@@ -5,9 +5,26 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from packaging.version import Version
+
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKBENCH = ROOT / "npa" / "docker" / "workbench"
+
+
+def test_generic_torch_images_require_patched_versions_and_complete_dependency_checks():
+    for relative, floors in (
+        ("base/cuda13-b300/Dockerfile", {
+            "TORCH_VERSION": "2.13.0", "TORCHVISION_VERSION": "0.28.0",
+            "TORCHAUDIO_VERSION": "2.11.0",
+        }),
+        ("cosmos-curate/Dockerfile", {"TORCH_VERSION": "2.13.0"}),
+    ):
+        text = (WORKBENCH / relative).read_text()
+        for variable, minimum in floors.items():
+            pin = re.search(rf"^ARG {variable}=(\S+)$", text, re.MULTILINE)
+            assert pin and Version(pin.group(1)) >= Version(minimum), relative
+        assert text.index("python -m pip check") > text.rindex("python -m pip install"), relative
 
 
 def _default_base(relative: str) -> str:
@@ -104,6 +121,22 @@ def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
     ):
         text = (WORKBENCH / relative).read_text(encoding="utf-8")
         assert "ARG UBUNTU_SNAPSHOT=20260820T000000Z" in text, relative
+
+
+def test_genesis_workflow_images_replace_vulnerable_parent_gitpython() -> None:
+    requirements = (WORKBENCH / "common/sim2real-genesis-requirements.txt").read_text()
+    pin = re.search(r"^GitPython==(\S+)$", requirements, re.MULTILINE)
+    assert pin and Version(pin.group(1)) >= Version("3.1.62")
+    for relative in (
+        "sim2real-envgen/Dockerfile", "sim2real-eval/Dockerfile", "lerobot-vlm-rl/Dockerfile",
+    ):
+        text = (WORKBENCH / relative).read_text()
+        install = text.index("-r /opt/npa/sim2real-genesis-requirements.txt")
+        assert install < text.index("python -m pip check"), relative
+        assert not re.search(r"GitPython\s*(?:@|==)", text, re.IGNORECASE), relative
+        if relative == "sim2real-envgen/Dockerfile":
+            assert install < text.index("FROM scratch AS runtime")
+            assert f'm.version("GitPython") == "{pin.group(1)}"' in text
 
 
 def test_isaac_runtime_uses_system_ffmpeg_without_wheel_bundled_binary() -> None:

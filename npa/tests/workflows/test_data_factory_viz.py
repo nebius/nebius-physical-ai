@@ -268,17 +268,22 @@ def test_load_stage_docs_covers_all_pipeline_stages(tmp_path: Path) -> None:
         )
     )
     (run / "curation").mkdir(parents=True)
+    curator = {"engine": "nvidia-cosmos/cosmos-curator", "clip_count": 2}
+    (run / "curation" / "cosmos_curator.json").write_text(json.dumps(curator))
     (run / "curation" / "report.json").write_text(json.dumps({"augmented_clips": 2, "multiply": {"mode": "multi-variant"}}))
     (run / "reports").mkdir(parents=True)
     (run / "reports" / "final.json").write_text(json.dumps({"artifact_count": 20, "multiply_mode": "multi-variant"}))
 
     docs = _load_stage_docs(run)
+    assert json.dumps(curator, indent=2, sort_keys=True) in docs["pipeline/4_cosmos_curator"]
+    assert "Cosmos Transfer 2.5" not in docs["pipeline/2_augment"]
     assert set(docs) == {
         "pipeline/0_log",
         "pipeline/0_input_provenance",
         "pipeline/1_scenarios",
         "pipeline/2_augment",
         "pipeline/3_grade",
+        "pipeline/4_cosmos_curator",
         "pipeline/4_curation",
         "pipeline/5_finalize",
     }

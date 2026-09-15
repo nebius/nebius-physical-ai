@@ -1,0 +1,59 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "0c391660d87730f79b254b2ef7282c0e2ea930dcc88d61ca1769444a9fe7a933",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation and both accepted and rejected static plans completed on September 11, 2026. Annotation renders on the pinned CPU image with FFmpeg; the accepted plan ends at finalize and the rejected plan ends at reject-quality.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/main/paidf-cosmos3.yaml --json",
+        "npa workbench workflow plan-spec workflows/main/paidf-cosmos3.yaml --run-id paidf-quality-contract --assume-decision loop_back --json",
+        "npa workbench workflow plan-spec workflows/main/paidf-cosmos3.yaml --run-id paidf-quality-contract --assume-decision promote_checkpoint --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The starter run completed all 15 stages at revision 1fb58217 on September 11, 2026: native aligned generation, complete evaluation and actual promotion, six accepted captions, two real Cosmos Curator clips, FiftyOne Brain curation, independently decoded recordings and final artifact checks. The guide retains advisory quality failures and the tiny-sample uniqueness fallback; this verifies pipeline execution, not training-data suitability.",
+      "evidence": [
+        "workflows/guides/paidf-cosmos3.md#validation"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The committed workflow retains example-bucket. Each future run must provide a writable operator-owned bucket and a fresh run prefix.",
+      "evidence": [
+        "docs/workbench/guides/paidf-cosmos3.md#inputs-and-configuration"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The live check proved the pinned H.264 starter input. Each future video or LeRobot selection still requires independent staging and integrity validation.",
+      "evidence": [
+        "docs/workbench/guides/paidf-cosmos3.md#inputs-and-configuration"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Each operator must independently pass Nebius, object-storage, Token Factory, Hugging Face, NGC, model-access, and applicable terms preflights before submission.",
+      "evidence": [
+        "docs/workbench/guides/paidf-cosmos3.md#inputs-and-configuration"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "This workflow stages the submitted NPA source and selects it over pinned workbench images. Each submission must verify the staged revision, image pullability, model access and pinned Cosmos runtime.",
+      "evidence": [
+        "workflows/guides/paidf-cosmos3.md#validation"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The current validation uses an existing RTX PRO 6000 Blackwell cluster. Every target must independently prove Kubernetes readiness, supported GPU discovery, image pullability and sufficient per-node resources.",
+      "evidence": [
+        "workflows/guides/paidf-cosmos3.md#validation"
+      ]
+    }
+  }
+}

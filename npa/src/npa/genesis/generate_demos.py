@@ -121,7 +121,7 @@ def _load_teacher_policy(
         init_noise_std=init_noise_std,
     ).to("cuda")
 
-    checkpoint = torch.load(str(checkpoint_path), map_location="cuda", weights_only=False)
+    checkpoint = torch.load(str(checkpoint_path), map_location="cuda", weights_only=True)
     actor_critic.load_state_dict(checkpoint["model_state_dict"])
     actor_critic.eval()
     return actor_critic

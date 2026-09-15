@@ -32,5 +32,34 @@ def test_image_bootstrap_terminal_probe_live() -> None:
     )
 
     assert evidence.state in {"compatible", "incompatible"}
-    assert evidence.cleanup == "verified_deleted"
+    assert evidence.cleanup == "verified"
     assert evidence.detail or evidence.checks
+
+
+def test_vendor_image_runtime_bootstrap_live() -> None:
+    """Require a real vendor image to pass prepared worker checks and cleanup."""
+
+    image = os.environ.get("NPA_E2E_IMAGE_PROBE_IMAGE", "").strip()
+    digest = os.environ.get("NPA_E2E_IMAGE_PROBE_DIGEST", "").strip()
+    context = os.environ.get("NPA_E2E_KUBECONTEXT", "").strip()
+    if not (image and digest and context):
+        pytest.skip("Requires an operator-selected vendor image and exact cluster")
+
+    evidence = probe_image_capabilities(
+        image=image,
+        digest=digest,
+        context=context,
+        kubeconfig=os.environ.get("KUBECONFIG", "").strip(),
+        image_pull_secrets=tuple(
+            name.strip()
+            for name in os.environ.get("NPA_E2E_IMAGE_PULL_SECRETS", "").split(",")
+            if name.strip()
+        ),
+        runtime_bootstrap=True,
+        observation_timeout_seconds=0,
+    )
+
+    assert evidence.ok, evidence.detail
+    assert evidence.source == "ephemeral_runtime_bootstrap_probe"
+    assert "kubernetes_command_override" in evidence.checks
+    assert evidence.cleanup == "verified"

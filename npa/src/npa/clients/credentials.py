@@ -8,6 +8,7 @@ import stat
 import tempfile
 import fcntl
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -650,18 +651,24 @@ def _private_store_lock(path: Path):
 def update_private_yaml(
     path: Path,
     updater: Callable[[dict[str, Any]], Mapping[str, Any] | None],
+    *,
+    skip_if_unchanged: bool = False,
 ) -> Path:
     """Lock and atomically update a protected YAML mapping.
 
     The updater receives the latest document after the lock is acquired. This
     prevents concurrent configure/agent commands from replacing one another's
     successful fields with an older snapshot.
+
+    Resolution paths can preserve exact verified file bytes when the document
+    is unchanged. Explicit writes and durability probes retain the default.
     """
 
     with _private_store_lock(path):
         existing: dict[str, Any] = {}
         if path.exists():
             existing = _read_credentials_document(path)
+        original = deepcopy(existing) if skip_if_unchanged else None
         updated = updater(existing)
         if updated is None:
             path.unlink(missing_ok=True)
@@ -670,6 +677,9 @@ def update_private_yaml(
                 os.fsync(directory_fd)
             finally:
                 os.close(directory_fd)
+            return path
+        if skip_if_unchanged and path.exists() and updated == original:
+            path.chmod(0o600, follow_symlinks=False)
             return path
         return write_private_yaml(path, updated)
 

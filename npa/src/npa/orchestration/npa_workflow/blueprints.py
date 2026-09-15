@@ -1,16 +1,9 @@
-"""Filesystem locations of the checked-in ``npa.workflow`` blueprint specs.
+"""Locations of the supported ``npa.workflow`` blueprint catalog.
 
-These YAMLs are discovered from a source checkout. The prominent Sim2Real
-direct-runbook is also force-included in the wheel. The flagship Physical AI
-Data Factory spec stays at the top of ``npa/workflows/`` in the repo; the rest
-of the declarative shown catalog is under
-``npa/workflows/workbench/npa-workflows/``.
-
-This module is the single source of truth for both roots so spec discovery,
-the smoke/guardrail tests, and the live-submit matrix stay in sync when a spec
-is promoted out of the catalog directory. When installed as a wheel (no repo
-tree) the directories simply do not exist and the helpers degrade to empty —
-only source-checkout callers (tests, the operator runner) rely on them.
+The source catalog lives in repo-root ``workflows/main`` and
+``workflows/testing``. Wheels include the same directories as package data so
+discovery and canonical workflow consumers also work without a source checkout.
+Guarded raw SkyPilot examples and resource profiles are separate from this catalog.
 """
 
 from __future__ import annotations
@@ -21,28 +14,35 @@ import yaml
 
 # blueprints.py -> npa_workflow -> orchestration -> npa -> src -> npa -> <repo root>
 _REPO_ROOT = Path(__file__).resolve().parents[5]
+_PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 
-#: Ordered spec roots. The promoted top-level directory is searched first so a
-#: name that exists in both wins from the prominent location.
+#: The first pair is the source catalog; the second pair is its installed fallback.
 NPA_WORKFLOW_SPEC_DIRS: tuple[Path, ...] = (
-    _REPO_ROOT / "npa" / "workflows",
-    _REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows",
+    _REPO_ROOT / "workflows" / "main",
+    _REPO_ROOT / "workflows" / "testing",
+    _PACKAGE_ROOT / "workflows" / "main",
+    _PACKAGE_ROOT / "workflows" / "testing",
 )
 
 
 def npa_workflow_spec_dirs() -> tuple[Path, ...]:
-    """Return the existing spec roots (skips missing dirs, e.g. wheel installs)."""
+    """Return the existing source or installed catalog directories."""
 
-    return tuple(
-        directory for directory in NPA_WORKFLOW_SPEC_DIRS if directory.is_dir()
+    source_dirs = tuple(
+        directory for directory in NPA_WORKFLOW_SPEC_DIRS[:2] if directory.is_dir()
+    )
+    # Generated container copies can outlive a source rename or deletion. A
+    # checkout's catalog remains authoritative until the next build stages it.
+    return source_dirs or tuple(
+        directory for directory in NPA_WORKFLOW_SPEC_DIRS[2:] if directory.is_dir()
     )
 
 
 def iter_npa_workflow_specs() -> list[Path]:
     """All ``*.yaml`` blueprint specs across the roots, de-duplicated by name.
 
-    Non-recursive per root, so the ``workbench/`` subtree under the top-level
-    ``npa/workflows`` directory is not double-counted.
+    Only the two catalog directories are scanned; nested examples and raw
+    SkyPilot/profile YAML homes are outside the supported declarative catalog.
     """
 
     seen: dict[str, Path] = {}

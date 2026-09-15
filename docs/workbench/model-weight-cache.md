@@ -1,5 +1,7 @@
 # Caching runtime-downloaded model weights and reviewed SDKs
 
+[Workbench docs](README.md)
+
 The workbench images bake **no model weights**. Every NVIDIA Cosmos checkpoint and
 guardrail, GR00T, the Cosmos-Curate towers, the Qwen VLMs, Wan 2.2 and LTX are
 license-gated or too large to redistribute, so
@@ -38,7 +40,7 @@ On by default wherever the answer is not "invent storage nobody asked for":
   default to; name a Nebius filesystem and every job attaches it:
 
   ```bash
-  export NPA_MODEL_CACHE_FILESYSTEM=<filesystem>   # not an s3:// bucket
+  export NPA_MODEL_CACHE_FILESYSTEM="<filesystem>"   # not an s3:// bucket
   ```
 
 Nothing here provisions storage. NPA will not create a claim, guess a class, or bill

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import re
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -116,6 +116,10 @@ class RuntimeRunState:
     #: by key, and keys only line up when the traversal is identical, so a resumed run
     #: whose spec/config changed must not silently reuse them.
     plan_fingerprint: str = ""
+    #: Append-only audit records for an explicitly authorized migration from one
+    #: terminal-failed plan to another under the same run identity. Prior waves
+    #: remain byte-for-byte represented below; a migration never rewrites them.
+    plan_migrations: list[dict[str, Any]] = field(default_factory=list)
     waves: list[dict[str, Any]] = field(default_factory=list)
     # Additive, per-stage projection of the wave ledger.  This is deliberately
     # kept in runtime.json so status/logs/cancel all consume one state store.
@@ -134,6 +138,7 @@ class RuntimeRunState:
             "status": self.status,
             "run_prefix_uri": self.run_prefix_uri,
             "plan_fingerprint": self.plan_fingerprint,
+            "plan_migrations": list(self.plan_migrations),
             "updated_at": self.updated_at,
             "waves": list(self.waves),
             "stages": list(self.stages),
@@ -150,6 +155,11 @@ class RuntimeRunState:
             status=str(payload.get("status") or "running"),
             run_prefix_uri=str(payload.get("run_prefix_uri") or ""),
             plan_fingerprint=str(payload.get("plan_fingerprint") or ""),
+            plan_migrations=[
+                dict(item)
+                for item in payload.get("plan_migrations") or []
+                if isinstance(item, dict)
+            ],
             waves=[
                 dict(item)
                 for item in payload.get("waves") or []
@@ -341,6 +351,36 @@ def _wave_members(wave: Mapping[str, Any]) -> list[tuple[str, int | None]]:
     if members:
         return members
     return [(str(item), None) for item in wave.get("states") or []]
+
+
+def runtime_manifest_view(
+    manifest: RunManifest, runtime_waves: Sequence[Mapping[str, Any]],
+) -> RunManifest:
+    """Include observed runtime stages omitted from an early manifest.
+
+    Args:
+        manifest: Durable manifest, possibly written before any stage ran.
+        runtime_waves: Recorded wave attempts with exact stage identities.
+
+    Returns:
+        An independent manifest view with each missing stage/iteration added.
+        Existing planned stages and their metadata retain their order.
+
+    Raises:
+        None.
+    """
+    steps = [dict(step) for step in manifest.steps]
+    known = {(str(step.get("state") or ""), step.get("iteration")) for step in steps}
+    for wave in runtime_waves:
+        for name, iteration in _wave_members(wave):
+            identity = (name, iteration)
+            if not name or identity in known:
+                continue
+            known.add(identity)
+            # Attempt outcomes come from attribution, which retains retries.
+            # Copying a historical failure into the stage would make it final.
+            steps.append({"state": name, "iteration": iteration, "status": SUBMITTED_STATUS})
+    return replace(manifest, steps=steps)
 
 
 def reconstruct_stage_job_attribution(

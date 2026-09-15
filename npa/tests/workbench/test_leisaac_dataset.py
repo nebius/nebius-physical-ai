@@ -619,6 +619,44 @@ def _dual_episode_dir(root: Path) -> tuple[Path, dict]:
     return episode, metadata
 
 
+@pytest.mark.parametrize("packaged", [False, True])
+def test_encoder_converts_jpeg_range_without_crushing_black_or_white(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, packaged: bool
+) -> None:
+    import os
+    import subprocess
+
+    if packaged:
+        import imageio_ffmpeg
+
+        executable = imageio_ffmpeg.get_ffmpeg_exe()
+        monkeypatch.setattr(leisaac_dataset, "_ffprobe_executable", lambda: None)
+    else:
+        executable = leisaac_dataset.shutil.which("ffmpeg")
+        if executable is None:
+            if os.environ.get("NPA_REQUIRE_FFMPEG") == "1":
+                pytest.fail("NPA_REQUIRE_FFMPEG=1 but system FFmpeg is unavailable")
+            pytest.skip("system FFmpeg unavailable; packaged encoder tested separately")
+    monkeypatch.setattr(leisaac_dataset, "_ffmpeg_executable", lambda: executable)
+    frames = tmp_path / "frames"
+    frames.mkdir()
+    levels = (0, 127, 255)
+    for index, level in enumerate(levels):
+        (frames / f"frame-{index:06d}.jpg").write_bytes(_jpeg((level,) * 3))
+    video = tmp_path / "range.mp4"
+    leisaac_dataset._encode_frames(frames, video)
+    media = leisaac_dataset._probe_video(video, expected_frames=3, fps=16)
+    assert media["pix_fmt"] == "yuv420p"
+    decoded = subprocess.run(
+        [executable, "-v", "error", "-i", str(video), "-f", "rawvideo",
+         "-pix_fmt", "rgb24", "-"],
+        capture_output=True, check=True,
+    )
+    pixels = np.frombuffer(decoded.stdout, dtype=np.uint8).reshape(3, 720, 1280, 3)
+    for frame, level in zip(pixels, levels, strict=True):
+        assert np.abs(frame.astype(np.int16) - level).max() <= 3
+
+
 def test_s3_store_publishes_faststart_synchronized_two_camera_artifacts(
     tmp_path: Path,
 ) -> None:

@@ -543,6 +543,7 @@ def _s3_sync_dir(
     local_path: str,
 ) -> None:
     """Upload or download a directory via S3 on a remote VM."""
+    import shlex
     from npa.clients.ssh import SSHError
     from urllib.parse import urlparse
 
@@ -557,8 +558,8 @@ def _s3_sync_dir(
             f"endpoint_url=os.environ.get('NEBIUS_S3_ENDPOINT', ''), "
             f"aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID', ''), "
             f"aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY', '')); "
-            f"base = pathlib.Path('{local_path}'); "
-            f"[s3.upload_file(str(f), '{bucket}', '{prefix}' + str(f.relative_to(base))) "
+            f"base = pathlib.Path({local_path!r}); "
+            f"[s3.upload_file(str(f), {bucket!r}, {prefix!r} + str(f.relative_to(base))) "
             f"for f in base.rglob('*') if f.is_file()]; "
             f"print('s3_sync_upload_done')"
         )
@@ -570,21 +571,29 @@ def _s3_sync_dir(
             f"aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID', ''), "
             f"aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY', '')); "
             f"pag = s3.get_paginator('list_objects_v2'); "
-            f"dest = pathlib.Path('{local_path}'); "
-            f"[("
-            f"os.makedirs(str((dest / o['Key'][len('{prefix}'):]).parent), exist_ok=True), "
-            f"s3.download_file('{bucket}', o['Key'], str(dest / o['Key'][len('{prefix}'):]))) "
-            f"for page in pag.paginate(Bucket='{bucket}', Prefix='{prefix}') "
-            f"for o in page.get('Contents', []) "
-            f"if o['Key'][len('{prefix}'):]"
-            f"]; "
+            f"dest = pathlib.Path({local_path!r}).resolve(); "
+            f"prefix = {prefix!r}\n"
+            f"for page in pag.paginate(Bucket={bucket!r}, Prefix=prefix):\n"
+            "    for obj in page.get('Contents', []):\n"
+            "        key = obj['Key']\n"
+            "        rel = key[len(prefix):]\n"
+            "        if not rel or key.endswith('/'):\n"
+            "            continue\n"
+            "        relative = pathlib.PurePosixPath(rel)\n"
+            "        if not key.startswith(prefix) or relative.is_absolute() or '..' in relative.parts or '\\\\' in rel:\n"
+            "            raise ValueError('Unsafe object key in download prefix')\n"
+            "        target = (dest / relative).resolve()\n"
+            "        if not target.is_relative_to(dest):\n"
+            "            raise ValueError('Object escapes its destination')\n"
+            "        target.parent.mkdir(parents=True, exist_ok=True)\n"
+            f"        s3.download_file({bucket!r}, key, str(target))\n"
             f"print('s3_sync_download_done')"
         )
 
     cmd = (
-        f"mkdir -p {local_path} && "
+        f"mkdir -p {shlex.quote(local_path)} && "
         f"{conda_prefix}"
-        f"python3 -c \"{script}\""
+        f"python3 -c {shlex.quote(script)}"
     )
 
     try:

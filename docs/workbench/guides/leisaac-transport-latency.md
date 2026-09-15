@@ -1,5 +1,7 @@
 # LeIsaac low-latency browser transport
 
+[Guides](README.md)
+
 This runbook describes the measured transport behind the public agent's LeIsaac
 keyboard teleoperation. It is deliberately separate from the recorder state
 machine: video congestion must not delay controls, and transport changes must

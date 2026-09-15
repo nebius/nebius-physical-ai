@@ -10,6 +10,8 @@ hardware; see docs/workbench/image-gpu-compatibility-matrix.md for those runs.
 from __future__ import annotations
 
 import importlib.util
+import os
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -20,6 +22,7 @@ SCRIPT = (
     Path(__file__).resolve().parents[2]
     / "docker/workbench/base/cuda13-b300/scripts/check_torch_gpu_arch.py"
 )
+WRAPPER = Path(__file__).resolve().parents[2] / "scripts/validate_blackwell_image.sh"
 
 
 def _load() -> ModuleType:
@@ -231,3 +234,47 @@ def test_build_report_reports_a_hopper_capped_wheel(checker, with_fake_torch) ->
     _, failures = checker.build_report(_args(require_arch=["sm_100"]))
 
     assert any("does not cover sm_100" in f for f in failures)
+
+
+def test_wrapper_can_validate_the_current_kubernetes_container(tmp_path) -> None:
+    observed = tmp_path / "argv.txt"
+    interpreter = tmp_path / "python"
+    interpreter.write_text(
+        "#!" + sys.executable + "\n"
+        "import os,sys\n"
+        "from pathlib import Path\n"
+        "source=sys.stdin.read()\n"
+        "assert 'def build_report' in source\n"
+        "Path(os.environ['OBSERVED']).write_text('\\n'.join(sys.argv[1:]))\n",
+        encoding="utf-8",
+    )
+    interpreter.chmod(0o700)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(WRAPPER),
+            "--current-container",
+            "--target",
+            "b200",
+            "--gpu",
+            "--python",
+            str(interpreter),
+            "--json",
+        ],
+        env={**os.environ, "OBSERVED": str(observed)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert observed.read_text(encoding="utf-8").splitlines() == [
+        "-",
+        "--require-arch",
+        "sm_100",
+        "--require-capability",
+        "10.0",
+        "--require-sass-coverage",
+        "--json",
+    ]

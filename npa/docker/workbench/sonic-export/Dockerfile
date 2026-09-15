@@ -26,11 +26,12 @@ RUN apt-get update \
 # torch as the CUDA workbench images for parity/reproducibility; pre-installing
 # the CPU wheel means the subsequent npa[sonic] install treats torch as
 # satisfied instead of pulling the multi-GB CUDA build.
-RUN pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.12.1"
+RUN pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.13.0"
 
 COPY npa/pyproject.toml /opt/npa/pyproject.toml
 COPY npa/src /opt/npa/src
 COPY npa/workflows /opt/npa/workflows
+COPY workflows /opt/workflows
 # Installs npa's base deps (pyarrow, boto3, ...) plus the [sonic] onnx toolchain.
 RUN pip install "/opt/npa[sonic]"
 

@@ -697,7 +697,13 @@ def run_launch_transaction(
                 # absence as permission for a second provider submission.
                 reconciliation_sequence = 0
                 while (
-                    after_success.state is ReconciliationState.ABSENT
+                    (
+                        after_success.state is ReconciliationState.ABSENT
+                        or (
+                            after_success.state is ReconciliationState.FOUND
+                            and is_terminal_failure_job_status(after_success.status)
+                        )
+                    )
                     and clock() < deadline
                 ):
                     reconciliation_sequence += 1
@@ -712,7 +718,10 @@ def run_launch_transaction(
                     sleeper(delay)
                     after_success = reconcile()
                     transaction.reconciliations.append(after_success.to_dict())
-                if after_success.state is ReconciliationState.FOUND:
+                if (
+                    after_success.state is ReconciliationState.FOUND
+                    and not is_terminal_failure_job_status(after_success.status)
+                ):
                     transaction.existence = "found"
                     transaction.state = LaunchState.SUBMITTED
                     transaction.job_id = after_success.job_id
@@ -728,7 +737,8 @@ def run_launch_transaction(
                 transaction.state = LaunchState.INDETERMINATE
                 transaction.existence = "indeterminate"
                 transaction.reconciliation_error = after_success.error or (
-                    "launch returned success but the exact managed job was not visible"
+                    "launch returned success but no non-terminal exact managed job "
+                    "became visible before the reconciliation deadline"
                 )
                 transaction.recovery_decision = "block_after_uncertain_success"
                 transaction.operator_remedy = (

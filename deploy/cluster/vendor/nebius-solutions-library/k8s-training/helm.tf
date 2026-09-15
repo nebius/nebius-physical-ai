@@ -14,11 +14,12 @@ module "gpu-operator" {
   depends_on = [
     module.network-operator
   ]
-  source       = "../modules/gpu-operator"
-  parent_id    = var.parent_id
-  cluster_id   = nebius_mk8s_v1_cluster.k8s-cluster.id
-  mig_strategy = var.mig_strategy
-  cdi_enabled  = local.gpu_operator_cdi_enabled
+  source             = "../modules/gpu-operator"
+  parent_id          = var.parent_id
+  cluster_id         = nebius_mk8s_v1_cluster.k8s-cluster.id
+  mig_strategy       = var.mig_strategy
+  cdi_enabled        = local.gpu_operator_cdi_enabled
+  rtx_driver_profile = var.gpu_operator_rtx_driver_profile
 }
 
 module "gpu-operator-custom" {

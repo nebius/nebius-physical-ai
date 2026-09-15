@@ -1,4 +1,7 @@
 # BDD100K Failure-Mode Detection Demo
+
+[Docs](../README.md)
+
 ## Nebius Physical AI Workbench - LanceDB Reproduction
 
 > This demo reproduces LanceDB's autonomous-vehicle perception pipeline on
@@ -125,7 +128,7 @@ Start with the no-infrastructure validation first:
 
 ```bash
 python npa/scripts/run_bdd100k_pipeline.py \
-  --spec npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml \
+  --spec workflows/testing/bdd100k-pipeline.yaml \
   --synthetic 5000 \
   --mock-endpoints
 ```
@@ -151,7 +154,7 @@ service requires an output path:
 ```bash
 npa workbench detection-training deploy \
   --namespace workbench \
-  --output-path s3://<YOUR_BUCKET>/bdd100k-pipeline/
+  --output-path "s3://<YOUR_BUCKET>/bdd100k-pipeline/"
 ```
 
 The OSS LanceDB VM path is still operator-owned in this build. For local smoke,
@@ -163,22 +166,21 @@ Submit the synthetic pipeline after those services are reachable:
 
 ```bash
 python npa/scripts/run_bdd100k_pipeline.py \
-  --spec npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml \
+  --spec workflows/testing/bdd100k-pipeline.yaml \
   --synthetic 5000
 
 # View results in FiftyOne
-npa workbench fiftyone deploy --public-ip
+npa workbench fiftyone deploy --runtime kubernetes
 npa workbench fiftyone status
 ```
 
 ### Accessing the FiftyOne Session
 
 ```bash
-# Public URL, no local tooling required for viewers
+# Check deployment readiness
 npa workbench fiftyone status
-# Public URL: http://<external-ip>:5151
 
-# Local access for operators who prefer a port-forward
+# Keep authenticated local forwarding running while reviewing
 npa workbench fiftyone open
 ```
 
@@ -187,7 +189,7 @@ npa workbench fiftyone open
 Stage a BDD100K subset at `s3://<your-bucket>/raw-bdd100k/subset-demo/` with
 3-5k frames in standard BDD100K format, then re-run without the synthetic flag.
 Before a production run, switch the three training task label-map comment blocks
-in `npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml` from the synthetic map to the
+in `workflows/testing/bdd100k-pipeline.yaml` from the synthetic map to the
 real BDD100K map:
 
 ```json
@@ -207,7 +209,7 @@ export NPA_RUN_ID=bdd100k-real-data-demo
 export BDD100K_PIPELINE_MODE=FULL_SUBMISSION
 
 python npa/scripts/run_bdd100k_pipeline.py \
-  --spec npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml \
+  --spec workflows/testing/bdd100k-pipeline.yaml \
   --run-id bdd100k-real-data-demo
 ```
 
@@ -228,5 +230,5 @@ This demo follows the three-layer workbench architecture described under [`docs/
 
 The runbook session loaded `bdd100k-real-data-demo` into FiftyOne with 3000 real
 BDD100K samples, CLIP embeddings, bounding boxes, scalar UDF fields, and the
-three saved views above. Run `npa workbench fiftyone status` for the public URL,
-or `npa workbench fiftyone open` for local access.
+three saved views above. Run `npa workbench fiftyone status` to check readiness,
+then `npa workbench fiftyone open` for authenticated local access.

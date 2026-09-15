@@ -10,6 +10,8 @@ import json
 import logging
 from pathlib import Path
 from urllib.parse import quote, urlparse
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 import boto3
 from botocore.config import Config as BotoConfig
@@ -35,6 +37,7 @@ logger = logging.getLogger(__name__)
 RERUN_VERSION = "0.31.4"
 MAX_TTL_HOURS = 168
 UTC = timezone.utc
+RERUN_BROWSER_ORIGIN = "https://app.rerun.io"
 
 
 class RerunHostError(ValueError):
@@ -54,6 +57,7 @@ class RerunHostResult:
     ttl_expires_at: str
     sha256: str
     rerun_version: str
+    browser_cors_verified: bool
 
 
 @dataclass(frozen=True)
@@ -113,6 +117,12 @@ def host_recording(
         bucket, key, data, sha = _prepare_local_recording(recording_path, target_bucket)
 
     uri = f"s3://{bucket}/{key}"
+    presigned = _presign(scoped_s3, bucket, key, ttl_hours)
+    _verify_browser_cors(
+        presigned,
+        bucket=bucket,
+        project=source_project if _is_s3_uri(recording_path) else target_project,
+    )
     _ensure_uploaded(
         scoped_s3,
         fallback_s3,
@@ -122,7 +132,6 @@ def host_recording(
         sha,
         allow_host_creds=allow_host_creds,
     )
-    presigned = _presign(scoped_s3, bucket, key, ttl_hours)
     expires_at = ((now or datetime.now(UTC)) + timedelta(hours=ttl_hours)).replace(
         microsecond=0
     )
@@ -134,6 +143,7 @@ def host_recording(
         ttl_expires_at=expires_at.isoformat().replace("+00:00", "Z"),
         sha256=sha,
         rerun_version=RERUN_VERSION,
+        browser_cors_verified=True,
     )
 
 
@@ -194,6 +204,8 @@ def share_recording(
     if label:
         metadata["rerun-label"] = label
 
+    presigned = _presign(target_scoped_s3, bucket, key, ttl_hours)
+    _verify_browser_cors(presigned, bucket=bucket, project=target_project)
     _ensure_uploaded(
         target_scoped_s3,
         target_fallback_s3,
@@ -204,7 +216,6 @@ def share_recording(
         allow_host_creds=allow_host_creds,
         metadata=metadata,
     )
-    presigned = _presign(target_scoped_s3, bucket, key, ttl_hours)
     expires_at = ((now or datetime.now(UTC)) + timedelta(hours=ttl_hours)).replace(
         microsecond=0
     )
@@ -215,6 +226,7 @@ def share_recording(
         ttl_expires_at=expires_at.isoformat().replace("+00:00", "Z"),
         sha256=sha,
         rerun_version=RERUN_VERSION,
+        browser_cors_verified=True,
     )
 
 
@@ -727,6 +739,91 @@ def _presign(s3, bucket: str, key: str, ttl_hours: int) -> str:
         )
     except (ClientError, NoCredentialsError) as exc:
         raise RerunHostError(f"Failed to presign s3://{bucket}/{key}: {exc}") from exc
+
+
+def _verify_browser_cors(
+    presigned_url: str,
+    *,
+    bucket: str,
+    project: str | None,
+) -> None:
+    """Exercise the same unauthenticated preflight the Rerun browser performs.
+
+    Bucket-level CORS reads require privileges the scoped object key intentionally
+    lacks. Probing the presigned URL is both privilege-neutral and closer to the
+    browser behavior we need to guarantee.
+    """
+
+    request = Request(
+        presigned_url,
+        method="OPTIONS",
+        headers={
+            "Origin": RERUN_BROWSER_ORIGIN,
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "Range",
+        },
+    )
+    status = 0
+    try:
+        with urlopen(request) as response:  # noqa: S310 - exact presigned HTTPS URL
+            status = int(getattr(response, "status", 0) or response.getcode() or 0)
+            allow_origin = str(response.headers.get("Access-Control-Allow-Origin", ""))
+            allow_methods = {
+                item.strip().upper()
+                for item in str(
+                    response.headers.get("Access-Control-Allow-Methods", "")
+                ).split(",")
+                if item.strip()
+            }
+            allow_headers = {
+                item.strip().lower()
+                for item in str(
+                    response.headers.get("Access-Control-Allow-Headers", "")
+                ).split(",")
+                if item.strip()
+            }
+            expose_headers = {
+                item.strip().lower()
+                for item in str(
+                    response.headers.get("Access-Control-Expose-Headers", "")
+                ).split(",")
+                if item.strip()
+            }
+    except HTTPError as exc:
+        status = int(exc.code or 0)
+        allow_origin = ""
+        allow_methods = set()
+        allow_headers = set()
+        expose_headers = set()
+    except OSError as exc:
+        raise RerunHostError(
+            _browser_cors_remedy(bucket, project, "request failed")
+        ) from exc
+
+    required_exposed = {"accept-ranges", "content-length", "content-range"}
+    if not (
+        200 <= status < 300
+        and allow_origin in {RERUN_BROWSER_ORIGIN, "*"}
+        and "GET" in allow_methods
+        and ("range" in allow_headers or "*" in allow_headers)
+        and (required_exposed <= expose_headers or "*" in expose_headers)
+    ):
+        raise RerunHostError(
+            _browser_cors_remedy(bucket, project, f"preflight returned HTTP {status}")
+        )
+
+
+def _browser_cors_remedy(bucket: str, project: str | None, detail: str) -> str:
+    command = "npa storage bucket cors --apply"
+    if project:
+        command += f" --project {project}"
+    command += f" --name {bucket}"
+    return (
+        f"Rerun browser CORS validation failed ({detail}). A bucket administrator "
+        f"must run `{command}`; the scoped S3 object key created by `npa configure` "
+        "cannot change bucket CORS. Then retry this command. For a local fallback, "
+        "download the recording and run `rerun <recording.rrd>`."
+    )
 
 
 def _share_url(presigned_url: str) -> str:

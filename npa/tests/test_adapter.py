@@ -133,6 +133,33 @@ class TestAdapterHelpers:
         assert stats["max"][2][0][0] == 1.0
         assert stats["count"] == [1]
 
+    def test_video_stats_match_full_dataset_with_unequal_episode_lengths(self, monkeypatch):
+        generator = np.random.default_rng(21)
+        arrays = [generator.integers(0, 256, (length, 6, 8, 3), dtype=np.uint8)
+                  for length in (1, 4, 2)]
+        reference = np.concatenate(arrays).astype(np.float64) / 255.0
+        expected = {name: getattr(reference, name)(axis=(0, 1, 2))
+                    for name in ("min", "max", "mean", "std")}
+        def reject_dataset_copy(*args, **kwargs):
+            raise AssertionError("video statistics must not concatenate the dataset")
+        monkeypatch.setattr(sim_to_lerobot.np, "concatenate", reject_dataset_copy)
+
+        stats = _compute_feature_stats(arrays, is_video=True)
+
+        assert stats["count"] == [7]
+        for name, value in expected.items():
+            np.testing.assert_allclose(np.asarray(stats[name]).reshape(3), value, atol=1e-14)
+
+    def test_video_stats_preserve_small_variance_between_constant_frames(self):
+        arrays = [np.full((1, 2, 2, 3), 255.0),
+                  np.full((2, 2, 2, 3), 255.0 + 1e-5)]
+        reference = np.concatenate(arrays).astype(np.float64) / 255.0
+
+        stats = _compute_feature_stats(arrays, is_video=True)
+
+        np.testing.assert_allclose(np.asarray(stats["std"]).reshape(3),
+                                   reference.std(axis=(0, 1, 2)), rtol=1e-8)
+
     def test_build_data_schema_has_fixed_size_lists(self) -> None:
         schema = _build_data_schema(n_state=10, n_actions=8)
 
@@ -316,6 +343,38 @@ class TestConvert:
         assert table.num_rows == 1
         assert table.column("task_index").to_pylist() == [0]
         assert table.column("task").to_pylist() == [task_str]
+
+    def test_tasks_from_robocasa_metadata_are_preserved(
+        self, demo_dir: Path, output_dir: Path
+    ) -> None:
+        episode_records = [
+            {
+                "episode_index": index,
+                "task": "PickPlaceCounterToCabinet" if index % 2 == 0 else "PickPlaceCounterToSink",
+            }
+            for index in range(N_EPISODES)
+        ]
+        (demo_dir / "metadata.json").write_text(
+            json.dumps({"episodes": episode_records}), encoding="utf-8"
+        )
+        convert(
+            demo_dir,
+            output_dir,
+            fps=FPS,
+            robot_type="panda_omron",
+            task_from_metadata=True,
+        )
+
+        info = json.loads((output_dir / "meta" / "info.json").read_text())
+        assert info["robot_type"] == "panda_omron"
+        assert info["total_tasks"] == 2
+        tasks = pq.read_table(output_dir / "meta" / "tasks.parquet")
+        assert tasks.column("task").to_pylist() == [
+            "PickPlaceCounterToCabinet",
+            "PickPlaceCounterToSink",
+        ]
+        data = pq.read_table(output_dir / "data" / "chunk-000" / "file-000.parquet")
+        assert set(data.column("task_index").to_pylist()) == {0, 1}
 
     def test_stats_json(self, demo_dir: Path, output_dir: Path) -> None:
         convert(demo_dir, output_dir, fps=FPS)

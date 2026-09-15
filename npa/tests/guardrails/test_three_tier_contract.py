@@ -30,7 +30,7 @@ from npa.guardrails.three_tier import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SPECS = Path("npa/workflows/workbench/npa-workflows")
+SPECS = Path("workflows/testing")
 SIM2REAL_DEMO = Path("npa/tests/fixtures/npa-workflows/sim2real-vlm-rl-demo.yaml")
 
 
@@ -61,6 +61,9 @@ def _p(
 #               the ones worth closing, tool by tool, with a live run each.
 #
 SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
+    "cosmos3/super-benchmark": {
+        "dry_run": "boolean",
+    },
     "cosmos3/ray-batch": {
         "dry_run": "boolean",
     },
@@ -126,7 +129,6 @@ SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
     },
     "vlm-eval/run": {
         "task": "knob",
-        "model": "knob",
         "endpoint_url": "knob",
         "frame_selection": "knob",
         "max_frames": "knob",
@@ -141,12 +143,30 @@ SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
         "image": "infra",
         "prompt": "knob",
     },
+    "robocasa/run": {
+        "download_assets": "boolean",
+        "seed": "knob",
+    },
 }
 
 VALID_GAP_CATEGORIES = frozenset({"boolean", "infra", "knob"})
 
 
 CONTRACTS: tuple[CapabilityContract, ...] = (
+    CapabilityContract(
+        name="curobo/benchmark",
+        cli_module="npa.cli.workbench.curobo",
+        cli_callback="benchmark_cmd",
+        sdk_module="npa.sdk.workbench.curobo",
+        sdk_attr="benchmark",
+        spec_path=SPECS / "curobo-benchmark.yaml",
+        tool_ref="workbench.curobo.benchmark",
+        params=(
+            _p("input_path", "input_path", "--input-path"),
+            _p("output_path", "output_path", "--output-path"),
+            _p("run_id", "run_id", "--run-id"),
+        ),
+    ),
     CapabilityContract(
         name="alpamayo2-super/infer",
         cli_module="npa.cli.workbench.alpamayo2_super",
@@ -282,7 +302,6 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         tool_ref="workbench.vlm_eval.run",
         spec_gap=(
             "task",
-            "model",
             "endpoint_url",
             "frame_selection",
             "max_frames",
@@ -356,6 +375,24 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         ),
     ),
     CapabilityContract(
+        name="cosmos3/super-benchmark",
+        cli_module="npa.cli.workbench.cosmos3",
+        cli_callback="super_benchmark_cmd",
+        sdk_module="npa.sdk.workbench.cosmos3",
+        sdk_attr="super_benchmark",
+        spec_path=SPECS / "cosmos3-super-b200-benchmark.yaml",
+        tool_ref="workbench.cosmos3.super_benchmark",
+        spec_gap=("dry_run",),
+        params=(
+            _p("output_path", "output_path", "--output-path"),
+            _p("topologies", "topologies", "--topologies"),
+            _p("attempts", "attempts", "--attempts"),
+            _p("base_port", "base_port", "--base-port"),
+            _p("run_id", "run_id", "--run-id"),
+            _p("dry_run", "dry_run", "--dry-run"),
+        ),
+    ),
+    CapabilityContract(
         name="detection-training/train",
         cli_module="npa.cli.workbench.detection_training",
         cli_callback="train_cmd",
@@ -384,6 +421,29 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
             _p("eval_view", "eval_view", "--eval-view"),
             _p("output_uri", "output_uri", "--output-uri"),
             _p("lance_uri", "lance_uri", "--lance-uri"),
+        ),
+    ),
+    CapabilityContract(
+        name="robocasa/run",
+        cli_module="npa.cli.workbench.robocasa.run",
+        cli_callback="run_cmd",
+        sdk_module="npa.sdk.workbench.robocasa",
+        sdk_attr="run",
+        spec_path=SPECS / "robocasa-smoke.yaml",
+        tool_ref="workbench.robocasa.random_rollout",
+        spec_gap=(
+            "download_assets",
+            "seed",
+        ),
+        params=(
+            _p("capability", "capability", "--capability"),
+            _p("env_id", "env_id", "--env-id"),
+            _p("output_path", "output_path", "--output-path"),
+            _p("iterations", "iterations", "--iterations"),
+            _p("num_envs", "num_envs", "--num-envs"),
+            _p("timeout_seconds", "timeout_seconds", "--timeout-seconds"),
+            _p("download_assets", "download_assets", "--download-assets"),
+            _p("seed", "seed", "--seed"),
         ),
     ),
     # --- the watcher: a DRIVER, so its third tier is the spec it submits --------

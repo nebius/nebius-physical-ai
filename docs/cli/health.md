@@ -10,7 +10,7 @@ Preflight health checks for workbench workflows.
 Options
 --help  Show this message and exit.
 Commands
-preflight  Validate HF, NGC, S3, and Token Factory credentials before a deploy or GPU job.
+preflight  Validate service credentials and optional Nebius CLI authentication.
 access  Check HF + NGC access to every gated model the workbench capabilities need.
 ```
 
@@ -24,7 +24,7 @@ access  Check HF + NGC access to every gated model the workbench capabilities ne
 
 | Command | Description |
 | --- | --- |
-| `preflight` | Validate HF, NGC, S3, and Token Factory credentials before a deploy or GPU job. |
+| `preflight` | Validate service credentials and optional Nebius CLI authentication. |
 | `access` | Check HF + NGC access to every gated model the workbench capabilities need. |
 
 ## Examples

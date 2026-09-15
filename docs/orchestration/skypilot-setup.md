@@ -1,5 +1,7 @@
 # SkyPilot Isolated Venv Setup
 
+[Docs](../README.md)
+
 SkyPilot is an external CLI dependency for NPA orchestration. NPA calls the
 `sky` CLI through subprocess and does not install or import SkyPilot in NPA's
 Python environment.
@@ -42,7 +44,7 @@ export PATH="$(dirname "$(npa skypilot status --bin-path)"):$PATH"
 
 ```bash
 test -x "$NPA_SKYPILOT_BIN"
-npa skypilot verify --cluster <npa-cluster-context>
+npa skypilot verify --cluster "<npa-cluster-context>"
 ```
 
 Passing the NPA cluster context is important on workstations that already use
@@ -59,10 +61,10 @@ built-in smoke task:
 
 ```bash
 npa provision-if-absent \
-  --project <project-alias> \
-  --cluster-name <npa-cluster-context> \
-  --context <npa-cluster-context> \
-  --kubeconfig <kubeconfig> \
+  --project "<project-alias>" \
+  --cluster-name "<npa-cluster-context>" \
+  --context "<npa-cluster-context>" \
+  --kubeconfig "<kubeconfig>" \
   --skip-s3 \
   --sky-smoke \
   --sky-bin "$NPA_SKYPILOT_BIN"
@@ -134,3 +136,11 @@ The validated version is SkyPilot `0.12.2` with the `nebius` and `kubernetes`
 extras. To upgrade, create a new venv at a separate path, install the candidate
 SkyPilot version, run `sky check`, and replay the NPA SkyPilot e2e before
 switching `NPA_SKYPILOT_BIN`.
+
+Controller cleanup uses the originating isolated runtime's user and controller
+identity. It snapshots controller metadata into a temporary owned API, without
+replaying the original API's pending requests, and verifies remote absence before
+removing the original local metadata. The temporary API and queue must stop
+before their directory is deleted. If process cleanup cannot be verified, keep
+`<isolated-config-dir>/controller-transactions/` and the original runtime for
+recovery; do not remove their ownership records or use a shared API as a fallback.

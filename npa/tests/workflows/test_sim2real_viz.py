@@ -52,8 +52,11 @@ class _FakeRerun:
         return {"kind": "lines3d", "args": args, **kwargs}
 
     # Recording lifecycle ---------------------------------------------------
-    def RecordingStream(self, application_id: str) -> _FakeRecording:
+    def RecordingStream(
+        self, application_id: str, *, recording_id: str | None = None
+    ) -> _FakeRecording:
         self.application_id = application_id
+        self.recording_id = recording_id
         return _FakeRecording()
 
     def save(
@@ -211,6 +214,7 @@ def test_emit_logs_frames_critiques_signal_and_heldout(
     assert result.frame_count == 6
     assert result.heldout_env_count == 2
     assert fake.disconnected is True
+    assert fake.recording_id == "run"
 
     entities = [entity for entity, _kind in fake.logged]
     kinds = {entity: kind for entity, kind in fake.logged}
@@ -311,6 +315,419 @@ def test_recording_loads_metrics_and_rollouts_from_every_outer_iteration(
     assert any(entity.startswith("rollouts/outer_01/") for entity in entities)
     assert any(entity.startswith("rollouts/outer_02/") for entity in entities)
     assert result.entity_counts["/training/loss_after"] == 2
+
+
+def test_iteration_evidence_merges_local_paths_and_preserves_persisted_facts(
+    tmp_path: Path,
+) -> None:
+    persisted = {
+        "outer_iteration": 2,
+        "iterations": [
+            {
+                "iteration": 1,
+                "actions_uri": "s3://bucket/run/actions/outer-02/iter-01/",
+                "actions_dir": "/old-controller/actions",
+                "update": {"checkpoint_sha256": "a" * 64, "mean_reward": 0.25},
+                "mean_reward": 0.25,
+            }
+        ],
+    }
+    path = tmp_path / "inner_loop" / "outer-02" / "evidence.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(persisted), encoding="utf-8")
+    localized = {
+        "outer_iteration": 2,
+        "iterations": [
+            {
+                "iteration": 1,
+                "actions_dir": str(tmp_path / "actions"),
+                "vlm_eval_dir": str(tmp_path / "evaluations"),
+                "signal_dir": str(tmp_path / "signals"),
+                "update": {"mean_reward": 0.25},
+                "mean_reward": None,
+            }
+        ],
+    }
+
+    records = viz_module._all_inner_iteration_records(tmp_path, localized)
+
+    assert len(records) == 1
+    outer, record = records[0]
+    assert outer == 2
+    assert record["actions_uri"] == persisted["iterations"][0]["actions_uri"]
+    assert record["update"] == persisted["iterations"][0]["update"]
+    assert record["mean_reward"] == 0.25
+    for key in ("actions_dir", "vlm_eval_dir", "signal_dir"):
+        assert record[key] == localized["iterations"][0][key]
+    assert json.loads(path.read_text()) == persisted
+    assert localized["iterations"][0]["mean_reward"] is None
+
+
+@pytest.mark.parametrize("field", ["actions_uri", "update.checkpoint_sha256"])
+def test_iteration_evidence_rejects_conflicting_artifact_facts(
+    tmp_path: Path, field: str
+) -> None:
+    record = {
+        "iteration": 1,
+        "actions_uri": "s3://bucket/run/actions/outer-01/iter-01/",
+        "update": {"checkpoint_sha256": "a" * 64},
+    }
+    path = tmp_path / "inner_loop" / "outer-01" / "evidence.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"iterations": [record]}), encoding="utf-8")
+    conflict = json.loads(json.dumps(record))
+    if field == "actions_uri":
+        conflict[field] = "s3://bucket/other/actions/"
+    else:
+        conflict["update"]["checkpoint_sha256"] = "b" * 64
+
+    with pytest.raises(
+        Sim2RealVizError, match=f"Conflicting iteration evidence for {field}"
+    ):
+        viz_module._all_inner_iteration_records(tmp_path, {"iterations": [conflict]})
+
+
+@pytest.mark.parametrize("iteration_ids", [(1, 2, 3), (1, None, None, 0)])
+def test_rrd_roundtrip_preserves_run_identity_and_each_ppo_pass_once(
+    tmp_path: Path,
+    iteration_ids: tuple[int | None, ...],
+) -> None:
+    import pyarrow as pa
+    from rerun.recording import load_recording
+
+    inner_evidence, heldout_report = _build_run_tree(tmp_path)
+    localized = {"outer_iteration": 2, "iterations": []}
+    expected_values: list[float] = []
+    persisted_bytes: dict[Path, bytes] = {}
+    for outer in (1, 2):
+        persisted_records = []
+        outer_values = []
+        for inner, iteration_id in enumerate(iteration_ids, start=1):
+            record = json.loads(json.dumps(inner_evidence["iterations"][0]))
+            if iteration_id is None:
+                record.pop("iteration")
+            else:
+                record["iteration"] = iteration_id
+            values = [outer + inner / 10, outer + inner / 10 + 0.01]
+            outer_values.append((iteration_id or 0, values))
+            record["update"]["ppo_telemetry"] = {
+                "curves": [
+                    {"iteration": index, "value_loss": value}
+                    for index, value in enumerate(values)
+                ]
+            }
+            if outer == 2:
+                localized["iterations"].append(json.loads(json.dumps(record)))
+                # Finalization and regeneration can localize persisted records
+                # that have either URI-only evidence or older local media paths.
+                for key in ("actions_dir", "vlm_eval_dir", "signal_dir"):
+                    if iteration_id is None:
+                        record[key] = (
+                            f"/old-controller/outer-{outer}/pass-{inner}/{key}"
+                        )
+                    else:
+                        record.pop(key, None)
+            persisted_records.append(record)
+        for _iteration, values in sorted(outer_values, key=lambda item: item[0]):
+            expected_values.extend(values)
+        path = tmp_path / "inner_loop" / f"outer-{outer:02d}" / "evidence.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            json.dumps({"outer_iteration": outer, "iterations": persisted_records}),
+            encoding="utf-8",
+        )
+        persisted_bytes[path] = path.read_bytes()
+    original_localized = json.loads(json.dumps(localized))
+
+    output = tmp_path / "reports" / "roundtrip.rrd"
+    result = emit_sim2real_rerun(
+        local_dir=tmp_path,
+        inner_evidence=localized,
+        heldout_report=heldout_report,
+        run_metadata={"run_id": "sim2real-roundtrip"},
+        output_rrd=output,
+    )
+    recording = load_recording(output)
+
+    assert recording.application_id() == viz_module.APPLICATION_ID
+    assert recording.recording_id() == "sim2real-roundtrip"
+    assert result.rollout_count == len(expected_values)
+    assert localized == original_localized
+    assert all(
+        path.read_bytes() == contents for path, contents in persisted_bytes.items()
+    )
+    observed = []
+    for chunk in recording.chunks():
+        if chunk.entity_path != "/training/ppo/value_loss":
+            continue
+        batch = chunk.to_record_batch()
+        times = batch.column("frame_time").cast(pa.int64()).to_pylist()
+        values = batch.column("Scalars:scalars").to_pylist()
+        observed.extend(
+            (time, value[0]) for time, value in zip(times, values, strict=True)
+        )
+    observed.sort()
+    assert [time for time, _value in observed] == [
+        int(index * 0.5 * 1_000_000_000) for index in range(len(expected_values))
+    ]
+    assert [value for _time, value in observed] == pytest.approx(expected_values)
+
+
+def _rrd_training_scalars(path: Path) -> dict[str, Any]:
+    """Decode training scalars from an actual closed RRD file."""
+
+    from rerun.recording import load_recording
+
+    measured = {}
+    for chunk in load_recording(path).chunks():
+        if not chunk.entity_path.startswith("/training/"):
+            continue
+        batch = chunk.to_record_batch()
+        if "Scalars:scalars" in batch.schema.names:
+            measured[chunk.entity_path] = batch.column("Scalars:scalars").to_pylist()
+    return measured
+
+
+def _checkpoint_validation_evidence() -> dict[str, Any]:
+    evidence: dict[str, Any] = {
+        "outer_iteration": 2,
+        "iterations": [],
+        "checkpoint_candidates": [],
+    }
+    for iteration, lift_rate in ((1, 0.75), (2, 0.5)):
+        checkpoint = f"s3://unit/run/checkpoints/pass-{iteration}/model_latest.pt"
+        digest = str(iteration) * 64
+        report = {
+            "policy_checkpoint": checkpoint,
+            "policy_checkpoint_sha256": digest,
+            "success_rate": 0.0,
+            "decomposed_metrics": {"lift": {"rate": lift_rate}},
+        }
+        evidence["iterations"].append(
+            {
+                "iteration": iteration,
+                "update": {"checkpoint_path": checkpoint},
+            }
+        )
+        evidence["checkpoint_candidates"].append(
+            {
+                "outer_iteration": 2,
+                "inner_iteration": iteration,
+                "evaluation_split": "validation",
+                "checkpoint_uri": checkpoint,
+                "checkpoint_sha256": digest,
+                "validation_report": report,
+            }
+        )
+    evidence["selected_validation_report"] = evidence["checkpoint_candidates"][0][
+        "validation_report"
+    ]
+    evidence["checkpoint_candidates"].reverse()
+    return evidence
+
+
+def test_iteration_validation_uses_each_checkpoint_without_mutating_evidence(
+    tmp_path: Path,
+) -> None:
+    evidence = _checkpoint_validation_evidence()
+    evidence["iterations"][0]["update"]["checkpoint_sha256"] = "1" * 64
+    original = json.dumps(evidence, sort_keys=True)
+    path = tmp_path / "inner_loop" / "outer-02" / "evidence.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(original)
+
+    records = viz_module._all_inner_iteration_records(tmp_path, evidence)
+
+    assert len(records) == 2
+    for (outer, record), rate in zip(records, (0.75, 0.5), strict=True):
+        report = record["validation_report"]
+        assert outer == 2
+        assert report["policy_checkpoint"] == record["update"]["checkpoint_path"]
+        assert report["policy_checkpoint_sha256"] == str(record["iteration"]) * 64
+        assert report["decomposed_metrics"]["lift"]["rate"] == rate
+    assert json.dumps(evidence, sort_keys=True) == original
+    assert path.read_text() == original
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "missing",
+        "duplicate",
+        "wrong_outer",
+        "extra",
+        "candidate_uri",
+        "report_uri",
+        "report_sha",
+        "update_sha",
+        "non_validation",
+        "conflicting_report",
+    ],
+)
+def test_iteration_validation_rejects_ambiguous_or_mismatched_lineage(
+    tmp_path: Path,
+    corruption: str,
+) -> None:
+    evidence = _checkpoint_validation_evidence()
+    candidates = evidence["checkpoint_candidates"]
+    candidate = candidates[0]
+    if corruption == "missing":
+        candidates.pop()
+    elif corruption in {"duplicate", "extra"}:
+        candidates.append(json.loads(json.dumps(candidate)))
+        if corruption == "extra":
+            candidates[-1]["inner_iteration"] = 3
+    elif corruption == "wrong_outer":
+        candidate["outer_iteration"] = 1
+    elif corruption == "candidate_uri":
+        candidate["checkpoint_uri"] = "s3://unit/other/model_latest.pt"
+    elif corruption == "report_uri":
+        candidate["validation_report"]["policy_checkpoint"] = "s3://unit/other/model.pt"
+    elif corruption == "report_sha":
+        candidate["validation_report"]["policy_checkpoint_sha256"] = "f" * 64
+    elif corruption == "update_sha":
+        evidence["iterations"][1]["update"]["checkpoint_sha256"] = "f" * 64
+    elif corruption == "non_validation":
+        candidate["evaluation_split"] = "gold-heldout"
+    else:
+        evidence["iterations"][1]["validation_report"] = evidence[
+            "selected_validation_report"
+        ]
+
+    with pytest.raises(Sim2RealVizError, match="[Vv]alidation|validation_report"):
+        viz_module._all_inner_iteration_records(tmp_path, evidence)
+
+
+def _decoded_validation_metrics(path: Path) -> tuple[list[float], dict[str, str]]:
+    import pyarrow as pa
+    from rerun.recording import load_recording
+
+    samples, labels = [], {}
+    for chunk in load_recording(path).chunks():
+        batch = chunk.to_record_batch()
+        if chunk.entity_path == "/evaluation/validation_lift_rate":
+            times = batch.column("frame_time").cast(pa.int64()).to_pylist()
+            values = batch.column("Scalars:scalars").to_pylist()
+            samples.extend(
+                (time, row[0]) for time, row in zip(times, values, strict=True)
+            )
+        if chunk.entity_path.startswith("/training/checkpoints/"):
+            labels[chunk.entity_path] = batch.column("TextDocument:text").to_pylist()[
+                0
+            ][0]
+    assert [time for time, _value in sorted(samples)] == [0, 1_000_000_000]
+    return [value for _time, value in sorted(samples)], labels
+
+
+@pytest.mark.parametrize("marker", ["vlm_eval_uri", "signal_uri"])
+def test_canonical_validation_cannot_fall_back_to_legacy_without_candidates(
+    tmp_path: Path,
+    marker: str,
+) -> None:
+    evidence = _checkpoint_validation_evidence()
+    del evidence["checkpoint_candidates"]
+    evidence["iterations"][0][marker] = "s3://unit/run/signals/"
+    with pytest.raises(Sim2RealVizError, match="[Vv]alidation"):
+        viz_module._all_inner_iteration_records(tmp_path, evidence)
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("outer_iteration",), 2.5),
+        (("checkpoint_candidates", 0, "outer_iteration"), 2.5),
+        (("checkpoint_candidates", 0, "inner_iteration"), 2.5),
+        (("checkpoint_candidates", 1, "inner_iteration"), True),
+        (("iterations", 0, "iteration"), True),
+        (("iterations", 1, "iteration"), "2"),
+        (("checkpoint_candidates", 0, "checkpoint_sha256"), int("2" * 64)),
+    ],
+)
+def test_validation_identity_rejects_coercion(
+    tmp_path: Path,
+    path: tuple[str | int, ...],
+    value: Any,
+) -> None:
+    evidence = _checkpoint_validation_evidence()
+    target = evidence
+    for field in path[:-1]:
+        target = target[field]
+    target[path[-1]] = value
+    with pytest.raises(Sim2RealVizError, match="[Vv]alidation"):
+        viz_module._all_inner_iteration_records(tmp_path, evidence)
+
+
+def test_validation_checkpoint_identity_requires_uri_strings(tmp_path: Path) -> None:
+    evidence = _checkpoint_validation_evidence()
+    checkpoint = {"uri": "s3://unit/run/model_latest.pt"}
+    candidate = evidence["checkpoint_candidates"][0]
+    candidate["checkpoint_uri"] = checkpoint
+    candidate["validation_report"]["policy_checkpoint"] = checkpoint
+    evidence["iterations"][1]["update"]["checkpoint_path"] = checkpoint
+    with pytest.raises(Sim2RealVizError, match="[Vv]alidation"):
+        viz_module._all_inner_iteration_records(tmp_path, evidence)
+
+
+def test_rrd_validation_rates_and_checkpoint_labels_roundtrip(tmp_path: Path) -> None:
+    evidence = _checkpoint_validation_evidence()
+    tree, heldout = _build_run_tree(tmp_path)
+    for record in evidence["iterations"]:
+        record.update(
+            {
+                key: tree["iterations"][0][key]
+                for key in ("actions_dir", "vlm_eval_dir", "signal_dir")
+            }
+        )
+    output = tmp_path / "reports" / "validation-lineage.rrd"
+    emit_sim2real_rerun(
+        local_dir=tmp_path,
+        inner_evidence=evidence,
+        heldout_report=heldout,
+        output_rrd=output,
+    )
+    rates, labels = _decoded_validation_metrics(output)
+    assert rates == pytest.approx([0.75, 0.5])
+    for iteration, rate in ((1, 0.75), (2, 0.5)):
+        label = labels[f"/training/checkpoints/outer_02_inner_{iteration:02d}"]
+        report = json.loads(label.split("```json\n", 1)[1].split("\n```", 1)[0])
+        assert report["checkpoint_uri"].endswith(f"pass-{iteration}/model_latest.pt")
+        assert report["checkpoint_sha256"] == str(iteration) * 64
+        assert report["decomposed_metrics"]["lift"]["rate"] == rate
+        assert report["evaluation_split"] == "validation"
+
+
+@pytest.mark.parametrize("backend", ["isaac_rsl_rl_ppo", "vlm_signal_adapter"])
+def test_rrd_excludes_isaac_adapter_proxies_but_preserves_measured_losses(
+    tmp_path: Path, backend: str
+) -> None:
+    inner_evidence, heldout_report = _build_run_tree(tmp_path)
+    update = inner_evidence["iterations"][0]["update"]
+    update["backend"] = backend
+    update["ppo_telemetry"] = {
+        "curves": [{"iteration": 0, "value_loss": 1.25, "surrogate_loss": -0.125}]
+    }
+    original = json.loads(json.dumps(inner_evidence))
+    output = tmp_path / "reports" / "metric-provenance.rrd"
+    emit_sim2real_rerun(
+        local_dir=tmp_path,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+        output_rrd=output,
+    )
+    measured = _rrd_training_scalars(output)
+    assert measured["/training/ppo/value_loss"] == [[1.25]]
+    assert measured["/training/ppo/surrogate_loss"] == [[-0.125]]
+    for name, value in (
+        ("loss_before", 1.0),
+        ("loss_after", 0.7),
+        ("policy_delta_vs_control", 0.1),
+    ):
+        entity = f"/training/{name}"
+        if backend == "isaac_rsl_rl_ppo":
+            assert entity not in measured
+        else:
+            assert measured[entity][0] == pytest.approx([value])
+    assert inner_evidence == original
 
 
 def test_emit_raises_when_rerun_unavailable(monkeypatch, tmp_path: Path) -> None:

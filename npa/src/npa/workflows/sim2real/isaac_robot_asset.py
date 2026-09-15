@@ -10,7 +10,7 @@ import shutil
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
-from npa.clients.storage import StorageError, safe_s3_tree_relative_path
+from npa.clients.storage import StorageError, safe_s3_download_target
 
 
 class IsaacRobotAssetError(RuntimeError):
@@ -83,12 +83,11 @@ def _download_tree(uri: str, destination: Path) -> None:
             if not key or key.endswith("/"):
                 continue
             try:
-                relative = safe_s3_tree_relative_path(key, prefix)
+                target = safe_s3_download_target(destination, key, prefix)
             except StorageError as exc:
                 raise IsaacRobotAssetError(
                     f"robot asset_root_uri returned an unsafe object key: {key!r}"
                 ) from exc
-            target = destination / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             client.download_file(bucket, key, str(target))
             count += 1

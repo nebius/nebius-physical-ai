@@ -23,7 +23,19 @@ Actions**:
 | `DEV_VM_SSH_HOST` | Hostname or IP of the dev VM |
 | `DEV_VM_SSH_USER` | SSH login user |
 | `DEV_VM_SSH_PRIVATE_KEY` | Private key (PEM) authorized on the dev VM |
+| `DEV_VM_SSH_KNOWN_HOSTS` | Required, independently verified SSH host key entry; non-default ports use `[hostname]:port` |
 | `DEV_VM_SSH_PORT` | Optional; defaults to `22` |
+
+The connection verifies the server's pinned host key and uses public-key
+authentication without interactive prompts. GitHub creates the private-key file
+with owner-only permissions and removes it after the job. Host keys must come
+from a trusted existing connection; the workflow does not trust a fresh network
+scan automatically.
+
+Each invocation stages its runner script in a new owner-private directory under
+`/tmp` on the VM. Concurrent callers cannot overwrite a shared script filename.
+Cleanup removes that run's script and empty directory before discarding the SSH
+key, including when upload or testing fails.
 
 Optional repository **variables** (not secrets) forwarded to the run:
 
@@ -34,7 +46,7 @@ Optional repository **variables** (not secrets) forwarded to the run:
 | `NPA_E2E_CLUSTER_CONTEXT` | Exact disposable cluster/context for the manual `mutation-live` tier |
 | `NPA_E2E_AGENT_NAME` | Exact disposable agent name for the manual `mutation-live` tier |
 | `NPA_E2E_CONTROLLER_TRANSACTION_RUN_ID` | Unique run ID for the manual controller transaction regression |
-| `NPA_REGISTRY` | Optional full-prefix execution-registry override; defaults to public GHCR releases |
+| `NPA_E2E_REGISTRY` | Optional explicit custom registry for live workflow cases; defaults to public GHCR releases |
 | `NPA_DAILY_E2E_SHARDS` | Days to spread the S3 e2e suite over (default 7) |
 | `NPA_DAILY_ENABLE_GPU` | Set to `1` to have `e2e-daily` also run one rotating real-GPU workflow submit |
 | `NPA_DAILY_AGENT_GPU_E2E` | Set to `1` with `gpu-daily` to run the agent-confirmed self-hosted VLM proof instead of the rotating case; requires a deployed agent record |
@@ -44,11 +56,84 @@ remote and valid `~/.npa` credentials. The runner script uses a dedicated CI
 checkout (`~/npa-ci-daily` by default) with its own venv, so it never disturbs
 the shared dev clone or other agents' worktrees.
 
+## Public SSH access
+
+Use a dedicated CPU VM with a public IPv4 address and SSH reachable from the
+GitHub-hosted Ubuntu runner. A public address in the cloud console alone does
+not prove that GitHub can reach it. Validate by manually dispatching this
+workflow and checking that both the upload and remote test steps succeed.
+A laptop can reach the same address through a VPN or subnet route while direct
+connections from GitHub still fail.
+On Nebius, verify that the network uses an external public IPv4 pool available
+to the project in the VM's region. An address allocated from a pool reachable
+through a VPN does not establish an internet route. A subnet that inherits
+network pools uses the network's pool selection for new allocations.
+
+For an existing dedicated CI VM with a dynamic public address, stop the VM and
+verify that its previous allocation has been released before changing pools.
+Release can be delayed; follow the provider's
+[address lifecycle](https://docs.nebius.com/compute/virtual-machines/network)
+instead of assuming that a stop releases the address immediately. Update its
+network to the approved external pool, restart it, and verify that the new
+allocation belongs to that pool. Preserve the pool selection in the deployment's
+private Terraform configuration and state. Reverify the instance
+identity and its existing trusted SSH host key at the new address, then update
+`DEV_VM_SSH_HOST` and `DEV_VM_SSH_KNOWN_HOSTS`. Coordinate shared networks and
+static allocations separately; do not release another workload's address.
+
+The workflow probes TCP reachability before creating its private-key file. On
+failure it checks public GitHub HTTPS and SSH endpoints as controls, reporting
+only reachability labels without printing connection values.
+
+Provision the VM with a dedicated CI public key, disable password and root
+login, and expose only the SSH port needed by this workflow. Keep application
+ports closed. Obtain its SSH host key through authenticated provider serial
+logs or another independently trusted connection before setting
+`DEV_VM_SSH_KNOWN_HOSTS`. Store all connection values in the secrets above;
+never commit live addresses, private keys, or project identifiers.
+
+Install `git`, `python3-venv`, and `make`, plus `skopeo` (or another supported
+registry inspector). Initialize the dedicated checkout at `~/npa-ci-daily`
+from this repository so the runner can discover its remote URL. Configure NPA
+using its credential APIs and non-interactive configuration commands; keep
+model and storage credentials on the VM, outside the checkout. Set
+`NPA_E2E_PROJECT` to its configured project alias. Verify the selected service
+credentials before dispatching a live tier.
+
+The complete S3 rotation includes bucket creation and deletion. Use an exclusive
+CI storage project with a service account whose
+[`storage.editor` role](https://docs.nebius.com/iam/authorization/roles)
+is scoped to that project. A key restricted to one existing bucket can pass the
+workflow artifact tests, but cannot run the bucket lifecycle fixtures. Those
+fixtures also prune old test buckets by name prefix, so they must not share a
+project with another operator's test buckets. Keep broader storage permissions
+away from the project that holds production or interactive workloads.
+
+Ensure the existing storage is selected in NPA as well as saved in its
+credential store. `npa configure --no-provision` intentionally deselects storage;
+S3 tiers require the supported setup flow to create or reuse authorized storage
+and a passing storage preflight afterward.
+
+The workflow needs no Tailscale client, OAuth secret, OIDC permission, or
+`NPA_DAILY_NETWORK` variable. When replacing a host, verify the new public route
+and server identity before updating the SSH secrets. Retain a shared old host
+until its other workloads are handled separately.
+
 ## Schedule
 
 The workflow runs daily at `07:00 UTC` and can also be triggered manually via
 **Run workflow** (`workflow_dispatch`). Change the `cron` line to match the
 operator's off-peak window.
+[GitHub schedules](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)
+use the workflow on the default branch. A successful manual run from a
+pull-request branch verifies the proposed change; merge it before expecting
+the scheduled run to use that version.
+
+There is no pull-request trigger. The GitHub host performs network and SSH setup;
+the tests still execute in the isolated Linux checkout on the operator VM.
+If an SSH connection times out before authentication, check reachability from
+the selected GitHub runner network. A successful connection from an operator's
+laptop does not establish reachability from GitHub's Linux runner network.
 
 ## Test tiers
 

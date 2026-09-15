@@ -86,6 +86,9 @@ endpoints, print identity/config/environment data, or inspect unrelated runs.
   with one mode-0600 runtime config. Keep exact Kubernetes, Antioch, and secret
   coordinates in that file, not argv or ordinary output. Finalize removal of an
   exact owned public rollback Service only after sustained acceptance.
+- Require the runtime config's explicit supported Antioch deployment profile and
+  forward it to the controller only as `ANTIOCH_ENV`; never let a cluster-native
+  run inherit the vendor CLI's default deployment implicitly.
 
 ## Cleanup and evidence
 

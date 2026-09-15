@@ -271,6 +271,10 @@ def test_ssh_connect_uses_paramiko_config(mocker) -> None:
     SSHClient(SSHConfig(host="host", user="ubuntu", key_path="~/key"))._connect()
 
     paramiko_client.set_missing_host_key_policy.assert_called_once()
+    import paramiko
+
+    assert isinstance(paramiko_client.set_missing_host_key_policy.call_args.args[0], paramiko.RejectPolicy)
+    paramiko_client.load_system_host_keys.assert_called_once_with()
     paramiko_client.connect.assert_called_once_with(
         hostname="host",
         username="ubuntu",
@@ -278,6 +282,30 @@ def test_ssh_connect_uses_paramiko_config(mocker) -> None:
         timeout=15,
         look_for_keys=False,
     )
+
+
+def test_ssh_explicit_known_hosts_takes_precedence_over_ambient(mocker, monkeypatch, tmp_path):
+    client = mocker.MagicMock()
+    mocker.patch("paramiko.SSHClient", return_value=client)
+    monkeypatch.setenv("NPA_SSH_KNOWN_HOSTS", str(tmp_path / "ambient"))
+    pinned = str(tmp_path / "verified")
+    SSHClient(SSHConfig(host="host", user="ubuntu", key_path="~/key"), known_hosts=pinned)._connect()
+    client.load_host_keys.assert_called_once_with(pinned)
+    client.load_system_host_keys.assert_not_called()
+
+
+def test_ssh_refuses_changed_host_before_credentials_are_staged(mocker):
+    import paramiko
+
+    client = mocker.MagicMock()
+    client.connect.side_effect = paramiko.SSHException("host key mismatch")
+    mocker.patch("paramiko.SSHClient", return_value=client)
+    ssh = SSHClient(SSHConfig(host="host", user="ubuntu", key_path="~/key", tokens={"HF_TOKEN": "test-token"}))
+    with pytest.raises(SSHError, match="Unknown or changed host keys are refused"):
+        ssh.run("true")
+    client.open_sftp.assert_not_called()
+    client.exec_command.assert_not_called()
+    client.close.assert_called_once()
 
 
 def test_ssh_connect_maps_errors(mocker) -> None:
@@ -451,6 +479,8 @@ def test_ssh_private_text_is_owner_only_before_secret_write(mocker) -> None:
             events.append("flush")
 
     sftp = mocker.MagicMock()
+    sftp.lstat.return_value.st_mode = 0o40700
+    sftp.mkdir.side_effect = lambda path, mode: events.append(("mkdir", path, mode))
     sftp.open.side_effect = lambda path, mode: (
         events.append(("open", path, mode)) or RemoteFile()
     )
@@ -464,11 +494,16 @@ def test_ssh_private_text_is_owner_only_before_secret_write(mocker) -> None:
         client.upload_private_text("SECRET-SENTINEL", "/tmp/private") == "/tmp/private"
     )
 
-    assert events[:3] == [
-        ("open", "/tmp/private", "wx"),
-        ("chmod", "/tmp/private", 0o600),
-        ("write", "SECRET-SENTINEL"),
+    directory = sftp.mkdir.call_args.args[0]
+    staged = directory + "/payload"
+    assert events[:4] == [
+        ("mkdir", directory, 0o700),
+        ("open", staged, "wx"),
+        ("chmod", staged, 0o600),
+        ("write", b"SECRET-SENTINEL"),
     ]
+    sftp.posix_rename.assert_called_once_with(staged, "/tmp/private")
+    sftp.rmdir.assert_called_once_with(directory)
     sftp.close.assert_called_once()
     paramiko_client.close.assert_called_once()
 
@@ -1307,7 +1342,12 @@ def test_nebius_agent_bootstrap_reuses_verified_storage_without_access_key_iam(
         "npa.clients.nebius.ensure_service_account",
         return_value="serviceaccount-agent",
     )
-    mocker.patch("npa.clients.nebius.ensure_editors_membership")
+    mocker.patch("npa.clients.agent_iam_binding.verify_agent_project_scope")
+    tenant_grant = mocker.patch("npa.clients.nebius.ensure_editors_membership")
+    project_grant = mocker.patch(
+        "npa.clients.agent_iam_binding.ensure_agent_project_binding",
+        return_value={"agent_iam_scope_id": "project", "agent_iam_role": "editor"},
+    )
     mocker.patch("npa.clients.nebius.get_iam_token", return_value="iam-token")
     full_bootstrap = mocker.patch("npa.clients.nebius.bootstrap_environment")
     list_keys = mocker.patch("npa.clients.nebius._list_access_key_metadata")
@@ -1323,6 +1363,10 @@ def test_nebius_agent_bootstrap_reuses_verified_storage_without_access_key_iam(
     assert result["service_account_id"] == "serviceaccount-agent"
     assert result["nebius_api_key"] == "configured-access"
     assert service_account.call_args.kwargs["allow_saved_fallback"] is False
+    assert result["agent_iam_scope_id"] == "project"
+    assert project_grant.call_args.kwargs["project_id"] == "project"
+    assert project_grant.call_args.kwargs["service_account_id"] == "serviceaccount-agent"
+    tenant_grant.assert_not_called()
     full_bootstrap.assert_not_called()
     list_keys.assert_not_called()
     create_key.assert_not_called()
@@ -1379,6 +1423,7 @@ def test_agent_bootstrap_removes_a_rolled_back_key_on_a_reused_account(
         raise NebiusError("provider failed after key creation")
 
     mocker.patch("npa.clients.nebius.bootstrap_environment", side_effect=bootstrap)
+    mocker.patch("npa.cli.agent_iam._verify_access_key_absent")
     delete_key = mocker.patch("npa.clients.nebius.delete_access_key")
     delete_account = mocker.patch("npa.clients.nebius.delete_service_account")
 
@@ -2053,6 +2098,22 @@ def test_nebius_quota_reads_omit_profile_flag_when_unset(mocker, monkeypatch) ->
     nebius.list_quota_allowances("tenant-x")
 
     assert run_json.call_args_list[-1].args[0][0] == "quotas"
+
+
+def test_nebius_quota_allowances_accept_project_parent(mocker) -> None:
+    run_json = mocker.patch(
+        "npa.clients.nebius._run_json", return_value={"items": []}
+    )
+
+    nebius.list_quota_allowances("project-test")
+
+    assert run_json.call_args.args[0][-3:] == ["--parent-id", "project-test", "--all"]
+
+
+def test_nebius_unauthorized_single_is_permission_denied() -> None:
+    assert nebius.is_permission_denied(
+        "rpc error: code = Unknown desc = UnauthorizedSingle"
+    )
 
 
 def _compute_instance_quota_items() -> dict:

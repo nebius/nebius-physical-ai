@@ -1,5 +1,7 @@
 # Export MCAP and open it in Foxglove Web
 
+[Workbench docs](README.md)
+
 The NPA agent preserves two distinct operations over one canonical artifact:
 
 - **Download MCAP** resolves the active run's canonical S3 recording and downloads
@@ -122,7 +124,7 @@ CLI callers can convert/export locally with `npa workbench foxglove export-run`
 and build a web-only link for an already indexed recording with:
 
 ```bash
-npa workbench foxglove open --recording-id <recording-id>
+npa workbench foxglove open --recording-id "<recording-id>"
 ```
 
 ## Real Isaac motion qualification

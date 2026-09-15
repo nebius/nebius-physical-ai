@@ -22,11 +22,30 @@ import math
 import os
 import time
 from collections.abc import Callable, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 DEFAULT_TASK = "Isaac-Lift-Cube-Franka-v0"
+
+
+@contextmanager
+def _simulation_app_lifecycle(simulation_app: Any):
+    """Close Kit only after capture and publication complete successfully.
+
+    Isaac Kit's ``close()`` can terminate the process instead of returning.  Calling it
+    from a ``finally`` block therefore converts a render exception into exit 0 and strands
+    the declared artifacts.  On failure, let normal process teardown preserve the original
+    non-zero exception; on success, retain the explicit clean shutdown.
+    """
+
+    try:
+        yield
+    except BaseException:
+        raise
+    else:
+        simulation_app.close()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -317,7 +336,7 @@ def _capture_frames(
     frames_written: list[str] = []
     started = time.time()
 
-    try:
+    with _simulation_app_lifecycle(simulation_app):
         env_cfg = parse_env_cfg(task, device=device, num_envs=1)
         _attach_capture_camera(env_cfg, eye=camera_eye, target=camera_target)
         env = gym.make(task, cfg=env_cfg)
@@ -335,8 +354,9 @@ def _capture_frames(
                         _write_render_png(output_dir / name, frame)
                         frames_written.append(name)
                         print(f"ISAAC_CAPTURE_FRAME {name} step={step}", flush=True)
-        env.close()
-
+        # Isaac Lab teardown can terminate the Kit process on some releases, just
+        # like ``simulation_app.close()`` below.  Validate and publish before
+        # crossing either teardown boundary so exit 0 cannot strand the frames.
         summary: dict[str, object] = {
             "status": "success" if frames_written else "failed",
             "task": task,
@@ -352,8 +372,7 @@ def _capture_frames(
             raise SystemExit("No frames captured — check task cameras and GPU rendering.")
         if publish is not None:
             publish(summary)
-    finally:
-        simulation_app.close()
+        env.close()
 
     return summary
 

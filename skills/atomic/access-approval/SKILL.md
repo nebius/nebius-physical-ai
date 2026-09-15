@@ -1,6 +1,6 @@
 ---
 name: access-approval
-description: Prepare, verify, and resume human-bound Hugging Face or NVIDIA NGC access approvals for exact NPA catalog and workflow dependencies, including agent prompts that may open official pages only after affirmative consent.
+description: Prepare, verify, and resume operator-owned Hugging Face or NVIDIA NGC access for exact NPA dependencies, including human-bound upstream approvals, while reusing one bounded run-scoped use declaration without duplicate NPA acceptance prompts.
 ---
 
 # Access Approval
@@ -31,19 +31,32 @@ Interpret evidence, not credentials:
 - `Ready`: an exact-revision HF payload-byte authorization probe or exact NGC
   registry artifact probe succeeded, or a cached success still matches the
   credential fingerprint, artifact revision, payload probe, and terms revision.
-  It means technical fetch entitlement at that moment, never legal acceptance.
+  This is operationally sufficient for NPA to proceed with that exact fetch
+  without another NPA attestation. It means technical fetch entitlement at that
+  moment, never legal acceptance, proof of compliance, or redistribution rights.
 - `Pending`: credentials or a human-bound upstream approval are still needed.
 - `Denied`: the provider rejected the credential or exact entitlement.
 - `Unavailable`: the exact probe could not produce reliable evidence; do not
   convert this into success.
 
-An HF token or NGC key proves identity only. Tokens inherit account access; they
-do not own licences. A generic login, HF repository/revision metadata response,
-or registry token exchange is not entitlement evidence. Probe a representative
-payload path for every exact model or dataset revision and the exact NGC
-container needed by the selected operation. Never select README, model-card,
-licence, tokenizer, or config-only files because those can remain public before
-approval.
+Token presence alone proves identity only. Tokens inherit account access; they
+do not accept terms or own licences. A generic login, HF repository/revision
+metadata response, or registry token exchange is not entitlement evidence.
+Probe a representative payload path for every exact model or dataset revision
+and the exact NGC container needed by the selected operation. Never select
+README, model-card, licence, tokenizer, or config-only files because those can
+remain public before approval.
+
+The operator who supplies the credential and invokes the fetch is responsible
+for using both consistently with the upstream terms. Record the operator's
+exact field-of-use statement once under one bounded manager task/run ID. Child
+solutions may reference the same scope record when their exact terms are
+compatible; do not ask again per image. The record expires with that task/run
+and is never a global or permanent declaration. Re-probe access when the
+provider, account credential fingerprint, artifact, revision, probe payload, or
+terms revision changes. Reopen the use question only when the operator changes
+scope or authoritative terms require a concrete additional fact not present in
+the record.
 
 ## Preserve human consent
 

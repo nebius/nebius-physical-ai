@@ -4,7 +4,7 @@
 # Run on an operator/dev VM that already has:
 #   - npa configured (npa configure --interactive)
 #   - SkyPilot bootstrapped (npa skypilot bootstrap)
-#   - NPA_REGISTRY (or NPA_E2E_REGISTRY) pointing at a reachable registry prefix
+#   - Public GHCR access; NPA_E2E_REGISTRY may explicitly select custom bytes
 #   - Optional: NEBIUS_TOKEN_FACTORY_KEY for cpu-tier twins
 #   - Optional: HF_TOKEN / NGC_API_KEY for SONIC / Cosmos3 twins
 #
@@ -103,7 +103,7 @@ log "repo: ${REPO_ROOT}"
 log "log:  ${LOG_FILE}"
 log "tiers: ${NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS}"
 log "specs: ${NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS:-(all in selected tiers)}"
-log "registry: ${NPA_E2E_REGISTRY:-${NPA_REGISTRY:-(unset)}}"
+log "registry: ${NPA_E2E_REGISTRY:-ghcr.io/nebius/nebius-physical-ai}"
 
 if [[ ! -x "$PY" ]]; then
   log "ERROR: python not found at $PY"

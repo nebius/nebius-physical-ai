@@ -29,7 +29,7 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SPEC_DIR = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+SPEC_DIR = REPO_ROOT / "workflows"
 RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_container_verify.py"
 
 #: Bootstraps that refuse with EX_CONFIG until the operator has accepted a
@@ -53,7 +53,7 @@ def _runner_module():
 
 def _specs_invoking_a_gated_runtime() -> dict[str, Path]:
     found: dict[str, Path] = {}
-    for path in sorted(SPEC_DIR.glob("*.yaml")):
+    for path in sorted(SPEC_DIR.glob("*/*.yaml")):
         try:
             payload = yaml.safe_load(path.read_text(encoding="utf-8"))
         except yaml.YAMLError:
@@ -130,7 +130,7 @@ def test_no_entry_names_a_solution_no_spec_declares() -> None:
             .get("solution_name")
             or ""
         ).strip()
-        for path in SPEC_DIR.glob("*.yaml")
+        for path in SPEC_DIR.glob("*/*.yaml")
     }
 
     stale = sorted(set(module.OPERATOR_RUNTIME_ENVS_BY_SOLUTION) - declared)

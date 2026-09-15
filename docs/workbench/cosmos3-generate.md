@@ -1,5 +1,7 @@
 # Cosmos 3 generation on the workbench (`npa-cosmos3`)
 
+[Workbench docs](README.md)
+
 Cosmos 3 is NVIDIA's omni model: one checkpoint that both reasons and generates.
 This guide covers the **generation** half as a containerized workbench tool —
 image and video synthesis for Physical AI data — through the CLI, the SDK, and a
@@ -11,7 +13,7 @@ declarative `npa.workflow` spec that all share one implementation.
 | Runner (single source of truth) | `npa/src/npa/workbench/cosmos/generate.py` |
 | CLI | `npa workbench cosmos3 generate` |
 | SDK | `npa.sdk.workbench.cosmos3.generate(...)` |
-| Workflow | `npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml` |
+| Workflow | `workflows/testing/cosmos3-generate.yaml` |
 | `npa.workflow` toolRef | `workbench.cosmos3.generate` |
 | Golden eval | `npa.smoke.test_cosmos3_generate_functional` (`gpu-gated`) |
 
@@ -21,9 +23,8 @@ independent multi-variant PAIDF composition and its canonical artifact contract
 are documented in [PAIDF with Cosmos 3](guides/paidf-cosmos3.md).
 
 Modes: `text2image`, `image2image`, `text2video`, `image2video`, `video2video`.
-The last three
-condition on an input asset, so they require `--input-path` (a local path, an
-`http(s)` URL, or an `s3://` URI).
+`image2image`, `image2video`, and `video2video` require `--input-path` (a local
+path, an `http(s)` URL, or an `s3://` URI). Text modes need only the prompt.
 
 ## Weights are never in the image
 
@@ -31,15 +32,15 @@ The image ships the OpenMDW-1.1 `cosmos-framework` **source at a pinned commit**
 plus its cu130 inference environment. It contains **no model weights**, which is
 what makes it redistributable under the packaging contract's `public` class.
 
-Every gated artifact — the Cosmos 3 checkpoint, the Wan VAE it pulls, the
-guardrail models — downloads **at run time** with credentials the operator
-supplies, under the operator's own license acceptance:
+Model components download **at run time** under their upstream terms.
+Cosmos3-Nano is public and downloads anonymously. Guardrail weights are gated;
+private or gated checkpoint overrides also need the operator's own access.
 
 | Credential | When | Effect if missing |
 | --- | --- | --- |
 | `HF_TOKEN` (or the env named by `NPA_COSMOS3_HF_TOKEN_ENV`) | Optional for public `Cosmos3-Nano`; required when guardrails are on or for a gated/private checkpoint override | `generate` anonymously checks public assets and uses the token only where repository access requires it |
 | `NGC_API_KEY` (or `NPA_COSMOS3_NGC_API_KEY_ENV`) | Only when `NPA_COSMOS3_REQUIRE_NGC=1` | Same fail-fast, naming the NGC key |
-| neither | `--checkpoint` is a staged local/`s3://` path **and** `--no-guardrails` | Runs; the token check is skipped |
+| neither | Public Cosmos3-Nano or a staged checkpoint, guardrails explicitly disabled, and NGC access not required | No HF/NGC credential gate; S3 locations still require storage access |
 
 A run pulls more than the checkpoint from Hugging Face: with guardrails on (the
 default) it also fetches the gated `nvidia/Cosmos-Guardrail1`. So staging a
@@ -47,9 +48,8 @@ checkpoint on its own does **not** remove the token requirement — if it did, t
 preflight would pass and the run would still die mid-inference fetching the
 guardrail models, which is the failure the check exists to prevent.
 
-This is enforced in three places: `require_model_access` refuses to launch
-inference without the token, the build fails if a checkpoint file lands in a
-layer, and `verify_env.py` re-asserts the absence of weights inside the image.
+`require_model_access` requires an HF token when guardrails are enabled. The
+build and `verify_env.py` separately check that weights are absent from the image.
 
 Clearing the license for this repo's own gated guardrail model
 (`nvidia/Cosmos-Guardrail1`) does not clear the license for the *different*
@@ -60,39 +60,52 @@ setup, the two-repo table, the 401-vs-403 diagnostic for a gated-download
 failure, and the Xet download workaround for a specific Hugging Face client
 pin.
 
-The current r6 image keeps the faster Xet transfer path enabled with its measured,
+The current r7 image keeps the faster Xet transfer path enabled with its measured,
 compatible baked versions (`huggingface_hub==0.36.2`, `hf-xet==1.3.2`). The
 image build records this pair and fails if the known-bad `1.23.0` / `1.5.1`
 combination is ever resolved; only non-image/custom environments need the
 runtime diagnostic and `HF_HUB_DISABLE_XET=1` fallback described there.
 
-Guardrails are **on** unless you pass `--no-guardrails`, and every result
-manifest records `guardrails` so a run's posture stays auditable.
+Guardrails are **on** unless you pass `--no-guardrails`. The compatibility field
+`guardrails` records that requested posture. `guardrail_state` separately records
+the safety models discovered and evaluated for prompt input and generated media,
+the postprocessors observed, and the final `effective` decision. A guarded run
+is publishable only when both safety stages were actually evaluated and the
+receipt reports `status: passed` and `effective: true`.
 
-Known limitation: a prior live run requested guardrails but upstream reported
-`No safety models found, returning safe`. The manifest currently records the
-requested posture, not proof of effective safety-model execution. This is
-tracked separately in [issue #270](https://github.com/nebius/nebius-physical-ai/issues/270);
-this release does not redesign guardrail behavior.
+The pinned upstream preset has Blocklist and Qwen3Guard for prompt input but an
+empty generated-media safety-model list; upstream otherwise logs `No safety
+models found, returning safe`. NPA restores the framework's shipped
+`VideoContentSafetyFilter` only when that list is empty, instruments the actual
+model calls, and fails closed if discovery, evaluation, or the receipt is absent
+or invalid. `RetinaFaceFilter` remains the generated-media postprocessor. This
+also rejects two pinned-upstream fail-open results: Qwen3Guard returning
+`safe=True` after catching an internal model error, and the video filter returning
+safe after one or more sampled-frame classifier calls failed. The receipt's
+`evaluation_details` reports decisions and, for generated media, attempted and
+successful frame counts. The fallback does not suppress a safety rejection or
+reinterpret an unsafe result.
+`--no-guardrails` remains the only opt-out and is recorded as
+`status: explicit_opt_out`, `requested: false`, and `effective: false`.
 
 ## Build
 
-The supported/default image release is `npa-cosmos3:1.2.2-cu130-r6`. It is an
+The supported/default image release is `npa-cosmos3:1.2.2-cu130-r7`. It is an
 additive successor to the historical rollback tag `npa-cosmos3:1.2.2-cu130`,
 which is retained for provenance and must never be
 overwritten or deleted. Pre-merge validation builds use a branch-specific
-candidate tag in a private registry; the official `1.2.2-cu130-r6` tag is built
-and published only from the reviewed trusted commit.
+candidate tag in a private registry; the official `1.2.2-cu130-r7` tag was promoted
+only from the exact source commit whose bytes passed the secure publishing gates.
 
 ```bash
 # Defaults to the pinned framework commit and the supported-tools tag.
-bash npa/docker/workbench/cosmos3/build.sh --registry <your-registry>
+bash npa/docker/workbench/cosmos3/build.sh --registry "<your-registry>"
 
 # Push it so the workflow's NPA_COSMOS3_IMAGE can resolve.
-bash npa/docker/workbench/cosmos3/build.sh --registry <your-registry> --push
+bash npa/docker/workbench/cosmos3/build.sh --registry "<your-registry>" --push
 
 # Pin a different upstream commit (re-validates at build time).
-bash npa/docker/workbench/cosmos3/build.sh --ref <40-char-sha>
+bash npa/docker/workbench/cosmos3/build.sh --ref "<40-char-sha>"
 ```
 
 The build runs `verify_env.py`, which walks the inference graph for every mode
@@ -123,7 +136,7 @@ model). It breaks down as:
 npa workbench cosmos3 generate \
   --mode text2image \
   --prompt "a robot arm sorting colored blocks on a white workbench" \
-  --output-path s3://<bucket>/cosmos3/<run-id>/ \
+  --output-path "s3://<bucket>/cosmos3/<run-id>/" \
   --checkpoint Cosmos3-Nano \
   --seed 0
 ```
@@ -152,21 +165,34 @@ print(result["output_kind"], result["artifact_uri"])
 
 ### Workflow
 
-`npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml` runs the same stage
+`workflows/testing/cosmos3-generate.yaml` runs the same stage
 through the `workbench.cosmos3.generate` toolRef, which resolves to the
-`npa-cosmos3` image automatically:
+supported public `npa-cosmos3` image automatically. Complete
+[Workbench Getting Started](getting-started.md), including access checks,
+planning, exact-cluster verification, and image preflight. Submit with the same
+project, cluster, bucket, and config overrides:
 
 ```bash
-npa workbench workflow submit npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml \
-  --infra k8s/<context> --registry <your-registry> \
-  --var bucket=<bucket> \
+npa workbench workflow submit workflows/testing/cosmos3-generate.yaml \
+  --project '<project-alias>' --infra 'k8s/<context>' \
+  --var 'bucket=<bucket>' --runtime \
   --secret-env HF_TOKEN --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
-`--secret-env HF_TOKEN` is required when guardrails are enabled: the plan only *hints* the secret, and without
-it the stage fails fast on the credential preflight. The submit path also refuses
-to run when the task image's registry does not match the Docker credentials in
-`SKYPILOT_DOCKER_SERVER`.
+`--runtime` supervises the workflow to its terminal state. Secret values resolve
+from the private environment or selected project's NPA credential store; only
+their names belong in the command. `HF_TOKEN` needs guardrail-model access for
+the default run.
+
+Official NPA images pull anonymously; no Docker registry credentials are needed.
+Use `--registry` only to select intentional custom images. A private registry
+requires credentials for its exact host or a pre-created Kubernetes pull secret
+referenced by the workload. Use the same image override for preflight and submit.
+
+After success, inspect `generate.json` and the media at its `artifact_uri`.
+Confirm the requested mode, nonempty output, usable decoded image or video, and
+the nested effective guardrail receipt. The top-level `guardrails` request flag
+alone is intentionally not treated as proof.
 
 The older raw SkyPilot template for this path was retired after this spec reached
 a terminal live success through the submit matrix. Keep new workflow authoring on
@@ -188,7 +214,7 @@ script renders the same embedded backend + UI the VM bootstrap ships:
 ```bash
 sudo mkdir -p /opt/npa-agent && sudo chown "$(id -u)":"$(id -g)" /opt/npa-agent
 export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_ENDPOINT_URL=...
-export NPA_AGENT_S3_BUCKET=<bucket-holding-the-run>
+export NPA_AGENT_S3_BUCKET="<bucket-holding-the-run>"
 npa/.venv/bin/python npa/scripts/run_agent_local.py     # http://127.0.0.1:8088/
 ```
 
@@ -205,14 +231,28 @@ The Runs & Artifacts panel also finds the run by name (`cosmos3-`), and
 
 ## Validated on real GPUs
 
-Verified on `npa-rtxpro-mk8s` (NVIDIA RTX PRO 6000 Blackwell Server Edition,
-sm_120) with `nvidia/Cosmos3-Nano`. The workflow path produced a non-blank
-960x960 JPEG in S3 with `guardrails: true` and `weights_baked: false`:
+The September 12 r7 regression in merged [PR #462](https://github.com/nebius/nebius-physical-ai/pull/462)
+resolves [#270](https://github.com/nebius/nebius-physical-ai/issues/270).
+On an NVIDIA RTX PRO 6000, Cosmos3-Nano completed 50 UniPC text-to-image steps.
+Blocklist and Qwen3Guard evaluated the prompt; VideoContentSafetyFilter
+successfully evaluated 1/1 generated-media inputs; RetinaFace postprocessing
+ran. The native receipt reported effective guardrail execution. The nonblank
+960×960 JPEG was 183,829 bytes with SHA-256
+`d80f7d11c49d66b12d3c896a9aa55a6d79b02de5a8ca24041a0e15b8efb4f2fd`.
+The accepted image digest is recorded in
+[`public_release_manifest.json`](../../npa/src/npa/deploy/public_release_manifest.json).
+This is text-to-image guardrail evidence; other generation modes require their
+own workload validation.
+
+Earlier generation and publication checks used NVIDIA RTX PRO 6000 Blackwell
+Server Edition (sm_120) with `nvidia/Cosmos3-Nano`. The workflow path produced a non-blank
+960x960 JPEG in S3 with `guardrails: true` and `weights_baked: false`. Those
+request flags alone did not prove effective safety execution:
 
 | Path | Result |
 | --- | --- |
 | Direct Kubernetes Job (image args) | generated + published |
-| `cosmos3-generate` npa.workflow via `workflow submit` | job 338 SUCCEEDED; `generated/generate.json` plus `generated/vision.jpg` |
+| `cosmos3-generate` npa.workflow via `workflow submit` | SUCCEEDED; `generated/generate.json` plus `generated/vision.jpg` |
 
 Notes from those runs: the cu130 wheel set works on sm_120 (no NATTEN/flash-attn
 kernel gap surfaced for text2image); the guardrail model, `Cosmos3-Nano`, and the
@@ -223,16 +263,18 @@ before generation starts.
 
 | Symptom | Cause |
 | --- | --- |
-| `Cosmos 3 weights are not baked into this image` | No HF token, or the token has not accepted the checkpoint's license. Accept it on the model page, or stage a checkpoint and pass it via `--checkpoint`. |
+| `Cosmos 3 guardrails are not baked into this image` | The default guardrails need an HF token with access to their gated repository. Run `npa workbench health access --capability cosmos3`; staging only the main checkpoint does not satisfy guardrail access. |
 | `the Cosmos 3 inference runtime is not present` | Running outside the image. Use `npa-cosmos3`, or point `COSMOS3_REPO` at a framework checkout with a built `.venv`. |
 | `mode ... conditions on an input image/video` | An `image2video` / `video2video` / `image2image` run without `--input-path`. |
 | `Found no NVIDIA driver` | The container reached real inference but has no GPU. Generation is GPU-only. |
-| `cosmos-framework produced no image/video artifact` | Inference exited 0 but wrote nothing; check the upstream log above the error for a guardrail rejection. |
+| `guardrail execution could not be proven` | The native receipt is missing or invalid. Guarded media is withheld; use the supported image/runtime rather than bypassing the receipt. |
+| `guardrails were requested but were not effective` | A prompt or generated-media model was missing, failed, returned an invalid decision, or was not evaluated. The run fails closed. Inspect the sanitized `failure` category in `guardrail_state`. |
+| `cosmos-framework produced no image/video artifact` | Inference exited 0 but wrote nothing after effective guardrail execution; inspect the upstream generation log. |
 | `Unable to parse string as hex hash value` from `huggingface_hub`'s Xet client | A download failure specific to the `hf-xet 1.5.1` + `huggingface_hub 1.23.0` pin pair (`huggingface/xet-core#895`), observed on a gated guardrail-repo download. Set `HF_HUB_DISABLE_XET=1` and retry; see [`cosmos3-access-preflight.md`](cosmos3-access-preflight.md). |
 
 For access checks before a run (`gh`/HF/NGC reachability) see
 `npa workbench cosmos check`. For the un-baked, clone-at-job-time text-to-image
-smoke, use `npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml`.
+smoke, use `workflows/testing/cosmos3-text-to-image.yaml`.
 
 ## Measured timing: Cosmos3-Super text2video on H200 and B200
 
@@ -277,4 +319,9 @@ The serving path's rule is different on both platforms: output is byte-identical
 
 ### Guardrail posture on this path
 
-At this framework ref the video content-safety classifier is commented out upstream ("Too many false positives, add back when fixed"): the runtime posture is the text guardrail (Blocklist + Qwen3Guard) plus the RetinaFaceFilter face-blur postprocessor. Manifests record `guardrails: true` either way; do not describe this path as screening video content.
+These measurements predate the fail-closed NPA wrapper. At this framework ref
+the video content-safety classifier was commented out upstream, so those
+historical runs used the text guardrail plus RetinaFace postprocessing and must
+not be described as having passed generated-media content-safety screening.
+Current `generate` runs additionally require actual
+`VideoContentSafetyFilter` evaluation and an effective receipt.

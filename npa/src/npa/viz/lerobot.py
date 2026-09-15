@@ -88,7 +88,7 @@ class RenderInputs:
     skeleton_data: np.ndarray
     predictions_data: np.ndarray | None
     duration_s: float
-    source_fps: int
+    source_fps: float
     title: str
     frame_indices: np.ndarray
 
@@ -166,7 +166,7 @@ def load_render_inputs(
     )
 
 
-def load_lerobot_state_vectors(root: Path) -> tuple[np.ndarray, int, str]:
+def load_lerobot_state_vectors(root: Path) -> tuple[np.ndarray, float, str]:
     """Read ``observation.state`` rows from a standard LeRobotDataset directory."""
     root = Path(root)
     if not root.exists():
@@ -213,7 +213,10 @@ def load_lerobot_state_vectors(root: Path) -> tuple[np.ndarray, int, str]:
         raise VizDataError(f"Expected {G1_STATE_DIM}D Unitree G1 state vectors, got {state.shape[1]}D")
 
     info = _read_info(root)
-    fps = int(info.get("fps") or DEFAULT_FPS)
+    raw_fps = info.get("fps") or DEFAULT_FPS
+    # Preserve numeric fractional rates while retaining legacy coercion/errors
+    # for strings, unsupported metadata types, and nonfinite numbers.
+    fps = raw_fps if isinstance(raw_fps, float) and np.isfinite(raw_fps) else int(raw_fps)
     if fps <= 0:
         fps = DEFAULT_FPS
     title = _read_task_title(root) or str(info.get("task") or info.get("robot_type") or root.name)
@@ -223,7 +226,7 @@ def load_lerobot_state_vectors(root: Path) -> tuple[np.ndarray, int, str]:
 def resolve_duration_s(
     *,
     frame_count: int,
-    source_fps: int,
+    source_fps: float,
     requested_duration_s: float | None,
     duration_cap_s: float = DEFAULT_DURATION_CAP_S,
 ) -> float:
@@ -241,7 +244,7 @@ def resolve_duration_s(
 def select_frames(
     data: np.ndarray,
     *,
-    source_fps: int,
+    source_fps: float,
     output_fps: int,
     duration_s: float,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -265,7 +268,7 @@ def select_frames(
 def load_predictions_skeleton(
     path: Path,
     *,
-    source_fps: int,
+    source_fps: float,
     output_fps: int,
     duration_s: float,
     target_joint_count: int,

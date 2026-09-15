@@ -1,5 +1,7 @@
 # Set up an NVIDIA NGC API key
 
+[Workbench docs](README.md)
+
 NVIDIA distributes some workbench assets through [NGC](https://ngc.nvidia.com)
 and `nvcr.io`. An NGC API key authenticates the pull; the owning account must
 also have repository entitlement. NPA does not add an independent manual EULA

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import os
 import socket
 import subprocess
+import tempfile
 import time
 from typing import Any, Iterator
 from urllib.parse import urlparse, urlunparse
@@ -68,41 +69,99 @@ def _wait_for_local_port(port: int, *, timeout: float = 10.0) -> None:
 
 def _open_ssh_forward(cfg: Any, local_port: int, remote_port: int) -> subprocess.Popen:
     key_path = os.path.expanduser(cfg.ssh.key_path)
+    from npa.deploy.ssh_trust import known_hosts_path
+
+    selected_hosts = os.environ.get("NPA_SSH_KNOWN_HOSTS", "").strip()
+    provider_hosts = known_hosts_path(cfg.ssh.host)
+    if not selected_hosts and provider_hosts.is_file():
+        selected_hosts = str(provider_hosts)
+    control_directory = tempfile.TemporaryDirectory(prefix="npa-ssh-")
+    control_path = os.path.join(control_directory.name, "control")
+    target = f"{cfg.ssh.user}@{cfg.ssh.host}"
     cmd = [
         "ssh",
+        "-M",
+        "-S",
+        control_path,
         "-N",
+        "-o",
+        "ControlPersist=no",
+        "-o",
+        "ForkAfterAuthentication=no",
+        "-o",
+        "ClearAllForwardings=yes",
         "-o",
         "ExitOnForwardFailure=yes",
         "-o",
         "BatchMode=yes",
         "-o",
-        "StrictHostKeyChecking=accept-new",
-        "-L",
-        f"127.0.0.1:{local_port}:127.0.0.1:{remote_port}",
+        "StrictHostKeyChecking=yes",
         "-i",
         key_path,
-        f"{cfg.ssh.user}@{cfg.ssh.host}",
+        target,
     ]
+    if selected_hosts:
+        cmd[1:1] = ["-o", f"UserKnownHostsFile={os.path.expanduser(selected_hosts)}"]
     try:
-        return subprocess.Popen(
+        proc = subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
         )
     except OSError as exc:
+        control_directory.cleanup()
         raise EndpointError(f"Unable to start SSH tunnel: {exc}") from exc
+    proc._npa_ssh_control_directory = control_directory
+    proc._npa_ssh_control_path = control_path
+    proc._npa_ssh_target = target
+    return proc
+
+
+def _wait_for_ssh_forward(
+    proc: subprocess.Popen, local_port: int, remote_port: int, *, timeout: float = 10.0,
+) -> None:
+    """Ask the authenticated master to bind, and require its success response."""
+    deadline = time.monotonic() + timeout
+    while not os.path.exists(proc._npa_ssh_control_path):
+        if proc.poll() is not None:
+            raise EndpointError("SSH authentication or host verification failed before forwarding")
+        if time.monotonic() >= deadline:
+            raise EndpointError("SSH control connection did not become ready")
+        time.sleep(0.05)
+    try:
+        result = subprocess.run(
+            [
+                "ssh", "-S", proc._npa_ssh_control_path, "-O", "forward",
+                "-L", f"127.0.0.1:{local_port}:127.0.0.1:{remote_port}",
+                proc._npa_ssh_target,
+            ],
+            capture_output=True, text=True, check=False,
+            timeout=max(0.01, deadline - time.monotonic()),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise EndpointError("Unable to confirm forwarding through the authenticated SSH master") from exc
+    if result.returncode != 0 or proc.poll() is not None:
+        raise EndpointError("SSH could not bind the requested local forwarding port")
 
 
 def _close_process(proc: subprocess.Popen) -> None:
-    if proc.poll() is not None:
-        return
-    proc.terminate()
     try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=5)
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+    finally:
+        for name in ("stdout", "stderr"):
+            pipe = getattr(proc, name, None)
+            if pipe is not None and hasattr(pipe, "close"):
+                pipe.close()
+        control_directory = getattr(proc, "_npa_ssh_control_directory", None)
+        if isinstance(control_directory, tempfile.TemporaryDirectory):
+            control_directory.cleanup()
 
 
 def _is_byovm_config(cfg: Any) -> bool:
@@ -151,6 +210,7 @@ def _ssh_service_endpoint(
     default_port: int = 0,
     service_port: int | None = None,
     allow_existing_local_port: bool = True,
+    require_new_forward: bool = False,
 ) -> Iterator[ActiveEndpoint]:
     parsed = urlparse(base_url)
     remote_port = (
@@ -162,7 +222,7 @@ def _ssh_service_endpoint(
     if remote_port <= 0:
         raise EndpointError("SSH endpoint strategy requires a service port")
 
-    if _is_loopback_host(parsed.hostname):
+    if not require_new_forward and _is_loopback_host(parsed.hostname):
         yield ActiveEndpoint(
             url=base_url,
             strategy="ssh_fallback",
@@ -188,11 +248,7 @@ def _ssh_service_endpoint(
     local_port = _free_local_port()
     proc = _open_ssh_forward(cfg, local_port, remote_port)
     try:
-        time.sleep(0.2)
-        if proc.poll() is not None:
-            stderr = (proc.stderr.read() if proc.stderr else "").strip()
-            raise EndpointError(f"SSH tunnel exited before becoming ready: {stderr}")
-        _wait_for_local_port(local_port)
+        _wait_for_ssh_forward(proc, local_port, remote_port)
         yield ActiveEndpoint(
             url=_replace_host_port(base_url, "127.0.0.1", local_port),
             strategy="ssh_fallback",
@@ -209,8 +265,12 @@ def service_endpoint(
     default_port: int = 0,
     endpoint: str | None = None,
     service_port: int | None = None,
+    require_ssh: bool = False,
 ) -> Iterator[ActiveEndpoint]:
     """Yield the HTTP endpoint that should be used for a live command.
+
+    ``require_ssh`` always creates a new verified SSH forward, including when a
+    saved endpoint is public or a loopback port already has a listener.
 
     Older configs default to the public endpoint. BYOVM configs that recorded
     ``endpoint_strategy: ssh_fallback`` get a transient local SSH forward unless the
@@ -224,6 +284,18 @@ def service_endpoint(
     strategy = str(getattr(cfg, "endpoint_strategy", "") or "public").lower()
     strategy_configured = bool(getattr(cfg, "endpoint_strategy_configured", False))
     service_port_configured = bool(getattr(cfg, "service_port_configured", False))
+
+    if require_ssh:
+        with _ssh_service_endpoint(
+            cfg, base_url=base_url, default_port=default_port,
+            service_port=service_port, allow_existing_local_port=False,
+            require_new_forward=True,
+        ) as active:
+            remote_port = int(service_port or getattr(cfg, "service_port", 0) or _port_from_url(base_url) or default_port)
+            if not _is_ssh_strategy(strategy) or not service_port_configured:
+                _persist_ssh_strategy(cfg, remote_port)
+            yield active
+        return
 
     if _is_serverless_config(cfg):
         yield ActiveEndpoint(url=base_url, strategy="serverless")

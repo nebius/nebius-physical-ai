@@ -92,7 +92,7 @@ def test_thinking_ellipsis_high_contrast() -> None:
 def test_soft_swap_prefers_quality_without_rrd_prefetch() -> None:
     source = AGENT_MODULE.read_text(encoding="utf-8")
     ui = _embedded_ui_html(source)
-    mount = ui.split("async function mountRerunIframe(camera, runId)")[1].split(
+    mount = ui.split("async function mountRerunIframe(camera, runId,")[1].split(
         "async function mountRerunIframeUntilSuccess"
     )[0]
     assert "swapRerunRecordingInPlace" in mount
@@ -103,7 +103,7 @@ def test_soft_swap_prefers_quality_without_rrd_prefetch() -> None:
     assert "do not prefetch .rrd bytes" in ui
     assert "waitForQualityRerunFrame" in ui
     swap = ui.split("async function swapRerunRecordingInPlace")[1].split(
-        "async function mountRerunIframe(camera, runId)"
+        "async function mountRerunIframe(camera, runId,"
     )[0]
     # Soft-swap settles on async non-blank pixel probe (not a Describe JPEG wait).
     assert "probeRerunCanvasContent" in swap
@@ -112,7 +112,7 @@ def test_soft_swap_prefers_quality_without_rrd_prefetch() -> None:
     assert "safeHideRerunBundleCover" in swap or "scheduleRerunBundleUncover" in swap
     assert "probeRerunCanvasContent" in ui
     assert "rerunViewerLooksDisplayReady" in ui
-    mount = ui.split("async function mountRerunIframe(camera, runId)")[1].split(
+    mount = ui.split("async function mountRerunIframe(camera, runId,")[1].split(
         "async function mountRerunIframeUntilSuccess"
     )[0]
     # Failed soft-swap falls through to remount instead of stale already-mounted SUCCESS.

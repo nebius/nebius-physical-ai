@@ -67,7 +67,7 @@ pytestmark = [
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_repo.py"
 OPEN_DREAMER_SPEC = (
-    REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "byof-open-dreamer.yaml"
+    REPO_ROOT / "workflows" / "testing" / "byof-open-dreamer.yaml"
 )
 
 # Capability contract for the accepted Open Dreamer smoke. Keep in sync with
@@ -166,6 +166,7 @@ def _verify_run_s3(s3, bucket: str, key_prefix: str, smoke_artifact: str, *, dea
 def test_open_dreamer_spec_renders_via_workflow_machinery() -> None:
     """The spec must plan/render through the real npa.workflow machinery."""
     from npa.orchestration.npa_workflow import build_plan, load_spec
+    from npa.workflows.byof.live import resolve_byof_profile_path
 
     spec = load_spec(OPEN_DREAMER_SPEC)
     plan = build_plan(spec, run_id="od-render-check")
@@ -175,15 +176,19 @@ def test_open_dreamer_spec_renders_via_workflow_machinery() -> None:
     # The single BYOF state must resolve to the workbench.byof.repo toolRef with
     # the spec's real smoke command and 2-GPU resource profile baked into argv.
     assert step.get("tool_ref") == "workbench.byof.repo", step.get("tool_ref")
-    argv = " ".join(str(part) for part in (step.get("argv") or []))
+    argv_parts = step.get("argv") or []
+    argv = " ".join(str(part) for part in argv_parts)
     assert "workbench byof run" in argv.replace("  ", " ")
-    assert "byof-solution-smoke-rtxpro-2gpu.yaml" in argv
+    profile = resolve_byof_profile_path(argv_parts[argv_parts.index("--yaml") + 1])
+    assert profile.name == "byof-solution-smoke-rtxpro-2gpu.yaml"
+    documents = list(yaml.safe_load_all(profile.read_text()))
+    assert documents[1]["resources"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:2"
     for capability in EXPECTED_CAPABILITIES:
         assert capability in argv, capability
 
     config = _spec_config()
     assert config.get("workload") == "solution-smoke"
-    assert "byof-solution-smoke-rtxpro-2gpu.yaml" in str(config.get("resource_profile_yaml"))
+    assert resolve_byof_profile_path(str(config.get("resource_profile_yaml"))) == profile
     smoke = str(config.get("smoke_command") or "")
     for capability in EXPECTED_CAPABILITIES:
         assert capability in smoke, capability

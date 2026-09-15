@@ -92,6 +92,14 @@ Use evidence-based convergence: report numeric pass counts and exact failure mes
 
 Tests must not hit real infrastructure. Mock SSH, S3, Nebius APIs, GPUs, and network calls at the call site. CLI tests use `typer.testing.CliRunner` against `npa.cli.main:app`.
 
+When testing a later runtime failure, isolate successful prerequisite setup and
+assert that execution reached the intended failing boundary. For example, a
+Cosmos inference-denial test must mock the separately tested guardrail tokenizer
+preparation before its mocked inference subprocess. Otherwise a missing optional
+dependency or empty host cache masks the denial and privacy assertions. Preserve
+those assertions; never prime a real cache or download vendor data to make a
+hermetic test pass.
+
 ## Live-Infra Testing Is A Priority (not optional)
 
 Smoke + mocked-unit tests are necessary but **not sufficient**. Any change to an

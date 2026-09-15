@@ -1,153 +1,150 @@
-# NPA Kubernetes Cluster Terraform
+# Managed Kubernetes for NPA
 
-This directory contains a thin Terraform wrapper around a vendored copy of the
-Nebius `k8s-training` solution from `nebius/nebius-solutions-library`.
+[Infrastructure docs](../../docs/cluster-backends.md) · [Workbench setup](../../docs/workbench/getting-started.md)
 
-The wrapper provisions a Managed Kubernetes cluster. The **default shape is a
-small FTUE / Physical AI Data Factory cluster**, not a training farm:
+This Terraform wrapper provisions Nebius Managed Kubernetes using the vendored
+`k8s-training` solution. Start with a workload's GPU and memory requirements,
+then use NPA to configure, provision, and validate its cluster.
 
-- **1× GPU node** (`gpu-rtx6000`, preset `1gpu-24vcpu-218gb`) — a single RTX PRO
-  6000 GPU.
-- **1× CPU node** (`cpu-d3`, preset `8vcpu-32gb`) for CPU stages — big enough to
-  schedule the shipped workflows' CPU requests (the Physical AI Data Factory asks
-  for 4 CPU / 16Gi, which a 4vcpu-16gb node cannot fit after kubelet reserve).
-- Nebius managed GPU driver image (`gpu_driver_mode = "auto"`) plus the
-  provider-managed NVIDIA device plugin. CPU-only pools do not receive GPU
-  driver settings.
-- Nebius Network Operator through the upstream solution.
-- **Shared Filesystem OFF by default** (`enable_filestore = false`). npa.workflow
-  stages — including the Physical AI Data Factory — hand off artifacts via S3
-  URIs, so no cross-node `/mnt/data` (and no Shared Filesystem SSD quota) is
-  required. The platform block-storage StorageClass stays the cluster default.
-- Optional strict GPU capacity-block reservation selector.
-- Grafana, Prometheus, Loki, KubeRay, and OPA Gatekeeper disabled by default.
-- Optional node-group service-account creation disabled by default, so the
-  wrapper does not mutate tenant IAM groups unless explicitly requested.
+## Prerequisites
 
-### Opt into a larger cluster or Shared Filesystem
+- [NPA installed](../../docs/install.md), a configured project, and an
+  authenticated Nebius CLI profile with permission to create its resources.
+- Terraform **1.12+**, `kubectl`, and an SSH public key available locally.
+- Quota and capacity for the requested CPU/GPU nodes, boot disks, and public IPs.
+- Model access checked before provisioning for a model-dependent workload.
 
-These remain available as explicit opt-in via `terraform.tfvars`, `TF_VAR_*`, or
-`-var` flags — they are just not the default:
+NPA installs neither Terraform nor `kubectl`. Use
+`NPA_TERRAFORM_BIN=/path/to/terraform` to select a compatible Terraform binary.
 
-- **More / bigger GPUs:** raise `gpu_nodes_count` and/or set a multi-GPU preset
-  (e.g. `gpu_nodes_preset = "8gpu-192vcpu-1744gb"`), and set
-  `enable_gpu_cluster = true` (with `infiniband_fabric`) for multi-node
-  InfiniBand training.
-- **Preemptible GPU nodes:** `gpu_nodes_preemptible = true` draws on the
-  preemptible capacity pool instead of on-demand. It does not bypass the hard
-  instance, boot-disk-count, `compute.disk.size.network-ssd` byte-capacity, or
-  public-IP allowances. The default 128 GiB CPU disk plus 1,023 GiB GPU disk
-  requires 1,151 GiB of incremental NETWORK_SSD capacity. `npa cluster up` checks all
-  cumulative hard quotas before `terraform apply`; capacity advice remains a
-  separate availability signal.
-- **Shared Filesystem:** set `enable_filestore = true` (optionally
-  `filestore_disk_size_gibibytes`) to create one, or `existing_filestore = <id>`
-  to attach an existing one (that alone implies `enable_filestore`). Either
-  promotes the filesystem CSI StorageClass to the cluster default.
+## Provision through NPA
 
-The vendored solution is based on upstream tag `main-v2026-05-25` with local
-patches for GPU node-group reservation policy, configurable managed-driver
-preset, and zero-CPU node-group omission so raw Terraform usage stays
-standalone.
-
-### GPU driver strategy and health gate
-
-`gpu_driver_mode` has three stable values:
-
-- `auto` (default) selects a Nebius managed-driver node image for every GPU
-  node group and leaves CPU-only clusters untouched.
-- `managed-image` explicitly requires that same safe path.
-- `operator` uses the recipe's in-cluster NVIDIA GPU Operator driver path. It
-  is an escape hatch for diagnostics and recipes that genuinely require it.
-
-The managed preset defaults to `cuda13.0` and is configurable through
-`managed_driver_preset`. Operator mode on an NVSwitch topology (a multi-GPU
-SXM/NVL preset or `enable_gpu_cluster = true`) is rejected unless
-`allow_unsafe_nvswitch_operator = true` is also set. That acknowledgement is
-deliberately noisy: the operator/Fabric Manager path can start before the
-Network Operator/MOFED has exposed host `/dev/infiniband/umad*` and `issm*`
-devices, leaving Fabric in progress and CUDA uninitialized.
-
-`npa cluster up` does not record the cluster as `RUNNING` merely because
-Terraform and kubeconfig creation succeeded. For GPU clusters it waits for the
-requested node topology to remain stable, verifies Ready nodes, boot IDs,
-`NebiusGPUError`, generalized `nvidia.com/gpu` allocatable capacity, exposed
-NVSwitch Fabric state, and mode-appropriate NVIDIA components, then runs CUDA
-vectorAdd on every requested GPU node. Use `--validation-timeout` and
-`--gpu-health-stabilization-seconds` to tune the wait; live validation can only
-be disabled explicitly with `--skip-validate` or the CUDA workload alone with
-`--skip-gpu-cuda-smoke`.
-
-Changing these settings does not repair nodes that have already booted with the
-operator-managed driver. Existing affected GPU pools require a controlled
-rolling node-group update or recreation under the managed-image setting so
-each replacement node boots from the new image. Follow workload disruption and
-capacity-reservation policy; a code or CLI upgrade by itself cannot retrofit
-the image on an existing node.
-
-## Usage
-
-**Terraform >= 1.12 is required.** The vendored modules declare
-`required_version >= 1.12.0` and use `ephemeral` blocks; Terraform loads every
-referenced module during `init`, including the ones this wrapper disables, so an
-older binary fails to initialise the directory. `npa cluster up` /
-`npa cluster down` check the version first and point at the upgrade; set
-`NPA_TERRAFORM_BIN=/path/to/terraform` to use a newer binary without changing
-`PATH`.
-
-Provider checksums are tracked for `linux_amd64`, `linux_arm64`,
-`darwin_amd64`, and `darwin_arm64`. `npa cluster up/down` verifies the current
-platform and the SHA-bound coverage metadata before authentication or provider
-download, runs `terraform init -lockfile=readonly`, and keeps both `TF_DATA_DIR`
-and the platform-scoped plugin cache outside this source directory. A mismatch
-is a stop condition: regenerate intentionally with Terraform's `providers lock
--platform=...` workflow in a clean checkout and review the diff; never remove
-the lock file or bypass checksum verification.
-
-Copy `terraform.tfvars.example` to `terraform.tfvars` and replace placeholders
-with local values. `terraform.tfvars` is ignored by git. The example ships the
-small default shape and shows the larger-cluster / Shared Filesystem opt-ins in
-comments. Leave `iam_token` commented out when driving Terraform through `npa`:
-the CLI mints a fresh token per run, and Terraform would prefer the pinned one
-in `terraform.tfvars` (so `npa cluster up` rejects that file outright).
-
-The default cluster needs **no** Shared Filesystem SSD quota, so
-`npa cluster up` / `npa provision-if-absent` succeed with zero SFS quota. Only
-when you opt in with `enable_filestore = true` and `existing_filestore = ""` does
-the CLI check Shared Filesystem SSD quota before `terraform apply`; if quota is
-not available, provide an existing filesystem ID or raise quota before running
-`up`.
-
-Set `capacity_block_group` only in private runtime configuration, such as a
-gitignored `terraform.tfvars`, `TF_VAR_capacity_block_group`, or a direct
-Terraform var:
+Run from the repository root. Replace the alias and cluster name, then inspect
+the plan against your workload's resource profiles:
 
 ```bash
-terraform apply -var capacity_block_group=<capacity-block-group-id>
+project_alias='<your-project-alias>'
+cluster_name='<your-cluster-name>'
+
+npa workbench health preflight --checks nebius --json
+npa provision-if-absent --project "$project_alias" \
+  --cluster-name "$cluster_name" --dry-run --output-format json
 ```
 
-Then run:
+Require a ready preflight, not just exit code zero. A preview can return
+`status: blocked`; its `preflight.reasons` identifies missing quota or access.
+Reserved GPUs still require sufficient boot-disk quota.
+
+When the project, region, and topology are correct, run the same command without
+`--dry-run`. It may create storage, networking, and a cluster. An existing
+external cluster needs explicit registration; see
+[use an existing cluster](../../docs/workbench/getting-started.md#verify-kubernetes-access).
+
+After successful provisioning:
 
 ```bash
-npa cluster up --terraform-dir deploy/cluster --capacity-block-group <capacity-block-group-id>
+npa cluster status --project "$project_alias" --name "$cluster_name"
+npa workbench workflow gpus --project "$project_alias" --cluster "$cluster_name" --json
 ```
 
-The command runs `terraform init`, `terraform apply -auto-approve`, writes a
-kubeconfig under `~/.npa/clusters/<cluster-name>/kubeconfig`, validates stable
-GPU health and CUDA execution with `kubectl`, and can run an additional
-SkyPilot Kubernetes GPU smoke test. See
-[`docs/workbench/mk8s-gpu-driver-strategy.md`](../../docs/workbench/mk8s-gpu-driver-strategy.md)
-for direct and Fleet configuration, recipe compatibility, diagnostics, and
-migration guidance.
+Expect Ready nodes and the requested GPU count. Use the kubeconfig reported by
+NPA and complete [SkyPilot setup](../../docs/orchestration/skypilot-setup.md)
+before submitting a workflow. A provider-created cluster is not yet proof that
+a model can run on it.
 
-To inspect Terraform outputs alongside the local cluster cache:
+## Default shape
+
+| Component | Default | Why |
+| --- | --- | --- |
+| GPU pool | One `gpu-rtx6000` node, `1gpu-24vcpu-218gb` | One RTX PRO 6000 GPU |
+| CPU pool | One `cpu-d3` node, `8vcpu-32gb` | Room for a 4 CPU / 16 GiB stage, the controller, and system pods |
+| GPU drivers | `auto`, managed `cuda13.0` image | Driver and device-plugin setup validated by NPA |
+| Shared filesystem | Disabled | Workflow stages normally exchange artifacts through S3 |
+| Monitoring, KubeRay, OPA Gatekeeper | Disabled | Enable only what the workload needs |
+| Node-group service account creation | Disabled | Avoid unnecessary tenant IAM changes |
+
+The default 128 GiB CPU disk plus 1,023 GiB GPU disk requires **1,151 GiB of
+NETWORK_SSD quota**, in addition to disk-count and instance quota. This is a
+small starter topology; it does not fit every workflow in the catalog.
+
+## Use this Terraform directory directly
+
+For explicit wrapper configuration, copy the example locally:
 
 ```bash
-npa cluster status --terraform-dir deploy/cluster
+cp deploy/cluster/terraform.tfvars.example deploy/cluster/terraform.tfvars
 ```
 
-To destroy a Terraform-managed cluster:
+Replace its tenant, project, region, subnet, cluster name, and public-key path.
+`terraform.tfvars` is gitignored; keep private infrastructure values there.
+Leave `iam_token` commented out when using NPA: the CLI supplies authentication
+and rejects a pinned token that Terraform would prefer over it.
 
 ```bash
-npa cluster down --terraform-dir deploy/cluster
+npa cluster up --project "$project_alias" --terraform-dir deploy/cluster
+npa cluster status --project "$project_alias" --terraform-dir deploy/cluster
 ```
+
+`cluster up` applies Terraform and validates the resulting cluster. It creates
+resources without a separate Terraform approval prompt. To use reserved GPU
+capacity, supply the exact authorized reservation through private configuration:
+
+```bash
+npa cluster up --project "$project_alias" --terraform-dir deploy/cluster \
+  --capacity-block-group '<capacity-block-group-id>'
+```
+
+The reservation uses strict placement. `TF_VAR_capacity_block_group` is the
+equivalent environment setting; an explicit CLI flag takes precedence.
+
+## Change the topology
+
+| Need | Configuration |
+| --- | --- |
+| More GPUs | Increase `gpu_nodes_count` and select a matching `gpu_nodes_preset`; a multi-GPU task must fit on one node |
+| Multi-node InfiniBand | Set `enable_gpu_cluster = true` and the matching `infiniband_fabric` for a supported topology |
+| Preemptible nodes | Set `gpu_nodes_preemptible = true`; this changes the capacity pool, while disk/IP/instance quotas still apply |
+| New shared filesystem | Set `enable_filestore = true` and its size; requires Shared Filesystem SSD quota and the approved CSI chart repository |
+| Existing shared filesystem | Set `existing_filestore`; it implies filesystem enablement and does not create a second filesystem |
+
+Shared filesystem enablement promotes its CSI StorageClass to the cluster
+default. Otherwise, platform block storage remains the default. See
+[filesystem verification](../../docs/fleet-storage-verification.md) before
+using a shared volume for multi-node work.
+
+## GPU health and driver changes
+
+The default `auto` and explicit `managed-image` strategies use a managed driver
+image. `operator` is a separate driver path; NVSwitch topologies reject it
+without the explicit unsafe-topology acknowledgement. For workloads that need
+operator-mounted graphics libraries, follow the
+[RTX rendering profile](../../docs/workbench/mk8s-gpu-driver-strategy.md).
+
+Before reporting GPU readiness, NPA checks stable Ready nodes, GPU allocatable
+capacity, driver components, exposed fabric state, and CUDA vectorAdd on every
+requested GPU node. Keep these checks enabled. Changing configuration alone
+does not change the image of already booted nodes; driver migration requires a
+controlled update or recreation. The driver guide covers that procedure and
+common failures.
+
+## Terraform reproducibility
+
+The vendored recipe is based on `main-v2026-05-25` with local reservation,
+managed-driver, and node-group patches. Provider checksums cover Linux and macOS
+on AMD64 and ARM64. NPA checks the SHA-bound platform metadata, initializes with
+`-lockfile=readonly`, and stores provider caches outside this source directory.
+On a lock mismatch, intentionally regenerate and review the provider lock;
+removing it would discard the verification contract.
+
+## Cleanup
+
+Stop active jobs and preserve needed outputs before removing this cluster:
+
+```bash
+npa cluster down --project "$project_alias" --terraform-dir deploy/cluster
+```
+
+Read the proposed scope before confirming. Cluster deletion does not mean all
+project storage or services are gone; follow the [teardown guide](../../docs/teardown.md)
+for those separately owned resources. Preserve Terraform state after an
+incomplete deletion so the exact operation can be resumed.

@@ -32,6 +32,11 @@ def convert_cmd(
         "--task",
         help="Task description for the dataset.",
     ),
+    task_from_metadata: bool = typer.Option(
+        False,
+        "--task-from-metadata/--no-task-from-metadata",
+        help="Use each exported episode's RoboCasa task from metadata.json.",
+    ),
 ) -> None:
     """Convert Genesis/sim demo numpy arrays to LeRobotDataset v3 format."""
     from pathlib import Path
@@ -73,7 +78,14 @@ def convert_cmd(
         console.print(f"  fps={fps}  robot={robot}")
 
         try:
-            convert(inp, out, fps=fps, robot_type=robot, task=task)
+            convert(
+                inp,
+                out,
+                fps=fps,
+                robot_type=robot,
+                task=task,
+                task_from_metadata=task_from_metadata,
+            )
         except AdapterError as exc:
             console.print(f"[red]Error:[/red] {exc}")
             raise typer.Exit(1)

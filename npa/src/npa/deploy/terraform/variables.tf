@@ -126,6 +126,16 @@ variable "ssh_public_key_path" {
   default     = "~/.ssh/id_ed25519.pub"
 }
 
+variable "ssh_host_key_nonce" {
+  description = "Fresh boot challenge persisted by NPA for provider-authenticated SSH host keys"
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.ssh_host_key_nonce == "" || can(regex("^[a-f0-9]{64}$", var.ssh_host_key_nonce))
+    error_message = "ssh_host_key_nonce must be a 64-character lowercase hexadecimal boot challenge."
+  }
+}
+
 variable "ssh_cidr_block" {
   description = "CIDR block allowed to SSH. Empty disables SSH ingress; set explicitly for remote bootstrap."
   type        = string
@@ -225,7 +235,7 @@ variable "s3_endpoint" {
 variable "fiftyone_version" {
   description = "FiftyOne PyPI version to install when workbench_type is fiftyone"
   type        = string
-  default     = "1.15.0"
+  default     = "1.21.0"
 }
 
 variable "wait_for_ssh" {

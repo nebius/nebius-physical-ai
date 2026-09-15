@@ -62,7 +62,7 @@ def serve_cmd(
         "--execute/--plan",
         help="Actually stage from S3 and run the viewer container (default: print the plan only).",
     ),
-    host: str = typer.Option(DEFAULT_HOST, "--host", help="Host/interface to bind."),
+    host: str = typer.Option(DEFAULT_HOST, "--host", help="Bind interface; non-loopback explicitly exposes the artifact without authentication."),
     port: int = typer.Option(DEFAULT_PORT, "--port", help="HTTP port to serve on."),
     image: str = typer.Option(
         "",
@@ -107,7 +107,7 @@ def launch_cmd(
     topic: str = typer.Option(DEFAULT_CAMERA_TOPIC, "--topic", help="MCAP topic for exported frames."),
     fps: float = typer.Option(DEFAULT_FPS, "--fps", help="Playback rate for exported frames."),
     execute: bool = typer.Option(False, "--execute/--plan", help="Stage and launch the viewer container."),
-    host: str = typer.Option(DEFAULT_HOST, "--host", help="Host/interface to bind."),
+    host: str = typer.Option(DEFAULT_HOST, "--host", help="Bind interface; non-loopback explicitly exposes the artifact without authentication."),
     port: int = typer.Option(DEFAULT_PORT, "--port", help="HTTP port to serve on."),
     image: str = typer.Option("", "--image", help="Override the npa-lichtblick image ref."),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),

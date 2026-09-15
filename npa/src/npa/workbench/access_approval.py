@@ -230,7 +230,13 @@ def _ngc_evidence(
         return AccessStatus.UNAVAILABLE, "provider_unavailable"
     if outcome == "reachable":
         return AccessStatus.READY, "exact_artifact_access_verified"
-    if outcome in {"entitlement-required", "tags-401", "tags-403"}:
+    if outcome in {
+        "entitlement-required",
+        "manifest-401",
+        "manifest-403",
+        "tags-401",
+        "tags-403",
+    }:
         return AccessStatus.DENIED, "artifact_entitlement_denied"
     if outcome in {"auth-no-token", "auth-401", "auth-403"}:
         return AccessStatus.DENIED, "credential_denied"

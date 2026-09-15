@@ -82,6 +82,7 @@ class CancellationAssessment:
     """Cancellation decision made before any mutating SkyPilot call."""
 
     detected_state: str
+    run_id: str = ""
     jobs: list[WorkflowJobRecord] = field(default_factory=list)
     active_jobs: list[WorkflowJobRecord] = field(default_factory=list)
     terminal_jobs: list[WorkflowJobRecord] = field(default_factory=list)
@@ -101,6 +102,7 @@ def assess_run_cancellation(
     *,
     sky_bin: str = "",
     lookup: LookupFn | None = None,
+    exact_job_id: str = "",
 ) -> CancellationAssessment:
     """Inspect every durable job/stage record and identify only active jobs.
 
@@ -279,6 +281,13 @@ def assess_run_cancellation(
             ),
             source=f"run resolution ({resolution.source or 'exact sources'})",
         )
+    explicit_job_id = str(exact_job_id or "").strip()
+    if explicit_job_id:
+        add_job(
+            explicit_job_id,
+            job_name=resolution.job_name or resolution.run_id,
+            source="explicit exact job id",
+        )
 
     # A terminal authoritative run state is sufficient when it carries no job
     # identity. If identities do exist, verify any record not itself terminal so
@@ -289,12 +298,36 @@ def assess_run_cancellation(
     terminal: list[WorkflowJobRecord] = []
     absent: list[WorkflowJobRecord] = []
     for record in records.values():
-        if record.terminal_in_durable_state:
+        # A recovered controller may reuse a small numeric managed-job ID after
+        # its local database is recreated.  When run resolution already proved
+        # that this exact ID is live and nonterminal, that provider evidence
+        # must outrank an older durable terminal row carrying the same number.
+        # Do not perform a fresh lookup for ordinary terminal records: only the
+        # exact cached evidence from resolution is allowed to reopen one.
+        force_live_lookup = bool(explicit_job_id) and record.job_id == explicit_job_id
+        evidence = (
+            lookup_fn(
+                record.job_name or resolution.run_id,
+                job_id=record.job_id,
+                sky_bin=sky_bin or None,
+            )
+            if force_live_lookup
+            else _cached_evidence(resolution, record.job_id)
+        )
+        cached_live = (
+            evidence is not None
+            and evidence.outcome == "found"
+            and not is_terminal_workflow_state(evidence.status)
+        )
+        if (
+            record.terminal_in_durable_state
+            and not force_live_lookup
+            and not cached_live
+        ):
             record.live_outcome = "durable_terminal"
             record.live_status = _aggregate_terminal_states(record.persisted_states)
             terminal.append(record)
             continue
-        evidence = _cached_evidence(resolution, record.job_id)
         if evidence is None:
             evidence = lookup_fn(
                 record.job_name or resolution.run_id,
@@ -350,12 +383,43 @@ def assess_run_cancellation(
     )
     return CancellationAssessment(
         detected_state=detected_state,
+        run_id=resolution.run_id,
         jobs=sorted(records.values(), key=lambda item: _job_sort_key(item.job_id)),
         active_jobs=sorted(active, key=lambda item: _job_sort_key(item.job_id)),
         terminal_jobs=sorted(terminal, key=lambda item: _job_sort_key(item.job_id)),
         absent_jobs=sorted(absent, key=lambda item: _job_sort_key(item.job_id)),
         errors=errors,
     )
+
+
+def reverify_active_cancellation(
+    assessment: CancellationAssessment,
+    *,
+    sky_bin: str = "",
+    lookup: LookupFn | None = None,
+) -> list[str]:
+    """Recheck every exact active identity immediately before cancellation."""
+
+    lookup_fn = lookup or lookup_managed_job
+    errors: list[str] = []
+    for record in assessment.active_jobs:
+        evidence = lookup_fn(
+            record.job_name or assessment.run_id,
+            job_id=record.job_id,
+            sky_bin=sky_bin or None,
+        )
+        status = normalize_workflow_state(evidence.status)
+        if evidence.outcome != "found":
+            errors.append(
+                f"exact job {record.job_id} changed before cancellation: "
+                f"{evidence.error or evidence.outcome}"
+            )
+        elif status not in _NONTERMINAL:
+            errors.append(
+                f"exact job {record.job_id} is no longer active before cancellation: "
+                f"{status or 'UNKNOWN'}"
+            )
+    return errors
 
 
 def _cached_evidence(

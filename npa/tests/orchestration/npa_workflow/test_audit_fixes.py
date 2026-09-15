@@ -18,7 +18,7 @@ from npa.orchestration.npa_workflow.run_state import RunManifest, RunStateStore
 from npa.orchestration.npa_workflow.spec import LoopSpec, StateSpec, validate_spec
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+SPECS = REPO_ROOT / "workflows" / "testing"
 SIM2REAL_DEMO = (
     REPO_ROOT
     / "npa"

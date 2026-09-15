@@ -1,5 +1,7 @@
 # Wan 2.2 TI2V-5B Workbench support
 
+[Workbench docs](README.md)
+
 NPA packages the official Alibaba Wan 2.2 source as a BYOF solution and runs
 real TI2V-5B generation on Nebius GPUs. The single-GPU workflow targets one RTX
 PRO 6000 Blackwell; the distributed workflow runs one shared generation across
@@ -61,15 +63,15 @@ Validate and plan the checked-in specs:
 
 ```bash
 npa/.venv/bin/npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/byof-wan2.2.yaml
+  workflows/testing/byof-wan2.2.yaml
 npa/.venv/bin/npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/byof-wan2.2.yaml \
+  workflows/testing/byof-wan2.2.yaml \
   --run-id wan22-plan
 
 npa/.venv/bin/npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml
+  workflows/testing/byof-wan2.2-multigpu.yaml
 npa/.venv/bin/npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml \
+  workflows/testing/byof-wan2.2-multigpu.yaml \
   --run-id wan22-multigpu-plan
 ```
 

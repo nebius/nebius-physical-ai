@@ -197,6 +197,7 @@ def _write_logical_lerobot_recording(
     rr.save(output_rrd_path, default_blueprint=blueprint, recording=recording)
     rr.send_blueprint(blueprint, recording=recording)
     selected_episodes = sorted(set(input_episode_indices + rollout_episode_indices))
+    video_locations = _episode_video_locations(dataset_path)
     video_entities = _log_dataset_videos(
         rr,
         recording,
@@ -204,6 +205,7 @@ def _write_logical_lerobot_recording(
         metadata,
         camera_keys,
         episode_indices=selected_episodes,
+        locations=video_locations,
     )
 
     for episode in input_episode_indices:
@@ -215,6 +217,7 @@ def _write_logical_lerobot_recording(
             video_entities=video_entities,
             camera_keys=camera_keys,
             episode_index=int(episode),
+            video_location=video_locations.get(int(episode), {}),
         )
     for episode in rollout_episode_indices:
         _log_episode_rows(
@@ -225,6 +228,7 @@ def _write_logical_lerobot_recording(
             video_entities=video_entities,
             camera_keys=camera_keys,
             episode_index=int(episode),
+            video_location=video_locations.get(int(episode), {}),
         )
         if int(episode) in feedback_by_episode:
             _log_feedback(
@@ -403,6 +407,7 @@ def _log_episode_rows(
     video_entities: dict[int, dict[str, str]],
     camera_keys: list[str],
     episode_index: int,
+    video_location: dict[str, Any],
 ) -> None:
     for row in rows:
         timestamp = float(row.get("timestamp", 0.0) or 0.0)
@@ -412,7 +417,12 @@ def _log_episode_rows(
             if video_entity:
                 rr.log(
                     f"{root}/camera/{_entity_key(camera_key)}",
-                    rr.VideoFrameReference(seconds=timestamp, video_reference=video_entity),
+                    rr.VideoFrameReference(
+                        seconds=timestamp + float(
+                            video_location.get(f"videos/{camera_key}/from_timestamp", 0.0) or 0.0
+                        ),
+                        video_reference=video_entity,
+                    ),
                     recording=recording,
                 )
         for index, value in enumerate(_as_float_list(row.get("observation.state"))):
@@ -445,10 +455,10 @@ def _log_dataset_videos(
     camera_keys: list[str],
     *,
     episode_indices: list[int],
+    locations: dict[int, dict[str, Any]],
 ) -> dict[int, dict[str, str]]:
     video_entities: dict[int, dict[str, str]] = {}
     video_path_pattern = str(metadata.get("video_path") or "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4")
-    locations = _episode_video_locations(dataset_path)
     for episode_index in episode_indices:
         for camera_key in camera_keys:
             location = locations.get(int(episode_index), {})

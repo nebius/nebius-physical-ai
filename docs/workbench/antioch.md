@@ -224,8 +224,8 @@ the tunnel's authenticated WSS operator role to a CA-verified, authenticated
 ClusterIP OpenPI Service. The operator VM launches and observes this Deployment
 but carries no camera frames, policy messages, or actions.
 
-The private runtime file contains Kubernetes coordinates and paths to the
-existing Antioch config, assigned project-id file,
+The private runtime file contains Kubernetes coordinates, the explicit supported
+Antioch deployment profile, and paths to the existing Antioch config, assigned project-id file,
 and retained OpenPI objects. Those values do not appear in CLI arguments or
 ordinary output. The deployer stages them as owner-labelled Kubernetes Secrets,
 rotates the policy gateway certificate for its `.svc` DNS name, and copies Secret
@@ -261,11 +261,13 @@ npa workbench antioch live-k8s-status \
   --runtime-config /path/to/private-runtime.json --output json
 ```
 
-The runtime schema is `npa.antioch.mk8s-live-config.v1`; the checked-in example
-uses only placeholders. `workflow_run` plus `state_id` derive every adapter
-identity, so independent Antioch stages cannot collide. `adapter_image` must be
-an immutable digest. Deployment, status, stop, and cutover-finalization refuse
-unowned objects.
+The runtime schema is `npa.antioch.mk8s-live-config.v2`; the checked-in example
+uses only placeholders. `antioch_deployment_profile` is required and is forwarded
+to the controller as the vendor CLI's supported `ANTIOCH_ENV` selector; it has no
+default because silently falling back to a different deployment can bind the wrong
+project namespace. `workflow_run` plus `state_id` derive every adapter identity,
+so independent Antioch stages cannot collide. `adapter_image` must be an immutable
+digest. Deployment, status, stop, and cutover-finalization refuse unowned objects.
 
 Scenario timeout is a finite platform boundary, so the supervisor renews
 indefinitely until explicitly stopped. Renewal resets the simulated episode and
@@ -362,7 +364,7 @@ uses those immutable values. Missing metadata fails before submission; there is
 no cartpole fallback and a later collector cannot silently relabel a dataset.
 
 The executable example
-`npa/workflows/workbench/npa-workflows/antioch-offline-policy-train.yaml` follows
+`workflows/testing/antioch-offline-policy-train.yaml` follows
 collection with real LeRobot ACT training and publishes a genuine checkpoint.
 The `workbench.antioch.run` toolRef reads its idempotency state identity from
 `config.antioch_state_id`. When a workflow contains multiple Antioch stages, set

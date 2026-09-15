@@ -1,5 +1,7 @@
 # SONIC Export and Eval Runbook
 
+[Cookbooks](README.md)
+
 This runbook covers the end-to-end SONIC locomotion path:
 
 ```text
@@ -7,7 +9,7 @@ policy checkpoint -> npa workbench sonic export -> npa workbench sonic eval
 ```
 
 The blueprint is the `npa.workflow` spec
-`npa/workflows/workbench/npa-workflows/sonic-export-eval.yaml` (its raw SkyPilot
+`workflows/testing/sonic-export-eval.yaml` (its raw SkyPilot
 template is retired).
 
 ## Prerequisites
@@ -17,7 +19,7 @@ template is retired).
   ```bash
   npa skypilot bootstrap
   export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
-  "$NPA_SKYPILOT_BIN" check
+  npa skypilot verify --cluster "<npa-cluster-name>"
   ```
 
 - The policy checkpoint is readable from the SkyPilot task. Use an `s3://`
@@ -28,9 +30,8 @@ template is retired).
   in `sonic_image_manifest.json`, for RTX PRO 6000 Blackwell Kubernetes targets:
 
   ```bash
-  export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
   docker manifest inspect \
-    "${NPA_REGISTRY}/npa-sonic:cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+    "ghcr.io/nebius/nebius-physical-ai/npa-sonic:cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
   ```
 
   Quarantined variants must not be rebuilt or pushed into the official public
@@ -40,16 +41,16 @@ template is retired).
 
 ## One Command
 
-Submit through the generic workflow command. The SONIC materializer fills the
-first-party image and S3 endpoint as literal YAML values before SkyPilot sees
-the workflow:
+Submit through the generic workflow command. NPA resolves its toolRefs, config,
+and images before handing rendered tasks to SkyPilot. Stage a compatible
+checkpoint and select its URI explicitly:
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/sonic-export-eval.yaml \
+  workflows/testing/sonic-export-eval.yaml \
   --run-id sonic-export-eval-$(date -u +%Y%m%dT%H%M%SZ) \
-  --registry "${NPA_REGISTRY}" \
-  --var bucket=<bucket> \
+  --project "<alias>" --infra "k8s/<cluster>" --runtime \
+  --var bucket="<bucket>" --var checkpoint_uri="s3://<bucket>/<checkpoint-path>" \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY
 ```

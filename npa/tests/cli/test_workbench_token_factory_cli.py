@@ -129,7 +129,7 @@ def test_token_factory_reason_writes_scene_json(monkeypatch, tmp_path: Path) -> 
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
-    assert payload["model"] == "nvidia/Cosmos3-Super-Reasoner"
+    assert payload["model"] == "MiniMaxAI/MiniMax-M3"
     assert payload["image_count"] == 1
     written = output / "scene_reasoning.json"
     assert written.exists()

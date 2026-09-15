@@ -46,7 +46,7 @@ def groot_predictions_to_rerun(
     predictions_color: tuple[int, int, int] = (255, 136, 0),
     duration_s: float | None = None,
 ) -> None:
-    """Write one Rerun ``.rrd`` with LeRobot input and GR00T predictions overlaid."""
+    """Overlay matching source prefixes, capped by duration at the native frame rate."""
     output_ref = str(output_rrd_path)
     with ExitStack() as stack:
         local_predictions = _materialize_predictions(predictions_path, stack)
@@ -82,6 +82,10 @@ def _write_groot_overlay_recording(
         fps=source_fps,
         duration_s=duration_s,
     )
+    # Use the shared duration budget, but retain a contiguous source prefix.
+    # Resampling the whole input would compare later states with earlier
+    # prediction frames and compress their source timestamps into the cap.
+    selected_input_states = input_states[: selected_input_states.shape[0]]
     input_skeleton = g1_state_vectors_to_skeleton(selected_input_states)
     prediction_skeleton, prediction_states = _load_prediction_frames(
         predictions_path,
@@ -101,10 +105,10 @@ def _write_groot_overlay_recording(
             "Prediction skeleton and angle state frame counts must match: "
             f"{prediction_skeleton.shape[0]} != {prediction_states.shape[0]}"
         )
-    if prediction_skeleton.shape[0] > input_skeleton.shape[0]:
+    if prediction_skeleton.shape[0] > input_states.shape[0]:
         raise RerunAdapterError(
-            "Prediction frame count cannot exceed input frame count after sampling: "
-            f"{prediction_skeleton.shape[0]} > {input_skeleton.shape[0]}"
+            "Prediction frame count cannot exceed input frame count: "
+            f"{prediction_skeleton.shape[0]} > {input_states.shape[0]}"
         )
 
     output_rrd_path = Path(output_rrd_path)

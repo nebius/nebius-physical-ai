@@ -1350,9 +1350,9 @@ function decodePngStats(base64Payload) {
 }
 
 Cypress.Commands.add("installAgentApiMocks", installAgentApiMocks);
-Cypress.Commands.add("visitMockAgent", () => {
+Cypress.Commands.add("visitMockAgent", (options = {}) => {
   installAgentApiMocks();
-  cy.visit("/");
+  cy.visit(options.enableLeIsaac ? "/ui-leisaac-enabled.html" : "/");
   cy.get("meta[name='npa-ui-version']").should("have.attr", "content").and("match", /^(\d+|dev)$/);
   cy.get("#statusBar").should("exist");
 });

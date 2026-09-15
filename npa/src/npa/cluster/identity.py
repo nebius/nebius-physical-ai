@@ -248,7 +248,10 @@ def resolve_verified_cluster_identity(
                     "project_id": str(getattr(environment, "project_id", "") or ""),
                     "context": requested_context,
                     "cluster_id": str(getattr(local_state, "cluster_id", "") or ""),
-                    "cluster_name": str(getattr(local_state, "name", "") or ""),
+                    "cluster_name": str(
+                        getattr(local_state, "provider_name", "")
+                        or getattr(local_state, "name", "") or ""
+                    ),
                     "kubeconfig_path": str(
                         getattr(local_state, "kubeconfig_path", "") or ""
                     ),

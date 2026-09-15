@@ -154,12 +154,12 @@ def test_s3_pass_and_fail_with_injected_client() -> None:
     assert "NoSuchBucket" in " ".join(bad.details)
 
 
-def test_registry_warns_on_unqualified_images() -> None:
-    # Default reference images are bare npa-* names, not registry-qualified.
+def test_registry_passes_for_public_default_images() -> None:
+    # Repository-owned defaults are fully qualified anonymous GHCR references.
     result = check_registry(
         _config(), probes=DoctorProbes(image_inspector=lambda i: True)
     )
-    assert result.status == health.WARN
+    assert result.status == health.PASS
 
 
 def test_registry_inspects_qualified_images() -> None:
@@ -273,7 +273,7 @@ def test_cluster_fails_without_pod_permission() -> None:
     assert result.status == health.FAIL
 
 
-def test_cluster_fails_when_controller_service_account_cannot_patch_jobs() -> None:
+def test_cluster_fails_when_selected_identity_cannot_patch_jobs() -> None:
     calls: list[list[str]] = []
 
     def runner(args):
@@ -289,33 +289,26 @@ def test_cluster_fails_when_controller_service_account_cannot_patch_jobs() -> No
     result = check_cluster(_config(), probes=DoctorProbes(kube_runner=runner))
     assert result.status == health.FAIL
     assert "cannot patch Jobs" in result.summary
-    assert any("--as=system:serviceaccount:default:agent-sa" in call for call in calls)
+    assert ["auth", "can-i", "patch", "jobs.batch", "-n", "default"] in calls
+    assert not any(arg.startswith("--as=") for call in calls for arg in call)
 
 
-def test_cluster_fails_when_controller_cannot_observe_kueue_workloads() -> None:
-    calls: list[list[str]] = []
-
+def test_cluster_checks_workflow_identity_without_legacy_account_impersonation() -> None:
     def runner(args):
-        calls.append(args)
+        if any(arg.startswith("--as=") for arg in args):
+            return KubeResult(1, "no", "legacy service account does not exist")
         if args[:2] == ["config", "current-context"]:
-            return KubeResult(0, "prod-cluster")
-        if args[:4] == ["auth", "can-i", "create", "pods"]:
+            return KubeResult(0, "fleet-context")
+        if args[:2] == ["auth", "can-i"]:
             return KubeResult(0, "yes")
-        if args[:4] == ["auth", "can-i", "patch", "jobs.batch"]:
-            return KubeResult(0, "yes")
-        if args[:4] == [
-            "auth",
-            "can-i",
-            "list",
-            "workloads.kueue.x-k8s.io",
-        ]:
-            return KubeResult(0, "no")
+        if args[:2] == ["get", "pvc"]:
+            return KubeResult(0, _bound_rwx_pvc())
+        if args[:2] == ["get", "nodes"]:
+            return KubeResult(0, _kube_nodes(8, nodes=2))
         return KubeResult(1, "", "unexpected")
 
     result = check_cluster(_config(), probes=DoctorProbes(kube_runner=runner))
-    assert result.status == health.FAIL
-    assert "cannot list Kueue Workloads" in result.summary
-    assert any("--as=system:serviceaccount:default:agent-sa" in call for call in calls)
+    assert result.status == health.PASS
 
 
 @pytest.mark.parametrize(

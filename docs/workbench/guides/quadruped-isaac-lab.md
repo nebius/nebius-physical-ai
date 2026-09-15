@@ -1,9 +1,10 @@
 # Train a Quadruped to Run in Isaac Lab
 
-**The hook:** drop a four-legged robot into NVIDIA **Isaac Lab**, run massively
-parallel reinforcement learning, and watch it learn to trot across flat and
-rough terrain. Isaac Lab ships dozens of ready-made tasks, so you get a real
-locomotion policy without writing an environment from scratch.
+[Guides](README.md)
+
+Train an ANYmal velocity policy with Isaac Lab on an RT-core GPU, then
+evaluate its checkpoint on held-out episodes. The evaluation report distinguishes
+successful execution from meeting the requested survival-rate threshold.
 
 ## Ingredients
 
@@ -115,7 +116,7 @@ goal distance, and otherwise uses survival.
 
 - Cookbook: [Isaac Lab BYOF](../cookbooks/byof-isaac-lab/README.md)
 - Workflows: `npa/src/npa/workflows/byof/profiles/isaac-lab-rl-train.yaml`,
-  `npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml` (submit with
+  `workflows/testing/isaac-lab-rl-sweep.yaml` (submit with
   `npa workbench workflow submit ... --runtime`); single-job runner
   `npa/scripts/run_isaac_lab_rl.py`
 - Skill: `skills/tools/isaac-lab/SKILL.md`

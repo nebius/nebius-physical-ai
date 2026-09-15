@@ -13,14 +13,14 @@ PY="${REPO}/npa/.venv/bin/python"
 NPA="${REPO}/npa/.venv/bin/npa"
 export NPA_INTEGRATION_E2E=1
 
-NPA_SPECS="${REPO}/npa/workflows/workbench/npa-workflows"
+NPA_SPECS="${REPO}/workflows"
 
 LOG="/tmp/npa-all-yaml-infra-$(date -u +%Y%m%dT%H%M%SZ).log"
 exec > >(tee -a "$LOG") 2>&1
 
 echo "=== ALL workflow YAML infra matrix log=${LOG} ==="
 echo "branch: $(git branch --show-current) @ $(git rev-parse --short HEAD)"
-echo "npa.workflow specs: $(find "${NPA_SPECS}" -maxdepth 1 -name '*.yaml' | wc -l)"
+echo "npa.workflow specs: $(find "${NPA_SPECS}/main" "${NPA_SPECS}/testing" -maxdepth 1 -name '*.yaml' | wc -l)"
 
 round=1
 while true; do
@@ -106,7 +106,7 @@ YAML
   fi
 
   echo "--- [1/7] npa.workflow validate (all golden specs) ---"
-  for spec in "${NPA_SPECS}"/*.yaml; do
+  for spec in "${NPA_SPECS}/main"/*.yaml "${NPA_SPECS}/testing"/*.yaml; do
     base=$(basename "$spec")
     echo "validate: ${base}"
     if ! "${NPA}" workbench workflow validate-spec "${spec}"; then
@@ -116,7 +116,7 @@ YAML
 
   echo "--- [2/7] npa.workflow plan + scheduler (all golden specs) ---"
   RUN_ID="tmux-all-r${round}-$(date -u +%H%M%S)"
-  for spec in "${NPA_SPECS}"/*.yaml; do
+  for spec in "${NPA_SPECS}/main"/*.yaml "${NPA_SPECS}/testing"/*.yaml; do
     base=$(basename "$spec")
     echo "plan: ${base}"
     extra=()

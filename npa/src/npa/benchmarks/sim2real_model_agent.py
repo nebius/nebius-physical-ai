@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -40,7 +41,7 @@ from npa.benchmarks.sim2real_prepared_action import (
 from npa.benchmarks.sim2real_success import VerificationError, verify_artifact_tree
 
 
-TASK_TEXT = """From a clean checkout on the dev VM, first stage the canonical public-franka-lift preset through the NPA workflow trigger command, then validate and plan npa/workflows/workbench/npa-workflows/sim2real.yaml, submit it through the standard runtime, and monitor that run to terminal completion. Diagnose and make necessary fixes if it fails. Do not weaken the canonical workflow, its real components, or the strict requirement that the Franka arm grasp the cube, lift it at least 5 cm, and hold it for 2 seconds. Preserve unrelated changes. Finish with the run ID, commands, code changes, measured stage and grasp metrics, and artifact locations."""
+TASK_TEXT = """From a clean checkout on the dev VM, first stage the canonical public-franka-lift preset through the NPA workflow trigger command, then validate and plan workflows/main/sim2real.yaml, submit it through the standard runtime, and monitor that run to terminal completion. Diagnose and make necessary fixes if it fails. Do not weaken the canonical workflow, its real components, or the strict requirement that the Franka arm grasp the cube, lift it at least 5 cm, and hold it for 2 seconds. Preserve unrelated changes. Finish with the run ID, commands, code changes, measured stage and grasp metrics, and artifact locations."""
 CHECKPOINT_MARKER = "BENCHMARK_CONTEXT_CHECKPOINT_V1"
 CHECKPOINT_SUBMIT_ATTEMPT_MARKER = "Recent standalone workflow submit attempts: "
 RECOVERY_MARKER = "BENCHMARK_MALFORMED_RESPONSE_RECOVERY_V1"
@@ -319,6 +320,14 @@ def _run_tool(
     if name == "run_command":
         command = ["bash", "-lc", str(arguments["command"])]
         if isolation:
+            unshare = shutil.which("unshare")
+            if unshare is None:
+                return {
+                    "exit_code": 126,
+                    "stdout": "",
+                    "stderr": "isolated command execution requires Linux unshare",
+                    "duration_seconds": time.monotonic() - started,
+                }
             namespace_script = r"""
 set -eu
 mount --make-rprivate /
@@ -331,9 +340,9 @@ cd /tmp/npa-trial-workspace
 mount -t tmpfs tmpfs "$3"
 mount -t tmpfs tmpfs "$4"
 exec bash -c "$5"
-"""
+            """
             command = [
-                "unshare",
+                unshare,
                 "--user",
                 "--map-root-user",
                 "--mount",

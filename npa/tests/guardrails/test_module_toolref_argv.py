@@ -40,6 +40,7 @@ PARSER_FACTORIES = {
     "npa.workflows.groot_learning": "build_parser",
     "npa.workflows.groot_task_performance": "build_parser",
     "npa.workflows.byof.openpi_pipeline": "build_parser",
+    "npa.workflows.byof.openpi_full_droid": "build_parser",
     "npa.workflows.byof.openpi_service": "build_parser",
     "npa.workflows.content_agents": "build_parser",
 }

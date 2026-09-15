@@ -12,7 +12,7 @@ from npa.orchestration.npa_workflow import build_plan, load_spec
 REPO_ROOT = Path(__file__).resolve().parents[4]
 SPEC_PATH = (
     REPO_ROOT
-    / "npa/workflows/workbench/npa-workflows/antioch-offline-policy-train.yaml"
+    / "workflows/testing/antioch-offline-policy-train.yaml"
 )
 
 

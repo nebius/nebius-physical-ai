@@ -1,5 +1,7 @@
 # Run lifecycle: identity, gates, and status
 
+[Docs](README.md)
+
 What `npa workbench workflow submit` verifies before it launches, how a run keeps
 its identity across interruptions, and how to read the status it reports back.
 
@@ -8,21 +10,30 @@ If you just want to launch something, start with
 [Physical AI Data Factory runbook](workbench/guides/physical-ai-data-factory-deploy.md).
 This page is the reference for what those paths are doing underneath.
 
-## Everything is verified before the run starts
+<a id="everything-is-verified-before-the-run-starts"></a>
 
-`submit` repeats its deterministic checks **before** input or source staging, so
-a missing image or an identity mismatch is caught locally rather than after the
-~1,225-file source tree has been uploaded and a cluster is waiting. It prints
-**everything** still missing in one list, each with the command that fixes it, so
-you are not discovering prerequisites one failed run at a time.
+## Checks before submission
 
-The read-only gates are meant to be run in this order:
+`submit` repeats prerequisite checks **before** input or source staging, so
+detected image and identity problems can be resolved before uploading the run's
+inputs and source. It reports
+detected prerequisites together with remediation commands. These checks do not
+prove that the workload will complete or produce usable artifacts.
+
+Run specification validation, planning, and image checks in this order.
+Validation and planning do not launch a workload. Image checks can create and
+delete a temporary Kubernetes probe pod when bootstrap evidence is absent:
 
 ```bash
-npa workbench workflow validate-spec    <spec.yaml>
-npa workbench workflow plan-spec        <spec.yaml> --run-id "$RUN_ID"
-npa workbench workflow preflight-images <spec.yaml> --registry "$REGISTRY"
+npa workbench workflow validate-spec "<spec.yaml>"
+npa workbench workflow plan-spec "<spec.yaml>" --run-id "<run-id>" --var bucket="<bucket>"
+npa workbench workflow preflight-images "<spec.yaml>" \
+  --project "<alias>" --infra "k8s/<cluster>" --var bucket="<bucket>"
 ```
+
+Use the same target and overrides throughout; public images need no `--registry`.
+The [workflow quick start](workbench/npa-workflow-guide.md#quick-start) shows the
+complete sequence.
 
 `preflight-images` reports each image as `ok` / `not_found` / `forbidden` and
 prints the exact build command for anything missing. `submit` runs the same
@@ -150,7 +161,7 @@ npa workbench workflow status "$RUN_ID" --project "$PROJECT" \
 `kubectl` in your own shell, export it (the command prints this line for you):
 
 ```bash
-export KUBECONFIG=~/.npa/clusters/<context>/kubeconfig
+export KUBECONFIG="$HOME/.npa/clusters/<context>/kubeconfig"
 ```
 
 ## Related

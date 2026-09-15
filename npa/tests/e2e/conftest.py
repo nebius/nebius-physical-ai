@@ -19,6 +19,14 @@ E2E_BUCKET_MAX_AGE_SECONDS = 60 * 60
 E2E_BUCKET_MAX_CONCURRENT = 3
 E2E_BUCKET_MAX_CREATIONS = int(os.environ.get("NPA_E2E_BUCKET_BUDGET", "8") or "8")
 E2E_BUCKET_COUNTER = Path("/tmp/npa-e2e-run-bucket-counter.txt")
+_HERMITIC_UNIT_BUCKET = "test-bucket-00000000"
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--require-token-factory-live", action="store_true", default=False,
+        help="Fail instead of skipping when the designated live provider job lacks its key.",
+    )
 
 # Live ops VMs commonly export AWS_* / S3_* while tool e2e suites gate on NPA_E2E_S3_*.
 _S3_ENV_FALLBACKS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -34,12 +42,23 @@ _S3_ENV_FALLBACKS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 def pytest_configure(config: pytest.Config) -> None:
     """Map standard AWS/S3 env vars onto NPA_E2E_S3_* so tool e2e suites run on real infra."""
-    del config
+    if config.getoption("--require-token-factory-live") and not os.environ.get(
+        "NEBIUS_TOKEN_FACTORY_KEY", ""
+    ).strip():
+        raise pytest.UsageError(
+            "Required live Token Factory mode needs NEBIUS_TOKEN_FACTORY_KEY; "
+            "a skipped or file-credential fallback run is not provider verification."
+        )
     for target, sources in _S3_ENV_FALLBACKS:
         if os.environ.get(target, "").strip():
             continue
         for source in sources:
             value = os.environ.get(source, "").strip()
+            if target == "NPA_E2E_S3_BUCKET" and value == _HERMITIC_UNIT_BUCKET:
+                # The root test conftest installs this sentinel before nested
+                # conftests load. It is not live storage and must not override
+                # the writable project bucket selected below.
+                continue
             if value:
                 os.environ[target] = value
                 break
@@ -79,7 +98,7 @@ def pytest_collection_modifyitems(
         )
     )
     for item in items:
-        if item.get_closest_marker("e2e_serverless"):
+        if item.get_closest_marker("e2e_serverless") and not item.get_closest_marker("public_inputs"):
             item.add_marker(serverless_skip)
 
 

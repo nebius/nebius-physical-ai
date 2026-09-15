@@ -319,8 +319,17 @@ PY
 }
 
 deep_verify() {
-  local venv="$1"
+  local venv="$1" kit_args
   log "launching Isaac Sim headless (deep verify; needs a GPU with RT cores)"
+  # This entrypoint bypasses isaac_python.sh. Apply the same privacy controls
+  # before the interpreter starts, including when caller arguments enable them.
+  kit_args="${NPA_ISAAC_KIT_ARGS:---portable-root /tmp/npa-isaac-kit}"
+  kit_args+=" --/telemetry/enableAnonymousData=false --/structuredLog/enable=false"
+  # Emptying the upload URL preserves local crash diagnostics.
+  kit_args+=" --/crashreporter/url= --/crashreporter/skipOldDumpUpload=true --/app/uploadDumpsOnStartup=false"
+  OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA=1 \
+  OMNI_CRASHREPORTER_URL="" OMNI_CRASHREPORTER_SKIPOLDDUMPUPLOAD=1 \
+  NPA_ISAAC_KIT_ARGS="$kit_args" \
   "$venv/bin/python" - >&2 <<'PY'
 import os
 
@@ -384,6 +393,8 @@ ensure() {
   # Serialise installers. Up to 8 pods per GPU node race the same cache, so this is a
   # real contention path, not a theoretical one. flock is fd-based: a killed pod
   # releases automatically, so there is no stale-lock recovery to get wrong.
+  command -v flock >/dev/null 2>&1 \
+    || die "$EX_SOFTWARE" "flock is required to install an Isaac cache; use an image with util-linux or pre-warm the cache"
   exec 9>"${CACHE_DIR}/.lock" || die "$EX_CONFIG" "cannot open ${CACHE_DIR}/.lock"
   if ! flock -w 5 9; then
     log "another process is installing Isaac into ${CACHE_DIR}; waiting (up to ${LOCK_TIMEOUT}s)"

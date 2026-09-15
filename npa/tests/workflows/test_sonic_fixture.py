@@ -67,8 +67,11 @@ def test_build_and_publish_writes_a_loadable_policy_checkpoint(tmp_path: Path) -
     assert result["checkpoint_uri"] == "s3://bucket/prefix/checkpoint.pt"
     assert client.uploads
 
-    payload = torch.load(result["checkpoint_path"], map_location="cpu", weights_only=False)
-    policy = payload["policy"]
+    from npa.workbench.sonic import _load_policy_from_checkpoint
+
+    payload = torch.load(result["checkpoint_path"], map_location="cpu", weights_only=True)
+    assert isinstance(payload["actor_model_state_dict"], dict)
+    policy = _load_policy_from_checkpoint(result["checkpoint_path"], torch, {})
     assert isinstance(policy, torch.nn.Module)
     # The same shape contract `npa workbench sonic export` will trace.
     action = policy(torch.zeros(1, 6))
@@ -76,7 +79,7 @@ def test_build_and_publish_writes_a_loadable_policy_checkpoint(tmp_path: Path) -
     # The exporter needs these to resolve dims without an --obs-spec, and they must
     # survive the save/load round trip (live regression: SkyPilot job 188 failed with
     # "observation dimension is required" because the first fixture had neither).
-    assert policy.obs_dim == 6
+    assert policy.observation_dim == 6
     assert policy.action_dim == 3
 
 
@@ -87,10 +90,10 @@ def test_build_and_publish_is_deterministic(tmp_path: Path) -> None:
     second = build_and_publish(workdir=tmp_path / "b", obs_dim=4, act_dim=2, hidden=4)
 
     def _weights(path: str) -> list[float]:
-        payload = torch.load(path, map_location="cpu", weights_only=False)
+        payload = torch.load(path, map_location="cpu", weights_only=True)
         return [
             round(float(value), 6)
-            for tensor in payload["policy"].state_dict().values()
+            for tensor in payload["actor_model_state_dict"].values()
             for value in tensor.flatten().tolist()
         ]
 

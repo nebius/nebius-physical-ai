@@ -1,0 +1,22 @@
+# Guarded native Tune example; SkyPilot owns one reusable CPU service task.
+name: tune-synthetic
+resources:
+  cloud: kubernetes
+  cpus: 6
+  memory: 12+
+  image_id: docker:docker.io/rayproject/ray@sha256:c3c9573c5c6bfe4127885f79622d6a32064d34cafc7d156ec728aab8657be250
+num_nodes: 1
+config:
+  kubernetes:
+    networking: portforward
+    pod_config:
+      spec:
+        serviceAccountName: default
+        automountServiceAccountToken: false
+file_mounts:
+  /opt/npa-ray-tune-bootstrap: ./cluster
+setup: |
+  set -euo pipefail
+  python3 /opt/npa-ray-tune-bootstrap/prepare.py
+run: |
+  bash /opt/npa-ray-tune-bootstrap/start.sh

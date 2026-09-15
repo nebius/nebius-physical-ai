@@ -20,7 +20,7 @@ from npa.workflows.byof.openpi_live import LIVE_MANAGED_BY, _certificate
 
 from .live import _relay_certificate
 
-CONFIG_SCHEMA = "npa.antioch.mk8s-live-config.v1"
+CONFIG_SCHEMA = "npa.antioch.mk8s-live-config.v2"
 ANTIOCH_TLS_EGRESS_PORTS = (22, 443, 8443)
 UNRESTRICTED_VENDOR_EGRESS_CIDR = "0.0.0.0/0"
 MANAGED_BY = "npa-antioch-mk8s-live"
@@ -56,6 +56,9 @@ class ClusterLiveConfig(BaseModel):
     policy_cache_pvc_name: str
     public_rollback_service_name: str = ""
     image_pull_secret: str = ""
+    antioch_deployment_profile: str = Field(
+        min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    )
     antioch_config_dir: str
     antioch_project_id_file: str
     adapter_replicas: int = Field(default=1, ge=0, le=1)
@@ -243,6 +246,10 @@ def build_public_manifests(config: ClusterLiveConfig) -> dict[str, dict[str, Any
         ],
         "env": [
             {"name": "ANTIOCH_CONFIG_DIR", "value": f"{private_root}/antioch-config"},
+            {
+                "name": "ANTIOCH_ENV",
+                "value": config.antioch_deployment_profile,
+            },
             {
                 "name": "NPA_ANTIOCH_RUNTIME_CACHE",
                 "value": "/workspace/.cache/npa/antioch",

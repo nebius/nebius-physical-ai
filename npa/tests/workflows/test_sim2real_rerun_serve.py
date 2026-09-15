@@ -238,9 +238,9 @@ def test_manifest_contains_init_sync_and_rerun_serve(mocker) -> None:
     assert "S3_URI" in secret["data"]
 
     service = next(item for item in manifest["items"] if item["kind"] == "Service")
-    assert service["spec"]["type"] == "LoadBalancer"
+    assert service["spec"]["type"] == "ClusterIP"
     assert service["spec"]["ports"][0]["port"] == DEFAULT_PORT
-    assert service["spec"]["ports"][1]["port"] == DEFAULT_GRPC_PORT
+    assert len(service["spec"]["ports"]) == 1
 
 
 def test_manifest_omits_cors_flag_for_preinstalled_rerun_031_image(mocker) -> None:
@@ -268,19 +268,21 @@ def test_manifest_omits_cors_flag_for_preinstalled_rerun_031_image(mocker) -> No
     assert "pip install" not in rerun_container["command"][-1]
 
 
-def test_public_viewer_url_points_at_external_grpc_proxy() -> None:
+def test_public_viewer_url_points_at_authenticated_recording() -> None:
     url = public_viewer_url("203.0.113.10", http_port=9090, grpc_port=9876)
     assert url.startswith("http://203.0.113.10:9090/?url=")
     assert "203.0.113.10" in url
-    assert "9876" in url
+    assert "9876" not in url
+    assert "recording.rrd" in url
 
 
-def test_local_viewer_url_uses_loopback_grpc_origin() -> None:
+def test_local_viewer_url_uses_loopback_http_recording() -> None:
     url = local_viewer_url(http_port=9090, grpc_port=9876)
     assert url == public_viewer_url("127.0.0.1", http_port=9090, grpc_port=9876)
     assert "127.0.0.1" in url
-    assert "9876" in url
-    assert "rerun%2Bhttp" in url or "rerun+http" in url
+    assert "9876" not in url
+    assert "recording.rrd" in url
+    assert "http%3A%2F%2F127.0.0.1%3A9090%2Frecording.rrd" in url
 
 
 def test_manifest_uses_direct_rerun_for_prebuilt_image(mocker) -> None:
@@ -431,15 +433,13 @@ def test_apply_rerun_serve_uses_kubectl_runner(mocker) -> None:
         f"deployment/{config.deployment_name}",
     ]
     assert result.status == "deployed"
-    assert result.public_url == public_viewer_url(
-        "203.0.113.10", http_port=DEFAULT_PORT, grpc_port=DEFAULT_GRPC_PORT
-    )
+    assert result.public_url == ""
     assert result.local_url == local_viewer_url(
         http_port=DEFAULT_PORT, grpc_port=DEFAULT_GRPC_PORT
     )
     assert "port-forward" in result.port_forward_command
     assert f"{DEFAULT_PORT}:{DEFAULT_PORT}" in result.port_forward_command
-    assert f"{DEFAULT_GRPC_PORT}:{DEFAULT_GRPC_PORT}" in result.port_forward_command
+    assert f"{DEFAULT_GRPC_PORT}:{DEFAULT_GRPC_PORT}" not in result.port_forward_command
 
 
 def test_destroy_rerun_serve_deletes_resources(mocker) -> None:
@@ -473,6 +473,7 @@ def test_destroy_rerun_serve_deletes_resources(mocker) -> None:
     assert deleted[2][2] == config.nginx_configmap_name
     assert deleted[3][:2] == ["delete", "secret"]
     assert deleted[3][2] == config.secret_name
+    assert deleted[4][:3] == ["delete", "secret", config.auth_secret_name]
     assert any("Deleting service/" in message for message in messages)
     assert any("Deleted shared cluster Rerun viewer" in message for message in messages)
 

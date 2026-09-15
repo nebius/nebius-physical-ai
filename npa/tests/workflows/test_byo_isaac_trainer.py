@@ -108,6 +108,50 @@ def test_resume_convergence_noise_supports_log_std_and_fails_closed() -> None:
         configure_convergence_action_noise(LogPolicy(), target_std=float("nan"))
 
 
+def test_resume_convergence_noise_supports_rsl_rl_5_distribution() -> None:
+    # rsl-rl >= 5.0: the actor MLPModel carries a Distribution module with
+    # std_type plus std_param/log_std_param instead of policy-level attributes.
+    class GaussianDistribution:
+        std_type = "scalar"
+        std_param = _FakeNoiseParameter([0.41] * 8)
+
+    class Actor:
+        distribution = GaussianDistribution()
+
+    audit = configure_convergence_action_noise(Actor(), target_std=0.05)
+    assert audit == {
+        "noise_std_type": "scalar",
+        "target_std": 0.05,
+        "parameter_count": 8,
+        "frozen": True,
+    }
+    assert GaussianDistribution.std_param.values == pytest.approx([0.05] * 8)
+    assert GaussianDistribution.std_param.requires_grad is False
+
+    class LogGaussianDistribution:
+        std_type = "log"
+        log_std_param = _FakeNoiseParameter([0.0, 0.0, 0.0])
+
+    class LogActor:
+        distribution = LogGaussianDistribution()
+
+    log_audit = configure_convergence_action_noise(LogActor(), target_std=0.1)
+    assert log_audit["parameter_count"] == 3
+    assert LogGaussianDistribution.log_std_param.values == pytest.approx(
+        [-2.302585093] * 3
+    )
+
+    class HeteroscedasticGaussianDistribution:
+        std_type = "scalar"
+        std_param = _FakeNoiseParameter([0.41])
+
+    class StateDependentActor:
+        distribution = HeteroscedasticGaussianDistribution()
+
+    with pytest.raises(RuntimeError, match="state-dependent"):
+        configure_convergence_action_noise(StateDependentActor(), target_std=0.05)
+
+
 def test_read_signal_stats(tmp_path):
     stats = byo.read_signal_stats(str(_write_signal(tmp_path)))
     assert stats["step_count"] == 3

@@ -85,6 +85,51 @@ def test_paidf_access_is_scoped_to_the_gated_transfer_model() -> None:
     assert all(asset.gated for asset in assets)
 
 
+def test_sim2real_access_includes_cosmos_transfer_runtime_dependencies() -> None:
+    assets = {asset.repo: asset for asset in assets_for(["sim2real"])}
+
+    guardrail = assets["nvidia/Cosmos-Guardrail1"]
+    assert guardrail.revision == "d6d4bfa899a71454a700907664f3e88f503950cf"
+    assert guardrail.probe_path == "video_content_safety_filter/safety_filter.pt"
+
+    tokenizer = assets["nvidia/Cosmos-Predict2.5-2B"]
+    assert tokenizer.revision == "85f8ae7bfe8f5525c8d103429524dcf12f98bf7b"
+    assert tokenizer.probe_path == "tokenizer.pth"
+
+    assert guardrail.gated and tokenizer.gated
+
+
+@pytest.mark.parametrize(
+    "denied_repo", ["nvidia/Cosmos-Guardrail1", "nvidia/Cosmos-Predict2.5-2B"]
+)
+def test_cosmos2_access_checks_auxiliary_runtime_dependencies(denied_repo: str) -> None:
+    observed = {}
+
+    def validate(_token, repo, _repo_type, revision, probe_path):
+        observed[repo] = (revision, probe_path)
+        return _HFResult(
+            ok=repo != denied_repo, status_code=403 if repo == denied_repo else 200
+        )
+
+    results = check_workbench_access(
+        hf_token="synthetic-token",
+        ngc_key="",
+        hf_validator=validate,
+        capabilities=["cosmos2"],
+        gated_only=True,
+    )
+
+    assert observed["nvidia/Cosmos-Guardrail1"] == (
+        "d6d4bfa899a71454a700907664f3e88f503950cf",
+        "video_content_safety_filter/safety_filter.pt",
+    )
+    assert observed["nvidia/Cosmos-Predict2.5-2B"] == (
+        "85f8ae7bfe8f5525c8d103429524dcf12f98bf7b",
+        "tokenizer.pth",
+    )
+    assert {result.name for result in results if result.status == FAIL} == {denied_repo}
+
+
 def test_hf_gated_warns_without_token() -> None:
     result = check_hf_asset(_gated_asset(), "", hf_validator=None)
     assert result.status == WARN
@@ -226,7 +271,16 @@ def test_ngc_definitive_auth_rejection_fails(outcome: str) -> None:
     assert "health access" in result.remedy
 
 
-@pytest.mark.parametrize("outcome", ["entitlement-required", "tags-401", "tags-403"])
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "entitlement-required",
+        "manifest-401",
+        "manifest-403",
+        "tags-401",
+        "tags-403",
+    ],
+)
 def test_ngc_definitive_entitlement_rejection_fails(outcome: str) -> None:
     result = check_ngc_key(
         "nvapi-synthetic",

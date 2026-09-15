@@ -12,8 +12,9 @@ LOG="${NPA_SIM2REAL_LOG:-${HOME}/sim2real-${RUN_ID}.log}"
 KUBECONFIG="${KUBECONFIG:-${HOME}/.npa/clusters/npa-rtxpro-mk8s/kubeconfig}"
 
 export KUBECONFIG
-# Full registry hostname so sibling Jobs pull real workbench images (not local reference).
-export NPA_REGISTRY="${NPA_REGISTRY:-ghcr.io/nebius/nebius-physical-ai}"
+# A custom Sim2Real image namespace is deliberate; otherwise the runtime uses
+# the supported anonymous GHCR releases.
+export NPA_SIM2REAL_REGISTRY="${NPA_SIM2REAL_REGISTRY:-ghcr.io/nebius/nebius-physical-ai}"
 
 eval "$("${ROOT}/npa/.venv/bin/python" <<'PY'
 from npa.clients.credentials import load_credentials, storage_endpoint_url
@@ -47,7 +48,7 @@ fi
   echo "started: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "output:  ${OUTPUT_DIR}"
   echo "kube:    ${KUBECONFIG}"
-  echo "registry: ${NPA_REGISTRY}"
+  echo "registry: ${NPA_SIM2REAL_REGISTRY}"
   echo
 
   "${ROOT}/npa/.venv/bin/python" -m npa.workflows.sim2real run \

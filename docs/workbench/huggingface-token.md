@@ -1,5 +1,7 @@
 # Set up a Hugging Face token
 
+[Workbench docs](README.md)
+
 Many workbench models and datasets are hosted on [Hugging Face](https://huggingface.co).
 A Hugging Face access token lets `npa` download private or **gated** assets and
 raises rate limits. Public assets work anonymously. Tokens inherit the owning

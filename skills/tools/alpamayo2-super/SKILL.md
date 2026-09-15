@@ -55,9 +55,9 @@ separately because B200 `sm_100` does not prove RTX `sm_120`.
 
 ```bash
 npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/alpamayo2-super-inference.yaml
+  workflows/testing/alpamayo2-super-inference.yaml
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/alpamayo2-super-inference.yaml \
+  workflows/testing/alpamayo2-super-inference.yaml \
   --infra <configured-infra-target> --var bucket=<operator-bucket> \
   --secret-env HF_TOKEN --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY
@@ -69,6 +69,15 @@ The run must publish non-empty `trajectory.json`, `trajectory.png`, and
 tier. Treat success without all three artifacts as failure.
 
 ## Diagnose
+
+For HTTP serving, configure `NPA_ALPAMAYO2_SUPER_TOKEN` as a deployment secret
+and `NPA_ALPAMAYO2_SUPER_OUTPUT_ROOT` as an operator-owned local `0700`
+directory or authorized S3 prefix. All operational routes require bearer
+authentication; keep transport private or terminate HTTPS. HTTP clients can
+select samples and inference controls, but cannot change the pinned model,
+dataset revision, or startup snapshot of `NPA_ALPAMAYO2_SUPER_MANIFEST`.
+Their `output_path` is a result label, and the server creates a fresh prefix
+under its configured root. Trusted CLI/SDK customization remains available.
 
 - 401/403 before GPU allocation: accept the dataset agreement with the same HF
   account or replace the rejected token; do not add an NPA bypass boolean.
@@ -100,11 +109,30 @@ B200 result.
 
 ## Verify changes
 
+For Ray scenario/seed/diffusion experiments, use
+`workflows/testing/alpamayo2-ray-sweep.yaml` and
+`workflows/testing/alpamayo2-ray-hardcases.yaml`, derived from the inference
+template. Submit current changes with `--stage-src`: the accepted release image
+does not yet contain `npa workbench alpamayo2-super sweep`. The catalog installs
+Ray 2.58.0 in the NPA interpreter. GPU actors reuse downloaded snapshots while
+upstream subprocesses reload weights per case; do not claim resident-model reuse.
+CPU reductions report measured errors and seed variability. Refinement inherits
+baseline seeds, verifies source manifest and revision identity, and supports an
+empty selection without fabricating inference. Keep public handoffs on S3.
+See `docs/workbench/alpamayo2-super.md#ray-experiments` for controls and outputs.
+
+Inference now snapshots and validates its manifest before fetching the model,
+verifies sidecar sample/seed/projection identity, and fully decodes the PNG before
+publication. The upstream sidecar contains metadata and metrics, not full XYZ
+coordinates; do not describe it as a coordinate recording.
+
 ```bash
 npa/.venv/bin/python ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
   skills/tools/alpamayo2-super
 npa/.venv/bin/python -m pytest \
   npa/tests/workbench/test_alpamayo2_super.py \
+  npa/tests/workbench/test_alpamayo_ray_sweep.py \
+  npa/tests/workbench/test_alpamayo2_super_service_security.py \
   npa/tests/guardrails/test_skills_index.py \
   npa/tests/orchestration/npa_workflow/test_catalog_doc_sync.py -q
 ```

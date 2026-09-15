@@ -32,7 +32,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from npa.clients.storage import StorageClient
+from npa.clients.storage import StorageClient, safe_s3_download_target
 from npa.workflows.sim2real.camera_views import camera_metadata, camera_views_json
 from npa.workflows.sim2real.capture import capture_settings
 from npa.workflows.sim2real.isaac_job_payload import (
@@ -514,6 +514,8 @@ try:
         from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper  # older layout
     from rsl_rl.runners import OnPolicyRunner
     env_cfg = parse_env_cfg(TASK, device="cuda:0", num_envs=N)
+    from npa.workflows.sim2real.isaac_assets_compat import remap_moved_franka_usd
+    print("EVAL_ROBOT_USD_EFFECTIVE", remap_moved_franka_usd(env_cfg), flush=True)
     # CUSTOM asset: override the manipuland USD so eval scores the policy on the
     # same custom object it trained on (physically simulated, not the stock cube).
     OBJECT_USD = os.environ.get("EVAL_OBJECT_USD", "").strip()
@@ -534,8 +536,10 @@ try:
     print("EVAL_SEED_APPLIED", SEED, flush=True)
     # Capture synchronized primary, side, and overhead views. Isaac Lab's
     # ``world`` camera convention looks along +X; the orchestrator serializes
-    # validated wxyz poses into CAMERA_VIEWS. ``heldout_cam`` remains the primary
-    # sensor key for backward compatibility with existing real-run tooling.
+    # validated wxyz poses into CAMERA_VIEWS. Convert only at the sensor boundary
+    # because Lab 3 consumes xyzw while Lab 2 consumes wxyz. ``heldout_cam`` remains
+    # the primary sensor key for compatibility with existing real-run tooling.
+    from npa.workflows.sim2real.camera_views import camera_rotation_for_isaac_lab
     def _camera_key(name):
         return "heldout_cam" if name == "primary" else "heldout_cam_" + name
     for view in CAMERA_VIEWS:
@@ -546,7 +550,7 @@ try:
                 prim_path="{ENV_REGEX_NS}/heldout_cam_" + view["name"],
                 offset=TiledCameraCfg.OffsetCfg(
                     pos=tuple(view["position"]),
-                    rot=tuple(view["rotation"]),
+                    rot=camera_rotation_for_isaac_lab(view["rotation"]),
                     convention="world",
                 ),
                 data_types=["rgb", "distance_to_image_plane"],
@@ -582,6 +586,8 @@ try:
             print("cfg loader", loader, "failed:", repr(e), flush=True)
     if agent_cfg is None:
         raise RuntimeError("could not load rsl_rl_cfg_entry_point for task")
+    from npa.workflows.sim2real.isaac_assets_compat import migrate_rsl_rl_agent_cfg
+    agent_cfg = migrate_rsl_rl_agent_cfg(agent_cfg)
     acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
     print("AGENT_CFG_KEYS", sorted(acfg.keys()), flush=True)
     # The ACTUAL env count is the single source of truth for per-env sizing.
@@ -716,6 +722,18 @@ try:
                 )
                 xyz = pts.detach().cpu().numpy().reshape(-1, 3).astype(np.float32)
                 col = cols.detach().cpu().numpy().reshape(-1, 3)
+                # Some rendered views legitimately contain no finite depth samples
+                # for a frame.  Treat that as an absent cloud before inspecting the
+                # color range: NumPy's max() is undefined for an empty array.  This
+                # keeps the other synchronized views usable without reporting a
+                # misleading capture exception.
+                if xyz.shape[0] != col.shape[0]:
+                    raise ValueError(
+                        f"point-cloud/color row mismatch for {name}: "
+                        f"{xyz.shape[0]} != {col.shape[0]}"
+                    )
+                if xyz.shape[0] == 0:
+                    continue
                 if col.dtype != np.uint8:
                     col = (np.clip(col, 0.0, 1.0) * 255).astype(np.uint8) if col.max() <= 1.0 else col.astype(np.uint8)
                 good = np.isfinite(xyz).all(axis=1)
@@ -770,7 +788,7 @@ try:
                         "view_name": view_name,
                         "frame_index": index,
                         "sim_step": int(step),
-                        "timestamp_seconds": round(float(step) / CAPTURE_FPS, 6),
+                        **simulation_clock.sample(),
                         "episode_id": _env_id(i),
                         "isaac_env_index": i,
                         "width": CAPTURE_WIDTH,
@@ -795,6 +813,8 @@ try:
     termination = np.array(["max_steps"] * N, dtype=object)
     completed = np.zeros(N, dtype=bool)
     initial_obj_z = None
+    from npa.workflows.sim2real.isaac_simulation_clock import SimulationClock
+    simulation_clock = SimulationClock(env.unwrapped.step_dt)
     for _step in range(STEPS):
         # Isaac auto-resets done environments inside env.step(). Preserve the
         # last sample from the evaluated episode so the returned reset state can
@@ -820,24 +840,21 @@ try:
         if hasattr(actions, "ndim") and actions.ndim == 1:
             actions = actions.reshape(N, -1)
         obs, _, dones, extras = env.step(actions)
+        simulation_clock.advance()
         try:
             done_np = dones.detach().cpu().numpy().astype(bool)
-        except Exception:
-            done_np = np.zeros(N, dtype=bool)
-        from npa.workflows.sim2real.byo_isaac_eval import first_episode_masks
+        except Exception as exc:
+            raise RuntimeError(
+                f"Isaac evaluation could not read episode termination at step {_step}"
+            ) from exc
+        from npa.workflows.sim2real.byo_isaac_eval import (
+            first_episode_masks,
+            manipulator_contact_signal,
+        )
         active, newly_terminal, completed = first_episode_masks(completed, done_np)
         if _step % CAPTURE_STRIDE == 0:
             capture(_step, active & ~newly_terminal)
-        # object-to-goal distance: prefer an explicit metric, else infer.
-        d = None
-        log = (extras or {}).get("log") or {}
-        for k, v in log.items():
-            if "object" in k.lower() and ("dist" in k.lower() or "error" in k.lower()):
-                try:
-                    d = float(v);
-                except Exception:
-                    d = None
-                break
+        # Strict success requires per-environment state, never an aggregate log.
         try:
             uenv = env.unwrapped
             if hasattr(uenv, "command_manager"):
@@ -871,12 +888,9 @@ try:
                     stable_grasp_steps,
                 )
                 grasp |= active & (stable_grasp_steps >= 3)
-                try:
-                    obj_speed = torch.linalg.norm(
-                        uenv.scene["object"].data.root_lin_vel_w[:, :3], dim=1
-                    ).detach().cpu().numpy()
-                except Exception:
-                    obj_speed = np.full(N, 1.0)
+                obj_speed = torch.linalg.norm(
+                    uenv.scene["object"].data.root_lin_vel_w[:, :3], dim=1
+                ).detach().cpu().numpy()
                 in_strict_basin = per < 0.05
                 min_speed_in_strict_basin = np.where(
                     active & in_strict_basin,
@@ -924,14 +938,11 @@ try:
                     ]
                     termination[newly_terminal] = "task_or_timeout"
                 continue
-        except Exception:
-            pass
-        if d is not None:
-            min_dist = np.where(
-                active,
-                np.minimum(min_dist, np.full(N, d)),
-                min_dist,
-            )
+            raise RuntimeError("Isaac evaluation requires object-pose commands")
+        except Exception as exc:
+            raise RuntimeError(
+                f"Isaac per-environment metric capture failed at step {_step}"
+            ) from exc
     capture(STEPS, ~completed)  # final frame only for a still-live first episode
     episodes = [
         {
@@ -1503,7 +1514,8 @@ def run_isaac_eval_job(
                 for view_names in (ep.get("camera_views") or {}).values():
                     names.extend(view_names or [])
                 for name in dict.fromkeys(names):
-                    dst = Path(_RENDERS_LOCAL_DIR) / eid / name
+                    episode_dir = safe_s3_download_target(_RENDERS_LOCAL_DIR, eid, "")
+                    dst = safe_s3_download_target(episode_dir, name, "")
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     s3.download_file(u.netloc, f"{base}/{eid}/{name}", str(dst))
             pointcloud_count = 0
@@ -1516,8 +1528,7 @@ def run_isaac_eval_job(
                         pointcloud_prefix
                     ):
                         continue
-                    relative = key[len(base) + 1 :]
-                    dst = Path(_RENDERS_LOCAL_DIR) / relative
+                    dst = safe_s3_download_target(_RENDERS_LOCAL_DIR, key, base + "/")
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     s3.download_file(u.netloc, key, str(dst))
                     pointcloud_count += 1

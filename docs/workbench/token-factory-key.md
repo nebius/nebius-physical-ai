@@ -1,5 +1,7 @@
 # Set up a Nebius Token Factory key
 
+[Workbench docs](README.md)
+
 [Nebius Token Factory](https://tokenfactory.nebius.com/) is an OpenAI-compatible
 hosted-inference API for open text and vision models. It is the cheapest way to
 get a real result on Nebius — **zero GPU, no cluster** — so it's a great way to

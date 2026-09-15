@@ -183,11 +183,15 @@ try:
         from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper  # older layout
     from rsl_rl.runners import OnPolicyRunner
     env_cfg = parse_env_cfg(task, device="cuda:0", num_envs=NUM_ENVS)
+    from npa.workflows.sim2real.isaac_assets_compat import remap_moved_franka_usd
+    print("PHYS_ROBOT_USD_EFFECTIVE", remap_moved_franka_usd(env_cfg), flush=True)
     # Zero is a real reproducibility seed, not an unset sentinel.
     env_cfg.seed = SEED
     torch.manual_seed(SEED)
     print("PHYS_SEED_APPLIED", SEED, flush=True)
     agent_cfg = load_cfg_from_registry(task, "rsl_rl_cfg_entry_point")
+    from npa.workflows.sim2real.isaac_assets_compat import migrate_rsl_rl_agent_cfg
+    agent_cfg = migrate_rsl_rl_agent_cfg(agent_cfg)
     acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
     acfg["max_iterations"] = ITERS
     acfg["num_steps_per_env"] = STEPS_PER_ENV

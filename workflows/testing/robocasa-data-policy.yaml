@@ -1,0 +1,150 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: robocasa-data-policy
+  description: >
+    RoboCasa kitchen simulation -> LeRobotDataset -> LeRobot policy training ->
+    held-out evaluation -> insights lineage. Real catalog toolRefs and real
+    components throughout: the RoboCasa service exports real trajectories, the
+    npa adapter materializes them into LeRobotDataset v3, LeRobot trains a real
+    ACT policy on reserved GPU capacity, the produced checkpoint is evaluated
+    with quantitative metrics and video evidence, and insights records lineage.
+
+config:
+  bucket: example-bucket
+  prefix: "robocasa-data-policy/{{run.id}}"
+
+  robocasa_endpoint: http://npa-robocasa.workbench.svc.cluster.local:8791
+  train_env_ids: >-
+    robocasa/PickPlaceCounterToCabinet,robocasa/PickPlaceCabinetToCounter,robocasa/PickPlaceCounterToSink
+  heldout_env_ids: >-
+    robocasa/PickPlaceSinkToCounter,robocasa/PickPlaceCounterToMicrowave
+  env_id: "{{config.train_env_ids}}"
+  iterations: "100"
+  num_envs: "12"
+  poll_seconds: "30"
+  timeout_seconds: "7200"
+
+  dataset_fps: "20"
+  dataset_robot: panda_omron
+  dataset_task: "RoboCasa task (resolved per episode from export metadata)"
+
+  lerobot_dataset: "s3://{{config.bucket}}/{{config.prefix}}/dataset/"
+  lerobot_output_dir: /tmp/lerobot_output
+  train_steps: "200"
+  policy_type: act
+  train_batch_size: "8"
+  policy_device: cuda
+
+  policy_checkpoint: "s3://{{config.bucket}}/{{config.prefix}}/artifacts/"
+  rollout_output_dir: /tmp/lerobot_rollout
+  eval_iterations: "100"
+  rollout_episodes: "6"
+
+  output_uri: "s3://{{config.bucket}}/{{config.prefix}}/trajectories/"
+  trajectory_uri: "s3://{{config.bucket}}/{{config.prefix}}/trajectories/"
+  dataset_uri: "s3://{{config.bucket}}/{{config.prefix}}/dataset/"
+  artifacts_uri: "s3://{{config.bucket}}/{{config.prefix}}/artifacts/"
+  rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/"
+  run_prefix_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  workflow_name: robocasa-data-policy
+  insights_store_uri: "s3://{{config.bucket}}/{{config.prefix}}/insights/"
+  insights_uri: "s3://{{config.bucket}}/{{config.prefix}}/insights/"
+
+resources:
+  sim-gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 8
+    memory: 32Gi
+  convert-cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+    image: tool://lerobot
+  insights-cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+    image: tool://lancedb
+  train-gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 16
+    memory: 64Gi
+
+initial: trajectory-export
+
+states:
+  trajectory-export:
+    description: Run a batch of RoboCasa kitchen rollouts and export trajectories.
+    toolRef: workbench.robocasa.trajectory_export
+    resources: sim-gpu
+    outputs:
+      - uri: "{{config.trajectory_uri}}"
+        schema: npa.robocasa.trajectory_export.v1
+    next: lerobot-convert
+
+  lerobot-convert:
+    description: Materialize RoboCasa trajectories into LeRobotDataset v3.
+    resources: convert-cpu
+    needs: [trajectory-export]
+    run:
+      argv:
+        - npa
+        - adapter
+        - convert
+        - --input-path
+        - "{{config.trajectory_uri}}"
+        - --output-path
+        - "{{config.dataset_uri}}"
+        - --fps
+        - "{{config.dataset_fps}}"
+        - --robot
+        - "{{config.dataset_robot}}"
+        - --task
+        - "{{config.dataset_task}}"
+        - --task-from-metadata
+    inputs:
+      - uri: "{{config.trajectory_uri}}"
+        schema: npa.robocasa.trajectory_export.v1
+    outputs:
+      - uri: "{{config.dataset_uri}}"
+        schema: npa.lerobot.dataset.v3
+    next: policy-train
+
+  policy-train:
+    description: Train a real LeRobot ACT policy on the generated dataset.
+    toolRef: workbench.lerobot.policy_train
+    resources: train-gpu
+    needs: [lerobot-convert]
+    outputs:
+      - uri: "{{config.artifacts_uri}}"
+        schema: npa.lerobot.training_run.v1
+    next: policy-eval
+
+  policy-eval:
+    description: Evaluate the exact produced checkpoint on disjoint held-out RoboCasa tasks.
+    toolRef: workbench.robocasa.policy_eval
+    resources: sim-gpu
+    needs: [policy-train]
+    inputs:
+      - uri: "{{config.artifacts_uri}}"
+        schema: npa.lerobot.training_run.v1
+    outputs:
+      - uri: "{{config.rollouts_uri}}"
+        schema: npa.robocasa.policy_eval.v1
+    next: insights
+
+  insights:
+    description: Record lineage and metrics into the insights store.
+    toolRef: workbench.insights.ingest_run
+    resources: insights-cpu
+    needs: [policy-eval]
+    inputs:
+      - uri: "{{config.prefix}}"
+    outputs:
+      - uri: "{{config.insights_uri}}"
+        schema: npa.insights.store.v1
+    terminal: true

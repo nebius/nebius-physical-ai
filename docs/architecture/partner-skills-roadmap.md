@@ -27,7 +27,7 @@ Until a partner capability has that footing, it stays here as a blueprint.
 ## Architecture Constraints (must hold for every onboarded skill)
 
 - **SkyPilot is the sole runtime orchestrator.** Every multi-stage job is authored as an
-  `npa.workflow/v0.0.1` spec under `npa/workflows/workbench/npa-workflows/` and submitted via
+  `npa.workflow/v0.0.1` spec under `workflows/` and submitted via
   `npa workbench workflow submit`, which renders to SkyPilot. Do not add a second orchestrator
   or a raw-template workflow catalog.
 - **Nebius substrate.** Managed Kubernetes (`npa-workbench-eu-north1`,
@@ -78,7 +78,7 @@ plumbing.
 | Skill | Capability | Upstream | License | Lands when |
 | --- | --- | --- | --- | --- |
 | `defect-image-generation` | AOI defect SDG (usd2roi, image-edit, AnomalyGen; PCBA/metal/glass; Day 0/Day 1) | `physical-ai-defect-image-generation` | CC-BY-4.0 AND Apache-2.0 | A validated SkyPilot defect-SDG pipeline + image-edit model serving on Nebius exists |
-| `video-data-augmentation` | Cosmos-Transfer augmentation + VLM auto-labeling | `physical-ai-video-data-augmentation` | CC-BY-4.0 AND Apache-2.0 | **Core path landed:** `npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml` (SkyPilot, no OSMO) implements real arbitrary-input annotate → augment → evaluate → re-label → curate → visualize with output-to-S3; optional upstream flow variants such as SeedVR2 super-resolution remain roadmap work |
+| `video-data-augmentation` | Cosmos-Transfer augmentation + VLM auto-labeling | `physical-ai-video-data-augmentation` | CC-BY-4.0 AND Apache-2.0 | **Core path landed:** `workflows/testing/physical-ai-data-factory.yaml` (SkyPilot, no OSMO) implements real arbitrary-input annotate → augment → evaluate → re-label → curate → visualize with output-to-S3; optional upstream flow variants such as SeedVR2 super-resolution remain roadmap work |
 | `infrastructure-resilient-scaling` | SDG infra setup/scaling/recovery | `physical-ai-infrastructure-setup-and-resilient-scaling` | Apache-2.0 | Captured as Nebius-K8s + SkyPilot provisioning/runbooks; overlaps `nebius-infra` + `skypilot-workflows` |
 
 ## Deep-Read Findings (2026-07): usefulness + how used for the pipeline
@@ -136,7 +136,7 @@ stack:
 
 | Concern | NPA implementation |
 | --- | --- |
-| Multi-stage orchestration | `npa.workflow/v0.0.1` spec under `npa/workflows/workbench/npa-workflows/`, submitted via `npa workbench workflow submit`; status/logs via `npa workbench workflow status/logs` |
+| Multi-stage orchestration | `npa.workflow/v0.0.1` spec under `workflows/`, submitted via `npa workbench workflow submit`; status/logs via `npa workbench workflow status/logs` |
 | GPU scheduling | SkyPilot `--gpus` + Nebius GPU routing (`nebius-infra`); RT-core paths (Isaac-render pose defects) on L40S / RTX PRO 6000 |
 | Inference endpoints | NPA vLLM/serverless serving on Nebius (OpenAI-compatible); `vlm-eval` for VLM scoring/labeling |
 | Video augmentation worker | NPA `cosmos` tool (`npa workbench cosmos`) |

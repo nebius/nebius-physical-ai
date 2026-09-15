@@ -53,11 +53,12 @@ def test_sonic_export_round_trip_and_parity(tmp_path: Path) -> None:
     checkpoint = tmp_path / "tiny_policy.pt"
     output = tmp_path / "tiny_policy.onnx"
     policy = TinySonicPolicy().eval()
-    torch.save(policy, checkpoint)
+    torch.save({"actor_model_state_dict": policy.state_dict()}, checkpoint)
 
     result = export_onnx(
         checkpoint=str(checkpoint),
         output=str(output),
+        config={"policy": {"class": f"{TinySonicPolicy.__module__}.TinySonicPolicy"}},
         verify=True,
         parity_atol=1e-4,
     )

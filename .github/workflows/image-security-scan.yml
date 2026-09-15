@@ -1,18 +1,9 @@
 name: Image Security Scan
 
 on:
-  pull_request:
-    paths:
-      - "npa/docker/workbench/**"
-      - "npa/scripts/scan_image_omniverse_payload.py"
-      - "npa/scripts/scan_image_antioch_payload.py"
-      - "**/Dockerfile*"
-      - ".trivyignore"
-      - "trivy.yaml"
-      - ".github/workflows/image-security-scan.yml"
-  push:
-    branches:
-      - main
+  # The required security-regression check calls this on every PR, merge queue
+  # candidate and main push. Keep one execution per event, without path filters.
+  workflow_call:
   schedule:
     # Weekly scan catches newly-disclosed CVEs in existing pinned bases.
     - cron: "0 3 * * 1"
@@ -34,7 +25,7 @@ permissions:
 concurrency:
   # Keep workflows independent, but let a newer commit supersede older work for
   # the same PR. Scheduled and manual scans use run_id so they run to completion.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  group: image-security-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -87,6 +78,43 @@ jobs:
             npa/tests/docker/test_isaac_bootstrap.py \
             -q
 
+  complete-byte-native-integration:
+    name: Complete-byte scanner (native integration)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install NPA validation environment
+        run: |
+          python -m venv npa/.venv
+          npa/.venv/bin/pip install -e "npa[dev]"
+
+      # These checks use synthetic archives and policies with the actual pinned
+      # Go detector and native literal engine. Missing native tools are failures.
+      # Ordinary pytest remains offline and does not bootstrap these dependencies.
+      - name: Build and exercise the exact native scanner dependencies
+        run: |
+          set -euo pipefail
+          umask 077
+          scan_root="$(mktemp -d "$RUNNER_TEMP/image-byte-native.XXXXXXXX")"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/go_helper/build.py \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+            --output-dir "$scan_root/tools"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/prepare.py dependencies \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+            --output-dir "$scan_root/native"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/real_helper_checks.py \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+            --tools-receipt "$scan_root/tools/dependency-receipt.json" \
+            --native-receipt "$scan_root/native/dependencies.json" \
+            --output-dir "$scan_root/integration-checks"
+
   omniverse-payload-scan:
     name: Omniverse payload scan (built image)
     runs-on: ubuntu-latest
@@ -104,9 +132,11 @@ jobs:
         uses: imjasonh/setup-crane@v0.4
 
       - name: Scan the public development image for a baked Omniverse Kit payload
+        env:
+          SCAN_IMAGE: ${{ inputs.omniverse_payload_scan_image }}
         run: |
           python npa/scripts/scan_image_omniverse_payload.py \
-            "${{ inputs.omniverse_payload_scan_image }}" \
+            "$SCAN_IMAGE" \
             --json omniverse-payload-report.json
 
       - name: Upload the report
@@ -146,8 +176,11 @@ jobs:
           output: trivy-config.sarif
 
       - name: Upload config SARIF
-        if: always()
+        if: always() && github.event_name != 'pull_request'
         uses: github/codeql-action/upload-sarif@v4
+        env:
+          # Preserve the existing alert configuration across reusable invocation.
+          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:dockerfile-static-scan
         with:
           sarif_file: trivy-config.sarif
           category: trivy-config
@@ -174,29 +207,51 @@ jobs:
           - name: nvidia-cuda-13-0-2-cudnn-devel-ubuntu24-04
             image: nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04@sha256:e071e85c52ad91fc9ea24158ff5330876b2d1a5c4ac83ccc6066976835873c01
             purge_linux_libc_dev: true
-          - name: python-3-11-slim-trixie
-            image: python:3.11-slim-trixie@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9fc0e6e38295747e49ac0
+          - name: nvidia-cuda-13-0-2-base-ubuntu24-04
+            image: nvidia/cuda:13.0.2-base-ubuntu24.04@sha256:2ab6381d970b211fb93853796dc6707eb8a72575a375c422b17cf4d8b2641701
             purge_linux_libc_dev: false
+          - name: python-3-11-slim-trixie
+            image: python:3.11.16-slim-trixie@sha256:9534e5a8e315485d4061ed659af0fd78a284c015f9b73661b41d6bab25604534
+            purge_linux_libc_dev: false
+            # FiftyOne applies these OS security updates before installing its
+            # runtime. Scan that baseline while the upstream digest is stale.
+            upgrade_os: true
     steps:
       - name: Resolve scan target
         id: scan-target
         shell: bash
+        env:
+          BASE_IMAGE: ${{ matrix.image }}
+          SCAN_NAME: ${{ matrix.name }}
+          PURGE_LINUX_LIBC_DEV: ${{ matrix.purge_linux_libc_dev }}
+          UPGRADE_OS: ${{ matrix.upgrade_os || false }}
         run: |
-          if [ "${{ matrix.purge_linux_libc_dev }}" = "true" ]; then
-            patched_image="npa-base-scan:${{ matrix.name }}"
-            docker build \
-              --build-arg BASE_IMAGE="${{ matrix.image }}" \
+          set -euo pipefail
+          if [ "$PURGE_LINUX_LIBC_DEV" = "true" ] || [ "$UPGRADE_OS" = "true" ]; then
+            patched_image="npa-base-scan:${SCAN_NAME}"
+            docker build --pull --no-cache \
+              --build-arg BASE_IMAGE="$BASE_IMAGE" \
+              --build-arg PURGE_LINUX_LIBC_DEV="$PURGE_LINUX_LIBC_DEV" \
+              --build-arg UPGRADE_OS="$UPGRADE_OS" \
               -t "${patched_image}" \
               -f - . <<'DOCKERFILE'
           ARG BASE_IMAGE
           FROM ${BASE_IMAGE}
           USER root
-          RUN dpkg --purge --force-depends linux-libc-dev \
+          ARG PURGE_LINUX_LIBC_DEV=false
+          ARG UPGRADE_OS=false
+          RUN if [ "$UPGRADE_OS" = "true" ]; then \
+                apt-get update \
+                && apt-get upgrade -y --no-install-recommends; \
+              fi \
+              && if [ "$PURGE_LINUX_LIBC_DEV" = "true" ]; then \
+                dpkg --purge --force-depends linux-libc-dev; \
+              fi \
               && rm -rf /var/lib/apt/lists/*
           DOCKERFILE
             echo "image=${patched_image}" >> "${GITHUB_OUTPUT}"
           else
-            echo "image=${{ matrix.image }}" >> "${GITHUB_OUTPUT}"
+            echo "image=${BASE_IMAGE}" >> "${GITHUB_OUTPUT}"
           fi
 
       - name: Trivy image scan
@@ -207,6 +262,7 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
           vuln-type: os
+          timeout: 2562047h47m16s
           format: table
 
       - name: Trivy image scan (SARIF)
@@ -217,13 +273,17 @@ jobs:
           severity: CRITICAL
           ignore-unfixed: true
           vuln-type: os
+          timeout: 2562047h47m16s
           limit-severities-for-sarif: true
           format: sarif
           output: trivy-${{ matrix.name }}.sarif
 
       - name: Upload image SARIF
-        if: always()
+        if: always() && github.event_name != 'pull_request'
         uses: github/codeql-action/upload-sarif@v4
+        env:
+          # Preserve the existing alert configuration across reusable invocation.
+          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
         with:
           sarif_file: trivy-${{ matrix.name }}.sarif
           category: trivy-image-${{ matrix.name }}

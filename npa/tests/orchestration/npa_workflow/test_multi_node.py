@@ -270,11 +270,8 @@ def test_paidf_augment_scales_from_one_pod_to_a_gang(monkeypatch: pytest.MonkeyP
 
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
     blueprint = (
-        Path(__file__).resolve().parents[3]
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "physical-ai-data-factory.yaml"
+        Path(__file__).resolve().parents[4]
+        / "workflows" / "testing" / "physical-ai-data-factory.yaml"
     )
     spec = load_spec(blueprint)
 
@@ -328,11 +325,8 @@ def test_more_augment_nodes_than_variants_fails_before_render(
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
     blueprint = (
-        Path(__file__).resolve().parents[3]
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "physical-ai-data-factory.yaml"
+        Path(__file__).resolve().parents[4]
+        / "workflows" / "testing" / "physical-ai-data-factory.yaml"
     )
     spec = load_spec(blueprint)
     with pytest.raises(NpaWorkflowError, match="num_nodes=3 exceeds n_augmentations=2"):
@@ -368,11 +362,8 @@ def test_cosmos_multi_node_requires_its_real_shard_publication_path(
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
     blueprint = (
-        Path(__file__).resolve().parents[3]
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "physical-ai-data-factory.yaml"
+        Path(__file__).resolve().parents[4]
+        / "workflows" / "testing" / "physical-ai-data-factory.yaml"
     )
     with pytest.raises(NpaWorkflowError, match=match):
         merge_config_overrides(load_spec(blueprint), overrides)

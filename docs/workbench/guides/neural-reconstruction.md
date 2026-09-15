@@ -1,5 +1,7 @@
 # Turn a real photo capture into a 3D scene you can fly through
 
+[Guides](README.md)
+
 Point a camera at a thing. Get back a 3D scene you can re-render from angles the
 camera never visited.
 
@@ -12,6 +14,11 @@ from the trained Gaussians at an offset rig pose, i.e. viewpoints that were neve
 photographed:
 
 ![Novel views rendered from the trained Gaussians](../../assets/nurec-novel-views.png)
+
+For original COLMAP photographs, camera poses and sparse points, see the
+[new COLMAP ingestion workflow](nurec-colmap-reconstruct.md). That CPU NCore
+conversion path is **not yet live validated**; the results on this page apply
+to the existing preconverted-NCore input only.
 
 ## Ingredients
 
@@ -29,7 +36,7 @@ photographed:
 
 ## The spec
 
-**`npa/workflows/workbench/npa-workflows/nurec-reconstruct.yaml`**
+**`workflows/main/nurec-reconstruct.yaml`**
 
 Six stages, each a real `npa workbench nurec` command — no manifest stubs:
 
@@ -40,7 +47,7 @@ check ──▶ fetch ──▶ reconstruct ──▶ render ──▶ visualize
 
 | Stage | What it does |
 | --- | --- |
-| `check` | Entitlement, real HF download authorization, RT-core detection — before spending a 14 GB pull or a GPU-minute |
+| `check` | Rechecks entitlement, real HF download authorization, and RT-core detection inside the GPU worker; run the operator preflight below before submitting |
 | `fetch` | Downloads the NCore V4 shards and derives the `rig -> world` pose edge NRE demands |
 | `reconstruct` | Trains 3DGUT Gaussians, exports the USDZ and real PSNR/SSIM/LPIPS |
 | `render` | Renders **novel** views at an offset rig pose |
@@ -49,36 +56,28 @@ check ──▶ fetch ──▶ reconstruct ──▶ render ──▶ visualize
 
 ## Fast path
 
-Free, no GPU, no credentials — see the shape of the pipeline before committing to
-it:
+Inspect the workflow locally before preparing its GPU runtime:
 
 ```bash
 npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/nurec-reconstruct.yaml
+  workflows/main/nurec-reconstruct.yaml
 ```
 
-Then the cheap real preflight (seconds, no image pull):
+With your NGC key in the private environment or credential store, check access:
 
 ```bash
-export NGC_API_KEY=...
-npa workbench nurec check --json
+npa workbench nurec check --output json
 ```
 
 This probes actual **download authorization**, not just visibility — a gated
 Hugging Face repo still answers `200` on its metadata endpoint, so "I can see it"
 is not "I can fetch it".
 
-> **Never** test a token with `echo "${HF_TOKEN:+yes}${HF_TOKEN:-no}"`. That
-> prints the token: `${VAR:-no}` only falls back when the variable is *empty*.
-> Use `hf auth whoami` or `echo ${#HF_TOKEN}`.
-
 ## Go bigger: the real GPU run
 
-The NRE container has no `npa` inside it, so stage the source the pods install:
-
-```bash
-export NPA_SRC_S3_URI=s3://<your-bucket>/npa-src/<tag>
-```
+Complete [Workbench setup](../getting-started.md) for your RT-core cluster.
+Source staging is automatic when the task needs NPA; an explicit
+`NPA_SRC_S3_URI` is an override. Use the same project and target throughout.
 
 Submit:
 
@@ -86,10 +85,10 @@ Submit:
 RUN_ID="nurec-$(date -u +%Y%m%dt%H%M%S)z"
 
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/nurec-reconstruct.yaml \
-  --run-id "$RUN_ID" \
-  --infra k8s/<your-rt-core-context> \
-  --var bucket=<your-bucket> \
+  workflows/main/nurec-reconstruct.yaml \
+  --run-id "$RUN_ID" --project "<project-alias>" --runtime \
+  --infra "k8s/<your-rt-core-context>" \
+  --var bucket="<your-bucket>" \
   --var prefix="checkpoints/neural-reconstruction/$RUN_ID" \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
   --secret-env NGC_API_KEY
@@ -98,7 +97,7 @@ npa workbench workflow submit \
 Watch it:
 
 ```bash
-sky jobs queue
+npa workbench workflow status "$RUN_ID" --project "<project-alias>" --watch
 ```
 
 A healthy run looks like this — `reconstruct` is the long pole:
@@ -133,6 +132,42 @@ npa workbench nurec status \
 ```
 
 Expect `PSNR ≈ 31`, `SSIM ≈ 0.83`, `LPIPS ≈ 0.27` on the default scene.
+
+## Promotion evidence
+
+The main workflow preserves the parsed YAML from the completed September 8,
+2026 multi-pod run; the move changes only the quickstart path comment. The saved
+testing YAML had SHA-256
+`a7d317382e05da80cd947bbeca2f3d0c4671d39e3bcd137678681ebca0880b0d`.
+The [readiness record](../../../workflows/main/nurec-reconstruct.readiness.json)
+binds planning checks to the promoted file and records future-run prerequisites.
+
+The public `struktur28` sample supplied the input photos. The run computed new
+outputs with NRE 26.4.149, using the vendor image digest
+`sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284`:
+
+| Evidence | Observed result |
+| --- | --- |
+| Training | 30,000 steps, one RTX PRO 6000 Blackwell, checkpoint tensors on `cuda:0`, no resumed checkpoint |
+| Quality | PSNR 31.08336, SSIM 0.83245, LPIPS 0.26844 |
+| Run artifacts | 224 objects, including a 240,542,295-byte USDZ |
+| Novel views | 38 frames, rig translation `[0, 0.25, 0]`, training-view replication disabled; MP4 decoded successfully |
+| Viewer | 1,429,920-byte RRD decoded with required run entities; authenticated agent served the same recording hash |
+| Completion | Durable runtime and stage records succeeded; final report confirmed USDZ, novel views, and RRD |
+
+This evidence covers the default sample and single-GPU execution. L40S and
+other captures were not tested in this run, and GPU utilization history was not
+retained. The original controller endpoint was unavailable at the later status
+check; completion evidence comes from durable records and validated outputs.
+Raw operational evidence stays in access-controlled storage. Each new run still
+needs its own writable bucket, staged source, registry access, and healthy
+RT-core target. Promotion does not provision those prerequisites.
+
+On September 9, the promotion check listed the same 224 stored objects,
+verified seven retained artifact hashes, and downloaded the RRD, metrics, and
+final report again with matching hashes. The USDZ archive, MP4 decode, and RRD
+entity checks passed again. This was a read-only artifact check, not a new
+training run.
 
 ## When it breaks
 

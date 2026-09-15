@@ -122,7 +122,6 @@ def test_isaac_lab_deploy_defaults_to_reproducible_container(tmp_path: Path, moc
     update_status = mocker.patch("npa.cli.isaac_lab.update_workbench_app_status")
     mocker.patch("npa.cli.isaac_lab.write_manifest")
     mocker.patch("npa.cli.isaac_lab.list_projects", return_value={})
-    mocker.patch("npa.cli.isaac_lab.resolve_container_registry", return_value="registry.example")
     mocker.patch(
         "npa.cli.isaac_lab.container_image_for_tool",
         return_value="registry.example/npa-isaac-lab:3.0.0b2.post1",
@@ -520,7 +519,9 @@ def test_isaac_lab_deploy_runtime_container_starts_image(tmp_path: Path, mocker)
     assert tf_vars["boot_disk_size_gb"] == "250"
     deploy_container.assert_called_once()
     assert deploy_container.call_args.kwargs["container_name"] == "npa-isaac-lab"
-    assert deploy_container.call_args.kwargs["image_ref"].endswith("/npa-isaac-lab:3.0.0b2.post1")
+    assert deploy_container.call_args.kwargs["image_ref"].endswith(
+        "/npa-isaac-lab:3.0.0b2.post1-sim2real-coherent-20260904"
+    )
     wb_cfg = write_config.call_args.args[0]["projects"]["proj"]["workbenches"]["isaac-container"]
     assert wb_cfg["runtime"] == "container"
     assert update_status.call_args_list[0].args == ("proj", "isaac-container", "installing")
@@ -662,7 +663,6 @@ def _mock_isaac_serverless_env(mocker):
             aws_secret_access_key="SECRET",
         ),
     )
-    mocker.patch("npa.cli.isaac_lab.resolve_container_registry", return_value="registry.example")
     mocker.patch("npa.cli.isaac_lab.container_image_for_tool", return_value="registry.example/npa-isaac-lab:smoke")
     return mocker.patch("npa.cli.isaac_lab.resolve_subnet", return_value="vpcsubnet-auto")
 
@@ -705,7 +705,7 @@ def test_isaac_lab_serverless_requires_rt_cores_gpu_type(mocker) -> None:
     assert kwargs["preset"] == "1gpu-40vcpu-160gb"
 
 
-def test_isaac_lab_serverless_rejects_non_rt_gpu_type(mocker) -> None:
+def _invoke_isaac_serverless_train(mocker, *, task: str, gpu_type: str):
     _mock_isaac_serverless_env(mocker)
     client = mocker.Mock()
     client.get_job.side_effect = EndpointNotFoundError("missing")
@@ -716,15 +716,55 @@ def test_isaac_lab_serverless_rejects_non_rt_gpu_type(mocker) -> None:
         app,
         [
             "workbench", "isaac-lab", "-p", "proj", "-n", "isaac", "train",
-            "--runtime", "serverless", "--task", "Isaac-Reach-Franka-v0",
+            "--runtime", "serverless", "--task", task,
             "--output-path", "s3://bucket/isaac/", "--submit-only",
-            "--gpu-type", "h200", "--job-name", "isaac-job",
+            "--gpu-type", gpu_type, "--job-name", "isaac-job",
         ],
+    )
+    return result, client
+
+
+@pytest.mark.parametrize(
+    ("gpu_type", "expected_platform"),
+    [
+        ("h200", "gpu-h200-sxm"),
+        ("h100", "gpu-h100-sxm"),
+        ("b200", "gpu-b200-sxm"),
+    ],
+)
+def test_isaac_lab_serverless_allows_datacenter_gpu_for_headless_task(
+    mocker, gpu_type: str, expected_platform: str
+) -> None:
+    """State-based RL does not rasterize, so RT cores are not required for it."""
+
+    result, client = _invoke_isaac_serverless_train(
+        mocker, task="Isaac-Reach-Franka-v0", gpu_type=gpu_type
+    )
+
+    assert result.exit_code == 0, result.output
+    assert client.create_job.call_args.kwargs["gpu_type"] == expected_platform
+
+
+def test_isaac_lab_serverless_rejects_datacenter_gpu_for_camera_task(mocker) -> None:
+    """A task that declares camera observations still needs RT cores."""
+
+    result, client = _invoke_isaac_serverless_train(
+        mocker, task="Isaac-Cartpole-RGB-Camera-Direct-v0", gpu_type="h200"
     )
 
     assert result.exit_code == 1
-    assert "requires RT-core GPUs" in result.output
+    assert "cannot run on the datacenter-headless GPU" in result.output
+    assert "camera or rendered observations" in result.output
     client.create_job.assert_not_called()
+
+
+def test_isaac_lab_serverless_allows_rt_core_gpu_for_camera_task(mocker) -> None:
+    result, client = _invoke_isaac_serverless_train(
+        mocker, task="Isaac-Cartpole-RGB-Camera-Direct-v0", gpu_type="l40s"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert client.create_job.call_args.kwargs["gpu_type"] == "gpu-l40s-a"
 
 
 def test_isaac_lab_serverless_uses_shared_env_builder(mocker) -> None:

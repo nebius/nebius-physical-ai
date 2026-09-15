@@ -5,6 +5,13 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+from npa.clients.config import resolve_environment, resolve_project_storage
+from npa.clients.nebius import (
+    BucketCorsPlan,
+    apply_bucket_rerun_cors,
+    plan_bucket_rerun_cors,
+)
+from npa.clients.scoped_credentials import bucket_from_s3_uri
 from npa.cli.rerun import (
     MAX_TTL_HOURS,
     RerunHostResult,
@@ -14,6 +21,49 @@ from npa.cli.rerun import (
     revoke_share,
     share_recording,
 )
+
+
+def configure_browser_cors(
+    *,
+    target_bucket: str = "",
+    target_project: str | None = None,
+    target_project_id: str = "",
+    apply: bool = False,
+) -> BucketCorsPlan:
+    """Plan or apply the bucket-admin CORS rule required by app.rerun.io.
+
+    This uses the Nebius control-plane identity selected by the active CLI
+    profile. It deliberately never uses the scoped S3 object credentials that
+    :func:`host` and :func:`share` use for recording data.
+    """
+
+    project_id = target_project_id.strip()
+    if project_id and not target_bucket:
+        raise ValueError("target_bucket is required with target_project_id")
+    if not project_id:
+        environment = resolve_environment(target_project)
+        project_id = str(getattr(environment, "project_id", "") or "").strip()
+    if not project_id:
+        alias = f" for target_project {target_project!r}" if target_project else ""
+        raise ValueError(
+            f"Target project is not configured{alias}. Pass target_project_id, "
+            "or run `npa configure` to configure the project."
+        )
+    configured = target_bucket
+    if not configured:
+        storage = resolve_project_storage(target_project)
+        configured = storage.checkpoint_bucket
+    bucket = (
+        bucket_from_s3_uri(configured)
+        if configured.startswith("s3://")
+        else configured.split("/", 1)[0]
+    )
+    if not bucket:
+        raise ValueError(
+            "Target bucket is not configured. Pass target_bucket or configure project storage."
+        )
+    operation = apply_bucket_rerun_cors if apply else plan_bucket_rerun_cors
+    return operation(project_id, bucket)
 
 
 def host(
@@ -112,4 +162,4 @@ def revoke(
     )
 
 
-__all__ = ["host", "share", "list_shares", "revoke"]
+__all__ = ["configure_browser_cors", "host", "share", "list_shares", "revoke"]

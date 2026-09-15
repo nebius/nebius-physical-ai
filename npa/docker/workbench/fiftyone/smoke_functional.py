@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-EXPECTED_FIFTYONE_VERSION = os.environ.get("FIFTYONE_VERSION", "1.15.0")
+EXPECTED_FIFTYONE_VERSION = os.environ.get("FIFTYONE_VERSION", "1.21.0")
 TINY_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
 )

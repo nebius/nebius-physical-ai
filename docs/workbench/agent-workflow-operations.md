@@ -1,5 +1,7 @@
 # Agent-operated Workbench workflows
 
+[Workbench docs](README.md)
+
 An automation agent can operate any Workbench workflow through NPA without
 knowing how NPA schedules or executes it. The caller owns its reasoning system
 and provider configuration. Workflow operations do not select, configure, or
@@ -26,10 +28,14 @@ using subprocesses must invoke only the fixed `npa ...` operations below. It
 must not invoke an execution backend, a cluster client, a terminal multiplexer,
 or an arbitrary shell command.
 
-## Read-only preparation
+<a id="read-only-preparation"></a>
+
+## Validate, plan, and check images
 
 Run these checks in order. Keep the same YAML file and config overrides for the
-plan and eventual submission.
+plan and eventual submission. `preflight-images` may create and delete a
+temporary Kubernetes probe pod when image bootstrap evidence is absent.
+Authorize that probe before running the image check.
 
 ```console
 npa workbench workflow validate-spec <workflow.yaml> --json
@@ -59,7 +65,7 @@ npa workbench workflow submit <workflow.yaml> --project <project> --run-id <run-
 ```
 
 For the canonical compositional Sim2Real workflow, use
-`npa/workflows/workbench/npa-workflows/sim2real.yaml` and always retain
+`workflows/main/sim2real.yaml` and always retain
 `--runtime`. If the controller is interrupted, resume the exact run rather than
 creating a replacement:
 
@@ -76,6 +82,12 @@ npa workbench workflow status <run-id> --project <project> --no-watch --json
 npa workbench workflow logs <run-id> --project <project> --stage <stage> --cached --max-output-chars 32768 --json
 npa workbench workflow artifacts <run-id> --project <project> --json
 ```
+
+Omit `--cached` to read live logs from the recorded managed job. Logs for a
+single-stage serial wave remain available if the driver stopped before its first
+task observation. A provider response that the requested task does not exist is
+reported as `VERIFICATION_UNAVAILABLE` with exit code 2; it is not verified stage
+output.
 
 Diagnose a failed run from the status result first, then request the named failed
 stage's bounded log tail and artifact inventory. Preserve the run ID for resume;

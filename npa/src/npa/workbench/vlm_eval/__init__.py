@@ -87,6 +87,7 @@ class VlmEvalResult:
     frame_selection: str = DEFAULT_FRAME_SELECTION
     frame_count: int = 0
     rationale: str = ""
+    served_model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,7 @@ class VlmStructuredResponse:
     success: bool
     score: float
     rationale: str
+    served_model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -557,6 +559,49 @@ def parse_structured_response(text: str) -> VlmStructuredResponse:
     )
 
 
+def _parse_api_structured_response(text: Any, *, served_model: str) -> VlmStructuredResponse:
+    """Validate the complete hosted judge output without repairing its verdict."""
+
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise VlmEvalError("Hosted VLM response JSON contains duplicate keys")
+            result[key] = value
+        return result
+
+    def reject_constant(_value: str) -> None:
+        raise VlmEvalError("Hosted VLM response JSON contains a non-finite number")
+
+    if not isinstance(text, str):
+        raise VlmEvalError("Hosted VLM response content must be a JSON string")
+    try:
+        payload = json.loads(
+            text, object_pairs_hook=unique_object, parse_constant=reject_constant
+        )
+    except json.JSONDecodeError as exc:
+        raise VlmEvalError("Hosted VLM response JSON could not be parsed in full") from exc
+    if not isinstance(payload, dict):
+        raise VlmEvalError("Hosted VLM response JSON must be an object")
+    if not isinstance(payload.get("success"), bool):
+        raise VlmEvalError("Hosted VLM response success must be a boolean")
+    score = payload.get("score")
+    if (
+        isinstance(score, bool)
+        or not isinstance(score, (int, float))
+        or not 0 <= score <= 1
+        or not math.isfinite(score)
+    ):
+        raise VlmEvalError("Hosted VLM response score must be a finite number in [0, 1]")
+    rationale = payload.get("rationale")
+    if not isinstance(rationale, str) or not rationale.strip():
+        raise VlmEvalError("Hosted VLM response rationale must be a nonempty string")
+    return VlmStructuredResponse(
+        success=payload["success"], score=float(score), rationale=rationale,
+        served_model=served_model,
+    )
+
+
 def result_uri_for(output_path: str) -> str:
     """Return the JSON artifact URI for an output path."""
 
@@ -836,6 +881,7 @@ def _result_from_structured(
         frame_selection=frame_selection,
         frame_count=frame_count,
         rationale=structured.rationale,
+        served_model=structured.served_model,
     )
 
 
@@ -1309,6 +1355,16 @@ def _call_openai_compatible(
         "response_format": {"type": "json_object"},
         "messages": [{"role": "user", "content": content}],
     }
+    if backend == "api":
+        from npa.clients.token_factory import default_chat_extra
+
+        request.update(default_chat_extra(model))
+        if model == "MiniMaxAI/MiniMax-M3":
+            # Token Factory's constrained JSON decoding for this model emitted
+            # malformed prefixes in live validation. The prompt still requires
+            # JSON and the hosted parser validates the full contract;
+            # never repair malformed model scores or accept a free-text score.
+            request.pop("response_format")
     data = _post_with_readiness_retry(
         url=url, headers=headers, request=request, backend=backend, timeout_s=timeout_s
     )
@@ -1317,6 +1373,16 @@ def _call_openai_compatible(
         message = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise VlmEvalError("VLM backend response missing choices[0].message.content") from exc
+    if backend == "api":
+        if data["choices"][0].get("finish_reason") != "stop":
+            raise VlmEvalError("Hosted VLM response did not complete with finish_reason=stop")
+        served_model = data.get("model")
+        if not isinstance(served_model, str) or not served_model.strip():
+            raise VlmEvalError("Hosted VLM response must identify the served model")
+        if model in {"nvidia/Nemotron-3_5-Lightning", "MiniMaxAI/MiniMax-M3"}:
+            if served_model != model:
+                raise VlmEvalError("Hosted VLM response model does not match the requested model")
+        return _parse_api_structured_response(message, served_model=served_model)
     return parse_structured_response(str(message))
 
 

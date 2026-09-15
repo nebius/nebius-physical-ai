@@ -1,0 +1,1991 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: living-lab-nurec-fanout
+  description: '16-zone living-lab digital twin from real NVIDIA NuRec / NRE neural reconstructions: 16
+    independent RTX PRO 6000 shards (8 real NCore capture pairs x 2 view sectors) each run the full nurec
+    pipeline, then a barrier join composes a composite digital-twin report and contact-sheet panorama
+    with objective per-zone GPU participation evidence. Topology size is derived from the capture/sector
+    inputs.'
+config:
+  bucket: example-bucket
+  prefix: living-lab/{{run.id}}
+  nurec_image: nvcr.io/nvidia/nre/nre-ga:26.04
+  dataset_id: nvidia/PhysicalAI-NuRec-PPISP
+  capture_count: '8'
+  sector_count: '2'
+  expected_device_count: '16'
+  max_concurrency: '16'
+  zones: huerstholz-auto-a,huerstholz-auto-b,huerstholz-standard-a,huerstholz-standard-b,struktur28-auto-a,struktur28-auto-b,struktur28-standard-a,struktur28-standard-b,toro-auto-a,toro-auto-b,toro-standard-a,toro-standard-b,valiant-auto-a,valiant-auto-b,valiant-standard-a,valiant-standard-b
+  run_prefix_uri: s3://{{config.bucket}}/{{config.prefix}}/
+  zones_uri: s3://{{config.bucket}}/{{config.prefix}}/zones/
+  report_uri: s3://{{config.bucket}}/{{config.prefix}}/reports/digital_twin.json
+  panorama_uri: s3://{{config.bucket}}/{{config.prefix}}/reports/panorama.png
+  zone_name: ''
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+    cpus: 8
+    memory: 64Gi
+    image: '{{config.nurec_image}}'
+    kubernetes:
+      provision_timeout: 2400
+      pod_config:
+        spec:
+          imagePullSecrets:
+          - name: ngc-nvcr-imagepullsecret
+          initContainers:
+          - name: npa-sudo-shim
+            image: '{{config.nurec_image}}'
+            command:
+            - /bin/sh
+            - -c
+            - 'printf ''#!/bin/sh\nexec "$@"\n'' > /shim/sudo
+
+              chmod 0755 /shim/sudo
+
+              '
+            volumeMounts:
+            - name: npa-sudo-shim
+              mountPath: /shim
+          containers:
+          - name: ray-node
+            env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            volumeMounts:
+            - name: npa-sudo-shim
+              mountPath: /usr/local/sbin
+            - name: dshm
+              mountPath: /dev/shm
+          volumes:
+          - name: npa-sudo-shim
+            emptyDir: {}
+          - name: dshm
+            emptyDir:
+              medium: Memory
+              sizeLimit: 64Gi
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+initial: living-lab-zones
+states:
+  living-lab-zones:
+    description: 16 living-lab zone reconstructions as one SkyPilot JobGroup (one RTX PRO 6000 each).
+      Each member is a fully independent, real NRE reconstruction of its zone, so all 16 reserved RTX
+      PRO 6000 GPUs are materially busy at once.
+    parallel:
+    - zone-huerstholz-auto-a
+    - zone-huerstholz-auto-b
+    - zone-huerstholz-standard-a
+    - zone-huerstholz-standard-b
+    - zone-struktur28-auto-a
+    - zone-struktur28-auto-b
+    - zone-struktur28-standard-a
+    - zone-struktur28-standard-b
+    - zone-toro-auto-a
+    - zone-toro-auto-b
+    - zone-toro-standard-a
+    - zone-toro-standard-b
+    - zone-valiant-auto-a
+    - zone-valiant-auto-b
+    - zone-valiant-standard-a
+    - zone-valiant-standard-b
+    parallelCount: '{{config.expected_device_count}}'
+    maxConcurrency: '{{config.max_concurrency}}'
+    next: join
+  zone-huerstholz-auto-a:
+    description: 'Zone huerstholz-auto-a: full real NuRec/NRE reconstruction of the huerstholz auto capture
+      (view sector a) on its own RTX PRO 6000, then novel-view render + Rerun recording.'
+    resources: gpu
+    params:
+      zone_name: huerstholz-auto-a
+      scene: huerstholz
+      variant: auto
+      view_sector: a
+      rig_rotation_offset: 0,0,0
+      rig_translation_offset: 0,0.25,0
+    run:
+      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
+        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+        \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
+        \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
+        MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
+        # The NGC NRE image ships no npa, no ffmpeg, and none of the workbench's Python\n# deps. The runtime\
+        \ setup installs npa from $NPA_SRC_S3_URI; this step fills in\n# the NRE-runtime Python deps (nvidia-ncore\
+        \ for fetch, rerun-sdk for the Rerun\n# recording, pillow/pyyaml for the join inputs) and ffmpeg\
+        \ (backs render\n# --export-video). It is idempotent and matches the shipped single-pod reference.\n\
+        export DEBIAN_FRONTEND=noninteractive\nif ! command -v ffmpeg >/dev/null 2>&1; then\n  apt-get\
+        \ update -qq || true\n  apt-get install -y -qq --no-install-recommends ffmpeg || true\nfi\nnpa_pip()\
+        \ {\n  python3 -m pip install -q \"$@\" || python3 -m pip install -q \"$@\" --break-system-packages\
+        \ || python3 -m pip install -q \"$@\" --user\n}\nnpa_pip \"boto3>=1.34\" \"awscli>=1.32\" \"huggingface_hub>=0.30\"\
+        \ \"nvidia-ncore\" \"rerun-sdk\" \"pillow>=10.0\" \"pyyaml>=6.0\"\ncommand -v npa >/dev/null 2>&1\
+        \ || { echo \"npa not found; set NPA_SRC_S3_URI\" >&2; exit 1; }\n\n# ---- objective per-shard\
+        \ GPU / scheduler identity ---------------------------\n# Captured once at the top of the shard\
+        \ so the manifest carries real, per-GPU\n# provenance (UUID + model + node + pod + wave), not\
+        \ just a model-name count.\n# HOSTNAME inside a Kubernetes pod is the pod name; NODE_NAME comes\
+        \ from the\n# downward-API env the workflow's pod_config injects.\nGPU_UUID=$(nvidia-smi --query-gpu=uuid\
+        \ --format=csv,noheader | head -1 || echo unknown)\nGPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader\
+        \ | head -1 || echo unknown)\nPOD_NAME=\"${HOSTNAME:-unknown}\"\nNODE_NAME=\"${NODE_NAME:-unknown}\"\
+        \nSTART=$(date +%s)\nexport ZONE RUN_URI DATASET_ID SCENE VARIANT ZU NC RC NV INPUT RRD FINAL\
+        \ MF\nexport GPU_UUID GPU_NAME POD_NAME NODE_NAME START\n\necho \"=== zone $ZONE: check (container\
+        \ + dataset rights + RT-core GPU) ===\"\nnpa workbench nurec check --require-gpu --output json\n\
+        \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
+        \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
+        \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
+        )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
+        )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
+        \ POSES_GROUP CAMERA\n\n# ---- reconstruct + real, non-missing quality metrics ------------------------\n\
+        # The reconstruct stage writes NRE's val metrics.yaml. metrics_path preserves\n# where the numbers\
+        \ came from; metrics are recorded only when actually measured.\n# A missing/unparseable metrics\
+        \ payload makes the shard (and the join) FAIL\n# rather than substituting a numeric zero.\necho\
+        \ \"=== zone $ZONE: reconstruct (3DGUT Gaussians -> renderable USDZ) ===\"\nnpa workbench nurec\
+        \ reconstruct --ncore-json \"${NCORE_JSON}\" --poses-component-group \"${POSES_GROUP}\" --camera-id\
+        \ \"${CAMERA}\" --world-size 1 --export-gt --output-uri \"${RC}\" --input-uri \"${INPUT}\" --output\
+        \ json >/tmp/nurec-reconstruct.json\nUSDZ=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json'))['usdz_path'])\"\
+        )\nMETRICS_PATH=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json')).get('metrics_path')\
+        \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
+        \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
+        ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
+        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
+        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
+        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
+        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
+        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
+        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
+        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
+        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
+        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
+        metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
+        \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
+        \ 0.0.\ndef _m(key):\n    val = raw_metrics.get(key)\n    if val is None or val == \"\":\n   \
+        \     return None\n    try:\n        return float(val)\n    except (TypeError, ValueError):\n\
+        \        return None\nmetrics = {\"test/psnr\": _m(\"test/psnr\"), \"test/ssim\": _m(\"test/ssim\"\
+        ), \"test/lpips\": _m(\"test/lpips\")}\nmetrics_present = bool(metrics_path) and all(metrics[k]\
+        \ is not None for k in metrics)\nif not metrics_present:\n    print(\"zone\", os.environ[\"ZONE\"\
+        ], \": NRE validation metrics missing/unparseable (metrics_path=%r); failing shard\" % metrics_path,\
+        \ flush=True)\n    raise SystemExit(1)\npayload = {\n  \"schema\": \"npa.living_lab.zone_manifest.v1\"\
+        ,\n  \"zone_name\": os.environ[\"ZONE\"],\n  \"status\": \"ok\",\n  \"provenance\": {\n    \"\
+        dataset_id\": os.environ[\"DATASET_ID\"],\n    \"scene\": os.environ[\"SCENE\"],\n    \"variant\"\
+        : os.environ[\"VARIANT\"],\n    \"requested\": {k: os.environ[k] for k in (\"DATASET_ID\", \"\
+        SCENE\", \"VARIANT\")},\n  },\n  \"gpu\": {\n    \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\
+        \"),\n    \"gpu_name\": os.environ.get(\"GPU_NAME\", \"\"),\n    \"node_name\": os.environ.get(\"\
+        NODE_NAME\", \"\"),\n    \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n    \"wave_id\": os.environ.get(\"\
+        RUN_URI\", \"\"),\n  },\n  \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\"),\n  \"gpu_name\":\
+        \ os.environ.get(\"GPU_NAME\", \"\"),\n  \"node_name\": os.environ.get(\"NODE_NAME\", \"\"),\n\
+        \  \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n  \"wave_id\": os.environ.get(\"RUN_URI\"\
+        , \"\"),\n  \"usdz_path\": os.environ.get(\"USDZ\", \"\"),\n  \"reconstruction_uri\": os.environ.get(\"\
+        RC\", \"\"),\n  \"novel_views_uri\": os.environ.get(\"NV\", \"\"),\n  \"rrd_uri\": os.environ.get(\"\
+        RRD\", \"\"),\n  \"final_report_uri\": os.environ.get(\"FINAL\", \"\"),\n  \"started_epoch\":\
+        \ int(os.environ.get(\"START\", 0)),\n  \"ended_epoch\": int(os.environ.get(\"END\", 0)),\n  \"\
+        elapsed_seconds\": int(os.environ.get(\"END\", 0)) - int(os.environ.get(\"START\", 0)),\n  \"\
+        metrics_path\": metrics_path,\n  \"metrics\": metrics,\n  \"finalize\": {\n    \"status\": final.get(\"\
+        status\", \"\"),\n    \"has_usdz\": bool(final.get(\"has_usdz\", False)),\n    \"has_rrd\": bool(final.get(\"\
+        has_rrd\", False)),\n    \"artifact_count\": final.get(\"artifact_count\", 0),\n  },\n}\njson.dump(payload,\
+        \ open(\"/tmp/zone_manifest.json\", \"w\"))\nfrom npa.clients.storage import StorageClient\nStorageClient.from_environment().upload_file(\"\
+        /tmp/zone_manifest.json\", os.environ[\"MF\"])\nprint(json.dumps(payload))\nPY\n"
+    outputs:
+    - uri: '{{config.zones_uri}}{{config.zone_name}}/zone_manifest.json'
+      schema: npa.living_lab.zone_manifest.v1
+  zone-huerstholz-auto-b:
+    description: 'Zone huerstholz-auto-b: full real NuRec/NRE reconstruction of the huerstholz auto capture
+      (view sector b) on its own RTX PRO 6000, then novel-view render + Rerun recording.'
+    resources: gpu
+    params:
+      zone_name: huerstholz-auto-b
+      scene: huerstholz
+      variant: auto
+      view_sector: b
+      rig_rotation_offset: 120,0,0
+      rig_translation_offset: 0,0,0.45
+    run:
+      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
+        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+        \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
+        \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
+        MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
+        # The NGC NRE image ships no npa, no ffmpeg, and none of the workbench's Python\n# deps. The runtime\
+        \ setup installs npa from $NPA_SRC_S3_URI; this step fills in\n# the NRE-runtime Python deps (nvidia-ncore\
+        \ for fetch, rerun-sdk for the Rerun\n# recording, pillow/pyyaml for the join inputs) and ffmpeg\
+        \ (backs render\n# --export-video). It is idempotent and matches the shipped single-pod reference.\n\
+        export DEBIAN_FRONTEND=noninteractive\nif ! command -v ffmpeg >/dev/null 2>&1; then\n  apt-get\
+        \ update -qq || true\n  apt-get install -y -qq --no-install-recommends ffmpeg || true\nfi\nnpa_pip()\
+        \ {\n  python3 -m pip install -q \"$@\" || python3 -m pip install -q \"$@\" --break-system-packages\
+        \ || python3 -m pip install -q \"$@\" --user\n}\nnpa_pip \"boto3>=1.34\" \"awscli>=1.32\" \"huggingface_hub>=0.30\"\
+        \ \"nvidia-ncore\" \"rerun-sdk\" \"pillow>=10.0\" \"pyyaml>=6.0\"\ncommand -v npa >/dev/null 2>&1\
+        \ || { echo \"npa not found; set NPA_SRC_S3_URI\" >&2; exit 1; }\n\n# ---- objective per-shard\
+        \ GPU / scheduler identity ---------------------------\n# Captured once at the top of the shard\
+        \ so the manifest carries real, per-GPU\n# provenance (UUID + model + node + pod + wave), not\
+        \ just a model-name count.\n# HOSTNAME inside a Kubernetes pod is the pod name; NODE_NAME comes\
+        \ from the\n# downward-API env the workflow's pod_config injects.\nGPU_UUID=$(nvidia-smi --query-gpu=uuid\
+        \ --format=csv,noheader | head -1 || echo unknown)\nGPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader\
+        \ | head -1 || echo unknown)\nPOD_NAME=\"${HOSTNAME:-unknown}\"\nNODE_NAME=\"${NODE_NAME:-unknown}\"\
+        \nSTART=$(date +%s)\nexport ZONE RUN_URI DATASET_ID SCENE VARIANT ZU NC RC NV INPUT RRD FINAL\
+        \ MF\nexport GPU_UUID GPU_NAME POD_NAME NODE_NAME START\n\necho \"=== zone $ZONE: check (container\
+        \ + dataset rights + RT-core GPU) ===\"\nnpa workbench nurec check --require-gpu --output json\n\
+        \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
+        \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
+        \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
+        )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
+        )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
+        \ POSES_GROUP CAMERA\n\n# ---- reconstruct + real, non-missing quality metrics ------------------------\n\
+        # The reconstruct stage writes NRE's val metrics.yaml. metrics_path preserves\n# where the numbers\
+        \ came from; metrics are recorded only when actually measured.\n# A missing/unparseable metrics\
+        \ payload makes the shard (and the join) FAIL\n# rather than substituting a numeric zero.\necho\
+        \ \"=== zone $ZONE: reconstruct (3DGUT Gaussians -> renderable USDZ) ===\"\nnpa workbench nurec\
+        \ reconstruct --ncore-json \"${NCORE_JSON}\" --poses-component-group \"${POSES_GROUP}\" --camera-id\
+        \ \"${CAMERA}\" --world-size 1 --export-gt --output-uri \"${RC}\" --input-uri \"${INPUT}\" --output\
+        \ json >/tmp/nurec-reconstruct.json\nUSDZ=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json'))['usdz_path'])\"\
+        )\nMETRICS_PATH=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json')).get('metrics_path')\
+        \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
+        \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
+        ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
+        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
+        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
+        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
+        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
+        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
+        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
+        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
+        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
+        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
+        metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
+        \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
+        \ 0.0.\ndef _m(key):\n    val = raw_metrics.get(key)\n    if val is None or val == \"\":\n   \
+        \     return None\n    try:\n        return float(val)\n    except (TypeError, ValueError):\n\
+        \        return None\nmetrics = {\"test/psnr\": _m(\"test/psnr\"), \"test/ssim\": _m(\"test/ssim\"\
+        ), \"test/lpips\": _m(\"test/lpips\")}\nmetrics_present = bool(metrics_path) and all(metrics[k]\
+        \ is not None for k in metrics)\nif not metrics_present:\n    print(\"zone\", os.environ[\"ZONE\"\
+        ], \": NRE validation metrics missing/unparseable (metrics_path=%r); failing shard\" % metrics_path,\
+        \ flush=True)\n    raise SystemExit(1)\npayload = {\n  \"schema\": \"npa.living_lab.zone_manifest.v1\"\
+        ,\n  \"zone_name\": os.environ[\"ZONE\"],\n  \"status\": \"ok\",\n  \"provenance\": {\n    \"\
+        dataset_id\": os.environ[\"DATASET_ID\"],\n    \"scene\": os.environ[\"SCENE\"],\n    \"variant\"\
+        : os.environ[\"VARIANT\"],\n    \"requested\": {k: os.environ[k] for k in (\"DATASET_ID\", \"\
+        SCENE\", \"VARIANT\")},\n  },\n  \"gpu\": {\n    \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\
+        \"),\n    \"gpu_name\": os.environ.get(\"GPU_NAME\", \"\"),\n    \"node_name\": os.environ.get(\"\
+        NODE_NAME\", \"\"),\n    \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n    \"wave_id\": os.environ.get(\"\
+        RUN_URI\", \"\"),\n  },\n  \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\"),\n  \"gpu_name\":\
+        \ os.environ.get(\"GPU_NAME\", \"\"),\n  \"node_name\": os.environ.get(\"NODE_NAME\", \"\"),\n\
+        \  \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n  \"wave_id\": os.environ.get(\"RUN_URI\"\
+        , \"\"),\n  \"usdz_path\": os.environ.get(\"USDZ\", \"\"),\n  \"reconstruction_uri\": os.environ.get(\"\
+        RC\", \"\"),\n  \"novel_views_uri\": os.environ.get(\"NV\", \"\"),\n  \"rrd_uri\": os.environ.get(\"\
+        RRD\", \"\"),\n  \"final_report_uri\": os.environ.get(\"FINAL\", \"\"),\n  \"started_epoch\":\
+        \ int(os.environ.get(\"START\", 0)),\n  \"ended_epoch\": int(os.environ.get(\"END\", 0)),\n  \"\
+        elapsed_seconds\": int(os.environ.get(\"END\", 0)) - int(os.environ.get(\"START\", 0)),\n  \"\
+        metrics_path\": metrics_path,\n  \"metrics\": metrics,\n  \"finalize\": {\n    \"status\": final.get(\"\
+        status\", \"\"),\n    \"has_usdz\": bool(final.get(\"has_usdz\", False)),\n    \"has_rrd\": bool(final.get(\"\
+        has_rrd\", False)),\n    \"artifact_count\": final.get(\"artifact_count\", 0),\n  },\n}\njson.dump(payload,\
+        \ open(\"/tmp/zone_manifest.json\", \"w\"))\nfrom npa.clients.storage import StorageClient\nStorageClient.from_environment().upload_file(\"\
+        /tmp/zone_manifest.json\", os.environ[\"MF\"])\nprint(json.dumps(payload))\nPY\n"
+    outputs:
+    - uri: '{{config.zones_uri}}{{config.zone_name}}/zone_manifest.json'
+      schema: npa.living_lab.zone_manifest.v1
+  zone-huerstholz-standard-a:
+    description: 'Zone huerstholz-standard-a: full real NuRec/NRE reconstruction of the huerstholz standard
+      capture (view sector a) on its own RTX PRO 6000, then novel-view render + Rerun recording.'
+    resources: gpu
+    params:
+      zone_name: huerstholz-standard-a
+      scene: huerstholz
+      variant: standard
+      view_sector: a
+      rig_rotation_offset: 0,0,0
+      rig_translation_offset: 0,0.25,0
+    run:
+      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
+        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+        \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
+        \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
+        MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
+        # The NGC NRE image ships no npa, no ffmpeg, and none of the workbench's Python\n# deps. The runtime\
+        \ setup installs npa from $NPA_SRC_S3_URI; this step fills in\n# the NRE-runtime Python deps (nvidia-ncore\
+        \ for fetch, rerun-sdk for the Rerun\n# recording, pillow/pyyaml for the join inputs) and ffmpeg\
+        \ (backs render\n# --export-video). It is idempotent and matches the shipped single-pod reference.\n\
+        export DEBIAN_FRONTEND=noninteractive\nif ! command -v ffmpeg >/dev/null 2>&1; then\n  apt-get\
+        \ update -qq || true\n  apt-get install -y -qq --no-install-recommends ffmpeg || true\nfi\nnpa_pip()\
+        \ {\n  python3 -m pip install -q \"$@\" || python3 -m pip install -q \"$@\" --break-system-packages\
+        \ || python3 -m pip install -q \"$@\" --user\n}\nnpa_pip \"boto3>=1.34\" \"awscli>=1.32\" \"huggingface_hub>=0.30\"\
+        \ \"nvidia-ncore\" \"rerun-sdk\" \"pillow>=10.0\" \"pyyaml>=6.0\"\ncommand -v npa >/dev/null 2>&1\
+        \ || { echo \"npa not found; set NPA_SRC_S3_URI\" >&2; exit 1; }\n\n# ---- objective per-shard\
+        \ GPU / scheduler identity ---------------------------\n# Captured once at the top of the shard\
+        \ so the manifest carries real, per-GPU\n# provenance (UUID + model + node + pod + wave), not\
+        \ just a model-name count.\n# HOSTNAME inside a Kubernetes pod is the pod name; NODE_NAME comes\
+        \ from the\n# downward-API env the workflow's pod_config injects.\nGPU_UUID=$(nvidia-smi --query-gpu=uuid\
+        \ --format=csv,noheader | head -1 || echo unknown)\nGPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader\
+        \ | head -1 || echo unknown)\nPOD_NAME=\"${HOSTNAME:-unknown}\"\nNODE_NAME=\"${NODE_NAME:-unknown}\"\
+        \nSTART=$(date +%s)\nexport ZONE RUN_URI DATASET_ID SCENE VARIANT ZU NC RC NV INPUT RRD FINAL\
+        \ MF\nexport GPU_UUID GPU_NAME POD_NAME NODE_NAME START\n\necho \"=== zone $ZONE: check (container\
+        \ + dataset rights + RT-core GPU) ===\"\nnpa workbench nurec check --require-gpu --output json\n\
+        \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
+        \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
+        \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
+        )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
+        )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
+        \ POSES_GROUP CAMERA\n\n# ---- reconstruct + real, non-missing quality metrics ------------------------\n\
+        # The reconstruct stage writes NRE's val metrics.yaml. metrics_path preserves\n# where the numbers\
+        \ came from; metrics are recorded only when actually measured.\n# A missing/unparseable metrics\
+        \ payload makes the shard (and the join) FAIL\n# rather than substituting a numeric zero.\necho\
+        \ \"=== zone $ZONE: reconstruct (3DGUT Gaussians -> renderable USDZ) ===\"\nnpa workbench nurec\
+        \ reconstruct --ncore-json \"${NCORE_JSON}\" --poses-component-group \"${POSES_GROUP}\" --camera-id\
+        \ \"${CAMERA}\" --world-size 1 --export-gt --output-uri \"${RC}\" --input-uri \"${INPUT}\" --output\
+        \ json >/tmp/nurec-reconstruct.json\nUSDZ=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json'))['usdz_path'])\"\
+        )\nMETRICS_PATH=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json')).get('metrics_path')\
+        \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
+        \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
+        ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
+        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
+        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
+        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
+        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
+        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
+        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
+        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
+        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
+        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
+        metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
+        \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
+        \ 0.0.\ndef _m(key):\n    val = raw_metrics.get(key)\n    if val is None or val == \"\":\n   \
+        \     return None\n    try:\n        return float(val)\n    except (TypeError, ValueError):\n\
+        \        return None\nmetrics = {\"test/psnr\": _m(\"test/psnr\"), \"test/ssim\": _m(\"test/ssim\"\
+        ), \"test/lpips\": _m(\"test/lpips\")}\nmetrics_present = bool(metrics_path) and all(metrics[k]\
+        \ is not None for k in metrics)\nif not metrics_present:\n    print(\"zone\", os.environ[\"ZONE\"\
+        ], \": NRE validation metrics missing/unparseable (metrics_path=%r); failing shard\" % metrics_path,\
+        \ flush=True)\n    raise SystemExit(1)\npayload = {\n  \"schema\": \"npa.living_lab.zone_manifest.v1\"\
+        ,\n  \"zone_name\": os.environ[\"ZONE\"],\n  \"status\": \"ok\",\n  \"provenance\": {\n    \"\
+        dataset_id\": os.environ[\"DATASET_ID\"],\n    \"scene\": os.environ[\"SCENE\"],\n    \"variant\"\
+        : os.environ[\"VARIANT\"],\n    \"requested\": {k: os.environ[k] for k in (\"DATASET_ID\", \"\
+        SCENE\", \"VARIANT\")},\n  },\n  \"gpu\": {\n    \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\
+        \"),\n    \"gpu_name\": os.environ.get(\"GPU_NAME\", \"\"),\n    \"node_name\": os.environ.get(\"\
+        NODE_NAME\", \"\"),\n    \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n    \"wave_id\": os.environ.get(\"\
+        RUN_URI\", \"\"),\n  },\n  \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\"),\n  \"gpu_name\":\
+        \ os.environ.get(\"GPU_NAME\", \"\"),\n  \"node_name\": os.environ.get(\"NODE_NAME\", \"\"),\n\
+        \  \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n  \"wave_id\": os.environ.get(\"RUN_URI\"\
+        , \"\"),\n  \"usdz_path\": os.environ.get(\"USDZ\", \"\"),\n  \"reconstruction_uri\": os.environ.get(\"\
+        RC\", \"\"),\n  \"novel_views_uri\": os.environ.get(\"NV\", \"\"),\n  \"rrd_uri\": os.environ.get(\"\
+        RRD\", \"\"),\n  \"final_report_uri\": os.environ.get(\"FINAL\", \"\"),\n  \"started_epoch\":\
+        \ int(os.environ.get(\"START\", 0)),\n  \"ended_epoch\": int(os.environ.get(\"END\", 0)),\n  \"\
+        elapsed_seconds\": int(os.environ.get(\"END\", 0)) - int(os.environ.get(\"START\", 0)),\n  \"\
+        metrics_path\": metrics_path,\n  \"metrics\": metrics,\n  \"finalize\": {\n    \"status\": final.get(\"\
+        status\", \"\"),\n    \"has_usdz\": bool(final.get(\"has_usdz\", False)),\n    \"has_rrd\": bool(final.get(\"\
+        has_rrd\", False)),\n    \"artifact_count\": final.get(\"artifact_count\", 0),\n  },\n}\njson.dump(payload,\
+        \ open(\"/tmp/zone_manifest.json\", \"w\"))\nfrom npa.clients.storage import StorageClient\nStorageClient.from_environment().upload_file(\"\
+        /tmp/zone_manifest.json\", os.environ[\"MF\"])\nprint(json.dumps(payload))\nPY\n"
+    outputs:
+    - uri: '{{config.zones_uri}}{{config.zone_name}}/zone_manifest.json'
+      schema: npa.living_lab.zone_manifest.v1
+  zone-huerstholz-standard-b:
+    description: 'Zone huerstholz-standard-b: full real NuRec/NRE reconstruction of the huerstholz standard
+      capture (view sector b) on its own RTX PRO 6000, then novel-view render + Rerun recording.'
+    resources: gpu
+    params:
+      zone_name: huerstholz-standard-b
+      scene: huerstholz
+      variant: standard
+      view_sector: b
+      rig_rotation_offset: 120,0,0
+      rig_translation_offset: 0,0,0.45
+    run:
+      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
+        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+        \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
+        \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
+        MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
+        # The NGC NRE image ships no npa, no ffmpeg, and none of the workbench's Python\n# deps. The runtime\
+        \ setup installs npa from $NPA_SRC_S3_URI; this step fills in\n# the NRE-runtime Python deps (nvidia-ncore\
+        \ for fetch, rerun-sdk for the Rerun\n# recording, pillow/pyyaml for the join inputs) and ffmpeg\
+        \ (backs render\n# --export-video). It is idempotent and matches the shipped single-pod reference.\n\
+        export DEBIAN_FRONTEND=noninteractive\nif ! command -v ffmpeg >/dev/null 2>&1; then\n  apt-get\
+        \ update -qq || true\n  apt-get install -y -qq --no-install-recommends ffmpeg || true\nfi\nnpa_pip()\
+        \ {\n  python3 -m pip install -q \"$@\" || python3 -m pip install -q \"$@\" --break-system-packages\
+        \ || python3 -m pip install -q \"$@\" --user\n}\nnpa_pip \"boto3>=1.34\" \"awscli>=1.32\" \"huggingface_hub>=0.30\"\
+        \ \"nvidia-ncore\" \"rerun-sdk\" \"pillow>=10.0\" \"pyyaml>=6.0\"\ncommand -v npa >/dev/null 2>&1\
+        \ || { echo \"npa not found; set NPA_SRC_S3_URI\" >&2; exit 1; }\n\n# ---- objective per-shard\
+        \ GPU / scheduler identity ---------------------------\n# Captured once at the top of the shard\
+        \ so the manifest carries real, per-GPU\n# provenance (UUID + model + node + pod + wave), not\
+        \ just a model-name count.\n# HOSTNAME inside a Kubernetes pod is the pod name; NODE_NAME comes\
+        \ from the\n# downward-API env the workflow's pod_config injects.\nGPU_UUID=$(nvidia-smi --query-gpu=uuid\
+        \ --format=csv,noheader | head -1 || echo unknown)\nGPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader\
+        \ | head -1 || echo unknown)\nPOD_NAME=\"${HOSTNAME:-unknown}\"\nNODE_NAME=\"${NODE_NAME:-unknown}\"\
+        \nSTART=$(date +%s)\nexport ZONE RUN_URI DATASET_ID SCENE VARIANT ZU NC RC NV INPUT RRD FINAL\
+        \ MF\nexport GPU_UUID GPU_NAME POD_NAME NODE_NAME START\n\necho \"=== zone $ZONE: check (container\
+        \ + dataset rights + RT-core GPU) ===\"\nnpa workbench nurec check --require-gpu --output json\n\
+        \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
+        \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
+        \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
+        )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
+        )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
+        \ POSES_GROUP CAMERA\n\n# ---- reconstruct + real, non-missing quality metrics ------------------------\n\
+        # The reconstruct stage writes NRE's val metrics.yaml. metrics_path preserves\n# where the numbers\
+        \ came from; metrics are recorded only when actually measured.\n# A missing/unparseable metrics\
+        \ payload makes the shard (and the join) FAIL\n# rather than substituting a numeric zero.\necho\
+        \ \"=== zone $ZONE: reconstruct (3DGUT Gaussians -> renderable USDZ) ===\"\nnpa workbench nurec\
+        \ reconstruct --ncore-json \"${NCORE_JSON}\" --poses-component-group \"${POSES_GROUP}\" --camera-id\
+        \ \"${CAMERA}\" --world-size 1 --export-gt --output-uri \"${RC}\" --input-uri \"${INPUT}\" --output\
+        \ json >/tmp/nurec-reconstruct.json\nUSDZ=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json'))['usdz_path'])\"\
+        )\nMETRICS_PATH=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json')).get('metrics_path')\
+        \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
+        \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
+        ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
+        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
+        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
+        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
+        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
+        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
+        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
+        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
+        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
+        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
+        metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
+        \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
+        \ 0.0.\ndef _m(key):\n    val = raw_metrics.get(key)\n    if val is None or val == \"\":\n   \
+        \     return None\n    try:\n        return float(val)\n    except (TypeError, ValueError):\n\
+        \        return None\nmetrics = {\"test/psnr\": _m(\"test/psnr\"), \"test/ssim\": _m(\"test/ssim\"\
+        ), \"test/lpips\": _m(\"test/lpips\")}\nmetrics_present = bool(metrics_path) and all(metrics[k]\
+        \ is not None for k in metrics)\nif not metrics_present:\n    print(\"zone\", os.environ[\"ZONE\"\
+        ], \": NRE validation metrics missing/unparseable (metrics_path=%r); failing shard\" % metrics_path,\
+        \ flush=True)\n    raise SystemExit(1)\npayload = {\n  \"schema\": \"npa.living_lab.zone_manifest.v1\"\
+        ,\n  \"zone_name\": os.environ[\"ZONE\"],\n  \"status\": \"ok\",\n  \"provenance\": {\n    \"\
+        dataset_id\": os.environ[\"DATASET_ID\"],\n    \"scene\": os.environ[\"SCENE\"],\n    \"variant\"\
+        : os.environ[\"VARIANT\"],\n    \"requested\": {k: os.environ[k] for k in (\"DATASET_ID\", \"\
+        SCENE\", \"VARIANT\")},\n  },\n  \"gpu\": {\n    \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\
+        \"),\n    \"gpu_name\": os.environ.get(\"GPU_NAME\", \"\"),\n    \"node_name\": os.environ.get(\"\
+        NODE_NAME\", \"\"),\n    \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n    \"wave_id\": os.environ.get(\"\
+        RUN_URI\", \"\"),\n  },\n  \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\"),\n  \"gpu_name\":\
+        \ os.environ.get(\"GPU_NAME\", \"\"),\n  \"node_name\": os.environ.get(\"NODE_NAME\", \"\"),\n\
+        \  \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n  \"wave_id\": os.environ.get(\"RUN_URI\"\
+        , \"\"),\n  \"usdz_path\": os.environ.get(\"USDZ\", \"\"),\n  \"reconstruction_uri\": os.environ.get(\"\
+        RC\", \"\"),\n  \"novel_views_uri\": os.environ.get(\"NV\", \"\"),\n  \"rrd_uri\": os.environ.get(\"\
+        RRD\", \"\"),\n  \"final_report_uri\": os.environ.get(\"FINAL\", \"\"),\n  \"started_epoch\":\
+        \ int(os.environ.get(\"START\", 0)),\n  \"ended_epoch\": int(os.environ.get(\"END\", 0)),\n  \"\
+        elapsed_seconds\": int(os.environ.get(\"END\", 0)) - int(os.environ.get(\"START\", 0)),\n  \"\
+        metrics_path\": metrics_path,\n  \"metrics\": metrics,\n  \"finalize\": {\n    \"status\": final.get(\"\
+        status\", \"\"),\n    \"has_usdz\": bool(final.get(\"has_usdz\", False)),\n    \"has_rrd\": bool(final.get(\"\
+        has_rrd\", False)),\n    \"artifact_count\": final.get(\"artifact_count\", 0),\n  },\n}\njson.dump(payload,\
+        \ open(\"/tmp/zone_manifest.json\", \"w\"))\nfrom npa.clients.storage import StorageClient\nStorageClient.from_environment().upload_file(\"\
+        /tmp/zone_manifest.json\", os.environ[\"MF\"])\nprint(json.dumps(payload))\nPY\n"
+    outputs:
+    - uri: '{{config.zones_uri}}{{config.zone_name}}/zone_manifest.json'
+      schema: npa.living_lab.zone_manifest.v1
+  zone-struktur28-auto-a:
+    description: 'Zone struktur28-auto-a: full real NuRec/NRE reconstruction of the struktur28 auto capture
+      (view sector a) on its own RTX PRO 6000, then novel-view render + Rerun recording.'
+    resources: gpu
+    params:
+      zone_name: struktur28-auto-a
+      scene: struktur28
+      variant: auto
+      view_sector: a
+      rig_rotation_offset: 0,0,0
+      rig_translation_offset: 0,0.25,0
+    run:
+      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
+        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+        \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
+        \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
+        MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
+        # The NGC NRE image ships no npa, no ffmpeg, and none of the workbench's Python\n# deps. The runtime\
+        \ setup installs npa from $NPA_SRC_S3_URI; this step fills in\n# the NRE-runtime Python deps (nvidia-ncore\
+        \ for fetch, rerun-sdk for the Rerun\n# recording, pillow/pyyaml for the join inputs) and ffmpeg\
+        \ (backs render\n# --export-video). It is idempotent and matches the shipped single-pod reference.\n\
+        export DEBIAN_FRONTEND=noninteractive\nif ! command -v ffmpeg >/dev/null 2>&1; then\n  apt-get\
+        \ update -qq || true\n  apt-get install -y -qq --no-install-recommends ffmpeg || true\nfi\nnpa_pip()\
+        \ {\n  python3 -m pip install -q \"$@\" || python3 -m pip install -q \"$@\" --break-system-packages\
+        \ || python3 -m pip install -q \"$@\" --user\n}\nnpa_pip \"boto3>=1.34\" \"awscli>=1.32\" \"huggingface_hub>=0.30\"\
+        \ \"nvidia-ncore\" \"rerun-sdk\" \"pillow>=10.0\" \"pyyaml>=6.0\"\ncommand -v npa >/dev/null 2>&1\
+        \ || { echo \"npa not found; set NPA_SRC_S3_URI\" >&2; exit 1; }\n\n# ---- objective per-shard\
+        \ GPU / scheduler identity ---------------------------\n# Captured once at the top of the shard\
+        \ so the manifest carries real, per-GPU\n# provenance (UUID + model + node + pod + wave), not\
+        \ just a model-name count.\n# HOSTNAME inside a Kubernetes pod is the pod name; NODE_NAME comes\
+        \ from the\n# downward-API env the workflow's pod_config injects.\nGPU_UUID=$(nvidia-smi --query-gpu=uuid\
+        \ --format=csv,noheader | head -1 || echo unknown)\nGPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader\
+        \ | head -1 || echo unknown)\nPOD_NAME=\"${HOSTNAME:-unknown}\"\nNODE_NAME=\"${NODE_NAME:-unknown}\"\
+        \nSTART=$(date +%s)\nexport ZONE RUN_URI DATASET_ID SCENE VARIANT ZU NC RC NV INPUT RRD FINAL\
+        \ MF\nexport GPU_UUID GPU_NAME POD_NAME NODE_NAME START\n\necho \"=== zone $ZONE: check (container\
+        \ + dataset rights + RT-core GPU) ===\"\nnpa workbench nurec check --require-gpu --output json\n\
+        \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
+        \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
+        \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
+        )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
+        )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
+        \ POSES_GROUP CAMERA\n\n# ---- reconstruct + real, non-missing quality metrics ------------------------\n\
+        # The reconstruct stage writes NRE's val metrics.yaml. metrics_path preserves\n# where the numbers\
+        \ came from; metrics are recorded only when actually measured.\n# A missing/unparseable metrics\
+        \ payload makes the shard (and the join) FAIL\n# rather than substituting a numeric zero.\necho\
+        \ \"=== zone $ZONE: reconstruct (3DGUT Gaussians -> renderable USDZ) ===\"\nnpa workbench nurec\
+        \ reconstruct --ncore-json \"${NCORE_JSON}\" --poses-component-group \"${POSES_GROUP}\" --camera-id\
+        \ \"${CAMERA}\" --world-size 1 --export-gt --output-uri \"${RC}\" --input-uri \"${INPUT}\" --output\
+        \ json >/tmp/nurec-reconstruct.json\nUSDZ=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json'))['usdz_path'])\"\
+        )\nMETRICS_PATH=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json')).get('metrics_path')\
+        \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
+        \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
+        ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
+        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
+        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
+        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
+        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
+        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
+        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
+        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
+        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
+        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
+        metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
+        \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
+        \ 0.0.\ndef _m(key):\n    val = raw_metrics.get(key)\n    if val is None or val == \"\":\n   \
+        \     return None\n    try:\n        return float(val)\n    except (TypeError, ValueError):\n\
+        \        return None\nmetrics = {\"test/psnr\": _m(\"test/psnr\"), \"test/ssim\": _m(\"test/ssim\"\
+        ), \"test/lpips\": _m(\"test/lpips\")}\nmetrics_present = bool(metrics_path) and all(metrics[k]\
+        \ is not None for k in metrics)\nif not metrics_present:\n    print(\"zone\", os.environ[\"ZONE\"\
+        ], \": NRE validation metrics missing/unparseable (metrics_path=%r); failing shard\" % metrics_path,\
+        \ flush=True)\n    raise SystemExit(1)\npayload = {\n  \"schema\": \"npa.living_lab.zone_manifest.v1\"\
+        ,\n  \"zone_name\": os.environ[\"ZONE\"],\n  \"status\": \"ok\",\n  \"provenance\": {\n    \"\
+        dataset_id\": os.environ[\"DATASET_ID\"],\n    \"scene\": os.environ[\"SCENE\"],\n    \"variant\"\
+        : os.environ[\"VARIANT\"],\n    \"requested\": {k: os.environ[k] for k in (\"DATASET_ID\", \"\
+        SCENE\", \"VARIANT\")},\n  },\n  \"gpu\": {\n    \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\
+        \"),\n    \"gpu_name\": os.environ.get(\"GPU_NAME\", \"\"),\n    \"node_name\": os.environ.get(\"\
+        NODE_NAME\", \"\"),\n    \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n    \"wave_id\": os.environ.get(\"\
+        RUN_URI\", \"\"),\n  },\n  \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\"),\n  \"gpu_name\":\
+        \ os.environ.get(\"GPU_NAME\", \"\"),\n  \"node_name\": os.environ.get(\"NODE_NAME\", \"\"),\n\
+        \  \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n  \"wave_id\": os.environ.get(\"RUN_URI\"\
+        , \"\"),\n  \"usdz_path\": os.environ.get(\"USDZ\", \"\"),\n  \"reconstruction_uri\": os.environ.get(\"\
+        RC\", \"\"),\n  \"novel_views_uri\": os.environ.get(\"NV\", \"\"),\n  \"rrd_uri\": os.environ.get(\"\
+        RRD\", \"\"),\n  \"final_report_uri\": os.environ.get(\"FINAL\", \"\"),\n  \"started_epoch\":\
+        \ int(os.environ.get(\"START\", 0)),\n  \"ended_epoch\": int(os.environ.get(\"END\", 0)),\n  \"\
+        elapsed_seconds\": int(os.environ.get(\"END\", 0)) - int(os.environ.get(\"START\", 0)),\n  \"\
+        metrics_path\": metrics_path,\n  \"metrics\": metrics,\n  \"finalize\": {\n    \"status\": final.get(\"\
+        status\", \"\"),\n    \"has_usdz\": bool(final.get(\"has_usdz\", False)),\n    \"has_rrd\": bool(final.get(\"\
+        has_rrd\", False)),\n    \"artifact_count\": final.get(\"artifact_count\", 0),\n  },\n}\njson.dump(payload,\
+        \ open(\"/tmp/zone_manifest.json\", \"w\"))\nfrom npa.clients.storage import StorageClient\nStorageClient.from_environment().upload_file(\"\
+        /tmp/zone_manifest.json\", os.environ[\"MF\"])\nprint(json.dumps(payload))\nPY\n"
+    outputs:
+    - uri: '{{config.zones_uri}}{{config.zone_name}}/zone_manifest.json'
+      schema: npa.living_lab.zone_manifest.v1
+  zone-struktur28-auto-b:
+    description: 'Zone struktur28-auto-b: full real NuRec/NRE reconstruction of the struktur28 auto capture
+      (view sector b) on its own RTX PRO 6000, then novel-view render + Rerun recording.'
+    resources: gpu
+    params:
+      zone_name: struktur28-auto-b
+      scene: struktur28
+      variant: auto
+      view_sector: b
+      rig_rotation_offset: 120,0,0
+      rig_translation_offset: 0,0,0.45
+    run:
+      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
+        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+        \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
+        \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
+        MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
+        # The NGC NRE image ships no npa, no ffmpeg, and none of the workbench's Python\n# deps. The runtime\
+        \ setup installs npa from $NPA_SRC_S3_URI; this step fills in\n# the NRE-runtime Python deps (nvidia-ncore\
+        \ for fetch, rerun-sdk for the Rerun\n# recording, pillow/pyyaml for the join inputs) and ffmpeg\
+        \ (backs render\n# --export-video). It is idempotent and matches the shipped single-pod reference.\n\
+        export DEBIAN_FRONTEND=noninteractive\nif ! command -v ffmpeg >/dev/null 2>&1; then\n  apt-get\
+        \ update -qq || true\n  apt-get install -y -qq --no-install-recommends ffmpeg || true\nfi\nnpa_pip()\
+        \ {\n  python3 -m pip install -q \"$@\" || python3 -m pip install -q \"$@\" --break-system-packages\
+        \ || python3 -m pip install -q \"$@\" --user\n}\nnpa_pip \"boto3>=1.34\" \"awscli>=1.32\" \"huggingface_hub>=0.30\"\
+        \ \"nvidia-ncore\" \"rerun-sdk\" \"pillow>=10.0\" \"pyyaml>=6.0\"\ncommand -v npa >/dev/null 2>&1\
+        \ || { echo \"npa not found; set NPA_SRC_S3_URI\" >&2; exit 1; }\n\n# ---- objective per-shard\
+        \ GPU / scheduler identity ---------------------------\n# Captured once at the top of the shard\
+        \ so the manifest carries real, per-GPU\n# provenance (UUID + model + node + pod + wave), not\
+        \ just a model-name count.\n# HOSTNAME inside a Kubernetes pod is the pod name; NODE_NAME comes\
+        \ from the\n# downward-API env the workflow's pod_config injects.\nGPU_UUID=$(nvidia-smi --query-gpu=uuid\
+        \ --format=csv,noheader | head -1 || echo unknown)\nGPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader\
+        \ | head -1 || echo unknown)\nPOD_NAME=\"${HOSTNAME:-unknown}\"\nNODE_NAME=\"${NODE_NAME:-unknown}\"\
+        \nSTART=$(date +%s)\nexport ZONE RUN_URI DATASET_ID SCENE VARIANT ZU NC RC NV INPUT RRD FINAL\
+        \ MF\nexport GPU_UUID GPU_NAME POD_NAME NODE_NAME START\n\necho \"=== zone $ZONE: check (container\
+        \ + dataset rights + RT-core GPU) ===\"\nnpa workbench nurec check --require-gpu --output json\n\
+        \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
+        \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
+        \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
+        )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
+        )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
+        \ POSES_GROUP CAMERA\n\n# ---- reconstruct + real, non-missing quality metrics ------------------------\n\
+        # The reconstruct stage writes NRE's val metrics.yaml. metrics_path preserves\n# where the numbers\
+        \ came from; metrics are recorded only when actually measured.\n# A missing/unparseable metrics\
+        \ payload makes the shard (and the join) FAIL\n# rather than substituting a numeric zero.\necho\
+        \ \"=== zone $ZONE: reconstruct (3DGUT Gaussians -> renderable USDZ) ===\"\nnpa workbench nurec\
+        \ reconstruct --ncore-json \"${NCORE_JSON}\" --poses-component-group \"${POSES_GROUP}\" --camera-id\
+        \ \"${CAMERA}\" --world-size 1 --export-gt --output-uri \"${RC}\" --input-uri \"${INPUT}\" --output\
+        \ json >/tmp/nurec-reconstruct.json\nUSDZ=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json'))['usdz_path'])\"\
+        )\nMETRICS_PATH=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json')).get('metrics_path')\
+        \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
+        \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
+        ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
+        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
+        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
+        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
+        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
+        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
+        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
+        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
+        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
+        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
+        metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
+        \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
+        \ 0.0.\ndef _m(key):\n    val = raw_metrics.get(key)\n    if val is None or val == \"\":\n   \
+        \     return None\n    try:\n        return float(val)\n    except (TypeError, ValueError):\n\
+        \        return None\nmetrics = {\"test/psnr\": _m(\"test/psnr\"), \"test/ssim\": _m(\"test/ssim\"\
+        ), \"test/lpips\": _m(\"test/lpips\")}\nmetrics_present = bool(metrics_path) and all(metrics[k]\
+        \ is not None for k in metrics)\nif not metrics_present:\n    print(\"zone\", os.environ[\"ZONE\"\
+        ], \": NRE validation metrics missing/unparseable (metrics_path=%r); failing shard\" % metrics_path,\
+        \ flush=True)\n    raise SystemExit(1)\npayload = {\n  \"schema\": \"npa.living_lab.zone_manifest.v1\"\
+        ,\n  \"zone_name\": os.environ[\"ZONE\"],\n  \"status\": \"ok\",\n  \"provenance\": {\n    \"\
+        dataset_id\": os.environ[\"DATASET_ID\"],\n    \"scene\": os.environ[\"SCENE\"],\n    \"variant\"\
+        : os.environ[\"VARIANT\"],\n    \"requested\": {k: os.environ[k] for k in (\"DATASET_ID\", \"\
+        SCENE\", \"VARIANT\")},\n  },\n  \"gpu\": {\n    \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\
+        \"),\n    \"gpu_name\": os.environ.get(\"GPU_NAME\", \"\"),\n    \"node_name\": os.environ.get(\"\
+        NODE_NAME\", \"\"),\n    \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n    \"wave_id\": os.environ.get(\"\
+        RUN_URI\", \"\"),\n  },\n  \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\"),\n  \"gpu_name\":\
+        \ os.environ.get(\"GPU_NAME\", \"\"),\n  \"node_name\": os.environ.get(\"NODE_NAME\", \"\"),\n\
+        \  \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n  \"wave_id\": os.environ.get(\"RUN_URI\"\
+        , \"\"),\n  \"usdz_path\": os.environ.get(\"USDZ\", \"\"),\n  \"reconstruction_uri\": os.environ.get(\"\
+        RC\", \"\"),\n  \"novel_views_uri\": os.environ.get(\"NV\", \"\"),\n  \"rrd_uri\": os.environ.get(\"\
+        RRD\", \"\"),\n  \"final_report_uri\": os.environ.get(\"FINAL\", \"\"),\n  \"started_epoch\":\
+        \ int(os.environ.get(\"START\", 0)),\n  \"ended_epoch\": int(os.environ.get(\"END\", 0)),\n  \"\
+        elapsed_seconds\": int(os.environ.get(\"END\", 0)) - int(os.environ.get(\"START\", 0)),\n  \"\
+        metrics_path\": metrics_path,\n  \"metrics\": metrics,\n  \"finalize\": {\n    \"status\": final.get(\"\
+        status\", \"\"),\n    \"has_usdz\": bool(final.get(\"has_usdz\", False)),\n    \"has_rrd\": bool(final.get(\"\
+        has_rrd\", False)),\n    \"artifact_count\": final.get(\"artifact_count\", 0),\n  },\n}\njson.dump(payload,\
+        \ open(\"/tmp/zone_manifest.json\", \"w\"))\nfrom npa.clients.storage import StorageClient\nStorageClient.from_environment().upload_file(\"\
+        /tmp/zone_manifest.json\", os.environ[\"MF\"])\nprint(json.dumps(payload))\nPY\n"
+    outputs:
+    - uri: '{{config.zones_uri}}{{config.zone_name}}/zone_manifest.json'
+      schema: npa.living_lab.zone_manifest.v1
+  zone-struktur28-standard-a:
+    description: 'Zone struktur28-standard-a: full real NuRec/NRE reconstruction of the struktur28 standard
+      capture (view sector a) on its own RTX PRO 6000, then novel-view render + Rerun recording.'
+    resources: gpu
+    params:
+      zone_name: struktur28-standard-a
+      scene: struktur28
+      variant: standard
+      view_sector: a
+      rig_rotation_offset: 0,0,0
+      rig_translation_offset: 0,0.25,0
+    run:
+      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
+        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+        \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
+        \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
+        MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
+        # The NGC NRE image ships no npa, no ffmpeg, and none of the workbench's Python\n# deps. The runtime\
+        \ setup installs npa from $NPA_SRC_S3_URI; this step fills in\n# the NRE-runtime Python deps (nvidia-ncore\
+        \ for fetch, rerun-sdk for the Rerun\n# recording, pillow/pyyaml for the join inputs) and ffmpeg\
+        \ (backs render\n# --export-video). It is idempotent and matches the shipped single-pod reference.\n\
+        export DEBIAN_FRONTEND=noninteractive\nif ! command -v ffmpeg >/dev/null 2>&1; then\n  apt-get\
+        \ update -qq || true\n  apt-get install -y -qq --no-install-recommends ffmpeg || true\nfi\nnpa_pip()\
+        \ {\n  python3 -m pip install -q \"$@\" || python3 -m pip install -q \"$@\" --break-system-packages\
+        \ || python3 -m pip install -q \"$@\" --user\n}\nnpa_pip \"boto3>=1.34\" \"awscli>=1.32\" \"huggingface_hub>=0.30\"\
+        \ \"nvidia-ncore\" \"rerun-sdk\" \"pillow>=10.0\" \"pyyaml>=6.0\"\ncommand -v npa >/dev/null 2>&1\
+        \ || { echo \"npa not found; set NPA_SRC_S3_URI\" >&2; exit 1; }\n\n# ---- objective per-shard\
+        \ GPU / scheduler identity ---------------------------\n# Captured once at the top of the shard\
+        \ so the manifest carries real, per-GPU\n# provenance (UUID + model + node + pod + wave), not\
+        \ just a model-name count.\n# HOSTNAME inside a Kubernetes pod is the pod name; NODE_NAME comes\
+        \ from the\n# downward-API env the workflow's pod_config injects.\nGPU_UUID=$(nvidia-smi --query-gpu=uuid\
+        \ --format=csv,noheader | head -1 || echo unknown)\nGPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader\
+        \ | head -1 || echo unknown)\nPOD_NAME=\"${HOSTNAME:-unknown}\"\nNODE_NAME=\"${NODE_NAME:-unknown}\"\
+        \nSTART=$(date +%s)\nexport ZONE RUN_URI DATASET_ID SCENE VARIANT ZU NC RC NV INPUT RRD FINAL\
+        \ MF\nexport GPU_UUID GPU_NAME POD_NAME NODE_NAME START\n\necho \"=== zone $ZONE: check (container\
+        \ + dataset rights + RT-core GPU) ===\"\nnpa workbench nurec check --require-gpu --output json\n\
+        \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
+        \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
+        \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
+        )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
+        )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
+        \ POSES_GROUP CAMERA\n\n# ---- reconstruct + real, non-missing quality metrics ------------------------\n\
+        # The reconstruct stage writes NRE's val metrics.yaml. metrics_path preserves\n# where the numbers\
+        \ came from; metrics are recorded only when actually measured.\n# A missing/unparseable metrics\
+        \ payload makes the shard (and the join) FAIL\n# rather than substituting a numeric zero.\necho\
+        \ \"=== zone $ZONE: reconstruct (3DGUT Gaussians -> renderable USDZ) ===\"\nnpa workbench nurec\
+        \ reconstruct --ncore-json \"${NCORE_JSON}\" --poses-component-group \"${POSES_GROUP}\" --camera-id\
+        \ \"${CAMERA}\" --world-size 1 --export-gt --output-uri \"${RC}\" --input-uri \"${INPUT}\" --output\
+        \ json >/tmp/nurec-reconstruct.json\nUSDZ=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json'))['usdz_path'])\"\
+        )\nMETRICS_PATH=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json')).get('metrics_path')\
+        \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
+        \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
+        ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
+        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
+        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
+        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
+        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
+        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
+        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
+        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
+        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
+        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
+        metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
+        \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
+        \ 0.0.\ndef _m(key):\n    val = raw_metrics.get(key)\n    if val is None or val == \"\":\n   \
+        \     return None\n    try:\n        return float(val)\n    except (TypeError, ValueError):\n\
+        \        return None\nmetrics = {\"test/psnr\": _m(\"test/psnr\"), \"test/ssim\": _m(\"test/ssim\"\
+        ), \"test/lpips\": _m(\"test/lpips\")}\nmetrics_present = bool(metrics_path) and all(metrics[k]\
+        \ is not None for k in metrics)\nif not metrics_present:\n    print(\"zone\", os.environ[\"ZONE\"\
+        ], \": NRE validation metrics missing/unparseable (metrics_path=%r); failing shard\" % metrics_path,\
+        \ flush=True)\n    raise SystemExit(1)\npayload = {\n  \"schema\": \"npa.living_lab.zone_manifest.v1\"\
+        ,\n  \"zone_name\": os.environ[\"ZONE\"],\n  \"status\": \"ok\",\n  \"provenance\": {\n    \"\
+        dataset_id\": os.environ[\"DATASET_ID\"],\n    \"scene\": os.environ[\"SCENE\"],\n    \"variant\"\
+        : os.environ[\"VARIANT\"],\n    \"requested\": {k: os.environ[k] for k in (\"DATASET_ID\", \"\
+        SCENE\", \"VARIANT\")},\n  },\n  \"gpu\": {\n    \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\
+        \"),\n    \"gpu_name\": os.environ.get(\"GPU_NAME\", \"\"),\n    \"node_name\": os.environ.get(\"\
+        NODE_NAME\", \"\"),\n    \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n    \"wave_id\": os.environ.get(\"\
+        RUN_URI\", \"\"),\n  },\n  \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\"),\n  \"gpu_name\":\
+        \ os.environ.get(\"GPU_NAME\", \"\"),\n  \"node_name\": os.environ.get(\"NODE_NAME\", \"\"),\n\
+        \  \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n  \"wave_id\": os.environ.get(\"RUN_URI\"\
+        , \"\"),\n  \"usdz_path\": os.environ.get(\"USDZ\", \"\"),\n  \"reconstruction_uri\": os.environ.get(\"\
+        RC\", \"\"),\n  \"novel_views_uri\": os.environ.get(\"NV\", \"\"),\n  \"rrd_uri\": os.environ.get(\"\
+        RRD\", \"\"),\n  \"final_report_uri\": os.environ.get(\"FINAL\", \"\"),\n  \"started_epoch\":\
+        \ int(os.environ.get(\"START\", 0)),\n  \"ended_epoch\": int(os.environ.get(\"END\", 0)),\n  \"\
+        elapsed_seconds\": int(os.environ.get(\"END\", 0)) - int(os.environ.get(\"START\", 0)),\n  \"\
+        metrics_path\": metrics_path,\n  \"metrics\": metrics,\n  \"finalize\": {\n    \"status\": final.get(\"\
+        status\", \"\"),\n    \"has_usdz\": bool(final.get(\"has_usdz\", False)),\n    \"has_rrd\": bool(final.get(\"\
+        has_rrd\", False)),\n    \"artifact_count\": final.get(\"artifact_count\", 0),\n  },\n}\njson.dump(payload,\
+        \ open(\"/tmp/zone_manifest.json\", \"w\"))\nfrom npa.clients.storage import StorageClient\nStorageClient.from_environment().upload_file(\"\
+        /tmp/zone_manifest.json\", os.environ[\"MF\"])\nprint(json.dumps(payload))\nPY\n"
+    outputs:
+    - uri: '{{config.zones_uri}}{{config.zone_name}}/zone_manifest.json'
+      schema: npa.living_lab.zone_manifest.v1
+  zone-struktur28-standard-b:
+    description: 'Zone struktur28-standard-b: full real NuRec/NRE reconstruction of the struktur28 standard
+      capture (view sector b) on its own RTX PRO 6000, then novel-view render + Rerun recording.'
+    resources: gpu
+    params:
+      zone_name: struktur28-standard-b
+      scene: struktur28
+      variant: standard
+      view_sector: b
+      rig_rotation_offset: 120,0,0
+      rig_translation_offset: 0,0,0.45
+    run:
+      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
+        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+        \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
+        \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
+        MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
+        # The NGC NRE image ships no npa, no ffmpeg, and none of the workbench's Python\n# deps. The runtime\
+        \ setup installs npa from $NPA_SRC_S3_URI; this step fills in\n# the NRE-runtime Python deps (nvidia-ncore\
+        \ for fetch, rerun-sdk for the Rerun\n# recording, pillow/pyyaml for the join inputs) and ffmpeg\
+        \ (backs render\n# --export-video). It is idempotent and matches the shipped single-pod reference.\n\
+        export DEBIAN_FRONTEND=noninteractive\nif ! command -v ffmpeg >/dev/null 2>&1; then\n  apt-get\
+        \ update -qq || true\n  apt-get install -y -qq --no-install-recommends ffmpeg || true\nfi\nnpa_pip()\
+        \ {\n  python3 -m pip install -q \"$@\" || python3 -m pip install -q \"$@\" --break-system-packages\
+        \ || python3 -m pip install -q \"$@\" --user\n}\nnpa_pip \"boto3>=1.34\" \"awscli>=1.32\" \"huggingface_hub>=0.30\"\
+        \ \"nvidia-ncore\" \"rerun-sdk\" \"pillow>=10.0\" \"pyyaml>=6.0\"\ncommand -v npa >/dev/null 2>&1\
+        \ || { echo \"npa not found; set NPA_SRC_S3_URI\" >&2; exit 1; }\n\n# ---- objective per-shard\
+        \ GPU / scheduler identity ---------------------------\n# Captured once at the top of the shard\
+        \ so the manifest carries real, per-GPU\n# provenance (UUID + model + node + pod + wave), not\
+        \ just a model-name count.\n# HOSTNAME inside a Kubernetes pod is the pod name; NODE_NAME comes\
+        \ from the\n# downward-API env the workflow's pod_config injects.\nGPU_UUID=$(nvidia-smi --query-gpu=uuid\
+        \ --format=csv,noheader | head -1 || echo unknown)\nGPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader\
+        \ | head -1 || echo unknown)\nPOD_NAME=\"${HOSTNAME:-unknown}\"\nNODE_NAME=\"${NODE_NAME:-unknown}\"\
+        \nSTART=$(date +%s)\nexport ZONE RUN_URI DATASET_ID SCENE VARIANT ZU NC RC NV INPUT RRD FINAL\
+        \ MF\nexport GPU_UUID GPU_NAME POD_NAME NODE_NAME START\n\necho \"=== zone $ZONE: check (container\
+        \ + dataset rights + RT-core GPU) ===\"\nnpa workbench nurec check --require-gpu --output json\n\
+        \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
+        \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
+        \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
+        )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
+        )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
+        \ POSES_GROUP CAMERA\n\n# ---- reconstruct + real, non-missing quality metrics ------------------------\n\
+        # The reconstruct stage writes NRE's val metrics.yaml. metrics_path preserves\n# where the numbers\
+        \ came from; metrics are recorded only when actually measured.\n# A missing/unparseable metrics\
+        \ payload makes the shard (and the join) FAIL\n# rather than substituting a numeric zero.\necho\
+        \ \"=== zone $ZONE: reconstruct (3DGUT Gaussians -> renderable USDZ) ===\"\nnpa workbench nurec\
+        \ reconstruct --ncore-json \"${NCORE_JSON}\" --poses-component-group \"${POSES_GROUP}\" --camera-id\
+        \ \"${CAMERA}\" --world-size 1 --export-gt --output-uri \"${RC}\" --input-uri \"${INPUT}\" --output\
+        \ json >/tmp/nurec-reconstruct.json\nUSDZ=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json'))['usdz_path'])\"\
+        )\nMETRICS_PATH=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json')).get('metrics_path')\
+        \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
+        \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
+        ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
+        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
+        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
+        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
+        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
+        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
+        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
+        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
+        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
+        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
+        metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
+        \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
+        \ 0.0.\ndef _m(key):\n    val = raw_metrics.get(key)\n    if val is None or val == \"\":\n   \
+        \     return None\n    try:\n        return float(val)\n    except (TypeError, ValueError):\n\
+        \        return None\nmetrics = {\"test/psnr\": _m(\"test/psnr\"), \"test/ssim\": _m(\"test/ssim\"\
+        ), \"test/lpips\": _m(\"test/lpips\")}\nmetrics_present = bool(metrics_path) and all(metrics[k]\
+        \ is not None for k in metrics)\nif not metrics_present:\n    print(\"zone\", os.environ[\"ZONE\"\
+        ], \": NRE validation metrics missing/unparseable (metrics_path=%r); failing shard\" % metrics_path,\
+        \ flush=True)\n    raise SystemExit(1)\npayload = {\n  \"schema\": \"npa.living_lab.zone_manifest.v1\"\
+        ,\n  \"zone_name\": os.environ[\"ZONE\"],\n  \"status\": \"ok\",\n  \"provenance\": {\n    \"\
+        dataset_id\": os.environ[\"DATASET_ID\"],\n    \"scene\": os.environ[\"SCENE\"],\n    \"variant\"\
+        : os.environ[\"VARIANT\"],\n    \"requested\": {k: os.environ[k] for k in (\"DATASET_ID\", \"\
+        SCENE\", \"VARIANT\")},\n  },\n  \"gpu\": {\n    \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\
+        \"),\n    \"gpu_name\": os.environ.get(\"GPU_NAME\", \"\"),\n    \"node_name\": os.environ.get(\"\
+        NODE_NAME\", \"\"),\n    \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n    \"wave_id\": os.environ.get(\"\
+        RUN_URI\", \"\"),\n  },\n  \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\"),\n  \"gpu_name\":\
+        \ os.environ.get(\"GPU_NAME\", \"\"),\n  \"node_name\": os.environ.get(\"NODE_NAME\", \"\"),\n\
+        \  \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n  \"wave_id\": os.environ.get(\"RUN_URI\"\
+        , \"\"),\n  \"usdz_path\": os.environ.get(\"USDZ\", \"\"),\n  \"reconstruction_uri\": os.environ.get(\"\
+        RC\", \"\"),\n  \"novel_views_uri\": os.environ.get(\"NV\", \"\"),\n  \"rrd_uri\": os.environ.get(\"\
+        RRD\", \"\"),\n  \"final_report_uri\": os.environ.get(\"FINAL\", \"\"),\n  \"started_epoch\":\
+        \ int(os.environ.get(\"START\", 0)),\n  \"ended_epoch\": int(os.environ.get(\"END\", 0)),\n  \"\
+        elapsed_seconds\": int(os.environ.get(\"END\", 0)) - int(os.environ.get(\"START\", 0)),\n  \"\
+        metrics_path\": metrics_path,\n  \"metrics\": metrics,\n  \"finalize\": {\n    \"status\": final.get(\"\
+        status\", \"\"),\n    \"has_usdz\": bool(final.get(\"has_usdz\", False)),\n    \"has_rrd\": bool(final.get(\"\
+        has_rrd\", False)),\n    \"artifact_count\": final.get(\"artifact_count\", 0),\n  },\n}\njson.dump(payload,\
+        \ open(\"/tmp/zone_manifest.json\", \"w\"))\nfrom npa.clients.storage import StorageClient\nStorageClient.from_environment().upload_file(\"\
+        /tmp/zone_manifest.json\", os.environ[\"MF\"])\nprint(json.dumps(payload))\nPY\n"
+    outputs:
+    - uri: '{{config.zones_uri}}{{config.zone_name}}/zone_manifest.json'
+      schema: npa.living_lab.zone_manifest.v1
+  zone-toro-auto-a:
+    description: 'Zone toro-auto-a: full real NuRec/NRE reconstruction of the toro auto capture (view
+      sector a) on its own RTX PRO 6000, then novel-view render + Rerun recording.'
+    resources: gpu
+    params:
+      zone_name: toro-auto-a
+      scene: toro
+      variant: auto
+      view_sector: a
+      rig_rotation_offset: 0,0,0
+      rig_translation_offset: 0,0.25,0
+    run:
+      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
+        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+        \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
+        \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
+        MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
+        # The NGC NRE image ships no npa, no ffmpeg, and none of the workbench's Python\n# deps. The runtime\
+        \ setup installs npa from $NPA_SRC_S3_URI; this step fills in\n# the NRE-runtime Python deps (nvidia-ncore\
+        \ for fetch, rerun-sdk for the Rerun\n# recording, pillow/pyyaml for the join inputs) and ffmpeg\
+        \ (backs render\n# --export-video). It is idempotent and matches the shipped single-pod reference.\n\
+        export DEBIAN_FRONTEND=noninteractive\nif ! command -v ffmpeg >/dev/null 2>&1; then\n  apt-get\
+        \ update -qq || true\n  apt-get install -y -qq --no-install-recommends ffmpeg || true\nfi\nnpa_pip()\
+        \ {\n  python3 -m pip install -q \"$@\" || python3 -m pip install -q \"$@\" --break-system-packages\
+        \ || python3 -m pip install -q \"$@\" --user\n}\nnpa_pip \"boto3>=1.34\" \"awscli>=1.32\" \"huggingface_hub>=0.30\"\
+        \ \"nvidia-ncore\" \"rerun-sdk\" \"pillow>=10.0\" \"pyyaml>=6.0\"\ncommand -v npa >/dev/null 2>&1\
+        \ || { echo \"npa not found; set NPA_SRC_S3_URI\" >&2; exit 1; }\n\n# ---- objective per-shard\
+        \ GPU / scheduler identity ---------------------------\n# Captured once at the top of the shard\
+        \ so the manifest carries real, per-GPU\n# provenance (UUID + model + node + pod + wave), not\
+        \ just a model-name count.\n# HOSTNAME inside a Kubernetes pod is the pod name; NODE_NAME comes\
+        \ from the\n# downward-API env the workflow's pod_config injects.\nGPU_UUID=$(nvidia-smi --query-gpu=uuid\
+        \ --format=csv,noheader | head -1 || echo unknown)\nGPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader\
+        \ | head -1 || echo unknown)\nPOD_NAME=\"${HOSTNAME:-unknown}\"\nNODE_NAME=\"${NODE_NAME:-unknown}\"\
+        \nSTART=$(date +%s)\nexport ZONE RUN_URI DATASET_ID SCENE VARIANT ZU NC RC NV INPUT RRD FINAL\
+        \ MF\nexport GPU_UUID GPU_NAME POD_NAME NODE_NAME START\n\necho \"=== zone $ZONE: check (container\
+        \ + dataset rights + RT-core GPU) ===\"\nnpa workbench nurec check --require-gpu --output json\n\
+        \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
+        \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
+        \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
+        )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
+        )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
+        \ POSES_GROUP CAMERA\n\n# ---- reconstruct + real, non-missing quality metrics ------------------------\n\
+        # The reconstruct stage writes NRE's val metrics.yaml. metrics_path preserves\n# where the numbers\
+        \ came from; metrics are recorded only when actually measured.\n# A missing/unparseable metrics\
+        \ payload makes the shard (and the join) FAIL\n# rather than substituting a numeric zero.\necho\
+        \ \"=== zone $ZONE: reconstruct (3DGUT Gaussians -> renderable USDZ) ===\"\nnpa workbench nurec\
+        \ reconstruct --ncore-json \"${NCORE_JSON}\" --poses-component-group \"${POSES_GROUP}\" --camera-id\
+        \ \"${CAMERA}\" --world-size 1 --export-gt --output-uri \"${RC}\" --input-uri \"${INPUT}\" --output\
+        \ json >/tmp/nurec-reconstruct.json\nUSDZ=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json'))['usdz_path'])\"\
+        )\nMETRICS_PATH=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json')).get('metrics_path')\
+        \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
+        \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
+        ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
+        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
+        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
+        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
+        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
+        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
+        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
+        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
+        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
+        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
+        metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
+        \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
+        \ 0.0.\ndef _m(key):\n    val = raw_metrics.get(key)\n    if val is None or val == \"\":\n   \
+        \     return None\n    try:\n        return float(val)\n    except (TypeError, ValueError):\n\
+        \        return None\nmetrics = {\"test/psnr\": _m(\"test/psnr\"), \"test/ssim\": _m(\"test/ssim\"\
+        ), \"test/lpips\": _m(\"test/lpips\")}\nmetrics_present = bool(metrics_path) and all(metrics[k]\
+        \ is not None for k in metrics)\nif not metrics_present:\n    print(\"zone\", os.environ[\"ZONE\"\
+        ], \": NRE validation metrics missing/unparseable (metrics_path=%r); failing shard\" % metrics_path,\
+        \ flush=True)\n    raise SystemExit(1)\npayload = {\n  \"schema\": \"npa.living_lab.zone_manifest.v1\"\
+        ,\n  \"zone_name\": os.environ[\"ZONE\"],\n  \"status\": \"ok\",\n  \"provenance\": {\n    \"\
+        dataset_id\": os.environ[\"DATASET_ID\"],\n    \"scene\": os.environ[\"SCENE\"],\n    \"variant\"\
+        : os.environ[\"VARIANT\"],\n    \"requested\": {k: os.environ[k] for k in (\"DATASET_ID\", \"\
+        SCENE\", \"VARIANT\")},\n  },\n  \"gpu\": {\n    \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\
+        \"),\n    \"gpu_name\": os.environ.get(\"GPU_NAME\", \"\"),\n    \"node_name\": os.environ.get(\"\
+        NODE_NAME\", \"\"),\n    \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n    \"wave_id\": os.environ.get(\"\
+        RUN_URI\", \"\"),\n  },\n  \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\"),\n  \"gpu_name\":\
+        \ os.environ.get(\"GPU_NAME\", \"\"),\n  \"node_name\": os.environ.get(\"NODE_NAME\", \"\"),\n\
+        \  \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n  \"wave_id\": os.environ.get(\"RUN_URI\"\
+        , \"\"),\n  \"usdz_path\": os.environ.get(\"USDZ\", \"\"),\n  \"reconstruction_uri\": os.environ.get(\"\
+        RC\", \"\"),\n  \"novel_views_uri\": os.environ.get(\"NV\", \"\"),\n  \"rrd_uri\": os.environ.get(\"\
+        RRD\", \"\"),\n  \"final_report_uri\": os.environ.get(\"FINAL\", \"\"),\n  \"started_epoch\":\
+        \ int(os.environ.get(\"START\", 0)),\n  \"ended_epoch\": int(os.environ.get(\"END\", 0)),\n  \"\
+        elapsed_seconds\": int(os.environ.get(\"END\", 0)) - int(os.environ.get(\"START\", 0)),\n  \"\
+        metrics_path\": metrics_path,\n  \"metrics\": metrics,\n  \"finalize\": {\n    \"status\": final.get(\"\
+        status\", \"\"),\n    \"has_usdz\": bool(final.get(\"has_usdz\", False)),\n    \"has_rrd\": bool(final.get(\"\
+        has_rrd\", False)),\n    \"artifact_count\": final.get(\"artifact_count\", 0),\n  },\n}\njson.dump(payload,\
+        \ open(\"/tmp/zone_manifest.json\", \"w\"))\nfrom npa.clients.storage import StorageClient\nStorageClient.from_environment().upload_file(\"\
+        /tmp/zone_manifest.json\", os.environ[\"MF\"])\nprint(json.dumps(payload))\nPY\n"
+    outputs:
+    - uri: '{{config.zones_uri}}{{config.zone_name}}/zone_manifest.json'
+      schema: npa.living_lab.zone_manifest.v1
+  zone-toro-auto-b:
+    description: 'Zone toro-auto-b: full real NuRec/NRE reconstruction of the toro auto capture (view
+      sector b) on its own RTX PRO 6000, then novel-view render + Rerun recording.'
+    resources: gpu
+    params:
+      zone_name: toro-auto-b
+      scene: toro
+      variant: auto
+      view_sector: b
+      rig_rotation_offset: 120,0,0
+      rig_translation_offset: 0,0,0.45
+    run:
+      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
+        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+        \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
+        \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
+        MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
+        # The NGC NRE image ships no npa, no ffmpeg, and none of the workbench's Python\n# deps. The runtime\
+        \ setup installs npa from $NPA_SRC_S3_URI; this step fills in\n# the NRE-runtime Python deps (nvidia-ncore\
+        \ for fetch, rerun-sdk for the Rerun\n# recording, pillow/pyyaml for the join inputs) and ffmpeg\
+        \ (backs render\n# --export-video). It is idempotent and matches the shipped single-pod reference.\n\
+        export DEBIAN_FRONTEND=noninteractive\nif ! command -v ffmpeg >/dev/null 2>&1; then\n  apt-get\
+        \ update -qq || true\n  apt-get install -y -qq --no-install-recommends ffmpeg || true\nfi\nnpa_pip()\
+        \ {\n  python3 -m pip install -q \"$@\" || python3 -m pip install -q \"$@\" --break-system-packages\
+        \ || python3 -m pip install -q \"$@\" --user\n}\nnpa_pip \"boto3>=1.34\" \"awscli>=1.32\" \"huggingface_hub>=0.30\"\
+        \ \"nvidia-ncore\" \"rerun-sdk\" \"pillow>=10.0\" \"pyyaml>=6.0\"\ncommand -v npa >/dev/null 2>&1\
+        \ || { echo \"npa not found; set NPA_SRC_S3_URI\" >&2; exit 1; }\n\n# ---- objective per-shard\
+        \ GPU / scheduler identity ---------------------------\n# Captured once at the top of the shard\
+        \ so the manifest carries real, per-GPU\n# provenance (UUID + model + node + pod + wave), not\
+        \ just a model-name count.\n# HOSTNAME inside a Kubernetes pod is the pod name; NODE_NAME comes\
+        \ from the\n# downward-API env the workflow's pod_config injects.\nGPU_UUID=$(nvidia-smi --query-gpu=uuid\
+        \ --format=csv,noheader | head -1 || echo unknown)\nGPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader\
+        \ | head -1 || echo unknown)\nPOD_NAME=\"${HOSTNAME:-unknown}\"\nNODE_NAME=\"${NODE_NAME:-unknown}\"\
+        \nSTART=$(date +%s)\nexport ZONE RUN_URI DATASET_ID SCENE VARIANT ZU NC RC NV INPUT RRD FINAL\
+        \ MF\nexport GPU_UUID GPU_NAME POD_NAME NODE_NAME START\n\necho \"=== zone $ZONE: check (container\
+        \ + dataset rights + RT-core GPU) ===\"\nnpa workbench nurec check --require-gpu --output json\n\
+        \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
+        \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
+        \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
+        )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
+        )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
+        \ POSES_GROUP CAMERA\n\n# ---- reconstruct + real, non-missing quality metrics ------------------------\n\
+        # The reconstruct stage writes NRE's val metrics.yaml. metrics_path preserves\n# where the numbers\
+        \ came from; metrics are recorded only when actually measured.\n# A missing/unparseable metrics\
+        \ payload makes the shard (and the join) FAIL\n# rather than substituting a numeric zero.\necho\
+        \ \"=== zone $ZONE: reconstruct (3DGUT Gaussians -> renderable USDZ) ===\"\nnpa workbench nurec\
+        \ reconstruct --ncore-json \"${NCORE_JSON}\" --poses-component-group \"${POSES_GROUP}\" --camera-id\
+        \ \"${CAMERA}\" --world-size 1 --export-gt --output-uri \"${RC}\" --input-uri \"${INPUT}\" --output\
+        \ json >/tmp/nurec-reconstruct.json\nUSDZ=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json'))['usdz_path'])\"\
+        )\nMETRICS_PATH=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json')).get('metrics_path')\
+        \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
+        \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
+        ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
+        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
+        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
+        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
+        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
+        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
+        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
+        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
+        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
+        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
+        metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
+        \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
+        \ 0.0.\ndef _m(key):\n    val = raw_metrics.get(key)\n    if val is None or val == \"\":\n   \
+        \     return None\n    try:\n        return float(val)\n    except (TypeError, ValueError):\n\
+        \        return None\nmetrics = {\"test/psnr\": _m(\"test/psnr\"), \"test/ssim\": _m(\"test/ssim\"\
+        ), \"test/lpips\": _m(\"test/lpips\")}\nmetrics_present = bool(metrics_path) and all(metrics[k]\
+        \ is not None for k in metrics)\nif not metrics_present:\n    print(\"zone\", os.environ[\"ZONE\"\
+        ], \": NRE validation metrics missing/unparseable (metrics_path=%r); failing shard\" % metrics_path,\
+        \ flush=True)\n    raise SystemExit(1)\npayload = {\n  \"schema\": \"npa.living_lab.zone_manifest.v1\"\
+        ,\n  \"zone_name\": os.environ[\"ZONE\"],\n  \"status\": \"ok\",\n  \"provenance\": {\n    \"\
+        dataset_id\": os.environ[\"DATASET_ID\"],\n    \"scene\": os.environ[\"SCENE\"],\n    \"variant\"\
+        : os.environ[\"VARIANT\"],\n    \"requested\": {k: os.environ[k] for k in (\"DATASET_ID\", \"\
+        SCENE\", \"VARIANT\")},\n  },\n  \"gpu\": {\n    \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\
+        \"),\n    \"gpu_name\": os.environ.get(\"GPU_NAME\", \"\"),\n    \"node_name\": os.environ.get(\"\
+        NODE_NAME\", \"\"),\n    \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n    \"wave_id\": os.environ.get(\"\
+        RUN_URI\", \"\"),\n  },\n  \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\"),\n  \"gpu_name\":\
+        \ os.environ.get(\"GPU_NAME\", \"\"),\n  \"node_name\": os.environ.get(\"NODE_NAME\", \"\"),\n\
+        \  \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n  \"wave_id\": os.environ.get(\"RUN_URI\"\
+        , \"\"),\n  \"usdz_path\": os.environ.get(\"USDZ\", \"\"),\n  \"reconstruction_uri\": os.environ.get(\"\
+        RC\", \"\"),\n  \"novel_views_uri\": os.environ.get(\"NV\", \"\"),\n  \"rrd_uri\": os.environ.get(\"\
+        RRD\", \"\"),\n  \"final_report_uri\": os.environ.get(\"FINAL\", \"\"),\n  \"started_epoch\":\
+        \ int(os.environ.get(\"START\", 0)),\n  \"ended_epoch\": int(os.environ.get(\"END\", 0)),\n  \"\
+        elapsed_seconds\": int(os.environ.get(\"END\", 0)) - int(os.environ.get(\"START\", 0)),\n  \"\
+        metrics_path\": metrics_path,\n  \"metrics\": metrics,\n  \"finalize\": {\n    \"status\": final.get(\"\
+        status\", \"\"),\n    \"has_usdz\": bool(final.get(\"has_usdz\", False)),\n    \"has_rrd\": bool(final.get(\"\
+        has_rrd\", False)),\n    \"artifact_count\": final.get(\"artifact_count\", 0),\n  },\n}\njson.dump(payload,\
+        \ open(\"/tmp/zone_manifest.json\", \"w\"))\nfrom npa.clients.storage import StorageClient\nStorageClient.from_environment().upload_file(\"\
+        /tmp/zone_manifest.json\", os.environ[\"MF\"])\nprint(json.dumps(payload))\nPY\n"
+    outputs:
+    - uri: '{{config.zones_uri}}{{config.zone_name}}/zone_manifest.json'
+      schema: npa.living_lab.zone_manifest.v1
+  zone-toro-standard-a:
+    description: 'Zone toro-standard-a: full real NuRec/NRE reconstruction of the toro standard capture
+      (view sector a) on its own RTX PRO 6000, then novel-view render + Rerun recording.'
+    resources: gpu
+    params:
+      zone_name: toro-standard-a
+      scene: toro
+      variant: standard
+      view_sector: a
+      rig_rotation_offset: 0,0,0
+      rig_translation_offset: 0,0.25,0
+    run:
+      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
+        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+        \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
+        \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
+        MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
+        # The NGC NRE image ships no npa, no ffmpeg, and none of the workbench's Python\n# deps. The runtime\
+        \ setup installs npa from $NPA_SRC_S3_URI; this step fills in\n# the NRE-runtime Python deps (nvidia-ncore\
+        \ for fetch, rerun-sdk for the Rerun\n# recording, pillow/pyyaml for the join inputs) and ffmpeg\
+        \ (backs render\n# --export-video). It is idempotent and matches the shipped single-pod reference.\n\
+        export DEBIAN_FRONTEND=noninteractive\nif ! command -v ffmpeg >/dev/null 2>&1; then\n  apt-get\
+        \ update -qq || true\n  apt-get install -y -qq --no-install-recommends ffmpeg || true\nfi\nnpa_pip()\
+        \ {\n  python3 -m pip install -q \"$@\" || python3 -m pip install -q \"$@\" --break-system-packages\
+        \ || python3 -m pip install -q \"$@\" --user\n}\nnpa_pip \"boto3>=1.34\" \"awscli>=1.32\" \"huggingface_hub>=0.30\"\
+        \ \"nvidia-ncore\" \"rerun-sdk\" \"pillow>=10.0\" \"pyyaml>=6.0\"\ncommand -v npa >/dev/null 2>&1\
+        \ || { echo \"npa not found; set NPA_SRC_S3_URI\" >&2; exit 1; }\n\n# ---- objective per-shard\
+        \ GPU / scheduler identity ---------------------------\n# Captured once at the top of the shard\
+        \ so the manifest carries real, per-GPU\n# provenance (UUID + model + node + pod + wave), not\
+        \ just a model-name count.\n# HOSTNAME inside a Kubernetes pod is the pod name; NODE_NAME comes\
+        \ from the\n# downward-API env the workflow's pod_config injects.\nGPU_UUID=$(nvidia-smi --query-gpu=uuid\
+        \ --format=csv,noheader | head -1 || echo unknown)\nGPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader\
+        \ | head -1 || echo unknown)\nPOD_NAME=\"${HOSTNAME:-unknown}\"\nNODE_NAME=\"${NODE_NAME:-unknown}\"\
+        \nSTART=$(date +%s)\nexport ZONE RUN_URI DATASET_ID SCENE VARIANT ZU NC RC NV INPUT RRD FINAL\
+        \ MF\nexport GPU_UUID GPU_NAME POD_NAME NODE_NAME START\n\necho \"=== zone $ZONE: check (container\
+        \ + dataset rights + RT-core GPU) ===\"\nnpa workbench nurec check --require-gpu --output json\n\
+        \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
+        \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
+        \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
+        )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
+        )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
+        \ POSES_GROUP CAMERA\n\n# ---- reconstruct + real, non-missing quality metrics ------------------------\n\
+        # The reconstruct stage writes NRE's val metrics.yaml. metrics_path preserves\n# where the numbers\
+        \ came from; metrics are recorded only when actually measured.\n# A missing/unparseable metrics\
+        \ payload makes the shard (and the join) FAIL\n# rather than substituting a numeric zero.\necho\
+        \ \"=== zone $ZONE: reconstruct (3DGUT Gaussians -> renderable USDZ) ===\"\nnpa workbench nurec\
+        \ reconstruct --ncore-json \"${NCORE_JSON}\" --poses-component-group \"${POSES_GROUP}\" --camera-id\
+        \ \"${CAMERA}\" --world-size 1 --export-gt --output-uri \"${RC}\" --input-uri \"${INPUT}\" --output\
+        \ json >/tmp/nurec-reconstruct.json\nUSDZ=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json'))['usdz_path'])\"\
+        )\nMETRICS_PATH=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json')).get('metrics_path')\
+        \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
+        \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
+        ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
+        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
+        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
+        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
+        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
+        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
+        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
+        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
+        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
+        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
+        metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
+        \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
+        \ 0.0.\ndef _m(key):\n    val = raw_metrics.get(key)\n    if val is None or val == \"\":\n   \
+        \     return None\n    try:\n        return float(val)\n    except (TypeError, ValueError):\n\
+        \        return None\nmetrics = {\"test/psnr\": _m(\"test/psnr\"), \"test/ssim\": _m(\"test/ssim\"\
+        ), \"test/lpips\": _m(\"test/lpips\")}\nmetrics_present = bool(metrics_path) and all(metrics[k]\
+        \ is not None for k in metrics)\nif not metrics_present:\n    print(\"zone\", os.environ[\"ZONE\"\
+        ], \": NRE validation metrics missing/unparseable (metrics_path=%r); failing shard\" % metrics_path,\
+        \ flush=True)\n    raise SystemExit(1)\npayload = {\n  \"schema\": \"npa.living_lab.zone_manifest.v1\"\
+        ,\n  \"zone_name\": os.environ[\"ZONE\"],\n  \"status\": \"ok\",\n  \"provenance\": {\n    \"\
+        dataset_id\": os.environ[\"DATASET_ID\"],\n    \"scene\": os.environ[\"SCENE\"],\n    \"variant\"\
+        : os.environ[\"VARIANT\"],\n    \"requested\": {k: os.environ[k] for k in (\"DATASET_ID\", \"\
+        SCENE\", \"VARIANT\")},\n  },\n  \"gpu\": {\n    \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\
+        \"),\n    \"gpu_name\": os.environ.get(\"GPU_NAME\", \"\"),\n    \"node_name\": os.environ.get(\"\
+        NODE_NAME\", \"\"),\n    \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n    \"wave_id\": os.environ.get(\"\
+        RUN_URI\", \"\"),\n  },\n  \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\"),\n  \"gpu_name\":\
+        \ os.environ.get(\"GPU_NAME\", \"\"),\n  \"node_name\": os.environ.get(\"NODE_NAME\", \"\"),\n\
+        \  \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n  \"wave_id\": os.environ.get(\"RUN_URI\"\
+        , \"\"),\n  \"usdz_path\": os.environ.get(\"USDZ\", \"\"),\n  \"reconstruction_uri\": os.environ.get(\"\
+        RC\", \"\"),\n  \"novel_views_uri\": os.environ.get(\"NV\", \"\"),\n  \"rrd_uri\": os.environ.get(\"\
+        RRD\", \"\"),\n  \"final_report_uri\": os.environ.get(\"FINAL\", \"\"),\n  \"started_epoch\":\
+        \ int(os.environ.get(\"START\", 0)),\n  \"ended_epoch\": int(os.environ.get(\"END\", 0)),\n  \"\
+        elapsed_seconds\": int(os.environ.get(\"END\", 0)) - int(os.environ.get(\"START\", 0)),\n  \"\
+        metrics_path\": metrics_path,\n  \"metrics\": metrics,\n  \"finalize\": {\n    \"status\": final.get(\"\
+        status\", \"\"),\n    \"has_usdz\": bool(final.get(\"has_usdz\", False)),\n    \"has_rrd\": bool(final.get(\"\
+        has_rrd\", False)),\n    \"artifact_count\": final.get(\"artifact_count\", 0),\n  },\n}\njson.dump(payload,\
+        \ open(\"/tmp/zone_manifest.json\", \"w\"))\nfrom npa.clients.storage import StorageClient\nStorageClient.from_environment().upload_file(\"\
+        /tmp/zone_manifest.json\", os.environ[\"MF\"])\nprint(json.dumps(payload))\nPY\n"
+    outputs:
+    - uri: '{{config.zones_uri}}{{config.zone_name}}/zone_manifest.json'
+      schema: npa.living_lab.zone_manifest.v1
+  zone-toro-standard-b:
+    description: 'Zone toro-standard-b: full real NuRec/NRE reconstruction of the toro standard capture
+      (view sector b) on its own RTX PRO 6000, then novel-view render + Rerun recording.'
+    resources: gpu
+    params:
+      zone_name: toro-standard-b
+      scene: toro
+      variant: standard
+      view_sector: b
+      rig_rotation_offset: 120,0,0
+      rig_translation_offset: 0,0,0.45
+    run:
+      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
+        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+        \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
+        \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
+        MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
+        # The NGC NRE image ships no npa, no ffmpeg, and none of the workbench's Python\n# deps. The runtime\
+        \ setup installs npa from $NPA_SRC_S3_URI; this step fills in\n# the NRE-runtime Python deps (nvidia-ncore\
+        \ for fetch, rerun-sdk for the Rerun\n# recording, pillow/pyyaml for the join inputs) and ffmpeg\
+        \ (backs render\n# --export-video). It is idempotent and matches the shipped single-pod reference.\n\
+        export DEBIAN_FRONTEND=noninteractive\nif ! command -v ffmpeg >/dev/null 2>&1; then\n  apt-get\
+        \ update -qq || true\n  apt-get install -y -qq --no-install-recommends ffmpeg || true\nfi\nnpa_pip()\
+        \ {\n  python3 -m pip install -q \"$@\" || python3 -m pip install -q \"$@\" --break-system-packages\
+        \ || python3 -m pip install -q \"$@\" --user\n}\nnpa_pip \"boto3>=1.34\" \"awscli>=1.32\" \"huggingface_hub>=0.30\"\
+        \ \"nvidia-ncore\" \"rerun-sdk\" \"pillow>=10.0\" \"pyyaml>=6.0\"\ncommand -v npa >/dev/null 2>&1\
+        \ || { echo \"npa not found; set NPA_SRC_S3_URI\" >&2; exit 1; }\n\n# ---- objective per-shard\
+        \ GPU / scheduler identity ---------------------------\n# Captured once at the top of the shard\
+        \ so the manifest carries real, per-GPU\n# provenance (UUID + model + node + pod + wave), not\
+        \ just a model-name count.\n# HOSTNAME inside a Kubernetes pod is the pod name; NODE_NAME comes\
+        \ from the\n# downward-API env the workflow's pod_config injects.\nGPU_UUID=$(nvidia-smi --query-gpu=uuid\
+        \ --format=csv,noheader | head -1 || echo unknown)\nGPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader\
+        \ | head -1 || echo unknown)\nPOD_NAME=\"${HOSTNAME:-unknown}\"\nNODE_NAME=\"${NODE_NAME:-unknown}\"\
+        \nSTART=$(date +%s)\nexport ZONE RUN_URI DATASET_ID SCENE VARIANT ZU NC RC NV INPUT RRD FINAL\
+        \ MF\nexport GPU_UUID GPU_NAME POD_NAME NODE_NAME START\n\necho \"=== zone $ZONE: check (container\
+        \ + dataset rights + RT-core GPU) ===\"\nnpa workbench nurec check --require-gpu --output json\n\
+        \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
+        \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
+        \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
+        )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
+        )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
+        \ POSES_GROUP CAMERA\n\n# ---- reconstruct + real, non-missing quality metrics ------------------------\n\
+        # The reconstruct stage writes NRE's val metrics.yaml. metrics_path preserves\n# where the numbers\
+        \ came from; metrics are recorded only when actually measured.\n# A missing/unparseable metrics\
+        \ payload makes the shard (and the join) FAIL\n# rather than substituting a numeric zero.\necho\
+        \ \"=== zone $ZONE: reconstruct (3DGUT Gaussians -> renderable USDZ) ===\"\nnpa workbench nurec\
+        \ reconstruct --ncore-json \"${NCORE_JSON}\" --poses-component-group \"${POSES_GROUP}\" --camera-id\
+        \ \"${CAMERA}\" --world-size 1 --export-gt --output-uri \"${RC}\" --input-uri \"${INPUT}\" --output\
+        \ json >/tmp/nurec-reconstruct.json\nUSDZ=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json'))['usdz_path'])\"\
+        )\nMETRICS_PATH=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json')).get('metrics_path')\
+        \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
+        \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
+        ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
+        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
+        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
+        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
+        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
+        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
+        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
+        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
+        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
+        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
+        metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
+        \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
+        \ 0.0.\ndef _m(key):\n    val = raw_metrics.get(key)\n    if val is None or val == \"\":\n   \
+        \     return None\n    try:\n        return float(val)\n    except (TypeError, ValueError):\n\
+        \        return None\nmetrics = {\"test/psnr\": _m(\"test/psnr\"), \"test/ssim\": _m(\"test/ssim\"\
+        ), \"test/lpips\": _m(\"test/lpips\")}\nmetrics_present = bool(metrics_path) and all(metrics[k]\
+        \ is not None for k in metrics)\nif not metrics_present:\n    print(\"zone\", os.environ[\"ZONE\"\
+        ], \": NRE validation metrics missing/unparseable (metrics_path=%r); failing shard\" % metrics_path,\
+        \ flush=True)\n    raise SystemExit(1)\npayload = {\n  \"schema\": \"npa.living_lab.zone_manifest.v1\"\
+        ,\n  \"zone_name\": os.environ[\"ZONE\"],\n  \"status\": \"ok\",\n  \"provenance\": {\n    \"\
+        dataset_id\": os.environ[\"DATASET_ID\"],\n    \"scene\": os.environ[\"SCENE\"],\n    \"variant\"\
+        : os.environ[\"VARIANT\"],\n    \"requested\": {k: os.environ[k] for k in (\"DATASET_ID\", \"\
+        SCENE\", \"VARIANT\")},\n  },\n  \"gpu\": {\n    \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\
+        \"),\n    \"gpu_name\": os.environ.get(\"GPU_NAME\", \"\"),\n    \"node_name\": os.environ.get(\"\
+        NODE_NAME\", \"\"),\n    \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n    \"wave_id\": os.environ.get(\"\
+        RUN_URI\", \"\"),\n  },\n  \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\"),\n  \"gpu_name\":\
+        \ os.environ.get(\"GPU_NAME\", \"\"),\n  \"node_name\": os.environ.get(\"NODE_NAME\", \"\"),\n\
+        \  \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n  \"wave_id\": os.environ.get(\"RUN_URI\"\
+        , \"\"),\n  \"usdz_path\": os.environ.get(\"USDZ\", \"\"),\n  \"reconstruction_uri\": os.environ.get(\"\
+        RC\", \"\"),\n  \"novel_views_uri\": os.environ.get(\"NV\", \"\"),\n  \"rrd_uri\": os.environ.get(\"\
+        RRD\", \"\"),\n  \"final_report_uri\": os.environ.get(\"FINAL\", \"\"),\n  \"started_epoch\":\
+        \ int(os.environ.get(\"START\", 0)),\n  \"ended_epoch\": int(os.environ.get(\"END\", 0)),\n  \"\
+        elapsed_seconds\": int(os.environ.get(\"END\", 0)) - int(os.environ.get(\"START\", 0)),\n  \"\
+        metrics_path\": metrics_path,\n  \"metrics\": metrics,\n  \"finalize\": {\n    \"status\": final.get(\"\
+        status\", \"\"),\n    \"has_usdz\": bool(final.get(\"has_usdz\", False)),\n    \"has_rrd\": bool(final.get(\"\
+        has_rrd\", False)),\n    \"artifact_count\": final.get(\"artifact_count\", 0),\n  },\n}\njson.dump(payload,\
+        \ open(\"/tmp/zone_manifest.json\", \"w\"))\nfrom npa.clients.storage import StorageClient\nStorageClient.from_environment().upload_file(\"\
+        /tmp/zone_manifest.json\", os.environ[\"MF\"])\nprint(json.dumps(payload))\nPY\n"
+    outputs:
+    - uri: '{{config.zones_uri}}{{config.zone_name}}/zone_manifest.json'
+      schema: npa.living_lab.zone_manifest.v1
+  zone-valiant-auto-a:
+    description: 'Zone valiant-auto-a: full real NuRec/NRE reconstruction of the valiant auto capture
+      (view sector a) on its own RTX PRO 6000, then novel-view render + Rerun recording.'
+    resources: gpu
+    params:
+      zone_name: valiant-auto-a
+      scene: valiant
+      variant: auto
+      view_sector: a
+      rig_rotation_offset: 0,0,0
+      rig_translation_offset: 0,0.25,0
+    run:
+      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
+        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+        \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
+        \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
+        MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
+        # The NGC NRE image ships no npa, no ffmpeg, and none of the workbench's Python\n# deps. The runtime\
+        \ setup installs npa from $NPA_SRC_S3_URI; this step fills in\n# the NRE-runtime Python deps (nvidia-ncore\
+        \ for fetch, rerun-sdk for the Rerun\n# recording, pillow/pyyaml for the join inputs) and ffmpeg\
+        \ (backs render\n# --export-video). It is idempotent and matches the shipped single-pod reference.\n\
+        export DEBIAN_FRONTEND=noninteractive\nif ! command -v ffmpeg >/dev/null 2>&1; then\n  apt-get\
+        \ update -qq || true\n  apt-get install -y -qq --no-install-recommends ffmpeg || true\nfi\nnpa_pip()\
+        \ {\n  python3 -m pip install -q \"$@\" || python3 -m pip install -q \"$@\" --break-system-packages\
+        \ || python3 -m pip install -q \"$@\" --user\n}\nnpa_pip \"boto3>=1.34\" \"awscli>=1.32\" \"huggingface_hub>=0.30\"\
+        \ \"nvidia-ncore\" \"rerun-sdk\" \"pillow>=10.0\" \"pyyaml>=6.0\"\ncommand -v npa >/dev/null 2>&1\
+        \ || { echo \"npa not found; set NPA_SRC_S3_URI\" >&2; exit 1; }\n\n# ---- objective per-shard\
+        \ GPU / scheduler identity ---------------------------\n# Captured once at the top of the shard\
+        \ so the manifest carries real, per-GPU\n# provenance (UUID + model + node + pod + wave), not\
+        \ just a model-name count.\n# HOSTNAME inside a Kubernetes pod is the pod name; NODE_NAME comes\
+        \ from the\n# downward-API env the workflow's pod_config injects.\nGPU_UUID=$(nvidia-smi --query-gpu=uuid\
+        \ --format=csv,noheader | head -1 || echo unknown)\nGPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader\
+        \ | head -1 || echo unknown)\nPOD_NAME=\"${HOSTNAME:-unknown}\"\nNODE_NAME=\"${NODE_NAME:-unknown}\"\
+        \nSTART=$(date +%s)\nexport ZONE RUN_URI DATASET_ID SCENE VARIANT ZU NC RC NV INPUT RRD FINAL\
+        \ MF\nexport GPU_UUID GPU_NAME POD_NAME NODE_NAME START\n\necho \"=== zone $ZONE: check (container\
+        \ + dataset rights + RT-core GPU) ===\"\nnpa workbench nurec check --require-gpu --output json\n\
+        \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
+        \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
+        \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
+        )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
+        )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
+        \ POSES_GROUP CAMERA\n\n# ---- reconstruct + real, non-missing quality metrics ------------------------\n\
+        # The reconstruct stage writes NRE's val metrics.yaml. metrics_path preserves\n# where the numbers\
+        \ came from; metrics are recorded only when actually measured.\n# A missing/unparseable metrics\
+        \ payload makes the shard (and the join) FAIL\n# rather than substituting a numeric zero.\necho\
+        \ \"=== zone $ZONE: reconstruct (3DGUT Gaussians -> renderable USDZ) ===\"\nnpa workbench nurec\
+        \ reconstruct --ncore-json \"${NCORE_JSON}\" --poses-component-group \"${POSES_GROUP}\" --camera-id\
+        \ \"${CAMERA}\" --world-size 1 --export-gt --output-uri \"${RC}\" --input-uri \"${INPUT}\" --output\
+        \ json >/tmp/nurec-reconstruct.json\nUSDZ=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json'))['usdz_path'])\"\
+        )\nMETRICS_PATH=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json')).get('metrics_path')\
+        \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
+        \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
+        ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
+        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
+        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
+        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
+        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
+        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
+        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
+        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
+        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
+        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
+        metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
+        \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
+        \ 0.0.\ndef _m(key):\n    val = raw_metrics.get(key)\n    if val is None or val == \"\":\n   \
+        \     return None\n    try:\n        return float(val)\n    except (TypeError, ValueError):\n\
+        \        return None\nmetrics = {\"test/psnr\": _m(\"test/psnr\"), \"test/ssim\": _m(\"test/ssim\"\
+        ), \"test/lpips\": _m(\"test/lpips\")}\nmetrics_present = bool(metrics_path) and all(metrics[k]\
+        \ is not None for k in metrics)\nif not metrics_present:\n    print(\"zone\", os.environ[\"ZONE\"\
+        ], \": NRE validation metrics missing/unparseable (metrics_path=%r); failing shard\" % metrics_path,\
+        \ flush=True)\n    raise SystemExit(1)\npayload = {\n  \"schema\": \"npa.living_lab.zone_manifest.v1\"\
+        ,\n  \"zone_name\": os.environ[\"ZONE\"],\n  \"status\": \"ok\",\n  \"provenance\": {\n    \"\
+        dataset_id\": os.environ[\"DATASET_ID\"],\n    \"scene\": os.environ[\"SCENE\"],\n    \"variant\"\
+        : os.environ[\"VARIANT\"],\n    \"requested\": {k: os.environ[k] for k in (\"DATASET_ID\", \"\
+        SCENE\", \"VARIANT\")},\n  },\n  \"gpu\": {\n    \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\
+        \"),\n    \"gpu_name\": os.environ.get(\"GPU_NAME\", \"\"),\n    \"node_name\": os.environ.get(\"\
+        NODE_NAME\", \"\"),\n    \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n    \"wave_id\": os.environ.get(\"\
+        RUN_URI\", \"\"),\n  },\n  \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\"),\n  \"gpu_name\":\
+        \ os.environ.get(\"GPU_NAME\", \"\"),\n  \"node_name\": os.environ.get(\"NODE_NAME\", \"\"),\n\
+        \  \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n  \"wave_id\": os.environ.get(\"RUN_URI\"\
+        , \"\"),\n  \"usdz_path\": os.environ.get(\"USDZ\", \"\"),\n  \"reconstruction_uri\": os.environ.get(\"\
+        RC\", \"\"),\n  \"novel_views_uri\": os.environ.get(\"NV\", \"\"),\n  \"rrd_uri\": os.environ.get(\"\
+        RRD\", \"\"),\n  \"final_report_uri\": os.environ.get(\"FINAL\", \"\"),\n  \"started_epoch\":\
+        \ int(os.environ.get(\"START\", 0)),\n  \"ended_epoch\": int(os.environ.get(\"END\", 0)),\n  \"\
+        elapsed_seconds\": int(os.environ.get(\"END\", 0)) - int(os.environ.get(\"START\", 0)),\n  \"\
+        metrics_path\": metrics_path,\n  \"metrics\": metrics,\n  \"finalize\": {\n    \"status\": final.get(\"\
+        status\", \"\"),\n    \"has_usdz\": bool(final.get(\"has_usdz\", False)),\n    \"has_rrd\": bool(final.get(\"\
+        has_rrd\", False)),\n    \"artifact_count\": final.get(\"artifact_count\", 0),\n  },\n}\njson.dump(payload,\
+        \ open(\"/tmp/zone_manifest.json\", \"w\"))\nfrom npa.clients.storage import StorageClient\nStorageClient.from_environment().upload_file(\"\
+        /tmp/zone_manifest.json\", os.environ[\"MF\"])\nprint(json.dumps(payload))\nPY\n"
+    outputs:
+    - uri: '{{config.zones_uri}}{{config.zone_name}}/zone_manifest.json'
+      schema: npa.living_lab.zone_manifest.v1
+  zone-valiant-auto-b:
+    description: 'Zone valiant-auto-b: full real NuRec/NRE reconstruction of the valiant auto capture
+      (view sector b) on its own RTX PRO 6000, then novel-view render + Rerun recording.'
+    resources: gpu
+    params:
+      zone_name: valiant-auto-b
+      scene: valiant
+      variant: auto
+      view_sector: b
+      rig_rotation_offset: 120,0,0
+      rig_translation_offset: 0,0,0.45
+    run:
+      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
+        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+        \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
+        \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
+        MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
+        # The NGC NRE image ships no npa, no ffmpeg, and none of the workbench's Python\n# deps. The runtime\
+        \ setup installs npa from $NPA_SRC_S3_URI; this step fills in\n# the NRE-runtime Python deps (nvidia-ncore\
+        \ for fetch, rerun-sdk for the Rerun\n# recording, pillow/pyyaml for the join inputs) and ffmpeg\
+        \ (backs render\n# --export-video). It is idempotent and matches the shipped single-pod reference.\n\
+        export DEBIAN_FRONTEND=noninteractive\nif ! command -v ffmpeg >/dev/null 2>&1; then\n  apt-get\
+        \ update -qq || true\n  apt-get install -y -qq --no-install-recommends ffmpeg || true\nfi\nnpa_pip()\
+        \ {\n  python3 -m pip install -q \"$@\" || python3 -m pip install -q \"$@\" --break-system-packages\
+        \ || python3 -m pip install -q \"$@\" --user\n}\nnpa_pip \"boto3>=1.34\" \"awscli>=1.32\" \"huggingface_hub>=0.30\"\
+        \ \"nvidia-ncore\" \"rerun-sdk\" \"pillow>=10.0\" \"pyyaml>=6.0\"\ncommand -v npa >/dev/null 2>&1\
+        \ || { echo \"npa not found; set NPA_SRC_S3_URI\" >&2; exit 1; }\n\n# ---- objective per-shard\
+        \ GPU / scheduler identity ---------------------------\n# Captured once at the top of the shard\
+        \ so the manifest carries real, per-GPU\n# provenance (UUID + model + node + pod + wave), not\
+        \ just a model-name count.\n# HOSTNAME inside a Kubernetes pod is the pod name; NODE_NAME comes\
+        \ from the\n# downward-API env the workflow's pod_config injects.\nGPU_UUID=$(nvidia-smi --query-gpu=uuid\
+        \ --format=csv,noheader | head -1 || echo unknown)\nGPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader\
+        \ | head -1 || echo unknown)\nPOD_NAME=\"${HOSTNAME:-unknown}\"\nNODE_NAME=\"${NODE_NAME:-unknown}\"\
+        \nSTART=$(date +%s)\nexport ZONE RUN_URI DATASET_ID SCENE VARIANT ZU NC RC NV INPUT RRD FINAL\
+        \ MF\nexport GPU_UUID GPU_NAME POD_NAME NODE_NAME START\n\necho \"=== zone $ZONE: check (container\
+        \ + dataset rights + RT-core GPU) ===\"\nnpa workbench nurec check --require-gpu --output json\n\
+        \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
+        \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
+        \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
+        )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
+        )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
+        \ POSES_GROUP CAMERA\n\n# ---- reconstruct + real, non-missing quality metrics ------------------------\n\
+        # The reconstruct stage writes NRE's val metrics.yaml. metrics_path preserves\n# where the numbers\
+        \ came from; metrics are recorded only when actually measured.\n# A missing/unparseable metrics\
+        \ payload makes the shard (and the join) FAIL\n# rather than substituting a numeric zero.\necho\
+        \ \"=== zone $ZONE: reconstruct (3DGUT Gaussians -> renderable USDZ) ===\"\nnpa workbench nurec\
+        \ reconstruct --ncore-json \"${NCORE_JSON}\" --poses-component-group \"${POSES_GROUP}\" --camera-id\
+        \ \"${CAMERA}\" --world-size 1 --export-gt --output-uri \"${RC}\" --input-uri \"${INPUT}\" --output\
+        \ json >/tmp/nurec-reconstruct.json\nUSDZ=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json'))['usdz_path'])\"\
+        )\nMETRICS_PATH=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json')).get('metrics_path')\
+        \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
+        \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
+        ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
+        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
+        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
+        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
+        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
+        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
+        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
+        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
+        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
+        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
+        metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
+        \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
+        \ 0.0.\ndef _m(key):\n    val = raw_metrics.get(key)\n    if val is None or val == \"\":\n   \
+        \     return None\n    try:\n        return float(val)\n    except (TypeError, ValueError):\n\
+        \        return None\nmetrics = {\"test/psnr\": _m(\"test/psnr\"), \"test/ssim\": _m(\"test/ssim\"\
+        ), \"test/lpips\": _m(\"test/lpips\")}\nmetrics_present = bool(metrics_path) and all(metrics[k]\
+        \ is not None for k in metrics)\nif not metrics_present:\n    print(\"zone\", os.environ[\"ZONE\"\
+        ], \": NRE validation metrics missing/unparseable (metrics_path=%r); failing shard\" % metrics_path,\
+        \ flush=True)\n    raise SystemExit(1)\npayload = {\n  \"schema\": \"npa.living_lab.zone_manifest.v1\"\
+        ,\n  \"zone_name\": os.environ[\"ZONE\"],\n  \"status\": \"ok\",\n  \"provenance\": {\n    \"\
+        dataset_id\": os.environ[\"DATASET_ID\"],\n    \"scene\": os.environ[\"SCENE\"],\n    \"variant\"\
+        : os.environ[\"VARIANT\"],\n    \"requested\": {k: os.environ[k] for k in (\"DATASET_ID\", \"\
+        SCENE\", \"VARIANT\")},\n  },\n  \"gpu\": {\n    \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\
+        \"),\n    \"gpu_name\": os.environ.get(\"GPU_NAME\", \"\"),\n    \"node_name\": os.environ.get(\"\
+        NODE_NAME\", \"\"),\n    \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n    \"wave_id\": os.environ.get(\"\
+        RUN_URI\", \"\"),\n  },\n  \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\"),\n  \"gpu_name\":\
+        \ os.environ.get(\"GPU_NAME\", \"\"),\n  \"node_name\": os.environ.get(\"NODE_NAME\", \"\"),\n\
+        \  \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n  \"wave_id\": os.environ.get(\"RUN_URI\"\
+        , \"\"),\n  \"usdz_path\": os.environ.get(\"USDZ\", \"\"),\n  \"reconstruction_uri\": os.environ.get(\"\
+        RC\", \"\"),\n  \"novel_views_uri\": os.environ.get(\"NV\", \"\"),\n  \"rrd_uri\": os.environ.get(\"\
+        RRD\", \"\"),\n  \"final_report_uri\": os.environ.get(\"FINAL\", \"\"),\n  \"started_epoch\":\
+        \ int(os.environ.get(\"START\", 0)),\n  \"ended_epoch\": int(os.environ.get(\"END\", 0)),\n  \"\
+        elapsed_seconds\": int(os.environ.get(\"END\", 0)) - int(os.environ.get(\"START\", 0)),\n  \"\
+        metrics_path\": metrics_path,\n  \"metrics\": metrics,\n  \"finalize\": {\n    \"status\": final.get(\"\
+        status\", \"\"),\n    \"has_usdz\": bool(final.get(\"has_usdz\", False)),\n    \"has_rrd\": bool(final.get(\"\
+        has_rrd\", False)),\n    \"artifact_count\": final.get(\"artifact_count\", 0),\n  },\n}\njson.dump(payload,\
+        \ open(\"/tmp/zone_manifest.json\", \"w\"))\nfrom npa.clients.storage import StorageClient\nStorageClient.from_environment().upload_file(\"\
+        /tmp/zone_manifest.json\", os.environ[\"MF\"])\nprint(json.dumps(payload))\nPY\n"
+    outputs:
+    - uri: '{{config.zones_uri}}{{config.zone_name}}/zone_manifest.json'
+      schema: npa.living_lab.zone_manifest.v1
+  zone-valiant-standard-a:
+    description: 'Zone valiant-standard-a: full real NuRec/NRE reconstruction of the valiant standard
+      capture (view sector a) on its own RTX PRO 6000, then novel-view render + Rerun recording.'
+    resources: gpu
+    params:
+      zone_name: valiant-standard-a
+      scene: valiant
+      variant: standard
+      view_sector: a
+      rig_rotation_offset: 0,0,0
+      rig_translation_offset: 0,0.25,0
+    run:
+      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
+        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+        \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
+        \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
+        MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
+        # The NGC NRE image ships no npa, no ffmpeg, and none of the workbench's Python\n# deps. The runtime\
+        \ setup installs npa from $NPA_SRC_S3_URI; this step fills in\n# the NRE-runtime Python deps (nvidia-ncore\
+        \ for fetch, rerun-sdk for the Rerun\n# recording, pillow/pyyaml for the join inputs) and ffmpeg\
+        \ (backs render\n# --export-video). It is idempotent and matches the shipped single-pod reference.\n\
+        export DEBIAN_FRONTEND=noninteractive\nif ! command -v ffmpeg >/dev/null 2>&1; then\n  apt-get\
+        \ update -qq || true\n  apt-get install -y -qq --no-install-recommends ffmpeg || true\nfi\nnpa_pip()\
+        \ {\n  python3 -m pip install -q \"$@\" || python3 -m pip install -q \"$@\" --break-system-packages\
+        \ || python3 -m pip install -q \"$@\" --user\n}\nnpa_pip \"boto3>=1.34\" \"awscli>=1.32\" \"huggingface_hub>=0.30\"\
+        \ \"nvidia-ncore\" \"rerun-sdk\" \"pillow>=10.0\" \"pyyaml>=6.0\"\ncommand -v npa >/dev/null 2>&1\
+        \ || { echo \"npa not found; set NPA_SRC_S3_URI\" >&2; exit 1; }\n\n# ---- objective per-shard\
+        \ GPU / scheduler identity ---------------------------\n# Captured once at the top of the shard\
+        \ so the manifest carries real, per-GPU\n# provenance (UUID + model + node + pod + wave), not\
+        \ just a model-name count.\n# HOSTNAME inside a Kubernetes pod is the pod name; NODE_NAME comes\
+        \ from the\n# downward-API env the workflow's pod_config injects.\nGPU_UUID=$(nvidia-smi --query-gpu=uuid\
+        \ --format=csv,noheader | head -1 || echo unknown)\nGPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader\
+        \ | head -1 || echo unknown)\nPOD_NAME=\"${HOSTNAME:-unknown}\"\nNODE_NAME=\"${NODE_NAME:-unknown}\"\
+        \nSTART=$(date +%s)\nexport ZONE RUN_URI DATASET_ID SCENE VARIANT ZU NC RC NV INPUT RRD FINAL\
+        \ MF\nexport GPU_UUID GPU_NAME POD_NAME NODE_NAME START\n\necho \"=== zone $ZONE: check (container\
+        \ + dataset rights + RT-core GPU) ===\"\nnpa workbench nurec check --require-gpu --output json\n\
+        \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
+        \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
+        \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
+        )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
+        )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
+        \ POSES_GROUP CAMERA\n\n# ---- reconstruct + real, non-missing quality metrics ------------------------\n\
+        # The reconstruct stage writes NRE's val metrics.yaml. metrics_path preserves\n# where the numbers\
+        \ came from; metrics are recorded only when actually measured.\n# A missing/unparseable metrics\
+        \ payload makes the shard (and the join) FAIL\n# rather than substituting a numeric zero.\necho\
+        \ \"=== zone $ZONE: reconstruct (3DGUT Gaussians -> renderable USDZ) ===\"\nnpa workbench nurec\
+        \ reconstruct --ncore-json \"${NCORE_JSON}\" --poses-component-group \"${POSES_GROUP}\" --camera-id\
+        \ \"${CAMERA}\" --world-size 1 --export-gt --output-uri \"${RC}\" --input-uri \"${INPUT}\" --output\
+        \ json >/tmp/nurec-reconstruct.json\nUSDZ=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json'))['usdz_path'])\"\
+        )\nMETRICS_PATH=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json')).get('metrics_path')\
+        \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
+        \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
+        ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
+        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
+        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
+        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
+        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
+        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
+        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
+        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
+        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
+        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
+        metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
+        \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
+        \ 0.0.\ndef _m(key):\n    val = raw_metrics.get(key)\n    if val is None or val == \"\":\n   \
+        \     return None\n    try:\n        return float(val)\n    except (TypeError, ValueError):\n\
+        \        return None\nmetrics = {\"test/psnr\": _m(\"test/psnr\"), \"test/ssim\": _m(\"test/ssim\"\
+        ), \"test/lpips\": _m(\"test/lpips\")}\nmetrics_present = bool(metrics_path) and all(metrics[k]\
+        \ is not None for k in metrics)\nif not metrics_present:\n    print(\"zone\", os.environ[\"ZONE\"\
+        ], \": NRE validation metrics missing/unparseable (metrics_path=%r); failing shard\" % metrics_path,\
+        \ flush=True)\n    raise SystemExit(1)\npayload = {\n  \"schema\": \"npa.living_lab.zone_manifest.v1\"\
+        ,\n  \"zone_name\": os.environ[\"ZONE\"],\n  \"status\": \"ok\",\n  \"provenance\": {\n    \"\
+        dataset_id\": os.environ[\"DATASET_ID\"],\n    \"scene\": os.environ[\"SCENE\"],\n    \"variant\"\
+        : os.environ[\"VARIANT\"],\n    \"requested\": {k: os.environ[k] for k in (\"DATASET_ID\", \"\
+        SCENE\", \"VARIANT\")},\n  },\n  \"gpu\": {\n    \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\
+        \"),\n    \"gpu_name\": os.environ.get(\"GPU_NAME\", \"\"),\n    \"node_name\": os.environ.get(\"\
+        NODE_NAME\", \"\"),\n    \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n    \"wave_id\": os.environ.get(\"\
+        RUN_URI\", \"\"),\n  },\n  \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\"),\n  \"gpu_name\":\
+        \ os.environ.get(\"GPU_NAME\", \"\"),\n  \"node_name\": os.environ.get(\"NODE_NAME\", \"\"),\n\
+        \  \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n  \"wave_id\": os.environ.get(\"RUN_URI\"\
+        , \"\"),\n  \"usdz_path\": os.environ.get(\"USDZ\", \"\"),\n  \"reconstruction_uri\": os.environ.get(\"\
+        RC\", \"\"),\n  \"novel_views_uri\": os.environ.get(\"NV\", \"\"),\n  \"rrd_uri\": os.environ.get(\"\
+        RRD\", \"\"),\n  \"final_report_uri\": os.environ.get(\"FINAL\", \"\"),\n  \"started_epoch\":\
+        \ int(os.environ.get(\"START\", 0)),\n  \"ended_epoch\": int(os.environ.get(\"END\", 0)),\n  \"\
+        elapsed_seconds\": int(os.environ.get(\"END\", 0)) - int(os.environ.get(\"START\", 0)),\n  \"\
+        metrics_path\": metrics_path,\n  \"metrics\": metrics,\n  \"finalize\": {\n    \"status\": final.get(\"\
+        status\", \"\"),\n    \"has_usdz\": bool(final.get(\"has_usdz\", False)),\n    \"has_rrd\": bool(final.get(\"\
+        has_rrd\", False)),\n    \"artifact_count\": final.get(\"artifact_count\", 0),\n  },\n}\njson.dump(payload,\
+        \ open(\"/tmp/zone_manifest.json\", \"w\"))\nfrom npa.clients.storage import StorageClient\nStorageClient.from_environment().upload_file(\"\
+        /tmp/zone_manifest.json\", os.environ[\"MF\"])\nprint(json.dumps(payload))\nPY\n"
+    outputs:
+    - uri: '{{config.zones_uri}}{{config.zone_name}}/zone_manifest.json'
+      schema: npa.living_lab.zone_manifest.v1
+  zone-valiant-standard-b:
+    description: 'Zone valiant-standard-b: full real NuRec/NRE reconstruction of the valiant standard
+      capture (view sector b) on its own RTX PRO 6000, then novel-view render + Rerun recording.'
+    resources: gpu
+    params:
+      zone_name: valiant-standard-b
+      scene: valiant
+      variant: standard
+      view_sector: b
+      rig_rotation_offset: 120,0,0
+      rig_translation_offset: 0,0,0.45
+    run:
+      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
+        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+        \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
+        \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
+        MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
+        # The NGC NRE image ships no npa, no ffmpeg, and none of the workbench's Python\n# deps. The runtime\
+        \ setup installs npa from $NPA_SRC_S3_URI; this step fills in\n# the NRE-runtime Python deps (nvidia-ncore\
+        \ for fetch, rerun-sdk for the Rerun\n# recording, pillow/pyyaml for the join inputs) and ffmpeg\
+        \ (backs render\n# --export-video). It is idempotent and matches the shipped single-pod reference.\n\
+        export DEBIAN_FRONTEND=noninteractive\nif ! command -v ffmpeg >/dev/null 2>&1; then\n  apt-get\
+        \ update -qq || true\n  apt-get install -y -qq --no-install-recommends ffmpeg || true\nfi\nnpa_pip()\
+        \ {\n  python3 -m pip install -q \"$@\" || python3 -m pip install -q \"$@\" --break-system-packages\
+        \ || python3 -m pip install -q \"$@\" --user\n}\nnpa_pip \"boto3>=1.34\" \"awscli>=1.32\" \"huggingface_hub>=0.30\"\
+        \ \"nvidia-ncore\" \"rerun-sdk\" \"pillow>=10.0\" \"pyyaml>=6.0\"\ncommand -v npa >/dev/null 2>&1\
+        \ || { echo \"npa not found; set NPA_SRC_S3_URI\" >&2; exit 1; }\n\n# ---- objective per-shard\
+        \ GPU / scheduler identity ---------------------------\n# Captured once at the top of the shard\
+        \ so the manifest carries real, per-GPU\n# provenance (UUID + model + node + pod + wave), not\
+        \ just a model-name count.\n# HOSTNAME inside a Kubernetes pod is the pod name; NODE_NAME comes\
+        \ from the\n# downward-API env the workflow's pod_config injects.\nGPU_UUID=$(nvidia-smi --query-gpu=uuid\
+        \ --format=csv,noheader | head -1 || echo unknown)\nGPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader\
+        \ | head -1 || echo unknown)\nPOD_NAME=\"${HOSTNAME:-unknown}\"\nNODE_NAME=\"${NODE_NAME:-unknown}\"\
+        \nSTART=$(date +%s)\nexport ZONE RUN_URI DATASET_ID SCENE VARIANT ZU NC RC NV INPUT RRD FINAL\
+        \ MF\nexport GPU_UUID GPU_NAME POD_NAME NODE_NAME START\n\necho \"=== zone $ZONE: check (container\
+        \ + dataset rights + RT-core GPU) ===\"\nnpa workbench nurec check --require-gpu --output json\n\
+        \necho \"=== zone $ZONE: fetch real NCore V4 shards + derived rig pose edge ===\"\nnpa workbench\
+        \ nurec fetch --dataset \"${DATASET_ID}\" --scene \"${SCENE}\" --variant \"${VARIANT}\" --output-uri\
+        \ \"${NC}\" --output json >/tmp/nurec-fetch.json\n\n# ---- fail-closed provenance gate -------------------------------------------\n\
+        # Provenance is validated against the *independently observed* unpacked content,\n# not merely\
+        \ the echoed request arguments: the fetch result carries\n# observed_scene/observed_variant derived\
+        \ from the scene directory that actually\n# landed in the extracted archive. A shard must never\
+        \ reconstruct a capture it\n# did not ask for; if the observed content disagrees with the requested\
+        \ scene or\n# variant, or the fetch did not record observed content at all, fail the shard\n#\
+        \ (and therefore the join).\npython3 - \"$SCENE\" \"$VARIANT\" <<'PY'\nimport json, os, sys\n\
+        requested = {\"scene\": sys.argv[1], \"variant\": sys.argv[2]}\nwith open(os.environ.get(\"NUREC_FETCH_JSON\"\
+        , \"/tmp/nurec-fetch.json\")) as fh:\n    fetched = json.load(fh)\n# Observed content is authoritative.\
+        \ When a fetch does not record it (older\n# output), fall back only for diagnostics -- the gate\
+        \ then fails closed because\n# observed content is missing.\nobserved_scene = str(fetched.get(\"\
+        observed_scene\") or \"\")\nobserved_variant = str(fetched.get(\"observed_variant\") or \"\")\n\
+        if not observed_scene and not observed_variant:\n    print(\"PROVENANCE MISMATCH for zone\", os.environ[\"\
+        ZONE\"], \":\",\n          \"fetch result carries no observed unpacked content\", file=sys.stderr)\n\
+        \    sys.exit(1)\nmismatch = {\n    k: (v, requested[k])\n    for k, v in ((\"scene\", observed_scene),\
+        \ (\"variant\", observed_variant))\n    if v != requested[k]\n}\nif mismatch:\n    print(\"PROVENANCE\
+        \ MISMATCH for zone\", os.environ[\"ZONE\"], \":\",\n          json.dumps({\"observed\": mismatch,\
+        \ \"requested\": requested}), file=sys.stderr)\n    sys.exit(1)\nif str(fetched.get(\"dataset_id\"\
+        ) or \"\") != os.environ.get(\"DATASET_ID\", \"\"):\n    print(\"PROVENANCE MISMATCH for zone\"\
+        , os.environ[\"ZONE\"], \": dataset_id\",\n          file=sys.stderr)\n    sys.exit(1)\nprint(\"\
+        provenance-ok\", json.dumps({\"scene\": observed_scene, \"variant\": observed_variant}))\nPY\n\
+        test \"$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['status'] or\
+        \ '')\")\" = \"ok\"\n\nNCORE_JSON=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['ncore_json'])\"\
+        )\nPOSES_GROUP=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['poses_component_group'])\"\
+        )\nCAMERA=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-fetch.json'))['reference_camera'])\"\
+        )\ntest -n \"${NCORE_JSON}\" && test -n \"${POSES_GROUP}\" && test -n \"${CAMERA}\"\nexport NCORE_JSON\
+        \ POSES_GROUP CAMERA\n\n# ---- reconstruct + real, non-missing quality metrics ------------------------\n\
+        # The reconstruct stage writes NRE's val metrics.yaml. metrics_path preserves\n# where the numbers\
+        \ came from; metrics are recorded only when actually measured.\n# A missing/unparseable metrics\
+        \ payload makes the shard (and the join) FAIL\n# rather than substituting a numeric zero.\necho\
+        \ \"=== zone $ZONE: reconstruct (3DGUT Gaussians -> renderable USDZ) ===\"\nnpa workbench nurec\
+        \ reconstruct --ncore-json \"${NCORE_JSON}\" --poses-component-group \"${POSES_GROUP}\" --camera-id\
+        \ \"${CAMERA}\" --world-size 1 --export-gt --output-uri \"${RC}\" --input-uri \"${INPUT}\" --output\
+        \ json >/tmp/nurec-reconstruct.json\nUSDZ=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json'))['usdz_path'])\"\
+        )\nMETRICS_PATH=$(python3 -c \"import json;print(json.load(open('/tmp/nurec-reconstruct.json')).get('metrics_path')\
+        \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
+        \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
+        ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
+        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
+        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
+        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
+        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
+        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
+        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
+        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
+        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
+        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
+        metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
+        \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
+        \ 0.0.\ndef _m(key):\n    val = raw_metrics.get(key)\n    if val is None or val == \"\":\n   \
+        \     return None\n    try:\n        return float(val)\n    except (TypeError, ValueError):\n\
+        \        return None\nmetrics = {\"test/psnr\": _m(\"test/psnr\"), \"test/ssim\": _m(\"test/ssim\"\
+        ), \"test/lpips\": _m(\"test/lpips\")}\nmetrics_present = bool(metrics_path) and all(metrics[k]\
+        \ is not None for k in metrics)\nif not metrics_present:\n    print(\"zone\", os.environ[\"ZONE\"\
+        ], \": NRE validation metrics missing/unparseable (metrics_path=%r); failing shard\" % metrics_path,\
+        \ flush=True)\n    raise SystemExit(1)\npayload = {\n  \"schema\": \"npa.living_lab.zone_manifest.v1\"\
+        ,\n  \"zone_name\": os.environ[\"ZONE\"],\n  \"status\": \"ok\",\n  \"provenance\": {\n    \"\
+        dataset_id\": os.environ[\"DATASET_ID\"],\n    \"scene\": os.environ[\"SCENE\"],\n    \"variant\"\
+        : os.environ[\"VARIANT\"],\n    \"requested\": {k: os.environ[k] for k in (\"DATASET_ID\", \"\
+        SCENE\", \"VARIANT\")},\n  },\n  \"gpu\": {\n    \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\
+        \"),\n    \"gpu_name\": os.environ.get(\"GPU_NAME\", \"\"),\n    \"node_name\": os.environ.get(\"\
+        NODE_NAME\", \"\"),\n    \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n    \"wave_id\": os.environ.get(\"\
+        RUN_URI\", \"\"),\n  },\n  \"gpu_uuid\": os.environ.get(\"GPU_UUID\", \"\"),\n  \"gpu_name\":\
+        \ os.environ.get(\"GPU_NAME\", \"\"),\n  \"node_name\": os.environ.get(\"NODE_NAME\", \"\"),\n\
+        \  \"pod_name\": os.environ.get(\"POD_NAME\", \"\"),\n  \"wave_id\": os.environ.get(\"RUN_URI\"\
+        , \"\"),\n  \"usdz_path\": os.environ.get(\"USDZ\", \"\"),\n  \"reconstruction_uri\": os.environ.get(\"\
+        RC\", \"\"),\n  \"novel_views_uri\": os.environ.get(\"NV\", \"\"),\n  \"rrd_uri\": os.environ.get(\"\
+        RRD\", \"\"),\n  \"final_report_uri\": os.environ.get(\"FINAL\", \"\"),\n  \"started_epoch\":\
+        \ int(os.environ.get(\"START\", 0)),\n  \"ended_epoch\": int(os.environ.get(\"END\", 0)),\n  \"\
+        elapsed_seconds\": int(os.environ.get(\"END\", 0)) - int(os.environ.get(\"START\", 0)),\n  \"\
+        metrics_path\": metrics_path,\n  \"metrics\": metrics,\n  \"finalize\": {\n    \"status\": final.get(\"\
+        status\", \"\"),\n    \"has_usdz\": bool(final.get(\"has_usdz\", False)),\n    \"has_rrd\": bool(final.get(\"\
+        has_rrd\", False)),\n    \"artifact_count\": final.get(\"artifact_count\", 0),\n  },\n}\njson.dump(payload,\
+        \ open(\"/tmp/zone_manifest.json\", \"w\"))\nfrom npa.clients.storage import StorageClient\nStorageClient.from_environment().upload_file(\"\
+        /tmp/zone_manifest.json\", os.environ[\"MF\"])\nprint(json.dumps(payload))\nPY\n"
+    outputs:
+    - uri: '{{config.zones_uri}}{{config.zone_name}}/zone_manifest.json'
+      schema: npa.living_lab.zone_manifest.v1
+  join:
+    description: 'Barrier: read every expected zone manifest, require every zone present with a real GPU
+      identity and a real USDZ, aggregate objective metrics and GPU participation, publish the composite
+      digital-twin report plus a contact-sheet panorama, and fail closed unless the proof demonstrates
+      exactly the required number of distinct non-empty GPU UUIDs with material all-required-device temporal
+      overlap.'
+    needs:
+    - living-lab-zones
+    resources: cpu
+    run:
+      shell: python3 -c "from npa.workflows.living_lab import join_living_lab_zones; join_living_lab_zones(zones_uri='{{config.zones_uri}}',
+        report_uri='{{config.report_uri}}', panorama_uri='{{config.panorama_uri}}', shards='{{config.zones}}',
+        run_id='{{run.id}}')"
+    outputs:
+    - uri: '{{config.report_uri}}'
+      schema: npa.living_lab.digital_twin.v1
+    - uri: '{{config.panorama_uri}}'
+      schema: npa.living_lab.panorama.v1
+    terminal: true

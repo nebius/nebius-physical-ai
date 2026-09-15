@@ -8,8 +8,15 @@ description: Use when working on Isaac Lab RL simulation, deployment, SkyPilot w
 Isaac Lab is the RL simulation framework. The canonical workbench pins the
 latest published 3.Y beta point, `v3.0.0-beta2.patch1` / wheel
 `3.0.0b2.post1`, with Isaac Sim `6.0.1.0`. Upstream has not labeled this a GA
-release; keep the beta limitation explicit. It requires RT cores: use L40S or
-RTX Pro 6000 only. Do not route this graphics/PhysX path to B200, H100, or H200.
+release; keep the beta limitation explicit. Use L40S or RTX Pro 6000 for the
+validated graphics/PhysX path. Rendering, camera-bearing tasks, and deployed
+workbenches require RT cores and cannot target B200, H100, or H200.
+
+The standalone training routing guard allows state-based, camera-free tasks to
+select datacenter GPUs. This is routing eligibility, not proof that the selected
+Isaac image, PhysX runtime, and driver work there. Require real training and a
+checkpoint from that exact runtime before claiming support; historical Isaac
+Lab 2.x results do not validate the generation 3 beta image.
 
 Generation 3 training must invoke `--visualizer none`. A compatibility path
 that can also receive a generation 2 image must select `--headless` only when
@@ -201,7 +208,7 @@ the operator passes `--replace` and confirms with `--yes` for automation.
 ## Workflows
 
 - Single RL job: `npa/src/npa/workflows/byof/profiles/isaac-lab-rl-train.yaml`.
-- Parameter sweep: `npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml`.
+- Parameter sweep: `workflows/testing/isaac-lab-rl-sweep.yaml`.
 - Runner: `npa/scripts/run_isaac_lab_rl.py`.
 
 E2E is pending the training command fix tracked by `W9-isaac-lab-e2e-fix`.

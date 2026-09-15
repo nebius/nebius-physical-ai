@@ -264,6 +264,37 @@ def test_runtime_ledger_recovers_exact_active_wave_identity(
     assert lookups == [(f"{run_id}-02-curate", "41")]
 
 
+def test_resume_planning_preserves_exact_runtime_location(resolver_env: ExactS3) -> None:
+    from npa.orchestration.npa_workflow.submission_state import record_submission_plan
+
+    run_id = "resumed-custom-prefix"
+    prefix = f"custom/sim2real/{run_id}"
+    update_submission_state("demo", run_id, {"workflow": {
+        "name": "sim2real", "run_prefix_uri": f"s3://alias-bucket/{prefix}",
+    }})
+    resolver_env.put_json("alias-bucket", f"{prefix}/npa-workflow/runtime.json", {
+        "schema_version": "npa.workflow.runtime.v1", "workflow": "sim2real",
+        "run_id": run_id, "status": "failed", "waves": [{
+            "key": "wave-01", "states": ["trigger"], "status": "succeeded",
+            "job_id": "40", "job_name": f"{run_id}-01-trigger",
+        }],
+    })
+    # A failed preflight on resume must retain the pre-existing runtime location,
+    # including for older receipts that did not record entry into the runtime.
+    record_submission_plan(
+        "demo", run_id, workflow={"name": "sim2real"}, planning={"state": "durable"},
+    )
+
+    resolved = resolve_run(run_id, project="demo", allow_local_not_submitted=True)
+
+    assert resolved.found
+    assert not resolved.not_submitted
+    assert resolved.workflow_name == "sim2real"
+    assert resolved.job_id == "40"
+    assert resolved.runtime_state["status"] == "failed"
+    assert resolved.run_prefix_uri == f"s3://alias-bucket/{prefix}"
+
+
 def test_project_alias_selects_bucket_endpoint_and_canonical_nested_prefix(
     resolver_env: ExactS3, monkeypatch: pytest.MonkeyPatch
 ) -> None:

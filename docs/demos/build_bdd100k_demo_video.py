@@ -93,7 +93,7 @@ def build_architecture() -> None:
     box(2.6, yB, "Failure-mode views\nrider · night · distant", STORE, w=3.0)
     box(6.3, yB, "Detector training ×3\nH100", GPU)
     box(9.6, yB, "Per-view eval\nmAP", GPU)
-    box(13.0, yB, "FiftyOne app\npublic :5151", ACCENT, w=3.0)
+    box(13.0, yB, "FiftyOne app\nlocal forward", ACCENT, w=3.0)
     for x0, x1 in [(4.1, 4.95), (7.65, 8.45), (10.95, 11.5)]:
         arrow(x0, yB, x1, yB)
 
@@ -216,7 +216,7 @@ def build_slides():
         "Anyone can re-run it; reviewers just open a URL",
         ["Whole pipeline is one YAML on Nebius (no bespoke glue).",
          "Validate with no cloud/GPU:  run_bdd100k_pipeline.py --mock-endpoints",
-         "Live review: npa workbench fiftyone status  ->  public http://<ip>:5151"],
+         "Live review: npa workbench fiftyone open  ->  authenticated localhost"],
         accent=ACCENT,
     )
     return [title, problem, arch, s1, s2, s3, s4, s5, results, close]

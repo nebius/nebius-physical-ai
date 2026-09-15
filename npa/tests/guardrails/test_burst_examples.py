@@ -9,7 +9,7 @@ API is deliberately scoped to *one* executable task.
 Two properties keep that boundary honest:
 
 * **one task per file** — the moment a second stage appears it is a workflow, and belongs in
-  `npa/workflows/workbench/npa-workflows/` as an `npa.workflow/v0.0.1` spec;
+  `workflows/testing/` as an `npa.workflow/v0.0.1` spec;
 * **`${VAR}` placeholders survive** — they are the burst substitution surface, so a concrete
   registry id, bucket name or run id must never be committed here.
 """
@@ -37,7 +37,7 @@ def test_example_set_is_pinned() -> None:
 
     assert found == set(PINNED_EXAMPLES), (
         "burst examples changed. A multi-stage pipeline is a workflow: author an "
-        "npa.workflow/v0.0.1 spec under npa/workflows/workbench/npa-workflows/ instead. "
+        "npa.workflow/v0.0.1 spec under workflows/testing/ instead. "
         f"expected {sorted(PINNED_EXAMPLES)}, found {sorted(found)}"
     )
 

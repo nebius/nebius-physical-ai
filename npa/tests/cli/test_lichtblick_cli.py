@@ -1,7 +1,7 @@
 """CLI + module tests for the Lichtblick (Foxglove-compatible OSS) workbench viewer.
 
-Infra-free: no Docker, S3, or network calls. Image resolution is pinned via
-NPA_REGISTRY so the tests never touch the real registry.
+Infra-free: no Docker, S3, or network calls. Image resolution only formats the
+supported public GHCR reference; it does not contact a registry.
 """
 
 from __future__ import annotations
@@ -32,11 +32,6 @@ runner = CliRunner()
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DOCKERFILE_PATH = REPO_ROOT / "npa" / "docker" / "workbench" / "lichtblick" / "Dockerfile"
 PACKAGING_CONTRACT = REPO_ROOT / "npa" / "docker" / "workbench" / "packaging-contract.yaml"
-
-
-@pytest.fixture(autouse=True)
-def _pin_registry(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("NPA_REGISTRY", "cr.example/reg")
 
 
 def test_lichtblick_is_registered_everywhere() -> None:
@@ -102,8 +97,12 @@ def test_serve_plans_viewer_for_s3_mcap() -> None:
     payload = json.loads(result.output)
     assert payload["status"] == "planned"
     assert payload["artifact_name"] == "recording.mcap"
-    assert payload["image"] == "cr.example/reg/npa-lichtblick:1.26.0"
+    assert payload["image"] == (
+        "ghcr.io/nebius/nebius-physical-ai/npa-lichtblick:1.26.0"
+    )
     assert payload["port"] == DEFAULT_PORT
+    assert payload["host"] == "127.0.0.1"
+    assert "-p 127.0.0.1:8080:8080" in payload["docker_command"]
     assert payload["served_artifact_path"] == "/srv/data/recording.mcap"
     assert "ds=remote-file" in payload["viewer_url"]
     # The deep link targets the app root `/` with the data source as a query
@@ -148,19 +147,27 @@ def test_build_launch_plan_local_path() -> None:
 
 def test_launch_viewer_uses_injected_runner() -> None:
     plan = build_launch_plan(input_path="s3://b/k/x.mcap", image="npa-lichtblick:test")
-    # Wildcard bind stays 0.0.0.0 for the container port mapping...
-    assert plan.host == "0.0.0.0"
-    # ...but the browser deep link uses a navigable loopback host.
+    # Private artifacts stay on loopback in both the plan and real Docker argv.
+    assert plan.host == "127.0.0.1"
     assert plan.viewer_url.startswith("http://127.0.0.1:8080/?")
     captured: list[list[str]] = []
     result = launch_viewer(plan, local_artifact="/tmp/x.mcap", runner=captured.append)
     assert result.status == "launched"
     assert captured, "runner was not invoked"
-    assert "0.0.0.0:8080:8080" in captured[0]
+    assert "127.0.0.1:8080:8080" in captured[0]
     argv = captured[0]
     assert argv[0] == "docker"
     assert "/tmp/x.mcap:/srv/data/x.mcap:ro" in argv
     assert "npa-lichtblick:test" in argv
+
+
+def test_lichtblick_network_publication_requires_explicit_host() -> None:
+    plan = build_launch_plan(
+        input_path="s3://b/k/x.mcap", image="npa-lichtblick:test", host="0.0.0.0"
+    )
+    captured = []
+    launch_viewer(plan, local_artifact="/tmp/x.mcap", runner=captured.append)
+    assert "0.0.0.0:8080:8080" in captured[0]
 
 
 def test_launch_viewer_requires_local_artifact() -> None:
@@ -469,4 +476,6 @@ def test_cli_serve_from_frames_plan() -> None:
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["artifact_name"] == "camera.mcap"
-    assert payload["image"] == "cr.example/reg/npa-lichtblick:1.26.0"
+    assert payload["image"] == (
+        "ghcr.io/nebius/nebius-physical-ai/npa-lichtblick:1.26.0"
+    )

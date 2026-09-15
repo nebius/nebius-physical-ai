@@ -6,11 +6,13 @@ import os
 from pathlib import Path
 import math
 import shlex
+import stat
 import sys
 import threading
 import time
 import uuid
-from typing import Callable
+from contextlib import contextmanager, suppress
+from typing import BinaryIO, Callable, Iterator
 
 import paramiko
 
@@ -24,6 +26,10 @@ class SSHError(Exception):
 
 class SSHTimeoutError(SSHError):
     """An aggregate SSH connection/command deadline expired."""
+
+
+class SSHHostKeyError(SSHError):
+    """The endpoint failed host authentication; readiness retries cannot fix it."""
 
 
 NPA_DEBUG_ENV_VAR = "NPA_DEBUG"
@@ -85,8 +91,9 @@ def format_remote_failure(
 
 
 class SSHClient:
-    def __init__(self, config: SSHConfig) -> None:
+    def __init__(self, config: SSHConfig, *, known_hosts: str | None = None) -> None:
         self._config = config
+        self._known_hosts = known_hosts
 
     def _connect(
         self,
@@ -95,7 +102,6 @@ class SSHClient:
         client: paramiko.SSHClient | None = None,
     ) -> paramiko.SSHClient:
         client = client or paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         key_path = os.path.expanduser(self._config.key_path)
         connect_options: dict[str, object] = {
             "hostname": self._config.host,
@@ -112,11 +118,33 @@ class SSHClient:
                 channel_timeout=timeout_seconds,
             )
         try:
+            client.set_missing_host_key_policy(paramiko.RejectPolicy())
+            known_hosts = (
+                self._known_hosts if self._known_hosts is not None
+                else os.environ.get("NPA_SSH_KNOWN_HOSTS", "")
+            )
+            if known_hosts:
+                client.load_host_keys(os.path.expanduser(known_hosts))
+            else:
+                from npa.deploy.ssh_trust import known_hosts_path
+
+                provider_pin = known_hosts_path(self._config.host)
+                if provider_pin.is_file() and not provider_pin.is_symlink():
+                    client.load_host_keys(str(provider_pin))
+                else:
+                    client.load_system_host_keys()
             client.connect(**connect_options)
         except Exception as exc:
-            raise SSHError(
+            with suppress(Exception):
+                client.close()
+            error_type = SSHHostKeyError if (
+                isinstance(exc, paramiko.BadHostKeyException)
+                or "not found in known_hosts" in str(exc)
+            ) else SSHError
+            raise error_type(
                 f"SSH connection to {self._config.user}@{self._config.host} failed: {exc}\n"
-                f"Check NPA_SSH_HOST, NPA_SSH_USER, NPA_SSH_KEY or ~/.npa/config.yaml"
+                "Check SSH credentials and the independently verified host key in "
+                "known_hosts or NPA_SSH_KNOWN_HOSTS. Unknown or changed host keys are refused."
             ) from exc
         return client
 
@@ -131,15 +159,44 @@ class SSHClient:
         return render_shell_env_file(env, export=True)
 
     def _write_token_env_file(self, client: paramiko.SSHClient) -> str:
-        remote_path = f"/tmp/.npa-env-{uuid.uuid4().hex}"
         sftp = client.open_sftp()
+        directory = ""
         try:
-            with sftp.open(remote_path, "w") as remote_file:
+            directory = self._private_directory(sftp, "/tmp")
+            remote_path = f"{directory}/payload"
+            with sftp.open(remote_path, "wx") as remote_file:
+                sftp.chmod(remote_path, 0o600)
                 remote_file.write(self._token_env_content())
-            sftp.chmod(remote_path, 0o600)
+                remote_file.flush()
+            return remote_path
+        except BaseException:
+            if directory:
+                self._remove_private_payload(sftp, directory)
+            raise
         finally:
             sftp.close()
-        return remote_path
+
+    @staticmethod
+    def _private_directory(sftp, parent: str) -> str:
+        directory = f"{parent.rstrip('/')}/.npa-stage-{uuid.uuid4().hex}"
+        # mkdir applies its creation attributes before any child can be opened.
+        # chmod after creating a public file cannot revoke an attacker's open FD.
+        sftp.mkdir(directory, mode=0o700)
+        try:
+            mode = sftp.lstat(directory).st_mode
+            if not stat.S_ISDIR(mode) or stat.S_IMODE(mode) != 0o700:
+                raise SSHError("SFTP server did not create an owner-only staging directory")
+        except BaseException:
+            with suppress(OSError):
+                sftp.rmdir(directory)
+            raise
+        return directory
+
+    @staticmethod
+    def _remove_private_payload(sftp, directory: str) -> None:
+        with suppress(FileNotFoundError):
+            sftp.remove(f"{directory}/payload")
+        sftp.rmdir(directory)
 
     def _command_with_tokens(self, command: str, env_file: str | None = None) -> str:
         if not self._config.tokens:
@@ -147,7 +204,11 @@ class SSHClient:
         if not env_file:
             raise SSHError("Token env file was not prepared")
         env_file_q = shlex.quote(env_file)
-        script = f"set -a\n. {env_file_q}\nset +a\nrm -f {env_file_q}\n{command}"
+        cleanup = f"rm -f -- {env_file_q}; rmdir -- {shlex.quote(str(Path(env_file).parent))}"
+        script = (
+            f"trap {shlex.quote(cleanup)} EXIT HUP INT TERM\n"
+            f"set -a\n. {env_file_q}\nset +a\n{cleanup}\ntrap - EXIT HUP INT TERM\n{command}"
+        )
         return f"bash -lc {shlex.quote(script)}"
 
     def run(
@@ -175,6 +236,7 @@ class SSHClient:
         deadline_expired = threading.Event()
         client = paramiko.SSHClient() if timeout is not None else None
         watchdog: threading.Timer | None = None
+        token_env_file: str | None = None
         if timeout is not None and client is not None:
             watchdog_client = client
 
@@ -257,6 +319,12 @@ class SSHClient:
             if watchdog is not None:
                 watchdog.cancel()
             if client is not None:
+                if token_env_file:
+                    # Also covers failures between upload and exec_command.
+                    with suppress(OSError, paramiko.SSHException, EOFError):
+                        with client.open_sftp() as sftp:
+                            with suppress(FileNotFoundError):
+                                self._remove_private_payload(sftp, str(Path(token_env_file).parent))
                 client.close()
 
     def run_or_raise(
@@ -297,47 +365,64 @@ class SSHClient:
             client.close()
 
     def upload_file(self, local_path: str, remote_path: str) -> str:
-        """Upload a single file to the VM over SFTP."""
+        """Atomically upload a file with private staging and final permissions."""
+        self.run_or_raise(f"mkdir -p {shlex.quote(str(Path(remote_path).parent))}")
+        try:
+            with Path(local_path).expanduser().open("rb") as source:
+                return self._upload_private(source, remote_path)
+        except OSError as exc:
+            raise SSHError(f"SFTP upload failed for {remote_path}: {exc}") from exc
+
+    def _upload_private(self, source: BinaryIO, remote_path: str) -> str:
         client = self._connect()
         sftp = None
+        directory = ""
         try:
-            local = Path(local_path).expanduser()
-            remote_parent = str(Path(remote_path).parent)
-            self.run(f"mkdir -p {shlex.quote(remote_parent)}")
             sftp = client.open_sftp()
-            sftp.put(str(local), remote_path)
+            directory = self._private_directory(sftp, str(Path(remote_path).parent))
+            staged = f"{directory}/payload"
+            with sftp.open(staged, "wx") as remote_file:
+                sftp.chmod(staged, 0o600)
+                while chunk := source.read(1024 * 1024):
+                    remote_file.write(chunk)
+                remote_file.flush()
+            # OpenSSH's POSIX rename atomically replaces the directory entry,
+            # including a pre-existing symlink, without truncating its target.
+            # Do not fall back to remove+rename or an in-place write.
+            sftp.posix_rename(staged, remote_path)
             return remote_path
         except Exception as exc:
-            raise SSHError(
-                f"SFTP upload failed: {local_path} -> {remote_path}: {exc}"
-            ) from exc
+            raise SSHError(f"Private SFTP upload failed for {remote_path}: {exc}") from exc
         finally:
-            if sftp is not None:
-                sftp.close()
-            client.close()
+            try:
+                if sftp is not None:
+                    try:
+                        if directory:
+                            self._remove_private_payload(sftp, directory)
+                    finally:
+                        sftp.close()
+            finally:
+                client.close()
 
     def upload_private_text(self, content: str, remote_path: str) -> str:
-        """Create a remote owner-only file without putting content in argv."""
+        """Atomically install owner-only text without putting content in argv."""
+        import io
 
+        return self._upload_private(io.BytesIO(content.encode("utf-8")), remote_path)
+
+    @contextmanager
+    def temporary_directory(self) -> Iterator[str]:
+        """Own a private remote staging directory for the complete operation."""
         client = self._connect()
-        sftp = None
         try:
-            sftp = client.open_sftp()
-            # Paramiko requires ``w`` in addition to ``x``: unlike Python's
-            # built-in open(), bare ``x`` sets CREATE|EXCL but not WRITE.
-            with sftp.open(remote_path, "wx") as remote_file:
-                sftp.chmod(remote_path, 0o600)
-                remote_file.write(content)
-                remote_file.flush()
-            return remote_path
-        except Exception as exc:
-            raise SSHError(
-                f"Private SFTP upload failed for {remote_path}: {exc}"
-            ) from exc
+            with client.open_sftp() as sftp:
+                directory = self._private_directory(sftp, "/tmp")
         finally:
-            if sftp is not None:
-                sftp.close()
             client.close()
+        try:
+            yield directory
+        finally:
+            self.run_or_raise(f"rm -rf -- {shlex.quote(directory)}", label="remove private staging directory")
 
     def upload_directory(self, local_dir: str, remote_dir: str) -> str:
         """Upload a local directory to the VM over SFTP."""

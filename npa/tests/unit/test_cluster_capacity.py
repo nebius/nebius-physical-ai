@@ -72,6 +72,7 @@ def _capture(quota: str, advice: str = ""):
 def test_gpu_quota_name_maps_the_platform() -> None:
     assert capacity.gpu_quota_name("gpu-rtx6000") == "compute.instance.gpu.rtx6000"
     assert capacity.gpu_quota_name("gpu-h100-sxm") == "compute.instance.gpu.h100"
+    assert capacity.gpu_quota_name("gpu-b200-sxm-a") == "compute.instance.gpu.b200"
     assert capacity.gpu_quota_name("gpu-l40s-pcie") == "compute.instance.gpu.l40s"
     assert capacity.gpu_quota_name("cpu-d3") == ""
     assert capacity.gpu_quota_name("") == ""
@@ -240,3 +241,65 @@ def test_platform_advice_falls_back_to_another_preset_in_the_region() -> None:
     assert exact is items[0]
     assert other_preset is items[0]
     assert other_region == {}
+
+
+def _cgb(*, tenant='tenant-a', region='us-central1', platform='gpu-rtx6000',
+         state='STATE_ACTIVE', limit=48, usage=12) -> str:
+    # Shape taken from `nebius capacity capacity-block-group get`.
+    return json.dumps({
+        'metadata': {'id': 'cg-1', 'parent_id': tenant},
+        'status': {
+            'region': region,
+            'state': state,
+            'current_limit': str(limit),
+            'usage': str(usage),
+            'resource_affinity': {'compute_v1': {'platform': platform}},
+        },
+    })
+
+
+def test_capacity_block_group_sufficient_reservation_is_ok() -> None:
+    def _ok(args):
+        assert '--id' in args
+        return _completed(_cgb())
+    assert capacity.capacity_block_group_error(
+        _ok, nebius_bin='nebius', block_group_id='cg-1',
+        tenant_id='tenant-a', region='us-central1',
+        platform='gpu-rtx6000', required_gpus=16,
+    ) is None
+
+
+def test_capacity_block_group_insufficient_or_wrong_is_error() -> None:
+    def _low(args):  # 20-12 = 8 free < 16 requested
+        return _completed(_cgb(limit=20, usage=12))
+    assert capacity.capacity_block_group_error(
+        _low, nebius_bin='nebius', block_group_id='cg-1',
+        tenant_id='tenant-a', region='us-central1',
+        platform='gpu-rtx6000', required_gpus=16,
+    ) is not None
+
+    def _wrong_region(args):
+        return _completed(_cgb(region='eu-north1'))
+    assert capacity.capacity_block_group_error(
+        _wrong_region, nebius_bin='nebius', block_group_id='cg-1',
+        tenant_id='tenant-a', region='us-central1',
+        platform='gpu-rtx6000', required_gpus=1,
+    ) is not None
+
+    def _wrong_platform(args):
+        return _completed(_cgb(platform='gpu-b200-sxm'))
+    assert capacity.capacity_block_group_error(
+        _wrong_platform, nebius_bin='nebius', block_group_id='cg-1',
+        tenant_id='tenant-a', region='us-central1',
+        platform='gpu-rtx6000', required_gpus=1,
+    ) is not None
+
+
+def test_capacity_block_group_unreadable_fails_closed() -> None:
+    def _missing(args):
+        return _completed('', returncode=1)
+    assert capacity.capacity_block_group_error(
+        _missing, nebius_bin='nebius', block_group_id='cg-1',
+        tenant_id='tenant-a', region='us-central1',
+        platform='gpu-rtx6000', required_gpus=1,
+    ) is not None

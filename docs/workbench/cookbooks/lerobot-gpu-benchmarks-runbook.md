@@ -1,5 +1,7 @@
 # LeRobot Benchmark on Workbench Serverless
 
+[Cookbooks](README.md)
+
 This runbook shows how to run LeRobot training benchmarks on Nebius Physical AI
 Workbench with Serverless Jobs.
 
@@ -344,7 +346,7 @@ aws s3 rm \
 Cancel a still-running job by ID if needed:
 
 ```bash
-nebius ai job cancel --id <JOB_ID>
+nebius ai job cancel --id "<JOB_ID>"
 ```
 
 ## Related Docs

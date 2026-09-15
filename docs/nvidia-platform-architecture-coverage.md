@@ -1,5 +1,7 @@
 # NVIDIA Physical AI Platform Architecture Coverage
 
+[Docs](README.md)
+
 **Last verified:** 2026-08-02
 
 NVIDIA publishes different CUDA / PyTorch versions per host CPU architecture for its Physical AI stack. This shapes which Workbench tools can be validated on which Nebius hardware today.

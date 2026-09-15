@@ -51,6 +51,7 @@ SKYPILOT_HOSTED_IMAGES = (
     "cosmos3-reason",
     "groot",
     "isaac-lab",
+    "lancedb",
     "lerobot",
     "sim2real-control",
     "sim2real-envgen",

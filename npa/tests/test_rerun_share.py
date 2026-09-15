@@ -24,12 +24,18 @@ from npa.clients.config import StorageConfig
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def _browser_cors_succeeds(mocker):
+    return mocker.patch("npa.cli.rerun._verify_browser_cors")
+
+
 class RerunShareFakeS3:
     def __init__(self) -> None:
         self.objects: dict[tuple[str, str], dict] = {}
         self.put_calls: list[tuple[str, str, dict[str, str]]] = []
         self.delete_calls: list[tuple[str, str]] = []
         self.presign_calls: list[dict] = []
+        self.events: list[str] = []
 
     def add(
         self,
@@ -46,6 +52,7 @@ class RerunShareFakeS3:
         }
 
     def head_object(self, *, Bucket: str, Key: str):
+        self.events.append("head")
         item = self.objects.get((Bucket, Key))
         if item is None:
             raise ClientError(
@@ -60,6 +67,7 @@ class RerunShareFakeS3:
     def put_object(
         self, *, Bucket: str, Key: str, Body: bytes, Metadata: dict[str, str]
     ) -> None:
+        self.events.append("put")
         self.put_calls.append((Bucket, Key, dict(Metadata)))
         self.add(Bucket, Key, Body, Metadata)
 
@@ -82,6 +90,7 @@ class RerunShareFakeS3:
         self.objects.pop((Bucket, Key), None)
 
     def generate_presigned_url(self, operation: str, *, Params: dict, ExpiresIn: int):
+        self.events.append("presign")
         self.presign_calls.append(
             {"operation": operation, "Params": Params, "ExpiresIn": ExpiresIn}
         )
@@ -108,7 +117,9 @@ def _rrd(tmp_path: Path, body: bytes = b"recording") -> tuple[Path, str]:
     return path, hashlib.sha256(body).hexdigest()
 
 
-def test_share_default_ttl_generates_seven_day_url(tmp_path: Path, mocker) -> None:
+def test_share_default_ttl_generates_seven_day_url(
+    tmp_path: Path, mocker, _browser_cors_succeeds
+) -> None:
     mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
     path, sha = _rrd(tmp_path)
     s3 = RerunShareFakeS3()
@@ -124,6 +135,33 @@ def test_share_default_ttl_generates_seven_day_url(tmp_path: Path, mocker) -> No
     assert result.rrd_s3_uri == f"s3://target/rerun-shares/default/{sha}.rrd"
     assert result.ttl_expires_at == "2026-05-18T22:30:00Z"
     assert s3.presign_calls[-1]["ExpiresIn"] == MAX_TTL_HOURS * 3600
+    _browser_cors_succeeds.assert_called_once_with(
+        result.presigned_url, bucket="target", project=None
+    )
+
+
+def test_share_fresh_key_checks_cors_before_head_and_upload(
+    tmp_path: Path, mocker, _browser_cors_succeeds
+) -> None:
+    mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
+    path, sha = _rrd(tmp_path, body=b"fresh recording")
+    s3 = RerunShareFakeS3()
+
+    def record_preflight(*_args, **_kwargs) -> None:
+        assert ("target", f"rerun-shares/default/{sha}.rrd") not in s3.objects
+        s3.events.append("preflight")
+
+    _browser_cors_succeeds.side_effect = record_preflight
+
+    share_recording(
+        str(path),
+        target_bucket="target",
+        s3_client=s3,
+        host_s3_client=RerunShareFakeS3(),
+    )
+
+    assert s3.events == ["presign", "preflight", "head", "put"]
+    assert ("target", f"rerun-shares/default/{sha}.rrd") in s3.objects
 
 
 def test_share_label_is_stored_in_metadata(tmp_path: Path, mocker) -> None:
@@ -252,6 +290,25 @@ def test_share_ttl_over_limit_fails_before_s3_calls() -> None:
             s3_client=NoCallS3(),
             host_s3_client=NoCallS3(),
         )
+
+
+def test_share_failed_browser_preflight_stops_before_upload(
+    tmp_path: Path, mocker, _browser_cors_succeeds
+) -> None:
+    mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
+    path, _ = _rrd(tmp_path)
+    s3 = RerunShareFakeS3()
+    _browser_cors_succeeds.side_effect = RerunHostError("CORS unavailable")
+
+    with pytest.raises(RerunHostError, match="CORS unavailable"):
+        share_recording(
+            str(path),
+            target_bucket="target",
+            s3_client=s3,
+            host_s3_client=RerunShareFakeS3(),
+        )
+
+    assert s3.put_calls == []
 
 
 def test_list_shares_json_cli_outputs_programmatic_schema(mocker) -> None:

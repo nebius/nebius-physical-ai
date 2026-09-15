@@ -91,6 +91,7 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
         (
             "npa/src/npa/genesis/eval_student.py",
             "npa/src/npa/server/app.py",
+            "npa/src/npa/workbench/robocasa/capabilities.py",
             "research/lerobot-deploy/training/profile_train.py",
         ),
     ),
@@ -115,6 +116,16 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
         ("research/lerobot-deploy/training/profile_train.py",),
     ),
     (
+        "lerobot.configs.types",
+        "FeatureType",
+        ("npa/src/npa/smoke/test_lerobot_env.py",),
+    ),
+    (
+        "lerobot.configs.types",
+        "PolicyFeature",
+        ("npa/src/npa/smoke/test_lerobot_env.py",),
+    ),
+    (
         "lerobot.policies.factory",
         "make_policy",
         (
@@ -128,6 +139,7 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
         (
             "npa/src/npa/genesis/eval_student.py",
             "npa/src/npa/server/app.py",
+            "npa/src/npa/workbench/robocasa/capabilities.py",
             "research/lerobot-deploy/training/profile_train.py",
         ),
     ),
@@ -139,7 +151,10 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
     (
         "lerobot.policies.act.modeling_act",
         "ACTPolicy",
-        ("npa/src/npa/genesis/eval_student.py",),
+        (
+            "npa/src/npa/genesis/eval_student.py",
+            "npa/src/npa/workbench/robocasa/capabilities.py",
+        ),
     ),
     (
         "lerobot.policies.act.configuration_act",
@@ -147,9 +162,17 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
         ("npa/src/npa/smoke/test_lerobot_env.py",),
     ),
     (
+        "lerobot.policies.diffusion.configuration_diffusion",
+        "DiffusionConfig",
+        ("npa/src/npa/smoke/test_lerobot_env.py",),
+    ),
+    (
         "lerobot.policies.diffusion.modeling_diffusion",
         "DiffusionPolicy",
-        ("npa/src/npa/genesis/eval_student.py",),
+        (
+            "npa/src/npa/genesis/eval_student.py",
+            "npa/src/npa/smoke/test_lerobot_env.py",
+        ),
     ),
     (
         "lerobot.policies.smolvla.modeling_smolvla",

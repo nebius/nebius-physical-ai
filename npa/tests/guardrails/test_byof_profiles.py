@@ -49,7 +49,7 @@ def test_profile_set_is_pinned() -> None:
 
     assert on_disk == EXPECTED_PROFILES, (
         "BYOF profiles changed. A multi-stage pipeline is a workflow: author an "
-        "npa.workflow/v0.0.1 spec under npa/workflows/workbench/npa-workflows/ instead. "
+        "npa.workflow/v0.0.1 spec under workflows/testing/ instead. "
         f"expected {sorted(EXPECTED_PROFILES)}, found {sorted(on_disk)}"
     )
 

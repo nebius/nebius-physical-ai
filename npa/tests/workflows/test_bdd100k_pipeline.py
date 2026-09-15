@@ -24,7 +24,7 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
-SPEC_PATH = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "bdd100k-pipeline.yaml"
+SPEC_PATH = ROOT / "workflows" / "testing" / "bdd100k-pipeline.yaml"
 WRAPPER_PATH = ROOT / "npa" / "scripts" / "run_bdd100k_pipeline.py"
 
 EXPECTED_STAGE_ORDER = [
@@ -331,10 +331,15 @@ def test_mock_endpoint_validation_drives_every_stage(capsys, tmp_path, monkeypat
         item["payload"] for item in summary["detection_requests"] if item["path"] == "/train"
     ]
     assert len(train_payloads) == 3
+    from npa.workbench.detection_training.schemas import TrainRequest
+    from npa.workbench.detection_training.training import resolve_num_classes
+
     for payload in train_payloads:
         assert payload["label_map"] == SYNTHETIC_BDD100K_LABEL_MAP
-        # num_classes agrees with the map rather than contradicting it.
-        assert payload["num_classes"] == len(SYNTHETIC_BDD100K_LABEL_MAP)
+        # The real training contract reserves detector category zero for
+        # background and resolves omitted counts from the explicit label map.
+        # Prove the effective model count, not an optional transport default.
+        assert resolve_num_classes(TrainRequest.model_validate(payload)) == len(SYNTHETIC_BDD100K_LABEL_MAP) + 1
 
 
 @pytest.mark.timeout(300)

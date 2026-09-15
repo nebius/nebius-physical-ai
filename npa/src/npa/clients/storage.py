@@ -50,6 +50,16 @@ def safe_s3_tree_relative_path(key: str, prefix: str) -> Path:
     return Path(*path.parts)
 
 
+def safe_s3_download_target(root: Path | str, key: str, prefix: str) -> Path:
+    """Contain an object-tree download, including existing filesystem symlinks."""
+    relative = safe_s3_tree_relative_path(key, prefix)
+    base = Path(root).resolve()
+    target = (base / relative).resolve()
+    if not target.is_relative_to(base):
+        raise StorageError("Object storage download escapes its destination")
+    return target
+
+
 class LazyStorageClient:
     """A :class:`StorageClient` stand-in that connects on first actual use.
 
@@ -134,6 +144,25 @@ class StorageClient:
             aws_secret_access_key=aws_secret_access_key
             or os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
         )
+
+    def probe_list_access(self, bucket_uri: str) -> None:
+        """Verify listing permission with one request, including for empty buckets.
+
+        Args:
+            bucket_uri: S3 bucket or directory URI whose listing permission to test.
+
+        Returns:
+            None. Object names and continuation tokens are discarded.
+
+        Raises:
+            StorageError: The destination is not an S3 URI.
+            botocore.exceptions.BotoCoreError: The request could not complete.
+            ClientError: The service rejected the listing request.
+        """
+        bucket, prefix = _parse_bucket_uri(bucket_uri)
+        if prefix and not prefix.endswith("/"):
+            prefix += "/"
+        self._s3.list_objects_v2(Bucket=bucket, Prefix=prefix, Delimiter="/", MaxKeys=1)
 
     def list_checkpoints(self, bucket_uri: str) -> list[dict[str, str]]:
         """List checkpoint directories under the given S3 URI."""
@@ -263,8 +292,6 @@ class StorageClient:
 
     def download_directory(self, bucket_uri: str, local_dir: str) -> str:
         """Download an S3 prefix to a local directory. Returns local path."""
-        import os
-
         bucket, prefix = _parse_bucket_uri(bucket_uri)
         if prefix and not prefix.endswith("/"):
             prefix += "/"
@@ -275,10 +302,9 @@ class StorageClient:
                 key = obj["Key"]
                 if key == prefix or key.endswith("/"):
                     continue
-                rel_path = safe_s3_tree_relative_path(key, prefix)
-                local_path = os.path.join(local_dir, rel_path)
-                os.makedirs(os.path.dirname(local_path), exist_ok=True)
-                self._s3.download_file(bucket, key, local_path)
+                target = safe_s3_download_target(local_dir, key, prefix)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                self._s3.download_file(bucket, key, str(target))
 
         return local_dir
 
@@ -317,7 +343,7 @@ class StorageClient:
                     raise
             else:
                 target = (
-                    dest / Path(prefix).name
+                    safe_s3_download_target(dest, Path(prefix).name, "")
                     if dest.exists() and dest.is_dir()
                     else dest
                 )
@@ -336,20 +362,21 @@ class StorageClient:
 
         if prefix in keys:
             target = (
-                dest / Path(prefix).name if dest.exists() and dest.is_dir() else dest
+                safe_s3_download_target(dest, Path(prefix).name, "")
+                if dest.exists() and dest.is_dir()
+                else dest
             )
             target.parent.mkdir(parents=True, exist_ok=True)
             self._s3.download_file(bucket, prefix, str(target))
             return str(target)
 
-        prefix_dir = prefix.rstrip("/") + "/"
+        prefix_dir = prefix.rstrip("/") + "/" if prefix else ""
         for key in keys:
             if not key.startswith(prefix_dir):
                 continue
-            rel_path = key[len(prefix_dir) :]
-            if not rel_path:
+            if key == prefix_dir or key.endswith("/"):
                 continue
-            target = dest / rel_path
+            target = safe_s3_download_target(dest, key, prefix_dir)
             target.parent.mkdir(parents=True, exist_ok=True)
             self._s3.download_file(bucket, key, str(target))
 

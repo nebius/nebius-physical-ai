@@ -60,7 +60,7 @@ selected through `NPA_COSMOS3_*_TOKEN_ENV`.
    npa/.venv/bin/python - <<'PY'
    import yaml
    from pathlib import Path
-   p = Path("npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml")
+   p = Path("workflows/testing/cosmos3-text-to-image.yaml")
    doc = yaml.safe_load(p.read_text())
    print(doc["metadata"]["name"])
    print(doc["states"][doc["initial"]]["toolRef"])
@@ -79,6 +79,22 @@ selected through `NPA_COSMOS3_*_TOKEN_ENV`.
    ```
 
 ## Common Error Signatures
+
+For `nano-video-batch`, `nano-video-augment` or their vLLM-Omni serving image,
+start with `npa/deploy/cosmos3-nano-video/README.md` and the installed image's
+video parser/pipeline. Framework inference arguments may not apply. The pinned
+video handler reads sequence length through `extra_params`; size alone does not
+select transfer resolution. Inspect retained effective requests instead of
+assuming an extra field was accepted.
+
+If an augmentation POST, artifact GET or publication fails, retain its original
+request/destination and use `nano-video-augment-recover`. Completed local media
+can finish publication without serving credentials; incomplete downloads use
+authenticated GETs. Recovery never submits generation. Distinguish transport or
+artifact failures from actual model failures, and retain both the initial error
+and successful readback evidence. For weak visual changes, verify full original
+source-interval controls before tuning the prompt or supported parameters;
+tail-only continuation and a changed hash are insufficient augmentation proof.
 
 | Error | Likely cause | Fix |
 | --- | --- | --- |

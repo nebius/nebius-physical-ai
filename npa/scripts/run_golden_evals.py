@@ -104,7 +104,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         return 0
     try:
         completed = subprocess.run(
-            shlex.split(ge.command), timeout=ge.timeout_seconds, check=False
+            shlex.split(ge.command), timeout=ge.execution_timeout, check=False
         )
     except FileNotFoundError as exc:
         print(f"command not runnable here: {exc}", file=sys.stderr)

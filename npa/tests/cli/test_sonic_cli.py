@@ -301,6 +301,38 @@ def test_sonic_eval_container_render_rejects_h100_misroute(tmp_path) -> None:
     assert "h100" in result.output.lower()
 
 
+@pytest.mark.parametrize("selection", [
+    ["--container-gpu-target", "gpu-b200"],
+    ["--container-gpu-target", "NVIDIA B200 Blackwell"],
+    ["--container-image-variant", "sonic-mujoco-runtime-fetch"],
+    ["--container-image-variant", "mujoco"],
+])
+def test_sonic_onnx_eval_rejects_mujoco_image_before_evaluation(mocker, selection) -> None:
+    evaluate = mocker.patch("npa.cli.workbench.sonic.eval.evaluate_onnx_policy")
+    result = runner.invoke(app, [
+        "workbench", "sonic", "eval", "--onnx", "policy.onnx",
+        "--backend", "container", *selection,
+    ])
+    assert result.exit_code == 1
+    assert "isaac-render" in result.output
+    assert "mujoco" in result.output
+    evaluate.assert_not_called()
+
+
+def test_sonic_onnx_eval_resolves_render_manifest_image(mocker) -> None:
+    evaluate = mocker.patch(
+        "npa.cli.workbench.sonic.eval.evaluate_onnx_policy", return_value={"status": "completed"}
+    )
+    result = runner.invoke(app, [
+        "workbench", "sonic", "eval", "--onnx", "policy.onnx", "--backend", "container",
+        "--container-gpu-target", "gpu-rtx6000", "--output-format", "json",
+    ])
+    assert result.exit_code == 0, result.output
+    assert evaluate.call_args.kwargs["container_image"] == container_image_for_tool(
+        "sonic", gpu_target="gpu-rtx6000", workload="isaac-render"
+    )
+
+
 def test_sonic_eval_container_render_allows_rt_core_target(mocker, tmp_path) -> None:
     onnx = tmp_path / "policy.onnx"
     onnx.write_bytes(b"onnx")

@@ -1,5 +1,5 @@
 {
-  "schema_name": "npa.antioch.mk8s-live-config.v1",
+  "schema_name": "npa.antioch.mk8s-live-config.v2",
   "workflow_run": "replace-with-run-identity",
   "state_id": "antioch-mk8s-live",
   "kubeconfig": "/path/to/owner-readable-kubeconfig",
@@ -17,6 +17,7 @@
   "policy_cache_pvc_name": "replace-with-bound-policy-cache-pvc",
   "public_rollback_service_name": "",
   "image_pull_secret": "",
+  "antioch_deployment_profile": "replace-with-supported-deployment-profile",
   "antioch_config_dir": "/path/to/mode-0700-antioch-config",
   "antioch_project_id_file": "/path/to/mode-0600-project-id",
   "adapter_replicas": 1,

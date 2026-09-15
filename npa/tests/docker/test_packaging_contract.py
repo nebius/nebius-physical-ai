@@ -263,9 +263,8 @@ def test_packaging_contract_file_exists() -> None:
 def test_images_that_install_npa_copy_forced_workflow_package_data() -> None:
     """Hatch metadata generation must see every force-included workflow YAML.
 
-    ``pyproject.toml`` force-includes files below ``workflows/``. A Dockerfile that
-    copies the project metadata and installs ``/opt/npa`` therefore cannot copy only
-    ``src/npa``: pip fails before it can build editable or regular package metadata.
+    The build hook includes the staged catalog below ``src/npa/workflows/``.
+    Dockerfiles installing ``/opt/npa`` must copy that package source directory.
     """
 
     missing: list[str] = []
@@ -283,7 +282,7 @@ def test_images_that_install_npa_copy_forced_workflow_package_data() -> None:
         if not installs_npa or "/opt/npa/pyproject.toml" not in instructions:
             continue
         if not re.search(
-            r"\bCOPY\b[^\n]*\b(?:npa/)?workflows\s+/opt/npa/workflows\b",
+            r"\bCOPY\b[^\n]*\b(?:npa/)?src(?:/npa)?\s+/opt/npa/src(?:/npa)?\b",
             instructions,
         ):
             missing.append(str(dockerfile.relative_to(ROOT)))

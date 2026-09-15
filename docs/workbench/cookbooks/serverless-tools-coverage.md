@@ -1,5 +1,7 @@
 # Workbench Tools - Serverless Coverage
 
+[Cookbooks](README.md)
+
 ## Overview
 
 The Workbench supports `--runtime serverless` on these non-LeRobot tools, each backed by Nebius Serverless Jobs:
@@ -44,13 +46,13 @@ The serverless Job commands use the same option shape:
 ```bash
 npa workbench cosmos -p eu-north1 -n w13-cosmos train \
   --runtime serverless \
-  --project-id <YOUR_PROJECT_ID> \
+  --project-id "<YOUR_PROJECT_ID>" \
   --image ghcr.io/nebius/nebius-physical-ai/npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z \
   --gpu-type h100 \
   --gpu-count 1 \
   --gpu-preset 1gpu-16vcpu-200gb \
-  --output-path s3://${NPA_S3_BUCKET}/w13-cosmos-e2e/<run-id>/ \
-  --job-name <run-id> \
+  --output-path "s3://${NPA_S3_BUCKET}/w13-cosmos-e2e/<run-id>/" \
+  --job-name "<run-id>" \
   --smoke \
   --smoke-seconds 5 \
   --timeout 3600 \
@@ -62,14 +64,14 @@ npa workbench cosmos -p eu-north1 -n w13-cosmos train \
 ```bash
 npa workbench isaac-lab -p uk-south1 -n w7p-isaac train \
   --runtime serverless \
-  --project-id <YOUR_PROJECT_ID> \
+  --project-id "<YOUR_PROJECT_ID>" \
   --task Isaac-Reach-Franka-v0 \
   --num-envs 1 \
   --steps 1 \
   --gpu-type l40s \
   --gpu-count 1 \
-  --output-path s3://${NPA_S3_BUCKET}/<run-prefix>/isaac-lab-smoke/ \
-  --job-name isaac-lab-smoke3-<run-id> \
+  --output-path "s3://${NPA_S3_BUCKET}/<run-prefix>/isaac-lab-smoke/" \
+  --job-name "isaac-lab-smoke3-<run-id>" \
   --timeout 3600 \
   --poll-interval 15
 ```
@@ -79,13 +81,13 @@ npa workbench isaac-lab -p uk-south1 -n w7p-isaac train \
 ```bash
 npa workbench fiftyone -p uk-south1 -n w7p-fiftyone load-dataset \
   --runtime serverless \
-  --project-id <YOUR_PROJECT_ID> \
+  --project-id "<YOUR_PROJECT_ID>" \
   --name w7p-curated \
   --input-path Voxel51/VisDrone2019-DET \
   --gpu-type l40s \
   --gpu-count 1 \
-  --output-path s3://${NPA_S3_BUCKET}/<run-prefix>/fiftyone-smoke/ \
-  --job-name fiftyone-smoke-<run-id> \
+  --output-path "s3://${NPA_S3_BUCKET}/<run-prefix>/fiftyone-smoke/" \
+  --job-name "fiftyone-smoke-<run-id>" \
   --timeout 3600 \
   --poll-interval 15
 ```
@@ -95,13 +97,13 @@ npa workbench fiftyone -p uk-south1 -n w7p-fiftyone load-dataset \
 ```bash
 npa workbench genesis -p uk-south1 -n w7p-genesis train-teacher \
   --runtime serverless \
-  --project-id <YOUR_PROJECT_ID> \
+  --project-id "<YOUR_PROJECT_ID>" \
   --n-envs 1 \
   --max-iterations 1 \
   --gpu-type l40s \
   --gpu-count 1 \
-  --output-path s3://${NPA_S3_BUCKET}/<run-prefix>/genesis-smoke/ \
-  --job-name genesis-smoke-<run-id> \
+  --output-path "s3://${NPA_S3_BUCKET}/<run-prefix>/genesis-smoke/" \
+  --job-name "genesis-smoke-<run-id>" \
   --timeout 3600 \
   --poll-interval 15
 ```
@@ -111,16 +113,16 @@ npa workbench genesis -p uk-south1 -n w7p-genesis train-teacher \
 ```bash
 npa workbench groot -p uk-south1 -n w7p-groot infer \
   --runtime serverless \
-  --project-id <YOUR_PROJECT_ID> \
-  --input-path s3://${NPA_S3_BUCKET}/<run-prefix>/groot-input/checkpoint/ \
-  --dataset-path s3://${NPA_S3_BUCKET}/<run-prefix>/groot-input/dataset/ \
-  --output-path s3://${NPA_S3_BUCKET}/<run-prefix>/groot-smoke/ \
+  --project-id "<YOUR_PROJECT_ID>" \
+  --input-path "s3://${NPA_S3_BUCKET}/<run-prefix>/groot-input/checkpoint/" \
+  --dataset-path "s3://${NPA_S3_BUCKET}/<run-prefix>/groot-input/dataset/" \
+  --output-path "s3://${NPA_S3_BUCKET}/<run-prefix>/groot-smoke/" \
   --gpu-type h200 \
   --gpu-count 1 \
   --model-variant nvidia/GR00T-N1.7-3B \
   --steps 1 \
   --action-horizon 1 \
-  --job-name groot-smoke-<run-id> \
+  --job-name "groot-smoke-<run-id>" \
   --timeout 3600 \
   --poll-interval 15
 ```

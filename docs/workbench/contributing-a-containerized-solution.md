@@ -1,5 +1,7 @@
 # Contributing a Containerized Solution
 
+[Workbench docs](README.md)
+
 Use this checklist to add an open-source solution to NPA. The contributor
 supplies reproducible code and real test evidence. The Nebius Physical AI team
 builds, scans, pushes, and, when approved, publishes the official image.
@@ -41,7 +43,7 @@ Use `docs/architecture/oss-onboarding-ladder.md` for promotion criteria.
 
 For a BYOF candidate:
 
-1. Add `npa/workflows/workbench/npa-workflows/byof-<solution>.yaml`.
+1. Add `workflows/testing/byof-<solution>.yaml`.
 2. Use `workload: solution-smoke` with the real upstream capability command.
 3. Pin the source/install and write a named JSON result under
    `$NPA_SMOKE_OUTPUT_DIR` containing `solution`, `capability`, and a real proof
@@ -50,15 +52,15 @@ For a BYOF candidate:
 
 ```bash
 npa/.venv/bin/npa workbench byof run \
-  --repo-url <public-repository-url> \
-  --repo-ref <immutable-ref> \
+  --repo-url "<public-repository-url>" \
+  --repo-ref "<immutable-ref>" \
   --base-profile ubuntu \
   --workload solution-smoke \
   --build-command '<pinned-install-command>' \
   --smoke-command '<real-capability-command>' \
-  --solution-name <solution> \
-  --capability-name <capability> \
-  --smoke-artifact-name <solution>_<capability>.json \
+  --solution-name "<solution>" \
+  --capability-name "<capability>" \
+  --smoke-artifact-name "<solution>_<capability>.json" \
   --skip-push --skip-run --dry-run --output json
 ```
 
@@ -152,3 +154,14 @@ Related policy:
 - `skills/workflows/contribute-workbench-image/SKILL.md`
 - `skills/atomic/solution-licensing/SKILL.md`
 - `docs/workbench/container-packaging.md`
+
+For a new additive release tag, keep the current runtime defaults until the
+new alias is public. After the exact public development digest passes real GPU
+validation, dispatch `publish-public-images.yml` with one `tool`, the explicit
+`development_sha`, `release_tag`, and `expected_source_digest`. Use `dry_run=true`
+for the promotion preflight, then `dry_run=false` with the same values and no
+build or cleanup selector. This path checks the source revision and anonymous
+digest, refuses mutable tags and an existing tag with different bytes, and
+verifies anonymous digest parity after promotion. Once that succeeds, update the
+supported-tool pin, accepted release manifest, and catalog together. Retain the
+development tag that shares the accepted release digest.

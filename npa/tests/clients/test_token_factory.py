@@ -123,6 +123,54 @@ def test_validate_model_access_requires_listing_and_inference(monkeypatch) -> No
     assert calls == ["models", "nvidia/Cosmos3-Super-Reasoner"]
 
 
+@pytest.mark.parametrize("endpoint_env", [
+    {"NEBIUS_TOKEN_FACTORY_BASE_URL": "https://dedicated.example/v1/"},
+    {"NEBIUS_BASE_URL": "https://dedicated.example/v1/"},
+    {
+        "NEBIUS_TOKEN_FACTORY_BASE_URL": "https://dedicated.example/v1/",
+        "NEBIUS_BASE_URL": "https://lower-precedence.example/v1/",
+    },
+])
+def test_access_probe_honors_endpoint_overrides_with_only_the_supplied_key(
+    monkeypatch, endpoint_env
+) -> None:
+    import npa.clients.token_factory as module
+
+    for key, value in endpoint_env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_KEY", "unselected-account-key")
+    requests = []
+    original_client = module.TokenFactoryClient
+
+    def handler(request):
+        requests.append(request)
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": [{"id": "dedicated/legacy"}]})
+        return httpx.Response(200, json={
+            "id": "request-dedicated", "choices": [{"message": {"content": "{}"}}],
+        })
+
+    monkeypatch.setattr(module, "TokenFactoryClient", lambda config: original_client(
+        config, http_client=httpx.Client(transport=httpx.MockTransport(handler))
+    ))
+    result = validate_model_access("selected-account-key", "dedicated/legacy")
+    assert result.ok
+    assert [str(request.url) for request in requests] == [
+        "https://dedicated.example/v1/models",
+        "https://dedicated.example/v1/chat/completions",
+    ]
+    assert all(request.headers["Authorization"] == "Bearer selected-account-key"
+               for request in requests)
+    assert json.loads(requests[-1].content)["model"] == "dedicated/legacy"
+
+
+def test_access_probe_does_not_substitute_an_ambient_key(monkeypatch) -> None:
+    monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_KEY", "unselected-account-key")
+    result = validate_model_access("", "dedicated/legacy")
+    assert not result.ok
+    assert "API key not found" in result.error
+
+
 def test_validate_model_access_rejects_key_scoped_unavailable_model(monkeypatch) -> None:
     class Client:
         def __init__(self, _config):
@@ -390,3 +438,59 @@ def test_chat_completion_text_raises_on_reasoning_only_response() -> None:
     with pytest.raises(TokenFactoryError) as exc:
         client.chat_completion_text(model="m", messages=[{"role": "user", "content": "x"}])
     assert "reasoning-only" in str(exc.value)
+
+
+@pytest.mark.parametrize(("model", "expected"), [
+    ("nvidia/Nemotron-3_5-Lightning", {"enable_thinking": False}),
+    ("MiniMaxAI/MiniMax-M3", {"thinking_mode": "disabled"}),
+    ("vendor/explicit-model", None),
+    ("meta-llama/Llama-3.3-70B-Instruct", None),
+])
+def test_replacement_template_parameters_and_explicit_models(model, expected) -> None:
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "answer"}}]})
+
+    assert _client(handler).chat_completion_text(
+        model=model, messages=[{"role": "user", "content": "task"}]
+    ) == "answer"
+    assert requests[0]["model"] == model
+    assert requests[0].get("chat_template_kwargs") == expected
+
+
+def test_explicit_thinking_and_other_template_parameters_win() -> None:
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "answer"}}]})
+
+    _client(handler).chat_completion_text(
+        model="nvidia/Nemotron-3_5-Lightning",
+        messages=[{"role": "user", "content": "task"}],
+        extra={"chat_template_kwargs": {"enable_thinking": True, "custom": "value"}},
+    )
+    assert requests[0]["chat_template_kwargs"] == {"enable_thinking": True, "custom": "value"}
+
+
+@pytest.mark.parametrize("choice", [
+    {"message": {"content": None, "reasoning": "hidden"}},
+    {"message": {"content": '{"preflight":'}, "finish_reason": "length"},
+])
+def test_access_probe_rejects_reasoning_only_or_truncated_choice(monkeypatch, choice) -> None:
+    class Client:
+        def __init__(self, config):
+            pass
+
+        def list_models(self):
+            return ["test-model"]
+
+        def chat_completion(self, **kwargs):
+            return {"choices": [choice]}
+
+    monkeypatch.setattr("npa.clients.token_factory.TokenFactoryClient", Client)
+    result = validate_model_access("test-key", "test-model")
+    assert not result.ok
+    assert "no complete visible answer" in result.error

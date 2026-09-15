@@ -1,0 +1,60 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "1f3d09976587a952afead4f149655fe21441b3117af3f232876117803afc4c49",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec both completed successfully.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/alpamayo2-ray-hardcases.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/alpamayo2-ray-hardcases.yaml --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Resolved commands execute the declared scenario/seed grid and consume the baseline report for refinement.",
+      "evidence": [
+        "docs/workbench/alpamayo2-super.md#ray-experiments"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "Exact selected-project storage setup and live HF/S3/Nebius credential preflight passed.",
+      "evidence": [
+        "Access-controlled operational evidence; no private identifiers committed."
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "Pinned model and PhysicalAI-AV dataset access passed. Worker uses the image validation manifest.",
+      "evidence": [
+        "npa workbench health access --capability alpamayo2-super --json"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Hugging Face authentication and exact gated dataset fetch access passed after interactive acceptance.",
+      "evidence": [
+        "npa workbench health preflight --checks nebius,hf,s3 --json"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "The recorded source archive was SHA-256 checked and executed in the accepted image; subsequent changes and their validation are documented.",
+      "evidence": [
+        "sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5",
+        "source archive sha256:a04ec3f2ff53020ca90d0ff5873b4e7469921a37ed2ad94b048741228f14ed74",
+        "docs/workbench/alpamayo2-ray-validation.md"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "12 real RTX PRO 6000 inferences completed through run-spec in Kubernetes with manual cache intervention. The default B200 allocation and standard SkyPilot submit path remain unverified.",
+      "evidence": [
+        "docs/workbench/alpamayo2-ray-validation.md"
+      ]
+    }
+  }
+}

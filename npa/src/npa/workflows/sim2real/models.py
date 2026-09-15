@@ -9,25 +9,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from npa.deploy.images import container_image_for_tool, registry_from_env
+from npa.deploy.images import container_image_for_tool
 
 from npa.workflows.sim2real.constants import (
     DEFAULT_ACTION_ENV_LIMIT,
-    DEFAULT_COSMOS2_TRANSFER_TAG,
     DEFAULT_ENV_COUNT,
     DEFAULT_ENVGEN_SHARD_COUNT,
     DEFAULT_K8S_MAX_PARALLEL_GPUS,
-    DEFAULT_ENVGEN_TAG,
-    DEFAULT_EVAL_TAG,
     DEFAULT_HELDOUT_ENVS,
     DEFAULT_INNER_ITERATIONS,
-    DEFAULT_ISAAC_TAG,
     DEFAULT_ISAAC_TASK,
     DEFAULT_LEROBOT_DATASET_ID,
     DEFAULT_LOOP_OF_LOOPS_ITERATIONS,
     DEFAULT_OUTER_ITERATIONS,
     DEFAULT_PREFIX,
-    DEFAULT_REFERENCE_POLICY_TAG,
     DEFAULT_REFERENCE_VLM_MODEL,
     DEFAULT_REASON2_MODEL,
     DEFAULT_COSMOS3_MODEL,
@@ -37,9 +32,7 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE,
     DEFAULT_STEPS_PER_ROLLOUT,
     DEFAULT_THRESHOLD,
-    DEFAULT_TRAINER_TAG,
     DEFAULT_TRAIN_FRACTION,
-    DEFAULT_VLM_IMAGE_TAG,
     DEFAULT_VALIDATION_ENVS,
     SIM_BACKEND_ISAAC,
     SIM_BACKENDS,
@@ -89,19 +82,19 @@ class Sim2RealLoopConfig:
     robot_spec_uri: str = ""
     robot_source: str = ""
     robot_preset: str = ""
-    augment_image: str = f"npa-cosmos2-transfer:{DEFAULT_COSMOS2_TRANSFER_TAG}"
-    envgen_image: str = f"npa-envgen:{DEFAULT_ENVGEN_TAG}"
+    augment_image: str = field(default_factory=lambda: default_augment_image())
+    envgen_image: str = field(default_factory=lambda: default_envgen_image())
     env_count: int = DEFAULT_ENV_COUNT
     train_fraction: float = DEFAULT_TRAIN_FRACTION
     envgen_shard_count: int = DEFAULT_ENVGEN_SHARD_COUNT
     action_env_limit: int = DEFAULT_ACTION_ENV_LIMIT
-    policy_image: str = f"npa-reference-policy:{DEFAULT_REFERENCE_POLICY_TAG}"
-    trainer_image: str = f"npa-lerobot-vlm-rl:{DEFAULT_TRAINER_TAG}"
-    vlm_image: str = f"npa-cosmos3-reason:{DEFAULT_VLM_IMAGE_TAG}"
+    policy_image: str = field(default_factory=lambda: default_policy_image())
+    trainer_image: str = field(default_factory=lambda: default_trainer_image())
+    vlm_image: str = field(default_factory=lambda: default_vlm_image())
     vlm_reason2_image: str = ""
     vlm_cosmos3_image: str = ""
-    eval_image: str = f"npa-loop-eval:{DEFAULT_EVAL_TAG}"
-    isaac_image: str = f"npa-isaac-lab:{DEFAULT_ISAAC_TAG}"
+    eval_image: str = field(default_factory=lambda: default_eval_image())
+    isaac_image: str = field(default_factory=lambda: default_isaac_image())
     sim_backend: str = DEFAULT_SIM_BACKEND
     isaac_task: str = DEFAULT_ISAAC_TASK
     vlm_model: str = DEFAULT_REFERENCE_VLM_MODEL
@@ -240,54 +233,40 @@ def new_run_id(prefix: str = "sim2real-b") -> str:
 def default_vlm_image(*, registry: str | None = None) -> str:
     """Return the reference Cosmos3-reason-compatible VLM image."""
 
-    if registry or registry_from_env():
-        return container_image_for_tool("cosmos3-reason", registry=registry)
-    return f"npa-cosmos3-reason:{DEFAULT_VLM_IMAGE_TAG}"
+    return container_image_for_tool("cosmos3-reason", registry=registry)
 
 
 def default_envgen_image(*, registry: str | None = None) -> str:
     """Return the reference env-generation image used by Stages 3-6."""
 
-    if registry or registry_from_env():
-        return container_image_for_tool("envgen", registry=registry)
-    return f"npa-envgen:{DEFAULT_ENVGEN_TAG}"
+    return container_image_for_tool("envgen", registry=registry)
 
 
 def default_augment_image(*, registry: str | None = None) -> str:
     """Return the reference Cosmos2 transfer image used by Stage 3."""
 
-    if registry or registry_from_env():
-        return container_image_for_tool("cosmos2-transfer", registry=registry)
-    return f"npa-cosmos2-transfer:{DEFAULT_COSMOS2_TRANSFER_TAG}"
+    return container_image_for_tool("cosmos2-transfer", registry=registry)
 
 
 def default_policy_image(*, registry: str | None = None) -> str:
     """Return the reference action-generation policy image."""
 
-    if registry or registry_from_env():
-        return container_image_for_tool("reference-policy", registry=registry)
-    return f"npa-reference-policy:{DEFAULT_REFERENCE_POLICY_TAG}"
+    return container_image_for_tool("reference-policy", registry=registry)
 
 
 def default_trainer_image(*, registry: str | None = None) -> str:
     """Return the reference VLM-signal LeRobot trainer image."""
 
-    if registry or registry_from_env():
-        return container_image_for_tool("lerobot-vlm-rl", registry=registry)
-    return f"npa-lerobot-vlm-rl:{DEFAULT_TRAINER_TAG}"
+    return container_image_for_tool("lerobot-vlm-rl", registry=registry)
 
 
 def default_eval_image(*, registry: str | None = None) -> str:
     """Return the reference held-out eval harness image."""
 
-    if registry or registry_from_env():
-        return container_image_for_tool("loop-eval", registry=registry)
-    return f"npa-loop-eval:{DEFAULT_EVAL_TAG}"
+    return container_image_for_tool("loop-eval", registry=registry)
 
 
 def default_isaac_image(*, registry: str | None = None) -> str:
     """Return the Isaac Lab held-out rollout image (Isaac Sim headless)."""
 
-    if registry or registry_from_env():
-        return container_image_for_tool("isaac-lab", registry=registry)
-    return f"npa-isaac-lab:{DEFAULT_ISAAC_TAG}"
+    return container_image_for_tool("isaac-lab", registry=registry)

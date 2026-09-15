@@ -939,22 +939,108 @@ def _activate_staged_runtime(path: Path, staging: Path) -> None:
 
 
 def _relocate_staged_scripts(staging: Path, target: Path) -> None:
-    """Rewrite venv console-script shebangs before the atomic directory swap."""
+    """Preserve executable launchers when an isolated runtime moves into place.
 
-    source = os.fsencode(str(staging))
-    destination = os.fsencode(str(target))
-    bin_dir = staging / ("Scripts" if os.name == "nt" else "bin")
-    for entry in bin_dir.iterdir():
+    Args:
+        staging: Prepared virtual environment before its atomic rename.
+        target: Final virtual environment location.
+    Returns:
+        None.
+    Raises:
+        OSError: If the script directory cannot be listed or a rewrite fails.
+    """
+    for entry in _venv_bin_dir(staging).iterdir():
         if entry.is_symlink() or not entry.is_file():
             continue
         try:
-            body = entry.read_bytes()
+            original = entry.read_bytes()
         except OSError:
             continue
-        first_line, separator, remainder = body.partition(b"\n")
-        if not first_line.startswith(b"#!") or source not in first_line:
-            continue
-        entry.write_bytes(first_line.replace(source, destination) + separator + remainder)
+        relocated = _relocate_launcher_header(original, staging, target)
+        if relocated != original:
+            entry.write_bytes(relocated)
+
+
+def _relocate_launcher_header(body: bytes, staging: Path, target: Path) -> bytes:
+    """Relocate an interpreter header without changing application payload bytes.
+
+    Args:
+        body: Complete launcher contents.
+        staging: Interpreter location encoded by pip.
+        target: Interpreter location after activation.
+    Returns:
+        Updated bytes, or the original for an unrelated launcher.
+    Raises:
+        None.
+    """
+    first_line, separator, remainder = body.partition(b"\n")
+    source = os.fsencode(staging)
+    if first_line.startswith(b"#!") and source in first_line:
+        header = first_line.replace(source, os.fsencode(target))
+        return header + separator + remainder
+    if first_line != b"#!/bin/sh":
+        return body
+    relocated = _relocate_distlib_header(remainder, staging, target)
+    if relocated is None:
+        return body
+    return first_line + separator + relocated
+
+
+def _relocate_distlib_header(body: bytes, staging: Path, target: Path) -> bytes | None:
+    """Recognize pip's long-path shell trampoline before replacing its interpreter.
+
+    Args:
+        body: Launcher bytes following the shell shebang.
+        staging: Prepared environment path.
+        target: Activated environment path.
+    Returns:
+        Relocated header and payload, or None for another shell program.
+    Raises:
+        None.
+    """
+    launch, launch_separator, remainder = body.partition(b"\n")
+    closing, closing_separator, payload = remainder.partition(b"\n")
+    prefix = b"'''exec' "
+    suffix = b' "$0" "$@"'
+    if closing != b"' '''" or not closing_separator:
+        return None
+    if not launch.startswith(prefix) or not launch.endswith(suffix):
+        return None
+    interpreter = launch[len(prefix):-len(suffix)]
+    replacement = _relocate_distlib_interpreter(interpreter, staging, target)
+    if replacement is None:
+        return None
+    # Replacing paths in the payload could corrupt application data.
+    header = prefix + replacement + suffix + launch_separator
+    return header + closing + closing_separator + payload
+
+
+def _relocate_distlib_interpreter(token: bytes, staging: Path, target: Path) -> bytes | None:
+    """Accept only one Python interpreter belonging to the staged environment.
+
+    Args:
+        token: Shell-quoted interpreter from a recognized pip header.
+        staging: Prepared environment path.
+        target: Activated environment path.
+    Returns:
+        A quoted replacement, or None for malformed or unrelated commands.
+    Raises:
+        None.
+    """
+    try:
+        words = shlex.split(os.fsdecode(token))
+    except ValueError:
+        return None
+    if len(words) != 1:
+        return None
+    interpreter = Path(words[0])
+    scripts = _venv_bin_dir(staging)
+    if interpreter.parent != scripts:
+        return None
+    if not re.fullmatch(r"python(?:\d+(?:\.\d+)?)?", interpreter.name):
+        return None
+    replacement = target / scripts.name / interpreter.name
+    return os.fsencode(shlex.quote(str(replacement)))
 
 
 def _validate_staged_runtime(state: VenvState, *, expected_version: str) -> None:

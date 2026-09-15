@@ -61,6 +61,7 @@ REPORT_PROFILES: dict[str, tuple[str, str]] = {
     "npa.rl.eval_report.v1": ("rl", "eval"),
     "npa.workbench.vlm_eval.report.v1": ("vlm_eval", "eval"),
     "npa.workbench.vlm_eval.benchmark.v1": ("vlm_eval", "benchmark"),
+    "npa.robocasa.policy_eval.v1": ("robocasa", "policy-eval"),
 }
 FORMAT_PROFILES: dict[str, tuple[str, str, str]] = {
     "npa_sonic_eval_result_v1": ("npa_sonic_eval_result_v1", "sonic", "eval"),
@@ -542,6 +543,7 @@ _COUNTER_NAMES = frozenset(
         "epochs",
         "global_step",
         "iteration",
+        "num_episodes",
         "num_samples",
         "sample_count",
         "samples",

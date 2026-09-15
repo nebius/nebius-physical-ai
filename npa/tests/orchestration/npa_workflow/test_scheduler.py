@@ -7,7 +7,7 @@ from npa.orchestration.npa_workflow.scheduler import build_scheduler_plan
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+SPECS = REPO_ROOT / "workflows" / "testing"
 
 
 def test_scheduler_plan_includes_resources() -> None:
@@ -21,7 +21,7 @@ def test_scheduler_plan_includes_resources() -> None:
 
 
 def test_scheduler_uses_interpreter_resolved_image_profile() -> None:
-    spec = load_spec(SPECS / "sim2real.yaml")
+    spec = load_spec(SPECS.parent / "main" / "sim2real.yaml")
     digest = "registry.example/npa/isaac@sha256:" + "a" * 64
     spec.config["isaac_image"] = digest
     spec.config["outer_iterations"] = "1"

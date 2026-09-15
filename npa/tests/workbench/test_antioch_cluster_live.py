@@ -40,6 +40,7 @@ def _config(tmp_path: Path, **updates: object) -> cluster_deploy.ClusterLiveConf
         "policy_auth_secret_name": "openpi-auth",
         "policy_tls_secret_name": "openpi-tls",
         "policy_cache_pvc_name": "openpi-cache",
+        "antioch_deployment_profile": "production",
         "antioch_config_dir": str(config_dir),
         "antioch_project_id_file": str(project),
         "kubelet_source_cidrs": ["192.0.2.10/32"],
@@ -66,6 +67,27 @@ def test_private_config_requires_mode_0600_and_per_state_identity(
 def test_cluster_live_requires_digest_pinned_adapter(tmp_path: Path) -> None:
     with pytest.raises(ValidationError, match="sha256"):
         _config(tmp_path, adapter_image="registry.invalid/npa-antioch:latest")
+
+
+@pytest.mark.parametrize(
+    "profile", ["", "production profile", "https://antioch.invalid"]
+)
+def test_cluster_live_requires_explicit_label_safe_deployment_profile(
+    tmp_path: Path, profile: str
+) -> None:
+    with pytest.raises(ValidationError, match="antioch_deployment_profile"):
+        _config(tmp_path, antioch_deployment_profile=profile)
+
+
+def test_cluster_live_rejects_legacy_runtime_schema(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    path = tmp_path / "legacy-runtime.json"
+    payload = config.model_dump(mode="json")
+    payload["schema_name"] = "npa.antioch.mk8s-live-config.v1"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    os.chmod(path, 0o600)
+    with pytest.raises(cluster_deploy.ClusterLiveError, match="malformed"):
+        cluster_deploy.load_private_config(path)
 
 
 def _accepted_live_metrics() -> dict[str, int | float]:
@@ -235,6 +257,8 @@ def test_public_manifests_keep_vm_out_and_policy_cluster_local(tmp_path: Path) -
     )
     assert "cp -a" not in init_command
     controller, relay = pod["containers"]
+    controller_env = {item["name"]: item["value"] for item in controller["env"]}
+    assert controller_env["ANTIOCH_ENV"] == config.antioch_deployment_profile
     controller_mounts = {mount["name"]: mount for mount in controller["volumeMounts"]}
     relay_mounts = {mount["name"]: mount for mount in relay["volumeMounts"]}
     assert controller_mounts["private"]["readOnly"] is False

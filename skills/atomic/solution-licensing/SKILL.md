@@ -35,6 +35,12 @@ third-party EULA, also load
 `skills/atomic/third-party-eula-preflight/SKILL.md`; licensing classification
 does not itself establish operator consent or upstream asset access.
 
+When the classification says an artifact may be used but not baked or
+redistributed, load `skills/workflows/runtime-fetch-onboard/SKILL.md`. It turns
+that decision into a bootstrap-container, runtime-delivery, cache, and validation
+contract so a restricted weight or SDK does not unnecessarily block the rest of
+the onboarding.
+
 ## The Six Artifact Boundaries
 
 Classify each boundary separately. A permissive answer at one boundary says
@@ -86,6 +92,13 @@ npa/.venv/bin/python -c "import importlib.metadata as m; print(m.metadata('<pkg>
 A package whose `License` field literally reads *"NVIDIA Proprietary Software"*
 settles the question regardless of what the GitHub repo's badge says.
 
+For compiled wheels, inspect embedded dependencies, certificate data and fonts,
+not only the package's top-level grant. An SBOM license expression does not
+deliver required copyright or permission text. Bind the exact notices and any
+required corresponding source to the shipped artifact/member hashes, then
+verify that recipients actually receive those bytes, including obligations for
+superseded components retained in ancestor layers.
+
 ### 3. Ask the redistribution question explicitly
 
 For every component, answer these four separately — permission for one is not
@@ -125,12 +138,13 @@ A conclusion in a PR description is not a control. Encode it:
   fails loudly. Compatibility aliases retain the original Omniverse-named API,
   but new code must use the general inventory because any vendor runtime can be
   non-redistributable.
-- `npa/src/npa/deploy/images.py` — add tools that are licence-eligible but have
-  no built, byte-scanned artifact yet to `UNVALIDATED_PUBLICATION_TOOLS`.
+- `npa/src/npa/deploy/images.py` — add tools that are licence-eligible but lack
+  accepted built-image scans and real capability evidence on required hardware to
+  `UNVALIDATED_PUBLICATION_TOOLS`.
   "Restricted" and "unproven" are different answers to different questions, and
   conflating them is wrong in both directions: a tool here is not restricted,
-  it simply has no evidence yet, and it leaves the set in the same change that
-  records its accepted digest and scan.
+  it simply lacks the required evidence, and it leaves the set in the same change
+  that records its accepted digest, scans, and real capability result.
 - For a solution's weights/datasets, record the license and the runtime-fetch
   requirement in the capability table from the onboarding skill.
 - For an **output-layer** restriction, the record has to travel with the
@@ -142,9 +156,65 @@ The packaging-contract guards then fail the build if a Dockerfile bakes a
 restricted marker, or is built `FROM` a restricted image, while claiming
 `public`.
 
+Before publication, resolve current state from the packaging contract and the
+restriction/quarantine inventories in `npa/src/npa/deploy/images.py`; stop if
+they disagree. For supported release promotion, require the accepted source/digest
+evidence there and in the applicable image manifests. After promotion, verify
+the supported release against
+`npa/src/npa/deploy/public_release_manifest.json` and anonymous registry reads.
+Historical examples below explain packaging decisions; they do not replace
+current artifact scans, real capability validation, or release verification.
+
 ## Patterns That Keep Us Compliant
 
 Three patterns do the real work. Prefer them over asking for an exception.
+
+### Default operator-responsibility policy
+
+Use this default for a public zero-restricted-payload image whose third-party
+artifacts are delivered directly to the operator at runtime:
+
+> The operator initiates runtime fetch with their own credential and is
+> responsible for using the credential and fetched artifact under the exact
+> upstream terms. NPA verifies access to the immutable artifact, stores neither
+> the credential nor restricted bytes in the public image, and makes no claim
+> that the credential authorizes redistribution.
+
+Apply these rules once, consistently, instead of reopening the same question
+for every image:
+
+- A customer-owned Hugging Face or NGC credential plus a successful upstream
+  usable-payload probe is operationally sufficient for NPA to fetch from that
+  exact provider, repository or artifact, revision, and account. It is not
+  legal acceptance or proof of compliance. Do not add an NPA acceptance
+  checkbox or ask the operator to attest again.
+- Preserve the exact operator statement once under one bounded manager task/run
+  ID. If the operator states `noncommercial`, record exactly `noncommercial`;
+  capture the intended activity separately. Child solutions may reference that
+  record when their exact terms are compatible, without another per-image
+  question. The record expires with the task/run and is never global or
+  permanent. Reopen the decision only if the operator changes scope or an exact
+  artifact's authoritative terms require a concrete additional fact.
+- Keep entitlement provider- and artifact-scoped. An HF token says nothing
+  about an unrelated NGC, CUDA, cuDNN, dataset, or asset endpoint; an NGC token
+  says nothing about an unrelated HF repository. Prefer a vendor-gated runtime
+  artifact or an operator-provided runtime when the otherwise selected endpoint
+  provides no verifiable entitlement.
+- Classify the public image from its built bytes. A neutral image is eligible
+  for public classification only when every baked byte has verified
+  redistribution rights, byte-level inspection proves no gated or
+  redistribution-restricted payload is present, and all `secure-image-build`
+  publication gates pass. Runtime-fetch `Ready` grants no redistribution rights.
+- Do not invent output or service restrictions. Escalate only a restriction
+  stated by authoritative terms or concrete conflicting provenance. If the
+  applicable terms contain no output restriction, record `none found` and
+  continue. Running GPL software fetched directly by the operator is not NPA
+  redistribution; GPL source-conveyance duties arise if NPA conveys the GPL
+  bytes.
+
+This policy does not override an explicit vendor click-through, license key,
+paid/enterprise entitlement, prohibited service use, or output restriction. Use
+the vendor's own mechanism once and reuse its result within the exact scope.
 
 **Runtime fetch under the customer's own credentials.** Never bake gated or
 redistribution-restricted weights merely because a token can gate image access.
@@ -153,9 +223,12 @@ credential at runtime and fetches an exact immutable revision when the selected
 asset requires authorization. Do not require a token for genuinely public,
 anonymous weights. For Hugging Face, the token and its actual upstream repository
 permission are the only local access gate: probe every required repository before
-provisioning, with no NPA terms boolean or model-check bypass. An HF or NGC token
-proves authorization to fetch; it is not EULA acceptance and does not change
-redistribution rights.
+provisioning, with no NPA terms boolean or model-check bypass. Token presence
+alone proves neither access nor acceptance. For a gated artifact, a successful
+provider-side payload probe is operationally sufficient for NPA to fetch that
+exact artifact; it is not legal acceptance, proof of compliance, or permission
+to redistribute. Compliant use remains the credential owner's responsibility,
+and NPA does not collect a duplicate attestation.
 
 **Build-your-own.** For a runtime we may not redistribute, ship the Dockerfile
 and the build tooling, not the built image. Each operator builds into their own
@@ -223,6 +296,22 @@ Document the selected asset license, immutable revision/digest, cache tier,
 storage wiring, population protocol, and consumer mount/URI in the workflow or
 capability record. If those are absent, describe the cache as ephemeral.
 
+## CUDA And cuDNN Are Separate Payload Boundaries
+
+A public CUDA base tag does not establish redistribution rights for every
+bundled SDK. During cuRobo packaging, the inspected `cudnn-devel` base layer
+contained cuDNN development headers. The current official cuDNN supplement
+identified runtime `.so` and `.dll` files as distributable, while the inspected
+wheel's older embedded supplement also allowed `.h` files. Record that difference;
+do not claim the embedded grant excludes headers. cuRobo selects runtime-only
+bytes that satisfy both grants. CUDA's Linux-specific grant is not a substitute
+for cuDNN's separate terms. Inspect both inherited image layers
+and the exact cuDNN wheel closure. Use an appropriate base and remove any
+non-distributable install payload before its layer commits; deletion from a
+later layer cannot remove bytes from an ancestor. Retain license notices and
+recheck the built layers before publication. Runtime use consent and permission
+to redistribute are separate decisions.
+
 ## Worked Precedent: Isaac Sim / Omniverse Kit
 
 The canonical case in this repo, and the best template for reasoning — because the
@@ -278,10 +367,15 @@ NVIDIA still delivers the runtime directly to each operator; we redistribute no 
 bytes, so the redistribution conclusion does not depend on the EULA UX default.
 The clean runtime-fetch `isaac-lab`, `sonic`, and `groot` images may therefore be
 classified `redistribution: public`. Historical SONIC L40S and inherited MuJoCo
-images remain restricted and quarantined because their built layers contain the
-old payload. The replacement MuJoCo architecture is built independently from a
-digest-pinned public Python base and must pass exact-layer scans plus real GPU
-validation before its digest can replace the quarantined variant.
+artifacts contain restricted payload; replacing them does not make those old
+bytes redistributable.
+The replacement MuJoCo design used an independent digest-pinned public Python
+base to remove that inherited runtime. Its accepted `0.2.0-runtime` digest passed
+exact-layer scans and a real B200 Unitree G1 rollout, as recorded in
+`npa/src/npa/deploy/sonic_image_manifest.json`. That evidence applies only to the
+replacement digest; historical variants remain quarantined. Every new digest
+must pass its own exact-layer scans and real GPU validation before release
+acceptance; use the current inventories and accepted manifests for its state.
 
 Three things made that verdict defensible rather than merely plausible, and a new
 solution should expect to produce all three:
@@ -406,11 +500,18 @@ fetch alone while the weight path stays guarded). Any time several controls
 share an exit code, assume they are hiding each other until a mutant proves
 otherwise.
 
-**Do not publish on the strength of the classification alone.** The licence work
-concluded `redistribution: public`, and the pushed image has since been scanned
-by digest, but no GPU has run it — so `ltx2` sits in
-`UNVALIDATED_PUBLICATION_TOOLS` and `publish_public` refuses it by name.
-Eligible and proven are different claims.
+**Do not publish on the strength of the classification alone.** LTX initially
+remained in `UNVALIDATED_PUBLICATION_TOOLS` after its public classification and
+byte scan because real GPU evidence was still missing. Its accepted
+`2.5-rtfetch-20260817` digest subsequently passed the payload,
+entitlement-refusal, and real RTX PRO 6000 text-to-video/decoded-MP4 gates.
+`npa/src/npa/deploy/ltx2_image_manifest.json` binds those results to the exact
+bytes, which are now in the public release plan. OpenPI remains in
+`UNVALIDATED_PUBLICATION_TOOLS`; eligibility alone does not qualify its pending
+full-DROID image for release. Resolve current quarantine and accepted-digest
+state from the current sources above. Every new digest must earn its own scans
+and real capability result before promotion; a previous release's evidence does
+not validate replacement bytes.
 
 ## Red Flags
 

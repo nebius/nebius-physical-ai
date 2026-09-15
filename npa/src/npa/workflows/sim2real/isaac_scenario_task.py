@@ -361,27 +361,70 @@ def apply_scenario_reset(env: Any, env_ids: Any, asset_cfg: Any) -> None:
 
     ids_cpu = ids.cpu()
     # Exact per-env material values.  This mirrors Isaac Lab's own material event
-    # setter but supplies the curated values instead of resampling buckets.
-    materials = asset.root_physx_view.get_material_properties()
-    friction = torch.tensor(
-        [float(row["physics"]["friction"]) for row in selected],
-        dtype=materials.dtype,
-        device=materials.device,
-    )
-    materials[ids_cpu, :, 0] = friction[:, None]
-    materials[ids_cpu, :, 1] = friction[:, None]
-    materials[ids_cpu, :, 2] = 0.0
-    asset.root_physx_view.set_material_properties(materials, ids_cpu)
+    # setter (envs/mdp/events.py) but supplies the curated values instead of
+    # resampling buckets. Isaac Lab 3.0's views hand out warp arrays and expect
+    # warp round-trips through `root_view`; older releases returned torch
+    # tensors from `root_physx_view`. Support both without changing values.
+    root_view = getattr(asset, "root_view", None) or asset.root_physx_view
+    materials_raw = root_view.get_material_properties()
+    friction_values = [float(row["physics"]["friction"]) for row in selected]
+    if isinstance(materials_raw, torch.Tensor):
+        materials = materials_raw
+        friction = torch.tensor(
+            friction_values, dtype=materials.dtype, device=materials.device
+        )
+        materials[ids_cpu, :, 0] = friction[:, None]
+        materials[ids_cpu, :, 1] = friction[:, None]
+        materials[ids_cpu, :, 2] = 0.0
+        root_view.set_material_properties(materials, ids_cpu)
+    else:
+        import warp as wp
 
-    masses = asset.root_physx_view.get_masses()
-    default_mass = asset.data.default_mass.cpu()
-    mass_scale = torch.tensor(
-        [float(row["physics"]["mass_scale"]) for row in selected],
-        dtype=masses.dtype,
-        device=masses.device,
-    )
-    masses[ids_cpu] = default_mass[ids_cpu].to(masses.device) * mass_scale[:, None]
-    asset.root_physx_view.set_masses(masses, ids_cpu)
+        materials = wp.to_torch(materials_raw)
+        ids_mat = ids.to(device=materials.device, dtype=torch.int32).contiguous()
+        friction = torch.tensor(
+            friction_values, dtype=materials.dtype, device=materials.device
+        )
+        materials[ids_mat.long(), :, 0] = friction[:, None]
+        materials[ids_mat.long(), :, 1] = friction[:, None]
+        materials[ids_mat.long(), :, 2] = 0.0
+        root_view.set_material_properties(
+            wp.from_torch(materials, dtype=wp.float32),
+            wp.from_torch(ids_mat, dtype=wp.int32),
+        )
+
+    # Exact per-env mass scaling. Isaac Lab 3.0 exposes the backend-safe
+    # partial setter `set_masses_index` (its own mass-randomization event uses
+    # it); the raw physx-view set_masses path remains only for older releases.
+    mass_scale_values = [float(row["physics"]["mass_scale"]) for row in selected]
+    set_masses_index = getattr(asset, "set_masses_index", None)
+    if callable(set_masses_index):
+        body_mass = asset.data.body_mass
+        body_mass = body_mass if isinstance(body_mass, torch.Tensor) else body_mass.torch
+        default_mass = asset.data.default_mass
+        default_mass = (
+            default_mass
+            if isinstance(default_mass, torch.Tensor)
+            else default_mass.torch
+        )
+        num_bodies = body_mass.shape[1] if body_mass.dim() > 1 else 1
+        device = body_mass.device
+        env_ids32 = ids.to(device=device, dtype=torch.int32).contiguous()
+        body_ids32 = torch.arange(num_bodies, dtype=torch.int32, device=device)
+        mass_scale = torch.tensor(
+            mass_scale_values, dtype=body_mass.dtype, device=device
+        )
+        partial = default_mass[ids.to(device).long()].reshape(len(selected), num_bodies)
+        partial = partial * mass_scale[:, None]
+        set_masses_index(masses=partial, body_ids=body_ids32, env_ids=env_ids32)
+    else:
+        masses = asset.root_physx_view.get_masses()
+        default_mass = asset.data.default_mass.cpu()
+        mass_scale = torch.tensor(
+            mass_scale_values, dtype=masses.dtype, device=masses.device
+        )
+        masses[ids_cpu] = default_mass[ids_cpu].to(masses.device) * mass_scale[:, None]
+        asset.root_physx_view.set_masses(masses, ids_cpu)
 
     if not getattr(env, "npa_scenario_first_reset_logged", False):
         print(
@@ -684,10 +727,27 @@ def _placement_state(
     command = env.command_manager.get_command(command_name)
     from isaaclab.utils.math import combine_frame_transforms
 
+    def _as_torch(value):
+        # Isaac Lab 3.0 asset buffers are lazy ProxyArrays; TorchScript
+        # functions such as combine_frame_transforms reject them. `.torch` is
+        # the documented zero-copy tensor view (a property in Isaac Lab 3.0);
+        # older releases already return torch tensors.
+        if isinstance(value, torch.Tensor):
+            return value
+        torch_view = getattr(value, "torch", None)
+        if isinstance(torch_view, torch.Tensor):
+            return torch_view
+        if callable(torch_view):
+            converted = torch_view()
+            if isinstance(converted, torch.Tensor):
+                return converted
+        # Last resort: ProxyArray.__getitem__ indexes the torch view.
+        return value[:]
+
     goal, _ = combine_frame_transforms(
-        robot.data.root_pos_w,
-        robot.data.root_quat_w,
-        command[:, :3],
+        _as_torch(robot.data.root_pos_w),
+        _as_torch(robot.data.root_quat_w),
+        _as_torch(command)[:, :3],
     )
     distance = torch.linalg.norm(position - goal, dim=1)
     speed = torch.linalg.norm(obj.data.root_lin_vel_w[:, :3], dim=1)

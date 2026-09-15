@@ -76,13 +76,23 @@ def supervise_serverless_job(
         )
         recovery = result.get("recovery") or {}
         action = RecoveryAction(str(recovery.get("action") or "block_relaunch"))
-        if action is RecoveryAction.ADOPT_EXACT_ATTEMPT:
+        observation = result.get("observation") or {}
+        transient_observation = (
+            action is RecoveryAction.BLOCK_RELAUNCH
+            and observation.get("reason_code") == "SERVERLESS_TRANSPORT"
+            and (observation.get("evidence") or {}).get("lookup")
+            == "transient_observation_failure"
+            and bool(current.provider_job_id)
+        )
+        if action is RecoveryAction.ADOPT_EXACT_ATTEMPT or transient_observation:
             if (
                 config.wait_ceiling_seconds > 0
                 and clock() - started >= config.wait_ceiling_seconds
             ):
                 raise TimeoutError(
-                    "Serverless Job did not reach a terminal state within the wait ceiling"
+                    "Serverless observation wait ended without verified completion; "
+                    "the exact recorded job may still be active. Reconnect to the same "
+                    "job identity; do not start another training job."
                 )
             sleeper(max(0.0, config.poll_interval_seconds))
             continue
@@ -96,6 +106,8 @@ def supervise_serverless_job(
             recoveries += 1
             continue
         reason = str(recovery.get("reason_code") or "UNCLASSIFIED")
+        if observation.get("reason_code") in {"AUTHORIZATION", "SERVERLESS_PROVIDER_ERROR"}:
+            reason = str(observation["reason_code"])
         remediation = str(recovery.get("remediation") or "")
         raise ServerlessSupervisionError(f"{reason}: {remediation}".strip())
 

@@ -182,11 +182,7 @@ def test_the_spec_declares_the_manifest_the_tool_writes() -> None:
 
     spec_path = (
         Path(__file__).resolve().parents[3]
-        / "npa"
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "cosmos3-text-to-image.yaml"
+        / "workflows" / "testing" / "cosmos3-text-to-image.yaml"
     )
     spec = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
     declared = spec["states"]["text-to-image"]["outputs"][0]["uri"]

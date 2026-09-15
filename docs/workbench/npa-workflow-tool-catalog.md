@@ -1,5 +1,7 @@
 # NPA workflow tool catalog (v0.0.1)
 
+[Workbench docs](README.md)
+
 Workbench tools referenced by `toolRef` in NPA workflow specs. Each tool is
 invoked as a container command; artifacts pass via S3 URIs in `config`.
 
@@ -10,7 +12,7 @@ This table must list every `TOOL_CATALOG` key (enforced by
 Catalog reachability is fail-closed: every entry is consumed by a shipped spec
 except the explicitly public composition primitives `infra.fleet.deploy`,
 `infra.soperator.deploy`, `workbench.cosmos2.transfer`,
-`workbench.foxglove.convert`, `workbench.insights.record`,
+`workbench.curobo.plan`, `workbench.foxglove.convert`, `workbench.insights.record`,
 `workbench.isaac_lab.byof_repo`, and `workbench.lerobot.eval`. The
 reusable-only list is machine-checked against `PUBLIC_REUSABLE_TOOLREFS`;
 accidental dead entries fail the guardrail. The retired monolithic
@@ -18,13 +20,20 @@ accidental dead entries fail the guardrail. The retired monolithic
 
 | toolRef | CLI / module | Typical inputs | Typical outputs | Stub? |
 | --- | --- | --- | --- | --- |
+| `workbench.curobo.prepare` | `npa workbench curobo prepare` | full benchmark mode selection | recipe JSON | no |
+| `workbench.curobo.benchmark` | `npa workbench curobo benchmark` | recipe JSON | all problem statuses, real trajectories and metrics | no |
+| `workbench.curobo.plan` | `npa workbench curobo plan` | Franka start/goal/cuboid manifest | real trajectories and metrics | no |
+| `workbench.curobo.validate` | `npa workbench curobo validate` | result prefix | hash and complete coverage validation | no |
+| `workbench.curobo.visualize` | `npa workbench curobo visualize` | validated result prefix | verified RRD joint/FK recording | no |
 | `workbench.alpamayo2_super.infer` | `npa workbench alpamayo2-super infer` | pinned model/dataset revisions and PhysicalAI-AV sample index | trajectory JSON, calibrated PNG, immutable provenance under `config.output_uri` | no (real upstream VLM + diffusion expert inference on GPU) |
 | `workbench.antioch.run` | `npa workbench antioch run` | immutable Antioch project at `config.antioch_project_uri`, deployed adapter endpoint, explicit `config.antioch_state_id` (set a distinct value in each state's `params` when reusing the toolRef), `config.antioch_robot_type`, and `config.antioch_task` | verified artifacts, manifest, completion marker, and correctly labelled strict offline LeRobotDataset under `config.antioch_run_uri` | no |
+| `workbench.alpamayo2_super.sweep` | `npa workbench alpamayo2-super sweep` | scenario indices, seeds, diffusion settings; optional completed baseline report | per-case verified artifacts, ADE/FDE statistics, matched refinement changes, report checksums | no (Ray GPU actors invoke upstream Alpamayo inference; Ray CPU tasks reduce measured results) |
 | `infra.fleet.deploy` | `npa fleet deploy` | `config.fleet_spec` | fleet deploy JSON | no |
 | `infra.soperator.deploy` | `npa soperator deploy` | `config.soperator_spec` | cluster deploy JSON | no |
 | `workbench.nurec.check` | `npa workbench nurec check` | `config.nurec_image`, `config.dataset_id` | access-check JSON (NGC pullability, HF rights, RT-core GPU) | no |
+| `workbench.nurec.convert_colmap` | `npa workbench nurec convert-colmap` | `config.colmap_input_uri`, `config.dataset_root`, `config.colmap_dir`, `config.images_dir`, `config.rig_mode` | `config.ncore_sequence_uri` (self-contained V4 sequence, `conversion.json` provenance; Apache-2.0 conversion, NRE separately licensed) | no |
 | `workbench.nurec.fetch` | `npa workbench nurec fetch` | `config.dataset_id`, `config.scene` | `config.ncore_uri` (NCore V4 shards + derived rig pose edge) | no |
-| `workbench.nurec.reconstruct` | `npa workbench nurec reconstruct` | `config.ncore_uri`, `config.config_name` | `config.reconstruction_uri` (USDZ, parsed config, metrics), `config.input_uri` | no |
+| `workbench.nurec.reconstruct` | `npa workbench nurec reconstruct` | `config.ncore_sequence_uri`, `config.config_name` | `config.reconstruction_uri` (USDZ, parsed config, metrics), `config.input_uri` | no |
 | `workbench.nurec.render` | `npa workbench nurec render` | `config.reconstruction_uri`, `config.rig_translation_offset` | `config.novel_views_uri` (novel-view PNGs + mp4) | no |
 | `workbench.nurec.visualize` | `npa workbench nurec visualize` | `config.run_root_uri` | `config.rrd_uri` (`reports/sim2real.rrd`) | no |
 | `workbench.nurec.finalize` | `npa workbench nurec finalize` | `config.run_root_uri` | `config.final_report_uri` | no |
@@ -45,6 +54,7 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.cosmos2.transfer_execute` | `npa workbench cosmos2 transfer --execute` | supported video or PNG/JPEG frames under `config.trigger_uri` (required); optional run-scoped `config.segmentation_uri` when `segmentation_mode=sam2-auto` | `config.augment_uri` plus optional frame-aligned SAM2 masks | yes (real, input-conditioned Cosmos Transfer 2.5 on GPU; optional official Meta SAM2 runs once per immutable run input and its masks are reused across variants/retries; both paths fail closed) |
 | `workbench.cosmos2.transfer_conditioned_execute` | `npa workbench cosmos2 transfer --execute --condition-on-input` | `config.trigger_uri` | `config.augment_uri` | yes (real input-conditioned Cosmos Transfer 2.5; publishes exact frames in the canonical manifest) |
 | `workbench.cosmos3.generate` | `npa workbench cosmos3 generate` | `config.prompt`, `config.cosmos3_mode`, `config.cosmos3_checkpoint`, optional `config.cosmos3_input_path` | `config.output_uri` | yes (real Cosmos 3 omni-model generation on GPU in `npa-cosmos3`; conditioned modes pass `--input-path`; gated weights download at runtime with the operator's HF token) |
+| `workbench.cosmos3.super_benchmark` | `npa workbench cosmos3 super-benchmark` | fixed pinned Cosmos3-Super workload; `config.suite`, `config.topologies`, `config.attempts`, `config.gpu_family`; either one full 8xB200/8xH200 node or one isolated H200 | per-attempt timing/hash/validity records, derived cell metrics, validated MP4s, and hash-verified per-cell resume markers under `config.output_uri` | yes (real vLLM-Omni services in the digest-pinned public Cosmos3 image; `primary` runs the four concurrency-one node topologies, `b200-full` fixes all ten public-record cells/240 attempts, and `h200-single-gpu` fixes one TP-1 service/24 sequential attempts while explicitly refusing a paper-cell claim; failures remain in the shared window with zero output credit) |
 | `workbench.cosmos3.ray_batch` | `npa workbench cosmos3 ray-batch` | `config.input_uri`, authenticated persistent `config.ray_endpoint` | `config.output_uri` | no (CPU client submits all samples concurrently to upstream `OmniModelDeployment`; NVIDIA's native `@ray.serve.batch` owns model batching and the client persists structured outputs/media/provenance through S3) |
 | `workbench.cosmos3.prepare_video_input` | `npa workbench cosmos3 prepare-video-input` | generic MP4 or LeRobot v2/v3 dataset URI plus episode/camera selector | canonical `config.input_uri` video, frames, and provenance | no (strict source selector and media preparation) |
 | `workbench.cosmos3.generate_variants` | `npa workbench cosmos3 generate-variants` | selected source video, original captions, sampled configs, model/seed/guidance/steps/retry knobs | canonical `cosmos_augmented/<variant>/` video, frames, metadata, and run manifest | yes (one real source-video-conditioned cosmos-framework inference per variant; retries change parameters) |
@@ -92,6 +102,9 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.openpi.direct` | `python -m npa.workflows.byof.openpi_pipeline direct` | Polaris checkpoint, Franka two-camera observation, digest-pinned image | finite `float64[T>=5,8]` trajectory and provenance | no |
 | `workbench.openpi.serve` | `python -m npa.workflows.byof.openpi_service` | digest-pinned image, ClusterIP/service resources, runtime-only terms secret, bounded recovery deadlines | two-request separate-client-pod evidence plus exact cleanup proof under one shared serving artifact root | no |
 | `workbench.openpi.train` | `python -m npa.workflows.byof.openpi_pipeline train` | train split, Polaris weights, configurable LoRA optimizer steps | finite loss/grad metrics, changed-state proof, reloadable checkpoint manifest | no |
+| `workbench.openpi.full_droid_prepare` | `python -m npa.workflows.byof.openpi_full_droid prepare` | DROID RLDS 1.0.1 and a run-owned ReadWriteMany volume | checksum-verified dataset inventory, ten-million-frame normalization report, immutable preparation RRD, and content-hashed milestone manifest | no |
+| `workbench.openpi.full_droid_qualification` | `python -m npa.workflows.byof.openpi_full_droid qualify` | prepared DROID data, pinned pi0.5 base, eight nodes with one RTX PRO 6000 each | fixed 100-update checkpoint/report/journal plus independently verified qualification RRD and milestone manifest | no |
+| `workbench.openpi.full_droid_finetune` | `python -m npa.workflows.byof.openpi_full_droid train` | qualified prepared DROID data, pinned pi0.5 base, eight nodes with one RTX PRO 6000 each | by default, the upstream 100,000-update checkpoint manifest plus factual telemetry and immutable verified progress RRDs/manifests; an explicit 1,000-update operator pause instead requires a finalized resumable checkpoint, checkpointed 1k RRD/manifest, and content-hashed paused report without claiming convergence | no |
 | `workbench.openpi.evaluate` | `python -m npa.workflows.byof.openpi_pipeline evaluate` | exact trained checkpoint and disjoint held-out split | upstream model loss, action MAE/MSE, schema/sample checks, valid trajectory | no |
 | `workbench.rl.policy_train` | `npa workbench isaac-lab train` | `config.task_name`, training dataset URI | policy checkpoint | no |
 | `workbench.rl.evaluate_policy` | `npa workbench isaac-lab eval` | checkpoint URI, eval episodes | eval report | no |
@@ -118,6 +131,12 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.lancedb.create_failure_views` | three materialized views | `config.rider_view`, … | failure-mode views | no |
 | `workbench.detection_training.train_*` | `npa workbench detection-training train --service` | view + output URIs | checkpoints | no |
 | `workbench.detection_training.eval_*` | `npa workbench detection-training eval --service` | checkpoint + view | metrics JSON | no |
+| `workbench.robocasa.task_registration` | `npa workbench robocasa run --capability kitchen_task_registration --service` | `config.env_id`, `config.output_uri` | task registration JSON | no |
+| `workbench.robocasa.asset_availability` | `npa workbench robocasa run --capability kitchen_asset_availability --service` | `config.env_id`, `config.output_uri` | asset availability JSON | no |
+| `workbench.robocasa.egl_env_reset` | `npa workbench robocasa run --capability kitchen_egl_env_reset --service` | `config.env_id`, `config.output_uri` | EGL reset JSON | no |
+| `workbench.robocasa.random_rollout` | `npa workbench robocasa run --capability kitchen_random_rollout --service` | `config.env_id`, canonical `--output-path` from `config.output_uri`, `config.iterations` | rollout JSON + generated MP4 + execution provenance (no RRD/MCAP) | no |
+| `workbench.robocasa.trajectory_export` | `npa workbench robocasa run --capability kitchen_trajectory_export --service` | `config.env_id`, canonical `--output-path` from `config.output_uri`, `config.iterations`, `config.num_envs` | per-episode trajectory arrays + metadata/metrics + generated MP4 + execution provenance (no RRD/MCAP) | no |
+| `workbench.robocasa.policy_eval` | `npa workbench robocasa run --capability kitchen_policy_eval --service` | exact checkpoint URI plus explicit train/held-out env-id sets (no unused singular `--env-id`) | disjoint-task evaluation metrics, checkpoint/split hashes, generated MP4s, and execution provenance (no RRD/MCAP) | no |
 | `workbench.fiftyone.launch_app` | FiftyOne review hook | `config.lance_uri` | review session | yes |
 | `workbench.fiftyone.curate_augmented` | `npa workbench fiftyone curate-augmented` | `config.augment_uri`, `config.curator_report_uri` | `config.curation_report_uri` (real FiftyOne Brain keep/drop report) | no |
 | `workbench.fiftyone.review_augmented` | `npa workbench fiftyone review-augmented` | canonical run + quality disposition | portable real FiftyOneDataset for every accepted/rejected terminal candidate, with non-promoting rejected fields | no |
@@ -155,3 +174,9 @@ See `docs/workbench/npa-workflow-guide.md` for the full authoring guide.
 | --- | --- |
 | `promote_checkpoint` | Last decision is promote |
 | `loop_back` | Last decision is loop-back |
+
+Hosted model selection: `workbench.token_factory.reason` accepts optional
+`config.reason_model`; `workbench.vlm_eval.run`, `.loop`, and
+`.judge_against_plan` accept optional `config.vlm_model`. An omitted or empty
+value leaves model selection to the CLI default for the chosen backend; an
+explicit value is passed as `--model`, including legacy dedicated model IDs.

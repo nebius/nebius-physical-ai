@@ -1,5 +1,7 @@
 # Cluster backends: standalone and fleet
 
+[Docs](README.md)
+
 `nebius mk8s` is the Nebius cloud-service CLI. NPA does not expose a primary
 `npa mk8s` command. The NPA standalone Managed Kubernetes surface is `npa
 cluster up` (and the agent `POST /api/infra/mk8s/provision` endpoint); `npa

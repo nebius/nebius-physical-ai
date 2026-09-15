@@ -1,4 +1,29 @@
-# Contributing Workbench Tools
+# Contributing to Nebius Physical AI
+
+Start with the task you are changing. The detailed contracts below cover a new
+Workbench tool; small fixes can go directly to the relevant section.
+
+| Task | Start here |
+| --- | --- |
+| Improve a README or guide | [Documentation requirements](#documentation-requirements) and [documentation checks](npa/README.md#developing-and-testing-npa) |
+| Fix a CLI, SDK, or service | [Required interfaces](#required-interfaces) and [testing](#testing-requirements) |
+| Add a tool and container | [End-to-end contribution skill](skills/workflows/add-workbench-tool/SKILL.md) |
+| Add or adapt a workflow | [Workflow authoring](skills/workflows/author-npa-workflow/SKILL.md) |
+| Prepare a pull request | [Validation gates](skills/atomic/pre-pr-validation/SKILL.md) and [PR conventions](#commit-and-pr-conventions) |
+
+## Contribution quality
+
+Use the [contributions skill](skills/atomic/contributions/SKILL.md) when writing
+or reviewing changes. It defines the required readability, exported-symbol
+documentation, module headers, README updates, and anti-pattern rules for new
+and changed code. Existing violations outside the task's scope do not require
+unrelated rewrites.
+
+Coding agents discover this skill through `AGENTS.md` and `skills/index.yaml`.
+The workbench agent's existing repository corpus also includes the root
+`skills/` tree; refresh that corpus after updating a deployed checkout to make
+new guidance available through retrieval.
+
 ## Scope
 This document covers adding a new Workbench tool to Nebius Physical AI.
 
@@ -185,6 +210,9 @@ existing Dockerfiles as the reference set, especially
 `npa/docker/workbench/lancedb/Dockerfile`, and
 `npa/docker/workbench/detection-training/Dockerfile`.
 
+Before a Docker build with `npa/` as its context, stage the top-level workflow
+catalog as described in [Build and tag](docs/workbench/container-packaging.md#build-and-tag).
+
 Base image and tag conventions are backed by:
 
 - `npa/docker/workbench/tags.yaml`
@@ -212,10 +240,10 @@ needs a new family, update `npa/docker/workbench/tags.yaml`,
 `npa/docker/workbench/check_tag_consistency.py`, and `docs/security/image-reproducibility.md`
 in a separate design change.
 
-NPA-owned releases resolve from the public GHCR namespace. `NPA_REGISTRY`
-remains a full-prefix operator override and resolves images through
-`npa/src/npa/deploy/images.py` and `npa/src/npa/clients/config.py`. The registry
-shape is:
+NPA-owned releases resolve from the public GHCR namespace and do not inherit
+ambient `NPA_REGISTRY` or legacy saved registry values. `NPA_REGISTRY` remains a
+build/BYOF destination; runtime custom bytes require an explicit complete image
+reference or workflow `--registry`. The official registry shape is:
 
 ```text
 ghcr.io/nebius/nebius-physical-ai/npa-tool:${TAG}
@@ -305,7 +333,7 @@ Use these references:
 - `npa/src/npa/clients/storage.py`
 - `npa/src/npa/serverless_common/output.py`
 - `docs/workbench-yaml-guide.md`
-- `npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml`
+- `workflows/testing/bdd100k-pipeline.yaml`
 
 The public handoff flags are:
 
@@ -339,11 +367,13 @@ or `NEBIUS_S3_ENDPOINT`. See `docs/workbench/getting-started.md`,
 
 Backing services are encapsulated. A pipeline stage should receive an S3 URI,
 call a tool endpoint, and write the next S3 URI. The BDD100K pipeline in
-`npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml` is the worked example.
+`workflows/testing/bdd100k-pipeline.yaml` is the worked example.
 ## Workflow YAML Conventions
 The supported, customer-facing workflow catalog is the declarative
-`npa.workflow` spec set under `npa/workflows/workbench/npa-workflows/`; author
-new customer-facing workflows there. Do not add raw SkyPilot task templates to
+`npa.workflow` spec set under `workflows/`. Keep `workflows/main/` limited to
+`sim2real.yaml`, `paidf-cosmos3.yaml`, and `nurec-reconstruct.yaml`; author new catalog workflows in
+`workflows/testing/`. Keep catalog documentation in `workflows/README.md`.
+Do not add raw SkyPilot task templates to
 the package as a workflow catalog; the old catalog path is guardrail-retired.
 Raw SkyPilot YAML is still accepted by the submit wrapper for customer-owned
 files, test fixtures, and guarded tool-specific examples such as burst or NuRec
@@ -352,9 +382,9 @@ single-pod execution. Do not add Argo workflows.
 References:
 
 - `docs/workbench-yaml-guide.md`
-- `npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml`
+- `workflows/testing/bdd100k-pipeline.yaml`
 - `npa/src/npa/workflows/byof/profiles/isaac-lab-rl-train.yaml`
-- `npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml`
+- `workflows/testing/isaac-lab-rl-sweep.yaml`
 - `npa/scripts/run_bdd100k_pipeline.py`
 - `npa/scripts/run_isaac_lab_rl.py`
 
@@ -384,7 +414,7 @@ Current verified routing:
 
 - H100 is the default choice for general training, CLIP embedding, and
   detection-training workflow stages. The BDD100K workflow requests H100 in
-  `npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml`.
+  `workflows/testing/bdd100k-pipeline.yaml`.
 - H200 is used by several serving or training defaults, including LeRobot and
   Cosmos serverless paths in their CLI files.
 - L40S or RTX Pro 6000 is required for Isaac Lab simulation paths that need RT
@@ -476,14 +506,30 @@ a pull request; `requires-python` is `>=3.10`.
 
 ## Testing Requirements
 
-Create the virtualenv at `npa/.venv` and install the dev tooling once (this pulls
-in `pytest`, `pytest-mock`, `pytest-cov`, `pytest-timeout`, `pytest-xdist`,
-`ruff`, and the `server` extra so the suite collects):
+Create the contributor virtualenv at `npa/.venv` from the repository root using CPython 3.12.
+The development and adapter extras supply test, lint, and conversion dependencies:
 
 ```bash
 python3 -m venv npa/.venv
-npa/.venv/bin/pip install -e "npa[dev]"
+npa/.venv/bin/python -m pip install -e "npa[dev,adapter]"
 ```
+
+Run the full suite on **Linux**: native filesystem and controller tests use
+Linux-specific behavior, including `/proc`. macOS supports the CLI, documentation
+checks, and many focused tests, but does not reproduce the complete Linux gate.
+Use an interpreter with `os.memfd_create`; some Conda builds omit it.
+Install `ffmpeg`/`ffprobe` and the same CPU checkpoint/export runtime as CI:
+
+```bash
+npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
+npa/.venv/bin/python -m pip install -e "npa[sonic]"
+export PATH="$PWD/npa/.venv/bin:$PATH"
+export NPA_REQUIRE_FFMPEG=1
+umask 077  # Publication handoff tests require private files.
+```
+
+This exercises real tensor serialization and ONNX export without GPU allocation.
+The [CI workflow](.github/workflows/test.yml) is the complete environment recipe.
 
 `npa/.venv` is the repo convention, not a preference: `AGENTS.md`, the guardrail
 CI jobs, and helper scripts such as `npa/scripts/start_golden_evals_tmux.sh` and
@@ -494,8 +540,8 @@ you must then point the tooling at it — `make test PYTHON=...`,
 Then use the `make` targets from the repo root:
 
 ```bash
-make check            # everything the PR gates block on: lint, docs-check, test
-make test             # full unit suite, no live/GPU/network (~11 min)
+make check            # local subset: lint, docs-check, unit tests
+make test             # full unit suite, live/GPU markers deselected
 make test-smoke       # quickest: onboarding CLI smoke tests only
 make test-guardrails  # repo guardrails: catalogs, specs, skills, docs, hygiene
 make lint             # ruff
@@ -522,7 +568,7 @@ just `--ignore=tests/e2e` — is what keeps the default suite hermetic.
 The equivalent raw command is:
 
 ```bash
-cd npa && python -m pytest tests/ --ignore=tests/e2e \
+cd npa && .venv/bin/python -m pytest tests/ --ignore=tests/e2e \
   -m "not e2e and not e2e_serverless and not e2e_skypilot and not e2e_pipeline and not gpu and not multi_gpu and not byovm_live and not ngc_e2e" \
   --timeout=180 -q
 ```
@@ -622,6 +668,18 @@ only when the platform architecture changes.
 ## Documentation Requirements
 A new tool needs human docs and agent docs.
 
+For README and guide changes, run the offline documentation contracts:
+
+```bash
+npa/.venv/bin/python -m pytest npa/tests/guardrails/test_documentation_examples.py -q
+```
+
+They check local links and heading anchors, shell/Python syntax, literal CLI names and
+options, declared workflow variables, and the executable package planning example.
+Keep prerequisites, first commands, expected artifacts, and cleanup together.
+Move optional operator details to linked references; retain the scope of historical
+measurements. Quote shell placeholders and mark abbreviated grammar as `text`.
+
 Human docs should cover the tool role, upstream project, runtime modes, GPU
 routing, image build path, credentials, input and output formats, S3 handoff
 paths, CLI examples, Python wrapper examples, workflow YAML usage, known
@@ -659,6 +717,11 @@ after adding one.
 
 Update `AGENTS.md` only if the skill list or root index changes.
 ## Commit And PR Conventions
+Every proposed merge runs the [security regression gate](docs/security/merge-security-gate.md).
+Run its real scanner regression checks and base comparison before changing the
+security policy. Fix new findings and scanner errors before requesting review;
+the guide describes coverage, local commands, and required-check enforcement.
+
 Keep commits small and logical.
 
 Commit messages use an imperative subject, subject length <=72 characters, and
@@ -684,9 +747,8 @@ can use `pytest -x --collect-only` as a smoke check. Parallel agent or operator
 runs use scope-specific commit lock directories under `/tmp/npa-commit-lock/`;
 remove the lock after commit and push.
 
-When 3 or more commits land from an agent run, trigger the Claude Code review
-pattern described in `skills/atomic/super-prompt-patterns/SKILL.md`. A
-two-commit documentation run does not trigger that review rule.
+Run Claude Code reviews only when explicitly requested by the operator.
+
 ## Design Principles
 The core promise is to remove glue code. Contributions should avoid bespoke
 adapters, path mapping scripts, and one-off orchestration logic that customers
@@ -714,7 +776,7 @@ For the clean HTTP service, CLI, and SDK pattern, read
 `npa/src/npa/sdk/workbench/detection_training.py`.
 
 For workflow composition, read `docs/workbench-yaml-guide.md`,
-`npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml`,
+`workflows/testing/bdd100k-pipeline.yaml`,
 `npa/src/npa/workflows/byof/profiles/isaac-lab-rl-train.yaml`,
 `npa/tests/workflows/test_bdd100k_pipeline.py`, and
 `npa/tests/workflows/test_isaac_lab_rl.py`. For deeper rationale, read
@@ -765,10 +827,11 @@ registration in `npa/src/npa/cli/workbench/sonic/cli.py` does not include it.
 
 New tools should include `system-info`.
 ### Public development and release tags share one namespace
-`NPA_PUBLIC_REGISTRY` selects the official public GHCR namespace, and
-`NPA_REGISTRY` is the operator execution override. Development tags are
+`NPA_PUBLIC_REGISTRY` selects the official public GHCR publication namespace,
+and `NPA_REGISTRY` is an operator build/BYOF destination. Development tags are
 immutable `dev-<full-git-sha>` values on the normal image packages. Restricted
-images use only an operator-controlled registry and never enter official GHCR.
+images use only an operator-controlled registry and never enter official GHCR;
+an explicit image or workflow `--registry` selects custom runtime bytes.
 ### Detection training is a service, not one of the 8 named tools
 `npa/src/npa/workbench/detection_training/` exists and is a strong service
 reference. It is not in the 8-tool architecture list in

@@ -84,6 +84,7 @@ build_simple() {
   local local_ref="${image}:${tag}"
   local remote_ref="${REGISTRY}/${image}:${tag}"
   echo "=== build ${tool} -> ${local_ref} ==="
+  "${NPA_ROOT}/npa/.venv/bin/python" "${NPA_ROOT}/npa/src/npa/workflow_build.py" --stage-catalog --package-root "${NPA_ROOT}/npa"
   docker build --platform linux/amd64 \
     -f "${NPA_ROOT}/${dockerfile}" \
     --build-arg "NPA_SOURCE_SHA=${NPA_SOURCE_SHA}" \

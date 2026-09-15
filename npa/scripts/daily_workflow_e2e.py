@@ -25,7 +25,6 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import json
-import os
 import subprocess
 import sys
 
@@ -197,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
     p_gpu.add_argument("--day-index", type=int, default=_day_index())
 
     p_images = sub.add_parser("images", help="resolve + optionally inspect every workbench image")
-    p_images.add_argument("--registry", default=os.environ.get("NPA_REGISTRY") or None)
+    p_images.add_argument("--registry", default=None)
     p_images.add_argument("--inspect", action="store_true", help="check registry presence")
     p_images.add_argument("--require", action="store_true", help="exit 1 if an image is absent")
     p_images.add_argument("--json", action="store_true")

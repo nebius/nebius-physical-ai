@@ -444,7 +444,7 @@ def export_policy_onnx(
     if not ckpt_path.is_file():
         raise PolicyExportError(f"checkpoint not found: {checkpoint_path}")
 
-    checkpoint = torch.load(str(ckpt_path), map_location="cpu", weights_only=False)
+    checkpoint = torch.load(str(ckpt_path), map_location="cpu", weights_only=True)
     if not isinstance(checkpoint, Mapping):
         raise PolicyExportError(
             f"checkpoint did not deserialize to a mapping (got {type(checkpoint)})"

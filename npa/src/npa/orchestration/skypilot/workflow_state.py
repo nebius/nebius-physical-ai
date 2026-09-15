@@ -119,6 +119,7 @@ def resolve_workflow_s3_config(
     workflow_s3_prefix: str = DEFAULT_WORKFLOW_STATE_PREFIX,
     s3_bucket: str = "",
     s3_endpoint: str = "",
+    credentials: Any | None = None,
 ) -> WorkflowS3Config:
     """Resolve an exact S3 run prefix from CLI args, env, and NPA config."""
 
@@ -126,6 +127,7 @@ def resolve_workflow_s3_config(
         raise WorkflowStateError("run_id or workflow_s3_uri is required")
 
     storage = resolve_project_storage(project)
+    selected_credentials = credentials
     credentials = load_credentials()
     endpoint = storage_endpoint_url(
         s3_endpoint
@@ -144,11 +146,15 @@ def resolve_workflow_s3_config(
         or credentials.s3_secret_access_key
         or os.environ.get("AWS_SECRET_ACCESS_KEY", "")
     )
+    if selected_credentials is not None:
+        endpoint = str(selected_credentials.endpoint_url)
+        access_key = str(selected_credentials.access_key_id)
+        secret_key = str(selected_credentials.secret_access_key)
 
     if workflow_s3_uri:
         bucket, prefix = parse_s3_uri(workflow_s3_uri)
     else:
-        bucket_source = s3_bucket or storage.checkpoint_bucket or credentials.s3_bucket
+        bucket_source = s3_bucket or (selected_credentials.bucket if selected_credentials is not None else "") or storage.checkpoint_bucket or credentials.s3_bucket
         if not bucket_source:
             raise WorkflowStateError(
                 "S3 bucket is not configured. Pass --s3-bucket, --workflow-s3-uri, "
@@ -509,26 +515,66 @@ def workflow_state_error_is_missing(exc: BaseException) -> bool:
     return code.lower() in {"404", "nosuchkey", "notfound", "no_such_key"}
 
 
+def _task_selection_failed(
+    result: subprocess.CompletedProcess[str], *, job_id: str, stage: str,
+) -> bool:
+    """Recognize a complete task-not-found diagnostic amid SkyPilot log banners."""
+    if result.returncode != 0 or not stage:
+        return False
+    task = int(stage) if stage.isdecimal() else stage
+    diagnostic = f"No task found matching {task!r} in job {job_id}. Valid task IDs are "
+    output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
+    output = re.sub(r"\x1b\[[0-9;]*m", "", output).strip()
+    pattern = (
+        "^" + re.escape(diagnostic)
+        + r"0(?:-[1-9][0-9]*)?\.\s*\ncommand terminated with exit code 102[ \t\r]*$"
+    )
+    return re.search(pattern, output, flags=re.MULTILINE) is not None
+
+
 def tail_live_job_logs(
-    *,
-    sky_bin: str,
-    job_id: str,
-    stage: str = "",
-    follow: bool = False,
+    *, sky_bin: str, job_id: str, stage: str = "", follow: bool = False,
     timeout: int = 300,
 ) -> subprocess.CompletedProcess[str]:
-    cmd = [sky_bin, "jobs", "logs", str(job_id)]
+    """Read managed-job logs through the selected, verified SkyPilot runtime.
+
+    Args:
+        sky_bin: Configured SkyPilot executable.
+        job_id: Exact managed-job ID from the run record.
+        stage: Optional task ID or stage name.
+        follow: Whether to follow the live log stream.
+        timeout: Subprocess timeout in seconds.
+    Returns:
+        Captured SkyPilot log process result.
+    Raises:
+        ValueError: Runtime configuration or API ownership cannot be verified.
+        RuntimeError: The pinned SkyPilot executable is unavailable or incompatible.
+        OSError: The configured executable or runtime cannot be accessed.
+        subprocess.TimeoutExpired: The log request exceeds its timeout.
+    """
+    from npa.orchestration.skypilot._bin import ensure_skypilot_version, resolve_config
+    from npa.orchestration.skypilot.cleanup import sky_environment
+
+    runtime = resolve_config(sky_bin=sky_bin)
+    env = sky_environment(runtime.isolated_config_dir)
+    if runtime.global_config_path is not None:
+        env["SKYPILOT_GLOBAL_CONFIG"] = str(runtime.global_config_path)
+    cmd = [str(ensure_skypilot_version(runtime.sky_bin)), "jobs", "logs", str(job_id)]
     if stage:
         cmd.append(stage)
     cmd.append("--follow" if follow else "--no-follow")
-    return subprocess.run(
-        cmd,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout,
-        check=False,
+    result = subprocess.run(
+        cmd, env=env, cwd=runtime.isolated_config_dir or Path.home(),
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        timeout=timeout, check=False,
     )
+    # SkyPilot's non-following SDK streams output without returning the remote
+    # exit code. Its CLI consequently exits zero even for task-not-found 102.
+    # Match only that complete, request-bound provider diagnostic; application
+    # tracebacks and failure messages are still successfully retrieved logs.
+    if _task_selection_failed(result, job_id=job_id, stage=stage):
+        return subprocess.CompletedProcess(result.args, 102, result.stdout, result.stderr)
+    return result
 
 
 def cancel_workflow_job(

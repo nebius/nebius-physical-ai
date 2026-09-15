@@ -57,6 +57,12 @@ defaults:
 
 projects:
   - name: a   # -> project "fleet1-test-a"
+    # Optional project storage, independent of the shared filesystem. Leave
+    # bucket_name unset in public specs so Fleet derives it at runtime.
+    object_storage:
+      enabled: true
+      storage_class: enhanced
+      size_gibibytes: 1024
   - name: b   # -> project "fleet1-test-b"
 
 # --- Mixing identical + custom clusters (reference) --------------------------

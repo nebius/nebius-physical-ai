@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from npa.clients import config
 from npa.orchestration.npa_workflow.artifact_load import (
     discover_final_rerun_artifact,
     load_final_artifact_into_agent,
@@ -72,6 +73,7 @@ def test_load_posts_exact_uri_then_verifies_and_persists(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / ".npa/config.yaml")
     _patch_agent(monkeypatch, tmp_path)
     artifact = "s3://bucket/physical-ai-data-factory/paidf-1/reports/sim2real.rrd"
     client = FakeS3({artifact.removeprefix("s3://bucket/")})

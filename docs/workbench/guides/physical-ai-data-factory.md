@@ -1,8 +1,10 @@
 # NVIDIA Physical AI Data Factory on NPA (no OSMO)
 
+[Guides](README.md)
+
 This guide runs the **NVIDIA Physical AI Data Factory** blueprint natively on
 Nebius + SkyPilot. It is delivered as a single npa.workflow spec
-(`npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml`) that
+(`workflows/testing/physical-ai-data-factory.yaml`) that
 **composes existing workbench tools** — there is no OSMO orchestrator and no new
 "data factory" tool. SkyPilot is the sole orchestrator; every stage hands off
 through one S3 run prefix so input, intermediate, and output artifacts are all
@@ -71,9 +73,9 @@ where NPA substitutes its own endpoint.
 
 **Model roles** (verified available on Nebius Token Factory):
 
-- VLM captioning + the evaluator's attribute answering: `Qwen/Qwen2.5-VL-72B-Instruct`
-- Cosmos-family reasoning critic: `nvidia/Cosmos3-Super-Reasoner`
-- Prompt / MCQ LLM: `meta-llama/Llama-3.3-70B-Instruct`
+- VLM captioning + the evaluator's attribute answering: `MiniMaxAI/MiniMax-M3`
+- Hosted reasoning critic: `MiniMaxAI/MiniMax-M3`
+- Prompt / MCQ LLM: `nvidia/Nemotron-3_5-Lightning`
 
 > **Config → augment MULTIPLY.** The `augment` stage receives the Config-Gen
 > manifest via `--configs-uri` and runs **one Cosmos Transfer 2.5 inference per
@@ -358,9 +360,9 @@ so Git-LFS payloads never enter a layer.
 
 ```bash
 docker run --rm -e HF_TOKEN=... -v curator-weights:/config/models \
-  <registry>/npa-cosmos-curate:0.1.0 fetch-models --models split-annotate
+  "<registry>/npa-cosmos-curate:0.1.0" fetch-models --models split-annotate
 docker run --rm -v curator-weights:/config/models \
-  <registry>/npa-cosmos-curate:0.1.0 models --output text
+  "<registry>/npa-cosmos-curate:0.1.0" models --output text
 ```
 
 `--models` takes a capability set (`split-transnetv2`, `embed-internvideo2`,
@@ -377,33 +379,33 @@ models` reports which of the two is visible along with what is already on disk.
 ## Validate / plan / render
 
 ```bash
-SPEC=npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
+SPEC=workflows/testing/physical-ai-data-factory.yaml
 npa workbench workflow validate-spec "$SPEC" --json
 # --var bucket= is what ties the plan to your storage; without it the spec's
 # `example-bucket` placeholder is planned (plan-spec warns when that happens).
 npa workbench workflow plan-spec "$SPEC" --run-id demo \
-  --assume-decision promote_checkpoint --var bucket=<your-bucket> --json
+  --assume-decision promote_checkpoint --var bucket="<your-bucket>" --json
 # Render the serial SkyPilot YAML without launching (needs NPA_SRC_S3_URI or --image
 # for the CPU tool steps, same as the other Token Factory specs):
-NPA_SRC_S3_URI=s3://<your-bucket>/npa-src/npa/ \
-  npa workbench workflow submit "$SPEC" --run-id demo --var bucket=<your-bucket> \
+NPA_SRC_S3_URI="s3://<your-bucket>/npa-src/npa/" \
+  npa workbench workflow submit "$SPEC" --run-id demo --var bucket="<your-bucket>" \
     --assume-decision promote_checkpoint --plan-only
 ```
 
 ## Submit (real run)
 
 ```bash
-SPEC=npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
+SPEC=workflows/testing/physical-ai-data-factory.yaml
 npa workbench health access --capability paidf
 npa workbench workflow preflight-images "$SPEC" \
-  --project <alias> --registry <registry>
-RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project <alias>)"
+  --project "<alias>" --registry "<registry>"
+RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "<alias>")"
 npa workbench workflow submit "$SPEC" \
-  --project <alias> --run-id "$RUN_ID" \
-  --var bucket=<your-bucket> \
+  --project "<alias>" --run-id "$RUN_ID" \
+  --var bucket="<your-bucket>" \
   --runtime --auto-load \
   --assume-decision promote_checkpoint \
-  --infra k8s/<your-kube-context> \
+  --infra "k8s/<your-kube-context>" \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY \
@@ -432,18 +434,18 @@ and reuses the generic image-pull check/secret refresh.
 Monitor an exact run using NPA alone:
 
 ```bash
-npa workbench workflow status <run-id> --project <alias>
+npa workbench workflow status "<run-id>" --project "<alias>"
 # Explicit fallback; the final manifest itself may still be pending:
-npa workbench workflow status <run-id> --project <alias> \
-  --workflow-s3-uri s3://<bucket>/physical-ai-data-factory/<run-id>/npa-workflow
+npa workbench workflow status "<run-id>" --project "<alias>" \
+  --workflow-s3-uri "s3://<bucket>/physical-ai-data-factory/<run-id>/npa-workflow"
 
 # Intentional offline inspection (exit 0 but never live-verified):
-npa workbench workflow status <run-id> --project <alias> --cached
+npa workbench workflow status "<run-id>" --project "<alias>" --cached
 
 # After DNS/controller recovery, explicitly resume the same run:
-npa workbench workflow submit "$SPEC" --project <alias> \
-  --resume-run <run-id> --var bucket=<your-bucket> --runtime \
-  --assume-decision promote_checkpoint --infra k8s/<your-kube-context>
+npa workbench workflow submit "$SPEC" --project "<alias>" \
+  --resume-run "<run-id>" --var bucket="<your-bucket>" --runtime \
+  --assume-decision promote_checkpoint --infra "k8s/<your-kube-context>"
 ```
 
 The launch path does not treat the earlier cluster/GPU snapshot as controller
@@ -572,7 +574,7 @@ or remove the canonical prefix. If the agent's base prefix is
 `checkpoints`, place the run under `checkpoints/physical-ai-data-factory/<run-id>/`
 (or pass the matching discovery prefix). Then:
 
-```bash
+```text
 # discover runs
 GET /api/artifacts/runs?prefix=physical-ai-data-factory
 # list a run's artifacts (render hints: video / image / json / text)

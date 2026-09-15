@@ -1,30 +1,48 @@
 # npa
 
-`npa` is the Nebius Physical AI platform CLI/SDK. Workbench is the first
-solution namespace and covers the current sim-to-real training loop on Nebius
-workbenches.
+`npa` is the Nebius Physical AI CLI and Python package. Its primary command
+namespace, `npa workbench`, runs robotics training, simulation, perception,
+world-model generation, dataset curation, and evaluation on Nebius. Workbench
+tools compose through S3 artifacts and `npa.workflow/v0.0.1` specifications
+executed through SkyPilot.
 
-In practice it does four things:
+Start with the [Workbench guide](../docs/workbench/README.md), choose a workload,
+and follow [installation](../docs/install.md) and
+[project setup](../docs/configuration.md) before provisioning its GPU resources.
+The [command reference](../docs/cli/workbench.md) lists the installed tools;
+`npa workbench <tool> --help` exposes each tool's actual commands.
 
-1. Provisions and updates Nebius GPU workbenches for LeRobot with Terraform, the `nebius` CLI, SSH, and a small FastAPI policy server.
-2. Runs LeRobot jobs on those workbenches: train, eval, serve checkpoints, run inference, list checkpoints, and collect benchmark/profile data.
-3. Runs Genesis-side steps in a Genesis environment: train a teacher policy, generate demonstrations, and evaluate a student.
-4. Converts simulation demos into LeRobotDataset v3 and orchestrates the full 5-stage distillation workflow:
-   teacher train -> demo generation -> dataset conversion -> student train -> student eval.
-
-The Python package exposes the same building blocks as importable modules: Nebius/Terraform helpers, SSH and HTTP clients, S3 storage utilities, dataset conversion, student training, and workflow orchestration.
+The package also provides project provisioning, storage, artifact conversion,
+viewers, and an agent interface. Python access includes typed clients, shared
+implementation functions, and wrappers around CLI callbacks; available imports
+and return types vary by tool. See the
+[CLI / SDK / workflow walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md)
+before integrating a tool programmatically.
 
 ## Install
 
+From the repository root, with your virtual environment active:
+
 ```bash
-pip install -e .
-pip install -e ".[server]"   # policy server
-pip install -e ".[adapter]"  # dataset conversion
-pip install -e ".[genesis]"  # Genesis + distillation stages
+pip install -e npa
+npa --version
+npa workbench --help
 ```
+
+The base package includes the non-GPU Workbench dependencies, including
+FastAPI, LanceDB, and Rerun. Local engine extras such as `npa[genesis]`,
+`npa[groot]`, and `npa[sonic]` are needed only when running those engines in
+your Python environment; remote workloads use their container dependencies.
+See [installation](../docs/install.md) for supported platforms, virtual
+environments, and the separate SkyPilot environment.
 
 Extra tools required by specific commands:
 
+- `ray[default]==2.58.0` in the NPA application environment for
+  `npa workbench alpamayo2-super sweep`. The workflow renderer installs this
+  dependency for the [Ray experiment templates](../docs/workbench/alpamayo2-super.md#ray-experiments).
+  Use `--sample-indices`, `--seeds`, and `--diffusion-steps` for a baseline,
+  or `--input-path` and `--minimum-ade` to refine a completed S3 report.
 - `nebius` CLI for Serverless AI Endpoint deploys and managed Nebius deploy commands
 - `terraform` for VM and container workbench deploys
 - `ffmpeg` for `npa adapter convert`
@@ -33,218 +51,101 @@ Extra tools required by specific commands:
 
 ## CLI layout
 
-```bash
+```text
 npa workbench lerobot ...
 npa workbench genesis ...
+npa workbench cosmos ...
+npa workbench dataset ...
+npa workbench workflow ...
+npa workbench health ...
 npa adapter convert ...
 npa convert lerobot-to-mp4 ...
-npa workbench workflow ...
 ```
 
-Common examples:
-
-```bash
-# Provision or update a Nebius LeRobot workbench
-npa workbench lerobot -p eu-north1 -n h200 deploy \
-  --project-id project-... \
-  --tenant-id tenant-... \
-  --region eu-north1
-
-# Train/eval/serve a LeRobot policy on the remote workbench
-npa workbench lerobot train --policy-type act --dataset lerobot/aloha_sim_transfer_cube_human --job-name act-demo --output-path s3://my-bucket/checkpoints/act-demo/
-npa workbench lerobot eval --input-path s3://my-bucket/checkpoints/act-demo/ --env aloha
-npa workbench lerobot serve --input-path s3://my-bucket/checkpoints/act-demo/
-npa workbench lerobot infer --observation /tmp/obs.json --output json
-
-# Genesis-side local stages
-npa workbench genesis train-teacher --n-envs 4096
-npa workbench genesis generate-demos --checkpoint ./checkpoints/teacher/model.pt
-npa workbench genesis eval-student --checkpoint ./checkpoints/student/checkpoints/last/pretrained_model
-
-# Convert demos to LeRobotDataset v3
-npa adapter convert --input ./runs/demos --output ./runs/dataset
-
-# Run the full distillation workflow
-npa workbench workflow run distill --local
-npa workbench workflow run distill --remote --project eu-north1 --s3-bucket s3://my-bucket/checkpoints/
-```
+For a complete workflow, use the
+[reference catalog](../workflows/README.md) and
+[workflow guide](../docs/workbench/npa-workflow-guide.md): validate and plan the
+chosen specification, prepare its data and resources, submit it, then inspect
+`npa workbench workflow status`, `logs`, and `artifacts`. The
+[recovery guide](../docs/workbench/troubleshooting/known-footguns.md) covers
+setup and runtime failures.
 
 ## Workbench Runtimes
 
-Deploy commands support these runtime modes where implemented:
+Choose a runtime supported by the selected tool:
 
-- `vm`: provisions and manages a Nebius VM with Terraform and installs the tool over SSH.
-- `container`: provisions and manages a Nebius VM with Terraform, then starts the tool container over SSH.
-- `byovm`: skips Terraform entirely and deploys the app to an existing SSH-accessible VM.
-- `serverless`: creates a Nebius Serverless AI Endpoint for a containerized serving backend. Cosmos supports this runtime first.
+| Mode | Runs on |
+| --- | --- |
+| Workflow | SkyPilot jobs on the configured cluster; see [Workbench setup](../docs/workbench/getting-started.md) |
+| `vm` / `container` | A Nebius VM managed through Terraform and SSH |
+| `byovm` | An existing SSH-accessible VM supplied by you |
+| `serverless` | Nebius AI Jobs or Endpoints, where the tool supports them |
 
-For Cosmos, `deploy --runtime serverless` creates the Endpoint resource with
-the image, platform, preset, environment, and volumes baked into the resource.
-`serve` is only a pre-warm/health operation; changing the served model or image
-requires redeploying the endpoint.
+See [runtime modes](../docs/workbench/runtime-modes.md) for direct deploy,
+BYOVM, and serverless examples. A mode supported by one tool does not imply
+support in every other tool.
 
-```bash
-npa workbench cosmos -p eu-north1 -n cosmos-sl deploy \
-  --runtime serverless \
-  --project-id project-... \
-  --image ghcr.io/nebius/nebius-physical-ai/npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z \
-  --platform gpu-h200-sxm \
-  --preset 1gpu-16vcpu-200gb \
-  --server-port 8080 \
-  --subnet-id vpcsubnet-... \
-  --wait
+<a id="config"></a>
 
-npa workbench cosmos -p eu-north1 -n cosmos-sl status
-npa workbench cosmos -p eu-north1 -n cosmos-sl serve
-npa workbench cosmos -p eu-north1 -n cosmos-sl infer --prompt "A robot arm stacks colored cubes"
-npa workbench cosmos -p eu-north1 -n cosmos-sl teardown --yes
-```
+## Configuration
 
-When a Nebius project has multiple subnets, pass `--subnet-id` on serverless
-deploy. Secrets should come from `~/.npa/credentials.yaml` or environment
-variables; do not pass tokens as command-line arguments.
+See [configuration](../docs/configuration.md) for project setup, credential
+precedence, the credential-file layout, token access, and cross-project storage.
+Use the [first-run prompts](../docs/workbench/agent-first-run.md) with a coding agent.
+For a headless machine, choose
+[service-account authentication or human OAuth](../docs/configuration.md#authentication-on-a-headless-machine).
+Separate skills cover unattended service identities, SSH callback forwarding,
+and the original private callback copy/paste helper.
 
-Use `byovm` when the VM already exists, for example for pre-provisioned
-multi-GPU machines. BYOVM does not create, stop, start, resize, or destroy the
-VM. A BYOVM `--destroy` only removes the local workbench entry from
-`~/.npa/config.yaml`.
-
-BYOVM requires a host and SSH key, either from flags:
-
-```bash
-npa workbench lerobot -p eu-north1 -n my-multi-gpu deploy \
-  --runtime byovm \
-  --host 203.0.113.10 \
-  --ssh-user ubuntu \
-  --ssh-key ~/.ssh/id_ed25519 \
-  --gpu-count 4
-```
-
-or from `~/.npa/credentials.yaml`:
-
-```yaml
-ssh:
-  host: 203.0.113.10
-  user: ubuntu
-  key_path: ~/.ssh/id_ed25519
-```
-
-During BYOVM deploy, `npa` probes the target with `nvidia-smi`, stores the
-detected GPU count and names in `~/.npa/config.yaml`, and writes
-`CUDA_VISIBLE_DEVICES` plus `NPA_GPU_COUNT` into the remote environment. Use
-`--gpu-count <N>` to limit the visible devices on a larger VM.
-
-Status and system information commands use the same saved SSH metadata:
-
-```bash
-npa workbench lerobot -p eu-north1 -n my-multi-gpu status
-npa workbench lerobot -p eu-north1 -n my-multi-gpu system-info
-```
-
-The multi-GPU BYOVM pytest suite is opt-in and expects a live target:
-
-```bash
-export NPA_TEST_BYOVM_HOST=203.0.113.10
-export NPA_TEST_BYOVM_SSH_KEY=~/.ssh/id_ed25519
-export NPA_TEST_BYOVM_GPU_COUNT=4
-export NPA_TEST_BYOVM_S3_PREFIX=s3://my-bucket/test-artifacts/
-pytest tests/test_multi_gpu -m multi_gpu
-```
-
-## Config
-
-Remote workbench commands resolve config from:
-
-1. CLI flags
-2. Environment variables
-3. `~/.npa/credentials.yaml` for user-level secrets
-4. `~/.npa/config.yaml` for projects and workbenches
-
-See [`src/npa/config/sample_config.yaml`](src/npa/config/sample_config.yaml) for the expected layout.
-
-`~/.npa/config.yaml` is machine-managed by deploy commands. Keep user tokens
-out of it and store those credentials in `~/.npa/credentials.yaml`:
-
-```yaml
-tokens:
-  HF_TOKEN: hf_REPLACE_ME
-ngc:
-  api_key: nvapi_REPLACE_ME
-  # org: optional-ngc-org
-  # team: optional-ngc-team
-```
-
-Standard environment variables override values in `credentials.yaml`, so this
-also works for one-off runs:
-
-```bash
-export HF_TOKEN=hf_REPLACE_ME
-export NGC_API_KEY=nvapi_REPLACE_ME
-npa workbench cosmos deploy ...
-```
-
-For compatibility, `NGC_API_KEY`, `NGC_ORG`, and `NGC_TEAM` are also accepted
-inside the legacy `tokens:` map.
-
-Recommended permissions:
-
-```bash
-chmod 600 ~/.npa/credentials.yaml
-```
-
-If the file is readable by other users, `npa workbench ...` prints a warning.
-Loaded tokens are forwarded to remote workbench SSH commands as environment
-variables.
-
-Token requirements by workbench:
-
-- Cosmos: requires `HF_TOKEN` during deploy to download gated Hugging Face Cosmos models.
-- GR00T: requires `HF_TOKEN` for gated Hugging Face GR00T models; optional `ngc.api_key` or `NGC_API_KEY` is written to the server env for NGC-backed model paths and readiness displays.
-- LeRobot: may need `HF_TOKEN` for gated Hugging Face datasets or models.
-- FiftyOne: may need `HF_TOKEN` for gated Hugging Face datasets.
-- Isaac Lab and Genesis: no token is required by default.
-
-Terraform remote state for managed workbenches is stored in the Nebius S3
-bucket under:
-
-```text
-npa/terraform-state/<project-alias>/<workbench-name>/terraform.tfstate
-```
-
-Deploy saves the S3 backend bucket, endpoint, and access key under
-`projects.<alias>.terraform_state` in `~/.npa/config.yaml` and writes that file
-with `0600` permissions. Destroy reuses those exact backend credentials. If
-Terraform still fails with `AccessDenied` while saving state after destroy, the
-service account/access key used for `terraform_state` needs S3 `PutObject` on
-`arn:aws:s3:::<bucket>/npa/terraform-state/<project-alias>/<workbench-name>/terraform.tfstate`
-plus `GetObject` on that object and `ListBucket` on the bucket/prefix.
+Managed workbench teardown reuses the saved Terraform backend. See
+[Terraform state](../docs/configuration.md#terraform-state-for-managed-workbenches)
+for its storage path and permissions.
 
 ## SDK examples
 
-```python
-from npa import convert, demo, rerun
+Plan a workflow from Python without credentials or cloud resources. Run this
+from the repository root in the environment where you installed `npa`:
 
-# Convert a LeRobot dataset to MP4.
-convert.lerobot_to_mp4(
-    input_path="s3://my-bucket/dataset/",
-    output_path="trajectory.mp4",
-    renderer="matplotlib",
+```python
+from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
+
+spec = load_spec("workflows/testing/cosmos3-generate.yaml")
+validate_spec(spec)
+plan = build_plan(spec, run_id="demo")
+for step in plan.steps:
+    print(step.state, step.tool_ref)
+```
+
+Expect `generate workbench.cosmos3.generate`. The plan resolves the checked-in
+example; execution still requires real input, storage, credentials, and GPUs.
+
+After submitting a real run, read its artifacts through the monitoring SDK.
+Set `NPA_RUN_ID` and `NPA_WORKFLOW_S3_URI` to the values returned by submission,
+and configure the project's S3 credentials first:
+
+```python
+import os
+from npa.sdk.workbench import workflow
+
+artifacts = workflow.artifacts(
+    os.environ["NPA_RUN_ID"],
+    workflow_s3_uri=os.environ["NPA_WORKFLOW_S3_URI"],
 )
-
-# Stage demo artifacts.
-demo.stage(target_bucket="customer-bucket", target_project="eu-north1")
-
-# Share a Rerun recording.
-result = rerun.host("recording.rrd")
-print(f"View at: {result.share_url}")
+print(artifacts)
 ```
 
-Lower-level access for advanced workflows:
+`npa.sdk.workbench.workflow` provides durable monitoring (`status`, `logs`,
+`artifacts`, `runs`). Specification loading and planning live in
+`npa.orchestration.npa_workflow`. Some tools, such as LeRobot and Genesis,
+expose CLI callback wrappers under `npa.workbench`; those wrappers can print
+output or raise CLI exits and do not guarantee typed response objects.
+The [walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md) explains these
+differences with a detection-training service example.
 
-```python
-from npa.adapter.lerobot.render import render_lerobot_to_mp4_result
-from npa.clients.http import HTTPClient
-```
+For artifact conversion and sharing, see the
+[CLI / SDK walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md),
+[Foxglove export](../docs/workbench/foxglove-export.md), and
+[Rerun sharing](../docs/workbench/rerun-sharing.md).
 
 ## Package map
 
@@ -257,4 +158,75 @@ from npa.clients.http import HTTPClient
 - `npa.lerobot`: local student training helpers
 - `npa.convert`, `npa.demo`, `npa.rerun`, `npa.workbench`, `npa.network`,
   `npa.workflow`: public SDK namespaces mirroring supported CLI commands
-- `npa.workflows`: end-to-end distillation orchestration
+- `npa.sdk.workbench`: tool-specific clients and compatibility imports
+- `npa.orchestration.npa_workflow`: specification loading, planning, execution,
+  durable state, and recovery
+- `npa.workflows`: workflow implementations and artifact discovery
+
+## Developing and testing npa
+
+To work on `npa` itself, create the contributor environment and use the `make`
+targets from the repo root:
+
+```bash
+python3 -m venv npa/.venv
+npa/.venv/bin/python -m pip install -e "npa[dev,adapter]"
+
+make test-smoke PYTHON="$(pwd)/npa/.venv/bin/python"  # onboarding CLI checks
+make lint PYTHON="$(pwd)/npa/.venv/bin/python"        # ruff
+npa/.venv/bin/python -m pytest npa/tests/guardrails/test_documentation_examples.py -q
+```
+
+For the **full unit suite**, use CPython 3.12 on Linux with `ffmpeg` and `ffprobe` available.
+Some runtime tests exercise Linux `/proc` and filesystem semantics, so macOS
+can run the focused checks above but does not reproduce the full Linux gate.
+The interpreter must provide `os.memfd_create`; some Conda builds omit it.
+Install CI's CPU checkpoint/export dependencies in this same environment:
+
+```bash
+npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
+npa/.venv/bin/python -m pip install -e "npa[sonic]"
+umask 077  # Private files are required by publication handoff tests.
+PATH="$PWD/npa/.venv/bin:$PATH" NPA_REQUIRE_FFMPEG=1 \
+  make test PYTHON="$PWD/npa/.venv/bin/python" PYTEST_ADDOPTS='-n auto'
+```
+
+The CPU wheel exercises real checkpoint loading without a GPU. See
+[the CI environment](../.github/workflows/test.yml) for the complete coverage
+gate; some optional checks also use Node, tmux, or Docker.
+
+Pull requests and main pushes run the full coverage suite on Python 3.10, 3.12,
+and 3.14. A focused compatibility check runs before the CPU tensor dependencies
+are installed, so async cancellation and isolated SkyPilot fixture regressions
+surface early. Run it locally with:
+
+```bash
+npa/.venv/bin/python -m pytest \
+  npa/tests/guardrails/test_ci_workflows.py \
+  npa/tests/docker/test_base_image_scan.py \
+  npa/tests/orchestration/skypilot/test_workflow_logs.py \
+  npa/tests/workbench/test_cosmos3_nano_video_server.py -q
+```
+
+The required [security check](../docs/security/merge-security-gate.md) calls the
+image security workflow once on every PR, merge queue candidate, and main push.
+It waits for successful image scans before running the runtime security tests.
+The image security workflow scans the pinned Python base after the same OS
+update and upgrade used by FiftyOne's Dockerfile. It rebuilds this local scan
+target without cache so newly published security fixes are included, then fails
+on fixable CRITICAL OS findings. This baseline check does not replace the
+complete image scans required before publication.
+
+Use an **absolute** interpreter path: the recipes change into `npa/` before
+running. Without an override, Make prefers the contributor environment
+`npa/.venv/bin/python`, then `python3` on `PATH`. Live and GPU tests are
+deselected from `make test`; `make test-e2e` is the explicit live-infrastructure
+target and needs the relevant credentials and resources.
+For the real Cosmos Ray batch check, set `NPA_COSMOS3_RAY_LIVE_OUTPUT_URI`
+to an operator-owned S3 prefix; it has no default. The check requires an existing
+authenticated GPU service and writes two synthetic images plus their provenance.
+See the [Cosmos Ray live-check instructions](../docs/workbench/cosmos3-ray-serve.md)
+for the remaining environment variables and the exact test command.
+
+See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full test layout and PR
+conventions (branch → PR → squash, one approval, never self-approve).

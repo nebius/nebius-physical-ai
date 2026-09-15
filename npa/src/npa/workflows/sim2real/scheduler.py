@@ -2,7 +2,7 @@
 
 This module and ``sim2real.dag.yaml`` are compatibility-only and target removal
 in 0.5.0, no earlier than 2027-02-01. The canonical workflow is the ordinary
-``npa.workflow/v0.0.1`` spec under ``npa-workflows/sim2real.yaml``; it never
+``npa.workflow/v0.0.1`` spec under ``workflows/main/sim2real.yaml``; it never
 imports this scheduler or ``runner.run_staged``.
 
 Stage *implementations are unchanged*: each executable node maps to an existing
@@ -39,7 +39,7 @@ DAG_SPEC_SCHEMA = "npa.workflow/v1"
 
 # Default spec shipped with the repo, resolved relative to the workbench tree.
 # __file__ = <repo>/npa/src/npa/workflows/sim2real/scheduler.py; parents[4] = <repo>/npa,
-# which is where the workbench workflow YAMLs and canonical sim2real.yaml live.
+# which holds the retained legacy DAG, separate from the supported catalog.
 DEFAULT_DAG_SPEC = (
     Path(__file__).resolve().parents[4]
     / "workflows"

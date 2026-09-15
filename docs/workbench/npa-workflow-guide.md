@@ -1,58 +1,95 @@
 # NPA workflow guide (`apiVersion: npa.workflow/v0.0.1`)
 
-Declarative state-machine specs for workbench tool pipelines. One format is consumed
-three ways: YAML file, CLI, and Python SDK.
+[Workbench docs](README.md) · [Workflow catalog](../../workflows/README.md)
+
+A workflow is a graph of tool calls, S3 artifacts, and transitions. NPA validates
+and plans the YAML, then uses SkyPilot to execute it. This page covers the command
+sequence and format; each workload guide supplies its inputs and resource needs.
 
 ## Quick start
 
+From the clone root, inspect a generation workflow locally:
+
 ```bash
-# Validate structure and closed toolRef / predicate registries
-npa workbench workflow validate-spec npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml
-
-# Expand loops/branches in the demo-only Sim2Real DSL fixture (dry-run)
-npa workbench workflow plan-spec npa/workflows/workbench/npa-workflows/sim2real.yaml \
-  --run-id demo --assume-decision loop_back
-
-# Plan + optional scheduler hints + S3 run manifest
-npa workbench workflow run-spec npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml \
-  --plan-only --scheduler-plan --persist-state --json
-
-# Submit an npa.workflow spec
-npa workbench workflow submit npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml \
-  --run-id demo --registry <your-registry>/<namespace>
-
-# Plan only (no submit) — inspect planned steps
-# Token Factory (and other no-image tools) need NPA_SRC_S3_URI or --image
-NPA_SRC_S3_URI=s3://<bucket>/npa-src/npa \
-  npa workbench workflow submit npa/workflows/workbench/npa-workflows/token-factory-caption.yaml \
-  --plan-only --run-id demo
+workflow_spec=workflows/testing/cosmos3-generate.yaml
+npa workbench workflow validate-spec "$workflow_spec"
+npa workbench workflow plan-spec "$workflow_spec" --run-id preview --json
 ```
 
-A successful submit prints the resolved run ID in text mode and returns it as
-the top-level `run_id` in `--output-format json`. If the spec configures an S3
-`bucket`, NPA also writes a run manifest under its resolved prefix. List those
-runs later with the established durable-run command:
+These commands launch no workload. The plan still contains the example bucket.
+For execution, complete [Workbench setup](getting-started.md) and the
+[Cosmos 3 prerequisites](cosmos3-generate.md#workflow), then set your actual target:
+
+```bash
+project_alias='<your-project-alias>'
+cluster_name='<your-npa-cluster-name>'
+bucket_name='<your-bucket>'
+run_id="$(npa workbench workflow prepare-run "$workflow_spec" --project "$project_alias")"
+
+npa workbench workflow plan-spec "$workflow_spec" \
+  --run-id "$run_id" --var "bucket=$bucket_name"
+npa workbench workflow preflight-images "$workflow_spec" \
+  --project "$project_alias" --infra "k8s/$cluster_name" \
+  --var "bucket=$bucket_name" --json
+```
+
+Review the resolved GPU shape, image, and output prefix. Image preflight may
+create and delete a temporary probe pod. Then run the workload:
+
+```bash
+npa workbench workflow submit "$workflow_spec" \
+  --project "$project_alias" --infra "k8s/$cluster_name" \
+  --run-id "$run_id" --var "bucket=$bucket_name" --runtime \
+  --secret-env HF_TOKEN \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+```
+
+`--runtime` supervises execution to a terminal state. The default generation
+requires gated guardrail access through `HF_TOKEN`. Secrets resolve from the
+private environment or selected project's credential store; pass names only.
+Public images need no registry login. Use `--registry` only for custom images.
+
+Inspect the same run from another shell or after submission returns:
+
+```bash
+npa workbench workflow status "$run_id" --project "$project_alias"
+npa workbench workflow logs "$run_id" --project "$project_alias"
+npa workbench workflow artifacts "$run_id" --project "$project_alias" --json
+```
+
+Open the generated media and `generate.json`; a successful job alone does not
+prove output quality. Keep the run ID for [recovery](../run-lifecycle.md#restart-safety)
+and follow [teardown](../teardown.md) when finished with owned resources.
+
+### Source staging and run IDs
+
+`prepare-run` reserves a new identity. `submit` prints the resolved ID in text
+mode or as `run_id` with `--output-format json`. Find durable runs with:
 
 ```bash
 npa workbench workflow list \
-  --s3-bucket <bucket> --workflow-s3-prefix <parent-prefix> --json
+  --s3-bucket "<bucket>" --workflow-s3-prefix "<parent-prefix>" --json
 ```
 
-Author and submit `npa.workflow/v0.0.1` specs under
-[`npa-workflows/`](../../npa/workflows/workbench/npa-workflows/). See that
-README for the full catalog.
+When tasks need source, submission automatically stages a content-addressed
+archive and persists its identity. A manually staged `NPA_SRC_S3_URI` or explicit
+image remains an override; it is not a prerequisite for the ordinary path.
+Resume the exact run using the command NPA prints, or `--resume-run <id>` with
+the original specification and target. See [run identity](../run-lifecycle.md#run-identity).
 
-**No-image tools** (Token Factory specs): set
-`NPA_SRC_S3_URI=s3://bucket/prefix/npa` so the job can sync and install `npa`,
-or pass `--image` to a workbench image that already includes it. `--plan-only`
-does not mint or print live registry tokens.
+### Choose another spec
+
+Browse the [workflow catalog](../../workflows/README.md). `workflows/main/`
+contains `sim2real.yaml`, `paidf-cosmos3.yaml`, and `nurec-reconstruct.yaml`;
+other catalog workflows live in `workflows/testing/`. A directory name does not
+establish a workflow's validation scope; read its guide.
 
 Reference specs (all pytest-guarded):
 
 | File | Shows |
 | --- | --- |
 | `vlm-eval-single.yaml` | Single `toolRef`, terminal state |
-| `token-factory-caption.yaml` | Zero-GPU Token Factory caption |
+| `token-factory-caption.yaml` | Hosted Token Factory captioning |
 | `tokenfactory-rollout-judge.yaml` | Serial two-tool chain with `inputs`/`outputs` |
 | `sim2real.yaml` | Canonical compositional 14-stage Sim2Real runtime; requires immutable component images and task-aligned S3 inputs for execution |
 | `bdd100k-pipeline.yaml` | AV failure-mode pipeline — ingest → backfill → train → eval |
@@ -65,12 +102,17 @@ Reference specs (all pytest-guarded):
 
 ## Document shape
 
+This excerpt illustrates the schema. Use a complete spec from the catalog for
+execution; each `toolRef` also requires its own configuration and inputs.
+
 ```yaml
 apiVersion: npa.workflow/v0.0.1
 kind: Workflow
 
 metadata:
   name: my-workflow
+  # Set for workflows whose live branches depend on decision artifacts.
+  executionMode: runtime
 
 config:            # parameters; referenced by tokens
   bucket: my-bucket
@@ -96,6 +138,14 @@ states:
 ```
 
 ## State mechanics
+
+`metadata.executionMode: runtime` makes the generic submit command select the
+runtime orchestrator automatically. Use it when live execution must re-read a
+decision artifact to exit a loop or choose a transition. Read-only planning still
+flattens the selected `--assume-decision` path. An explicit `--no-runtime` is
+rejected for these workflows because a one-shot plan cannot honor their real
+data-dependent control flow. These workflows also reject `--assume-decision`
+for execution; use it only for offline planning previews.
 
 | Field | Purpose |
 | --- | --- |
@@ -140,8 +190,8 @@ states:
 
 ## Tool catalog
 
-See `docs/workbench/npa-workflow-tool-catalog.md` and
-`npa/src/npa/orchestration/npa_workflow/catalog.py`. Add new tools in Python, not by
+See the [toolRef catalog](npa-workflow-tool-catalog.md) and its
+[source](../../npa/src/npa/orchestration/npa_workflow/catalog.py). Add new tools in Python, not by
 inventing YAML fields.
 
 ## Runtime features (v0.0.1+)
@@ -161,15 +211,15 @@ and launches it. Use `--plan-only` to inspect the plan without launching.
 
 ### Runtime orchestrator (`--runtime`)
 
-The default submit path is one-shot: it renders the flattened serial plan (loops
-unrolled with `--assume-decision`) and launches it. That path is unchanged.
+Without `metadata.executionMode: runtime`, the default submit path is one-shot:
+it renders the flattened serial plan (loops unrolled with `--assume-decision`)
+and launches it. Runtime-required workflows select the driver automatically.
 
 `--runtime` adds a driver that executes the graph wave by wave:
 
 ```bash
-npa workbench workflow submit <spec.yaml> --run-id <id> --runtime \
-  [--resume] [--poll-seconds 30] [--max-wait-seconds 3600] \
-  [--retries 1] [--max-concurrency 2] [--no-cancel-on-timeout]
+npa workbench workflow submit "<spec.yaml>" --run-id "<id>" --runtime \
+  --project "<alias>" --infra "k8s/<cluster>" --var bucket="<bucket>"
 ```
 
 | Capability | Behaviour |
@@ -203,6 +253,89 @@ independently recomputed from the current spec, source selection, and digest pin
 declared S3 output evidence
 is authoritative, and any live prior attempt is cancelled by exact provider ID
 with terminal verification.
+
+For runtime workflows, GPU capacity is checked against each rendered wave at the
+shared SDK submit boundary. Resuming an existing job does not require spare GPU
+capacity or record a new capacity check. Supervisor evidence retains the wave,
+attempt and observation time of a successful submission; adopting a job without
+that local evidence leaves capacity unknown. Every new or retried submission
+must pass the SDK checks again.
+
+Submission binds those checks to one effective execution target. The selected
+NPA project must have saved project, tenant and region identities. The provider's
+exact project and bucket-owner responses must agree before any temporary storage
+write; the selected Kubernetes context must resolve to that same live project,
+including when SkyPilot uses isolated local state. The storage endpoint must be
+the selected region's Nebius endpoint. Ownership/authentication uncertainty
+blocks submission and never selects an alternative writable bucket.
+
+For `npa.workflow` specs, `--s3-bucket` and `--s3-prefix` override the corresponding
+`--var` values, followed by `NPA_S3_BUCKET` / `NPA_S3_PREFIX`, then the spec's
+`config`. These values control both the rendered workload and durable run ledger.
+`--s3-endpoint` takes precedence over endpoint environment variables and selected
+project storage settings. An S3 credential pair comes from one source: process
+environment, the submitted SkyPilot YAML's `envs`, selected
+project storage, then configured credentials. An incomplete higher-priority pair
+fails instead of combining keys from different principals. Each runtime wave
+uses the pair checked by that invocation; a new submit/resume resolves credentials
+again. Conflicting custom pod storage environment values are rejected.
+All supported S3 endpoint aliases are normalized to that endpoint, including
+`AWS_ENDPOINT_URL_S3`. Session-token overrides and unresolved pod secret
+references are rejected before access checks because they would change the
+executing principal.
+
+Declare a directory output with `kind: directory`, including when its URI has no
+trailing slash; use `kind: file` for an exact object. This role survives planning
+and rendering, so prefix checks and artifact discovery agree. Older declarations
+without a kind retain the trailing-slash directory convention.
+
+Raw SkyPilot YAML and the shared `submit_workflow` SDK use the same mandatory
+gate before creating a controller or job. Kubernetes tasks require one explicit
+context in `--infra k8s/<context>` or task resources, matching the selected NPA
+project. Native Nebius tasks and controllers must use that project's region;
+native submission verifies the executing SkyPilot principal and pins its project
+selection, preventing first-project fallback. Use `--controller-backend nebius`
+for a native controller, or declare an explicit Kubernetes controller context
+in the same project. Raw storage tasks declare `envs.NPA_EXECUTION_OUTPUTS` as a JSON list,
+for example `'[{"uri":"s3://example-bucket/run/checkpoints","kind":"directory"}]'`.
+The supported `NPA_OUTPUT_PATH`, `NPA_OUTPUT_URI`, `S3_OUTPUT_PATH`, and
+bucket-plus-prefix environment contracts also declare directories. An explicit
+`[]` means no durable outputs. Undeclared storage destinations and alternative
+resource targets require clarification in the YAML before submission.
+Explicit artifact declarations may use a sibling prefix or another bucket in
+the same project; each destination is checked separately. `config.prefix` is the
+default/ledger prefix and does not restrict explicitly declared artifact locations.
+Nebius storage mounts, including raw `--durable-s3` tasks, also verify the
+executing SkyPilot home's static `nebius` AWS profile against the selected
+storage credentials and endpoint. SkyPilot copies `~/.aws/credentials` and
+`~/.aws/config` to its controller, so both files must contain that matching
+profile. Missing or dynamic profiles, different principals, nondefault AWS
+file overrides, and task mounts replacing those files block submission before
+storage or compute creation. Writable mount prefixes receive the same ownership
+and write/readback checks as declared outputs.
+Use `--config-path` for SkyPilot configuration. Nonempty implicit `.sky.yaml`,
+`SKYPILOT_PROJECT_CONFIG`, and internal `SKYPILOT_CONFIG` overrides must be removed
+before submission so they cannot replace the checked configuration after the gate.
+
+`--isolated-config-dir` also owns a separate local SkyPilot API process, request
+queue, and persistent user identity. Its endpoint and process ownership are
+recorded before startup and verified again on reconnect. A conflicting endpoint,
+foreign listener, or changed executing identity blocks submission. Preserve this
+directory when reconnecting to existing jobs; an unrelated local SkyPilot API
+is never adopted or stopped as part of that isolated runtime.
+
+The actual resolved output directories, file-parent prefixes, run-ledger prefix,
+and any source-staging destination receive a unique write/readback probe using
+the executing credentials. Probe deletion is best effort and does not require
+wider IAM. GPU checks include a one-node request's actual product, free GPU/CPU/
+memory capacity and placement constraints. Serverless Genesis checks the current
+project's platform/preset offering and exact GPU count before creating a job.
+Provider-owned catalog products require a matching lookup through that same
+project, without treating shared catalog ownership as workload ownership.
+Catalog availability is separate from actual allocation or reservation evidence.
+Scope, destination access and GPU gates remain active with `--skip-preflight`.
+Generic `health preflight --offline` still proves only credential presence;
+generic online health/access checks do not themselves prove execution readiness.
 
 SkyPilot launch uses asynchronous API submission followed by exact-name/ID
 reconciliation inside the crash-safe launch transaction. This allows production
@@ -250,7 +383,8 @@ not checkpoint-resumable.
 
 ### Live submit E2E
 
-On an operator VM with Nebius credentials and `NPA_REGISTRY`:
+On an operator VM with Nebius credentials (supported workload images resolve
+from public GHCR automatically):
 
 ```bash
 # Cheap first: Token Factory CPU twins
@@ -268,7 +402,7 @@ Matrix: `npa/src/npa/orchestration/npa_workflow/submit_matrix.py`
 ```python
 from npa.orchestration.npa_workflow import build_plan, load_spec, run_workflow
 
-spec = load_spec("npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml")
+spec = load_spec("workflows/testing/vlm-eval-single.yaml")
 plan = build_plan(spec, run_id="sdk-demo")
 report = run_workflow(spec, run_id="sdk-demo", persist_state=True)
 ```

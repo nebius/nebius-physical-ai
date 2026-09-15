@@ -1680,7 +1680,7 @@ test_aggregate_gate_is_the_mean_not_the_pass_rate
 Object-store discovery uses a `Delimiter="/"` listing, which is the S3 equivalent of
 `find -mindepth 1 -maxdepth 1 -type d`, with the same fall-back branch.
 
-New spec `npa/workflows/workbench/npa-workflows/vlm-eval-loop.yaml` (twin of
+New spec `workflows/testing/vlm-eval-loop.yaml` (twin of
 `sim-to-real-loop.yaml`), registered as a `gpu` matrix case whose seeder plants **three**
 rollout directories so the aggregate has something to aggregate.
 
@@ -2310,7 +2310,7 @@ rather than papered over.
   report**: a run whose artifacts contain no readable text fails loudly instead of triaging
   nothing.
 * Two catalog toolRefs (`workbench.lerobot.policy_train`, `workbench.token_factory.triage`) and
-  the twin spec `npa-workflows/tokenfactory-train-triage.yaml`.
+  the twin spec `workflows/testing/tokenfactory-train-triage.yaml`.
 
 ### Defect: five toolRefs invoked bare `python`
 
@@ -2834,7 +2834,7 @@ warnings.warn(
 
 Every other retirement in this PR required a live twin first. This one is the exception, and the
 reason is the point: **a twin would have made the new surface the home of a legacy path.** The
-maintained loop already has a spec (`npa-workflows/sim2real-vlm-rl.yaml`) and a runbook for
+maintained loop already has a spec (then named `sim2real-vlm-rl.yaml`) and a runbook for
 reading without npa in the loop (`sim2real/runbook.yaml`).
 
 **Watching a bucket is not deprecated**, so `npa.workflows.sim_to_real_trigger` stays — and was
@@ -3113,7 +3113,7 @@ name and with the remedy:
 
 ```
 new raw SkyPilot task YAML(s) appeared in the retiring catalog: ['nurec-reconstruct.yaml'].
-Author an npa.workflow/v0.0.1 spec under npa/workflows/workbench/npa-workflows/ instead;
+Author an npa.workflow/v0.0.1 spec under workflows/ instead;
 if a raw template is genuinely required, add it to REMAINING with a reason.
 ```
 
@@ -3130,7 +3130,7 @@ variant should survive alongside its spec is #234's call to make, not this PR's 
 — but the tally now says it exists and why, which is the whole point of a machine-checked list.
 
 A third merge brought #235 and a second new template, `cosmos3-generate.yaml`, caught the same
-way and listed the same way. Its npa.workflow twin (`npa-workflows/cosmos3-generate.yaml`)
+way and listed the same way. Its npa.workflow twin (`workflows/testing/cosmos3-generate.yaml`)
 already exists, so retiring the raw one needs only a live run of that twin — which belongs with
 #235 rather than here.
 
@@ -3274,7 +3274,7 @@ Two lessons worth keeping, both cheap:
 ## R53. `cosmos3-generate.yaml` retired after its spec twin ran live
 
 The raw template added by #235 is gone. Its twin
-`npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml` now has a live-submit-matrix case
+`workflows/testing/cosmos3-generate.yaml` now has a live-submit-matrix case
 (`tier="gpu"`, `image_tool="cosmos3"`) and reached terminal success through the same harness used
 for the rest of this retirement work:
 

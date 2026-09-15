@@ -142,6 +142,19 @@ def test_container_creating_is_progress_not_a_blocker() -> None:
     assert report.blocked is False
 
 
+def test_pod_initializing_is_progress_not_an_init_container_failure() -> None:
+    # A main container waiting with reason PodInitializing means init containers
+    # completed and the main container is starting -- normal progress, not the
+    # fatal INIT_CONTAINER_FAILED a substring match used to manufacture.
+    runner = _runner(
+        _pods(_waiting_pod("sky-abc-worker-0", "PodInitializing"))
+    )
+
+    report = inspect_job_blockers(cluster_name="sky-abc", runner=runner)
+
+    assert report.blocked is False
+
+
 def test_an_unreachable_cluster_is_an_error_not_a_clean_bill_of_health() -> None:
     runner = _runner("", returncode=1, stderr="Unable to connect to the server")
 
@@ -375,7 +388,7 @@ def test_a_pod_level_reason_still_wins_over_the_node_check() -> None:
             "Unschedulable",
             "0/3 nodes: insufficient nvidia.com/gpu",
             "scheduler",
-            "ACCELERATOR_MISMATCH",
+            "CAPACITY_OR_QUOTA",
         ),
         (
             "Unschedulable",
@@ -387,6 +400,12 @@ def test_a_pod_level_reason_still_wins_over_the_node_check() -> None:
         ("ImagePullBackOff", "401 unauthorized", "container", "IMAGE_PULL_AUTH"),
         ("ErrImagePull", "manifest unknown: not found", "container", "IMAGE_NOT_FOUND"),
         ("CrashLoopBackOff", "init setup failed", "init", "INIT_CONTAINER_FAILED"),
+        (
+            "PodInitializing",
+            "",
+            "container",
+            "PENDING_UNKNOWN",
+        ),
         ("CrashLoopBackOff", "worker exited", "container", "CONTAINER_CRASH"),
         ("BackOff", "controller retry backoff", "event", "CONTROLLER_BACKOFF"),
         ("FailedMount", "persistentvolumeclaim is pending", "event", "STORAGE_PENDING"),
@@ -423,3 +442,26 @@ def test_kubernetes_diagnostic_failures_are_typed_and_sanitized(
     assert report.error_code == code
     assert "synthetic-secret" not in report.error
     assert report.observed_at
+
+
+@pytest.mark.parametrize("reason", ["Unschedulable", "FailedScheduling"])
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("0/4 nodes: 1 Insufficient cpu, 2 Insufficient nvidia.com/gpu, "
+         "2 node(s) did not match Pod's node affinity/selector", "CAPACITY_OR_QUOTA"),
+        ("Insufficient nvidia.com/gpu", "CAPACITY_OR_QUOTA"),
+        ("Insufficient cpu", "CAPACITY_OR_QUOTA"),
+        ("GPU capacity temporarily unavailable", "CAPACITY_OR_QUOTA"),
+        ("GPU quota exceeded", "CAPACITY_OR_QUOTA"),
+        ("no nodes match requested GPU accelerator", "ACCELERATOR_MISMATCH"),
+        ("GPU accelerator label did not match", "ACCELERATOR_MISMATCH"),
+        ("persistentvolumeclaim has volume node affinity conflict", "STORAGE_PENDING"),
+        ("no nodes are available", "CAPACITY_OR_QUOTA"),
+        ("node selector did not match", "UNSCHEDULABLE"),
+    ],
+)
+def test_scheduler_shortage_is_distinct_from_accelerator_mismatch(
+    reason: str, message: str, expected: str,
+) -> None:
+    assert classify_pending_reason(reason, message, source="scheduler") == expected
