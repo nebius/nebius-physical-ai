@@ -109,6 +109,15 @@ cleanup. Do not upload the containing evidence directory. This validator
 complements the required packaging, vulnerability and payload gates; a passing
 summary is not publication authorization.
 
+For the full payload gate, `scan_image_omniverse_payload.py --tarball` accepts a
+complete Docker-save or OCI-layout archive. It checks that referenced configs,
+manifests and readable layers are present before reporting `scan_complete`.
+Some Docker image stores can export only metadata while returning success;
+that incomplete export is not image coverage. Preserve the failed input and
+use a complete archive of the same independently verified digest. This archive
+check establishes reference completeness; retain the separate digest, package,
+vulnerability and source-delivery checks.
+
 The CPU golden evaluation runs the existing standalone `smoke_functional.py`:
 version, dataset creation and query, Brain curation, and App launch on loopback.
 The lighter `smoke_env.py` remains useful for environment checks. Qualify the
