@@ -1408,6 +1408,26 @@ def submit_cmd(
                 _fail_missing_prerequisites(yaml_path, missing)
                 return
 
+        # For an existing PAIDF target, prove placement before the shared
+        # execution preflight writes its temporary storage probe or performs
+        # any provider/model/image work.  Static prerequisites deliberately
+        # remain first: they are local and give a cold-start user the complete
+        # actionable report without needing cluster access.  A deployIfAbsent
+        # target cannot be placement-checked until it exists.
+        if (
+            is_paidf_spec
+            and not plan_only
+            and not skip_preflight
+            and not deploy_if_absent
+        ):
+            placement_missing = _paidf_kubernetes_prerequisites_for_submit(
+                infra_context
+            )
+            if placement_missing:
+                _fail_missing_prerequisites(yaml_path, placement_missing)
+                return
+            paidf_placement_prechecked = True
+
         if not plan_only:
             # Scope and denied output-prefix access must fail before image
             # bootstrap or deployIfAbsent creates compute. This identity gate
@@ -1428,26 +1448,6 @@ def submit_cmd(
             except (RuntimeError, ValueError) as exc:
                 _fail(str(exc))
                 return
-
-        # An existing target can prove that PAIDF has nowhere schedulable to run
-        # without any provider or model call.  Preserve that cheapest failure
-        # ordering, then verify the exact modality-specific checkpoint before
-        # image work, provisioning, or launch.  A deployIfAbsent target cannot
-        # be placement-checked until it exists, so its checkpoint fence remains
-        # ahead of provisioning below.
-        if (
-            is_paidf_spec
-            and not plan_only
-            and not skip_preflight
-            and not deploy_if_absent
-        ):
-            placement_missing = _paidf_kubernetes_prerequisites_for_submit(
-                infra_context
-            )
-            if placement_missing:
-                _fail_missing_prerequisites(yaml_path, placement_missing)
-                return
-            paidf_placement_prechecked = True
 
         if not plan_only:
             # Cosmos Transfer already has the stronger state-local pinned-file
