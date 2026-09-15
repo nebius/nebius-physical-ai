@@ -116,7 +116,7 @@ def test_supported_configured_tokens_and_custom_declared_token_are_forwarded(
 @pytest.mark.parametrize(
     "missing", ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"]
 )
-def test_manager_authorized_triplet_rejects_every_partial_environment(
+def test_control_plane_authorized_triplet_rejects_every_partial_environment(
     monkeypatch, missing
 ) -> None:
     monkeypatch.setattr(
@@ -128,9 +128,9 @@ def test_manager_authorized_triplet_rejects_every_partial_environment(
         lambda **_kwargs: pytest.fail("configured credentials are forbidden"),
     )
     environ = {
-        "AWS_ACCESS_KEY_ID": "manager-access",
-        "AWS_SECRET_ACCESS_KEY": "manager-secret",
-        "AWS_SESSION_TOKEN": "manager-session",
+        "AWS_ACCESS_KEY_ID": "control-plane-access",
+        "AWS_SECRET_ACCESS_KEY": "control-plane-secret",
+        "AWS_SESSION_TOKEN": "control-plane-session",
         "AWS_ENDPOINT_URL": "https://storage.example",
     }
     environ.pop(missing)
@@ -141,7 +141,7 @@ def test_manager_authorized_triplet_rejects_every_partial_environment(
         )
 
 
-def test_manager_authorized_triplet_never_reads_or_mixes_saved_credentials(
+def test_control_plane_authorized_triplet_never_reads_or_mixes_saved_credentials(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
@@ -154,9 +154,9 @@ def test_manager_authorized_triplet_never_reads_or_mixes_saved_credentials(
     )
     context = resolve_submit_credentials(
         environ={
-            "AWS_ACCESS_KEY_ID": "manager-access",
-            "AWS_SECRET_ACCESS_KEY": "manager-secret",
-            "AWS_SESSION_TOKEN": "manager-session",
+            "AWS_ACCESS_KEY_ID": "control-plane-access",
+            "AWS_SECRET_ACCESS_KEY": "control-plane-secret",
+            "AWS_SESSION_TOKEN": "control-plane-session",
             "AWS_ENDPOINT_URL": "https://storage.example",
         },
         workflow_env={
@@ -167,9 +167,9 @@ def test_manager_authorized_triplet_never_reads_or_mixes_saved_credentials(
         require_process_environment_triplet=True,
     )
 
-    assert context.access_key_id == "manager-access"
-    assert context.secret_access_key == "manager-secret"
-    assert context.session_token == "manager-session"
+    assert context.access_key_id == "control-plane-access"
+    assert context.secret_access_key == "control-plane-secret"
+    assert context.session_token == "control-plane-session"
     assert context.endpoint_url == "https://storage.example"
-    assert "manager-session" not in repr(context)
+    assert "control-plane-session" not in repr(context)
     assert "hostile-workflow" not in repr(context)

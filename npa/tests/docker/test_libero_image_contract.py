@@ -44,6 +44,11 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
     assert "useradd --no-log-init --uid 1000" in text
     assert "groupadd --gid 1001 npa-libero-exec" in text
     assert "useradd --no-log-init --uid 1001 --gid npa-libero-exec" in text
+    assert (
+        "install -d -m 1770 -o ubuntu -g npa-libero-exec /workspace/byof-runs"
+        in text
+    )
+    assert "install -d -m 0770 -o ubuntu -g npa-libero-exec /workspace/byof-runs" not in text
     assert "ubuntu ALL=(npa-libero-exec) NOPASSWD: NPA_LIBERO_EXEC" in text
     assert "NPA_LIBERO_EXEC = /opt/npa/libero/runtime-bootstrap.py execute" in text
     assert "Defaults!NPA_LIBERO_EXEC closefrom_override" in text

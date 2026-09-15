@@ -241,7 +241,12 @@ def test_libero_profile_binds_payload_identity_customer_authorization_and_headle
         assert contract in profile
     bootstrap = (IMAGE_ROOT / "runtime-bootstrap.py").read_text(encoding="utf-8")
     assert '"rendering_invoked": False' in bootstrap
-    assert "root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)" in bootstrap
+    assert (
+        "root_fd = os.open(output_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)"
+        in bootstrap
+    )
+    assert "upload_outputs(smoke_exit_code, root_fd=root_fd)" in bootstrap
+    assert "output staging directory changed during execution" in bootstrap
     assert "dir_fd=root_fd" in bootstrap
     assert "stat.S_ISREG(info.st_mode)" in bootstrap
     assert "info.st_nlink != 1" in bootstrap

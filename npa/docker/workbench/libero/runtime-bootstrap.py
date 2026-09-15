@@ -244,8 +244,12 @@ def _read_private_regular_bytes(path: Path, *, limit: int) -> bytes:
 
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-    except OSError as exc:
+    except FileNotFoundError as exc:
         raise CustomerAcceptanceRequired("authorization_missing") from exc
+    except OSError as exc:
+        raise BootstrapRefusal(
+            "customer authorization file is unavailable or invalid"
+        ) from exc
     try:
         before = os.fstat(descriptor)
         with os.fdopen(descriptor, "rb", closefd=False) as stream:
@@ -263,7 +267,9 @@ def _read_private_regular_bytes(path: Path, *, limit: int) -> bytes:
         or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
         != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
     ):
-        raise CustomerAcceptanceRequired("authorization_missing")
+        raise BootstrapRefusal(
+            "customer authorization file is not stable owner-private"
+        )
     return payload
 
 
@@ -2270,7 +2276,7 @@ def _s3_object_url(endpoint: str, bucket: str, object_key: str) -> str:
     return f"{endpoint}/{path}"
 
 
-def upload_outputs(smoke_exit_code: int) -> dict[str, Any]:
+def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
     """Upload through image-owned stdlib code after untrusted runtime execution ends."""
 
     run_id = os.environ.get("NPA_BYOF_RUN_ID", "")
@@ -2291,8 +2297,13 @@ def upload_outputs(smoke_exit_code: int) -> dict[str, Any]:
     if endpoint_parts.scheme != "https" or not endpoint_parts.netloc:
         raise BootstrapRefusal("output storage endpoint must be HTTPS")
     _storage_authorization(output_prefix, run_id, endpoint)
-    root = _run_output_root(run_id)
-    root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    root_info = os.fstat(root_fd)
+    if (
+        not stat.S_ISDIR(root_info.st_mode)
+        or root_info.st_uid != os.getuid()
+        or stat.S_IMODE(root_info.st_mode) != 0o700
+    ):
+        raise BootstrapRefusal("output upload descriptor is not sealed")
     summary = {
         "status": "success" if smoke_exit_code == 0 else "failed",
         "tool": "byof",
@@ -2308,16 +2319,12 @@ def upload_outputs(smoke_exit_code: int) -> dict[str, Any]:
         "created_unix": round(datetime.now(timezone.utc).timestamp(), 3),
     }
     summary_payload = (json.dumps(summary, indent=2, sort_keys=True) + "\n").encode()
-    try:
-        summary_fd = os.open(
-            "npa_byof_summary.json",
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-            stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP,
-            dir_fd=root_fd,
-        )
-    except BaseException:
-        os.close(root_fd)
-        raise
+    summary_fd = os.open(
+        "npa_byof_summary.json",
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP,
+        dir_fd=root_fd,
+    )
     with os.fdopen(summary_fd, "wb") as stream:
         stream.write(summary_payload)
 
@@ -2366,49 +2373,48 @@ def upload_outputs(smoke_exit_code: int) -> dict[str, Any]:
             raise BootstrapRefusal("output storage checksum/readback differs")
         return {"name": name, "size_bytes": len(payload), "sha256": digest}
 
-    try:
-        if set(os.listdir(root_fd)) != set(OUTPUT_SIZE_LIMITS):
-            raise BootstrapRefusal("output differs from the exact artifact allowlist")
-        observed_total = sum(
-            os.stat(name, dir_fd=root_fd, follow_symlinks=False).st_size
-            for name in OUTPUT_SIZE_LIMITS
+    if set(os.listdir(root_fd)) != set(OUTPUT_SIZE_LIMITS):
+        raise BootstrapRefusal("output differs from the exact artifact allowlist")
+    observed_total = sum(
+        os.stat(name, dir_fd=root_fd, follow_symlinks=False).st_size
+        for name in OUTPUT_SIZE_LIMITS
+    )
+    if observed_total > MAX_OUTPUT_BYTES:
+        raise BootstrapRefusal("output exceeds the aggregate size budget")
+    snapshots = []
+    for name, limit in sorted(OUTPUT_SIZE_LIMITS.items()):
+        payload, digest = immutable_bytes(root_fd, name, limit)
+        snapshots.append((name, payload, digest))
+    receipts = [
+        upload_and_read_back(name, payload, digest)
+        for name, payload, digest in snapshots
+    ]
+    receipt_payload = (
+        json.dumps(
+            {
+                "schema": "npa.libero.s3-upload-readback.v1",
+                "run_id": run_id,
+                "status": "verified",
+                "artifacts": receipts,
+            },
+            indent=2,
+            sort_keys=True,
         )
-        if observed_total > MAX_OUTPUT_BYTES:
-            raise BootstrapRefusal("output exceeds the aggregate size budget")
-        snapshots = []
-        for name, limit in sorted(OUTPUT_SIZE_LIMITS.items()):
-            payload, digest = immutable_bytes(root_fd, name, limit)
-            snapshots.append((name, payload, digest))
-        receipts = [
-            upload_and_read_back(name, payload, digest)
-            for name, payload, digest in snapshots
-        ]
-        receipt_payload = (
-            json.dumps(
-                {
-                    "schema": "npa.libero.s3-upload-readback.v1",
-                    "run_id": run_id,
-                    "status": "verified",
-                    "artifacts": receipts,
-                },
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n"
-        ).encode()
-        receipt_name = "npa_upload_receipt.json"
-        receipt_fd = os.open(
-            receipt_name,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-            stat.S_IRUSR | stat.S_IWUSR,
-            dir_fd=root_fd,
-        )
-        with os.fdopen(receipt_fd, "wb") as stream:
-            stream.write(receipt_payload)
-        receipt_bytes, receipt_sha256 = immutable_bytes(root_fd, receipt_name, 8 * 1024 * 1024)
-        upload_and_read_back(receipt_name, receipt_bytes, receipt_sha256)
-    finally:
-        os.close(root_fd)
+        + "\n"
+    ).encode()
+    receipt_name = "npa_upload_receipt.json"
+    receipt_fd = os.open(
+        receipt_name,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        stat.S_IRUSR | stat.S_IWUSR,
+        dir_fd=root_fd,
+    )
+    with os.fdopen(receipt_fd, "wb") as stream:
+        stream.write(receipt_payload)
+    receipt_bytes, receipt_sha256 = immutable_bytes(
+        root_fd, receipt_name, 8 * 1024 * 1024
+    )
+    upload_and_read_back(receipt_name, receipt_bytes, receipt_sha256)
     return {"schema": "npa.libero.output-upload.v1", "status": "verified"}
 
 
@@ -2615,6 +2621,20 @@ def execute_and_upload() -> int:
                         "runtime execution left processes behind: "
                         + ",".join(str(pid) for pid in remaining_processes)
                     )
+                try:
+                    current_root_info = output_root.stat(follow_symlinks=False)
+                except OSError as exc:
+                    raise BootstrapRefusal(
+                        "execution output staging directory is unavailable after execution"
+                    ) from exc
+                if (
+                    not stat.S_ISDIR(current_root_info.st_mode)
+                    or (current_root_info.st_dev, current_root_info.st_ino)
+                    != (root_info.st_dev, root_info.st_ino)
+                ):
+                    raise BootstrapRefusal(
+                        "execution output staging directory changed during execution"
+                    )
                 os.fchmod(root_fd, 0o700)
                 _materialize_supervisor_artifact(
                     root_fd, "npa_runtime_bootstrap.json", bootstrap_payload
@@ -2623,17 +2643,28 @@ def execute_and_upload() -> int:
                     root_fd, "npa_runtime_metadata.json", runtime_metadata
                 )
                 artifact_name = os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", "")
-                if artifact_name not in OUTPUT_SIZE_LIMITS or not (
-                    output_root / artifact_name
-                ).is_file():
-                    with (output_root / "solution_smoke_stderr.log").open(
-                        "a", encoding="utf-8"
-                    ) as stderr:
+                try:
+                    artifact_info = os.stat(
+                        artifact_name, dir_fd=root_fd, follow_symlinks=False
+                    )
+                    artifact_is_regular = (
+                        stat.S_ISREG(artifact_info.st_mode)
+                        and artifact_info.st_nlink == 1
+                    )
+                except OSError:
+                    artifact_is_regular = False
+                if artifact_name not in OUTPUT_SIZE_LIMITS or not artifact_is_regular:
+                    stderr_fd = os.open(
+                        "solution_smoke_stderr.log",
+                        os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW,
+                        dir_fd=root_fd,
+                    )
+                    with os.fdopen(stderr_fd, "a", encoding="utf-8") as stderr:
                         stderr.write(
                             f"missing required smoke artifact: {artifact_name}\n"
                         )
                     smoke_exit_code = 1
-                upload_outputs(smoke_exit_code)
+                upload_outputs(smoke_exit_code, root_fd=root_fd)
                 _validate_complete(
                     stable_root,
                     manifest,

@@ -636,7 +636,7 @@ def test_customer_authorization_rejects_descriptor_metadata_race(
 
     monkeypatch.setattr(module.os, "fstat", racing_fstat)
 
-    with pytest.raises(module.CustomerAcceptanceRequired, match="authorization missing"):
+    with pytest.raises(module.BootstrapRefusal, match="not stable owner-private"):
         module._validate_customer_authorization(
             authorization_path,
             args.authorization_sha256,
@@ -1449,7 +1449,7 @@ def test_cache_output_overlap_and_cache_symlink_refuse(tmp_path) -> None:
 def test_customer_authorization_must_be_owner_private_regular_file(tmp_path) -> None:
     module, args, _fixture_values = _fixture(tmp_path)
     os.chmod(args.authorization, 0o644)
-    with pytest.raises(module.CustomerAcceptanceRequired, match="authorization missing"):
+    with pytest.raises(module.BootstrapRefusal, match="not stable owner-private"):
         module.ensure(args)
 
 
@@ -1656,8 +1656,9 @@ def test_verified_download_refuses_redirect_outside_allowlist(
     assert not destination.exists()
 
 
-def test_execute_and_upload_holds_cache_lock_through_readback(
-    monkeypatch, tmp_path
+@pytest.mark.parametrize("replace_output_root", [False, True])
+def test_execute_and_upload_holds_descriptor_and_cache_lock_through_readback(
+    monkeypatch, tmp_path, replace_output_root
 ) -> None:
     module, args, fixture = _fixture(tmp_path)
     _install_fake_materializers(monkeypatch, module, fixture)
@@ -1665,6 +1666,8 @@ def test_execute_and_upload_holds_cache_lock_through_readback(
     output = tmp_path / "run-output"
     output.mkdir()
     output.chmod(0o1770)
+    output_identity = (output.stat().st_dev, output.stat().st_ino)
+    replaced_output = tmp_path / "replaced-run-output"
     (output / "libero-smoke.json").write_text("{}\n", encoding="utf-8")
     monkeypatch.setattr(module, "DEFAULT_MANIFEST", Path(args.manifest))
     monkeypatch.setattr(module, "DEFAULT_REQUIREMENTS", Path(args.requirements))
@@ -1707,12 +1710,18 @@ def test_execute_and_upload_holds_cache_lock_through_readback(
         assert environment["NPA_LIBERO_BOOTSTRAP_RECEIPT"] == str(receipt)
         assert environment["HOME"] == "/nonexistent"
         assert environment["PATH"] == "/usr/bin:/bin"
+        if replace_output_root:
+            output.rename(replaced_output)
+            output.mkdir()
+            output.chmod(0o1770)
         return Completed()
 
     lock_path = Path(args.cache_root) / ".bootstrap.lock"
 
-    def fake_upload(smoke_exit_code):
+    def fake_upload(smoke_exit_code, *, root_fd):
         assert smoke_exit_code == 0
+        opened = os.fstat(root_fd)
+        assert (opened.st_dev, opened.st_ino) == output_identity
         with lock_path.open("rb") as competing:
             with pytest.raises(BlockingIOError):
                 module.fcntl.flock(
@@ -1724,6 +1733,15 @@ def test_execute_and_upload_holds_cache_lock_through_readback(
     monkeypatch.setattr(module.subprocess, "run", fake_run)
     monkeypatch.setattr(module, "_execution_uid_processes", lambda: [])
     monkeypatch.setattr(module, "upload_outputs", fake_upload)
+
+    if replace_output_root:
+        with pytest.raises(
+            module.BootstrapRefusal,
+            match="output staging directory changed during execution",
+        ):
+            module.execute_and_upload()
+        assert not (output / "npa_runtime_bootstrap.json").exists()
+        return
 
     assert module.execute_and_upload() == 0
     assert (output / "solution_smoke_stdout.log").is_file()
