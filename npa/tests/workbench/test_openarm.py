@@ -37,8 +37,23 @@ def test_cli_registered() -> None:
 def test_light_image_cli_imports_only_openarm_sdk() -> None:
     env = dict(os.environ)
     env.update(NPA_SKIP_EAGER_IMPORTS="1", NPA_LIGHT_WORKBENCH_TOOL="openarm")
+    probe = """
+import importlib.abc
+import sys
+
+class BlockFullCli(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "npa.cli.main":
+            raise RuntimeError("full platform CLI import attempted")
+        return None
+
+sys.meta_path.insert(0, BlockFullCli())
+sys.argv = ["npa", "workbench", "openarm", "--help"]
+from npa.cli.entry import main
+main()
+"""
     result = subprocess.run(
-        [sys.executable, "-m", "npa", "workbench", "openarm", "--help"],
+        [sys.executable, "-c", probe],
         text=True,
         capture_output=True,
         env=env,
