@@ -551,6 +551,8 @@ jobs:
           owner="${path%%/*}"
           package_and_tag="${path#*/}"
           package="${package_and_tag%:*}"
+          tag="${package_and_tag##*:}"
+          repository="${IMAGE%:*}"
           encoded="${package//\//%2F}"
           response="$(mktemp)"
           status="$(gh api --silent --include "/orgs/${owner}/packages/container/${encoded}" >"$response" 2>/dev/null; printf '%s' "$?")"
@@ -587,10 +589,84 @@ jobs:
                 echo "Private destination is repository-bound and contains exactly the qualified untagged OCI graph (${version_count} versions)." >> "$GITHUB_STEP_SUMMARY"
               else
                 if [ "$version_count" != 0 ]; then
-                  if [ "$tagged_count" != 0 ]; then
-                    echo "::error::Private destination contains tagged versions"
+                  validate_retained_graph() {
+                    npa/.venv/bin/python - "$repository" "$tag" "$1" <<'PY'
+          import json
+          import re
+          import subprocess
+          import sys
+
+          repository, tag, versions_path = sys.argv[1:]
+          versions = json.load(open(versions_path, encoding="utf-8"))
+          if not isinstance(versions, list) or not versions:
+              raise SystemExit("retained package graph is empty or malformed")
+          identities = [str(item.get("id") or "") for item in versions if isinstance(item, dict)]
+          if len(identities) != len(versions) or len(set(identities)) != len(versions) or any(re.fullmatch(r"[1-9][0-9]*", item) is None for item in identities):
+              raise SystemExit("retained package version identities are ambiguous")
+          tagged = [item for item in versions if (item.get("metadata", {}).get("container", {}).get("tags") or [])]
+          if len(tagged) != 1 or (tagged[0].get("metadata", {}).get("container", {}).get("tags") or []) != [tag]:
+              raise SystemExit("retained package does not have exactly the expected candidate tag")
+          root = str(tagged[0].get("name") or "")
+          if re.fullmatch(r"sha256:[0-9a-f]{64}", root) is None:
+              raise SystemExit("retained candidate digest is invalid")
+          observed = subprocess.check_output(["crane", "digest", f"{repository}@{root}"], text=True).strip()
+          if observed != root:
+              raise SystemExit("retained candidate digest cannot be revalidated")
+          for item in versions:
+              if item is tagged[0]:
+                  continue
+              tags = item.get("metadata", {}).get("container", {}).get("tags") or []
+              digest = str(item.get("name") or "")
+              if tags or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
+                  raise SystemExit("retained package contains an unrelated version")
+              manifest = json.loads(subprocess.check_output(["crane", "manifest", f"{repository}@{digest}"]))
+              annotations = manifest.get("annotations") or {}
+              subject = manifest.get("subject") or {}
+              if (
+                  manifest.get("schemaVersion") != 2
+                  or manifest.get("mediaType") != "application/vnd.oci.image.manifest.v1+json"
+                  or not isinstance(manifest.get("layers"), list)
+                  or not manifest["layers"]
+                  or (
+                      subject.get("digest") != root
+                      and annotations.get("vnd.docker.reference.digest") != root
+                  )
+              ):
+                  raise SystemExit("retained referrer is not bound to the candidate")
+          print(root)
+          PY
+                  }
+                  test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
+                    "$GITHUB_REPOSITORY"
+                  retained_digest="$(validate_retained_graph "$versions")" || {
+                    echo "::error::Private destination is not a closed repository-bound retained candidate graph"
+                    exit 1
+                  }
+                  retained_snapshot="$(mktemp)"
+                  jq '[.[] | {id:(.id | tostring), name, tags:(.metadata.container.tags // [])}] | sort_by(.id)' \
+                    "$versions" > "$retained_snapshot"
+                  current_versions="$(mktemp)"
+                  gh api --paginate --slurp "${package_api}/versions?per_page=100" |
+                    jq 'add' > "$current_versions"
+                  test "$(validate_retained_graph "$current_versions")" = "$retained_digest"
+                  jq -e --slurpfile before "$retained_snapshot" '
+                    ([.[] | {id:(.id | tostring), name,
+                      tags:(.metadata.container.tags // [])}] | sort_by(.id)) == $before[0]
+                  ' "$current_versions" >/dev/null
+                  test "$(gh api "$package_api" --jq .visibility)" = private
+                  test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
+                    "$GITHUB_REPOSITORY"
+                  gh api --method DELETE "$package_api"
+                  if gh api -i "$package_api" >"$response" 2>&1; then
+                    echo "::error::Retained unpublished candidate package still exists after reconciliation"
+                    exit 1
+                  elif ! grep -q '^HTTP/.* 404 ' "$response"; then
+                    echo "::error::Retained unpublished candidate package absence is unverified"
+                    exit 1
                   fi
-                  echo "::error::Private destination contains image or referrer versions; refusing a visibility change"
+                  echo "Reconciled one exact closed unpublished candidate/referrer graph before retry." >> "$GITHUB_STEP_SUMMARY"
+                elif [ "$tagged_count" != 0 ]; then
+                  echo "::error::Empty private destination unexpectedly contains tagged versions"
                   exit 1
                 fi
                 echo "Private destination is genuinely empty; exact pushed-byte gates and visibility verification apply." >> "$GITHUB_STEP_SUMMARY"
@@ -642,20 +718,19 @@ jobs:
       # intentionally invalid placeholder credential; no registry write occurs
       # until the separately gated push step below.
       - name: Authenticate immutable public base pulls
-        if: matrix.tool != 'libero'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Authenticate immutable LIBERO base pulls
+      - name: Install the LIBERO OCI archive importer
         if: matrix.tool == 'libero'
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+          skopeo --version
 
       - name: Verify exact qualified private LIBERO candidate lineage
         if: matrix.tool == 'libero'
@@ -757,6 +832,7 @@ jobs:
             build_args+=(--build-arg "SOURCE_DATE_EPOCH=$source_epoch")
           fi
           metadata_args=()
+          export_args=(--load)
           secret_args=()
           if [[ "$TOOL" == libero ]]; then
             NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64="$(tr -d '\r\n' < "$NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE")"
@@ -771,6 +847,9 @@ jobs:
               --provenance=mode=max
               --sbom=true
             )
+            export_args=(
+              --output "type=oci,dest=$RUNNER_TEMP/libero-build.oci.tar,tar=true,rewrite-timestamp=true"
+            )
             secret_args+=(
               --secret id=npa_libero_customer_authorization_public_key_b64,env=NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64
               --secret id=npa_libero_output_storage_authorization_public_key_b64,env=NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64
@@ -778,15 +857,28 @@ jobs:
             export BUILDX_METADATA_PROVENANCE=max
           fi
           docker buildx build \
-            --load \
             --file "$DOCKERFILE" \
             "${build_args[@]}" \
             "${metadata_args[@]}" \
+            "${export_args[@]}" \
             "${secret_args[@]}" \
             --label "org.opencontainers.image.revision=$DEVELOPMENT_SHA" \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
             --tag "$IMAGE" \
             npa
+          if [[ "$TOOL" == libero ]]; then
+            test -s "$RUNNER_TEMP/libero-build-metadata.json"
+            test -s "$RUNNER_TEMP/libero-build.oci.tar"
+            npa/.venv/bin/python npa/scripts/scan_image_libero_payload.py \
+              --verify-build-oci "$RUNNER_TEMP/libero-build.oci.tar" \
+              --build-metadata "$RUNNER_TEMP/libero-build-metadata.json" \
+              --output "$RUNNER_TEMP/libero-build-attestations.json"
+            skopeo copy --override-os linux --override-arch amd64 \
+              "oci-archive:$RUNNER_TEMP/libero-build.oci.tar" \
+              "docker-daemon:$IMAGE" >/dev/null
+            test "$(docker image inspect --format '{{.Id}}' "$IMAGE")" = \
+              "$(jq -er '.["containerimage.config.digest"]' "$RUNNER_TEMP/libero-build-metadata.json")"
+          fi
 
       - name: Enforce runtime, revision, bootstrap, config, and history contracts
         if: matrix.tool != 'ncore'
@@ -1549,6 +1641,7 @@ jobs:
           package_and_tag="${path#*/}"
           package="${package_and_tag%:*}"
           tag="${package_and_tag##*:}"
+          repository="${IMAGE%:*}"
           encoded="${package//\//%2F}"
           package_api="/orgs/${owner}/packages/container/${encoded}"
           versions="$(mktemp)"
@@ -1574,7 +1667,8 @@ jobs:
               --arg tag "$tag" \
               --argjson expected "$LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS" '
               ($expected | length > 0 and length == (unique | length) and
-                all(.[]; test("^sha256:[0-9a-f]{64}$"))) and
+                all(.[]; test("^sha256:[0-9a-f]{64}$")) and
+                index($root) != null) and
               ([.[] | select(.name as $name | $expected | index($name))] |
                 (length == ($expected | length)) and
                 ([.[].name] | sort) == ($expected | sort) and
@@ -1612,6 +1706,41 @@ jobs:
                 {id:(.id | tostring), name,
                  tags:(.metadata.container.tags // [])}] | sort_by(.id)
             ' "$versions" > "$unrelated_before"
+            if jq -e 'length == 0' "$unrelated_before" >/dev/null; then
+              # The package-wide fallback is lawful only for the complete signed
+              # graph, with no unrelated version, after access is private again.
+              gh api --method PATCH "$package_api" -f visibility=private >/dev/null
+              test "$(gh api "$package_api" --jq .visibility)" = private
+              test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
+                "$LIBERO_PACKAGE_WRITER_REPOSITORY"
+              current_versions="$(mktemp)"
+              gh api --paginate --slurp "${package_api}/versions?per_page=100" |
+                jq 'add' > "$current_versions"
+              jq -e --arg root "$LIBERO_QUALIFIED_OCI_DIGEST" \
+                --arg tag "$tag" \
+                --argjson expected "$LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS" '
+                ([.[].name] | sort) == $expected and
+                ([.[] | select(.name == $root)] | length) == 1 and
+                all(.[];
+                  if .name == $root
+                  then ((.metadata.container.tags // []) == [] or
+                        (.metadata.container.tags // []) == [$tag])
+                  else (.metadata.container.tags // []) == []
+                  end)
+              ' "$current_versions" >/dev/null
+              gh api --method DELETE "$package_api"
+              response="$(mktemp)"
+              if gh api -i "$package_api" >"$response" 2>&1; then
+                echo "::error::Failed LIBERO candidate package still exists after cleanup"
+                exit 1
+              elif ! grep -q '^HTTP/.* 404 ' "$response"; then
+                echo "::error::Failed LIBERO candidate package absence is unverified"
+                exit 1
+              fi
+              echo "Deleted the complete exact failed public LIBERO OCI graph after restoring private visibility." >> "$GITHUB_STEP_SUMMARY"
+              echo "Deletion does not revoke downloads made while the package was public." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
             while IFS=$'\t' read -r version_id digest expected_tags; do
               current_versions="$(mktemp)"
               gh api --paginate --slurp "${package_api}/versions?per_page=100" |
@@ -1670,6 +1799,8 @@ jobs:
             echo "::error::Unsupported failed-build package visibility: $visibility"
             exit 1
           fi
+          test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
+            "$GITHUB_REPOSITORY"
           current_versions="$(mktemp)"
           gh api --paginate --slurp "${package_api}/versions?per_page=100" |
             jq 'add' > "$current_versions"
@@ -1682,10 +1813,118 @@ jobs:
             echo "::error::Refusing cleanup: exact run-owned version identity changed"
             exit 1
           }
-          # Delete only the version carrying this run's unique tag. Never delete
-          # the package or infer ownership of untagged versions/referrers.
-          gh api --method DELETE "${package_api}/versions/${version_id}"
-          echo "Deleted only exact failed dev version $tag at $digest." >> "$GITHUB_STEP_SUMMARY"
+          classified="$(mktemp)"
+          npa/.venv/bin/python - "$repository" "$digest" "$version_id" \
+            "$tag" "$current_versions" "$classified" <<'PY'
+          import json
+          import re
+          import subprocess
+          import sys
+
+          repository, root, root_id, tag, versions_path, output_path = sys.argv[1:]
+          versions = json.load(open(versions_path, encoding="utf-8"))
+          if not isinstance(versions, list) or not versions:
+              raise SystemExit("failed-build package version graph is malformed")
+          identities = [str(item.get("id") or "") for item in versions if isinstance(item, dict)]
+          if len(identities) != len(versions) or len(set(identities)) != len(versions) or any(re.fullmatch(r"[1-9][0-9]*", item) is None for item in identities):
+              raise SystemExit("failed-build package version identities are ambiguous")
+          owned = []
+          unrelated = []
+          for item in versions:
+              row = {
+                  "id": str(item["id"]),
+                  "name": str(item.get("name") or ""),
+                  "tags": item.get("metadata", {}).get("container", {}).get("tags") or [],
+              }
+              if re.fullmatch(r"sha256:[0-9a-f]{64}", row["name"]) is None or not isinstance(row["tags"], list):
+                  raise SystemExit("failed-build package version record is malformed")
+              if row["id"] == root_id:
+                  if row["name"] != root or row["tags"] != [tag]:
+                      raise SystemExit("failed-build root candidate identity changed")
+                  owned.append(row)
+                  continue
+              if row["tags"]:
+                  unrelated.append(row)
+                  continue
+              manifest = json.loads(subprocess.check_output(["crane", "manifest", f"{repository}@{row['name']}"]))
+              annotations = manifest.get("annotations") or {}
+              subject = manifest.get("subject") or {}
+              if (
+                  manifest.get("schemaVersion") == 2
+                  and manifest.get("mediaType") == "application/vnd.oci.image.manifest.v1+json"
+                  and isinstance(manifest.get("layers"), list)
+                  and manifest["layers"]
+                  and (
+                      subject.get("digest") == root
+                      or annotations.get("vnd.docker.reference.digest") == root
+                  )
+              ):
+                  owned.append(row)
+              else:
+                  unrelated.append(row)
+          owned.sort(key=lambda row: (row["name"] == root, row["id"]))
+          unrelated.sort(key=lambda row: row["id"])
+          with open(output_path, "w", encoding="utf-8") as stream:
+              json.dump({"owned": owned, "unrelated": unrelated}, stream, sort_keys=True)
+              stream.write("\n")
+          PY
+          if jq -e '.unrelated | length == 0' "$classified" >/dev/null; then
+            # Revoke public reachability first, then re-read the complete closed
+            # graph and package identity immediately before final-version cleanup.
+            if [ "$visibility" = public ]; then
+              gh api --method PATCH "$package_api" -f visibility=private >/dev/null
+            fi
+            test "$(gh api "$package_api" --jq .visibility)" = private
+            test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
+              "$GITHUB_REPOSITORY"
+            final_versions="$(mktemp)"
+            gh api --paginate --slurp "${package_api}/versions?per_page=100" |
+              jq 'add' > "$final_versions"
+            jq -e --slurpfile classified "$classified" '
+              ([.[] | {id:(.id | tostring), name,
+                tags:(.metadata.container.tags // [])}] |
+                sort_by([.name == $classified[0].owned[-1].name, .id])) ==
+              $classified[0].owned
+            ' "$final_versions" >/dev/null
+            gh api --method DELETE "$package_api"
+            response="$(mktemp)"
+            if gh api -i "$package_api" >"$response" 2>&1; then
+              echo "::error::Failed-build candidate package still exists after cleanup"
+              exit 1
+            elif ! grep -q '^HTTP/.* 404 ' "$response"; then
+              echo "::error::Failed-build candidate package absence is unverified"
+              exit 1
+            fi
+            echo "Deleted the complete exact failed candidate/referrer graph after restoring private visibility." >> "$GITHUB_STEP_SUMMARY"
+            echo "Deletion does not revoke downloads made while the package was public." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ "$visibility" = private ]; then
+            echo "::error::Refusing package fallback: unpublished candidate graph contains unrelated versions"
+            exit 1
+          fi
+          unrelated_before="$(mktemp)"
+          jq '.unrelated' "$classified" > "$unrelated_before"
+          while IFS=$'\t' read -r owned_id owned_digest owned_tags; do
+            latest="$(mktemp)"
+            gh api --paginate --slurp "${package_api}/versions?per_page=100" |
+              jq 'add' > "$latest"
+            jq -e --arg id "$owned_id" --arg digest "$owned_digest" \
+              --argjson tags "$owned_tags" '
+              [.[] | select((.id | tostring) == $id and .name == $digest and
+                (.metadata.container.tags // []) == $tags)] | length == 1
+            ' "$latest" >/dev/null
+            gh api --method DELETE "${package_api}/versions/${owned_id}"
+          done < <(jq -r '.owned[] | [.id, .name, (.tags | tojson)] | @tsv' "$classified")
+          post_versions="$(mktemp)"
+          gh api --paginate --slurp "${package_api}/versions?per_page=100" |
+            jq 'add' > "$post_versions"
+          jq -e --slurpfile classified "$classified" --slurpfile before "$unrelated_before" '
+            all(.[]; (.name as $name | [$classified[0].owned[].name] | index($name) | not)) and
+            ([.[] | {id:(.id | tostring), name,
+              tags:(.metadata.container.tags // [])}] | sort_by(.id)) == $before[0]
+          ' "$post_versions" >/dev/null
+          echo "Deleted the exact failed candidate and bound referrers while preserving unrelated versions." >> "$GITHUB_STEP_SUMMARY"
           echo "Deletion does not revoke downloads made while the public tag existed." >> "$GITHUB_STEP_SUMMARY"
 
   promote:

@@ -91,13 +91,21 @@ or embedded attestation graph. Other first publications still require a nonexist
 or zero-version destination, then re-enumerate and tag-filter the complete
 post-push version graph immediately before the visibility mutation. The target
 namespace is globally serialized. A failed first publish
-deletes the still-private package only after proving its exact run tag, removing
-the image and its referrers before any retry.
+of another image reconciles a still-private package only after proving its
+repository binding, exact retained run tag, complete candidate/referrer graph,
+and zero unrelated versions; ambiguity refuses without mutation. A failed
+LIBERO attempt before visibility changes retains the independently qualified
+private untagged graph as recovery evidence.
 If a build runner fails or is cancelled after the package-wide visibility
-transition, an `always()` reconciliation job on a separate runner validates the
-signed complete graph and deletes the entire public package. Requested LIBERO
-cleanup applies the same package-wide rule; it refuses retained private evidence
-or any extra/shared version instead of deleting only the tagged index.
+transition, an `always()` reconciliation job on a separate runner first makes a
+complete, repository-bound, zero-unrelated candidate graph private, rechecks it,
+and deletes the package with a 404 absence proof. When unrelated public versions
+exist, it deletes only the identity-stable candidate and bound referrers while
+proving unrelated versions unchanged. LIBERO uses its signed qualified digest
+set for the same decision: an exact whole package is made private and deleted;
+graph drift triggers version-scoped deletion of only the qualified graph.
+Requested LIBERO cleanup remains a separately authorized package-wide public
+deletion and refuses retained private evidence or any extra/shared version.
 Both build paths derive `SOURCE_DATE_EPOCH` from that exact source commit so the
 identity comparison cannot depend on the wall-clock build time. The package
 transaction removes APT/dpkg/account logs and normalizes the non-root account's
@@ -106,7 +114,10 @@ shadow day to the same epoch in its creation layer.
 The trusted build must then:
 
 1. reproduce the accepted development SHA from its hash-bound neutral build-input
-   bundle with Buildx SBOM and maximum provenance;
+   bundle with Buildx SBOM and maximum provenance, exporting an attested OCI
+   archive; verify its runtime config plus both subject-bound attestations before
+   selecting and importing only its linux/amd64 runtime manifest for complete-byte
+   scanning;
 2. fetch and hash-verify Docker Official Images' exact published provenance
    metadata, without using Docker history;
 3. inspect every OCI config and ordered layer, nested archive, exact runtime

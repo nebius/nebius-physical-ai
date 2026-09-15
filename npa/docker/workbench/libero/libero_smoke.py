@@ -811,7 +811,7 @@ try:
                 "independent_oci_layer_scan_required_before_live_use": True,
             },
             "boundaries": {
-                "cache": "/workspace/.cache/npa/libero/<runtime-manifest-sha256>",
+                "cache": "/workspace/.cache/npa/libero/<customer-run-manifest-scope-sha256>",
                 "output": "$NPA_SMOKE_OUTPUT_DIR",
                 "cache_uploaded": False,
                 "rendering_invoked": False,

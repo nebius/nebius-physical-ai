@@ -218,8 +218,8 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
     trust_root.chmod(0o444)
     module.CUSTOMER_AUTHORIZATION_PUBLIC_KEY = trust_root
     module.CUSTOMER_AUTHORIZATION_PUBLIC_KEY_OWNER_UID = os.getuid()
-    storage_key = Ed25519PrivateKey.generate()
-    storage_public_key = storage_key.public_key().public_bytes(
+    storage_signer = Ed25519PrivateKey.generate()
+    storage_public_key = storage_signer.public_key().public_bytes(
         serialization.Encoding.Raw, serialization.PublicFormat.Raw
     )
     storage_trust_root = tmp_path / "output-storage-authorization-public-key.b64"
@@ -268,7 +268,7 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
         ),
         "customer_private_key": customer_key,
         "customer_public_key": customer_public_key,
-        "storage_private_key": storage_key,
+        "storage_private_key": storage_signer,
         "storage_public_key": storage_public_key,
         "authorization_path": authorization_path,
         "customer_identity_sha256": authorization["customer_identity_sha256"],
@@ -723,6 +723,27 @@ def test_customer_authorization_rejects_descriptor_metadata_race(
         )
 
 
+def test_private_input_reader_names_the_supplied_input(tmp_path: Path) -> None:
+    module = _load_module()
+    candidate = tmp_path / "payload-kubeconfig"
+    candidate.write_bytes(b"private input\n")
+    candidate.chmod(0o644)
+    descriptor = os.open(candidate, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        with pytest.raises(
+            module.BootstrapRefusal,
+            match="payload kubeconfig file is not stable owner-private",
+        ):
+            module._read_private_regular_descriptor(
+                descriptor,
+                limit=1024,
+                owner_uid=os.getuid(),
+                input_name="payload kubeconfig file",
+            )
+    finally:
+        os.close(descriptor)
+
+
 def test_customer_trust_root_rejects_descriptor_metadata_race(
     monkeypatch, tmp_path
 ) -> None:
@@ -759,6 +780,23 @@ def test_incomplete_runtime_artifact_review_refuses_before_cache_mutation(
     )
 
     with pytest.raises(module.BootstrapRefusal, match="size/license review"):
+        module.ensure(args)
+
+    assert not Path(args.cache_root).exists()
+
+
+@pytest.mark.parametrize("version", [None, "", "1.0 # unbound", {"value": "1.0"}])
+def test_invalid_runtime_artifact_version_refuses_before_requirements_dereference(
+    tmp_path: Path, version: object
+) -> None:
+    module, args, _fixture_values = _fixture(tmp_path)
+    manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
+    manifest["runtime_artifacts"][0]["version"] = version
+    module.EXPECTED_RUNTIME_MANIFEST_SHA256 = _write_json(
+        Path(args.manifest), manifest
+    )
+
+    with pytest.raises(module.BootstrapRefusal, match="runtime artifact version"):
         module.ensure(args)
 
     assert not Path(args.cache_root).exists()

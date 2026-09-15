@@ -41,6 +41,14 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
     assert f'org.nebius.npa.base-rootfs-material="{BASE_ROOTFS}"' in text
     assert 'org.nebius.npa.redistribution="public-neutral-bootstrap"' in text
     assert 'org.nebius.npa.validation-status="quarantined-unvalidated"' in text
+    assert (
+        'org.opencontainers.image.licenses="Apache-2.0 AND '
+        'LicenseRef-NPA-LIBERO-Neutral-Third-Party"' in text
+    )
+    assert (
+        'org.nebius.npa.third-party-notices="/opt/npa/libero/'
+        'THIRD_PARTY_NOTICES.md"' in text
+    )
     assert "USER ubuntu" in text
     assert "useradd --no-log-init --uid 1000" in text
     assert "groupadd --gid 1001 npa-libero-exec" in text
@@ -184,6 +192,11 @@ def test_smoke_writes_runtime_configuration_only_under_output_boundary() -> None
     assert 'cfg.experiment_dir = os.environ["LIBERO_EXPERIMENT_DIR"]' in (
         IMAGE_ROOT / "libero_smoke.py"
     ).read_text(encoding="utf-8")
+    assert (
+        '"cache": "/workspace/.cache/npa/libero/'
+        '<customer-run-manifest-scope-sha256>"'
+        in (IMAGE_ROOT / "libero_smoke.py").read_text(encoding="utf-8")
+    )
 
 
 def test_skypilot_ssh_key_helper_accepts_only_runtime_host_key_generation(
@@ -465,6 +478,11 @@ def test_build_script_requires_exact_sha_tag_and_buildx_attestations() -> None:
     assert "--provenance=mode=max" in text
     assert "--sbom=true" in text
     assert "--metadata-file" in text
+    assert "--load" not in text
+    assert "type=oci,dest=$oci_archive,tar=true,rewrite-timestamp=true" in text
+    assert '--verify-build-oci "$oci_archive"' in text
+    assert '"oci-archive:$oci_archive" "docker-daemon:$image"' in text
+    assert "containerimage.config.digest" in text
     assert '--build-arg "SOURCE_DATE_EPOCH=$source_epoch"' in text
     assert "docker push" not in text
     assert "docker history" not in text
@@ -480,7 +498,8 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert "libero-base-sbom.intoto.json" in text
     assert "0d66ce85e6ecad0d044a1d4bae712afe24ff2eb0a5d89eb224944df3895f226b" in text
     assert "b290dbd3087fc5d2cf4af106f1d253c417a26080b70bdcf440ff96314a12c2bb" in text
-    assert text.count("npa/scripts/scan_image_libero_payload.py") == 2
+    assert text.count("npa/scripts/scan_image_libero_payload.py") == 3
+    assert text.count("--verify-build-oci") == 1
     assert text.count("--exported-rootfs") == 2
     assert text.count("--expected-image-inventory-sha256") == 2
     assert text.count("--expected-config-digest") == 2
@@ -498,6 +517,9 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert 'if tool != "libero"' not in text
     assert "--provenance=mode=max" in text
     assert "--sbom=true" in text
+    assert "type=oci,dest=$RUNNER_TEMP/libero-build.oci.tar" in text
+    assert '"oci-archive:$RUNNER_TEMP/libero-build.oci.tar"' in text
+    assert '"docker-daemon:$IMAGE"' in text
     assert '[[ "$TOOL" == curobo || "$TOOL" == libero ]]' in text
     assert "libero_qualified_image_manifest" in text
     assert "checked-in qualification development SHA does not match" in text
@@ -524,7 +546,7 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
         "${{ matrix.libero_private_config_digest }}"
     ) in text
     assert 'version_count="$(jq \'length\' "$versions")"' in text
-    assert "Private destination contains image or referrer versions" in text
+    assert "closed unpublished candidate/referrer graph before retry" in text
     assert "Private destination is genuinely empty" in text
     assert "exactly the qualified untagged OCI graph" in text
     assert "tagged_count=" in text
@@ -556,6 +578,8 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert 'test "$LIBERO_PACKAGE_WRITER_REPOSITORY" = "$GITHUB_REPOSITORY"' in text
     assert "Retained the private qualified LIBERO versions" in text
     assert "Deleted only the exact qualified failed public LIBERO OCI versions" in text
+    assert "Deleted the complete exact failed public LIBERO OCI graph" in text
+    assert "Failed-build candidate package absence is unverified" in text
     assert 'gh api --method DELETE "${package_api}/versions/${version_id}"' in text
     assert "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64" in text
     assert "LIBERO_QUALIFIED_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_SHA256" in text
@@ -876,3 +900,210 @@ def test_failed_libero_cleanup_removes_only_qualified_versions_under_graph_drift
     assert "Deleted only the exact qualified" in (tmp_path / "summary").read_text(
         encoding="utf-8"
     )
+
+
+def test_failed_libero_cleanup_makes_exact_graph_private_before_package_delete(
+    tmp_path: Path,
+) -> None:
+    spec = yaml.safe_load(PUBLICATION_WORKFLOW.read_text(encoding="utf-8"))
+    steps = spec["jobs"]["cleanup-failed-build"]["steps"]
+    script = next(
+        step["run"]
+        for step in steps
+        if str(step.get("name") or "").startswith("Remove an exact run-owned")
+    )
+    root = "sha256:" + "a" * 64
+    platform = "sha256:" + "b" * 64
+    attestation = "sha256:" + "c" * 64
+    tag = "dev-" + "1" * 40
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "visibility": "public",
+                "deleted": False,
+                "versions": [
+                    {"id": 1, "name": root, "metadata": {"container": {"tags": [tag]}}},
+                    {
+                        "id": 2,
+                        "name": platform,
+                        "metadata": {"container": {"tags": []}},
+                    },
+                    {
+                        "id": 3,
+                        "name": attestation,
+                        "metadata": {"container": {"tags": []}},
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    operations = tmp_path / "operations"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    gh = bin_dir / "gh"
+    gh.write_text(
+        f"#!{sys.executable}\n"
+        "import json,os,sys\n"
+        "args=sys.argv[1:]\n"
+        "path=os.environ['PACKAGE_STATE']\n"
+        "state=json.load(open(path))\n"
+        "if '--paginate' in args:\n"
+        " print(json.dumps([state['versions']])); raise SystemExit(0)\n"
+        "if '-i' in args:\n"
+        " print('HTTP/2.0 404 Not Found' if state['deleted'] else 'HTTP/2.0 200 OK')\n"
+        " raise SystemExit(1 if state['deleted'] else 0)\n"
+        "if '--method' in args and args[args.index('--method')+1] == 'PATCH':\n"
+        " state['visibility']='private'; json.dump(state,open(path,'w'))\n"
+        " open(os.environ['OPERATIONS'],'a').write('patch-private\\n')\n"
+        " raise SystemExit(0)\n"
+        "if '--method' in args and args[args.index('--method')+1] == 'DELETE':\n"
+        " assert state['visibility'] == 'private'\n"
+        " assert args[-1].endswith('npa-libero')\n"
+        " state['deleted']=True; state['versions']=[]\n"
+        " json.dump(state,open(path,'w'))\n"
+        " open(os.environ['OPERATIONS'],'a').write('delete-package\\n')\n"
+        " raise SystemExit(0)\n"
+        "if '--jq' in args:\n"
+        " query=args[args.index('--jq')+1]\n"
+        " print(state['visibility'] if query == '.visibility' "
+        "else os.environ['GITHUB_REPOSITORY'])\n"
+        " raise SystemExit(0)\n"
+        "raise SystemExit(1)\n",
+        encoding="utf-8",
+    )
+    gh.chmod(0o700)
+
+    completed = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", script],
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "IMAGE": "ghcr.io/nebius/nebius-physical-ai/npa-libero:" + tag,
+            "TOOL": "libero",
+            "LIBERO_QUALIFIED_OCI_DIGEST": root,
+            "LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS": json.dumps(
+                sorted([root, platform, attestation])
+            ),
+            "LIBERO_PACKAGE_WRITER_REPOSITORY": "nebius/nebius-physical-ai",
+            "GITHUB_REPOSITORY": "nebius/nebius-physical-ai",
+            "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
+            "PACKAGE_STATE": str(state_path),
+            "OPERATIONS": str(operations),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert operations.read_text(encoding="utf-8").splitlines() == [
+        "patch-private",
+        "delete-package",
+    ]
+    assert json.loads(state_path.read_text(encoding="utf-8"))["deleted"] is True
+    assert "Deleted the complete exact failed public LIBERO OCI graph" in (
+        tmp_path / "summary"
+    ).read_text(encoding="utf-8")
+
+
+def test_first_publication_retry_reconciles_only_a_closed_private_graph(
+    tmp_path: Path,
+) -> None:
+    spec = yaml.safe_load(PUBLICATION_WORKFLOW.read_text(encoding="utf-8"))
+    steps = spec["jobs"]["build-development"]["steps"]
+    script = next(
+        step["run"]
+        for step in steps
+        if step.get("name")
+        == "Prove destination cannot expose unvalidated tagged bytes"
+    )
+    root = "sha256:" + "a" * 64
+    referrer = "sha256:" + "b" * 64
+    tag = "dev-" + "1" * 40
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "deleted": False,
+                "versions": [
+                    {"id": 1, "name": root, "metadata": {"container": {"tags": [tag]}}},
+                    {
+                        "id": 2,
+                        "name": referrer,
+                        "metadata": {"container": {"tags": []}},
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    gh = bin_dir / "gh"
+    gh.write_text(
+        f"#!{sys.executable}\n"
+        "import json,os,sys\n"
+        "args=sys.argv[1:]\n"
+        "path=os.environ['PACKAGE_STATE']\n"
+        "state=json.load(open(path))\n"
+        "if '--paginate' in args:\n"
+        " print(json.dumps([state['versions']])); raise SystemExit(0)\n"
+        "if '-i' in args:\n"
+        " print('HTTP/2.0 404 Not Found' if state['deleted'] else 'HTTP/2.0 200 OK')\n"
+        " raise SystemExit(1 if state['deleted'] else 0)\n"
+        "if '--method' in args and args[args.index('--method')+1] == 'DELETE':\n"
+        " state['deleted']=True; state['versions']=[]\n"
+        " json.dump(state,open(path,'w'))\n"
+        " raise SystemExit(0)\n"
+        "if '--jq' in args:\n"
+        " query=args[args.index('--jq')+1]\n"
+        " print('private' if query == '.visibility' "
+        "else os.environ['GITHUB_REPOSITORY'])\n"
+        " raise SystemExit(0)\n"
+        "raise SystemExit(0)\n",
+        encoding="utf-8",
+    )
+    gh.chmod(0o700)
+    crane = bin_dir / "crane"
+    crane.write_text(
+        f"#!{sys.executable}\n"
+        "import json,os,sys\n"
+        "args=sys.argv[1:]\n"
+        "if args[0] == 'digest': print(os.environ['ROOT_DIGEST'])\n"
+        "elif args[0] == 'manifest':\n"
+        " print(json.dumps({'schemaVersion':2,"
+        "'mediaType':'application/vnd.oci.image.manifest.v1+json',"
+        "'subject':{'digest':os.environ['ROOT_DIGEST']},"
+        "'layers':[{'digest':'sha256:'+'c'*64}]}))\n"
+        "else: raise SystemExit(1)\n",
+        encoding="utf-8",
+    )
+    crane.chmod(0o700)
+    github_env = tmp_path / "github-env"
+
+    completed = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", script],
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "IMAGE": "ghcr.io/nebius/nebius-physical-ai/npa-genesis:" + tag,
+            "TOOL": "genesis",
+            "GITHUB_REPOSITORY": "nebius/nebius-physical-ai",
+            "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
+            "GITHUB_ENV": str(github_env),
+            "PACKAGE_STATE": str(state_path),
+            "ROOT_DIGEST": root,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert json.loads(state_path.read_text(encoding="utf-8"))["deleted"] is True
+    assert "NPA_FIRST_PUBLICATION_REQUIRED=1" in github_env.read_text(encoding="utf-8")
+    assert "closed unpublished candidate/referrer graph" in (
+        tmp_path / "summary"
+    ).read_text(encoding="utf-8")

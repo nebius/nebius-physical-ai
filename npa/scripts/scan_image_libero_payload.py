@@ -189,7 +189,7 @@ FORBIDDEN_PAYLOAD_CONTENT: tuple[re.Pattern[bytes], ...] = (
 )
 NEUTRAL_PAYLOAD_CONTENT_ALLOWLIST = {
     "opt/npa/libero/libero_smoke.py": (
-        "a76a9312a3d8d46f87d9d9c830cb7ee6dc47ea319a899b8a199d2992d48543fd"
+        "4959102a280d64656ab67b0403f84378f3e1613241ebf772569ac511ecb4a45c"
     )
 }
 NEVER_MATCH_ELF = re.compile(rb"(?!)")
@@ -204,6 +204,9 @@ RUNTIME_INJECTED_EXPORT_PATHS = frozenset(
     }
 )
 IMAGE_INVENTORY_SCHEMA = "npa.libero.neutral-image-inventory.v1"
+REQUIRED_BUILD_ATTESTATION_PREDICATE_TYPES = frozenset(
+    {"https://slsa.dev/provenance/v1", "https://spdx.dev/Document"}
+)
 
 # The pinned neutral base contains two libraries with secret-shaped binary
 # substrings.  These exact path+byte identities are already independently
@@ -253,11 +256,17 @@ def _config_findings(config: dict[str, Any]) -> list[walker.Finding]:
     runtime = config.get("config") or {}
     labels = runtime.get("Labels") or {}
     expected_labels = {
+        "org.opencontainers.image.licenses": (
+            "Apache-2.0 AND LicenseRef-NPA-LIBERO-Neutral-Third-Party"
+        ),
         "org.nebius.npa.redistribution": "public-neutral-bootstrap",
         "org.nebius.npa.validation-status": "quarantined-unvalidated",
         "org.nebius.npa.base-manifest": BASE_MANIFEST,
         "org.nebius.npa.base-rootfs-material": BASE_ROOTFS_MATERIAL,
         "org.nebius.npa.skypilot-bootstrap-contract": BOOTSTRAP_CONTRACT,
+        "org.nebius.npa.third-party-notices": (
+            "/opt/npa/libero/THIRD_PARTY_NOTICES.md"
+        ),
     }
     for key, expected in expected_labels.items():
         if labels.get(key) != expected:
@@ -1253,6 +1262,256 @@ def _oci_descriptor_members(
     return allowed, findings
 
 
+def _build_oci_attestation_findings(
+    path: Path, build_metadata: dict[str, Any]
+) -> tuple[list[walker.Finding], dict[str, object]]:
+    """Verify one BuildKit OCI export binds attestations to its runtime image."""
+
+    records, findings, identity = _archive_records(path)
+    expected_config_digest = str(
+        build_metadata.get("containerimage.config.digest") or ""
+    )
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", expected_config_digest) is None:
+        raise RuntimeError("build metadata has no immutable config digest")
+    findings.extend(_metadata_findings(build_metadata, expected_config_digest))
+    canonical_metadata = canonical_build_metadata_bytes(build_metadata)
+    allowed = {"index.json", "oci-layout"}
+    seen_outer: set[str] = set()
+    with tarfile.open(path, "r:*") as archive:
+        names = archive.getnames()
+        for required in ("index.json", "oci-layout"):
+            if required not in names or not archive.getmember(required).isfile():
+                raise RuntimeError(f"build OCI archive has no regular {required}")
+        layout_stream = archive.extractfile(archive.getmember("oci-layout"))
+        index_stream = archive.extractfile(archive.getmember("index.json"))
+        if layout_stream is None or index_stream is None:
+            raise RuntimeError("build OCI archive metadata is unreadable")
+        layout = json.load(io.TextIOWrapper(layout_stream, encoding="utf-8"))
+        index = json.load(io.TextIOWrapper(index_stream, encoding="utf-8"))
+        if layout != {"imageLayoutVersion": "1.0.0"}:
+            raise RuntimeError("build OCI archive layout is invalid")
+        if (
+            not isinstance(index, dict)
+            or index.get("schemaVersion") != 2
+            or not isinstance(index.get("manifests"), list)
+        ):
+            raise RuntimeError("build OCI archive index is malformed")
+
+        pending = list(index["manifests"])
+        expanded: set[str] = set()
+        manifests: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        while pending:
+            descriptor = pending.pop()
+            member_name, blob, descriptor_findings = _verified_oci_descriptor(
+                archive, descriptor, "manifest"
+            )
+            findings.extend(descriptor_findings)
+            if blob is None:
+                continue
+            allowed.add(member_name)
+            if member_name in expanded:
+                continue
+            expanded.add(member_name)
+            media_type = str(descriptor.get("mediaType") or "")
+            document = json.loads(blob)
+            if not isinstance(document, dict):
+                raise RuntimeError("build OCI manifest is not an object")
+            if media_type in OCI_INDEX_MEDIA_TYPES:
+                children = document.get("manifests")
+                if not isinstance(children, list):
+                    raise RuntimeError("build OCI nested index is malformed")
+                pending.extend(children)
+            elif media_type in OCI_MANIFEST_MEDIA_TYPES:
+                manifests.append((descriptor, document))
+            else:
+                raise RuntimeError("build OCI root has unsupported media type")
+
+        runtime = [
+            item
+            for item in manifests
+            if item[0].get("platform") == {"architecture": "amd64", "os": "linux"}
+            and str((item[1].get("config") or {}).get("mediaType") or "")
+            == "application/vnd.oci.image.config.v1+json"
+        ]
+        attestations = [
+            item
+            for item in manifests
+            if (item[0].get("annotations") or {}).get(
+                "vnd.docker.reference.type"
+            )
+            == "attestation-manifest"
+        ]
+        if len(runtime) != 1 or len(attestations) != 1 or len(manifests) != 2:
+            findings.append(
+                walker.Finding(
+                    "build_attestation_graph",
+                    "<build-oci-index>",
+                    "OCI export must contain exactly one runtime and one "
+                    "attestation manifest",
+                )
+            )
+        else:
+            runtime_descriptor, runtime_manifest = runtime[0]
+            attestation_descriptor, attestation_manifest = attestations[0]
+            runtime_digest = str(runtime_descriptor.get("digest") or "")
+            annotations = attestation_descriptor.get("annotations") or {}
+            if annotations.get("vnd.docker.reference.digest") != runtime_digest:
+                findings.append(
+                    walker.Finding(
+                        "build_attestation_graph",
+                        "<build-oci-index>",
+                        "attestation descriptor does not bind the runtime manifest",
+                    )
+                )
+
+            runtime_config = runtime_manifest.get("config")
+            config_name, config_blob, config_findings = _verified_oci_descriptor(
+                archive, runtime_config, "config"
+            )
+            findings.extend(config_findings)
+            if config_blob is not None:
+                allowed.add(config_name)
+            if (
+                str((runtime_config or {}).get("digest") or "")
+                != expected_config_digest
+            ):
+                findings.append(
+                    walker.Finding(
+                        "build_attestation_graph",
+                        "<build-oci-runtime-config>",
+                        "OCI export config does not match Buildx metadata",
+                    )
+                )
+            runtime_layers = runtime_manifest.get("layers")
+            if not isinstance(runtime_layers, list) or not runtime_layers:
+                raise RuntimeError("build OCI runtime layer set is incomplete")
+            for layer in runtime_layers:
+                member_name, blob, descriptor_findings = _verified_oci_descriptor(
+                    archive, layer, "layer"
+                )
+                findings.extend(descriptor_findings)
+                if blob is not None:
+                    allowed.add(member_name)
+
+            attestation_config = attestation_manifest.get("config")
+            config_name, config_blob, config_findings = _verified_oci_descriptor(
+                archive, attestation_config, "config"
+            )
+            findings.extend(config_findings)
+            if config_blob is not None:
+                allowed.add(config_name)
+                if json.loads(config_blob) != {}:
+                    findings.append(
+                        walker.Finding(
+                            "build_attestation_graph",
+                            config_name,
+                            "attestation config is not the empty OCI config",
+                        )
+                    )
+            if str((attestation_config or {}).get("mediaType") or "") != (
+                "application/vnd.oci.empty.v1+json"
+            ):
+                findings.append(
+                    walker.Finding(
+                        "build_attestation_graph",
+                        "<build-oci-attestation-config>",
+                        "attestation config media type is invalid",
+                    )
+                )
+            layers = attestation_manifest.get("layers")
+            if not isinstance(layers, list):
+                raise RuntimeError("build OCI attestation layer set is malformed")
+            predicate_types: set[str] = set()
+            for layer in layers:
+                member_name, blob, descriptor_findings = _verified_oci_descriptor(
+                    archive, layer, "layer"
+                )
+                findings.extend(descriptor_findings)
+                if blob is None:
+                    continue
+                allowed.add(member_name)
+                predicate_type = str(
+                    (layer.get("annotations") or {}).get("in-toto.io/predicate-type")
+                    or ""
+                )
+                statement = json.loads(blob)
+                subjects = (
+                    statement.get("subject")
+                    if isinstance(statement, dict)
+                    else None
+                )
+                bound = isinstance(subjects, list) and any(
+                    isinstance(subject, dict)
+                    and (subject.get("digest") or {}).get("sha256")
+                    == runtime_digest.removeprefix("sha256:")
+                    for subject in subjects
+                )
+                if (
+                    str(layer.get("mediaType") or "")
+                    != "application/vnd.in-toto+json"
+                    or not isinstance(statement, dict)
+                    or statement.get("_type")
+                    not in {
+                        "https://in-toto.io/Statement/v0.1",
+                        "https://in-toto.io/Statement/v1",
+                    }
+                    or statement.get("predicateType") != predicate_type
+                    or not bound
+                ):
+                    findings.append(
+                        walker.Finding(
+                            "build_attestation_graph",
+                            member_name,
+                            "attestation statement does not bind the runtime manifest",
+                        )
+                    )
+                predicate_types.add(predicate_type)
+                findings.extend(
+                    _opaque_content_findings(
+                        member_name=member_name,
+                        blob=blob,
+                        runtime_payload_hashes=_runtime_payload_hashes(),
+                        description="a build attestation",
+                    )
+                )
+            if predicate_types != REQUIRED_BUILD_ATTESTATION_PREDICATE_TYPES:
+                findings.append(
+                    walker.Finding(
+                        "build_attestation_graph",
+                        "<build-oci-attestations>",
+                        "required provenance and SPDX attestations are not exact",
+                    )
+                )
+
+    for _member, normalized, descriptor in records:
+        if normalized in seen_outer:
+            findings.append(
+                walker.Finding(
+                    "duplicate_outer_archive_member",
+                    normalized,
+                    "build OCI archive contains a duplicate normalized path",
+                )
+            )
+        seen_outer.add(normalized)
+        if descriptor[0] != "directory" and normalized not in allowed:
+            findings.append(
+                walker.Finding(
+                    "unaccounted_outer_archive_member",
+                    normalized,
+                    "build OCI archive member is not bound by its index",
+                )
+            )
+    return findings, {
+        "archive_sha256": identity.sha256,
+        "archive_size_bytes": identity.size_bytes,
+        "config_digest": expected_config_digest,
+        "canonical_build_metadata_sha256": hashlib.sha256(
+            canonical_metadata
+        ).hexdigest(),
+        "predicate_types": sorted(REQUIRED_BUILD_ATTESTATION_PREDICATE_TYPES),
+    }
+
+
 def _docker_save_config_digest(path: Path) -> str:
     with tarfile.open(path, "r:*") as archive:
         manifest_stream = archive.extractfile(archive.getmember("manifest.json"))
@@ -1397,25 +1656,75 @@ def scan(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", nargs="?")
+    parser.add_argument("--verify-build-oci", type=Path)
     parser.add_argument("--docker-save", type=Path)
     parser.add_argument("--exported-rootfs", type=Path)
     parser.add_argument("--rootfs-tar", type=Path)
     parser.add_argument("--config-json", type=Path)
     parser.add_argument("--build-metadata", type=Path, required=True)
-    parser.add_argument("--base-provenance", type=Path, required=True)
-    parser.add_argument("--expected-image-inventory-sha256", required=True)
-    parser.add_argument("--expected-config-digest", required=True)
-    parser.add_argument("--expected-canonical-build-metadata-sha256", required=True)
-    parser.add_argument("--expected-base-provenance-sha256", required=True)
+    parser.add_argument("--base-provenance", type=Path)
+    parser.add_argument("--expected-image-inventory-sha256")
+    parser.add_argument("--expected-config-digest")
+    parser.add_argument("--expected-canonical-build-metadata-sha256")
+    parser.add_argument("--expected-base-provenance-sha256")
     parser.add_argument("--image-inventory-output", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
+    if args.verify_build_oci:
+        if any(
+            item
+            for item in (
+                args.image,
+                args.docker_save,
+                args.exported_rootfs,
+                args.rootfs_tar,
+                args.config_json,
+                args.base_provenance,
+                args.expected_image_inventory_sha256,
+                args.expected_config_digest,
+                args.expected_canonical_build_metadata_sha256,
+                args.expected_base_provenance_sha256,
+                args.image_inventory_output,
+            )
+        ):
+            parser.error("--verify-build-oci is a separate validation mode")
+        try:
+            metadata = json.loads(args.build_metadata.read_bytes())
+            findings, evidence = _build_oci_attestation_findings(
+                args.verify_build_oci,
+                metadata,
+            )
+        except Exception as exc:  # noqa: BLE001 - unreadable evidence fails closed
+            print(json.dumps({"status": "error", "error": str(exc)}, sort_keys=True))
+            return 2
+        result = {
+            "format": "npa_libero_build_oci_attestation_scan_v1",
+            "status": "pass" if not findings else "fail",
+            **evidence,
+            "findings": [asdict(item) for item in findings],
+        }
+        rendered = json.dumps(result, indent=2, sort_keys=True) + "\n"
+        if args.output:
+            args.output.write_text(rendered, encoding="utf-8")
+        print(rendered, end="")
+        return 0 if not findings else 1
     if sum(bool(item) for item in (args.image, args.docker_save, args.rootfs_tar)) != 1:
         parser.error("provide exactly one IMAGE, --docker-save, or --rootfs-tar")
     if args.config_json and not args.rootfs_tar:
         parser.error("--config-json is valid only with --rootfs-tar")
     if bool(args.exported_rootfs) != bool(args.docker_save):
         parser.error("--docker-save and --exported-rootfs are required together")
+    if any(
+        item is None
+        for item in (
+            args.base_provenance,
+            args.expected_image_inventory_sha256,
+            args.expected_config_digest,
+            args.expected_canonical_build_metadata_sha256,
+            args.expected_base_provenance_sha256,
+        )
+    ):
+        parser.error("complete lineage inputs are required for an image scan")
     try:
         metadata = json.loads(args.build_metadata.read_bytes())
         base_provenance_bytes = args.base_provenance.read_bytes()

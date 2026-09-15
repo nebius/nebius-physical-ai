@@ -250,7 +250,9 @@ def _load_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def _read_private_regular_bytes(path: Path, *, limit: int) -> bytes:
+def _read_private_regular_bytes(
+    path: Path, *, limit: int, input_name: str
+) -> bytes:
     """Read one stable owner-private file through a no-follow descriptor."""
 
     try:
@@ -258,19 +260,20 @@ def _read_private_regular_bytes(path: Path, *, limit: int) -> bytes:
     except FileNotFoundError as exc:
         raise CustomerAcceptanceRequired("authorization_missing") from exc
     except OSError as exc:
-        raise BootstrapRefusal(
-            "customer authorization file is unavailable or invalid"
-        ) from exc
+        raise BootstrapRefusal(f"{input_name} is unavailable or invalid") from exc
     try:
         return _read_private_regular_descriptor(
-            descriptor, limit=limit, owner_uid=os.geteuid()
+            descriptor,
+            limit=limit,
+            owner_uid=os.geteuid(),
+            input_name=input_name,
         )
     finally:
         os.close(descriptor)
 
 
 def _read_private_regular_descriptor(
-    descriptor: int, *, limit: int, owner_uid: int
+    descriptor: int, *, limit: int, owner_uid: int, input_name: str
 ) -> bytes:
     """Read stable private bytes without changing an inherited descriptor offset."""
 
@@ -279,7 +282,7 @@ def _read_private_regular_descriptor(
         payload = os.pread(descriptor, limit + 1, 0)
         after = os.fstat(descriptor)
     except OSError as exc:
-        raise BootstrapRefusal("customer authorization descriptor is unavailable") from exc
+        raise BootstrapRefusal(f"{input_name} descriptor is unavailable") from exc
     if (
         not stat.S_ISREG(before.st_mode)
         or before.st_uid != owner_uid
@@ -290,9 +293,7 @@ def _read_private_regular_descriptor(
         or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
         != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
     ):
-        raise BootstrapRefusal(
-            "customer authorization file is not stable owner-private"
-        )
+        raise BootstrapRefusal(f"{input_name} is not stable owner-private")
     return payload
 
 
@@ -465,6 +466,12 @@ def _validate_manifest(
         names.add(name)
         filenames.add(filename)
         _validate_download_url(str(item.get("url") or ""))
+        version = item.get("version")
+        if (
+            not isinstance(version, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+!-]*", version) is None
+        ):
+            raise BootstrapRefusal(f"invalid runtime artifact version for {name}")
         if not _is_hex(item.get("sha256"), 64):
             raise BootstrapRefusal(f"invalid runtime artifact hash for {name}")
         size_bytes = item.get("size_bytes")
@@ -1321,7 +1328,11 @@ def _validate_customer_authorization(
     if not _is_hex(expected_sha256, 64):
         raise CustomerAcceptanceRequired("authorization_missing")
     try:
-        authorization_bytes = _read_private_regular_bytes(path, limit=1024 * 1024)
+        authorization_bytes = _read_private_regular_bytes(
+            path,
+            limit=1024 * 1024,
+            input_name="customer authorization file",
+        )
     except CustomerAcceptanceRequired:
         raise
     except BootstrapRefusal as exc:
@@ -2345,7 +2356,10 @@ def execute(
         raise BootstrapRefusal("runtime supervisor account is unavailable") from exc
     try:
         authorization_bytes = _read_private_regular_descriptor(
-            authorization_descriptor, limit=1024 * 1024, owner_uid=supervisor_uid
+            authorization_descriptor,
+            limit=1024 * 1024,
+            owner_uid=supervisor_uid,
+            input_name="customer authorization file",
         )
     except BootstrapRefusal as exc:
         raise CustomerAcceptanceRequired("authorization_file_invalid") from exc
@@ -2954,7 +2968,10 @@ def execute_and_upload() -> int:
             raise CustomerAcceptanceRequired("authorization_missing_at_execution") from exc
         try:
             authorization_bytes = _read_private_regular_descriptor(
-                authorization_fd, limit=1024 * 1024, owner_uid=os.getuid()
+                authorization_fd,
+                limit=1024 * 1024,
+                owner_uid=os.getuid(),
+                input_name="customer authorization file",
             )
         except BootstrapRefusal as exc:
             raise CustomerAcceptanceRequired("authorization_file_invalid") from exc

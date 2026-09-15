@@ -168,6 +168,8 @@ def test_public_base_pull_authentication_precedes_local_build() -> None:
     assert steps[auth]["uses"] == (
         "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9"
     )
+    assert names.count("Authenticate immutable public base pulls") == 1
+    assert "Authenticate immutable LIBERO base pulls" not in names
     assert auth < build < push
 
 
@@ -254,7 +256,7 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     prepush = text.index("Prove destination cannot expose unvalidated tagged bytes")
     push = text.index("Push only after every pre-publication gate passes")
     assert prepush < push
-    assert "Private destination contains tagged versions" in text[prepush:push]
+    assert "Empty private destination unexpectedly contains tagged versions" in text[prepush:push]
     assert "tagged_count" in text[prepush:push]
     steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
     attestations = {
@@ -336,7 +338,17 @@ def test_failed_development_cleanup_is_exact_and_refuses_shared_digest() -> None
         for step in failed_cleanup["steps"]
         if str(step.get("name") or "").startswith("Remove an exact run-owned")
     )
-    assert 'gh api --method DELETE "$package_api"' not in script
+    assert 'gh api --method DELETE "$package_api"' in script
+    assert 'gh api --method PATCH "$package_api" -f visibility=private' in script
+    assert "unpublished candidate graph contains unrelated versions" in script
+    assert "candidate package absence is unverified" in script
+    package_delete = script.index('gh api --method DELETE "$package_api"')
+    private_recheck = script.rindex(
+        'test "$(gh api "$package_api" --jq .visibility)" = private',
+        0,
+        package_delete,
+    )
+    assert private_recheck < package_delete
     assert 'gh api -i "$package_api"' in script
     assert "grep -q '^HTTP/.* 404 '" in script
     assert "Failed-build package absence is unverified" in script

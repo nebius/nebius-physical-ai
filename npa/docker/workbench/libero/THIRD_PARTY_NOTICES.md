@@ -4,6 +4,11 @@ The neutral image contains no LIBERO, dataset, model, MuJoCo, PyTorch, CUDA,
 cuDNN, NCCL, NVIDIA-wheel, robomimic, or render-asset payload. The following
 notices cover only bytes intended for the neutral image.
 
+The OCI license label uses
+`Apache-2.0 AND LicenseRef-NPA-LIBERO-Neutral-Third-Party`: Apache-2.0 covers
+the NPA-authored bytes, while this file and the installed Debian copyright
+records are authoritative for the separately licensed base and package bytes.
+
 - `python:3.10-slim-bookworm`, linux/amd64 manifest
   `sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496`,
   is produced by the Docker Official Images Python project. CPython 3.10.21 is

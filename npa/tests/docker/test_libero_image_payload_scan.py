@@ -78,11 +78,17 @@ def _config(module, *, user: str = "ubuntu") -> dict[str, object]:
             "Entrypoint": ["/usr/local/bin/npa-libero-entrypoint"],
             "Labels": {
                 "org.opencontainers.image.revision": REVISION,
+                "org.opencontainers.image.licenses": (
+                    "Apache-2.0 AND LicenseRef-NPA-LIBERO-Neutral-Third-Party"
+                ),
                 "org.nebius.npa.redistribution": "public-neutral-bootstrap",
                 "org.nebius.npa.validation-status": "quarantined-unvalidated",
                 "org.nebius.npa.base-manifest": module.BASE_MANIFEST,
                 "org.nebius.npa.base-rootfs-material": module.BASE_ROOTFS_MATERIAL,
                 "org.nebius.npa.skypilot-bootstrap-contract": module.BOOTSTRAP_CONTRACT,
+                "org.nebius.npa.third-party-notices": (
+                    "/opt/npa/libero/THIRD_PARTY_NOTICES.md"
+                ),
             },
         },
         "history": [{"created_by": "COPY neutral bootstrap files /opt/npa/libero/"}],
@@ -195,6 +201,134 @@ def test_scanner_accepts_only_neutral_bytes_and_independent_lineage(tmp_path) ->
     )
 
     assert _scan(module, [first, second], _config(module), _metadata(module)) == []
+
+
+def _build_oci_archive(
+    path: Path, *, mutation: str = ""
+) -> tuple[Path, str]:
+    config = b"{}"
+    runtime_layer = b"runtime layer fixture"
+    config_descriptor = _descriptor(config, "application/vnd.oci.image.config.v1+json")
+    runtime_layer_descriptor = _descriptor(
+        runtime_layer, "application/vnd.oci.image.layer.v1.tar"
+    )
+    runtime_manifest = json.dumps(
+        {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "config": config_descriptor,
+            "layers": [runtime_layer_descriptor],
+        },
+        sort_keys=True,
+    ).encode()
+    runtime_descriptor = _descriptor(
+        runtime_manifest, "application/vnd.oci.image.manifest.v1+json"
+    )
+    runtime_descriptor["platform"] = {"architecture": "amd64", "os": "linux"}
+    runtime_digest = str(runtime_descriptor["digest"])
+    statements = []
+    for predicate_type in (
+        "https://slsa.dev/provenance/v1",
+        "https://spdx.dev/Document",
+    ):
+        if mutation == "missing-sbom" and predicate_type == "https://spdx.dev/Document":
+            continue
+        subject_digest = "0" * 64 if mutation == "subject" else runtime_digest[7:]
+        statement = json.dumps(
+            {
+                "_type": "https://in-toto.io/Statement/v1",
+                "subject": [{"name": "fixture", "digest": {"sha256": subject_digest}}],
+                "predicateType": predicate_type,
+                "predicate": {},
+            },
+            sort_keys=True,
+        ).encode()
+        descriptor = _descriptor(statement, "application/vnd.in-toto+json")
+        descriptor["annotations"] = {"in-toto.io/predicate-type": predicate_type}
+        statements.append((descriptor, statement))
+    empty_config = b"{}"
+    empty_descriptor = _descriptor(empty_config, "application/vnd.oci.empty.v1+json")
+    attestation_manifest = json.dumps(
+        {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "config": empty_descriptor,
+            "layers": [item[0] for item in statements],
+        },
+        sort_keys=True,
+    ).encode()
+    attestation_descriptor = _descriptor(
+        attestation_manifest, "application/vnd.oci.image.manifest.v1+json"
+    )
+    attestation_descriptor["platform"] = {"architecture": "unknown", "os": "unknown"}
+    attestation_descriptor["annotations"] = {
+        "vnd.docker.reference.digest": runtime_digest,
+        "vnd.docker.reference.type": "attestation-manifest",
+    }
+    index = json.dumps(
+        {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "manifests": [runtime_descriptor, attestation_descriptor],
+        },
+        sort_keys=True,
+    ).encode()
+    members = {
+        "oci-layout": b'{"imageLayoutVersion":"1.0.0"}',
+        "index.json": index,
+        f"blobs/sha256/{str(config_descriptor['digest'])[7:]}": config,
+        f"blobs/sha256/{str(runtime_layer_descriptor['digest'])[7:]}": runtime_layer,
+        f"blobs/sha256/{runtime_digest[7:]}": runtime_manifest,
+        f"blobs/sha256/{str(empty_descriptor['digest'])[7:]}": empty_config,
+        f"blobs/sha256/{str(attestation_descriptor['digest'])[7:]}": (
+            attestation_manifest
+        ),
+    }
+    for descriptor, statement in statements:
+        members[f"blobs/sha256/{str(descriptor['digest'])[7:]}"] = statement
+    return _outer_archive(path, members), str(config_descriptor["digest"])
+
+
+def test_build_oci_archive_binds_required_attestations_to_runtime(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    archive, config_digest = _build_oci_archive(tmp_path / "build.oci.tar")
+    metadata = _metadata(module)
+    metadata["containerimage.config.digest"] = config_digest
+
+    findings, evidence = module._build_oci_attestation_findings(
+        archive, metadata
+    )
+
+    assert findings == []
+    assert evidence["config_digest"] == config_digest
+    assert evidence["predicate_types"] == [
+        "https://slsa.dev/provenance/v1",
+        "https://spdx.dev/Document",
+    ]
+
+
+@pytest.mark.parametrize("mutation", ["missing-sbom", "subject", "config"])
+def test_build_oci_archive_refuses_incomplete_or_unbound_attestations(
+    tmp_path: Path, mutation: str
+) -> None:
+    module = _load_module()
+    archive, config_digest = _build_oci_archive(
+        tmp_path / "build.oci.tar",
+        mutation="" if mutation == "config" else mutation,
+    )
+    metadata = _metadata(module)
+    metadata["containerimage.config.digest"] = (
+        "sha256:" + "0" * 64 if mutation == "config" else config_digest
+    )
+
+    findings, _evidence = module._build_oci_attestation_findings(
+        archive,
+        metadata,
+    )
+
+    assert any(item.kind == "build_attestation_graph" for item in findings)
 
 
 def test_scanner_rejects_unaccepted_build_and_base_lineage_bytes(tmp_path) -> None:
