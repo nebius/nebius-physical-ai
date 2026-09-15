@@ -25,7 +25,6 @@ import select
 import shutil
 import signal
 import stat
-import subprocess
 import sys
 import tarfile
 import tempfile
@@ -57,6 +56,29 @@ REQUIREMENT = re.compile(
 MAX_ARTIFACTS = 256
 MAX_ARCHIVE_MEMBERS = 100_000
 MAX_RUNTIME_ENTRIES = 200_000
+PR_GET_DUMPABLE = 3
+PR_SET_DUMPABLE = 4
+PR_SET_NO_NEW_PRIVS = 38
+PR_SET_SECCOMP = 22
+PR_SET_CHILD_SUBREAPER = 36
+PR_GET_CHILD_SUBREAPER = 37
+SECCOMP_MODE_FILTER = 2
+SECCOMP_RET_ERRNO = 0x00050000
+SECCOMP_RET_ALLOW = 0x7FFF0000
+AUDIT_ARCH_X86_64 = 0xC000003E
+SYS_SOCKET_X86_64 = 41
+AF_INET = 2
+AF_INET6 = 10
+RUNTIME_AUTHORITY_ENV = frozenset(
+    {
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "KUBERNETES_SERVICE_HOST",
+        "KUBERNETES_SERVICE_PORT",
+        "NEBIUS_S3_ENDPOINT",
+        "NPA_S3_BUCKET",
+        "S3_OUTPUT_PREFIX",
+    }
+)
 INOTIFY_CHANGE_MASK = (
     0x00000002  # IN_MODIFY
     | 0x00000004  # IN_ATTRIB
@@ -102,6 +124,19 @@ class RuntimeLock:
     artifacts: tuple[Artifact, ...]
     requirements_raw: bytes
     requirements_sha256: str
+
+
+class _SockFilter(ctypes.Structure):
+    _fields_ = [
+        ("code", ctypes.c_ushort),
+        ("jt", ctypes.c_ubyte),
+        ("jf", ctypes.c_ubyte),
+        ("k", ctypes.c_uint32),
+    ]
+
+
+class _SockFprog(ctypes.Structure):
+    _fields_ = [("len", ctypes.c_ushort), ("filter", ctypes.POINTER(_SockFilter))]
 
 
 def _refuse(message: str) -> NoReturn:
@@ -618,7 +653,7 @@ def _install_runtime(stage: Path, requirements: Path) -> None:
         venv.EnvBuilder(with_pip=True, clear=False, symlinks=False).create(runtime)
         _remove_venv_compatibility_link(runtime)
         python = runtime / "bin/python"
-        subprocess.run(
+        if _execute_isolated_command(
             [
                 str(python),
                 "-I",
@@ -633,10 +668,10 @@ def _install_runtime(stage: Path, requirements: Path) -> None:
                 str(wheelhouse),
                 "--requirement",
                 str(requirements),
-            ],
-            check=True,
-        )
-        subprocess.run(
+            ]
+        ) != 0:
+            _refuse("offline wheel installation failed")
+        if _execute_isolated_command(
             [
                 str(python),
                 "-I",
@@ -648,10 +683,10 @@ def _install_runtime(stage: Path, requirements: Path) -> None:
                 "--no-deps",
                 "--no-build-isolation",
                 str(source),
-            ],
-            check=True,
-        )
-    except (OSError, subprocess.CalledProcessError) as error:
+            ]
+        ) != 0:
+            _refuse("offline source installation failed")
+    except OSError as error:
         _refuse(f"offline runtime installation failed: {error}")
 
 
@@ -1267,6 +1302,127 @@ def _terminate_runtime_child(process_id: int) -> None:
             return
 
 
+def _prctl(option: int, argument: object = 0, argument2: object = 0) -> int:
+    libc = ctypes.CDLL(None, use_errno=True)
+    result = libc.prctl(option, argument, argument2, 0, 0)
+    if result < 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+    return result
+
+
+def _authority_free_environment() -> dict[str, str]:
+    """Remove storage and workload-identity authority from untrusted code."""
+
+    blocked_prefixes = ("AWS_", "AZURE_", "GOOGLE_", "NEBIUS_")
+    return {
+        name: value
+        for name, value in os.environ.items()
+        if name not in RUNTIME_AUTHORITY_ENV and not name.startswith(blocked_prefixes)
+    }
+
+
+def _runtime_environment(directory_fd: int) -> dict[str, str]:
+    return {
+        **_authority_free_environment(),
+        "NPA_GYMNASIUM_RUNTIME_ROOT": f"/proc/self/fd/{directory_fd}",
+    }
+
+
+def _install_runtime_network_filter() -> None:
+    """Deny IPv4/IPv6 sockets while retaining local EGL/Unix IPC."""
+
+    if os.uname().machine != "x86_64":
+        _refuse("runtime network isolation supports only the reviewed amd64 target")
+    filters = (_SockFilter * 9)(
+        _SockFilter(0x20, 0, 0, 4),
+        _SockFilter(0x15, 0, 6, AUDIT_ARCH_X86_64),
+        _SockFilter(0x20, 0, 0, 0),
+        _SockFilter(0x15, 0, 3, SYS_SOCKET_X86_64),
+        _SockFilter(0x20, 0, 0, 16),
+        _SockFilter(0x15, 2, 0, AF_INET),
+        _SockFilter(0x15, 1, 0, AF_INET6),
+        _SockFilter(0x06, 0, 0, SECCOMP_RET_ALLOW),
+        _SockFilter(0x06, 0, 0, SECCOMP_RET_ERRNO | 1),
+    )
+    program = _SockFprog(len=len(filters), filter=filters)
+    _prctl(PR_SET_NO_NEW_PRIVS, 1)
+    _prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, ctypes.byref(program))
+
+
+def _runtime_children() -> set[int]:
+    """Return direct children adopted by this single-threaded supervisor."""
+
+    try:
+        raw = Path(f"/proc/self/task/{os.getpid()}/children").read_text(
+            encoding="ascii"
+        )
+    except OSError as error:
+        _refuse(f"runtime descendant accounting is unavailable: {error}")
+    try:
+        return {int(value) for value in raw.split()}
+    except ValueError as error:
+        _refuse(f"runtime descendant accounting is malformed: {error}")
+
+
+def _remove_runtime_descendants(baseline: set[int]) -> None:
+    survivors = _runtime_children() - baseline
+    if not survivors:
+        return
+    while survivors:
+        for process_id in survivors:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(process_id, signal.SIGKILL)
+        for process_id in survivors:
+            while True:
+                try:
+                    os.waitpid(process_id, 0)
+                    break
+                except InterruptedError:
+                    continue
+                except ChildProcessError:
+                    break
+        survivors = _runtime_children() - baseline
+    _refuse("runtime command left a surviving descendant")
+
+
+def _execute_isolated_command(command: list[str]) -> int:
+    """Run fetched installation code without authority or surviving children."""
+
+    previous_dumpable = _prctl(PR_GET_DUMPABLE)
+    previous_subreaper = ctypes.c_int()
+    _prctl(PR_GET_CHILD_SUBREAPER, ctypes.byref(previous_subreaper))
+    _prctl(PR_SET_DUMPABLE, 0)
+    _prctl(PR_SET_CHILD_SUBREAPER, 1)
+    baseline = _runtime_children()
+    try:
+        process_id = os.fork()
+        if process_id == 0:
+            try:
+                os.setsid()
+                _install_runtime_network_filter()
+                os.execve(command[0], command, _authority_free_environment())
+            except (BootstrapRefusal, OSError) as error:
+                os.write(2, f"isolated runtime install failed: {error}\n".encode())
+                os._exit(65)
+        while True:
+            try:
+                _finished, status = os.waitpid(process_id, 0)
+                break
+            except InterruptedError:
+                continue
+        _remove_runtime_descendants(baseline)
+        return os.waitstatus_to_exitcode(status)
+    except BaseException:
+        if "process_id" in locals():
+            _terminate_runtime_child(process_id)
+        _remove_runtime_descendants(baseline)
+        raise
+    finally:
+        _prctl(PR_SET_CHILD_SUBREAPER, previous_subreaper.value)
+        _prctl(PR_SET_DUMPABLE, previous_dumpable)
+
+
 def _wait_for_runtime_child(process_id: int, monitor_fd: int) -> int:
     while True:
         try:
@@ -1290,11 +1446,14 @@ def _wait_for_runtime_child(process_id: int, monitor_fd: int) -> int:
 def _execute_validated_runtime(
     directory_fd: int, python_fd: int, monitor_fd: int, command: list[str]
 ) -> int:
-    environment = {
-        **os.environ,
-        "NPA_GYMNASIUM_RUNTIME_ROOT": f"/proc/self/fd/{directory_fd}",
-    }
+    environment = _runtime_environment(directory_fd)
     python_name = f"/proc/self/fd/{directory_fd}/runtime/bin/python"
+    previous_dumpable = _prctl(PR_GET_DUMPABLE)
+    previous_subreaper = ctypes.c_int()
+    _prctl(PR_GET_CHILD_SUBREAPER, ctypes.byref(previous_subreaper))
+    _prctl(PR_SET_DUMPABLE, 0)
+    _prctl(PR_SET_CHILD_SUBREAPER, 1)
+    baseline = _runtime_children()
     try:
         process_id = os.fork()
     except OSError as error:
@@ -1305,17 +1464,24 @@ def _execute_validated_runtime(
     if process_id == 0:
         os.close(monitor_fd)
         try:
+            os.setsid()
+            _install_runtime_network_filter()
             os.execve(python_fd, [python_name, "-I", "-B", *command], environment)
-        except OSError as error:
+        except (BootstrapRefusal, OSError) as error:
             message = f"descriptor-bound runtime execution failed: {error}\n"
             os.write(2, message.encode())
             os._exit(65)
     try:
-        return _wait_for_runtime_child(process_id, monitor_fd)
+        status = _wait_for_runtime_child(process_id, monitor_fd)
+        _remove_runtime_descendants(baseline)
+        return status
     except BaseException:
         _terminate_runtime_child(process_id)
+        _remove_runtime_descendants(baseline)
         raise
     finally:
+        _prctl(PR_SET_CHILD_SUBREAPER, previous_subreaper.value)
+        _prctl(PR_SET_DUMPABLE, previous_dumpable)
         os.close(monitor_fd)
         os.close(python_fd)
         os.close(directory_fd)

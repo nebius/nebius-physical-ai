@@ -151,8 +151,13 @@ def test_workflow_and_profile_never_route_to_b200() -> None:
     assert "RUNTIME_PYTHON" not in profile
     assert "/usr/bin/python3 -I -B" in profile
     assert "/usr/local/bin/npa-gymnasium-entrypoint prepare-runtime" in profile
-    assert "/bin/bash -lc \"${BYOF_SMOKE_COMMAND}\"" in profile
-    assert "-u AWS_SECRET_ACCESS_KEY" in profile
+    assert "/bin/bash -lc \"${BYOF_SMOKE_COMMAND}\"" not in profile
+    assert '["/usr/local/bin/npa-gymnasium-entrypoint", "run-smoke"]' in profile
+    assert "-u AWS_SECRET_ACCESS_KEY" not in profile
+    assert 'blocked_prefixes = ("AWS_", "AZURE_", "GOOGLE_", "NEBIUS_")' in profile
+    assert "name not in blocked_names" in profile
+    assert "not name.startswith(blocked_prefixes)" in profile
+    assert "env=runtime_environment" in profile
     assert "npa_pod_image_receipt.json" in profile
     assert 'IfNoneMatch="*"' in profile
     assert 'upload_paths = (artifact_path, root / "npa_byof_summary.json")' in profile
