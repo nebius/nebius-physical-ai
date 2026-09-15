@@ -2,8 +2,8 @@
 
 [Workbench docs](../workbench/README.md)
 
-**Assessment: 2026-09-14. Status: proposed integration; no new GPU validation.**
-Repository baseline: `8af94f40e` on `origin/main`.
+**Assessment: 2026-09-14. Status: factory integration proposed.**
+Repository baseline: `d743f1853` on `origin/main`.
 
 ## Recommendation
 
@@ -12,21 +12,17 @@ and Physical AI Data Factory (PAIDF) paths. The workbench has useful pieces of
 a model factory, but it does not yet demonstrate a complete Cosmos 3
 generate → post-train → evaluate → improve cycle.
 
-The reference is AWS's
-[Build a Physical AI model factory with NVIDIA Cosmos 3 on SageMaker HyperPod](https://aws.amazon.com/blogs/machine-learning/build-a-physical-ai-model-factory-with-nvidia-cosmos-3-on-sagemaker-hyperpod/).
-It brings generation, distributed post-training, and policy evaluation onto a
-persistent cluster with shared storage. Its operational emphasis is useful
-progress per reserved GPU-hour, including checkpoint and recovery overhead.
-That is a good comparison target for NPA. This assessment proposes a Nebius
-implementation; it does not transfer AWS performance or resilience claims to
-our platform.
+The target is generation, distributed post-training, and policy evaluation on
+a persistent cluster with shared storage. Measure useful progress per reserved
+GPU-hour, including checkpoint and recovery overhead. Qualify that complete
+path on Nebius before advertising a model factory.
 
 Start by qualifying **native Cosmos3-Nano vision SFT** (supervised fine-tuning)
 on an eight-GPU H200 or B200 training node, with the exact image/GPU combination
 validated before use. That connects most directly to our existing video
 generation work. Then qualify a **native LIBERO action-policy recipe and its
-matching simulator** to prove a complete policy loop. Add DROID for the
-article's robot-policy comparison and Super LoRA for teacher adaptation.
+matching simulator** to prove a complete policy loop. Add DROID for another
+robot embodiment and Super LoRA for teacher adaptation.
 These are proposed qualification configurations, not NPA capacity guarantees.
 
 The critical work is the training runtime, trustworthy training datasets,
@@ -46,36 +42,27 @@ evidence is identified separately; it does not qualify a new image or workload.
 | Cosmos3-Nano SFT and Super LoRA | The [post-training skill](../../skills/workflows/cosmos3-post-training/SKILL.md) explicitly identifies these as planning work. The [Cosmos3 image](../../npa/docker/workbench/cosmos3/Dockerfile) installs an inference environment and sets `COSMOS_TRAINING=0`. | Qualify a training environment, native recipes, distributed execution, real DCP save/resume, and export. Existing `cosmos train` commands do not prove Cosmos3 SFT support. |
 | Cosmos policy evaluation | [Cosmos checkpoint evaluation](../workbench/cosmos3-b200-checkpoint-evaluation-20260814.md) records 72 generated still images. Other workbench tools have policy evaluators. | Implement and validate a Cosmos action-policy server/client pair against the exact trained checkpoint and embodiment. Still-image evaluation and a generic LeRobot evaluator do not prove this integration. |
 | Persistent compute and storage | [GPU cluster setup](../../skills/tools/gpu-cluster-provisioning/SKILL.md), [model cache](../workbench/model-weight-cache.md), and [task pod configuration](../../npa/src/npa/orchestration/npa_workflow/skypilot_render.py) provide reusable infrastructure and volume hooks. | Qualify a separate shared training workspace, cross-node NCCL, data loading, and checkpoint I/O for Cosmos. A weight cache does not define a training corpus or checkpoint protocol. |
-| Recovery | The [workflow runtime](../../npa/src/npa/orchestration/npa_workflow/runtime.py) persists stage attempts and supports resume. The [Ray Train reference](../../npa/workflows/workbench/ray-train-synthetic/README.md) exercises synthetic DDP optimization and optimizer recovery. | Demonstrate Cosmos DCP recovery, then node replacement and gang recovery. Neither existing mechanism establishes HyperPod-equivalent Cosmos recovery. |
+| Recovery | The [workflow runtime](../../npa/src/npa/orchestration/npa_workflow/runtime.py) persists stage attempts and supports resume. The [Ray Train reference](../../npa/workflows/workbench/ray-train-synthetic/README.md) exercises synthetic DDP optimization and optimizer recovery. | Demonstrate Cosmos DCP recovery, then node replacement and gang recovery. Existing recovery evidence does not establish recovery for Cosmos training. |
 | Metrics and lineage | [Insights](../../skills/tools/insights/SKILL.md) records metrics, artifact relations, and comparisons; [schemas](../../npa/src/npa/workbench/insights/schemas.py) distinguish metric and cost records. | Collect factory allocation intervals, useful progress, rejected outputs, and recovery losses. Existing per-run metrics do not measure reserved-pool goodput. |
 | Failure-driven improvement | PAIDF can refine rejected generation attempts; workflow composition supports gates and loops. | Turn policy evaluation failures into versioned generation targets, retrain, and evaluate on an unchanged held-out task set. A generation retry is not a policy-learning round. |
 
-## Source verification changes the implementation plan
+## Native implementation sources
 
-The article's `3.test_cases/pytorch/cosmos3` links return 404 at assessment time.
-The sample moved to
-[`examples/use-cases/cosmos3`](https://github.com/awslabs/awsome-distributed-ai/tree/995d296aa8d1dce3cd907268dd84072c0951a426/examples/use-cases/cosmos3).
-Use that pinned source when reviewing the article's implementation.
-
-Three source versions matter:
+Pin the native framework and qualify its training dependencies independently
+of the existing generation image:
 
 | Source | Inspected revision | Consequence |
 | --- | --- | --- |
 | NPA generation image's Cosmos framework | `5e67049cd94acb667786f1e6dd0dab821cb90c97` | The image selects `cu130-torch213` for inference. The presence of training source files does not make its installed dependency set a training runtime. |
-| AWS sample | `995d296aa8d1dce3cd907268dd84072c0951a426` | Its [Dockerfile](https://github.com/awslabs/awsome-distributed-ai/blob/995d296aa8d1dce3cd907268dd84072c0951a426/examples/use-cases/cosmos3/Dockerfile) pins framework `5eee9ed574255f017b192161bfbb5a10253d65cf` and a Python 3.13 / `cu130-train` stack with AWS-specific networking. |
 | NVIDIA framework main | `2a8339d46a6e10e96f26c98509e6080d04ead490` | Current [training guidance](https://github.com/NVIDIA/cosmos-framework/blob/2a8339d46a6e10e96f26c98509e6080d04ead490/docs/training.md), [DROID post-training](https://github.com/NVIDIA/cosmos-framework/blob/2a8339d46a6e10e96f26c98509e6080d04ead490/docs/action_policy_droid_posttrain.md), and [LIBERO post-training/evaluation](https://github.com/NVIDIA/cosmos-framework/blob/2a8339d46a6e10e96f26c98509e6080d04ead490/docs/action_policy_libero_posttrain.md) provide native starting points. |
 
-Prefer the native recipe and matching dataset at the selected revision. The
-AWS sample's [public LeRobot adapter](https://github.com/awslabs/awsome-distributed-ai/tree/995d296aa8d1dce3cd907268dd84072c0951a426/examples/use-cases/cosmos3/src/cosmos3_aws/action)
-registers its own experiment; its data assumptions are different from NVIDIA's
-native DROID recipe. Do not substitute one for the other because both consume
-LeRobot v3. The current NVIDIA DROID guide documents a particular dataset
+Prefer the native recipe and matching dataset at the selected revision. Two
+datasets using LeRobot v3 need not have compatible actions or observations.
+The current NVIDIA DROID guide documents a particular dataset
 layout, proprioceptive state, and absolute joint-position actions. Its LIBERO
 guide uses different action coordinates and normalization.
 
-Likewise, the AWS [serving manifest](https://github.com/awslabs/awsome-distributed-ai/blob/995d296aa8d1dce3cd907268dd84072c0951a426/examples/use-cases/cosmos3/hyperpod-eks/serve-policy.yaml)
-invokes `action_policy_server_libero`. Treat it as a deployment example: a ready
-HTTP server does not establish compatibility with an arbitrary DROID checkpoint.
+A ready HTTP server does not establish compatibility with an arbitrary checkpoint.
 Use the matching native server, action statistics, camera transform, and
 simulation client. Current NVIDIA guidance includes both a
 [DROID/RoboLab path](https://github.com/NVIDIA/cosmos-framework/blob/2a8339d46a6e10e96f26c98509e6080d04ead490/docs/action_policy_droid_server.md)
@@ -122,8 +109,8 @@ recovery evidence for that application, not a replacement Cosmos trainer.
 
 Nebius documents [InfiniBand for Kubernetes GPU clusters](https://docs.nebius.com/kubernetes/gpu/clusters).
 Verify NCCL transport and collective bandwidth inside the selected training
-image on the actual nodes. Do not copy AWS EFA resources or networking plugin
-settings into a Nebius manifest. Resolve the framework, Python, Torch, CUDA,
+image on the actual nodes, using the Nebius-supported networking stack.
+Resolve the framework, Python, Torch, CUDA,
 NCCL, attention kernels, Transformer Engine, and video-decoder versions together.
 Measure both single-node execution and cross-node execution before scaling.
 
@@ -132,7 +119,7 @@ against its native engine; multiplying generation server replicas does not
 establish distributed training throughput. Prevent long-lived generation
 servers from occupying capacity needed by a training gang. Add queue quotas,
 priorities, and preemption only with a separately tested cluster policy; NPA
-does not establish HyperPod task-governance parity by launching Kubernetes jobs.
+needs explicit scheduling policy beyond launching Kubernetes jobs.
 
 ### Storage and checkpoint ownership
 
@@ -144,10 +131,10 @@ directories. Mount source datasets read-only in workers. Keep credentials and
 gated model caches within the authorized operator's access boundary.
 
 Treat the shared filesystem as a working tier, with explicit checksummed
-publication to Object Storage. It is not an automatic FSx/S3 data-repository
-association. Compare cold metadata access, cold bulk reads, warm epoch reads,
-and checkpoint writes on representative datasets. Do not infer FSx throughput
-from the existence of a shared mount. Local scratch can hold reconstructible
+publication to Object Storage. Verify publication explicitly. Compare cold
+metadata access, cold bulk reads, warm epoch reads, and checkpoint writes on
+representative datasets. Measure throughput rather than inferring it from the
+existence of a shared mount. Local scratch can hold reconstructible
 caches, but it cannot be the only copy of a resumable checkpoint.
 
 Publish a completed DCP (PyTorch Distributed Checkpoint) only after all required
@@ -223,10 +210,10 @@ the [packaging review](../../skills/atomic/solution-licensing/SKILL.md). Reuse t
 operator's bounded use declaration. Upstream model availability does not itself
 establish redistribution permission for a training image or dataset.
 
-## Measure comparability
+## Measure factory efficiency
 
-Use the article's whole-factory perspective, with measurements collected on
-Nebius. Extend Insights with explicit allocation and progress records; do not
+Measure the whole factory on Nebius. Extend Insights with explicit allocation
+and progress records; do not
 derive billed cost or reserved-pool efficiency from stage wall time alone.
 
 - **Reserved GPU-hours:** integrate the number of GPUs allocated to the factory
@@ -259,8 +246,7 @@ The first comparable release should publish reproducible image and recipe
 identities, a complete learning-round trace, matching checkpoint reload and
 simulation evidence, and measured failure recovery. Full operational parity
 additionally needs shared-pool scheduling/governance and node-lifecycle proof.
-The AWS article is the reference architecture; its reported measurements are
-not our benchmark results.
+Report measurements from the exact Nebius run and retain their workload scope.
 
 ## What can run today
 
@@ -271,9 +257,17 @@ qualified resident-generation path. Both require their documented images,
 access, and GPU prerequisites; retain the precise run's artifacts and follow
 their cleanup instructions.
 
-This change supplies the comparison and implementation plan. It introduces no
-training command, container, provisioned resource, or live-validation claim.
+This proposal supplies the implementation plan for training and policy evaluation.
+It introduces no training command or container.
 Complete the qualification slices above before publishing a runnable model
 factory guide. Preserve durable outputs, cancel exact owned jobs, and verify
 their terminal state before removing compute as described in
 [teardown](../teardown.md).
+
+## Design provenance
+
+The continuous generation/training/evaluation loop and emphasis on useful
+progress per reserved GPU-hour were informed by
+[Build a Physical AI model factory with NVIDIA Cosmos 3 on SageMaker HyperPod](https://aws.amazon.com/blogs/machine-learning/build-a-physical-ai-model-factory-with-nvidia-cosmos-3-on-sagemaker-hyperpod/).
+This credits the design source. Implementation references are the native NVIDIA
+recipes and existing NPA components above; no sample code was copied.

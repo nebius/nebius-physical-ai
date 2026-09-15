@@ -72,7 +72,7 @@ a reconstructed LeRobot dataset containing action/state records.
 
 For extending this data pipeline into training and policy evaluation, see the
 [Cosmos 3 model factory assessment](../../architecture/cosmos3-model-factory.md).
-It compares the AWS reference with current NPA capabilities and defines the
+It maps current NPA capabilities and defines the
 dataset, checkpoint, and simulation evidence needed for each proposed addition.
 
 The committed `example-bucket` and run-scoped fixture path are placeholders.
