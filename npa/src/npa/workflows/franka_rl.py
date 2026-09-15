@@ -12,6 +12,7 @@ import tempfile
 import uuid
 
 from npa.workflows.lerobot_transfer_data import materialize, publish, write_json
+from npa.workflows.franka_rl_embodiments import EMBODIMENTS, embodiment_profile
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -25,6 +26,7 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--eval-episodes", type=int, default=128)
     prepare.add_argument("--minimum-success", type=float, default=0.7)
     prepare.add_argument("--asset", choices=("spool", "hex_nut", "bottle"), default="spool")
+    prepare.add_argument("--embodiment", choices=EMBODIMENTS, default="franka")
     prepare.add_argument("--vlm-model", default="MiniMaxAI/MiniMax-M3")
     for stage in ("train", "evaluate", "visual-evaluate", "report"):
         command = commands.add_parser(stage)
@@ -47,6 +49,7 @@ def _recipe(args: argparse.Namespace) -> dict:
         raise ValueError("Training seed overlaps a reserved evaluation or capture stream")
     return {
         "schema": "npa.franka-rl.recipe.v1", "task": "Isaac-Lift-Cube-Franka-v0", "run_id": args.run_id,
+        "embodiment": embodiment_profile(getattr(args, "embodiment", "franka")),
         "seed": args.seed, "iterations": args.iterations, "num_envs": args.num_envs,
         "eval_episodes": args.eval_episodes, "minimum_success": args.minimum_success,
         "steps_per_env": 24, "checkpoint_interval": max(1, args.iterations // 3),

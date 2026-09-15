@@ -4,7 +4,7 @@ kind: Workflow
 metadata:
   name: franka-rl-transfer
   description: >-
-    Real Franka Panda parts-handling PPO with sealed collision-bearing USD assets,
+    Real Franka Panda, UR10e/Robotiq, or Kinova JACO2 parts-handling PPO with sealed collision-bearing USD assets,
     randomized physics, validation-only checkpoint selection, paired held-out
     physics shifts, and blinded Token Factory visual evaluation of actual RTX
     rollouts exported to LeRobotDataset and Rerun. A compact reference derived
@@ -21,6 +21,7 @@ config:
   eval_episodes: "128"
   minimum_success: "0.7"
   asset: spool
+  embodiment: franka
   vlm_model: MiniMaxAI/MiniMax-M3
   prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/"
   training_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/"
@@ -45,16 +46,16 @@ initial: prepare
 
 states:
   prepare:
-    description: Seal original USD parts and fixture, Franka embodiment, physics, reset streams, and visual/physical criteria.
+    description: Seal original USD parts and fixture, selected embodiment, physics, reset streams, and visual/physical criteria.
     resources: cpu
     run:
-      argv: [python3, -m, npa.workflows.franka_rl, prepare, --run-id, "{{run.id}}", --seed, "{{config.seed}}", --iterations, "{{config.iterations}}", --num-envs, "{{config.num_envs}}", --eval-episodes, "{{config.eval_episodes}}", --minimum-success, "{{config.minimum_success}}", --asset, "{{config.asset}}", --vlm-model, "{{config.vlm_model}}", --output-path, "{{config.prepared_uri}}"]
+      argv: [python3, -m, npa.workflows.franka_rl, prepare, --run-id, "{{run.id}}", --seed, "{{config.seed}}", --iterations, "{{config.iterations}}", --num-envs, "{{config.num_envs}}", --eval-episodes, "{{config.eval_episodes}}", --minimum-success, "{{config.minimum_success}}", --asset, "{{config.asset}}", --embodiment, "{{config.embodiment}}", --vlm-model, "{{config.vlm_model}}", --output-path, "{{config.prepared_uri}}"]
     outputs:
       - {uri: "{{config.prepared_uri}}recipe.json", schema: npa.franka-rl.recipe.v1}
     next: train
 
   train:
-    description: Train native RSL-RL PPO on the real Isaac Franka; retain initial and periodic weights.
+    description: Train native RSL-RL PPO on the selected Isaac articulation; retain initial and periodic weights.
     resources: isaac
     run:
       argv: [python3, -m, npa.workflows.franka_rl, train, --input-path, "{{config.prepared_uri}}", --output-path, "{{config.training_uri}}"]
@@ -98,5 +99,5 @@ states:
       - {uri: "{{config.report_uri}}report.json", schema: npa.franka-rl.report.v1}
       - {uri: "{{config.report_uri}}visual-evaluation.json", schema: npa.franka-rl.visual-evaluation.v1}
       - {uri: "{{config.report_uri}}lerobot/meta/info.json", schema: lerobot.dataset.v3}
-      - {uri: "{{config.report_uri}}franka.rrd", schema: application/vnd.rerun.rrd}
+      - {uri: "{{config.report_uri}}{{config.embodiment}}.rrd", schema: application/vnd.rerun.rrd}
     terminal: true

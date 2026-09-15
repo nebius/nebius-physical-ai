@@ -75,7 +75,7 @@ def write_recording(dataset: Path, output: Path, metadata: dict) -> dict[str, in
     info = json.loads((dataset / "meta/info.json").read_text())
     rows = [row for path in sorted((dataset / "data").rglob("*.parquet")) for row in pq.read_table(path).to_pylist()]
     episodes = [row for path in sorted((dataset / "meta/episodes").rglob("*.parquet")) for row in pq.read_table(path).to_pylist()]
-    recording = rr.RecordingStream("npa-franka-rl", recording_id=metadata["run_id"])
+    recording = rr.RecordingStream(f"npa-{metadata.get('robot_type', 'franka')}-rl", recording_id=metadata["run_id"])
     rr.save(output, default_blueprint=_blueprint(metadata), recording=recording)
     rr.log("provenance", rr.TextDocument(json.dumps(metadata, indent=2)), static=True, recording=recording)
     required = []

@@ -16,6 +16,49 @@ the articulated robot, gripper, contact dynamics, and reinforcement-learning
 experiment needed to study embodied transfer. Neither experiment proves
 physical robot transfer without a subsequent hardware trial.
 
+## Additional embodiments
+
+The same five-stage workflow accepts `--var embodiment=ur10e_robotiq85` or
+`--var embodiment=kinova_jaco7`; the default remains `franka`. Give each robot
+a fresh run ID, output prefix, and isolated runtime directory. Each trains its
+own PPO policy from initialization and exports its actual articulation joints.
+
+| Embodiment | Arm and gripper | Policy actions | Rerun output |
+| --- | --- | ---: | --- |
+| `franka` | Panda, two-finger parallel gripper | 7 joint targets + 1 gripper command | `franka.rrd` |
+| `ur10e_robotiq85` | UR10e, Robotiq 2F-85 | 6 joint targets + 1 gripper command | `ur10e_robotiq85.rrd` |
+| `kinova_jaco7` | JACO2 N7S300, three-finger gripper | 7 joint targets + 1 command controlling six finger joints | `kinova_jaco7.rrd` |
+
+`Isaac-Lift-Cube-Franka-v0` remains the upstream task template and PPO settings
+source. Before constructing the environment, the adapter replaces its robot,
+action bindings, command body, and end-effector sensor with the selected
+[UR10e](https://github.com/isaac-sim/IsaacLab/blob/ffff603eafc6b74264a5261cc0183d6a65390d78/source/isaaclab_assets/isaaclab_assets/robots/universal_robots.py)
+or [JACO2](https://github.com/isaac-sim/IsaacLab/blob/ffff603eafc6b74264a5261cc0183d6a65390d78/source/isaaclab_assets/isaaclab_assets/robots/kinova.py)
+configuration. Vendor robot USD assets are fetched at runtime under the existing
+Isaac asset terms; they are not included in this repository or its images.
+
+The recipe seals the embodiment and control convention. Runtime checks verify
+the actual action order, gripper joints, base/tool bodies, and exported names.
+The evidence records the effective USD path/variant, root pose, initial joints,
+gravity, self-collision, and actuator settings. Capture merging and VLM auditing
+reject a different embodiment or inconsistent telemetry.
+
+UR10e's upstream base yaw and shoulder-pan initialization cancel each other;
+the adapter sets both to zero to preserve the initial world pose while aligning
+the root-relative goal distribution with the other robots. Its nominal grasp
+frame is 14.5 cm along the wrist's tool axis. JACO2 uses its authored
+`j2n7s300_end_effector` frame. These are simulation conventions, not physical
+TCP calibrations. Native robot actuator/gravity/collision settings otherwise
+remain unchanged and are recorded separately.
+
+Object assets, PPO update count, success criteria, and physics shifts remain
+fixed. Initial/trained resets are paired within each embodiment. Different
+joint dimensions can change random-number consumption, so equal seeds do not
+establish identical object/goal resets across robots. This is a comparison of
+independently trained systems, not a controlled estimate of morphology alone.
+The additional embodiments require their own live evidence; historical Franka
+results below do not validate them.
+
 ## Relationship to the reference Sim2Real pipeline
 
 The reference is [`workflows/main/sim2real.yaml`](../../../workflows/main/sim2real.yaml).

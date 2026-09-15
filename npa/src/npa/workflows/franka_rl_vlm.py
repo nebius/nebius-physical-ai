@@ -12,12 +12,14 @@ import numpy as np
 from npa.clients.token_factory import TokenFactoryClient
 from npa.workbench.vlm_eval.temporal import RUBRIC, RUBRIC_VERSION, judge_manipulation
 from npa.workflows.lerobot_transfer_data import file_sha256, write_json
+from npa.workflows.franka_rl_embodiments import validate_capture_embodiment
 
 
 def _capture_contract(evaluated: Path) -> tuple[dict, dict, dict]:
     evaluation = json.loads((evaluated / "evaluation.json").read_text())
     metadata = json.loads((evaluated / "trajectories/meta.json").read_text())
     recipe = evaluation["recipe"]
+    validate_capture_embodiment(metadata, recipe)
     protocol = recipe["visual_eval"]
     if (protocol["rubric_version"] != RUBRIC_VERSION
             or protocol["rubric_sha256"] != hashlib.sha256(RUBRIC.encode()).hexdigest()):
@@ -47,6 +49,8 @@ def _capture_contract(evaluated: Path) -> tuple[dict, dict, dict]:
 
 
 def _check_physics(row: dict, recipe: dict) -> None:
+    if "embodiment" in recipe and row["applied_physics"].get("embodiment", {}).get("profile") != recipe["embodiment"]:
+        raise ValueError("Capture physics belongs to a different robot embodiment")
     if "physics_capacity" in recipe and row["applied_physics"].get("physics_capacity") != recipe["physics_capacity"]:
         raise ValueError("Franka capture physics capacity differs from the sealed experiment")
     condition = recipe["conditions"][row["condition"]]

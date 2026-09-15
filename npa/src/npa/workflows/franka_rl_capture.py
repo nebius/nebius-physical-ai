@@ -119,17 +119,18 @@ def capture_policy(checkpoint: Path, output: Path, recipe: dict, *, arm: str = "
 
 def _write_metadata(env, checkpoint: Path, output: Path, recipe: dict, episodes: list[dict]) -> None:
     joint_names = list(env.unwrapped.scene["robot"].joint_names)
+    identity = env.unwrapped.npa_embodiment_evidence
     step_dt = float(env.unwrapped.step_dt)
     write_json(output / "meta.json", {
-        "format": "npa_isaac_lab_rollout_v2", "task": recipe["task"], "robot_type": "franka", "run_id": recipe["run_id"],
+        "format": "npa_isaac_lab_rollout_v2", "task": recipe["task"], "robot_type": identity["robot_type"],
+        "run_id": recipe["run_id"], "embodiment": identity,
         "policy_loaded": True, "runtime_version": version("isaaclab"),
         "checkpoint_sha256": file_sha256(checkpoint), "fps": 1.0 / step_dt,
         "assets": recipe.get("assets"),
         "physics": physics_evidence(env),
         "task_description": "Lift the " + recipe.get("assets", {}).get("description", "cube") + " and hold it steady",
         "control_dt": step_dt, "source_joint_names": joint_names, "state_names": joint_names,
-        "action_names": [f"panda_joint{i}_normalized_target" for i in range(1, 8)] + ["gripper_open_close"],
-        "action_semantics": "Isaac joint position: default offset + 0.5 * arm action; binary gripper",
+        "action_names": identity["action_names"], "action_semantics": identity["action_semantics"],
         "num_episodes": len(episodes), "episode_lengths": [row["length"] for row in episodes],
         "total_frames": sum(row["length"] for row in episodes), "episode_results": episodes,
         "capture_seed": recipe["capture_seed"], "source_split": "capture",

@@ -10,6 +10,7 @@ import shutil
 import numpy as np
 
 from npa.workflows.lerobot_transfer_data import file_sha256, write_json
+from npa.workflows.franka_rl_embodiments import validate_capture_embodiment
 
 
 def summarize(evaluation: dict) -> dict:
@@ -70,7 +71,7 @@ def _interval(indexed: dict, recipe: dict) -> list[float]:
     return np.quantile(draws.mean(axis=1), [0.025, 0.975]).tolist()
 
 
-def _convert_trajectories(source: Path, output: Path, visual: Path | None = None) -> None:
+def _convert_trajectories(source: Path, output: Path, visual: Path | None = None) -> Path:
     from npa.adapter.isaac_lab_lerobot import LeRobotFeatureSpec, convert
     from npa.workflows.franka_rl_recording import write_recording
 
@@ -82,12 +83,15 @@ def _convert_trajectories(source: Path, output: Path, visual: Path | None = None
             metadata["episode_results"][row["episode_index"]]["visual_judgment"] = {
                 "status": visual_result.get("status", "valid"), "verdict": visual_result["verdict"],
                 "validation_error": visual_result.get("validation_error")}
-    spec = LeRobotFeatureSpec(metadata["state_names"], metadata["action_names"], "franka")
-    convert(source, output / "lerobot", fps=round(metadata["fps"]), robot_type="franka",
+    robot_type = metadata["robot_type"]
+    spec = LeRobotFeatureSpec(metadata["state_names"], metadata["action_names"], robot_type)
+    convert(source, output / "lerobot", fps=round(metadata["fps"]), robot_type=robot_type,
             task=metadata.get("task_description", "Lift the cube and hold at its commanded goal"), spec=spec)
     shutil.copy2(source / "meta.json", output / "capture.json")
-    counts = write_recording(output / "lerobot", output / "franka.rrd", metadata)
+    recording = output / f"{robot_type}.rrd"
+    counts = write_recording(output / "lerobot", recording, metadata)
     write_json(output / "recording-validation.json", {"run_id": metadata["run_id"], "entity_counts": counts})
+    return recording
 
 
 def _plot(report: dict, output: Path) -> None:
@@ -145,17 +149,19 @@ def report_results(evaluated: Path, output: Path, *, visual: Path | None = None)
     evaluation = json.loads((evaluated / "evaluation.json").read_text())
     report = summarize(evaluation)
     report["recipe"] = evaluation["recipe"]
+    validate_capture_embodiment(json.loads((evaluated / "trajectories/meta.json").read_text()), report["recipe"])
     output.mkdir(parents=True)
     if "visual_eval" in report["recipe"]:
         if visual is None:
             raise ValueError("Franka report requires the sealed Token Factory visual evaluation")
         _attach_visual(report, evaluated, visual, output)
-    _convert_trajectories(evaluated / "trajectories", output, visual)
+    recording = _convert_trajectories(evaluated / "trajectories", output, visual)
     _plot(report, output)
     with (output / "trials.csv").open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(evaluation["trials"][0]), lineterminator="\n")
         writer.writeheader()
         writer.writerows(evaluation["trials"])
-    report["recording_sha256"] = file_sha256(output / "franka.rrd")
+    report["recording_file"] = recording.name
+    report["recording_sha256"] = file_sha256(recording)
     report["evaluation_sha256"] = file_sha256(evaluated / "evaluation.json")
     write_json(output / "report.json", report)

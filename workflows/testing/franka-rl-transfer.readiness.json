@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "ac91e2b3344a447fa7540065ffddd90d52a36138f1a23ad4e3fe4ccd43cda1b2",
+  "workflow_sha256": "f5377607715dc2c918b02954b82e91082f1039c213b7f9e5d52292618b0cd8f7",
   "planning": {
     "validation": {
       "status": "verified",
@@ -49,8 +49,8 @@
       ]
     },
     "target_runtime": {
-      "status": "verified",
-      "reason": "Native PPO and 1024 paired tests completed; a separate CPU recovery preserved 22 first responses, requested 10 missing judgments, and exported 32 verified videos plus LeRobot/Rerun. Original failed audit and both source revisions remain recorded. Execution coverage is verified; policy qualification is false.",
+      "status": "unverified",
+      "reason": "Historical Franka execution is verified. Newly selected UR10e/Robotiq and Kinova JACO2 require their own native training, paired tests, visual audits, and embodiment metadata verification.",
       "evidence": [
         "docs/workbench/evidence/franka-parts-validation.json"
       ]

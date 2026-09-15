@@ -27,6 +27,9 @@ def environment_config(recipe: dict, *, training: bool, condition: str = "nomina
     from npa.workflows.sim2real.isaac_assets_compat import remap_moved_franka_usd
 
     config = load_cfg_from_registry(recipe["task"], "env_cfg_entry_point")
+    from npa.workflows.franka_rl_embodiments import configure_embodiment
+
+    configure_embodiment(config, recipe)
     config.scene.num_envs = recipe["num_envs"] if training else recipe["eval_episodes"]
     config.seed = recipe["seed"] if training else recipe["validation_seed"]
     config.sim.device = "cuda:0"
@@ -100,7 +103,9 @@ def build_runner(env, recipe: dict, output=None):
     from isaaclab_tasks.utils import load_cfg_from_registry
     from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg
     from rsl_rl.runners import OnPolicyRunner
+    from npa.workflows.franka_rl_embodiments import embodiment_evidence
 
+    env.unwrapped.npa_embodiment_evidence = embodiment_evidence(env, recipe)
     config = load_cfg_from_registry(recipe["task"], "rsl_rl_cfg_entry_point")
     config = handle_deprecated_rsl_rl_cfg(config, version("rsl-rl-lib"))
     config.seed = recipe["seed"]
@@ -134,7 +139,7 @@ def physics_evidence(env) -> dict:
     material = wp.to_torch(view.get_material_properties())
     values = {"mass_kg": wp.to_torch(view.get_masses()), "static_friction": material[..., 0],
               "dynamic_friction": material[..., 1], "restitution": material[..., 2]}
-    evidence = {"startup_terms": list(terms), "physics_capacity": {
+    evidence = {"startup_terms": list(terms), "embodiment": unwrapped.npa_embodiment_evidence, "physics_capacity": {
         "gpu_total_aggregate_pairs_capacity": unwrapped.cfg.sim.physics.gpu_total_aggregate_pairs_capacity}}
     for name, value in values.items():
         if not torch.isfinite(value).all():

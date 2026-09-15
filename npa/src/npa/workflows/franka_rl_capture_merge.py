@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 
 from npa.workflows.lerobot_transfer_data import file_sha256, write_json
+from npa.workflows.franka_rl_embodiments import validate_capture_embodiment
 
 
 def merge_captures(evaluation: Path, recipe: dict) -> None:
@@ -23,12 +24,16 @@ def merge_captures(evaluation: Path, recipe: dict) -> None:
     """
     output = evaluation / "trajectories"
     output.mkdir()
-    rows, metadata = [], None
+    rows, metadata, identity = [], None, None
     for arm in recipe["visual_eval"]["arms"]:
         expected = file_sha256(evaluation / ("initial.pt" if arm == "initial" else "selected.pt"))
         for condition in recipe["conditions"]:
             source = evaluation / "captures" / f"{arm}-{condition}"
             metadata = json.loads((source / "meta.json").read_text())
+            validate_capture_embodiment(metadata, recipe)
+            if identity is not None and identity != metadata.get("embodiment"):
+                raise ValueError("Capture cases contain different robot embodiments")
+            identity = metadata.get("embodiment")
             if metadata["checkpoint_sha256"] != expected or metadata["num_episodes"] != recipe["capture_episodes"]:
                 raise ValueError("Franka capture checkpoint or episode coverage differs from protocol")
             for index, row in enumerate(metadata["episode_results"]):

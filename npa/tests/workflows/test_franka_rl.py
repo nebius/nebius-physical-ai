@@ -102,6 +102,32 @@ def test_complete_simulation_success_never_claims_physical_transfer(evaluation):
     assert not report["physical_robot_tested"]
 
 
+@pytest.mark.parametrize("robot_type", ["ur10e_robotiq85", "kinova_jaco7"])
+def test_report_hashes_exported_robot_recording(evaluation, robot_type, tmp_path, monkeypatch):
+    from npa.workflows import franka_rl_report as reports
+    from npa.workflows.lerobot_transfer_data import file_sha256
+
+    evaluation["recipe"].pop("visual_eval", None)
+    evaluation["recipe"].pop("embodiment", None)
+    source, output = tmp_path / "evaluated", tmp_path / "reported"
+    (source / "trajectories").mkdir(parents=True)
+    (source / "evaluation.json").write_text(json.dumps(evaluation))
+    (source / "trajectories/meta.json").write_text(json.dumps({"robot_type": robot_type}))
+
+    def export(captured, destination, visual):
+        metadata = json.loads((captured / "meta.json").read_text())
+        path = destination / (metadata["robot_type"] + ".rrd")
+        path.write_bytes(b"recording fixture")
+        return path
+
+    monkeypatch.setattr(reports, "_convert_trajectories", export)
+    monkeypatch.setattr(reports, "_plot", lambda *args: None)
+    reports.report_results(source, output)
+    report = json.loads((output / "report.json").read_text())
+    assert report["recording_file"] == robot_type + ".rrd"
+    assert report["recording_sha256"] == file_sha256(output / report["recording_file"])
+
+
 @pytest.mark.parametrize("mutation", ["missing", "duplicate", "wrong_checkpoint", "wrong_seed", "wrong_split"])
 def test_report_rejects_incomplete_or_mixed_test_evidence(evaluation, mutation):
     changed = deepcopy(evaluation)
@@ -248,6 +274,7 @@ def test_isaac_physics_evidence_decodes_actual_warp_arrays():
     masses = wp.array([[0.7], [1.3]], dtype=wp.float32, device="cpu")
     view = SimpleNamespace(get_material_properties=lambda: material, get_masses=lambda: masses)
     env = SimpleNamespace(unwrapped=SimpleNamespace(scene={"object": SimpleNamespace(root_view=view)},
+        npa_embodiment_evidence={"robot_type": "franka"},
         cfg=SimpleNamespace(sim=SimpleNamespace(physics=SimpleNamespace(gpu_total_aggregate_pairs_capacity=2**21))),
         event_manager=SimpleNamespace(active_terms={"startup": ["npa_object_mass", "npa_object_material"]})))
     evidence = physics_evidence(env)
@@ -255,6 +282,7 @@ def test_isaac_physics_evidence_decodes_actual_warp_arrays():
     assert evidence["static_friction"] == {"min": 0.5, "max": 1.5}
     assert evidence["dynamic_friction"] == {"min": 0.25, "max": 1.25}
     assert evidence["physics_capacity"] == {"gpu_total_aggregate_pairs_capacity": 2**21}
+    assert evidence["embodiment"] == {"robot_type": "franka"}
 
 
 def test_isaac_proxy_geometry_uses_explicit_tensors_for_goal_and_reset_hash(monkeypatch):

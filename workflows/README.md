@@ -130,7 +130,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`rl-policy-training-sim-success.yaml`](testing/rl-policy-training-sim-success.yaml) | Isaac Lab RL train (partial) |
 | [`robocasa-data-policy.yaml`](testing/robocasa-data-policy.yaml) | Native multi-task PandaOmron trajectories → LeRobotDataset v3 → real ACT training → exact-checkpoint evaluation on disjoint RoboCasa tasks → insights |
 | [`lerobot-transfer.yaml`](testing/lerobot-transfer.yaml) | Four-phase LeRobot demonstration experiment: paired ACT training → native PushT transfer stress tests → measured comparison and next-expert-demo queue. [Runbook](../docs/workbench/guides/lerobot-transfer.md). |
-| [`franka-rl-transfer.yaml`](testing/franka-rl-transfer.yaml) | Franka PPO with sealed spool/nut/bottle USD assets, paired physics shifts, blinded Token Factory visual evaluation, and actual LeRobot/Rerun rollouts. One RTX GPU plus a hosted VLM credential. [Runbook](../docs/workbench/guides/franka-rl-transfer.md). |
+| [`franka-rl-transfer.yaml`](testing/franka-rl-transfer.yaml) | PPO with selectable Franka, UR10e/Robotiq, or Kinova JACO2 embodiment, sealed spool/nut/bottle USD assets, paired physics shifts, Token Factory visual evaluation, and actual LeRobot/Rerun rollouts. One RTX GPU plus a hosted VLM credential. [Runbook](../docs/workbench/guides/franka-rl-transfer.md). |
 | [`robocasa-smoke.yaml`](testing/robocasa-smoke.yaml) | Native RoboCasa workbench: task registration, asset availability, headless EGL reset, and a real random rollout with video through the npa-robocasa service |
 | [`sonic-eval.yaml`](testing/sonic-eval.yaml) | SONIC eval |
 | [`sonic-export-eval.yaml`](testing/sonic-export-eval.yaml) | Export → eval |
