@@ -35,6 +35,39 @@ def modules(monkeypatch):
     return SimpleNamespace(checks=loaded[0], docker=loaded[1], host=loaded[2])
 
 
+@pytest.mark.parametrize("mismatch", [None, "source", "receipt"])
+def test_installed_npa_import_uses_fresh_interpreter(
+    modules, tmp_path, monkeypatch, mismatch
+):
+    source = ROOT / "npa"
+    receipt = tmp_path / "source-receipt"
+    receipt.write_text(str(source) if mismatch != "receipt" else "different-source")
+    monkeypatch.setattr(modules.checks, "_SOURCE", source)
+    monkeypatch.setattr(modules.checks, "_RECEIPT", receipt)
+    monkeypatch.setattr(modules.checks, "_OUTPUT", tmp_path)
+    monkeypatch.setattr(modules.checks, "_PYTHON", sys.executable)
+    # A pre-install interpreter can retain a namespace that lacks the new editable hook.
+    monkeypatch.setitem(sys.modules, "npa", SimpleNamespace(__file__=None))
+    if mismatch == "source":
+        monkeypatch.setattr(modules.checks, "_SOURCE", tmp_path / "different-source")
+    if mismatch:
+        message = "another source" if mismatch == "source" else "receipt differs"
+        with pytest.raises(RuntimeError, match=message):
+            modules.checks._installed_npa_version("installed")
+    else:
+        assert modules.checks._installed_npa_version("installed")
+        assert modules.checks._installed_npa_version("post")
+        assert (tmp_path / "post-npa-import.exit.json").is_file()
+    result = json.loads((tmp_path / "installed-npa-import.stdout").read_text())
+    assert Path(result["file"]).resolve().is_relative_to(source / "src")
+    assert (
+        json.loads((tmp_path / "installed-npa-import.exit.json").read_text())[
+            "exit_code"
+        ]
+        == 0
+    )
+
+
 def _image():
     return {
         "Id": IMAGE_ID,

@@ -141,7 +141,7 @@ def _packages(phase: str) -> dict:
     dependencies = _compatibility(versions)
     _built_scripts()
     if phase != "bare":
-        versions["npa"] = _installed_npa_version()
+        versions["npa"] = _installed_npa_version(phase)
     installed = {
         dist.metadata["Name"]: dist.version for dist in metadata.distributions()
     }
@@ -167,18 +167,30 @@ def _built_scripts() -> None:
         )
 
 
-def _installed_npa_version() -> str:
-    import npa
-
+def _installed_npa_version(phase: str) -> str:
+    # Editable installation adds startup hooks that this pre-install process has not loaded.
+    name = f"{phase}-npa-import"
+    _command(
+        name,
+        [
+            _PYTHON,
+            "-c",
+            "import json, npa; from importlib import metadata; "
+            "print(json.dumps({'file': npa.__file__, 'version': metadata.version('npa')}))",
+        ],
+    )
+    installed = json.loads((_OUTPUT / f"{name}.stdout").read_text())
+    filename = installed["file"]
     _require(
-        Path(npa.__file__).resolve().is_relative_to(_SOURCE / "src"),
+        isinstance(filename, str)
+        and Path(filename).resolve().is_relative_to(_SOURCE / "src"),
         "NPA came from another source",
     )
     _require(
         _RECEIPT.read_text() == str(_SOURCE),
         "NPA source receipt differs",
     )
-    return metadata.version("npa")
+    return installed["version"]
 
 
 def _configure_mounts() -> None:
