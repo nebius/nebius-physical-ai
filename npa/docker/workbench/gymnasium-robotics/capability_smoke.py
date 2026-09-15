@@ -15,7 +15,7 @@ from pathlib import Path
 import re
 import subprocess
 import time
-from typing import Any
+from typing import Any, BinaryIO
 
 import gymnasium as gym
 import gymnasium_robotics
@@ -33,11 +33,19 @@ EXPECTED_MUJOCO_WHEEL = (
     "7ec16ce408871a0a9157cc556958ab66cd34db9fc1dccd3ef07717170163a4e0"
 )
 EXPECTED_ASSET_LOCK = "e22eb62fc690a5e1d1ea931bab950392ca480caf3d51c7f16fd8cb4133d65568"
+SHA256_CHUNK_BYTES = 1024 * 1024
+
+
+def _stream_sha256(stream: BinaryIO) -> str:
+    digest = hashlib.sha256()
+    while chunk := stream.read(SHA256_CHUNK_BYTES):
+        digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _sha256(path: Path) -> str:
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        return _stream_sha256(stream)
 
 
 def _exact_files(root: Path, expected: dict[str, str]) -> dict[str, str]:

@@ -45,6 +45,24 @@ sys.modules[BOOTSTRAP_SPEC.name] = BOOTSTRAP
 BOOTSTRAP_SPEC.loader.exec_module(BOOTSTRAP)
 
 
+def test_verifier_streaming_digest_is_bounded_without_file_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delattr(hashlib, "file_digest", raising=False)
+    read_sizes: list[int] = []
+
+    class RecordingStream(io.BytesIO):
+        def read(self, size: int = -1) -> bytes:
+            read_sizes.append(size)
+            return super().read(size)
+
+    payload = b"v" * (VERIFIER.SHA256_CHUNK_BYTES + 1)
+    assert VERIFIER._stream_sha256(RecordingStream(payload)) == hashlib.sha256(
+        payload
+    ).hexdigest()
+    assert read_sizes == [VERIFIER.SHA256_CHUNK_BYTES] * 3
+
+
 @pytest.fixture
 def tmp_path() -> Iterator[Path]:
     """Keep scanner inputs beneath one non-replaceable owner directory chain."""

@@ -30,6 +30,24 @@ sys.modules[SPEC.name] = BOOTSTRAP
 SPEC.loader.exec_module(BOOTSTRAP)
 
 
+def test_streaming_digest_is_bounded_without_file_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delattr(hashlib, "file_digest", raising=False)
+    read_sizes: list[int] = []
+
+    class RecordingStream(io.BytesIO):
+        def read(self, size: int = -1) -> bytes:
+            read_sizes.append(size)
+            return super().read(size)
+
+    payload = b"a" * (BOOTSTRAP.SHA256_CHUNK_BYTES + 1)
+    assert BOOTSTRAP._stream_sha256(RecordingStream(payload)) == hashlib.sha256(
+        payload
+    ).hexdigest()
+    assert read_sizes == [BOOTSTRAP.SHA256_CHUNK_BYTES] * 3
+
+
 @pytest.fixture
 def tmp_path() -> Iterator[Path]:
     """Create test caches below a non-writable owner-controlled parent chain."""

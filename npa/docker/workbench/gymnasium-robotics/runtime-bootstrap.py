@@ -57,6 +57,7 @@ REQUIREMENT = re.compile(
 MAX_ARTIFACTS = 256
 MAX_ARCHIVE_MEMBERS = 100_000
 MAX_RUNTIME_ENTRIES = 200_000
+SHA256_CHUNK_BYTES = 1024 * 1024
 PR_GET_DUMPABLE = 3
 PR_SET_DUMPABLE = 4
 PR_SET_NO_NEW_PRIVS = 38
@@ -168,9 +169,16 @@ def _refuse_root_runtime(operation: str) -> None:
         _refuse(f"{operation} must run as the non-root runtime user")
 
 
+def _stream_sha256(stream: BinaryIO) -> str:
+    digest = hashlib.sha256()
+    while chunk := stream.read(SHA256_CHUNK_BYTES):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _sha256(path: Path) -> str:
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        return _stream_sha256(stream)
 
 
 def _read_trusted_input(path: Path, *, label: str) -> bytes:
@@ -1056,7 +1064,7 @@ def _runtime_tree_entries(root: Path) -> list[dict[str, object]]:
                         or not stat.S_ISREG(opened.st_mode)
                     ):
                         _refuse(f"runtime cache file changed during validation: {relative}")
-                    digest = hashlib.file_digest(stream, "sha256").hexdigest()
+                    digest = _stream_sha256(stream)
                 entries.append(
                     {
                         "path": relative,
@@ -1259,7 +1267,7 @@ def _open_validated_runtime(
             and entry.get("path") == "runtime/bin/python"
         ]
         with os.fdopen(os.dup(python_fd), "rb") as stream:
-            python_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+            python_sha256 = _stream_sha256(stream)
         os.lseek(python_fd, 0, os.SEEK_SET)
         if expected_python != [
             {

@@ -9,18 +9,20 @@ import os
 from pathlib import Path
 import re
 import sys
+from typing import BinaryIO
 
 LOCK_ROOT = Path("/opt/npa/gymnasium-robotics")
 EXPECTED_SOURCE = "4d1ebecbc6436806cfbc0e42ebc36f594d05844e"
 EXPECTED_MUJOCO = "3.12.0"
 EXPECTED_ASSET_LOCK = "e22eb62fc690a5e1d1ea931bab950392ca480caf3d51c7f16fd8cb4133d65568"
+SHA256_CHUNK_BYTES = 1024 * 1024
 EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
     "source-lock.json": "3318043e3d3fec10b233b212b8e7bd97391f48f20b629dbdb3319981010b6ca9",
     "apt-runtime.lock.json": "6e1df9be2187010e9d4ee12dc2a4d95e4f0aa799ff321c70d86ec2d8772b855e",
     "corresponding-source.lock.json": "7a097851d8c9eae45bb663d7d8d989f507afc0fcdc12e721d7431dd27aa9a3be",
     "requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a",
-    "runtime-bootstrap.py": "59876125502757d958a866c9339b73225b5321024d8490bc5108993821b634a2",
-    "capability_smoke.py": "c3707490a49224bb262bceab8548c5ee04aa5ce9d5a41062327c5140c236f6bf",
+    "runtime-bootstrap.py": "859ed6d530b8c4b327bba6383872327e557afd55a9b9280f71659f2425121500",
+    "capability_smoke.py": "f91683fa5955882e29e2ac8e6ba9f4d92f2a25eb71621275fa3c45b26828d6d6",
 }
 KNOWN_FORBIDDEN_CONTENT_SHA256 = frozenset(
     {
@@ -100,9 +102,16 @@ EXPECTED_FIXED_FILE_SHA256 = {
 }
 
 
+def _stream_sha256(stream: BinaryIO) -> str:
+    digest = hashlib.sha256()
+    while chunk := stream.read(SHA256_CHUNK_BYTES):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _sha256(path: Path) -> str:
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        return _stream_sha256(stream)
 
 
 def _canonical_verification_root(root: Path) -> tuple[Path, bool]:

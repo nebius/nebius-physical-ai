@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import io
 from pathlib import Path
 import runpy
 import sys
@@ -46,6 +47,25 @@ def _transition_guard():
 
 def _digest_parser():
     return _smoke_namespace()["_digest_from_reference"]
+
+
+def test_smoke_streaming_digest_is_bounded_without_file_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delattr(hashlib, "file_digest", raising=False)
+    smoke = _smoke_namespace()
+    read_sizes: list[int] = []
+
+    class RecordingStream(io.BytesIO):
+        def read(self, size: int = -1) -> bytes:
+            read_sizes.append(size)
+            return super().read(size)
+
+    payload = b"s" * (smoke["SHA256_CHUNK_BYTES"] + 1)
+    assert smoke["_stream_sha256"](RecordingStream(payload)) == hashlib.sha256(
+        payload
+    ).hexdigest()
+    assert read_sizes == [smoke["SHA256_CHUNK_BYTES"]] * 3
 
 
 def test_fixed_capability_identity_and_trajectory() -> None:
