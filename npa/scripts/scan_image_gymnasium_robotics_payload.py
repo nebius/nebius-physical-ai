@@ -225,9 +225,9 @@ EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
     "apt-runtime.lock.json": "6e1df9be2187010e9d4ee12dc2a4d95e4f0aa799ff321c70d86ec2d8772b855e",
     "corresponding-source.lock.json": "7a097851d8c9eae45bb663d7d8d989f507afc0fcdc12e721d7431dd27aa9a3be",
     "requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a",
-    "runtime-bootstrap.py": "7d6e019beecc13f6e13dffda4749726bbd7e70c310e16aa180c6e3498e01a366",
+    "runtime-bootstrap.py": "59876125502757d958a866c9339b73225b5321024d8490bc5108993821b634a2",
     "capability_smoke.py": "c3707490a49224bb262bceab8548c5ee04aa5ce9d5a41062327c5140c236f6bf",
-    "verify_image.py": "d13985130708ffb1416825450fbe07077ce20c8b21f70e13f8cbdc4150a4095e",  # gitleaks:allow; public file-content SHA-256
+    "verify_image.py": "d74720e27fa563d04ee44db2f5244c9f67212c217f181be30cbf60e27fc4c780",  # gitleaks:allow; public file-content SHA-256
 }
 EXPECTED_SOURCE_FIELDS = {
     "farama_gymnasium_robotics": {

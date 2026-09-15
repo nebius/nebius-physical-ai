@@ -306,6 +306,243 @@ def test_verified_runtime_is_atomically_published_and_reused(tmp_path: Path) -> 
     assert second_calls == []
 
 
+def test_cache_root_replacement_during_lock_never_redirects_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, requirements, content = _write_inputs(tmp_path)
+    cache = tmp_path / "cache"
+    displaced = tmp_path / "cache-displaced"
+    original_open = BOOTSTRAP.os.open
+    swapped = False
+
+    def replacing_open(
+        path: object,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal swapped
+        if Path(path).name == ".bootstrap.lock" and not swapped:
+            swapped = True
+            cache.rename(displaced)
+            cache.mkdir(mode=0o700)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(BOOTSTRAP.os, "open", replacing_open)
+    calls: list[str] = []
+    with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="cache root identity changed"):
+        BOOTSTRAP.prepare(
+            manifest,
+            requirements,
+            cache,
+            opener=_opener(content, calls),
+            installer=_installer,
+        )
+    assert swapped is True
+    assert calls == []
+    assert list(cache.iterdir()) == []
+
+
+def test_versions_replacement_cannot_supply_a_reused_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, requirements, content = _write_inputs(tmp_path)
+    cache = tmp_path / "cache"
+    first = BOOTSTRAP.prepare(
+        manifest,
+        requirements,
+        cache,
+        opener=_opener(content, []),
+        installer=_installer,
+    )
+    target_name = Path(str(first["runtime_root"])).name
+    versions = cache / "versions"
+    displaced = cache / "versions-displaced"
+    attacker_versions = tmp_path / "attacker-versions"
+    shutil.copytree(versions, attacker_versions)
+    (cache / "current").unlink()
+    original_validate = BOOTSTRAP._validated_existing
+    observed: list[Path] = []
+
+    def replacing_validate(target: Path, runtime_lock: object) -> dict[str, object]:
+        versions.rename(displaced)
+        attacker_versions.rename(versions)
+        observed.append(target.resolve())
+        return original_validate(target, runtime_lock)
+
+    monkeypatch.setattr(BOOTSTRAP, "_validated_existing", replacing_validate)
+    with pytest.raises(
+        BOOTSTRAP.BootstrapRefusal, match="versions directory identity changed"
+    ):
+        BOOTSTRAP.prepare(
+            manifest,
+            requirements,
+            cache,
+            opener=_opener({}, []),
+            installer=lambda *_: pytest.fail("a replacement cache must not install"),
+        )
+    assert observed == [displaced / target_name]
+    assert not (cache / "current").exists()
+
+
+def test_versions_replacement_before_staging_never_redirects_downloads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, requirements, content = _write_inputs(tmp_path)
+    cache = tmp_path / "cache"
+    versions = cache / "versions"
+    displaced = cache / "versions-displaced"
+    original_mkdtemp = BOOTSTRAP.tempfile.mkdtemp
+    swapped = False
+
+    def replacing_mkdtemp(*args: object, **kwargs: object) -> str:
+        nonlocal swapped
+        if kwargs.get("prefix") == ".staging-runtime-" and not swapped:
+            swapped = True
+            versions.rename(displaced)
+            versions.mkdir(mode=0o700)
+        return original_mkdtemp(*args, **kwargs)
+
+    monkeypatch.setattr(BOOTSTRAP.tempfile, "mkdtemp", replacing_mkdtemp)
+    calls: list[str] = []
+    with pytest.raises(
+        BOOTSTRAP.BootstrapRefusal, match="versions directory identity changed"
+    ):
+        BOOTSTRAP.prepare(
+            manifest,
+            requirements,
+            cache,
+            opener=_opener(content, calls),
+            installer=_installer,
+        )
+    assert swapped is True
+    assert calls == []
+    assert list(versions.iterdir()) == []
+    assert list(displaced.iterdir()) == []
+
+
+def test_versions_replacement_during_publish_never_redirects_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, requirements, content = _write_inputs(tmp_path)
+    cache = tmp_path / "cache"
+    versions = cache / "versions"
+    displaced = cache / "versions-displaced"
+    runtime_digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    original_replace = BOOTSTRAP.os.replace
+    swapped = False
+
+    def replacing_replace(
+        source: object,
+        destination: object,
+        *,
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+    ) -> None:
+        nonlocal swapped
+        if Path(destination).name == runtime_digest and not swapped:
+            swapped = True
+            versions.rename(displaced)
+            versions.mkdir(mode=0o700)
+        original_replace(
+            source,
+            destination,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+        )
+
+    monkeypatch.setattr(BOOTSTRAP.os, "replace", replacing_replace)
+    with pytest.raises(
+        BOOTSTRAP.BootstrapRefusal, match="versions directory identity changed"
+    ):
+        BOOTSTRAP.prepare(
+            manifest,
+            requirements,
+            cache,
+            opener=_opener(content, []),
+            installer=_installer,
+        )
+    assert swapped is True
+    assert list(versions.iterdir()) == []
+    assert list(displaced.iterdir()) == []
+
+
+def test_cache_root_replacement_during_current_link_never_redirects_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, requirements, content = _write_inputs(tmp_path)
+    cache = tmp_path / "cache"
+    displaced = tmp_path / "cache-displaced"
+    original_symlink = BOOTSTRAP.os.symlink
+    swapped = False
+
+    def replacing_symlink(
+        source: object,
+        destination: object,
+        target_is_directory: bool = False,
+        *,
+        dir_fd: int | None = None,
+    ) -> None:
+        nonlocal swapped
+        if Path(destination).name.startswith(".current-") and not swapped:
+            swapped = True
+            cache.rename(displaced)
+            cache.mkdir(mode=0o700)
+        original_symlink(
+            source,
+            destination,
+            target_is_directory,
+            dir_fd=dir_fd,
+        )
+
+    monkeypatch.setattr(BOOTSTRAP.os, "symlink", replacing_symlink)
+    with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="cache root identity changed"):
+        BOOTSTRAP.prepare(
+            manifest,
+            requirements,
+            cache,
+            opener=_opener(content, []),
+            installer=_installer,
+        )
+    assert swapped is True
+    assert list(cache.iterdir()) == []
+
+
+def test_stage_cleanup_stays_below_replaced_versions_descriptor(
+    tmp_path: Path,
+) -> None:
+    manifest, requirements, content = _write_inputs(tmp_path)
+    cache = tmp_path / "cache"
+    versions = cache / "versions"
+    displaced = cache / "versions-displaced"
+    decoy_marker: Path | None = None
+    stage_name = ""
+
+    def replacing_installer(stage: Path, locked_requirements: Path) -> None:
+        nonlocal decoy_marker, stage_name
+        _installer(stage, locked_requirements)
+        stage_name = stage.name
+        versions.rename(displaced)
+        versions.mkdir(mode=0o700)
+        decoy = versions / stage_name
+        decoy.mkdir(mode=0o700)
+        decoy_marker = decoy / "must-remain"
+        decoy_marker.write_text("replacement tree", encoding="utf-8")
+        raise BOOTSTRAP.BootstrapRefusal("injected installer failure")
+
+    with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="injected installer failure"):
+        BOOTSTRAP.prepare(
+            manifest,
+            requirements,
+            cache,
+            opener=_opener(content, []),
+            installer=replacing_installer,
+        )
+    assert decoy_marker is not None and decoy_marker.read_text() == "replacement tree"
+    assert not (displaced / stage_name).exists()
+
+
 def test_installer_receives_the_once_read_exact_requirements_bytes(
     tmp_path: Path,
 ) -> None:
@@ -987,18 +1224,22 @@ def test_untrusted_cache_ancestor_owner_refuses_before_fetch(
     manifest, requirements, content = _write_inputs(tmp_path)
     ancestor = tmp_path / "untrusted-owner"
     ancestor.mkdir(mode=0o700)
-    real_lstat = Path.lstat
+    real_fstat = BOOTSTRAP.os.fstat
     untrusted_uid = os.geteuid() + 1
 
-    def spoofed_lstat(path: Path) -> os.stat_result:
-        metadata = real_lstat(path)
-        if path != ancestor:
+    def spoofed_fstat(descriptor: int) -> os.stat_result:
+        metadata = real_fstat(descriptor)
+        try:
+            opened_path = Path(f"/proc/self/fd/{descriptor}").resolve()
+        except FileNotFoundError:
+            return metadata
+        if opened_path != ancestor:
             return metadata
         fields = list(metadata)
         fields[4] = untrusted_uid
         return os.stat_result(fields)
 
-    monkeypatch.setattr(Path, "lstat", spoofed_lstat)
+    monkeypatch.setattr(BOOTSTRAP.os, "fstat", spoofed_fstat)
     calls: list[str] = []
     with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="untrusted owner"):
         BOOTSTRAP.prepare(
