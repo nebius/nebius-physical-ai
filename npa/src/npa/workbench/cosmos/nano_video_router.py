@@ -2,6 +2,32 @@
 
 from ray.serve.request_router import FIFOMixin, RequestRouter
 
+EXPECTED_RAY_VERSION = "2.56.0"
+
+
+def _assert_ray_version() -> None:
+    # This module subclasses private Ray Serve internals (FIFOMixin /
+    # RequestRouter) whose behavior changed between releases. A rebuild against
+    # a different Ray version would silently alter routing semantics, so fail
+    # loudly instead. Skipped when ray is not installed at all (unit-test
+    # harnesses fake ray.serve.request_router); the import above then decides
+    # what happens next.
+    try:
+        import ray
+    except ImportError:
+        return
+    actual = ray.__version__
+    if actual != EXPECTED_RAY_VERSION:
+        raise RuntimeError(
+            f"nano_video_router requires ray=={EXPECTED_RAY_VERSION} "
+            f"(it subclasses ray.serve.request_router internals); "
+            f"found ray=={actual}. Rebuild the image against the pinned "
+            "Ray version."
+        )
+
+
+_assert_ray_version()
+
 
 class LeastOutstandingRouter(FIFOMixin, RequestRouter):
     # FIFO fallback retains pending requests when an out-of-order assignment
