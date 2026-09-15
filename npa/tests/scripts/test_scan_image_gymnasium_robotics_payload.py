@@ -179,7 +179,9 @@ def _tar_bytes(
     directories: dict[str, bytes] | None = None,
     directory_linknames: dict[str, str] | None = None,
     symlinks: dict[str, str] | None = None,
+    symlink_bodies: dict[str, bytes] | None = None,
     hardlinks: dict[str, str] | None = None,
+    hardlink_bodies: dict[str, bytes] | None = None,
     suffix: bytes = b"",
     gname: str = "",
 ) -> bytes:
@@ -194,12 +196,16 @@ def _tar_bytes(
             info = tarfile.TarInfo(name)
             info.type = tarfile.SYMTYPE
             info.linkname = target
-            archive.addfile(info)
+            body = (symlink_bodies or {}).get(name, b"")
+            info.size = len(body)
+            archive.addfile(info, io.BytesIO(body) if body else None)
         for name, target in (hardlinks or {}).items():
             info = tarfile.TarInfo(name)
             info.type = tarfile.LNKTYPE
             info.linkname = target
-            archive.addfile(info)
+            body = (hardlink_bodies or {}).get(name, b"")
+            info.size = len(body)
+            archive.addfile(info, io.BytesIO(body) if body else None)
         for name, raw in (directories or {}).items():
             info = tarfile.TarInfo(name)
             info.type = tarfile.DIRTYPE
@@ -225,7 +231,9 @@ def _docker_save(
     user: str = "ubuntu",
     env: list[str] | None = None,
     symlinks: dict[str, str] | None = None,
+    symlink_bodies: dict[str, bytes] | None = None,
     hardlinks: dict[str, str] | None = None,
+    hardlink_bodies: dict[str, bytes] | None = None,
     layer_directories: dict[str, bytes] | None = None,
     layer_directory_linknames: dict[str, str] | None = None,
     outer_directories: dict[str, bytes] | None = None,
@@ -241,7 +249,9 @@ def _docker_save(
     app = _tar_bytes(
         files,
         symlinks=symlinks,
+        symlink_bodies=symlink_bodies,
         hardlinks=hardlinks,
+        hardlink_bodies=hardlink_bodies,
         directories=layer_directories,
         directory_linknames=layer_directory_linknames,
         suffix=layer_suffix,
@@ -343,6 +353,8 @@ def _oci_layout(
     layer_size_delta: int = 0,
     layer_media_type: str = "application/vnd.oci.image.layer.v1.tar+gzip",
     configured_diff_ids: list[str] | None = None,
+    index_depth: int = 0,
+    index_repeat_count: int = 1,
 ) -> tuple[str, list[str], list[dict[str, object]]]:
     raw_layers = [
         _tar_bytes({"etc/neutral-base": b"base"}),
@@ -387,15 +399,30 @@ def _oci_layout(
         manifest, "application/vnd.oci.image.manifest.v1+json"
     )
     manifest_descriptor["platform"] = {"architecture": "amd64", "os": "linux"}
-    index = json.dumps(
-        {"schemaVersion": 2, "manifests": [manifest_descriptor]},
-        separators=(",", ":"),
-    ).encode()
     blobs = {config_descriptor["digest"]: config, manifest_descriptor["digest"]: manifest}
     blobs.update(
         (descriptor["digest"], content)
         for descriptor, content in zip(descriptors, compressed, strict=True)
     )
+    index_descriptors = [manifest_descriptor]
+    for _depth in range(index_depth):
+        nested_index = json.dumps(
+            {
+                "schemaVersion": 2,
+                "mediaType": "application/vnd.oci.image.index.v1+json",
+                "manifests": index_descriptors,
+            },
+            separators=(",", ":"),
+        ).encode()
+        nested_descriptor = _oci_descriptor(
+            nested_index, "application/vnd.oci.image.index.v1+json"
+        )
+        blobs[nested_descriptor["digest"]] = nested_index
+        index_descriptors = [nested_descriptor] * index_repeat_count
+    index = json.dumps(
+        {"schemaVersion": 2, "manifests": index_descriptors},
+        separators=(",", ":"),
+    ).encode()
     archive_files = {
         "oci-layout": b'{"imageLayoutVersion":"1.0.0"}',
         "index.json": index,
@@ -494,6 +521,54 @@ def test_oci_layout_binds_compressed_descriptors_and_uncompressed_diff_ids(
     assert result["distributed_blob_scan_complete"] is True
 
 
+def test_oci_descriptor_graph_budget_accepts_exact_normal_boundary(
+    tmp_path: Path,
+    structural_scan: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image = tmp_path / "exact-descriptor-budget.tar"
+    _oci_layout(image, _required())
+    monkeypatch.setattr(SCAN, "MAX_OCI_DESCRIPTOR_GRAPH_VISITS", 7)
+
+    assert SCAN.scan_oci_layout(image)["status"] == "passed"
+
+
+def test_oci_repeated_descriptor_graph_refuses_at_scanwide_limit(
+    tmp_path: Path,
+    structural_scan: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image = tmp_path / "repeated-descriptor-graph.tar"
+    _oci_layout(image, _required(), index_depth=1, index_repeat_count=3)
+    monkeypatch.setattr(SCAN, "MAX_OCI_DESCRIPTOR_GRAPH_VISITS", 7)
+
+    with pytest.raises(ValueError, match="descriptor graph work budget exceeded"):
+        SCAN.scan_oci_layout(image)
+
+
+def test_oci_repeated_descriptors_scan_each_distinct_blob_once(
+    tmp_path: Path,
+    structural_scan: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image = tmp_path / "repeated-descriptor-cache.tar"
+    _oci_layout(image, _required(), index_depth=1, index_repeat_count=3)
+    original_raw_member = SCAN._raw_member
+    blob_reads: list[str] = []
+
+    def measured_raw_member(*args: object, **kwargs: object) -> bytes:
+        name = str(args[1])
+        if name.startswith("blobs/sha256/"):
+            blob_reads.append(name)
+        return original_raw_member(*args, **kwargs)
+
+    monkeypatch.setattr(SCAN, "_raw_member", measured_raw_member)
+    with pytest.raises(ValueError, match="exactly one runnable image"):
+        SCAN.scan_oci_layout(image)
+
+    assert len(blob_reads) == len(set(blob_reads))
+
+
 @pytest.mark.parametrize(
     ("field", "limit_name", "message"),
     [
@@ -565,9 +640,7 @@ def test_oci_layout_refuses_cumulative_budget_in_materialized_layers(
     descriptor_budgets, materialized_budget = _measure_oci_nested_archive_budget(
         files
     )
-    before_materialization = 2 * sum(
-        item[field] for item in descriptor_budgets
-    )
+    before_materialization = sum(item[field] for item in descriptor_budgets)
     materialized = materialized_budget[field]
     assert materialized > 0
     monkeypatch.setattr(SCAN, limit_name, before_materialization + materialized - 1)
@@ -593,7 +666,7 @@ def test_oci_layout_accepts_exact_scanwide_nested_budget_boundaries(
         files
     )
     totals = {
-        field: 2 * sum(item[field] for item in descriptor_budgets)
+        field: sum(item[field] for item in descriptor_budgets)
         + materialized_budget[field]
         for field in ("member_count", "expanded_bytes", "work_bytes")
     }
@@ -1353,6 +1426,52 @@ def test_nonzero_directory_body_refuses(
 ) -> None:
     with pytest.raises(ValueError, match="invalid .* directory"):
         _scan_directory_case(kind, b"hidden payload", tmp_path)
+
+
+@pytest.mark.parametrize("link_kind", ["symlink", "hardlink"])
+def test_nonzero_nested_tar_link_body_refuses(
+    monkeypatch: pytest.MonkeyPatch, link_kind: str
+) -> None:
+    link_name = "neutral-link"
+    body = b"hidden forbidden payload"
+    monkeypatch.setattr(
+        SCAN,
+        "KNOWN_FORBIDDEN_CONTENT_SHA256",
+        frozenset({hashlib.sha256(body).hexdigest()}),
+    )
+    options = {
+        f"{link_kind}s": {link_name: "neutral-target"},
+        f"{link_kind}_bodies": {link_name: body},
+    }
+    nested = _tar_bytes({}, **options)
+
+    with pytest.raises(ValueError, match="nonzero tar link body"):
+        SCAN._nested_archive_members("nested.tar", nested)
+
+
+@pytest.mark.parametrize("link_kind", ["symlink", "hardlink"])
+def test_nonzero_layer_link_body_refuses(
+    tmp_path: Path,
+    structural_scan: None,
+    monkeypatch: pytest.MonkeyPatch,
+    link_kind: str,
+) -> None:
+    link_name = "opt/neutral-link"
+    body = b"hidden forbidden payload"
+    monkeypatch.setattr(
+        SCAN,
+        "KNOWN_FORBIDDEN_CONTENT_SHA256",
+        frozenset({hashlib.sha256(body).hexdigest()}),
+    )
+    options = {
+        f"{link_kind}s": {link_name: "opt/neutral-target"},
+        f"{link_kind}_bodies": {link_name: body},
+    }
+    image = tmp_path / f"{link_kind}-body.tar"
+    _docker_save(image, _required(), **options)
+
+    with pytest.raises(ValueError, match="nonzero tar link body"):
+        SCAN.scan(image)
 
 
 def test_zip_directory_regular_file_mode_refuses() -> None:

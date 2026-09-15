@@ -120,6 +120,7 @@ MAX_DOCKER_SAVE_ARCHIVE_BYTES = 1024 * 1024 * 1024
 MAX_DOCKER_SAVE_OUTER_MEMBERS = 4_096
 MAX_DOCKER_SAVE_METADATA_BYTES = 16 * 1024 * 1024
 MAX_ORDERED_LAYERS = 256
+MAX_OCI_DESCRIPTOR_GRAPH_VISITS = MAX_DOCKER_SAVE_OUTER_MEMBERS
 MAX_LAYER_ARCHIVE_BYTES = 512 * 1024 * 1024
 MAX_ORDERED_LAYER_BYTES = 1024 * 1024 * 1024
 MAX_LAYER_MEMBERS = 100_000
@@ -517,6 +518,22 @@ class _NestedArchiveBudget:
             raise ValueError(f"nested archive work budget exceeded: {path}")
 
 
+class _OciDescriptorGraphBudget:
+    """Bound every descriptor occurrence visited during one OCI scan."""
+
+    def __init__(self) -> None:
+        self.visits = 0
+        self.validated_blobs: dict[str, bytes] = {}
+
+    def reserve(self, label: str) -> None:
+        self.visits += 1
+        if self.visits > MAX_OCI_DESCRIPTOR_GRAPH_VISITS:
+            raise ValueError(f"OCI descriptor graph work budget exceeded: {label}")
+
+    def remember(self, digest: str, content: bytes) -> None:
+        self.validated_blobs[digest] = content
+
+
 def _looks_like_tar(content: bytes) -> bool:
     """Recognize a valid first tar header, including pre-ustar archives."""
 
@@ -561,6 +578,8 @@ def _validated_tar_members(
             f"tar metadata: {path}:member-{index}",
             content[member.offset : member.offset_data],
         )
+        if (member.issym() or member.islnk()) and member.size != 0:
+            raise ValueError(f"nonzero tar link body: {path}:member-{index}")
         data_end = member.offset_data + member.size
         cursor = ((data_end + 511) // 512) * 512
         if any(content[data_end:cursor]):
@@ -1501,6 +1520,7 @@ def _oci_blob(
     label: str,
     referenced: set[str],
     nested_budget: _NestedArchiveBudget,
+    graph_budget: _OciDescriptorGraphBudget,
 ) -> tuple[bytes, str]:
     if not isinstance(descriptor, dict):
         raise ValueError(f"OCI {label} descriptor is not an object")
@@ -1517,15 +1537,23 @@ def _oci_blob(
         or size < 0
     ):
         raise ValueError(f"OCI {label} descriptor is incomplete")
+    graph_budget.reserve(label)
     name = f"blobs/sha256/{digest.removeprefix('sha256:')}"
-    raw = _raw_member(archive, name, max_bytes=MAX_LAYER_ARCHIVE_BYTES)
-    if len(raw) != size or "sha256:" + hashlib.sha256(raw).hexdigest() != digest:
+    raw = graph_budget.validated_blobs.get(digest)
+    if raw is None:
+        raw = _raw_member(archive, name, max_bytes=MAX_LAYER_ARCHIVE_BYTES)
+    if len(raw) != size or (
+        digest not in graph_budget.validated_blobs
+        and "sha256:" + hashlib.sha256(raw).hexdigest() != digest
+    ):
         raise ValueError(f"OCI {label} descriptor does not bind its blob")
     referenced.add(name)
-    _scan_decoded_member_bytes(f"raw OCI {label} blob", raw)
-    _nested_archive_members(
-        f"raw OCI {label} blob", raw, budget=nested_budget
-    )
+    if digest not in graph_budget.validated_blobs:
+        _scan_decoded_member_bytes(f"raw OCI {label} blob", raw)
+        _nested_archive_members(
+            f"raw OCI {label} blob", raw, budget=nested_budget
+        )
+        graph_budget.remember(digest, raw)
     return raw, media_type
 
 
@@ -1535,6 +1563,7 @@ def _oci_manifest_candidates(
     *,
     referenced: set[str],
     nested_budget: _NestedArchiveBudget,
+    graph_budget: _OciDescriptorGraphBudget,
     inherited_platform: dict[str, object] | None = None,
     depth: int = 0,
 ) -> list[tuple[dict[str, object], dict[str, object]]]:
@@ -1552,6 +1581,7 @@ def _oci_manifest_candidates(
             label=f"graph descriptor {depth}:{index}",
             referenced=referenced,
             nested_budget=nested_budget,
+            graph_budget=graph_budget,
         )
         if media_type not in OCI_INDEX_MEDIA_TYPES | OCI_MANIFEST_MEDIA_TYPES:
             raise ValueError("OCI index contains an unsupported descriptor media type")
@@ -1576,6 +1606,7 @@ def _oci_manifest_candidates(
                     document.get("manifests"),
                     referenced=referenced,
                     nested_budget=nested_budget,
+                    graph_budget=graph_budget,
                     inherited_platform=platform,
                     depth=depth + 1,
                 )
@@ -1589,6 +1620,7 @@ def _oci_manifest_candidates(
             label=f"manifest config {depth}:{index}",
             referenced=referenced,
             nested_budget=nested_budget,
+            graph_budget=graph_budget,
         )
         _scan_decoded_member_bytes(
             f"decoded OCI manifest config {depth}:{index}", config_raw
@@ -1603,6 +1635,7 @@ def _oci_manifest_candidates(
                 label=f"manifest layer {depth}:{index}:{layer_index}",
                 referenced=referenced,
                 nested_budget=nested_budget,
+                graph_budget=graph_budget,
             )
         annotations = descriptor.get("annotations") or {}
         if not isinstance(annotations, dict):
@@ -1755,11 +1788,13 @@ def scan_oci_layout(path: Path) -> dict[str, Any]:
             raise ValueError("OCI root index is malformed")
         referenced: set[str] = set()
         nested_budget = _NestedArchiveBudget()
+        graph_budget = _OciDescriptorGraphBudget()
         candidates = _oci_manifest_candidates(
             archive,
             index.get("manifests"),
             referenced=referenced,
             nested_budget=nested_budget,
+            graph_budget=graph_budget,
         )
         manifest = _selected_oci_manifest(candidates)
         config_descriptor = manifest.get("config")
@@ -1769,6 +1804,7 @@ def scan_oci_layout(path: Path) -> dict[str, Any]:
             label="selected image config",
             referenced=referenced,
             nested_budget=nested_budget,
+            graph_budget=graph_budget,
         )
         if config_media not in OCI_CONFIG_MEDIA_TYPES:
             raise ValueError("OCI image config media type is unsupported")
@@ -1787,6 +1823,7 @@ def scan_oci_layout(path: Path) -> dict[str, Any]:
                 label=f"selected layer {position}",
                 referenced=referenced,
                 nested_budget=nested_budget,
+                graph_budget=graph_budget,
             )
             assert isinstance(descriptor, dict)
             decoded = _strict_oci_layer(
