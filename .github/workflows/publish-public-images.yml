@@ -400,9 +400,13 @@ jobs:
             [[ "$curobo_source_epoch" =~ ^[1-9][0-9]*$ ]] || { echo "Positive source commit epoch is required" >&2; exit 1; }
             build_args+=(--build-arg "SOURCE_DATE_EPOCH=$curobo_source_epoch")
           fi
+          metadata_args=()
+          if [[ "$TOOL" == gymnasium-robotics ]]; then
+            metadata_args=(--metadata-file "$RUNNER_TEMP/${TOOL}-build-metadata.json")
+          fi
           docker buildx build \
             --load \
-            --metadata-file "$RUNNER_TEMP/${TOOL}-build-metadata.json" \
+            "${metadata_args[@]}" \
             --file "$DOCKERFILE" \
             "${build_args[@]}" \
             --label "org.opencontainers.image.revision=$DEVELOPMENT_SHA" \
