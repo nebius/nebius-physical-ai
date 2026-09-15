@@ -81,6 +81,10 @@ _GIB = 1024**3
 _MIN_TERRAFORM_VERSION = (1, 12, 0)
 
 
+class _ClusterNameCollisionError(RuntimeError):
+    """Terraform rejected creation because the requested cluster name exists."""
+
+
 def _redacted_exception_message(prefix: str, exc: BaseException) -> str:
     from npa.clients.nebius import redact_nebius_output
 
@@ -898,13 +902,19 @@ def up_cmd(
                     terraform_env=env,
                     terraform_timeout_seconds=timeout * 60,
                     terraform_cancel_reason=lambda: watcher.fatal_reason,
-                    command_runner=_run_stream,
+                    command_runner=_run_stream_with_captured_output,
                 ),
             )
         except BaseException as exc:
             watcher.stop()
+            error_to_report: BaseException = exc
+            if _is_cluster_name_collision(exc):
+                error_to_report = _ClusterNameCollisionError(
+                    "Terraform rejected the requested cluster name because it already exists"
+                )
             typer.echo(
-                _redacted_exception_message("terraform apply error", exc), err=True
+                _redacted_exception_message("terraform apply error", error_to_report),
+                err=True,
             )
             operation = current_operation()
             rolled_back = False
@@ -925,6 +935,8 @@ def up_cmd(
                 )
             if not rolled_back:
                 _echo_apply_recovery(tf_dir, tfvars, isinstance(exc, KeyboardInterrupt))
+            if isinstance(error_to_report, _ClusterNameCollisionError):
+                raise error_to_report from exc
             raise
         finally:
             watcher.stop()
@@ -2250,6 +2262,31 @@ def _run_stream(
         )
     except BackendCommandError as exc:
         raise typer.BadParameter(str(exc)) from exc
+
+
+def _run_stream_with_captured_output(
+    args: list[str],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+    timeout: int | None = None,
+    cancel: Callable[[], str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run Terraform while retaining diagnostics for a safe error classification."""
+    return _run_stream(
+        args,
+        cwd=cwd,
+        env=env,
+        timeout=timeout,
+        cancel=cancel,
+        capture_output=True,
+    )
+
+
+def _is_cluster_name_collision(exc: BaseException) -> bool:
+    """Return whether Terraform reported that creation collided with an existing name."""
+    message = str(exc).lower()
+    return "alreadyexists" in message or "already exists" in message
 
 
 def _stop_process(process: subprocess.Popen[str]) -> None:

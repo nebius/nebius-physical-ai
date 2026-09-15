@@ -53,6 +53,32 @@ def _completed(
     )
 
 
+def test_cluster_name_collision_is_classified_without_provider_details() -> None:
+    error = RuntimeError("service create RPC AlreadyExists: provider-specific-detail")
+
+    assert tf_mod._is_cluster_name_collision(error) is True
+    assert tf_mod._is_cluster_name_collision(RuntimeError("quota exhausted")) is False
+
+
+def test_terraform_collision_runner_retains_output_for_classification(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    observed: dict[str, object] = {}
+
+    def fake_runner(args: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        observed.update(args=args, capture_output=kwargs.get("capture_output"))
+        return _completed()
+
+    monkeypatch.setattr(tf_mod, "_run_stream", fake_runner)
+
+    tf_mod._run_stream_with_captured_output(
+        ["terraform", "apply"], cwd=tmp_path, env={}, timeout=60
+    )
+
+    assert observed["args"] == ["terraform", "apply"]
+    assert observed["capture_output"] is True
+
+
 @pytest.fixture(autouse=True)
 def _node_group_ssh_key(tmp_path_factory, monkeypatch) -> Path:
     """The vendored module rejects a node-group key path that does not exist.
