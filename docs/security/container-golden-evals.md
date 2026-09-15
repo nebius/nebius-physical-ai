@@ -33,7 +33,9 @@ pre-registration record with `needs-image-update`. This records the future real
 MuJoCo/EGL gate without registering a supported image. The neutral candidate
 must contain no upstream source, Shadow asset, MuJoCo/Python workload runtime,
 or populated cache; its Dockerfile refuses before package network access when
-the exact signed-snapshot bootstrap or corresponding-source locks differ. No
+the exact signed-snapshot bootstrap or corresponding-source locks differ. An
+owner-only reference build supplied exact config and ordered-layer scanner
+anchors but did not complete the product scan or leave an accepted artifact. No
 golden evaluation, accepted image, or public availability is claimed.
 
 ## CLI

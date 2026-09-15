@@ -155,7 +155,7 @@ def test_installed_notices_are_immutable_and_verified_by_the_default_user() -> N
         assert f"test ! -w {path}" in dockerfile
 
 
-def test_packaging_contract_does_not_claim_a_built_or_supported_image() -> None:
+def test_packaging_contract_distinguishes_reference_from_accepted_image() -> None:
     contract = yaml.safe_load(
         (ROOT / "npa/docker/workbench/packaging-contract.yaml").read_text()
     )
@@ -164,7 +164,9 @@ def test_packaging_contract_does_not_claim_a_built_or_supported_image() -> None:
     assert entry["phase"] == "pre-registration-quarantine"
     assert entry["skypilot_bootstrap_contract"] == "skypilot-0.12.2-v1"
     assert "uid 1000" in entry["passwordless_root_exemption"]
-    assert "No image" in entry["notes"]
+    assert "reference build" in entry["notes"]
+    assert "not accepted" in entry["notes"]
+    assert "complete product scan" in entry["notes"]
     assert "neutral" in entry["notes"].lower()
     assert "accepted_manifest" not in entry
 

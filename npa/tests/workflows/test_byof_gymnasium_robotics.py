@@ -173,7 +173,11 @@ def test_readiness_is_bound_and_all_execution_evidence_is_blocked() -> None:
     assert readiness["planning"]["task_fidelity"]["status"] == "unverified"
     assert readiness["prerequisites"]["source_image"]["status"] == "blocked"
     assert readiness["prerequisites"]["target_runtime"]["status"] == "blocked"
-    assert "historical" in readiness["prerequisites"]["source_image"]["reason"].lower()
+    source_reason = readiness["prerequisites"]["source_image"]["reason"].lower()
+    assert "reference build" in source_reason
+    assert "complete product scan" in source_reason
+    assert "no retained, pullable, accepted" in source_reason
+    assert "historical" in source_reason
 
 
 def test_no_gated_payload_or_consent_proxy_is_part_of_neutral_design() -> None:

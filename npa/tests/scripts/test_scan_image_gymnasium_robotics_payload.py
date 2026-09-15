@@ -134,6 +134,43 @@ def _zip_with_files(files: dict[str, bytes]) -> bytes:
     return stream.getvalue()
 
 
+def _deflated_zip_with_declared_suffix(suffix: bytes) -> bytes:
+    """Place bytes after a valid deflate stream inside its declared region."""
+
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("neutral.txt", b"neutral archive member")
+    content = stream.getvalue()
+    eocd_offset = content.rfind(b"PK\x05\x06")
+    central_offset = struct.unpack_from("<L", content, eocd_offset + 16)[0]
+    compressed_size = struct.unpack_from("<L", content, 18)[0]
+    filename_size, extra_size = struct.unpack_from("<2H", content, 26)
+    assert 30 + filename_size + extra_size + compressed_size == central_offset
+
+    raw = bytearray(content[:central_offset] + suffix + content[central_offset:])
+    new_central_offset = central_offset + len(suffix)
+    new_eocd_offset = eocd_offset + len(suffix)
+    struct.pack_into("<L", raw, 18, compressed_size + len(suffix))
+    struct.pack_into("<L", raw, new_central_offset + 20, compressed_size + len(suffix))
+    struct.pack_into("<L", raw, new_eocd_offset + 16, new_central_offset)
+    return bytes(raw)
+
+
+def _gzip_with_header_marker(kind: str, marker: bytes) -> bytes:
+    """Create a valid gzip stream carrying marker bytes in optional metadata."""
+
+    if kind == "filename":
+        stream = io.BytesIO()
+        with gzip.GzipFile(
+            filename=marker.decode(), mode="wb", fileobj=stream, mtime=0
+        ) as archive:
+            archive.write(b"neutral")
+        return stream.getvalue()
+    content = bytearray(gzip.compress(b"neutral", mtime=0))
+    content[3] |= 0x10
+    return bytes(content[:10] + marker + b"\0" + content[10:])
+
+
 def _tar_bytes(
     files: dict[str, bytes],
     *,
@@ -607,7 +644,7 @@ def test_secret_in_tar_header_metadata_refuses_without_echo(
     assert structural_marker not in str(captured.value)
 
 
-def test_nonzero_tar_member_padding_refuses_without_echo() -> None:
+def test_secret_in_tar_member_padding_refuses_without_echo() -> None:
     marker = b"api" + b"_key=" + (b"x" * 16)
     content = bytearray(_tar_bytes({"neutral.txt": b"x"}))
     with tarfile.open(fileobj=io.BytesIO(content), mode="r:") as archive:
@@ -615,9 +652,20 @@ def test_nonzero_tar_member_padding_refuses_without_echo() -> None:
     padding_start = member.offset_data + member.size
     content[padding_start : padding_start + len(marker)] = marker
 
-    with pytest.raises(ValueError, match="nonzero tar member padding") as captured:
+    with pytest.raises(ValueError, match="forbidden secret signature") as captured:
         SCAN._nested_archive_members("nested.tar", bytes(content))
     assert marker.decode() not in str(captured.value)
+
+
+def test_neutral_nonzero_tar_member_padding_refuses() -> None:
+    content = bytearray(_tar_bytes({"neutral.txt": b"x"}))
+    with tarfile.open(fileobj=io.BytesIO(content), mode="r:") as archive:
+        member = archive.getmember("neutral.txt")
+    padding_start = member.offset_data + member.size
+    content[padding_start] = 1
+
+    with pytest.raises(ValueError, match="nonzero tar member padding"):
+        SCAN._nested_archive_members("nested.tar", bytes(content))
 
 
 def test_source_and_built_graph_trust_roots_are_pinned() -> None:
@@ -1009,7 +1057,7 @@ def test_decoded_secret_in_nested_content_refuses_with_member_label_only(
             archive.writestr("credential.txt", content)
         nested = stream.getvalue()
         name = "opt/nested.zip"
-        label = "decoded member: opt/nested.zip:credential.txt"
+        label = "raw archive member: opt/nested.zip"
     else:
         nested = gzip.compress(content, mtime=0)
         name = "opt/nested.gz"
@@ -1021,6 +1069,72 @@ def test_decoded_secret_in_nested_content_refuses_with_member_label_only(
     message = str(captured.value)
     assert label in message
     assert content.decode("utf-8") not in message
+
+
+@pytest.mark.parametrize("kind", ["zip", "gzip", "bzip2", "xz"])
+def test_supported_nested_compression_accepts_neutral_bytes(kind: str) -> None:
+    content = b"neutral archive member"
+    if kind == "zip":
+        stream = io.BytesIO()
+        with zipfile.ZipFile(
+            stream, "w", compression=zipfile.ZIP_DEFLATED
+        ) as archive:
+            archive.writestr("neutral.txt", content)
+        nested = stream.getvalue()
+        expected_members = 1
+    elif kind == "gzip":
+        nested = gzip.compress(content, mtime=0)
+        expected_members = 0
+    elif kind == "bzip2":
+        nested = SCAN.bz2.compress(content)
+        expected_members = 0
+    else:
+        nested = SCAN.lzma.compress(content)
+        expected_members = 0
+
+    assert SCAN._nested_archive_members(f"neutral.{kind}", nested) == expected_members
+
+
+@pytest.mark.parametrize("kind", ["gzip", "bzip2", "xz"])
+def test_secret_in_compressed_representation_refuses_without_echo(kind: str) -> None:
+    marker = b"api" + b"_key=" + (b"x" * 16)
+    compressors = {
+        "gzip": lambda: gzip.compress(b"neutral", mtime=0),
+        "bzip2": lambda: SCAN.bz2.compress(b"neutral"),
+        "xz": lambda: SCAN.lzma.compress(b"neutral"),
+    }
+    content = compressors[kind]() + marker
+
+    with pytest.raises(ValueError, match="forbidden secret signature") as captured:
+        SCAN._nested_archive_members(f"nested.{kind}", content)
+    assert marker.decode() not in str(captured.value)
+
+
+@pytest.mark.parametrize("kind", ["filename", "comment"])
+def test_secret_in_gzip_optional_header_refuses_without_echo(kind: str) -> None:
+    marker = b"password=" + (b"x" * 16)
+    content = _gzip_with_header_marker(kind, marker)
+    assert gzip.decompress(content) == b"neutral"
+
+    with pytest.raises(ValueError, match="forbidden secret signature") as captured:
+        SCAN._nested_archive_members("nested.gz", content)
+    assert marker.decode() not in str(captured.value)
+
+
+def test_zip_deflate_stream_must_consume_its_declared_region() -> None:
+    content = _deflated_zip_with_declared_suffix(b"neutral-trailing-byte")
+
+    with pytest.raises(ValueError, match="ambiguous zip compressed stream"):
+        SCAN._validated_zip_infos("nested.zip", content)
+
+
+def test_secret_in_zip_compressed_region_refuses_without_echo() -> None:
+    marker = b"secret" + b"_key=" + (b"x" * 16)
+    content = _deflated_zip_with_declared_suffix(marker)
+
+    with pytest.raises(ValueError, match="forbidden secret signature") as captured:
+        SCAN._nested_archive_members("nested.zip", content)
+    assert marker.decode() not in str(captured.value)
 
 
 @pytest.mark.parametrize(

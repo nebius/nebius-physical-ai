@@ -216,8 +216,9 @@ EXPECTED_ORDERED_LAYER_DIFF_IDS = (
     "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
 )
 # Neutral files are trusted only after their exact bytes are independently
-# reviewed and pinned here. Repository implementation leaves the built-image
-# trust roots unset, so a local status edit cannot turn the scanner green.
+# reviewed and pinned here. The reference-build config and ordered layer graph
+# above are scanner inputs, not an accepted image digest or current-head proof;
+# a local status edit cannot turn the scanner green.
 EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
     "source-lock.json": "3318043e3d3fec10b233b212b8e7bd97391f48f20b629dbdb3319981010b6ca9",
     "apt-runtime.lock.json": "6e1df9be2187010e9d4ee12dc2a4d95e4f0aa799ff321c70d86ec2d8772b855e",
@@ -455,6 +456,24 @@ def _scan_raw_blob_bytes(
             )
 
 
+def _scan_archive_representation_bytes(
+    label: str, content: bytes, *, allowed_system_wheel_path: str | None = None
+) -> None:
+    """Apply policy to one archive's stored representation."""
+
+    _scan_raw_blob_bytes(
+        label,
+        content,
+        allowed_system_wheel_path=allowed_system_wheel_path,
+    )
+    if allowed_system_wheel_path is not None:
+        return
+    if SECRET_TEXT.search(content):
+        raise ValueError(f"forbidden secret signature: {label}")
+    if VENDOR_TEXT.search(content):
+        raise ValueError(f"forbidden vendor payload signature: {label}")
+
+
 def _scan_decoded_member_bytes(
     label: str, content: bytes, *, allowed_system_wheel_path: str | None = None
 ) -> None:
@@ -620,6 +639,31 @@ def _zip_central_filename_bytes(path: str, info: zipfile.ZipInfo) -> bytes:
         raise ValueError(f"unsupported zip filename encoding: {path}") from error
 
 
+def _validate_zip_compressed_stream(
+    path: str, info: zipfile.ZipInfo, content: bytes
+) -> None:
+    """Require one ZIP member stream to consume all declared stored bytes."""
+
+    if info.file_size > MAX_NESTED_ARCHIVE:
+        raise ValueError(f"nested archive member exceeds scan bound: {path}")
+    if info.compress_type == zipfile.ZIP_STORED:
+        expanded = content
+    elif info.compress_type == zipfile.ZIP_DEFLATED:
+        try:
+            stream = zlib.decompressobj(-zlib.MAX_WBITS)
+            expanded = stream.decompress(content, MAX_NESTED_ARCHIVE + 1)
+        except zlib.error as error:
+            raise ValueError(f"unreadable zip compressed stream: {path}") from error
+        if len(expanded) > MAX_NESTED_ARCHIVE:
+            raise ValueError(f"nested archive member exceeds scan bound: {path}")
+        if not stream.eof or stream.unconsumed_tail or stream.unused_data:
+            raise ValueError(f"ambiguous zip compressed stream: {path}")
+    else:
+        raise ValueError(f"unsupported zip compression: {path}")
+    if len(expanded) != info.file_size or zlib.crc32(expanded) != info.CRC:
+        raise ValueError(f"zip compressed stream does not match central directory: {path}")
+
+
 def _validated_zip_infos(
     path: str,
     content: bytes,
@@ -722,6 +766,9 @@ def _validated_zip_infos(
             if index + 1 < len(ordered)
             else central_offset
         )
+        if data_end > next_offset:
+            raise ValueError(f"unaccounted zip bytes: {path}")
+        _validate_zip_compressed_stream(path, info, content[data_start:data_end])
         descriptor = content[data_end:next_offset]
         if local_flags & 0x08:
             if (local_crc, local_compressed_size, local_size) != (0, 0, 0):
@@ -832,7 +879,7 @@ def _nested_archive_members(
     )
     if archive_like:
         budget.account_archive(path, len(content))
-        _scan_raw_blob_bytes(
+        _scan_archive_representation_bytes(
             f"raw archive member: {path}",
             content,
             allowed_system_wheel_path=allowed_system_wheel_path,

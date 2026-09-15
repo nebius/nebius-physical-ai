@@ -102,10 +102,12 @@ This remains a minimal BYOF candidate. It has no model, external dataset,
 gated asset, terms acceptance, RL training claim, expert score, other
 environment-family claim, or physical-robot transfer claim. See
 [`byof-gymnasium-robotics.md`](byof-gymnasium-robotics.md).
-The neutral zero-Shadow-payload bootstrap has no accepted or public build and
-is pre-registration quarantined. Pinned source, Shadow assets, MuJoCo/Python
-runtime, and populated caches are runtime-only; historical private evidence
-does not transfer to redesigned image or executable bytes.
+The neutral zero-Shadow-payload bootstrap is pre-registration quarantined. An
+owner-only reference build supplied the scanner's exact config and ordered
+20-DiffID anchors, but did not complete the product scan, SBOM, push, or
+immutable-digest gates and left no accepted artifact. Pinned source, Shadow
+assets, MuJoCo/Python runtime, and populated caches are runtime-only; historical
+private evidence does not transfer to redesigned image or executable bytes.
 
 ### RoboCasa
 
