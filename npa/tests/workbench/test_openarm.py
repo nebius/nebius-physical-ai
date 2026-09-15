@@ -256,6 +256,12 @@ def test_packaging_pins_and_excludes_isaac_payload() -> None:
     assert "isaac-bootstrap ensure" not in dockerfile
     assert "nvcr.io/nvidia/isaac" not in dockerfile
     assert "--require-hashes" in dockerfile
+    assert 'm.version("GitPython") == "3.1.62"' in dockerfile
+    security_lock = (
+        ROOT / "npa/docker/workbench/openarm/security-requirements.txt"
+    ).read_text(encoding="utf-8")
+    assert "gitpython==3.1.62" in security_lock
+    assert "gitpython==3.1.57" not in security_lock
     assert (ROOT / "npa/docker/workbench/openarm/THIRD_PARTY_NOTICES.md").is_file()
     assert "prune_python_vendor_devel.py" in dockerfile
     assert (ROOT / "npa/docker/workbench/openarm/ONBOARDING_CONTRACT.md").is_file()
@@ -271,6 +277,9 @@ def test_packaging_pins_and_excludes_isaac_payload() -> None:
     sources = {row["name"]: row for row in components["components"]}
     assert len(sources["enactic/openarm_mujoco"]["license_sha256"]) == 64
     assert len(sources["enactic/openarm_isaac_lab"]["license_sha256"]) == 64
+    assert "docker/workbench/openarm/security-requirements.txt" in components[
+        "transitive_inventory"
+    ]["python_lock"]
 
 
 def test_deploy_dry_run_redacts_secrets(monkeypatch: pytest.MonkeyPatch) -> None:

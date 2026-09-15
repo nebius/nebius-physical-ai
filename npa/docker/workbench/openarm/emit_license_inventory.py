@@ -82,6 +82,7 @@ def main() -> int:
     locks = [
         Path("/opt/npa/docker/workbench/common/isaac-oss-deps.txt"),
         Path("/opt/npa/openarm/mujoco-requirements.txt"),
+        Path("/opt/npa/openarm/security-requirements.txt"),
     ]
     packages = [_package_record(row) for row in importlib.metadata.distributions()]
     payload = {

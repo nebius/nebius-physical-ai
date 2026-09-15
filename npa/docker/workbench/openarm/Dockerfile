@@ -49,6 +49,7 @@ COPY docker/workbench/common /opt/npa/docker/workbench/common
 COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh /usr/local/bin/npa-workflow-entrypoint
 COPY --chmod=0755 docker/workbench/isaac-lab/npa_cli.sh /usr/local/bin/npa
 COPY docker/workbench/openarm/mujoco-requirements.txt /opt/npa/openarm/mujoco-requirements.txt
+COPY docker/workbench/openarm/security-requirements.txt /opt/npa/openarm/security-requirements.txt
 COPY --chmod=0755 docker/workbench/openarm/isaac_runner.py /opt/npa/openarm/isaac_runner.py
 COPY --chmod=0755 docker/workbench/openarm/emit_license_inventory.py /opt/npa/openarm/emit_license_inventory.py
 COPY --chmod=0755 docker/workbench/openarm/prune_python_vendor_devel.py /opt/npa/openarm/prune_python_vendor_devel.py
@@ -71,6 +72,8 @@ RUN find /opt/npa/docker/workbench/common -type d -exec chmod 0755 {} + \
 # The reviewed hash lock is additive to the exact shared Isaac prerequisite closure.
 RUN /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir --require-hashes \
       -r /opt/npa/openarm/mujoco-requirements.txt \
+    && /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir --require-hashes \
+      -r /opt/npa/openarm/security-requirements.txt \
     && /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir --no-deps wheel==0.47.0 \
     && git clone --filter=blob:none --no-checkout https://github.com/enactic/openarm_mujoco.git /opt/openarm/mujoco \
     && git -C /opt/openarm/mujoco checkout "${OPENARM_MUJOCO_COMMIT}" \
@@ -93,6 +96,7 @@ RUN /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir --require-hashes 
     && rm -rf /root/.cache /home/ubuntu/.cache
 
 RUN /opt/npa/sim/venv/bin/python -c 'import mujoco, openarm_mujoco.v2 as o; m=mujoco.MjModel.from_xml_path(o.openarm_demo_xml()); assert m.nu == 17' \
+    && /opt/npa/sim/venv/bin/python -c 'import importlib.metadata as m; assert m.version("GitPython") == "3.1.62"' \
     && /opt/npa/sim/venv/bin/python -c 'import importlib.util; assert importlib.util.find_spec("isaacsim") is None; assert importlib.util.find_spec("isaaclab") is None' \
     && /opt/npa/sim/venv/bin/python /opt/npa/openarm/emit_license_inventory.py
 

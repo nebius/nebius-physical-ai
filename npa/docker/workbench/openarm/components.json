@@ -75,7 +75,8 @@
   "transitive_inventory": {
     "python_lock": [
       "docker/workbench/common/isaac-oss-deps.txt",
-      "docker/workbench/openarm/mujoco-requirements.txt"
+      "docker/workbench/openarm/mujoco-requirements.txt",
+      "docker/workbench/openarm/security-requirements.txt"
     ],
     "runtime_path": "/usr/share/doc/npa-openarm/python-license-inventory.json",
     "vendor_prune_record": "/usr/share/doc/npa-openarm/python-vendor-prune.json",
