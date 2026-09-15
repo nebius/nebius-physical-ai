@@ -125,16 +125,15 @@ npa workbench workflow validate-spec workflows/testing/isaac-arena-evaluation-b2
 npa workbench workflow validate-spec workflows/testing/isaac-arena-evaluation-rtxpro.yaml
 ```
 
-The historical release is `0.3.0-isaaclab3-20260912-r2`, exact manifest
-`sha256:5e2099a83ce4fd090bcb9bbac3004f5ddf37ef9e2c763a225b04e5daab46a4c2`,
+The current release is `0.3.0-isaaclab3-20260912-r3`, exact manifest
+`sha256:267f2b5785c9a1d2df7aba58a0ea4bb112edb976b5b83fef2afbbd130a23c32c`,
 promoted without rebuilding from development source SHA
-`7dd3a2bf3aa228dd3c201ba72ac0aae3d9559ab1` after genuine replay and state-only
-regression qualification. Its RTX visual qualification is now rejected: the
-80 source actions were followed by 170 held-action steps, the recorded initial
-state was not applied, success rate was zero, and render grain passed the former
-pixel-change gate. The current source changes require a new immutable image
-and fresh qualification; do not treat that historical digest or its zero-action
-predecessor as meaningful visual evidence. On a target whose accelerator
+`feadf144a277366265c1331d0176d43e835092be` after exact-digest B200 state and
+successful RTX task/visual qualification. The historical r2 RTX proof remains
+rejected: 80 source actions were followed by 170 held-action steps, the recorded
+initial state was not applied, success rate was zero, and render grain passed
+the former pixel-change gate. Do not treat that historical digest or its
+zero-action predecessor as meaningful visual evidence. On a target whose accelerator
 spelling has already passed `npa workbench workflow gpus`, set
 `NPA_WORKFLOW_GPU_ACCELERATOR=B200:1` for the state-only spec or
 `NPA_WORKFLOW_GPU_ACCELERATOR=RTXPRO-6000-BLACKWELL-SERVER-EDITION:1` for the

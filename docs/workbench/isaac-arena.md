@@ -19,17 +19,15 @@ Lab image. The source archive and Python wheels are SHA-256 verified. Arena
 tests, sample checkpoints, demonstration data, and documentation media are
 removed.
 
-The historical published release is
-`npa-isaac-arena:0.3.0-isaaclab3-20260912-r2`, manifest
-`sha256:5e2099a83ce4fd090bcb9bbac3004f5ddf37ef9e2c763a225b04e5daab46a4c2`.
-It was promoted without rebuilding from source revision
-`7dd3a2bf3aa228dd3c201ba72ac0aae3d9559ab1` after complete payload/security,
-SBOM, provenance, bootstrap, anonymous-pull, and two-platform workload gates.
-Its RTX visual qualification was subsequently rejected: stochastic rendering
-noise passed the former pixel-change checks, while the task failed. The current
-source corrects replay-state initialization and visual acceptance. A new image
-must pass fresh digest-bound B200 and RTX qualification before promotion; the
-historical release is not evidence for these corrections.
+The current published release is
+`npa-isaac-arena:0.3.0-isaaclab3-20260912-r3`, manifest
+`sha256:267f2b5785c9a1d2df7aba58a0ea4bb112edb976b5b83fef2afbbd130a23c32c`.
+It is an exact-digest promotion of source revision
+`feadf144a277366265c1331d0176d43e835092be` after complete payload/security,
+SBOM, provenance, bootstrap, anonymous-pull, B200 state, and successful RTX
+task/visual gates. The r2 release remains historical: its RTX qualification is
+rejected because stochastic rendering noise passed its former pixel-change
+checks while held actions obscured motion and the task failed.
 
 The image excludes Isaac Sim/Lab/Omniverse Kit runtime payloads, Arena policy
 checkpoints and replay datasets, operator inputs, Lightwheel registry assets,
@@ -528,10 +526,20 @@ the wrong order changes their physical orientations. The replacement normalizer
 handles this declared representation change explicitly; a successful source
 recording still does not establish a successful live replay.
 
-The replacement candidate's image/security gates, B200 state regression, RTX
-successful task video, independent artifact readback, and authenticated playback
-remain pending in the adjacent workflow readiness records until executed. No
-historical digest or run is reused to claim the changed implementation passed.
+The replacement candidate qualified as
+`arena-b200-state-feadf144-20260915-r1` and
+`arena-rtx-task-feadf144-20260915-r1`. The B200 run completed four 1,050-step
+state-only episodes for seeds 42–45 with `success_rate=0.0` and
+`object_moved_rate=1.0`, emitting no video. The RTX run applied the replay's
+declared XYZW contract and executed its exact 42-action native terminal prefix
+with zero padding. Upstream reported `success_rate=1.0`; the registered
+`arena.open-door.revolute-joint.v1` adapter measured microwave-door openness
+from 0.200 to 0.846 and bound that progress interval to spatially coherent
+motion after strong denoising. The 1280×720 evidence H.264 has SHA-256
+`658fd8f3070ea52ef365af5e117538892d0ecf927d19d2d1f39d1227793c5780`.
+Independent retrieval re-read and hash-checked 63 B200 objects / 51,025,377
+bytes and 26 RTX objects / 13,264,455 bytes. No historical digest or failed run
+is reused to claim the changed implementation passed.
 
 For exact build, scan, qualification, and cleanup rules, use
 `skills/tools/isaac-arena/SKILL.md`.

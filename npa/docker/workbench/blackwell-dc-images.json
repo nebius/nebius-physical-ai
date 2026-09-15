@@ -548,18 +548,18 @@
       "torch": "2.11.0+cu128 inherited from the exact accepted npa-isaac-lab runtime-fetch base",
       "source_compiled_extensions": [],
       "smoke": "Complete real state evaluation on B200; RTX visual qualification additionally requires current-run task success, simulator-ground-truth progress, and coherent denoised viewport motion.",
-      "notes": "The published r2 coordinate and its packaging/security evidence are retained. Its four-seed B200 state-only regression completed on the exact digest. Its RTX video acceptance is rejected: 80 source actions were followed by 170 held-action steps, success_rate was 0.0, and stochastic render grain could satisfy the old pixel-delta thresholds. A replacement image needs fresh build/security, B200 state, RTX task/visual, and playback qualification. Isaac Sim/Lab and provider-controlled assets remain operator runtime fetches; Arena 0.3.0 remains upstream alpha.",
-      "validated_tag": "dev-7dd3a2bf3aa228dd3c201ba72ac0aae3d9559ab1",
-      "validated_digest": "sha256:5e2099a83ce4fd090bcb9bbac3004f5ddf37ef9e2c763a225b04e5daab46a4c2",
-      "published_tag": "0.3.0-isaaclab3-20260912-r2",
-      "published_digest": "sha256:5e2099a83ce4fd090bcb9bbac3004f5ddf37ef9e2c763a225b04e5daab46a4c2",
+      "notes": "The exact accepted candidate passed source/license, complete-payload, security, SBOM, provenance, bootstrap, and anonymous-pull gates. Its four-seed B200 state-only regression retained success_rate=0.0 without a video claim. The RTX replay executed only its 42-action native terminal prefix with zero padding, reported upstream success_rate=1.0, opened the microwave door from 0.200 to 0.846, and bound simulator progress to spatially coherent denoised video motion. The historical r2 RTX proof remains rejected because held actions, task failure, and render grain could satisfy its former raw-pixel gate. Isaac Sim/Lab and provider-controlled assets remain operator runtime fetches; Arena 0.3.0 remains upstream alpha.",
+      "validated_tag": "dev-feadf144a277366265c1331d0176d43e835092be",
+      "validated_digest": "sha256:267f2b5785c9a1d2df7aba58a0ea4bb112edb976b5b83fef2afbbd130a23c32c",
+      "published_tag": "0.3.0-isaaclab3-20260912-r3",
+      "published_digest": "sha256:267f2b5785c9a1d2df7aba58a0ea4bb112edb976b5b83fef2afbbd130a23c32c",
       "publication_model": "exact-digest-promoted",
       "published_registries": [
         "public-development",
         "public-release"
       ],
-      "validation_scope": "Historical r2 B200 state-only evaluation; RTX visual qualification rejected.",
-      "candidate_validation": "pending-build"
+      "validation_scope": "B200 four-seed state-only evaluation plus successful RTX task/progress/visual evaluation on the exact accepted digest.",
+      "candidate_validation": "qualified"
     },
     {
       "name": "npa-leisaac",
@@ -885,17 +885,22 @@
   "validation_evidence": {
     "npa-isaac-arena": {
       "built": true,
-      "payload_scan": "The exact development digest passed the complete filesystem/layer/history Omniverse and secret scans, vulnerability/license policy, SBOM generation, digest-bound provenance and SBOM attestations, and anonymous registry resolution.",
-      "hardware_run": "Historical r2 run arena-state-b200-7dd3a2bf-r1 completed four 1,050-step zero-action state-regression seeds, with 24 independently hash-verified task files / 358,401 bytes and no video claim. RTX run arena-replay-rtx-7dd3a2bf-r1 executed 80 source actions then held the last action for 170 steps; success_rate was 0.0. Its 72,519,371-byte H.264 MP4 decoded as 1280x720, 5.04 seconds, and 252 frames, but noisy pixel variation did not establish useful robot/task motion. That visual proof is rejected; no replacement candidate is qualified yet.",
+      "payload_scan": "Public build workflow 35005920685 verified the exact development digest through source/license policy, a complete 126,120-entry filesystem/layer/history Omniverse and secret scan, vulnerability policy, SBOM generation, digest-bound provenance and SBOM attestations, bootstrap, and anonymous registry resolution.",
+      "hardware_run": "Run arena-b200-state-feadf144-20260915-r1 completed four 1,050-step zero-action state-regression seeds on B200; all retained success_rate=0.0 and object_moved_rate=1.0 without a video claim. Run arena-rtx-task-feadf144-20260915-r1 completed a 42-step GR1 open-microwave replay on RTX PRO 6000 with zero padding, upstream success_rate=1.0, and door openness 0.200 to 0.846. Its progress-bound denoised 1280x720 H.264 evidence is sha256:658fd8f3070ea52ef365af5e117538892d0ecf927d19d2d1f39d1227793c5780. Independent retrieval hash-checked 63 B200 objects / 51,025,377 bytes and 26 RTX objects / 13,264,455 bytes. All run-owned workers and controllers were removed.",
       "validated_gpus": {
         "B200": {
           "platform": "gpu-b200-sxm",
           "capability": "10.0",
           "result": "REAL_ISAAC_ARENA_STATE_EVALUATION_PASSED"
+        },
+        "RTX PRO 6000": {
+          "platform": "gpu-rtx6000",
+          "capability": "12.0",
+          "result": "REAL_ISAAC_ARENA_TASK_VISUAL_EVALUATION_PASSED"
         }
       },
-      "validated_tag": "dev-7dd3a2bf3aa228dd3c201ba72ac0aae3d9559ab1",
-      "validated_digest": "sha256:5e2099a83ce4fd090bcb9bbac3004f5ddf37ef9e2c763a225b04e5daab46a4c2",
+      "validated_tag": "dev-feadf144a277366265c1331d0176d43e835092be",
+      "validated_digest": "sha256:267f2b5785c9a1d2df7aba58a0ea4bb112edb976b5b83fef2afbbd130a23c32c",
       "validated_registry_scope": "public-development",
       "rejected_visual_evidence": {
         "RTX PRO 6000": {
@@ -905,7 +910,7 @@
           "success_rate": 0.0
         }
       },
-      "candidate_validation": "pending-build"
+      "candidate_validation": "qualified"
     },
     "npa-cosmos3": {
       "built": true,

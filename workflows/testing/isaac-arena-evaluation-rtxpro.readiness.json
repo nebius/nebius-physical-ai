@@ -4,52 +4,65 @@
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "validate-spec and plan-spec completed successfully for these workflow bytes on 2026-09-14; the registered toolRef resolves to the shared Arena evaluator.",
+      "reason": "validate-spec and plan-spec completed successfully for these workflow bytes on 2026-09-15; the registered toolRef resolves to the shared Arena evaluator.",
       "evidence": [
         "workflows/testing/isaac-arena-evaluation-rtxpro.yaml",
         "npa/src/npa/orchestration/npa_workflow/catalog.py"
       ]
     },
     "task_fidelity": {
-      "status": "unverified",
-      "reason": "The plan requests a GR1 open-microwave replay with CPU physics/tensors and RTX viewport rendering, exact initial-state application, and successful task/video qualification without held actions. The private execution input explicitly converts declared legacy Pink quaternion representations to the native XYZW contract while preserving physical commands and action count/order. The small fixture has no source-device metadata; fresh candidate validation remains required.",
+      "status": "verified",
+      "reason": "The GR1 open-microwave replay applied the declared XYZW initial-state/action contract, executed the exact 42-action native terminal prefix with zero padding, reported upstream success_rate=1.0, and passed the registered open-door adapter by binding simulator progress and successful task metrics to coherent denoised viewport motion.",
       "evidence": [
         "workflows/testing/isaac-arena-evaluation-rtxpro.yaml",
-        "npa/src/npa/workbench/isaac_arena/runtime.py"
+        "arena-rtx-task-feadf144-20260915-r1",
+        "npa.isaac-arena.visual-acceptance.v1",
+        "arena.open-door.revolute-joint.v1"
       ]
     }
   },
   "prerequisites": {
     "output_storage": {
-      "status": "unverified",
-      "reason": "The replacement candidate needs a fresh owner-bound writable-storage preflight and independent output readback; historical storage checks do not qualify the new run.",
-      "evidence": []
+      "status": "verified",
+      "reason": "The selected owner-bound storage passed write/read/delete preflight. Independent post-run retrieval re-read and hash-checked 26 objects totaling 13,264,455 bytes for the sanitized run ID.",
+      "evidence": [
+        "arena-rtx-task-feadf144-20260915-r1"
+      ]
     },
     "worker_input": {
-      "status": "unverified",
-      "reason": "The live harness stages the pinned upstream HDF5 under the selected E2E prefix and checks hash, content, and readback; its synthetic unit tests passed, but no replacement-candidate worker read has yet been verified.",
+      "status": "verified",
+      "reason": "The worker hash-verified the source replay, converted only its declared representation boundary, and hash-bound both the 103-step prepared sequence and the exact 42-step executed prefix. Sixty-one source actions remained unexecuted after native task termination; no action was padded or synthesized.",
       "evidence": [
-        "npa/tests/e2e/npa_workflow_live_helpers.py",
-        "npa/tests/orchestration/npa_workflow/test_isaac_arena_live_inputs.py"
+        "2437d0af03954a0ce98afc91373efc1bc696b5f2deb0e46d2f2b41e2a021ed8c",
+        "41d7af99a60bbeba5764ea989e70ab652b92609bf6ea04112940957410f3ee72",
+        "7bc7b3a0f97dee4b18fd2bd9ee46d29a7f83a7a583abfafa09533d25254eac6c"
       ]
     },
     "credentials": {
-      "status": "unverified",
-      "reason": "Fresh selected-target Nebius, storage ownership, controller, EULA, accelerator, and runtime asset access checks are pending for the replacement run; no credentials belong in this record.",
-      "evidence": []
+      "status": "verified",
+      "reason": "Fresh selected-target Nebius, storage ownership, controller, EULA, accelerator, and runtime-asset access preflights passed before submission. No credential or private infrastructure identifier is retained here.",
+      "evidence": [
+        "arena-rtx-task-feadf144-20260915-r1"
+      ]
     },
     "source_image": {
-      "status": "unverified",
-      "reason": "The replay/evidence source changes require a new full-SHA development image and fresh source, license, complete-layer payload, security, SBOM, provenance, bootstrap, and anonymous-pull gates. The historical r2 digest is not evidence for the new bytes.",
+      "status": "verified",
+      "reason": "The exact full-SHA public development image passed source and license checks, complete 126,120-entry payload scan, security policy, SBOM and provenance attestation, bootstrap, anonymous-pull, and revision/digest verification in public build workflow 35005920685.",
       "evidence": [
-        "npa/docker/workbench/isaac-arena/Dockerfile"
+        "ghcr.io/nebius/nebius-physical-ai/npa-isaac-arena:dev-feadf144a277366265c1331d0176d43e835092be",
+        "sha256:267f2b5785c9a1d2df7aba58a0ea4bb112edb976b5b83fef2afbbd130a23c32c",
+        "35005920685"
       ]
     },
     "target_runtime": {
-      "status": "unverified",
-      "reason": "Replacement-candidate RTX qualification is pending. Historical run arena-replay-rtx-7dd3a2bf-r1 is rejected for zero task success, 170 held-action steps, and render grain. Candidate run arena-replay-rtx-0bc59afc-20260914-r1 executed its 80 source actions but completed no scored episode and remained dark/grainy; it correctly failed acceptance. Diagnostic candidate e1ff793a was not launched after inspection identified legacy WXYZ Pink targets reaching the XYZW action parser unchanged. The corrected conversion requires fresh candidate-image execution.",
+      "status": "verified",
+      "reason": "Run arena-rtx-task-feadf144-20260915-r1 completed on NVIDIA RTX PRO 6000 capability 12.0 with success_rate=1.0 and 42 frames. Microwave-door openness increased from 0.200 to 0.846 (delta 0.646); three progress-overlap frame pairs and two spatially bound pairs passed after strong denoising. The raw and evidence H.264 videos are 1280x720 and independently hash-verified. All run-owned workers and controllers were removed after exact-job cancellation.",
       "evidence": [
-        "docs/workbench/isaac-arena.md"
+        "arena-rtx-task-feadf144-20260915-r1",
+        "78687c42dc6e350712e5b2d6c8ab37f7b393f7638ec7ca08675ad318054413d4",
+        "658fd8f3070ea52ef365af5e117538892d0ecf927d19d2d1f39d1227793c5780",
+        "6645a42f4df73a6d0012c515060fdc0c73a551e0fc4bdd3de1054ee6aa46255b",
+        "52e646be76fdf2eae983059e5f0936ed9cc82ceadece282a05688a1d1566d2be"
       ]
     }
   }

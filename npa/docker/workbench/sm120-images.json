@@ -61,12 +61,12 @@
     },
     {
       "name": "npa-isaac-arena",
-      "tag": "0.3.0-isaaclab3-20260912-r2",
-      "source_tag": "dev-7dd3a2bf3aa228dd3c201ba72ac0aae3d9559ab1",
-      "digest": "sha256:5e2099a83ce4fd090bcb9bbac3004f5ddf37ef9e2c763a225b04e5daab46a4c2",
-      "purpose": "Historical published Isaac Lab-Arena r2 coordinate. RTX evaluation executed, but its noisy video proof and zero-success task result do not qualify useful visual behavior; replacement candidate qualification is pending.",
-      "visual_validation": "rejected",
-      "candidate_validation": "pending-build"
+      "tag": "0.3.0-isaaclab3-20260912-r3",
+      "source_tag": "dev-feadf144a277366265c1331d0176d43e835092be",
+      "digest": "sha256:267f2b5785c9a1d2df7aba58a0ea4bb112edb976b5b83fef2afbbd130a23c32c",
+      "purpose": "Isaac Lab-Arena candidate qualified on B200 state evaluation and RTX PRO 6000 successful GR1 open-microwave evaluation. The visual gate binds exact actions, upstream task success, simulator door progress, and coherent denoised motion; provider assets remain runtime fetched.",
+      "visual_validation": "validated",
+      "candidate_validation": "qualified"
     }
   ]
 }
