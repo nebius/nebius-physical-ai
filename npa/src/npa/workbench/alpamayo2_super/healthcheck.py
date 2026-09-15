@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import os
-from urllib.error import URLError
-from urllib.request import Request, urlopen
+from http.client import HTTPConnection, HTTPException
 
 
 def main() -> int:
@@ -20,15 +19,14 @@ def main() -> int:
     token = os.environ.get("NPA_ALPAMAYO2_SUPER_TOKEN", "")
     if not token:
         return 1
-    request = Request(
-        "http://127.0.0.1:8080/health",
-        headers={"Authorization": "Bearer " + token},
-    )
+    connection = HTTPConnection("127.0.0.1", 8080, timeout=3)
     try:
-        with urlopen(request, timeout=3) as response:
-            return 0 if response.status == 200 else 1
-    except (URLError, ValueError):
+        connection.request("GET", "/health", headers={"Authorization": "Bearer " + token})
+        return 0 if connection.getresponse().status == 200 else 1
+    except (HTTPException, OSError):
         return 1
+    finally:
+        connection.close()
 
 
 if __name__ == "__main__":

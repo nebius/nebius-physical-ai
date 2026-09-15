@@ -30,14 +30,22 @@ TOKEN = "test-inference-credential"
 HEADERS = {"Authorization": "Bearer " + TOKEN}
 
 
-class _HealthResponse:
-    status = 200
+class _HealthConnection:
+    def __init__(self, host, port, *, timeout):
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+        self.request_arguments = None
+        self.closed = False
 
-    def __enter__(self):
-        return self
+    def request(self, method, path, *, headers):
+        self.request_arguments = (method, path, headers)
 
-    def __exit__(self, *_args):
-        return None
+    def getresponse(self):
+        return type("HealthResponse", (), {"status": 200})()
+
+    def close(self):
+        self.closed = True
 
 
 @pytest.fixture
@@ -122,30 +130,32 @@ def test_missing_admission_credential_fails_startup(monkeypatch):
 
 
 def test_container_healthcheck_uses_the_runtime_admission_credential(monkeypatch):
-    observed = {}
+    connections = []
 
-    def open_request(request, *, timeout):
-        observed["url"] = request.full_url
-        observed["authorization"] = request.get_header("Authorization")
-        observed["timeout"] = timeout
-        return _HealthResponse()
+    def open_connection(*args, **kwargs):
+        connection = _HealthConnection(*args, **kwargs)
+        connections.append(connection)
+        return connection
 
     monkeypatch.setenv("NPA_ALPAMAYO2_SUPER_TOKEN", TOKEN)
-    monkeypatch.setattr(healthcheck, "urlopen", open_request)
+    monkeypatch.setattr(healthcheck, "HTTPConnection", open_connection)
 
     assert healthcheck.main() == 0
-    assert observed == {
-        "url": "http://127.0.0.1:8080/health",
-        "authorization": "Bearer " + TOKEN,
-        "timeout": 3,
-    }
+    assert len(connections) == 1
+    assert connections[0].host == "127.0.0.1"
+    assert connections[0].port == 8080
+    assert connections[0].timeout == 3
+    assert connections[0].request_arguments == (
+        "GET", "/health", {"Authorization": "Bearer " + TOKEN}
+    )
+    assert connections[0].closed is True
 
 
 def test_container_healthcheck_fails_closed_without_a_credential(monkeypatch):
     monkeypatch.delenv("NPA_ALPAMAYO2_SUPER_TOKEN", raising=False)
     monkeypatch.setattr(
         healthcheck,
-        "urlopen",
+        "HTTPConnection",
         lambda *_args, **_kwargs: pytest.fail("health request must not be sent"),
     )
 
