@@ -28,6 +28,7 @@ WAN_RUNTIME_SCRIPT_PATH = (
 SOLUTION_SPECS = sorted(
     path for path in WORKFLOW_DIR.glob("byof-*.yaml") if path.name != "byof.yaml"
 )
+ROBOTWIN_PHASE_A_SMOKE = "/opt/npa/robotwin/robotwin-runtime run"
 
 # Primary capability contracts for onboarded and pending-live solution candidates
 # (solution-specific ids; catalog status remains authoritative).
@@ -62,6 +63,19 @@ SOLUTION_CAPABILITY_CONTRACTS = {
             "kitchen_task_registration",
             "download_kitchen_assets_lw",
             "kitchen_egl_env_reset",
+        ],
+    },
+    "robotwin": {
+        "capability_name": "beat_block_hammer_successful_seed_replay_collection",
+        "smoke_artifact_name": "robotwin-smoke.json",
+        "spec": "byof-robotwin.yaml",
+        "must_exercise": [
+            "sapien_vulkan_rt_renderer",
+            "pinned_official_runtime_assets",
+            "beat_block_hammer_successful_seed_search",
+            "beat_block_hammer_successful_seed_replay",
+            "robotwin_native_hdf5_collection",
+            "robotwin_rendered_mp4",
         ],
     },
     "openpi": {
@@ -158,6 +172,9 @@ def test_byof_solution_specs_have_capability_smokes() -> None:
         artifact = str(config.get("smoke_artifact_name") or "").strip()
         smoke = str(config.get("smoke_command") or "")
         assert artifact.endswith(".json"), path.name
+        if path.name == "byof-robotwin.yaml":
+            assert smoke == ROBOTWIN_PHASE_A_SMOKE
+            continue
         assert "NPA_SMOKE_OUTPUT_DIR" in smoke, path.name
         assert artifact in smoke, path.name
 
@@ -165,11 +182,32 @@ def test_byof_solution_specs_have_capability_smokes() -> None:
 def test_byof_solution_smokes_are_not_import_only() -> None:
     for path in SOLUTION_SPECS:
         smoke = str(_load_config(path).get("smoke_command") or "")
+        if path.name == "byof-robotwin.yaml":
+            assert smoke == ROBOTWIN_PHASE_A_SMOKE
+            continue
         assert ".write_text(" in smoke, path.name
         assert "json.dumps(" in smoke, path.name
         assert '"capability"' in smoke or "'capability'" in smoke, path.name
         assert '"solution"' in smoke or "'solution'" in smoke, path.name
         assert "capabilities_exercised" in smoke, path.name
+
+
+def test_robotwin_solution_smoke_is_the_native_success_gate() -> None:
+    config = _load_config(WORKFLOW_DIR / "byof-robotwin.yaml")
+    build = str(config["build_command"])
+    smoke = str(config["smoke_command"])
+
+    assert config["repo_ref"] == "96c1feab536306b50c26af200044fcdf126e8904"
+    assert config["resource_profile_yaml"] == (
+        "byof-solution-smoke-robotwin-rtxpro-gpu"
+    )
+    assert config["task"] == "beat_block_hammer"
+    assert config["wait_timeout"] == -1
+    assert config["base_profile"] == "prebuilt"
+    assert config["base_image"] == "tool://robotwin"
+    assert config["runtime_context_env"] == "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT"
+    assert build == ""
+    assert smoke == ROBOTWIN_PHASE_A_SMOKE
 
 
 def test_openpi_polaris_contract_is_runtime_only_and_position_targeted() -> None:
@@ -267,6 +305,9 @@ def test_solution_capability_contracts_match_specs() -> None:
         assert config.get("capability_name") == expected["capability_name"]
         assert config.get("smoke_artifact_name") == expected["smoke_artifact_name"]
         smoke = str(config.get("smoke_command") or "")
+        if solution == "robotwin":
+            assert smoke == ROBOTWIN_PHASE_A_SMOKE
+            continue
         assert expected["capability_name"] in smoke
         assert expected["smoke_artifact_name"] in smoke
         for capability in expected["must_exercise"]:

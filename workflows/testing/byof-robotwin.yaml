@@ -1,0 +1,47 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: byof-robotwin
+  description: >
+    Public zero-vendor-payload RoboTwin bootstrap candidate. Normal submit uses
+    one CPU launcher and, only after manager authorization, delegates exactly
+    one RTX PRO 6000 Blackwell job. The incomplete Phase A runtime lock refuses
+    before source, runtime, asset, cache, output, scheduler, or GPU work.
+config:
+  bucket: example-bucket
+  repo_url: "https://github.com/RoboTwin-Platform/RoboTwin.git"
+  repo_ref: "96c1feab536306b50c26af200044fcdf126e8904"
+  repo_auth: none
+  repo_token_env: GH_TOKEN
+  base_profile: prebuilt
+  base_image: "tool://robotwin"
+  build_command: ""
+  workload: solution-smoke
+  smoke_command: "/opt/npa/robotwin/robotwin-runtime run"
+  solution_name: robotwin
+  capability_name: beat_block_hammer_successful_seed_replay_collection
+  smoke_artifact_name: robotwin-smoke.json
+  runtime_context_env: NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT
+  resource_profile_yaml: byof-solution-smoke-robotwin-rtxpro-gpu
+  task: beat_block_hammer
+  iterations: 1
+  num_envs: 1
+  num_demos: 1
+  wait_timeout: -1
+  poll_interval: 60
+  output_root: "s3://{{config.bucket}}/oss-solutions/robotwin"
+  summary_uri: "{{config.output_root}}/{{run.id}}/npa_byof_summary.json"
+resources:
+  launcher:
+    cloud: kubernetes
+    cpus: 4+
+    memory: 8+
+states:
+  byof-run:
+    toolRef: workbench.byof.repo
+    resources: launcher
+    terminal: true
+    outputs:
+      - name: summary
+        uri: "{{config.summary_uri}}"
+        schema: npa.workbench.byof.summary.v1

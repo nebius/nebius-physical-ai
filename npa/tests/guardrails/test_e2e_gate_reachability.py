@@ -76,6 +76,9 @@ MANUAL_GATES = {
     "NPA_BYOF_OD_VERIFY_RUN": "Open Dreamer verification requires an explicitly selected run",
     "NPA_BYOF_OPEN_DREAMER_LIVE_GPU": "Open Dreamer GPU mutation remains an operator acceptance test",
     "NPA_BYOF_OPENPI_LIVE_B200": "OpenPI B200 validation requires live GPU and registry access",
+    "NPA_BYOF_ROBOTWIN_LIVE": (
+        "RoboTwin mutation requires the manager-owned STRICT RTX PRO runtime context and operator license decisions"
+    ),
     "NPA_BYOF_WAN22_LIVE_GPU": "Wan single-GPU BYOF mutation requires an explicitly selected validation run",
     "NPA_BYOF_WAN22_MULTIGPU_LIVE_GPU": "Wan multi-GPU BYOF mutation requires an explicitly selected validation run",
     "NPA_BYOF_LIVE_UBUNTU": "BYOF Ubuntu mutation is a dedicated onboarding acceptance",
@@ -172,6 +175,24 @@ def test_pr218_mutation_gates_are_runner_reachable_not_manual() -> None:
     ):
         assert gate in runner_text
         assert gate not in MANUAL_GATES
+
+
+def test_robotwin_hard_gate_reaches_the_workload_only_through_normal_submit() -> None:
+    path = E2E / "test_byof_onboarding_live_e2e.py"
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "test_live_robotwin_build_push_run_and_artifacts"
+    )
+    body = ast.get_source_segment(source, function)
+    assert body is not None
+    for required in ('"workflow"', '"submit"', '"--secret-env"'):
+        assert required in body
+    for forbidden in ('"byof",\n        "run"', 'str(BYOF_RUNNER)'):
+        assert forbidden not in body
 
 
 def test_fleet_storage_verification_has_an_opt_in_daily_runner() -> None:

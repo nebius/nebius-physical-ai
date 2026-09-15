@@ -229,6 +229,33 @@ Also exercised in the same smoke (live-accepted with S3 evidence):
 - `kitchen_egl_env_reset` (post-download subprocess so `OBJ_CATEGORIES` sees mjcf paths)
 - `kitchen_random_rollout` (`run_random_rollouts` with mp4; pin `gymnasium==0.29.1` and bind `env.sim`)
 
+### RoboTwin 2.0 (`byof-robotwin.yaml`)
+
+Pinned source: `RoboTwin-Platform/RoboTwin`
+`96c1feab536306b50c26af200044fcdf126e8904`. Pinned runtime assets:
+`TianxingChen/RoboTwin2.0`
+`785feb15aa4a4f532395ad2b1d2be5f28cb561ad`.
+
+Hard-gate capability:
+`beat_block_hammer_successful_seed_replay_collection`. It is accepted only when
+the official `demo_clean` path searches for one successful seed, replays that
+seed through SAPIEN/Vulkan on exactly one RTX PRO 6000 Blackwell (`sm_120`), and
+emits native RoboTwin HDF5 plus decoded MP4 evidence with hashes, sizes, action
+and frame counts, observed GPU/image identity, task success, and exit status.
+Renderer startup or task registration alone is not evidence.
+
+The Phase A image is a zero-vendor-payload public-bootstrap candidate and remains
+unbuilt/publication-quarantined. CuRobo v0.7.8 stays runtime-only and its
+noncommercial research/evaluation field-of-use restriction remains binding on
+use and service claims. Official assets remain a
+runtime fetch. The guarded live harness must refuse before building when the
+manager-owned runtime-use decision is absent, scan the pushed exact digest's
+rootfs and every layer for asset/cache/output bytes, and launch only that
+scanned digest. Runtime fetch, a credential, a private registry, or a passing
+byte scan does not grant permission. Do not add the BYOF image to public GHCR
+or the public image catalog. The full 50-task sweep, policy training, and
+physical deployment are deferred.
+
 ### OpenPI (`byof-openpi.yaml` + `openpi-pi05-four-mode.yaml`)
 
 Pinned: `Physical-Intelligence/openpi` `15a9616a00943ada6c20a0f158e3adb39df2ccac`

@@ -4,13 +4,16 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.util
+import io
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
-from contextlib import ExitStack
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -20,6 +23,27 @@ from npa.clients.project_credentials import storage_env_for_project
 from npa.deploy.images import (
     container_image_for_tool,
     wan_accepted_image_manifest,
+)
+from npa.orchestration.npa_workflow.robotwin_preflight import (
+    BUILD_COMMAND_SHA256 as ROBOTWIN_BUILD_COMMAND_SHA256,
+    CHILD_BUCKET_ENV as ROBOTWIN_CHILD_BUCKET_ENV,
+    CHILD_CONFIG_PATH_ENV as ROBOTWIN_CHILD_CONFIG_PATH_ENV,
+    CHILD_IMAGE_ENV as ROBOTWIN_CHILD_IMAGE_ENV,
+    CHILD_OUTPUT_PREFIX_ENV as ROBOTWIN_CHILD_OUTPUT_PREFIX_ENV,
+    CHILD_OUTPUT_ROOT_ENV as ROBOTWIN_CHILD_OUTPUT_ROOT_ENV,
+    CHILD_RUNTIME_AUTH_ENV as ROBOTWIN_CHILD_RUNTIME_AUTH_ENV,
+    CHILD_RUN_ID_ENV as ROBOTWIN_CHILD_RUN_ID_ENV,
+    CONTEXT_ENV_NAMES as ROBOTWIN_CONTEXT_ENV_NAMES,
+    INVOCATION as ROBOTWIN_INVOCATION,
+    PUBLIC_CONTEXT_ENV as ROBOTWIN_RUNTIME_CONTEXT_ENV,
+    REQUIRED_DECISIONS as ROBOTWIN_REQUIRED_DECISIONS,
+    SMOKE_COMMAND_SHA256 as ROBOTWIN_SMOKE_COMMAND_SHA256,
+    RobotwinAuthorization as _RuntimeAuthorization,
+    encode_runtime_authorization,
+    is_robotwin_request,
+    load_runtime_authorization,
+    require_runtime_lock_complete,
+    validate_invocation,
 )
 from npa.workflows.byof.live import resolve_byof_kubernetes_target
 from npa.workflows.byof.openpi import is_openpi_request, require_openpi_terms
@@ -35,10 +59,20 @@ from npa.workflows.byof.source_auth import (
     validate_repository_url,
 )
 
+__all__ = [
+    "ROBOTWIN_BUILD_COMMAND_SHA256",
+    "ROBOTWIN_INVOCATION",
+    "ROBOTWIN_REQUIRED_DECISIONS",
+    "ROBOTWIN_RUNTIME_CONTEXT_ENV",
+    "ROBOTWIN_SMOKE_COMMAND_SHA256",
+    "main",
+]
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 ISAAC_RUNNER = SCRIPT_DIR / "run_isaac_lab_rl.py"
 DATAGEN_RUNNER = SCRIPT_DIR / "run_byof_datagen.py"
 CONTAINER_VERIFY_RUNNER = SCRIPT_DIR / "run_byof_container_verify.py"
+ROBOTWIN_IMAGE_SCANNER = SCRIPT_DIR / "scan_image_robotwin_payload.py"
 BYOF_REPO_MOUNT = "/opt/byof"
 
 DEFAULT_REPO_URL = "https://github.com/LightwheelAI/leisaac.git"
@@ -71,13 +105,66 @@ WAN_POSTPROCESS_CONTRACTS = {
         "wan2_2_ti2v_5b_multigpu.json",
     ),
 }
-
-
 def _redact_text(value: str, redactions: tuple[str, ...]) -> str:
     result = value
     for secret in sorted((item for item in redactions if item), key=len, reverse=True):
         result = result.replace(secret, "<redacted>")
     return result
+
+
+def _redact_payload(value: Any, redactions: tuple[str, ...]) -> Any:
+    if isinstance(value, str):
+        return _redact_text(value, redactions)
+    if isinstance(value, list):
+        return [_redact_payload(item, redactions) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_payload(item, redactions) for item in value)
+    if isinstance(value, dict):
+        return {key: _redact_payload(item, redactions) for key, item in value.items()}
+    return value
+
+
+def _load_runtime_authorization(
+    args: argparse.Namespace,
+) -> _RuntimeAuthorization | None:
+    reference = args.runtime_context_env.strip()
+    if not _is_robotwin_request(args):
+        if reference:
+            raise ValueError("runtime authorization is not supported for this solution")
+        return None
+    if reference != ROBOTWIN_RUNTIME_CONTEXT_ENV:
+        raise ValueError(
+            f"RoboTwin requires --runtime-context-env {ROBOTWIN_RUNTIME_CONTEXT_ENV}"
+        )
+    return require_runtime_lock_complete(load_runtime_authorization())
+
+
+def _apply_runtime_authorization(
+    args: argparse.Namespace, authorization: _RuntimeAuthorization
+) -> None:
+    args.project = authorization.project
+    args.base_image = authorization.bootstrap_image
+    args.image = authorization.bootstrap_image
+    args.registry = _registry_path(authorization.bootstrap_image)
+    args.output_root = authorization.output_root
+    args.run_id = authorization.run_id
+    args.config_path = authorization.skypilot_config_path
+
+
+def _validate_robotwin_invocation(args: argparse.Namespace) -> None:
+    validate_invocation(args)
+
+
+def _is_robotwin_request(args: argparse.Namespace) -> bool:
+    return is_robotwin_request(
+        solution_name=args.solution_name,
+        repo_url=args.repo_url,
+        base_image=args.base_image,
+        image=args.image,
+        smoke_command=args.smoke_command,
+        capability_name=args.capability_name,
+        yaml_path=args.yaml,
+    )
 
 
 def _utc_stamp() -> str:
@@ -179,13 +266,39 @@ def _run(
     capture: bool = False,
     env: dict[str, str] | None = None,
     redactions: tuple[str, ...] = (),
+    inherit_env: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    runtime_env = dict(os.environ)
+    runtime_env = (
+        dict(os.environ)
+        if inherit_env
+        else {
+            name: os.environ[name]
+            for name in (
+                "HOME",
+                "LANG",
+                "LC_ALL",
+                "LD_LIBRARY_PATH",
+                "LOGNAME",
+                "PATH",
+                "PYTHONPATH",
+                "SSL_CERT_DIR",
+                "SSL_CERT_FILE",
+                "TMPDIR",
+                "USER",
+                "VIRTUAL_ENV",
+            )
+            if os.environ.get(name)
+        }
+    )
     # Avoid stale operator tokens overriding profile-based auth on shared VMs.
     runtime_env.pop("NEBIUS_IAM_TOKEN", None)
     runtime_env.pop("NEBIUS_IAM_TOKEN_FILE", None)
+    for name in ROBOTWIN_CONTEXT_ENV_NAMES:
+        runtime_env.pop(name, None)
     if env is not None:
         runtime_env.update(env)
+    for name in ROBOTWIN_CONTEXT_ENV_NAMES:
+        runtime_env.pop(name, None)
     kwargs: dict[str, Any] = {"text": True, "check": False}
     if stdin is not None:
         kwargs["input"] = stdin
@@ -221,14 +334,18 @@ def _repository_without_tag(image_ref: str) -> str:
 
 
 def _resolve_pushed_image_digest(
-    image_ref: str, *, env: dict[str, str] | None = None
+    image_ref: str,
+    *,
+    env: dict[str, str] | None = None,
+    redactions: tuple[str, ...] = (),
 ) -> str:
     """Resolve a just-pushed tag and return the immutable pull reference."""
 
+    run_kwargs: dict[str, Any] = {"env": env, "capture": True}
+    if redactions:
+        run_kwargs["redactions"] = redactions
     inspected = _run(
-        ["docker", "buildx", "imagetools", "inspect", image_ref],
-        env=env,
-        capture=True,
+        ["docker", "buildx", "imagetools", "inspect", image_ref], **run_kwargs
     )
     combined = "\n".join((inspected.stdout or "", inspected.stderr or ""))
     match = re.search(r"(?im)^\s*Digest:\s*(sha256:[0-9a-f]{64})\s*$", combined)
@@ -248,7 +365,9 @@ def _bare_s3_bucket(value: str) -> str:
     return text.split("/", 1)[0].strip()
 
 
-def _live_runner_env(project: str) -> dict[str, str]:
+def _live_runner_env(
+    project: str, *, redactions: tuple[str, ...] = ()
+) -> dict[str, str]:
     env: dict[str, str] = {}
     target = resolve_byof_kubernetes_target(project or None)
     if target.kubeconfig:
@@ -267,7 +386,10 @@ def _live_runner_env(project: str) -> dict[str, str]:
             )
         )
     except Exception as exc:
-        print(f"WARN: skipped BYOF storage env resolution: {exc}", file=sys.stderr)
+        warning = _redact_text(
+            f"WARN: skipped BYOF storage env resolution: {exc}", redactions
+        )
+        print(warning, file=sys.stderr)
     # Project configs often store checkpoint_bucket as s3://bucket/prefix. BYOF
     # SkyPilot templates expect a bare bucket name in NPA_S3_BUCKET.
     for key in ("NPA_S3_BUCKET", "S3_BUCKET"):
@@ -296,7 +418,10 @@ def _live_runner_env(project: str) -> dict[str, str]:
             if bare:
                 env["NPA_S3_BUCKET"] = bare
         except Exception as exc:
-            print(f"WARN: skipped BYOF bucket resolution: {exc}", file=sys.stderr)
+            warning = _redact_text(
+                f"WARN: skipped BYOF bucket resolution: {exc}", redactions
+            )
+            print(warning, file=sys.stderr)
     return env
 
 
@@ -307,6 +432,23 @@ def _registry_path(image_ref: str) -> str:
     if last_slash <= 0:
         return ""
     return without_digest[:last_slash]
+
+
+def _private_image_redactions(image_ref: str) -> tuple[str, ...]:
+    """Return every private coordinate derivable from an authorized image."""
+
+    return tuple(
+        dict.fromkeys(
+            value
+            for value in (
+                image_ref,
+                _repository_without_tag(image_ref),
+                _registry_path(image_ref),
+                _registry_server(image_ref),
+            )
+            if value
+        )
+    )
 
 
 def _dockerfile_text() -> str:
@@ -466,6 +608,157 @@ def _base_image_candidates(
     return _ubuntu_base_image_candidates()
 
 
+def _scan_robotwin_image(image: str, *, redactions: tuple[str, ...]) -> dict[str, Any]:
+    if re.fullmatch(r".+@sha256:[0-9a-f]{64}", image) is None:
+        raise ValueError("RoboTwin requires an immutable image before byte scanning")
+    with tempfile.TemporaryDirectory(prefix="npa-robotwin-image-scan-") as tmp:
+        report_path = Path(tmp) / "report.json"
+        scanner_env = {
+            name: os.environ[name]
+            for name in ("DOCKER_CONFIG",)
+            if os.environ.get(name)
+        }
+        _run(
+            [
+                sys.executable,
+                str(ROBOTWIN_IMAGE_SCANNER),
+                "--image-stdin",
+                "--output",
+                str(report_path),
+            ],
+            stdin=image,
+            capture=True,
+            env=scanner_env,
+            redactions=redactions,
+            inherit_env=False,
+        )
+        report_bytes = report_path.read_bytes()
+    report = json.loads(report_bytes)
+    if report.get("status") != "pass" or report.get("findings") != []:
+        raise RuntimeError("RoboTwin exact-image byte scan did not pass")
+    if report.get("image") != image or int(report.get("archives_scanned", 0)) < 2:
+        raise RuntimeError("RoboTwin exact-image byte scan evidence is incomplete")
+    return {
+        "format": "npa_robotwin_image_byte_scan_v1",
+        "report_sha256": hashlib.sha256(report_bytes).hexdigest(),
+        "archives_scanned": int(report["archives_scanned"]),
+        "status": "pass",
+    }
+
+
+def _authorized_live_env(
+    authorization: _RuntimeAuthorization | None,
+    scan_evidence: dict[str, Any],
+    *,
+    project: str,
+    image: str,
+) -> dict[str, str]:
+    if authorization is None:
+        return _live_runner_env(project)
+    # The outer worker receives only values selected by the owner client. Do not
+    # inherit generic BYOF/SkyPilot knobs that could redirect or weaken the
+    # already-authorized inner launch.
+    env = {
+        name: os.environ[name]
+        for name in (
+            "AWS_ACCESS_KEY_ID",
+            "AWS_DEFAULT_REGION",
+            "AWS_ENDPOINT_URL",
+            "AWS_ENDPOINT_URL_S3",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SECURITY_TOKEN",
+            "AWS_SESSION_TOKEN",
+            "NEBIUS_S3_ENDPOINT",
+            "NPA_STORAGE_ENDPOINT",
+            "S3_ENDPOINT_URL",
+        )
+        if os.environ.get(name)
+    }
+    output_prefix = (
+        f"{authorization.output_root.rstrip('/')}/{authorization.run_id}/"
+    )
+    env.update(
+        {
+            "KUBECONFIG": authorization.kubeconfig,
+            "KUBECONTEXT": authorization.kubernetes_context,
+            "NPA_BYOF_K8S_CONTEXT": authorization.kubernetes_context,
+            "NPA_NEBIUS_PROFILE": authorization.profile,
+            "NEBIUS_PROFILE": authorization.profile,
+            "NPA_BYOF_PROJECT": authorization.project,
+            ROBOTWIN_CHILD_BUCKET_ENV: authorization.bucket,
+            ROBOTWIN_CHILD_CONFIG_PATH_ENV: authorization.skypilot_config_path,
+            ROBOTWIN_CHILD_IMAGE_ENV: image,
+            ROBOTWIN_CHILD_OUTPUT_PREFIX_ENV: output_prefix,
+            ROBOTWIN_CHILD_OUTPUT_ROOT_ENV: authorization.output_root,
+            ROBOTWIN_CHILD_RUN_ID_ENV: authorization.run_id,
+            ROBOTWIN_CHILD_RUNTIME_AUTH_ENV: encode_runtime_authorization(
+                authorization
+            ),
+            "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256": authorization.context_sha256,
+            "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256": str(scan_evidence["report_sha256"]),
+            "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES": str(
+                scan_evidence["archives_scanned"]
+            ),
+        }
+    )
+    return env
+
+
+def _private_runtime_redactions(env: dict[str, str]) -> tuple[str, ...]:
+    return tuple(
+        value
+        for key in (
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "AWS_SECURITY_TOKEN",
+            "AWS_ENDPOINT_URL",
+            "NEBIUS_S3_ENDPOINT",
+            "NPA_S3_BUCKET",
+            "S3_BUCKET",
+            ROBOTWIN_CHILD_BUCKET_ENV,
+            ROBOTWIN_CHILD_CONFIG_PATH_ENV,
+            ROBOTWIN_CHILD_IMAGE_ENV,
+            ROBOTWIN_CHILD_OUTPUT_PREFIX_ENV,
+            ROBOTWIN_CHILD_OUTPUT_ROOT_ENV,
+            ROBOTWIN_CHILD_RUN_ID_ENV,
+            ROBOTWIN_CHILD_RUNTIME_AUTH_ENV,
+        )
+        if (value := env.get(key, "").strip())
+    )
+
+
+def _run_robotwin_container_verify(
+    cmd: list[str],
+    *,
+    authorization: _RuntimeAuthorization,
+    environment: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    """Keep the validated authorization in-process until the inner Sky bridge."""
+
+    spec = importlib.util.spec_from_file_location(
+        "npa_robotwin_container_verify", CONTAINER_VERIFY_RUNNER
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("RoboTwin container verifier could not be loaded")
+    module = importlib.util.module_from_spec(spec)
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with redirect_stdout(stdout), redirect_stderr(stderr):
+        spec.loader.exec_module(module)
+        returncode = module.run_authorized_robotwin(
+            cmd[2:],
+            authorization=authorization,
+            environment=environment,
+        )
+    return subprocess.CompletedProcess(
+        cmd,
+        int(returncode),
+        stdout=stdout.getvalue(),
+        stderr=stderr.getvalue(),
+    )
+
+
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-url", default=DEFAULT_REPO_URL)
@@ -525,6 +818,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--solution-name", default=os.environ.get("NPA_BYOF_SOLUTION_NAME", "")
     )
     parser.add_argument(
+        "--runtime-context-env",
+        default="",
+        help=(
+            "Environment-variable name containing owner-only runtime authorization; "
+            "the authorization value never enters argv."
+        ),
+    )
+    parser.add_argument(
         "--capability-name", default=os.environ.get("NPA_BYOF_CAPABILITY_NAME", "")
     )
     parser.add_argument(
@@ -575,8 +876,71 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _authorization_failure(
+    args: argparse.Namespace, exc: Exception, redactions: tuple[str, ...]
+) -> int:
+    """Emit one sanitized authorization refusal."""
+
+    payload = {
+        "status": "failed",
+        "solution_name": args.solution_name,
+        "error": _redact_text(str(exc), redactions),
+    }
+    print(json.dumps(_redact_payload(payload, redactions), indent=2, sort_keys=True))
+    return 1
+
+
+def _run_authorized_robotwin(
+    argv: list[str], *, authorization: _RuntimeAuthorization
+) -> int:
+    """Run RoboTwin only from the validated normal-submit worker bridge.
+
+    Args:
+        argv: Exact public toolRef arguments already recognized by preflight.
+        authorization: Validated manager context materialized by the CPU worker.
+
+    Returns:
+        The standard BYOF process exit status.
+    """
+
+    args = _parse_args(argv)
+    redactions = tuple(
+        dict.fromkeys(
+            (
+                *authorization.redactions,
+                *_private_image_redactions(authorization.bootstrap_image),
+            )
+        )
+    )
+    try:
+        require_runtime_lock_complete(authorization)
+        _validate_robotwin_invocation(args)
+        _apply_runtime_authorization(args, authorization)
+    except Exception as exc:
+        return _authorization_failure(args, exc, redactions)
+    return _run_parsed(args, authorization=authorization, redactions=redactions)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    if _is_robotwin_request(args):
+        return _authorization_failure(
+            args,
+            ValueError(
+                "RoboTwin requires the normal npa workbench workflow submit "
+                "CPU launcher"
+            ),
+            (),
+        )
+    return _run_parsed(args, authorization=None, redactions=())
+
+
+def _run_parsed(
+    args: argparse.Namespace,
+    *,
+    authorization: _RuntimeAuthorization | None,
+    redactions: tuple[str, ...],
+) -> int:
     private_source = args.repo_auth == "github"
     try:
         validate_repository_url(args.repo_url, private=private_source)
@@ -611,39 +975,10 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             return 1
-    explicit_base = _normalize_optional(args.base_image)
-    base_profile = _normalize_optional(args.base_profile) or "ubuntu"
-    registry = args.registry.strip() or resolve_container_registry(args.project or None)
-    image = args.image.strip() or f"{registry.rstrip('/')}/npa-byof:{args.run_id}"
-    base_candidates = _base_image_candidates(
-        profile=base_profile,
-        image=image,
-        registry=registry,
-        explicit_base=explicit_base,
-    )
-    if not base_candidates:
-        raise RuntimeError("unable to resolve a BYOF base image candidate")
-    base_image = base_candidates[0]
-    if base_profile == "prebuilt":
-        if args.build_command.strip():
-            raise ValueError(
-                "prebuilt profile forbids --build-command; image bytes are immutable"
-            )
-        image = base_image
-    skip_build = args.skip_build or base_profile == "prebuilt"
-    skip_push = args.skip_push or base_profile == "prebuilt"
-    base_registry = _registry_path(base_image) or (_registry_path(image) or registry)
-
     summary: dict[str, Any] = {
         "repo_url": "<private-repository>" if private_source else args.repo_url,
         "repo_ref": "<private-ref>" if private_source else args.repo_ref,
         "repo_auth": args.repo_auth,
-        "registry": registry,
-        "base_profile": base_profile,
-        "base_registry": base_registry,
-        "image": image,
-        "base_image": base_image,
-        "base_image_candidates": base_candidates,
         "run_id": args.run_id,
         "workload": args.workload,
         "build_command": args.build_command,
@@ -657,8 +992,41 @@ def main(argv: list[str] | None = None) -> int:
     # must already exist in the caller's Docker config; NPA never mints provider IAM
     # registry tokens or creates a hidden registry-specific credential directory.
     docker_env: dict[str, str] = {}
-    redactions: tuple[str, ...] = ()
     try:
+        explicit_base = _normalize_optional(args.base_image)
+        base_profile = _normalize_optional(args.base_profile) or "ubuntu"
+        registry = args.registry.strip() or resolve_container_registry(
+            args.project or None
+        )
+        image = args.image.strip() or f"{registry.rstrip('/')}/npa-byof:{args.run_id}"
+        base_candidates = _base_image_candidates(
+            profile=base_profile,
+            image=image,
+            registry=registry,
+            explicit_base=explicit_base,
+        )
+        if not base_candidates:
+            raise RuntimeError("unable to resolve a BYOF base image candidate")
+        base_image = base_candidates[0]
+        if base_profile == "prebuilt":
+            if args.build_command.strip():
+                raise ValueError(
+                    "prebuilt profile forbids --build-command; image bytes are immutable"
+                )
+            image = base_image
+        skip_build = args.skip_build or base_profile == "prebuilt"
+        skip_push = args.skip_push or base_profile == "prebuilt"
+        summary.update(
+            {
+                "registry": registry,
+                "base_profile": base_profile,
+                "base_registry": _registry_path(base_image)
+                or (_registry_path(image) or registry),
+                "image": image,
+                "base_image": base_image,
+                "base_image_candidates": base_candidates,
+            }
+        )
         with ExitStack() as secret_stack:
             source_secrets: RepositorySecretFiles | None = None
             if private_source:
@@ -673,11 +1041,21 @@ def main(argv: list[str] | None = None) -> int:
                     "repository_sha256": source_secrets.repository_sha256,
                     "ref_sha256": source_secrets.ref_sha256,
                 }
-            redactions = (
-                source_secrets.redaction_values if source_secrets is not None else ()
+            redactions = tuple(
+                dict.fromkeys(
+                    (
+                        *redactions,
+                        *(
+                            source_secrets.redaction_values
+                            if source_secrets is not None
+                            else ()
+                        ),
+                    )
+                )
             )
             return _run_byof(
                 args,
+                authorization=authorization,
                 summary=summary,
                 source_secrets=source_secrets,
                 redactions=redactions,
@@ -713,7 +1091,7 @@ def main(argv: list[str] | None = None) -> int:
                 "Grant write access to the target repository, or use --skip-push "
                 "with an already-published image."
             )
-        print(json.dumps(summary, indent=2, sort_keys=True))
+        print(json.dumps(_redact_payload(summary, redactions), indent=2, sort_keys=True))
         hint = str(summary.get("hint") or "").strip()
         if hint:
             print(f"HINT: {hint}", file=sys.stderr)
@@ -723,6 +1101,7 @@ def main(argv: list[str] | None = None) -> int:
 def _run_byof(
     args: argparse.Namespace,
     *,
+    authorization: _RuntimeAuthorization | None,
     summary: dict[str, Any],
     source_secrets: RepositorySecretFiles | None,
     redactions: tuple[str, ...],
@@ -764,34 +1143,34 @@ def _run_byof(
                     )
                     try:
                         build_cmd = [
-                                "docker",
-                                "build",
-                                "--platform",
-                                "linux/amd64",
-                                "--build-arg",
-                                f"BYOF_BASE_IMAGE={base_image}",
-                                "--build-arg",
-                                f"BYOF_SOURCE_VISIBILITY={'private' if source_secrets else 'public'}",
-                                "--build-arg",
-                                (
-                                    "BYOF_SOURCE_CACHE_KEY="
-                                    + (
-                                        source_secrets.repository_sha256
-                                        + source_secrets.ref_sha256
-                                        if source_secrets
-                                        else "public"
-                                    )
-                                ),
-                                "--build-arg",
-                                f"BYOF_SOURCE_LABEL_REPO={'<private-repository>' if source_secrets else args.repo_url}",
-                                "--build-arg",
-                                f"BYOF_SOURCE_LABEL_REF={'<private-ref>' if source_secrets else args.repo_ref}",
-                                "--build-arg",
-                                f"BYOF_BUILD_COMMAND={args.build_command}",
-                                "-t",
-                                image,
-                                str(context),
-                            ]
+                            "docker",
+                            "build",
+                            "--platform",
+                            "linux/amd64",
+                            "--build-arg",
+                            f"BYOF_BASE_IMAGE={base_image}",
+                            "--build-arg",
+                            f"BYOF_SOURCE_VISIBILITY={'private' if source_secrets else 'public'}",
+                            "--build-arg",
+                            (
+                                "BYOF_SOURCE_CACHE_KEY="
+                                + (
+                                    source_secrets.repository_sha256
+                                    + source_secrets.ref_sha256
+                                    if source_secrets
+                                    else "public"
+                                )
+                            ),
+                            "--build-arg",
+                            f"BYOF_SOURCE_LABEL_REPO={'<private-repository>' if source_secrets else args.repo_url}",
+                            "--build-arg",
+                            f"BYOF_SOURCE_LABEL_REF={'<private-ref>' if source_secrets else args.repo_ref}",
+                            "--build-arg",
+                            f"BYOF_BUILD_COMMAND={args.build_command}",
+                            "-t",
+                            image,
+                            str(context),
+                        ]
                         if source_secrets is None:
                             build_cmd[8:8] = [
                                 "--build-arg",
@@ -832,16 +1211,22 @@ def _run_byof(
                     assert last_build_error is not None
                     raise last_build_error
             if not skip_push:
-                push_proc = _run(
-                    ["docker", "push", image], env=docker_env or None, capture=True
-                )
+                push_kwargs: dict[str, Any] = {
+                    "env": docker_env or None,
+                    "capture": True,
+                }
+                if redactions:
+                    push_kwargs["redactions"] = redactions
+                push_proc = _run(["docker", "push", image], **push_kwargs)
                 if push_proc.stdout:
-                    sys.stdout.write(push_proc.stdout)
+                    sys.stdout.write(_redact_text(push_proc.stdout, redactions))
                 if push_proc.stderr:
-                    sys.stderr.write(push_proc.stderr)
+                    sys.stderr.write(_redact_text(push_proc.stderr, redactions))
                 tagged_image = image
                 image = _resolve_pushed_image_digest(
-                    tagged_image, env=docker_env or None
+                    tagged_image,
+                    env=docker_env or None,
+                    redactions=redactions,
                 )
                 summary["image_tag"] = tagged_image
                 summary["image"] = image
@@ -855,6 +1240,11 @@ def _run_byof(
                 summary["build"] = {"ok": True, "pushed": False}
         else:
             summary["build"] = {"ok": True, "skipped": True}
+
+        scan_evidence: dict[str, Any] = {}
+        if authorization is not None:
+            scan_evidence = _scan_robotwin_image(image, redactions=redactions)
+            summary["robotwin_image_scan"] = scan_evidence
 
         if not args.skip_run:
             if args.workload == "datagen":
@@ -879,20 +1269,19 @@ def _run_byof(
                     BYOF_REPO_MOUNT,
                 ]
             elif args.workload in {"container-verify", "solution-smoke"}:
-                cmd = [
-                    sys.executable,
-                    str(CONTAINER_VERIFY_RUNNER),
-                    "--image",
-                    image,
-                    "--run-id",
-                    args.run_id,
-                    "--wait-timeout",
-                    str(args.wait_timeout),
-                    "--poll-interval",
-                    str(args.poll_interval),
-                    "--repo-root",
-                    BYOF_REPO_MOUNT,
-                ]
+                cmd = [sys.executable, str(CONTAINER_VERIFY_RUNNER)]
+                if authorization is None:
+                    cmd.extend(["--image", image, "--run-id", args.run_id])
+                cmd.extend(
+                    [
+                        "--wait-timeout",
+                        str(args.wait_timeout),
+                        "--poll-interval",
+                        str(args.poll_interval),
+                        "--repo-root",
+                        BYOF_REPO_MOUNT,
+                    ]
+                )
                 if args.smoke_command:
                     cmd.extend(["--smoke-command", args.smoke_command])
                 if args.solution_name:
@@ -920,21 +1309,46 @@ def _run_byof(
                 ]
             if args.yaml:
                 cmd.extend(["--yaml", args.yaml])
-            if args.output_root:
+            if args.output_root and authorization is None:
                 cmd.extend(["--output-root", args.output_root])
             if args.sky_bin:
                 cmd.extend(["--sky-bin", args.sky_bin])
-            if args.config_path:
+            if args.config_path and authorization is None:
                 cmd.extend(["--config-path", args.config_path])
             if args.cleanup:
                 cmd.append("--cleanup")
-            run_proc = _run(cmd, capture=True, env=_live_runner_env(args.project))
-            sys.stdout.write(run_proc.stdout)
-            if run_proc.stderr:
-                sys.stderr.write(run_proc.stderr)
-            summary["run"] = _parse_last_json(run_proc.stdout) or {
-                "status": "submitted"
+            live_env = _authorized_live_env(
+                authorization, scan_evidence, project=args.project, image=image
+            )
+            runtime_redactions = (
+                tuple(
+                    dict.fromkeys((*redactions, *_private_runtime_redactions(live_env)))
+                )
+                if authorization is not None
+                else redactions
+            )
+            run_kwargs = {
+                "capture": True,
+                "env": live_env,
             }
+            if authorization is not None:
+                run_kwargs["inherit_env"] = False
+            if runtime_redactions:
+                run_kwargs["redactions"] = runtime_redactions
+            run_proc = (
+                _run_robotwin_container_verify(
+                    cmd,
+                    authorization=authorization,
+                    environment=live_env,
+                )
+                if authorization is not None
+                else _run(cmd, **run_kwargs)
+            )
+            sys.stdout.write(_redact_text(run_proc.stdout, runtime_redactions))
+            if run_proc.stderr:
+                sys.stderr.write(_redact_text(run_proc.stderr, runtime_redactions))
+            parsed_run = _parse_last_json(run_proc.stdout) or {"status": "submitted"}
+            summary["run"] = _redact_payload(parsed_run, runtime_redactions)
             if postprocess_key is not None:
                 postprocess = run_registered_postprocess(
                     postprocess_key,
@@ -955,12 +1369,21 @@ def _run_byof(
         else:
             summary["run"] = {"skipped": True}
         summary["status"] = "ok"
-        print(json.dumps(summary, indent=2, sort_keys=True))
+        print(json.dumps(_redact_payload(summary, redactions), indent=2, sort_keys=True))
         return 0
     except Exception as exc:
-        # Do not retain an unsanitized exception as ``__cause__``: callers may
-        # serialize the exception chain even though the top-level message is safe.
-        raise RuntimeError(_redact_text(str(exc), redactions)) from None
+        _raise_sanitized_runtime_error(_redact_text(str(exc), redactions))
+
+
+def _raise_sanitized_runtime_error(message: str) -> None:
+    """Raise without retaining any exception handled by the BYOF boundary."""
+
+    try:
+        raise RuntimeError(message) from None
+    except RuntimeError as failure:
+        failure.__cause__ = None
+        failure.__context__ = None
+        raise
 
 
 if __name__ == "__main__":

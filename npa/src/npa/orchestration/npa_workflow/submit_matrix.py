@@ -931,6 +931,22 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
     ),
     SubmitLiveCase(
+        "byof-robotwin.yaml",
+        "multi",
+        secret_envs=(
+            "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        notes=(
+            "Normal submit uses a CPU-only outer launcher and delegates the sole "
+            "accelerator request to one STRICT RTX PRO 6000 Blackwell inner job. "
+            "The private/restricted RoboTwin 2.0 beat_block_hammer pass requires "
+            "SAPIEN/Vulkan, task success, HDF5 actions, decoded MP4 frames, exact "
+            "runtime asset revision, and pod image-digest evidence."
+        ),
+    ),
+    SubmitLiveCase(
         "robocasa-smoke.yaml",
         "gpu",
         plan_only=True,

@@ -22,6 +22,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     plan_image_pull_secrets,
     render_skypilot_yaml,
     resolve_task_image,
+    secret_env_hints_for_plan,
     tool_image_key,
 )
 from npa.orchestration.npa_workflow.spec import load_spec
@@ -97,13 +98,47 @@ def test_every_byof_spec_declares_its_outer_runtime_image() -> None:
 
     # Pinned so a new BYOF spec cannot skip the per-profile image assertion
     # below by simply not being globbed. Bump it when you add one.
-    assert len(paths) == 10
+    assert len(paths) == 11
     for path in paths:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         base_image = raw["config"].get("base_image")
         assert isinstance(base_image, str) and base_image, path.name
         for profile in raw["resources"].values():
+            if path.name == "byof-robotwin.yaml":
+                assert "image" not in profile
+                continue
             assert profile["image"] == "{{config.base_image}}", path.name
+
+
+def test_robotwin_outer_render_is_cpu_only_public_and_destination_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa/public")
+    spec = load_spec(NPA_SPECS / "byof-robotwin.yaml")
+    plan = build_plan(spec, run_id="robotwin-public-launcher")
+
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="robotwin-public-launcher",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+
+    from npa.execution_preflight import skypilot_output_destinations
+
+    assert task["resources"]["cloud"] == "kubernetes"
+    assert "accelerators" not in task["resources"]
+    assert task["resources"].get("image_id") != str(spec.config["base_image"])
+    assert task["envs"]["NPA_EXECUTION_OUTPUTS"] == "[]"
+    assert task["envs"]["NPA_SRC_S3_URI"].startswith("s3://")
+    assert skypilot_output_destinations([task]) == {}
+    assert "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT" in task["run"]
+    assert "NPA_INTERNAL_BYOF_ROBOTWIN_CONTEXT_V1" not in rendered
+    assert "private-bucket-canary" not in rendered
+    assert secret_env_hints_for_plan(plan.steps) == (
+        "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
+    )
 
 
 def test_isaac_byof_config_routes_image_and_preserves_cli_opt_out() -> None:
