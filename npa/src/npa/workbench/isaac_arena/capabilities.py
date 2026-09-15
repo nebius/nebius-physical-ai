@@ -539,13 +539,13 @@ _CAPABILITY_MANIFEST = {
                 "legacy_mode_enabled": True,
                 "rt2_enabled": False,
                 "path_tracing_enabled": False,
-                "antialiasing": "DLAA",
+                "antialiasing": "TAA",
                 "dlss_execution_mode": "quality",
                 "dl_denoiser_enabled": True,
                 "frame_generation_enabled": False,
                 "minimum_settling_renders": 8,
                 "stochastic_accumulation": False,
-                "reason": "Selecting legacy RTX while disabling RT2, interactive path tracing, and generated frames prevents Isaac Sim 6 from remapping or inventing action frames. Native-resolution DLAA, the DL denoiser, quality reconstruction, and at least eight consecutive ready physics-frozen settling renders address single-frame RTX grain; task-bound temporal median and coherent tracking remain independent acceptance checks.",
+                "reason": "Selecting legacy RTX while disabling RT2, interactive path tracing, and generated frames prevents Isaac Sim 6 from remapping or inventing action frames. Supported temporal anti-aliasing, the DL denoiser, and at least eight consecutive ready physics-frozen settling renders address single-frame RTX grain; task-bound temporal median and coherent tracking remain independent acceptance checks.",
             },
             "graphics_userspace": (
                 "Native NVIDIA EGL/Vulkan, libnvoptix.so.1 and readable nonempty OptiX weights are preferred. "

@@ -117,7 +117,7 @@ def _proof(length: int = 20, source_length: int | None = None) -> dict:
                     "legacy_mode_enabled": True,
                     "rt2_enabled": False,
                     "path_tracing_enabled": False,
-                    "antialiasing": "DLAA",
+                    "antialiasing": "TAA",
                     "dlss_execution_mode": "quality",
                     "dl_denoiser_enabled": True,
                     "frame_generation_enabled": False,

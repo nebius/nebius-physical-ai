@@ -206,7 +206,7 @@ def _capture_contract(capture: dict, episode_length: int) -> dict:
         and rendering.get("legacy_mode_enabled") is True
         and rendering.get("rt2_enabled") is False
         and rendering.get("path_tracing_enabled") is False
-        and rendering.get("antialiasing") == "DLAA"
+        and rendering.get("antialiasing") == "TAA"
         and rendering.get("dlss_execution_mode") == "quality"
         and rendering.get("dl_denoiser_enabled") is True
         and rendering.get("frame_generation_enabled") is False

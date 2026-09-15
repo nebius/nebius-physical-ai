@@ -143,7 +143,7 @@ def test_capabilities_are_complete_and_honest() -> None:
         "legacy_mode_enabled": True,
         "rt2_enabled": False,
         "path_tracing_enabled": False,
-        "antialiasing": "DLAA",
+        "antialiasing": "TAA",
         "dlss_execution_mode": "quality",
         "dl_denoiser_enabled": True,
         "frame_generation_enabled": False,
@@ -152,8 +152,8 @@ def test_capabilities_are_complete_and_honest() -> None:
         "reason": (
             "Selecting legacy RTX while disabling RT2, interactive path tracing, "
             "and generated frames prevents Isaac Sim 6 from remapping or inventing "
-            "action frames. Native-resolution DLAA, the DL denoiser, quality "
-            "reconstruction, and at least eight consecutive ready physics-frozen "
+            "action frames. Supported temporal anti-aliasing, the DL denoiser, "
+            "and at least eight consecutive ready physics-frozen "
             "settling renders address single-frame RTX grain; task-bound temporal "
             "median and coherent tracking remain independent acceptance checks."
         ),
@@ -193,7 +193,7 @@ def test_dry_run_builds_real_pinned_upstream_argv(tmp_path: Path) -> None:
         "--/persistent/rtx/modes/rt2/enabled=false",
         "--/persistent/rtx/modes/pt/enabled=false",
         "--/rtx/rendermode=RaytracedLighting",
-        "--/rtx/post/aa/op=4",
+        "--/rtx/post/aa/op=1",
         "--/rtx/post/dlss/execMode=2",
         "--/rtx-transient/dldenoiser/enabled=true",
         "--/rtx-transient/dlssg/enabled=false",
@@ -979,7 +979,7 @@ def test_passive_baseline_success_is_never_task_qualified_video(
                 "legacy_mode_enabled": True,
                 "rt2_enabled": False,
                 "path_tracing_enabled": False,
-                "antialiasing": "DLAA",
+                "antialiasing": "TAA",
                 "dlss_execution_mode": "quality",
                 "dl_denoiser_enabled": True,
                 "frame_generation_enabled": False,

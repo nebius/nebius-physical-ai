@@ -238,7 +238,7 @@ capture setup and is not an absolute simulation clock.
 Texture streaming and asset loading must finish before capture accepts a frame.
 Capture requires legacy RTX Real-Time (`RaytracedLighting`) explicitly enabled
 at Kit startup, with RT2, interactive path tracing, and frame generation disabled,
-native-resolution DLAA, quality reconstruction, the DL denoiser, and at least
+supported temporal anti-aliasing (TAA), the DL denoiser, and at least
 eight consecutive ready settling renders after the readiness baseline per captured
 frame while physics is frozen. Isaac Sim 6 otherwise remaps that
 renderer request to `RealTimePathTracing`; exact readback rejects the remap. The

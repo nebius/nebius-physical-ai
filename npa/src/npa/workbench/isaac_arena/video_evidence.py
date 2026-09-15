@@ -660,7 +660,7 @@ def _rendering_proof(capture: dict[str, Any]) -> dict[str, Any]:
         "legacy_mode_enabled": True,
         "rt2_enabled": False,
         "path_tracing_enabled": False,
-        "antialiasing": "DLAA",
+        "antialiasing": "TAA",
         "dlss_execution_mode": "quality",
         "dl_denoiser_enabled": True,
         "frame_generation_enabled": False,

@@ -414,14 +414,14 @@ def test_capture_setup_preserves_existing_metric_configuration(
     assert cfg.sim.render.carb_settings["/rtx/sceneDb/ambientLightIntensity"] == 0.0
     assert cfg.sim.render.carb_settings == {
         "/rtx/rendermode": "RaytracedLighting",
-        "/rtx/post/aa/op": 4,
+        "/rtx/post/aa/op": 1,
         "/rtx/post/dlss/execMode": 2,
         "/rtx-transient/dldenoiser/enabled": True,
         "/rtx-transient/dlssg/enabled": False,
         "/rtx/ecoMode/enabled": False,
         "/rtx/sceneDb/ambientLightIntensity": 0.0,
     }
-    assert cfg.sim.render.antialiasing_mode == "DLAA"
+    assert cfg.sim.render.antialiasing_mode == "TAA"
     assert cfg.sim.render.dlss_mode == 2
     assert cfg.sim.render.enable_dl_denoiser is True
     assert (
@@ -610,7 +610,7 @@ def test_capture_reasserts_mutable_renderer_settings_after_late_override(
     ] == list(simulator_video._CAPTURE_RENDER_SETTINGS.items())
     assert simulator_modules.settings.get("/persistent/rtx/modes/rt2/enabled") is False
     assert simulator_modules.settings.get("/rtx/rendermode") == ("RaytracedLighting")
-    assert simulator_modules.settings.get("/rtx/post/aa/op") == 4
+    assert simulator_modules.settings.get("/rtx/post/aa/op") == 1
     assert simulator_modules.settings.get("/rtx/post/dlss/execMode") == 2
     assert simulator_modules.settings.get("/rtx-transient/dldenoiser/enabled") is True
     assert simulator_modules.settings.get("/rtx-transient/dlssg/enabled") is False
@@ -625,13 +625,13 @@ def test_capture_refuses_renderer_that_rejects_required_settings(
     env = _AutoResetEnvironment(tmp_path, simulator_modules)
     native_set = simulator_modules.settings.set
 
-    def reject_dlaa(key, value):
-        native_set(key, 1 if key == "/rtx/post/aa/op" else value)
+    def reject_taa(key, value):
+        native_set(key, 2 if key == "/rtx/post/aa/op" else value)
 
-    simulator_modules.settings.set = reject_dlaa
+    simulator_modules.settings.set = reject_taa
     with pytest.raises(
         RuntimeError,
-        match=r'required capture settings: .*"/rtx/post/aa/op": 1',
+        match=r'required capture settings: .*"/rtx/post/aa/op": 2',
     ):
         env.reset()
     assert env.renders == 0

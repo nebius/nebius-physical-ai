@@ -87,7 +87,7 @@ The fixture does not record its original physics device; this selection needs
 fresh task/video validation and is not proof of successful reproduction.
 The RTX renderer must explicitly enable legacy RTX and disable RT2 plus
 interactive path tracing through AppLauncher Kit startup arguments, then
-reassert legacy RTX Real-Time plus native-resolution DLAA, quality reconstruction,
+reassert legacy RTX Real-Time plus supported TAA,
 the DL denoiser, disabled frame generation, and at least eight consecutive ready
 physics-frozen settling renders after the readiness baseline at the live capture
 boundary and verify
@@ -216,11 +216,11 @@ physics counter, and uncached robot/object state must remain unchanged during
 rendering. The native subscription must also observe progress between real
 actions; elapsed event time starts at capture setup, not an absolute clock.
 Verify asset/texture readiness and the exact legacy RTX Real-Time
-`RaytracedLighting`, RT2-disabled, DLAA/quality/DL-denoiser settings readback,
+`RaytracedLighting`, RT2-disabled, TAA/DL-denoiser settings readback,
 disabled frame generation, and at least eight consecutive ready physics-frozen
 settling renders after the readiness baseline per captured frame. Do not use
 stochastic path-tracing accumulation for acceptance footage; only the declared
-DLAA history may span those render-only settling calls. The separate temporal-median
+TAA history may span those render-only settling calls. The separate temporal-median
 and coherent-motion verifier remains mandatory. Rendering must
 not add physics steps or video frames. An unfinished recorder buffer belongs only in the separate
 unscored diagnostic and cannot create upstream success or completed episodes.

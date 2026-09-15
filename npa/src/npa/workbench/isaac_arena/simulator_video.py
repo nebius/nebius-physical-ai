@@ -24,11 +24,12 @@ _STARTUP_RENDER_SETTINGS = {
 }
 _CAPTURE_RENDER_SETTINGS = {
     "/rtx/rendermode": "RaytracedLighting",
-    # DLAA reconstructs at native resolution and suppresses the severe
-    # single-frame Monte Carlo grain observed with spatial-only FXAA. The
-    # simulator is frozen while the temporal history settles, and the separate
-    # verifier still requires task-bound coherent motion.
-    "/rtx/post/aa/op": 4,
+    # Legacy RTX maps TAA to its supported temporal anti-aliasing path. It
+    # suppresses the severe single-frame grain observed with spatial-only FXAA
+    # without relying on the unsupported DLAA selection, which Isaac Sim 6
+    # silently remaps to TAA. The simulator is frozen while temporal history
+    # settles, and the separate verifier still requires task-bound motion.
+    "/rtx/post/aa/op": 1,
     "/rtx/post/dlss/execMode": 2,
     "/rtx-transient/dldenoiser/enabled": True,
     "/rtx-transient/dlssg/enabled": False,
@@ -191,7 +192,7 @@ def _rendering_evidence(settings: Any) -> dict[str, Any]:
         "legacy_mode_enabled": True,
         "rt2_enabled": False,
         "path_tracing_enabled": False,
-        "antialiasing": "DLAA",
+        "antialiasing": "TAA",
         "dlss_execution_mode": "quality",
         "dl_denoiser_enabled": True,
         "frame_generation_enabled": False,
@@ -261,7 +262,7 @@ def _ready_capture_frame(env: Any, context: Any) -> tuple[np.ndarray, int, int]:
         else:
             consecutive_ready_renders = 0
         # The first ready frame establishes the temporal-history baseline. Only
-        # subsequent consecutive ready renders count as DLAA settling.
+        # subsequent consecutive ready renders count as TAA settling.
         settling_renders = max(0, consecutive_ready_renders - 1)
         if settling_renders >= _MINIMUM_SETTLING_RENDERS:
             return frame.copy(), renders, settling_renders
@@ -472,8 +473,8 @@ def configure_video_capture(env_cfg: Any) -> None:
         raise RuntimeError("Arena video capture requires the task's metric recorder")
     env_cfg.sim.render.carb_settings.update(_CAPTURE_RENDER_SETTINGS)
     # Isaac Lab applies this native Replicator bridge after raw Carb settings;
-    # make both configuration paths request the same native-resolution mode.
-    env_cfg.sim.render.antialiasing_mode = "DLAA"
+    # make both configuration paths request the same supported temporal mode.
+    env_cfg.sim.render.antialiasing_mode = "TAA"
     env_cfg.sim.render.dlss_mode = 2
     env_cfg.sim.render.enable_dl_denoiser = True
     env_cfg.recorders.npa_video = RecorderTermCfg(class_type=_capture_recorder_type())

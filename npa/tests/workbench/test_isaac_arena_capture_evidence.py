@@ -82,7 +82,7 @@ def capture(tmp_path: Path) -> tuple[Path, dict, dict, list[np.ndarray]]:
             "legacy_mode_enabled": True,
             "rt2_enabled": False,
             "path_tracing_enabled": False,
-            "antialiasing": "DLAA",
+            "antialiasing": "TAA",
             "dlss_execution_mode": "quality",
             "dl_denoiser_enabled": True,
             "frame_generation_enabled": False,
@@ -305,9 +305,9 @@ def test_allblack_initial_png_cannot_qualify_with_consistent_hashes(capture):
         verify_capture_evidence(video.parent, video, task_motion=motion)
 
 
-def test_renderer_readback_must_confirm_temporal_reconstruction(capture):
+def test_renderer_readback_must_confirm_temporal_antialiasing(capture):
     video, payload, motion, _ = capture
-    payload["rendering"]["settings"]["/rtx/post/aa/op"] = 1
+    payload["rendering"]["settings"]["/rtx/post/aa/op"] = 2
     _write_sidecar(video.parent, payload)
     with pytest.raises(IsaacArenaError, match="renderer readback"):
         verify_capture_evidence(video.parent, video, task_motion=motion)
