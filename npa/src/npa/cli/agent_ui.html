@@ -2762,6 +2762,15 @@
       let chatSessionSelectionGeneration = 0;
       let chatSessionMutationGeneration = 0;
       let chatSessionMutationQueue = Promise.resolve();
+      let chatSessionBootstrapResolver = null;
+      const chatSessionBootstrap = new Promise((resolve) => {
+        chatSessionBootstrapResolver = resolve;
+      });
+      function resolveChatSessionBootstrap() {
+        const resolve = chatSessionBootstrapResolver;
+        chatSessionBootstrapResolver = null;
+        if (resolve) resolve();
+      }
       const chatSessionSnapshotGenerations = new WeakMap();
       let chatSendInFlight = false;
       const chatQueue = [];
@@ -8661,7 +8670,7 @@
         }
         return true;
       }
-      function queueChatText(text, options) {
+      async function queueChatText(text, options) {
         const opts = options || {};
         const input = document.getElementById("chatInput");
         if (document.body.classList.contains("mobile-agent") && !hasMobileChatAuth()) {
@@ -8674,9 +8683,13 @@
           showToast("Enter a message first", "info");
           return Promise.resolve(false);
         }
+        // The initial session snapshot may replace the optimistic "default" id.
+        // Wait before binding a request so a first-turn reply cannot be discarded
+        // merely because that read finishes while its response is in flight.
+        await chatSessionBootstrap;
         if (input && !opts.keepInput) input.value = "";
         if (activeMainTab === "rerun" || document.body.classList.contains("viewer-focus")) openChatDrawer();
-        // Capture session at enqueue so a mid-queue session switch cannot retarget the POST.
+        // Bind the hydrated session before enqueue so a later switch cannot retarget the POST.
         const jobSessionId = String(opts.session_id || activeChatSessionId || "default");
         const jobMessages = opts.messages || null;
         return enqueueChatJob(async () => {
@@ -15977,6 +15990,8 @@
         } catch (_err) {
           // Session restore is best-effort on first load.
           return null;
+        } finally {
+          resolveChatSessionBootstrap();
         }
       }
       async function ensureFrankaRerunLoaded(simViz) {
