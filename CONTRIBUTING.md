@@ -747,9 +747,8 @@ can use `pytest -x --collect-only` as a smoke check. Parallel agent or operator
 runs use scope-specific commit lock directories under `/tmp/npa-commit-lock/`;
 remove the lock after commit and push.
 
-When 3 or more commits land from an agent run, trigger the Claude Code review
-pattern described in `skills/atomic/super-prompt-patterns/SKILL.md`. A
-two-commit documentation run does not trigger that review rule.
+Run Claude Code reviews only when explicitly requested by the operator.
+
 ## Design Principles
 The core promise is to remove glue code. Contributions should avoid bespoke
 adapters, path mapping scripts, and one-off orchestration logic that customers

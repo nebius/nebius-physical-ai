@@ -92,6 +92,10 @@ support in every other tool.
 See [configuration](../docs/configuration.md) for project setup, credential
 precedence, the credential-file layout, token access, and cross-project storage.
 Use the [first-run prompts](../docs/workbench/agent-first-run.md) with a coding agent.
+For a headless machine, choose
+[service-account authentication or human OAuth](../docs/configuration.md#authentication-on-a-headless-machine).
+Separate skills cover unattended service identities, SSH callback forwarding,
+and the original private callback copy/paste helper.
 
 For an existing Agent, `npa agent bootstrap --output-prefix <subtree>` selects
 and persists its deployment-bucket output scope. Keep live-verification fixtures

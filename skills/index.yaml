@@ -337,6 +337,25 @@ skills:
       - type: cli_help
         args: ["--help"]
         contains: "Nebius Physical AI"
+  - name: nebius-headless-oauth
+    category: atomic
+    when_to_use: "Complete human Nebius CLI OAuth on a headless operator/dev machine without SSH forwarding, using a private terminal and a validated manual loopback callback."
+    path: skills/atomic/nebius-headless-oauth/SKILL.md
+    smoke:
+      - type: file_exists
+        path: skills/atomic/nebius-headless-oauth/scripts/relay_callback.py
+      - type: file_exists
+        path: npa/tests/unit/test_headless_oauth_relay.py
+  - name: nebius-service-account-auth
+    category: atomic
+    when_to_use: "Set up or verify unattended Nebius CLI authentication on a VM or CI runner using a project-scoped service account, an attached identity, or an authorized-key profile."
+    path: skills/atomic/nebius-service-account-auth/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "health", "preflight", "--help"]
+        contains: "nebius"
+      - type: file_exists
+        path: npa/src/npa/clients/nebius_auth.py
   - name: vm-nebius-auth
     category: atomic
     when_to_use: "Start, recover, or verify no-browser human Nebius CLI profile authentication on a remote operator/dev VM with a safe SSH loopback callback forward."
