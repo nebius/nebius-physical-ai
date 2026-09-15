@@ -54,6 +54,10 @@ artifact-level gate is not complete workflow evidence.
 Use an L40S or RTX PRO 6000 for Isaac execution. H100, H200, and B200 are not
 valid render-capable qualification targets.
 
+Direct service deployment must mount an operator-owned PVC for
+`/opt/isaac-cache`; never reintroduce an `emptyDir` fallback for the proprietary
+runtime. Service deletion retains that claim.
+
 ## Ordered gate
 
 1. Run `npa workbench health preflight`, including `--checks nebius` before

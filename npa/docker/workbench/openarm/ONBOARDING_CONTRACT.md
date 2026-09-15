@@ -44,16 +44,16 @@ Review date: 2026-09-15. This engineering record is not legal advice.
 | Expected files/checksums | `docker/workbench/common/isaac-nvidia-wheels.txt` and the common bootstrap ready manifest |
 | Authorization source | explicit runtime `ACCEPT_EULA=Y`; no credential is baked |
 | Credential phase | runtime |
-| Acceptance mechanism | documented NVIDIA environment-variable mechanism; the bootstrap maps the scoped operator decision to the exact vendor variable and refuses negative, empty, or absent acceptance before network access |
+| Acceptance mechanism | documented NVIDIA environment-variable mechanism; the bootstrap maps the scoped operator decision to the exact vendor variable when `ACCEPT_EULA` is absent, and refuses an explicit negative, empty, or invalid value before network access |
 | Exact access evidence | public package access; acceptance is recorded only in the run-scoped execution environment |
-| Cleanup | workload teardown removes run-owned pods; ephemeral caches disappear with the pod and explicitly mounted cache volumes remain operator-owned |
+| Cleanup | workload teardown removes run-owned pods; explicitly mounted cache volumes remain operator-owned and are never deleted implicitly |
 
 ## Runtime-fetch delivery
 
 | Field | Value |
 | --- | --- |
-| Cache tier | node-local ephemeral by default; optional operator-owned durable PVC |
-| Cache owner/access policy | non-root workload user and the run-selected namespace; a supplied PVC remains under operator access control |
+| Cache tier | operator-owned durable PVC for the service; run-owned task storage for workflow jobs |
+| Cache owner/access policy | non-root workload user and the run-selected namespace; the PVC remains under operator access control |
 | Cache reuse permission | ordinary installed-software reuse remains subject to the NVIDIA agreement; NPA never republishes or promotes cache bytes |
 | Temporary-download path | unique directory below the external cache mount, never an image layer |
 | Atomic ready marker | versioned common-bootstrap manifest containing exact package/source identities and checksums |

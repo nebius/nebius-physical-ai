@@ -266,11 +266,10 @@ def _service_env(project: str, token_env: str) -> dict[str, str]:
 
 
 def _cache_volume(cache_pvc: str) -> dict[str, Any]:
-    if cache_pvc:
-        source = {"persistentVolumeClaim": {"claimName": cache_pvc}}
-    else:
-        source = {"emptyDir": {"sizeLimit": "50Gi"}}
-    return {"name": "isaac-cache", **source}
+    return {
+        "name": "isaac-cache",
+        "persistentVolumeClaim": {"claimName": cache_pvc},
+    }
 
 
 def _service_container(image: str, secret_name: str) -> dict[str, Any]:
@@ -486,7 +485,9 @@ def deploy_cmd(
     name: str = typer.Option("npa-openarm", "--name"),
     namespace: str = typer.Option("workbench", "--namespace"),
     kubeconfig: str = typer.Option("", "--kubeconfig"),
-    isaac_cache_pvc: str = typer.Option("", "--isaac-cache-pvc"),
+    isaac_cache_pvc: str = typer.Option(
+        "npa-openarm-isaac-cache", "--isaac-cache-pvc"
+    ),
     gpu_type: GpuTypeOption = "rtxpro6000",
     node_selector_key: NodeSelectorKeyOption = "node.kubernetes.io/instance-type",
     node_selector_value: str = typer.Option("", "--node-selector-value"),

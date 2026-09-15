@@ -80,9 +80,11 @@ is supported only after exact-image live qualification.
 
 ## Service and workflow
 
-Set `OPENARM_TOKEN`, then deploy the authenticated RTX service. Supply a PVC to
-reuse the first-run Isaac cache; without one the deployment uses an ephemeral
-50 GiB volume:
+Set `OPENARM_TOKEN`, create a writable PVC with enough space for the pinned
+Isaac runtime, then deploy the authenticated RTX service. The default claim name
+is `npa-openarm-isaac-cache`; override it with `--isaac-cache-pvc`. Deployment
+never falls back to a pod-local cache because that would silently repeat the
+runtime fetch after restart:
 
 ```bash
 npa workbench openarm deploy --project "$NPA_PROJECT" --gpu-type rtxpro6000 \
