@@ -63,7 +63,7 @@ resources:
     accelerators: B200:1
     cpus: 16
     memory: 200Gi
-    disk_size: 80
+    disk_size: 128
 initial: generate
 states:
   generate:

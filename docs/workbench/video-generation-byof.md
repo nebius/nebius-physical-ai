@@ -45,6 +45,12 @@ submitting from this checkout: an older saved source URI does not contain these
 adapters, and this flag explicitly stages the current source. The worker needs
 the checked-out `npa.solutions.video_generation` adapter.
 
+Provide enough writable cache space for the checkpoint and CUDA runtime: the
+recipes request 128 GB for Mochi/Wan and 256 GB for LingBot. On Kubernetes,
+configure that capacity in the node or mounted cache volume; a SkyPilot
+`disk_size` request does not create a Kubernetes persistent volume. The LingBot
+checkpoint cache alone occupied approximately 150 GiB during qualification.
+
 Admission requires the allocated worker to pull those exact image bytes,
 `smoke_exit_code: 0`, the named capability JSON, and a fully decoded nonblank,
 moving video. The JSON records checkpoint revision, prompt, seed, native pipeline,

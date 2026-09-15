@@ -67,7 +67,7 @@ resources:
     accelerators: B200:4
     cpus: 64
     memory: 700Gi
-    disk_size: 80
+    disk_size: 256
 initial: generate
 states:
   generate:
