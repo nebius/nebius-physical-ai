@@ -50,7 +50,7 @@ def test_opened_door_requires_real_progress_and_success_in_same_episode(tmp_path
     assert motion["progress_interval"] == {
         "start_action_step": 1,
         "end_action_step": 4,
-        "total_action_steps": 80,
+        "total_action_steps": 4,
     }
     assert motion["visual_progress_qualified"] is True
     assert len(result["files"][0]["sha256"]) == 64

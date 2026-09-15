@@ -24,12 +24,18 @@ _STARTUP_RENDER_SETTINGS = {
 }
 _CAPTURE_RENDER_SETTINGS = {
     "/rtx/rendermode": "RaytracedLighting",
-    # Spatial FXAA has no stochastic path-tracing grain or temporal history.
-    # The separate video verifier still applies a temporal median before
-    # requiring persistent, spatially coherent motion inside task progress.
-    "/rtx/post/aa/op": 2,
+    # DLAA reconstructs at native resolution and suppresses the severe
+    # single-frame Monte Carlo grain observed with spatial-only FXAA. The
+    # simulator is frozen while the temporal history settles, and the separate
+    # verifier still requires task-bound coherent motion.
+    "/rtx/post/aa/op": 4,
+    "/rtx/post/dlss/execMode": 2,
+    "/rtx-transient/dldenoiser/enabled": True,
+    "/rtx-transient/dlssg/enabled": False,
+    "/rtx/ecoMode/enabled": False,
 }
 _RENDER_SETTINGS = {**_STARTUP_RENDER_SETTINGS, **_CAPTURE_RENDER_SETTINGS}
+_MINIMUM_SETTLING_RENDERS = 8
 
 
 def legacy_rtx_kit_args() -> str:
@@ -167,7 +173,7 @@ def _rendering_settings_readback(settings: Any) -> dict[str, Any]:
 
 def _apply_rendering_settings(settings: Any) -> None:
     # Isaac Sim can reapply application defaults after SimulationCfg raw
-    # settings are consumed. Reassert the deterministic spatial renderer at
+    # settings are consumed. Reassert the deterministic capture renderer at
     # the actual capture boundary and reject unsupported settings before a
     # single render is attempted.
     for key, value in _CAPTURE_RENDER_SETTINGS.items():
@@ -185,9 +191,12 @@ def _rendering_evidence(settings: Any) -> dict[str, Any]:
         "legacy_mode_enabled": True,
         "rt2_enabled": False,
         "path_tracing_enabled": False,
-        "antialiasing": "FXAA",
+        "antialiasing": "DLAA",
+        "dlss_execution_mode": "quality",
+        "dl_denoiser_enabled": True,
+        "frame_generation_enabled": False,
+        "minimum_settling_renders": _MINIMUM_SETTLING_RENDERS,
         "stochastic_accumulation": False,
-        "accumulation_renders_per_frame": 0,
         "readback_phase": "after_final_accepted_render",
         "settings": actual,
     }
@@ -241,16 +250,26 @@ def _ready_frame(env: Any, context: Any, frame: np.ndarray) -> bool:
     return stage_ready and bool(annotator_ready) and bool(nonblack_rgb)
 
 
-def _ready_capture_frame(env: Any, context: Any) -> tuple[np.ndarray, int]:
+def _ready_capture_frame(env: Any, context: Any) -> tuple[np.ndarray, int, int]:
     renders = 0
+    consecutive_ready_renders = 0
     while True:
         frame = _render_frame(env)
         renders += 1
         if _ready_frame(env, context, frame):
-            return frame.copy(), renders
+            consecutive_ready_renders += 1
+        else:
+            consecutive_ready_renders = 0
+        # The first ready frame establishes the temporal-history baseline. Only
+        # subsequent consecutive ready renders count as DLAA settling.
+        settling_renders = max(0, consecutive_ready_renders - 1)
+        if settling_renders >= _MINIMUM_SETTLING_RENDERS:
+            return frame.copy(), renders, settling_renders
 
 
-def _freeze_evidence(before: dict, after: dict, renders: int) -> dict[str, Any]:
+def _freeze_evidence(
+    before: dict, after: dict, renders: int, settling_renders: int
+) -> dict[str, Any]:
     return {
         "physics_time_before": before["physics_time"],
         "physics_time_after": after["physics_time"],
@@ -261,7 +280,9 @@ def _freeze_evidence(before: dict, after: dict, renders: int) -> dict[str, Any]:
         "state_sha256_before": _state_hash(before),
         "state_sha256_after": _state_hash(after),
         "render_calls": renders,
-        "accumulation_render_calls": 0,
+        "pre_settling_render_calls": renders - settling_renders,
+        "settling_render_calls": settling_renders,
+        "consecutive_ready_render_calls": settling_renders + 1,
         "stage_streaming_idle": True,
         "stage_assets_loaded": True,
         "nonblack_rgb": True,
@@ -282,14 +303,16 @@ def _capture_verified_frame(env: Any) -> np.ndarray:
     try:
         settings.set(_PLAY_SIMULATIONS, False)
         env.sim.physics_manager.forward()
-        frame, renders = _ready_capture_frame(env, context)
+        frame, renders, settling_renders = _ready_capture_frame(env, context)
         rendering = _rendering_evidence(settings)
     finally:
         settings.set(_PLAY_SIMULATIONS, previous)
         after = _physics_snapshot(env)
         _assert_physics_unchanged(before, after)
     env._npa_video_rendering = rendering
-    env._npa_video_capture_proof = _freeze_evidence(before, after, renders)
+    env._npa_video_capture_proof = _freeze_evidence(
+        before, after, renders, settling_renders
+    )
     if getattr(env, "_npa_video_initial_physics_state", None) is None:
         env._npa_video_initial_physics_state = before
     return frame
@@ -449,8 +472,10 @@ def configure_video_capture(env_cfg: Any) -> None:
         raise RuntimeError("Arena video capture requires the task's metric recorder")
     env_cfg.sim.render.carb_settings.update(_CAPTURE_RENDER_SETTINGS)
     # Isaac Lab applies this native Replicator bridge after raw Carb settings;
-    # make both configuration paths request the same spatial-only mode.
-    env_cfg.sim.render.antialiasing_mode = "FXAA"
+    # make both configuration paths request the same native-resolution mode.
+    env_cfg.sim.render.antialiasing_mode = "DLAA"
+    env_cfg.sim.render.dlss_mode = 2
+    env_cfg.sim.render.enable_dl_denoiser = True
     env_cfg.recorders.npa_video = RecorderTermCfg(class_type=_capture_recorder_type())
 
 

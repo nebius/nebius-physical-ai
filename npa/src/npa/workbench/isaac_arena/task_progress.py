@@ -21,7 +21,7 @@ class TaskProgressAdapter:
     name: str
     environment: str
     supported_policy_types: tuple[str, ...]
-    maximum_trailing_identical_action_fraction: float
+    maximum_trailing_held_action_fraction: float
     signal_names: tuple[str, ...]
     qualifier: ProgressQualifier
     thresholds: Mapping[str, float]
@@ -126,7 +126,10 @@ def _qualify_open_microwave(
             "simulator trace length disagrees with upstream episode length"
         )
     statistics = _microwave_statistics(values, require_progress)
-    total_steps = expected_steps or int(values.size - 1)
+    # The native terminal is authoritative for the scored/captured episode.
+    # A replay may contain an unused suffix, but that suffix is outside this
+    # episode and cannot lengthen its progress or visual evidence interval.
+    total_steps = int(values.size - 1)
     return _microwave_motion_record(record, values, statistics, total_steps)
 
 
@@ -136,7 +139,7 @@ _TASK_PROGRESS_ADAPTERS: Mapping[str, TaskProgressAdapter] = MappingProxyType(
             name="arena.open-door.revolute-joint.v1",
             environment="gr1_open_microwave",
             supported_policy_types=("replay", "rsl_rl"),
-            maximum_trailing_identical_action_fraction=0.25,
+            maximum_trailing_held_action_fraction=0.25,
             signal_names=("revolute_joint_state",),
             qualifier=_qualify_open_microwave,
             thresholds=MappingProxyType(
@@ -164,8 +167,8 @@ def task_progress_capabilities() -> list[dict[str, Any]]:
             "name": adapter.name,
             "environment": adapter.environment,
             "supported_policy_types": list(adapter.supported_policy_types),
-            "maximum_trailing_identical_action_fraction": (
-                adapter.maximum_trailing_identical_action_fraction
+            "maximum_trailing_held_action_fraction": (
+                adapter.maximum_trailing_held_action_fraction
             ),
             "signal_names": list(adapter.signal_names),
             "thresholds": dict(adapter.thresholds),

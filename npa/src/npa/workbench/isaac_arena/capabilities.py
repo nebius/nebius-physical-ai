@@ -3,6 +3,7 @@
 import copy
 from typing import Any
 
+from .action_evidence import ACTION_HOLD_DELTA_ABS_MAX_TOLERANCE
 from .identity import (
     ISAAC_ARENA_VERSION,
     ISAAC_ARENA_REVISION,
@@ -266,9 +267,16 @@ _CAPABILITY_MANIFEST = {
                 },
                 "episode_horizon": (
                     "The upstream policy runner applies the recorded initial_state with "
-                    "Isaac Lab reset_to(is_relative=True), then executes every source action "
-                    "exactly once without truncation, padding, repetition, or final-action hold."
+                    "Isaac Lab reset_to(is_relative=True), then executes the exact source "
+                    "prefix through the requested native episode terminal. Unused source "
+                    "actions remain outside the scored/captured episode. Synthetic padding, "
+                    "repetition, and appended final-action holds are forbidden; naturally "
+                    "stable source tails remain subject to the registered adapter limit."
                 ),
+                "held_tail_definition": {
+                    "metric": "maximum absolute component delta between adjacent actions",
+                    "maximum_delta": ACTION_HOLD_DELTA_ABS_MAX_TOLERANCE,
+                },
                 "retained_input_bytes": False,
             },
         },
@@ -503,7 +511,7 @@ _CAPABILITY_MANIFEST = {
         },
         "early_failure": "Request validation or input/setup failures may occur before any result tree exists; an interrupted worker may leave only workflow logs. Completed-episode JSONL, scored HDF5, and HTML reports are not guaranteed on failure.",
         "successful_video_qualification": [
-            "raw viewport MP4 and a labeled denoised derivative",
+            "raw viewport MP4 and a labeled denoised half-speed derivative with identical frame count",
             "simulator-video-evidence.json with capture phase and action-step mapping",
             "simulator-initial.png and simulator-episode-0-terminal.png with file and decoded-RGB hashes",
         ],
@@ -531,9 +539,13 @@ _CAPABILITY_MANIFEST = {
                 "legacy_mode_enabled": True,
                 "rt2_enabled": False,
                 "path_tracing_enabled": False,
-                "antialiasing": "FXAA",
+                "antialiasing": "DLAA",
+                "dlss_execution_mode": "quality",
+                "dl_denoiser_enabled": True,
+                "frame_generation_enabled": False,
+                "minimum_settling_renders": 8,
                 "stochastic_accumulation": False,
-                "reason": "Selecting legacy RTX while disabling RT2 and interactive path tracing at Kit startup prevents Isaac Sim 6 from remapping the request to RealTimePathTracing; spatial FXAA avoids path-tracing grain, while task-bound temporal median and coherent tracking remain independent acceptance checks.",
+                "reason": "Selecting legacy RTX while disabling RT2, interactive path tracing, and generated frames prevents Isaac Sim 6 from remapping or inventing action frames. Native-resolution DLAA, the DL denoiser, quality reconstruction, and at least eight consecutive ready physics-frozen settling renders address single-frame RTX grain; task-bound temporal median and coherent tracking remain independent acceptance checks.",
             },
             "graphics_userspace": (
                 "Native NVIDIA EGL/Vulkan, libnvoptix.so.1 and readable nonempty OptiX weights are preferred. "
@@ -558,9 +570,9 @@ _CAPABILITY_MANIFEST = {
             ],
             "progress_adapters": _TASK_PROGRESS_CAPABILITIES,
             "policy_adapters": _TASK_QUALIFIED_POLICIES,
-            "requires": "Current-run JSONL and simulator HDF5 agree on task success; numeric success_rate is greater than zero; a registered policy adapter has measured finite, nonzero, varied policy-to-environment actions without padding; replay actions exactly match the prepared private tensor commitment.",
+            "requires": "Current-run JSONL and simulator HDF5 agree on task success; numeric success_rate is greater than zero; a registered policy adapter has measured finite, nonzero, varied policy-to-environment actions without synthetic padding or a dominant numerically held tail; replay actions exactly match the prepared private tensor prefix through the native terminal.",
             "visual_interval": "Coherent denoised motion is measured from the first door progress through its first crossing of the upstream success threshold, excluding subsequent reset or idle frames.",
-            "shared_contract": "Measured policy-to-environment actions without padding, one native successful scored episode, registered environment/policy progress, exact full-episode simulator capture steps, capture/PNG/raw/evidence hash chain, and noise-resistant video motion must all bind to the same episode horizon. The visual analysis interval may be the task-specific progress subset.",
+            "shared_contract": "Measured policy-to-environment actions without synthetic padding or a dominant numerically held tail, one native successful scored episode, registered environment/policy progress, exact full-episode simulator capture steps, capture/PNG/raw/evidence hash chain, and noise-resistant video motion must all bind to the same episode horizon. The visual analysis interval may be the task-specific progress subset.",
             "other_environments": "Ordinary scored evaluation remains implemented; nonzero-policy visual qualification requires an explicitly registered task-progress adapter and is otherwise unsupported.",
             "zero_action": "Viewport baseline only; task-qualified visual evidence is not claimed.",
             "live_validation": "Consult the external readiness record for the exact image digest, target hardware, execution device, and task. The baked implementation status does not establish a physical-GPU result.",

@@ -16,6 +16,7 @@ from npa.workbench.isaac_arena.action_evidence import (
     read_action_evidence,
     record_executed_action,
     validate_action_evidence,
+    validate_prepared_action_sequence,
 )
 from npa.workbench.isaac_arena.errors import IsaacArenaError
 
@@ -38,8 +39,10 @@ def test_policy_boundary_journal_matches_prepared_replay_commitment(tmp_path) ->
     assert observed["action_step_sha256"] == prepared["action_step_sha256"]
     assert observed["nonzero_actions"] is True
     assert observed["varied_actions"] is True
-    assert observed["trailing_identical_action_steps"] == 1
-    assert observed["trailing_identical_action_fraction"] == 0.25
+    assert observed["trailing_held_action_steps"] == 1
+    assert observed["trailing_held_action_fraction"] == 0.25
+    assert observed["held_action_delta_abs_max_tolerance"] == 1e-6
+    assert observed["interstep_delta_abs_max"] == pytest.approx([0.3, 0.3, 0.3])
     assert observed["raw_actions_retained"] is False
     assert len(observed["file"]["sha256"]) == 64
     content = (tmp_path / ACTION_EVIDENCE_FILENAME).read_text()
@@ -109,7 +112,33 @@ def test_tampered_trailing_action_summary_is_rejected(tmp_path) -> None:
     finalize_action_evidence(env)
     path = tmp_path / ACTION_EVIDENCE_FILENAME
     payload = json.loads(path.read_text())
-    payload["trailing_identical_action_steps"] = 3
+    payload["trailing_held_action_steps"] = 3
     path.write_text(json.dumps(payload))
     with pytest.raises(IsaacArenaError, match="nonzero varied actions"):
         read_action_evidence(tmp_path, policy_type="replay", expected_steps=4)
+
+
+def test_near_identical_jitter_is_measured_as_a_held_tail() -> None:
+    actions = np.arange(30, dtype=np.float64).reshape(10, 3)
+    actions[4:] = actions[3] + (np.arange(6, dtype=np.float64)[:, None] + 1) * 1e-9
+    record = action_sequence_evidence(actions)
+    assert record["distinct_action_steps"] == 10
+    assert record["trailing_held_action_steps"] == 7
+    assert record["trailing_held_action_fraction"] == 0.7
+    assert max(record["interstep_delta_abs_max"][3:]) < 1e-6
+
+
+def test_repeated_action_hashes_cannot_claim_nonzero_deltas() -> None:
+    actions = _actions(8)
+    actions[4:] = actions[3]
+    record = action_sequence_evidence(actions)
+    record["interstep_delta_abs_max"] = [3.0] * 7
+    record["action_step_delta_abs_max"] = 3.0
+    record["trailing_held_action_steps"] = 1
+    record["trailing_held_action_fraction"] = 0.125
+    with pytest.raises(IsaacArenaError, match="replay prepared actions"):
+        validate_prepared_action_sequence(
+            record,
+            expected_steps=8,
+            maximum_trailing_held_fraction=0.25,
+        )

@@ -21,9 +21,14 @@ from npa.workbench.isaac_arena.task_progress import (
     task_progress_adapter,
     task_progress_capabilities,
 )
+from npa.workbench.isaac_arena.video_evidence import (
+    EVIDENCE_FILTER,
+    EVIDENCE_PLAYBACK_RATE,
+)
 
 
-def _proof(length: int = 20) -> dict:
+def _proof(length: int = 20, source_length: int | None = None) -> dict:
+    source_length = source_length or length
     interval = {
         "start_action_step": 2,
         "end_action_step": length,
@@ -48,10 +53,13 @@ def _proof(length: int = 20) -> dict:
             "terminal_action_step": length,
         },
     }
-    prepared_actions = np.arange(length * 3, dtype=np.float32).reshape(length, 3)
+    prepared_actions = np.arange(source_length * 3, dtype=np.float32).reshape(
+        source_length, 3
+    )
     prepared_sequence = action_sequence_evidence(prepared_actions)
+    executed_sequence = action_sequence_evidence(prepared_actions[:length])
     executed_actions = {
-        **prepared_sequence,
+        **executed_sequence,
         "schema": ACTION_EVIDENCE_SCHEMA,
         "source": "upstream policy.get_action to env.step boundary",
         "recording_phase": "after_native_env_step_return",
@@ -74,8 +82,8 @@ def _proof(length: int = 20) -> dict:
             "trajectory": {"nonzero_actions": True},
             "execution": {
                 "strategy": "actions_initial_state_exact_replay",
-                "source_steps": length,
-                "prepared_steps": length,
+                "source_steps": source_length,
+                "prepared_steps": source_length,
                 "action_padding_steps": 0,
                 "prepared_sha256": "6" * 64,
                 "prepared_action_sequence": prepared_sequence,
@@ -109,9 +117,12 @@ def _proof(length: int = 20) -> dict:
                     "legacy_mode_enabled": True,
                     "rt2_enabled": False,
                     "path_tracing_enabled": False,
-                    "antialiasing": "FXAA",
+                    "antialiasing": "DLAA",
+                    "dlss_execution_mode": "quality",
+                    "dl_denoiser_enabled": True,
+                    "frame_generation_enabled": False,
+                    "minimum_settling_renders": 8,
                     "stochastic_accumulation": False,
-                    "accumulation_renders_per_frame": 0,
                     "readback_phase": "after_final_accepted_render",
                 },
             },
@@ -122,6 +133,9 @@ def _proof(length: int = 20) -> dict:
             "frame_count": length,
             "sha256": "e" * 64,
             "derivation": {
+                "kind": "ffmpeg_spatiotemporal_denoise",
+                "filter": EVIDENCE_FILTER,
+                "playback_rate": EVIDENCE_PLAYBACK_RATE,
                 "source_sha256": "a" * 64,
                 "changes_simulator_outcome": False,
             },
@@ -135,7 +149,7 @@ def _proof(length: int = 20) -> dict:
                 "input_sha256": "5" * 64,
                 "execution_input_sha256": "6" * 64,
                 "executed_action_evidence_sha256": "9" * 64,
-                "executed_action_sequence_sha256": prepared_sequence["sequence_sha256"],
+                "executed_action_sequence_sha256": executed_sequence["sequence_sha256"],
                 "simulator_ground_truth_sha256": ["7" * 64],
             },
             "motion": {
@@ -189,15 +203,30 @@ def test_shared_contract_binds_all_evidence_to_one_episode() -> None:
         "source": "replay_input",
         "source_steps": 20,
         "executed_steps": 20,
+        "unexecuted_source_steps": 0,
+        "execution_stop": "native_scored_episode_terminal",
         "padding_steps": 0,
         "sequence_sha256": proof["ground_truth"]["action_evidence"]["sequence_sha256"],
         "evidence_sha256": "9" * 64,
-        "trailing_identical_action_fraction": 0.05,
-        "maximum_trailing_identical_action_fraction": 0.25,
+        "trailing_held_action_fraction": 0.05,
+        "maximum_trailing_held_action_fraction": 0.25,
     }
     assert result["episode"]["native_success"] is True
     assert result["capture"]["captured_action_steps"] == 20
     assert result["video"]["progress_action_steps"]["total"] == 20
+
+
+def test_native_success_may_end_before_varied_replay_source_horizon() -> None:
+    proof = _proof(length=20, source_length=30)
+    result = qualify_visual_acceptance(**proof)
+    assert result["actions"]["source_steps"] == 30
+    assert result["actions"]["executed_steps"] == 20
+    assert result["actions"]["unexecuted_source_steps"] == 10
+    assert result["actions"]["execution_stop"] == "native_scored_episode_terminal"
+    assert (
+        result["actions"]["sequence_sha256"]
+        == proof["ground_truth"]["action_evidence"]["sequence_sha256"]
+    )
 
 
 def test_progress_interval_may_end_before_full_scored_capture_horizon() -> None:
@@ -293,12 +322,13 @@ def test_progress_interval_may_end_before_full_scored_capture_horizon() -> None:
             "span the scored episode",
         ),
         (
-            "capture.physics_freeze.rendering.accumulation_renders_per_frame",
+            "capture.physics_freeze.rendering.minimum_settling_renders",
             1,
             "span the scored episode",
         ),
         ("capture.source_mp4_sha256", "invalid", "span the scored episode"),
         ("video.frame_count", 19, "bound to native task progress"),
+        ("video.derivation.playback_rate", 1.0, "bound to native task progress"),
         ("video.derivation.source_sha256", "f" * 64, "bound to native task progress"),
         ("video.binding.episode", "demo_1", "bound to native task progress"),
         ("video.binding.input_sha256", "8" * 64, "bound to native task progress"),
@@ -360,9 +390,91 @@ def test_native_policy_actions_use_the_same_scored_horizon() -> None:
         "padding_steps": 0,
         "sequence_sha256": proof["ground_truth"]["action_evidence"]["sequence_sha256"],
         "evidence_sha256": "9" * 64,
-        "trailing_identical_action_fraction": 0.05,
-        "maximum_trailing_identical_action_fraction": 0.25,
+        "trailing_held_action_fraction": 0.05,
+        "maximum_trailing_held_action_fraction": 0.25,
     }
+
+
+def test_replay_executed_actions_must_match_exact_prepared_prefix() -> None:
+    proof = _proof(length=20, source_length=30)
+    replacement = np.arange(60, dtype=np.float32).reshape(20, 3) + 1000
+    observed = action_sequence_evidence(replacement)
+    action_evidence = proof["ground_truth"]["action_evidence"]
+    action_evidence.update(observed)
+    action_evidence["schema"] = ACTION_EVIDENCE_SCHEMA
+    proof["video"]["binding"]["executed_action_sequence_sha256"] = observed[
+        "sequence_sha256"
+    ]
+    with pytest.raises(IsaacArenaError, match="exact nonzero actions"):
+        qualify_visual_acceptance(**proof)
+
+
+def test_unexecuted_dominant_held_source_tail_cannot_hide_after_success() -> None:
+    proof = _proof(length=80, source_length=250)
+    values = np.arange(250 * 3, dtype=np.float32).reshape(250, 3)
+    values[80:] = values[79]
+    proof["evidence"]["execution"]["prepared_action_sequence"] = (
+        action_sequence_evidence(values)
+    )
+    with pytest.raises(IsaacArenaError, match="replay prepared actions"):
+        qualify_visual_acceptance(**proof)
+
+
+def test_near_identical_jitter_cannot_hide_a_dominant_held_source_tail() -> None:
+    proof = _proof(length=80, source_length=250)
+    values = np.arange(250 * 3, dtype=np.float64).reshape(250, 3)
+    values[80:] = values[79] + (np.arange(170, dtype=np.float64)[:, None] + 1) * 1e-9
+    prepared = action_sequence_evidence(values)
+    assert prepared["distinct_action_steps"] == 250
+    assert prepared["trailing_held_action_steps"] == 171
+    proof["evidence"]["execution"]["prepared_action_sequence"] = prepared
+    with pytest.raises(IsaacArenaError, match="replay prepared actions"):
+        qualify_visual_acceptance(**proof)
+
+
+def test_malformed_delta_summary_cannot_hide_exact_repeated_source_tail() -> None:
+    proof = _proof(length=80, source_length=250)
+    values = np.arange(250 * 3, dtype=np.float64).reshape(250, 3)
+    values[80:] = values[79]
+    prepared = action_sequence_evidence(values)
+    prepared["interstep_delta_abs_max"] = [3.0] * 249
+    prepared["action_step_delta_abs_max"] = 3.0
+    prepared["trailing_held_action_steps"] = 1
+    prepared["trailing_held_action_fraction"] = 1 / 250
+    proof["evidence"]["execution"]["prepared_action_sequence"] = prepared
+    with pytest.raises(IsaacArenaError, match="replay prepared actions"):
+        qualify_visual_acceptance(**proof)
+
+
+def test_rsl_actions_with_near_identical_jitter_tail_cannot_qualify() -> None:
+    proof = _proof(length=250)
+    values = np.arange(250 * 3, dtype=np.float64).reshape(250, 3)
+    values[80:] = values[79] + (np.arange(170, dtype=np.float64)[:, None] + 1) * 1e-9
+    observed = action_sequence_evidence(values)
+    assert observed["distinct_action_steps"] == 250
+    assert observed["trailing_held_action_steps"] == 171
+    action_evidence = proof["ground_truth"]["action_evidence"]
+    action_evidence.update(observed)
+    action_evidence.update(
+        schema=ACTION_EVIDENCE_SCHEMA,
+        source="upstream policy.get_action to env.step boundary",
+        recording_phase="after_native_env_step_return",
+        policy_type="rsl_rl",
+        executed_steps=250,
+        action_steps=list(range(1, 251)),
+        synthetic_padding_steps=0,
+        raw_actions_retained=False,
+    )
+    proof["policy_type"] = "rsl_rl"
+    proof["evidence"] = {"kind": "rsl_rl_checkpoint", "sha256": "8" * 64}
+    proof["video"]["binding"].update(
+        policy_type="rsl_rl",
+        input_sha256="8" * 64,
+        execution_input_sha256="8" * 64,
+        executed_action_sequence_sha256=observed["sequence_sha256"],
+    )
+    with pytest.raises(IsaacArenaError, match="nonzero varied actions"):
+        qualify_visual_acceptance(**proof)
 
 
 @pytest.mark.parametrize("kind", ["zero", "constant", "mutation", "count"])
@@ -400,7 +512,7 @@ def test_prior_shaped_varying_prefix_with_dominant_held_tail_cannot_qualify(
     values = np.arange(250 * 3, dtype=np.float32).reshape(250, 3)
     values[80:] = values[79]
     observed = action_sequence_evidence(values)
-    assert observed["trailing_identical_action_steps"] == 171
+    assert observed["trailing_held_action_steps"] == 171
     action_evidence = proof["ground_truth"]["action_evidence"]
     action_evidence.update(observed)
     action_evidence["schema"] = ACTION_EVIDENCE_SCHEMA
@@ -434,7 +546,7 @@ def test_task_specific_progress_is_explicitly_registered() -> None:
             "name": "arena.open-door.revolute-joint.v1",
             "environment": "gr1_open_microwave",
             "supported_policy_types": ["replay", "rsl_rl"],
-            "maximum_trailing_identical_action_fraction": 0.25,
+            "maximum_trailing_held_action_fraction": 0.25,
             "signal_names": ["revolute_joint_state"],
             "thresholds": {
                 "final_openness_greater_than": 0.8,

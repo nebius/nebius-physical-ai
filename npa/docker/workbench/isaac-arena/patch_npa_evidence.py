@@ -105,6 +105,57 @@ POLICY_RUNNER_POLICY_PATCHED = """\
         # Simulation length.
 """
 
+POLICY_RUNNER_LENGTH = """\
+        # Simulation length.
+        if policy.has_length():
+            num_steps = policy.length()
+            num_episodes = None
+        else:
+            if args_cli.num_steps is not None:
+                num_steps = args_cli.num_steps
+                num_episodes = None
+                print(f"[Rank {local_rank}/{world_size}] Simulation length: {num_steps} steps")
+            elif args_cli.num_episodes is not None:
+                num_steps = None
+                num_episodes = args_cli.num_episodes
+                print(f"[Rank {local_rank}/{world_size}] Simulation length: {num_episodes} episodes")
+            else:
+                raise ValueError(f"[Rank {local_rank}/{world_size}] Either num_steps or num_episodes must be provided")
+"""
+
+POLICY_RUNNER_LENGTH_PATCHED = """\
+        # Video evidence is episode-bound even when a replay policy advertises
+        # a longer source-action horizon. Stop at the requested native terminal
+        # rather than auto-resetting and recording actions from another episode.
+        if video_cfg.enabled and args_cli.num_episodes is not None:
+            num_steps = None
+            num_episodes = args_cli.num_episodes
+            print(f"[Rank {local_rank}/{world_size}] Video simulation length: {num_episodes} episodes")
+        elif policy.has_length():
+            num_steps = policy.length()
+            num_episodes = None
+        else:
+            if args_cli.num_steps is not None:
+                num_steps = args_cli.num_steps
+                num_episodes = None
+                print(f"[Rank {local_rank}/{world_size}] Simulation length: {num_steps} steps")
+            elif args_cli.num_episodes is not None:
+                num_steps = None
+                num_episodes = args_cli.num_episodes
+                print(f"[Rank {local_rank}/{world_size}] Simulation length: {num_episodes} episodes")
+            else:
+                raise ValueError(f"[Rank {local_rank}/{world_size}] Either num_steps or num_episodes must be provided")
+"""
+
+_SIMULATION_LENGTH_MARKER = "        # Simulation length.\n"
+POLICY_RUNNER_POLICY_AND_LENGTH = (
+    POLICY_RUNNER_POLICY.removesuffix(_SIMULATION_LENGTH_MARKER) + POLICY_RUNNER_LENGTH
+)
+POLICY_RUNNER_POLICY_AND_LENGTH_PATCHED = (
+    POLICY_RUNNER_POLICY_PATCHED.removesuffix(_SIMULATION_LENGTH_MARKER)
+    + POLICY_RUNNER_LENGTH_PATCHED
+)
+
 POLICY_RUNNER_CAMERA_CONTEXT = """\
         # Re-apply enable_cameras: the full parse resets it to default False.
         if args_cli.record_camera_video or args_cli.record_viewport_video:
@@ -246,9 +297,9 @@ def _patch_runner(policy_runner: Path) -> None:
     )
     _replace_once(
         policy_runner,
-        POLICY_RUNNER_POLICY,
-        POLICY_RUNNER_POLICY_PATCHED,
-        "executed-action-evidence",
+        POLICY_RUNNER_POLICY_AND_LENGTH,
+        POLICY_RUNNER_POLICY_AND_LENGTH_PATCHED,
+        "action-evidence-and-episode-bound-video",
     )
     policy_text = policy_runner.read_text(encoding="utf-8")
     if policy_text.count(POLICY_RUNNER_CAMERA_CONTEXT) != 1:

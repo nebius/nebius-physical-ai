@@ -10,7 +10,12 @@ import numpy as np
 import pytest
 
 from npa.workbench.isaac_arena.errors import IsaacArenaError
-from npa.workbench.isaac_arena.video_evidence import denoise_mp4, probe_mp4
+from npa.workbench.isaac_arena.video_evidence import (
+    EVIDENCE_FILTER,
+    EVIDENCE_PLAYBACK_RATE,
+    denoise_mp4,
+    probe_mp4,
+)
 
 
 def _encode(path: Path, frames: np.ndarray, *, rate: int = 15) -> None:
@@ -210,7 +215,8 @@ def test_denoising_preserves_original_and_declares_transform(tmp_path: Path) -> 
     assert source.read_bytes() == source_bytes
     assert derivative != source
     assert record["source_sha256"] == hashlib.sha256(source_bytes).hexdigest()
-    assert record["filter"] == "hqdn3d=8:6:12:9"
+    assert record["filter"] == EVIDENCE_FILTER
+    assert record["playback_rate"] == EVIDENCE_PLAYBACK_RATE
     assert record["changes_simulator_outcome"] is False
     result = probe_mp4(
         derivative,
@@ -223,6 +229,24 @@ def test_denoising_preserves_original_and_declares_transform(tmp_path: Path) -> 
     assert result["frame_count"] == 45
     assert result["codec"] == "h264"
     assert result["pixel_format"] == "yuv420p"
+    assert result["duration_seconds"] >= 2 * (45 - 1) / 15
+
+
+def test_short_native_episode_is_slowed_without_adding_frames(tmp_path: Path) -> None:
+    source = tmp_path / "short-native-episode.mp4"
+    _encode(source, _scene(42, moving=True), rate=50)
+    derivative, record = denoise_mp4(source)
+    result = probe_mp4(
+        derivative,
+        evidence_interval={
+            "start_action_step": 1,
+            "end_action_step": 42,
+            "total_action_steps": 42,
+        },
+    )
+    assert result["frame_count"] == 42
+    assert result["duration_seconds"] >= 1.6
+    assert record["playback_rate"] == 0.5
 
 
 @pytest.mark.parametrize("grain_size", [20, 40])

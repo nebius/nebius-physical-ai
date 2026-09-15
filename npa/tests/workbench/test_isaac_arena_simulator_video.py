@@ -231,7 +231,33 @@ def _assert_freeze_trace(evidence, expected_steps):
         assert check["physics_time_before"] == check["physics_time_after"]
         assert check["physics_step_before"] == check["physics_step_after"]
         assert check["native_physics_step_before"] == check["native_physics_step_after"]
-        assert check["render_calls"] == 1
+        assert check["pre_settling_render_calls"] >= 1
+        assert (
+            check["settling_render_calls"] >= simulator_video._MINIMUM_SETTLING_RENDERS
+        )
+        assert check["render_calls"] == (
+            check["pre_settling_render_calls"] + check["settling_render_calls"]
+        )
+        assert check["consecutive_ready_render_calls"] == (
+            check["settling_render_calls"] + 1
+        )
+
+
+def test_interrupted_readiness_restarts_the_full_settling_window(monkeypatch) -> None:
+    readiness = iter([True, True, False, *([True] * 9)])
+    frame = np.ones((24, 32, 3), dtype=np.uint8)
+    monkeypatch.setattr(simulator_video, "_render_frame", lambda _env: frame)
+    monkeypatch.setattr(
+        simulator_video,
+        "_ready_frame",
+        lambda _env, _context, _frame: next(readiness),
+    )
+    captured, renders, settling = simulator_video._ready_capture_frame(
+        object(), object()
+    )
+    np.testing.assert_array_equal(captured, frame)
+    assert renders == 12
+    assert settling == simulator_video._MINIMUM_SETTLING_RENDERS
 
 
 def test_phase_journal_distinguishes_capture_from_remaining_environment_step(
@@ -305,7 +331,7 @@ def test_video_records_terminal_frame_before_autoreset(
     assert env.state == 0
     assert [int(frame[0, 0, 0]) for frame in frames] == [80, 120, 160]
     assert env.action_steps == [1, 2, 3]
-    assert env.renders == 4
+    assert env.renders == 4 * (simulator_video._MINIMUM_SETTLING_RENDERS + 1)
     assert env.env_renders == 0
     assert env.physics_time == 0.06
     evidence = json.loads((tmp_path / "simulator-video-evidence.json").read_text())
@@ -331,7 +357,7 @@ def test_initial_renderer_warmup_adds_no_action_or_video_frames(
     env = _AutoResetEnvironment(tmp_path, simulator_modules, warmup_renders=3)
     wrapper = simulator_video.cached_frame_env(env)
     env.reset()
-    assert env.renders == 3
+    assert env.renders == env.warmup_renders + simulator_video._MINIMUM_SETTLING_RENDERS
     assert env.physics_time == 0.0
     assert env.state == 0
     assert env.action_steps == []
@@ -356,7 +382,7 @@ def test_outer_video_reads_copy_without_rerendering(
     rendered = wrapper.render()
     rendered[:] = 0
     assert int(wrapper.render()[0, 0, 0]) == 80
-    assert env.renders == 2
+    assert env.renders == 2 * (simulator_video._MINIMUM_SETTLING_RENDERS + 1)
 
 
 def test_capture_requires_real_renderer_frame(
@@ -388,10 +414,16 @@ def test_capture_setup_preserves_existing_metric_configuration(
     assert cfg.sim.render.carb_settings["/rtx/sceneDb/ambientLightIntensity"] == 0.0
     assert cfg.sim.render.carb_settings == {
         "/rtx/rendermode": "RaytracedLighting",
-        "/rtx/post/aa/op": 2,
+        "/rtx/post/aa/op": 4,
+        "/rtx/post/dlss/execMode": 2,
+        "/rtx-transient/dldenoiser/enabled": True,
+        "/rtx-transient/dlssg/enabled": False,
+        "/rtx/ecoMode/enabled": False,
         "/rtx/sceneDb/ambientLightIntensity": 0.0,
     }
-    assert cfg.sim.render.antialiasing_mode == "FXAA"
+    assert cfg.sim.render.antialiasing_mode == "DLAA"
+    assert cfg.sim.render.dlss_mode == 2
+    assert cfg.sim.render.enable_dl_denoiser is True
     assert (
         cfg.recorders.npa_video.class_type.__mro__[1]
         is simulator_video._VideoCaptureMethods
@@ -407,7 +439,9 @@ def test_texture_streaming_and_asset_loading_finish_before_capture(
     env.loading_renders = 5
     env.streaming_renders = 7
     env.reset()
-    assert env.renders == 7
+    assert env.renders == (
+        env.streaming_renders + simulator_video._MINIMUM_SETTLING_RENDERS
+    )
     assert simulator_modules.resets == 0
     assert env.state == 0
     assert env.physics_time == 0.0
@@ -415,7 +449,11 @@ def test_texture_streaming_and_asset_loading_finish_before_capture(
     check = evidence["physics_freeze_checks"][0]
     assert check["stage_streaming_idle"] is True
     assert check["stage_assets_loaded"] is True
-    assert check["accumulation_render_calls"] == 0
+    assert check["pre_settling_render_calls"] == env.streaming_renders
+    assert check["settling_render_calls"] == simulator_video._MINIMUM_SETTLING_RENDERS
+    assert check["consecutive_ready_render_calls"] == (
+        simulator_video._MINIMUM_SETTLING_RENDERS + 1
+    )
 
 
 @pytest.mark.parametrize("previous", [True, False])
@@ -489,7 +527,10 @@ def test_zero_duration_native_step_during_render_fails_freeze_check(
     with pytest.raises(RuntimeError, match="advanced physics time, steps, or state"):
         env.reset()
     assert env._npa_video_physics_clock.elapsed == 0.0
-    assert env._npa_video_physics_clock.steps == 1
+    assert (
+        env._npa_video_physics_clock.steps
+        == simulator_video._MINIMUM_SETTLING_RENDERS + 1
+    )
     assert not (tmp_path / "simulator-initial.png").exists()
 
 
@@ -564,13 +605,18 @@ def test_capture_reasserts_mutable_renderer_settings_after_late_override(
     simulator_modules.settings.set("/rtx/post/aa/op", 1)
     simulator_modules.settings.set_calls.clear()
     env.reset()
-    assert simulator_modules.settings.set_calls[:2] == list(
-        simulator_video._CAPTURE_RENDER_SETTINGS.items()
-    )
+    assert simulator_modules.settings.set_calls[
+        : len(simulator_video._CAPTURE_RENDER_SETTINGS)
+    ] == list(simulator_video._CAPTURE_RENDER_SETTINGS.items())
     assert simulator_modules.settings.get("/persistent/rtx/modes/rt2/enabled") is False
     assert simulator_modules.settings.get("/rtx/rendermode") == ("RaytracedLighting")
-    assert simulator_modules.settings.get("/rtx/post/aa/op") == 2
+    assert simulator_modules.settings.get("/rtx/post/aa/op") == 4
+    assert simulator_modules.settings.get("/rtx/post/dlss/execMode") == 2
+    assert simulator_modules.settings.get("/rtx-transient/dldenoiser/enabled") is True
+    assert simulator_modules.settings.get("/rtx-transient/dlssg/enabled") is False
+    assert simulator_modules.settings.get("/rtx/ecoMode/enabled") is False
     assert env._npa_video_rendering["stochastic_accumulation"] is False
+    assert env._npa_video_rendering["minimum_settling_renders"] == 8
 
 
 def test_capture_refuses_renderer_that_rejects_required_settings(
@@ -579,10 +625,10 @@ def test_capture_refuses_renderer_that_rejects_required_settings(
     env = _AutoResetEnvironment(tmp_path, simulator_modules)
     native_set = simulator_modules.settings.set
 
-    def reject_fxaa(key, value):
+    def reject_dlaa(key, value):
         native_set(key, 1 if key == "/rtx/post/aa/op" else value)
 
-    simulator_modules.settings.set = reject_fxaa
+    simulator_modules.settings.set = reject_dlaa
     with pytest.raises(
         RuntimeError,
         match=r'required capture settings: .*"/rtx/post/aa/op": 1',
@@ -624,8 +670,29 @@ def test_capture_refuses_rt2_remap_triggered_by_render(
         match=r'required capture settings: .*"/rtx/rendermode": "RealTimePathTracing"',
     ):
         env.reset()
-    assert env.renders == 1
+    assert env.renders == simulator_video._MINIMUM_SETTLING_RENDERS + 1
     assert not (tmp_path / "simulator-initial.png").exists()
+    assert not (tmp_path / "simulator-video-evidence.json").exists()
+
+
+def test_capture_refuses_generated_frames_enabled_during_render(
+    simulator_modules, tmp_path: Path
+) -> None:
+    env = _AutoResetEnvironment(tmp_path, simulator_modules)
+    native_render = env.video_recorder.render_rgb_array
+
+    def enable_frame_generation_during_render():
+        frame = native_render()
+        simulator_modules.settings.set("/rtx-transient/dlssg/enabled", True)
+        return frame
+
+    env.video_recorder.render_rgb_array = enable_frame_generation_during_render
+    with pytest.raises(
+        RuntimeError,
+        match=r'required capture settings: .*"/rtx-transient/dlssg/enabled": true',
+    ):
+        env.reset()
+    assert env.renders == simulator_video._MINIMUM_SETTLING_RENDERS + 1
     assert not (tmp_path / "simulator-video-evidence.json").exists()
 
 

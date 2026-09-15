@@ -177,7 +177,7 @@ def build_evaluation_argv(
     argv = _runner_options(request, output_dir)
     if request.record_video:
         # Keep the launcher preset explicit. Capture overrides it with the
-        # required real-time spatial-AA settings and checks their readback.
+        # required real-time reconstruction settings and checks their readback.
         argv.extend(
             [
                 "--rendering_mode",
@@ -701,8 +701,8 @@ def _video_artifacts(
             run_dir,
             source,
             task_motion=_capture_context(request, ground_truth),
-            expected_steps=((evidence or {}).get("execution") or {}).get(
-                "prepared_steps"
+            expected_steps=(ground_truth.get("task_motion") or {}).get(
+                "episode_length"
             ),
         )
         video, derivation = video_preparer(source)

@@ -87,19 +87,23 @@ The fixture does not record its original physics device; this selection needs
 fresh task/video validation and is not proof of successful reproduction.
 The RTX renderer must explicitly enable legacy RTX and disable RT2 plus
 interactive path tracing through AppLauncher Kit startup arguments, then
-reassert legacy RTX Real-Time plus FXAA at the live capture boundary and verify
+reassert legacy RTX Real-Time plus native-resolution DLAA, quality reconstruction,
+the DL denoiser, disabled frame generation, and at least eight consecutive ready
+physics-frozen settling renders after the readiness baseline at the live capture
+boundary and verify
 exact Carb-setting readback before rendering and again,
 without another write, after the final accepted render. Treat a mismatch as a failed run; do not accept a
 default renderer or infer stability from the requested configuration alone.
 Task-qualified evidence also requires the registered environment/policy pair,
 a sanitized policy-to-`env.step` action journal covering the full scored episode,
 finite nonzero varied actions, and zero synthetic padding. Replay must match the
-prepared private action-sequence commitment exactly. Keep the task-specific
+exact prepared private action-sequence prefix through the native terminal, while
+the complete prepared source sequence independently passes held-tail checks. Keep the task-specific
 progress interval as a subset for visual motion analysis; capture, actions, and
 the terminal PNG must still span the complete native episode.
-Enforce the adapter's declared maximum trailing-identical-action fraction on
-both prepared and executed sequences; a varying prefix cannot hide a dominant
-held final action.
+Enforce the adapter's declared maximum trailing-held-action fraction on both
+prepared and executed sequences, using a shared maximum inter-step delta of `1e-6`;
+exact repetition or tiny numerical jitter cannot hide a dominant held final action.
 
 ```bash
 npa workbench health preflight --checks nebius,s3
@@ -138,9 +142,12 @@ execution HDF5 and never publishes either input. Its result binds the source and
 prepared execution-input hashes. These identify input bytes and do not prove
 that actions ran. Replay supports one episode in one environment. Apply its
 recorded initial state with Isaac Lab `reset_to(is_relative=True)` and execute
-every source action once. Do not pad, repeat, truncate, or hold actions to
-manufacture a completed episode. A source recording that cannot complete the
-task is an input/qualification limitation, not permission to fabricate success.
+the exact source prefix through the requested native episode terminal. Record
+any unexecuted suffix explicitly and keep it outside the scored/captured episode.
+Do not invent an early stop, synthetically pad/repeat actions, or append a held
+action to manufacture a completed episode. A naturally stable source tail remains
+subject to the registered adapter limit. A source recording that cannot complete the task is an
+input/qualification limitation, not permission to fabricate success.
 
 Use the declared HDF5 quaternion format: missing/integer 0 is legacy WXYZ;
 integer 1 is XYZW. Reject unknown or malformed versions. The pinned native
@@ -184,7 +191,8 @@ is factual execution and artifact integrity, with no visual claim.
 Task-qualified video uses a shared fail-closed contract that binds one action
 horizon across executed actions, the native scored episode, native task progress,
 simulator capture, and noise-resistant video. Replay actions must be nonzero and
-must not be padded or held. Environment-specific progress semantics belong in
+must not be synthetically padded or dominated by a numerically held tail.
+Environment-specific progress semantics belong in
 the explicit task-progress adapter registry; never embed one task's thresholds
 as generic runtime assumptions. The sole current registration supports
 `gr1_open_microwave` with `replay` or `rsl_rl`. Require matching current-run
@@ -208,9 +216,12 @@ physics counter, and uncached robot/object state must remain unchanged during
 rendering. The native subscription must also observe progress between real
 actions; elapsed event time starts at capture setup, not an absolute clock.
 Verify asset/texture readiness and the exact legacy RTX Real-Time
-`RaytracedLighting`, RT2-disabled, and spatial-FXAA settings readback. Do not use
-stochastic path-tracing or temporal accumulation for acceptance footage. The separate
-temporal-median and coherent-motion verifier remains mandatory. Rendering must
+`RaytracedLighting`, RT2-disabled, DLAA/quality/DL-denoiser settings readback,
+disabled frame generation, and at least eight consecutive ready physics-frozen
+settling renders after the readiness baseline per captured frame. Do not use
+stochastic path-tracing accumulation for acceptance footage; only the declared
+DLAA history may span those render-only settling calls. The separate temporal-median
+and coherent-motion verifier remains mandatory. Rendering must
 not add physics steps or video frames. An unfinished recorder buffer belongs only in the separate
 unscored diagnostic and cannot create upstream success or completed episodes.
 When emitted, `simulator-phases-rank*.jsonl` contains fixed phase/event labels,
@@ -222,8 +233,9 @@ effort and preserve the original operation's result or exception.
 An `unavailable` method-phase event means the native binding could not be
 overridden on its instance. Keep that binding untouched and use the enclosing
 simulator phase; availability is neither execution evidence nor task progress.
-Preserve the raw MP4 and label any denoised derivative with
-its source hash and transform. Validate coherent motion over the same progress
+Preserve the raw MP4 and label the denoised half-speed derivative with its
+source hash and transform. Keep the frame count unchanged; never use duplicated
+frames as padding. Validate coherent motion over the same progress
 interval after temporal/spatial denoising; a noisy static scene must fail.
 Zero-action output is always a baseline and never task-qualified. If video is
 requested for that baseline, the same capture and coherent-motion checks still

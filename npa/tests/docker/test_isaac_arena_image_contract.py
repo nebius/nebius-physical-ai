@@ -116,7 +116,7 @@ def test_evidence_patch_preserves_render_and_applies_every_context(
         + module.POLICY_RUNNER_CAMERA_CONTEXT
         + module.POLICY_RUNNER_ROLLOUT_END
         + module.POLICY_RUNNER_STEP
-        + module.POLICY_RUNNER_POLICY
+        + module.POLICY_RUNNER_POLICY_AND_LENGTH
     )
     embodiment = tmp_path / "embodiment.py"
     embodiment.write_text(module.EMBODIMENT_IMPORT + module.EMBODIMENT_ASSIGNMENT)
@@ -134,7 +134,7 @@ def test_evidence_patch_preserves_render_and_applies_every_context(
     assert module.POLICY_RUNNER_CAMERA_CONTEXT in policy.read_text()
     assert module.POLICY_RUNNER_ROLLOUT_END_PATCHED in policy.read_text()
     assert module.POLICY_RUNNER_STEP_PATCHED in policy.read_text()
-    assert module.POLICY_RUNNER_POLICY_PATCHED in policy.read_text()
+    assert module.POLICY_RUNNER_POLICY_AND_LENGTH_PATCHED in policy.read_text()
     assert "configure_phase_journal(env, output_dir, local_rank)" in policy.read_text()
     assert (
         "self.enable_cameras = enable_cameras and not viewport_only"
@@ -150,12 +150,7 @@ def test_evidence_patch_preserves_render_and_applies_every_context(
 def test_evidence_patch_matches_pinned_upstream_policy_layout(tmp_path: Path) -> None:
     """Keep policy instrumentation anchored to the real pinned source layout."""
     module = _evidence_patch()
-    pinned_policy_context = """\
-        # Create the policy through the typed config compatibility adapter.
-        policy = build_policy_from_cli(policy_cls, args_cli)
-
-        # Simulation length.
-"""
+    pinned_policy_context = module.POLICY_RUNNER_POLICY_AND_LENGTH
     policy = tmp_path / "policy_runner.py"
     policy.write_text(
         module.POLICY_RUNNER_RESET
@@ -175,8 +170,30 @@ def test_evidence_patch_matches_pinned_upstream_policy_layout(tmp_path: Path) ->
     module.patch_sources(policy, embodiment, video, metric)
 
     patched = policy.read_text()
-    assert module.POLICY_RUNNER_POLICY_PATCHED in patched
+    assert module.POLICY_RUNNER_POLICY_AND_LENGTH_PATCHED in patched
     assert pinned_policy_context not in patched
+
+
+def test_video_replay_stops_at_requested_native_episode_terminal(
+    tmp_path: Path,
+) -> None:
+    module = _evidence_patch()
+    body = textwrap.indent(textwrap.dedent(module.POLICY_RUNNER_LENGTH_PATCHED), "    ")
+    program = tmp_path / "episode_bound_length.py"
+    program.write_text(
+        "from types import SimpleNamespace\n"
+        "def choose(policy, video_cfg, args_cli):\n"
+        "    local_rank = 0\n"
+        "    world_size = 1\n" + body + "    return num_steps, num_episodes\n"
+        "policy = SimpleNamespace(has_length=lambda: True, length=lambda: 103)\n"
+        "args = SimpleNamespace(num_steps=None, num_episodes=1)\n"
+        "assert choose(policy, SimpleNamespace(enabled=True), args) == (None, 1)\n"
+        "assert choose(policy, SimpleNamespace(enabled=False), args) == (103, None)\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, str(program)], capture_output=True, text=True, check=False
+    )
+    assert completed.returncode == 0, completed.stderr
 
 
 def _replay_reset_assertions() -> str:

@@ -32,6 +32,10 @@ from npa.workbench.isaac_arena.action_evidence import (
     finalize_action_evidence,
     record_executed_action,
 )
+from npa.workbench.isaac_arena.video_evidence import (
+    EVIDENCE_FILTER,
+    EVIDENCE_PLAYBACK_RATE,
+)
 
 
 def test_lightweight_console_route_is_exact() -> None:
@@ -108,7 +112,7 @@ def test_capabilities_are_complete_and_honest() -> None:
             "name": "arena.open-door.revolute-joint.v1",
             "environment": "gr1_open_microwave",
             "supported_policy_types": ["replay", "rsl_rl"],
-            "maximum_trailing_identical_action_fraction": 0.25,
+            "maximum_trailing_held_action_fraction": 0.25,
             "signal_names": ["revolute_joint_state"],
             "thresholds": {
                 "final_openness_greater_than": 0.8,
@@ -116,8 +120,15 @@ def test_capabilities_are_complete_and_honest() -> None:
             },
         }
     ]
-    assert "without padding" in visual["shared_contract"]
+    assert "without synthetic padding" in visual["shared_contract"]
     assert "hash chain" in visual["shared_contract"]
+    replay = next(
+        item for item in payload["policy_adapters"] if item["name"] == "replay"
+    )
+    assert replay["execution_contract"]["held_tail_definition"] == {
+        "metric": "maximum absolute component delta between adjacent actions",
+        "maximum_delta": 1e-6,
+    }
     viewport_graphics = next(
         item
         for item in payload["runtime_dependencies"]
@@ -132,14 +143,19 @@ def test_capabilities_are_complete_and_honest() -> None:
         "legacy_mode_enabled": True,
         "rt2_enabled": False,
         "path_tracing_enabled": False,
-        "antialiasing": "FXAA",
+        "antialiasing": "DLAA",
+        "dlss_execution_mode": "quality",
+        "dl_denoiser_enabled": True,
+        "frame_generation_enabled": False,
+        "minimum_settling_renders": 8,
         "stochastic_accumulation": False,
         "reason": (
-            "Selecting legacy RTX while disabling RT2 and interactive path "
-            "tracing at Kit startup prevents Isaac Sim 6 from remapping the "
-            "request to RealTimePathTracing; spatial FXAA avoids path-tracing "
-            "grain, while task-bound temporal median and coherent tracking "
-            "remain independent acceptance checks."
+            "Selecting legacy RTX while disabling RT2, interactive path tracing, "
+            "and generated frames prevents Isaac Sim 6 from remapping or inventing "
+            "action frames. Native-resolution DLAA, the DL denoiser, quality "
+            "reconstruction, and at least eight consecutive ready physics-frozen "
+            "settling renders address single-frame RTX grain; task-bound temporal "
+            "median and coherent tracking remain independent acceptance checks."
         ),
     }
     assert payload["outputs"]["rerun_rrd"] is False
@@ -177,7 +193,11 @@ def test_dry_run_builds_real_pinned_upstream_argv(tmp_path: Path) -> None:
         "--/persistent/rtx/modes/rt2/enabled=false",
         "--/persistent/rtx/modes/pt/enabled=false",
         "--/rtx/rendermode=RaytracedLighting",
-        "--/rtx/post/aa/op=2",
+        "--/rtx/post/aa/op=4",
+        "--/rtx/post/dlss/execMode=2",
+        "--/rtx-transient/dldenoiser/enabled=true",
+        "--/rtx-transient/dlssg/enabled=false",
+        "--/rtx/ecoMode/enabled=false",
     ]
     assert kit_args_index < video_argv.index("cube_goal_pose")
     assert "--record_viewport_video" in video_argv
@@ -350,8 +370,9 @@ def _fake_video_preparer(source: Path) -> tuple[Path, dict[str, object]]:
     target = source.with_name(f"{source.stem}-evidence-denoised.mp4")
     target.write_bytes(source.read_bytes())
     return target, {
-        "kind": "test_spatiotemporal_denoise",
-        "filter": "test",
+        "kind": "ffmpeg_spatiotemporal_denoise",
+        "filter": EVIDENCE_FILTER,
+        "playback_rate": EVIDENCE_PLAYBACK_RATE,
         "source_path": source.name,
         "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
         "changes_simulator_outcome": False,
@@ -958,9 +979,12 @@ def test_passive_baseline_success_is_never_task_qualified_video(
                 "legacy_mode_enabled": True,
                 "rt2_enabled": False,
                 "path_tracing_enabled": False,
-                "antialiasing": "FXAA",
+                "antialiasing": "DLAA",
+                "dlss_execution_mode": "quality",
+                "dl_denoiser_enabled": True,
+                "frame_generation_enabled": False,
+                "minimum_settling_renders": 8,
                 "stochastic_accumulation": False,
-                "accumulation_renders_per_frame": 0,
                 "readback_phase": "after_final_accepted_render",
             },
         },

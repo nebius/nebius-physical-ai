@@ -17,6 +17,7 @@ ACTION_EVIDENCE_SCHEMA = "npa.isaac-arena.executed-actions.v1"
 ACTION_SEQUENCE_SCHEMA = "npa.isaac-arena.action-sequence.v1"
 ACTION_EVIDENCE_FILENAME = "simulator-action-evidence.json"
 _ACTION_STATE_ATTRIBUTE = "_npa_executed_action_evidence"
+ACTION_HOLD_DELTA_ABS_MAX_TOLERANCE = 1e-6
 
 
 def _base_environment(env: Any) -> Any:
@@ -72,18 +73,31 @@ def _sequence_sha256(step_hashes: Iterable[str]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _trailing_identical_steps(step_hashes: list[str]) -> int:
-    """Count the exact final-action run, including the terminal action."""
+def _trailing_held_steps(interstep_deltas: list[float], action_steps: int) -> int:
+    """Count the numerically held final-action run, including its first action."""
 
-    if not step_hashes:
+    if not action_steps:
         return 0
-    final = step_hashes[-1]
     count = 1
-    for digest in reversed(step_hashes[:-1]):
-        if digest != final:
+    for delta in reversed(interstep_deltas):
+        if delta > ACTION_HOLD_DELTA_ABS_MAX_TOLERANCE:
             break
         count += 1
     return count
+
+
+def _hashes_and_deltas_consistent(
+    step_hashes: list[str], interstep_deltas: list[float]
+) -> bool:
+    """Reject impossible summaries without retaining private action values."""
+
+    return len(interstep_deltas) == max(0, len(step_hashes) - 1) and all(
+        delta == 0.0
+        for previous, current, delta in zip(
+            step_hashes, step_hashes[1:], interstep_deltas
+        )
+        if previous == current
+    )
 
 
 def action_sequence_evidence(actions: Any) -> dict[str, Any]:
@@ -106,7 +120,7 @@ def action_sequence_evidence(actions: Any) -> dict[str, Any]:
         for previous, current in zip(arrays, arrays[1:])
     ]
     hashes = [record[2] for record in records]
-    trailing_identical_steps = _trailing_identical_steps(hashes)
+    trailing_held_steps = _trailing_held_steps(deltas, len(records))
     nonzero_fraction = float(np.mean(np.abs(flattened) > 1e-6))
     action_abs_max = float(np.max(np.abs(flattened)))
     return {
@@ -120,10 +134,12 @@ def action_sequence_evidence(actions: Any) -> dict[str, Any]:
         "action_nonzero_fraction": nonzero_fraction,
         "nonzero_actions": action_abs_max >= 1e-4 and nonzero_fraction >= 0.001,
         "distinct_action_steps": len(set(hashes)),
+        "interstep_delta_abs_max": deltas,
         "action_step_delta_abs_max": max(deltas, default=0.0),
         "varied_actions": len(set(hashes)) > 1 and max(deltas, default=0.0) >= 1e-6,
-        "trailing_identical_action_steps": trailing_identical_steps,
-        "trailing_identical_action_fraction": trailing_identical_steps / len(records),
+        "held_action_delta_abs_max_tolerance": ACTION_HOLD_DELTA_ABS_MAX_TOLERANCE,
+        "trailing_held_action_steps": trailing_held_steps,
+        "trailing_held_action_fraction": trailing_held_steps / len(records),
     }
 
 
@@ -190,7 +206,7 @@ def _journal_payload(state: dict[str, Any]) -> dict[str, Any]:
         action_shape = []
     distinct = len(set(hashes))
     maximum_delta = max(deltas, default=0.0)
-    trailing_identical_steps = _trailing_identical_steps(hashes)
+    trailing_held_steps = _trailing_held_steps(deltas, len(arrays))
     return {
         "schema": ACTION_EVIDENCE_SCHEMA,
         "source": "upstream policy.get_action to env.step boundary",
@@ -206,11 +222,13 @@ def _journal_payload(state: dict[str, Any]) -> dict[str, Any]:
         "action_nonzero_fraction": nonzero_fraction,
         "nonzero_actions": action_abs_max >= 1e-4 and nonzero_fraction >= 0.001,
         "distinct_action_steps": distinct,
+        "interstep_delta_abs_max": deltas,
         "action_step_delta_abs_max": maximum_delta,
         "varied_actions": distinct > 1 and maximum_delta >= 1e-6,
-        "trailing_identical_action_steps": trailing_identical_steps,
-        "trailing_identical_action_fraction": (
-            trailing_identical_steps / len(arrays) if arrays else 0.0
+        "held_action_delta_abs_max_tolerance": ACTION_HOLD_DELTA_ABS_MAX_TOLERANCE,
+        "trailing_held_action_steps": trailing_held_steps,
+        "trailing_held_action_fraction": (
+            trailing_held_steps / len(arrays) if arrays else 0.0
         ),
         "synthetic_padding_steps": 0,
         "raw_actions_retained": False,
@@ -244,15 +262,16 @@ def validate_action_evidence(
     policy_type: str,
     expected_steps: int,
     require_nonzero_varied: bool,
-    maximum_trailing_identical_fraction: float | None = None,
+    maximum_trailing_held_fraction: float | None = None,
 ) -> dict[str, Any]:
     """Validate an action journal supplied to the shared acceptance contract."""
 
     if not isinstance(record, dict):
         raise IsaacArenaError("visual acceptance requires measured executed actions")
     hashes = record.get("action_step_sha256")
-    trailing_steps = record.get("trailing_identical_action_steps")
-    trailing_fraction = record.get("trailing_identical_action_fraction")
+    trailing_steps = record.get("trailing_held_action_steps")
+    trailing_fraction = record.get("trailing_held_action_fraction")
+    interstep_deltas = record.get("interstep_delta_abs_max")
     numeric = (
         record.get("action_abs_max"),
         record.get("action_nonzero_fraction"),
@@ -286,11 +305,28 @@ def validate_action_evidence(
             and float(value) >= 0
             for value in numeric
         )
+        and isinstance(interstep_deltas, list)
+        and len(interstep_deltas) == max(0, expected_steps - 1)
+        and all(
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(float(value))
+            and float(value) >= 0
+            for value in interstep_deltas
+        )
+        and _hashes_and_deltas_consistent(hashes, interstep_deltas)
+        and math.isclose(
+            float(record["action_step_delta_abs_max"]),
+            max(interstep_deltas, default=0.0),
+            abs_tol=1e-12,
+        )
         and type(record.get("distinct_action_steps")) is int
         and record["distinct_action_steps"] == len(set(hashes))
         and expected_steps > 0
+        and record.get("held_action_delta_abs_max_tolerance")
+        == ACTION_HOLD_DELTA_ABS_MAX_TOLERANCE
         and type(trailing_steps) is int
-        and trailing_steps == _trailing_identical_steps(hashes)
+        and trailing_steps == _trailing_held_steps(interstep_deltas, expected_steps)
         and isinstance(trailing_fraction, (int, float))
         and not isinstance(trailing_fraction, bool)
         and math.isfinite(float(trailing_fraction))
@@ -310,11 +346,11 @@ def validate_action_evidence(
             and record["distinct_action_steps"] > 1
             and float(record["action_step_delta_abs_max"]) >= 1e-6
         )
-    if maximum_trailing_identical_fraction is not None:
+    if maximum_trailing_held_fraction is not None:
         valid = (
             valid
-            and 0 <= maximum_trailing_identical_fraction < 1
-            and float(trailing_fraction) <= maximum_trailing_identical_fraction
+            and 0 <= maximum_trailing_held_fraction < 1
+            and float(trailing_fraction) <= maximum_trailing_held_fraction
         )
     if not valid:
         raise IsaacArenaError(
@@ -327,15 +363,16 @@ def validate_prepared_action_sequence(
     record: Any,
     *,
     expected_steps: int,
-    maximum_trailing_identical_fraction: float,
+    maximum_trailing_held_fraction: float,
 ) -> dict[str, Any]:
     """Validate the private replay tensor's sanitized sequence commitment."""
 
     if not isinstance(record, dict):
         raise IsaacArenaError("replay has no prepared action-sequence commitment")
     hashes = record.get("action_step_sha256")
-    trailing_steps = record.get("trailing_identical_action_steps")
-    trailing_fraction = record.get("trailing_identical_action_fraction")
+    trailing_steps = record.get("trailing_held_action_steps")
+    trailing_fraction = record.get("trailing_held_action_fraction")
+    interstep_deltas = record.get("interstep_delta_abs_max")
     numeric = (
         record.get("action_abs_max"),
         record.get("action_nonzero_fraction"),
@@ -364,6 +401,21 @@ def validate_prepared_action_sequence(
             and float(value) >= 0
             for value in numeric
         )
+        and isinstance(interstep_deltas, list)
+        and len(interstep_deltas) == max(0, expected_steps - 1)
+        and all(
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(float(value))
+            and float(value) >= 0
+            for value in interstep_deltas
+        )
+        and _hashes_and_deltas_consistent(hashes, interstep_deltas)
+        and math.isclose(
+            float(record["action_step_delta_abs_max"]),
+            max(interstep_deltas, default=0.0),
+            abs_tol=1e-12,
+        )
         and record.get("nonzero_actions") is True
         and float(record["action_abs_max"]) >= 1e-4
         and float(record["action_nonzero_fraction"]) >= 0.001
@@ -372,16 +424,18 @@ def validate_prepared_action_sequence(
         and record["distinct_action_steps"] > 1
         and float(record["action_step_delta_abs_max"]) >= 1e-6
         and expected_steps > 0
+        and record.get("held_action_delta_abs_max_tolerance")
+        == ACTION_HOLD_DELTA_ABS_MAX_TOLERANCE
         and type(trailing_steps) is int
-        and trailing_steps == _trailing_identical_steps(hashes)
+        and trailing_steps == _trailing_held_steps(interstep_deltas, expected_steps)
         and isinstance(trailing_fraction, (int, float))
         and not isinstance(trailing_fraction, bool)
         and math.isfinite(float(trailing_fraction))
         and math.isclose(
             float(trailing_fraction), trailing_steps / expected_steps, abs_tol=1e-12
         )
-        and 0 <= maximum_trailing_identical_fraction < 1
-        and float(trailing_fraction) <= maximum_trailing_identical_fraction
+        and 0 <= maximum_trailing_held_fraction < 1
+        and float(trailing_fraction) <= maximum_trailing_held_fraction
     )
     if not valid:
         raise IsaacArenaError(

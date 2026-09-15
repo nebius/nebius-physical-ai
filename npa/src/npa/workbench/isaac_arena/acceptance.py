@@ -11,6 +11,7 @@ from .action_evidence import (
 )
 from .errors import IsaacArenaError
 from .task_progress import task_progress_adapter
+from .video_evidence import EVIDENCE_FILTER, EVIDENCE_PLAYBACK_RATE
 
 ACCEPTANCE_SCHEMA = "npa.isaac-arena.visual-acceptance.v1"
 
@@ -103,13 +104,13 @@ def _action_contract(
         raise IsaacArenaError(
             "visual acceptance requires registered native task progress"
         )
-    maximum_held_fraction = adapter.maximum_trailing_identical_action_fraction
+    maximum_held_fraction = adapter.maximum_trailing_held_action_fraction
     observed = validate_action_evidence(
         ground_truth.get("action_evidence"),
         policy_type=policy_type,
         expected_steps=episode_length,
         require_nonzero_varied=True,
-        maximum_trailing_identical_fraction=maximum_held_fraction,
+        maximum_trailing_held_fraction=maximum_held_fraction,
     )
     action_file = observed.get("file")
     if not isinstance(action_file, dict) or not _sha256(action_file.get("sha256")):
@@ -129,28 +130,33 @@ def _action_contract(
             "padding_steps": 0,
             "sequence_sha256": observed["sequence_sha256"],
             "evidence_sha256": action_file["sha256"],
-            "trailing_identical_action_fraction": observed[
-                "trailing_identical_action_fraction"
-            ],
-            "maximum_trailing_identical_action_fraction": maximum_held_fraction,
+            "trailing_held_action_fraction": observed["trailing_held_action_fraction"],
+            "maximum_trailing_held_action_fraction": maximum_held_fraction,
         }
     execution = (evidence or {}).get("execution") or {}
     source_steps = execution.get("source_steps")
     prepared_steps = execution.get("prepared_steps")
+    if not _positive_integer(source_steps) or source_steps != prepared_steps:
+        raise IsaacArenaError(
+            "visual acceptance requires exact nonzero actions without padding"
+        )
     prepared = validate_prepared_action_sequence(
         execution.get("prepared_action_sequence"),
-        expected_steps=episode_length,
-        maximum_trailing_identical_fraction=maximum_held_fraction,
+        expected_steps=source_steps,
+        maximum_trailing_held_fraction=maximum_held_fraction,
     )
+    prepared_hashes = prepared.get("action_step_sha256")
+    observed_hashes = observed.get("action_step_sha256")
     valid = (
         policy_type == "replay"
         and ((evidence or {}).get("trajectory") or {}).get("nonzero_actions") is True
-        and _positive_integer(source_steps)
-        and source_steps == prepared_steps == episode_length
+        and source_steps >= episode_length
         and execution.get("action_padding_steps") == 0
         and execution.get("strategy") == "actions_initial_state_exact_replay"
         and observed.get("action_shape") == prepared.get("action_shape")
-        and observed.get("sequence_sha256") == prepared.get("sequence_sha256")
+        and isinstance(prepared_hashes, list)
+        and isinstance(observed_hashes, list)
+        and observed_hashes == prepared_hashes[:episode_length]
     )
     if not valid:
         raise IsaacArenaError(
@@ -159,14 +165,14 @@ def _action_contract(
     return {
         "source": "replay_input",
         "source_steps": source_steps,
-        "executed_steps": prepared_steps,
+        "executed_steps": episode_length,
+        "unexecuted_source_steps": source_steps - episode_length,
+        "execution_stop": "native_scored_episode_terminal",
         "padding_steps": 0,
         "sequence_sha256": observed["sequence_sha256"],
         "evidence_sha256": action_file["sha256"],
-        "trailing_identical_action_fraction": observed[
-            "trailing_identical_action_fraction"
-        ],
-        "maximum_trailing_identical_action_fraction": maximum_held_fraction,
+        "trailing_held_action_fraction": observed["trailing_held_action_fraction"],
+        "maximum_trailing_held_action_fraction": maximum_held_fraction,
     }
 
 
@@ -200,9 +206,12 @@ def _capture_contract(capture: dict, episode_length: int) -> dict:
         and rendering.get("legacy_mode_enabled") is True
         and rendering.get("rt2_enabled") is False
         and rendering.get("path_tracing_enabled") is False
-        and rendering.get("antialiasing") == "FXAA"
+        and rendering.get("antialiasing") == "DLAA"
+        and rendering.get("dlss_execution_mode") == "quality"
+        and rendering.get("dl_denoiser_enabled") is True
+        and rendering.get("frame_generation_enabled") is False
+        and rendering.get("minimum_settling_renders") == 8
         and rendering.get("stochastic_accumulation") is False
-        and rendering.get("accumulation_renders_per_frame") == 0
         and rendering.get("readback_phase") == "after_final_accepted_render"
         and isinstance(comparison, dict)
         and comparison.get("source_frame_index") == episode_length - 1
@@ -274,6 +283,9 @@ def _video_contract(
         and analysis.get("source") == "simulator_ground_truth"
         and analysis.get("action_steps") == expected
         and isinstance(derivation, dict)
+        and derivation.get("kind") == "ffmpeg_spatiotemporal_denoise"
+        and derivation.get("filter") == EVIDENCE_FILTER
+        and derivation.get("playback_rate") == EVIDENCE_PLAYBACK_RATE
         and derivation.get("source_sha256") == source_mp4_sha256
         and derivation.get("changes_simulator_outcome") is False
         and _sha256(video.get("sha256"))

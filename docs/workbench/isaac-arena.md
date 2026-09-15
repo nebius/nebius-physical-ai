@@ -85,9 +85,13 @@ The evaluator supports the three local policy adapters registered by upstream:
   adapter consumes only actions and the initial state, so NPA materializes
   exactly those required fields in owner-private scratch. The runner applies
   the recorded initial state through Isaac Lab's `reset_to(is_relative=True)`
-  and executes the source actions once, without padding, repetition, truncation,
-  or a final-action hold. Replay evaluates one recorded episode in one
-  environment.
+  and executes the exact source-action prefix until the requested native scored
+  episode terminates. A longer source suffix remains unexecuted and outside the
+  capture; it is not padding or a second auto-reset episode. The full prepared
+  sequence and executed prefix are independently hash-bound. Synthetic padding,
+  repetition, or an appended final-action hold is forbidden; a naturally stable
+  source tail remains subject to the registered task adapter's limit. Replay
+  evaluates one recorded episode in one environment.
 - `rsl_rl`: `--input-path` resolves to `model*.pt` or a directory containing
   exactly one such checkpoint with sibling `params/agent.yaml`.
 
@@ -164,21 +168,29 @@ Observed action counts come from a sanitized policy-to-environment journal that
 is written only after each native `env.step` returns. It retains per-step and
 sequence SHA-256 commitments, shape/count, finite/nonzero/variation statistics,
 and no raw actions. Replay qualification requires that sequence commitment to
-equal the prepared private action tensor, so mutation, truncation, padding, a
-constant held tail, or an unexecuted policy call cannot pass. Task outcomes come
-from the simulator evidence.
+equal the corresponding prefix of the prepared private action tensor through the
+native terminal. The complete prepared sequence is also checked, so mutation,
+an invented early stop, padding, or a dominant numerically held tail cannot pass,
+even when tiny jitter makes every action hash distinct. The shared hold tolerance
+is a maximum inter-step action delta of `1e-6`; each task adapter declares its
+allowed held-tail fraction. Task outcomes and the terminal boundary come from the
+simulator evidence.
 A completed evaluation may truthfully report a success rate of zero. Nonzero
 actions and movement metrics never substitute for the upstream task result.
 
 Replay evaluation requires `--num-episodes 1` and `--num-envs 1`, including
 state-only replay. NPA selects the first sorted episode in the input HDF5.
-`--record-video` also requires one episode in one environment and H.264 at least
-320×240 and one second long. The untouched source MP4 is retained beside a
-labeled FFmpeg-denoised derivative. Acceptance checks temporal-median samples
+`--record-video` also requires one episode in one environment and an H.264
+evidence derivative at least 320×240 and one second long. The untouched source
+MP4 may be shorter when the native task succeeds quickly; its exact action-frame
+count remains mandatory. The labeled FFmpeg-denoised derivative plays those same
+frames at half speed without padding or duplication so task motion remains
+plainly reviewable. Acceptance checks temporal-median samples
 for coherent spatial change and binds that interval to the same run's simulator
 metric trace. A shared fail-closed contract requires one horizon across executed
 actions, the native scored episode, task progress, simulator capture, and video;
-replay steps must be nonzero and must not be padded or held. Environment-specific
+replay steps must be nonzero and must not be synthetically padded or dominated by
+an effectively held tail. Environment-specific
 progress semantics are explicit registry entries rather than generic motion
 thresholds, and each entry declares its supported policy types. The sole current
 entry supports `gr1_open_microwave` with `replay` or `rsl_rl`: the upstream JSONL, numeric
@@ -192,8 +204,8 @@ threshold crossing cannot truncate the proof. The result records the named progr
 `npa.isaac-arena.visual-acceptance.v1` binding. Other registered scored
 environments remain available for ordinary evaluation; their nonzero-policy
 video qualification is unsupported until a task-specific adapter is registered.
-The microwave adapter also rejects an exactly repeated terminal action run over
-25% of the scored horizon. This limit is declared by the adapter, measured for
+The microwave adapter also rejects a numerically held terminal action run over
+25% of the source or scored horizon. This limit is declared by the adapter, measured for
 both prepared and executed actions, and prevents a short varying prefix plus a
 dominant held tail from passing the shared contract.
 
@@ -225,12 +237,14 @@ an inactive observer cannot provide a freeze proof. Its elapsed time starts at
 capture setup and is not an absolute simulation clock.
 Texture streaming and asset loading must finish before capture accepts a frame.
 Capture requires legacy RTX Real-Time (`RaytracedLighting`) explicitly enabled
-at Kit startup, with RT2 and interactive path tracing disabled, spatial FXAA,
-and no stochastic or temporal accumulation. Isaac Sim 6
-otherwise remaps that renderer request to `RealTimePathTracing`; exact readback
-rejects the remap. This removes path-tracing grain from the source evidence; the
-independent temporal-median and coherent block-tracking gate still rejects static
-scenes and incoherent flicker.
+at Kit startup, with RT2, interactive path tracing, and frame generation disabled,
+native-resolution DLAA, quality reconstruction, the DL denoiser, and at least
+eight consecutive ready settling renders after the readiness baseline per captured
+frame while physics is frozen. Isaac Sim 6 otherwise remaps that
+renderer request to `RealTimePathTracing`; exact readback rejects the remap. The
+settling renders address the severe single-frame RTX grain observed with FXAA;
+the independent temporal-median and coherent block-tracking gate still rejects
+static scenes and incoherent flicker.
 The initial and terminal PNGs must also contain nonblack pixels; real task
 progress and coherent motion remain separate required checks. Renderer settings
 are selected through AppLauncher's native Kit startup arguments, reasserted at
@@ -247,6 +261,10 @@ When the action sequence ends before an episode finishes, a separate unscored
 diagnostic retains the remaining metric buffer and simulator state. It does not
 create a completed episode, success flag, or scored HDF5 record. This keeps a
 failed replay diagnosable while preserving the upstream result.
+Conversely, when the native episode terminates before the source sequence ends,
+video execution stops at that terminal and records the count/hash of the exact
+executed prefix plus the unexecuted source count. It never records the auto-reset
+episode as part of the accepted proof.
 Replay input metadata reports `prepared_steps` and `prepared_sha256`; these
 describe the private execution input prepared before launch. They do not count
 actions actually executed or imply a task result, including when setup fails.

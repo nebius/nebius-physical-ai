@@ -13,7 +13,10 @@ from PIL import Image
 
 from npa.workbench.isaac_arena.errors import IsaacArenaError
 from npa.workbench.isaac_arena.video_evidence import verify_capture_evidence
-from npa.workbench.isaac_arena.simulator_video import _RENDER_SETTINGS
+from npa.workbench.isaac_arena.simulator_video import (
+    _MINIMUM_SETTLING_RENDERS,
+    _RENDER_SETTINGS,
+)
 
 
 def _frame(column: int) -> np.ndarray:
@@ -22,9 +25,9 @@ def _frame(column: int) -> np.ndarray:
     return frame
 
 
-def _encode(path: Path, frames: list[np.ndarray]) -> None:
+def _encode(path: Path, frames: list[np.ndarray], *, rate: int = 15) -> None:
     arguments = ["ffmpeg", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24"]
-    arguments += ["-s", "320x240", "-r", "15", "-i", "pipe:0", "-an"]
+    arguments += ["-s", "320x240", "-r", str(rate), "-i", "pipe:0", "-an"]
     arguments += [
         "-c:v",
         "libx264",
@@ -79,9 +82,12 @@ def capture(tmp_path: Path) -> tuple[Path, dict, dict, list[np.ndarray]]:
             "legacy_mode_enabled": True,
             "rt2_enabled": False,
             "path_tracing_enabled": False,
-            "antialiasing": "FXAA",
+            "antialiasing": "DLAA",
+            "dlss_execution_mode": "quality",
+            "dl_denoiser_enabled": True,
+            "frame_generation_enabled": False,
+            "minimum_settling_renders": _MINIMUM_SETTLING_RENDERS,
             "stochastic_accumulation": False,
-            "accumulation_renders_per_frame": 0,
             "readback_phase": "after_final_accepted_render",
             "settings": dict(_RENDER_SETTINGS),
         },
@@ -96,8 +102,10 @@ def capture(tmp_path: Path) -> tuple[Path, dict, dict, list[np.ndarray]]:
                 "native_physics_step_after": step,
                 "state_sha256_before": hashlib.sha256(str(step).encode()).hexdigest(),
                 "state_sha256_after": hashlib.sha256(str(step).encode()).hexdigest(),
-                "render_calls": 1,
-                "accumulation_render_calls": 0,
+                "render_calls": _MINIMUM_SETTLING_RENDERS + 1,
+                "pre_settling_render_calls": 1,
+                "settling_render_calls": _MINIMUM_SETTLING_RENDERS,
+                "consecutive_ready_render_calls": _MINIMUM_SETTLING_RENDERS + 1,
                 "stage_streaming_idle": True,
                 "stage_assets_loaded": True,
                 "nonblack_rgb": True,
@@ -152,6 +160,16 @@ def test_capture_spans_full_episode_when_progress_threshold_crosses_early(
     assert result["terminal"]["sha256"] == payload["terminals"][0]["sha256"]
 
 
+def test_short_raw_native_episode_keeps_every_action_frame(capture) -> None:
+    video, _, motion, frames = capture
+    _encode(video, frames, rate=50)
+    result = verify_capture_evidence(
+        video.parent, video, task_motion=motion, expected_steps=20
+    )
+    assert result["captured_action_steps"] == 20
+    assert result["terminal_frame_comparison"]["source_frame_index"] == 19
+
+
 def test_autoreset_frame_cannot_replace_successful_terminal_frame(capture) -> None:
     video, _, motion, frames = capture
     frames[-1] = _frame(17)
@@ -184,7 +202,7 @@ def test_capture_counts_must_match_raw_video(capture, count: int) -> None:
         verify_capture_evidence(video.parent, video, task_motion=motion)
 
 
-def test_replay_source_action_count_is_independently_required(capture) -> None:
+def test_native_episode_action_count_is_independently_required(capture) -> None:
     video, _, motion, _ = capture
     with pytest.raises(IsaacArenaError, match="frame count disagrees"):
         verify_capture_evidence(
@@ -243,8 +261,10 @@ def test_capture_after_reset_is_an_invalid_evidence_phase(capture) -> None:
         ("stage_streaming_idle", False),
         ("stage_assets_loaded", False),
         ("nonblack_rgb", False),
-        ("render_calls", 0),
-        ("accumulation_render_calls", 4),
+        ("render_calls", _MINIMUM_SETTLING_RENDERS - 1),
+        ("pre_settling_render_calls", 0),
+        ("settling_render_calls", 4),
+        ("consecutive_ready_render_calls", _MINIMUM_SETTLING_RENDERS),
         ("action_step", True),
     ],
 )
@@ -285,9 +305,17 @@ def test_allblack_initial_png_cannot_qualify_with_consistent_hashes(capture):
         verify_capture_evidence(video.parent, video, task_motion=motion)
 
 
-def test_renderer_readback_must_confirm_stable_spatial_antialiasing(capture):
+def test_renderer_readback_must_confirm_temporal_reconstruction(capture):
     video, payload, motion, _ = capture
     payload["rendering"]["settings"]["/rtx/post/aa/op"] = 1
+    _write_sidecar(video.parent, payload)
+    with pytest.raises(IsaacArenaError, match="renderer readback"):
+        verify_capture_evidence(video.parent, video, task_motion=motion)
+
+
+def test_renderer_readback_must_reject_generated_frames(capture):
+    video, payload, motion, _ = capture
+    payload["rendering"]["settings"]["/rtx-transient/dlssg/enabled"] = True
     _write_sidecar(video.parent, payload)
     with pytest.raises(IsaacArenaError, match="renderer readback"):
         verify_capture_evidence(video.parent, video, task_motion=motion)
