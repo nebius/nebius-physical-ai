@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -19,7 +20,8 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 
-_SOURCE = Path("/tmp/npa-src")
+_SOURCE: Path | None = None
+_RECEIPT: Path | None = None
 _OUTPUT = Path("/evidence")
 _PYTHON = "/opt/fiftyone/venv/bin/python"
 _SMOKES = Path("/opt/npa/docker/workbench/fiftyone")
@@ -173,10 +175,51 @@ def _installed_npa_version() -> str:
         "NPA came from another source",
     )
     _require(
-        Path("/tmp/npa-src-root").read_text() == str(_SOURCE),
+        _RECEIPT.read_text() == str(_SOURCE),
         "NPA source receipt differs",
     )
     return metadata.version("npa")
+
+
+def _configure_mounts() -> None:
+    global _SOURCE, _RECEIPT
+    selected = os.environ.get("NPA_FIFTYONE_VALIDATION_CONTRACT")
+    _require(bool(selected), "The owned container mount contract is missing")
+    path = Path(selected)
+    _require(
+        path.parent == Path("/validation") and not path.is_symlink(),
+        "Mount contract must come from the read-only validation mount",
+    )
+    contract = json.loads(path.read_text())
+    _require(
+        contract.get("schema") == "npa.fiftyone.mounts.v1", "Unsupported mount contract"
+    )
+    _require(
+        contract["checks"]["Destination"] == str(path.parent)
+        and contract["checks"]["RW"] is False,
+        "Mount contract was not bound read-only",
+    )
+    source, receipt = contract["source"], contract["receipt"]
+    _require(
+        source["Type"] == receipt["Type"] == "bind"
+        and source["RW"] is receipt["RW"] is True,
+        "Source and receipt must use the verified owned bind mounts",
+    )
+    _SOURCE, _RECEIPT = Path(source["Destination"]), Path(receipt["Destination"])
+    _require(
+        _SOURCE.name == "npa-src"
+        and _RECEIPT.name == "npa-src-root"
+        and _SOURCE.parent == _RECEIPT.parent,
+        "Mounts do not match the unchanged setup producer contract",
+    )
+    _require(
+        _SOURCE.is_absolute() and _SOURCE.is_dir() and not _SOURCE.is_symlink(),
+        "Owned source mount is unavailable",
+    )
+    _require(
+        stat.S_ISREG(_RECEIPT.lstat().st_mode),
+        "Owned receipt backing file is not regular",
+    )
 
 
 def _initial_source() -> dict:
@@ -195,6 +238,10 @@ def _initial_source() -> dict:
     )
     _require(
         (_SOURCE / "pyproject.toml").is_file(), "Exact NPA source archive is missing"
+    )
+    _require(
+        _RECEIPT is not None and _RECEIPT.read_bytes() == b"",
+        "Initial source receipt is not empty",
     )
     return {"initial_install_required": True}
 
@@ -235,7 +282,7 @@ def _entrypoint() -> dict:
 def _writable_paths() -> list[str]:
     paths = [
         Path.home(),
-        Path("/tmp"),
+        Path(tempfile.gettempdir()),
         Path("/opt/fiftyone/db"),
         Path("/opt/fiftyone/datasets"),
         Path("/opt/fiftyone/smoke"),
@@ -554,6 +601,7 @@ def main() -> int:
             phase in {"bare", "initial-install", "post-install"},
             "Unknown validation phase",
         )
+        _configure_mounts()
         for name, operation in _phase_checks(phase):
             _record(name, operation, records)
         status = "passed"

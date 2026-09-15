@@ -22,6 +22,7 @@ from validation_docker import (
     _inspect,
     _require_owner,
     _write_json,
+    _verify_receipt,
 )
 
 
@@ -146,6 +147,7 @@ def _source_inputs(commands: _Commands, revision: str) -> tuple[Path, Path]:
     _bind_validator(commands, source)
     checks = commands.root / "checks"
     checks.mkdir(mode=0o755)
+    checks.chmod(0o755)
     for name in ("validation_checks.py",):
         original = source / "docker/workbench/fiftyone" / name
         target = checks / name
@@ -423,6 +425,7 @@ def _validate(commands: _Commands, arguments: argparse.Namespace) -> dict:
             )
             containers.append(container)
             operation(commands, container, source, checks)
+            _verify_receipt(commands, container)
             _verify_source(commands, source, role)
         after = _inspect(commands, "image-after", arguments.image_id)
         if after.get("Id") != before["Id"] or after.get("Config") != before.get(

@@ -8,6 +8,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shlex
 import sys
 import tarfile
 from types import SimpleNamespace
@@ -89,6 +90,52 @@ def test_source_binding_and_editable_directory_permissions(modules, source_fixtu
     assert source.stat().st_uid == os.getuid()
     assert (source / "src/run.sh").stat().st_mode & 0o111
     (source / "src/generated.egg-info").mkdir()
+    modules.host._verify_source(commands, source)
+
+
+def _validator_archive_files():
+    return [
+        ("docker/workbench/fiftyone/" + name, (IMAGE / name).read_bytes(), 0o644)
+        for name in (
+            "validate_image.py",
+            "validation_docker.py",
+            "validation_checks.py",
+        )
+    ]
+
+
+@pytest.mark.parametrize("mask", [0o022, 0o077])
+def test_actual_source_staging_preserves_private_parent_and_cross_uid_readability(
+    modules, tmp_path, monkeypatch, mask
+):
+    calls = []
+
+    def git(name, argv):
+        calls.append(argv)
+        if name == "source-revision":
+            return REVISION.encode()
+        assert name == "source-archive" and argv[:2] == ["git", "archive"]
+        _archive(Path(argv[argv.index("-o") + 1]), _validator_archive_files())
+        return b""
+
+    arguments = argparse.Namespace(
+        image_id=IMAGE_ID,
+        revision=REVISION,
+        source_root=ROOT,
+        output_path=tmp_path / "private",
+    )
+    previous = os.umask(mask)
+    try:
+        commands = modules.host._prepare(arguments)
+        monkeypatch.setattr(commands, "run", git)
+        source, checks = modules.host._source_inputs(commands, REVISION)
+    finally:
+        os.umask(previous)
+    assert commands.root.stat().st_mode & 0o777 == 0o700
+    assert checks.stat().st_mode & 0o777 == 0o755
+    assert (checks / "validation_checks.py").stat().st_mode & 0o777 == 0o644
+    assert source.stat().st_mode & 0o777 == 0o777
+    assert len(calls) == 2 and all(argv[0] == "git" for argv in calls)
     modules.host._verify_source(commands, source)
 
 
@@ -216,22 +263,58 @@ class _DockerSimulation:
         name = argv[argv.index("--name") + 1]
         nonce = argv[argv.index("--label") + 1].split("=", 1)[1]
         network = argv[argv.index("--network") + 1]
+        mounts = self._mounts(argv)
+        environment = [
+            argv[index + 1] for index, value in enumerate(argv) if value == "--env"
+        ]
         self.containers[identity] = {
             "Id": identity,
             "Name": "/" + name,
             "Image": IMAGE_ID,
             "Created": "synthetic creation lifetime",
-            "Config": {"Image": IMAGE_ID, "Labels": {"npa.fiftyone.validation": nonce}},
+            "Mounts": mounts,
+            "Config": {
+                "Image": IMAGE_ID,
+                "Labels": {"npa.fiftyone.validation": nonce},
+                "Env": environment,
+            },
             "State": {"Running": False, "Pid": 0, "ExitCode": 0},
             "NetworkSettings": {"Networks": {network: {}}},
         }
         return 0, identity.encode()
+
+    def _mounts(self, argv):
+        mounts = []
+        for index, value in enumerate(argv):
+            if value != "--mount":
+                continue
+            parts = argv[index + 1].split(",")
+            fields = dict(item.split("=", 1) for item in parts if "=" in item)
+            mounts.append(
+                {
+                    "Type": fields["type"],
+                    "Source": fields["src"],
+                    "Destination": fields["dst"],
+                    "RW": "readonly" not in parts,
+                }
+            )
+        return mounts
 
     def _payload(self, argv):
         if argv[1] == "start" and "--attach" not in argv:
             self._find(argv[-1])["State"] = {"Running": True, "Pid": 9}
             return 0, b""
         phase = "bare" if argv[1] == "start" else argv[-1]
+        if phase == "initial-install":
+            identity = next(value for value in argv if value in self.containers)
+            mounts = self.containers[identity]["Mounts"]
+            source = next(
+                row for row in mounts if row["Destination"].endswith("/npa-src")
+            )
+            receipt = next(
+                row for row in mounts if row["Destination"].endswith("/npa-src-root")
+            )
+            Path(receipt["Source"]).write_text(source["Destination"])
         output = self.root / ("bare" if phase == "bare" else "post")
         checks = [
             {"name": name, "ok": True, "result": {}}
@@ -512,6 +595,9 @@ def test_publication_orders_runtime_gate_before_login_and_push_and_uploads_only_
         == "${{ runner.temp }}/fiftyone-validation/public-summary.json"
     )
     assert "always()" in upload["if"] and upload["with"]["if-no-files-found"] == "error"
+    assert upload["uses"] == (
+        "actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4"
+    )
 
 
 @pytest.mark.parametrize(
@@ -771,3 +857,238 @@ def test_benign_cors_uses_actual_selected_app_and_checks_normal_response(
     else:
         with pytest.raises(RuntimeError, match="App"):
             modules.checks._app_access()
+
+
+def _change_mount_observation(row, change):
+    mounts = row["Mounts"]
+    if change == "missing":
+        mounts.pop()
+    elif change == "duplicate":
+        mounts[-1] = dict(mounts[0])
+    elif change == "type":
+        mounts[1]["Type"] = "volume"
+    elif change == "source":
+        mounts[1]["Source"] += "-different"
+    elif change == "checks-writable":
+        mounts[0]["RW"] = True
+    elif change == "source-readonly":
+        mounts[1]["RW"] = False
+    elif change == "receipt-readonly":
+        mounts[2]["RW"] = False
+    elif change == "receipt-source":
+        mounts[2]["Source"] = mounts[1]["Source"]
+    elif change == "destination":
+        mounts[1]["Destination"] += "-different"
+    else:
+        row["Config"]["Env"] = ["NPA_FIFTYONE_VALIDATION_CONTRACT=wrong"]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "missing",
+        "duplicate",
+        "type",
+        "source",
+        "checks-writable",
+        "source-readonly",
+        "receipt-readonly",
+        "receipt-source",
+        "destination",
+        "selector",
+    ],
+)
+def test_mount_mismatch_refuses_before_payload_and_cleans_only_owned_container(
+    modules, execution, monkeypatch, change
+):
+    commands, arguments, simulation = execution
+    original = simulation._create
+
+    def create(argv):
+        result, identity = original(argv)
+        _change_mount_observation(simulation.containers[identity.decode()], change)
+        return result, identity
+
+    monkeypatch.setattr(simulation, "_create", create)
+    with pytest.raises(modules.docker._ValidationError, match="validation failed"):
+        modules.host._validate(commands, arguments)
+    assert not any(argv[1] in {"start", "exec"} for argv in simulation.commands)
+    assert simulation.containers == {}
+    assert len([argv for argv in simulation.commands if argv[1] == "rm"]) == 1
+
+
+def _producer_mount_destinations():
+    from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
+
+    lines = default_npa_setup().splitlines()
+    writer = next(line for line in lines if line.startswith("npa_record_src_root()"))
+    tokens = shlex.split(writer)
+    receipt = tokens[tokens.index(">") + 1].rstrip(";")
+    calls = [
+        shlex.split(line)
+        for line in lines
+        if line.strip().startswith("npa_record_src_root ")
+    ]
+    mounted = [call[1] for call in calls if Path(call[1]).name == "npa-src"]
+    assert len(mounted) == 1
+    source = mounted[0]
+    installs = [
+        shlex.split(line)
+        for line in lines
+        if line.strip().startswith("npa_pip_install -e ")
+    ]
+    assert ["npa_pip_install", "-e", source] in installs
+    return source, receipt
+
+
+def test_receipts_use_unpredictable_private_backing_and_same_canonical_setup_mounts(
+    modules, execution, monkeypatch
+):
+    commands, arguments, simulation = execution
+    commands.root.chmod(0o700)
+    original = simulation._create
+    backing = []
+    source_destination, receipt_destination = _producer_mount_destinations()
+
+    def create(argv):
+        result, identity = original(argv)
+        mounts = simulation.containers[identity.decode()]["Mounts"]
+        source = next(row for row in mounts if row["Destination"] == source_destination)
+        receipt = next(
+            row for row in mounts if row["Destination"] == receipt_destination
+        )
+        path = Path(receipt["Source"])
+        assert path.parent.parent == commands.root and path.read_bytes() == b""
+        assert (
+            path.name.startswith("npa-source-receipt-") and path.name != "npa-src-root"
+        )
+        assert path.stat().st_mode & 0o777 == 0o666
+        assert source["RW"] is receipt["RW"] is True
+        backing.append(path)
+        return result, identity
+
+    monkeypatch.setattr(simulation, "_create", create)
+    assert modules.host._validate(commands, arguments)["status"] == "passed"
+    assert len(set(backing)) == 2 and commands.root.stat().st_mode & 0o777 == 0o700
+    assert [path.read_text() for path in backing] == ["", source_destination]
+    for role in ("bare", "post"):
+        proof = json.loads((commands.root / f"{role}-receipt-after.json").read_text())
+        assert proof["same_backing_file"] and proof["contents_match_setup"]
+
+
+@pytest.mark.parametrize("change", ["replaced", "symlink", "content"])
+def test_receipt_tampering_blocks_further_phases_and_preserves_owned_cleanup(
+    modules, execution, monkeypatch, change
+):
+    commands, arguments, simulation = execution
+    original = simulation._payload
+
+    def payload(argv):
+        result = original(argv)
+        record = json.loads((commands.root / "bare-receipt.json").read_text())
+        path = Path(record["path"])
+        if change == "content":
+            path.write_text("different setup")
+        else:
+            saved = path.with_suffix(".original")
+            path.rename(saved)
+            if change == "symlink":
+                path.symlink_to(saved)
+            else:
+                path.write_bytes(b"")
+        return result
+
+    monkeypatch.setattr(simulation, "_payload", payload)
+    with pytest.raises(modules.docker._ValidationError) as failure:
+        modules.host._validate(commands, arguments)
+    assert "receipt" in str(failure.value.__cause__)
+    assert simulation.containers == {}
+    assert not any(argv[-1] == "initial-install" for argv in simulation.commands)
+
+
+@pytest.fixture
+def mount_contract(modules, tmp_path, monkeypatch):
+    checks, source, receipt = (
+        tmp_path / "validation",
+        tmp_path / "npa-src",
+        tmp_path / "npa-src-root",
+    )
+    checks.mkdir()
+    source.mkdir()
+    receipt.write_bytes(b"")
+    path = checks / "bare-mounts.json"
+    contract = {
+        "schema": "npa.fiftyone.mounts.v1",
+        "checks": {"Destination": str(checks), "RW": False},
+        "source": {"Type": "bind", "Destination": str(source), "RW": True},
+        "receipt": {"Type": "bind", "Destination": str(receipt), "RW": True},
+    }
+    path.write_text(json.dumps(contract))
+    monkeypatch.setenv("NPA_FIFTYONE_VALIDATION_CONTRACT", str(path))
+    monkeypatch.setattr(
+        modules.checks,
+        "Path",
+        lambda value: checks if value == "/validation" else Path(value),
+    )
+    return path, contract, source, receipt
+
+
+def test_checks_select_verified_source_and_empty_receipt(modules, mount_contract):
+    _, _, source, receipt = mount_contract
+    modules.checks._configure_mounts()
+    assert modules.checks._SOURCE == source and modules.checks._RECEIPT == receipt
+    assert receipt.read_bytes() == b""
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "missing",
+        "schema",
+        "writable-checks",
+        "source-mode",
+        "receipt-mode",
+        "source-name",
+        "receipt-name",
+        "receipt-directory",
+    ],
+)
+def test_checks_refuse_missing_or_incompatible_mount_contract(
+    modules, mount_contract, monkeypatch, change
+):
+    path, contract, _, receipt = mount_contract
+    if change == "missing":
+        monkeypatch.delenv("NPA_FIFTYONE_VALIDATION_CONTRACT")
+    elif change == "schema":
+        contract["schema"] = "unknown"
+    elif change == "writable-checks":
+        contract["checks"]["RW"] = True
+    elif change in {"source-mode", "receipt-mode"}:
+        contract[change.split("-")[0]]["RW"] = False
+    elif change in {"source-name", "receipt-name"}:
+        contract[change.split("-")[0]]["Destination"] += "-different"
+    else:
+        receipt.unlink()
+        receipt.mkdir()
+    path.write_text(json.dumps(contract))
+    with pytest.raises(RuntimeError):
+        modules.checks._configure_mounts()
+
+
+def test_temp_writability_uses_selected_root_and_removes_own_fixtures(
+    modules, tmp_path, monkeypatch
+):
+    selected = tmp_path / "selected-temporary-root"
+    selected.mkdir()
+    monkeypatch.setattr(modules.checks.tempfile, "gettempdir", lambda: str(selected))
+    original = modules.checks.tempfile.TemporaryDirectory
+    observed = []
+
+    def temporary(*, prefix, dir):
+        observed.append(Path(dir))
+        return original(prefix=prefix, dir=selected)
+
+    monkeypatch.setattr(modules.checks.tempfile, "TemporaryDirectory", temporary)
+    assert str(selected) in modules.checks._writable_paths()
+    assert selected in observed and len(observed) == 5
+    assert list(selected.iterdir()) == []

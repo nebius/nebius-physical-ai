@@ -7,6 +7,8 @@ import json
 import os
 import re
 import subprocess
+import stat
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -117,17 +119,43 @@ def _require_owner(container: _Container, observed: dict) -> None:
         raise _ValidationError("Container creation lifetime changed")
 
 
-def _create(
-    commands: _Commands,
-    container: _Container,
-    source: Path,
-    checks: Path,
-    output: Path,
-    argv: list[str],
-    *,
-    network: str,
-) -> None:
-    _write_json(commands.root / f"{container.role}-intent.json", vars(container))
+def _private_mounts(commands, container, source, checks, output) -> list[str]:
+    descriptor, name = tempfile.mkstemp(prefix="npa-source-receipt-", dir=output)
+    with os.fdopen(descriptor, "wb"):
+        pass
+    receipt = Path(name)
+    # The unpredictable backing file stays beneath the existing private 0700 parent.
+    # A distinct host UID must not prevent the image's default user writing its receipt.
+    receipt.chmod(0o666)
+    info = receipt.stat()
+    _write_json(
+        commands.root / f"{container.role}-receipt.json",
+        {"path": str(receipt), "device": info.st_dev, "inode": info.st_ino},
+    )
+    return [
+        f"type=bind,src={checks},dst=/validation,readonly",
+        f"type=bind,src={source},dst=/tmp/npa-src",
+        f"type=bind,src={receipt},dst=/tmp/npa-src-root",
+        f"type=bind,src={output},dst=/evidence",
+    ]
+
+
+def _mount_fields(specification: str) -> dict:
+    fields = dict(
+        part.split("=", 1) for part in specification.split(",") if "=" in part
+    )
+    return {
+        "Type": fields["type"],
+        "Source": fields["src"],
+        "Destination": fields["dst"],
+        "RW": "readonly" not in specification.split(","),
+    }
+
+
+def _creation_arguments(container, mounts, argv, network) -> list[str]:
+    contract = (
+        f"NPA_FIFTYONE_VALIDATION_CONTRACT=/validation/{container.role}-mounts.json"
+    )
     arguments = [
         "docker",
         "create",
@@ -138,21 +166,104 @@ def _create(
         f"npa.fiftyone.validation={container.nonce}",
         "--network",
         network,
-        "--mount",
-        f"type=bind,src={checks},dst=/validation,readonly",
-        "--mount",
-        f"type=bind,src={source},dst=/tmp/npa-src",
-        "--mount",
-        f"type=bind,src={output},dst=/evidence",
-        container.image_id,
-        *argv,
+        "--env",
+        contract,
     ]
-    commands.run(f"{container.role}-create", arguments)
+    for specification in mounts:
+        arguments.extend(["--mount", specification])
+    return [*arguments, container.image_id, *argv]
+
+
+def _verified_mounts(observed: dict, requested: list[str]) -> list[dict]:
+    actual = observed.get("Mounts")
+    if not isinstance(actual, list) or len(actual) != len(requested):
+        raise _ValidationError("Container mounts are missing or unexpected")
+    matched = []
+    for specification in requested:
+        expected = _mount_fields(specification)
+        rows = [
+            row for row in actual if row.get("Destination") == expected["Destination"]
+        ]
+        if len(rows) != 1:
+            raise _ValidationError(
+                "Container mount destination is missing or ambiguous"
+            )
+        row = rows[0]
+        if row.get("Type") != "bind" or row.get("RW") is not expected["RW"]:
+            raise _ValidationError("Container mount type or write mode differs")
+        if Path(row.get("Source", "")).resolve() != Path(expected["Source"]).resolve():
+            raise _ValidationError(
+                "Container mount source differs from its owned backing path"
+            )
+        matched.append(expected)
+    return matched
+
+
+def _record_mounts(commands, container, observed, requested, checks) -> None:
+    mounted = _verified_mounts(observed, requested)
+    selection = (
+        f"NPA_FIFTYONE_VALIDATION_CONTRACT=/validation/{container.role}-mounts.json"
+    )
+    environment = observed.get("Config", {}).get("Env", [])
+    values = [
+        value
+        for value in environment
+        if value.startswith("NPA_FIFTYONE_VALIDATION_CONTRACT=")
+    ]
+    if values != [selection]:
+        raise _ValidationError("Container mount-contract selection differs")
+    record = {
+        "schema": "npa.fiftyone.mounts.v1",
+        "container_id": container.container_id,
+        "created": container.created,
+        "source": mounted[1],
+        "receipt": mounted[2],
+        "checks": mounted[0],
+    }
+    path = checks / f"{container.role}-mounts.json"
+    _write_json(path, record)
+    path.chmod(0o644)
+    _write_json(commands.root / f"{container.role}-mounts.json", record)
+
+
+def _create(commands, container, source, checks, output, argv, *, network: str) -> None:
+    _write_json(commands.root / f"{container.role}-intent.json", vars(container))
+    mounts = _private_mounts(commands, container, source, checks, output)
+    commands.run(
+        f"{container.role}-create",
+        _creation_arguments(container, mounts, argv, network),
+    )
     observed = _inspect(commands, f"{container.role}-created", container.name)
     _require_owner(container, observed)
     container.container_id = observed["Id"]
     container.created = observed["Created"]
     _write_json(commands.root / f"{container.role}-identity.json", vars(container))
+    _record_mounts(commands, container, observed, mounts, checks)
+
+
+def _verify_receipt(commands, container) -> None:
+    record = json.loads((commands.root / f"{container.role}-receipt.json").read_text())
+    path = Path(record["path"])
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or (info.st_dev, info.st_ino) != (
+        record["device"],
+        record["inode"],
+    ):
+        raise _ValidationError("Owned source receipt backing file was replaced")
+    mounts = json.loads((commands.root / f"{container.role}-mounts.json").read_text())
+    expected = mounts["source"]["Destination"] if container.role == "post" else ""
+    if path.read_text() != expected:
+        raise _ValidationError(
+            "Owned source receipt does not match the original setup path"
+        )
+    _write_json(
+        commands.root / f"{container.role}-receipt-after.json",
+        {
+            "same_backing_file": True,
+            "contents_match_setup": True,
+            "sha256": _digest(path),
+        },
+    )
 
 
 def _retire(commands: _Commands, container: _Container) -> dict:
