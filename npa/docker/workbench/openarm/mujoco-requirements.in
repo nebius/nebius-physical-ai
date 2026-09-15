@@ -1,2 +1,8 @@
-# Exact OpenArm MuJoCo runtime layered onto common/isaac-oss-deps.txt.
+# Exact OpenArm CLI, service, and MuJoCo runtime layered onto
+# common/isaac-oss-deps.txt.
+# 0.133.1 is the newest release compatible with the validated Isaac closure's
+# exact Starlette 0.45.3 pin.
+fastapi==0.133.1
 mujoco==3.6.0
+pydantic==2.13.5
+uvicorn==0.53.0
