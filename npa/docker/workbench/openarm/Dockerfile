@@ -92,7 +92,7 @@ RUN /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir --require-hashes 
     && find /opt/npa/src /opt/openarm /usr/share/doc/npa-openarm -type f -exec chmod a+r {} + \
     && rm -rf /root/.cache /home/ubuntu/.cache
 
-RUN /opt/npa/sim/venv/bin/python -c 'import mujoco, openarm_mujoco.v2 as o; m=mujoco.MjModel.from_xml_path(o.openarm_demo_xml()); assert m.nu == 16' \
+RUN /opt/npa/sim/venv/bin/python -c 'import mujoco, openarm_mujoco.v2 as o; m=mujoco.MjModel.from_xml_path(o.openarm_demo_xml()); assert m.nu == 17' \
     && /opt/npa/sim/venv/bin/python -c 'import importlib.util; assert importlib.util.find_spec("isaacsim") is None; assert importlib.util.find_spec("isaaclab") is None' \
     && /opt/npa/sim/venv/bin/python /opt/npa/openarm/emit_license_inventory.py
 

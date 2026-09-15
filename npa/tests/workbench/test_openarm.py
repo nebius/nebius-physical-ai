@@ -8,6 +8,7 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -18,7 +19,7 @@ from npa.cli.main import app
 from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
 from npa.orchestration.npa_workflow.catalog import argv_for_tool
 from npa.sdk.workbench import openarm as sdk
-from npa.workbench.openarm.runtime import _validate_qualification_tree
+from npa.workbench.openarm.runtime import _step_mujoco, _validate_qualification_tree
 from npa.workbench.openarm.schemas import OpenArmRunRequest, OpenArmStatusResponse
 from npa.workbench.openarm.service import RunRegistry, create_app
 
@@ -50,6 +51,47 @@ def test_light_image_cli_imports_only_openarm_sdk() -> None:
 def test_request_rejects_non_s3_output() -> None:
     with pytest.raises(ValueError, match="S3"):
         OpenArmRunRequest(simulator="mujoco", output_uri="/tmp/output")
+
+
+def test_mujoco_rollout_commands_only_bimanual_actuators(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    names = [
+        *(f"right_joint{index}_ctrl" for index in range(1, 8)),
+        "right_finger1_ctrl",
+        *(f"left_joint{index}_ctrl" for index in range(1, 8)),
+        "left_finger1_ctrl",
+    ]
+    actuator_ids = {name: index + 1 for index, name in enumerate(names)}
+    fake_mujoco = SimpleNamespace(
+        mjtObj=SimpleNamespace(mjOBJ_ACTUATOR=object()),
+        mj_name2id=lambda _model, _kind, name: actuator_ids.get(name, -1),
+        mj_step=lambda _model, data: setattr(data, "time", data.time + 0.001),
+    )
+    monkeypatch.setitem(sys.modules, "mujoco", fake_mujoco)
+    model = SimpleNamespace(
+        actuator_ctrlrange=np.asarray([[-1.0, 1.0]] * 17),
+    )
+    data = SimpleNamespace(
+        ctrl=np.zeros(17, dtype=float),
+        qpos=np.zeros(16, dtype=float),
+        qvel=np.zeros(16, dtype=float),
+        time=0.0,
+    )
+
+    class Resolver:
+        def set_ctrl(self, ctrl, values, segment):
+            selected = range(1, 9) if segment == "right" else range(9, 17)
+            ctrl[list(selected)] = values
+
+        def get_driver(self, _qpos, _segment):
+            return np.zeros(7), 0.0
+
+    commands, _samples, _energies = _step_mujoco(model, data, Resolver(), 3)
+
+    assert np.asarray(commands).shape == (3, 16)
+    assert data.ctrl[0] == 0.0
+    assert np.count_nonzero(data.ctrl[1:]) > 0
 
 
 def test_sdk_service_parity(monkeypatch: pytest.MonkeyPatch) -> None:

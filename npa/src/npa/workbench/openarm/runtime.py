@@ -81,14 +81,38 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def _arm_actuator_indices(model: Any) -> Any:
+    """Resolve the 16 bimanual actuators without commanding the cell lifter."""
+    import mujoco
+    import numpy as np
+
+    names = [
+        *(f"right_joint{index}_ctrl" for index in range(1, 8)),
+        "right_finger1_ctrl",
+        *(f"left_joint{index}_ctrl" for index in range(1, 8)),
+        "left_finger1_ctrl",
+    ]
+    indices = np.asarray(
+        [
+            mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, name)
+            for name in names
+        ],
+        dtype=np.intp,
+    )
+    if np.any(indices < 0):
+        raise OpenArmError("OpenArm bimanual actuator mapping is incomplete")
+    return indices
+
+
 def _sample_targets(model: Any, phase: float) -> Any:
     import numpy as np
 
-    lower = np.asarray(model.actuator_ctrlrange[:, 0], dtype=float)
-    upper = np.asarray(model.actuator_ctrlrange[:, 1], dtype=float)
+    indices = _arm_actuator_indices(model)
+    lower = np.asarray(model.actuator_ctrlrange[indices, 0], dtype=float)
+    upper = np.asarray(model.actuator_ctrlrange[indices, 1], dtype=float)
     center = (lower + upper) / 2.0
     amplitude = np.minimum((upper - lower) * 0.12, 0.18)
-    offsets = np.sin(phase + np.arange(model.nu) * 0.31)
+    offsets = np.sin(phase + np.arange(indices.size) * 0.31)
     return np.clip(center + amplitude * offsets, lower, upper)
 
 
@@ -124,7 +148,8 @@ def _step_mujoco(
     energies: list[float] = []
     for step in range(steps):
         command = _sample_targets(model, step * 0.025)
-        data.ctrl[:] = command
+        resolver.set_ctrl(data.ctrl, command[:8], "right")
+        resolver.set_ctrl(data.ctrl, command[8:], "left")
         mujoco.mj_step(model, data)
         commands.append(command.copy())
         if step % max(1, steps // 100) == 0 or step + 1 == steps:
