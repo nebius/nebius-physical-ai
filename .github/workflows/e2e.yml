@@ -4,6 +4,9 @@
 # the e2e suite still collects and the e2e shell entrypoints still parse.
 name: GPU e2e preflight
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
 
