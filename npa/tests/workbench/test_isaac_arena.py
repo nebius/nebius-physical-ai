@@ -113,7 +113,17 @@ def test_capabilities_are_complete_and_honest() -> None:
             "environment": "gr1_open_microwave",
             "supported_policy_types": ["replay", "rsl_rl"],
             "maximum_trailing_held_action_fraction": 0.25,
-            "visual_interval_strategy": "native_scored_episode",
+            "visual_interval_strategy": "task_progress_with_leading_context",
+            "visual_context_steps": 30,
+            "visual_progress_signal": "monotonic_structural_change",
+            "visual_progress_region": {
+                "name": "microwave_door_workspace",
+                "left": 0.25,
+                "top": 0.3,
+                "right": 0.7,
+                "bottom": 0.95,
+            },
+            "visual_association_radius_fraction": 0.03,
             "signal_names": ["revolute_joint_state"],
             "thresholds": {
                 "final_openness_greater_than": 0.8,
@@ -933,15 +943,32 @@ def test_passive_baseline_success_is_never_task_qualified_video(
         "frame_count": 4,
         "motion": {
             "meaningful": True,
+            "required_progress_overlap": True,
+            "progress_overlapping_frame_pairs": 1,
+            "required_progress_spatial_binding": True,
+            "progress_spatially_bound_frame_pairs": 1,
+            "progress_association_radius_pixels": 5,
             "analysis_interval": {
                 "source": "simulator_ground_truth",
                 "action_steps": {"start": 0, "end": 4, "total": 4},
             },
         },
         "frame_evidence": {
+            "motion_pair": {
+                "source_frame_support": {"start": 0, "end_exclusive": 4},
+                "coherent_blocks": 2,
+                "coherent_block_origins": [
+                    {"row": 40, "column": 40},
+                    {"row": 40, "column": 48},
+                ],
+            },
             "samples": {
-                role: {"decoded_luma_sha256": character * 64}
-                for role, character in zip(
+                role: {
+                    "decoded_luma_sha256": character * 64,
+                    "source_frame_index": frame,
+                    "timestamp_seconds": frame / 15,
+                }
+                for role, character, frame in zip(
                     (
                         "first",
                         "last",
@@ -949,10 +976,62 @@ def test_passive_baseline_success_is_never_task_qualified_video(
                         "motion_current",
                         "motion_continuation",
                     ),
-                    "12345",
+                    "14123",
+                    (0, 3, 0, 1, 2),
                     strict=True,
                 )
-            }
+            },
+        },
+        "progress_change": {
+            "signal": "monotonic_structural_change",
+            "meaningful": True,
+            "decoded_samples": 4,
+            "association_radius_fraction": 0.03,
+            "association_radius_pixels": 5,
+            "trending_pixels": 12,
+            "largest_connected_trending_region_pixels": 8,
+            "largest_connected_region_bounds": {
+                "top": 40,
+                "left": 52,
+                "bottom_exclusive": 44,
+                "right_exclusive": 56,
+            },
+            "task_region": {
+                "name": "microwave_door_workspace",
+                "left": 0.25,
+                "top": 0.3,
+                "right": 0.7,
+                "bottom": 0.95,
+                "sample_bounds": {
+                    "top": 27,
+                    "left": 40,
+                    "bottom_exclusive": 86,
+                    "right_exclusive": 112,
+                },
+            },
+            "thresholds": {
+                "minimum_projected_luma_delta": 6.0,
+                "minimum_linear_r_squared": 0.94,
+                "minimum_connected_pixels": 8,
+            },
+            "analysis_interval": {
+                "source": "simulator_ground_truth",
+                "signal_horizon": "exact_task_progress",
+                "action_steps": {"start": 1, "end": 4, "total": 4},
+                "source_frame_indices": {"start": 0, "end_exclusive": 4},
+            },
+            "frame_evidence": {
+                "first": {
+                    "source_frame_index": 0,
+                    "timestamp_seconds": 0,
+                    "decoded_luma_sha256": "1" * 64,
+                },
+                "last": {
+                    "source_frame_index": 3,
+                    "timestamp_seconds": 3 / 15,
+                    "decoded_luma_sha256": "4" * 64,
+                },
+            },
         },
     },
 )

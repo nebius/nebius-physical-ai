@@ -23,6 +23,10 @@ class TaskProgressAdapter:
     supported_policy_types: tuple[str, ...]
     maximum_trailing_held_action_fraction: float
     visual_interval_strategy: str
+    visual_context_steps: int
+    visual_progress_signal: str
+    visual_progress_region: Mapping[str, Any]
+    visual_association_radius_fraction: float
     signal_names: tuple[str, ...]
     qualifier: ProgressQualifier
     thresholds: Mapping[str, float]
@@ -122,6 +126,20 @@ def task_visual_interval(
 ) -> dict[str, int]:
     """Resolve the adapter-declared visual horizon for one scored episode."""
 
+    keys = ("start_action_step", "end_action_step", "total_action_steps")
+    if (
+        type(total_steps) is not int
+        or total_steps <= 0
+        or any(type(progress_interval.get(key)) is not int for key in keys)
+        or progress_interval["total_action_steps"] != total_steps
+        or not 0
+        <= progress_interval["start_action_step"]
+        < progress_interval["end_action_step"]
+        <= total_steps
+        or type(adapter.visual_context_steps) is not int
+        or adapter.visual_context_steps < 0
+    ):
+        raise IsaacArenaError("task progress adapter has an invalid visual interval")
     if adapter.visual_interval_strategy == "native_scored_episode":
         return {
             "start_action_step": 0,
@@ -130,6 +148,15 @@ def task_visual_interval(
         }
     if adapter.visual_interval_strategy == "task_progress":
         return dict(progress_interval)
+    if adapter.visual_interval_strategy == "task_progress_with_leading_context":
+        return {
+            "start_action_step": max(
+                0,
+                progress_interval["start_action_step"] - adapter.visual_context_steps,
+            ),
+            "end_action_step": progress_interval["end_action_step"],
+            "total_action_steps": total_steps,
+        }
     raise IsaacArenaError(
         "task progress adapter has an invalid visual interval strategy"
     )
@@ -161,7 +188,19 @@ _TASK_PROGRESS_ADAPTERS: Mapping[str, TaskProgressAdapter] = MappingProxyType(
             environment="gr1_open_microwave",
             supported_policy_types=("replay", "rsl_rl"),
             maximum_trailing_held_action_fraction=0.25,
-            visual_interval_strategy="native_scored_episode",
+            visual_interval_strategy="task_progress_with_leading_context",
+            visual_context_steps=30,
+            visual_progress_signal="monotonic_structural_change",
+            visual_progress_region=MappingProxyType(
+                {
+                    "name": "microwave_door_workspace",
+                    "left": 0.25,
+                    "top": 0.3,
+                    "right": 0.7,
+                    "bottom": 0.95,
+                }
+            ),
+            visual_association_radius_fraction=0.03,
             signal_names=("revolute_joint_state",),
             qualifier=_qualify_open_microwave,
             thresholds=MappingProxyType(
@@ -193,6 +232,12 @@ def task_progress_capabilities() -> list[dict[str, Any]]:
                 adapter.maximum_trailing_held_action_fraction
             ),
             "visual_interval_strategy": adapter.visual_interval_strategy,
+            "visual_context_steps": adapter.visual_context_steps,
+            "visual_progress_signal": adapter.visual_progress_signal,
+            "visual_progress_region": dict(adapter.visual_progress_region),
+            "visual_association_radius_fraction": (
+                adapter.visual_association_radius_fraction
+            ),
             "signal_names": list(adapter.signal_names),
             "thresholds": dict(adapter.thresholds),
         }
@@ -231,6 +276,12 @@ def qualify_task_progress(
                         "task progress adapter has an invalid scored horizon"
                     )
                 motion["visual_interval_strategy"] = adapter.visual_interval_strategy
+                motion["visual_context_steps"] = adapter.visual_context_steps
+                motion["visual_progress_signal"] = adapter.visual_progress_signal
+                motion["visual_progress_region"] = dict(adapter.visual_progress_region)
+                motion["visual_association_radius_fraction"] = (
+                    adapter.visual_association_radius_fraction
+                )
                 motion["visual_interval"] = task_visual_interval(
                     adapter, interval, total_steps
                 )

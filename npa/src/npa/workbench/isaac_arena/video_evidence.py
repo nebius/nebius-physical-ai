@@ -20,6 +20,10 @@ _SAMPLE_HEIGHT = 90
 _MEDIAN_WINDOW = 5
 _COMPARISON_LAG = 5
 _MINIMUM_PAIRS = 2
+_MINIMUM_PROGRESS_SAMPLES = 10
+_MINIMUM_PROJECTED_PROGRESS_LUMA_DELTA = 6.0
+_MINIMUM_PROGRESS_LINEAR_R_SQUARED = 0.94
+_MINIMUM_CONNECTED_PROGRESS_PIXELS = 8
 _BLOCK_SIZE = 16
 _BLOCK_STRIDE = 8
 _SEARCH_RADIUS = 8
@@ -63,6 +67,15 @@ def video_acceptance_thresholds() -> dict[str, Any]:
         "tracking_search_radius": _SEARCH_RADIUS,
         "tracking": "brightness-centered patches; adjacent agreeing displacements over three disjoint temporal windows",
         "consecutive_tracking_intervals": 2,
+        "progress_overlap": "at least one accepted coherent-motion track spans the exact simulator progress interval",
+        "progress_signal": "adapter-selected per-pixel linear luma trend within the exact simulator progress interval",
+        "progress_spatial_binding": "largest connected trend must be inside the adapter-declared task region and within its declared radius of an overlapping coherent track",
+        "minimum_progress_samples": _MINIMUM_PROGRESS_SAMPLES,
+        "minimum_projected_progress_luma_delta": (
+            _MINIMUM_PROJECTED_PROGRESS_LUMA_DELTA
+        ),
+        "minimum_progress_linear_r_squared": _MINIMUM_PROGRESS_LINEAR_R_SQUARED,
+        "minimum_connected_progress_pixels": _MINIMUM_CONNECTED_PROGRESS_PIXELS,
         "evidence_filter": EVIDENCE_FILTER,
         "evidence_playback_rate": EVIDENCE_PLAYBACK_RATE,
     }
@@ -176,6 +189,28 @@ def _analysis_interval(
     return metadata
 
 
+def _progress_analysis_interval(
+    frame_count: int, interval: dict[str, int]
+) -> dict[str, Any]:
+    keys = ("start_action_step", "end_action_step", "total_action_steps")
+    if any(type(interval.get(key)) is not int for key in keys):
+        raise IsaacArenaError("invalid simulator-ground-truth progress interval")
+    first, last, total = (interval[key] for key in keys)
+    if not 0 <= first < last <= total or frame_count != total:
+        raise IsaacArenaError("invalid simulator-ground-truth progress interval")
+    start, stop = max(first, 1) - 1, last
+    if stop - start < _MINIMUM_PROGRESS_SAMPLES:
+        raise IsaacArenaError("video progress interval is too short for validation")
+    return {
+        "source": "simulator_ground_truth",
+        "signal_horizon": "exact_task_progress",
+        "action_steps": {"start": first, "end": last, "total": total},
+        "first_video_frame_action_step": 1,
+        "source_frame_indices": {"start": start, "end_exclusive": stop},
+        "decoded_sample_indices": {"start": start, "end_exclusive": stop},
+    }
+
+
 def _decode_interval(path: Path, interval: dict[str, Any]) -> np.ndarray:
     bounds = interval["source_frame_indices"]
     filters = (
@@ -277,7 +312,7 @@ def _persistent_track(
 
 def _coherent_tracks(
     previous: np.ndarray, current: np.ndarray, following: np.ndarray
-) -> int:
+) -> set[tuple[int, int]]:
     tracks = {}
     for row in range(0, _SAMPLE_HEIGHT - _BLOCK_SIZE + 1, _BLOCK_STRIDE):
         for column in range(0, _SAMPLE_WIDTH - _BLOCK_SIZE + 1, _BLOCK_STRIDE):
@@ -290,7 +325,7 @@ def _coherent_tracks(
             other = tracks.get(neighbor)
             if other is not None and math.dist(displacement, other) <= 1.5:
                 coherent.update(((row, column), neighbor))
-    return len(coherent)
+    return coherent
 
 
 def _pair_statistics(
@@ -303,21 +338,46 @@ def _pair_statistics(
     coherent = (
         _coherent_tracks(previous, current, following)
         if mean_delta >= 1 and changed_ratio >= 0.01
-        else 0
+        else set()
     )
     return {
         "previous_sample_index": index,
         "current_sample_index": index + _COMPARISON_LAG,
         "mean_abs_luma_delta": mean_delta,
         "changed_pixel_ratio": changed_ratio,
-        "coherent_blocks": coherent,
+        "coherent_blocks": len(coherent),
+        "coherent_block_origins": [
+            {"row": row, "column": column} for row, column in sorted(coherent)
+        ],
         "continuation_sample_index": index + 2 * _COMPARISON_LAG,
-        "meaningful": mean_delta >= 1 and changed_ratio >= 0.01 and coherent >= 2,
+        "meaningful": (
+            mean_delta >= 1 and changed_ratio >= 0.01 and len(coherent) >= 2
+        ),
     }
 
 
+def _pair_source_support(pair: dict[str, Any], source_offset: int) -> dict[str, int]:
+    return {
+        "start": source_offset + pair["previous_sample_index"],
+        "end_exclusive": source_offset
+        + pair["continuation_sample_index"]
+        + _MEDIAN_WINDOW,
+    }
+
+
+def _intervals_overlap(first: dict[str, int], second: dict[str, int]) -> bool:
+    return (
+        first["start"] < second["end_exclusive"]
+        and second["start"] < first["end_exclusive"]
+    )
+
+
 def _motion_metadata(
-    frames: np.ndarray, interval: dict[str, Any]
+    frames: np.ndarray,
+    interval: dict[str, Any],
+    required_progress_interval: dict[str, Any] | None,
+    required_progress_component: np.ndarray | None,
+    association_radius: int | None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     denoised = _temporal_medians(frames)
     pairs = [
@@ -330,13 +390,49 @@ def _motion_metadata(
             )
         )
     ]
+    source_offset = interval["source_frame_indices"]["start"]
+    for pair in pairs:
+        pair["source_frame_support"] = _pair_source_support(pair, source_offset)
     accepted = [pair for pair in pairs if pair["meaningful"]]
     if len(accepted) < _MINIMUM_PAIRS:
         raise IsaacArenaError(
             "viewport MP4 is decodable but visually static or lacks "
             "noise-resistant coherent scene motion"
         )
-    best = max(accepted, key=lambda pair: pair["coherent_blocks"])
+    overlapping = accepted
+    if required_progress_interval is not None:
+        progress_bounds = required_progress_interval["source_frame_indices"]
+        overlapping = [
+            pair
+            for pair in accepted
+            if _intervals_overlap(pair["source_frame_support"], progress_bounds)
+        ]
+        if not overlapping:
+            raise IsaacArenaError(
+                "noise-resistant coherent scene motion does not overlap native task progress"
+            )
+    spatially_bound = overlapping
+    if required_progress_component is not None:
+        if association_radius is None:
+            raise IsaacArenaError("missing task-progress spatial association radius")
+        spatially_bound = [
+            pair
+            for pair in overlapping
+            if _spatially_associated(
+                pair, required_progress_component, association_radius
+            )
+        ]
+        if not spatially_bound:
+            raise IsaacArenaError(
+                "coherent scene motion is spatially disjoint from task-progress change"
+            )
+    best = max(
+        spatially_bound,
+        key=lambda pair: (
+            pair["coherent_blocks"],
+            pair["continuation_sample_index"],
+        ),
+    )
     return {
         "sample_width": _SAMPLE_WIDTH,
         "sample_height": _SAMPLE_HEIGHT,
@@ -350,10 +446,178 @@ def _motion_metadata(
         ),
         "max_changed_pixel_ratio": max(pair["changed_pixel_ratio"] for pair in pairs),
         "max_coherent_blocks": max(pair["coherent_blocks"] for pair in pairs),
+        "progress_overlapping_frame_pairs": (
+            len(overlapping) if required_progress_interval is not None else None
+        ),
+        "progress_spatially_bound_frame_pairs": (
+            len(spatially_bound) if required_progress_component is not None else None
+        ),
+        "progress_association_radius_pixels": association_radius,
+        "required_progress_overlap": required_progress_interval is not None,
+        "required_progress_spatial_binding": required_progress_component is not None,
         "analysis_interval": interval,
         "thresholds": video_acceptance_thresholds(),
         "meaningful": True,
     }, best
+
+
+def _largest_connected_region(
+    mask: np.ndarray,
+) -> tuple[int, np.ndarray, dict[str, int] | None]:
+    visited = np.zeros(mask.shape, dtype=bool)
+    largest_points: list[tuple[int, int]] = []
+    for row, column in np.argwhere(mask):
+        if visited[row, column]:
+            continue
+        visited[row, column] = True
+        pending = [(int(row), int(column))]
+        points: list[tuple[int, int]] = []
+        while pending:
+            current_row, current_column = pending.pop()
+            points.append((current_row, current_column))
+            for next_row, next_column in (
+                (current_row - 1, current_column),
+                (current_row + 1, current_column),
+                (current_row, current_column - 1),
+                (current_row, current_column + 1),
+            ):
+                if (
+                    0 <= next_row < mask.shape[0]
+                    and 0 <= next_column < mask.shape[1]
+                    and mask[next_row, next_column]
+                    and not visited[next_row, next_column]
+                ):
+                    visited[next_row, next_column] = True
+                    pending.append((next_row, next_column))
+        if len(points) > len(largest_points):
+            largest_points = points
+    component = np.zeros(mask.shape, dtype=bool)
+    if not largest_points:
+        return 0, component, None
+    rows, columns = zip(*largest_points, strict=True)
+    component[rows, columns] = True
+    return (
+        len(largest_points),
+        component,
+        {
+            "top": min(rows),
+            "left": min(columns),
+            "bottom_exclusive": max(rows) + 1,
+            "right_exclusive": max(columns) + 1,
+        },
+    )
+
+
+def _progress_region_bounds(region: dict[str, Any]) -> dict[str, int]:
+    required = {"name", "left", "top", "right", "bottom"}
+    values = [region.get(key) for key in ("left", "top", "right", "bottom")]
+    if (
+        set(region) != required
+        or not isinstance(region.get("name"), str)
+        or not region["name"]
+        or any(
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not math.isfinite(float(value))
+            for value in values
+        )
+        or not 0 <= float(values[0]) < float(values[2]) <= 1
+        or not 0 <= float(values[1]) < float(values[3]) <= 1
+    ):
+        raise IsaacArenaError("invalid adapter-declared task visual region")
+    return {
+        "top": math.floor(float(values[1]) * _SAMPLE_HEIGHT),
+        "left": math.floor(float(values[0]) * _SAMPLE_WIDTH),
+        "bottom_exclusive": math.ceil(float(values[3]) * _SAMPLE_HEIGHT),
+        "right_exclusive": math.ceil(float(values[2]) * _SAMPLE_WIDTH),
+    }
+
+
+def _spatially_associated(
+    pair: dict[str, Any], component: np.ndarray, radius: int
+) -> bool:
+    for origin in pair["coherent_block_origins"]:
+        row, column = origin["row"], origin["column"]
+        top, left = max(0, row - radius), max(0, column - radius)
+        bottom = min(_SAMPLE_HEIGHT, row + _BLOCK_SIZE + radius)
+        right = min(_SAMPLE_WIDTH, column + _BLOCK_SIZE + radius)
+        if np.any(component[top:bottom, left:right]):
+            return True
+    return False
+
+
+def _progress_change_metadata(
+    frames: np.ndarray,
+    interval: dict[str, Any],
+    timestamps: list[float],
+    signal: str,
+    task_region: dict[str, Any],
+) -> tuple[dict[str, Any], np.ndarray]:
+    if signal != "monotonic_structural_change":
+        raise IsaacArenaError("unsupported task-progress visual signal")
+    values = frames.astype(np.float32)
+    values -= np.median(values, axis=(1, 2), keepdims=True)
+    time = np.arange(len(values), dtype=np.float32)
+    centered_time = time - np.mean(time)
+    centered_values = values - np.mean(values, axis=0)
+    covariance = np.sum(
+        centered_time[:, np.newaxis, np.newaxis] * centered_values, axis=0
+    )
+    time_variance = float(np.sum(centered_time**2))
+    value_variance = np.sum(centered_values**2, axis=0)
+    r_squared = np.divide(
+        covariance**2,
+        time_variance * value_variance,
+        out=np.zeros_like(covariance),
+        where=value_variance > 0,
+    )
+    projected_delta = covariance / time_variance * (len(values) - 1)
+    trending = (np.abs(projected_delta) >= _MINIMUM_PROJECTED_PROGRESS_LUMA_DELTA) & (
+        r_squared >= _MINIMUM_PROGRESS_LINEAR_R_SQUARED
+    )
+    region_bounds = _progress_region_bounds(task_region)
+    region_mask = np.zeros(trending.shape, dtype=bool)
+    region_mask[
+        region_bounds["top"] : region_bounds["bottom_exclusive"],
+        region_bounds["left"] : region_bounds["right_exclusive"],
+    ] = True
+    trending &= region_mask
+    largest, largest_component, component_bounds = _largest_connected_region(trending)
+    if largest < _MINIMUM_CONNECTED_PROGRESS_PIXELS:
+        raise IsaacArenaError(
+            "viewport MP4 has no noise-resistant structural change during native task progress"
+        )
+    bounds = interval["source_frame_indices"]
+    first_index, last_index = bounds["start"], bounds["end_exclusive"] - 1
+    return {
+        "signal": signal,
+        "meaningful": True,
+        "analysis_interval": interval,
+        "decoded_samples": len(frames),
+        "brightness_compensation": "per-frame median",
+        "linear_fit": "ordinary least squares over every native progress frame",
+        "trending_pixels": int(np.count_nonzero(trending)),
+        "largest_connected_trending_region_pixels": largest,
+        "task_region": {**task_region, "sample_bounds": region_bounds},
+        "largest_connected_region_bounds": component_bounds,
+        "thresholds": {
+            "minimum_projected_luma_delta": (_MINIMUM_PROJECTED_PROGRESS_LUMA_DELTA),
+            "minimum_linear_r_squared": _MINIMUM_PROGRESS_LINEAR_R_SQUARED,
+            "minimum_connected_pixels": _MINIMUM_CONNECTED_PROGRESS_PIXELS,
+        },
+        "frame_evidence": {
+            "first": {
+                "source_frame_index": first_index,
+                "timestamp_seconds": timestamps[first_index],
+                "decoded_luma_sha256": hashlib.sha256(frames[0].tobytes()).hexdigest(),
+            },
+            "last": {
+                "source_frame_index": last_index,
+                "timestamp_seconds": timestamps[last_index],
+                "decoded_luma_sha256": hashlib.sha256(frames[-1].tobytes()).hexdigest(),
+            },
+        },
+    }, largest_component
 
 
 def _frame_evidence(
@@ -391,7 +655,13 @@ def _frame_evidence(
 
 
 def probe_mp4(
-    path: Path, *, evidence_interval: dict[str, int] | None = None
+    path: Path,
+    *,
+    evidence_interval: dict[str, int] | None = None,
+    progress_interval: dict[str, int] | None = None,
+    progress_signal: str | None = None,
+    progress_region: dict[str, Any] | None = None,
+    progress_association_radius_fraction: float | None = None,
 ) -> dict[str, Any]:
     """Require browser video and geometric motion inside the exact task interval.
 
@@ -404,6 +674,12 @@ def probe_mp4(
         path: Original viewport MP4, with one frame after each simulator action.
         evidence_interval: Inclusive action-step bounds and total action count;
             action one maps to frame zero. None analyzes the complete video.
+        progress_interval: Exact native progress bounds which accepted coherent
+            motion must overlap when task qualification is requested.
+        progress_signal: Adapter-selected structural progress validator.
+        progress_region: Adapter-declared normalized task-object workspace.
+        progress_association_radius_fraction: Maximum normalized image distance
+            between progress structure and an overlapping coherent track.
     Returns:
         Codec metadata, robust motion statistics, and reproducible frame hashes.
     Raises:
@@ -413,10 +689,74 @@ def probe_mp4(
     metadata, timestamps = _video_metadata(path)
     interval = _analysis_interval(metadata["frame_count"], evidence_interval)
     frames = _decode_interval(path, interval)
-    motion, best = _motion_metadata(frames, interval)
+    progress_contract = (
+        progress_interval,
+        progress_signal,
+        progress_region,
+        progress_association_radius_fraction,
+    )
+    if any(value is None for value in progress_contract) and not all(
+        value is None for value in progress_contract
+    ):
+        raise IsaacArenaError("incomplete simulator-ground-truth progress binding")
+    progress_analysis = (
+        _progress_analysis_interval(metadata["frame_count"], progress_interval)
+        if progress_interval is not None
+        else None
+    )
+    if progress_analysis is not None and not (
+        interval["source_frame_indices"]["start"]
+        <= progress_analysis["source_frame_indices"]["start"]
+        < progress_analysis["source_frame_indices"]["end_exclusive"]
+        <= interval["source_frame_indices"]["end_exclusive"]
+    ):
+        raise IsaacArenaError("task progress is outside the visual evidence interval")
+    progress_change = None
+    progress_component = None
+    association_radius = None
+    if progress_analysis is not None:
+        if (
+            not isinstance(progress_signal, str)
+            or not isinstance(progress_region, dict)
+            or not isinstance(progress_association_radius_fraction, (int, float))
+            or isinstance(progress_association_radius_fraction, bool)
+            or not math.isfinite(float(progress_association_radius_fraction))
+            or not 0 < float(progress_association_radius_fraction) <= 0.25
+        ):
+            raise IsaacArenaError("invalid task-progress visual contract")
+        offset = interval["source_frame_indices"]["start"]
+        progress_bounds = progress_analysis["source_frame_indices"]
+        progress_frames = frames[
+            progress_bounds["start"] - offset : progress_bounds["end_exclusive"]
+            - offset
+        ]
+        progress_change, progress_component = _progress_change_metadata(
+            progress_frames,
+            progress_analysis,
+            timestamps,
+            progress_signal,
+            progress_region,
+        )
+        association_radius = math.ceil(
+            max(_SAMPLE_WIDTH, _SAMPLE_HEIGHT)
+            * float(progress_association_radius_fraction)
+        )
+        progress_change["association_radius_fraction"] = float(
+            progress_association_radius_fraction
+        )
+        progress_change["association_radius_pixels"] = association_radius
+    motion, best = _motion_metadata(
+        frames,
+        interval,
+        progress_analysis,
+        progress_component,
+        association_radius,
+    )
     motion["sample_fps"] = (len(timestamps) - 1) / (timestamps[-1] - timestamps[0])
     metadata["motion"] = motion
     metadata["frame_evidence"] = _frame_evidence(frames, interval, timestamps, best)
+    if progress_change is not None:
+        metadata["progress_change"] = progress_change
     return metadata
 
 

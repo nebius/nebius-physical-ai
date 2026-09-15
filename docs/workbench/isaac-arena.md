@@ -186,8 +186,16 @@ MP4 may be shorter when the native task succeeds quickly; its exact action-frame
 count remains mandatory. The labeled FFmpeg-denoised derivative uses declared
 spatiotemporal and low-pass filtering, then plays those same frames at half
 speed without padding or duplication so task motion remains plainly reviewable.
-Acceptance checks temporal-median samples for coherent spatial change and binds
-that interval to the same run's simulator metric trace. A shared fail-closed
+Acceptance checks temporal-median samples for coherent spatial change, requires
+at least one accepted track's full temporal support to overlap native task
+progress, and binds that interval to the same run's simulator metric trace. An
+adapter-selected structural gate additionally requires a connected set of pixels
+inside the declared normalized task-object region to follow a strong linear trend
+across the exact progress interval and lie within the declared image-space radius
+of an overlapping coherent track. Per-frame brightness compensation and a high
+fit threshold reject flicker and stochastic grain; unrelated motion and a
+spatially disjoint brightness ramp fail. Duplicate decoded frame indices must
+also carry identical hashes and timestamps throughout the evidence record. A shared fail-closed
 contract requires one horizon across executed
 actions, the native scored episode, task progress, simulator capture, and video;
 replay steps must be nonzero and must not be synthetically padded or dominated by
@@ -198,11 +206,17 @@ entry supports `gr1_open_microwave` with `replay` or `rsl_rl`: the upstream JSON
 `success_rate > 0`, and HDF5 success flag must agree, the final door openness
 must exceed the upstream threshold of `0.8`, and maximum openness must increase
 at least `0.5` from the initial state. The adapter retains the progress interval
-from the first measured door movement to the first threshold crossing, and
-explicitly selects the full native scored episode as its visual-analysis
-interval. This includes the robot's approach/contact and door progress without
-including a post-terminal reset or invented frames. Capture and action evidence
+from the first measured door movement to the first threshold crossing and
+explicitly expands its visual-analysis interval by up to 30 leading action steps
+for approach/contact context. Coherent motion must overlap progress, and the
+adapter selects monotonic structural change inside a normalized microwave-door
+workspace and requires it to be spatially adjacent to the overlapping track;
+motion elsewhere cannot qualify it. Neither interval includes a post-terminal
+reset or invented frame. Capture and action evidence
 span that same complete native scored episode through its terminal action. The
+normalized workspace is part of the fixed upstream microwave evaluation-camera
+adapter; changing that camera requires a new task registration and live
+qualification rather than silently reusing this evidence contract. The
 result records both intervals, the named progress adapter, and a
 `npa.isaac-arena.visual-acceptance.v1` binding. Other registered scored
 environments remain available for ordinary evaluation; their nonzero-policy

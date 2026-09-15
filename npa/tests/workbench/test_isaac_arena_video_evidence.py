@@ -17,6 +17,14 @@ from npa.workbench.isaac_arena.video_evidence import (
     probe_mp4,
 )
 
+_TASK_REGION = {
+    "name": "microwave_door_workspace",
+    "left": 0.25,
+    "top": 0.3,
+    "right": 0.7,
+    "bottom": 0.95,
+}
+
 
 def _encode(path: Path, frames: np.ndarray, *, rate: int = 15) -> None:
     completed = subprocess.run(
@@ -149,6 +157,59 @@ def test_motion_outside_task_interval_cannot_supply_evidence(tmp_path: Path) -> 
         )
 
 
+def test_coherent_motion_before_progress_cannot_satisfy_overlap(
+    tmp_path: Path,
+) -> None:
+    frames = _scene(45)
+    frames[:20] = _scene(20, moving=True)
+    for index in range(29, 45):
+        frames[index, 100:140, 100:140] += (index - 28) * 3
+    video = tmp_path / "motion-before-progress.mp4"
+    _encode(video, frames)
+    with pytest.raises(IsaacArenaError, match="does not overlap native task progress"):
+        probe_mp4(
+            video,
+            evidence_interval={
+                "start_action_step": 0,
+                "end_action_step": 45,
+                "total_action_steps": 45,
+            },
+            progress_interval={
+                "start_action_step": 30,
+                "end_action_step": 45,
+                "total_action_steps": 45,
+            },
+            progress_signal="monotonic_structural_change",
+            progress_region=_TASK_REGION,
+            progress_association_radius_fraction=0.03,
+        )
+
+
+def test_disjoint_motion_and_progress_ramp_cannot_qualify(tmp_path: Path) -> None:
+    frames = _scene(45, moving=True)
+    for index in range(29, 45):
+        frames[index, 170:210, 200:240] += (index - 28) * 3
+    video = tmp_path / "disjoint-motion-and-progress.mp4"
+    _encode(video, np.clip(frames, 0, 255))
+    with pytest.raises(IsaacArenaError, match="spatially disjoint"):
+        probe_mp4(
+            video,
+            evidence_interval={
+                "start_action_step": 0,
+                "end_action_step": 45,
+                "total_action_steps": 45,
+            },
+            progress_interval={
+                "start_action_step": 30,
+                "end_action_step": 45,
+                "total_action_steps": 45,
+            },
+            progress_signal="monotonic_structural_change",
+            progress_region=_TASK_REGION,
+            progress_association_radius_fraction=0.03,
+        )
+
+
 def test_short_task_interval_is_not_expanded_to_surrounding_motion(
     tmp_path: Path,
 ) -> None:
@@ -276,6 +337,35 @@ def test_large_stochastic_blocks_cannot_masquerade_as_object_tracks(
     _encode(video, _add_noise(_scene(45), "coarse", seed, grain_size))
     with pytest.raises(IsaacArenaError, match="noise-resistant coherent scene motion"):
         probe_mp4(video)
+
+
+@pytest.mark.parametrize("grain_size", [20, 40])
+@pytest.mark.parametrize("seed", [7, 19, 43])
+def test_transformed_large_stochastic_blocks_cannot_qualify(
+    tmp_path: Path,
+    grain_size: int,
+    seed: int,
+) -> None:
+    source = tmp_path / "large-grain-static.mp4"
+    _encode(source, _add_noise(_scene(45), "coarse", seed, grain_size))
+    derivative, _ = denoise_mp4(source)
+    with pytest.raises(IsaacArenaError, match="noise-resistant"):
+        probe_mp4(
+            derivative,
+            evidence_interval={
+                "start_action_step": 0,
+                "end_action_step": 45,
+                "total_action_steps": 45,
+            },
+            progress_interval={
+                "start_action_step": 30,
+                "end_action_step": 45,
+                "total_action_steps": 45,
+            },
+            progress_signal="monotonic_structural_change",
+            progress_region=_TASK_REGION,
+            progress_association_radius_fraction=0.03,
+        )
 
 
 @pytest.mark.parametrize(

@@ -52,7 +52,11 @@ def test_opened_door_requires_real_progress_and_success_in_same_episode(tmp_path
         "end_action_step": 4,
         "total_action_steps": 4,
     }
-    assert motion["visual_interval_strategy"] == "native_scored_episode"
+    assert motion["visual_interval_strategy"] == "task_progress_with_leading_context"
+    assert motion["visual_context_steps"] == 30
+    assert motion["visual_progress_signal"] == "monotonic_structural_change"
+    assert motion["visual_progress_region"]["name"] == "microwave_door_workspace"
+    assert motion["visual_association_radius_fraction"] == 0.03
     assert motion["visual_interval"] == {
         "start_action_step": 0,
         "end_action_step": 4,

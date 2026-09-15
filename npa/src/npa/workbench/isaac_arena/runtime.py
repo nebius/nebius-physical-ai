@@ -695,7 +695,12 @@ def _video_artifacts(
             "video recording was requested but no non-empty MP4 was written"
         )
     result = {}
-    interval = (ground_truth.get("task_motion") or {}).get("visual_interval")
+    task_motion = ground_truth.get("task_motion") or {}
+    interval = task_motion.get("visual_interval")
+    progress_interval = task_motion.get("progress_interval")
+    progress_signal = task_motion.get("visual_progress_signal")
+    progress_region = task_motion.get("visual_progress_region")
+    progress_radius = task_motion.get("visual_association_radius_fraction")
     for source in videos:
         capture = _verify_capture_evidence(
             run_dir,
@@ -706,7 +711,16 @@ def _video_artifacts(
             ),
         )
         video, derivation = video_preparer(source)
-        metadata = _probe_mp4(video, evidence_interval=interval)
+        metadata = _probe_mp4(
+            video,
+            evidence_interval=interval,
+            progress_interval=progress_interval if interval is not None else None,
+            progress_signal=progress_signal if interval is not None else None,
+            progress_region=progress_region if interval is not None else None,
+            progress_association_radius_fraction=(
+                progress_radius if interval is not None else None
+            ),
+        )
         metadata["sha256"] = _sha256(video)
         metadata["derivation"] = derivation
         metadata["binding"] = _video_binding(request, run_dir, evidence, ground_truth)

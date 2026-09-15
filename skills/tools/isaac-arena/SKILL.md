@@ -100,11 +100,21 @@ finite nonzero varied actions, and zero synthetic padding. Replay must match the
 exact prepared private action-sequence prefix through the native terminal, while
 the complete prepared source sequence independently passes held-tail checks.
 Require each task-progress registry entry to declare its visual interval
-strategy. Keep its measured task-progress interval separately; for the microwave
-adapter, analyze the complete native scored episode so approach/contact and door
-progress have enough frames without admitting post-terminal reset or invented
-frames. Capture, actions, and the terminal PNG must span that same complete
-native episode.
+strategy, bounded context, progress visual signal, normalized task-object region,
+and spatial association radius. Keep its measured
+task-progress interval separately; for the microwave adapter, include up to 30
+leading action steps for approach/contact context, require an accepted coherent
+track to overlap native progress, and require connected monotonic structural
+change inside the exact progress interval, microwave workspace, and declared
+distance of that track. Require duplicate source-frame indices across every
+evidence view to retain identical decoded hashes and timestamps. Never let
+motion outside progress, disjoint unrelated motion, or post-transform stochastic
+grain satisfy the shared gate. Do not admit a
+post-terminal reset or invented frames. Capture, actions, and the terminal PNG
+must span that same complete native episode.
+Treat an adapter's normalized task region as fixed-camera semantics. A camera
+change requires a new registration and live qualification; never silently reuse
+the prior region.
 Enforce the adapter's declared maximum trailing-held-action fraction on both
 prepared and executed sequences, using a shared maximum inter-step delta of `1e-6`;
 exact repetition or tiny numerical jitter cannot hide a dominant held final action.
