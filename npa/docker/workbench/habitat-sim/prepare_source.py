@@ -153,6 +153,41 @@ def _verify_required_source_files(
             raise SourceError(f"required source projection file changed: {relative}")
 
 
+def _apply_metadata_patches(root: Path, patches: list[dict[str, object]]) -> None:
+    for patch in patches:
+        relative = PurePosixPath(str(patch["path"]))
+        if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+            raise SourceError("source metadata patch path is unsafe")
+        path = root.joinpath(*relative.parts)
+        if path.is_symlink() or not path.is_file():
+            raise SourceError(f"source metadata patch target is invalid: {relative}")
+        original = path.read_bytes()
+        if (
+            len(original) != patch["upstream_file_bytes"]
+            or hashlib.sha256(original).hexdigest()
+            != patch["upstream_file_sha256"]
+        ):
+            raise SourceError(f"source metadata patch input changed: {relative}")
+        preimage = str(patch["preimage_utf8"]).encode("utf-8")
+        postimage = str(patch["postimage_utf8"]).encode("utf-8")
+        if (
+            not preimage
+            or hashlib.sha256(preimage).hexdigest() != patch["preimage_sha256"]
+            or hashlib.sha256(postimage).hexdigest() != patch["postimage_sha256"]
+        ):
+            raise SourceError(f"source metadata patch bytes changed: {relative}")
+        if patch["expected_match_count"] != 1 or original.count(preimage) != 1:
+            raise SourceError(f"source metadata patch preimage changed: {relative}")
+        patched = original.replace(preimage, postimage)
+        if (
+            len(patched) != patch["patched_file_bytes"]
+            or hashlib.sha256(patched).hexdigest()
+            != patch["patched_file_sha256"]
+        ):
+            raise SourceError(f"source metadata patch result changed: {relative}")
+        path.write_bytes(patched)
+
+
 def _required_pbr_paths(required: list[dict[str, object]]) -> set[PurePosixPath]:
     selected: set[PurePosixPath] = set()
     for item in required:
@@ -299,6 +334,7 @@ def stage(
         parent_archive = _download(source, temp)
         _extract(parent_archive, output, source.get("excluded_archive_links", []))
         _verify_license(output, source)
+        _apply_metadata_patches(output, source["metadata_patches"])
         _verify_required_source_files(output, source["required_projection_files"])
         _prune_parent(output, source["required_projection_files"])
         _verify_required_source_files(output, source["required_projection_files"])

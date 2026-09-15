@@ -2,7 +2,7 @@
   "schema_version": "npa.habitat-sim.source-manifest.v1",
   "expected_projection": {
     "file_count": 8147,
-    "inventory_sha256": "7c623dbc40bb00a000d756df0c931f948e0bc77d46f233deb3a5358bb836fdd0"
+    "inventory_sha256": "014957d05e0d70184d38c25a7a0ba1ef75a5a546ffa7dd84ae136bf412f2a0cb"
   },
   "source": {
     "repository": "https://github.com/facebookresearch/habitat-sim",
@@ -14,6 +14,21 @@
     "license_path": "LICENSE",
     "license_bytes": 1092,
     "license_sha256": "2d4c3d00d67067461412a2d9a2f3f8b7b9cda62b3db501e4b6844ccf35c949aa",
+    "metadata_patches": [
+      {
+        "path": "pyproject.toml",
+        "upstream_file_bytes": 4829,
+        "upstream_file_sha256": "43e4dbeea6f9e5294469471c58da6dba497f496b2b38d7913655728d50a22b08",
+        "preimage_utf8": "    \"pillow==10.4.0\",\n",
+        "preimage_sha256": "fa18a78709845c41b6126d8891ae9242d0f620372b9b5a99c97f79d2889f5792",
+        "postimage_utf8": "    \"pillow==12.3.0\",\n",
+        "postimage_sha256": "4182c99cf1ae8748d641bc94d848f214fc387ac0bbf82d17f11ce8dfa96ab187",
+        "expected_match_count": 1,
+        "patched_file_bytes": 4829,
+        "patched_file_sha256": "e5800094351b07779cafa2e1b65fa504bd1642cc11c904a5af0a2d3e261e437d",
+        "reason": "Accept the security-pinned Pillow 12.3.0 runtime after compatibility verification"
+      }
+    ],
     "required_projection_files": [
       {
         "path": "data/pbr/PbrImages.conf",

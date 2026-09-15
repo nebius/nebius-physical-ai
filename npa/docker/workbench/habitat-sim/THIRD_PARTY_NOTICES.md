@@ -36,3 +36,12 @@ The upstream notice identifies their original records at
 The Habitat-Sim PBR configuration files remain covered by Habitat-Sim's root
 MIT license. These PBR resources are image source/runtime support bytes, not
 the separately licensed Skokloster demo scene, which remains runtime-fetched.
+
+## Downstream packaging metadata modification
+
+NPA changes one dependency declaration in the pinned Habitat-Sim
+`pyproject.toml`: `pillow==10.4.0` becomes `pillow==12.3.0`. This metadata-only
+patch accepts the security-pinned Pillow runtime after compatibility testing;
+it does not change Habitat-Sim runtime code or its MIT license. The source
+manifest binds the complete upstream file, exact preimage and postimage, final
+patched file, and resulting source-projection inventory by SHA-256.
