@@ -18,9 +18,15 @@ import sys
 import tarfile
 
 from npa.guardrails.ncore_attribution import (
-    ATTRIBUTION_LINES,
-    REPOSITORY_PATH,
+    ATTRIBUTION_LINES as NCORE_ATTRIBUTION_LINES,
+    REPOSITORY_PATH as NCORE_REPOSITORY_PATH,
     verify_public_notice,
+)
+from npa.guardrails.robomimic_attribution import (
+    ATTRIBUTION_LINES as ROBOMIMIC_ATTRIBUTION_LINES,
+    LOCK_GIT_BLOB_SHA1 as ROBOMIMIC_LOCK_GIT_BLOB_SHA1,
+    REPOSITORY_PATH as ROBOMIMIC_REPOSITORY_PATH,
+    verify_public_license_lock,
 )
 
 
@@ -225,17 +231,34 @@ def scan_git_diff(
     """Scan a Git diff range and report redacted locations."""
 
     result = subprocess.run(
-        ["git", "diff", "--unified=0", "--no-ext-diff", "--no-textconv", diff_range],
+        [
+            "git",
+            "diff",
+            "--unified=0",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--end-of-options",
+            diff_range,
+        ],
         cwd=repo_root,
         check=True,
         stdout=subprocess.PIPE,
         text=True,
     )
     hits = _scan_git_diff_text(result.stdout, denylist, diff_range=diff_range)
-    if any(hit.repository_path == REPOSITORY_PATH for hit in hits):
-        if not _canonical_diff_matches(repo_root, diff_range):
-            hits = [ScanHit(hit.source, hit.line_number)
-                    if hit.repository_path == REPOSITORY_PATH else hit for hit in hits]
+    canonical_checks = (
+        (NCORE_REPOSITORY_PATH, _canonical_diff_matches),
+        (ROBOMIMIC_REPOSITORY_PATH, _robomimic_diff_matches),
+    )
+    for repository_path, check in canonical_checks:
+        has_candidate = any(hit.repository_path == repository_path for hit in hits)
+        if has_candidate and not check(repo_root, diff_range):
+            hits = [
+                ScanHit(hit.source, hit.line_number)
+                if hit.repository_path == repository_path
+                else hit
+                for hit in hits
+            ]
     return hits
 
 
@@ -243,39 +266,93 @@ def _canonical_diff_matches(repo_root: Path, diff_range: str) -> bool:
     """Bind an eligible diff to the exact canonical post-image Git blob."""
     try:
         notice = _canonical_notice_bytes(repo_root)
-        object_id = subprocess.check_output(
-            ["git", "hash-object", "--stdin"], cwd=repo_root, input=notice).strip()
-        raw = subprocess.check_output(
-            ["git", "diff", "--raw", "--no-abbrev", "--no-renames",
-             "--no-ext-diff", "--no-textconv", "-z", diff_range, "--", REPOSITORY_PATH],
-            cwd=repo_root)
-        fields = raw.split(b"\0")
-        if len(fields) != 3 or fields[1] != REPOSITORY_PATH.encode() or fields[2]:
-            return False
-        header = fields[0].split()
-        return len(header) == 5 and header[1] == b"100644" and header[3] == object_id
+        return _diff_has_post_image(
+            repo_root, diff_range, NCORE_REPOSITORY_PATH, notice
+        )
     except (OSError, ValueError, subprocess.SubprocessError):
         return False
 
 
+def _robomimic_diff_matches(repo_root: Path, diff_range: str) -> bool:
+    """Bind an eligible robomimic diff to its exact canonical Git blob."""
+    try:
+        lock = _canonical_robomimic_lock_bytes(repo_root)
+        return _diff_has_post_image(
+            repo_root, diff_range, ROBOMIMIC_REPOSITORY_PATH, lock
+        )
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+
+
+def _diff_has_post_image(
+    repo_root: Path, diff_range: str, repository_path: str, payload: bytes
+) -> bool:
+    object_id = subprocess.check_output(
+        ["git", "hash-object", "--stdin"], cwd=repo_root, input=payload
+    ).strip()
+    raw = subprocess.check_output(
+        [
+            "git",
+            "diff",
+            "--raw",
+            "--no-abbrev",
+            "--no-renames",
+            "--no-ext-diff",
+            "--no-textconv",
+            "-z",
+            "--end-of-options",
+            diff_range,
+            "--",
+            repository_path,
+        ],
+        cwd=repo_root,
+    )
+    fields = raw.split(b"\0")
+    if len(fields) != 3 or fields[1] != repository_path.encode() or fields[2]:
+        return False
+    header = fields[0].split()
+    return len(header) == 5 and header[1] == b"100644" and header[3] == object_id
+
+
 def _canonical_notice_bytes(repo_root: Path) -> bytes:
     """Return canonical bytes only for the exact regular Git index entry."""
-    notice_path = repo_root / REPOSITORY_PATH
-    details = notice_path.lstat()
+    return _canonical_git_bytes(repo_root, NCORE_REPOSITORY_PATH)
+
+
+def _canonical_robomimic_lock_bytes(repo_root: Path) -> bytes:
+    """Return the exact regular robomimic lock Git index entry."""
+    return _canonical_git_bytes(
+        repo_root,
+        ROBOMIMIC_REPOSITORY_PATH,
+        expected_object_id=ROBOMIMIC_LOCK_GIT_BLOB_SHA1,
+    )
+
+
+def _canonical_git_bytes(
+    repo_root: Path,
+    repository_path: str,
+    *,
+    expected_object_id: str | None = None,
+) -> bytes:
+    """Return bytes only for one exact, unaliased, regular Git entry."""
+    path = repo_root / repository_path
+    details = path.lstat()
     if (
         not stat.S_ISREG(details.st_mode)
-        or notice_path.is_symlink()
+        or path.is_symlink()
         or details.st_nlink != 1
     ):
-        raise ValueError("canonical notice is not an unaliased regular file")
-    notice = notice_path.read_bytes()
+        raise ValueError("canonical attribution is not an unaliased regular file")
+    payload = path.read_bytes()
     object_id = subprocess.run(
         ["git", "hash-object", "--stdin"],
         cwd=repo_root,
         check=True,
-        input=notice,
+        input=payload,
         stdout=subprocess.PIPE,
     ).stdout.strip()
+    if expected_object_id is not None and object_id.decode() != expected_object_id:
+        raise ValueError("canonical attribution Git object mismatch")
     result = subprocess.run(
         ["git", "ls-files", "--stage", "-z"],
         cwd=repo_root,
@@ -283,21 +360,21 @@ def _canonical_notice_bytes(repo_root: Path) -> bytes:
         stdout=subprocess.PIPE,
     )
     records = [record for record in result.stdout.split(b"\0") if record]
-    expected = b"100644 " + object_id + b" 0\t" + REPOSITORY_PATH.encode()
+    expected = b"100644 " + object_id + b" 0\t" + repository_path.encode()
     same_objects = [
         record for record in records
         if record.split(b"\t", 1)[0].split()[1] == object_id
     ]
     if expected not in records or same_objects != [expected]:
-        raise ValueError("canonical notice is not an exact regular Git entry")
-    canonical_target = notice_path.resolve()
+        raise ValueError("canonical attribution is not an exact regular Git entry")
+    canonical_target = path.resolve()
     for record in records:
         if not record.startswith(b"120000 "):
             continue
         candidate = repo_root / record.split(b"\t", 1)[1].decode()
         if candidate.is_symlink() and candidate.resolve() == canonical_target:
-            raise ValueError("canonical notice has a tracked symlink alias")
-    return notice
+            raise ValueError("canonical attribution has a tracked symlink alias")
+    return payload
 
 
 def _ncore_disposition_indexes(
@@ -307,12 +384,30 @@ def _ncore_disposition_indexes(
     candidates = {
         index
         for index, hit in enumerate(hits)
-        if hit.repository_path == REPOSITORY_PATH
-        and hit.line_number in ATTRIBUTION_LINES
+        if hit.repository_path == NCORE_REPOSITORY_PATH
+        and hit.line_number in NCORE_ATTRIBUTION_LINES
     }
     if not candidates:
         return set()
     verify_public_notice(_canonical_notice_bytes(repo_root), proof_directory)
+    return candidates
+
+
+def _robomimic_disposition_indexes(
+    hits: list[ScanHit], repo_root: Path, proof_directory: Path
+) -> set[int]:
+    """Return exact robomimic attribution indexes after official-byte proof."""
+    candidates = {
+        index
+        for index, hit in enumerate(hits)
+        if hit.repository_path == ROBOMIMIC_REPOSITORY_PATH
+        and hit.line_number in ROBOMIMIC_ATTRIBUTION_LINES
+    }
+    if not candidates:
+        return set()
+    verify_public_license_lock(
+        _canonical_robomimic_lock_bytes(repo_root), proof_directory
+    )
     return candidates
 
 
@@ -391,8 +486,8 @@ def main(argv: list[str] | None = None) -> int:
         "--ncore-attribution-proof-directory",
         type=Path,
         help=(
-            "Private caller-owned directory used to verify the exact NCore "
-            "CPython notice against two pinned official archives."
+            "Private caller-owned directory used to verify exact public "
+            "attributions against independently pinned official sources."
         ),
     )
     args = parser.parse_args(argv)
@@ -458,17 +553,27 @@ def main(argv: list[str] | None = None) -> int:
         and args.ncore_attribution_proof_directory is not None
     )
     if hits and may_verify_ncore:
-        try:
-            disposition_indexes = _ncore_disposition_indexes(
-                hits,
-                repo_root,
-                args.ncore_attribution_proof_directory,
-            )
-        except (OSError, ValueError, subprocess.SubprocessError, tarfile.TarError):
-            print(
-                "NCore public-attribution proof could not be verified",
-                file=sys.stderr,
-            )
+        verifiers = (
+            ("NCore", _ncore_disposition_indexes),
+            ("robomimic", _robomimic_disposition_indexes),
+        )
+        for label, verifier in verifiers:
+            try:
+                disposition_indexes |= verifier(
+                    hits,
+                    repo_root,
+                    args.ncore_attribution_proof_directory,
+                )
+            except (
+                OSError,
+                ValueError,
+                subprocess.SubprocessError,
+                tarfile.TarError,
+            ):
+                print(
+                    f"{label} public-attribution proof could not be verified",
+                    file=sys.stderr,
+                )
 
     unresolved = len(hits) - len(disposition_indexes)
     summary = (

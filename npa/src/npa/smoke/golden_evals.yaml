@@ -896,6 +896,33 @@ containers:
       timeout_seconds: 300
       status: ready
 
+  robomimic:
+    image: npa-robomimic
+    dockerfile: npa/docker/workbench/robomimic/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Trains a low-dimensional behavior-cloning policy on official Lift PH
+        demonstrations and reloads it for held-out action inference.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.11.16-slim-bookworm (digest pinned)
+      network: none in the neutral image; dataset fetch is deferred to an authorized gate
+      external_fetch: [operator-prepared-cuda-runtime, official-lift-ph-dataset, s3]
+      notes: >-
+        Quarantined Phase A candidate. The image contains pinned MIT source and
+        non-CUDA dependencies only. The command below proves missing-runtime
+        refusal without writing a cache; it is not the physical-AI capability
+        acceptance. CUDA runtime use and the exact-digest B200 gate remain
+        separately blocked.
+    golden_eval:
+      kind: entrypoint-smoke
+      command: robomimic-entrypoint assert-refusal
+      serverless_gpu: b200
+      gpu: required
+      timeout_seconds: 120
+      status: blocked-on-upstream
+
   wan2-2:
     image: npa-wan2-2
     dockerfile: npa/docker/workbench/wan2-2/Dockerfile

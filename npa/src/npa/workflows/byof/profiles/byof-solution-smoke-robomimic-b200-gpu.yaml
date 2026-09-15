@@ -1,0 +1,435 @@
+# Compute-only robomimic BC smoke: exact one-B200 shape, no simulator/render stack.
+name: byof-solution-smoke-robomimic-b200-gpu
+execution: serial
+---
+name: byof-solution-smoke-robomimic-b200-gpu
+resources:
+  cloud: kubernetes
+  accelerators: B200:1
+  cpus: 8+
+  memory: 32+
+  disk_size: 100
+  image_id: "docker:<your-registry>/<namespace>/npa-robomimic@sha256:<digest>"
+config:
+  kubernetes:
+    pod_config:
+      spec:
+        # The dedicated live gate replaces this inert checked-in name with a
+        # run-scoped ServiceAccount that it creates, verifies, and removes.
+        serviceAccountName: npa-robomimic-observer-placeholder
+        securityContext:
+          fsGroup: 1000
+          fsGroupChangePolicy: OnRootMismatch
+        containers:
+          - name: ray-node
+            volumeMounts:
+              - name: robomimic-runtime
+                mountPath: /opt/npa-runtime/robomimic
+                readOnly: true
+              - name: robomimic-inputs
+                mountPath: /workspace/byof-inputs
+              - name: robomimic-outputs
+                mountPath: /workspace/byof-runs
+        volumes:
+          # The live materializer replaces only this inert name. Population of
+          # this PVC is a separate authorized operator transaction.
+          - name: robomimic-runtime
+            persistentVolumeClaim:
+              claimName: npa-robomimic-runtime-placeholder
+              readOnly: true
+          - name: robomimic-inputs
+            emptyDir: {}
+          - name: robomimic-outputs
+            emptyDir: {}
+envs:
+  NPA_BYOF_RUN_ID: "<your-run-id>"
+  BYOF_REPO_ROOT: "/opt/byof"
+  BYOF_SMOKE_COMMAND: ""
+  BYOF_SOLUTION_NAME: ""
+  BYOF_CAPABILITY_NAME: ""
+  BYOF_SMOKE_ARTIFACT_NAME: ""
+  BYOF_IMAGE: ""
+  NPA_ROBOMIMIC_RUNTIME_ROOT: "/opt/npa-runtime/robomimic"
+  # Exact identity only, never legal acceptance. The authorized live harness
+  # fills the manager-approved digest of inventory.json in its run-local copy.
+  NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256: ""
+  # The authorized live harness materializes this boolean in a run-local copy
+  # only after checking the manager's STRICT-capacity gate. The private
+  # reservation identity stays outside rendered task YAML and repo artifacts.
+  NPA_ROBOMIMIC_STRICT_B200_ATTESTED: ""
+  # The live harness fills these only in its run-local copy. The in-pod smoke
+  # verifies them against the mounted namespace and its observed Pod spec.
+  NPA_ROBOMIMIC_EXPECTED_NAMESPACE: ""
+  NPA_ROBOMIMIC_EXPECTED_SERVICE_ACCOUNT: ""
+  NVIDIA_VISIBLE_DEVICES: "all"
+  NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
+  S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/byof/${NPA_BYOF_RUN_ID}/"
+  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+setup: |
+  set -euo pipefail
+  if [[ ! "${NPA_BYOF_RUN_ID}" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]]; then
+    echo "robomimic run ID is not a safe output slug" >&2
+    exit 64
+  fi
+  test -d "${BYOF_REPO_ROOT}"
+  test -f "${BYOF_REPO_ROOT}/npa_source_metadata.json"
+  test -r "${NPA_ROBOMIMIC_RUNTIME_ROOT}/.ready.json"
+  test -r "${NPA_ROBOMIMIC_RUNTIME_ROOT}/inventory.json"
+  robomimic-entrypoint verify-runtime
+  python3 - <<'PY'
+  import boto3
+  PY
+run: |
+  set -euo pipefail
+  if [[ ! "${NPA_BYOF_RUN_ID}" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]]; then
+    echo "robomimic run ID is not a safe output slug" >&2
+    exit 64
+  fi
+  OUTPUT_DIR="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
+  mkdir -p "${OUTPUT_DIR}"
+  export NPA_SMOKE_OUTPUT_DIR="${OUTPUT_DIR}"
+  cp "${BYOF_REPO_ROOT}/npa_source_metadata.json" "${OUTPUT_DIR}/npa_source_metadata.json"
+  nvidia-smi > "${OUTPUT_DIR}/nvidia_smi.txt" 2>&1
+  nvidia-smi -L > "${OUTPUT_DIR}/nvidia_smi_list.txt" 2>&1
+  SMOKE_EXIT_CODE=0
+  if [ -n "${BYOF_SMOKE_COMMAND}" ]; then
+    set +e
+    (
+      cd "${BYOF_REPO_ROOT}"
+      /bin/bash -lc "${BYOF_SMOKE_COMMAND}"
+    ) > "${OUTPUT_DIR}/solution_smoke_stdout.log" 2> "${OUTPUT_DIR}/solution_smoke_stderr.log"
+    SMOKE_EXIT_CODE=$?
+    set -e
+  fi
+  if [ -n "${BYOF_SMOKE_COMMAND}" ] && [ -n "${BYOF_SMOKE_ARTIFACT_NAME}" ] && [ "${SMOKE_EXIT_CODE}" -eq 0 ]; then
+    test -f "${OUTPUT_DIR}/${BYOF_SMOKE_ARTIFACT_NAME}"
+  fi
+  export SMOKE_EXIT_CODE
+  python3 <<'PY'
+  import json
+  import os
+  import re
+  import stat
+  import tempfile
+  import time
+  from pathlib import Path
+  from urllib.parse import urlparse
+
+  import boto3
+  from botocore.config import Config
+
+  MAX_OUTPUT_FILE_BYTES = 1024 * 1024 * 1024
+  MAX_OUTPUT_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
+  MAX_OUTPUT_ENTRY_COUNT = 1024
+  MAX_OUTPUT_OBJECT_COUNT = 256
+  OUTPUT_READ_CHUNK_BYTES = 1024 * 1024
+  RESERVED_JSON_MAX_BYTES = 4 * 1024 * 1024
+
+
+  class ExactLengthReader:
+      """Expose no more than one opened output file's preflighted byte count."""
+
+      def __init__(self, handle, length):
+          self._handle = handle
+          self._length = length
+          self._position = 0
+
+      def read(self, amount=-1):
+          remaining = self._length - self._position
+          if remaining == 0 or amount == 0:
+              return b""
+          requested = (
+              OUTPUT_READ_CHUNK_BYTES if amount is None or amount < 0 else amount
+          )
+          chunk = self._handle.read(min(requested, remaining, OUTPUT_READ_CHUNK_BYTES))
+          if not chunk:
+              raise RuntimeError("output file shrank during upload")
+          self._position += len(chunk)
+          return chunk
+
+      def seek(self, offset, whence=os.SEEK_SET):
+          if whence == os.SEEK_SET:
+              target = offset
+          elif whence == os.SEEK_CUR:
+              target = self._position + offset
+          elif whence == os.SEEK_END:
+              target = self._length + offset
+          else:
+              raise ValueError("invalid output stream seek mode")
+          if target < 0 or target > self._length:
+              raise OSError("output stream seek exceeds declared length")
+          self._handle.seek(target)
+          self._position = target
+          return target
+
+      def tell(self):
+          return self._position
+
+      def seekable(self):
+          return True
+
+      def readable(self):
+          return True
+
+      def assert_complete_and_unchanged(self):
+          if self._position != self._length:
+              raise RuntimeError("output upload did not consume its declared bytes")
+          if os.fstat(self._handle.fileno()).st_size != self._length:
+              raise RuntimeError("output file size changed during upload")
+          self._handle.seek(self._length)
+          if self._handle.read(1):
+              raise RuntimeError("output file grew during upload")
+
+
+  def read_reserved_json_object(path):
+      """Read one bounded, single-link regular JSON file without following links."""
+
+      nofollow = getattr(os, "O_NOFOLLOW", None)
+      if nofollow is None:
+          raise RuntimeError("reserved JSON verification requires O_NOFOLLOW")
+      try:
+          descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | nofollow)
+      except OSError as exc:
+          raise RuntimeError(f"reserved JSON is not a safe regular file: {path}") from exc
+      with os.fdopen(descriptor, "rb") as handle:
+          opened = os.fstat(handle.fileno())
+          if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+              raise RuntimeError(f"reserved JSON must be one regular file: {path}")
+          if opened.st_size > RESERVED_JSON_MAX_BYTES:
+              raise RuntimeError(f"reserved JSON exceeds its byte limit: {path}")
+          raw = handle.read(opened.st_size + 1)
+          closed = os.fstat(handle.fileno())
+          if (
+              len(raw) != opened.st_size
+              or closed.st_size != opened.st_size
+              or closed.st_dev != opened.st_dev
+              or closed.st_ino != opened.st_ino
+              or closed.st_nlink != 1
+          ):
+              raise RuntimeError(f"reserved JSON changed while being read: {path}")
+      try:
+          value = json.loads(raw)
+      except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+          raise RuntimeError(f"reserved JSON is invalid: {path}") from exc
+      if not isinstance(value, dict):
+          raise RuntimeError(f"reserved JSON must contain an object: {path}")
+      return value
+
+
+  def atomic_write_json_object(path, value):
+      """Publish bounded JSON through a verified temporary regular file."""
+
+      encoded = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
+      if len(encoded) > RESERVED_JSON_MAX_BYTES:
+          raise RuntimeError(f"reserved JSON exceeds its byte limit: {path}")
+      descriptor, temporary_name = tempfile.mkstemp(
+          prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+      )
+      temporary_path = Path(temporary_name)
+      try:
+          with os.fdopen(descriptor, "wb") as handle:
+              opened = os.fstat(handle.fileno())
+              if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+                  raise RuntimeError("reserved JSON temporary is not one regular file")
+              handle.write(encoded)
+              handle.flush()
+              os.fsync(handle.fileno())
+              written = os.fstat(handle.fileno())
+              if (
+                  written.st_dev != opened.st_dev
+                  or written.st_ino != opened.st_ino
+                  or written.st_nlink != 1
+                  or written.st_size != len(encoded)
+              ):
+                  raise RuntimeError("reserved JSON temporary identity changed")
+          staged = temporary_path.lstat()
+          if (
+              not stat.S_ISREG(staged.st_mode)
+              or staged.st_dev != opened.st_dev
+              or staged.st_ino != opened.st_ino
+              or staged.st_nlink != 1
+              or staged.st_size != len(encoded)
+          ):
+              raise RuntimeError("reserved JSON temporary changed before publication")
+          os.replace(temporary_path, path)
+          published = path.lstat()
+          if (
+              not stat.S_ISREG(published.st_mode)
+              or published.st_dev != opened.st_dev
+              or published.st_ino != opened.st_ino
+              or published.st_nlink != 1
+              or published.st_size != len(encoded)
+          ):
+              raise RuntimeError("reserved JSON publication identity changed")
+      finally:
+          try:
+              temporary_path.unlink()
+          except FileNotFoundError:
+              pass
+
+
+  def checked_output_files(root):
+      """Return regular outputs after enforcing per-file and aggregate bounds."""
+
+      checked = []
+      total_bytes = 0
+      entry_count = 0
+      object_count = 0
+      for path in root.rglob("*"):
+          entry_count += 1
+          if entry_count > MAX_OUTPUT_ENTRY_COUNT:
+              raise RuntimeError("outputs exceed the filesystem entry count limit")
+          details = path.lstat()
+          if stat.S_ISLNK(details.st_mode):
+              raise RuntimeError(f"output symlink is forbidden: {path}")
+          if stat.S_ISDIR(details.st_mode):
+              continue
+          if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1:
+              raise RuntimeError(f"output must be one regular unlinked file: {path}")
+          object_count += 1
+          if object_count > MAX_OUTPUT_OBJECT_COUNT:
+              raise RuntimeError("outputs exceed the regular object count limit")
+          try:
+              path.resolve().relative_to(root)
+          except ValueError as exc:
+              raise RuntimeError(f"output path escapes its mounted root: {path}") from exc
+          if path.suffix.lower() in {".hdf5", ".download"}:
+              raise RuntimeError(f"runtime input must not be uploaded as output: {path}")
+          if details.st_size > MAX_OUTPUT_FILE_BYTES:
+              raise RuntimeError(f"output exceeds the per-file byte limit: {path}")
+          total_bytes += details.st_size
+          if total_bytes > MAX_OUTPUT_TOTAL_BYTES:
+              raise RuntimeError("outputs exceed the aggregate byte limit")
+          checked.append((path, details.st_size, details.st_dev, details.st_ino))
+      return checked
+
+
+  def upload_outputs(s3, bucket, prefix, root):
+      """Stream preflighted outputs without overwriting an existing object."""
+
+      checked = checked_output_files(root)
+      for path, size, device, inode in checked:
+          key = prefix + str(path.relative_to(root))
+          flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+          descriptor = os.open(path, flags)
+          with os.fdopen(descriptor, "rb") as handle:
+              opened = os.fstat(handle.fileno())
+              if (
+                  not stat.S_ISREG(opened.st_mode)
+                  or opened.st_nlink != 1
+                  or opened.st_size != size
+                  or opened.st_dev != device
+                  or opened.st_ino != inode
+              ):
+                  raise RuntimeError(f"output identity changed before upload: {path}")
+              body = ExactLengthReader(handle, size)
+              s3.put_object(
+                  Bucket=bucket,
+                  Key=key,
+                  Body=body,
+                  ContentLength=size,
+                  IfNoneMatch="*",
+              )
+              body.assert_complete_and_unchanged()
+      return len(checked)
+
+  run_id = os.environ["NPA_BYOF_RUN_ID"]
+  if re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", run_id) is None:
+      raise RuntimeError("robomimic run ID is not a safe output slug")
+  output_root = Path("/workspace/byof-runs").resolve()
+  root = (output_root / run_id).resolve()
+  if root.parent != output_root:
+      raise RuntimeError("robomimic output directory escapes its mounted root")
+  smoke_exit_code = int(os.environ.get("SMOKE_EXIT_CODE", "0"))
+  smoke_artifact_name = os.environ["BYOF_SMOKE_ARTIFACT_NAME"]
+  smoke_artifact_path = root / smoke_artifact_name
+  try:
+      smoke_artifact_path.lstat()
+  except FileNotFoundError:
+      smoke_artifact = None
+  else:
+      smoke_artifact = read_reserved_json_object(smoke_artifact_path)
+  if smoke_artifact is not None:
+      # Only the wrapper can observe the completed smoke process' return code.
+      smoke_artifact["exit_status"] = smoke_exit_code
+      atomic_write_json_object(smoke_artifact_path, smoke_artifact)
+  metadata = read_reserved_json_object(
+      Path(os.environ["BYOF_REPO_ROOT"]) / "npa_source_metadata.json"
+  )
+  summary = {
+      "status": "success" if smoke_exit_code == 0 else "failed",
+      "tool": "byof",
+      "workload": "solution-smoke-robomimic-b200",
+      "run_id": run_id,
+      "image": os.environ.get("BYOF_IMAGE", ""),
+      "repo_root": os.environ["BYOF_REPO_ROOT"],
+      "metadata": metadata,
+      "solution_name": os.environ.get("BYOF_SOLUTION_NAME", ""),
+      "capability_name": os.environ.get("BYOF_CAPABILITY_NAME", ""),
+      "smoke_artifact_name": smoke_artifact_name,
+      "smoke_exit_code": smoke_exit_code,
+      "created_unix": round(time.time(), 3),
+  }
+  atomic_write_json_object(root / "npa_byof_summary.json", summary)
+  print(json.dumps(summary, indent=2), flush=True)
+
+  output = os.environ["S3_OUTPUT_PREFIX"].rstrip("/") + "/"
+  parsed = urlparse(output)
+  if parsed.scheme != "s3" or not parsed.netloc:
+      raise RuntimeError(f"invalid S3 output prefix: {output!r}")
+  endpoint_candidates = {
+      value.strip()
+      for value in (
+          os.environ.get("AWS_ENDPOINT_URL", ""),
+          os.environ.get("NEBIUS_S3_ENDPOINT", ""),
+      )
+      if value.strip()
+  }
+  if len(endpoint_candidates) != 1:
+      raise RuntimeError("one consistent manager-issued S3 endpoint is required")
+  endpoint = endpoint_candidates.pop()
+  endpoint_parts = urlparse(endpoint)
+  try:
+      endpoint_port = endpoint_parts.port
+  except ValueError as exc:
+      raise RuntimeError("manager-issued S3 endpoint is malformed") from exc
+  endpoint_host = (endpoint_parts.hostname or "").lower()
+  canonical_endpoint = f"https://{endpoint_host}"
+  if (
+      endpoint_parts.scheme != "https"
+      or endpoint_parts.username is not None
+      or endpoint_parts.password is not None
+      or endpoint_port not in {None, 443}
+      or endpoint_parts.path not in {"", "/"}
+      or endpoint_parts.params
+      or endpoint_parts.query
+      or endpoint_parts.fragment
+      or re.fullmatch(r"storage\.[a-z0-9-]+\.nebius\.cloud", endpoint_host) is None
+      or endpoint.rstrip("/") != canonical_endpoint
+  ):
+      raise RuntimeError("refusing S3 credentials for an unapproved endpoint")
+  endpoint = canonical_endpoint
+  client_kwargs = {
+      "endpoint_url": endpoint,
+      "config": Config(s3={"addressing_style": "path"}),
+      "region_name": os.environ.get("AWS_DEFAULT_REGION", "us-central1"),
+  }
+  access_key = (os.environ.get("AWS_ACCESS_KEY_ID") or "").strip()
+  secret_key = (os.environ.get("AWS_SECRET_ACCESS_KEY") or "").strip()
+  session_token = (os.environ.get("AWS_SESSION_TOKEN") or "").strip()
+  if access_key and secret_key:
+      client_kwargs["aws_access_key_id"] = access_key
+      client_kwargs["aws_secret_access_key"] = secret_key
+      if session_token:
+          client_kwargs["aws_session_token"] = session_token
+  s3 = boto3.client("s3", **client_kwargs)
+  prefix = parsed.path.lstrip("/")
+  uploaded = upload_outputs(s3, parsed.netloc, prefix, root)
+  s3.head_object(Bucket=parsed.netloc, Key=prefix + "npa_byof_summary.json")
+  if smoke_exit_code == 0:
+      s3.head_object(Bucket=parsed.netloc, Key=prefix + smoke_artifact_name)
+  print(f"uploaded_file_count={uploaded}", flush=True)
+  PY
+  if [ "${SMOKE_EXIT_CODE}" -ne 0 ]; then
+    exit "${SMOKE_EXIT_CODE}"
+  fi

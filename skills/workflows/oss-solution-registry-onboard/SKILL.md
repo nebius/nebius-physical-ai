@@ -287,6 +287,46 @@ Also exercised in the same smoke (live-accepted with S3 evidence):
 
 Follow-up: full / debug `train.py` once data is staged.
 
+### robomimic (`byof-robomimic.yaml`)
+
+Pinned: `ARISE-Initiative/robomimic`
+`d309eaecc18acf4152a830a895a6984b8ac71b05` · official Lift PH low-dimensional
+dataset revision `robomimic/robomimic_datasets`
+`74fa018461f479cd9fd15b924a16103012096203`.
+
+The Phase A image is a quarantined neutral candidate only: bake the pinned MIT
+source and exact non-CUDA lock, with no torch, NVIDIA/CUDA runtime, weights,
+dataset, populated cache, credential, or output. Consume CUDA/PyTorch only from
+an independently prepared exact-inventory read-only operator mount after an
+authoritative runtime-use decision and separate manager transaction
+authorization. The bootstrap verifies or refuses; it must not fetch, install,
+warm, populate, or accept terms. An environment flag, credential, private
+registry, or runtime fetch never supplies permission.
+
+The hard gate must pass all three solution-specific capabilities on exactly one
+STRICT-reserved B200 (`sm_100`):
+
+- `lift_ph_lowdim_bc_train` — the upstream `scripts/train.py` BC entrypoint must
+  perform nonzero optimizer work and serialize the Adam step state;
+- `lift_ph_lowdim_heldout_validate` — upstream HDF5 train/valid masks must be
+  nonempty and disjoint, and validation must produce a finite loss;
+- `lift_ph_lowdim_checkpoint_reload_action` — reload the exact saved checkpoint
+  with `policy_from_checkpoint` and infer a finite, in-range action from a
+  held-out trajectory.
+
+Require `robomimic-smoke.json`, the immutable source and dataset identities, the
+dataset file hash and trajectory/sample counts, split hashes/counts, losses,
+checkpoint hash, action proof, observed B200 identity, pod-observed image digest,
+and exit status. Dataset inspection, imports, CPU fallback, a mutable image, or a
+zero-step training config fails the gate. CUDA and cuDNN remain governed by the
+NVIDIA CUDA Toolkit EULA and cuDNN Software License Agreement. Those terms have
+no vendor entitlement probe or documented environment acceptance mechanism, so
+do not invent a local consent proxy: require an authorized operator to make the
+legal decision outside the workflow. During Phase A the runner refuses even
+when ordinary target selectors are present. Keep the dependent capability
+private; download the official dataset at runtime only after authorization.
+Defer image-policy sweeps, simulator rollouts, and the full algorithm matrix.
+
 ### Open Dreamer (`byof-open-dreamer.yaml`)
 
 Pinned: `next-state/open-dreamer` `2b10640` · base `ubuntu` + system `python3.11`
