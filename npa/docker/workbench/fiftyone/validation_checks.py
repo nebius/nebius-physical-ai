@@ -258,6 +258,41 @@ def _initial_source() -> dict:
     return {"initial_install_required": True}
 
 
+def _source_receipt_owner() -> dict:
+    owner = (os.geteuid(), os.getegid())
+    _require(owner[0] != 0, "Source setup must use the non-root runtime user")
+    before = _RECEIPT.lstat()
+    _require(
+        stat.S_ISREG(before.st_mode) and _RECEIPT.read_bytes() == b"",
+        "Initial source receipt must be an empty regular file",
+    )
+    # Sticky /tmp can reject shell redirection to a foreign-owned file even at 0666.
+    if (before.st_uid, before.st_gid) != owner:
+        _command(
+            "install-source-receipt-owner",
+            [
+                "sudo",
+                "-n",
+                "chown",
+                "--no-dereference",
+                "--",
+                f"{owner[0]}:{owner[1]}",
+                str(_RECEIPT),
+            ],
+        )
+    after = _RECEIPT.lstat()
+    _require(
+        stat.S_ISREG(after.st_mode)
+        and (before.st_dev, before.st_ino) == (after.st_dev, after.st_ino),
+        "Owned source receipt backing file changed during ownership setup",
+    )
+    _require(
+        (after.st_uid, after.st_gid) == owner and _RECEIPT.read_bytes() == b"",
+        "Initial source receipt ownership or contents differ",
+    )
+    return {"owner_matches_runtime": True, "same_backing_file": True}
+
+
 def _extract_setup() -> dict:
     source = _SOURCE / "src/npa/orchestration/npa_workflow/skypilot_render.py"
     tree = ast.parse(source.read_text())
@@ -527,6 +562,7 @@ def _phase_checks(phase: str) -> list[tuple]:
 def _install_checks() -> list[tuple]:
     return [
         ("initial-source-absence", _initial_source),
+        ("install-source-receipt-owner", _source_receipt_owner),
         (
             "install-before-pip-check",
             lambda: _command(

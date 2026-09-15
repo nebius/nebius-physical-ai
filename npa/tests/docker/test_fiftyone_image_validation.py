@@ -1073,6 +1073,102 @@ def test_checks_select_verified_source_and_empty_receipt(modules, mount_contract
     assert receipt.read_bytes() == b""
 
 
+@pytest.fixture
+def receipt_ownership(modules, tmp_path, monkeypatch):
+    receipt = tmp_path / "npa-src-root"
+    receipt.write_bytes(b"")
+    observed = list(receipt.lstat())
+    observed[4:6] = [1001, 1001]
+    calls = []
+    original = Path.lstat
+
+    def inspect(path, *args, **kwargs):
+        if path == receipt:
+            return os.stat_result(observed)
+        return original(path, *args, **kwargs)
+
+    def chown(name, argv):
+        calls.append((name, argv))
+        observed[4:6] = [1000, 1000]
+        return {"exit_code": 0}
+
+    monkeypatch.setattr(Path, "lstat", inspect)
+    monkeypatch.setattr(modules.checks.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(modules.checks.os, "getegid", lambda: 1000)
+    monkeypatch.setattr(modules.checks, "_RECEIPT", receipt)
+    monkeypatch.setattr(modules.checks, "_command", chown)
+    return receipt, observed, calls
+
+
+@pytest.mark.parametrize("same_owner", [True, False])
+def test_initial_receipt_matches_runtime_owner_before_unchanged_setup(
+    modules, receipt_ownership, same_owner
+):
+    receipt, observed, calls = receipt_ownership
+    if same_owner:
+        observed[4:6] = [1000, 1000]
+    before = receipt.lstat()
+    assert modules.checks._source_receipt_owner() == {
+        "owner_matches_runtime": True,
+        "same_backing_file": True,
+    }
+    assert receipt.read_bytes() == b"" and receipt.lstat().st_ino == before.st_ino
+    expected = [
+        "sudo",
+        "-n",
+        "chown",
+        "--no-dereference",
+        "--",
+        "1000:1000",
+        str(receipt),
+    ]
+    assert calls == ([] if same_owner else [("install-source-receipt-owner", expected)])
+    names = [name for name, _ in modules.checks._install_checks()]
+    assert names.index("initial-source-absence") < names.index(
+        "install-source-receipt-owner"
+    )
+    assert names.index("install-source-receipt-owner") < names.index(
+        "initial-default-npa-setup"
+    )
+
+
+@pytest.mark.parametrize("change", ["owner", "inode", "contents", "chown-failed"])
+def test_receipt_ownership_failure_stops_before_setup(
+    modules, receipt_ownership, monkeypatch, change
+):
+    receipt, observed, _ = receipt_ownership
+
+    def unsuccessful(name, argv):
+        if change == "chown-failed":
+            raise RuntimeError("ownership command exited 1")
+        if change != "owner":
+            observed[4:6] = [1000, 1000]
+        if change == "inode":
+            observed[1] += 1
+        if change == "contents":
+            receipt.write_text("unexpected setup receipt")
+
+    monkeypatch.setattr(modules.checks, "_command", unsuccessful)
+    with pytest.raises(RuntimeError, match="receipt|ownership command"):
+        modules.checks._source_receipt_owner()
+
+
+@pytest.mark.parametrize("change", ["root", "populated", "symlink"])
+def test_receipt_ownership_refuses_ineligible_input_without_chown(
+    modules, receipt_ownership, monkeypatch, change
+):
+    receipt, observed, calls = receipt_ownership
+    if change == "root":
+        monkeypatch.setattr(modules.checks.os, "geteuid", lambda: 0)
+    elif change == "populated":
+        receipt.write_text("already populated")
+    else:
+        observed[0] = 0o120777
+    with pytest.raises(RuntimeError, match="receipt|non-root"):
+        modules.checks._source_receipt_owner()
+    assert calls == []
+
+
 @pytest.mark.parametrize(
     "change",
     [

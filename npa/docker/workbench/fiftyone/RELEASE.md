@@ -82,6 +82,13 @@ NPA source install uses Docker bridge networking, disconnected before the
 post-install phase. Preserve the original exit and private evidence on failure;
 do not push an image whose required checks or cleanup failed.
 
+Before initial setup, the validator assigns only its empty receipt bind mount
+to the image's non-root user through the existing passwordless sudo contract.
+This supports runners whose host UID differs from the image UID: a writable
+foreign-owned file in sticky `/tmp` can still reject shell redirection. The
+validator checks the receipt's identity, ownership and empty contents before
+running the unchanged setup script; it leaves `/tmp` hardening in place.
+
 The driver verifies actual non-root bootstrap behavior, including passwordless
 sudo, writable paths, rsync, SSH start/restart/stop and entrypoint forwarding.
 It checks dependencies and the existing environment and CPU Brain/App smokes

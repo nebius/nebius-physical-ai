@@ -125,7 +125,7 @@ def _private_mounts(commands, container, source, checks, output) -> list[str]:
         pass
     receipt = Path(name)
     # The unpredictable backing file stays beneath the existing private 0700 parent.
-    # A distinct host UID must not prevent the image's default user writing its receipt.
+    # Keep host readback possible after initial setup assigns the runtime user's owner.
     receipt.chmod(0o666)
     info = receipt.stat()
     _write_json(
