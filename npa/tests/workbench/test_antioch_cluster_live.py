@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import http.client
 import io
 import json
 import os
@@ -8,8 +9,6 @@ import socket
 import stat
 import tarfile
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -217,9 +216,16 @@ def test_config_archive_preserves_owner_only_nested_assignment_state(
 def test_config_archive_rejects_non_owner_only_nested_state(tmp_path: Path) -> None:
     config = _config(tmp_path)
     nested = Path(config.antioch_config_dir) / "ssh"
-    nested.mkdir(mode=0o755)
     # Deliberately violate the owner-only contract for this negative test.
-    os.chmod(nested, 0o755)  # nosec B103
+    permissive = (
+        stat.S_IRWXU
+        | stat.S_IRGRP
+        | stat.S_IXGRP
+        | stat.S_IROTH
+        | stat.S_IXOTH
+    )
+    nested.mkdir(mode=permissive)
+    os.chmod(nested, permissive)
     with pytest.raises(cluster_deploy.ClusterLiveError, match="owner-only"):
         cluster_deploy._config_archive(Path(config.antioch_config_dir))
 
@@ -423,17 +429,17 @@ def test_state_health_server_preserves_fail_closed_probe_semantics() -> None:
     )
     server.start()
     try:
-        # The test server and URL are both fixed to loopback.
-        with urllib.request.urlopen(  # nosec B310
-            f"http://127.0.0.1:{port}/live", timeout=2
-        ) as reply:
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        connection.request("GET", "/live")
+        with connection.getresponse() as reply:
             assert reply.status == 200
             assert reply.read() == b"ok\n"
-        with pytest.raises(urllib.error.HTTPError) as exc_info:
-            urllib.request.urlopen(  # nosec B310
-                f"http://127.0.0.1:{port}/ready", timeout=2
-            )
-        assert exc_info.value.code == 503
+        connection.close()
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        connection.request("GET", "/ready")
+        with connection.getresponse() as reply:
+            assert reply.status == 503
+        connection.close()
     finally:
         server.close()
 

@@ -37,7 +37,7 @@ def runtime_harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str
     monkeypatch.delenv("NPA_ANTIOCH_CLI_SHA256", raising=False)
     monkeypatch.setattr(runtime, "ANTIOCH_CLI_SHA256", WHEEL_SHA256)
 
-    def urlopen(url: str):  # noqa: ANN202
+    def open_https(url: str):  # noqa: ANN202
         assert url == runtime.ANTIOCH_CLI_URL
         calls["downloads"] += 1
         return io.BytesIO(WHEEL_BYTES)
@@ -57,7 +57,7 @@ def runtime_harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str
             executable.write_text(body, encoding="utf-8")
             executable.chmod(0o755)
 
-    monkeypatch.setattr(runtime.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(runtime, "_open_https", open_https)
     monkeypatch.setattr(runtime.venv.EnvBuilder, "create", create)
     monkeypatch.setattr(
         runtime.subprocess,
@@ -103,9 +103,7 @@ def test_ensure_runtime_rejects_checksum_mismatch(
     monkeypatch.setenv("NPA_ANTIOCH_RUNTIME_CACHE", str(tmp_path / "cache"))
     monkeypatch.delenv("NPA_ANTIOCH_CLI_SHA256", raising=False)
     monkeypatch.setattr(runtime, "ANTIOCH_CLI_SHA256", "0" * 64)
-    monkeypatch.setattr(
-        runtime.urllib.request, "urlopen", lambda _url: io.BytesIO(WHEEL_BYTES)
-    )
+    monkeypatch.setattr(runtime, "_open_https", lambda _url: io.BytesIO(WHEEL_BYTES))
     with pytest.raises(runtime.AntiochRuntimeError, match="SHA-256"):
         runtime.ensure_runtime()
 
@@ -127,8 +125,8 @@ def test_ensure_runtime_rejects_untrusted_download_urls(
     monkeypatch.setenv("NPA_ANTIOCH_RUNTIME_CACHE", str(tmp_path / "cache"))
     monkeypatch.setenv("NPA_ANTIOCH_CLI_URL", url)
     monkeypatch.setattr(
-        runtime.urllib.request,
-        "urlopen",
+        runtime,
+        "_open_https",
         lambda _url: pytest.fail("invalid URL reached the network boundary"),
     )
     with pytest.raises(runtime.AntiochRuntimeError, match="unsigned HTTPS URL"):
@@ -143,8 +141,8 @@ def test_ensure_runtime_offline_cold_cache_fails_before_network(
     monkeypatch.setenv("NPA_ANTIOCH_RUNTIME_CACHE", str(tmp_path / "cache"))
     monkeypatch.setenv("NPA_ANTIOCH_RUNTIME_OFFLINE", "1")
     monkeypatch.setattr(
-        runtime.urllib.request,
-        "urlopen",
+        runtime,
+        "_open_https",
         lambda _url: pytest.fail("offline mode attempted a download"),
     )
     with pytest.raises(runtime.AntiochRuntimeError, match="offline mode"):
@@ -171,8 +169,8 @@ def test_ensure_runtime_reuses_verified_install_without_download(
 ) -> None:
     first = runtime.ensure_runtime()
     monkeypatch.setattr(
-        runtime.urllib.request,
-        "urlopen",
+        runtime,
+        "_open_https",
         lambda _url: pytest.fail("verified install was downloaded again"),
     )
     second = runtime.ensure_runtime()

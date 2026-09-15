@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import operator
 import ssl
+import tempfile
 import time
 import contextlib
 from collections import Counter
@@ -41,7 +42,7 @@ logger = antioch.Logger(TELEMETRY_ROOT)
 
 # This fixed path is private to the single-run simulation container and points
 # at an atomically replaced, authenticated client bundle.
-CLIENT_ROOT = Path("/tmp/npa-live-client-current")  # nosec B108
+CLIENT_ROOT = Path(tempfile.gettempdir()) / "npa-live-client-current"
 ACTION_SHAPE = (15, 8)
 CONTROL_HZ = 15.0
 CAMERA_SENSOR_TICK_RATE_HZ = CONTROL_HZ

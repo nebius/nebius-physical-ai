@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -128,7 +129,7 @@ def cartpole_offline_policy_episode(
     }
     # Antioch collects artifacts from this engine-container-local scratch path;
     # the container is single-run and the filename is not shared with the host.
-    target = Path("/tmp/npa-antioch-cartpole-episode.npz")  # nosec B108
+    target = Path(tempfile.gettempdir()) / "npa-antioch-cartpole-episode.npz"
     np.savez(
         target,
         observation_state=np.stack(states),

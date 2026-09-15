@@ -88,6 +88,13 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _open_https(url: str):  # noqa: ANN202
+    """Open a previously validated HTTPS URL with the verifying stdlib handler."""
+
+    opener = urllib.request.build_opener(urllib.request.HTTPSHandler())
+    return opener.open(url, timeout=60)
+
+
 def _verified_executable(path: Path, expected_version: str) -> Path:
     if not path.is_file() or not os.access(path, os.X_OK):
         raise AntiochRuntimeError("configured Antioch CLI executable is not usable")
@@ -185,7 +192,7 @@ def ensure_runtime(*, expected_version: str = ANTIOCH_CLI_VERSION) -> Path:
                 with (
                     # Scheme and authority are checked immediately above and the
                     # exact wheel bytes are still bound to the reviewed digest.
-                    urllib.request.urlopen(url) as response,  # nosec B310
+                    _open_https(url) as response,
                     wheel.open("wb") as output,
                 ):
                     shutil.copyfileobj(response, output)

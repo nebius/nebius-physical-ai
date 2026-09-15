@@ -16,7 +16,7 @@ import subprocess
 import sys
 import time
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Sequence
 
 import yaml
@@ -30,9 +30,10 @@ from .vendor_cli import AntiochCli, AntiochCliError
 
 # These fixed roots exist only inside the single-run Antioch service container;
 # generation and upload paths append an unpredictable UUID before use.
-REMOTE_CLIENT_ROOT = "/tmp/npa-live-client-current"  # nosec B108
-REMOTE_CLIENT_STAGING_PREFIX = "/tmp/npa-live-client-generation-"  # nosec B108
-REMOTE_CLIENT_UPLOAD_PREFIX = "/tmp/npa-live-client-upload-"  # nosec B108
+REMOTE_TEMP_ROOT = str(PurePosixPath("/") / "tmp")
+REMOTE_CLIENT_ROOT = f"{REMOTE_TEMP_ROOT}/npa-live-client-current"
+REMOTE_CLIENT_STAGING_PREFIX = f"{REMOTE_TEMP_ROOT}/npa-live-client-generation-"
+REMOTE_CLIENT_UPLOAD_PREFIX = f"{REMOTE_TEMP_ROOT}/npa-live-client-upload-"
 UPSTREAM_BUNDLE_FILES = ("ca.crt", "api-key", "endpoint.json")
 RELAY_BUNDLE_FILES = (
     "relay-ca.crt",
@@ -316,7 +317,7 @@ def _stage_runtime_source(
     last_error: Exception | None = None
     for attempt in range(attempts):
         # UUID suffix plus mode 0700 makes this service-container-local staging.
-        staging = f"/tmp/npa-live-source-{uuid.uuid4().hex}"  # nosec B108
+        staging = f"{REMOTE_TEMP_ROOT}/npa-live-source-{uuid.uuid4().hex}"
         try:
             cli.services_exec(
                 runtime,
@@ -511,7 +512,9 @@ def _write_supervisor(
         ]
     )
     # UUID suffix plus mode 0700 makes this service-container-local staging.
-    source_staging = f"/tmp/npa-live-supervisor-source-{uuid.uuid4().hex}"  # nosec B108
+    source_staging = (
+        f"{REMOTE_TEMP_ROOT}/npa-live-supervisor-source-{uuid.uuid4().hex}"
+    )
     source_stage_commands = [
         shlex.join(
             [

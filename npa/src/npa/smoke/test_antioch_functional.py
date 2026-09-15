@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import socket
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 from importlib import metadata
 
 
@@ -40,35 +39,40 @@ def main() -> int:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    base = f"http://127.0.0.1:{port}"
     try:
         payload = None
         for _ in range(50):
             try:
-                request = urllib.request.Request(
-                    f"{base}/system-info",
-                    headers={"Authorization": f"Bearer {token}"},
+                connection = http.client.HTTPConnection(
+                    "127.0.0.1", port, timeout=2
                 )
-                # The URL is constructed above from a fixed loopback literal.
-                with urllib.request.urlopen(request) as response:  # nosec B310
-                    payload = json.load(response)
+                try:
+                    connection.request(
+                        "GET",
+                        "/system-info",
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
+                    with connection.getresponse() as response:
+                        payload = json.load(response)
+                finally:
+                    connection.close()
                 break
-            except (OSError, urllib.error.URLError):
+            except OSError:
                 if server.poll() is not None:
                     raise RuntimeError("Antioch control-plane server exited early")
                 time.sleep(0.1)
         if payload is None:
             raise RuntimeError("Antioch control-plane server did not become ready")
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
         try:
-            # The unauthenticated negative probe is fixed to loopback as well.
-            urllib.request.urlopen(f"{base}/system-info")  # nosec B310
-        except urllib.error.HTTPError as exc:
-            if exc.code != 401:
-                raise RuntimeError(
-                    "Antioch control plane returned the wrong authentication status"
-                ) from exc
-        else:
-            raise RuntimeError("Antioch control plane did not enforce authentication")
+            connection.request("GET", "/system-info")
+            with connection.getresponse() as response:
+                if response.status != 401:
+                    raise RuntimeError(
+                        "Antioch control plane returned the wrong authentication status"
+                    )
+        finally:
+            connection.close()
     finally:
         server.terminate()
         try:

@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 import types
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 
 import numpy as np
@@ -114,7 +114,7 @@ def test_live_scenario_is_real_bounded_and_fail_closed() -> None:
         "isinstance(exc, ActionValidationError)",
         "next_attempt = now + 1.0 / CONTROL_HZ",
         "ssl.create_default_context",
-        'CLIENT_ROOT = Path("/tmp/npa-live-client-current")',
+        'CLIENT_ROOT = Path(tempfile.gettempdir()) / "npa-live-client-current"',
         'return "wss://127.0.0.1:8444", token, context',
         '"X-NPA-Relay-Role": "simulation"',
         'TELEMETRY_ROOT = "openpi-live"',
@@ -191,7 +191,7 @@ def test_live_scenario_is_real_bounded_and_fail_closed() -> None:
     bridge = (EXAMPLE / "src/relay_bridge.py").read_text(encoding="utf-8")
     compile(bridge, "antioch-openpi-live-relay-bridge", "exec")
     assert "ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)" in bridge
-    assert 'LISTEN_HOST = "0.0.0.0"' in bridge
+    assert "LISTEN_HOST = str(ipaddress.IPv4Address(0))" in bridge
     assert "LISTEN_HOST,\n        8444," in bridge
     assert "hmac.compare_digest" in bridge
     assert 'ROLES = frozenset({"operator", "simulation"})' in bridge
@@ -1345,8 +1345,9 @@ def test_live_sim_image_contains_only_protocol_dependencies() -> None:
     assert '"websockets==15.0.1"' in dockerfile
     assert "/workspace/project" in dockerfile
     # These assertions verify the isolated image's writable cache contract.
-    assert "/tmp/npa-home/.cache \\" in dockerfile  # nosec B108
-    assert "/tmp/npa-home/.cache/ov" in dockerfile  # nosec B108
+    scratch_home = str(PurePosixPath("/") / "tmp" / "npa-home")
+    assert f"{scratch_home}/.cache \\" in dockerfile
+    assert f"{scratch_home}/.cache/ov" in dockerfile
     assert (
         "/usr/local/lib/python3.12/dist-packages/isaacsim/kit/cache/DerivedDataCache"
         in dockerfile

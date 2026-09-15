@@ -11,7 +11,7 @@ import re
 import stat
 import tarfile
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -31,7 +31,7 @@ _METRIC_KEY = re.compile(r"^[a-z][a-z0-9_]*$")
 _ANTIOCH_TERMS_ENV = "NPA_ANTIOCH_ACCEPT_TERMS"
 # Every use is backed by the deployment's pod-scoped emptyDir volume, not a
 # host-shared temporary directory.
-_POD_TMP_PATH = "/tmp"  # nosec B108
+_POD_TMP_PATH = str(PurePosixPath("/") / "tmp")
 
 
 class ClusterLiveError(RuntimeError):

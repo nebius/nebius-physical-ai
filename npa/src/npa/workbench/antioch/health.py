@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import threading
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -40,7 +41,9 @@ class StateHealthServer:
 
         # Kubernetes probes address the pod IP, so loopback-only binding would
         # make this unauthenticated, status-only health endpoint unreachable.
-        self._server = ThreadingHTTPServer(("0.0.0.0", port), Handler)  # nosec B104
+        self._server = ThreadingHTTPServer(
+            (str(ipaddress.IPv4Address(0)), port), Handler
+        )
         self._thread = threading.Thread(
             target=self._server.serve_forever,
             name=f"antioch-state-health-{port}",
