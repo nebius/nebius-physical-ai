@@ -58,7 +58,8 @@ def _check_physics(row: dict, recipe: dict) -> None:
             raise ValueError("Franka capture physics differs from its named condition")
 
 
-def _judge_episode(evaluated: Path, output: Path, index: int, metadata: dict, recipe: dict, client) -> dict:
+def _judge_episode(evaluated: Path, output: Path, index: int, metadata: dict, recipe: dict, client,
+                   previous: Path | None = None) -> dict:
     trajectory = evaluated / "trajectories" / f"episode_{index:06d}"
     row = metadata["episode_results"][index]
     pixels = np.load(trajectory / "rgb.npy", mmap_mode="r", allow_pickle=False)
@@ -69,7 +70,7 @@ def _judge_episode(evaluated: Path, output: Path, index: int, metadata: dict, re
     task = f"Grasp the {target} initially on the table, lift it, and hold it steady. Leave the tray and other parts alone."
     result = judge_manipulation(rgb_path=trajectory / "rgb.npy", output=output / f"episode-{index:06d}",
         task=task, fps=metadata["fps"], frame_count=recipe["visual_eval"]["frame_count"],
-        model=recipe["visual_eval"]["model"], client=client)
+        model=recipe["visual_eval"]["model"], client=client, previous=previous)
     sampled = [frame["index"] for frame in result["frames"]]
     high = geometry[sampled, 2] > recipe["minimum_object_height_m"]
     return {"episode_index": index, **row, "visual": result,
@@ -95,7 +96,8 @@ def summarize_visual(rows: list[dict], recipe: dict) -> dict:
     _validate_judgment_grid(rows, recipe)
     confusion = Counter()
     for row in rows:
-        prediction = row["visual"]["verdict"]["lifted"]["verdict"]
+        verdict = row["visual"]["verdict"]
+        prediction = verdict["lifted"]["verdict"] if verdict is not None else "invalid"
         reference = "positive" if row["reference_lifted"] else "negative"
         confusion[f"{reference}_{prediction}"] += 1
     positive = sum(row["reference_lifted"] for row in rows)
@@ -104,11 +106,12 @@ def summarize_visual(rows: list[dict], recipe: dict) -> dict:
     specificity = confusion["negative_no"] / negative if negative else None
     balanced = (sensitivity + specificity) / 2 if positive and negative else None
     rates = _visual_rates(rows, recipe)
-    audit_passed = balanced is not None and balanced >= recipe["visual_eval"]["minimum_lift_agreement"]
+    invalid = sum(row["visual"]["verdict"] is None for row in rows)
+    audit_passed = not invalid and balanced is not None and balanced >= recipe["visual_eval"]["minimum_lift_agreement"]
     visual_passed = all(row["held_at_end_rate"] >= recipe["minimum_success"]
-                        and row["scene_disturbed_count"] == 0 and row["scene_uncertain_count"] == 0
+                        and row["scene_disturbed_count"] == 0 and row["scene_uncertain_count"] == 0 and row["invalid_count"] == 0
                         for row in rates["trained"].values())
-    return {"episodes": len(rows), "lift_confusion": dict(confusion), "lift_sensitivity": sensitivity,
+    return {"episodes": len(rows), "invalid_responses": invalid, "lift_confusion": dict(confusion), "lift_sensitivity": sensitivity,
             "lift_specificity": specificity, "lift_balanced_accuracy": balanced,
             "outcomes": rates, "visual_audit_passed": audit_passed, "visual_task_passed": visual_passed,
             "quality_role": "Additional gate; cannot override failed simulator success",
@@ -126,6 +129,11 @@ def _validate_judgment_grid(rows: list[dict], recipe: dict) -> None:
         raise ValueError("Franka visual judgments have missing, extra, or duplicate episode coverage")
     for row in rows:
         visual = row["visual"]
+        status = visual.get("status", "valid")
+        if (status not in {"valid", "invalid_response"}
+                or (status == "invalid_response") != (visual["verdict"] is None)
+                or (status == "invalid_response" and not visual.get("validation_error"))):
+            raise ValueError("Franka visual judgment validation status is inconsistent")
         if (visual["model"] != recipe["visual_eval"]["model"] or visual["backend"] != "token_factory"
                 or visual["rubric_sha256"] != recipe["visual_eval"]["rubric_sha256"]
                 or type(row["reference_lifted"]) is not bool):
@@ -138,9 +146,10 @@ def _visual_rates(rows: list[dict], recipe: dict) -> dict:
         rates[arm] = {}
         for condition in recipe["conditions"]:
             selected = [row for row in rows if row["arm"] == arm and row["condition"] == condition]
-            verdicts = [row["visual"]["verdict"] for row in selected]
+            verdicts = [row["visual"]["verdict"] for row in selected if row["visual"]["verdict"] is not None]
             rates[arm][condition] = {
                 "episodes": len(selected),
+                "invalid_count": len(selected) - len(verdicts),
                 "lifted_rate": sum(v["lifted"]["verdict"] == "yes" for v in verdicts) / len(selected),
                 "held_at_end_rate": sum(v["held_at_end"]["verdict"] == "yes" for v in verdicts) / len(selected),
                 "scene_disturbed_count": sum(v["scene_disturbed"]["verdict"] == "yes" for v in verdicts),
@@ -152,28 +161,49 @@ def _visual_rates(rows: list[dict], recipe: dict) -> dict:
     return rates
 
 
-def evaluate_captures(evaluated: Path, output: Path) -> None:
+def _prior_responses(previous: Path | None, evaluated: Path, metadata: dict) -> dict[int, Path]:
+    if previous is None:
+        return {}
+    contract = json.loads((previous / "capture-contract.json").read_text())
+    if contract != {"evaluation_sha256": file_sha256(evaluated / "evaluation.json"),
+                    "capture_sha256": file_sha256(evaluated / "trajectories/meta.json")}:
+        raise ValueError("Prior VLM judgments belong to a different evaluation or capture")
+    recorded = {}
+    for episode in previous.glob("episode-*"):
+        index = int(episode.name.removeprefix("episode-"))
+        if not 0 <= index < metadata["num_episodes"] or index in recorded or not (episode / "response.json").is_file():
+            raise ValueError("Prior VLM judgments contain incomplete or duplicate responses")
+        recorded[index] = episode
+    return recorded
+
+
+def evaluate_captures(evaluated: Path, output: Path, *, previous: Path | None = None) -> None:
     """Run the actual hosted judge for every sealed capture and publish a paired audit.
 
     Args:
         evaluated: Verified evaluation stage with policy captures and physical telemetry.
         output: New visual evaluation artifact directory.
+        previous: Optional checksum-verified interrupted audit with a matching capture contract.
     Returns:
         None.
     Raises:
-        ValueError: Capture lineage, model availability, or a structured visual judgment is invalid.
+        ValueError: Capture lineage, model availability, or prior evidence is invalid.
         TokenFactoryError: Hosted model access or inference fails.
         OSError: Input or output files cannot be accessed.
     """
     _, metadata, recipe = _capture_contract(evaluated)
+    recorded = _prior_responses(previous, evaluated, metadata)
     client = TokenFactoryClient()
     if recipe["visual_eval"]["model"] not in client.list_models():
         raise ValueError("Sealed VLM model is unavailable to the Token Factory credential")
     output.mkdir(parents=True)
+    write_json(output / "capture-contract.json", {
+        "evaluation_sha256": file_sha256(evaluated / "evaluation.json"),
+        "capture_sha256": file_sha256(evaluated / "trajectories/meta.json")})
     rows = []
     order = np.random.default_rng(recipe["capture_seed"]).permutation(metadata["num_episodes"])
     for index in order.tolist():
-        rows.append(_judge_episode(evaluated, output, index, metadata, recipe, client))
+        rows.append(_judge_episode(evaluated, output, index, metadata, recipe, client, recorded.get(index)))
         print(f"Token Factory judged capture {len(rows)}/{len(order)}", flush=True)
     rows.sort(key=lambda row: row["episode_index"])
     report = {"schema": "npa.franka-rl.visual-evaluation.v1", "recipe": recipe,

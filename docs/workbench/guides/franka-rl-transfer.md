@@ -92,10 +92,12 @@ lifecycle. The stage publishes only after all completion records are verified.
 Keep each experiment's prefix and isolated API configuration unchanged while
 it owns jobs. Use a fresh run identity after changing the experimental recipe.
 An explicit `--resume-run "$NPA_RUN_ID"` reuses successful stages after checking
-their durable outputs. After correcting a terminal implementation failure,
-stage a new immutable source snapshot, use a fresh isolated API directory, and
-explicitly enable the next payload retry with `--retries`. Keep the earlier
-source snapshots and attempt history; completed training need not run again.
+their durable outputs. First confirm that the previous driver stopped and
+verify its exact recorded jobs. Preserve the source snapshot, run prefix, and
+isolated API directory so recovery reaches the same controller and job history.
+A terminal payload retry requires explicit `--retries` and retains that history.
+Changing the source requires a separately verified run or a documented migration
+procedure.
 
 ## Protocol and configuration
 
@@ -191,14 +193,28 @@ wrong-object handling, fixture contact, and occlusion.
 
 The parser rejects an unexpected served model, truncated or malformed responses,
 missing events, citations to unsent frames, contradictory tags, and a claimed
-final hold without support from both final frames. It retains sampled JPEGs,
+final hold without a lift and support from both final frames. It retains sampled JPEGs,
 the exact prompt, raw provider response, model ID, rubric hash, request ID, usage,
 latency, and retries. Provider cost is recorded only when returned; otherwise it
 is null. There is no stub or score-override path.
-If a judgment fails, available requests, raw responses, and sampled images are
-published under a unique `visual-failures/` directory beside `visual/`. A failure
-record cannot satisfy the workflow's completion output. Storage failure is
-reported separately without replacing the original evaluation error.
+An invalid model response is recorded as `status: invalid_response`, with a null
+verdict and a validation reason. The audit continues through every episode;
+invalid responses remain in its denominators and close the audit gate. They are
+never replaced with invented `uncertain` judgments or retried until accepted.
+Input, lineage, authentication, transport, and storage errors still fail the stage.
+Available evidence is then published under a unique `visual-failures/` directory;
+a failed stage cannot satisfy a completion output.
+
+For an interrupted audit, the `npa.workflows.franka_rl visual-evaluate` stage
+accepts `--prior-judgments-path` pointing to a checksum-verified prior artifact.
+Its `capture-contract.json` must bind the exact evaluation and capture metadata
+hashes. Every saved request must match the current model, prompt, and sampled
+image hashes, and every saved JPEG is checked before the raw response is
+revalidated. Both valid and invalid first responses are retained. Only missing
+episodes make new hosted requests. Missing historical transport accounting is
+reported as null. After an implementation change, use a separate CPU
+visual-evaluate → report workflow consuming the immutable evaluation and prior
+audit artifacts; retain both source revisions and the original failed run.
 
 The report compares visual lift judgments against synchronized simulator height
 measurements at the exact supplied frame indices. The reference requires the
@@ -206,7 +222,7 @@ object center above 10 cm in at least two supplied frames; an event occurring
 only between samples does not count. This elevation proxy reports sensitivity,
 specificity, uncertainty, and false positives, without claiming grasp detection.
 The predeclared audit gate requires balanced lift agreement of at least 80%, with
-both positive and negative references present; uncertain judgments count against
+both positive and negative references present and zero invalid responses; uncertain judgments count against
 agreement. The visual task gate requires at least 70% observed final holds in
 every trained condition and no observed scene disturbance. Final simulation
 qualification requires **the original strict physics gate and both visual gates**.

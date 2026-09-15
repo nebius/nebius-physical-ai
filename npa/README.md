@@ -70,6 +70,12 @@ chosen specification, prepare its data and resources, submit it, then inspect
 [recovery guide](../docs/workbench/troubleshooting/known-footguns.md) covers
 setup and runtime failures.
 
+The [Franka transfer workflow](../docs/workbench/guides/franka-rl-transfer.md)
+retains invalid hosted visual judgments as failed audit evidence. Its
+`npa.workflows.franka_rl visual-evaluate --prior-judgments-path` option accepts
+a verified interrupted audit so saved responses are revalidated and only missing
+episodes make new requests; omit the option for a fresh audit.
+
 ## Workbench Runtimes
 
 Choose a runtime supported by the selected tool:

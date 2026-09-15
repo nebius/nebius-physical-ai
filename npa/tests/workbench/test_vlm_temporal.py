@@ -80,3 +80,56 @@ def test_real_client_sends_blinded_pixels_and_retains_provider_accounting(tmp_pa
     prompt = json.loads((tmp_path / "judgment/request.json").read_text())["prompt"]
     assert "checkpoint_sha256" not in prompt and "reference_lifted" not in prompt
     assert (tmp_path / "judgment/response.json").is_file()
+
+
+@pytest.mark.parametrize("mutation", ["hold_without_lift", "invalid_json", "empty_choices", "message_null", "choices_scalar"])
+def test_invalid_response_is_retained_and_replayed_without_a_second_request(tmp_path, mutation):
+    response = _response()
+    if mutation == "hold_without_lift":
+        verdict = json.loads(response["choices"][0]["message"]["content"])
+        verdict["lifted"]["verdict"] = "no"
+        response["choices"][0]["message"]["content"] = json.dumps(verdict)
+    elif mutation == "invalid_json":
+        response["choices"][0]["message"]["content"] = "not JSON"
+    elif mutation == "empty_choices":
+        response["choices"] = []
+    elif mutation == "message_null":
+        response["choices"][0]["message"] = None
+    else:
+        response["choices"] = 7
+    calls = []
+
+    def serve(request):
+        calls.append(request)
+        return httpx.Response(200, json=response)
+
+    client = TokenFactoryClient(TokenFactoryConfig("https://example.invalid/v1/", "test-credential"),
+        http_client=httpx.Client(transport=httpx.MockTransport(serve)))
+    source = tmp_path / "rgb.npy"
+    np.save(source, np.zeros((10, 16, 16, 3), dtype=np.uint8))
+    options = dict(rgb_path=source, task="Lift the orange spool", fps=2, frame_count=16, model=MODEL, client=client)
+    first = judge_manipulation(output=tmp_path / "first", **options)
+    assert first["status"] == "invalid_response" and first["verdict"] is None
+    assert first["validation_error"] and first["usage"] == response["usage"]
+    replay = judge_manipulation(output=tmp_path / "replay", previous=tmp_path / "first", **options)
+    assert replay["status"] == "invalid_response" and replay["verdict"] is None
+    assert replay["response_source"] == "replayed" and replay["response_sha256"] == first["response_sha256"]
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("mutation", ["prompt", "frame", "pixels"])
+def test_recorded_judgment_cannot_be_reused_for_changed_input(tmp_path, mutation):
+    client = TokenFactoryClient(TokenFactoryConfig("https://example.invalid/v1/", "test-credential"),
+        http_client=httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=_response()))))
+    source = tmp_path / "rgb.npy"
+    np.save(source, np.zeros((10, 16, 16, 3), dtype=np.uint8))
+    options = dict(rgb_path=source, task="Lift the orange spool", fps=2, frame_count=16, model=MODEL, client=client)
+    judge_manipulation(output=tmp_path / "first", **options)
+    if mutation == "prompt":
+        options["task"] = "Lift the blue bottle"
+    elif mutation == "frame":
+        (tmp_path / "first/frame-000000.jpg").write_bytes(b"changed")
+    else:
+        np.save(source, np.ones((10, 16, 16, 3), dtype=np.uint8) * 255)
+    with pytest.raises(ValueError, match="differs|differ"):
+        judge_manipulation(output=tmp_path / "replay", previous=tmp_path / "first", **options)

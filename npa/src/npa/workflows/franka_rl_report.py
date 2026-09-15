@@ -78,7 +78,10 @@ def _convert_trajectories(source: Path, output: Path, visual: Path | None = None
     if visual is not None:
         audit = json.loads((visual / "visual-evaluation.json").read_text())
         for row in audit["episodes"]:
-            metadata["episode_results"][row["episode_index"]]["visual_judgment"] = row["visual"]["verdict"]
+            visual_result = row["visual"]
+            metadata["episode_results"][row["episode_index"]]["visual_judgment"] = {
+                "status": visual_result.get("status", "valid"), "verdict": visual_result["verdict"],
+                "validation_error": visual_result.get("validation_error")}
     spec = LeRobotFeatureSpec(metadata["state_names"], metadata["action_names"], "franka")
     convert(source, output / "lerobot", fps=round(metadata["fps"]), robot_type="franka",
             task=metadata.get("task_description", "Lift the cube and hold at its commanded goal"), spec=spec)

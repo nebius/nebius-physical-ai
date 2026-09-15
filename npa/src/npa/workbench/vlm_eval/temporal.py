@@ -96,8 +96,12 @@ def _validate_response(response: dict, model: str, frames: list[dict]) -> dict:
     choices = response.get("choices")
     if response.get("model") != model or not isinstance(choices, list) or len(choices) != 1:
         raise ValueError("Temporal VLM response has a substituted model or invalid choice coverage")
+    if not isinstance(choices[0], dict) or not isinstance(choices[0].get("message"), dict):
+        raise ValueError("Temporal VLM response has an invalid message")
     if choices[0].get("finish_reason") != "stop":
         raise ValueError("Temporal VLM response did not finish completely")
+    if not isinstance(choices[0]["message"].get("content"), str):
+        raise ValueError("Temporal VLM response has no textual judgment")
     verdict = ManipulationVerdict.model_validate_json(choices[0]["message"]["content"])
     available = {frame["index"] for frame in frames}
     for event in (verdict.lifted, verdict.held_at_end, verdict.scene_disturbed):
@@ -118,8 +122,55 @@ def _write(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n")
 
 
+def _replay_response(previous: Path, output: Path, request: dict) -> tuple[dict, dict | None]:
+    if json.loads((previous / "request.json").read_text()) != request:
+        raise ValueError("Recorded VLM request differs from the current pixels, prompt, or model")
+    for frame in request["frames"]:
+        if hashlib.sha256((previous / frame["file"]).read_bytes()).hexdigest() != frame["sha256"]:
+            raise ValueError("Recorded VLM frame bytes differ from the supplied image")
+    raw = (previous / "response.json").read_bytes()
+    response = json.loads(raw)
+    if not isinstance(response, dict):
+        raise ValueError("Recorded VLM response must be an object")
+    (output / "response.json").write_bytes(raw)
+    receipt = previous / "verdict.json"
+    transport = json.loads(receipt.read_text()).get("transport") if receipt.is_file() else None
+    return response, transport
+
+
+def _judgment_result(response: dict, model: str, frames: list[dict], transport: dict | None) -> dict:
+    from pydantic import ValidationError
+
+    verdict, error = None, None
+    try:
+        verdict = _validate_response(response, model, frames)
+    except ValidationError as invalid:
+        error = {"type": "schema", "message": "; ".join(item["type"] for item in invalid.errors())}
+    except ValueError as invalid:
+        error = {"type": "evidence_contract", "message": str(invalid)}
+    choices = response.get("choices")
+    finish = choices[0].get("finish_reason") if isinstance(choices, list) and choices and isinstance(choices[0], dict) else None
+    return {"schema": "npa.vlm.manipulation.v1", "backend": "token_factory", "model": model,
+            "rubric_version": RUBRIC_VERSION, "rubric_sha256": hashlib.sha256(RUBRIC.encode()).hexdigest(),
+            "status": "valid" if error is None else "invalid_response", "validation_error": error,
+            "frames": frames, "verdict": verdict, "request_id": response.get("id"),
+            "usage": response.get("usage"), "cost": response.get("cost"), "transport": transport,
+            "finish_reason": finish}
+
+
+def _request_content(rgb_path: Path, output: Path, task: str, fps: float, frame_count: int, model: str) -> tuple[dict, list]:
+    frames, content = _frame_content(rgb_path, output, fps, frame_count)
+    schema = ManipulationVerdict.model_json_schema()
+    schema["$defs"]["VisualEvent"]["properties"]["frames"]["items"]["enum"] = [frame["index"] for frame in frames]
+    prompt = RUBRIC + "\nTask: " + task + "\nJSON schema: " + json.dumps(schema)
+    request = {"model": model, "temperature": 0, "prompt": prompt, "rubric_version": RUBRIC_VERSION, "frames": frames}
+    _write(output / "request.json", request)
+    return request, [{"type": "text", "text": prompt}, *content]
+
+
 def judge_manipulation(*, rgb_path: Path, output: Path, task: str, fps: float,
-                      frame_count: int, model: str, client: TokenFactoryClient) -> dict:
+                      frame_count: int, model: str, client: TokenFactoryClient,
+                      previous: Path | None = None) -> dict:
     """Judge one unlabeled rollout and retain frame, prompt, response, and usage evidence.
 
     Args:
@@ -130,29 +181,25 @@ def judge_manipulation(*, rgb_path: Path, output: Path, task: str, fps: float,
         frame_count: Sealed frame sampling resolution.
         model: Exact Token Factory model ID verified by the caller.
         client: Shared authenticated Token Factory client.
+        previous: Optional prior request/response and JPEG evidence, revalidated without another model call.
     Returns:
-        Validated visual events, provenance, and measured provider accounting.
+        Visual events or an explicit invalid response, provenance, and available provider accounting.
     Raises:
-        ValueError: Input pixels, returned model, structured verdict, or evidence references are invalid.
+        ValueError: Input pixels or recorded request/frame evidence is invalid.
         TokenFactoryError: Hosted inference fails.
         OSError: Evidence cannot be written.
     """
     output.mkdir(parents=True)
-    frames, content = _frame_content(rgb_path, output, fps, frame_count)
-    schema = ManipulationVerdict.model_json_schema()
-    schema["$defs"]["VisualEvent"]["properties"]["frames"]["items"]["enum"] = [frame["index"] for frame in frames]
-    prompt = RUBRIC + "\nTask: " + task + "\nJSON schema: " + json.dumps(schema)
-    _write(output / "request.json", {"model": model, "temperature": 0, "prompt": prompt,
-                                    "rubric_version": RUBRIC_VERSION, "frames": frames})
-    response = client.chat_completion(model=model, temperature=0,
-        messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, *content]}])
-    _write(output / "response.json", response)
-    verdict = _validate_response(response, model, frames)
-    result = {"schema": "npa.vlm.manipulation.v1", "backend": "token_factory", "model": model,
-              "rubric_version": RUBRIC_VERSION, "rubric_sha256": hashlib.sha256(RUBRIC.encode()).hexdigest(),
-              "frames": frames, "verdict": verdict, "request_id": response.get("id"),
-              "usage": response.get("usage"), "cost": response.get("cost"),
-              "transport": client.last_request_metrics,
-              "finish_reason": response["choices"][0]["finish_reason"]}
+    request, content = _request_content(rgb_path, output, task, fps, frame_count, model)
+    if previous is not None:
+        response, transport = _replay_response(previous, output, request)
+    else:
+        response = client.chat_completion(model=model, temperature=0,
+            messages=[{"role": "user", "content": content}])
+        transport = client.last_request_metrics
+        _write(output / "response.json", response)
+    result = _judgment_result(response, model, request["frames"], transport)
+    result["response_source"] = "replayed" if previous is not None else "live"
+    result["response_sha256"] = hashlib.sha256((output / "response.json").read_bytes()).hexdigest()
     _write(output / "verdict.json", result)
     return result

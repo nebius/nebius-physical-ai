@@ -123,7 +123,7 @@ def test_failed_judge_retains_diagnostics_without_success_manifest(tmp_path, mon
     from npa.workflows import franka_rl, franka_rl_vlm
     from npa.workflows.lerobot_transfer_data import materialize
 
-    def fail_judge(prepared, output):
+    def fail_judge(prepared, output, **kwargs):
         episode = output / "episode-000000"
         episode.mkdir(parents=True)
         (episode / "request.json").write_text('{"model":"test"}')
@@ -158,3 +158,121 @@ def test_failure_directory_error_does_not_replace_judge_error(tmp_path, monkeypa
     monkeypatch.setattr(Path, "mkdir", fail_mkdir)
     _publish_stage_failure(tmp_path, str(tmp_path / "visual"), ValueError("invalid judge"))
     assert '"failure_evidence_published": false' in capsys.readouterr().out
+
+
+def test_invalid_judgment_remains_in_denominator_and_closes_both_gates(visual_case):
+    recipe, rows = visual_case
+    rows[-1]["visual"].update(status="invalid_response", verdict=None,
+                              validation_error={"type": "evidence_contract", "message": "Invalid hold"})
+    summary = summarize_visual(rows, recipe)
+    assert summary["episodes"] == 32 and summary["invalid_responses"] == 1
+    assert summary["lift_confusion"]["positive_invalid"] == 1
+    assert summary["lift_sensitivity"] == 15 / 16
+    condition = summary["outcomes"]["trained"][rows[-1]["condition"]]
+    assert condition["episodes"] == 4 and condition["invalid_count"] == 1
+    assert condition["held_at_end_rate"] == 3 / 4
+    assert not summary["visual_audit_passed"] and not summary["visual_task_passed"]
+
+
+def test_visual_stage_continues_after_invalid_response_and_reports_failed_gate(tmp_path, monkeypatch, visual_case):
+    import json
+    from npa.workflows import franka_rl_vlm, franka_rl_report
+    from npa.workflows.lerobot_transfer_data import file_sha256
+
+    recipe, rows = visual_case
+    rows[0]["visual"].update(status="invalid_response", verdict=None,
+                             validation_error={"type": "evidence_contract", "message": "Invalid hold"})
+    (tmp_path / "trajectories").mkdir()
+    (tmp_path / "evaluation.json").write_text("{}")
+    (tmp_path / "trajectories/meta.json").write_text("{}")
+    recipe["capture_seed"] = 123
+    metadata = {"num_episodes": len(rows)}
+    monkeypatch.setattr(franka_rl_vlm, "_capture_contract", lambda path: ({}, metadata, recipe))
+    monkeypatch.setattr(franka_rl_vlm, "TokenFactoryClient", lambda: SimpleNamespace(list_models=lambda: [recipe["visual_eval"]["model"]]))
+    seen = []
+
+    def judge(evaluated, output, index, metadata, recipe, client, previous):
+        seen.append(index)
+        return dict(rows[index], episode_index=index)
+
+    monkeypatch.setattr(franka_rl_vlm, "_judge_episode", judge)
+    visual = tmp_path / "visual"
+    franka_rl_vlm.evaluate_captures(tmp_path, visual)
+    assert sorted(seen) == list(range(32))
+    audit = json.loads((visual / "visual-evaluation.json").read_text())
+    assert audit["summary"]["invalid_responses"] == 1
+    report = {"recipe": recipe, "simulation_qualified": True}
+    output = tmp_path / "report"
+    output.mkdir()
+    franka_rl_report._attach_visual(report, tmp_path, visual, output)
+    assert report["physics_qualified"] and not report["simulation_qualified"]
+    assert report["visual_evaluation_sha256"] == file_sha256(visual / "visual-evaluation.json")
+
+
+def test_replay_requires_exact_capture_contract(tmp_path):
+    import json
+    from npa.workflows.franka_rl_vlm import _prior_responses
+
+    previous = tmp_path / "previous"
+    previous.mkdir()
+    (previous / "capture-contract.json").write_text(json.dumps({"evaluation_sha256": "wrong", "capture_sha256": "wrong"}))
+    (tmp_path / "evaluation.json").write_text("{}")
+    (tmp_path / "trajectories").mkdir()
+    (tmp_path / "trajectories/meta.json").write_text("{}")
+    with pytest.raises(ValueError, match="different evaluation or capture"):
+        _prior_responses(previous, tmp_path, {"num_episodes": 32})
+
+
+def _recovery_inputs(tmp_path, recipe, rows):
+    import json
+    from npa.workflows.lerobot_transfer_data import file_sha256
+
+    recipe["assets"] = {"description": "orange spool"}
+    recipe["visual_eval"]["frame_count"] = 16
+    metadata = {"num_episodes": len(rows), "episode_results": [], "fps": 2}
+    for index, row in enumerate(rows):
+        trajectory = tmp_path / "trajectories" / f"episode_{index:06d}"
+        trajectory.mkdir(parents=True)
+        np.save(trajectory / "rgb.npy", np.zeros((10, 16, 16, 3), dtype=np.uint8))
+        geometry = np.zeros((10, 3))
+        geometry[:, 2] = 0.2 if row["arm"] == "trained" else 0
+        np.save(trajectory / "object_metrics.npy", geometry)
+        metadata["episode_results"].append({key: row[key] for key in ("arm", "condition", "capture_index")} | {"length": 10})
+    (tmp_path / "evaluation.json").write_text(json.dumps({"recipe": recipe}))
+    (tmp_path / "trajectories/meta.json").write_text(json.dumps(metadata))
+    contract = {"evaluation_sha256": file_sha256(tmp_path / "evaluation.json"),
+                "capture_sha256": file_sha256(tmp_path / "trajectories/meta.json")}
+    return metadata, contract
+
+
+def test_recovery_replays_all_first_responses_and_requests_only_missing_episodes(tmp_path, monkeypatch, visual_case):
+    import json
+    from npa.workflows import franka_rl_vlm
+
+    recipe, rows = visual_case
+    metadata, contract = _recovery_inputs(tmp_path, recipe, rows)
+    calls = []
+    invalid_response = {"model": recipe["visual_eval"]["model"], "id": "fixture-response", "choices": []}
+    def complete(**kwargs):
+        calls.append(kwargs)
+        return invalid_response
+    client = SimpleNamespace(list_models=lambda: [recipe["visual_eval"]["model"]],
+                             chat_completion=complete, last_request_metrics={"attempts": 1})
+    monkeypatch.setattr(franka_rl_vlm, "TokenFactoryClient", lambda: client)
+    monkeypatch.setattr(franka_rl_vlm, "_capture_contract", lambda path: ({}, metadata, recipe))
+    previous = tmp_path / "previous"
+    previous.mkdir()
+    (previous / "capture-contract.json").write_text(json.dumps(contract))
+    for index in range(22):
+        franka_rl_vlm._judge_episode(tmp_path, previous, index, metadata, recipe, client)
+    (previous / "episode-000021/verdict.json").unlink()
+    assert len(calls) == 22
+    output = tmp_path / "output"
+    franka_rl_vlm.evaluate_captures(tmp_path, output, previous=previous)
+    audit = json.loads((output / "visual-evaluation.json").read_text())
+    assert len(calls) == 32 and audit["summary"]["invalid_responses"] == 32
+    assert [row["visual"]["response_source"] for row in audit["episodes"]] == ["replayed"] * 22 + ["live"] * 10
+    assert audit["episodes"][21]["visual"]["transport"] is None
+    for index in range(22):
+        name = f"episode-{index:06d}/response.json"
+        assert (previous / name).read_bytes() == (output / name).read_bytes()

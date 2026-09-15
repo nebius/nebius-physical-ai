@@ -32,6 +32,8 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("--output-path", required=True)
         if stage == "report":
             command.add_argument("--vlm-path", required=True)
+        if stage == "visual-evaluate":
+            command.add_argument("--prior-judgments-path")
     prepare.add_argument("--output-path", required=True)
     return parser
 
@@ -144,7 +146,8 @@ def _run_stage_payload(args, prepared: Path, output: Path, workspace: Path) -> N
     elif args.stage == "visual-evaluate":
         from npa.workflows.franka_rl_vlm import evaluate_captures
 
-        evaluate_captures(prepared, output)
+        previous = materialize(args.prior_judgments_path, workspace / "previous") if args.prior_judgments_path else None
+        evaluate_captures(prepared, output, previous=previous)
     else:
         _run_native(args.stage, prepared, output)
 
