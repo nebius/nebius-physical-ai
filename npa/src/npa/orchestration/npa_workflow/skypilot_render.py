@@ -2298,6 +2298,20 @@ def render_skypilot_steps_yaml(
     )
 
 
+def _record_parallel_name(task_name: str, seen: set[str], workflow: str) -> None:
+    if re.fullmatch(r"[A-Za-z0-9_-]+", task_name) is None:
+        raise NpaWorkflowRenderError(
+            f"SkyPilot parallel task name {task_name!r} in workflow {workflow!r} "
+            "must contain only ASCII letters, digits, hyphens, and underscores"
+        )
+    if task_name in seen:
+        raise NpaWorkflowRenderError(
+            f"duplicate SkyPilot task name {task_name!r} in parallel group "
+            f"of workflow {workflow!r}"
+        )
+    seen.add(task_name)
+
+
 def _render_docs(
     spec: NpaWorkflowSpec,
     steps: Sequence[PlanStep],
@@ -2320,12 +2334,7 @@ def _render_docs(
         # body re-runs the same state), so only JobGroups — whose tasks run at the
         # same time on distinct clusters — require unique names.
         if execution == "parallel":
-            if task_name in seen:
-                raise NpaWorkflowRenderError(
-                    f"duplicate SkyPilot task name {task_name!r} in parallel group "
-                    f"of workflow {spec.name!r}"
-                )
-            seen.add(task_name)
+            _record_parallel_name(task_name, seen, spec.name)
         docs.append(doc)
 
     chunks: list[str] = []

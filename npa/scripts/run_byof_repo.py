@@ -342,6 +342,7 @@ def _dockerfile_text() -> str:
         "  && echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \\\n"
         "  && chmod 440 /etc/sudoers.d/ubuntu\n"
         "RUN mkdir -p /workspace && chown ubuntu:ubuntu /workspace\n"
+        "WORKDIR /workspace\n"
         "RUN --mount=type=secret,id=npa_byof_repo_token \\\n"
         "    --mount=type=secret,id=npa_byof_repo_url \\\n"
         "    --mount=type=secret,id=npa_byof_repo_ref \\\n"
@@ -384,6 +385,10 @@ def _dockerfile_text() -> str:
         f'    "$build_command_executed" "$build_command_sha256" > {BYOF_REPO_MOUNT}/npa_build_metadata.json\n'
         f"RUN chown ubuntu:ubuntu {BYOF_REPO_MOUNT}/npa_source_metadata.json {BYOF_REPO_MOUNT}/npa_build_metadata.json\n"
         'LABEL npa.byof.repo="${BYOF_SOURCE_LABEL_REPO}" npa.byof.ref="${BYOF_SOURCE_LABEL_REF}" '
+        'npa.tool="byof" npa.source.repo="${BYOF_SOURCE_LABEL_REPO}" '
+        'npa.source.ref="${BYOF_SOURCE_LABEL_REF}" '
+        'org.opencontainers.image.source="${BYOF_SOURCE_LABEL_REPO}" '
+        'org.opencontainers.image.revision="${BYOF_SOURCE_LABEL_REF}" '
         'npa.packaging.tier="interactive" '
         'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"\n'
         "USER ubuntu\n"

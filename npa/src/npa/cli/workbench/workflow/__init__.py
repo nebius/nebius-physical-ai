@@ -1777,6 +1777,7 @@ def submit_cmd(
                 project=project,
                 run_id=resolved_run_id,
                 force=stage_src is True,
+                persist=not runtime,
             )
             if not staged_uri:
                 return
@@ -3701,8 +3702,13 @@ def _stage_npa_src_for_submit(
     project: str = "",
     run_id: str = "workflow",
     force: bool = False,
+    persist: bool = True,
 ) -> str:
-    """Upload once, then durably record the exact ``NPA_SRC_S3_URI``."""
+    """Upload source, optionally updating the project-level source setting.
+
+    Runtime submissions bind the returned URI into their durable run record.
+    They must not rewrite the configuration used to identify an active daemon.
+    """
     from npa.clients.config import ConfigError, persist_workflow_src_s3_uri
     from npa.orchestration.npa_workflow.src_staging import (
         SrcStagingError,
@@ -3727,10 +3733,11 @@ def _stage_npa_src_for_submit(
             on_status=lambda message: typer.echo(f"  {message}", err=True),
             force=force,
         )
-        # This project-level cache is content-addressed and safe to update before
-        # the run exists.  Do not create a run submission ledger here: upload
-        # failure must leave no evidence that a managed job was reserved.
-        persist_workflow_src_s3_uri(uri, project or None)
+        # The isolated daemon verifies configuration bytes as part of its
+        # credential identity. Runtime source refreshes are run-scoped; changing
+        # this setting would invalidate an otherwise healthy owned controller.
+        if persist:
+            persist_workflow_src_s3_uri(uri, project or None)
         return uri
     except (ConfigError, SrcStagingError) as exc:
         _fail(str(exc))

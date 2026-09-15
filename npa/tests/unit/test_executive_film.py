@@ -66,6 +66,48 @@ def test_changed_asset_is_rejected_before_media_probe(film, tmp_path, monkeypatc
         film._validate(story, assets)
 
 
+@pytest.mark.parametrize("second_role", ["source", "alternate"])
+def test_unique_sources_rejects_reused_bytes_even_with_another_name_or_trim(
+    film, tmp_path, monkeypatch, second_role
+):
+    original = tmp_path / "source.mp4"
+    original.write_bytes(b"the same approved source")
+    alternate = tmp_path / "different-name.mp4"
+    shutil.copy2(original, alternate)
+    digest = hashlib.sha256(original.read_bytes()).hexdigest()
+    assets = {
+        "source": {"path": str(original), "kind": "video", "sha256": digest,
+                   "trim": [0, 2]},
+        "alternate": {"path": str(alternate), "kind": "video", "sha256": digest,
+                      "trim": [4, 6]},
+    }
+    story = {"unique_sources": True, "scenes": [
+        {"id": "opening", "duration": 2, "assets": ["source"]},
+        {"id": "closing", "duration": 2, "assets": [second_role]},
+    ]}
+    monkeypatch.setattr(film, "_probe", lambda path: pytest.fail("reject before probing"))
+    with pytest.raises(ValueError, match="Repeated source media: opening/source and closing/"):
+        film._validate(story, assets)
+
+
+@pytest.mark.parametrize("enabled", [None, False, True])
+def test_unique_source_policy_preserves_optional_comparison_workflows(film, enabled):
+    story = {} if enabled is None else {"unique_sources": enabled}
+    assets = {"first": {"sha256": "a" * 64}, "second": {"sha256": "b" * 64}}
+    scenes = [(0, {"id": "opening", "assets": ["first"]}),
+              (1, {"id": "closing", "assets": ["second"]})]
+    film._validate_unique_sources(story, assets, scenes)
+    if not enabled:
+        assets["second"]["sha256"] = assets["first"]["sha256"]
+        film._validate_unique_sources(story, assets, scenes)
+
+
+@pytest.mark.parametrize("enabled", ["true", 1, None])
+def test_unique_source_policy_rejects_non_boolean_values(film, enabled):
+    with pytest.raises(ValueError, match="unique_sources must be a boolean"):
+        film._validate_unique_sources({"unique_sources": enabled}, {}, [])
+
+
 def test_relative_assets_are_resolved_against_manifest_location(film, tmp_path, monkeypatch):
     package = tmp_path / "delivery"
     package.mkdir()

@@ -67,6 +67,8 @@ def _load_assets(path):
 
 def _validate_storyboard(storyboard):
     _validate_duration(storyboard)
+    if type(storyboard.get("unique_sources", False)) is not bool:
+        raise ValueError("Storyboard unique_sources must be a boolean")
     identifiers = [scene["id"] for scene in storyboard["scenes"]]
     if len(set(identifiers)) != len(identifiers) or any(
         re.fullmatch(r"[a-z0-9][a-z0-9_-]*", name) is None for name in identifiers
@@ -133,6 +135,7 @@ def _validate(storyboard, assets, scene_id=None):
     required = {role for _, scene in selected for role in scene["assets"]}
     if required - assets.keys():
         raise ValueError(f"Missing asset roles: {sorted(required - assets.keys())}")
+    _validate_unique_sources(storyboard, assets, selected)
     for role in sorted(required):
         asset = assets[role]
         path = Path(asset["path"]).expanduser().resolve(strict=True)
@@ -158,6 +161,26 @@ def _validate(storyboard, assets, scene_id=None):
         _validate_trim(asset, probe, role)
         asset["path"] = str(path)
     return required
+
+
+def _validate_unique_sources(storyboard, assets, selected):
+    enabled = storyboard.get("unique_sources", False)
+    if type(enabled) is not bool:
+        raise ValueError("Storyboard unique_sources must be a boolean")
+    if not enabled:
+        return
+    seen = {}
+    for _, scene in selected:
+        for role in scene["assets"]:
+            digest = assets[role]["sha256"]
+            if digest in seen:
+                previous_scene, previous_role = seen[digest]
+                raise ValueError(
+                    f"Repeated source media: {previous_scene}/{previous_role} and "
+                    f"{scene.get('id', 'unnamed')}/{role}. unique_sources requires "
+                    "different source bytes, including when trims or filenames differ."
+                )
+            seen[digest] = (scene.get("id", "unnamed"), role)
 
 
 def _validate_trim(asset, probe, role):

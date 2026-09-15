@@ -479,6 +479,14 @@ is rejected. Keep the original file and its original SHA-256. Several asset
 roles can select different excerpts from that same file, so adjusting a cut
 requires only a manifest edit. Trim points are retained in render provenance
 and invalidate only scenes that use the changed role.
+
+Set `"unique_sources": true` at the storyboard root when each primary image or
+video must appear only once. Full renders reject repeated SHA-256 identities,
+including aliases with different filenames, crops or trim points. The option
+defaults to false for projects that intentionally compare or revisit sources.
+Single-scene previews check only the selected scene. This checks source identity;
+the editor still reviews different files for visually similar content.
+
 Set `"fit": "cover"` to fill the scene's media area with a centered crop while
 preserving the source aspect ratio. The default, `"contain"`, keeps the whole
 source visible with padding. An explicit pixel `crop` is applied before either
