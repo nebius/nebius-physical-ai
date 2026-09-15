@@ -4505,6 +4505,17 @@ def _mk8s_chat_desired(user_text: str) -> dict:
     return {{}}
 
 
+def _mk8s_chat_cluster_name(user_text: str) -> str:
+    # Return an explicitly named chat target, never a guessed resource name.
+    text = str(user_text or "")
+    match = re.search(
+        r"\\b(?:cluster\\s+(?:named|name)\\s+|named\\s+cluster\\s+)([a-z][a-z0-9-]{{0,62}})\\b",
+        text,
+        re.IGNORECASE,
+    )
+    return match.group(1).lower() if match else ""
+
+
 def _maybe_toolground_chat_reply(
     user_text: str,
     *,
@@ -4524,6 +4535,9 @@ def _maybe_toolground_chat_reply(
     if intent == "mk8s_provision":
         desired = _mk8s_chat_desired(user_text)
         request = {{"dry_run": True, "validate": False, "skip_s3": True, **desired}}
+        requested_cluster_name = _mk8s_chat_cluster_name(user_text)
+        if requested_cluster_name:
+            request["cluster_name"] = requested_cluster_name
         if desired.get("gpu_workload_profile") == "rtx-rendering":
             shape_note = (
                 "- **shape**: one on-demand RTX rendering GPU node; NPA resolves the configured "
@@ -4533,6 +4547,11 @@ def _maybe_toolground_chat_reply(
             shape_note = "- **shape**: CPU-only (one CPU node; no GPU node).\\n"
         else:
             shape_note = ""
+        target_note = (
+            "- **target**: the explicitly named Kubernetes cluster will be created or reused.\\n"
+            if requested_cluster_name
+            else ""
+        )
         if confirm_token:
             request.update({{"dry_run": False, "validate": True, "confirm_token": confirm_token}})
             response = provision_infra(request)
@@ -4542,6 +4561,7 @@ def _maybe_toolground_chat_reply(
                 "**Nebius infrastructure deployment submitted**\\n"
                 "- The configured Kubernetes backend was handed to the NPA provisioner.\\n"
                 + shape_note
+                + target_note
                 + f"- **status**: `{{status}}`\\n"
                 + "- I will keep using the configured backend for future workflow planning and submission."
                 if completed
@@ -4561,9 +4581,15 @@ def _maybe_toolground_chat_reply(
             )
             details = {{"phase": "preflight", "status": status, "needs_confirmation": False}}
             return reply, ["infra/mk8s/provision"], suggested_apis, None, {{"infra_deployment": details}}, intent
-        confirmation = provision_infra(
-            {{"dry_run": False, "validate": True, "skip_s3": True, **desired}}
-        )
+        confirmation_request = {{
+            "dry_run": False,
+            "validate": True,
+            "skip_s3": True,
+            **desired,
+        }}
+        if requested_cluster_name:
+            confirmation_request["cluster_name"] = requested_cluster_name
+        confirmation = provision_infra(confirmation_request)
         token = str(confirmation.get("confirm_token") or "") if isinstance(confirmation, dict) else ""
         if not token:
             reply = (
@@ -4577,6 +4603,7 @@ def _maybe_toolground_chat_reply(
             "**Nebius infrastructure preflight complete**\\n"
             "- I checked the configured Kubernetes deployment path with a non-mutating dry-run.\\n"
             + shape_note
+            + target_note
             + "- **status**: `ready`\\n"
             + "- No cloud resources have been created. The confirmation card calls `POST /api/infra/mk8s/provision`, which invokes `npa provision-if-absent` to create or reuse the configured backend."
         )
