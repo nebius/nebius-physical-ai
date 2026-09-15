@@ -993,6 +993,14 @@ def test_source_and_built_graph_trust_roots_are_pinned() -> None:
         isinstance(value, str) and len(value) == 64
         for value in VERIFIER.EXPECTED_NEUTRAL_FILE_SHA256.values()
     )
+    assert SCAN.EXPECTED_NEUTRAL_FILE_SHA256 == {
+        **VERIFIER.EXPECTED_NEUTRAL_FILE_SHA256,
+        "verify_image.py": hashlib.sha256(VERIFIER_SCRIPT.read_bytes()).hexdigest(),
+    }
+    bootstrap_sha256 = hashlib.sha256(BOOTSTRAP_SCRIPT.read_bytes()).hexdigest()
+    assert SCAN.EXPECTED_NEUTRAL_FILE_SHA256["runtime-bootstrap.py"] == (
+        bootstrap_sha256
+    )
     assert SCAN.EXPECTED_SYSTEM_WHEEL_FILES == VERIFIER.EXPECTED_SYSTEM_WHEEL_FILES
     apt = json.loads(
         (
