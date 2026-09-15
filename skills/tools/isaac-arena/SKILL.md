@@ -140,6 +140,15 @@ metadata. Never guess the convention from values or select Pink conversion
 from action width: `gr1_joint` also has 36 columns. Other action contracts keep
 native root-pose handling and require compatible embedded action values.
 
+For Pink recordings with native `obs/datagen_info/target_eef_pose/left` or
+`right` matrices, validate each provided target's position and orientation
+against its same-step action before creating execution input. Reject malformed
+matrices and contradictions in quaternion interpretation, frame, or sample
+alignment. Mixed-format sources need explicit source-specific normalization
+and retained provenance; never repair them by changing only a format label or
+guessing from replay success. The recorded-target check describes source
+consistency, not current-run motion or task success.
+
 Successful evaluation requires:
 
 - one or more episode records with boolean `success` and positive

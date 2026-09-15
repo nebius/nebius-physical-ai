@@ -109,6 +109,17 @@ numerical values.
 The [pinned dataset loader](https://github.com/isaac-sim/IsaacLab/blob/ffff603eafc6b74264a5261cc0183d6a65390d78/source/isaaclab/isaaclab/utils/datasets/hdf5_dataset_file_handler.py)
 defines those format versions and its root-pose conversion boundary.
 
+When a Pink recording also supplies native
+`obs/datagen_info/target_eef_pose/left` or `right` matrices, NPA checks each
+provided hand target against the corresponding action's position and declared
+quaternion interpretation before creating execution input. Malformed matrices,
+different coordinate frames, misaligned samples, and contradictory quaternion
+conventions are rejected. A mixed-format recording requires an explicit,
+source-specific normalization with retained provenance; changing its version
+label alone can corrupt root poses. NPA never chooses a convention from a
+replay's apparent success. The consistency result describes source coordinates
+and does not establish current-run motion or task success.
+
 The pinned source also contains separate OpenPI, GR00T, Cosmos, and DreamZero
 remote-policy packages. NPA does not expose those adapters through this public
 runner: each requires a separately operated model server, compatible

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from .errors import IsaacArenaError
 from .hashing import file_sha256 as _sha256
 from .replay_quaternions import dataset_format_version, normalize_pose_representation
+from .replay_target_poses import validate_recorded_target_poses
 
 if TYPE_CHECKING:
     from .runtime import IsaacArenaRequest
@@ -188,12 +189,15 @@ def _write_execution_input(
     h5py, np = _replay_dependencies("normalization")
     try:
         with h5py.File(source, "r") as source_file:
+            target_poses = validate_recorded_target_poses(source_file, episode_name, embodiment)
             actions = np.asarray(source_file["data"][episode_name]["actions"])
             with h5py.File(destination, "w") as output_file:
                 _copy_execution_episode(source_file, output_file, episode_name, actions)
                 representation = normalize_pose_representation(
                     source_file, output_file, episode_name, embodiment
                 )
+                if target_poses is not None:
+                    representation["recorded_target_poses"] = target_poses
     except (KeyError, OSError) as exc:
         raise IsaacArenaError(
             "replay input cannot be normalized for execution"
