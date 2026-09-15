@@ -19,7 +19,7 @@ EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
     "apt-runtime.lock.json": "6e1df9be2187010e9d4ee12dc2a4d95e4f0aa799ff321c70d86ec2d8772b855e",
     "corresponding-source.lock.json": "7a097851d8c9eae45bb663d7d8d989f507afc0fcdc12e721d7431dd27aa9a3be",
     "requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a",
-    "runtime-bootstrap.py": "7d6e019beecc13f6e13dffda4749726bbd7e70c310e16aa180c6e3498e01a366",
+    "runtime-bootstrap.py": "59876125502757d958a866c9339b73225b5321024d8490bc5108993821b634a2",
     "capability_smoke.py": "c3707490a49224bb262bceab8548c5ee04aa5ce9d5a41062327c5140c236f6bf",
 }
 KNOWN_FORBIDDEN_CONTENT_SHA256 = frozenset(

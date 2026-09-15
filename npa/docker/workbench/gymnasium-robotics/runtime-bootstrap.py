@@ -15,6 +15,7 @@ from collections.abc import Callable, Iterator
 import contextlib
 import ctypes
 from dataclasses import dataclass
+import errno
 import fcntl
 import hashlib
 import json
@@ -124,6 +125,23 @@ class RuntimeLock:
     artifacts: tuple[Artifact, ...]
     requirements_raw: bytes
     requirements_sha256: str
+
+
+@dataclass(frozen=True)
+class _CacheDirectories:
+    """Hold descriptor-bound cache directories for one preparation transaction."""
+
+    root_path: Path
+    root_fd: int
+    versions_fd: int
+
+    @property
+    def bound_root(self) -> Path:
+        return Path(f"/proc/self/fd/{self.root_fd}")
+
+    @property
+    def bound_versions(self) -> Path:
+        return Path(f"/proc/self/fd/{self.versions_fd}")
 
 
 class _SockFilter(ctypes.Structure):
@@ -432,54 +450,143 @@ def load_lock(manifest: Path, requirements: Path) -> RuntimeLock:
     )
 
 
-def _validate_cache_component(path: Path, *, cache_root: Path) -> None:
-    """Require a trusted directory at one cache path component."""
+def _validate_cache_directory(
+    metadata: os.stat_result, *, operator_owned: bool
+) -> None:
+    """Validate one descriptor-opened cache directory."""
 
-    try:
-        metadata = path.lstat()
-    except OSError as error:
-        _refuse(f"runtime cache path cannot be inspected: {error}")
-    if stat.S_ISLNK(metadata.st_mode):
-        _refuse("runtime cache path may not traverse a symlink")
     if not stat.S_ISDIR(metadata.st_mode):
         _refuse("runtime cache path component is not a directory")
-    allowed_owners = {os.geteuid()} if path == cache_root else {0, os.geteuid()}
+    allowed_owners = {os.geteuid()} if operator_owned else {0, os.geteuid()}
     if metadata.st_uid not in allowed_owners:
         _refuse("runtime cache path component has an untrusted owner")
     if stat.S_IMODE(metadata.st_mode) & 0o022:
         _refuse("runtime cache path component is group/world writable")
 
 
-def _validate_existing_cache_chain(cache_root: Path) -> None:
-    """Validate existing components before creating a missing cache leaf."""
+def _open_cache_component(
+    parent_fd: int, name: str, *, operator_owned: bool
+) -> int:
+    """Create if needed and bind one no-follow directory below a trusted fd."""
 
-    for component in reversed((cache_root, *cache_root.parents)):
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        descriptor = os.open(name, flags, dir_fd=parent_fd)
+    except FileNotFoundError:
         try:
-            component.lstat()
-        except FileNotFoundError:
-            break
+            os.mkdir(name, mode=0o700, dir_fd=parent_fd)
         except OSError as error:
-            _refuse(f"runtime cache path cannot be inspected: {error}")
-        _validate_cache_component(component, cache_root=cache_root)
+            _refuse(f"runtime cache cannot be created safely: {error}")
+        try:
+            descriptor = os.open(name, flags, dir_fd=parent_fd)
+        except OSError as error:
+            if error.errno in {errno.ELOOP, errno.ENOTDIR}:
+                _refuse(
+                    "runtime cache path may not traverse a symlink or "
+                    "non-directory component"
+                )
+            _refuse(f"runtime cache path cannot be opened safely: {error}")
+    except OSError as error:
+        if error.errno in {errno.ELOOP, errno.ENOTDIR}:
+            _refuse(
+                "runtime cache path may not traverse a symlink or "
+                "non-directory component"
+            )
+        _refuse(f"runtime cache path cannot be opened safely: {error}")
+    opened = os.fstat(descriptor)
+    try:
+        named = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError as error:
+        os.close(descriptor)
+        _refuse(f"runtime cache path changed while being opened: {error}")
+    if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
+        os.close(descriptor)
+        _refuse("runtime cache path changed while being opened")
+    try:
+        _validate_cache_directory(opened, operator_owned=operator_owned)
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return descriptor
 
 
-def _validate_cache_root(cache_root: Path) -> Path:
-    cache_root = cache_root.absolute()
+def _open_cache_root(cache_root: Path) -> tuple[Path, int]:
+    """Resolve and create the cache root beneath descriptor-bound ancestors."""
+
+    cache_root = Path(os.path.abspath(cache_root))
     forbidden = (Path("/"), Path("/opt"), Path("/usr"), Path("/var"))
     if any(cache_root == item or item in cache_root.parents for item in forbidden[1:]):
         _refuse("runtime cache must be an operator-owned external path")
     if cache_root == forbidden[0]:
         _refuse("runtime cache may not be the filesystem root")
-    _validate_existing_cache_chain(cache_root)
     try:
-        cache_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        descriptor = os.open(
+            "/", os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
+        )
     except OSError as error:
-        _refuse(f"runtime cache cannot be created: {error}")
-    for component in reversed((cache_root, *cache_root.parents)):
-        _validate_cache_component(component, cache_root=cache_root)
-    if cache_root.lstat().st_uid != os.geteuid():
-        _refuse("runtime cache root is not owned by the runtime operator")
-    return cache_root
+        _refuse(f"runtime cache root cannot be opened safely: {error}")
+    try:
+        for index, name in enumerate(cache_root.parts[1:]):
+            child = _open_cache_component(
+                descriptor,
+                name,
+                operator_owned=index == len(cache_root.parts[1:]) - 1,
+            )
+            os.close(descriptor)
+            descriptor = child
+        return cache_root, descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _require_directory_identity(path: Path, descriptor: int, *, label: str) -> None:
+    """Require an external path to retain the descriptor-bound directory identity."""
+
+    try:
+        named = path.lstat()
+        opened = os.fstat(descriptor)
+    except OSError as error:
+        _refuse(f"{label} identity cannot be verified: {error}")
+    if (
+        stat.S_ISLNK(named.st_mode)
+        or not stat.S_ISDIR(named.st_mode)
+        or (named.st_dev, named.st_ino) != (opened.st_dev, opened.st_ino)
+    ):
+        _refuse(f"{label} identity changed during runtime preparation")
+    _validate_cache_directory(opened, operator_owned=True)
+
+
+def _require_cache_identities(cache: _CacheDirectories) -> None:
+    """Reject replacement of either descriptor-bound cache directory."""
+
+    _require_directory_identity(
+        cache.root_path, cache.root_fd, label="runtime cache root"
+    )
+    _require_directory_identity(
+        cache.root_path / "versions",
+        cache.versions_fd,
+        label="runtime cache versions directory",
+    )
+
+
+@contextlib.contextmanager
+def _open_cache_directories(cache_root: Path) -> Iterator[_CacheDirectories]:
+    """Keep the validated root and versions descriptors live for one transaction."""
+
+    root_path, root_fd = _open_cache_root(cache_root)
+    versions_fd: int | None = None
+    try:
+        versions_fd = _open_cache_component(root_fd, "versions", operator_owned=True)
+        cache = _CacheDirectories(root_path, root_fd, versions_fd)
+        _require_cache_identities(cache)
+        if not cache.bound_root.is_dir() or not cache.bound_versions.is_dir():
+            _refuse("descriptor-bound runtime cache traversal is unavailable")
+        yield cache
+    finally:
+        if versions_fd is not None:
+            os.close(versions_fd)
+        os.close(root_fd)
 
 
 class _RestrictedRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -691,13 +798,13 @@ def _install_runtime(stage: Path, requirements: Path) -> None:
 
 
 @contextlib.contextmanager
-def _exclusive_lock(cache_root: Path) -> Iterator[None]:
-    lock_path = cache_root / ".bootstrap.lock"
+def _exclusive_lock(cache_root_fd: int) -> Iterator[None]:
     try:
         descriptor = os.open(
-            lock_path,
-            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
+            ".bootstrap.lock",
+            os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW,
             0o600,
+            dir_fd=cache_root_fd,
         )
     except OSError as error:
         _refuse(f"runtime cache lock is unsafe or unavailable: {error}")
@@ -707,7 +814,48 @@ def _exclusive_lock(cache_root: Path) -> Iterator[None]:
         if metadata.st_uid != os.geteuid() or not stat.S_ISREG(metadata.st_mode):
             _refuse("runtime cache lock is not an operator-owned regular file")
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        named = os.stat(
+            ".bootstrap.lock", dir_fd=cache_root_fd, follow_symlinks=False
+        )
+        if (named.st_dev, named.st_ino) != (metadata.st_dev, metadata.st_ino):
+            _refuse("runtime cache lock identity changed while being acquired")
         yield
+
+
+def _replace_current_link(cache_root_fd: int, runtime_digest: str) -> None:
+    """Atomically select one version relative to the bound cache-root descriptor."""
+
+    temporary_name = f".current-{os.getpid()}"
+    try:
+        os.stat(temporary_name, dir_fd=cache_root_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        _refuse(f"runtime current-link staging name is unsafe: {error}")
+    else:
+        _refuse("runtime current-link staging name already exists")
+    try:
+        os.symlink(
+            f"versions/{runtime_digest}", temporary_name, dir_fd=cache_root_fd
+        )
+        os.replace(
+            temporary_name,
+            "current",
+            src_dir_fd=cache_root_fd,
+            dst_dir_fd=cache_root_fd,
+        )
+    except OSError as error:
+        _refuse(f"runtime current link cannot be published safely: {error}")
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temporary_name, dir_fd=cache_root_fd)
+    try:
+        current = os.stat("current", dir_fd=cache_root_fd, follow_symlinks=False)
+        destination = os.readlink("current", dir_fd=cache_root_fd)
+    except OSError as error:
+        _refuse(f"runtime current link cannot be verified: {error}")
+    if not stat.S_ISLNK(current.st_mode) or destination != f"versions/{runtime_digest}":
+        _refuse("runtime current link changed during publication")
 
 
 def _read_owned_control(path: Path) -> bytes:
@@ -1156,129 +1304,157 @@ def prepare(
 
     _refuse_root_runtime("runtime preparation")
     runtime_lock = load_lock(manifest, requirements)
-    cache_root = _validate_cache_root(cache_root)
-    versions = cache_root / "versions"
-    versions.mkdir(mode=0o700, exist_ok=True)
-    metadata = versions.lstat()
-    if (
-        not stat.S_ISDIR(metadata.st_mode)
-        or stat.S_ISLNK(metadata.st_mode)
-        or metadata.st_uid != os.geteuid()
-        or stat.S_IMODE(metadata.st_mode) & 0o022
-    ):
-        _refuse("runtime cache control directory is unsafe")
-    target = versions / runtime_lock.digest
-    with _exclusive_lock(cache_root):
-        partials = [
-            path
-            for path in versions.iterdir()
-            if path.name.startswith((".staging-", ".rejected-"))
-        ]
-        if partials:
-            _refuse("runtime cache contains an unreviewed partial publication")
-        cache_reused = target.exists()
-        if cache_reused:
-            receipt = _validated_existing(target, runtime_lock)
-        else:
-            # A sealed directory cannot be renamed across parents on Linux because
-            # its ``..`` entry would change.  Stage under the versions directory so
-            # the final rename is both same-parent atomic and performed only after
-            # the root itself has become non-writable.
-            stage = Path(tempfile.mkdtemp(prefix=".staging-runtime-", dir=versions))
+    handles: tuple[int, int, int] | None = None
+    with _open_cache_directories(cache_root) as cache:
+        cache_root = cache.root_path
+        versions = cache.bound_versions
+        target_name = runtime_lock.digest
+        target = versions / target_name
+        with _exclusive_lock(cache.root_fd):
+            _require_cache_identities(cache)
+            partials = [
+                entry.name
+                for entry in os.scandir(cache.versions_fd)
+                if entry.name.startswith((".staging-", ".rejected-"))
+            ]
+            _require_cache_identities(cache)
+            if partials:
+                _refuse("runtime cache contains an unreviewed partial publication")
             try:
-                downloads = stage / "downloads"
-                wheelhouse = stage / "wheelhouse"
-                downloads.mkdir(mode=0o700)
-                wheelhouse.mkdir(mode=0o700)
-                for artifact in runtime_lock.artifacts:
-                    fetched = downloads / artifact.filename
-                    _download(artifact, fetched, opener=opener)
-                    if artifact.archive == "tar.gz":
-                        _extract_source(artifact, fetched, stage / "source")
-                    else:
-                        assert artifact.max_unpacked_bytes is not None
-                        _validate_wheel(
-                            fetched,
-                            max_unpacked_bytes=artifact.max_unpacked_bytes,
-                        )
-                        os.replace(fetched, wheelhouse / artifact.filename)
-                locked_requirements = stage / "requirements.lock"
-                _write_new_control(
-                    locked_requirements, runtime_lock.requirements_raw
+                os.stat(
+                    target_name,
+                    dir_fd=cache.versions_fd,
+                    follow_symlinks=False,
                 )
-                if (
-                    hashlib.sha256(_read_owned_control(locked_requirements)).hexdigest()
-                    != runtime_lock.requirements_sha256
-                ):
-                    _refuse("staged runtime requirements digest changed")
-                installer(stage, locked_requirements)
-                python = stage / "runtime/bin/python"
-                if not python.is_file() or not os.access(python, os.X_OK):
-                    _refuse("offline installer produced no executable Python runtime")
-                tree_path = stage / "tree-manifest.json"
-                receipt_path = stage / "receipt.json"
-                tree_path.touch(mode=0o600, exist_ok=False)
-                receipt_path.touch(mode=0o600, exist_ok=False)
-                _seal_runtime_tree(stage)
-                tree = {
-                    "schema": TREE_MANIFEST_SCHEMA,
-                    "entries": _runtime_tree_entries(stage),
-                }
-                tree_raw = (
-                    json.dumps(tree, separators=(",", ":"), sort_keys=True) + "\n"
-                ).encode()
-                _write_control(tree_path, tree_raw)
-                receipt = {
-                    "schema": RECEIPT_SCHEMA,
-                    "status": "ready",
-                    "manifest_sha256": runtime_lock.digest,
-                    "requirements_lock_sha256": runtime_lock.requirements_sha256,
-                    "source_commit": EXPECTED_SOURCE_COMMIT,
-                    "mujoco_version": EXPECTED_MUJOCO_VERSION,
-                    "artifact_sha256": {
-                        item.name: item.sha256 for item in runtime_lock.artifacts
-                    },
-                    "rights_boundary": RIGHTS_BOUNDARY,
-                    "tree_manifest_sha256": hashlib.sha256(tree_raw).hexdigest(),
-                }
-                _write_control(
-                    receipt_path,
-                    (json.dumps(receipt, indent=2, sort_keys=True) + "\n").encode(),
-                )
-                staged = stage.lstat()
-                if stat.S_IMODE(staged.st_mode) & 0o222:
-                    _refuse("runtime staging root was not sealed before publication")
-                os.replace(stage, target)
-                try:
-                    receipt = _validated_existing(target, runtime_lock)
-                except BaseException:
-                    _discard_published(
-                        target,
-                        versions,
-                        expected_device=staged.st_dev,
-                        expected_inode=staged.st_ino,
+            except FileNotFoundError:
+                cache_reused = False
+            except OSError as error:
+                _refuse(f"runtime cache target cannot be inspected safely: {error}")
+            else:
+                cache_reused = True
+            if cache_reused:
+                receipt = _validated_existing(target, runtime_lock)
+                _require_cache_identities(cache)
+            else:
+                # The proc descriptor path keeps all staged writes below the opened
+                # versions inode even if its external name is replaced concurrently.
+                stage = Path(
+                    tempfile.mkdtemp(
+                        prefix=".staging-runtime-", dir=cache.bound_versions
                     )
+                )
+                try:
+                    _require_cache_identities(cache)
+                    downloads = stage / "downloads"
+                    wheelhouse = stage / "wheelhouse"
+                    downloads.mkdir(mode=0o700)
+                    wheelhouse.mkdir(mode=0o700)
+                    for artifact in runtime_lock.artifacts:
+                        fetched = downloads / artifact.filename
+                        _download(artifact, fetched, opener=opener)
+                        if artifact.archive == "tar.gz":
+                            _extract_source(artifact, fetched, stage / "source")
+                        else:
+                            assert artifact.max_unpacked_bytes is not None
+                            _validate_wheel(
+                                fetched,
+                                max_unpacked_bytes=artifact.max_unpacked_bytes,
+                            )
+                            os.replace(fetched, wheelhouse / artifact.filename)
+                    locked_requirements = stage / "requirements.lock"
+                    _write_new_control(
+                        locked_requirements, runtime_lock.requirements_raw
+                    )
+                    if (
+                        hashlib.sha256(
+                            _read_owned_control(locked_requirements)
+                        ).hexdigest()
+                        != runtime_lock.requirements_sha256
+                    ):
+                        _refuse("staged runtime requirements digest changed")
+                    installer(stage, locked_requirements)
+                    python = stage / "runtime/bin/python"
+                    if not python.is_file() or not os.access(python, os.X_OK):
+                        _refuse(
+                            "offline installer produced no executable Python runtime"
+                        )
+                    tree_path = stage / "tree-manifest.json"
+                    receipt_path = stage / "receipt.json"
+                    tree_path.touch(mode=0o600, exist_ok=False)
+                    receipt_path.touch(mode=0o600, exist_ok=False)
+                    _seal_runtime_tree(stage)
+                    tree = {
+                        "schema": TREE_MANIFEST_SCHEMA,
+                        "entries": _runtime_tree_entries(stage),
+                    }
+                    tree_raw = (
+                        json.dumps(tree, separators=(",", ":"), sort_keys=True) + "\n"
+                    ).encode()
+                    _write_control(tree_path, tree_raw)
+                    receipt = {
+                        "schema": RECEIPT_SCHEMA,
+                        "status": "ready",
+                        "manifest_sha256": runtime_lock.digest,
+                        "requirements_lock_sha256": runtime_lock.requirements_sha256,
+                        "source_commit": EXPECTED_SOURCE_COMMIT,
+                        "mujoco_version": EXPECTED_MUJOCO_VERSION,
+                        "artifact_sha256": {
+                            item.name: item.sha256 for item in runtime_lock.artifacts
+                        },
+                        "rights_boundary": RIGHTS_BOUNDARY,
+                        "tree_manifest_sha256": hashlib.sha256(tree_raw).hexdigest(),
+                    }
+                    _write_control(
+                        receipt_path,
+                        (
+                            json.dumps(receipt, indent=2, sort_keys=True) + "\n"
+                        ).encode(),
+                    )
+                    staged = stage.lstat()
+                    if stat.S_IMODE(staged.st_mode) & 0o222:
+                        _refuse(
+                            "runtime staging root was not sealed before publication"
+                        )
+                    _require_cache_identities(cache)
+                    os.replace(
+                        stage.name,
+                        target_name,
+                        src_dir_fd=cache.versions_fd,
+                        dst_dir_fd=cache.versions_fd,
+                    )
+                    try:
+                        _require_cache_identities(cache)
+                        receipt = _validated_existing(target, runtime_lock)
+                    except BaseException:
+                        _discard_published(
+                            target,
+                            versions,
+                            expected_device=staged.st_dev,
+                            expected_inode=staged.st_ino,
+                        )
+                        raise
+                except BaseException:
+                    _discard_stage(stage)
                     raise
+            _require_cache_identities(cache)
+            _replace_current_link(cache.root_fd, runtime_lock.digest)
+            _require_cache_identities(cache)
+            if retain_runtime_handles:
+                receipt, directory_fd, python_fd, monitor_fd = (
+                    _open_validated_runtime(target, runtime_lock)
+                )
+                handles = (directory_fd, python_fd, monitor_fd)
+            try:
+                _require_cache_identities(cache)
             except BaseException:
-                _discard_stage(stage)
+                if handles is not None:
+                    for descriptor in handles:
+                        os.close(descriptor)
+                    handles = None
                 raise
-        link = cache_root / "current"
-        temporary_link = cache_root / f".current-{os.getpid()}"
-        try:
-            temporary_link.unlink(missing_ok=True)
-            temporary_link.symlink_to(Path("versions") / runtime_lock.digest)
-            os.replace(temporary_link, link)
-        finally:
-            temporary_link.unlink(missing_ok=True)
-        handles: tuple[int, int, int] | None = None
-        if retain_runtime_handles:
-            receipt, directory_fd, python_fd, monitor_fd = _open_validated_runtime(
-                target, runtime_lock
-            )
-            handles = (directory_fd, python_fd, monitor_fd)
     result: dict[str, object] = {
         **receipt,
-        "runtime_root": str(target),
+        "runtime_root": str(cache_root / "versions" / runtime_lock.digest),
         "cache_root": str(cache_root),
         "cache_reused": cache_reused,
     }
