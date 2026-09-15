@@ -43,16 +43,19 @@ The evidence records the effective USD path/variant, root pose, initial joints,
 gravity, self-collision, and actuator settings. Capture merging and VLM auditing
 reject a different embodiment or inconsistent telemetry.
 
-UR10e's upstream base yaw and shoulder-pan initialization cancel each other;
-the adapter sets both to zero to preserve the initial world pose while aligning
-the root-relative goal distribution with the other robots. Its nominal grasp
+The pinned Isaac Lab 3 runtime uses XYZW quaternions; all robots retain the
+identity base rotation `(0, 0, 0, 1)`. UR10e's shoulder-pan initialization changes
+from pi to zero to face the positive-X task workspace. Kinova retains its
+upstream initial joints and identity root pose. UR10e's nominal grasp
 frame is 14.5 cm along the wrist's tool axis. JACO2 uses its authored
 `j2n7s300_end_effector` frame. These are simulation conventions, not physical
 TCP calibrations. Native robot actuator/gravity/collision settings otherwise
 remain unchanged and are recorded separately.
 
 Object assets, PPO update count, success criteria, and physics shifts remain
-fixed. Initial/trained resets are paired within each embodiment. Different
+fixed, including an untuned 0.5-radian arm-action scale for each robot. This
+common control convention is a comparison baseline, not a claim of optimal
+embodiment-specific tuning. Initial/trained resets are paired within each embodiment. Different
 joint dimensions can change random-number consumption, so equal seeds do not
 establish identical object/goal resets across robots. This is a comparison of
 independently trained systems, not a controlled estimate of morphology alone.

@@ -18,7 +18,7 @@ def _robot_config(name):
     return SimpleNamespace(spawn=SimpleNamespace(usd_path=f"{name}.usd", variants={"Gripper": name},
         rigid_props=SimpleNamespace(disable_gravity=False),
         articulation_props=SimpleNamespace(enabled_self_collisions=True)),
-        init_state=SimpleNamespace(pos=(0, 0, 0), rot=(1, 0, 0, 0), joint_pos={}), actuators={})
+        init_state=SimpleNamespace(pos=(0, 0, 0), rot=(0, 0, 0, 1), joint_pos={}), actuators={})
 
 
 @pytest.fixture(autouse=True)
@@ -103,7 +103,7 @@ def test_similar_robot_names_cannot_hide_wrong_asset_or_control(mutation):
     elif mutation == "gripper":
         native.action_manager.get_term("gripper_action").cfg.close_command_expr = {"finger_joint": 0.0}
     elif mutation == "root":
-        native.cfg.scene.robot.init_state.rot = (0, 0, 0, 1)
+        native.cfg.scene.robot.init_state.rot = (1, 0, 0, 0)
     elif mutation == "tool_offset":
         native.cfg.scene.ee_frame.target_frames[0].offset.pos = (0, 0, 0)
     else:
@@ -129,7 +129,8 @@ def test_capture_cannot_relabel_a_robot_or_its_telemetry(mutation):
         embodiments.validate_capture_embodiment(metadata, recipe)
 
 
-def test_ur10_configuration_preserves_upstream_object_and_aligns_world_goals(monkeypatch):
+@pytest.mark.parametrize("name", ["ur10e_robotiq85", "kinova_jaco7"])
+def test_robot_configuration_preserves_upstream_and_uses_native_xyzw_identity(monkeypatch, name):
     class RobotConfig(SimpleNamespace):
         def copy(self):
             return deepcopy(self)
@@ -139,22 +140,28 @@ def test_ur10_configuration_preserves_upstream_object_and_aligns_world_goals(mon
             result.__dict__.update(values)
             return result
 
-    source = RobotConfig(init_state=SimpleNamespace(rot=(0, 0, 0, 1),
-                                                    joint_pos={"shoulder_pan_joint": 3.141592653589793}))
-    monkeypatch.setattr(embodiments, "import_module", lambda name: SimpleNamespace(UR10e_ROBOTIQ_2F_85_CFG=source))
+    profile = embodiments.embodiment_profile(name)
+    initial_joints = {"shoulder_pan_joint": 3.141592653589793} if name == "ur10e_robotiq85" else {
+        "j2n7s300_joint_2": 2.76, "j2n7s300_joint_finger_[1-3]": 0.2}
+    source = RobotConfig(init_state=SimpleNamespace(rot=(0, 0, 0, 1), joint_pos=deepcopy(initial_joints)))
+    monkeypatch.setattr(embodiments, "import_module", lambda module: SimpleNamespace(**{profile["configuration"]: source}))
     mdp = SimpleNamespace(JointPositionActionCfg=SimpleNamespace, BinaryJointPositionActionCfg=SimpleNamespace)
     monkeypatch.setitem(sys.modules, "isaaclab.envs", SimpleNamespace(mdp=mdp))
     target = SimpleNamespace(prim_path="old", offset=SimpleNamespace(pos=(0, 0, 0)))
     config = SimpleNamespace(scene=SimpleNamespace(ee_frame=SimpleNamespace(target_frames=[target])),
                              actions=SimpleNamespace(), commands=SimpleNamespace(object_pose=SimpleNamespace()))
-    embodiments.configure_embodiment(config, {"embodiment": embodiments.embodiment_profile("ur10e_robotiq85")})
+    embodiments.configure_embodiment(config, {"embodiment": profile})
     assert source.init_state.rot == (0, 0, 0, 1)
-    assert source.init_state.joint_pos["shoulder_pan_joint"] != 0
-    assert config.scene.robot.init_state.rot == (1, 0, 0, 0)
-    assert config.scene.robot.init_state.joint_pos["shoulder_pan_joint"] == 0
-    assert config.actions.arm_action.joint_names[-1] == "wrist_3_joint"
-    assert config.actions.gripper_action.joint_names == ["finger_joint"]
-    assert target.prim_path.endswith("/wrist_3_link")
+    assert source.init_state.joint_pos == initial_joints
+    assert config.scene.robot.init_state.rot == (0, 0, 0, 1)
+    assert config.actions.arm_action.joint_names == profile["arm_joints"]
+    assert config.actions.gripper_action.joint_names == profile["gripper_joints"]
+    assert target.prim_path.endswith("/" + profile["tool_body"])
+    if name == "ur10e_robotiq85":
+        assert config.scene.robot.init_state.joint_pos["shoulder_pan_joint"] == 0
+    else:
+        assert config.scene.robot.init_state.joint_pos == initial_joints
+        assert len(config.actions.gripper_action.close_command_expr) == 6
 
 
 def test_historical_franka_recipe_stays_readable():

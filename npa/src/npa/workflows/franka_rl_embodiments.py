@@ -47,7 +47,7 @@ def embodiment_profile(name: str) -> dict:
     if name not in _PROFILES:
         raise ValueError(f"Unsupported manipulation embodiment: {name}")
     return {"schema": "npa.manipulation-embodiment.v1", "name": name,
-            "arm_action_scale": 0.5, "root_rotation_wxyz": [1.0, 0.0, 0.0, 0.0],
+            "arm_action_scale": 0.5, "root_rotation_xyzw": [0.0, 0.0, 0.0, 1.0],
             **deepcopy(_PROFILES[name])}
 
 
@@ -85,9 +85,9 @@ def configure_embodiment(config, recipe: dict) -> None:
         return
     module = import_module("isaaclab_assets.robots." + profile["module"])
     robot = getattr(module, profile["configuration"]).copy().replace(prim_path="{ENV_REGEX_NS}/Robot")
-    robot.init_state.rot = tuple(profile["root_rotation_wxyz"])
+    robot.init_state.rot = tuple(profile["root_rotation_xyzw"])
     if profile["name"] == "ur10e_robotiq85":
-        # Cancel the upstream base yaw without rotating the world-space goal distribution.
+        # Face the positive-X task workspace while retaining the identity XYZW base pose.
         robot.init_state.joint_pos["shoulder_pan_joint"] = 0.0
     config.scene.robot = robot
     _configure_actions(config, profile)
@@ -156,7 +156,7 @@ def _validate_asset(config, profile: dict) -> None:
     if (config.spawn.usd_path != expected.spawn.usd_path
             or config.spawn.variants != expected.spawn.variants):
         raise ValueError("Actual robot USD or gripper variant differs from the selected upstream asset")
-    if list(config.init_state.rot) != profile["root_rotation_wxyz"]:
+    if list(config.init_state.rot) != profile["root_rotation_xyzw"]:
         raise ValueError("Actual robot root rotation differs from the sealed profile")
 
 
@@ -190,7 +190,7 @@ def _joint_commands(expressions: dict, joints: list[str]) -> list[float]:
 
 def _asset_evidence(config) -> dict:
     return {"usd_path": config.spawn.usd_path, "variants": config.spawn.variants,
-            "root_position_m": list(config.init_state.pos), "root_rotation_wxyz": list(config.init_state.rot),
+            "root_position_m": list(config.init_state.pos), "root_rotation_xyzw": list(config.init_state.rot),
             "initial_joint_positions": dict(config.init_state.joint_pos),
             "disable_gravity": config.spawn.rigid_props.disable_gravity,
             "self_collisions": config.spawn.articulation_props.enabled_self_collisions,
