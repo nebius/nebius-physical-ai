@@ -175,7 +175,27 @@ def test_missing_authorization_refuses_before_lock_access(monkeypatch) -> None:
                     "count": 1,
                 }
             },
-            "reservation-mismatch",
+            "reservation-accelerator-mismatch",
+        ),
+        (
+            {
+                "reservation": {
+                    "policy": "STRICT",
+                    "accelerator": runtime.ACCELERATOR,
+                    "count": True,
+                }
+            },
+            "reservation-count-not-one",
+        ),
+        (
+            {
+                "reservation": {
+                    "policy": "STRICT",
+                    "accelerator": runtime.ACCELERATOR,
+                    "count": 1.0,
+                }
+            },
+            "reservation-count-not-one",
         ),
         ({"run_id": "robotwin-other"}, "runtime-binding-mismatch"),
     ],

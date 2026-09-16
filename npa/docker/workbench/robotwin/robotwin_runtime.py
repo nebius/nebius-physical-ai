@@ -229,8 +229,18 @@ def _validate_authorization(environ: Mapping[str, str]) -> dict[str, Any]:
     if re.fullmatch(r"[^\s]+/npa-robotwin@sha256:[0-9a-f]{64}", image) is None:
         _refuse("bootstrap-image-not-immutable")
     reservation = payload.get("reservation")
-    if reservation != {"policy": "STRICT", "accelerator": ACCELERATOR, "count": 1}:
-        _refuse("reservation-mismatch")
+    if not isinstance(reservation, dict) or set(reservation) != {
+        "policy",
+        "accelerator",
+        "count",
+    }:
+        _refuse("reservation-schema-mismatch")
+    if reservation.get("policy") != "STRICT":
+        _refuse("reservation-policy-not-strict")
+    if reservation.get("accelerator") != ACCELERATOR:
+        _refuse("reservation-accelerator-mismatch")
+    if type(reservation.get("count")) is not int or reservation["count"] != 1:
+        _refuse("reservation-count-not-one")
     _validate_customer_entitlement(payload, entitlement)
     for name in (
         "project",

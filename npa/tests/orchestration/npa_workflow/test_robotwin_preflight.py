@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 import hashlib
 import json
+import os
 from pathlib import Path
 import stat
 
@@ -351,6 +352,14 @@ def test_customer_entitlement_read_is_bounded_owner_only_and_no_follow(
     oversized.chmod(0o600)
     with pytest.raises(RobotwinPreflightError, match="customer-entitlement-too-large"):
         read_customer_entitlement({CUSTOMER_ENTITLEMENT_ENV: str(oversized)})
+
+
+def test_owner_file_fifo_refuses_without_blocking(tmp_path: Path) -> None:
+    fifo = tmp_path / "runtime-context.fifo"
+    os.mkfifo(fifo, mode=0o600)
+
+    with pytest.raises(RobotwinPreflightError, match="context-not-regular"):
+        read_owner_context({PUBLIC_CONTEXT_ENV: str(fifo)})
 
 
 def test_control_plane_source_is_explicit_immutable_and_separate(tmp_path: Path) -> None:

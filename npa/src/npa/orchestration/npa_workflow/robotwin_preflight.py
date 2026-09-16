@@ -335,7 +335,7 @@ def _read_owner_file(path_text: str, *, label: str, limit: int) -> bytes:
     raw = b""
     unreadable = False
     try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         metadata = os.fstat(descriptor)
         if not stat.S_ISREG(metadata.st_mode):
             raise _refusal(f"{label}-not-regular")
