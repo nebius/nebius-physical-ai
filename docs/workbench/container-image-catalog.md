@@ -21,13 +21,13 @@ repository-owned runtime defaults; select custom bytes with a complete image
 reference or an explicit workflow `--registry`.
 
 The main-branch public plan and accepted-release manifest were verified against
-GHCR without credentials on **2026-09-05**. All **32 current release tags**
-resolved and matched their recorded digests. All **43 retained table references**
-(32 current pins and 11 historical aliases) resolved anonymously; manifest and
+GHCR without credentials on **2026-09-12**. All **33 current release tags**
+resolved and matched their recorded digests. All **44 retained table references**
+(33 current pins and 11 historical aliases) resolved anonymously; manifest and
 OCI config hashes were checked, and every inspected runtime was `linux/amd64`.
-No missing or drifted accepted release required a build, promotion, or registry
-write. This audit did not execute new CPU/GPU workloads or repeat payload scans;
-capability results below retain their original exact-digest evidence.
+The 32 pre-existing release references required no registry write; Isaac Arena
+was built, qualified, and promoted as the additive 33rd release. Capability
+results below remain tied to their original exact-digest evidence.
 
 **Built** is the UTC build date of the newest listed variant, read from OCI
 `created`, or from the immutable timestamp/`npa.build_ts` when a reproducible
@@ -47,8 +47,8 @@ image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
 The current source inventory, including the pending NCore integration, has
-**37 packaging entries** (35 redistribution-eligible and two restricted) and
-**38 mapped tools**: 32 public-release members, two restricted tools, and four
+**38 packaging entries** (36 redistribution-eligible and two restricted) and
+**39 mapped tools**: 33 public-release members, two restricted tools, and four
 quarantined tools (`curobo`, `ncore`, `openpi`, and `robocasa`). These counts come
 from `packaging-contract.yaml` and `npa.deploy.images`; they do not constitute
 a new registry audit or acceptance of the quarantined images.
@@ -61,6 +61,39 @@ publication gates plus the checked-in Blackwell validator and real
 `DiffusionPolicy` construction on B200. This optional version does not replace
 0.5.1 as the current default or add a second `lerobot` row to the default public
 release plan.
+
+## 2026-09-15 Isaac Arena task-evidence publication
+
+`npa-isaac-arena:0.3.0-isaaclab3-20260912-r3` promotes, without rebuilding, the
+exact public development manifest
+`sha256:267f2b5785c9a1d2df7aba58a0ea4bb112edb976b5b83fef2afbbd130a23c32c`
+from source revision `feadf144a277366265c1331d0176d43e835092be`. Public build
+workflow `35005920685` passed source/license, complete 126,120-entry payload,
+vulnerability, secret, SBOM, provenance, worker-bootstrap, and anonymous-pull
+gates.
+
+Run `arena-b200-state-feadf144-20260915-r1` completed four real upstream
+`cube_goal_pose` episodes on B200: seeds 42–45 each ran 1,050 steps with
+`success_rate=0.0` and `object_moved_rate=1.0`. This remains truthful state-only
+coverage and makes no video claim. Run `arena-rtx-task-feadf144-20260915-r1`
+completed the GR1 open-microwave task on RTX PRO 6000. It executed the exact
+42-action native terminal prefix with zero padding, reported upstream
+`success_rate=1.0`, and increased door openness from 0.200 to 0.846. The
+registered task adapter bound that progress interval to spatially coherent
+denoised motion. The 1280×720 evidence MP4 has SHA-256
+`658fd8f3070ea52ef365af5e117538892d0ecf927d19d2d1f39d1227793c5780`.
+Independent retrieval hash-checked 63 B200 objects / 51,025,377 bytes and 26
+RTX objects / 13,264,455 bytes.
+
+The prior r2 coordinate is historical. Its four-seed B200 state
+regression completed 4,200 steps and intentionally emitted no video. The RTX
+visual proof is rejected: it executed 80 source actions, held the final action
+for another 170 steps, and reported `success_rate=0.0`. Its 72,519,371-byte
+H.264 MP4 decoded as 1280×720, 5.04 seconds, and 252 frames, but stochastic
+render grain could satisfy the former pixel-delta test without useful task
+motion. The publication and state-execution facts remain valid; this run does
+not qualify RTX visual behavior. Isaac Sim/Lab and Lightwheel assets remain
+operator runtime fetches, and upstream Arena 0.3.0 remains alpha.
 
 ## Pending NCore conversion image
 
@@ -219,6 +252,7 @@ published, and anonymously pullable status for this exact digest only.
 | Rerun 0.31.4 | `npa-rerun-viewer` | `0.31.4-sim2real-coherent-20260904` | 2026-09-04 | Published non-root `ubuntu` SkyPilot worker and Rerun viewer/server on ports 9876/9090 for `.rrd` robotics traces. It includes the attested bootstrap contract and exact-source Sim2Real Stage 14 runtime, and bakes no models, datasets, credentials, or runtime caches. The coherent release converted an actual three-sample robot joint trace, reopened its RRD entity through the CLI, and served/read the artifact over HTTP. |
 | Sim2Real Controller 0.1.2 | `npa-sim2real-control` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Non-root CPU controller containing the canonical 14-stage orchestration capability. The coherent release expanded and validated both the checkpoint-promotion and loop-back decision branches; it contains no model weights, datasets, credentials, or runtime caches. |
 | Sim2Real EnvGen 0.1.2 | `npa-envgen` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Generates randomized Sim2Real environments and scenes on the Genesis base. The coherent exact-source release bakes the snapshot-pinned non-root SkyPilot Kubernetes bootstrap closure (`sudo`, SSH, and rsync) and was validated through real environment generation plus a Genesis CUDA physics step. It is built from `sim2real-envgen/Dockerfile`. |
+| Isaac Lab-Arena 0.3.0 | `npa-isaac-arena` | `0.3.0-isaaclab3-20260912-r3` | 2026-09-15 | Real completed-episode evaluation through pinned upstream `policy_runner.py`. The public image bakes Apache-2.0 Arena source and its hash-locked Apache-2.0 Lightwheel SDK client, but no Lightwheel registry asset; Isaac Sim/Lab and provider-controlled registry USDs remain operator runtime fetches. Exact-digest qualification covers a four-seed B200 state regression and successful RTX GR1 open-microwave evaluation whose task progress is spatially bound to denoised video motion. Upstream remains alpha; only the pinned evaluator contract is supported. |
 
 ## Candidates outside the supported public release plan
 
@@ -270,14 +304,15 @@ this chart is generated from that table and the publishing plan:
 
 ![Published GHCR images against every Nebius GPU platform](../assets/image-gpu-coverage.svg)
 
-All 32 accepted release references resolved anonymously to their recorded
-digests on 2026-09-11. Nineteen resolve directly to an image manifest and 13 to
+All 33 accepted release references resolved anonymously to their recorded
+digests on 2026-09-12. Nineteen resolve directly to an image manifest and 14 to
 an OCI index; the runtime variants in both forms are `linux/amd64`. The chart
 groups the current publishing plan three ways:
 
-- **17 GPU images have no known blocked platform**: `npa-alpamayo2-super`,
+- **18 GPU images have no known blocked platform**: `npa-alpamayo2-super`,
   `npa-cosmos3`, `npa-cosmos3-ray-serve`, `npa-cosmos3-reason`,
   `npa-detection-training`, `npa-envgen`, `npa-genesis`, `npa-groot`,
+  `npa-isaac-arena`,
   `npa-lancedb`, `npa-lerobot`, `npa-lerobot-policy`, `npa-lerobot-vlm-rl`,
   `npa-loop-eval`, `npa-ltx2`, `npa-reference-policy`, `npa-sonic-mujoco`, and
   `npa-wan2-2`. This band does not mean every cell has a current-release run:

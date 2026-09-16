@@ -1,0 +1,63 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "a78610661e118b90e47fca97a3847521aca9645816f9e353774ea8516214850e",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec completed successfully for these workflow bytes on 2026-09-15; each single-environment CUDA state requests eight CPU cores and the registered toolRef resolves to the shared Arena evaluator.",
+      "evidence": [
+        "workflows/testing/isaac-arena-evaluation-b200.yaml",
+        "npa/src/npa/orchestration/npa_workflow/catalog.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The four states invoke the real upstream zero-action cube-goal-pose evaluator with distinct seeds and output prefixes. This is a simulator/state regression only: success_rate=0.0 is retained and no policy or visual qualification is claimed.",
+      "evidence": [
+        "workflows/testing/isaac-arena-evaluation-b200.yaml",
+        "arena-b200-state-feadf144-20260915-r1"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The selected owner-bound storage passed write/read/delete preflight. Independent post-run retrieval re-read and hash-checked 63 objects totaling 51,025,377 bytes for the sanitized run ID.",
+      "evidence": [
+        "arena-b200-state-feadf144-20260915-r1"
+      ]
+    },
+    "worker_input": {
+      "status": "not_applicable",
+      "reason": "The zero-action state regression requires no policy, model, or dataset input.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Fresh selected-target Nebius, storage ownership, controller, EULA, accelerator, and runtime-asset access preflights passed before submission. No credential or private infrastructure identifier is retained here.",
+      "evidence": [
+        "arena-b200-state-feadf144-20260915-r1"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "The exact full-SHA public development image passed source and license checks, complete 126,120-entry payload scan, security policy, SBOM and provenance attestation, bootstrap, anonymous-pull, and revision/digest verification in public build workflow 35005920685.",
+      "evidence": [
+        "ghcr.io/nebius/nebius-physical-ai/npa-isaac-arena:dev-feadf144a277366265c1331d0176d43e835092be",
+        "sha256:267f2b5785c9a1d2df7aba58a0ea4bb112edb976b5b83fef2afbbd130a23c32c",
+        "35005920685"
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "Run arena-b200-state-feadf144-20260915-r1 completed four real upstream cube_goal_pose episodes on NVIDIA B200 capability 10.0. Seeds 42-45 each ran 1,050 scored steps with success_rate=0.0 and object_moved_rate=1.0. No video is claimed. All run-owned workers and controllers were removed after exact-job cancellation.",
+      "evidence": [
+        "arena-b200-state-feadf144-20260915-r1",
+        "614345524d45dfd5026644ded4f0fbf6929ebf8ed4cb60f5dac904205d1169ac",
+        "b90fd83737f326bc4c9574dda80cbe3f3da1e6ed28d19c7d5b0bc775666669c9",
+        "88524c53ed8ded00641169c9bd96baf76ff8533464f77de7df03d583c05590ae",
+        "c8c3cbe49c06e5cfc63b91bef83b54b5a85aed76de23e6d5c805746c0aa07112"
+      ]
+    }
+  }
+}

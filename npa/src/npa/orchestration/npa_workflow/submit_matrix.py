@@ -89,6 +89,26 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "isaac-arena-evaluation-b200.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="isaac-arena",
+        notes=(
+            "Real completed-episode, state-only Isaac Lab-Arena policy_runner "
+            "evaluation on one B200; publishes scored JSONL and HTML report."
+        ),
+    ),
+    SubmitLiveCase(
+        "isaac-arena-evaluation-rtxpro.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="isaac-arena",
+        notes=(
+            "Real completed-episode Isaac Lab-Arena policy_runner evaluation "
+            "on RTX PRO 6000; additionally requires a recorded viewport MP4."
+        ),
+    ),
+    SubmitLiveCase(
         "alpamayo2-ray-sweep.yaml", "gpu",
         secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         image_tool="alpamayo2-super",

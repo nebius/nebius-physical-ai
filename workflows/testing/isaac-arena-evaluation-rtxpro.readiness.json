@@ -1,0 +1,69 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "8fb410f6466c7f85a740925d155854ad2e025bc1a5455af4030f0b3fe0817d97",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec completed successfully for these workflow bytes on 2026-09-15; the registered toolRef resolves to the shared Arena evaluator.",
+      "evidence": [
+        "workflows/testing/isaac-arena-evaluation-rtxpro.yaml",
+        "npa/src/npa/orchestration/npa_workflow/catalog.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The GR1 open-microwave replay applied the declared XYZW initial-state/action contract, executed the exact 42-action native terminal prefix with zero padding, reported upstream success_rate=1.0, and passed the registered open-door adapter by binding simulator progress and successful task metrics to coherent denoised viewport motion.",
+      "evidence": [
+        "workflows/testing/isaac-arena-evaluation-rtxpro.yaml",
+        "arena-rtx-task-feadf144-20260915-r1",
+        "npa.isaac-arena.visual-acceptance.v1",
+        "arena.open-door.revolute-joint.v1"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The selected owner-bound storage passed write/read/delete preflight. Independent post-run retrieval re-read and hash-checked 26 objects totaling 13,264,455 bytes for the sanitized run ID.",
+      "evidence": [
+        "arena-rtx-task-feadf144-20260915-r1"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "The worker hash-verified the source replay, converted only its declared representation boundary, and hash-bound both the 103-step prepared sequence and the exact 42-step executed prefix. Sixty-one source actions remained unexecuted after native task termination; no action was padded or synthesized.",
+      "evidence": [
+        "2437d0af03954a0ce98afc91373efc1bc696b5f2deb0e46d2f2b41e2a021ed8c",
+        "41d7af99a60bbeba5764ea989e70ab652b92609bf6ea04112940957410f3ee72",
+        "7bc7b3a0f97dee4b18fd2bd9ee46d29a7f83a7a583abfafa09533d25254eac6c"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Fresh selected-target Nebius, storage ownership, controller, EULA, accelerator, and runtime-asset access preflights passed before submission. No credential or private infrastructure identifier is retained here.",
+      "evidence": [
+        "arena-rtx-task-feadf144-20260915-r1"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "The exact full-SHA public development image passed source and license checks, complete 126,120-entry payload scan, security policy, SBOM and provenance attestation, bootstrap, anonymous-pull, and revision/digest verification in public build workflow 35005920685.",
+      "evidence": [
+        "ghcr.io/nebius/nebius-physical-ai/npa-isaac-arena:dev-feadf144a277366265c1331d0176d43e835092be",
+        "sha256:267f2b5785c9a1d2df7aba58a0ea4bb112edb976b5b83fef2afbbd130a23c32c",
+        "35005920685"
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "Run arena-rtx-task-feadf144-20260915-r1 completed on NVIDIA RTX PRO 6000 capability 12.0 with success_rate=1.0 and 42 frames. Microwave-door openness increased from 0.200 to 0.846 (delta 0.646); three progress-overlap frame pairs and two spatially bound pairs passed after strong denoising. The raw and evidence H.264 videos are 1280x720 and independently hash-verified. All run-owned workers and controllers were removed after exact-job cancellation.",
+      "evidence": [
+        "arena-rtx-task-feadf144-20260915-r1",
+        "78687c42dc6e350712e5b2d6c8ab37f7b393f7638ec7ca08675ad318054413d4",
+        "658fd8f3070ea52ef365af5e117538892d0ecf927d19d2d1f39d1227793c5780",
+        "6645a42f4df73a6d0012c515060fdc0c73a551e0fc4bdd3de1054ee6aa46255b",
+        "52e646be76fdf2eae983059e5f0936ed9cc82ceadece282a05688a1d1566d2be"
+      ]
+    }
+  }
+}

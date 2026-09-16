@@ -41,6 +41,7 @@ Python and HTTP access follow each tool's documented contract.
 | Browser teleoperation | [LeIsaac](leisaac-teleoperation.md) · [latency measurement](guides/leisaac-transport-latency.md) |
 | Motion planning | [cuRobo](curobo.md) |
 | Isaac Lab versions | [Isaac Lab 3](isaac-lab-3.md) |
+| Policy evaluation in Isaac Lab | [Isaac Arena](isaac-arena.md) |
 
 ## Data and evaluation
 
