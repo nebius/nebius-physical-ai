@@ -198,7 +198,6 @@ def _runtime_entitlement_contract(lock: dict[str, Any]) -> dict[str, Any]:
     contract = lock.get("customer_entitlement")
     if not isinstance(contract, dict) or set(contract) != {
         "schema",
-        "field_of_use",
         "maximum_validity_seconds",
         "responsibilities",
         "terms",
@@ -206,8 +205,6 @@ def _runtime_entitlement_contract(lock: dict[str, Any]) -> dict[str, Any]:
         raise VerificationError("runtime lock customer entitlement contract is invalid")
     if contract.get("schema") != "npa.robomimic.customer-runtime-entitlement.v1":
         raise VerificationError("runtime lock customer entitlement schema is invalid")
-    if contract.get("field_of_use") != "noncommercial":
-        raise VerificationError("runtime lock customer field of use is invalid")
     maximum_validity = contract.get("maximum_validity_seconds")
     if not isinstance(maximum_validity, int) or isinstance(maximum_validity, bool):
         raise VerificationError("runtime lock entitlement validity is invalid")
@@ -242,7 +239,6 @@ def _runtime_entitlement_notice_sha256(
         "schema": contract["schema"],
         "runtime_id": lock.get("runtime_id"),
         "runtime_lock_sha256": lock_sha256,
-        "field_of_use": contract["field_of_use"],
         "terms": contract["terms"],
         "customer_responsibilities": contract["responsibilities"],
     }
@@ -294,7 +290,6 @@ def verify_customer_runtime_entitlement(
         "runtime_id",
         "runtime_manifest_sha256",
         "runtime_lock_sha256",
-        "field_of_use",
         "terms",
         "customer_responsibilities",
         "notice_sha256",
@@ -312,7 +307,6 @@ def verify_customer_runtime_entitlement(
         "runtime_id": lock.get("runtime_id"),
         "runtime_manifest_sha256": expected_inventory_sha256,
         "runtime_lock_sha256": _sha256(runtime_lock_path),
-        "field_of_use": contract["field_of_use"],
         "terms": contract["terms"],
         "customer_responsibilities": contract["responsibilities"],
         "notice_sha256": _runtime_entitlement_notice_sha256(
@@ -343,7 +337,6 @@ def verify_customer_runtime_entitlement(
         "runtime_lock_sha256": expected_values["runtime_lock_sha256"],
         "run_binding_matched": True,
         "customer_binding_matched": True,
-        "field_of_use": contract["field_of_use"],
         "expires_at": record["expires_at"],
         "redistribution_granted": False,
     }

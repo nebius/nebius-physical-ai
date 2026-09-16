@@ -8,7 +8,6 @@
   },
   "artifact_hash_closure": "required-in-runtime-inventory",
   "customer_entitlement": {
-    "field_of_use": "noncommercial",
     "maximum_validity_seconds": 86400,
     "responsibilities": [
       "runtime-use",

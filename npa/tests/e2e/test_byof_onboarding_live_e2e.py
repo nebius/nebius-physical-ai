@@ -619,7 +619,6 @@ def _preflight_robomimic_runtime_entitlement(
     contract = lock.get("customer_entitlement")
     if not isinstance(contract, dict) or contract != {
         "schema": "npa.robomimic.customer-runtime-entitlement.v1",
-        "field_of_use": "noncommercial",
         "maximum_validity_seconds": 86_400,
         "responsibilities": [
             "runtime-use",
@@ -636,7 +635,6 @@ def _preflight_robomimic_runtime_entitlement(
         "schema": contract.get("schema"),
         "runtime_id": lock.get("runtime_id"),
         "runtime_lock_sha256": lock_sha256,
-        "field_of_use": contract.get("field_of_use"),
         "terms": contract.get("terms"),
         "customer_responsibilities": contract.get("responsibilities"),
     }
@@ -652,7 +650,6 @@ def _preflight_robomimic_runtime_entitlement(
         "runtime_id": lock.get("runtime_id"),
         "runtime_manifest_sha256": selectors["runtime_inventory_sha256"],
         "runtime_lock_sha256": lock_sha256,
-        "field_of_use": contract.get("field_of_use"),
         "terms": contract.get("terms"),
         "customer_responsibilities": contract.get("responsibilities"),
         "notice_sha256": hashlib.sha256(
@@ -1436,7 +1433,7 @@ def _assert_robomimic_runtime(
     entitlement = artifact["customer_runtime_entitlement"]
     assert entitlement["run_binding_matched"] is True
     assert entitlement["customer_binding_matched"] is True
-    assert entitlement["field_of_use"] == "noncommercial"
+    assert "field_of_use" not in entitlement
     assert entitlement["redistribution_granted"] is False
     assert external_runtime["atomic_private_snapshot_published"] is True
     assert external_runtime["snapshot_write_bits_absent"] is True

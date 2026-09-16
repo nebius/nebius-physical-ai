@@ -5,9 +5,13 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import re
+import shlex
+import stat
 import subprocess
+import sys
 import tarfile
 
 import pytest
@@ -130,7 +134,7 @@ def test_neutral_image_boundaries_and_locks_are_explicit() -> None:
     assert runtime["artifact_hash_closure"] == "required-in-runtime-inventory"
     entitlement = runtime["customer_entitlement"]
     assert entitlement["schema"] == "npa.robomimic.customer-runtime-entitlement.v1"
-    assert entitlement["field_of_use"] == "noncommercial"
+    assert "field_of_use" not in entitlement
     assert entitlement["maximum_validity_seconds"] == 86_400
     assert entitlement["responsibilities"][-1] == "no-redistribution-grant"
     assert [term["url"] for term in entitlement["terms"]] == [
@@ -173,11 +177,305 @@ def test_build_helper_defaults_local_and_uses_only_committed_context() -> None:
     assert "NPA_PUBLIC_REGISTRY" not in text
     assert 'archive "${revision}:npa/docker/workbench/robomimic"' in text
     assert '"${context}/verify_image.py" prepare-build-inputs' in text
-    assert (
-        'docker build --platform linux/amd64 --pull=false --tag "${image}" '
-        '"${context}"'
-    ) in text
+    assert 'docker build --platform linux/amd64 --pull=false --iidfile' in text
+    assert 'docker image tag "${image_id}" "${image}"' in text
+    assert 'flock -x "${tag_lock_fd}"' in text
+    assert '"consumer_image_ref": image_id' in text
+    assert '--tag "${image}"' not in text
     assert '"${repo_root}/npa/docker/workbench/robomimic"' not in text
+
+
+def _fake_build_environment(tmp_path: Path) -> tuple[dict[str, str], Path, Path, Path]:
+    bin_dir = tmp_path / "bin"
+    temp_root = tmp_path / "tmp"
+    receipt_dir = tmp_path / "receipts"
+    lock_dir = tmp_path / "locks"
+    for path in (bin_dir, temp_root, receipt_dir, lock_dir):
+        path.mkdir(mode=0o700)
+
+    python_wrapper = bin_dir / "python3"
+    python_wrapper.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == */verify_image.py && "${2:-}" == "prepare-build-inputs" ]]; then
+  while [[ "$#" -gt 0 ]]; do
+    if [[ "$1" == "--output-root" ]]; then
+      mkdir -p -- "$2"
+      exit 0
+    fi
+    shift
+  done
+  exit 91
+fi
+if [[ "${FAKE_RECEIPT_FAILURE:-0}" == "1" && "${1:-}" == "-" ]]; then
+  exit 97
+fi
+exec """
+        + shlex.quote(sys.executable)
+        + ' "$@"\n',
+        encoding="utf-8",
+    )
+    python_wrapper.chmod(0o700)
+
+    docker = bin_dir / "docker"
+    docker.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+action="$1"
+shift
+case "${action}" in
+  build)
+    iidfile=""
+    context=""
+    while [[ "$#" -gt 0 ]]; do
+      if [[ "$1" == "--iidfile" ]]; then
+        iidfile="$2"
+        shift 2
+      else
+        context="$1"
+        shift
+      fi
+    done
+    printf '%s' "${iidfile}" > "${FAKE_DOCKER_IID_RECORD}"
+    printf '%s' "${context}" > "${FAKE_DOCKER_CONTEXT_RECORD}"
+    if [[ "${FAKE_DOCKER_MODE:-}" == "signal" ]]; then
+      kill -TERM "$PPID"
+      exit 143
+    fi
+    if [[ "${FAKE_DOCKER_MODE:-}" == "missing-iid" ]]; then
+      exit 0
+    elif [[ "${FAKE_DOCKER_MODE:-}" == "malformed-iid" ]]; then
+      printf 'not-an-image-id\n' > "${iidfile}"
+    else
+      printf '%s\n' "${FAKE_DOCKER_IMAGE_ID}" > "${iidfile}"
+    fi
+    chmod 600 -- "${iidfile}"
+    ;;
+  image)
+    subaction="$1"
+    shift
+    case "${subaction}" in
+      inspect)
+        reference="${!#}"
+        if [[ "${reference}" == sha256:* ]]; then
+          if [[ "${FAKE_DOCKER_MODE:-}" == "malformed-inspect" ]]; then
+            printf 'malformed\n'
+          elif [[ "${FAKE_DOCKER_MODE:-}" == "changed-inspect" ]]; then
+            printf 'sha256:%064d\n' 9
+          else
+            printf '%s\n' "${reference}"
+          fi
+          if [[ "${FAKE_DOCKER_MODE:-}" == "changed-iid" ]]; then
+            printf 'sha256:%064d\n' 8 > "$(cat "${FAKE_DOCKER_IID_RECORD}")"
+          fi
+          exit 0
+        fi
+        [[ -f "${FAKE_DOCKER_TAG_STATE}" ]] || exit 1
+        if [[ "${FAKE_DOCKER_MODE:-}" == "changed-tag-inspect" ]]; then
+          printf 'sha256:%064d\n' 7
+        else
+          cat "${FAKE_DOCKER_TAG_STATE}"
+        fi
+        ;;
+      tag)
+        source_id="$1"
+        if [[ "${FAKE_DOCKER_MODE:-}" == "signal-tag" ]]; then
+          kill -TERM "$PPID"
+          exit 143
+        fi
+        printf '%s\n' "${source_id}" > "${FAKE_DOCKER_TAG_STATE}"
+        ;;
+      *) exit 92 ;;
+    esac
+    ;;
+  *) exit 93 ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    docker.chmod(0o700)
+
+    environment = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "TMPDIR": str(temp_root),
+        "NPA_BYOF_ROBOMIMIC_RECEIPT_DIR": str(receipt_dir),
+        "NPA_BYOF_ROBOMIMIC_LOCK_DIR": str(lock_dir),
+        "FAKE_DOCKER_TAG_STATE": str(tmp_path / "tag-state"),
+        "FAKE_DOCKER_IID_RECORD": str(tmp_path / "iid-path"),
+        "FAKE_DOCKER_CONTEXT_RECORD": str(tmp_path / "context-path"),
+    }
+    return environment, temp_root, receipt_dir, tmp_path / "tag-state"
+
+
+def _run_fake_build(environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", str(BUILD_SCRIPT)],
+        cwd=ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_build_helper_records_immutable_id_in_owner_only_receipt(tmp_path: Path) -> None:
+    environment, temp_root, receipt_dir, tag_state = _fake_build_environment(tmp_path)
+    image_id = "sha256:" + "1" * 64
+    environment["FAKE_DOCKER_IMAGE_ID"] = image_id
+
+    result = _run_fake_build(environment)
+
+    receipts = list(receipt_dir.glob("*.json"))
+    assert result.returncode == 0, result.stderr
+    assert len(receipts) == 1
+    receipt = json.loads(receipts[0].read_text(encoding="utf-8"))
+    assert receipt["immutable_image_id"] == image_id
+    assert receipt["consumer_image_ref"] == image_id
+    assert receipt["revision"] == subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+    ).strip()
+    assert receipt["tag_compare_and_set"] == "assigned"
+    assert stat.S_IMODE(receipts[0].stat().st_mode) == 0o600
+    assert tag_state.read_text(encoding="utf-8").strip() == image_id
+    assert list(temp_root.glob("npa-robomimic-context.*")) == []
+
+
+def test_build_helper_refuses_stale_shared_tag_without_retagging(tmp_path: Path) -> None:
+    environment, _, receipt_dir, tag_state = _fake_build_environment(tmp_path)
+    stale_id = "sha256:" + "2" * 64
+    tag_state.write_text(stale_id + "\n", encoding="utf-8")
+    environment["FAKE_DOCKER_IMAGE_ID"] = "sha256:" + "3" * 64
+
+    result = _run_fake_build(environment)
+
+    assert result.returncode != 0
+    assert "already names different bytes" in result.stderr
+    assert tag_state.read_text(encoding="utf-8").strip() == stale_id
+    assert list(receipt_dir.glob("*.json")) == []
+
+
+def test_build_helper_accepts_identical_shared_tag_idempotently(tmp_path: Path) -> None:
+    environment, _, receipt_dir, tag_state = _fake_build_environment(tmp_path)
+    image_id = "sha256:" + "3" * 64
+    tag_state.write_text(image_id + "\n", encoding="utf-8")
+    environment["FAKE_DOCKER_IMAGE_ID"] = image_id
+
+    result = _run_fake_build(environment)
+
+    assert result.returncode == 0, result.stderr
+    receipt = json.loads(next(receipt_dir.glob("*.json")).read_text(encoding="utf-8"))
+    assert receipt["tag_compare_and_set"] == "existing-identical"
+    assert tag_state.read_text(encoding="utf-8").strip() == image_id
+
+
+def test_build_helper_serializes_concurrent_differing_ids(tmp_path: Path) -> None:
+    environment, _, receipt_dir, tag_state = _fake_build_environment(tmp_path)
+    processes = []
+    for index, digit in enumerate(("4", "5")):
+        candidate = dict(environment)
+        candidate["FAKE_DOCKER_IMAGE_ID"] = "sha256:" + digit * 64
+        candidate["FAKE_DOCKER_IID_RECORD"] = str(tmp_path / f"iid-path-{index}")
+        candidate["FAKE_DOCKER_CONTEXT_RECORD"] = str(tmp_path / f"context-{index}")
+        processes.append(
+            subprocess.Popen(
+                ["bash", str(BUILD_SCRIPT)],
+                cwd=ROOT,
+                env=candidate,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        )
+
+    outcomes = [process.communicate(timeout=30) for process in processes]
+    codes = [process.returncode for process in processes]
+    assert sorted(codes) == [0, 1]
+    winner = tag_state.read_text(encoding="utf-8").strip()
+    assert winner in {"sha256:" + "4" * 64, "sha256:" + "5" * 64}
+    assert len(list(receipt_dir.glob("*.json"))) == 1
+    assert any("already names different bytes" in stderr for _, stderr in outcomes)
+
+
+@pytest.mark.parametrize(
+    "mode",
+    (
+        "missing-iid",
+        "malformed-iid",
+        "malformed-inspect",
+        "changed-inspect",
+        "changed-iid",
+        "changed-tag-inspect",
+    ),
+)
+def test_build_helper_refuses_malformed_or_changed_identity(
+    tmp_path: Path, mode: str
+) -> None:
+    environment, _, receipt_dir, _ = _fake_build_environment(tmp_path)
+    environment["FAKE_DOCKER_IMAGE_ID"] = "sha256:" + "6" * 64
+    environment["FAKE_DOCKER_MODE"] = mode
+
+    result = _run_fake_build(environment)
+
+    assert result.returncode != 0
+    assert list(receipt_dir.glob("*.json")) == []
+
+
+def test_build_helper_cleans_transaction_context_on_signal(tmp_path: Path) -> None:
+    environment, temp_root, receipt_dir, tag_state = _fake_build_environment(tmp_path)
+    environment["FAKE_DOCKER_IMAGE_ID"] = "sha256:" + "6" * 64
+    environment["FAKE_DOCKER_MODE"] = "signal-tag"
+
+    result = _run_fake_build(environment)
+
+    assert result.returncode != 0
+    assert list(temp_root.glob("npa-robomimic-context.*")) == []
+    assert list(receipt_dir.glob("*.json")) == []
+    assert not tag_state.exists()
+
+
+def test_build_helper_receipt_failure_is_fail_closed_and_cleans_temp(
+    tmp_path: Path,
+) -> None:
+    environment, temp_root, receipt_dir, tag_state = _fake_build_environment(tmp_path)
+    image_id = "sha256:" + "a" * 64
+    environment["FAKE_DOCKER_IMAGE_ID"] = image_id
+    environment["FAKE_RECEIPT_FAILURE"] = "1"
+
+    result = _run_fake_build(environment)
+
+    assert result.returncode != 0
+    assert tag_state.read_text(encoding="utf-8").strip() == image_id
+    assert list(receipt_dir.iterdir()) == []
+    assert list(temp_root.glob("npa-robomimic-context.*")) == []
+
+
+def test_dataset_notice_binds_exact_official_license_metadata() -> None:
+    text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            ROOT / "docs" / "workbench" / "byof-robomimic.md",
+            IMAGE_ROOT / "THIRD_PARTY_NOTICES.md",
+        )
+    )
+    for expected in (
+        "74fa018461f479cd9fd15b924a16103012096203",
+        "736f9c17ae642026c84d2b534119cc4dfea1548a",
+        "e09a24720408bac08425dbaa0b7b55615e4440f1af0a61133303e4b5d5d6b09a",
+        "2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540",
+        "21,084,088",
+        (
+            "https://huggingface.co/datasets/robomimic/robomimic_datasets/raw/"
+            "74fa018461f479cd9fd15b924a16103012096203/README.md"
+        ),
+        "https://huggingface.co/terms-of-service",
+        "42020fcaac52b7b036bf7e816910ca45485ad04c2d31faf09e13636a5b48a36b",
+    ):
+        assert expected in text
+    assert (
+        "Public, anonymous reachability is access evidence, not a grant of rights"
+        in " ".join(text.split())
+    )
 
 
 def test_immutable_build_locks_bind_exact_source_and_debian_bytes() -> None:

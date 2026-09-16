@@ -101,7 +101,6 @@ def _entitlement(
         "runtime_id": lock["runtime_id"],
         "runtime_manifest_sha256": runtime_inventory_sha256,
         "runtime_lock_sha256": _sha(lock_path),
-        "field_of_use": contract["field_of_use"],
         "terms": contract["terms"],
         "customer_responsibilities": contract["responsibilities"],
         "notice_sha256": verifier._runtime_entitlement_notice_sha256(
@@ -419,7 +418,7 @@ def test_exact_customer_runtime_entitlement_verifies_without_mutation(
 
     assert result["run_binding_matched"] is True
     assert result["customer_binding_matched"] is True
-    assert result["field_of_use"] == "noncommercial"
+    assert "field_of_use" not in result
     assert result["redistribution_granted"] is False
     assert path.read_bytes() == before
 
@@ -432,7 +431,7 @@ def test_exact_customer_runtime_entitlement_verifies_without_mutation(
         ("run", "binding mismatch: run_id"),
         ("manifest", "binding mismatch: runtime_manifest_sha256"),
         ("lock", "binding mismatch: runtime_lock_sha256"),
-        ("field", "binding mismatch: field_of_use"),
+        ("field", "fields are invalid"),
         ("terms", "binding mismatch: terms"),
         ("responsibilities", "binding mismatch: customer_responsibilities"),
         ("notice", "binding mismatch: notice_sha256"),
@@ -456,7 +455,7 @@ def test_customer_runtime_entitlement_hostile_bindings_fail_closed(
     elif mutation == "lock":
         record["runtime_lock_sha256"] = "e" * 64
     elif mutation == "field":
-        record["field_of_use"] = "commercial"
+        record["field_of_use"] = "noncommercial"
     elif mutation == "terms":
         record["terms"] = []
     elif mutation == "responsibilities":
