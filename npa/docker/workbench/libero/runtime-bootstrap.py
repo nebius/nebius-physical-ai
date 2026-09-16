@@ -2734,12 +2734,28 @@ def _verified_output_put(
     }
 
 
+def _cleanup_object_etag(
+    headers: dict[str, str], *, size_bytes: int, checksum: str
+) -> str:
+    if headers.get("x-amz-checksum-sha256") != checksum:
+        return ""
+    try:
+        observed_size = int(headers.get("content-length", "-1"))
+    except ValueError:
+        return ""
+    etag = headers.get("etag", "")
+    if observed_size != size_bytes or re.fullmatch(r'"[^"]+"', etag) is None:
+        return ""
+    return etag
+
+
 def _cleanup_output_attempts(
     *, endpoint: str, bucket: str, attempted: dict[str, tuple[int, str]]
 ) -> None:
     failures: list[str] = []
     for object_key, (size_bytes, checksum) in reversed(attempted.items()):
         url = _s3_object_url(endpoint, bucket, object_key)
+        key_hash = hashlib.sha256(object_key.encode()).hexdigest()
         try:
             status_code, headers, _ = _sigv4_request(
                 "HEAD",
@@ -2749,22 +2765,28 @@ def _cleanup_output_attempts(
             )
             if status_code == 404:
                 continue
-            if (
-                headers.get("x-amz-checksum-sha256") != checksum
-                or int(headers.get("content-length", "-1")) != size_bytes
-            ):
-                failures.append(hashlib.sha256(object_key.encode()).hexdigest())
-                continue
-            _sigv4_request(
-                "DELETE", url, expected_statuses=frozenset({200, 204})
+            etag = _cleanup_object_etag(
+                headers, size_bytes=size_bytes, checksum=checksum
             )
+            if not etag:
+                failures.append(key_hash)
+                continue
+            delete_status, _, _ = _sigv4_request(
+                "DELETE",
+                url,
+                extra_headers={"if-match": etag},
+                expected_statuses=frozenset({200, 204, 412}),
+            )
+            if delete_status == 412:
+                failures.append(key_hash)
+                continue
             status_code, _, _ = _sigv4_request(
                 "HEAD", url, expected_statuses=frozenset({200, 404})
             )
             if status_code != 404:
-                failures.append(hashlib.sha256(object_key.encode()).hexdigest())
+                failures.append(key_hash)
         except (BootstrapRefusal, OSError, ValueError):
-            failures.append(hashlib.sha256(object_key.encode()).hexdigest())
+            failures.append(key_hash)
     if failures:
         raise BootstrapRefusal(
             "output transaction cleanup is incomplete for exact key hashes: "

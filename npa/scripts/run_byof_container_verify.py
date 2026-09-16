@@ -153,21 +153,20 @@ DEFAULT_SECRET_ENVS = (
     "AWS_SECRET_ACCESS_KEY",
     "AWS_SESSION_TOKEN",
 )
-LIBERO_OUTPUT_ARTIFACT_NAMES = frozenset(
+LIBERO_PUBLIC_GROUP_NON_RESOURCE_URLS = frozenset(
     {
-        "libero-bc-rnn-smoke.pth",
-        "libero-smoke.json",
-        "npa_byof_summary.json",
-        "npa_runtime_bootstrap.json",
-        "npa_runtime_metadata.json",
-        "nvidia_smi.txt",
-        "nvidia_smi_list.txt",
-        "solution_smoke_stderr.log",
-        "solution_smoke_stdout.log",
+        "/api",
+        "/api/*",
+        "/apis",
+        "/apis/*",
+        "/healthz",
+        "/livez",
+        "/openapi",
+        "/openapi/*",
+        "/readyz",
+        "/version",
+        "/version/",
     }
-)
-LIBERO_OUTPUT_COMMIT_MARKERS = frozenset(
-    {"npa_upload_receipt.json", "npa_output_commit.json"}
 )
 
 
@@ -711,7 +710,8 @@ def _libero_safe_public_group_rules(rules: list[Any]) -> bool:
                 not isinstance(url, str) or not url.startswith("/")
                 for url in non_resource_urls
             )
-            or set(rule.get("verbs") or []) - {"get"}
+            or not set(non_resource_urls) <= LIBERO_PUBLIC_GROUP_NON_RESOURCE_URLS
+            or set(rule.get("verbs") or []) != {"get"}
         ):
             return False
     return True
@@ -1879,39 +1879,6 @@ def _libero_output_storage_client() -> Any:
     )
 
 
-def _libero_reconcilable_output_key(key: str, run_prefix: str, run_id: str) -> bool:
-    if not key.startswith(run_prefix):
-        return False
-    suffix = key.removeprefix(run_prefix)
-    if suffix in LIBERO_OUTPUT_ARTIFACT_NAMES:
-        return True
-    staging = re.fullmatch(
-        rf"\.npa-staging/{re.escape(run_id)}/[0-9a-f]{{32}}/([^/]+)", suffix
-    )
-    return bool(staging and staging.group(1) in LIBERO_OUTPUT_ARTIFACT_NAMES)
-
-
-def _reconcile_libero_uncommitted_outputs(
-    client: Any, *, bucket: str, run_prefix: str, run_id: str
-) -> None:
-    listing = client.list_objects_v2(Bucket=bucket, Prefix=run_prefix, MaxKeys=64)
-    entries = listing.get("Contents") or []
-    keys = [str(entry.get("Key") or "") for entry in entries]
-    suffixes = {key.removeprefix(run_prefix) for key in keys}
-    if (
-        listing.get("IsTruncated")
-        or not keys
-        or suffixes & LIBERO_OUTPUT_COMMIT_MARKERS
-        or not all(_libero_reconcilable_output_key(key, run_prefix, run_id) for key in keys)
-    ):
-        raise RuntimeError("refusing to reconcile a non-transactional LIBERO prefix")
-    for key in keys:
-        client.delete_object(Bucket=bucket, Key=key)
-    remaining = client.list_objects_v2(Bucket=bucket, Prefix=run_prefix, MaxKeys=1)
-    if remaining.get("Contents"):
-        raise RuntimeError("LIBERO output reconciliation did not prove exact absence")
-
-
 def preflight_output_storage(
     *, output_root: str, run_id: str, libero: bool = False
 ) -> None:
@@ -1941,12 +1908,8 @@ def preflight_output_storage(
     try:
         existing = client.list_objects_v2(Bucket=bucket, Prefix=run_prefix, MaxKeys=1)
         if existing.get("Contents"):
-            if not libero:
-                raise RuntimeError(
-                    "refusing to reuse a non-empty BYOF run prefix; choose a new run ID"
-                )
-            _reconcile_libero_uncommitted_outputs(
-                client, bucket=bucket, run_prefix=run_prefix, run_id=run_id
+            raise RuntimeError(
+                "refusing to reuse a non-empty BYOF run prefix; choose a new run ID"
             )
         client.put_object(
             Bucket=bucket,

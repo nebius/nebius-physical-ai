@@ -2172,7 +2172,7 @@ def test_output_upload_is_commit_last_and_cleans_exact_failed_transaction(
         validation_calls += 1
         return capability
 
-    objects: dict[str, tuple[bytes, str]] = {}
+    objects: dict[str, tuple[bytes, str, str]] = {}
     puts: list[str] = []
     deletes: list[str] = []
     injected = False
@@ -2191,23 +2191,25 @@ def test_output_upload_is_commit_last_and_cleans_exact_failed_transaction(
             if failure in {"artifact-put", "delete", "absence"} and len(puts) == 2:
                 raise module.BootstrapRefusal("injected staging upload failure")
             checksum = extra_headers["x-amz-checksum-sha256"]
-            objects[url] = (payload, checksum)
+            objects[url] = (payload, checksum, f'"fixture-{len(puts)}"')
             if failure == "receipt-put" and url.endswith("/npa_upload_receipt.json"):
                 raise module.BootstrapRefusal("injected receipt upload failure")
             return 200, {}, b""
         if method == "GET":
-            observed, checksum = objects[url]
+            observed, checksum, _etag = objects[url]
             return 200, {"x-amz-checksum-sha256": checksum}, observed
         if method == "HEAD":
             if url not in objects:
                 return 404, {}, b""
-            observed, checksum = objects[url]
+            observed, checksum, etag = objects[url]
             return 200, {
                 "content-length": str(len(observed)),
+                "etag": etag,
                 "x-amz-checksum-sha256": checksum,
             }, b""
         assert method == "DELETE"
         deletes.append(url)
+        assert extra_headers == {"if-match": objects[url][2]}
         if failure == "delete" and not injected:
             injected = True
             raise module.BootstrapRefusal("injected delete failure")
@@ -2255,6 +2257,56 @@ def test_output_upload_is_commit_last_and_cleans_exact_failed_transaction(
         for item in receipt["artifacts"]
     )
     assert validation_calls == len(puts) + 1
+
+
+def test_output_cleanup_preserves_replacement_between_head_and_delete(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    object_key = "byof/run/libero-smoke.json"
+    original = b"original transaction bytes"
+    replacement = b"replacement transaction bytes"
+    checksum = module.base64.b64encode(
+        bytes.fromhex(hashlib.sha256(original).hexdigest())
+    ).decode()
+    state = {"payload": original, "etag": '"original-etag"'}
+    delete_attempts = 0
+
+    def request(
+        method,
+        _url,
+        *,
+        payload=b"",
+        extra_headers=None,
+        expected_statuses=frozenset({200}),
+    ):
+        nonlocal delete_attempts
+        assert payload == b""
+        if method == "HEAD":
+            observed = state.copy()
+            state.update(payload=replacement, etag='"replacement-etag"')
+            return 200, {
+                "content-length": str(len(observed["payload"])),
+                "etag": observed["etag"],
+                "x-amz-checksum-sha256": checksum,
+            }, b""
+        assert method == "DELETE"
+        delete_attempts += 1
+        assert extra_headers == {"if-match": '"original-etag"'}
+        assert 412 in expected_statuses
+        return 412, {}, b""
+
+    monkeypatch.setattr(module, "_sigv4_request", request)
+
+    with pytest.raises(module.BootstrapRefusal, match="cleanup is incomplete"):
+        module._cleanup_output_attempts(
+            endpoint="https://storage.fixture.invalid",
+            bucket="fixture-bucket",
+            attempted={object_key: (len(original), checksum)},
+        )
+
+    assert delete_attempts == 1
+    assert state == {"payload": replacement, "etag": '"replacement-etag"'}
 
 
 def test_supervisor_evidence_rejects_group_writable_and_symlinked_files(

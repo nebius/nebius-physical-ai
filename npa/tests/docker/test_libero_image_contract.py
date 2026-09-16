@@ -10,7 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 import yaml
@@ -261,6 +261,10 @@ def test_skypilot_failure_sentinels_do_not_follow_preplaced_symlinks(tmp_path) -
     guard_source = (IMAGE_ROOT / "skypilot-bootstrap-guard.sh").read_text(
         encoding="utf-8"
     )
+    contract_failure_source = (
+        PurePosixPath("/") / "tmp" / "npa-skypilot-bootstrap-contract.failed"
+    )
+    sky_failure_source = PurePosixPath("/") / "tmp" / "apt-ssh-setup.failed"
     contract_failure = tmp_path / "bootstrap-contract.failed"
     sky_failure = tmp_path / "apt-ssh-setup.failed"
     contract_target = tmp_path / "contract-target"
@@ -270,8 +274,8 @@ def test_skypilot_failure_sentinels_do_not_follow_preplaced_symlinks(tmp_path) -
     contract_failure.symlink_to(contract_target)
     sky_failure.symlink_to(sky_target)
     guard_source = guard_source.replace(
-        "/tmp/npa-skypilot-bootstrap-contract.failed", str(contract_failure)
-    ).replace("/tmp/apt-ssh-setup.failed", str(sky_failure))
+        str(contract_failure_source), str(contract_failure)
+    ).replace(str(sky_failure_source), str(sky_failure))
     guard_source = guard_source.replace(
         "guard_owner_uid=0", f"guard_owner_uid={os.getuid()}"
     )

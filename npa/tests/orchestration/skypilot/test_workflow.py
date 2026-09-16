@@ -188,19 +188,26 @@ def test_submit_capacity_preflight_proves_no_launch(monkeypatch, tmp_path) -> No
     assert caught.value.__cause__.__cause__ is capacity
 
 
-def test_submit_workflow_preflight_receives_exact_source_profile_identity(
+def test_libero_submit_uses_one_identity_for_unchanged_noncanonical_yaml(
     monkeypatch, tmp_path
 ) -> None:
     yaml_path = tmp_path / "workflow.yaml"
-    yaml_bytes = b"name: exact-source-profile\nresources: {cloud: kubernetes}\n"
+    yaml_bytes = (
+        b"# Representation differences must not look like executable drift.\n"
+        b"name: 'exact-source-profile'\nresources: {cloud: kubernetes}\n"
+    )
     yaml_path.write_bytes(yaml_bytes)
+    executable_bytes = yaml.safe_dump_all(
+        list(yaml.safe_load_all(yaml_bytes.decode())), sort_keys=False
+    ).encode()
+    assert executable_bytes != yaml_bytes
     sky_bin = _fake_sky(tmp_path)
     observed: dict[str, object] = {}
 
     def preflight(documents, **kwargs):
         observed["documents"] = documents
         observed.update(kwargs)
-        return None, {}, {}
+        return None, {"checks": {"libero_authorization": "pass"}}, {}
 
     def fake_run(command, **_kwargs):
         if _is_status_cmd(command):
@@ -223,8 +230,16 @@ def test_submit_workflow_preflight_receives_exact_source_profile_identity(
     assert "authorization_global_config" not in observed
     assert observed["submission_backend"] == "kubernetes"
     assert observed["executable_profile_sha256"] == hashlib.sha256(
-        yaml_bytes
+        executable_bytes
     ).hexdigest()
+    prepared = (
+        tmp_path
+        / "sky-state"
+        / "submissions"
+        / "libero-exact-profile-0001"
+        / "workflow.yaml"
+    )
+    assert prepared.read_bytes() == executable_bytes
 
 
 def test_libero_submit_refuses_any_post_preflight_profile_change(

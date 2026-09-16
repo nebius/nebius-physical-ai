@@ -814,7 +814,7 @@ class _PreparedWorkflowSubmission:
     config_path: Path
     sky_executable: str
     global_config: dict[str, Any]
-    source_profile_bytes: bytes
+    prepared_profile_bytes: bytes
     run_id: str
     submission_backend: str
     libero_submission: bool = False
@@ -840,7 +840,7 @@ def _submission_global_config(runtime, controller_backend, infra):
 def _preflight_prepared_submission(prepared, *, project, infra, extra_env, target):
     from npa.execution_preflight import ExecutionPreflightError
 
-    executable_profile_sha256 = hashlib.sha256(prepared.source_profile_bytes).hexdigest()
+    executable_profile_sha256 = hashlib.sha256(prepared.prepared_profile_bytes).hexdigest()
     env = sky_environment(prepared.runtime_config.isolated_config_dir)
     for key, value in (extra_env or {}).items():
         if value or key in {"NPA_S3_BUCKET", "NPA_S3_PREFIX"}:
@@ -885,13 +885,14 @@ def _prepare_workflow_submission(
 ):
     runtime = resolve_config(sky_bin=sky_bin, global_config_path=config_path,
                              isolated_config_dir=isolated_config_dir)
-    source_profile_bytes, docs = _load_yaml_documents(Path(yaml_path))
+    _, docs = _load_yaml_documents(Path(yaml_path))
     if not docs:
         raise ValueError("SkyPilot YAML is empty")
+    prepared_profile_bytes = yaml.safe_dump_all(docs, sort_keys=False).encode()
     directory = _submission_dir(run_id, runtime.isolated_config_dir)
     try:
         rendered = directory / "workflow.yaml"
-        rendered.write_bytes(source_profile_bytes)
+        rendered.write_bytes(prepared_profile_bytes)
         _chmod_owner_only(rendered)
         executable = str(ensure_skypilot_version(runtime.sky_bin))
         global_config = _submission_global_config(runtime, controller_backend, infra)
@@ -900,7 +901,7 @@ def _prepare_workflow_submission(
         _chmod_owner_only(generated)
         prepared = _PreparedWorkflowSubmission(runtime, docs, directory, rendered,
                                                 generated, executable, global_config,
-                                                source_profile_bytes,
+                                                prepared_profile_bytes,
                                                 run_id, controller_backend)
         _preflight_prepared_submission(prepared, project=project, infra=infra,
                                       extra_env=extra_env, target=execution_target)

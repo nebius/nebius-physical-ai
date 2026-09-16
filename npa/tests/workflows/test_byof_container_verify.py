@@ -1641,6 +1641,17 @@ def test_libero_allows_only_discovery_for_authenticated_group(monkeypatch) -> No
     )
 
 
+@pytest.mark.parametrize("non_resource_url", ["/metrics", "/*"])
+def test_libero_rejects_broad_public_group_non_resource_urls(
+    non_resource_url,
+) -> None:
+    module = _load_module()
+
+    assert not module._libero_safe_public_group_rules(
+        [{"nonResourceURLs": [non_resource_url], "verbs": ["get"]}]
+    )
+
+
 @pytest.mark.parametrize(
     "subject",
     [
@@ -2729,7 +2740,7 @@ def test_libero_output_preflight_first_call_uses_exact_authorized_triplet(
     )
 
 
-def test_libero_output_preflight_reconciles_only_exact_uncommitted_objects(
+def test_libero_output_preflight_preserves_commit_interleaving(
     monkeypatch,
 ) -> None:
     import boto3
@@ -2737,33 +2748,30 @@ def test_libero_output_preflight_reconciles_only_exact_uncommitted_objects(
     module = _load_module()
     run_id = "libero-authorized-probe"
     prefix = f"accepted-prefix/{run_id}/"
-    transaction_id = "a" * 32
-    objects = {
-        prefix + "libero-smoke.json",
-        prefix
-        + f".npa-staging/{run_id}/{transaction_id}/solution_smoke_stdout.log",
-    }
+    artifact_key = prefix + "libero-smoke.json"
+    commit_key = prefix + "npa_upload_receipt.json"
+    objects = {artifact_key: b"listed bytes"}
     deletes: list[str] = []
 
     class FakeS3:
         def list_objects_v2(self, *, Bucket, Prefix, MaxKeys):
             assert Bucket == "manager-bucket"
             assert Prefix == prefix
-            return {"Contents": [{"Key": key} for key in sorted(objects)[:MaxKeys]]}
+            listed = [{"Key": key} for key in sorted(objects)[:MaxKeys]]
+            objects[artifact_key] = b"replacement bytes"
+            objects[commit_key] = b"committed transaction"
+            return {"Contents": listed}
 
         def delete_object(self, *, Bucket, Key):
             assert Bucket == "manager-bucket"
             deletes.append(Key)
-            objects.discard(Key)
+            objects.pop(Key, None)
 
-        def put_object(self, *, Bucket, Key, **_kwargs):
-            assert Bucket == "manager-bucket"
-            objects.add(Key)
+        def put_object(self, **_kwargs):
+            pytest.fail("preflight wrote into a nonempty run prefix")
 
-        def head_object(self, *, Bucket, Key):
-            assert Bucket == "manager-bucket"
-            assert Key in objects
-            return {"ContentLength": 24}
+        def head_object(self, **_kwargs):
+            pytest.fail("preflight observed a marker after refusing the prefix")
 
     monkeypatch.setattr(boto3, "client", lambda *_args, **_kwargs: FakeS3())
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "manager-access")
@@ -2771,22 +2779,21 @@ def test_libero_output_preflight_reconciles_only_exact_uncommitted_objects(
     monkeypatch.setenv("AWS_SESSION_TOKEN", "manager-session")
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")
 
-    module.preflight_output_storage(
-        output_root="s3://manager-bucket/accepted-prefix",
-        run_id=run_id,
-        libero=True,
-    )
+    with pytest.raises(RuntimeError, match="output storage preflight failed"):
+        module.preflight_output_storage(
+            output_root="s3://manager-bucket/accepted-prefix",
+            run_id=run_id,
+            libero=True,
+        )
 
-    assert set(deletes[:2]) == {
-        prefix + "libero-smoke.json",
-        prefix
-        + f".npa-staging/{run_id}/{transaction_id}/solution_smoke_stdout.log",
+    assert deletes == []
+    assert objects == {
+        artifact_key: b"replacement bytes",
+        commit_key: b"committed transaction",
     }
-    assert deletes[-1] == prefix + ".npa-write-preflight"
-    assert objects == set()
 
 
-def test_libero_output_reconciliation_failure_is_explicit_and_retryable(
+def test_libero_output_prefix_refusal_is_retryable_after_external_cleanup(
     monkeypatch,
 ) -> None:
     import boto3
@@ -2796,17 +2803,14 @@ def test_libero_output_reconciliation_failure_is_explicit_and_retryable(
     prefix = f"accepted-prefix/{run_id}/"
     partial_key = prefix + "npa_runtime_metadata.json"
     objects = {partial_key}
-    fail_delete = True
+    deletes: list[str] = []
 
     class FakeS3:
         def list_objects_v2(self, *, Bucket, Prefix, MaxKeys):
             return {"Contents": [{"Key": key} for key in sorted(objects)[:MaxKeys]]}
 
         def delete_object(self, *, Bucket, Key):
-            nonlocal fail_delete
-            if Key == partial_key and fail_delete:
-                fail_delete = False
-                raise OSError("injected exact-object delete failure")
+            deletes.append(Key)
             objects.discard(Key)
 
         def put_object(self, *, Bucket, Key, **_kwargs):
@@ -2828,13 +2832,16 @@ def test_libero_output_reconciliation_failure_is_explicit_and_retryable(
             libero=True,
         )
     assert objects == {partial_key}
+    assert deletes == []
 
+    objects.clear()
     module.preflight_output_storage(
         output_root="s3://manager-bucket/accepted-prefix",
         run_id=run_id,
         libero=True,
     )
     assert objects == set()
+    assert deletes == [prefix + ".npa-write-preflight"]
 
 
 @pytest.mark.parametrize("suffix", ["npa_upload_receipt.json", "foreign.json"])
