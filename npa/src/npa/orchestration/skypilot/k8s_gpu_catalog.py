@@ -15,8 +15,10 @@ makes ``NAME:2`` unschedulable on a fleet of single-GPU nodes.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+import fcntl
 import hashlib
 import json
 import os
@@ -24,6 +26,7 @@ from pathlib import Path
 import re
 import subprocess
 import time
+import uuid
 
 from npa.orchestration.skypilot._bin import SkyBin, resolve_sky_bin
 from npa.orchestration.skypilot.gpu_catalog import (
@@ -69,6 +72,108 @@ def _kubeconfig_env(kubeconfig: Kubeconfig) -> dict[str, str] | None:
     return env
 
 
+@contextmanager
+def _validation_scope_recovery_lock(scope: Path):
+    """Serialize a narrow stale-validation-state recovery for one scope."""
+
+    lock_path = scope / ".validation-recovery.lock"
+    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def _recover_idle_validation_scope(
+    scope: Path,
+    *,
+    context: str,
+    kubeconfig_path: Path,
+    user_id: str,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    stop_api: Callable[[Path], None] | None = None,
+) -> bool:
+    """Archive stale validation runtime only after exact controller absence.
+
+    GPU catalog discovery owns a separate SkyPilot API scope.  That API has no
+    workload authority except its deterministic jobs-controller pod, so an
+    identity-bound stopped receipt may be retired only when the exact controller
+    pod selector proves empty.  Query failure and any live pod fail closed.
+    """
+
+    expected_user_id = str(user_id or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", expected_user_id):
+        return False
+    if scope.is_symlink() or not scope.is_dir():
+        return False
+    command = [
+        "kubectl",
+        "--kubeconfig",
+        str(kubeconfig_path),
+        "--context",
+        str(context),
+        "get",
+        "pods",
+        "--all-namespaces",
+        "--selector",
+        f"skypilot-cluster-name=sky-jobs-controller-{expected_user_id}",
+        "--output",
+        "json",
+    ]
+    try:
+        result = runner(
+            command,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
+            env=_kubeconfig_env(kubeconfig_path),
+        )
+        payload = json.loads(result.stdout or "{}") if result.returncode == 0 else {}
+        pods = payload.get("items") if isinstance(payload, dict) else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+    if not isinstance(pods, list) or pods:
+        return False
+
+    from npa.orchestration.skypilot import local_api
+
+    stop = stop_api or local_api.stop_isolated_api
+    try:
+        with _validation_scope_recovery_lock(scope):
+            # Recheck while holding the lock: a recovery is only safe for an
+            # exact empty selector, never because a prior read happened to be
+            # empty.
+            result = runner(
+                command,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=30,
+                check=False,
+                env=_kubeconfig_env(kubeconfig_path),
+            )
+            payload = (
+                json.loads(result.stdout or "{}") if result.returncode == 0 else {}
+            )
+            pods = payload.get("items") if isinstance(payload, dict) else None
+            if not isinstance(pods, list) or pods:
+                return False
+            stop(scope)
+            archive = scope / f"retired-{uuid.uuid4().hex}"
+            archive.mkdir(mode=0o700)
+            for name in ("home", "sky-runtime", "local-api"):
+                source = scope / name
+                if source.exists() or source.is_symlink():
+                    os.replace(source, archive / name)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+    return True
+
+
 def kubernetes_sky_environment(
     *, context: str, kubeconfig: Kubeconfig, sky_executable: str,
 ) -> dict[str, str]:
@@ -88,6 +193,7 @@ def kubernetes_sky_environment(
         # Cluster validation may launch a GPU task. It must never fall through
         # to the operator's shared API, even before workflow submission exists.
         from npa.orchestration.skypilot.cleanup import sky_environment
+        from npa.orchestration.skypilot import local_api
         from npa.orchestration.skypilot.local_api import ensure_isolated_api
         import yaml
 
@@ -123,13 +229,39 @@ def kubernetes_sky_environment(
                 handle.flush()
                 os.fsync(handle.fileno())
         env["SKYPILOT_GLOBAL_CONFIG"] = str(config_path)
-        env = sky_environment(scope, environment=env)
-        ensure_isolated_api(
-            isolated_dir=scope,
-            sky_executable=sky_executable,
-            environment=env,
-            cwd=str(kubeconfig_path.parent),
-        )
+        base_environment = dict(env)
+        env = sky_environment(scope, environment=base_environment)
+        try:
+            ensure_isolated_api(
+                isolated_dir=scope,
+                sky_executable=sky_executable,
+                environment=env,
+                cwd=str(kubeconfig_path.parent),
+            )
+        except local_api.IsolatedApiError as exc:
+            # A stopped validation daemon can retain credential-bound SkyPilot
+            # state after the metadata/profile source changes.  It is safe to
+            # retire only this validation scope after Kubernetes proves that its
+            # exact controller pod does not exist; workflow controller state is
+            # never touched here.
+            stale_stopped_identity = (
+                "recovery requires the original executing identity and credential configuration"
+                in str(exc).lower()
+            )
+            if not stale_stopped_identity or not _recover_idle_validation_scope(
+                scope,
+                context=context,
+                kubeconfig_path=kubeconfig_path,
+                user_id=str(env.get("SKYPILOT_USER_ID") or ""),
+            ):
+                raise
+            env = sky_environment(scope, environment=base_environment)
+            ensure_isolated_api(
+                isolated_dir=scope,
+                sky_executable=sky_executable,
+                environment=env,
+                cwd=str(kubeconfig_path.parent),
+            )
     return env
 
 
