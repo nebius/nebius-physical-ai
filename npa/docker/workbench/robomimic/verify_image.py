@@ -126,12 +126,11 @@ def _bounded_json_object(
         VerificationError: The file is absent, unsafe, oversized, or invalid JSON.
     """
 
-    flags = (
-        os.O_RDONLY
-        | os.O_CLOEXEC
-        | getattr(os, "O_NOFOLLOW", 0)
-        | getattr(os, "O_NONBLOCK", 0)
-    )
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    nonblock = getattr(os, "O_NONBLOCK", None)
+    if nofollow is None or nonblock is None:
+        raise VerificationError("runtime metadata requires safe descriptor flags")
+    flags = os.O_RDONLY | os.O_CLOEXEC | nofollow | nonblock
     try:
         descriptor = os.open(path, flags)
     except OSError as exc:
@@ -181,14 +180,17 @@ def _bounded_json_object(
 def _utc_timestamp(value: Any, *, field: str) -> datetime:
     if not isinstance(value, str):
         raise VerificationError(f"customer runtime entitlement {field} is invalid")
+    parse_failed = False
     try:
         parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(
             tzinfo=timezone.utc
         )
-    except ValueError as exc:
+    except ValueError:
+        parse_failed = True
+    if parse_failed:
         raise VerificationError(
             f"customer runtime entitlement {field} is invalid"
-        ) from exc
+        )
     return parsed
 
 
@@ -355,10 +357,13 @@ def _checked_https_url(value: Any, *, host: str) -> str:
     if not isinstance(value, str):
         raise VerificationError("immutable input URL must be a string")
     parsed = urllib.parse.urlsplit(value)
+    invalid_port = False
     try:
         port = parsed.port
-    except ValueError as exc:
-        raise VerificationError(f"immutable input URL has an invalid port: {value}") from exc
+    except ValueError:
+        invalid_port = True
+    if invalid_port:
+        raise VerificationError("immutable input URL has an invalid port")
     if (
         parsed.scheme != "https"
         or parsed.hostname != host
@@ -368,7 +373,7 @@ def _checked_https_url(value: Any, *, host: str) -> str:
         or parsed.query
         or parsed.fragment
     ):
-        raise VerificationError(f"immutable input URL is outside {host}: {value}")
+        raise VerificationError("immutable input URL is outside its approved origin")
     return value
 
 
@@ -1087,6 +1092,53 @@ def _checked_artifacts(
     return result, total_bytes
 
 
+def _verify_declared_runtime_file(
+    path: Path, *, expected_size: int, expected_sha256: str
+) -> None:
+    """Verify one declared payload through a bounded, identity-stable descriptor."""
+
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    nonblock = getattr(os, "O_NONBLOCK", None)
+    if nofollow is None or nonblock is None:
+        raise VerificationError("runtime payload verification requires safe descriptor flags")
+    flags = os.O_RDONLY | os.O_CLOEXEC | nofollow | nonblock
+    open_failed = False
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        open_failed = True
+    if open_failed:
+        raise VerificationError("declared runtime file is not a safe regular file")
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_size != expected_size
+        ):
+            raise VerificationError("runtime file identity mismatch")
+        digest = hashlib.sha256()
+        remaining = expected_size
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            while remaining:
+                chunk = handle.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    raise VerificationError("runtime file identity mismatch")
+                digest.update(chunk)
+                remaining -= len(chunk)
+        closed = os.fstat(descriptor)
+        if (
+            closed.st_dev != opened.st_dev
+            or closed.st_ino != opened.st_ino
+            or closed.st_size != expected_size
+            or closed.st_nlink != 1
+            or digest.hexdigest() != expected_sha256
+        ):
+            raise VerificationError("runtime file identity mismatch")
+    finally:
+        os.close(descriptor)
+
+
 def verify_external_runtime(
     *,
     runtime_root: Path,
@@ -1192,10 +1244,11 @@ def verify_external_runtime(
     payload_resolved = payload_root.resolve()
     for relative, entry in files.items():
         path = runtime_root / relative
-        if not path.is_file() or path.is_symlink():
-            raise VerificationError(f"declared runtime file is not regular: {relative}")
-        if path.stat().st_size != entry["size"] or _sha256(path) != entry["sha256"]:
-            raise VerificationError(f"runtime file identity mismatch: {relative}")
+        _verify_declared_runtime_file(
+            path,
+            expected_size=entry["size"],
+            expected_sha256=entry["sha256"],
+        )
     for relative, entry in links.items():
         path = runtime_root / relative
         if not path.is_symlink() or os.readlink(path) != entry["target"]:
@@ -1285,11 +1338,15 @@ def _copy_bounded_regular_file(
         OSError: Opening, reading, or writing either file fails.
     """
 
-    source_flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    nonblock = getattr(os, "O_NONBLOCK", None)
+    if nofollow is None or nonblock is None:
+        raise VerificationError("runtime snapshot requires safe descriptor flags")
+    source_flags = os.O_RDONLY | os.O_CLOEXEC | nofollow | nonblock
     source_fd = os.open(source, source_flags)
     try:
         source_stat = os.fstat(source_fd)
-        if not stat.S_ISREG(source_stat.st_mode):
+        if not stat.S_ISREG(source_stat.st_mode) or source_stat.st_nlink != 1:
             raise VerificationError(f"runtime snapshot source is not regular: {source}")
         locked_size = source_stat.st_size if expected_size is None else expected_size
         if source_stat.st_size != locked_size:
@@ -1314,9 +1371,16 @@ def _copy_bounded_regular_file(
                     destination_handle.write(chunk)
                     digest.update(chunk)
                     remaining -= len(chunk)
-                if source_handle.read(1):
+                source_after = os.fstat(source_fd)
+                if (
+                    source_after.st_dev != source_stat.st_dev
+                    or source_after.st_ino != source_stat.st_ino
+                    or source_after.st_size != locked_size
+                    or source_after.st_nlink != 1
+                    or not stat.S_ISREG(source_after.st_mode)
+                ):
                     raise VerificationError(
-                        f"runtime snapshot source grew while copying: {source}"
+                        f"runtime snapshot source identity changed: {source}"
                     )
                 destination_handle.flush()
             if expected_sha256 is not None and digest.hexdigest() != expected_sha256:
@@ -1403,6 +1467,7 @@ def materialize_external_runtime(
     staging = Path(
         tempfile.mkdtemp(prefix=f".{destination.name}.staging-", dir=destination.parent)
     )
+    operating_system_failure = False
     try:
         staging.rmdir()
         _copy_runtime_inventory(runtime_root, staging, expected_inventory_sha256)
@@ -1417,12 +1482,14 @@ def materialize_external_runtime(
     except VerificationError:
         shutil.rmtree(staging, ignore_errors=True)
         raise
-    except OSError as exc:
+    except OSError:
         shutil.rmtree(staging, ignore_errors=True)
-        raise VerificationError("runtime snapshot materialization failed") from exc
+        operating_system_failure = True
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
+    if operating_system_failure:
+        raise VerificationError("runtime snapshot materialization failed")
     return {
         **snapshot_proof,
         "read_only_mount_observed": source_proof["read_only_mount_observed"],
@@ -1588,10 +1655,13 @@ def main() -> int:
         runtime_mode = args.mode in {"runtime", "snapshot", "entitlement"}
         runtime_label = runtime_mode or args.mode == "assert-missing-runtime"
         label = "RUNTIME" if runtime_label else "BUILD_INPUT"
-        if args.mode == "entitlement":
-            detail = "customer runtime entitlement refused"
-        else:
-            detail = str(exc)
+        runtime_details = {
+            "runtime": "external runtime verification refused",
+            "snapshot": "runtime snapshot materialization refused",
+            "entitlement": "customer runtime entitlement refused",
+            "assert-missing-runtime": "missing runtime assertion refused",
+        }
+        detail = runtime_details.get(args.mode, str(exc))
         print(f"NPA_ROBOMIMIC_{label}_REFUSED: {detail}", file=sys.stderr)
         return RUNTIME_REFUSAL_STATUS if runtime_mode else 1
     print(json.dumps(result, sort_keys=True))

@@ -55,10 +55,13 @@ def _open_allowed_https(
     for _ in range(6):
         parsed = urllib.parse.urlsplit(current_url)
         hostname = (parsed.hostname or "").lower()
+        invalid_port = False
         try:
             port = parsed.port
-        except ValueError as exc:
-            raise RuntimeError("refusing malformed approved HTTPS URL") from exc
+        except ValueError:
+            invalid_port = True
+        if invalid_port:
+            raise RuntimeError("refusing malformed approved HTTPS URL")
         allowed = hostname in allowed_hosts or (
             allow_hf_redirects
             and (
@@ -84,12 +87,15 @@ def _open_allowed_https(
             context=context,
             timeout=120,
         )
+        transport_failed = False
         try:
             connection.request("GET", target, headers=headers)
             response = connection.getresponse()
         except (OSError, http.client.HTTPException):
             connection.close()
-            raise
+            transport_failed = True
+        if transport_failed:
+            raise RuntimeError("approved HTTPS transport failed")
         if response.status in _HTTPS_REDIRECT_STATUSES:
             location = response.getheader("Location")
             response.close()
@@ -113,6 +119,21 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _value_free_customer_entitlement(**arguments: object) -> dict[str, object]:
+    """Verify the customer record without retaining rejected private values."""
+
+    refused = False
+    try:
+        proof = verify_customer_runtime_entitlement(**arguments)
+    except Exception:
+        refused = True
+    if refused:
+        raise RuntimeError("customer runtime entitlement refused")
+    if not isinstance(proof, dict):
+        raise RuntimeError("customer runtime entitlement proof is invalid")
+    return proof
 
 
 def _pod_identity(
@@ -391,7 +412,7 @@ def main() -> None:
         raise RuntimeError(
             "runtime inventory does not match the operator-selected digest"
         )
-    entitlement = verify_customer_runtime_entitlement(
+    entitlement = _value_free_customer_entitlement(
         entitlement_path=Path(
             os.environ["NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE"]
         ),

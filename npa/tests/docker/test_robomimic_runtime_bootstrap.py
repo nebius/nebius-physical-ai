@@ -9,6 +9,7 @@ import signal
 import subprocess
 import sys
 import time
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -127,6 +128,11 @@ import time
 from pathlib import Path
 
 if sys.argv[1] == "entitlement":
+    count_path = Path(os.environ["NPA_TEST_ENTITLEMENT_COUNT"])
+    count = int(count_path.read_text(encoding="utf-8")) + 1 if count_path.exists() else 1
+    count_path.write_text(str(count), encoding="utf-8")
+    if os.environ.get("NPA_TEST_ENTITLEMENT_FAIL_AT") == str(count):
+        raise SystemExit(78)
     if os.environ.get("NPA_TEST_ENTITLEMENT_MODE") == "fail":
         raise SystemExit(78)
     raise SystemExit(0)
@@ -345,6 +351,7 @@ def _exec_environment(
         "NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_SHA256": "c" * 64,
         "NPA_ROBOMIMIC_CUSTOMER_BINDING_SHA256": "b" * 64,
         "NPA_BYOF_RUN_ID": "entitled-run",
+        "NPA_TEST_ENTITLEMENT_COUNT": str(tmp_path / "entitlement-count"),
         "NPA_TEST_SNAPSHOT_RECORD": str(tmp_path / "snapshot-record"),
         "NPA_TEST_SNAPSHOT_STARTED": str(tmp_path / "snapshot-started"),
         "NPA_TEST_SNAPSHOT_PID": str(tmp_path / "snapshot-pid"),
@@ -599,6 +606,79 @@ def test_entitlement_cli_refusal_redacts_customer_path(
     assert marker not in output
 
 
+@pytest.mark.parametrize("mode", ("runtime", "snapshot"))
+def test_runtime_cli_refusals_never_serialize_rejected_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    mode: str,
+) -> None:
+    marker = f"private-{mode}-path-marker"
+    arguments = [
+        "verify_image.py",
+        mode,
+        "--runtime-root",
+        str(tmp_path / marker),
+        "--runtime-lock",
+        str(IMAGE_ROOT / "runtime-requirements.lock"),
+        "--expected-inventory-sha256",
+        "a" * 64,
+    ]
+    if mode == "snapshot":
+        arguments.extend(["--destination", str(tmp_path / "destination")])
+    monkeypatch.setattr(sys, "argv", arguments)
+
+    status = verifier.main()
+
+    output = capsys.readouterr().err
+    assert status == verifier.RUNTIME_REFUSAL_STATUS
+    assert marker not in output
+    assert "Traceback" not in output
+
+
+def test_entitlement_timestamp_refusal_drops_rejected_value_and_exception_chain() -> None:
+    marker = "private-malformed-timestamp-marker"
+
+    with pytest.raises(verifier.VerificationError) as raised:
+        verifier._utc_timestamp(marker, field="accepted_at")
+
+    error = raised.value
+    serialized = json.dumps(
+        {
+            "args": error.args,
+            "cause": repr(error.__cause__),
+            "context": repr(error.__context__),
+            "traceback": "".join(traceback.format_exception(error)),
+        }
+    )
+    assert marker not in serialized
+    assert error.__cause__ is None
+    assert error.__context__ is None
+
+
+def test_immutable_url_port_refusal_drops_rejected_value_and_exception_chain() -> None:
+    marker = "private-malformed-port-marker"
+
+    with pytest.raises(verifier.VerificationError) as raised:
+        verifier._checked_https_url(
+            f"https://download.pytorch.org:{marker}/wheel",
+            host="download.pytorch.org",
+        )
+
+    error = raised.value
+    serialized = json.dumps(
+        {
+            "args": error.args,
+            "cause": repr(error.__cause__),
+            "context": repr(error.__context__),
+            "traceback": "".join(traceback.format_exception(error)),
+        }
+    )
+    assert marker not in serialized
+    assert error.__cause__ is None
+    assert error.__context__ is None
+
+
 def _artifact(index: int, *, size: int) -> dict[str, object]:
     return {
         "name": f"package-{index}",
@@ -728,15 +808,83 @@ def test_runtime_inventory_fails_closed(tmp_path: Path, mutation: str) -> None:
         marker = json.loads(marker_path.read_text())
         marker["inventory_sha256"] = _sha(inventory_path)
         marker_path.write_text(json.dumps(marker), encoding="utf-8")
+        inventory_sha256 = _sha(inventory_path)
     else:
         (runtime_root / "payload" / "extra").write_text("undeclared")
-    with pytest.raises(verifier.VerificationError):
+    message = (
+        "runtime package inventory mismatch"
+        if mutation == "wrong-package"
+        else None
+    )
+    with pytest.raises(verifier.VerificationError, match=message):
         verifier.verify_external_runtime(
             runtime_root=runtime_root,
             runtime_lock_path=lock_path,
             expected_inventory_sha256=inventory_sha256,
             require_read_only_mount=False,
         )
+
+
+def test_initial_runtime_verification_refuses_fifo_replacement_without_blocking(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
+    interpreter = runtime_root / "payload" / "bin" / "python"
+    original_open = verifier.os.open
+    replaced = False
+
+    def replace_before_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
+        nonlocal replaced
+        if Path(path) == interpreter and not replaced:
+            replaced = True
+            interpreter.unlink()
+            os.mkfifo(interpreter)
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(verifier.os, "open", replace_before_open)
+    started = time.monotonic()
+    with pytest.raises(verifier.VerificationError, match="runtime file identity mismatch"):
+        verifier.verify_external_runtime(
+            runtime_root=runtime_root,
+            runtime_lock_path=lock_path,
+            expected_inventory_sha256=inventory_sha256,
+            require_read_only_mount=False,
+        )
+
+    assert replaced is True
+    assert time.monotonic() - started < 1.0
+
+
+def test_snapshot_copy_refuses_fifo_replacement_without_blocking(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "source"
+    source.write_bytes(b"verified")
+    destination = tmp_path / "destination"
+    original_open = verifier.os.open
+    replaced = False
+
+    def replace_before_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
+        nonlocal replaced
+        if Path(path) == source and not replaced:
+            replaced = True
+            source.unlink()
+            os.mkfifo(source)
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(verifier.os, "open", replace_before_open)
+    started = time.monotonic()
+    with pytest.raises(verifier.VerificationError, match="source is not regular"):
+        verifier._copy_bounded_regular_file(
+            source,
+            destination,
+            expected_size=8,
+            expected_sha256=hashlib.sha256(b"verified").hexdigest(),
+        )
+
+    assert replaced is True
+    assert not destination.exists()
+    assert time.monotonic() - started < 1.0
 
 
 @pytest.mark.parametrize("sibling", ["wheelhouse", "cache", "run-output.json"])
@@ -1002,6 +1150,50 @@ def test_bootstrap_cleans_snapshot_when_import_gate_fails(tmp_path: Path) -> Non
 
     snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
     assert result.returncode == 42, result.stderr
+    assert not snapshot_root.parent.exists()
+
+
+def test_bootstrap_rechecks_expiry_after_snapshot_before_import(tmp_path: Path) -> None:
+    script = _bootstrap_with_fake_snapshot(tmp_path)
+    environment = _exec_environment(tmp_path, import_mode="success", exec_mode="exit")
+    environment["NPA_TEST_ENTITLEMENT_FAIL_AT"] = "2"
+
+    result = subprocess.run(
+        ["bash", str(script), "exec", "smoke.py"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+        timeout=5,
+    )
+
+    snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
+    assert result.returncode == verifier.RUNTIME_REFUSAL_STATUS, result.stderr
+    assert (tmp_path / "entitlement-count").read_text(encoding="utf-8") == "2"
+    assert not (tmp_path / "import-started").exists()
+    assert not (tmp_path / "exec-started").exists()
+    assert not snapshot_root.parent.exists()
+
+
+def test_bootstrap_rechecks_expiry_after_import_before_payload(tmp_path: Path) -> None:
+    script = _bootstrap_with_fake_snapshot(tmp_path)
+    environment = _exec_environment(tmp_path, import_mode="success", exec_mode="exit")
+    environment["NPA_TEST_ENTITLEMENT_FAIL_AT"] = "3"
+
+    result = subprocess.run(
+        ["bash", str(script), "exec", "smoke.py"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+        timeout=5,
+    )
+
+    snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
+    assert result.returncode == verifier.RUNTIME_REFUSAL_STATUS, result.stderr
+    assert (tmp_path / "entitlement-count").read_text(encoding="utf-8") == "3"
+    assert (tmp_path / "import-started").is_file()
+    assert not (tmp_path / "exec-started").exists()
     assert not snapshot_root.parent.exists()
 
 
