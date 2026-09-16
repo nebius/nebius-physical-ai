@@ -6858,6 +6858,16 @@ def test_ui_script_calls_no_undefined_local_helper() -> None:
     assert not undefined, f"UI script calls undefined helper(s): {undefined}"
 
 
+def test_workflow_execution_status_keeps_the_browser_usable() -> None:
+    """Active workflow execution must update a visible status without blocking the UI."""
+    ui = rendered_agent_ui_html()
+
+    assert 'id="workflowExecutionStatus"' in ui
+    assert "function monitorWorkflowExecution(runId)" in ui
+    assert "void monitorWorkflowExecution(executionRunId);" in ui
+    assert "its status remains visible while the browser stays usable" in ui
+
+
 def test_artifact_role_summary_uses_the_declared_role() -> None:
     """Guard the conflict-prone semantic-role/artifact-role UI merge."""
 

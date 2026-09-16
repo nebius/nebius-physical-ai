@@ -2387,6 +2387,7 @@
           </div>
           <p class="hint" id="workflowSubmitHint" style="margin-top:8px;">Prepare run validates and plans without launching work. A second, single-use confirmation starts the durable Kubernetes workflow.</p>
           <div id="workflowExecutionConfirm" class="infra-confirmation-card" style="margin-top:8px;" hidden></div>
+          <div id="workflowExecutionStatus" class="infra-confirmation-card" style="margin-top:8px;" aria-live="polite" hidden></div>
           <div id="workflowPlanHost" class="plan-host" hidden></div>
           <pre id="workflowPlanOutput" class="hint" style="margin-top:8px; white-space:pre-wrap;"></pre>
         </section>
@@ -8571,6 +8572,55 @@
           await new Promise((resolve) => window.setTimeout(resolve, 2000));
         }
       }
+      function renderWorkflowExecutionStatus(execution) {
+        const host = document.getElementById("workflowExecutionStatus");
+        if (!host) return;
+        const record = execution && typeof execution === "object" ? execution : {};
+        const status = String(record.status || record.state || "preparing");
+        const phase = String(record.submission_state || "").trim();
+        const heading = document.createElement("strong");
+        heading.textContent = "Durable workflow status";
+        const detail = document.createElement("p");
+        detail.textContent = phase ? status + " · " + phase : status;
+        host.replaceChildren(heading, detail);
+        host.hidden = false;
+      }
+      function loadCompletedWorkflowTimeline(runId) {
+        const input = document.getElementById("stagesRunInput");
+        if (!input || !runId) return;
+        input.value = runId;
+        const load = document.getElementById("stagesLoadRun");
+        if (load) load.click();
+      }
+      function finishWorkflowExecution(execution, runId) {
+        renderWorkflowExecutionStatus(execution);
+        if (!workflowExecutionSucceeded(execution)) {
+          const failure = String(execution.error || "Workflow execution did not complete successfully.");
+          const category = String(execution.failure_category || "").trim();
+          const recovery = String(execution.recovery_decision || "").trim();
+          const evidence = category
+            ? " [safe runtime category: " + category + (recovery ? "; " + recovery : "") + "]"
+            : "";
+          appendChat("error", "Workflow execution failed: " + failure + evidence);
+          return false;
+        }
+        appendChat(
+          "assistant",
+          "Completed workflow run `" + runId + "` with status `" +
+            String(execution.status || "unknown") + "`. Loading its artifact-backed stage timeline."
+        );
+        loadCompletedWorkflowTimeline(runId);
+        return true;
+      }
+      async function monitorWorkflowExecution(runId) {
+        try {
+          return finishWorkflowExecution(await waitForWorkflowExecution(runId), runId);
+        } catch (error) {
+          renderWorkflowExecutionStatus({ status: "status unavailable" });
+          appendChat("error", "Workflow status could not be refreshed. The durable run continues independently.");
+          return false;
+        }
+      }
       function showWorkflowExecutionConfirmation(pending) {
         const response = pending && pending.response ? pending.response : {};
         const action = response.proposed_action || {};
@@ -8650,39 +8700,19 @@
           throw new Error(String(data.message || data.reason || data.error || "workflow execution failed"));
         }
         clearWorkflowExecutionConfirmation();
-        let execution = data.execution || {};
+        const execution = data.execution || {};
         const executionRunId = String((execution && execution.run_id) || data.run_id || "");
+        renderWorkflowExecutionStatus(execution);
         if (workflowExecutionIsActive(execution)) {
           appendChat(
             "assistant",
             "Accepted workflow run `" + executionRunId +
-              "`. Preparing the durable runtime and watching its terminal result."
+              "`. Preparing the durable runtime; its status remains visible while the browser stays usable."
           );
-          execution = await waitForWorkflowExecution(executionRunId);
+          void monitorWorkflowExecution(executionRunId);
+          return true;
         }
-        if (!workflowExecutionSucceeded(execution)) {
-          const failure = String(execution.error || "Workflow execution did not complete successfully.");
-          const category = String(execution.failure_category || "").trim();
-          const recovery = String(execution.recovery_decision || "").trim();
-          const evidence = category
-            ? " [safe runtime category: " + category + (recovery ? "; " + recovery : "") + "]"
-            : "";
-          appendChat("error", "Workflow execution failed: " + failure + evidence);
-          throw new Error(failure);
-        }
-        appendChat(
-          "assistant",
-          "Completed workflow run `" + String((execution && execution.run_id) || data.run_id || "") +
-            "` with status `" + String((execution && execution.status) || "unknown") +
-            "`. Loading its artifact-backed stage timeline."
-        );
-        const input = document.getElementById("stagesRunInput");
-        if (input && data.run_id) {
-          input.value = String(data.run_id);
-          const load = document.getElementById("stagesLoadRun");
-          if (load) load.click();
-        }
-        return true;
+        return finishWorkflowExecution(execution, executionRunId);
       }
       async function queueChatText(text, options) {
         const opts = options || {};

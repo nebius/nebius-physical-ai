@@ -1606,6 +1606,8 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.wait("@workflowSubmitYaml");
     cy.get("#chatLog").should("contain.text", "Completed workflow run");
     cy.get("#chatLog").should("contain.text", "SUCCEEDED");
+    cy.get("#workflowExecutionStatus").should("contain.text", "Durable workflow status");
+    cy.get("#workflowExecutionStatus").should("contain.text", "SUCCEEDED");
   });
 
   it("covers Stages panel, Rerun buttons, and run-data loading", () => {
