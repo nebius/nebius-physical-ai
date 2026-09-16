@@ -2883,6 +2883,7 @@ def _plan_requires_npa_source(
     from npa.orchestration.npa_workflow.skypilot_render import (
         build_scheduler_task,
         resolve_task_image,
+        tool_requires_staged_npa_source,
     )
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
@@ -2894,6 +2895,8 @@ def _plan_requires_npa_source(
     plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
     for step in plan.steps:
         task = build_scheduler_task(spec, step, run_id=run_id)
+        if tool_requires_staged_npa_source(str(task.get("tool_ref") or "")):
+            return True
         if not resolve_task_image(
             str(task.get("tool_ref") or ""),
             task.get("resources") or {},

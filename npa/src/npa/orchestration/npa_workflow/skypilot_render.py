@@ -69,6 +69,13 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.groot": "groot",
 }
 
+# Runtime-fetch images intentionally carry the tool runtime but not the NPA CLI
+# distribution.  Their generated setup installs NPA from the operator's
+# content-addressed source copy before invoking a toolRef.  This is an image
+# capability, not a tenant workaround: a changed image can retire an entry only
+# when it genuinely bakes a compatible NPA CLI.
+IMAGE_TOOLS_REQUIRING_STAGED_NPA_SOURCE = frozenset({"sonic"})
+
 OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
@@ -646,6 +653,18 @@ def tool_image_key(tool_ref: str) -> str | None:
             if len(prefix) > len(best):
                 best = prefix
     return TOOL_REF_IMAGE_TOOL.get(best)
+
+
+def tool_requires_staged_npa_source(tool_ref: str) -> bool:
+    """Return whether a tool's selected runtime image needs staged NPA source.
+
+    A non-empty image reference alone does not prove it includes the NPA CLI.
+    Runtime-fetch images deliberately omit that distribution to keep their
+    published payload narrow, so the submit preflight must stage source even
+    though image routing itself succeeds.
+    """
+
+    return tool_image_key(tool_ref) in IMAGE_TOOLS_REQUIRING_STAGED_NPA_SOURCE
 
 
 def resolve_task_image(

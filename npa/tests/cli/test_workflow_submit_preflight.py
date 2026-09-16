@@ -34,6 +34,12 @@ SIM2REAL_SPEC = (
     Path(__file__).resolve().parents[3]
     / "workflows" / "main" / "sim2real.yaml"
 )
+SONIC_SPEC = (
+    Path(__file__).resolve().parents[3]
+    / "workflows"
+    / "testing"
+    / "sonic-export-eval.yaml"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -970,6 +976,20 @@ def test_config_pinned_resource_images_satisfy_the_npa_source_requirement() -> N
         )
         is False
     )
+
+
+def test_runtime_fetch_sonic_image_requires_staged_npa_source() -> None:
+    """An image route is insufficient when the image omits the NPA CLI."""
+
+    from npa.cli.workbench.workflow import _plan_requires_npa_source
+    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+
+    assert _plan_requires_npa_source(
+        SONIC_SPEC,
+        run_id="sonic-runtime-fetch-source",
+        assume_decision="",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    ) is True
 
 
 def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None:
