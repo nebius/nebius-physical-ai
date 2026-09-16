@@ -1,0 +1,44 @@
+diff --git a/src/flexpi/models/backbone.py b/src/flexpi/models/backbone.py
+--- a/src/flexpi/models/backbone.py
++++ b/src/flexpi/models/backbone.py
+@@ -1493,9 +1493,11 @@ class WanModelWrapper(torch.nn.Module):
+                 strict_shape=strict_shape,
+             )
+             missing, unexpected = self.mot.load_state_dict(filtered, strict=False)
+-            if missing:
+-                logger.info("MoT keys kept at random init: %d  (first 10: %s)",
+-                            len(missing), missing[:10])
++            if missing or unexpected:
++                raise RuntimeError(
++                    "Checkpoint does not exactly match the deployed MoT: "
++                    f"missing={missing[:10]}, unexpected={unexpected[:10]}"
++                )
+         elif "dit" in payload:
+             logger.warning("Loading legacy `dit` checkpoint into video expert only.")
+             self.video_expert.load_state_dict(payload["dit"], strict=False)
+@@ -1511,7 +1513,9 @@ class WanModelWrapper(torch.nn.Module):
+                 )
+                 self.proprio_encoder.load_state_dict(filtered, strict=False)
+             else:
+-                logger.warning("Checkpoint has no `proprio_encoder` weights; keeping current `proprio_encoder` params.")
++                raise RuntimeError(
++                    "Checkpoint has no `proprio_encoder` weights for the deployed model."
++                )
+         elif "proprio_encoder" in payload:
+             logger.warning("Checkpoint contains `proprio_encoder` weights but current model has `proprio_dim=None`; ignoring.")
+ 
+diff --git a/src/flexpi/models/flexpi.py b/src/flexpi/models/flexpi.py
+--- a/src/flexpi/models/flexpi.py
++++ b/src/flexpi/models/flexpi.py
+@@ -2519,8 +2519,9 @@ class FlexPi(WanModelWrapper):
+             )
+         for key in self._dino_ckpt_keys() + self._mode_ckpt_keys():
+             if key not in payload:
+-                logger.warning("Checkpoint missing '%s'; keeping current params.", key)
+-                continue
++                raise RuntimeError(
++                    f"Checkpoint missing required deployed model state: {key}"
++                )
+             try:
+                 getattr(self, key).load_state_dict(payload[key])
+             except RuntimeError as e:

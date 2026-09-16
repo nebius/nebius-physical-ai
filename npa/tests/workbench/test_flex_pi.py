@@ -15,6 +15,7 @@ from npa.workbench.flex_pi.runtime import (
     FlexPiError,
     FlexPiRequest,
     _runtime_env,
+    REAL_INFERENCE_MARKER,
     run_inference,
 )
 from npa.workbench.flex_pi.service import create_app
@@ -37,7 +38,7 @@ def _runner(argv, **kwargs):  # type: ignore[no-untyped-def]
         "metrics": {"inference_seconds": 0.25, "action_l2_mean": 1.0, "peak_gpu_memory_bytes": 1},
         "runtime": {"cuda": True, "gpu_name": "NVIDIA RTX PRO 6000 Blackwell"},
     }), encoding="utf-8")
-    return subprocess.CompletedProcess(argv, 0, stdout="passed")
+    return subprocess.CompletedProcess(argv, 0, stdout=REAL_INFERENCE_MARKER)
 
 
 def test_real_contract_executes_and_publishes(tmp_path: Path) -> None:
@@ -71,7 +72,7 @@ def test_invalid_action_shape_is_not_published(tmp_path: Path) -> None:
             "metrics": {"inference_seconds": 1.0},
             "runtime": {"cuda": True, "gpu_name": "RTXPRO6000"},
         }))
-        return subprocess.CompletedProcess(argv, 0)
+        return subprocess.CompletedProcess(argv, 0, stdout=REAL_INFERENCE_MARKER)
     output = tmp_path / "output"
     try:
         run_inference(FlexPiRequest(input_path=str(manifest), output_path=str(output)), runner=broken)
@@ -111,6 +112,23 @@ def test_failed_upstream_output_is_bounded_and_redacted(tmp_path: Path) -> None:
         assert len(message) < 8_400
     else:
         raise AssertionError("failed upstream execution was accepted")
+
+
+def test_missing_real_inference_marker_is_rejected(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path / "input.json")
+
+    def missing_marker(argv, **kwargs):  # type: ignore[no-untyped-def]
+        return subprocess.CompletedProcess(argv, 0, stdout="")
+
+    try:
+        run_inference(
+            FlexPiRequest(input_path=str(manifest), output_path=str(tmp_path / "output")),
+            runner=missing_marker,
+        )
+    except FlexPiError as exc:
+        assert "success marker" in str(exc)
+    else:
+        raise AssertionError("unmarked upstream execution was accepted")
 
 
 def test_cli_sdk_and_service_share_dry_run(tmp_path: Path, monkeypatch) -> None:

@@ -28,6 +28,7 @@ DEFAULT_DATASET_REVISION = "bee164afe94041d8c3d7dd1203725c41163fc3f4"
 DEFAULT_INPUT_MANIFEST = "/opt/flex-pi/npa/public_robotwin_sample.json"
 DEFAULT_SOURCE_REVISION = "20c1b2b71ea35a415d5d47c39b04443cfadad7a1"
 ARTIFACT_SCHEMA = "npa.workbench.flex_pi.inference.v1"
+REAL_INFERENCE_MARKER = "FLEX_PI_REAL_INFERENCE_PASSED"
 
 
 class FlexPiError(RuntimeError):
@@ -165,6 +166,11 @@ def _execute(argv: list[str], request: FlexPiRequest, runner: Callable[..., Any]
         raise FlexPiError(
             f"upstream flex-pi inference failed ({completed.returncode}): {detail}"
         )
+    if REAL_INFERENCE_MARKER not in str(completed.stdout or ""):
+        raise FlexPiError("upstream flex-pi inference did not emit its success marker")
+    # Keep the durable job log useful without forwarding verbose library output,
+    # download URLs, or credentials captured from the subprocess.
+    print(REAL_INFERENCE_MARKER, flush=True)
 
 
 def _validate_action_artifact(path: Path, request: FlexPiRequest) -> dict[str, Any]:

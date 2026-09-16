@@ -67,6 +67,7 @@ def test_dockerfile_pins_source_base_and_nonroot() -> None:
     assert "security-dependencies.patch" in text
     assert "hf-snapshot-config.patch" in text
     assert "checkpoint-only-deploy.patch" in text
+    assert "strict-checkpoint-load.patch" in text
     assert "MODELSCOPE_DOWNLOAD_PARALLELS=16" in text
 
     inference = (
@@ -106,3 +107,11 @@ def test_dockerfile_pins_source_base_and_nonroot() -> None:
     assert deploy_patch.index("self.model = instantiate") < deploy_patch.index(
         "self.model.load_checkpoint"
     )
+
+    strict_patch = (
+        Path(__file__).resolve().parents[2]
+        / "docker/workbench/flex-pi/pins/strict-checkpoint-load.patch"
+    ).read_text()
+    assert "if missing or unexpected" in strict_patch
+    assert "Checkpoint missing required deployed model state" in strict_patch
+    assert "Checkpoint has no `proprio_encoder` weights" in strict_patch
