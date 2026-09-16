@@ -6,5 +6,6 @@ artifact-count=0
 # cuDNN, CuRobo, RoboTwin, simulator, model, asset, cache, or output payload.
 # Ubuntu's snapshot-locked python3-minimal package is part of apt-packages.lock
 # and exists only to run NPA's standard-library refusal bootstrap. The future
-# workload runtime remains disabled and requires a separate complete artifact
-# lock plus the four independent human/runtime-use decisions.
+# workload runtime remains disabled pending a complete artifact lock, valid
+# customer-issued exact-terms entitlement, aggregate member-asset/output review,
+# native-content policy, built-image evidence, and live qualification.

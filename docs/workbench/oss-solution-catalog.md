@@ -174,7 +174,8 @@ asset repository card says MIT, while the
 aggregate object archive includes mixed documented source families; future
 tasks must review the terms of their selected objects. Registry credentials,
 runtime fetch, and the byte-absence scan do not grant permission; the
-manager-owned decisions remain pre-fetch/pre-run gates. See
+customer-issued exact-terms entitlement and the separate unresolved
+member-asset provenance/output treatment remain pre-fetch/pre-run gates. See
 [`byof-robotwin.md`](byof-robotwin.md) for the exact license, GPU, workflow, and
 artifact contract.
 

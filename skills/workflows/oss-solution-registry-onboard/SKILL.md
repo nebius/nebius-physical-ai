@@ -249,12 +249,14 @@ unbuilt/publication-quarantined. CuRobo v0.7.8 stays runtime-only and its
 noncommercial research/evaluation field-of-use restriction remains binding on
 use and service claims. Official assets remain a
 runtime fetch. The guarded live harness must refuse before building when the
-manager-owned runtime-use decision is absent, scan the pushed exact digest's
-rootfs and every layer for asset/cache/output bytes, and launch only that
-scanned digest. Runtime fetch, a credential, a private registry, or a passing
-byte scan does not grant permission. Do not add the BYOF image to public GHCR
-or the public image catalog. The full 50-task sweep, policy training, and
-physical deployment are deferred.
+customer-issued, run/manifest/expiry-bound exact-terms entitlement is missing,
+declined, stale, or mismatched, and while aggregate member-asset provenance and
+output treatment remain unresolved. It must scan the pushed exact digest's
+rootfs and every layer for asset/cache/output bytes and launch only that scanned
+digest. Runtime fetch, a credential, a private registry, or a passing byte scan
+does not grant permission. Do not add the BYOF image to public GHCR or the
+public image catalog. The full 50-task sweep, policy training, and physical
+deployment are deferred.
 
 ### OpenPI (`byof-openpi.yaml` + `openpi-pi05-four-mode.yaml`)
 

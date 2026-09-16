@@ -164,16 +164,20 @@ The outer run ID and lower-level worker run ID are separate provenance fields.
 Image builds and other host-orchestrated BYOF workloads must run from the
 operator entrypoint above, before workflow submission.
 
-For a checked-in solution whose runtime or output terms require manager
-authorization before packaging, set `config.runtime_context_env` only to its
-documented environment-variable name and pass the value through the workflow's
-secret environment channel. The public CLI equivalent is
-`--runtime-context-env <variable-name>`. Never put the context JSON, decisions,
-credentials, private registry/storage identities, or local context path in a
+For a checked-in solution that needs manager resource authorization, set
+`config.runtime_context_env` only to its documented environment-variable name
+and pass the value through the workflow's secret environment channel. The
+public CLI equivalent is `--runtime-context-env <variable-name>`. If exact
+runtime terms instead require customer authorization, use the solution's
+separate documented customer-entitlement secret and bind it to customer, run,
+exact runtime manifest, activity, terms and expiry; never add legal-acceptance
+booleans to the manager context. Never put either context value, decisions,
+credentials, private registry/storage identities, or local file paths in a
 workflow or command line. The generic runner remains unchanged when the option
-is absent. A solution that selects it must validate the complete owner-only
-context before source access, registry resolution, image work, or workload
-submission; a credential or private registry alone is not authorization.
+is absent. A solution that selects these channels must validate every required
+owner-only value before source access, registry resolution, image work, or
+workload submission; a credential or private registry alone is not
+authorization.
 
 Workloads:
 
