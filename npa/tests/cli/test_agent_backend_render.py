@@ -4813,10 +4813,13 @@ def test_rendered_backend_uses_dedicated_agent_skypilot_state(
     module_name = "npa_rendered_isolated_skypilot_backend"
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
     monkeypatch.delenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("NPA_AGENT_ISOLATED_RECOVERY_REBIND", raising=False)
     try:
-        assert module._agent_command_env()["NPA_SKYPILOT_ISOLATED_CONFIG_DIR"] == (
+        environment = module._agent_command_env()
+        assert environment["NPA_SKYPILOT_ISOLATED_CONFIG_DIR"] == (
             "/opt/npa-agent/skypilot-state"
         )
+        assert environment["NPA_AGENT_ISOLATED_RECOVERY_REBIND"] == "v1"
     finally:
         sys.modules.pop(module_name, None)
 

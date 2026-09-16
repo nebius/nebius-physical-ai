@@ -3318,6 +3318,10 @@ def _agent_command_env() -> dict:
     # VM-wide default gives every UI submit an owned API endpoint and prevents
     # stale shared-controller metadata from crossing into a confirmed run.
     env.setdefault("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", "/opt/npa-agent/skypilot-state")
+    # Agent bootstrap refreshes only this VM's staged NPA profile and attached
+    # metadata cache.  The isolated API accepts that narrow, stopped-daemon
+    # recovery without allowing a project, cluster, or credential-source swap.
+    env.setdefault("NPA_AGENT_ISOLATED_RECOVERY_REBIND", "v1")
     # A dedicated agent VM owns a staged NPA kubeconfig for its one selected
     # project.  Give every child command that exact file up front: otherwise the
     # isolated SkyPilot API can be verified with an empty KUBECONFIG and later

@@ -30,6 +30,7 @@ _ENDPOINT = "SKYPILOT_API_SERVER_ENDPOINT"
 _MARKER = "NPA_OWNED_SKYPILOT_API_ID"
 _METADATA_TOKEN_ROOT = Path("/mnt/cloud-metadata")
 _METADATA_CREDENTIAL_SOURCE = "instance_metadata"
+_AGENT_RECOVERY_REBIND_ENV = "NPA_AGENT_ISOLATED_RECOVERY_REBIND"
 # These resolved values are private runtime configuration, never credentials.
 _RUNTIME_SETTINGS = {"storage_bucket": "NPA_S3_BUCKET", "storage_prefix": "NPA_S3_PREFIX",
                      "aws_region": "AWS_REGION", "aws_default_region": "AWS_DEFAULT_REGION",
@@ -492,6 +493,54 @@ def _identity_files(environment: Mapping[str, str], *, config: Mapping[str, Any]
         raise IsolatedApiError("executing credential/configuration file identity cannot be inspected") from None
 
 
+def _agent_profile_rebind_allowed(
+    record: Mapping[str, Any], *, binding: Mapping[str, str],
+    files: Mapping[str, str], environment: Mapping[str, str],
+) -> bool:
+    """Allow a stopped Agent daemon to refresh only its staged config/cache.
+
+    An Agent bootstrap rewrites its own NPA profile and receives a fresh
+    instance-metadata token. These files can change while the selected project,
+    Kubernetes context, provider configuration, and storage identity are
+    unchanged. This opt-in migration is deliberately unavailable to regular
+    callers and never permits a live daemon or any other identity file to be
+    rebound.
+    """
+    if environment.get(_AGENT_RECOVERY_REBIND_ENV) != "v1":
+        return False
+    recorded_binding = record.get("environment_binding")
+    recorded_files = record.get("identity_files")
+    if not isinstance(recorded_binding, dict) or not isinstance(recorded_files, dict):
+        return False
+    if dict(recorded_binding) != dict(binding):
+        return False
+    project = str(environment.get("NPA_SKYPILOT_PROJECT") or "")
+    if not project or record.get("project_alias") != project:
+        return False
+    configured = str(environment.get("NPA_CONFIG_DIR") or "")
+    if not configured:
+        return False
+    try:
+        config_root = Path(configured).expanduser().resolve(strict=False)
+        allowed = {
+            str(config_root / "config.yaml"),
+            str(config_root / "credentials.yaml"),
+        }
+        changed = {
+            path for path in set(recorded_files) | set(files)
+            if recorded_files.get(path) != files.get(path)
+        }
+        return bool(changed) and all(
+            path in allowed
+            or Path(path).expanduser().resolve(strict=False).is_relative_to(
+                _METADATA_TOKEN_ROOT.resolve()
+            )
+            for path in changed
+        )
+    except (OSError, ValueError):
+        return False
+
+
 def _session_members(record: Mapping[str, Any]) -> list[int]:
     if not record.get("pid"):
         return []
@@ -897,7 +946,12 @@ def ensure_isolated_api(
             if _session_members(record):
                 raise IsolatedApiError("owned SkyPilot API children survived their leader; finish its process-session cleanup before recovery")
             if record.get("environment_binding") and (record["environment_binding"] != binding or record.get("identity_files") != files):
-                raise IsolatedApiError("isolated SkyPilot API recovery requires the original executing identity and credential configuration")
+                if not _agent_profile_rebind_allowed(
+                    record, binding=binding, files=files, environment=daemon_env,
+                ):
+                    raise IsolatedApiError("isolated SkyPilot API recovery requires the original executing identity and credential configuration")
+                record.update(environment_binding=binding, identity_files=files)
+                _write(root / "daemon.json", record)
             for port in (record["port"], record["queue_port"], record["metrics_port"]):
                 with socket.socket() as listener:
                     try:
