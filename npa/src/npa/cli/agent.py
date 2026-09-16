@@ -10576,8 +10576,6 @@ def deploy_cmd(
         progress=lambda payload: typer.echo(
             "progress: " + json.dumps(payload, sort_keys=True), err=True
         ),
-        # Local staging validation is deterministic, not a transport loss. An
-        # older healthy service must never reconcile it into false success.
         fatal_errors=(DeploymentIdentityError, ValueError),
         transport_errors=(ConfigError, SSHError),
     )
@@ -11264,8 +11262,6 @@ def bootstrap_cmd(
         progress=lambda payload: typer.echo(
             "progress: " + json.dumps(payload, sort_keys=True), err=True
         ),
-        # Local staging validation is deterministic, not a transport loss. An
-        # older healthy service must never reconcile it into false success.
         fatal_errors=(DeploymentIdentityError, ValueError),
         transport_errors=(ConfigError, SSHError),
     )
