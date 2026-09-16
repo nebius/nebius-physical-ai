@@ -1761,6 +1761,18 @@ def secret_env_hints_for_plan(steps: Sequence[PlanStep]) -> tuple[str, ...]:
             if name not in seen:
                 seen.add(name)
                 hints.append(name)
+        # RoboCasa endpoints use a bearer token whose variable name is part of
+        # the workflow config.  Read the already-resolved argv rather than
+        # guessing a fixed variable name, so a deployment can use a scoped
+        # token without silently dropping it at submit time.
+        if tool_ref == "workbench.robocasa" or tool_ref.startswith("workbench.robocasa."):
+            for index, arg in enumerate(step.argv[:-1]):
+                if arg != "--token-env":
+                    continue
+                name = step.argv[index + 1]
+                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) and name not in seen:
+                    seen.add(name)
+                    hints.append(name)
     return tuple(hints)
 
 

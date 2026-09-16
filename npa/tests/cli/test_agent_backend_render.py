@@ -25,6 +25,7 @@ import pytest
 from npa.agent_backend.shipping import SHIPPED_BACKEND_MODULES
 from npa.cli.agent_embed import embedded_python_source
 from npa.cli.agent_viewer_runtime import _sha256_file
+from npa.cli.agent_workflow import generate_workflow_yaml
 
 
 def test_sha256_file_streams_recording_without_read_bytes(
@@ -596,6 +597,32 @@ def test_rendered_mk8s_provision_forwards_shared_backend_desired_state(
     assert captured["preemptible"] is True
 
 
+def test_rendered_mk8s_provision_does_not_promote_unknown_preflight_to_ready(
+    monkeypatch, tmp_path
+) -> None:
+    """A chat confirmation must not bypass a fail-closed capacity plan."""
+    import sys
+
+    from npa import provisioning
+
+    module_name = "npa_rendered_mk8s_unknown_preflight"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+
+    class Result:
+        def to_dict(self):
+            return {"status": "unknown", "preflight": {"decision": "unknown"}}
+
+    monkeypatch.setattr(module, "_agent_npa_ready", lambda: (True, ""))
+    monkeypatch.setattr(provisioning, "provision_if_absent", lambda **_kwargs: Result())
+    try:
+        result = module._provision_agent_infra("project-alias", "target", dry_run=True)
+    finally:
+        sys.modules.pop(module_name, None)
+
+    assert result["ok"] is False
+    assert result["status"] == "unknown"
+
+
 def test_rendered_mk8s_confirmation_binds_storage_and_validation_switches(
     monkeypatch, tmp_path
 ) -> None:
@@ -622,6 +649,178 @@ def test_rendered_mk8s_confirmation_binds_storage_and_validation_switches(
             )
     finally:
         sys.modules.pop(module_name, None)
+
+
+def test_rendered_chat_mk8s_preflights_then_requires_click_confirmation(
+    monkeypatch, tmp_path
+) -> None:
+    """Chat runs a safe preflight; only the returned token can provision."""
+    import sys
+
+    module_name = "npa_rendered_chat_mk8s_confirmation"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    module.STATE_PATH = tmp_path / "chat-mk8s-confirmation-state.json"
+    module._STATE_STORE = None
+    calls: list[bool] = []
+
+    def provision(project, cluster_name, *, dry_run, **_kwargs):
+        calls.append(dry_run)
+        return {"ok": True, "status": "planned" if dry_run else "submitted"}
+
+    monkeypatch.setattr(module, "_provision_agent_infra", provision)
+    monkeypatch.setattr(module, "_agent_k8s_backends", lambda _project="": {"has_infra": False})
+    try:
+        initial = module._agent_chat_with_tools(
+            raw_messages=[{"role": "user", "content": "deploy an mk8s cluster for my workflow"}],
+            model="unused",
+        )
+        assert initial["grounded"] is True
+        assert initial["needs_confirmation"] is True
+        assert initial["infra_deployment"] == {
+            "phase": "ready_for_confirmation",
+            "status": "ready",
+            "needs_confirmation": True,
+        }
+        assert initial["confirm_token"]
+        assert calls == [True]
+        assert "project" not in initial["reply"].lower()
+        assert "/api/infra/mk8s/provision" in initial["reply"]
+        assert "npa provision-if-absent" in initial["reply"]
+
+        confirmed = module._agent_chat_with_tools(
+            raw_messages=[{"role": "user", "content": "deploy an mk8s cluster for my workflow"}],
+            model="unused",
+            confirm_token=initial["confirm_token"],
+        )
+        assert confirmed["infra_deployment"]["phase"] == "submitted"
+        assert confirmed["needs_confirmation"] is False
+        assert calls == [True, False]
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_rendered_chat_mk8s_cpu_only_request_binds_confirmed_shape(
+    monkeypatch, tmp_path
+) -> None:
+    """A CPU-only chat request must preserve its exact shape through confirmation."""
+    import sys
+
+    module_name = "npa_rendered_chat_mk8s_cpu_only_confirmation"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    module.STATE_PATH = tmp_path / "chat-mk8s-cpu-only-state.json"
+    module._STATE_STORE = None
+    calls: list[tuple[bool, dict]] = []
+
+    def provision(_project, _cluster_name, *, dry_run, desired, **_kwargs):
+        calls.append((dry_run, desired))
+        return {"ok": True, "status": "planned" if dry_run else "submitted"}
+
+    monkeypatch.setattr(module, "_provision_agent_infra", provision)
+    monkeypatch.setattr(module, "_agent_k8s_backends", lambda _project="": {"has_infra": False})
+    prompt = "Deploy a CPU-only MK8s cluster for the Token Factory workload."
+    try:
+        initial = module._agent_chat_with_tools(
+            raw_messages=[{"role": "user", "content": prompt}], model="unused"
+        )
+        confirmed = module._agent_chat_with_tools(
+            raw_messages=[{"role": "user", "content": prompt}],
+            model="unused",
+            confirm_token=initial["confirm_token"],
+        )
+    finally:
+        sys.modules.pop(module_name, None)
+
+    assert initial["needs_confirmation"] is True
+    assert confirmed["needs_confirmation"] is False
+    assert [dry_run for dry_run, _desired in calls] == [True, False]
+    assert calls[0][1] == calls[1][1]
+    assert calls[0][1]["cpu_nodes"] == 1
+    assert calls[0][1]["gpu_nodes"] == 0
+    assert "CPU-only" in initial["reply"]
+
+
+def test_rendered_chat_mk8s_rtx_rendering_request_binds_profile(
+    monkeypatch, tmp_path
+) -> None:
+    """The named GPU profile remains identical from preflight to confirmation."""
+    import sys
+
+    module_name = "npa_rendered_chat_mk8s_rtx_rendering_confirmation"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    module.STATE_PATH = tmp_path / "chat-mk8s-rtx-rendering-state.json"
+    module._STATE_STORE = None
+    calls: list[tuple[bool, dict]] = []
+    cluster_names: list[str] = []
+
+    def provision(_project, cluster_name, *, dry_run, desired, **_kwargs):
+        calls.append((dry_run, desired))
+        cluster_names.append(cluster_name)
+        return {"ok": True, "status": "planned" if dry_run else "submitted"}
+
+    monkeypatch.setattr(module, "_provision_agent_infra", provision)
+    monkeypatch.setattr(module, "_agent_k8s_backends", lambda _project="": {"has_infra": False})
+    prompt = (
+        "Provision one on-demand RTX rendering GPU node in an MK8s cluster "
+        "named demo-gpu-target for this workflow."
+    )
+    try:
+        initial = module._agent_chat_with_tools(
+            raw_messages=[{"role": "user", "content": prompt}], model="unused"
+        )
+        confirmed = module._agent_chat_with_tools(
+            raw_messages=[{"role": "user", "content": prompt}],
+            model="unused",
+            confirm_token=initial["confirm_token"],
+        )
+    finally:
+        sys.modules.pop(module_name, None)
+
+    assert initial["needs_confirmation"] is True
+    assert confirmed["needs_confirmation"] is False
+    assert [dry_run for dry_run, _desired in calls] == [True, False]
+    assert calls[0][1] == calls[1][1]
+    assert cluster_names == ["demo-gpu-target", "demo-gpu-target"]
+    assert {
+        key: calls[0][1][key]
+        for key in ("gpu_nodes", "gpu_workload_profile", "gpu_cuda_smoke")
+    } == {
+        "gpu_nodes": 1,
+        "gpu_workload_profile": "rtx-rendering",
+        "gpu_cuda_smoke": True,
+    }
+    assert "RTX rendering GPU node" in initial["reply"]
+    assert "explicitly named Kubernetes cluster" in initial["reply"]
+
+
+def test_rendered_chat_mk8s_unknown_preflight_never_issues_confirmation(
+    monkeypatch, tmp_path
+) -> None:
+    """Unknown quota evidence is a no-mutation stop, not a confirmable action."""
+    import sys
+
+    module_name = "npa_rendered_chat_mk8s_unknown_preflight"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    module.STATE_PATH = tmp_path / "chat-mk8s-unknown-state.json"
+    module._STATE_STORE = None
+    monkeypatch.setattr(module, "_agent_project_alias", lambda _value: "project-alias")
+    monkeypatch.setattr(
+        module,
+        "_provision_agent_infra",
+        lambda *_args, **_kwargs: {"ok": False, "status": "unknown"},
+    )
+    try:
+        response = module._agent_chat_with_tools(
+            raw_messages=[{"role": "user", "content": "provision an mk8s cluster"}],
+            model="unused",
+        )
+    finally:
+        sys.modules.pop(module_name, None)
+
+    assert response["grounded"] is True
+    assert response["needs_confirmation"] is False
+    assert "confirm_token" not in response
+    assert response["infra_deployment"]["phase"] == "preflight"
+    assert response["infra_deployment"]["status"] == "unknown"
 
 
 def test_rendered_mk8s_dry_run_backend_validation_error_is_clean_400(
@@ -1227,7 +1426,7 @@ def test_bootstrap_installs_auth_with_protected_stdin(monkeypatch) -> None:
     assert "| sudo htpasswd -iBc" in commands[0]
     assert "password" not in commands[0].split("| sudo htpasswd", 1)[1]
     assert 'sudo chown root:www-data "$stage/auth"' in setup
-    assert 'sudo mv -fT -- "$stage/auth" /etc/nginx/.npa-agent-htpasswd' in setup
+    assert 'sudo mv -f "$stage/auth" /etc/nginx/.npa-agent-htpasswd' in setup
 
 
 def test_bootstrap_stages_explicit_official_foxglove_backend(monkeypatch) -> None:
@@ -1399,7 +1598,17 @@ def test_workflow_dry_run_plans_provision_even_with_existing_infra(
     monkeypatch.setattr(
         module,
         "_agent_k8s_backends",
-        lambda _project: {"has_infra": True, "configured": ["existing"]},
+        lambda _project: {
+            "has_infra": True,
+            "project": "demo",
+            "configured": [
+                {
+                    "cluster_name": "existing-cluster",
+                    "context": "existing-context",
+                    "kubeconfig": str(tmp_path / "kubeconfig"),
+                }
+            ],
+        },
     )
 
     def provision(project, cluster_name, **kwargs):
@@ -1429,12 +1638,331 @@ def test_workflow_dry_run_plans_provision_even_with_existing_infra(
     assert provisions == [
         {
             "project": "demo",
-            "cluster_name": "npa-cluster",
+            "cluster_name": "existing-cluster",
             "dry_run": True,
             "validate": False,
             "skip_s3": True,
         }
     ]
+
+
+def test_agent_execution_resolves_catalog_secret_hints(monkeypatch, tmp_path) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_workflow_secret_hints_backend"
+    )
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        generate_workflow_yaml("token-factory-deployment-review"), encoding="utf-8"
+    )
+
+    assert module._agent_workflow_secret_envs(
+        yaml_path, run_id="catalog-secret-hints"
+    ) == ("NEBIUS_TOKEN_FACTORY_KEY",)
+
+
+def test_workflow_execution_requires_and_uses_action_bound_confirmation(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_workflow_execute_backend"
+    )
+    state: dict[str, object] = {}
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("apiVersion: npa.workflow/v0.0.1\n", encoding="utf-8")
+    commands: list[tuple[list[str], object, bool]] = []
+    command_envs: list[tuple[list[str], dict[str, str]]] = []
+    issued: list[tuple[dict, str]] = []
+    consumed: list[tuple[str, dict]] = []
+    monkeypatch.setattr(module, "_resolve_workflow_yaml", lambda _body: "workflow")
+    monkeypatch.setattr(
+        module,
+        "validate_workflow_yaml_text",
+        lambda *_args, **_kwargs: {"ok": True, "name": "confirmed-workflow"},
+    )
+    monkeypatch.setattr(
+        module,
+        "plan_workflow_yaml_text",
+        lambda *_args, **_kwargs: {"ok": True, "steps": [{"state": "generate"}]},
+    )
+    monkeypatch.setattr(module, "_agent_project_alias", lambda value: value or "demo")
+    monkeypatch.setattr(
+        module,
+        "_agent_k8s_backends",
+        lambda _project: {
+            "has_infra": True,
+            "project": "demo",
+            "configured": [
+                {
+                    "cluster_name": "existing-cluster",
+                    "context": "existing-context",
+                    "kubeconfig": str(tmp_path / "kubeconfig"),
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(module, "_write_workflow_temp_yaml", lambda _text: yaml_path)
+    monkeypatch.setattr(
+        module, "_agent_workflow_requires_staged_source", lambda *_args, **_kwargs: True
+    )
+    monkeypatch.setattr(
+        module,
+        "_agent_workflow_secret_envs",
+        lambda *_args, **_kwargs: ("NEBIUS_TOKEN_FACTORY_KEY",),
+    )
+
+    monkeypatch.setattr(
+        module,
+        "_agent_workflow_context_env",
+        lambda context: {"KUBECONFIG": f"selected/{context}/kubeconfig"},
+    )
+
+    def run_npa(args, *, timeout_s=300, expect_json=True, extra_env=None):
+        commands.append((list(args), timeout_s, expect_json))
+        command_envs.append((list(args), dict(extra_env or {})))
+        if "run-spec" in args:
+            return {"ok": True, "steps": [{"state": "generate"}]}
+        if args[:3] == ["workbench", "workflow", "stage-src"]:
+            return {}
+        if args[:2] == ["skypilot", "bootstrap"]:
+            return {}
+        if args[:2] == ["skypilot", "bind-controller"]:
+            return {}
+        assert args[:3] == ["workbench", "workflow", "submit"]
+        return {
+            "run_id": "confirmed-run",
+            "workflow": "confirmed-workflow",
+            "status": "SUCCEEDED",
+            "steps": [{"state": "generate"}],
+        }
+
+    monkeypatch.setattr(module, "_run_agent_npa_json", run_npa)
+    monkeypatch.setattr(module, "_load_state", lambda: dict(state))
+
+    def save_state(value):
+        state.clear()
+        state.update(value)
+
+    monkeypatch.setattr(module, "_save_state", save_state)
+
+    def mutate_state(fn):
+        current = dict(state)
+        result = fn(current)
+        save_state(current)
+        return result
+
+    monkeypatch.setattr(module, "_mutate_state", mutate_state)
+    monkeypatch.setattr(module, "_save_workflow_draft", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "_record_sim_viz_run", lambda *_args: None)
+
+    class InlineThread:
+        def __init__(self, *, target, **_kwargs):
+            self.target = target
+
+        def start(self) -> None:
+            self.target()
+
+    monkeypatch.setattr(module.threading, "Thread", InlineThread)
+
+    def issue_token(action, digest):
+        issued.append((action, digest))
+        state["agent_act"] = {
+            "confirm_token": "single-use-token",
+            "confirm_digest": digest,
+            "pending_action": action,
+        }
+        return "single-use-token"
+
+    monkeypatch.setattr(module, "_issue_agent_confirm_token", issue_token)
+    monkeypatch.setattr(
+        module,
+        "_consume_workflow_confirmation",
+        lambda *, confirm_token, expected_action: consumed.append(
+            (confirm_token, expected_action)
+        ),
+    )
+
+    prepared = module.submit_npa_workflow(
+        {
+            "yaml": "workflow",
+            "run_id": "confirmed-run",
+            "project": "demo",
+            "prepare_execution": True,
+        }
+    )
+
+    assert prepared["needs_confirmation"] is True
+    assert prepared["submit_mode"] == "agent-live-infra-confirm-required"
+    assert prepared["proposed_action"]["action"] == "execute_workflow"
+    assert prepared["proposed_action"]["kubernetes_context"] == "existing-context"
+    assert issued and issued[0][0] == prepared["proposed_action"]
+    assert state["agent_act"]["confirm_token"] == "single-use-token"
+    assert all("submit" not in command for command, _timeout, _json in commands)
+
+    completed = module.submit_npa_workflow(
+        {
+            "yaml": "workflow",
+            "run_id": "confirmed-run",
+            "project": "demo",
+            "execute": True,
+            "confirm_token": "single-use-token",
+        }
+    )
+
+    assert consumed == [("single-use-token", prepared["proposed_action"])]
+    submit_commands = [
+        (command, timeout, expect_json)
+        for command, timeout, expect_json in commands
+        if command[:3] == ["workbench", "workflow", "submit"]
+    ]
+    assert len(submit_commands) == 1
+    assert "--runtime" in submit_commands[0][0]
+    assert "--infra" in submit_commands[0][0]
+    assert "k8s/existing-context" in submit_commands[0][0]
+    assert "--secret-env" in submit_commands[0][0]
+    assert "NEBIUS_TOKEN_FACTORY_KEY" in submit_commands[0][0]
+    assert "--isolated-config-dir" not in submit_commands[0][0]
+    assert submit_commands[0][0][-2:] == ["--output-format", "json"]
+    assert submit_commands[0][1] is None
+    assert submit_commands[0][2] is True
+    source_commands = [
+        (command, timeout, expect_json)
+        for command, timeout, expect_json in commands
+        if command[:3] == ["workbench", "workflow", "stage-src"]
+    ]
+    assert source_commands == [
+        (
+            [
+                "workbench",
+                "workflow",
+                "stage-src",
+                "--project",
+                "demo",
+                "--run-id",
+                "confirmed-run-source",
+            ],
+            900,
+            False,
+        )
+    ]
+    assert commands.index(source_commands[0]) < commands.index(
+        (["skypilot", "bootstrap", "--save"], 600, False)
+    )
+    assert (["skypilot", "bootstrap", "--save"], 600, False) in commands
+    assert (
+        [
+            "skypilot",
+            "bind-controller",
+            "--project",
+            "demo",
+            "--context",
+            "existing-context",
+            "--json",
+        ],
+        300,
+        False,
+    ) in commands
+    context_bound_commands = [
+        env
+        for command, env in command_envs
+        if command[:2] in (["skypilot", "bootstrap"], ["skypilot", "bind-controller"])
+        or command[:3] in (["workbench", "workflow", "stage-src"], ["workbench", "workflow", "submit"])
+    ]
+    assert context_bound_commands
+    assert all(
+        env == {"KUBECONFIG": "selected/existing-context/kubeconfig"}
+        for env in context_bound_commands
+    )
+    assert completed["submit_mode"] == "agent-live-infra-executing"
+    assert completed["execution"] == {
+        "run_id": "confirmed-run",
+        "workflow": "confirmed-workflow",
+        "status": "RUNNING",
+        "state": "running",
+        "lifecycle_state": "",
+        "submission_state": "accepted",
+        "steps": 1,
+    }
+    assert state["workflow_executions"]["confirmed-run"] == {
+        "run_id": "confirmed-run",
+        "workflow": "confirmed-workflow",
+        "status": "SUCCEEDED",
+        "state": "succeeded",
+        "lifecycle_state": "",
+        "submission_state": "",
+        "steps": 1,
+        "submitted_at": state["workflow_executions"]["confirmed-run"]["submitted_at"],
+        "started_at": state["workflow_executions"]["confirmed-run"]["started_at"],
+        "finished_at": state["workflow_executions"]["confirmed-run"]["finished_at"],
+        "error": "",
+    }
+    status = module.workflow_execution_status("confirmed-run")
+    assert status["ok"] is True
+    assert status["execution"]["state"] == "succeeded"
+    assert status["execution"]["status"] == "SUCCEEDED"
+
+
+def test_workflow_execution_failure_observability_is_safe_and_actionable(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_failure_observability_backend"
+    )
+
+    observed = module._workflow_execution_failure_observability(
+        RuntimeError("SkyPilot API connection refused while launching")
+    )
+
+    assert observed == {
+        "failure_category": "sky_api_transport",
+        "recovery_decision": "",
+    }
+
+    structured = module._workflow_execution_failure_observability(
+        type(
+            "StructuredFailure",
+            (),
+            {
+                "detail": json.dumps(
+                    {
+                        "transaction": {
+                            "category": "kubernetes_transport",
+                            "recovery_decision": "readiness_blocked",
+                        }
+                    }
+                )
+            },
+        )()
+    )
+    assert structured == {
+        "failure_category": "kubernetes_transport",
+        "recovery_decision": "readiness_blocked",
+    }
+
+
+def test_agent_npa_failure_prefers_safe_structured_transaction(monkeypatch, tmp_path) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_safe_transaction_backend"
+    )
+
+    detail = module._safe_structured_transaction_detail(
+        json.dumps(
+            {
+                "transaction": {
+                    "category": "kubernetes_transport",
+                    "recovery_decision": "readiness_blocked",
+                    "raw_error": "must not be reflected",
+                }
+            }
+        )
+    )
+
+    assert json.loads(detail) == {
+        "transaction": {
+            "category": "kubernetes_transport",
+            "recovery_decision": "readiness_blocked",
+        }
+    }
+    assert module._safe_structured_transaction_detail("not json") == ""
 
 
 @pytest.mark.parametrize(
@@ -3706,6 +4234,56 @@ def test_rendered_backend_skips_unreadable_ssh_key_candidates(
         assert "TF_VAR_ssh_public_key" not in env
     finally:
         sys.modules.pop(module_name, None)
+
+
+def test_rendered_backend_exports_hcl_ssh_key_path_for_cluster_provisioning(
+    monkeypatch, tmp_path
+) -> None:
+    """The service backend must emit the Terraform-compatible HCL object form."""
+    module_name = "npa_rendered_hcl_ssh_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    candidate = "/home/ubuntu/.ssh/id_ed25519.pub"
+    real_isfile = module.os.path.isfile
+    real_access = module.os.access
+    monkeypatch.delenv("TF_VAR_ssh_public_key", raising=False)
+    monkeypatch.setattr(
+        module.os.path,
+        "isfile",
+        lambda value: True if str(value) == candidate else real_isfile(value),
+    )
+    monkeypatch.setattr(
+        module.os,
+        "access",
+        lambda value, mode: True if str(value) == candidate else real_access(value, mode),
+    )
+    try:
+        env = module._agent_command_env()
+        assert env["TF_VAR_ssh_public_key"] == '{path="/home/ubuntu/.ssh/id_ed25519.pub"}'
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_rendered_backend_uses_dedicated_agent_skypilot_state(
+    monkeypatch, tmp_path
+) -> None:
+    module_name = "npa_rendered_isolated_skypilot_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    monkeypatch.delenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", raising=False)
+    try:
+        assert module._agent_command_env()["NPA_SKYPILOT_ISOLATED_CONFIG_DIR"] == (
+            "/opt/npa-agent/skypilot-state"
+        )
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_agent_bootstrap_exposes_authorized_key_to_cluster_lifecycle() -> None:
+    from npa.cli import agent as agent_module
+
+    script_source = Path(agent_module.__file__).read_text(encoding="utf-8")
+
+    assert "NPA_SSH_PUBLIC_KEY={agent_cluster_ssh_key_path}" in script_source
+    assert "EnvironmentFile=-/opt/npa-agent/cluster.env" in script_source
 
 
 @pytest.fixture

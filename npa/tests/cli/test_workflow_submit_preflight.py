@@ -233,6 +233,7 @@ def test_paidf_kubernetes_helper_propagates_context_and_kubeconfig(
 def test_paidf_placement_fails_before_storage_or_staging_without_explicit_infra(
     monkeypatch: pytest.MonkeyPatch, mocker
 ) -> None:
+    _mock_sky_bin_ok(monkeypatch)
     for name in (
         "NEBIUS_TOKEN_FACTORY_KEY",
         "AWS_ACCESS_KEY_ID",
@@ -306,6 +307,8 @@ def test_paidf_existing_target_orders_placement_exact_access_then_image(
     control: str,
 ) -> None:
     from npa.orchestration.npa_workflow.spec import load_spec
+
+    _mock_sky_bin_ok(monkeypatch)
 
     # The selected Transfer tool routes through cosmos2, so catalog expansion
     # must not broaden PAIDF's deliberately narrow submit-time access fence.
@@ -828,6 +831,8 @@ def test_submit_rechecks_execution_scope_before_persist_or_staging(
     from npa import execution_preflight
     from npa.orchestration.npa_workflow import first_run_state
 
+    _mock_sky_bin_ok(monkeypatch)
+
     spec = tmp_path / "scope.yaml"
     spec.write_text(
         "apiVersion: npa.workflow/v0.0.1\n"
@@ -896,9 +901,12 @@ def test_submit_rechecks_execution_scope_before_persist_or_staging(
 
 
 @pytest.mark.parametrize("requires_s3", [False, True])
-def test_static_submit_prerequisites_never_probe_storage(mocker, requires_s3) -> None:
+def test_static_submit_prerequisites_never_probe_storage(
+    monkeypatch: pytest.MonkeyPatch, mocker, requires_s3
+) -> None:
     from npa.cli.workbench.workflow import _submit_prerequisites
 
+    _mock_sky_bin_ok(monkeypatch)
     probe = mocker.patch("npa.clients.storage_validation.probe_storage_write")
 
     missing = _submit_prerequisites(

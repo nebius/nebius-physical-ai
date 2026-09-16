@@ -296,6 +296,12 @@ def current_resolved_plan() -> WholePathPreflightPlan | None:
 QuotaReader = Callable[[str, str, Sequence[str]], Mapping[str, QuotaObservation]]
 
 
+PROJECT_QUOTA_RBAC_FALLBACK_REASON = (
+    "tenant-wide quota query unavailable due to RBAC; "
+    "project-scoped quota allowances verified"
+)
+
+
 def resolve_topology(
     *,
     cluster_name: str = "npa-cluster",
@@ -642,6 +648,50 @@ def read_provider_quotas(
     )
 
 
+def read_project_quota_observations(
+    project_id: str, region: str, names: Sequence[str]
+) -> Mapping[str, QuotaObservation]:
+    """Read exact-project quota constraints after tenant scope is denied.
+
+    Project allowances are an additional provider-enforced boundary.  Providers
+    omit rows for unconstrained project quotas, so an absent row is represented
+    as unbounded rather than confused with unreadable quota evidence.
+    """
+    from copy import deepcopy
+
+    from npa.clients.nebius import list_quota_allowances
+
+    payload = deepcopy(list_quota_allowances(str(project_id or "").strip()))
+    items = payload.get("items")
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                raise ValueError("project quota response contains a non-mapping item")
+            metadata = item.get("metadata")
+            if not isinstance(metadata, dict):
+                raise ValueError("project quota response contains malformed metadata")
+            if str(metadata.get("name") or "") not in names:
+                continue
+            spec = item.get("spec")
+            if not isinstance(spec, dict):
+                raise ValueError("project quota response contains a malformed spec")
+            if not str(spec.get("limit") or "").strip():
+                spec["limit"] = "unbounded"
+    parsed = parse_quota_allowances(payload, region=region, names=names)
+    return {
+        name: (
+            QuotaObservation(
+                name=name,
+                state="unbounded",
+                reason="no project-specific quota restriction is configured",
+            )
+            if observation.state == "unsupported"
+            else observation
+        )
+        for name, observation in parsed.items()
+    }
+
+
 def discover_existing_capacity(
     *,
     project_id: str,
@@ -774,6 +824,7 @@ __all__ = [
     "PUBLIC_IP_QUOTA",
     "PreflightBlockedError",
     "PreflightCheck",
+    "PROJECT_QUOTA_RBAC_FALLBACK_REASON",
     "QuotaDecision",
     "QuotaObservation",
     "ResolvedTopology",
@@ -784,6 +835,7 @@ __all__ = [
     "discover_existing_capacity",
     "parse_quota_allowances",
     "read_provider_quotas",
+    "read_project_quota_observations",
     "resolved_plan_context",
     "resolve_topology",
 ]

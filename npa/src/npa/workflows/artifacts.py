@@ -2870,6 +2870,146 @@ def find_run_sources_across_buckets(
     return matches, page.source_errors, page.discovery_complete and not page.truncated
 
 
+def find_run_sources_by_prefix_tree_across_buckets(
+    buckets: "list[str] | tuple[str, ...]",
+    *,
+    base_prefix: str,
+    run_id: str,
+    exclude: "set[str] | None" = None,
+    bucket_projects: "dict[str, str] | None" = None,
+    s3=None,
+) -> tuple[list[RunSummary], tuple[dict[str, str], ...], bool]:
+    """Find a named run through generic S3 directory prefixes.
+
+    This is the bounded exact-search fallback for a large bucket whose
+    object-level run index is incomplete. It never assumes a workflow name or
+    artifact type: it walks native S3 ``CommonPrefixes`` and checks every
+    encountered directory for the requested run child. The result remains
+    source-qualified, and an exhausted search budget is reported as incomplete
+    rather than pretending the run is absent.
+    """
+    if s3 is None:
+        raise ArtifactDiscoveryError("s3 client is required")
+    normalized_run = _validate_run_basename(run_id)
+    bucket_list = [str(value).strip() for value in buckets if str(value).strip()]
+    excluded = _normalized_discovery_exclusions(exclude)
+    sources: list[RunSummary] = []
+    source_errors: list[dict[str, str]] = []
+    complete = True
+
+    for bucket in bucket_list:
+        base = _validate_source_prefix(base_prefix)
+        queue = [""]
+        if base:
+            queue.append(base)
+        queued = set(queue)
+        inspected = 0
+        while queue:
+            if inspected >= MAX_RUN_PARENT_CANDIDATES:
+                complete = False
+                break
+            parent = queue.pop(0)
+            if _path_in_non_run_tree(parent, excluded):
+                continue
+            inspected += 1
+            remaining = max(1, MAX_RUN_PARENT_CANDIDATES - inspected + 1)
+            try:
+                children = list_run_categories(
+                    bucket,
+                    base_prefix=parent,
+                    max_results=remaining,
+                    s3=s3,
+                )
+            except (ArtifactDiscoveryError, ClientError, BotoCoreError):
+                source_errors.append(
+                    {
+                        "bucket": bucket,
+                        "project_id": str(
+                            (bucket_projects or {}).get(bucket) or ""
+                        ),
+                        "code": "artifact_discovery_unavailable",
+                        "message": "Run discovery is unavailable for this object storage resource.",
+                    }
+                )
+                complete = False
+                break
+            if len(children) >= remaining:
+                # ``max_results`` intentionally bounds the breadth walk. Equal
+                # is conservatively incomplete because S3 may have more pages.
+                complete = False
+            for child in children:
+                normalized_child = str(child or "").strip().strip("/")
+                if not normalized_child or _path_in_non_run_tree(
+                    normalized_child, excluded
+                ):
+                    continue
+                leaf = normalized_child.rsplit("/", 1)[-1]
+                if leaf == normalized_run:
+                    source_parent = parent.strip("/")
+                    scope = "/".join(
+                        part for part in (source_parent, normalized_run) if part
+                    ) + "/"
+                    try:
+                        response = s3.list_objects_v2(
+                            Bucket=bucket, Prefix=scope, MaxKeys=1
+                        )
+                    except (ArtifactDiscoveryError, ClientError, BotoCoreError):
+                        source_errors.append(
+                            {
+                                "bucket": bucket,
+                                "project_id": str(
+                                    (bucket_projects or {}).get(bucket) or ""
+                                ),
+                                "code": "artifact_discovery_unavailable",
+                                "message": "Run discovery is unavailable for this object storage resource.",
+                            }
+                        )
+                        complete = False
+                        continue
+                    objects = [
+                        item
+                        for item in response.get("Contents", []) or []
+                        if str(item.get("Key") or "").startswith(scope)
+                    ]
+                    if objects:
+                        first = objects[0]
+                        last_modified = _to_iso8601(first.get("LastModified"))
+                        sources.append(
+                            RunSummary(
+                                run_id=normalized_run,
+                                last_modified=last_modified,
+                                artifact_count=1,
+                                has_viewable=None,
+                                bucket=bucket,
+                                project_id=str(
+                                    (bucket_projects or {}).get(bucket) or ""
+                                ),
+                                summary_complete=False,
+                                started_at=_run_started_at(
+                                    normalized_run, last_modified
+                                ),
+                                resolved_prefix=source_parent,
+                            )
+                        )
+                    # A matching directory is a run root, not another category
+                    # to descend through during an exact run-id search.
+                    continue
+                if is_infrastructure_root(leaf) or normalized_child in queued:
+                    continue
+                queued.add(normalized_child)
+                queue.append(normalized_child)
+
+    unique = {
+        (item.project_id, item.bucket, item.resolved_prefix, item.run_id): item
+        for item in sources
+    }
+    ordered = sorted(
+        unique.values(),
+        key=lambda item: (item.project_id, item.bucket, item.resolved_prefix),
+    )
+    return ordered, tuple(source_errors), complete and not source_errors
+
+
 def find_run_artifact_page_across_buckets(
     buckets: "list[str] | tuple[str, ...]",
     *,

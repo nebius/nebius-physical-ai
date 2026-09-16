@@ -949,6 +949,50 @@ def test_configured_exact_run_search_uses_only_exact_source_tuple(monkeypatch) -
     ]
 
 
+def test_generic_exact_run_search_uses_prefix_tree_without_owner_configuration(
+    monkeypatch,
+) -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    source = SimpleNamespace(
+        run_id="deployment-review-run-20300101t010203z",
+        bucket="deployment-bucket",
+        project_id="deployment-project",
+        resolved_prefix="workflow-family",
+    )
+    calls: list[dict] = []
+
+    def find(buckets, **kwargs):
+        calls.append({"buckets": tuple(buckets), **kwargs})
+        return [source], (), True
+
+    monkeypatch.setattr(runtime, "find_run_sources_by_prefix_tree_across_buckets", find)
+
+    page = runtime._generic_exact_run_page(
+        object(),
+        source.run_id,
+        buckets=[source.bucket],
+        base_prefix="",
+        exclude={"npa-agent"},
+        bucket_projects={source.bucket: source.project_id},
+        discovery_limit=100,
+    )
+
+    assert page is not None
+    assert page.runs == [source]
+    assert page.discovery_complete is True
+    assert calls == [
+        {
+            "buckets": (source.bucket,),
+            "base_prefix": "",
+            "run_id": source.run_id,
+            "exclude": {"npa-agent"},
+            "bucket_projects": {source.bucket: source.project_id},
+            "s3": calls[0]["s3"],
+        }
+    ]
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [

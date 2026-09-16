@@ -178,11 +178,9 @@ def test_receipt_is_atomic_private_and_written_only_after_success(
     sudo.write_text('#!/bin/sh\nexec "$@"\n')
     sudo.chmod(0o700)
     monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
-    receipt_script = (
-        subject._receipt_script("test-digest")
-        .replace("/opt/npa-agent", str(tmp_path))
-        .replace("mv -fT", "mv -f")
-    )  # BSD mv has no -T; target is a regular file.
+    receipt_script = subject._receipt_script("test-digest").replace(
+        "/opt/npa-agent", str(tmp_path)
+    )
     result = subprocess.run(
         ["bash", "-c", f"set -eu\n(exit {exit_code})\n" + receipt_script],
         check=False,

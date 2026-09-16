@@ -162,6 +162,11 @@ def test_submit_workflow_loads_yaml_applies_controller_and_calls_subprocess(
         "memory": 8,
         "autostop": False,
     }
+    # A task-owned API has a dynamic endpoint.  SkyPilot reads that endpoint
+    # from the submitted config, not only SKYPILOT_API_SERVER_ENDPOINT.
+    assert config["api_server"]["endpoint"] == kwargs["env"][
+        "SKYPILOT_API_SERVER_ENDPOINT"
+    ]
 
 
 def test_submit_workflow_strips_name_from_global_config(monkeypatch, tmp_path) -> None:
@@ -2043,6 +2048,36 @@ def test_wait_for_controller_blocks_on_transient_init(monkeypatch) -> None:
         )
     assert "INIT" in str(exc.value)
     assert "sky down" in str(exc.value)
+
+
+def test_wait_for_controller_allows_exact_init_without_a_controller_pod(
+    monkeypatch,
+) -> None:
+    """A queue-created INIT row must not deadlock its first jobs launch."""
+
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        _controller_status_run("INIT"),
+    )
+
+    result = workflow_module._wait_for_healthy_jobs_controller(
+        "sky",
+        env={"SKYPILOT_USER_ID": "abc123"},
+        timeout=0,
+        interval=0.01,
+        execution_probe=lambda _name: workflow_module.ControllerExecutionProbe(
+            False,
+            "head_pod_ambiguous",
+            pod_count=0,
+            error="expected one controller head pod, found 0",
+        ),
+    )
+
+    assert result.state is workflow_module.ControllerState.ABSENT
+    assert result.name == "sky-jobs-controller-abc123"
+    assert result.execution_probe is not None
+    assert result.execution_probe.outcome == "controller_absent"
 
 
 def _failing_status_run(stderr: str):

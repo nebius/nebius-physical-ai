@@ -35,6 +35,8 @@ def test_agent_bootstrap_chat_router_patterns() -> None:
     assert '"grounded": True' in source
     assert '"apis_used": apis_used' in source
     assert 'apiJson("/api/chat"' in bundled
+    assert "renderInfraConfirmation" in bundled
+    assert "confirm_token" in bundled
 
 
 def test_agent_chat_module_intent_patterns() -> None:

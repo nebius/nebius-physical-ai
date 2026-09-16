@@ -18,6 +18,9 @@ provider "nebius" {
 resource "nebius_vpc_v1_network" "workbench" {
   parent_id = var.nebius_project_id
   name      = "${var.instance_name}-network"
+  ipv4_public_pools = trimspace(var.ipv4_public_pool_id) == "" ? null : {
+    pools = [{ id = trimspace(var.ipv4_public_pool_id) }]
+  }
 }
 
 resource "nebius_vpc_v1_subnet" "workbench" {

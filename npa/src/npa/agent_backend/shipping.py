@@ -35,6 +35,7 @@ SHIPPED_BACKEND_MODULES = (
     "leisaac_transport",
     "leisaac_datachannel",
     "leisaac_routes",
+    "workflow_execution",
 )
 
 _HEREDOC_MARKER = "PY"

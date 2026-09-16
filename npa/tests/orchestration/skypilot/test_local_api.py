@@ -31,6 +31,184 @@ def test_strict_credential_yaml_accepts_plain_safe_mapping():
     assert api._strict_mapping(b"tokens: {}\n") == {"tokens": {}}
 
 
+def test_isolated_api_canonicalizes_equivalent_symlinked_roots(tmp_path):
+    target = tmp_path / "actual-isolated-state"
+    target.mkdir()
+    alias = tmp_path / "isolated-state-alias"
+    alias.symlink_to(target, target_is_directory=True)
+
+    through_alias = api.isolated_api_environment(alias, {})
+    through_target = api.isolated_api_environment(target, {})
+
+    assert through_alias["SKYPILOT_API_SERVER_ENDPOINT"] == through_target[
+        "SKYPILOT_API_SERVER_ENDPOINT"
+    ]
+    assert through_alias["NPA_SKYPILOT_ISOLATED_API_DIR"] == str(target.resolve())
+    record = json.loads((target / "local-api" / "daemon.json").read_text())
+    assert record["root"] == str((target / "local-api").resolve())
+
+
+def test_darwin_owned_listener_uses_pid_fingerprint_and_lsof(monkeypatch):
+    monkeypatch.setattr(api.sys, "platform", "darwin")
+    record = {"pid": 731, "port": 43127}
+    calls: list[list[str]] = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        if argv[0] == "ps" and any("lstart=,command=" in part for part in argv):
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                "731 Sun Sep 14 16:00:00 2026 python -m sky.server.server --port 43127\n",
+                "",
+            )
+        if argv[0] == "ps" and "pgid=" in argv:
+            return subprocess.CompletedProcess(argv, 0, "731\n", "")
+        assert argv[0] == "lsof"
+        return subprocess.CompletedProcess(argv, 0, "731\n", "")
+
+    monkeypatch.setattr(api.subprocess, "run", run)
+
+    process = api._process(record)
+
+    assert process == {"pid": 731, "start_ticks": record["darwin_process_fingerprint"]}
+    assert api._listener_owned(record, process)
+    assert [call[0] for call in calls] == ["ps", "lsof", "ps"]
+
+
+@pytest.mark.parametrize("legacy_receipt", [False, True])
+def test_darwin_framework_exec_preserves_lifetime(monkeypatch, tmp_path, legacy_receipt):
+    framework = tmp_path / "Python.framework" / "Versions" / "3.12"
+    launcher = framework / "bin" / "python3.12"
+    application = framework / "Resources" / "Python.app" / "Contents" / "MacOS" / "Python"
+    for executable in (launcher, application):
+        executable.parent.mkdir(parents=True, exist_ok=True)
+        executable.touch()
+    interpreter = tmp_path / "environment with spaces" / "python"
+    interpreter.parent.mkdir()
+    interpreter.symlink_to(launcher)
+    prefix = "731 Sun Sep 14 16:00:00 2026 "
+    arguments = " -m sky.server.server --port 43127"
+    launched = prefix + str(interpreter) + arguments
+    running = prefix + str(application) + arguments
+    record = {"pid": 731, "port": 43127, "interpreter": str(interpreter)}
+    if legacy_receipt:
+        record["darwin_process_fingerprint"] = hashlib.sha256(running.encode()).hexdigest()
+    lines = iter([running if legacy_receipt else launched, running,
+                  running.replace("16:00:00", "16:00:01")])
+    monkeypatch.setattr(api.sys, "platform", "darwin")
+    monkeypatch.setattr(api.subprocess, "run", lambda argv, **kwargs:
+                        subprocess.CompletedProcess(argv, 0, next(lines) + "\n", ""))
+
+    original = api._process(record)
+    assert api._process(record) == original
+    with pytest.raises(api.IsolatedApiError, match="lifetime disagrees"):
+        api._process(record)
+
+
+def test_darwin_fingerprint_rejects_an_unrelated_executable(tmp_path):
+    interpreter = tmp_path / "python"
+    interpreter.touch()
+    record = {"interpreter": str(interpreter)}
+    prefix = "731 Sun Sep 14 16:00:00 2026 "
+    arguments = " -m sky.server.server --port 43127"
+    record["darwin_process_fingerprint"] = api._darwin_process_fingerprint(
+        prefix + str(interpreter) + arguments, record,
+    )
+
+    with pytest.raises(api.IsolatedApiError, match="executable disagrees"):
+        api._darwin_process_fingerprint(prefix + "/unrelated/python" + arguments, record)
+
+
+def test_darwin_process_refuses_changed_saved_fingerprint(monkeypatch):
+    monkeypatch.setattr(api.sys, "platform", "darwin")
+    record = {"pid": 731, "port": 43127, "darwin_process_fingerprint": "different"}
+    monkeypatch.setattr(
+        api.subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(
+            argv,
+            0,
+            "731 Sun Sep 14 16:00:00 2026 python -m sky.server.server --port 43127\n",
+            "",
+        ),
+    )
+
+    with pytest.raises(api.IsolatedApiError, match="lifetime disagrees"):
+        api._process(record)
+
+
+def test_darwin_process_does_not_adopt_a_reused_nonserver_pid(monkeypatch):
+    monkeypatch.setattr(api.sys, "platform", "darwin")
+    record = {"pid": 731, "port": 43127}
+    monkeypatch.setattr(
+        api.subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(
+            argv, 0, "731 Sun Sep 14 16:00:00 2026 unrelated-process\n", ""
+        ),
+    )
+
+    assert api._process(record) is None
+
+
+def test_darwin_session_keeps_owned_queue_listener_after_leader_exit(monkeypatch):
+    monkeypatch.setattr(api.sys, "platform", "darwin")
+    record = {"pid": 731, "port": 43127, "metrics_port": 43128, "queue_port": 43129}
+
+    def run(argv, **kwargs):
+        if argv[0] == "ps" and any("lstart=,command=" in part for part in argv):
+            return subprocess.CompletedProcess(argv, 0, "731 retired-process\n", "")
+        if argv[0] == "lsof":
+            return subprocess.CompletedProcess(
+                argv,
+                0 if "-iTCP:43129" in argv else 1,
+                "844\n" if "-iTCP:43129" in argv else "",
+                "",
+            )
+        assert argv == ["ps", "-p", "844", "-o", "pgid="]
+        return subprocess.CompletedProcess(argv, 0, "731\n", "")
+
+    monkeypatch.setattr(api.subprocess, "run", run)
+
+    assert api._session_members(record) == [844]
+
+
+def test_stop_does_not_kill_process_group_after_darwin_pid_reuse(monkeypatch, tmp_path):
+    monkeypatch.setattr(api.sys, "platform", "darwin")
+    isolated = tmp_path / "isolated"
+    root = api._isolated_api_root(isolated)
+    root.mkdir(parents=True)
+    record = {
+        "schema_version": 1,
+        "root": str(root),
+        "port": 43127,
+        "metrics_port": 43128,
+        "queue_port": 43129,
+        "marker": "fixture-marker",
+        "interpreter": "/fixture/python",
+        "environment_binding": {"AWS_ACCESS_KEY_ID": "hashed"},
+        "config_sha256": "fixture-config",
+        "identity_files": {"/fixture/credential": "hashed"},
+        "runtime_settings": {"storage_bucket": "fixture"},
+        "pid": 731,
+        "state": "ready",
+    }
+    api._write(root / "daemon.json", record)
+    calls: list[tuple[str, int]] = []
+    outcomes = iter(({"pid": 731, "start_ticks": "first"}, None, None, None))
+    monkeypatch.setattr(api, "_process", lambda *args, **kwargs: next(outcomes))
+    monkeypatch.setattr(api.os, "kill", lambda pid, _signal: calls.append(("kill", pid)))
+    monkeypatch.setattr(api.os, "killpg", lambda pid, _signal: calls.append(("killpg", pid)))
+
+    api.stop_isolated_api(isolated)
+
+    assert calls == [("kill", 731)]
+    stopped = json.loads((root / "daemon.json").read_text())
+    assert stopped["state"] == "stopped"
+    assert not {"interpreter", "environment_binding", "config_sha256", "identity_files", "runtime_settings"} & set(stopped)
+
+
 @pytest.fixture
 def local_runtime(tmp_path):
     package = tmp_path / "modules" / "sky" / "server"

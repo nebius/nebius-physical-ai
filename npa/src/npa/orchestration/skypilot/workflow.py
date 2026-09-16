@@ -863,12 +863,25 @@ def submit_workflow(
                     "SkyPilot global config kubernetes section must be a mapping"
                 )
             kubernetes["allowed_contexts"] = [controller_context]
+        # ``sky.server.server --port`` owns a dynamically allocated loopback
+        # endpoint for every NPA-isolated runtime.  SkyPilot's client reads the
+        # endpoint from its YAML config (not merely the process environment),
+        # so preserve the same owned endpoint in the per-submit config before
+        # launching.  Without this binding a client silently falls back to
+        # SkyPilot's default shared port and can report connection-refused even
+        # though NPA's verified isolated API is healthy.
+        env = sky_environment(runtime_config.isolated_config_dir)
+        isolated_endpoint = str(env.get("SKYPILOT_API_SERVER_ENDPOINT") or "").strip()
+        if env.get("NPA_SKYPILOT_ISOLATED_API_DIR") and isolated_endpoint:
+            api_server = global_config.setdefault("api_server", {})
+            if not isinstance(api_server, dict):
+                raise ValueError("SkyPilot global config api_server section must be a mapping")
+            api_server["endpoint"] = isolated_endpoint
         generated_config_path = submission_dir / "skypilot-config.yaml"
         generated_config_path.write_text(
             yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8"
         )
         _chmod_owner_only(generated_config_path)
-        env = sky_environment(runtime_config.isolated_config_dir)
         for key, value in (extra_env or {}).items():
             if value or key in {"NPA_S3_BUCKET", "NPA_S3_PREFIX"}:
                 env[key] = value
@@ -2046,6 +2059,40 @@ def _wait_for_healthy_jobs_controller(
                 + _controller_health_remedy(detail)
             )
         controllers = _jobs_controller_statuses(result.stdout)
+        # A read-only jobs-queue reconciliation can materialize SkyPilot's
+        # exact controller row as INIT before any controller pod exists.  It is
+        # not a provisioning controller yet: waiting for it to become UP
+        # deadlocks the very `sky jobs launch` that creates the first pod.  Let
+        # the launch proceed only when the isolated user selects exactly one
+        # INIT row and the exact Kubernetes context proves that it has no head
+        # pod.  A live/provisioning pod, an ambiguous controller set, or an
+        # unbound user identity remains a normal transient preflight block.
+        if execution_probe is not None and len(controllers) == 1:
+            init_name, init_status = controllers[0]
+            user_id = str(env.get("SKYPILOT_USER_ID") or "").strip()
+            expected_init_name = (
+                f"{JOBS_CONTROLLER_PREFIX}{user_id}"
+                if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", user_id)
+                else ""
+            )
+            if (
+                init_status.upper() == "INIT"
+                and expected_init_name
+                and init_name == expected_init_name
+            ):
+                init_probe = execution_probe(init_name)
+                if (
+                    not init_probe.healthy
+                    and init_probe.outcome == "head_pod_ambiguous"
+                    and init_probe.pod_count == 0
+                ):
+                    return ControllerHealthResult(
+                        ControllerState.ABSENT,
+                        init_name,
+                        ControllerExecutionProbe(
+                            True, "controller_absent", pod_count=0
+                        ),
+                    )
         if require_existing and not controllers:
             last_summary = "no jobs-controller found"
             unhealthy = []

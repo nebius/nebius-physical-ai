@@ -188,7 +188,6 @@ def test_real_sftp_token_file_is_private_and_removed_before_failed_exec(sftp_vm,
 @pytest.mark.parametrize("failure", [False, True])
 def test_persistent_env_install_uses_real_atomic_coreutils_and_cleans_up(tmp_path, failure):
     """Run the actual destination-filesystem installation shell locally."""
-    import getpass
     import shlex
     import subprocess
     import tempfile
@@ -225,7 +224,10 @@ def test_persistent_env_install_uses_real_atomic_coreutils_and_cleans_up(tmp_pat
     target = tmp_path / "destination" / "config"
     target.parent.mkdir()
     target.write_text("original")
-    options = {"owner": "npa-no-such-user-fixture" if failure else getpass.getuser()}
+    options = {
+        "owner": "npa-no-such-user-fixture" if failure else str(os.getuid()),
+        "group": str(os.getgid()),
+    }
     if failure:
         with pytest.raises(SSHError, match="install failure"):
             write_remote_env_file(LocalSSH(), str(target), {"HF_TOKEN": "synthetic-value"}, **options)
@@ -234,7 +236,9 @@ def test_persistent_env_install_uses_real_atomic_coreutils_and_cleans_up(tmp_pat
         write_remote_env_file(LocalSSH(), str(target), {"HF_TOKEN": "synthetic-value"}, **options)
         assert target.read_text() == "HF_TOKEN='synthetic-value'\n"
         assert stat.S_IMODE(target.stat().st_mode) == 0o600
-        assert "mv -fT" in shlex.split(commands[-1])[-1]
+        script = shlex.split(commands[-1])[-1]
+        assert "mv -f " in script
+        assert " -T" not in script
     assert all("synthetic-value" not in command for command in commands)
     assert not any(path.exists() for path in staging)
     assert list(target.parent.iterdir()) == [target]
