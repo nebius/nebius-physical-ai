@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Python 3.12 contract tests verify immutable contract recognition, early owner-only authorization parsing, value-only transport, one authorized output, CPU outer/one RTX inner topology, a zero-vendor-payload boundary, and genuine missing-access/incomplete-lock refusal. No simulator success is claimed.",
+      "reason": "Python 3.12 contract tests verify immutable contract recognition, a structured customer-acceptance refusal, rejection of unsigned local assertions, an authenticated typed-boundary mock with exact bindings and replay refusal, private value-only transport, one authorized output, CPU outer/one RTX inner topology, a zero-vendor-payload boundary, and genuine missing-access/incomplete-lock refusal. No simulator success is claimed.",
       "evidence": [
         "npa/.venv/bin/python -m pytest -q npa/tests/docker/test_robotwin_runtime_bootstrap.py npa/tests/workflows/test_byof_robotwin.py"
       ]
@@ -31,7 +31,7 @@
     },
     "credentials": {
       "status": "unverified",
-      "reason": "No manager resource context, customer entitlement, upstream access probe, or credential was used. The fail-closed submit path separately requires a customer-issued, run/manifest/expiry-bound entitlement for the exact CUDA 12.8.1, cuDNN 9.8.0, and CuRobo v0.7.8 terms. Public artifacts must use exact-revision payload-byte probes; any gated artifact requires a customer-controlled runtime-only credential and an exact provider/artifact/revision/terms probe before provisioning. A credential is entitlement evidence only when the upstream vendor gates the exact artifact after customer acceptance.",
+      "reason": "No manager resource context, authenticated customer assertion, upstream access probe, or credential was used. Normal local submit returns needs_customer_acceptance and rejects the retired unsigned local entitlement file. A future authenticated customer control plane must issue and consume once a verified-issuer/customer/run/manifest/terms/activity/issuance/expiry/nonce/assertion-bound authorization for the exact CUDA 12.8.1, cuDNN 9.8.0, and CuRobo v0.7.8 terms. No such provider is integrated. Public artifacts must use exact-revision payload-byte probes; any gated artifact requires a customer-controlled runtime-only credential and an exact provider/artifact/revision/terms probe before provisioning. A credential is entitlement evidence only when the upstream vendor gates the exact artifact after customer acceptance.",
       "evidence": []
     },
     "source_image": {
@@ -41,7 +41,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The run-level operator statement is exactly noncommercial for containerization and technical workload validation/evaluation and expires with this bounded run. A customer-issued entitlement can authorize the exact CUDA/cuDNN/CuRobo terms only for that bounded activity; it grants no broader service, derivative, output, or redistribution rights. The exact public ungated RoboTwin asset revision and declared outputs are classified with no signature hold. The complete runtime artifact lock, exact payload probes, native-content policy, image bytes, writable storage, manager runtime context, and STRICT RTX evidence remain technical gates. B200 is invalid.",
+      "reason": "The run-level operator statement is exactly noncommercial for containerization and technical workload validation/evaluation and expires with this bounded run. Only a future assertion from an authenticated customer control plane can authorize the exact CUDA/cuDNN/CuRobo terms for that bounded activity; an unsigned local file or manager context cannot, and no provider is integrated. Such authorization grants no broader service, derivative, output, or redistribution rights. The exact public ungated RoboTwin asset revision and declared outputs are classified with no signature hold. The complete runtime artifact lock, exact payload probes, native-content policy, image bytes, writable storage, manager runtime context, and STRICT RTX evidence remain technical gates. B200 is invalid.",
       "evidence": []
     }
   }

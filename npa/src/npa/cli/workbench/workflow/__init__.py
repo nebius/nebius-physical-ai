@@ -987,7 +987,6 @@ def submit_cmd(
                         if name
                         not in {
                             "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
-                            "NPA_BYOF_ROBOTWIN_CUSTOMER_ENTITLEMENT",
                         }
                     ]
         except Exception as exc:

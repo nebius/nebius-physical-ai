@@ -145,7 +145,7 @@ def _robotwin_runtime_materialization(
             os.environ.pop(TRANSPORT_CONTEXT_ENV, None)
             os.environ[PUBLIC_CONTEXT_ENV] = str(materialized.context_path)
             os.environ[MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV] = str(
-                materialized.customer_entitlement_path
+                materialized.customer_authorization_path
             )
             os.environ[MATERIALIZED_KUBECONFIG_ENV] = str(
                 materialized.kubeconfig_path

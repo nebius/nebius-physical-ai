@@ -18,14 +18,16 @@ from typing import Any, Mapping
 
 
 AUTH_ENV = "NPA_INTERNAL_BYOF_ROBOTWIN_RUNTIME_AUTH_V1"
-AUTH_SCHEMA = "npa.byof.robotwin.runtime-authorization.v2"
-CUSTOMER_ENTITLEMENT_SCHEMA = "npa.byof.robotwin.customer-runtime-entitlement.v1"
+AUTH_SCHEMA = "npa.byof.robotwin.runtime-authorization.v3"
+CUSTOMER_AUTHORIZATION_SCHEMA = (
+    "npa.byof.robotwin.authenticated-customer-authorization.v1"
+)
 LOCK_PATH = Path("/opt/npa/robotwin/runtime-lock.json")
 SOURCE_REVISION = "96c1feab536306b50c26af200044fcdf126e8904"
 CUROBO_REVISION = "d64c4b005459db10c5dd867d8b30a87d5bda9bdb"
 ASSET_REVISION = "785feb15aa4a4f532395ad2b1d2be5f28cb561ad"
 WORKFLOW_SHA256 = "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3"
-RUNTIME_LOCK_SHA256 = "f20a0bc5f8a9200df976fd0eb417c7b81000bf4841d2f12208e5982e9d667e91"
+RUNTIME_LOCK_SHA256 = "507b2d1d2f1241ab43d91666aca2b0ed6c3132cf61046ccb400f1f23b7e6a408"
 ACCELERATOR = "RTXPRO-6000-BLACKWELL-SERVER-EDITION"
 CUSTOMER_USE_SCOPE = (
     "noncommercial-containerization-and-technical-workload-"
@@ -73,17 +75,20 @@ CONTEXT_FIELDS = frozenset(
         "run_id",
     }
 )
-CUSTOMER_ENTITLEMENT_FIELDS = frozenset(
+CUSTOMER_AUTHORIZATION_FIELDS = frozenset(
     {
         "schema_version",
-        "provenance",
+        "issuer",
         "customer_scope_id",
         "run_id",
         "runtime_manifest_sha256",
+        "issued_at",
         "expires_at",
         "decision",
         "intended_activity",
         "terms",
+        "assertion_id",
+        "nonce",
     }
 )
 
@@ -117,8 +122,8 @@ def _decode_authorization(
         "schema_version",
         "context_base64",
         "context_sha256",
-        "customer_entitlement_base64",
-        "customer_entitlement_sha256",
+        "customer_authorization_base64",
+        "customer_authorization_sha256",
     }:
         _refuse("authorization-envelope-invalid")
     if envelope.get("schema_version") != AUTH_SCHEMA:
@@ -138,76 +143,100 @@ def _decode_authorization(
     if not isinstance(payload, dict) or set(payload) != CONTEXT_FIELDS:
         _refuse("authorization-context-schema-mismatch")
     try:
-        entitlement_raw = base64.b64decode(
-            envelope.get("customer_entitlement_base64"), validate=True
+        authorization_raw = base64.b64decode(
+            envelope.get("customer_authorization_base64"), validate=True
         )
     except (TypeError, ValueError):
-        entitlement_raw = b""
-    if not entitlement_raw or len(entitlement_raw) > 16 * 1024:
-        _refuse("customer-entitlement-invalid")
+        authorization_raw = b""
+    if not authorization_raw or len(authorization_raw) > 16 * 1024:
+        _refuse("customer-authorization-invalid")
     if (
-        hashlib.sha256(entitlement_raw).hexdigest()
-        != envelope.get("customer_entitlement_sha256")
+        hashlib.sha256(authorization_raw).hexdigest()
+        != envelope.get("customer_authorization_sha256")
     ):
-        _refuse("customer-entitlement-digest-mismatch")
+        _refuse("customer-authorization-digest-mismatch")
     try:
-        entitlement = json.loads(entitlement_raw.decode("utf-8"))
+        customer_authorization = json.loads(authorization_raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
-        entitlement = None
+        customer_authorization = None
     if (
-        not isinstance(entitlement, dict)
-        or set(entitlement) != CUSTOMER_ENTITLEMENT_FIELDS
+        not isinstance(customer_authorization, dict)
+        or set(customer_authorization) != CUSTOMER_AUTHORIZATION_FIELDS
     ):
-        _refuse("customer-entitlement-schema-mismatch")
-    return payload, entitlement
+        _refuse("customer-authorization-schema-mismatch")
+    return payload, customer_authorization
 
 
-def _validate_customer_entitlement(
-    payload: Mapping[str, Any], entitlement: Mapping[str, Any]
+def _validate_customer_authorization(
+    payload: Mapping[str, Any], customer_authorization: Mapping[str, Any]
 ) -> None:
-    """Revalidate customer/run/manifest/expiry binding inside the image."""
+    """Revalidate the authenticated-boundary receipt inside the image."""
 
-    if entitlement.get("schema_version") != CUSTOMER_ENTITLEMENT_SCHEMA:
-        _refuse("customer-entitlement-version-mismatch")
-    if entitlement.get("provenance") != "customer-issued":
-        _refuse("customer-entitlement-provenance-invalid")
-    if entitlement.get("decision") != "accepted":
+    if customer_authorization.get("schema_version") != CUSTOMER_AUTHORIZATION_SCHEMA:
+        _refuse("customer-authorization-version-mismatch")
+    if customer_authorization.get("decision") != "accepted":
         category = (
-            "customer-entitlement-declined"
-            if entitlement.get("decision") == "declined"
-            else "customer-entitlement-decision-invalid"
+            "customer-authorization-declined"
+            if customer_authorization.get("decision") == "declined"
+            else "customer-authorization-decision-invalid"
         )
         _refuse(category)
-    if entitlement.get("customer_scope_id") != _text(payload, "customer_scope_id"):
-        _refuse("customer-entitlement-wrong-customer")
-    if entitlement.get("run_id") != _text(payload, "run_id"):
-        _refuse("customer-entitlement-wrong-run")
-    if entitlement.get("runtime_manifest_sha256") != RUNTIME_LOCK_SHA256:
-        _refuse("customer-entitlement-wrong-manifest")
-    if entitlement.get("intended_activity") != CUSTOMER_USE_SCOPE:
-        _refuse("customer-entitlement-use-scope-mismatch")
-    if entitlement.get("terms") != list(CUSTOMER_TERMS):
-        _refuse("customer-entitlement-terms-mismatch")
-    expires_at = entitlement.get("expires_at")
-    if not isinstance(expires_at, str) or re.fullmatch(
-        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", expires_at
+    if customer_authorization.get("customer_scope_id") != _text(
+        payload, "customer_scope_id"
+    ):
+        _refuse("customer-authorization-wrong-customer")
+    if customer_authorization.get("run_id") != _text(payload, "run_id"):
+        _refuse("customer-authorization-wrong-run")
+    if customer_authorization.get("runtime_manifest_sha256") != RUNTIME_LOCK_SHA256:
+        _refuse("customer-authorization-wrong-manifest")
+    if customer_authorization.get("intended_activity") != CUSTOMER_USE_SCOPE:
+        _refuse("customer-authorization-activity-mismatch")
+    if customer_authorization.get("terms") != list(CUSTOMER_TERMS):
+        _refuse("customer-authorization-terms-mismatch")
+    issuer = customer_authorization.get("issuer")
+    assertion_id = customer_authorization.get("assertion_id")
+    nonce = customer_authorization.get("nonce")
+    if not isinstance(issuer, str) or re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._:/@-]{2,255}", issuer
     ) is None:
-        _refuse("customer-entitlement-expiry-invalid")
-    expiry: datetime | None = None
-    try:
-        expiry = datetime.strptime(expires_at, "%Y-%m-%dT%H:%M:%SZ").replace(
-            tzinfo=timezone.utc
-        )
-    except ValueError:
-        pass
-    if expiry is None:
-        _refuse("customer-entitlement-expiry-invalid")
-    if expiry <= datetime.now(timezone.utc):
-        _refuse("customer-entitlement-stale")
+        _refuse("customer-authorization-issuer-invalid")
+    if not isinstance(assertion_id, str) or re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9_.:-]{7,255}", assertion_id
+    ) is None:
+        _refuse("customer-authorization-assertion-id-invalid")
+    if not isinstance(nonce, str) or re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9_.:-]{15,255}", nonce
+    ) is None:
+        _refuse("customer-authorization-nonce-invalid")
+    timestamps: dict[str, datetime] = {}
+    for name in ("issued_at", "expires_at"):
+        label = "issuance" if name == "issued_at" else "expiry"
+        value = customer_authorization.get(name)
+        if not isinstance(value, str) or re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value
+        ) is None:
+            _refuse(f"customer-authorization-{label}-invalid")
+        parsed: datetime | None = None
+        try:
+            parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc
+            )
+        except ValueError:
+            pass
+        if parsed is None:
+            _refuse(f"customer-authorization-{label}-invalid")
+        timestamps[name] = parsed
+    current = datetime.now(timezone.utc)
+    if timestamps["issued_at"] > current:
+        _refuse("customer-authorization-not-yet-valid")
+    if timestamps["expires_at"] <= current:
+        _refuse("customer-authorization-stale")
+    if timestamps["expires_at"] <= timestamps["issued_at"]:
+        _refuse("customer-authorization-window-invalid")
 
 
 def _validate_authorization(environ: Mapping[str, str]) -> dict[str, Any]:
-    payload, entitlement = _decode_authorization(environ)
+    payload, customer_authorization = _decode_authorization(environ)
     if payload.get("solution") != "robotwin":
         _refuse("wrong-solution")
     if payload.get("ownership_provenance") != "manager-issued":
@@ -241,7 +270,7 @@ def _validate_authorization(environ: Mapping[str, str]) -> dict[str, Any]:
         _refuse("reservation-accelerator-mismatch")
     if type(reservation.get("count")) is not int or reservation["count"] != 1:
         _refuse("reservation-count-not-one")
-    _validate_customer_entitlement(payload, entitlement)
+    _validate_customer_authorization(payload, customer_authorization)
     for name in (
         "project",
         "nebius_profile",

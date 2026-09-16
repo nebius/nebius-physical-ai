@@ -12,7 +12,7 @@ from pathlib import Path
 import posixpath
 import re
 import stat
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Protocol, Sequence
 from urllib.parse import unquote, urlparse, urlsplit
 
 import yaml
@@ -52,15 +52,17 @@ MAX_CUSTOMER_ENTITLEMENT_BYTES = 16 * 1024
 MAX_CONFIG_BYTES = 24 * 1024
 MAX_TRANSPORT_SOURCE_BYTES = 64 * 1024
 MAX_TRANSPORT_BYTES = 96 * 1024
-TRANSPORT_SCHEMA = "npa.byof.robotwin.runtime-transport.v2"
+TRANSPORT_SCHEMA = "npa.byof.robotwin.runtime-transport.v3"
 SOURCE_REVISION = "96c1feab536306b50c26af200044fcdf126e8904"
 CUROBO_REVISION = "d64c4b005459db10c5dd867d8b30a87d5bda9bdb"
 ASSET_REVISION = "785feb15aa4a4f532395ad2b1d2be5f28cb561ad"
 WORKFLOW_SHA256 = "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3"
-RUNTIME_LOCK_SHA256 = "f20a0bc5f8a9200df976fd0eb417c7b81000bf4841d2f12208e5982e9d667e91"
+RUNTIME_LOCK_SHA256 = "507b2d1d2f1241ab43d91666aca2b0ed6c3132cf61046ccb400f1f23b7e6a408"
 RUNTIME_LOCK_STATUS = "bootstrap-complete-runtime-disabled"
-RUNTIME_AUTH_SCHEMA = "npa.byof.robotwin.runtime-authorization.v2"
-CUSTOMER_ENTITLEMENT_SCHEMA = "npa.byof.robotwin.customer-runtime-entitlement.v1"
+RUNTIME_AUTH_SCHEMA = "npa.byof.robotwin.runtime-authorization.v3"
+CUSTOMER_AUTHORIZATION_SCHEMA = (
+    "npa.byof.robotwin.authenticated-customer-authorization.v1"
+)
 CUSTOMER_USE_SCOPE = (
     "noncommercial-containerization-and-technical-workload-"
     "validation-and-evaluation"
@@ -96,12 +98,15 @@ CUSTOMER_ENTITLEMENT_NOTICE = " ".join(
         "Only a customer representative authorized to bind that customer may "
         "accept; NPA and the infrastructure manager do not accept vendor terms "
         "for the customer.",
-        "Decline by leaving the entitlement unset or recording decision=declined; "
+        "Decline by taking no action in the authenticated customer control plane; "
         "no runtime side effect will occur.",
-        "To accept and resume, create an owner-only 0600 customer entitlement "
-        f"using schema {CUSTOMER_ENTITLEMENT_SCHEMA}, bind it to the customer "
-        "scope, run id, exact runtime-lock SHA-256, and a future expiry, then "
-        f"rerun submit with --secret-env {CUSTOMER_ENTITLEMENT_ENV}.",
+        "To accept and resume, an authenticated customer control plane must issue "
+        "and consume once a run-scoped assertion bound to the verified issuer, "
+        "customer scope, run id, exact runtime-lock SHA-256, terms, intended "
+        "activity, issuance, expiry, nonce, and assertion identity.",
+        f"An unsigned local file, {CUSTOMER_ENTITLEMENT_ENV}, manager context, "
+        "filesystem ownership, or self-declared provenance is never customer "
+        "authentication.",
         "This authorization does not satisfy the separate technical artifact-lock, "
         "payload-probe, native-content, built-image, storage/context, or live gates.",
     )
@@ -233,17 +238,37 @@ _CONTEXT_FIELDS = frozenset(
     }
 )
 
-_CUSTOMER_ENTITLEMENT_FIELDS = frozenset(
+_CUSTOMER_AUTHORIZATION_FIELDS = frozenset(
     {
         "schema_version",
-        "provenance",
+        "issuer",
         "customer_scope_id",
         "run_id",
         "runtime_manifest_sha256",
+        "issued_at",
         "expires_at",
         "decision",
         "intended_activity",
         "terms",
+        "assertion_id",
+        "nonce",
+    }
+)
+
+_CUSTOMER_AUTHORIZATION_REFUSALS = frozenset(
+    {
+        "absent",
+        "declined",
+        "stale",
+        "wrong-customer",
+        "wrong-run",
+        "wrong-manifest",
+        "terms-mismatch",
+        "activity-mismatch",
+        "replayed",
+        "unauthenticated",
+        "malformed",
+        "unavailable",
     }
 )
 
@@ -256,11 +281,115 @@ class RobotwinPreflightError(ValueError):
         message = (
             f"RoboTwin authorization refused ({category}; context_sha256={digest})"
         )
-        if category.startswith("customer-entitlement-"):
+        if category == "needs_customer_acceptance" or category.startswith(
+            "customer-authorization-"
+        ):
             message = f"{message}. {CUSTOMER_ENTITLEMENT_NOTICE}"
         super().__init__(message)
         self.category = category
         self.context_sha256 = digest
+        self.notice = (
+            customer_acceptance_notice()
+            if category == "needs_customer_acceptance"
+            else None
+        )
+
+
+def customer_acceptance_notice() -> dict[str, Any]:
+    """Return the public, non-secret refusal payload for an unauthenticated caller."""
+
+    return {
+        "schema_version": "npa.byof.robotwin.customer-acceptance-notice.v1",
+        "status": "needs_customer_acceptance",
+        "intended_activity": CUSTOMER_USE_SCOPE,
+        "terms": [dict(term) for term in CUSTOMER_TERMS],
+        "customer_action": (
+            "review and accept or decline through an authenticated customer "
+            "control plane, then start a new run-scoped submission"
+        ),
+        "local_files_authoritative": False,
+        "side_effects_started": False,
+    }
+
+
+@dataclass(frozen=True)
+class CustomerAuthorizationRequest:
+    """Exact bindings requested from an authenticated, replay-safe boundary."""
+
+    customer_scope_id: str
+    run_id: str
+    runtime_manifest_sha256: str
+    intended_activity: str
+    terms: tuple[tuple[str, str], ...]
+
+
+class AuthenticatedCustomerAssertion(Protocol):
+    """Assertion already authenticated by a customer control plane.
+
+    This protocol deliberately has no repository implementation.  Files,
+    environment values, manager context, and self-declared provenance must not
+    be adapted into it.  A future authenticated control plane is responsible
+    for establishing issuer/customer identity before returning these fields.
+    """
+
+    issuer: str
+    customer_scope_id: str
+    run_id: str
+    runtime_manifest_sha256: str
+    issued_at: str
+    expires_at: str
+    decision: str
+    intended_activity: str
+    terms: Sequence[Mapping[str, str]]
+    assertion_id: str
+    nonce: str
+
+
+class CustomerAuthorizationBoundary(Protocol):
+    """Typed trust boundary that atomically authenticates and consumes once."""
+
+    def consume_once(
+        self, request: CustomerAuthorizationRequest
+    ) -> AuthenticatedCustomerAssertion:
+        """Return one authenticated assertion or raise a bounded refusal."""
+
+
+class CustomerAuthorizationBoundaryRefusal(RuntimeError):
+    """Non-secret failure returned by an authenticated customer boundary."""
+
+    def __init__(self, category: str) -> None:
+        normalized = (
+            category if category in _CUSTOMER_AUTHORIZATION_REFUSALS else "unavailable"
+        )
+        super().__init__(normalized)
+        self.category = normalized
+
+
+@dataclass(frozen=True)
+class _TransportedCustomerAssertion:
+    """Private receipt emitted only after the typed boundary authenticated origin."""
+
+    issuer: str
+    customer_scope_id: str
+    run_id: str
+    runtime_manifest_sha256: str
+    issued_at: str
+    expires_at: str
+    decision: str
+    intended_activity: str
+    terms: tuple[dict[str, str], ...]
+    assertion_id: str
+    nonce: str
+
+
+@dataclass(frozen=True)
+class _VerifiedCustomerAuthorization:
+    """Canonical receipt produced by a trusted boundary or private transport."""
+
+    expires_at: str
+    sha256: str
+    raw: bytes = field(repr=False)
+    redactions: tuple[str, ...] = field(repr=False)
 
 
 @dataclass(frozen=True)
@@ -268,9 +397,9 @@ class RobotwinAuthorization:
     """Validated private runtime authorization; private fields never enter repr."""
 
     context_sha256: str
-    customer_entitlement_sha256: str
+    customer_authorization_sha256: str
     customer_scope_id: str = field(repr=False)
-    customer_entitlement_expires_at: str = field(repr=False)
+    customer_authorization_expires_at: str = field(repr=False)
     project: str = field(repr=False)
     profile: str = field(repr=False)
     kubeconfig_source: str = field(repr=False)
@@ -284,7 +413,7 @@ class RobotwinAuthorization:
     run_id: str = field(repr=False)
     summary_uri: str = field(repr=False)
     raw_context: bytes = field(repr=False)
-    raw_customer_entitlement: bytes = field(repr=False)
+    raw_customer_authorization: bytes = field(repr=False)
     redactions: tuple[str, ...] = field(repr=False)
 
     @property
@@ -318,7 +447,7 @@ class MaterializedRobotwinContext:
     """Owner-only worker paths for one decoded transport envelope."""
 
     context_path: Path = field(repr=False)
-    customer_entitlement_path: Path = field(repr=False)
+    customer_authorization_path: Path = field(repr=False)
     kubeconfig_path: Path = field(repr=False)
     skypilot_config_path: Path = field(repr=False)
     authorization: RobotwinAuthorization = field(repr=False)
@@ -375,19 +504,13 @@ def read_owner_context(environ: Mapping[str, str] | None = None) -> bytes:
 def read_customer_entitlement(
     environ: Mapping[str, str] | None = None,
 ) -> bytes:
-    """Read one customer-controlled entitlement file without following links."""
+    """Reject the retired unsigned local-file customer entitlement path."""
 
     source = os.environ if environ is None else environ
     reference = str(source.get(CUSTOMER_ENTITLEMENT_ENV) or "").strip()
-    if not reference:
-        raise _refusal("customer-entitlement-missing")
-    if reference.startswith(("{", "[")):
-        raise _refusal("customer-entitlement-file-reference-required")
-    return _read_owner_file(
-        reference,
-        label="customer-entitlement",
-        limit=MAX_CUSTOMER_ENTITLEMENT_BYTES,
-    )
+    if reference:
+        raise _refusal("customer-authorization-unsigned-local-file")
+    raise _refusal("needs_customer_acceptance")
 
 
 def _context_text(payload: Mapping[str, Any], field_name: str, raw: bytes) -> str:
@@ -631,14 +754,175 @@ def _parse_context_payload(raw: bytes) -> dict[str, Any]:
     return payload
 
 
-def _parse_customer_entitlement(
+def _parse_customer_timestamp(
+    value: Any, *, label: str, context: bytes
+) -> datetime:
+    if not isinstance(value, str) or re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value
+    ) is None:
+        raise _refusal(f"customer-authorization-{label}-invalid", context)
+    parsed: datetime | None = None
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        pass
+    if parsed is None:
+        raise _refusal(f"customer-authorization-{label}-invalid", context)
+    return parsed
+
+
+def _customer_terms_binding() -> tuple[tuple[str, str], ...]:
+    return tuple((term["id"], term["url"]) for term in CUSTOMER_TERMS)
+
+
+def _canonical_customer_authorization(
+    assertion: AuthenticatedCustomerAssertion,
+    *,
+    customer_scope_id: str,
+    run_id: str,
+    context: bytes,
+    now: datetime | None = None,
+) -> _VerifiedCustomerAuthorization:
+    """Validate and canonicalize a result from the authenticated typed boundary."""
+
+    values: dict[str, Any] | None = None
+    try:
+        values = {
+            "schema_version": CUSTOMER_AUTHORIZATION_SCHEMA,
+            "issuer": assertion.issuer,
+            "customer_scope_id": assertion.customer_scope_id,
+            "run_id": assertion.run_id,
+            "runtime_manifest_sha256": assertion.runtime_manifest_sha256,
+            "issued_at": assertion.issued_at,
+            "expires_at": assertion.expires_at,
+            "decision": assertion.decision,
+            "intended_activity": assertion.intended_activity,
+            "terms": [dict(term) for term in assertion.terms],
+            "assertion_id": assertion.assertion_id,
+            "nonce": assertion.nonce,
+        }
+    except (AttributeError, TypeError, ValueError):
+        pass
+    if values is None:
+        raise _refusal("customer-authorization-malformed", context)
+    if values["decision"] == "declined":
+        raise _refusal("customer-authorization-declined", context)
+    if values["decision"] != "accepted":
+        raise _refusal("customer-authorization-decision-invalid", context)
+    if values["customer_scope_id"] != customer_scope_id:
+        raise _refusal("customer-authorization-wrong-customer", context)
+    if values["run_id"] != run_id:
+        raise _refusal("customer-authorization-wrong-run", context)
+    if values["runtime_manifest_sha256"] != RUNTIME_LOCK_SHA256:
+        raise _refusal("customer-authorization-wrong-manifest", context)
+    if values["intended_activity"] != CUSTOMER_USE_SCOPE:
+        raise _refusal("customer-authorization-activity-mismatch", context)
+    if values["terms"] != list(CUSTOMER_TERMS):
+        raise _refusal("customer-authorization-terms-mismatch", context)
+    issuer = values["issuer"]
+    assertion_id = values["assertion_id"]
+    nonce = values["nonce"]
+    if not isinstance(issuer, str) or re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._:/@-]{2,255}", issuer
+    ) is None:
+        raise _refusal("customer-authorization-issuer-invalid", context)
+    if not isinstance(assertion_id, str) or re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9_.:-]{7,255}", assertion_id
+    ) is None:
+        raise _refusal("customer-authorization-assertion-id-invalid", context)
+    if not isinstance(nonce, str) or re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9_.:-]{15,255}", nonce
+    ) is None:
+        raise _refusal("customer-authorization-nonce-invalid", context)
+    issued = _parse_customer_timestamp(
+        values["issued_at"], label="issuance", context=context
+    )
+    expiry = _parse_customer_timestamp(
+        values["expires_at"], label="expiry", context=context
+    )
+    current = datetime.now(timezone.utc) if now is None else now
+    if current.tzinfo is None:
+        raise _refusal("customer-authorization-clock-invalid", context)
+    current = current.astimezone(timezone.utc)
+    if issued > current:
+        raise _refusal("customer-authorization-not-yet-valid", context)
+    if expiry <= current:
+        raise _refusal("customer-authorization-stale", context)
+    if expiry <= issued:
+        raise _refusal("customer-authorization-window-invalid", context)
+    raw = json.dumps(values, separators=(",", ":"), sort_keys=True).encode()
+    if len(raw) > MAX_CUSTOMER_ENTITLEMENT_BYTES:
+        raise _refusal("customer-authorization-too-large", context)
+    return _VerifiedCustomerAuthorization(
+        expires_at=values["expires_at"],
+        sha256=hashlib.sha256(raw).hexdigest(),
+        raw=raw,
+        redactions=tuple(
+            values[name]
+            for name in (
+                "issuer",
+                "issued_at",
+                "expires_at",
+                "assertion_id",
+                "nonce",
+            )
+        ),
+    )
+
+
+def _consume_customer_authorization(
+    boundary: CustomerAuthorizationBoundary | None,
+    *,
+    customer_scope_id: str,
+    run_id: str,
+    context: bytes,
+    now: datetime | None = None,
+) -> _VerifiedCustomerAuthorization:
+    """Consume one assertion through the only authority-granting interface."""
+
+    if boundary is None:
+        raise _refusal("needs_customer_acceptance", context)
+    request = CustomerAuthorizationRequest(
+        customer_scope_id=customer_scope_id,
+        run_id=run_id,
+        runtime_manifest_sha256=RUNTIME_LOCK_SHA256,
+        intended_activity=CUSTOMER_USE_SCOPE,
+        terms=_customer_terms_binding(),
+    )
+    assertion: AuthenticatedCustomerAssertion | None = None
+    refusal_category = ""
+    try:
+        assertion = boundary.consume_once(request)
+    except CustomerAuthorizationBoundaryRefusal as failure:
+        refusal_category = failure.category
+    except Exception:
+        refusal_category = "unavailable"
+    if refusal_category:
+        raise _refusal(f"customer-authorization-{refusal_category}", context)
+    if assertion is None:
+        raise _refusal("customer-authorization-unauthenticated", context)
+    # Validate before returning so a malformed or misbound boundary response
+    # cannot trigger config reads or any external side effect.
+    return _canonical_customer_authorization(
+        assertion,
+        customer_scope_id=customer_scope_id,
+        run_id=run_id,
+        context=context,
+        now=now,
+    )
+
+
+def _parse_transported_customer_authorization(
     raw: bytes,
     *,
     customer_scope_id: str,
     run_id: str,
     context: bytes,
-) -> tuple[str, str]:
-    """Validate one customer-issued, run-scoped terms authorization."""
+    now: datetime | None = None,
+) -> _VerifiedCustomerAuthorization:
+    """Decode a receipt carried only by the existing private worker transport."""
 
     payload: Any = None
     try:
@@ -646,44 +930,39 @@ def _parse_customer_entitlement(
     except (UnicodeDecodeError, json.JSONDecodeError):
         pass
     if not isinstance(payload, dict):
-        raise _refusal("customer-entitlement-invalid-json", context)
-    if set(payload) != _CUSTOMER_ENTITLEMENT_FIELDS:
-        raise _refusal("customer-entitlement-schema-mismatch", context)
-    if payload.get("schema_version") != CUSTOMER_ENTITLEMENT_SCHEMA:
-        raise _refusal("customer-entitlement-version-mismatch", context)
-    if payload.get("provenance") != "customer-issued":
-        raise _refusal("customer-entitlement-provenance-invalid", context)
-    if payload.get("decision") == "declined":
-        raise _refusal("customer-entitlement-declined", context)
-    if payload.get("decision") != "accepted":
-        raise _refusal("customer-entitlement-decision-invalid", context)
-    if payload.get("customer_scope_id") != customer_scope_id:
-        raise _refusal("customer-entitlement-wrong-customer", context)
-    if payload.get("run_id") != run_id:
-        raise _refusal("customer-entitlement-wrong-run", context)
-    if payload.get("runtime_manifest_sha256") != RUNTIME_LOCK_SHA256:
-        raise _refusal("customer-entitlement-wrong-manifest", context)
-    if payload.get("intended_activity") != CUSTOMER_USE_SCOPE:
-        raise _refusal("customer-entitlement-use-scope-mismatch", context)
-    if payload.get("terms") != list(CUSTOMER_TERMS):
-        raise _refusal("customer-entitlement-terms-mismatch", context)
-    expires_at = payload.get("expires_at")
-    if not isinstance(expires_at, str) or re.fullmatch(
-        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", expires_at
-    ) is None:
-        raise _refusal("customer-entitlement-expiry-invalid", context)
-    expiry: datetime | None = None
-    try:
-        expiry = datetime.strptime(expires_at, "%Y-%m-%dT%H:%M:%SZ").replace(
-            tzinfo=timezone.utc
-        )
-    except ValueError:
-        pass
-    if expiry is None:
-        raise _refusal("customer-entitlement-expiry-invalid", context)
-    if expiry <= datetime.now(timezone.utc):
-        raise _refusal("customer-entitlement-stale", context)
-    return expires_at, hashlib.sha256(raw).hexdigest()
+        raise _refusal("customer-authorization-invalid-json", context)
+    if set(payload) != _CUSTOMER_AUTHORIZATION_FIELDS:
+        raise _refusal("customer-authorization-schema-mismatch", context)
+    if payload.get("schema_version") != CUSTOMER_AUTHORIZATION_SCHEMA:
+        raise _refusal("customer-authorization-version-mismatch", context)
+    terms = payload.get("terms")
+    if not isinstance(terms, list) or any(
+        not isinstance(term, dict) for term in terms
+    ):
+        raise _refusal("customer-authorization-terms-mismatch", context)
+    assertion = _TransportedCustomerAssertion(
+        issuer=payload.get("issuer"),
+        customer_scope_id=payload.get("customer_scope_id"),
+        run_id=payload.get("run_id"),
+        runtime_manifest_sha256=payload.get("runtime_manifest_sha256"),
+        issued_at=payload.get("issued_at"),
+        expires_at=payload.get("expires_at"),
+        decision=payload.get("decision"),
+        intended_activity=payload.get("intended_activity"),
+        terms=tuple(terms),
+        assertion_id=payload.get("assertion_id"),
+        nonce=payload.get("nonce"),
+    )
+    verified = _canonical_customer_authorization(
+        assertion,
+        customer_scope_id=customer_scope_id,
+        run_id=run_id,
+        context=context,
+        now=now,
+    )
+    if verified.raw != raw:
+        raise _refusal("customer-authorization-noncanonical", context)
+    return verified
 
 
 def _validate_authorization_fields(payload: dict[str, Any], raw: bytes) -> dict[str, str]:
@@ -833,25 +1112,22 @@ def _require_verified_control_plane_source_bytes(
     raise _refusal("control-plane-source-byte-proof-unavailable")
 
 
-def validate_context_bytes(
+def _validate_context_with_customer_authorization(
     raw: bytes,
     *,
-    customer_entitlement_bytes: bytes,
+    verified_customer_authorization: _VerifiedCustomerAuthorization,
     config_bytes: Mapping[str, bytes] | None = None,
 ) -> RobotwinAuthorization:
-    """Validate resource context, customer entitlement, and portable configs."""
+    """Validate context/configs with a previously verified private receipt."""
 
     if not raw or len(raw) > MAX_CONTEXT_BYTES:
         raise _refusal("context-size-invalid", raw[:MAX_CONTEXT_BYTES])
     payload = _parse_context_payload(raw)
     values = _validate_authorization_fields(payload, raw)
     summary_uri = _validate_destination(values, raw)
-    entitlement_expiry, entitlement_sha256 = _parse_customer_entitlement(
-        customer_entitlement_bytes,
-        customer_scope_id=values["customer_scope_id"],
-        run_id=values["run_id"],
-        context=raw,
-    )
+    authorization_expiry = verified_customer_authorization.expires_at
+    authorization_sha256 = verified_customer_authorization.sha256
+    authorization_raw = verified_customer_authorization.raw
     for field_name in ("kubeconfig", "skypilot_config_path"):
         path = Path(values[field_name]).expanduser()
         if not path.is_absolute():
@@ -878,7 +1154,7 @@ def validate_context_bytes(
         raise _refusal("transport-config-too-large", raw)
     if (
         len(raw)
-        + len(customer_entitlement_bytes)
+        + len(authorization_raw)
         + len(kube_bytes)
         + len(sky_bytes)
         > MAX_TRANSPORT_SOURCE_BYTES
@@ -910,7 +1186,8 @@ def validate_context_bytes(
                     )
                 ),
                 raw.decode("utf-8", errors="replace"),
-                customer_entitlement_bytes.decode("utf-8", errors="replace"),
+                authorization_raw.decode("utf-8", errors="replace"),
+                *verified_customer_authorization.redactions,
                 *_portable_config_redactions(kube_bytes),
                 *_portable_config_redactions(sky_bytes),
             )
@@ -918,9 +1195,9 @@ def validate_context_bytes(
     )
     return RobotwinAuthorization(
         context_sha256=hashlib.sha256(raw).hexdigest(),
-        customer_entitlement_sha256=entitlement_sha256,
+        customer_authorization_sha256=authorization_sha256,
         customer_scope_id=values["customer_scope_id"],
-        customer_entitlement_expires_at=entitlement_expiry,
+        customer_authorization_expires_at=authorization_expiry,
         project=values["project"],
         profile=values["nebius_profile"],
         kubeconfig_source=values["kubeconfig"],
@@ -934,15 +1211,46 @@ def validate_context_bytes(
         run_id=values["run_id"],
         summary_uri=summary_uri,
         raw_context=raw,
-        raw_customer_entitlement=customer_entitlement_bytes,
+        raw_customer_authorization=authorization_raw,
         redactions=redactions,
+    )
+
+
+def validate_context_bytes(
+    raw: bytes,
+    *,
+    customer_authorization_boundary: CustomerAuthorizationBoundary,
+    config_bytes: Mapping[str, bytes] | None = None,
+    now: datetime | None = None,
+) -> RobotwinAuthorization:
+    """Validate through an authenticated boundary; intended for hermetic adapters."""
+
+    if not raw or len(raw) > MAX_CONTEXT_BYTES:
+        raise _refusal("context-size-invalid", raw[:MAX_CONTEXT_BYTES])
+    payload = _parse_context_payload(raw)
+    values = _validate_authorization_fields(payload, raw)
+    _validate_destination(values, raw)
+    verified = _consume_customer_authorization(
+        customer_authorization_boundary,
+        customer_scope_id=values["customer_scope_id"],
+        run_id=values["run_id"],
+        context=raw,
+        now=now,
+    )
+    return _validate_context_with_customer_authorization(
+        raw,
+        verified_customer_authorization=verified,
+        config_bytes=config_bytes,
     )
 
 
 def load_runtime_authorization(
     environ: Mapping[str, str] | None = None,
+    *,
+    customer_authorization_boundary: CustomerAuthorizationBoundary | None = None,
+    now: datetime | None = None,
 ) -> RobotwinAuthorization:
-    """Load and validate the fixed public file-reference authorization."""
+    """Load context and require authenticated customer-origin authorization."""
 
     source = os.environ if environ is None else environ
     raw = read_owner_context(source)
@@ -951,31 +1259,45 @@ def load_runtime_authorization(
     parsed_context = _parse_context_payload(raw)
     context_values = _validate_authorization_fields(parsed_context, raw)
     _validate_destination(context_values, raw)
-    entitlement_path = str(
+    if str(source.get(CUSTOMER_ENTITLEMENT_ENV) or "").strip():
+        raise _refusal("customer-authorization-unsigned-local-file", raw)
+    authorization_path = str(
         source.get(MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV) or ""
     ).strip()
-    entitlement_raw = (
+    transported_raw = (
         _read_owner_file(
-            entitlement_path,
-            label="materialized-customer-entitlement",
+            authorization_path,
+            label="materialized-customer-authorization",
             limit=MAX_CUSTOMER_ENTITLEMENT_BYTES,
         )
-        if entitlement_path
-        else read_customer_entitlement(source)
+        if authorization_path
+        else b""
     )
-    _parse_customer_entitlement(
-        entitlement_raw,
-        customer_scope_id=context_values["customer_scope_id"],
-        run_id=context_values["run_id"],
-        context=raw,
+    verified = (
+        _parse_transported_customer_authorization(
+            transported_raw,
+            customer_scope_id=context_values["customer_scope_id"],
+            run_id=context_values["run_id"],
+            context=raw,
+            now=now,
+        )
+        if transported_raw
+        else _consume_customer_authorization(
+            customer_authorization_boundary,
+            customer_scope_id=context_values["customer_scope_id"],
+            run_id=context_values["run_id"],
+            context=raw,
+            now=now,
+        )
     )
     kube_path = str(source.get(MATERIALIZED_KUBECONFIG_ENV) or "").strip()
     sky_path = str(source.get(MATERIALIZED_SKYPILOT_CONFIG_ENV) or "").strip()
     if bool(kube_path) != bool(sky_path):
         raise _refusal("materialized-config-set-incomplete", raw)
     if not kube_path:
-        return validate_context_bytes(
-            raw, customer_entitlement_bytes=entitlement_raw
+        return _validate_context_with_customer_authorization(
+            raw,
+            verified_customer_authorization=verified,
         )
     config_bytes = {
         "kubeconfig": _read_owner_file(
@@ -985,9 +1307,9 @@ def load_runtime_authorization(
             sky_path, label="materialized-skypilot-config", limit=MAX_CONFIG_BYTES
         ),
     }
-    authorization = validate_context_bytes(
+    authorization = _validate_context_with_customer_authorization(
         raw,
-        customer_entitlement_bytes=entitlement_raw,
+        verified_customer_authorization=verified,
         config_bytes=config_bytes,
     )
     return replace(
@@ -996,7 +1318,7 @@ def load_runtime_authorization(
         skypilot_config_source=sky_path,
         redactions=tuple(
             dict.fromkeys(
-                (*authorization.redactions, entitlement_path, kube_path, sky_path)
+                (*authorization.redactions, authorization_path, kube_path, sky_path)
             )
         ),
     )
@@ -1027,8 +1349,8 @@ def encode_transport(authorization: RobotwinAuthorization) -> str:
     payload = {
         "schema_version": TRANSPORT_SCHEMA,
         "context": record(authorization.raw_context),
-        "customer_entitlement": record(
-            authorization.raw_customer_entitlement
+        "customer_authorization": record(
+            authorization.raw_customer_authorization
         ),
         "files": {
             "kubeconfig": record(authorization.kubeconfig_bytes),
@@ -1046,11 +1368,11 @@ def encode_runtime_authorization(authorization: RobotwinAuthorization) -> str:
             "schema_version": RUNTIME_AUTH_SCHEMA,
             "context_base64": base64.b64encode(authorization.raw_context).decode("ascii"),
             "context_sha256": authorization.context_sha256,
-            "customer_entitlement_base64": base64.b64encode(
-                authorization.raw_customer_entitlement
+            "customer_authorization_base64": base64.b64encode(
+                authorization.raw_customer_authorization
             ).decode("ascii"),
-            "customer_entitlement_sha256": (
-                authorization.customer_entitlement_sha256
+            "customer_authorization_sha256": (
+                authorization.customer_authorization_sha256
             ),
         },
         separators=(",", ":"),
@@ -1096,7 +1418,7 @@ def decode_transport(value: str) -> RobotwinAuthorization:
     if invalid:
         raise _refusal("transport-invalid-json")
     if not isinstance(payload, dict) or set(payload) != {
-        "schema_version", "context", "customer_entitlement", "files"
+        "schema_version", "context", "customer_authorization", "files"
     }:
         raise _refusal("transport-schema-mismatch")
     if payload.get("schema_version") != TRANSPORT_SCHEMA:
@@ -1109,18 +1431,26 @@ def decode_transport(value: str) -> RobotwinAuthorization:
     raw = _decode_transport_record(
         payload["context"], label="context", limit=MAX_CONTEXT_BYTES
     )
-    entitlement_raw = _decode_transport_record(
-        payload["customer_entitlement"],
-        label="customer-entitlement",
+    authorization_raw = _decode_transport_record(
+        payload["customer_authorization"],
+        label="customer-authorization",
         limit=MAX_CUSTOMER_ENTITLEMENT_BYTES,
     )
     config_bytes = {
         name: _decode_transport_record(record, label=name, limit=MAX_CONFIG_BYTES)
         for name, record in files.items()
     }
-    return validate_context_bytes(
+    context_payload = _parse_context_payload(raw)
+    context_values = _validate_authorization_fields(context_payload, raw)
+    verified = _parse_transported_customer_authorization(
+        authorization_raw,
+        customer_scope_id=context_values["customer_scope_id"],
+        run_id=context_values["run_id"],
+        context=raw,
+    )
+    return _validate_context_with_customer_authorization(
         raw,
-        customer_entitlement_bytes=entitlement_raw,
+        verified_customer_authorization=verified,
         config_bytes=config_bytes,
     )
 
@@ -1239,6 +1569,7 @@ def prepare_live_submit(
     *,
     requested_secret_envs: Sequence[str],
     environ: Mapping[str, str] | None = None,
+    customer_authorization_boundary: CustomerAuthorizationBoundary | None = None,
 ) -> RobotwinSubmitContext | None:
     """Validate RoboTwin locally and return its value-only secret transport."""
 
@@ -1246,9 +1577,11 @@ def prepare_live_submit(
         return None
     if PUBLIC_CONTEXT_ENV not in requested_secret_envs:
         raise _refusal("context-secret-not-requested")
-    if CUSTOMER_ENTITLEMENT_ENV not in requested_secret_envs:
-        raise _refusal("customer-entitlement-secret-not-requested")
     source = os.environ if environ is None else environ
+    if CUSTOMER_ENTITLEMENT_ENV in requested_secret_envs or str(
+        source.get(CUSTOMER_ENTITLEMENT_ENV) or ""
+    ).strip():
+        raise _refusal("customer-authorization-unsigned-local-file")
     internal_channels = tuple(
         name
         for name in CONTEXT_ENV_NAMES
@@ -1257,7 +1590,12 @@ def prepare_live_submit(
     )
     if internal_channels:
         raise _refusal("internal-context-channel-forbidden")
-    authorization = require_runtime_lock_complete(load_runtime_authorization(source))
+    authorization = require_runtime_lock_complete(
+        load_runtime_authorization(
+            source,
+            customer_authorization_boundary=customer_authorization_boundary,
+        )
+    )
     return RobotwinSubmitContext(
         authorization.context_sha256,
         authorization,
@@ -1685,16 +2023,16 @@ def materialize_transport(
     authorization = decode_transport(value)
     directory.chmod(0o700)
     context_path = directory / "runtime-context.json"
-    entitlement_path = directory / "customer-entitlement.json"
+    authorization_path = directory / "customer-authorization.json"
     kubeconfig_path = directory / "kubeconfig.yaml"
     skypilot_path = directory / "skypilot-config.yaml"
     write_owner_file(context_path, authorization.raw_context)
-    write_owner_file(entitlement_path, authorization.raw_customer_entitlement)
+    write_owner_file(authorization_path, authorization.raw_customer_authorization)
     write_owner_file(kubeconfig_path, authorization.kubeconfig_bytes)
     write_owner_file(skypilot_path, authorization.skypilot_config_bytes)
     return MaterializedRobotwinContext(
         context_path,
-        entitlement_path,
+        authorization_path,
         kubeconfig_path,
         skypilot_path,
         authorization,

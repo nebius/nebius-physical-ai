@@ -158,7 +158,11 @@ SECRET_CONTENT = (
     re.compile(
         rb"npa\.byof\.robotwin\.runtime-(?:transport|authorization)\.v[0-9]+"
     ),
-    re.compile(rb"npa\.byof\.robotwin\.customer-runtime-entitlement\.v[0-9]+"),
+    re.compile(
+        rb"npa\.byof\.robotwin\."
+        rb"(?:customer-runtime-entitlement|authenticated-customer-authorization)"
+        rb"\.v[0-9]+"
+    ),
     re.compile(rb'(?i)"provenance"\s*:\s*"customer-issued"'),
     # Source bytes must remain forbidden after arbitrary renaming or nesting.
     # These semantic signatures are absent from the neutral bootstrap but bind

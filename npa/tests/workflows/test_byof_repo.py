@@ -47,7 +47,7 @@ def _robotwin_context(**updates: object) -> dict[str, object]:
         "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
         "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
         "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-        "runtime_lock_sha256": "f20a0bc5f8a9200df976fd0eb417c7b81000bf4841d2f12208e5982e9d667e91",
+        "runtime_lock_sha256": "507b2d1d2f1241ab43d91666aca2b0ed6c3132cf61046ccb400f1f23b7e6a408",
         "bootstrap_image": "registry.example/private-namespace-canary/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "reservation": {
             "policy": "STRICT",
@@ -69,8 +69,10 @@ def _robotwin_context(**updates: object) -> dict[str, object]:
 
 def _install_robotwin_context(module, monkeypatch, tmp_path, **updates: object):
     from npa.orchestration.npa_workflow.robotwin_preflight import (
-        CUSTOMER_ENTITLEMENT_SCHEMA,
+        CUSTOMER_TERMS,
         CUSTOMER_USE_SCOPE,
+        MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV,
+        validate_context_bytes,
     )
     monkeypatch.setattr(module, "require_runtime_lock_complete", lambda value: value)
     payload = _robotwin_context(**updates)
@@ -97,28 +99,41 @@ def _install_robotwin_context(module, monkeypatch, tmp_path, **updates: object):
     context.write_text(json.dumps(payload), encoding="utf-8")
     context.chmod(0o600)
     monkeypatch.setenv(module.ROBOTWIN_RUNTIME_CONTEXT_ENV, str(context))
-    entitlement = tmp_path / "customer-entitlement.json"
-    entitlement.write_text(
-        json.dumps(
-            {
-                "schema_version": CUSTOMER_ENTITLEMENT_SCHEMA,
-                "provenance": "customer-issued",
-                "customer_scope_id": payload["customer_scope_id"],
-                "run_id": payload["run_id"],
-                "runtime_manifest_sha256": payload["runtime_lock_sha256"],
-                "expires_at": "2099-01-01T00:00:00Z",
-                "decision": "accepted",
-                "intended_activity": CUSTOMER_USE_SCOPE,
-                "terms": list(module.ROBOTWIN_CUSTOMER_TERMS),
-            },
-            sort_keys=True,
+    assertion = SimpleNamespace(
+        issuer="https://customer-auth.example.invalid",
+        customer_scope_id=payload["customer_scope_id"],
+        run_id=payload["run_id"],
+        runtime_manifest_sha256=payload["runtime_lock_sha256"],
+        issued_at="2026-01-01T00:00:00Z",
+        expires_at="2099-01-01T00:00:00Z",
+        decision="accepted",
+        intended_activity=CUSTOMER_USE_SCOPE,
+        terms=list(CUSTOMER_TERMS),
+        assertion_id="assertion-runner-canary-0001",
+        nonce="nonce-runner-canary-00000001",
+    )
+    receipt_context = dict(payload)
+    if not isinstance(receipt_context.get("project"), str):
+        receipt_context["project"] = "private-project-canary"
+    if not isinstance(receipt_context.get("reservation"), dict) or type(
+        receipt_context["reservation"].get("count")
+    ) is not int:
+        receipt_context["reservation"] = {
+            "policy": "STRICT",
+            "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
+            "count": 1,
+        }
+    authorization = validate_context_bytes(
+        json.dumps(receipt_context).encode(),
+        customer_authorization_boundary=SimpleNamespace(
+            consume_once=lambda _request: assertion
         ),
-        encoding="utf-8",
     )
-    entitlement.chmod(0o600)
-    monkeypatch.setenv(
-        module.ROBOTWIN_CUSTOMER_ENTITLEMENT_ENV, str(entitlement)
-    )
+    receipt = tmp_path / "authenticated-customer-authorization.json"
+    receipt.write_bytes(authorization.raw_customer_authorization)
+    receipt.chmod(0o600)
+    monkeypatch.delenv(module.ROBOTWIN_CUSTOMER_ENTITLEMENT_ENV, raising=False)
+    monkeypatch.setenv(MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV, str(receipt))
     return payload
 
 

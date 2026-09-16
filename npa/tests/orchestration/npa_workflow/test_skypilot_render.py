@@ -139,7 +139,6 @@ def test_robotwin_outer_render_is_cpu_only_public_and_destination_free(
     assert "private-bucket-canary" not in rendered
     assert secret_env_hints_for_plan(plan.steps) == (
         "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
-        "NPA_BYOF_ROBOTWIN_CUSTOMER_ENTITLEMENT",
     )
 
 

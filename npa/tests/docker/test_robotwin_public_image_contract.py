@@ -92,15 +92,23 @@ def test_neutral_locks_are_complete_while_runtime_delivery_is_disabled() -> None
         "customer-vendor-side-entitlement-and-exact-revision-payload-byte-probe"
     )
     assert lock["access"]["customer_authorization"] == {
-        "schema_version": "npa.byof.robotwin.customer-runtime-entitlement.v1",
-        "control": "customer-issued-run-scoped-secret-value",
+        "schema_version": "npa.byof.robotwin.authenticated-customer-authorization.v1",
+        "control": "authenticated-customer-control-plane-consume-once",
         "bindings": [
+            "verified-issuer",
             "customer-scope-id",
             "run-id",
             "runtime-lock-sha256",
+            "issuance",
             "expiry",
             "exact-terms",
+            "intended-activity",
+            "assertion-id",
+            "replay-resistant-nonce",
         ],
+        "unsigned_local_file_authoritative": False,
+        "manager_context_authoritative": False,
+        "repository_authenticator_implementation": False,
         "manager_or_npa_acceptance": False,
     }
     assert lock["cache"]["status"] == "disabled-until-runtime-delivery-approved"
@@ -115,7 +123,7 @@ def test_neutral_locks_are_complete_while_runtime_delivery_is_disabled() -> None
         "none-found-in-inspected-authoritative-terms"
     )
     assert "aggregate" not in lock["reason"].lower()
-    assert "customer entitlement" in " ".join(
+    assert "customer authorization assertion or receipt" in " ".join(
         lock["bootstrap"]["forbidden_payloads"]
     ).lower()
     apt_lines = (IMAGE_ROOT / "apt-packages.lock").read_text().splitlines()

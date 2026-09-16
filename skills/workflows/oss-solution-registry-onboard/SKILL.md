@@ -248,9 +248,12 @@ The Phase A image is a zero-vendor-payload public-bootstrap candidate and remain
 unbuilt/publication-quarantined. CuRobo v0.7.8 stays runtime-only and its
 noncommercial research/evaluation field-of-use restriction remains binding on
 use and service claims. Official assets remain a
-runtime fetch. The guarded live harness must refuse before building when the
-customer-issued, run/manifest/expiry-bound exact-terms entitlement is missing,
-declined, stale, or mismatched. The repository MIT card classifies the two exact
+runtime fetch. The guarded live harness must refuse before building unless an
+authenticated customer control plane has atomically consumed a verified-issuer,
+customer/run/manifest/terms/activity/issuance/expiry/nonce/assertion-bound
+authorization. Unsigned local files and manager context are not customer
+authentication, and no provider is integrated in Phase A. The repository MIT
+card classifies the two exact
 locked runtime members, `embodiments.zip` and `objects.zip`, at revision
 `785feb15aa4a4f532395ad2b1d2be5f28cb561ad`. No additional restriction was
 found in the inspected authoritative terms for the five declared output

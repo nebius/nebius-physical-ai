@@ -1800,7 +1800,6 @@ def secret_env_hints_for_plan(steps: Sequence[PlanStep]) -> tuple[str, ...]:
         ):
             for name in (
                 "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
-                "NPA_BYOF_ROBOTWIN_CUSTOMER_ENTITLEMENT",
             ):
                 if name not in seen:
                     seen.add(name)

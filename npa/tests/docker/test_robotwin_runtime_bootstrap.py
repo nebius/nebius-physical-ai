@@ -75,17 +75,22 @@ def _context(**updates: object) -> dict[str, object]:
     return payload
 
 
-def _entitlement(payload: dict[str, object], **updates: object) -> dict[str, object]:
+def _customer_authorization(
+    payload: dict[str, object], **updates: object
+) -> dict[str, object]:
     value: dict[str, object] = {
-        "schema_version": runtime.CUSTOMER_ENTITLEMENT_SCHEMA,
-        "provenance": "customer-issued",
+        "schema_version": runtime.CUSTOMER_AUTHORIZATION_SCHEMA,
+        "issuer": "https://customer-auth.example.invalid",
         "customer_scope_id": payload["customer_scope_id"],
         "run_id": payload["run_id"],
         "runtime_manifest_sha256": runtime.RUNTIME_LOCK_SHA256,
+        "issued_at": "2026-01-01T00:00:00Z",
         "expires_at": "2099-01-01T00:00:00Z",
         "decision": "accepted",
         "intended_activity": runtime.CUSTOMER_USE_SCOPE,
         "terms": list(runtime.CUSTOMER_TERMS),
+        "assertion_id": "assertion-canary-0001",
+        "nonce": "nonce-canary-00000001",
     }
     value.update(updates)
     return value
@@ -94,17 +99,19 @@ def _entitlement(payload: dict[str, object], **updates: object) -> dict[str, obj
 def _environment(**updates: object) -> dict[str, str]:
     payload = _context(**updates)
     raw = json.dumps(payload, sort_keys=True).encode()
-    entitlement_raw = json.dumps(_entitlement(payload), sort_keys=True).encode()
+    authorization_raw = json.dumps(
+        _customer_authorization(payload), separators=(",", ":"), sort_keys=True
+    ).encode()
     envelope = json.dumps(
         {
             "schema_version": runtime.AUTH_SCHEMA,
             "context_base64": base64.b64encode(raw).decode(),
             "context_sha256": hashlib.sha256(raw).hexdigest(),
-            "customer_entitlement_base64": base64.b64encode(
-                entitlement_raw
+            "customer_authorization_base64": base64.b64encode(
+                authorization_raw
             ).decode(),
-            "customer_entitlement_sha256": hashlib.sha256(
-                entitlement_raw
+            "customer_authorization_sha256": hashlib.sha256(
+                authorization_raw
             ).hexdigest(),
         },
         sort_keys=True,
@@ -120,22 +127,24 @@ def _environment(**updates: object) -> dict[str, str]:
     }
 
 
-def _environment_with_entitlement(**updates: object) -> dict[str, str]:
+def _environment_with_customer_authorization(**updates: object) -> dict[str, str]:
     payload = _context()
     raw = json.dumps(payload, sort_keys=True).encode()
-    entitlement_raw = json.dumps(
-        _entitlement(payload, **updates), sort_keys=True
+    authorization_raw = json.dumps(
+        _customer_authorization(payload, **updates),
+        separators=(",", ":"),
+        sort_keys=True,
     ).encode()
     envelope = json.dumps(
         {
             "schema_version": runtime.AUTH_SCHEMA,
             "context_base64": base64.b64encode(raw).decode(),
             "context_sha256": hashlib.sha256(raw).hexdigest(),
-            "customer_entitlement_base64": base64.b64encode(
-                entitlement_raw
+            "customer_authorization_base64": base64.b64encode(
+                authorization_raw
             ).decode(),
-            "customer_entitlement_sha256": hashlib.sha256(
-                entitlement_raw
+            "customer_authorization_sha256": hashlib.sha256(
+                authorization_raw
             ).hexdigest(),
         },
         sort_keys=True,
@@ -220,17 +229,19 @@ def test_mutated_authorization_refuses_before_lock_access(
 @pytest.mark.parametrize(
     ("updates", "category"),
     [
-        ({"provenance": "manager-issued"}, "customer-entitlement-provenance-invalid"),
-        ({"decision": "declined"}, "customer-entitlement-declined"),
-        ({"customer_scope_id": "other"}, "customer-entitlement-wrong-customer"),
-        ({"run_id": "robotwin-other"}, "customer-entitlement-wrong-run"),
-        ({"runtime_manifest_sha256": "0" * 64}, "customer-entitlement-wrong-manifest"),
-        ({"expires_at": "not-a-date"}, "customer-entitlement-expiry-invalid"),
-        ({"expires_at": "2000-01-01T00:00:00Z"}, "customer-entitlement-stale"),
-        ({"terms": []}, "customer-entitlement-terms-mismatch"),
+        ({"issuer": ""}, "customer-authorization-issuer-invalid"),
+        ({"decision": "declined"}, "customer-authorization-declined"),
+        ({"customer_scope_id": "other"}, "customer-authorization-wrong-customer"),
+        ({"run_id": "robotwin-other"}, "customer-authorization-wrong-run"),
+        ({"runtime_manifest_sha256": "0" * 64}, "customer-authorization-wrong-manifest"),
+        ({"expires_at": "not-a-date"}, "customer-authorization-expiry-invalid"),
+        ({"expires_at": "2000-01-01T00:00:00Z"}, "customer-authorization-stale"),
+        ({"terms": []}, "customer-authorization-terms-mismatch"),
+        ({"assertion_id": "short"}, "customer-authorization-assertion-id-invalid"),
+        ({"nonce": "short"}, "customer-authorization-nonce-invalid"),
     ],
 )
-def test_customer_entitlement_refuses_before_lock_access(
+def test_customer_authorization_refuses_before_lock_access(
     monkeypatch: pytest.MonkeyPatch,
     updates: dict[str, object],
     category: str,
@@ -243,7 +254,7 @@ def test_customer_entitlement_refuses_before_lock_access(
     with pytest.raises(runtime.Refusal, match=category):
         runtime.run(
             lock_path=LOCK,
-            environ=_environment_with_entitlement(**updates),
+            environ=_environment_with_customer_authorization(**updates),
         )
 
 
@@ -258,7 +269,7 @@ def test_runtime_expiry_refusal_discards_private_exception_graph(
     with pytest.raises(runtime.Refusal) as caught:
         runtime.run(
             lock_path=LOCK,
-            environ=_environment_with_entitlement(
+            environ=_environment_with_customer_authorization(
                 expires_at="private-expiry-canary"
             ),
         )

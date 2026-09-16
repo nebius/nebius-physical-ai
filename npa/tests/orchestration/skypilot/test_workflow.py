@@ -7,6 +7,7 @@ import re
 import subprocess
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -45,7 +46,6 @@ def _robotwin_bridge_fixture(
 ) -> tuple[Path, object, object, dict[str, object], dict[str, str]]:
     from npa.orchestration.npa_workflow import build_plan, load_spec
     from npa.orchestration.npa_workflow.robotwin_preflight import (
-        CUSTOMER_ENTITLEMENT_SCHEMA,
         CUSTOMER_TERMS,
         CUSTOMER_USE_SCOPE,
         RobotwinSubmitContext,
@@ -73,7 +73,7 @@ def _robotwin_bridge_fixture(
         "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
         "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
         "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-        "runtime_lock_sha256": "f20a0bc5f8a9200df976fd0eb417c7b81000bf4841d2f12208e5982e9d667e91",
+        "runtime_lock_sha256": "507b2d1d2f1241ab43d91666aca2b0ed6c3132cf61046ccb400f1f23b7e6a408",
         "bootstrap_image": "registry.example/robotwin-private/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "reservation": {
             "policy": "STRICT",
@@ -90,20 +90,19 @@ def _robotwin_bridge_fixture(
         "run_id": run_id,
     }
     raw = json.dumps(payload, sort_keys=True).encode()
-    entitlement = json.dumps(
-        {
-            "schema_version": CUSTOMER_ENTITLEMENT_SCHEMA,
-            "provenance": "customer-issued",
-            "customer_scope_id": payload["customer_scope_id"],
-            "run_id": run_id,
-            "runtime_manifest_sha256": payload["runtime_lock_sha256"],
-            "expires_at": "2099-01-01T00:00:00Z",
-            "decision": "accepted",
-            "intended_activity": CUSTOMER_USE_SCOPE,
-            "terms": list(CUSTOMER_TERMS),
-        },
-        sort_keys=True,
-    ).encode()
+    assertion = SimpleNamespace(
+        issuer="https://customer-auth.example.invalid",
+        customer_scope_id=payload["customer_scope_id"],
+        run_id=run_id,
+        runtime_manifest_sha256=payload["runtime_lock_sha256"],
+        issued_at="2026-01-01T00:00:00Z",
+        expires_at="2099-01-01T00:00:00Z",
+        decision="accepted",
+        intended_activity=CUSTOMER_USE_SCOPE,
+        terms=list(CUSTOMER_TERMS),
+        assertion_id="assertion-sky-canary-0001",
+        nonce="nonce-sky-canary-00000001",
+    )
     kubeconfig = yaml.safe_dump(
         {
             "apiVersion": "v1",
@@ -138,7 +137,9 @@ def _robotwin_bridge_fixture(
     ).encode()
     authorization = validate_context_bytes(
         raw,
-        customer_entitlement_bytes=entitlement,
+        customer_authorization_boundary=SimpleNamespace(
+            consume_once=lambda _request: assertion
+        ),
         config_bytes={
             "kubeconfig": kubeconfig,
             "skypilot_config_path": skypilot,

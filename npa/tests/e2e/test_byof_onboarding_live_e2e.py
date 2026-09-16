@@ -21,7 +21,6 @@ from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import s3_client_for_project
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.robotwin_preflight import (
-    CUSTOMER_ENTITLEMENT_ENV,
     load_runtime_authorization,
 )
 from npa.workflows.byof.live import (
@@ -623,7 +622,8 @@ def _s3_object_sha256(client, *, bucket: str, key: str) -> tuple[int, str]:
     os.environ.get("NPA_BYOF_ROBOTWIN_LIVE") != "1",
     reason=(
         "Set NPA_BYOF_ROBOTWIN_LIVE=1 and provide the manager-owned context "
-        "and customer-issued entitlement through their documented secret paths."
+        "through its documented secret path plus a separately integrated "
+        "authenticated customer-authorization provider."
     ),
 )
 def test_live_robotwin_build_push_run_and_artifacts() -> None:
@@ -676,8 +676,6 @@ def test_live_robotwin_build_push_run_and_artifacts() -> None:
         "--no-deploy-if-absent",
         "--secret-env",
         str(config["runtime_context_env"]),
-        "--secret-env",
-        CUSTOMER_ENTITLEMENT_ENV,
         "--secret-env",
         "AWS_ACCESS_KEY_ID",
         "--secret-env",

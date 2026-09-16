@@ -1,7 +1,7 @@
 {
   "schema_version": "npa.robotwin.runtime-lock.v1",
   "status": "bootstrap-complete-runtime-disabled",
-  "reason": "The public Ubuntu bootstrap inputs are complete and immutable. Customer-issued, run-scoped entitlement governs the exact CUDA 12.8.1, cuDNN 9.8.0 and CuRobo v0.7.8 non-token terms; neither the manager nor NPA accepts or signs them for the customer. The exact public Hugging Face asset revision is ungated and its two locked archives are classified under the repository's MIT declaration. Runtime delivery remains disabled because the complete technical artifact lock and exact upstream payload probes, native-content policy, built-image evidence, storage and manager runtime context, and live gates remain incomplete.",
+  "reason": "The public Ubuntu bootstrap inputs are complete and immutable. An authenticated customer control-plane assertion, not an unsigned local document or manager context, must govern the exact CUDA 12.8.1, cuDNN 9.8.0 and CuRobo v0.7.8 non-token terms; no authenticated assertion provider is integrated in Phase A. The exact public Hugging Face asset revision is ungated and its two locked archives are classified under the repository's MIT declaration. Runtime delivery remains disabled because customer-boundary integration, the complete technical artifact lock and exact upstream payload probes, native-content policy, built-image evidence, storage and manager runtime context, and live gates remain incomplete.",
   "packaging_shape": "whole-source-sdk-runtime-fetch",
   "operator_scope": {
     "statement": "noncommercial",
@@ -111,15 +111,23 @@
       }
     ],
     "customer_authorization": {
-      "schema_version": "npa.byof.robotwin.customer-runtime-entitlement.v1",
-      "control": "customer-issued-run-scoped-secret-value",
+      "schema_version": "npa.byof.robotwin.authenticated-customer-authorization.v1",
+      "control": "authenticated-customer-control-plane-consume-once",
       "bindings": [
+        "verified-issuer",
         "customer-scope-id",
         "run-id",
         "runtime-lock-sha256",
+        "issuance",
         "expiry",
-        "exact-terms"
+        "exact-terms",
+        "intended-activity",
+        "assertion-id",
+        "replay-resistant-nonce"
       ],
+      "unsigned_local_file_authoritative": false,
+      "manager_context_authoritative": false,
+      "repository_authenticator_implementation": false,
       "manager_or_npa_acceptance": false
     }
   },
@@ -223,14 +231,14 @@
       "runtime caches",
       "credentials",
       "manager context",
-      "customer entitlement",
+      "customer authorization assertion or receipt",
       "outputs"
     ]
   },
   "runtime_delivery": {
     "status": "disabled-pending-artifact-lock-and-live-gates",
     "artifact_lock_status": "not-resolved",
-    "customer_entitlement_contract_status": "implemented-not-exercised",
+    "customer_authorization_contract_status": "typed-interface-implemented-not-integrated-or-exercised",
     "asset_output_classification_status": "complete-no-signature-hold",
     "source_access_status": "not-probed",
     "asset_access_status": "not-probed",

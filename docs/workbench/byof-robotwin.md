@@ -36,9 +36,11 @@ run and is neither global nor permanent. It is compatible with CuRobo v0.7.8's
 noncommercial research/evaluation field-of-use limit, but it does not authorize
 a hosted service, broaden derivative/output rights, or silently upgrade CuRobo.
 Before any CUDA 12.8.1, cuDNN 9.8.0, or CuRobo v0.7.8 fetch, install, or cache
-mutation, an authorized customer representative must issue the run-scoped
-entitlement described below. NPA and the infrastructure manager do not accept
-or sign those terms for the customer. The exact public asset revision needs no
+mutation, an authenticated customer control plane must issue and consume once
+the run-scoped assertion described below. An unsigned file, filesystem owner,
+environment value, manager context, or self-declared provenance does not prove
+customer origin. NPA and the infrastructure manager do not accept or sign
+those terms for the customer. The exact public asset revision needs no
 token or local acceptance flag. If a later artifact is token-gated, only the
 customer's vendor-side entitlement and exact payload probe may gate its runtime
 delivery.
@@ -74,37 +76,45 @@ populated caches never become image or output payloads.
 
 ## Fail-closed submit and runtime
 
-The exact RoboTwin normal-submit contract reads two independent owner-owned
-0600 files with byte bounds and `O_NOFOLLOW` before config discovery, image
-work, storage, networking, scheduling, or GPU activity. The manager-issued
+The exact RoboTwin normal-submit contract reads the owner-owned resource
+context with byte bounds and `O_NOFOLLOW` before config discovery, image work,
+storage, networking, scheduling, or GPU activity. The manager-issued
 resource context binds the workflow hash, source/CuRobo/asset revisions,
 runtime-lock hash, immutable bootstrap digest, one STRICT RTX reservation,
 resource coordinates, opaque customer scope, and one output root/run ID. It
-contains no legal-acceptance booleans. The customer-issued entitlement binds
-that customer scope and run ID to runtime-lock SHA-256
-`f20a0bc5f8a9200df976fd0eb417c7b81000bf4841d2f12208e5982e9d667e91`, a future
-expiry, the exact intended activity, the exact three terms records, and an
-explicit `accepted` or `declined` decision. Missing, declined, stale,
-wrong-customer, wrong-run, wrong-manifest, wrong-scope, or changed-terms records
-fail before any external side effect.
+contains no legal-acceptance booleans. The repository deliberately implements
+no customer identity, key, trust root, signature scheme, or local successful
+acceptance path. Normal local submit returns a structured
+`needs_customer_acceptance` notice. A future authenticated control-plane
+implementation must pass a typed assertion that binds verified issuer,
+customer scope, run ID, runtime-lock SHA-256
+`507b2d1d2f1241ab43d91666aca2b0ed6c3132cf61046ccb400f1f23b7e6a408`,
+issuance, expiry, exact intended
+activity, exact terms, assertion identity, and replay-resistant nonce. Missing,
+declined, stale, replayed, unauthenticated, malformed, or wrongly bound
+assertions fail before config reads or any external side effect.
 
-The public secret names are `NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT` and
-`NPA_BYOF_ROBOTWIN_CUSTOMER_ENTITLEMENT`. To make an informed choice, the
-customer reviews the exact
+The only public RoboTwin context secret name is
+`NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT`. The retired
+`NPA_BYOF_ROBOTWIN_CUSTOMER_ENTITLEMENT` local-file channel is rejected even
+for a same-UID owner-only file. To make an informed choice, the customer
+reviews the exact
 [CUDA 12.8.1 EULA](https://docs.nvidia.com/cuda/archive/12.8.1/eula/index.html),
 [cuDNN 9.8.0 SLA](https://docs.nvidia.com/deeplearning/cudnn/backend/v9.8.0/reference/eula.html),
 and [CuRobo v0.7.8 license](https://github.com/NVlabs/curobo/blob/d64c4b005459db10c5dd867d8b30a87d5bda9bdb/LICENSE).
-Declining or leaving the second secret unset performs no runtime work. An
-authorized customer representative may resume by creating the documented
-closed-schema, owner-only entitlement and passing both variable names with
-`--secret-env`; neither file value belongs in argv, plans, logs, Git, or PR
-text. This entitlement does not satisfy the separate technical artifact-lock,
+Declining or leaving the authenticated customer flow incomplete performs no
+runtime work. A future customer control plane may resume only by authenticating
+the customer and atomically consuming the exact run-scoped assertion; the
+current repository has only a typed integration boundary and hermetic mocks.
+No assertion or receipt belongs in argv, plans, logs, Git, or PR text. This
+authorization does not satisfy the separate technical artifact-lock,
 payload-probe, native-content, built-image, storage/context, or live gates.
 
 Only validated bytes cross the existing secret-value transport. The CPU worker
-materializes temporary context/entitlement/config files below a 0700 directory as exclusive
-0600 files, scrubs context variables from child environments, and cleans them
-on every exit. The public YAML and plan retain `tool://robotwin`,
+materializes temporary context/authenticated-authorization-receipt/config files
+below a 0700 directory as exclusive 0600 files, scrubs context variables from
+child environments, and cleans them on every exit. The public YAML and plan
+retain `tool://robotwin`,
 `example-bucket`, and the context variable name—not any value. The outer task is
 CPU-only and the inner profile contains the sole accelerator request:
 `RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`.

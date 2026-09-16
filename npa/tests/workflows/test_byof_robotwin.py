@@ -14,7 +14,6 @@ import yaml
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.robotwin_preflight import (
     CUSTOMER_ENTITLEMENT_ENV,
-    CUSTOMER_ENTITLEMENT_SCHEMA,
     CUSTOMER_TERMS,
     CUSTOMER_USE_SCOPE,
     RobotwinPreflightError,
@@ -185,7 +184,7 @@ def test_robotwin_runtime_lock_records_exact_deferred_boundaries() -> None:
         "customer-vendor-side-entitlement"
     )
     assert lock["access"]["customer_authorization"]["control"] == (
-        "customer-issued-run-scoped-secret-value"
+        "authenticated-customer-control-plane-consume-once"
     )
     assert lock["access"]["customer_authorization"]["manager_or_npa_acceptance"] is False
     assert lock["cache"]["tier"] == "node-local-ephemeral"
@@ -253,14 +252,13 @@ def test_robotwin_has_exactly_one_accelerator_request_across_both_layers() -> No
     assert all("B200" not in request for request in accelerator_requests)
 
 
-def test_robotwin_live_gate_requires_resource_context_and_customer_entitlement() -> None:
+def test_robotwin_live_gate_requires_context_and_authenticated_customer_boundary() -> None:
     live_test = LIVE_E2E.read_text(encoding="utf-8")
 
     assert inspect.signature(
         live_e2e.test_live_robotwin_build_push_run_and_artifacts
     ).parameters == {}
     for required in (
-        "CUSTOMER_ENTITLEMENT_ENV",
         "load_runtime_authorization",
         '"workflow"',
         '"submit"',
@@ -322,7 +320,7 @@ def test_robotwin_live_gate_refuses_missing_owner_context_before_work(
         live_e2e.test_live_robotwin_build_push_run_and_artifacts()
 
 
-def test_robotwin_live_gate_refuses_declined_customer_entitlement(
+def test_robotwin_live_gate_refuses_unsigned_customer_entitlement(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     repo = tmp_path / "repo"
@@ -348,7 +346,7 @@ def test_robotwin_live_gate_refuses_declined_customer_entitlement(
                 "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
                 "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
                 "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-                "runtime_lock_sha256": "f20a0bc5f8a9200df976fd0eb417c7b81000bf4841d2f12208e5982e9d667e91",
+                "runtime_lock_sha256": "507b2d1d2f1241ab43d91666aca2b0ed6c3132cf61046ccb400f1f23b7e6a408",
                 "bootstrap_image": "registry.example/private/robotwin/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "reservation": {
                     "policy": "STRICT",
@@ -372,12 +370,11 @@ def test_robotwin_live_gate_refuses_declined_customer_entitlement(
     entitlement.write_text(
         json.dumps(
             {
-                "schema_version": CUSTOMER_ENTITLEMENT_SCHEMA,
                 "provenance": "customer-issued",
                 "customer_scope_id": "private-customer",
                 "run_id": "robotwin-private-run",
                 "runtime_manifest_sha256": (
-                    "f20a0bc5f8a9200df976fd0eb417c7b81000bf4841d2f12208e5982e9d667e91"
+                    "507b2d1d2f1241ab43d91666aca2b0ed6c3132cf61046ccb400f1f23b7e6a408"
                 ),
                 "expires_at": "2099-01-01T00:00:00Z",
                 "decision": "declined",
@@ -400,7 +397,7 @@ def test_robotwin_live_gate_refuses_declined_customer_entitlement(
 
     with pytest.raises(
         RobotwinPreflightError,
-        match="customer-entitlement-declined",
+        match="customer-authorization-unsigned-local-file",
     ):
         live_e2e.test_live_robotwin_build_push_run_and_artifacts()
 

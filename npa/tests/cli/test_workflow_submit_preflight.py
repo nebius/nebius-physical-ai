@@ -12,6 +12,7 @@ from io import StringIO
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from rich.console import Console
@@ -23,10 +24,10 @@ from npa.cli.main import app
 from npa.cli.workbench import workflow as workflow_cli
 from npa.orchestration.npa_workflow.robotwin_preflight import (
     CUSTOMER_ENTITLEMENT_ENV as ROBOTWIN_ENTITLEMENT_ENV,
-    CUSTOMER_ENTITLEMENT_SCHEMA,
     CUSTOMER_TERMS,
     CUSTOMER_USE_SCOPE,
     PUBLIC_CONTEXT_ENV as ROBOTWIN_CONTEXT_ENV,
+    RUNTIME_LOCK_SHA256,
     TRANSPORT_CONTEXT_ENV as ROBOTWIN_TRANSPORT_ENV,
 )
 
@@ -125,7 +126,8 @@ def _install_robotwin_submit_context(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     *,
-    entitlement_decision: str = "accepted",
+    assertion_decision: str = "accepted",
+    install_authenticated_boundary: bool = True,
 ) -> tuple[dict[str, object], Path]:
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.robotwin_preflight.RUNTIME_LOCK_STATUS",
@@ -157,7 +159,7 @@ def _install_robotwin_submit_context(
         "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
         "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
         "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-        "runtime_lock_sha256": "f20a0bc5f8a9200df976fd0eb417c7b81000bf4841d2f12208e5982e9d667e91",
+        "runtime_lock_sha256": RUNTIME_LOCK_SHA256,
         "bootstrap_image": "registry.example/robotwin-private/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "reservation": {
             "policy": "STRICT",
@@ -177,17 +179,16 @@ def _install_robotwin_submit_context(
     context.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
     context.chmod(0o600)
     monkeypatch.setenv(ROBOTWIN_CONTEXT_ENV, str(context))
-    entitlement = tmp_path / "customer-entitlement.json"
-    entitlement.write_text(
+    unsigned_entitlement = tmp_path / "unsigned-customer-entitlement.json"
+    unsigned_entitlement.write_text(
         json.dumps(
             {
-                "schema_version": CUSTOMER_ENTITLEMENT_SCHEMA,
                 "provenance": "customer-issued",
                 "customer_scope_id": payload["customer_scope_id"],
                 "run_id": payload["run_id"],
                 "runtime_manifest_sha256": payload["runtime_lock_sha256"],
                 "expires_at": "2099-01-01T00:00:00Z",
-                "decision": entitlement_decision,
+                "decision": assertion_decision,
                 "intended_activity": CUSTOMER_USE_SCOPE,
                 "terms": list(CUSTOMER_TERMS),
             },
@@ -195,8 +196,43 @@ def _install_robotwin_submit_context(
         ),
         encoding="utf-8",
     )
-    entitlement.chmod(0o600)
-    monkeypatch.setenv(ROBOTWIN_ENTITLEMENT_ENV, str(entitlement))
+    unsigned_entitlement.chmod(0o600)
+    monkeypatch.delenv(ROBOTWIN_ENTITLEMENT_ENV, raising=False)
+    if install_authenticated_boundary:
+        from npa.orchestration.npa_workflow import robotwin_preflight
+
+        real_prepare = robotwin_preflight.prepare_live_submit
+        assertion = SimpleNamespace(
+            issuer="https://customer-auth.example.invalid",
+            customer_scope_id=payload["customer_scope_id"],
+            run_id=payload["run_id"],
+            runtime_manifest_sha256=payload["runtime_lock_sha256"],
+            issued_at="2026-01-01T00:00:00Z",
+            expires_at="2099-01-01T00:00:00Z",
+            decision=assertion_decision,
+            intended_activity=CUSTOMER_USE_SCOPE,
+            terms=list(CUSTOMER_TERMS),
+            assertion_id="assertion-cli-canary-0001",
+            nonce="nonce-cli-canary-00000001",
+        )
+        boundary = SimpleNamespace(consume_once=lambda _request: assertion)
+
+        def prepare_with_authenticated_boundary(*args, **kwargs):
+            kwargs["customer_authorization_boundary"] = boundary
+            return real_prepare(*args, **kwargs)
+
+        monkeypatch.setattr(
+            robotwin_preflight,
+            "prepare_live_submit",
+            prepare_with_authenticated_boundary,
+        )
+    else:
+        monkeypatch.setattr(
+            workflow_cli,
+            "_robotwin_unsigned_entitlement_for_test",
+            unsigned_entitlement,
+            raising=False,
+        )
     return payload, context
 
 
@@ -211,8 +247,6 @@ def test_robotwin_submit_refuses_before_every_external_boundary_even_when_skippe
     args = [
         "--secret-env",
         ROBOTWIN_CONTEXT_ENV,
-        "--secret-env",
-        ROBOTWIN_ENTITLEMENT_ENV,
         "--skip-preflight",
     ]
     if malformed:
@@ -250,8 +284,8 @@ def test_robotwin_submit_refuses_before_every_external_boundary_even_when_skippe
 @pytest.mark.parametrize(
     ("missing", "category"),
     [
-        (True, "customer-entitlement-missing"),
-        (False, "customer-entitlement-declined"),
+        (True, "needs_customer_acceptance"),
+        (False, "customer-authorization-unsigned-local-file"),
     ],
 )
 def test_robotwin_customer_entitlement_refuses_before_external_boundaries(
@@ -262,10 +296,16 @@ def test_robotwin_customer_entitlement_refuses_before_external_boundaries(
     category: str,
 ) -> None:
     _install_robotwin_submit_context(
-        monkeypatch, tmp_path, entitlement_decision="declined"
+        monkeypatch,
+        tmp_path,
+        assertion_decision="declined",
+        install_authenticated_boundary=False,
     )
-    if missing:
-        monkeypatch.delenv(ROBOTWIN_ENTITLEMENT_ENV)
+    secret_args: tuple[str, ...] = ()
+    if not missing:
+        unsigned = workflow_cli._robotwin_unsigned_entitlement_for_test
+        monkeypatch.setenv(ROBOTWIN_ENTITLEMENT_ENV, str(unsigned))
+        secret_args = ("--secret-env", ROBOTWIN_ENTITLEMENT_ENV)
     boundaries = [
         mocker.patch(
             "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials"
@@ -280,8 +320,7 @@ def test_robotwin_customer_entitlement_refuses_before_external_boundaries(
     result = _submit_robotwin(
         "--secret-env",
         ROBOTWIN_CONTEXT_ENV,
-        "--secret-env",
-        ROBOTWIN_ENTITLEMENT_ENV,
+        *secret_args,
         "--skip-preflight",
     )
 
@@ -386,8 +425,6 @@ def test_non_robotwin_live_submit_never_enters_robotwin_preflight(
 def test_robotwin_normal_submit_uses_only_internal_value_secret_and_bound_output(
     monkeypatch: pytest.MonkeyPatch, mocker, tmp_path: Path
 ) -> None:
-    from types import SimpleNamespace
-
     from npa.orchestration.npa_workflow import robotwin_preflight
     from npa.orchestration.skypilot.workflow import WorkflowResult
 
@@ -481,8 +518,6 @@ def test_robotwin_normal_submit_uses_only_internal_value_secret_and_bound_output
         "--secret-env",
         ROBOTWIN_CONTEXT_ENV,
         "--secret-env",
-        ROBOTWIN_ENTITLEMENT_ENV,
-        "--secret-env",
         "AWS_ACCESS_KEY_ID",
         "--secret-env",
         "AWS_SECRET_ACCESS_KEY",
@@ -567,8 +602,6 @@ def test_robotwin_missing_control_plane_source_refuses_without_state_or_staging(
     result = _submit_robotwin(
         "--secret-env",
         ROBOTWIN_CONTEXT_ENV,
-        "--secret-env",
-        ROBOTWIN_ENTITLEMENT_ENV,
         "--skip-preflight",
         "--output-format",
         "json",
