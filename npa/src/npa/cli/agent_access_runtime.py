@@ -933,9 +933,34 @@ def _artifact_source_metadata(report, bucket: str, key: str, run_id: str):
 def _agent_access_api_response(refresh: bool = False):
     try:
         report = _agent_access_report(refresh=bool(refresh))
+        _artifact_client, artifact_settings = _agent_artifact_s3_client_optional()
+        credential_mode = str(
+            artifact_settings.get("credential_mode") or "unconfigured"
+        )
+        credential_status = str(
+            artifact_settings.get("credential_status") or "blocked"
+        )
         return {
             "ok": True,
             **report.to_dict(),
+            "artifact_credentials": {
+                "mode": credential_mode,
+                "status": (
+                    "warning"
+                    if credential_mode == "deployment-write-migration"
+                    and credential_status == "ready"
+                    else credential_status
+                ),
+                "reason": str(
+                    artifact_settings.get("credential_reason")
+                    or "artifact_read_identity_absent"
+                ),
+                "source_scope": (
+                    "configured_exact_sources"
+                    if _configured_agent_artifact_sources()
+                    else "none"
+                ),
+            },
             "refresh": {
                 "requested": bool(refresh),
                 "state": "refreshed" if refresh else "cached_or_current",

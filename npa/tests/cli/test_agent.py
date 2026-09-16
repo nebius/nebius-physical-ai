@@ -2620,7 +2620,9 @@ def test_bootstrap_visualize_run_selector_lists_discovered_runs() -> None:
     assert "artifactSourceHistoryQuarantined = true;" in source
     assert "const currentSourceHistory = knownAvailableRuns.filter" in source
     assert "hasExactRunSource(discovered) && sameRunSource(run, discovered)" in source
-    assert "mergeRunsLatestFirst(currentSourceHistory, discoveredArtifactRuns)" in source
+    assert (
+        "mergeRunsLatestFirst(currentSourceHistory, discoveredArtifactRuns)" in source
+    )
     assert 'fillRunSelectOptionsRich(document.getElementById("runIdSelect")' in source
 
 
@@ -2826,6 +2828,10 @@ def test_agent_status_json(monkeypatch) -> None:
     assert payload["sim_assets_url"].endswith("8.8.8.8/assets/")
     assert payload["cameras_api_url"].endswith("/assets/api/sim-assets/cameras")
     assert payload["direct_url"] == ""
+    assert payload["artifact_credentials"] == {
+        "mode": "unconfigured",
+        "status": "blocked",
+    }
 
 
 def test_agent_status_withholds_endpoint_when_basic_auth_is_not_enforced(
@@ -3039,6 +3045,12 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                     "capabilities": {},
                     "projects": [],
                     "errors": [],
+                    "artifact_credentials": {
+                        "mode": "unconfigured",
+                        "status": "blocked",
+                        "reason": "artifact_read_identity_absent",
+                        "source_scope": "none",
+                    },
                     "refreshed_at": "2026-08-06T23:30:00+00:00",
                 }
             )
@@ -6135,9 +6147,16 @@ def test_artifact_source_file_round_trip_survives_service_environment_reload(
     assert "project-exact" not in env_line
     assert "bucket-exact" not in env_line
     assert "NPA_AGENT_ARTIFACT_S3_BUCKET=bucket-exact" in staged["content"]
+    assert "NPA_AGENT_ARTIFACT_CREDENTIAL_MODE=isolated-read" in staged["content"]
     assert "NPA_AGENT_ARTIFACT_S3_PREFIX=" not in staged["content"]
-    assert "NPA_AGENT_ARTIFACT_S3_ACCESS_KEY_ID=synthetic-artifact-access" in staged["content"]
-    assert "NPA_AGENT_ARTIFACT_S3_SECRET_ACCESS_KEY=synthetic-artifact-secret" in staged["content"]
+    assert (
+        "NPA_AGENT_ARTIFACT_S3_ACCESS_KEY_ID=synthetic-artifact-access"
+        in staged["content"]
+    )
+    assert (
+        "NPA_AGENT_ARTIFACT_S3_SECRET_ACCESS_KEY=synthetic-artifact-secret"
+        in staged["content"]
+    )
     assert "AWS_ACCESS_KEY_ID=" not in staged["content"]
     assert "AWS_SECRET_ACCESS_KEY=" not in staged["content"]
     monkeypatch.setenv("NPA_AGENT_ARTIFACT_SOURCES_B64", env_line.split("=", 1)[1])
@@ -6262,11 +6281,15 @@ def test_cross_project_artifact_source_uses_exact_private_credential_record(
         "project_credential_record",
         lambda project_id, **_kwargs: {
             "project_id": project_id,
-            "storage": {
+            "artifact_read_storage": {
                 "bucket": "bucket-exact",
                 "endpoint_url": "https://objects.example",
                 "aws_access_key_id": "synthetic-access",
                 "aws_secret_access_key": "synthetic-secret",
+                "project_id": "project-exact",
+                "resolved_prefixes": ["preserved/runs"],
+                "iam_role": "storage.viewer",
+                "service_account_id": "artifact-read-service-account",
             },
         },
     )
@@ -6276,7 +6299,7 @@ def test_cross_project_artifact_source_uses_exact_private_credential_record(
         "https://deployment.example",
         "deployment-access",
         "deployment-secret",
-        "service-account",
+        "deployment-service-account",
     )
 
     assert agent_module._resolve_configured_artifact_storage_credentials(
@@ -6295,7 +6318,7 @@ def test_cross_project_artifact_source_uses_exact_private_credential_record(
         "https://objects.example",
         "synthetic-access",
         "synthetic-secret",
-        "service-account",
+        "artifact-read-service-account",
     )
 
 
@@ -6308,18 +6331,21 @@ def test_cross_project_artifact_source_rejects_mismatched_private_bucket(
         agent_artifact_sources,
         "project_credential_record",
         lambda _project_id, **_kwargs: {
-            "storage": {
+            "artifact_read_storage": {
                 "bucket": "other-bucket",
                 "endpoint_url": "https://objects.example",
                 "aws_access_key_id": "synthetic-access",
                 "aws_secret_access_key": "synthetic-secret",
+                "project_id": "project-exact",
+                "resolved_prefixes": ["preserved/runs"],
+                "iam_role": "storage.viewer",
             }
         },
     )
 
     with pytest.raises(
         agent_module.AgentStorageCredentialError,
-        match="no exact matching artifact source credentials",
+        match="no exact matching artifact read credentials",
     ):
         agent_module._resolve_configured_artifact_storage_credentials(
             [
@@ -6331,6 +6357,149 @@ def test_cross_project_artifact_source_rejects_mismatched_private_bucket(
             ],
             deployment_project_id="project-deployment",
             current=("", "", "", "", "", "service-account"),
+        )
+
+
+def test_absent_artifact_read_identity_never_falls_back_to_deployment_write() -> None:
+    current = (
+        "deployment-bucket",
+        "deployment/runs",
+        "https://storage.example",
+        "deployment-access",
+        "deployment-secret",
+        "deployment-service-account",
+    )
+
+    assert agent_module._resolve_configured_artifact_storage_credentials(
+        [], deployment_project_id="project-deployment", current=current
+    ) == ("", "", "", "", "", "")
+
+
+def test_same_project_write_identity_requires_explicit_exact_source_migration() -> None:
+    source = {
+        "project_id": "project-deployment",
+        "bucket": "deployment-bucket",
+        "resolved_prefix": "preserved/runs",
+    }
+    current = (
+        "deployment-bucket",
+        "deployment/runs",
+        "https://storage.example",
+        "deployment-access",
+        "deployment-secret",
+        "deployment-service-account",
+    )
+
+    with pytest.raises(
+        agent_module.AgentStorageCredentialError,
+        match="deployment-write fallback is disabled",
+    ):
+        agent_module._resolve_configured_artifact_storage_credentials(
+            [source], deployment_project_id="project-deployment", current=current
+        )
+    assert agent_module._resolve_configured_artifact_storage_credentials(
+        [source],
+        deployment_project_id="project-deployment",
+        current=current,
+        allow_deployment_write_migration=True,
+    ) == (
+        "deployment-bucket",
+        "preserved/runs",
+        "https://storage.example",
+        "deployment-access",
+        "deployment-secret",
+        "deployment-service-account",
+    )
+
+
+def test_same_project_prefers_independent_read_identity_over_write_migration(
+    monkeypatch,
+) -> None:
+    from npa.cli import agent_artifact_sources
+
+    monkeypatch.setattr(
+        agent_artifact_sources,
+        "project_credential_record",
+        lambda project_id, **_kwargs: {
+            "artifact_read_storage": {
+                "bucket": "deployment-bucket",
+                "endpoint_url": "https://read.example",
+                "aws_access_key_id": "read-access",
+                "aws_secret_access_key": "read-secret",
+                "project_id": project_id,
+                "resolved_prefixes": ["preserved/runs"],
+                "iam_role": "storage.viewer",
+                "service_account_id": "artifact-read-service-account",
+            }
+        },
+    )
+    source = {
+        "project_id": "project-deployment",
+        "bucket": "deployment-bucket",
+        "resolved_prefix": "preserved/runs",
+    }
+    current = (
+        "deployment-bucket",
+        "deployment/runs",
+        "https://write.example",
+        "write-access",
+        "write-secret",
+        "deployment-service-account",
+    )
+
+    resolution = agent_artifact_sources.resolve_configured_artifact_storage_identity(
+        [source],
+        deployment_project_id="project-deployment",
+        current=current,
+        allow_deployment_write_migration=True,
+    )
+
+    assert resolution.mode == "isolated-read"
+    assert resolution.credentials == (
+        "deployment-bucket",
+        "preserved/runs",
+        "https://read.example",
+        "read-access",
+        "read-secret",
+        "artifact-read-service-account",
+    )
+
+
+def test_artifact_read_identity_rejects_source_prefix_scope_mismatch(
+    monkeypatch,
+) -> None:
+    from npa.cli import agent_artifact_sources
+
+    monkeypatch.setattr(
+        agent_artifact_sources,
+        "project_credential_record",
+        lambda project_id, **_kwargs: {
+            "artifact_read_storage": {
+                "bucket": "bucket-exact",
+                "endpoint_url": "https://objects.example",
+                "aws_access_key_id": "synthetic-access",
+                "aws_secret_access_key": "synthetic-secret",
+                "project_id": project_id,
+                "resolved_prefixes": ["different/prefix"],
+                "iam_role": "storage.viewer",
+            }
+        },
+    )
+
+    with pytest.raises(
+        agent_module.AgentStorageCredentialError,
+        match="scope does not match",
+    ):
+        agent_module._resolve_configured_artifact_storage_credentials(
+            [
+                {
+                    "project_id": "project-exact",
+                    "bucket": "bucket-exact",
+                    "resolved_prefix": "preserved/runs",
+                }
+            ],
+            deployment_project_id="project-deployment",
+            current=("", "", "", "", "", ""),
         )
 
 
@@ -6437,16 +6606,27 @@ def test_bootstrap_refresh_stages_artifact_reads_without_replacing_deployment_wr
 
     monkeypatch.setattr(nebius, "bootstrap_agent_environment", refresh_environment)
 
-    def resolve_exact(sources, *, deployment_project_id, current):
+    def resolve_exact(
+        sources,
+        *,
+        deployment_project_id,
+        current,
+        persisted_mode,
+        migration_requested,
+    ):
         events.append("exact_source")
         assert sources == (source,)
         assert deployment_project_id == "project-deployment"
         assert current == refreshed_tuple
-        return exact_tuple
+        assert persisted_mode == ""
+        assert migration_requested is False
+        from npa.cli.agent_artifact_sources import ArtifactStorageCredentialResolution
+
+        return ArtifactStorageCredentialResolution(exact_tuple, "isolated-read")
 
     monkeypatch.setattr(
         agent_module,
-        "_resolve_configured_artifact_storage_credentials",
+        "_resolve_bootstrap_artifact_storage_identity",
         resolve_exact,
     )
 
@@ -6505,6 +6685,7 @@ def test_bootstrap_refresh_stages_artifact_reads_without_replacing_deployment_wr
         llm_models=[],
         refresh_credentials=True,
         artifact_source_file="",
+        allow_artifact_write_identity_migration=False,
         llm_config_file="",
         foxglove_embed_src="",
         foxglove_viewer_backend="",
@@ -6514,17 +6695,20 @@ def test_bootstrap_refresh_stages_artifact_reads_without_replacing_deployment_wr
     )
 
     assert events == ["refresh", "exact_source", "stage"]
-    assert tuple(
-        staged[key]
-        for key in (
-            "s3_bucket",
-            "s3_prefix",
-            "s3_endpoint",
-            "s3_access_key",
-            "s3_secret_key",
-            "service_account_id",
+    assert (
+        tuple(
+            staged[key]
+            for key in (
+                "s3_bucket",
+                "s3_prefix",
+                "s3_endpoint",
+                "s3_access_key",
+                "s3_secret_key",
+                "service_account_id",
+            )
         )
-    ) == refreshed_tuple
+        == refreshed_tuple
+    )
     assert tuple(
         staged[key]
         for key in (
@@ -6535,6 +6719,7 @@ def test_bootstrap_refresh_stages_artifact_reads_without_replacing_deployment_wr
         )
     ) == (exact_tuple[0], *exact_tuple[2:5])
     assert staged["artifact_sources"] == (source,)
+    assert staged["artifact_credential_mode"] == "isolated-read"
 
 
 def test_bootstrap_recovery_preserves_owner_artifact_source_file(

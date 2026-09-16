@@ -168,12 +168,24 @@ def test_rendered_artifact_reads_use_an_identity_isolated_from_state_writes(
         "AWS_REGION": "deployment-region",
     }
     artifact = {
+        "NPA_AGENT_ARTIFACT_CREDENTIAL_MODE": "isolated-read",
         "NPA_AGENT_ARTIFACT_S3_BUCKET": "artifact-bucket",
         "NPA_AGENT_ARTIFACT_S3_PREFIX": "preserved/runs",
         "NPA_AGENT_ARTIFACT_S3_ENDPOINT": "https://artifact.example",
         "NPA_AGENT_ARTIFACT_S3_ACCESS_KEY_ID": "artifact-access",
         "NPA_AGENT_ARTIFACT_S3_SECRET_ACCESS_KEY": "artifact-secret",
         "NPA_AGENT_ARTIFACT_S3_REGION": "artifact-region",
+        "NPA_AGENT_ARTIFACT_SOURCES_B64": module.base64.urlsafe_b64encode(
+            json.dumps(
+                [
+                    {
+                        "project_id": "artifact-project",
+                        "bucket": "artifact-bucket",
+                        "resolved_prefix": "preserved/runs",
+                    }
+                ]
+            ).encode("utf-8")
+        ).decode("ascii"),
     }
     for key, value in {**deployment, **artifact}.items():
         monkeypatch.setenv(key, value)
@@ -185,6 +197,9 @@ def test_rendered_artifact_reads_use_an_identity_isolated_from_state_writes(
         "access_key": "artifact-access",
         "secret_key": "artifact-secret",
         "region": "artifact-region",
+        "credential_mode": "isolated-read",
+        "credential_status": "ready",
+        "credential_reason": "isolated_read_identity_configured",
     }
     expected_deployment = {
         "bucket": "deployment-bucket",
@@ -203,13 +218,85 @@ def test_rendered_artifact_reads_use_an_identity_isolated_from_state_writes(
     # Never form a mixed credential pair from a partial artifact-read channel.
     monkeypatch.delenv("NPA_AGENT_ARTIFACT_S3_SECRET_ACCESS_KEY")
     assert module._agent_artifact_s3_settings() == {
-        "bucket": "deployment-bucket",
-        "prefix": "deployment/runs",
-        "endpoint": "https://deployment.example",
-        "access_key": "deployment-access",
-        "secret_key": "deployment-secret",
-        "region": "deployment-region",
+        "bucket": "",
+        "prefix": "",
+        "endpoint": "",
+        "access_key": "",
+        "secret_key": "",
+        "region": "artifact-region",
+        "credential_mode": "isolated-read",
+        "credential_status": "blocked",
+        "credential_reason": "artifact_read_identity_incomplete",
     }
+
+
+def test_rendered_artifact_write_migration_is_explicit_and_scope_bound(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_artifact_s3_migration"
+    )
+    deployment = {
+        "NPA_AGENT_S3_BUCKET": "deployment-bucket",
+        "NPA_AGENT_S3_ENDPOINT": "https://deployment.example",
+        "AWS_ACCESS_KEY_ID": "deployment-access",
+        "AWS_SECRET_ACCESS_KEY": "deployment-secret",
+        "AWS_REGION": "deployment-region",
+    }
+    source = module.base64.urlsafe_b64encode(
+        json.dumps(
+            [
+                {
+                    "project_id": "deployment-project",
+                    "bucket": "deployment-bucket",
+                    "resolved_prefix": "preserved/runs",
+                }
+            ]
+        ).encode("utf-8")
+    ).decode("ascii")
+    artifact = {
+        "NPA_AGENT_ARTIFACT_CREDENTIAL_MODE": "deployment-write-migration",
+        "NPA_AGENT_ARTIFACT_CREDENTIAL_MIGRATION": (
+            "deployment-write-exact-source-v1"
+        ),
+        "NPA_AGENT_ARTIFACT_SOURCES_B64": source,
+        "NPA_AGENT_ARTIFACT_S3_BUCKET": "deployment-bucket",
+        "NPA_AGENT_ARTIFACT_S3_ENDPOINT": "https://deployment.example",
+        "NPA_AGENT_ARTIFACT_S3_ACCESS_KEY_ID": "deployment-access",
+        "NPA_AGENT_ARTIFACT_S3_SECRET_ACCESS_KEY": "deployment-secret",
+        "NPA_AGENT_ARTIFACT_S3_REGION": "deployment-region",
+    }
+    for key, value in {**deployment, **artifact}.items():
+        monkeypatch.setenv(key, value)
+
+    settings = module._agent_artifact_s3_settings()
+    assert settings["credential_mode"] == "deployment-write-migration"
+    assert settings["credential_status"] == "ready"
+    assert settings["credential_reason"] == "explicit_deployment_write_migration"
+
+    monkeypatch.setenv("NPA_AGENT_ARTIFACT_S3_BUCKET", "different-bucket")
+    blocked = module._agent_artifact_s3_settings()
+    assert blocked["credential_status"] == "blocked"
+    assert blocked["credential_reason"] == "artifact_read_identity_scope_mismatch"
+    assert blocked["access_key"] == blocked["secret_key"] == ""
+
+
+def test_rendered_artifact_reads_block_when_read_identity_is_absent(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_artifact_s3_absent"
+    )
+    monkeypatch.setenv("NPA_AGENT_S3_BUCKET", "deployment-bucket")
+    monkeypatch.setenv("NPA_AGENT_S3_ENDPOINT", "https://deployment.example")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "deployment-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "deployment-secret")
+
+    settings = module._agent_artifact_s3_settings()
+    assert settings["credential_mode"] == "unconfigured"
+    assert settings["credential_status"] == "blocked"
+    assert settings["credential_reason"] == "artifact_read_identity_absent"
+    assert settings["bucket"] == settings["access_key"] == settings["secret_key"] == ""
 
 
 def test_rendered_backend_routes_models_and_parameters_without_overriding_configuration(
@@ -3204,6 +3291,12 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
     assert access_payload["apiVersion"] == "npa.agent.access/v1"
     assert access_payload["identity"]["tenant_id"] == "tenant-test"
     assert access_payload["projects"][0]["id"] == "project-test"
+    assert access_payload["artifact_credentials"] == {
+        "mode": "unconfigured",
+        "status": "blocked",
+        "reason": "artifact_read_identity_absent",
+        "source_scope": "none",
+    }
 
     called: dict[str, object] = {}
 

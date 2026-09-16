@@ -326,14 +326,20 @@ invalidates run discovery, exact-source authorization, and run-list cursor
 caches before subsequent requests use it.
 
 Workflow submission and artifact writes/deletes stay **scoped to the deployment
-project**. Caller-supplied S3 URIs remain configuration-scoped; an exact artifact
-selected from a discovered cross-project run can be read without widening those
-mutation boundaries.
+project**. Artifact discovery uses a separate owner-stored
+`artifact_read_storage` identity whose contract is `storage.viewer` for one
+exact project, bucket, and configured set of run-parent prefixes. Bootstrap
+blocks when that read identity is absent, incomplete, or scope-mismatched; it
+does not silently substitute the deployment writer. `npa agent status`,
+`GET /api/access`, and `GET /api/health` report the artifact credential mode
+without exposing key material.
 
-> **This boundary is enforced by the agent application, not by a structurally
-> read-only IAM credential.** Deployments may still attach a service account with
-> tenant-level editors grants, so treat that credential as privileged even though
-> cross-project mutation endpoints are not exposed.
+For a same-project deployment being migrated, an operator may explicitly pass
+`--allow-artifact-write-identity-migration` for one exact registered source.
+That compatibility state is persisted and reported as a warning until a
+separate viewer identity is installed. It is never available for cross-project
+sources, a different bucket, an unregistered source, or an invalid read-identity
+record. Caller-supplied S3 URIs remain configuration-scoped and are not grants.
 
 ### Paging discovered runs
 

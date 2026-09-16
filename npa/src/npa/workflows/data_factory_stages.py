@@ -26,8 +26,13 @@ import math
 import random
 import re
 import tempfile
+import threading
+import time
+import uuid
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from urllib.parse import urlparse
 
 from botocore.exceptions import ClientError
@@ -35,6 +40,14 @@ from botocore.exceptions import ClientError
 
 class RefinementStateError(RuntimeError):
     """Fail-closed, operator-safe refinement state error."""
+
+
+class CandidateSelectionLockError(RuntimeError):
+    """A candidate-selection destination lock was lost or malformed."""
+
+
+_CANDIDATE_SELECTION_LOCK_SCHEMA = "npa.paidf.candidate-selection-lock/v1"
+_CANDIDATE_SELECTION_LOCK_LEASE_SECONDS = 300
 
 
 # Coherent appearance profiles for a replaceable physical scene. Sampling each
@@ -239,7 +252,9 @@ def _download_json(uri: str) -> dict[str, Any]:
         except ClientError as exc:
             code = str(exc.response.get("Error", {}).get("Code", ""))
             if code in {"404", "NoSuchKey", "NotFound"}:
-                raise FileNotFoundError("requested JSON object does not exist") from None
+                raise FileNotFoundError(
+                    "requested JSON object does not exist"
+                ) from None
             raise
         return json.loads(Path(local).read_text())
 
@@ -334,9 +349,334 @@ def _put_immutable_json(payload: dict[str, Any], uri: str, *, label: str) -> str
     return uri
 
 
-def _quality_gate_contract(
-    report: dict[str, Any], threshold: float
+def _candidate_selection_lock_uri(selection_uri: str) -> str:
+    """Keep the coordination record outside the selected artifact inventory."""
+
+    bucket, prefix = _split(selection_uri)
+    if not bucket or not prefix:
+        raise CandidateSelectionLockError(
+            "candidate selection requires an exact S3 destination prefix"
+        )
+    return f"s3://{bucket}/{prefix.rstrip('/')}.lock.json"
+
+
+def _candidate_selection_lock_payload(
+    *, owner: str, generation: int, state: str, now: datetime
 ) -> dict[str, Any]:
+    expires = now + timedelta(seconds=_CANDIDATE_SELECTION_LOCK_LEASE_SECONDS)
+    return {
+        "schema": _CANDIDATE_SELECTION_LOCK_SCHEMA,
+        "owner": owner,
+        "generation": generation,
+        "state": state,
+        "updated_at": now.isoformat(),
+        "expires_at": expires.isoformat() if state == "held" else now.isoformat(),
+    }
+
+
+def _candidate_selection_lock_record(raw: bytes, *, label: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+        expires = datetime.fromisoformat(str(payload["expires_at"]))
+        if expires.tzinfo is None:
+            raise ValueError("timezone required")
+        generation = int(payload["generation"])
+    except (KeyError, TypeError, ValueError, UnicodeError, json.JSONDecodeError):
+        raise CandidateSelectionLockError(f"{label} is malformed") from None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != _CANDIDATE_SELECTION_LOCK_SCHEMA
+        or payload.get("state") not in {"held", "released"}
+        or not str(payload.get("owner") or "")
+        or generation < 1
+    ):
+        raise CandidateSelectionLockError(f"{label} is malformed")
+    payload["generation"] = generation
+    payload["_expires"] = expires.astimezone(timezone.utc)
+    return payload
+
+
+def _candidate_selection_lock_write(
+    storage: Any,
+    lock_uri: str,
+    payload: dict[str, Any],
+    *,
+    etag: str = "",
+) -> str:
+    from npa.clients.storage import StoragePreconditionFailed
+
+    try:
+        return storage.put_bytes_conditional(
+            _canonical_json_bytes(payload),
+            lock_uri,
+            if_match=etag,
+            if_none_match=not etag,
+            content_type="application/json",
+        )
+    except StoragePreconditionFailed:
+        raise
+    except Exception as exc:  # noqa: BLE001 - sanitized coordination boundary
+        raise CandidateSelectionLockError(
+            f"candidate selection lock write failed ({type(exc).__name__})"
+        ) from None
+
+
+def _renew_candidate_selection_lock(lock: dict[str, Any]) -> None:
+    """Renew only the exact owner/generation version that is still held."""
+
+    from npa.clients.storage import StoragePreconditionFailed
+
+    guard = lock.get("_guard")
+    if guard is None:
+        guard = threading.Lock()
+    with guard:
+        if lock.get("_lost"):
+            raise CandidateSelectionLockError(
+                "candidate selection lock renewal previously failed"
+            )
+        try:
+            storage = lock["storage"]
+            current = storage.read_bytes_with_etag(lock["uri"])
+            if current is None:
+                raise CandidateSelectionLockError(
+                    "candidate selection lock disappeared"
+                )
+            record = _candidate_selection_lock_record(
+                current[0], label="candidate selection lock"
+            )
+            if (
+                record["state"] != "held"
+                or record["owner"] != lock["owner"]
+                or record["generation"] != lock["generation"]
+                or current[1] != lock["etag"]
+            ):
+                raise CandidateSelectionLockError(
+                    "candidate selection lock was superseded"
+                )
+            now = datetime.now(timezone.utc)
+            payload = _candidate_selection_lock_payload(
+                owner=lock["owner"],
+                generation=lock["generation"],
+                state="held",
+                now=now,
+            )
+            lock["etag"] = _candidate_selection_lock_write(
+                storage, lock["uri"], payload, etag=lock["etag"]
+            )
+        except StoragePreconditionFailed:
+            lock["_lost"] = True
+            raise CandidateSelectionLockError(
+                "candidate selection lock was superseded"
+            ) from None
+        except CandidateSelectionLockError:
+            lock["_lost"] = True
+            raise
+        except Exception as exc:  # noqa: BLE001 - sanitized coordination boundary
+            lock["_lost"] = True
+            raise CandidateSelectionLockError(
+                f"candidate selection lock renewal failed ({type(exc).__name__})"
+            ) from None
+
+
+def _candidate_selection_lock_heartbeat(lock: dict[str, Any]) -> None:
+    """Keep a held lease current even while one object operation is slow."""
+
+    interval = max(0.05, _CANDIDATE_SELECTION_LOCK_LEASE_SECONDS / 3)
+    while not lock["_stop"].wait(interval):
+        try:
+            _renew_candidate_selection_lock(lock)
+        except CandidateSelectionLockError:
+            return
+
+
+@contextmanager
+def _candidate_selection_destination_lock(
+    selection_uri: str,
+) -> Iterator[dict[str, Any]]:
+    """Acquire a CAS-fenced, stale-recoverable lock for one destination.
+
+    Active owners are waited out without an arbitrary deadline. A crashed
+    owner's lease can be replaced only with the exact observed ETag, and every
+    renewal/release is fenced by owner, generation, and ETag.
+    """
+
+    from npa.clients.storage import StoragePreconditionFailed
+
+    storage = _storage()
+    lock_uri = _candidate_selection_lock_uri(selection_uri)
+    owner = uuid.uuid4().hex
+    lock: dict[str, Any] | None = None
+    while lock is None:
+        current = storage.read_bytes_with_etag(lock_uri)
+        now = datetime.now(timezone.utc)
+        if current is None:
+            generation = 1
+            etag = ""
+        else:
+            record = _candidate_selection_lock_record(
+                current[0], label="candidate selection lock"
+            )
+            if record["state"] == "held" and record["_expires"] > now:
+                time.sleep(
+                    min(1.0, max(0.05, (record["_expires"] - now).total_seconds()))
+                )
+                continue
+            generation = int(record["generation"]) + 1
+            etag = current[1]
+        payload = _candidate_selection_lock_payload(
+            owner=owner, generation=generation, state="held", now=now
+        )
+        try:
+            acquired_etag = _candidate_selection_lock_write(
+                storage, lock_uri, payload, etag=etag
+            )
+        except StoragePreconditionFailed:
+            continue
+        lock = {
+            "storage": storage,
+            "uri": lock_uri,
+            "owner": owner,
+            "generation": generation,
+            "etag": acquired_etag,
+            "_guard": threading.Lock(),
+            "_stop": threading.Event(),
+            "_lost": False,
+        }
+    heartbeat = threading.Thread(
+        target=_candidate_selection_lock_heartbeat,
+        args=(lock,),
+        name="npa-paidf-selection-lock",
+        daemon=True,
+    )
+    heartbeat.start()
+    body_failed = False
+    try:
+        yield lock
+    except BaseException:
+        body_failed = True
+        raise
+    finally:
+        lock["_stop"].set()
+        heartbeat.join()
+        with lock["_guard"]:
+            current = storage.read_bytes_with_etag(lock_uri)
+            if current is not None:
+                record = _candidate_selection_lock_record(
+                    current[0], label="candidate selection lock"
+                )
+                if (
+                    record["state"] == "held"
+                    and record["owner"] == owner
+                    and record["generation"] == lock["generation"]
+                    and current[1] == lock["etag"]
+                ):
+                    payload = _candidate_selection_lock_payload(
+                        owner=owner,
+                        generation=lock["generation"],
+                        state="released",
+                        now=datetime.now(timezone.utc),
+                    )
+                    try:
+                        _candidate_selection_lock_write(
+                            storage, lock_uri, payload, etag=lock["etag"]
+                        )
+                    except StoragePreconditionFailed:
+                        # A newer recovery owner is authoritative; never release it.
+                        lock["_lost"] = True
+                else:
+                    # A successor became authoritative between the last heartbeat
+                    # and exit. Fence this result even if the body did not perform
+                    # another explicit renewal.
+                    lock["_lost"] = True
+            else:
+                lock["_lost"] = True
+        if lock["_lost"] and not body_failed:
+            raise CandidateSelectionLockError(
+                "candidate selection lock was lost during the critical section"
+            )
+
+
+def _immutable_candidate_copy(
+    *,
+    source_bucket: str,
+    source_row: dict[str, Any],
+    destination_bucket: str,
+    destination_key: str,
+) -> None:
+    """Conditionally create one exact media object and verify retry identity."""
+
+    source_key = str(source_row["key"])
+    source_size = int(source_row.get("size") or 0)
+    source_etag = str(source_row.get("etag") or "").strip('"')
+    if not source_key or source_size <= 0 or not source_etag:
+        raise RuntimeError("candidate selection source lacks immutable identity")
+    client = _s3_client()
+
+    def verify_existing() -> bool:
+        try:
+            head = client.head_object(Bucket=destination_bucket, Key=destination_key)
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in {"404", "NoSuchKey", "NotFound"}:
+                return False
+            raise
+        observed_size = int(head.get("ContentLength") or 0)
+        metadata = (
+            head.get("Metadata") if isinstance(head.get("Metadata"), dict) else {}
+        )
+        observed_source_etag = str(metadata.get("npa-source-etag") or "").strip('"')
+        observed_etag = str(head.get("ETag") or "").strip('"')
+        if observed_size != source_size or (
+            source_etag
+            and observed_source_etag not in {source_etag, ""}
+            and observed_etag != source_etag
+        ):
+            raise RuntimeError("candidate selection prior media differs from source")
+        if source_etag and not observed_source_etag and observed_etag != source_etag:
+            raise RuntimeError("candidate selection prior media lacks source identity")
+        return True
+
+    if verify_existing():
+        return
+    response = client.get_object(Bucket=source_bucket, Key=source_key)
+    body = response["Body"]
+    with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024) as stream:
+        copied = 0
+        try:
+            while chunk := body.read(1024 * 1024):
+                stream.write(chunk)
+                copied += len(chunk)
+        finally:
+            body.close()
+        if copied != source_size:
+            raise RuntimeError("candidate selection source changed during copy")
+        stream.seek(0)
+        try:
+            client.put_object(
+                Bucket=destination_bucket,
+                Key=destination_key,
+                Body=stream,
+                ContentLength=copied,
+                IfNoneMatch="*",
+                Metadata={"npa-source-etag": source_etag},
+            )
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            status = int(
+                exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0) or 0
+            )
+            if code not in {
+                "409",
+                "412",
+                "ConditionalRequestConflict",
+                "PreconditionFailed",
+            } and status not in {409, 412}:
+                raise
+    if not verify_existing():
+        raise RuntimeError("candidate selection media write could not be verified")
+
+
+def _quality_gate_contract(report: dict[str, Any], threshold: float) -> dict[str, Any]:
     """Evaluate the one authoritative completed/hard-check/score contract."""
 
     score = float(report.get("score", 0.0))
@@ -368,11 +708,7 @@ def _quality_threshold(value: float | str) -> float:
         threshold = float(value)
     except (TypeError, ValueError):
         return 0.5
-    return (
-        threshold
-        if math.isfinite(threshold) and 0.0 <= threshold <= 1.0
-        else 0.5
-    )
+    return threshold if math.isfinite(threshold) and 0.0 <= threshold <= 1.0 else 0.5
 
 
 def _validated_refinement_pointer(payload: dict[str, Any]) -> dict[str, Any]:
@@ -382,7 +718,9 @@ def _validated_refinement_pointer(payload: dict[str, Any]) -> dict[str, Any]:
         raise RefinementStateError("refinement pointer has an unsupported schema")
     raw_attempt = payload.get("attempt")
     if isinstance(raw_attempt, bool) or not isinstance(raw_attempt, int):
-        raise RefinementStateError("refinement pointer has an invalid attempt") from None
+        raise RefinementStateError(
+            "refinement pointer has an invalid attempt"
+        ) from None
     attempt = raw_attempt
     if attempt < 0:
         raise RefinementStateError("refinement pointer has an invalid attempt")
@@ -392,7 +730,9 @@ def _validated_refinement_pointer(payload: dict[str, Any]) -> dict[str, Any]:
     immutable = dict(payload)
     immutable.pop("policy_sha256", None)
     if _payload_sha256(immutable) != digest:
-        raise RefinementStateError("refinement pointer digest does not match its contract")
+        raise RefinementStateError(
+            "refinement pointer digest does not match its contract"
+        )
     if not str(immutable.get("history_uri") or "") or not str(
         immutable.get("commit_uri") or ""
     ):
@@ -523,9 +863,7 @@ def _derive_quality_anchor(anchor_uri: str) -> dict[str, Any] | None:
                 continue
             attributes = clip.get("attribute_verification")
             hallucination = clip.get("hallucination")
-            if not isinstance(attributes, dict) or not isinstance(
-                hallucination, dict
-            ):
+            if not isinstance(attributes, dict) or not isinstance(hallucination, dict):
                 continue
             if (
                 attributes.get("passed") is not True
@@ -831,7 +1169,9 @@ def grade_gate(
     yields ``loop_back`` rather than an exception, because a gate that raises takes
     the whole refinement loop down with it.
     """
-    from npa.workbench.cosmos_evaluator import RESULT_FILENAME as COSMOS_EVALUATOR_RESULT
+    from npa.workbench.cosmos_evaluator import (
+        RESULT_FILENAME as COSMOS_EVALUATOR_RESULT,
+    )
     from npa.workbench.vlm_eval import RESULT_FILENAME as VLM_EVAL_RESULT
 
     threshold = _quality_threshold(threshold)
@@ -965,13 +1305,9 @@ def prepare_refinement(
         if scores_uri.endswith(".json"):
             score_parent, _, score_name = scores_uri.rpartition("/")
             score_prefix = f"{score_parent}/" if score_parent else ""
-            scores_uri = (
-                f"{score_prefix}iteration-{prior_iteration}/{score_name}"
-            )
+            scores_uri = f"{score_prefix}iteration-{prior_iteration}/{score_name}"
         else:
-            scores_uri = (
-                f"{scores_uri.rstrip('/')}/iteration-{prior_iteration}/"
-            )
+            scores_uri = f"{scores_uri.rstrip('/')}/iteration-{prior_iteration}/"
         if decision_uri:
             decision_parent, _, decision_name = decision_uri.rpartition("/")
             decision_prefix = f"{decision_parent}/" if decision_parent else ""
@@ -1007,9 +1343,7 @@ def prepare_refinement(
     if control_step < 0.0:
         raise ValueError("control_weight_step must be non-negative")
     if not base_control <= control_ceiling <= 1.0:
-        raise ValueError(
-            "max_control_weight must be between base_control_weight and 1"
-        )
+        raise ValueError("max_control_weight must be between base_control_weight and 1")
 
     base_cfg = _guidance("base_guidance", base_guidance)
     if quality_anchor and quality_anchor.get("guidance") is not None:
@@ -1039,9 +1373,7 @@ def prepare_refinement(
         if scores_uri.endswith(".json")
         else f"{scores_uri.rstrip('/')}/{RESULT_FILENAME}"
     )
-    report = _read_optional_refinement_json(
-        report_uri, label="prior evaluator report"
-    )
+    report = _read_optional_refinement_json(report_uri, label="prior evaluator report")
     adaptation_report = report
     adaptation_report_uri = report_uri
     if report is not None and not report.get("clips"):
@@ -1129,9 +1461,7 @@ def prepare_refinement(
                 raise RefinementStateError(
                     "quality gate decision contradicts the evaluator contract"
                 )
-            recorded_report_digest = str(
-                decision_payload.get("report_sha256") or ""
-            )
+            recorded_report_digest = str(decision_payload.get("report_sha256") or "")
             if recorded_report_digest and recorded_report_digest != report_digest:
                 raise RefinementStateError(
                     "quality gate decision contradicts the evaluator report version"
@@ -1162,10 +1492,9 @@ def prepare_refinement(
                 }
             )
 
-        gate_matches_current = (
-            evaluated_attempt_number == int(previous["attempt"])
-            and evaluated_digest == str(previous_pointer["policy_sha256"])
-        )
+        gate_matches_current = evaluated_attempt_number == int(
+            previous["attempt"]
+        ) and evaluated_digest == str(previous_pointer["policy_sha256"])
         gate_was_already_committed = (
             contract["decision"] == "loop_back"
             and str(previous.get("source_gate_id") or "") == gate_id
@@ -1215,9 +1544,7 @@ def prepare_refinement(
         effective_control = min(
             control_ceiling, base_control + control_step * max(1, attempt)
         )
-        effective_guidance = max(
-            cfg_floor, base_cfg - cfg_step * max(1, attempt)
-        )
+        effective_guidance = max(cfg_floor, base_cfg - cfg_step * max(1, attempt))
         previous_settings = previous.get("settings") if previous else {}
         previous_pair = (
             round(float(previous_settings.get("control_weight", base_control)), 6),
@@ -1237,9 +1564,7 @@ def prepare_refinement(
     failed_checks: set[str] = set()
     failed_attributes: set[str] = set()
     report_clips = (
-        adaptation_report.get("clips", [])
-        if adaptation_report is not None
-        else []
+        adaptation_report.get("clips", []) if adaptation_report is not None else []
     )
     for clip in report_clips if isinstance(report_clips, list) else []:
         if not isinstance(clip, dict) or clip.get("passed") is True:
@@ -1286,9 +1611,7 @@ def prepare_refinement(
             adaptation_report_uri if adaptation_report is not None else ""
         ),
         "adaptation_evaluator_report_sha256": (
-            _payload_sha256(adaptation_report)
-            if adaptation_report is not None
-            else ""
+            _payload_sha256(adaptation_report) if adaptation_report is not None else ""
         ),
         "prior_score": prior_score,
         "prior_passed": prior_passed,
@@ -1388,8 +1711,7 @@ def _persist_quality_disposition(
         # the same persist-before-raise path as unreadable or invalid JSON rather
         # than escaping below through ``report.get``.
         reasons.append(
-            "evaluator report unavailable or malformed "
-            f"({type(exc).__name__})"
+            f"evaluator report unavailable or malformed ({type(exc).__name__})"
         )
 
     try:
@@ -1562,9 +1884,7 @@ def _assert_terminal_review_source_preserved(
         raise RuntimeError("terminal review publication changed source inventory")
     before_keys = {str(row["key"]) for row in before}
     after_keys = {str(row["key"]) for row in after}
-    workflow_before = {
-        key for key in before_keys if key.startswith(workflow_prefix)
-    }
+    workflow_before = {key for key in before_keys if key.startswith(workflow_prefix)}
     if not workflow_before.issubset(after_keys):
         raise RuntimeError("terminal review publication removed workflow evidence")
     unexpected = {
@@ -1764,16 +2084,14 @@ def _terminal_review_archive_metadata(
             raise RuntimeError(
                 "terminal review archive check fields are invalid"
             ) from exc
-        if (
-            attribute_results != candidate.get("attribute_results", [])
-            or hard_check_results != candidate.get("hard_check_results", {})
-        ):
+        if attribute_results != candidate.get(
+            "attribute_results", []
+        ) or hard_check_results != candidate.get("hard_check_results", {}):
             raise RuntimeError("terminal review archive checks do not match this run")
         source_key = str(candidate.get("media_key") or "")
         if (
             not source_key
-            or int(rows_by_key[archive_key]["size"])
-            <= 0
+            or int(rows_by_key[archive_key]["size"]) <= 0
             or _sha256_object(client, bucket, archive_key)
             != _sha256_object(client, bucket, source_key)
         ):
@@ -1846,9 +2164,7 @@ def _review_candidate_from_evaluation(
         if isinstance(evaluation.get("attribute_verification"), dict)
         else {}
     )
-    checks = [
-        item for item in attributes.get("checks", []) if isinstance(item, dict)
-    ]
+    checks = [item for item in attributes.get("checks", []) if isinstance(item, dict)]
     failed_attributes = [
         str(item.get("variable") or "unknown")
         for item in checks
@@ -1936,7 +2252,9 @@ def _terminal_review_candidates(
         manifest_clips: set[str] = set()
         for variant in manifest.get("variants", []):
             if not isinstance(variant, dict):
-                raise RuntimeError("terminal review manifest contains an invalid variant")
+                raise RuntimeError(
+                    "terminal review manifest contains an invalid variant"
+                )
             clip = str(variant.get("clip") or "").strip()
             video_uri = str(variant.get("augmented_video_uri") or "").strip()
             if not clip or not video_uri or clip not in evaluations:
@@ -2017,8 +2335,8 @@ def review_terminal_candidates(
                 workdir=str(Path(tmp) / "media"),
                 run_disposition=quality_status,
             )
-            written_dataset_uri, archive_rows = (
-                _publish_terminal_review_directory_once(export_dir, dataset_uri)
+            written_dataset_uri, archive_rows = _publish_terminal_review_directory_once(
+                export_dir, dataset_uri
             )
 
     after_dataset = _inventory_rows(run_root_uri)
@@ -2039,11 +2357,7 @@ def review_terminal_candidates(
         "source_inventory_sha256": _inventory_digest(source_before),
         "source_inventory_unchanged_after_publication": True,
         "candidate_results": [
-            {
-                key: value
-                for key, value in candidate.items()
-                if key != "media_key"
-            }
+            {key: value for key, value in candidate.items() if key != "media_key"}
             for candidate in candidates
         ],
     }
@@ -2062,9 +2376,7 @@ def review_terminal_candidates(
                 "status": "completed",
                 "quality_disposition": quality_status,
                 "candidate_count": len(candidates),
-                "promotion_eligible_count": metadata[
-                    "promotion_eligible_count"
-                ],
+                "promotion_eligible_count": metadata["promotion_eligible_count"],
                 "source_inventory_unchanged": True,
             }
         )
@@ -2072,9 +2384,7 @@ def review_terminal_candidates(
     return report
 
 
-def route_terminal_quality(
-    quality_disposition_uri: str, decision_uri: str
-) -> str:
+def route_terminal_quality(quality_disposition_uri: str, decision_uri: str) -> str:
     """Route after common review without rewriting the canonical disposition."""
 
     disposition = _download_json(quality_disposition_uri)
@@ -2126,7 +2436,10 @@ def _independently_hard_passing_candidate(
         return False
     if evaluation.get("input_conditioned") is True:
         hallucination = evaluation.get("hallucination")
-        if not isinstance(hallucination, dict) or hallucination.get("passed") is not True:
+        if (
+            not isinstance(hallucination, dict)
+            or hallucination.get("passed") is not True
+        ):
             return False
     for enforced_key, result_key in (
         ("temporal_enforced", "temporal_consistency"),
@@ -2154,6 +2467,29 @@ def select_hard_passing_candidates(
     lets final validation emit a fail-closed report instead of crashing the loop.
     """
 
+    with _candidate_selection_destination_lock(selection_uri) as destination_lock:
+        return _select_hard_passing_candidates_locked(
+            augment_uri,
+            ranking_scores_uri,
+            selection_uri,
+            selection_report_uri,
+            threshold,
+            destination_lock=destination_lock,
+        )
+
+
+def _select_hard_passing_candidates_locked(
+    augment_uri: str,
+    ranking_scores_uri: str,
+    selection_uri: str,
+    selection_report_uri: str,
+    threshold: float | str,
+    *,
+    destination_lock: dict[str, Any],
+) -> dict[str, Any]:
+    """Execute selection while holding the destination's durable fence."""
+
+    _renew_candidate_selection_lock(destination_lock)
     source_rows = _inventory_rows(augment_uri)
     destination_rows = _inventory_rows(selection_uri)
     listed_keys = [str(row["key"]) for row in source_rows]
@@ -2173,9 +2509,7 @@ def select_hard_passing_candidates(
         for item in ranking.get("clips", [])
         if isinstance(item, dict) and item.get("clip_id")
     }
-    variants = [
-        item for item in manifest.get("variants", []) if isinstance(item, dict)
-    ]
+    variants = [item for item in manifest.get("variants", []) if isinstance(item, dict)]
     if {str(item.get("clip") or "") for item in variants} != set(evaluations):
         raise RuntimeError(
             "candidate selection ranking differs from the committed augment manifest"
@@ -2201,7 +2535,9 @@ def select_hard_passing_candidates(
         video_uri = str(variant.get("augmented_video_uri") or "")
         video_bucket, video_key = _split(video_uri)
         if video_bucket != source_bucket or video_key not in source_keys:
-            raise RuntimeError("selected candidate video is outside the source inventory")
+            raise RuntimeError(
+                "selected candidate video is outside the source inventory"
+            )
         source_directory = video_key.rsplit("/", 1)[0] + "/"
         candidate_keys = sorted(
             key for key in source_keys if key.startswith(source_directory)
@@ -2264,68 +2600,51 @@ def select_hard_passing_candidates(
         ],
     }
 
-    if destination_rows:
-        report_bucket, report_key = _split(selection_report_uri)
-        manifest_bucket, manifest_key = _split(manifest_uri)
-        if report_bucket != destination_bucket or manifest_bucket != destination_bucket:
-            raise RuntimeError("candidate selection evidence left canonical storage")
-        expected_rows = {
-            destination_key: source_row
-            for source_row, destination_key in candidate_copies
-        }
-        expected_keys = {*expected_rows, manifest_key, report_key}
-        actual_rows = {str(row["key"]): row for row in destination_rows}
-        if set(actual_rows) != expected_keys:
-            raise RuntimeError(
-                "candidate selection prior evidence inventory differs from replay"
-            )
-        for key, source_row in expected_rows.items():
-            observed = actual_rows[key]
-            if int(observed.get("size") or 0) != int(source_row.get("size") or 0):
-                raise RuntimeError(
-                    "candidate selection prior media size differs from source"
-                )
-            source_etag = str(source_row.get("etag") or "")
-            observed_etag = str(observed.get("etag") or "")
-            if source_etag and observed_etag and source_etag != observed_etag:
-                raise RuntimeError(
-                    "candidate selection prior media digest differs from source"
-                )
-        existing_manifest = _download_json(manifest_uri)
-        existing_result = _download_json(selection_report_uri)
-        if existing_manifest != selected_manifest or existing_result != result:
-            raise RuntimeError(
-                "candidate selection prior evidence differs from deterministic replay"
-            )
-        if source_rows != _inventory_rows(augment_uri):
-            raise RuntimeError("candidate selection changed the preserved ranking pool")
-        print(
-            json.dumps(
-                {
-                    "stage": "select_hard_passing_candidates",
-                    "ranked_count": result["ranked_count"],
-                    "selected_count": result["selected_count"],
-                    "ranking_pool_unchanged": True,
-                    "replayed": True,
-                }
-            )
+    report_bucket, report_key = _split(selection_report_uri)
+    manifest_bucket, manifest_key = _split(manifest_uri)
+    if report_bucket != destination_bucket or manifest_bucket != destination_bucket:
+        raise RuntimeError("candidate selection evidence left canonical storage")
+    expected_rows = {
+        destination_key: source_row for source_row, destination_key in candidate_copies
+    }
+    expected_keys = {*expected_rows, manifest_key, report_key}
+    actual_rows = {str(row["key"]): row for row in destination_rows}
+    unexpected = set(actual_rows).difference(expected_keys)
+    if unexpected:
+        raise RuntimeError(
+            "candidate selection prior evidence inventory differs from replay"
         )
-        return {**result, "written_uri": selection_report_uri}
+    replayed = set(actual_rows) == expected_keys
 
     for source_row, destination_key in candidate_copies:
-        _s3_client().copy_object(
-            Bucket=destination_bucket,
-            CopySource={"Bucket": source_bucket, "Key": source_row["key"]},
-            Key=destination_key,
+        _renew_candidate_selection_lock(destination_lock)
+        _immutable_candidate_copy(
+            source_bucket=source_bucket,
+            source_row=source_row,
+            destination_bucket=destination_bucket,
+            destination_key=destination_key,
         )
-    _upload_json(selected_manifest, manifest_uri)
+    _renew_candidate_selection_lock(destination_lock)
+    _put_immutable_json(
+        selected_manifest, manifest_uri, label="candidate selection manifest"
+    )
     after_source = _inventory_rows(augment_uri)
     if source_rows != after_source:
         raise RuntimeError("candidate selection changed the preserved ranking pool")
-    selected_rows = _inventory_rows(selection_uri)
-    if not selected_rows or any(int(row["size"]) <= 0 for row in selected_rows):
+    _renew_candidate_selection_lock(destination_lock)
+    _put_immutable_json(
+        result, selection_report_uri, label="candidate selection report"
+    )
+    selected_rows = {str(row["key"]): row for row in _inventory_rows(selection_uri)}
+    if set(selected_rows) != expected_keys or any(
+        int(row["size"]) <= 0 for row in selected_rows.values()
+    ):
         raise RuntimeError("candidate selection produced an incomplete final batch")
-    result["written_uri"] = _upload_json(result, selection_report_uri)
+    for key, source_row in expected_rows.items():
+        if int(selected_rows[key].get("size") or 0) != int(source_row.get("size") or 0):
+            raise RuntimeError(
+                "candidate selection prior media size differs from source"
+            )
     print(
         json.dumps(
             {
@@ -2333,10 +2652,11 @@ def select_hard_passing_candidates(
                 "ranked_count": result["ranked_count"],
                 "selected_count": result["selected_count"],
                 "ranking_pool_unchanged": True,
+                "replayed": replayed,
             }
         )
     )
-    return result
+    return {**result, "written_uri": selection_report_uri}
 
 
 def curate(
@@ -2579,9 +2899,7 @@ def finalize(
                 raise RuntimeError(
                     f"adaptive canonical source is not a JSON object: {source_relative}"
                 )
-            _upload_json(
-                payload, run_root_uri.rstrip("/") + "/" + target_relative
-            )
+            _upload_json(payload, run_root_uri.rstrip("/") + "/" + target_relative)
             target_key = run_prefix.rstrip("/") + "/" + target_relative
             if target_key not in keys:
                 keys.append(target_key)
@@ -2607,9 +2925,7 @@ def finalize(
         else aug_marker
     )
     selected_augment_uri = run_root_uri.rstrip("/") + f"/{selected_aug_marker}"
-    committed = _committed_augment_manifest(
-        selected_augment_uri, listed_keys=keys
-    )
+    committed = _committed_augment_manifest(selected_augment_uri, listed_keys=keys)
     if committed is not None:
         n_variants = int(committed.get("variant_count", 0) or 0)
     else:
@@ -2664,7 +2980,9 @@ def finalize(
                 run_root_uri.rstrip("/") + "/reports/upstream.json"
             )
         except Exception as exc:
-            raise RuntimeError("PAIDF upstream provenance is missing or unreadable") from exc
+            raise RuntimeError(
+                "PAIDF upstream provenance is missing or unreadable"
+            ) from exc
         if (
             not isinstance(upstream, dict)
             or upstream.get("schema") != "npa.paidf.upstream.v1"

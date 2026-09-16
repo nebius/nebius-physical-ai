@@ -33,6 +33,9 @@ _REMOTE_KUBERNETES_KEYS = (
 _LLM_PROVIDER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,62}\Z")
 _CUSTOM_LLM_MIN_TIMEOUT_SECONDS = 180.0
 _CUSTOM_LLM_MAX_CONCURRENCY = 8
+_ARTIFACT_CREDENTIAL_MODES = frozenset(
+    {"isolated-read", "deployment-write-migration", "unconfigured"}
+)
 
 
 def _remote_kubernetes_config(project_alias: str) -> tuple[dict[str, str], str]:
@@ -227,10 +230,43 @@ def _write_agent_artifact_sources_env(
     access_key: str = "",
     secret_key: str = "",
     region: str = "",
+    credential_mode: str = "",
 ) -> None:
-    """Stage durable read selectors and their isolated S3 identity."""
+    """Stage exact read selectors and an explicit artifact identity mode."""
     normalized_sources = normalize_configured_artifact_sources(artifact_sources)
-    env_lines: list[str] = []
+    complete_credentials = bool(
+        bucket.strip() and endpoint.strip() and access_key.strip() and secret_key.strip()
+    )
+    partial_credentials = any(
+        value.strip() for value in (bucket, endpoint, access_key, secret_key)
+    ) and not complete_credentials
+    mode = str(credential_mode or "").strip() or (
+        "isolated-read" if normalized_sources and complete_credentials else "unconfigured"
+    )
+    if mode not in _ARTIFACT_CREDENTIAL_MODES:
+        raise ValueError("unsupported artifact credential mode")
+    if partial_credentials:
+        raise ValueError("artifact read credentials must be complete")
+    source_buckets = {item["bucket"] for item in normalized_sources}
+    if len(source_buckets) > 1:
+        raise ValueError("artifact read credentials may target only one exact bucket")
+    if complete_credentials and source_buckets and bucket.strip() not in source_buckets:
+        raise ValueError("artifact read credential bucket does not match its source scope")
+    if mode in {"isolated-read", "deployment-write-migration"} and (
+        not normalized_sources or not complete_credentials
+    ):
+        raise ValueError(
+            "configured artifact credential mode requires sources and complete credentials"
+        )
+    if mode == "unconfigured" and complete_credentials:
+        raise ValueError("unconfigured artifact mode must not stage credentials")
+
+    env_lines: list[str] = [f"NPA_AGENT_ARTIFACT_CREDENTIAL_MODE={mode}"]
+    if mode == "deployment-write-migration":
+        env_lines.append(
+            "NPA_AGENT_ARTIFACT_CREDENTIAL_MIGRATION="
+            "deployment-write-exact-source-v1"
+        )
     if normalized_sources:
         encoded_sources = base64.urlsafe_b64encode(
             json.dumps(
@@ -238,7 +274,7 @@ def _write_agent_artifact_sources_env(
             ).encode("utf-8")
         ).decode("ascii")
         env_lines.append(f"NPA_AGENT_ARTIFACT_SOURCES_B64={encoded_sources}")
-    if bucket.strip() and access_key.strip() and secret_key.strip():
+    if complete_credentials:
         env_lines.extend(
             [
                 f"NPA_AGENT_ARTIFACT_S3_BUCKET={bucket.strip()}",

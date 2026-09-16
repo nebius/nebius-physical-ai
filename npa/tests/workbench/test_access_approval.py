@@ -181,6 +181,23 @@ def test_paidf_native_toolref_closures_are_workflow_specific() -> None:
     assert all("Cosmos-Transfer" not in item.repo for item in (*dig, *iaa, *evg))
 
 
+def test_toolref_closure_fails_closed_on_catalog_drift(monkeypatch) -> None:
+    from dataclasses import replace
+
+    from npa.orchestration.npa_workflow import catalog
+    from npa.workbench.model_access import UnknownAccessCapabilityError
+
+    original = catalog.TOOL_CATALOG["workflow.paidf.dig_prepare_pretrained"]
+    monkeypatch.setitem(
+        catalog.TOOL_CATALOG,
+        original.name,
+        replace(original, access_capabilities=("unregistered-paidf-capability",)),
+    )
+
+    with pytest.raises(UnknownAccessCapabilityError, match="unregistered-paidf"):
+        requirements_for_tool_refs([original.name])
+
+
 def test_hf_ready_pending_denied_unavailable_and_public_anonymous(
     tmp_path: Path,
 ) -> None:

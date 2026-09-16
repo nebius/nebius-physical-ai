@@ -6,6 +6,8 @@ import pytest
 
 from npa.workbench.model_access import (
     HF_GATING_LAST_VERIFIED,
+    NGC,
+    UnknownAccessCapabilityError,
     WORKBENCH_ASSETS,
     access_note,
     all_capabilities,
@@ -72,6 +74,127 @@ def test_assets_for_filters_by_capability() -> None:
     # 'all' / None returns the full catalog.
     assert assets_for(None) == WORKBENCH_ASSETS
     assert assets_for([]) == WORKBENCH_ASSETS
+
+
+def test_assets_for_unknown_capability_fails_closed() -> None:
+    with pytest.raises(UnknownAccessCapabilityError, match="unknown access capability"):
+        assets_for(["paidf-dig", "catalog-drift"])
+
+
+def test_every_catalog_access_capability_has_an_asset_contract() -> None:
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    capabilities = {
+        capability
+        for entry in TOOL_CATALOG.values()
+        for capability in entry.access_capabilities
+    }
+    assert capabilities
+    for capability in sorted(capabilities):
+        assert assets_for([capability]), capability
+
+
+def test_paidf_capability_combinations_are_stable_and_deduplicated() -> None:
+    capabilities = (
+        "paidf-dig",
+        "paidf-iaa",
+        "paidf-evg",
+        "paidf-label-detection",
+        "paidf-label-captioning",
+        "paidf-label-visual-qa",
+        "paidf-label-attribute-search",
+    )
+    combined = assets_for((*capabilities, "paidf-dig", "paidf-iaa"))
+    identities = [
+        (asset.provider, asset.repo, asset.repo_type, asset.revision)
+        for asset in combined
+    ]
+    assert len(identities) == len(set(identities))
+    assert {
+        capability
+        for asset in combined
+        for capability in asset.capabilities
+        if capability in capabilities
+    } == set(capabilities)
+    assert {asset.repo for asset in combined if asset.provider == NGC} == {
+        asset.repo
+        for asset in WORKBENCH_ASSETS
+        if asset.provider == NGC and set(asset.capabilities).intersection(capabilities)
+    }
+
+
+@pytest.mark.parametrize(
+    ("capability", "expected_repos"),
+    [
+        (
+            "paidf-dig",
+            {
+                "nvidia/Cosmos3-Nano",
+                "nvidia/Cosmos3-Edge",
+                "nvidia/Cosmos-Guardrail1",
+                "facebook/dinov2-large",
+                "nvidia/C-RADIOv3-B",
+                "Wan-AI/Wan2.2-TI2V-5B",
+                "facebook/sam2.1-hiera-large",
+                "Qwen/Qwen3Guard-Gen-0.6B",
+                "Qwen/Qwen3-VL-8B-Instruct",
+            },
+        ),
+        ("paidf-iaa", {"Qwen/Qwen-Image-Edit-2511"}),
+        (
+            "paidf-evg",
+            {
+                "nvidia/Cosmos3-Super-Image2Video",
+                "Qwen/Qwen3Guard-Gen-0.6B",
+                "nvidia/Cosmos-1.0-Guardrail",
+            },
+        ),
+        (
+            "paidf-label-detection",
+            {
+                "nvcr.io/nvidia/paidf-detection-and-tracking-rfdetr-service@sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e"
+            },
+        ),
+        (
+            "paidf-label-captioning",
+            {
+                "nvcr.io/nvidia/paidf-captioning-service@sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804"
+            },
+        ),
+        (
+            "paidf-label-visual-qa",
+            {
+                "nvcr.io/nvidia/paidf-visual-qa-service@sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c"
+            },
+        ),
+        (
+            "paidf-label-attribute-search",
+            {
+                "nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a"
+            },
+        ),
+    ],
+)
+def test_paidf_specific_capability_resolves_exact_runtime_assets(
+    capability: str, expected_repos: set[str]
+) -> None:
+    assert {asset.repo for asset in assets_for([capability])} == expected_repos
+
+
+def test_paidf_umbrella_alias_contains_every_specific_capability_asset() -> None:
+    umbrella = set(assets_for(["paidf"]))
+    specific_capabilities = (
+        "paidf-dig",
+        "paidf-iaa",
+        "paidf-evg",
+        "paidf-label-detection",
+        "paidf-label-captioning",
+        "paidf-label-visual-qa",
+        "paidf-label-attribute-search",
+    )
+    assert umbrella
+    for capability in specific_capabilities:
+        assert set(assets_for([capability])).issubset(umbrella), capability
 
 
 def test_paidf_access_covers_translation_models_and_transfer_checkpoints() -> None:

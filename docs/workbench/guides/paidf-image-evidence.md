@@ -216,6 +216,17 @@ losslessly without source-file metadata. The output uses mode 0600, is created
 atomically, and cannot overwrite an existing recording. Publishing and protected
 Agent discovery verification are separate steps after conversion succeeds.
 
+The embedded default is the media-review tab on `source_frame`, never the
+`stage_index` metric sequence. DIG orders source, mask, overlay, and generated
+media before provenance and explicitly avoids inferring realism or detector
+improvement. IAA orders source before generated/postprocessed media and reports
+only supplied fidelity and composition checks. EVG orders source video before
+generated video and detection overlays; its expected-versus-actual panel names
+only executed event, detection, caption, and VQA stages. Stage events remain in
+a separate tab, and the scalar-metric pane is omitted when no metrics exist.
+Thus an unavailable category is neither a blank default view nor an implied
+pass.
+
 Validate converter changes with:
 
 ```bash

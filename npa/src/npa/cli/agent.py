@@ -18,6 +18,7 @@ from typing import Any, NoReturn
 import httpx
 import typer
 
+from npa.cli import agent_artifact_sources as agent_artifact_options
 from npa.cli._typer_defaults import resolve_typer_defaults
 from npa.clients.project_credential_store import (
     persist_agent_service_account_id as _persist_project_agent_service_account_id,
@@ -39,10 +40,12 @@ from npa.cli.agent_assets import (  # noqa: F401 - re-exported for tests/callers
 )
 from npa.cli.agent_artifact_sources import (
     AgentStorageCredentialError,
+    artifact_credential_record_summary as _artifact_credential_record_summary,
     resolve_agent_artifact_sources as _resolve_agent_artifact_sources,
     resolve_agent_service_account_id as _resolve_agent_service_account_id,
     resolve_agent_storage_credentials,
-    resolve_configured_artifact_storage_credentials as _resolve_configured_artifact_storage_credentials,
+    resolve_configured_artifact_storage_credentials as _resolve_configured_artifact_storage_credentials,  # noqa: F401 - compatibility re-export
+    resolve_bootstrap_artifact_storage_identity as _resolve_bootstrap_artifact_storage_identity,
 )
 from npa.cli.agent_env_files import (  # noqa: F401 - re-exported for tests/callers
     _load_agent_artifact_sources_file,
@@ -803,15 +806,20 @@ def _agent_mobile_login_help_html() -> str:
 def _agent_auth_setup_script(auth_user: str, auth_password: str) -> str:
     """Install nginx's password hash privately, with no password in process argv."""
     if (
-        not auth_user or auth_user.startswith("-") or ":" in auth_user
+        not auth_user
+        or auth_user.startswith("-")
+        or ":" in auth_user
         or any(ord(char) < 32 or ord(char) == 127 for char in auth_user)
     ):
         raise ValueError("Invalid agent authentication username")
     if (
-        not auth_password or len(auth_password.encode("utf-8")) > 72
+        not auth_password
+        or len(auth_password.encode("utf-8")) > 72
         or any(char in auth_password for char in "\r\n\0")
     ):
-        raise ValueError("Agent password must contain 1..72 UTF-8 bytes without CR, LF or NUL")
+        raise ValueError(
+            "Agent password must contain 1..72 UTF-8 bytes without CR, LF or NUL"
+        )
     return f"""\
 (
 set -euo pipefail
@@ -863,6 +871,7 @@ def _bootstrap_agent_stack(
     artifact_s3_access_key: str = "",
     artifact_s3_secret_key: str = "",
     artifact_s3_region: str = "",
+    artifact_credential_mode: str = "unconfigured",
     nebius_project_id: str = "",
     nebius_tenant_id: str = "",
     public_https: bool = True,
@@ -917,9 +926,14 @@ def _bootstrap_agent_stack(
     # This check runs before staging source, writing manifests, or restarting
     # services. A stale/missing local record cannot authorize overwriting a VM
     # that is still advertising a different immutable owner.
-    installed = assert_remote_owner_if_present(ssh, deployment, backend_port=backend_port)
+    installed = assert_remote_owner_if_present(
+        ssh, deployment, backend_port=backend_port
+    )
     if resume_services and installed.get("bootstrap_timestamp"):
-        deployment = {**deployment, "bootstrap_timestamp": installed["bootstrap_timestamp"]}
+        deployment = {
+            **deployment,
+            "bootstrap_timestamp": installed["bootstrap_timestamp"],
+        }
     deployment_json = json.dumps(deployment, sort_keys=True)
     deployment_b64 = base64.b64encode(deployment_json.encode("utf-8")).decode("ascii")
     preload_stock_demo_value = "1" if preload_stock_demo else "0"
@@ -2122,22 +2136,73 @@ def _agent_s3_settings() -> dict[str, str]:
 
 
 def _agent_artifact_s3_settings() -> dict[str, str]:
+    mode = str(os.environ.get("NPA_AGENT_ARTIFACT_CREDENTIAL_MODE") or "unconfigured").strip()
     artifact_bucket = str(os.environ.get("NPA_AGENT_ARTIFACT_S3_BUCKET") or "").strip()
     artifact_access_key = str(os.environ.get("NPA_AGENT_ARTIFACT_S3_ACCESS_KEY_ID") or "").strip()
     artifact_secret_key = str(os.environ.get("NPA_AGENT_ARTIFACT_S3_SECRET_ACCESS_KEY") or "").strip()
-    if artifact_bucket and artifact_access_key and artifact_secret_key:
+    endpoint = str(os.environ.get("NPA_AGENT_ARTIFACT_S3_ENDPOINT") or "").strip()
+    complete = bool(artifact_bucket and endpoint and artifact_access_key and artifact_secret_key)
+    try:
+        sources = _configured_agent_artifact_sources()
+    except Exception:
+        sources = ()
+        source_error = True
+    else:
+        source_error = False
+    source_buckets = {{str(item.get("bucket") or "").strip() for item in sources}}
+    status = "ready"
+    reason = "isolated_read_identity_configured"
+    if mode not in {{"isolated-read", "deployment-write-migration", "unconfigured"}}:
+        status, reason = "blocked", "unsupported_credential_mode"
+    elif source_error:
+        status, reason = "blocked", "invalid_source_configuration"
+    elif mode == "unconfigured":
+        status, reason = "blocked", "artifact_read_identity_absent"
+    elif not complete or not sources:
+        status, reason = "blocked", "artifact_read_identity_incomplete"
+    elif source_buckets != {{artifact_bucket}}:
+        status, reason = "blocked", "artifact_read_identity_scope_mismatch"
+    elif mode == "deployment-write-migration":
+        deployment = _agent_s3_settings()
+        migration = str(os.environ.get("NPA_AGENT_ARTIFACT_CREDENTIAL_MIGRATION") or "").strip()
+        if migration != "deployment-write-exact-source-v1" or any(
+            artifact != str(deployment.get(field) or "").strip()
+            for artifact, field in (
+                (artifact_bucket, "bucket"),
+                (endpoint, "endpoint"),
+                (artifact_access_key, "access_key"),
+                (artifact_secret_key, "secret_key"),
+            )
+        ):
+            status, reason = "blocked", "invalid_deployment_write_migration"
+        else:
+            reason = "explicit_deployment_write_migration"
+    if status == "ready":
         return {{
             "bucket": artifact_bucket,
             # Exact parent prefixes live only in normalized configured-source
             # tuples. Applying one source prefix as a generic credential base
             # would hide sibling runs and other authorized buckets.
             "prefix": "",
-            "endpoint": str(os.environ.get("NPA_AGENT_ARTIFACT_S3_ENDPOINT") or "").strip(),
+            "endpoint": endpoint,
             "access_key": artifact_access_key,
             "secret_key": artifact_secret_key,
             "region": str(os.environ.get("NPA_AGENT_ARTIFACT_S3_REGION") or "eu-north1").strip() or "eu-north1",
+            "credential_mode": mode,
+            "credential_status": status,
+            "credential_reason": reason,
         }}
-    return _agent_s3_settings()
+    return {{
+        "bucket": "",
+        "prefix": "",
+        "endpoint": "",
+        "access_key": "",
+        "secret_key": "",
+        "region": str(os.environ.get("NPA_AGENT_ARTIFACT_S3_REGION") or "eu-north1").strip() or "eu-north1",
+        "credential_mode": mode,
+        "credential_status": status,
+        "credential_reason": reason,
+    }}
 
 
 def _join_agent_s3_prefix(base_prefix: str, suffix: str = "") -> str:
@@ -2250,7 +2315,10 @@ def _agent_artifact_s3_client():
     if not settings["bucket"] or not settings["access_key"] or not settings["secret_key"]:
         raise HTTPException(
             status_code=400,
-            detail="S3 artifact discovery is not configured on this agent (missing bucket or credentials).",
+            detail=(
+                "S3 artifact discovery is blocked until an exact read identity is configured "
+                f"({{settings.get('credential_reason') or 'unconfigured'}})."
+            ),
         )
     try:
         client_kwargs = {{
@@ -6170,6 +6238,9 @@ def agent_trace_analyze(payload: dict):
 @app.get("/health")
 def health():
     state = _load_state()
+    artifact_settings = _agent_artifact_s3_settings()
+    artifact_mode = str(artifact_settings.get("credential_mode") or "unconfigured")
+    artifact_status = str(artifact_settings.get("credential_status") or "blocked")
     state_sha256 = hashlib.sha256(
         json.dumps(state, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
@@ -6184,6 +6255,19 @@ def health():
                     "POST /api/agent/gpu-allocation/attempt",
                     "POST /api/agent/gpu-allocation/consent",
                 ],
+            }},
+            "artifact_read_identity": {{
+                "status": (
+                    "warning"
+                    if artifact_mode == "deployment-write-migration"
+                    and artifact_status == "ready"
+                    else artifact_status
+                ),
+                "mode": artifact_mode,
+                "reason": str(
+                    artifact_settings.get("credential_reason")
+                    or "artifact_read_identity_absent"
+                ),
             }},
         }},
         "deployment": dict(DEPLOYMENT),
@@ -9375,10 +9459,14 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         )
     )
     if install_agent_services(
-        ssh, setup_script=setup_script, stage_source=_stage_agent_npa_source,
+        ssh,
+        setup_script=setup_script,
+        stage_source=_stage_agent_npa_source,
         resuming=resume_services,
     ):
-        typer.echo("  Reusing completed agent service installation; restaging credentials.")
+        typer.echo(
+            "  Reusing completed agent service installation; restaging credentials."
+        )
     agent_llm_config.write_agent_llm_env(
         ssh,
         api_key=llm_api_key or tf_api_key,
@@ -9407,6 +9495,7 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         access_key=artifact_s3_access_key,
         secret_key=artifact_s3_secret_key,
         region=artifact_s3_region or s3_region,
+        credential_mode=artifact_credential_mode,
     )
     _write_agent_operator_profile(
         ssh,
@@ -10152,7 +10241,8 @@ def deploy_cmd(
             from npa.cli.agent_terraform import _record_configured_backend
 
             _record_configured_backend(
-                operation, project_alias=project,
+                operation,
+                project_alias=project,
                 bucket=str(configured_storage.get("s3_bucket", "")),
                 endpoint=str(configured_storage.get("s3_endpoint", "")),
                 project_id=env_project_id,
@@ -10891,14 +10981,8 @@ def bootstrap_cmd(
         "--refresh-credentials",
         help="Re-provision the long-lived npa-agent service account and restage VM credentials.",
     ),
-    artifact_source_file: str = typer.Option(
-        "",
-        "--artifact-source-file",
-        help=(
-            "Owner-only JSON file containing exact read-only artifact source "
-            "project/bucket/prefix tuples; persisted for future bootstraps."
-        ),
-    ),
+    artifact_source_file: str = agent_artifact_options.artifact_source_file_option(),
+    allow_artifact_write_identity_migration: bool = agent_artifact_options.artifact_write_identity_migration_option(),
     llm_config_file: str = agent_llm_config.llm_config_file_option(),
     foxglove_embed_src: str = agent_foxglove_config.embed_src_option(),
     foxglove_viewer_backend: str = agent_foxglove_config.viewer_backend_option(),
@@ -10924,6 +11008,7 @@ def bootstrap_cmd(
         llm_models: Optional replacement model list.
         refresh_credentials: Whether to refresh the existing service identity.
         artifact_source_file: Optional owner-only exact-source JSON file.
+        allow_artifact_write_identity_migration: Explicit same-project migration.
         llm_config_file: Optional owner-only custom-provider configuration.
         foxglove_embed_src: Optional Foxglove application URL.
         foxglove_viewer_backend: Requested Foxglove viewer backend.
@@ -11093,28 +11178,24 @@ def bootstrap_cmd(
                     }
                 }
             )
-    # Keep the deployment storage identity authoritative for workflow outputs and
-    # durable agent state. Configured artifact-source credentials are read-only
-    # discovery inputs and are staged into an isolated runtime channel below.
-    (
-        artifact_s3_bucket,
-        _artifact_s3_prefix,
-        artifact_s3_endpoint,
-        artifact_s3_access_key,
-        artifact_s3_secret_key,
-        _artifact_service_account_id,
-    ) = _resolve_configured_artifact_storage_credentials(
-        artifact_sources,
-        deployment_project_id=project_id,
-        current=(
-            s3_bucket,
-            s3_prefix,
-            s3_endpoint,
-            s3_access_key,
-            s3_secret_key,
-            service_account_id,
-        ),
-    )
+    try:
+        artifact_resolution = _resolve_bootstrap_artifact_storage_identity(
+            artifact_sources,
+            deployment_project_id=project_id,
+            current=(
+                s3_bucket,
+                s3_prefix,
+                s3_endpoint,
+                s3_access_key,
+                s3_secret_key,
+                service_account_id,
+            ),
+            persisted_mode=str(record.get("artifact_credential_mode") or ""),
+            migration_requested=allow_artifact_write_identity_migration,
+        )
+    except AgentStorageCredentialError as exc:
+        _fail(str(exc))
+    agent_artifact_options.emit_artifact_migration_warning(artifact_resolution)
     operation = current_operation()
     resuming = str(record.get("setup_state") or "") in {
         "remote_bootstrap_pending",
@@ -11149,11 +11230,7 @@ def bootstrap_cmd(
             "s3_secret_key": s3_secret_key,
             "s3_region": region,
             "artifact_sources": artifact_sources,
-            "artifact_s3_bucket": artifact_s3_bucket,
-            "artifact_s3_endpoint": artifact_s3_endpoint,
-            "artifact_s3_access_key": artifact_s3_access_key,
-            "artifact_s3_secret_key": artifact_s3_secret_key,
-            "artifact_s3_region": region,
+            **artifact_resolution.bootstrap_kwargs(region),
             "nebius_project_id": project_id,
             "nebius_tenant_id": tenant_id,
             "service_account_id": service_account_id,
@@ -11226,6 +11303,7 @@ def bootstrap_cmd(
     updated["foxglove"] = foxglove_settings
     updated["llm"] = llm_runtime["persisted"]
     updated["setup_state"] = "healthy"
+    updated["artifact_credential_mode"] = artifact_resolution.mode
     if artifact_sources:
         updated["artifact_sources"] = list(artifact_sources)
     else:
@@ -11338,6 +11416,7 @@ def status_cmd(
         "ui_status_code": ui_code,
         "rerun_status_code": rerun_code,
         "llm": record.get("llm", {}),
+        "artifact_credentials": _artifact_credential_record_summary(record),
     }
     if output_json:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
@@ -11942,6 +12021,24 @@ def verify_live_cmd(
         _fail("agent access endpoint returned an invalid status")
     if not isinstance(access_payload.get("projects"), list):
         _fail("agent access endpoint did not return a projects list")
+    artifact_credentials = access_payload.get("artifact_credentials")
+    if not isinstance(artifact_credentials, dict):
+        _fail("agent access endpoint did not report artifact credential separation")
+    expected_artifact_mode = str(
+        record.get("artifact_credential_mode") or "unconfigured"
+    )
+    if artifact_credentials.get("mode") != expected_artifact_mode:
+        _fail("agent artifact credential mode differs from bootstrap state")
+    if record.get("artifact_sources") and artifact_credentials.get("status") not in {
+        "ready",
+        "warning",
+    }:
+        _fail("configured artifact source has no usable artifact read identity")
+    if (
+        expected_artifact_mode == "isolated-read"
+        and artifact_credentials.get("status") != "ready"
+    ):
+        _fail("isolated artifact read identity is not ready")
 
     try:
         tools_resp = httpx.get(

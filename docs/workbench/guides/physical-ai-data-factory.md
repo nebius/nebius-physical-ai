@@ -74,6 +74,27 @@ Cosmos-1.0-Guardrail snapshot. The broader
 `health access` calls also probe public, revision-pinned model payloads used at
 runtime. None of these checks accepts terms for the operator.
 
+The capability closure is fail-closed and exact:
+
+| Capability | Runtime assets checked |
+| --- | --- |
+| `paidf-dig` | Public `nvidia/Cosmos3-Nano@411f42a8`, `nvidia/Cosmos3-Edge@a9d944e2`, `facebook/dinov2-large@47b73eef`, `nvidia/C-RADIOv3-B@44653a04`, `Wan-AI/Wan2.2-TI2V-5B@921dbaf3`, `facebook/sam2.1-hiera-large@665f8e2a`, `Qwen/Qwen3Guard-Gen-0.6B@fada3b2f`, and `Qwen/Qwen3-VL-8B-Instruct@0c351dd0`; gated `nvidia/Cosmos-Guardrail1@d6d4bfa8`. |
+| `paidf-iaa` | Public `Qwen/Qwen-Image-Edit-2511@6f3ccc0b`. The workflow's separate attribute-search tool adds the corresponding NGC capability below. |
+| `paidf-evg` | Public `nvidia/Cosmos3-Super-Image2Video@4f847566` and `Qwen/Qwen3Guard-Gen-0.6B@fada3b2f`; gated `nvidia/Cosmos-1.0-Guardrail@cf03c039`. The workflow's labeling tools add all four NGC capabilities below. |
+| `paidf-label-detection` | Gated NGC `paidf-detection-and-tracking-rfdetr-service@sha256:6b35e63b...a9561e`. |
+| `paidf-label-captioning` | Gated NGC `paidf-captioning-service@sha256:17e1e3f5...64d804`. |
+| `paidf-label-visual-qa` | Gated NGC `paidf-visual-qa-service@sha256:e681c8de...3c97c`. |
+| `paidf-label-attribute-search` | Gated NGC `paidf-event-and-person-attribute-search-service@sha256:0f581ff6...01f6a`. |
+
+The exact full revisions, probe paths, official URLs, and governing-terms
+identifiers are the records in `npa.workbench.model_access.WORKBENCH_ASSETS`;
+the abbreviated hashes above are only for readability. `paidf` is the umbrella
+alias: it includes every workflow-specific capability in this table in addition
+to the established Transfer VDA assets already assigned to `paidf`. Combining
+capabilities produces a stable deduplicated union. A misspelled or unregistered
+capability is an error, never an empty approval plan. Public entries remain
+public and are probed as such; the preflight does not relabel them as gated.
+
 DIG is the official Day-1 manual-ROI fresh-finetune path: it validates the clean
 images, ROI masks, and defect specification, runtime-fetches and verifies the
 pinned AnomalyGen checkpoint closure, fine-tunes the selected upstream recipe,

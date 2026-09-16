@@ -71,6 +71,17 @@ class GatedAsset:
     probe_path: str = ""
 
 
+class UnknownAccessCapabilityError(ValueError):
+    """Raised when an access preflight capability has no asset contract."""
+
+    def __init__(self, capabilities: Iterable[str]) -> None:
+        unknown = tuple(
+            sorted({str(item).strip() for item in capabilities if str(item).strip()})
+        )
+        super().__init__("unknown access capability: " + ", ".join(unknown))
+        self.capabilities = unknown
+
+
 def usable_hf_payload_probe(asset: GatedAsset) -> bool:
     """Return whether a gated HF asset names a pinned, non-metadata payload."""
 
@@ -426,6 +437,23 @@ NGC_CAPABILITIES: tuple[str, ...] = tuple(
     )
 )
 
+# Stable user-facing umbrella names. A named alias retains any assets assigned
+# directly to it (for example the established Transfer VDA closure) and expands
+# to every workflow-specific capability listed here. This makes `paidf` useful
+# as the complete PAIDF preflight without obscuring the narrower per-workflow
+# checks used by toolRef planning.
+ACCESS_CAPABILITY_ALIASES: dict[str, tuple[str, ...]] = {
+    "paidf": (
+        "paidf-dig",
+        "paidf-iaa",
+        "paidf-evg",
+        "paidf-label-detection",
+        "paidf-label-captioning",
+        "paidf-label-visual-qa",
+        "paidf-label-attribute-search",
+    ),
+}
+
 
 def hf_model_url(repo: str) -> str:
     """Return the Hugging Face page where a gated repo's license is accepted."""
@@ -438,18 +466,34 @@ def all_capabilities() -> tuple[str, ...]:
     for asset in WORKBENCH_ASSETS:
         seen.update(asset.capabilities)
     seen.update(NGC_CAPABILITIES)
+    seen.update(ACCESS_CAPABILITY_ALIASES)
+    for expanded in ACCESS_CAPABILITY_ALIASES.values():
+        seen.update(expanded)
     return tuple(sorted(seen))
 
 
 def assets_for(capabilities: Iterable[str] | None) -> tuple[GatedAsset, ...]:
-    """Return the assets needed for *capabilities* (all when ``None``)."""
+    """Return assets for *capabilities*, failing closed on catalog drift.
+
+    ``None`` and an empty iterable intentionally retain the historical meaning
+    of "all assets" for the unfiltered health command. Any named capability,
+    however, must be represented by at least one exact asset record. Workflow
+    submission must never turn an unknown catalog capability into an empty,
+    misleading approval plan.
+    """
     if capabilities is None:
         return WORKBENCH_ASSETS
     wanted = {item.strip() for item in capabilities if item and item.strip()}
     if not wanted:
         return WORKBENCH_ASSETS
+    unknown = wanted.difference(all_capabilities())
+    if unknown:
+        raise UnknownAccessCapabilityError(unknown)
+    expanded = set(wanted)
+    for capability in wanted:
+        expanded.update(ACCESS_CAPABILITY_ALIASES.get(capability, ()))
     return tuple(
-        asset for asset in WORKBENCH_ASSETS if wanted.intersection(asset.capabilities)
+        asset for asset in WORKBENCH_ASSETS if expanded.intersection(asset.capabilities)
     )
 
 
@@ -863,6 +907,7 @@ __all__ = [
     "HF_GATING_LAST_VERIFIED",
     "NGC",
     "NGC_CAPABILITIES",
+    "UnknownAccessCapabilityError",
     "WORKBENCH_ASSETS",
     "access_note",
     "all_capabilities",

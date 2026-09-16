@@ -33,7 +33,9 @@ def test_build_run_rrd_from_local_run(tmp_path: Path) -> None:
     # One augmented clip with metadata.
     aug = run / "cosmos_augmented" / "video_0_aug0"
     _write_png(aug / "frame_01.png", (11, 22, 33))
-    (aug / "metadata.json").write_text('{"variables": {"weather": "rainy", "time_of_day": "night"}}')
+    (aug / "metadata.json").write_text(
+        '{"variables": {"weather": "rainy", "time_of_day": "night"}}'
+    )
 
     out = tmp_path / "reports" / "sim2real.rrd"
     result = build_run_rrd(str(run), str(out))
@@ -41,6 +43,13 @@ def test_build_run_rrd_from_local_run(tmp_path: Path) -> None:
     assert result["status"] == "completed"
     assert result["frames_logged"] == 4
     assert result["run_id"] == "df-run"
+    assert result["presentation"]["default_timeline"] == "frame"
+    assert result["presentation"]["default_view"] == "original-versus-generated"
+    assert result["presentation"]["source_entities"] == [
+        "source/video_0",
+        "source/video_1",
+    ]
+    assert result["presentation"]["candidate_entities"]
     assert out.is_file()
     assert out.stat().st_size > 0
     rerun_cli = Path(sys.executable).with_name("rerun")
@@ -121,9 +130,7 @@ def test_rejected_rrd_component_stats_include_actual_augmented_media(
                         "passed": False,
                         "attribute_verification": {
                             "passed": False,
-                            "checks": [
-                                {"variable": "lighting", "passed": False}
-                            ],
+                            "checks": [{"variable": "lighting", "passed": False}],
                         },
                         "hallucination": {"passed": True},
                     }
@@ -159,6 +166,27 @@ def test_rejected_rrd_component_stats_include_actual_augmented_media(
     assert "@EncodedImage:blob" in component_stats
     assert "@AssetVideo:blob" in component_stats
     assert "augmented/iteration-1/candidate-a/disposition" in component_stats
+    assert "Blueprint" in component_stats
+    from rerun.recording import load_recording
+
+    video_frame_batches = [
+        chunk.to_record_batch()
+        for chunk in load_recording(out).chunks()
+        if str(chunk.entity_path) == "/augmented/iteration-1/candidate-a/video"
+    ]
+    assert any(
+        "frame" in batch.schema.names
+        and any(name.startswith("VideoFrameReference:") for name in batch.schema.names)
+        for batch in video_frame_batches
+    )
+    assert result["presentation"] == {
+        "default_timeline": "frame",
+        "default_view": "original-versus-generated",
+        "source_entities": [],
+        "candidate_entities": ["augmented/iteration-1/candidate-a"],
+        "conditioning_context": False,
+        "evaluator_disposition_context": True,
+    }
     import npa.workflows.data_factory_viz as viz
 
     verified = viz._verify_terminal_rrd_media(
@@ -212,7 +240,11 @@ def test_augmented_frames_get_distinct_time_points(tmp_path: Path, monkeypatch) 
 
     seen: list[int] = []
     orig = viz._set_frame
-    monkeypatch.setattr(viz, "_set_frame", lambda rr, rec, idx: (seen.append(idx), orig(rr, rec, idx))[-1])
+    monkeypatch.setattr(
+        viz,
+        "_set_frame",
+        lambda rr, rec, idx: (seen.append(idx), orig(rr, rec, idx))[-1],
+    )
 
     build_run_rrd(str(run), str(tmp_path / "reports" / "sim2real.rrd"))
     assert sorted(seen) == [0, 1, 2, 3], seen
@@ -227,13 +259,17 @@ def test_load_stage_docs_covers_all_pipeline_stages(tmp_path: Path) -> None:
 
     run = tmp_path / "run"
     (run / "configs").mkdir(parents=True)
-    (run / "configs" / "manifest.json").write_text(json.dumps({
-        "scene": "robot folding cloth",
-        "augmentations": [
-            {"cloth_color": "blue", "prompt": "a blue cloth, bright daylight"},
-            {"cloth_color": "red", "prompt": "a red cloth, dim evening light"},
-        ],
-    }))
+    (run / "configs" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "scene": "robot folding cloth",
+                "augmentations": [
+                    {"cloth_color": "blue", "prompt": "a blue cloth, bright daylight"},
+                    {"cloth_color": "red", "prompt": "a red cloth, dim evening light"},
+                ],
+            }
+        )
+    )
     (run / "input").mkdir(parents=True)
     (run / "input" / "provenance.json").write_text(
         json.dumps(
@@ -246,10 +282,17 @@ def test_load_stage_docs_covers_all_pipeline_stages(tmp_path: Path) -> None:
         )
     )
     (run / "cosmos_augmented").mkdir(parents=True)
-    (run / "cosmos_augmented" / "manifest.json").write_text(json.dumps({
-        "mode": "cosmos_transfer2.5_gpu", "variant_count": 2, "input_conditioned": True,
-        "clips": ["aug-0", "aug-1"], "variants": [{"clip": "aug-0"}, {"clip": "aug-1"}],
-    }))
+    (run / "cosmos_augmented" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "mode": "cosmos_transfer2.5_gpu",
+                "variant_count": 2,
+                "input_conditioned": True,
+                "clips": ["aug-0", "aug-1"],
+                "variants": [{"clip": "aug-0"}, {"clip": "aug-1"}],
+            }
+        )
+    )
     (run / "grade").mkdir(parents=True)
     (run / "grade" / "cosmos_evaluator.json").write_text(
         json.dumps({"score": 0.72, "status": "completed", "passed": False})
@@ -270,12 +313,19 @@ def test_load_stage_docs_covers_all_pipeline_stages(tmp_path: Path) -> None:
     (run / "curation").mkdir(parents=True)
     curator = {"engine": "nvidia-cosmos/cosmos-curator", "clip_count": 2}
     (run / "curation" / "cosmos_curator.json").write_text(json.dumps(curator))
-    (run / "curation" / "report.json").write_text(json.dumps({"augmented_clips": 2, "multiply": {"mode": "multi-variant"}}))
+    (run / "curation" / "report.json").write_text(
+        json.dumps({"augmented_clips": 2, "multiply": {"mode": "multi-variant"}})
+    )
     (run / "reports").mkdir(parents=True)
-    (run / "reports" / "final.json").write_text(json.dumps({"artifact_count": 20, "multiply_mode": "multi-variant"}))
+    (run / "reports" / "final.json").write_text(
+        json.dumps({"artifact_count": 20, "multiply_mode": "multi-variant"})
+    )
 
     docs = _load_stage_docs(run)
-    assert json.dumps(curator, indent=2, sort_keys=True) in docs["pipeline/4_cosmos_curator"]
+    assert (
+        json.dumps(curator, indent=2, sort_keys=True)
+        in docs["pipeline/4_cosmos_curator"]
+    )
     assert "Cosmos Transfer 2.5" not in docs["pipeline/2_augment"]
     assert set(docs) == {
         "pipeline/0_log",
@@ -287,7 +337,10 @@ def test_load_stage_docs_covers_all_pipeline_stages(tmp_path: Path) -> None:
         "pipeline/4_curation",
         "pipeline/5_finalize",
     }
-    assert "2 scenario" in docs["pipeline/1_scenarios"] or "Scenarios sampled:** 2" in docs["pipeline/1_scenarios"]
+    assert (
+        "2 scenario" in docs["pipeline/1_scenarios"]
+        or "Scenarios sampled:** 2" in docs["pipeline/1_scenarios"]
+    )
     assert "a red cloth" in docs["pipeline/1_scenarios"]
     assert "Upstream real sample" in docs["pipeline/0_input_provenance"]
     assert "normalized_conditioning_clip" in docs["pipeline/0_input_provenance"]
@@ -323,11 +376,7 @@ def test_stage_docs_select_latest_append_only_refinement_iteration(
         )
         (grade / "decision.json").write_text(
             json.dumps(
-                {
-                    "decision": "promote_checkpoint"
-                    if iteration == 2
-                    else "loop_back"
-                }
+                {"decision": "promote_checkpoint" if iteration == 2 else "loop_back"}
             )
         )
     (run / "grade" / "quality_disposition.json").write_text(
@@ -443,11 +492,26 @@ def test_captions_carry_self_identifying_header(tmp_path: Path) -> None:
     run = tmp_path / "run"
     (run / "labeled_original").mkdir(parents=True)
     (run / "labeled_original" / "captions.json").write_text(
-        json.dumps({"captions": [{"image": "frame_01.png", "caption": "a robot arm folds cloth"}]})
+        json.dumps(
+            {
+                "captions": [
+                    {"image": "frame_01.png", "caption": "a robot arm folds cloth"}
+                ]
+            }
+        )
     )
     (run / "labeled_augmented").mkdir(parents=True)
     (run / "labeled_augmented" / "captions.json").write_text(
-        json.dumps({"captions": [{"image": "frame_01.png", "caption": "a blue cloth under warm light"}]})
+        json.dumps(
+            {
+                "captions": [
+                    {
+                        "image": "frame_01.png",
+                        "caption": "a blue cloth under warm light",
+                    }
+                ]
+            }
+        )
     )
 
     caps = _load_captions(run)
@@ -486,9 +550,7 @@ def test_viewer_publication_preservation_check_is_additive_and_fail_closed() -> 
     )
     assert preserved == before[:2]
     assert (
-        viz._verify_additive_publication(
-            after, after, "run/reports/sim2real.rrd"
-        )
+        viz._verify_additive_publication(after, after, "run/reports/sim2real.rrd")
         == before[:2]
     )
 
@@ -499,14 +561,10 @@ def test_viewer_publication_preservation_check_is_additive_and_fail_closed() -> 
         after[-1],
     ]
     with pytest.raises(DataFactoryVizError, match="changed the canonical"):
-        viz._verify_additive_publication(
-            before, changed, "run/reports/sim2real.rrd"
-        )
+        viz._verify_additive_publication(before, changed, "run/reports/sim2real.rrd")
     changed_rrd = [*after[:-1], {**after[-1], "etag": "changed"}]
     with pytest.raises(DataFactoryVizError, match="changed an existing recording"):
-        viz._verify_additive_publication(
-            after, changed_rrd, "run/reports/sim2real.rrd"
-        )
+        viz._verify_additive_publication(after, changed_rrd, "run/reports/sim2real.rrd")
 
 
 def test_build_run_rrd_errors_when_no_frames(tmp_path: Path) -> None:
@@ -517,7 +575,9 @@ def test_build_run_rrd_errors_when_no_frames(tmp_path: Path) -> None:
         build_run_rrd(str(empty), str(tmp_path / "reports" / "sim2real.rrd"))
 
 
-def test_visualization_follows_only_committed_attempt_directories(tmp_path: Path) -> None:
+def test_visualization_follows_only_committed_attempt_directories(
+    tmp_path: Path,
+) -> None:
     current = tmp_path / "cosmos_augmented" / "_attempts" / "current" / "aug-1"
     old = tmp_path / "cosmos_augmented" / "_attempts" / "old" / "aug-1"
     current.mkdir(parents=True)
