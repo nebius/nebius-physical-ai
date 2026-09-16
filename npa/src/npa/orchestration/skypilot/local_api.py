@@ -28,6 +28,8 @@ import yaml
 
 _ENDPOINT = "SKYPILOT_API_SERVER_ENDPOINT"
 _MARKER = "NPA_OWNED_SKYPILOT_API_ID"
+_METADATA_TOKEN_ROOT = Path("/mnt/cloud-metadata")
+_METADATA_CREDENTIAL_SOURCE = "instance_metadata"
 # These resolved values are private runtime configuration, never credentials.
 _RUNTIME_SETTINGS = {"storage_bucket": "NPA_S3_BUCKET", "storage_prefix": "NPA_S3_PREFIX",
                      "aws_region": "AWS_REGION", "aws_default_region": "AWS_DEFAULT_REGION",
@@ -212,7 +214,27 @@ def _supported_service_account_profile(selected):
     return Path(selected["private-key-file-path"]).is_absolute()
 
 
-def _nebius_profile_selection(config_path, profile, environment):
+def _supported_metadata_token_profile(selected):
+    """Accept only the mounted-token profile created for an attached identity."""
+    minimal_fields = {"endpoint", "parent-id", "token-file"}
+    extended_fields = minimal_fields | {"token-endpoint", "virtual"}
+    if not isinstance(selected, dict) or (set(selected) != minimal_fields and set(selected) != extended_fields):
+        return False
+    if not all(isinstance(selected.get(key), str) and selected[key] for key in minimal_fields):
+        return False
+    if "token-endpoint" in selected and (not isinstance(selected["token-endpoint"], str) or not selected["token-endpoint"]):
+        return False
+    if "virtual" in selected and type(selected["virtual"]) is not bool:
+        return False
+    try:
+        token_file = Path(selected["token-file"])
+        return (token_file.is_absolute() and token_file.is_file()
+                and token_file.resolve().is_relative_to(_METADATA_TOKEN_ROOT.resolve()))
+    except OSError:
+        return False
+
+
+def _nebius_profile_selection(config_path, profile, environment, profile_supported):
     if not config_path.is_absolute():
         return None
     try:
@@ -228,11 +250,9 @@ def _nebius_profile_selection(config_path, profile, environment):
     if not isinstance(profile, str) or not profile:
         return None
     selected = data["profiles"].get(profile)
-    if not _supported_service_account_profile(selected):
+    if not profile_supported(selected):
         return None
-    return (str(config_path), hashlib.sha256(contents).hexdigest(), profile,
-            selected["service-account-id"], selected["public-key-id"],
-            str(Path(selected["private-key-file-path"])))
+    return str(config_path), hashlib.sha256(contents).hexdigest(), profile, selected
 
 
 def _nebius_config_dir(environment, home):
@@ -244,7 +264,10 @@ def _service_account_key_binding(selection, provider_dir):
     from cryptography.hazmat.primitives.serialization import load_pem_private_key
     from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
-    config_name, config_hash, profile, account, public_key, key_name = selection
+    config_name, config_hash, profile, selected = selection
+    account = selected["service-account-id"]
+    public_key = selected["public-key-id"]
+    key_name = str(Path(selected["private-key-file-path"]))
     try:
         key_bytes = Path(key_name).read_bytes()
         if not isinstance(load_pem_private_key(key_bytes, password=None), RSAPrivateKey):
@@ -257,6 +280,37 @@ def _service_account_key_binding(selection, provider_dir):
             provider_dir / "credentials.yaml": "derived-nebius-sa-cache-v1:" + hashlib.sha256(binding.encode()).hexdigest()}
 
 
+def _selected_nebius_identity(
+    environment: Mapping[str, str], home: Path, execs: list[dict], *, profile_supported, credential_source="",
+):
+    """Resolve one exact Nebius CLI profile used by every selected kube exec."""
+    selections = []
+    provider_dir = _nebius_config_dir(environment, home)
+    alternate_auth = ("NEBIUS_ENDPOINT", "NEBIUS_IAM_TOKEN", "NEBIUS_IAM_TOKEN_FILE",
+                      "NPA_NEBIUS_IAM_TOKEN", "NPA_NEBIUS_IAM_TOKEN_FILE")
+    for spec in execs or [{}]:
+        env = _nebius_exec_environment(environment, spec)
+        if env is None or any(env.get(key) for key in alternate_auth):
+            return None
+        if credential_source and env.get("NPA_NEBIUS_CREDENTIAL_SOURCE") != credential_source:
+            return None
+        if _nebius_config_dir(env, home) != provider_dir:
+            return None
+        selectors = _nebius_exec_selectors(spec)
+        if selectors is None:
+            return None
+        config_path = Path(selectors.get("config", provider_dir / "config.yaml"))
+        selected = _nebius_profile_selection(
+            config_path, selectors.get("profile"), env, profile_supported,
+        )
+        if selected is None:
+            return None
+        selections.append(selected)
+    if not selections or any(selection != selections[0] for selection in selections[1:]):
+        return None
+    return provider_dir, selections[0]
+
+
 def _nebius_service_account_identity(environment: Mapping[str, str], home: Path, execs: list[dict]) -> dict[Path, str]:
     """Bind one supported CLI RSA profile and its durable key; never fetch tokens.
 
@@ -265,27 +319,40 @@ def _nebius_service_account_identity(environment: Mapping[str, str], home: Path,
     Relative paths, extra auth sources, and multiple effective selections remain
     byte-strict, including exec overrides selecting a different cache directory.
     """
-    selections = set()
-    provider_dir = _nebius_config_dir(environment, home)
-    alternate_auth = ("NEBIUS_ENDPOINT", "NEBIUS_IAM_TOKEN", "NEBIUS_IAM_TOKEN_FILE",
-                      "NPA_NEBIUS_IAM_TOKEN", "NPA_NEBIUS_IAM_TOKEN_FILE")
-    for spec in execs or [{}]:
-        env = _nebius_exec_environment(environment, spec)
-        if env is None or any(env.get(key) for key in alternate_auth):
-            return {}
-        if _nebius_config_dir(env, home) != provider_dir:
-            return {}
-        selectors = _nebius_exec_selectors(spec)
-        if selectors is None:
-            return {}
-        config_path = Path(selectors.get("config", provider_dir / "config.yaml"))
-        selected = _nebius_profile_selection(config_path, selectors.get("profile"), env)
-        if selected is None:
-            return {}
-        selections.add(selected)
-    if len(selections) != 1:
+    resolved = _selected_nebius_identity(
+        environment, home, execs, profile_supported=_supported_service_account_profile,
+    )
+    if resolved is None:
         return {}
-    return _service_account_key_binding(selections.pop(), provider_dir)
+    provider_dir, selection = resolved
+    return _service_account_key_binding(selection, provider_dir)
+
+
+def _metadata_token_binding(selection, provider_dir):
+    config_name, config_hash, profile, selected = selection
+    token_file = Path(selected["token-file"]).resolve()
+    binding = json.dumps([
+        config_name, config_hash, profile, selected["endpoint"], selected["parent-id"],
+        selected.get("token-endpoint", ""), str(token_file), selected.get("virtual", False),
+    ])
+    digest = hashlib.sha256(binding.encode()).hexdigest()
+    return {
+        Path(config_name): config_hash,
+        token_file: "derived-nebius-metadata-source-v1:" + digest,
+        provider_dir / "credentials.yaml": "derived-nebius-metadata-cache-v1:" + digest,
+    }
+
+
+def _nebius_metadata_token_identity(environment: Mapping[str, str], home: Path, execs: list[dict]) -> dict[Path, str]:
+    """Bind the mounted token source for an explicitly attached VM identity."""
+    resolved = _selected_nebius_identity(
+        environment, home, execs, profile_supported=_supported_metadata_token_profile,
+        credential_source=_METADATA_CREDENTIAL_SOURCE,
+    )
+    if resolved is None:
+        return {}
+    provider_dir, selection = resolved
+    return _metadata_token_binding(selection, provider_dir)
 
 
 def _derived_service_account_cache(contents: bytes | None) -> bool:
@@ -417,6 +484,8 @@ def _identity_files(environment: Mapping[str, str], *, config: Mapping[str, Any]
     protected.extend(referenced)
     try:
         durable = _nebius_service_account_identity(environment, home, execs)
+        if not durable:
+            durable = _nebius_metadata_token_identity(environment, home, execs)
         cache = _nebius_config_dir(environment, home) / "credentials.yaml"
         return _hash_identity_paths(paths, protected, designated_caches, durable, cache)
     except OSError:
@@ -795,6 +864,7 @@ def ensure_isolated_api(
         daemon_env["SKYPILOT_SERVER_PLUGINS_CONFIG"] = str(plugins_path)
         # Retain only hashes of settings that determine executing identity.
         identity_keys = ("HOME", "SKYPILOT_USER_ID", "KUBECONFIG", "NEBIUS_CONFIG_DIR", "NEBIUS_PROFILE",
+                         "NPA_NEBIUS_CREDENTIAL_SOURCE",
                          "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_ENDPOINT_URL",
                          "AWS_ENDPOINT_URL_S3", "AWS_REGION", "AWS_DEFAULT_REGION", "AWS_PROFILE", "AWS_CONFIG_FILE",
                          "AWS_SHARED_CREDENTIALS_FILE", "S3_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT", "NPA_STORAGE_ENDPOINT",

@@ -834,6 +834,113 @@ def service_account_runtime(local_runtime, request):
     return local_runtime, provider, key, cache
 
 
+@pytest.fixture
+def metadata_token_runtime(local_runtime, monkeypatch):
+    import yaml
+
+    home = Path(local_runtime["environment"]["HOME"])
+    provider = home / ".nebius"
+    provider.mkdir()
+    metadata_root = home / "cloud-metadata"
+    metadata_root.mkdir()
+    token_file = metadata_root / "token"
+    token_file.write_text("fixture-initial-metadata-token")
+    profile = {
+        "endpoint": "fixture.invalid:443",
+        "parent-id": "fixture-project",
+        "token-file": str(token_file),
+    }
+    (provider / "config.yaml").write_text(yaml.safe_dump({"default": "metadata", "profiles": {"metadata": profile}}))
+    cache = provider / "credentials.yaml"
+    cache.write_text("tokens:\n  service-account/fixture-account/fixture-key:\n    token: fixture-old-token\n    expires_at: 100\n")
+    monkeypatch.setattr(api, "_METADATA_TOKEN_ROOT", metadata_root)
+    local_runtime["environment"].update(
+        NEBIUS_CONFIG_DIR=str(provider), NPA_CONFIG_DIR=str(home / ".npa"),
+        NPA_NEBIUS_CREDENTIAL_SOURCE="instance_metadata",
+    )
+    _select_nebius_exec(local_runtime, ["mk8s", "get-token", "--format", "json"])
+    return local_runtime, provider, token_file, cache
+
+
+@pytest.mark.parametrize("initial_cache", ["populated", "absent", "empty"])
+def test_metadata_token_cache_rotation_preserves_owned_api(metadata_token_runtime, initial_cache):
+    runtime, provider, token_file, cache = metadata_token_runtime
+    if initial_cache == "absent":
+        cache.unlink()
+    elif initial_cache == "empty":
+        cache.write_text("tokens: {}\n")
+
+    api.ensure_isolated_api(**runtime)
+    original = _record(runtime)
+    token_file.write_text("fixture-refreshed-metadata-token")
+    cache.write_text("tokens:\n  service-account/fixture-account/fixture-key:\n    token: fixture-refreshed-token\n    expires_at: 200\n")
+
+    assert api.ensure_isolated_api(**runtime)["healthy"]
+    record = _record(runtime)
+    assert record["pid"] == original["pid"]
+    assert record["identity_files"][str(token_file)].startswith("derived-nebius-metadata-source-v1:")
+    assert record["identity_files"][str(cache)].startswith("derived-nebius-metadata-cache-v1:")
+    assert "fixture-refreshed" not in json.dumps(record)
+
+
+@pytest.mark.parametrize("change", ["credential-source", "parent-id", "token-file"])
+def test_metadata_token_identity_change_cannot_adopt_owned_api(metadata_token_runtime, change):
+    import yaml
+
+    runtime, provider, token_file, _ = metadata_token_runtime
+    api.ensure_isolated_api(**runtime)
+    original = _record(runtime)
+    if change == "credential-source":
+        runtime["environment"]["NPA_NEBIUS_CREDENTIAL_SOURCE"] = "configured_profile"
+    else:
+        config = provider / "config.yaml"
+        data = yaml.safe_load(config.read_text())
+        if change == "parent-id":
+            data["profiles"]["metadata"]["parent-id"] = "different-fixture-project"
+        else:
+            replacement = token_file.with_name("replacement-token")
+            replacement.write_text("fixture-replacement-token")
+            data["profiles"]["metadata"]["token-file"] = str(replacement)
+        config.write_text(yaml.safe_dump(data))
+
+    with pytest.raises(api.IsolatedApiError, match="credential configuration changed|different executing identity"):
+        api.ensure_isolated_api(**runtime)
+    assert _record(runtime)["pid"] == original["pid"]
+
+
+def test_non_metadata_token_file_keeps_cache_byte_strict(metadata_token_runtime):
+    import yaml
+
+    runtime, provider, _, cache = metadata_token_runtime
+    outside = runtime["isolated_dir"] / "untrusted-token"
+    outside.write_text("fixture-untrusted-token")
+    config = provider / "config.yaml"
+    data = yaml.safe_load(config.read_text())
+    data["profiles"]["metadata"]["token-file"] = str(outside)
+    config.write_text(yaml.safe_dump(data))
+
+    before = api._identity_files(runtime["environment"])
+    assert before[str(cache)] == hashlib.sha256(cache.read_bytes()).hexdigest()
+    cache.write_text("tokens: {}\n")
+    assert api._identity_files(runtime["environment"]) != before
+
+
+def test_extended_metadata_profile_preserves_cache_identity(metadata_token_runtime):
+    import yaml
+
+    runtime, provider, _, cache = metadata_token_runtime
+    config = provider / "config.yaml"
+    data = yaml.safe_load(config.read_text())
+    data["profiles"]["metadata"].update(
+        {"token-endpoint": "fixture.invalid:443/token", "virtual": True}
+    )
+    config.write_text(yaml.safe_dump(data))
+
+    before = api._identity_files(runtime["environment"])
+    cache.write_text("tokens: {}\n")
+    assert api._identity_files(runtime["environment"]) == before
+
+
 @pytest.mark.parametrize("initial_cache", ["populated", "absent", "empty"])
 @pytest.mark.parametrize("service_account_runtime", [".nebius", "custom-nebius"], indirect=True)
 def test_service_account_cache_refresh_creation_pruning_preserves_owned_pid(service_account_runtime, initial_cache):
