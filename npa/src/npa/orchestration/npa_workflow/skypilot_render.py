@@ -1797,10 +1797,14 @@ def secret_env_hints_for_plan(steps: Sequence[PlanStep]) -> tuple[str, ...]:
             tool_ref == "workbench.byof.repo"
             and "--runtime-context-env" in step.argv
             and "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT" in step.argv
-            and "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT" not in seen
         ):
-            seen.add("NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT")
-            hints.append("NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT")
+            for name in (
+                "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
+                "NPA_BYOF_ROBOTWIN_CUSTOMER_ENTITLEMENT",
+            ):
+                if name not in seen:
+                    seen.add(name)
+                    hints.append(name)
         if tool_ref == "workbench.byof.repo" and any(
             value == "openpi" or "pi05_droid_jointpos_polaris" in value
             for value in step.argv

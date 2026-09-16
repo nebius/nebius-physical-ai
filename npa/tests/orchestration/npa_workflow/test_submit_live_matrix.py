@@ -308,6 +308,7 @@ def test_robotwin_case_is_normal_submit_with_one_delegated_strict_rtx() -> None:
     assert not case.runtime
     assert set(case.secret_envs) == {
         "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
+        "NPA_BYOF_ROBOTWIN_CUSTOMER_ENTITLEMENT",
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
     }

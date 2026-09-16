@@ -1027,6 +1027,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "multi",
         secret_envs=(
             "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
+            "NPA_BYOF_ROBOTWIN_CUSTOMER_ENTITLEMENT",
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
         ),
