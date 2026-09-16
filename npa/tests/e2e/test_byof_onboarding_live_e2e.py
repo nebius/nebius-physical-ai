@@ -8,10 +8,12 @@ import math
 import os
 import re
 import secrets
+import stat
 import subprocess
 import sys
 import tempfile
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 from urllib.parse import quote, urlsplit
@@ -61,6 +63,35 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 BYOF_SPEC = REPO_ROOT / "workflows" / "testing" / "byof.yaml"
 ROBOMIMIC_SPEC = REPO_ROOT / "workflows" / "testing" / "byof-robomimic.yaml"
 BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_repo.py"
+ROBOMIMIC_RUNTIME_LOCK = (
+    REPO_ROOT
+    / "npa"
+    / "docker"
+    / "workbench"
+    / "robomimic"
+    / "runtime-requirements.lock"
+)
+ROBOMIMIC_ENTITLEMENT_MAX_BYTES = 16 * 1024
+ROBOMIMIC_ENTITLEMENT_TERMS = [
+    {
+        "name": "NVIDIA CUDA Toolkit EULA",
+        "url": "https://docs.nvidia.com/cuda/eula/index.html",
+    },
+    {
+        "name": "NVIDIA Software License Agreement",
+        "url": (
+            "https://www.nvidia.com/en-us/agreements/enterprise-software/"
+            "nvidia-software-license-agreement/"
+        ),
+    },
+    {
+        "name": "NVIDIA cuDNN Software License Agreement",
+        "url": (
+            "https://docs.nvidia.com/deeplearning/cudnn/backend/latest/"
+            "reference/eula.html"
+        ),
+    },
+]
 RUNNER = CliRunner()
 ROBOMIMIC_SOURCE_REVISION = "d309eaecc18acf4152a830a895a6984b8ac71b05"
 ROBOMIMIC_DATASET_REVISION = "74fa018461f479cd9fd15b924a16103012096203"
@@ -403,15 +434,200 @@ def _robomimic_live_selectors(e2e_project: str | None) -> dict[str, str]:
     assert re.fullmatch(r"[0-9a-f]{64}", selectors["runtime_inventory_sha256"]), (
         "an operator-selected exact runtime inventory digest is required"
     )
-    assert selectors["runtime_entitlement_file"] and Path(
-        selectors["runtime_entitlement_file"]
-    ).is_file(), "a customer-created runtime entitlement record is required"
+    assert selectors["runtime_entitlement_file"], (
+        "a customer-created runtime entitlement record is required"
+    )
     assert os.environ.get("NPA_E2E_MK8S_RESERVED_CAPACITY") == "1", (
         "the manager's STRICT reserved-capacity gate is required"
     )
     assert os.environ.get("NPA_BYOF_LIVE_GPU") == "1"
     assert os.environ.get("NPA_BYOF_ROBOMIMIC_LIVE_B200") == "1"
     return selectors
+
+
+def _robomimic_private_record_bytes(path_value: str) -> bytes:
+    """Read a symlink-free owner-private record without blocking on a FIFO."""
+
+    path = Path(os.path.abspath(Path(path_value).expanduser()))
+    if not path.is_absolute() or path.name in {"", ".", ".."}:
+        raise RuntimeError("robomimic customer entitlement path is invalid")
+    directory_flags = (
+        os.O_RDONLY
+        | os.O_CLOEXEC
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+
+    def open_parent() -> int:
+        descriptor = -1
+        try:
+            descriptor = os.open(os.sep, directory_flags)
+            for component in path.parent.parts[1:]:
+                next_descriptor = os.open(
+                    component, directory_flags, dir_fd=descriptor
+                )
+                os.close(descriptor)
+                descriptor = next_descriptor
+        except OSError as exc:
+            if descriptor >= 0:
+                os.close(descriptor)
+            raise RuntimeError(
+                "robomimic customer entitlement parent is unavailable or unsafe"
+            ) from exc
+        details = os.fstat(descriptor)
+        if details.st_uid != os.geteuid() or details.st_mode & 0o077:
+            os.close(descriptor)
+            raise RuntimeError(
+                "robomimic customer entitlement parent must be owner-only"
+            )
+        return descriptor
+
+    parent_descriptor = open_parent()
+    parent_identity = os.fstat(parent_descriptor)
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            path.name,
+            os.O_RDONLY
+            | os.O_CLOEXEC
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0),
+            dir_fd=parent_descriptor,
+        )
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_uid != os.geteuid()
+            or opened.st_mode & 0o077
+            or opened.st_size > ROBOMIMIC_ENTITLEMENT_MAX_BYTES
+        ):
+            raise RuntimeError(
+                "robomimic customer entitlement must be an owner-only regular file"
+            )
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            raw = handle.read(ROBOMIMIC_ENTITLEMENT_MAX_BYTES + 1)
+        closed = os.fstat(descriptor)
+        if (
+            len(raw) != opened.st_size
+            or closed.st_size != opened.st_size
+            or closed.st_dev != opened.st_dev
+            or closed.st_ino != opened.st_ino
+            or closed.st_nlink != 1
+            or closed.st_uid != os.geteuid()
+            or closed.st_mode & 0o077
+        ):
+            raise RuntimeError("robomimic customer entitlement changed while read")
+        current_parent = open_parent()
+        try:
+            current_identity = os.fstat(current_parent)
+        finally:
+            os.close(current_parent)
+        if (current_identity.st_dev, current_identity.st_ino) != (
+            parent_identity.st_dev,
+            parent_identity.st_ino,
+        ):
+            raise RuntimeError(
+                "robomimic customer entitlement parent changed while read"
+            )
+        return raw
+    except OSError as exc:
+        raise RuntimeError(
+            "robomimic customer entitlement file is unavailable or unsafe"
+        ) from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        os.close(parent_descriptor)
+
+
+def _preflight_robomimic_runtime_entitlement(
+    *, selectors: dict[str, str], run_id: str, now: datetime | None = None
+) -> dict[str, str]:
+    """Validate the complete customer/run/runtime binding before side effects."""
+
+    raw = _robomimic_private_record_bytes(selectors["runtime_entitlement_file"])
+    try:
+        record = json.loads(raw)
+        lock_raw = ROBOMIMIC_RUNTIME_LOCK.read_bytes()
+        lock = json.loads(lock_raw)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("robomimic customer entitlement is invalid") from exc
+    if not isinstance(record, dict) or not isinstance(lock, dict):
+        raise RuntimeError("robomimic customer entitlement is invalid")
+    contract = lock.get("customer_entitlement")
+    if not isinstance(contract, dict) or contract != {
+        "schema": "npa.robomimic.customer-runtime-entitlement.v1",
+        "field_of_use": "noncommercial",
+        "maximum_validity_seconds": 86_400,
+        "responsibilities": [
+            "runtime-use",
+            "derivative-use",
+            "service-use",
+            "output-use",
+            "no-redistribution-grant",
+        ],
+        "terms": ROBOMIMIC_ENTITLEMENT_TERMS,
+    }:
+        raise RuntimeError("robomimic customer entitlement contract is invalid")
+    lock_sha256 = hashlib.sha256(lock_raw).hexdigest()
+    notice_identity = {
+        "schema": contract.get("schema"),
+        "runtime_id": lock.get("runtime_id"),
+        "runtime_lock_sha256": lock_sha256,
+        "field_of_use": contract.get("field_of_use"),
+        "terms": contract.get("terms"),
+        "customer_responsibilities": contract.get("responsibilities"),
+    }
+    expected = {
+        "schema": contract.get("schema"),
+        "decision": "accepted",
+        "customer_binding_sha256": hashlib.sha256(
+            b"npa.robomimic.customer-binding.v1\0"
+            + selectors["project"].encode("utf-8")
+        ).hexdigest(),
+        "run_id": run_id,
+        "source_revision": lock.get("source_revision"),
+        "runtime_id": lock.get("runtime_id"),
+        "runtime_manifest_sha256": selectors["runtime_inventory_sha256"],
+        "runtime_lock_sha256": lock_sha256,
+        "field_of_use": contract.get("field_of_use"),
+        "terms": contract.get("terms"),
+        "customer_responsibilities": contract.get("responsibilities"),
+        "notice_sha256": hashlib.sha256(
+            json.dumps(
+                notice_identity, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+        ).hexdigest(),
+    }
+    if set(record) != set(expected) | {"accepted_at", "expires_at"}:
+        raise RuntimeError("robomimic customer entitlement fields are invalid")
+    if any(record.get(key) != value for key, value in expected.items()):
+        raise RuntimeError("robomimic customer entitlement binding mismatch")
+    try:
+        accepted_at = datetime.strptime(
+            record["accepted_at"], "%Y-%m-%dT%H:%M:%SZ"
+        ).replace(tzinfo=timezone.utc)
+        expires_at = datetime.strptime(
+            record["expires_at"], "%Y-%m-%dT%H:%M:%SZ"
+        ).replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("robomimic customer entitlement time is invalid") from exc
+    observed_now = now or datetime.now(timezone.utc)
+    validity_seconds = int((expires_at - accepted_at).total_seconds())
+    maximum_validity = contract.get("maximum_validity_seconds")
+    if (
+        not isinstance(maximum_validity, int)
+        or accepted_at > observed_now
+        or validity_seconds <= 0
+        or validity_seconds > maximum_validity
+        or observed_now >= expires_at
+    ):
+        raise RuntimeError("robomimic customer entitlement time is invalid")
+    return {
+        "record_sha256": hashlib.sha256(raw).hexdigest(),
+        "customer_binding_sha256": expected["customer_binding_sha256"],
+    }
 
 
 def _robomimic_runner_command(
@@ -958,6 +1174,14 @@ def _invoke_robomimic_gate(
     e2e_project: str | None,
 ) -> tuple[dict[str, object], str, str]:
     selectors = _robomimic_live_selectors(e2e_project)
+    run_id = os.environ.get("NPA_BYOF_ROBOMIMIC_RUN_ID") or (
+        f"robomimic-live-{secrets.token_hex(8)}"
+    )
+    if re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", run_id) is None:
+        raise RuntimeError("robomimic run ID is not a safe output slug")
+    entitlement = _preflight_robomimic_runtime_entitlement(
+        selectors=selectors, run_id=run_id
+    )
     _activate_nebius_profile()
     config = load_spec(ROBOMIMIC_SPEC).config
     registry = resolve_container_registry(e2e_project)
@@ -965,11 +1189,6 @@ def _invoke_robomimic_gate(
     assert not is_public_registry(registry)
     bucket = live_bucket(e2e_project)
     assert bucket == selectors["bucket"].removeprefix("s3://").split("/", 1)[0]
-    run_id = os.environ.get("NPA_BYOF_ROBOMIMIC_RUN_ID") or (
-        f"robomimic-live-{secrets.token_hex(8)}"
-    )
-    if re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", run_id) is None:
-        raise RuntimeError("robomimic run ID is not a safe output slug")
     with tempfile.TemporaryDirectory(prefix="npa-robomimic-profile-") as temp_dir:
         service_account = _robomimic_observer_name(run_id)
         profile_yaml = _materialize_robomimic_attested_profile(
@@ -979,13 +1198,8 @@ def _invoke_robomimic_gate(
             runtime_pvc=selectors["runtime_pvc"],
             runtime_inventory_sha256=selectors["runtime_inventory_sha256"],
             runtime_entitlement_file=selectors["runtime_entitlement_file"],
-            runtime_entitlement_sha256=hashlib.sha256(
-                Path(selectors["runtime_entitlement_file"]).read_bytes()
-            ).hexdigest(),
-            customer_binding_sha256=hashlib.sha256(
-                b"npa.robomimic.customer-binding.v1\0"
-                + selectors["project"].encode("utf-8")
-            ).hexdigest(),
+            runtime_entitlement_sha256=entitlement["record_sha256"],
+            customer_binding_sha256=entitlement["customer_binding_sha256"],
         )
         cmd = _robomimic_runner_command(
             config,

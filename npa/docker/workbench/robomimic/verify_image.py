@@ -107,7 +107,11 @@ def _json_object(path: Path) -> dict[str, Any]:
 
 
 def _bounded_json_object(
-    path: Path, *, maximum_size: int, require_single_link: bool = False
+    path: Path,
+    *,
+    maximum_size: int,
+    require_single_link: bool = False,
+    require_owner_only: bool = False,
 ) -> tuple[dict[str, Any], bytes]:
     """Read one regular JSON object through a no-link hard byte ceiling.
 
@@ -122,7 +126,12 @@ def _bounded_json_object(
         VerificationError: The file is absent, unsafe, oversized, or invalid JSON.
     """
 
-    flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+    flags = (
+        os.O_RDONLY
+        | os.O_CLOEXEC
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
     try:
         descriptor = os.open(path, flags)
     except OSError as exc:
@@ -133,6 +142,10 @@ def _bounded_json_object(
             raise VerificationError(f"required regular file is absent: {path}")
         if require_single_link and details.st_nlink != 1:
             raise VerificationError(f"runtime metadata must have one link: {path}")
+        if require_owner_only and (
+            details.st_uid != os.geteuid() or details.st_mode & 0o077
+        ):
+            raise VerificationError("runtime metadata must be owner-only")
         if details.st_size > maximum_size:
             raise VerificationError(f"runtime metadata exceeds size limit: {path}")
         with os.fdopen(descriptor, "rb", closefd=False) as handle:
@@ -146,6 +159,10 @@ def _bounded_json_object(
             or after.st_dev != details.st_dev
             or after.st_ino != details.st_ino
             or (require_single_link and after.st_nlink != 1)
+            or (
+                require_owner_only
+                and (after.st_uid != os.geteuid() or after.st_mode & 0o077)
+            )
         ):
             raise VerificationError(f"runtime metadata changed while read: {path}")
     except OSError as exc:
@@ -260,6 +277,7 @@ def verify_customer_runtime_entitlement(
         entitlement_path,
         maximum_size=RUNTIME_ENTITLEMENT_MAX_BYTES,
         require_single_link=True,
+        require_owner_only=True,
     )
     if hashlib.sha256(raw).hexdigest() != expected_entitlement_sha256:
         raise VerificationError("customer runtime entitlement byte identity mismatch")
@@ -1570,7 +1588,11 @@ def main() -> int:
         runtime_mode = args.mode in {"runtime", "snapshot", "entitlement"}
         runtime_label = runtime_mode or args.mode == "assert-missing-runtime"
         label = "RUNTIME" if runtime_label else "BUILD_INPUT"
-        print(f"NPA_ROBOMIMIC_{label}_REFUSED: {exc}", file=sys.stderr)
+        if args.mode == "entitlement":
+            detail = "customer runtime entitlement refused"
+        else:
+            detail = str(exc)
+        print(f"NPA_ROBOMIMIC_{label}_REFUSED: {detail}", file=sys.stderr)
         return RUNTIME_REFUSAL_STATUS if runtime_mode else 1
     print(json.dumps(result, sort_keys=True))
     return 0
