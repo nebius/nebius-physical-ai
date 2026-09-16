@@ -5,7 +5,8 @@
 Every Workbench container image against every Nebius GPU platform, and — separately — which of those cells has actually been run on real hardware.
 
 **Last measured:** see the dated runs and exact-digest records below.
-**Publication/evidence reconciliation:** 2026-09-15; includes the exact OpenArm release and its new RTX execution.
+**Publication/evidence reconciliation:** 2026-09-16; includes the exact OpenArm
+release and the corrected Alpamayo 2 Super release evidence.
 
 Two things are deliberately kept apart here, because conflating them is how "Blackwell ready" claims go wrong:
 
@@ -27,7 +28,7 @@ Machine-readable source of record: [`npa/docker/workbench/blackwell-dc-images.js
 
 H100 and H200 are both `sm_90`, so they share a column below.
 
-Also offered: `gpu-gb300` (Grace-Blackwell Ultra). Its GPU is the same `sm_103`, but the host is aarch64, and the x86_64 workbench images do not run there. All 33 accepted release references in the [public container catalog](container-image-catalog.md) resolved anonymously to their recorded digests on 2026-09-15. Twenty-one resolve directly to an image manifest and 12 to an OCI index; every runtime variant is `linux/amd64`. The aarch64 platform is therefore uncovered across the published set rather than per image.
+Also offered: `gpu-gb300` (Grace-Blackwell Ultra). Its GPU is the same `sm_103`, but the host is aarch64, and the x86_64 workbench images do not run there. All 33 accepted release references in the [public container catalog](container-image-catalog.md) resolved anonymously to their recorded digests on 2026-09-16. Twenty resolve directly to an image manifest and 13 to an OCI index; every runtime variant is `linux/amd64`. The aarch64 platform is therefore uncovered across the published set rather than per image.
 
 One column below carries no recorded capability run: public-image L40S cells are supported, blocked, not routed, unverified, or CPU-only rather than verified or historical evidence. L40S is the one architecture besides RTX PRO 6000 that can render. The recorded capability runs are on H100, H200, RTX PRO 6000, B200, and B300.
 
@@ -56,7 +57,7 @@ Two compatibility rules govern every cell:
 | `npa-envgen` / `npa-reference-policy` / `npa-lerobot-vlm-rl` / `npa-loop-eval` | `…-20260803T034152Z` | inherited 2.9.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
 | `npa-sonic` | `…-0.1.2-k8s-runtime-…-20260803T034152Z` | 2.9.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
 | `npa-cosmos` | `cu128-torch27-sm100-1.0.9-20260803T002017Z` | 2.7.0+cu128 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
-| `npa-alpamayo2-super` | `0.1.0-cu128` (index `sha256:2164450f8baf…`) | 2.8.0+cu128 | `sm_70 sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
+| `npa-alpamayo2-super` | `0.1.0-cu128-r3` (index `sha256:17a3966a6e74…`) | 2.8.0+cu128 | `sm_70 sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
 
 The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/torch-2.7 replacement now carries `sm_100`, and the custom kernels passed on B200. Predict2 v1.0.9 still has a separate software allowlist that rejects L40S, RTX PRO 6000, and B300 before dispatch, so wheel coverage alone does not make those cells supported. The 2026-08-03 Genesis and Sim2Real tags compiled their runtime kernels and passed their real smokes on B200 and B300; the inherited Taichi blocker did not reproduce. Cells for a newer accepted release mark those runs historical unless the newer digest was independently qualified. SONIC remains separately blocked on the NVIDIA Isaac vendor stack. Not measured yet: `npa-workbench-cuda-base` and `npa-groot` on datacenter GPUs.
 
@@ -107,7 +108,7 @@ likewise predates its current coherent release.
 | `npa-ltx2` | unverified runtime | unverified runtime | **verified** [accepted records](#accepted-release-evidence) | unverified runtime | unverified runtime |
 | `npa-openpi` | blocked (RTX-only runtime contract) | blocked (RTX-only runtime contract) | pending exact-digest full-DROID qualification | blocked (`sm_120`-only probe/runtime contract) | blocked (`sm_120`-only probe/runtime contract) |
 | `npa-curobo` | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |
-| `npa-alpamayo2-super` | supported | supported | **verified** [63] | **verified** [62] | supported (same-major `sm_100` coverage; not measured) |
+| `npa-alpamayo2-super` | supported | supported | **verified** [72] | **verified** [71] | supported (same-major `sm_100` coverage; not measured) |
 | `npa-cosmos3-reason` | supported | **verified** [38] | **verified** [43] | **verified** [36] | **verified** [37] |
 | `npa-cosmos2-transfer` | supported | supported | supported | **historical evidence** [9] | blocked (cu128 NVRTC cannot JIT `sm_103`) |
 | `npa-cosmos` | blocked (Predict2 allowlist) | **verified** [33] | blocked (Predict2 allowlist) | **verified** [32] | blocked (Predict2 allowlist) |
@@ -233,6 +234,8 @@ Managed-Kubernetes nodes were placed successfully for both B200 in us-central1 a
 | 68 | 2026-09-12 | optional `npa-lerobot:0.6.0-d6-extras-20260912` (`sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643`) | NVIDIA B200 (`sm_100`) | exact accepted bytes through the checked-in Blackwell validator, then real construction and CUDA placement of a 272,708-parameter LeRobot 0.6.0 `DiffusionPolicy` | PASS; torch 2.11.0+cu130, native `sm_100` SASS/capability coverage, system FFmpeg, and 6/6 environment checks |
 | 69 | 2026-09-12 | `npa-cosmos3:1.2.2-cu130-r7` (`sha256:d8e1fe370f75e5433455a221b70ae6211c30369255a3bb111d03e5c07240e010`) | NVIDIA RTX PRO 6000 Blackwell Server Edition (`sm_120`) | exact accepted bytes through the checked-in Blackwell validator, then real 50-step Cosmos3-Nano text-to-image generation with Blocklist, Qwen3Guard, VideoContentSafetyFilter, and RetinaFace postprocessing | PASS; all requested prompt/media models discovered and evaluated, media classifier 1/1, effective guardrail receipt, nonblank 960×960 JPEG (183,829 bytes), SHA-256 `d80f7d11c49d66b12d3c896a9aa55a6d79b02de5a8ca24041a0e15b8efb4f2fd` |
 | 70 | 2026-09-15 | `npa-openarm:2.2.0-isaac0.1.0-rtfetch` (`sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a`) | NVIDIA RTX PRO 6000 Blackwell Server Edition (`sm_120`) | exact accepted bytes ran 500 real MuJoCo steps with render, 64-environment × 100-step upstream Isaac reach rollout on CUDA/PhysX, one iteration of upstream RSL-RL training, and fail-closed qualification | PASS; finite traces, fully decoded 100-frame H.264 video, serialized Torch checkpoint, and four matching artifact hashes |
+| 71 | 2026-09-16 | `npa-alpamayo2-super:0.1.0-cu128-r3` (index `sha256:17a3966a6e74…`) | NVIDIA B200 (`sm_100`) | exact accepted digest built from source `5b693476c113c833e9d9d4f8c7aa492492a27505` loaded the pinned 34B OpenMDW checkpoint and gated PhysicalAI-AV sample at runtime, ran genuine upstream projected-trajectory inference, and produced independently decoded result JSON, trajectory JSON, and camera PNG artifacts | PASS; shape `[1, 1, 1, 64, 3]`, ADE 1.503835, FDE 4.357265; 3 artifacts / 3,299,729 bytes; one successful attempt with no inference retry |
+| 72 | 2026-09-16 | same exact Alpamayo r3 digest | NVIDIA RTX PRO 6000 (`sm_120`) | independent runtime fetch and the same real upstream surround-view trajectory workflow with exact model, dataset, image, and ephemeral-cache provenance | PASS; shape `[1, 1, 1, 64, 3]`, ADE 1.501321, FDE 4.351557; 3 artifacts / 3,299,884 bytes; one successful attempt with no inference retry |
 
 ## Measured failures and negative controls
 
