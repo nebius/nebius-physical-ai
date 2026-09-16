@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import io
 import json
 import subprocess
@@ -325,6 +326,28 @@ def test_prescribed_run_preserves_zip_bytes_and_refuses_reexecution(execution_fi
     with pytest.raises(StoragePreconditionFailed):
         execution.evaluate(args)
     assert calls == list(range(10))
+
+
+def test_submission_delivers_policy_launcher_license(execution_fixture, monkeypatch):
+    args, storage, _calls = execution_fixture
+    adapter = b"# Synthetic policy launcher fixture\n"
+
+    @contextmanager
+    def managed_policy(_args, _plan, output):
+        (output / "policy-server.py").write_bytes(adapter)
+        (output / "policy-provenance.json").write_text("{}\n")
+        yield
+
+    monkeypatch.setattr(execution, "managed_policy", managed_policy)
+    execution.evaluate(args)
+    license_bytes = (Path(__file__).resolve().parents[3] / "LICENSE").read_bytes()
+    with zipfile.ZipFile(
+        io.BytesIO(storage.objects["output/submission.zip"])
+    ) as archive:
+        assert archive.read("policy-server.py") == adapter
+        assert archive.read("policy-server.LICENSE") == license_bytes
+        assert archive.read("evaluator/LICENSE") == b"Synthetic license fixture\n"
+    assert storage.objects["output/policy-server.LICENSE"] == license_bytes
 
 
 def test_failed_evaluator_preserves_attempt_and_partial_outputs(

@@ -138,6 +138,19 @@ def write_summary(output: Path, plan: dict, records: list[dict]) -> dict:
     return summary
 
 
+def _policy_submission_files(output: Path) -> list[Path]:
+    paths = [
+        output / name
+        for name in ("policy-server.py", "policy-provenance.json")
+        if (output / name).is_file()
+    ]
+    if (output / "policy-server.py").is_file():
+        license_path = output / "policy-server.LICENSE"
+        shutil.copyfile(Path(__file__).with_name("POLICY_LICENSE"), license_path)
+        paths.append(license_path)
+    return paths
+
+
 def build_submission(output: Path, plan: dict, records: list[dict]) -> Path:
     """Bundle unmodified metrics and evaluator code, retaining videos beside the ZIP.
 
@@ -161,11 +174,7 @@ def build_submission(output: Path, plan: dict, records: list[dict]) -> Path:
     paths = [output / name for name in metadata_files]
     paths += sorted((output / "evaluator").rglob("*.py"))
     paths += [output / "evaluator/r1pro.yaml", output / "evaluator/LICENSE"]
-    paths += [
-        output / name
-        for name in ("policy-server.py", "policy-provenance.json")
-        if (output / name).is_file()
-    ]
+    paths += _policy_submission_files(output)
     paths += [
         output / relative
         for record in records

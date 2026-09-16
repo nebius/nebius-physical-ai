@@ -167,6 +167,8 @@ and three camera lookup keys before running the unchanged upstream serving
 script. Camera ordering, images, proprioception, action indices, checkpoint,
 and the official evaluator remain unchanged. The launcher source is saved as
 `policy-server.py`, with its hash and mapping in `policy-provenance.json`.
+Reporting archives include its Apache 2.0 license as `policy-server.LICENSE`,
+alongside the official evaluator's separate license.
 
 This option supports only `turning_on_radio`. It records `policy-provenance.json`
 and `policy.log`, waits for the real health endpoint, and stops its own server
