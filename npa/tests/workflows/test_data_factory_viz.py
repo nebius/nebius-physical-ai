@@ -64,7 +64,9 @@ def test_build_run_rrd_from_local_run(tmp_path: Path) -> None:
     )
 
     out = tmp_path / "reports" / "sim2real.rrd"
-    result = build_run_rrd(str(run), str(out))
+    # The shared nurec visualize CLI passes this app id. A committed PAIDF
+    # candidate set must still select the PAIDF application and default layout.
+    result = build_run_rrd(str(run), str(out), app_id="neural-reconstruction")
 
     assert result["status"] == "completed"
     assert result["frames_logged"] == 4
@@ -87,6 +89,9 @@ def test_build_run_rrd_from_local_run(tmp_path: Path) -> None:
         check=False,
     )
     assert verified.returncode == 0, verified.stderr
+    from rerun.recording import load_recording
+
+    assert load_recording(out).application_id() == "physical-ai-data-factory"
 
 
 def test_rejected_rrd_component_stats_include_actual_augmented_media(
@@ -179,6 +184,8 @@ def test_rejected_rrd_component_stats_include_actual_augmented_media(
     assert "Blueprint" in component_stats
     from rerun.recording import load_recording
 
+    assert load_recording(out).application_id() == "physical-ai-data-factory"
+
     video_frame_batches = [
         chunk.to_record_batch()
         for chunk in load_recording(out).chunks()
@@ -210,9 +217,7 @@ def test_rejected_rrd_component_stats_include_actual_augmented_media(
             }
         ],
         quality_status="REJECTED",
-        source_video_records=[
-            {"entity": "source/original", "video": source_video}
-        ],
+        source_video_records=[{"entity": "source/original", "video": source_video}],
     )
     assert verified == {
         "source_video_entities": 1,
@@ -230,9 +235,7 @@ def test_rejected_rrd_component_stats_include_actual_augmented_media(
                 }
             ],
             quality_status="REJECTED",
-            source_video_records=[
-                {"entity": "source/original", "video": source_video}
-            ],
+            source_video_records=[{"entity": "source/original", "video": source_video}],
         )
 
 

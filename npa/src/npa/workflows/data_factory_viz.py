@@ -402,30 +402,41 @@ def build_run_rrd(
                 source_entities.add(entity)
                 source_video_records.append({"entity": entity, "video": video})
         variant_records = _committed_variant_records(local)
+        # ``workbench.nurec.visualize`` is intentionally shared by NuRec and
+        # PAIDF workflow stages. Its CLI default is the NuRec application id,
+        # but committed PAIDF candidates are authoritative run-shape evidence:
+        # they must always receive the media-first PAIDF blueprint and
+        # presentation metadata, regardless of that shared entrypoint default.
+        effective_app_id = APPLICATION_ID if variant_records else app_id
         candidate_entities = [
             f"augmented/{record['candidate_id']}" for record in variant_records
         ]
         stage_docs = _load_stage_docs(local)
         has_controls = bool(_image_files(local / "cosmos_control"))
-        if app_id == APPLICATION_ID and variant_records and not source_entities:
+        if (
+            effective_app_id == APPLICATION_ID
+            and variant_records
+            and not source_entities
+        ):
             raise DataFactoryVizError(
                 "committed augmented candidates require source media for comparison"
             )
         has_video_timing = bool(source_video_records) and any(
-            isinstance(record.get("video"), Path)
-            and record["video"].is_file()
+            isinstance(record.get("video"), Path) and record["video"].is_file()
             for record in variant_records
         )
         default_timeline = "video_time" if has_video_timing else "frame"
 
         out_path = Path(tmp) / "sim2real.rrd"
-        rec = rr.RecordingStream(app_id, recording_id=run_id)
+        rec = rr.RecordingStream(effective_app_id, recording_id=run_id)
         # A file sink must be attached before the first log call. Attaching it
         # afterwards happens to replay buffered rows, but leaves a streaming RRD
         # without its footer/manifest when the temporary directory is published.
         # Rerun can often read that stream, while `rerun rrd verify` correctly
         # rejects it as incomplete.
-        if app_id == APPLICATION_ID and (source_entities or candidate_entities):
+        if effective_app_id == APPLICATION_ID and (
+            source_entities or candidate_entities
+        ):
             rec.save(
                 str(out_path),
                 default_blueprint=_build_data_factory_blueprint(
@@ -646,7 +657,7 @@ def build_run_rrd(
                 "decoded-video-timestamps" if has_video_timing else "frame-sequence"
             ),
         }
-        if app_id == APPLICATION_ID
+        if effective_app_id == APPLICATION_ID
         else {},
         **inventory_proof,
     }
