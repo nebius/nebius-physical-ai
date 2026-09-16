@@ -248,8 +248,6 @@ def _write_agent_artifact_sources_env(
     if partial_credentials:
         raise ValueError("artifact read credentials must be complete")
     source_buckets = {item["bucket"] for item in normalized_sources}
-    if len(source_buckets) > 1:
-        raise ValueError("artifact read credentials may target only one exact bucket")
     if complete_credentials and source_buckets and bucket.strip() not in source_buckets:
         raise ValueError("artifact read credential bucket does not match its source scope")
     if mode in {"isolated-read", "deployment-write-migration"} and (

@@ -6164,6 +6164,54 @@ def test_artifact_source_file_round_trip_survives_service_environment_reload(
     assert str(staged["remote_path"]).startswith("/tmp/.npa-private-")
 
 
+def test_shared_reader_stages_multiple_exact_source_buckets(monkeypatch) -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    sources = (
+        {
+            "project_id": "project-one",
+            "bucket": "bucket-one",
+            "resolved_prefix": "preserved/one",
+        },
+        {
+            "project_id": "project-two",
+            "bucket": "bucket-two",
+            "resolved_prefix": "preserved/two",
+        },
+    )
+    staged: dict[str, str] = {}
+
+    class FakeSSH:
+        def upload_private_text(self, content, remote_path):
+            staged.update(content=content, remote_path=remote_path)
+
+        def run_or_raise(self, _command, *, label):
+            assert label == "stage private /opt/npa-agent/artifact-sources.env"
+
+        def run(self, _command):
+            return None
+
+    agent_module._write_agent_artifact_sources_env(
+        FakeSSH(),
+        artifact_sources=sources,
+        bucket="bucket-one",
+        endpoint="https://objects.example",
+        access_key="shared-read-access",
+        secret_key="shared-read-secret",
+        region="test-region",
+    )
+
+    encoded = next(
+        line.split("=", 1)[1]
+        for line in staged["content"].splitlines()
+        if line.startswith("NPA_AGENT_ARTIFACT_SOURCES_B64=")
+    )
+    monkeypatch.setenv("NPA_AGENT_ARTIFACT_SOURCES_B64", encoded)
+    assert runtime._configured_agent_artifact_sources() == sources
+    assert "NPA_AGENT_ARTIFACT_S3_BUCKET=bucket-one" in staged["content"]
+    assert "NPA_AGENT_ARTIFACT_S3_BUCKET=bucket-two" not in staged["content"]
+
+
 def test_artifact_source_file_rejects_non_private_permissions(tmp_path) -> None:
     source_file = tmp_path / "artifact-sources.json"
     source_file.write_text("[]", encoding="utf-8")
