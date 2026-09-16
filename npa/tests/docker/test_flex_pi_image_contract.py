@@ -59,7 +59,7 @@ def test_dockerfile_pins_source_base_and_nonroot() -> None:
     assert "20c1b2b71ea35a415d5d47c39b04443cfadad7a1" in text
     assert "USER ubuntu" in text
     assert "'sm_120' in flags" in text
-    assert "NPA_SOURCE_COMMIT" in text
+    assert "NPA_SOURCE_SHA" in text
     assert "IMAGEIO_FFMPEG_EXE=/opt/conda/bin/ffmpeg" in text
     assert "rm -f /opt/conda/lib/python3.11/site-packages/imageio_ffmpeg/binaries/" in text
     assert "apt-get install -y --only-upgrade linux-libc-dev" in text
