@@ -21,6 +21,9 @@ _PROFILES = {
         "arm_joints": ["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
                        "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"],
         "gripper_joints": ["finger_joint"], "base_body": "base_link", "tool_body": "wrist_3_link",
+        # The pinned native frame view unexpectedly includes the gripper's duplicate base_link.
+        # Use a unique source body. The lift reward reads the target's world position.
+        "sensor_source_body": "shoulder_link",
         "tool_offset_m": [0.0, 0.0, 0.145], "open_position": 0.0, "closed_position": 0.8,
     },
     "kinova_jaco7": {
@@ -92,7 +95,8 @@ def configure_embodiment(config, recipe: dict) -> None:
     config.scene.robot = robot
     _configure_actions(config, profile)
     config.commands.object_pose.body_name = profile["tool_body"]
-    config.scene.ee_frame.prim_path = "{ENV_REGEX_NS}/Robot/" + profile["base_body"]
+    source_body = profile.get("sensor_source_body", profile["base_body"])
+    config.scene.ee_frame.prim_path = "{ENV_REGEX_NS}/Robot/" + source_body
     target = config.scene.ee_frame.target_frames[0]
     target.prim_path = "{ENV_REGEX_NS}/Robot/" + profile["tool_body"]
     target.offset.pos = tuple(profile["tool_offset_m"])
@@ -135,8 +139,10 @@ def embodiment_evidence(env, recipe: dict) -> dict:
     if (native.action_manager.active_terms != ["arm_action", "gripper_action"]
             or arm.action_dim != len(arm_names) or gripper.action_dim != 1):
         raise ValueError("Actual policy action layout differs from the sealed embodiment")
-    if not {profile["base_body"], profile["tool_body"]}.issubset(robot.body_names):
-        raise ValueError("Actual robot lacks the sealed base or tool body")
+    required_bodies = {profile["base_body"], profile["tool_body"],
+                       profile.get("sensor_source_body", profile["base_body"])}
+    if not required_bodies.issubset(robot.body_names):
+        raise ValueError("Actual robot lacks the sealed base, sensor source, or tool body")
     controls = _control_evidence(native, profile, arm, gripper)
     _validate_asset(native.cfg.scene.robot, profile)
     return {"profile": profile, "robot_type": profile["name"], "state_names": list(robot.joint_names),
@@ -171,7 +177,7 @@ def _control_evidence(native, profile: dict, arm, gripper) -> dict:
                 "closed_positions": _joint_commands(gripper.cfg.close_command_expr, profile["gripper_joints"])}
     expected = {"arm_action_scale": profile["arm_action_scale"], "use_default_offset": True,
                 "command_body": profile["tool_body"],
-                "base_frame": native.scene.env_regex_ns + "/Robot/" + profile["base_body"],
+                "base_frame": native.scene.env_regex_ns + "/Robot/" + profile.get("sensor_source_body", profile["base_body"]),
                 "tool_frame": native.scene.env_regex_ns + "/Robot/" + profile["tool_body"],
                 "tool_offset_m": profile["tool_offset_m"],
                 "open_positions": [profile["open_position"]] * len(profile["gripper_joints"]),

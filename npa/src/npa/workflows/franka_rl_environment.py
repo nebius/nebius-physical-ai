@@ -106,6 +106,9 @@ def build_runner(env, recipe: dict, output=None):
     from npa.workflows.franka_rl_embodiments import embodiment_evidence
 
     env.unwrapped.npa_embodiment_evidence = embodiment_evidence(env, recipe)
+    profile = env.unwrapped.npa_embodiment_evidence["profile"]
+    if "sensor_source_body" in profile:
+        env.unwrapped.npa_tool_frame_check = _tool_frame_check(env.unwrapped, profile)
     config = load_cfg_from_registry(recipe["task"], "rsl_rl_cfg_entry_point")
     config = handle_deprecated_rsl_rl_cfg(config, version("rsl-rl-lib"))
     config.seed = recipe["seed"]
@@ -116,6 +119,27 @@ def build_runner(env, recipe: dict, output=None):
     wrapped = RslRlVecEnvWrapper(env, clip_actions=config.clip_actions)
     runner = OnPolicyRunner(wrapped, settings, log_dir=str(output) if output else None, device="cuda:0")
     return wrapped, runner, settings
+
+
+def _tool_frame_check(native, profile: dict) -> dict:
+    """Check world TCP against the articulation's independent XYZW link pose."""
+    import numpy as np
+
+    robot = native.scene["robot"]
+    index = robot.body_names.index(profile["tool_body"])
+    positions = robot.data.body_link_pos_w.torch[:, index].detach().cpu().numpy()
+    quaternions = robot.data.body_link_quat_w.torch[:, index].detach().cpu().numpy()
+    measured = native.scene["ee_frame"].data.target_pos_w.torch[:, 0].detach().cpu().numpy()
+    offset = np.broadcast_to(np.asarray(profile["tool_offset_m"], dtype=positions.dtype), positions.shape)
+    cross = 2 * np.cross(quaternions[:, :3], offset)
+    expected = positions + offset + quaternions[:, 3:] * cross + np.cross(quaternions[:, :3], cross)
+    errors = np.linalg.norm(measured - expected, axis=1)
+    if (not np.isfinite(errors).all() or not np.allclose(np.linalg.norm(quaternions, axis=1), 1, atol=1e-4)
+            or float(errors.max()) > 1e-4):
+        raise ValueError("Frame sensor world TCP differs from the articulation link pose and grasp offset")
+    return {"source_body": profile["sensor_source_body"], "tool_body": profile["tool_body"],
+            "environments_checked": len(errors), "maximum_error_m": float(errors.max()),
+            "tolerance_m": 1e-4, "world_tcp_verified": True}
 
 
 def physics_evidence(env) -> dict:
@@ -141,6 +165,8 @@ def physics_evidence(env) -> dict:
               "dynamic_friction": material[..., 1], "restitution": material[..., 2]}
     evidence = {"startup_terms": list(terms), "embodiment": unwrapped.npa_embodiment_evidence, "physics_capacity": {
         "gpu_total_aggregate_pairs_capacity": unwrapped.cfg.sim.physics.gpu_total_aggregate_pairs_capacity}}
+    if hasattr(unwrapped, "npa_tool_frame_check"):
+        evidence["tool_frame_check"] = unwrapped.npa_tool_frame_check
     for name, value in values.items():
         if not torch.isfinite(value).all():
             raise RuntimeError("Applied Franka physics is nonfinite")

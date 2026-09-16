@@ -42,8 +42,9 @@ def _live_environment(name):
     }
     manager = SimpleNamespace(active_terms=list(terms), get_term=terms.__getitem__)
     robot = SimpleNamespace(joint_names=profile["arm_joints"] + profile["gripper_joints"],
-                            body_names=[profile["base_body"], profile["tool_body"]])
-    frame = SimpleNamespace(prim_path=Scene.env_regex_ns + "/Robot/" + profile["base_body"], target_frames=[
+                            body_names=[profile["base_body"], profile["tool_body"],
+                                        profile.get("sensor_source_body", profile["base_body"])])
+    frame = SimpleNamespace(prim_path=Scene.env_regex_ns + "/Robot/" + profile.get("sensor_source_body", profile["base_body"]), target_frames=[
         SimpleNamespace(prim_path=Scene.env_regex_ns + "/Robot/" + profile["tool_body"],
                         offset=SimpleNamespace(pos=profile["tool_offset_m"]))])
     config = SimpleNamespace(scene=SimpleNamespace(robot=_robot_config(name), ee_frame=frame),
@@ -90,7 +91,7 @@ def test_unsupported_or_mutated_profile_is_rejected():
         embodiments.recipe_embodiment(recipe)
 
 
-@pytest.mark.parametrize("mutation", ["asset", "variant", "scale", "gripper", "root", "tool_offset", "command"])
+@pytest.mark.parametrize("mutation", ["asset", "variant", "scale", "gripper", "root", "tool_offset", "command", "sensor_source", "missing_sensor_body"])
 def test_similar_robot_names_cannot_hide_wrong_asset_or_control(mutation):
     env, recipe = _live_environment("ur10e_robotiq85")
     native = env.unwrapped
@@ -106,6 +107,10 @@ def test_similar_robot_names_cannot_hide_wrong_asset_or_control(mutation):
         native.cfg.scene.robot.init_state.rot = (1, 0, 0, 0)
     elif mutation == "tool_offset":
         native.cfg.scene.ee_frame.target_frames[0].offset.pos = (0, 0, 0)
+    elif mutation == "sensor_source":
+        native.cfg.scene.ee_frame.prim_path = Scene.env_regex_ns + "/Robot/base_link"
+    elif mutation == "missing_sensor_body":
+        native.scene["robot"].body_names.remove("shoulder_link")
     else:
         native.cfg.commands.object_pose.body_name = "base_link"
     with pytest.raises(ValueError):
@@ -159,6 +164,7 @@ def test_robot_configuration_preserves_upstream_and_uses_native_xyzw_identity(mo
     assert target.prim_path.endswith("/" + profile["tool_body"])
     if name == "ur10e_robotiq85":
         assert config.scene.robot.init_state.joint_pos["shoulder_pan_joint"] == 0
+        assert config.scene.ee_frame.prim_path == "{ENV_REGEX_NS}/Robot/shoulder_link"
     else:
         assert config.scene.robot.init_state.joint_pos == initial_joints
         assert len(config.actions.gripper_action.close_command_expr) == 6
@@ -167,3 +173,39 @@ def test_robot_configuration_preserves_upstream_and_uses_native_xyzw_identity(mo
 def test_historical_franka_recipe_stays_readable():
     assert embodiments.recipe_embodiment({})["name"] == "franka"
     embodiments.validate_capture_embodiment({}, {})
+
+
+def test_ur_sensor_source_avoids_nested_gripper_body_name_collision():
+    # The native Robotiq hierarchy repeats the arm's base_link leaf name.
+    body_paths = ["/Robot/base_link", "/Robot/shoulder_link", "/Robot/wrist_3_link",
+                  "/Robot/ee_link/Robotiq_2F_85/base_link"]
+    profile = embodiments.embodiment_profile("ur10e_robotiq85")
+    assert sum(path.endswith("/" + profile["base_body"]) for path in body_paths) == 2
+    for body in (profile["sensor_source_body"], profile["tool_body"]):
+        assert sum(path.endswith("/" + body) for path in body_paths) == 1
+
+
+@pytest.mark.parametrize("corruption", [None, "wrong_offset", "nonfinite"])
+def test_sensor_world_tcp_matches_rotated_articulation_link_pose(corruption):
+    torch = pytest.importorskip("torch")
+    from npa.workflows.franka_rl_environment import _tool_frame_check
+
+    profile = embodiments.embodiment_profile("ur10e_robotiq85")
+    # A 90-degree Y rotation moves the 14.5 cm local Z grasp offset to world X.
+    positions = torch.tensor([[[1.0, 2.0, 3.0]]])
+    quaternions = torch.tensor([[[0.0, 2**-0.5, 0.0, 2**-0.5]]])
+    measured = torch.tensor([[[1.145, 2.0, 3.0]]])
+    if corruption == "wrong_offset":
+        measured[0, 0] = torch.tensor([1.0, 2.0, 3.145])
+    elif corruption == "nonfinite":
+        measured[0, 0, 0] = float("nan")
+    robot = SimpleNamespace(body_names=["wrist_3_link"], data=SimpleNamespace(
+        body_link_pos_w=SimpleNamespace(torch=positions), body_link_quat_w=SimpleNamespace(torch=quaternions)))
+    frame = SimpleNamespace(data=SimpleNamespace(target_pos_w=SimpleNamespace(torch=measured)))
+    native = SimpleNamespace(scene={"robot": robot, "ee_frame": frame})
+    if corruption:
+        with pytest.raises(ValueError, match="world TCP"):
+            _tool_frame_check(native, profile)
+    else:
+        result = _tool_frame_check(native, profile)
+        assert result["world_tcp_verified"] and result["maximum_error_m"] < 1e-6

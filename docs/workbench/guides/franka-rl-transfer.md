@@ -1,10 +1,12 @@
-# Franka RL: train in simulation, measure the transfer gap
+# Embodied RL: train in simulation, measure the transfer gap
 
 Run [`franka-rl-transfer.yaml`](../../../workflows/testing/franka-rl-transfer.yaml)
-on a reserved RTX PRO 6000 with the `rtx-rendering` cluster profile. It trains a
-real Franka Panda in Isaac Lab using native RSL-RL PPO, evaluates the selected
+on a reserved RTX PRO 6000 with the `rtx-rendering` cluster profile. It trains
+an articulated robot in Isaac Lab using native RSL-RL PPO, evaluates the selected
 weights under physical perturbations, and judges actual timestamped rollouts
-through Token Factory. It exports LeRobotDataset v3 and Rerun evidence.
+through Token Factory. Franka Panda is the default; UR10e/Robotiq and Kinova
+JACO2 use explicit native embodiment bindings. It exports LeRobotDataset v3 and
+Rerun evidence.
 
 The five stages are **prepare → train → evaluate → visual-evaluate → report**.
 Training and rendering use one RTX GPU sequentially. The hosted VLM stage uses
@@ -52,6 +54,14 @@ frame is 14.5 cm along the wrist's tool axis. JACO2 uses its authored
 TCP calibrations. Native robot actuator/gravity/collision settings otherwise
 remain unchanged and are recorded separately.
 
+UR10e uses `shoulder_link` as the frame sensor's source because the pinned PhysX
+frame-view initialization unexpectedly includes the Robotiq gripper's nested
+`base_link` when the arm's `base_link` is requested. The robot root remains
+`base_link`; the sensor target remains `wrist_3_link` plus the grasp offset.
+The lift reward consumes that target's world position, while object goals and
+held-out metrics use the articulation root independently. No shoulder-relative
+position is used as a policy observation, reward, or success measurement.
+
 Object assets, PPO update count, success criteria, and physics shifts remain
 fixed, including an untuned 0.5-radian arm-action scale for each robot. This
 common control convention is a comparison baseline, not a claim of optimal
@@ -69,13 +79,13 @@ This compact workflow retains its relevant experimental contracts:
 
 | Reference responsibility | Franka RL implementation |
 | --- | --- |
-| Task and embodiment contract | Pin `Isaac-Lift-Cube-Franka-v0`, its Franka joint control, geometric success criteria, and reset streams before training |
+| Task and embodiment contract | Pin the upstream lift task, selected robot and joint control, geometric success criteria, and reset streams before training |
 | Stage 9: genuine PPO | Use the upstream Franka PPO configuration, randomized object mass/friction, native optimizer updates, initial weights, and periodic checkpoints |
 | Validation-only selection | Rank checkpoint success on the same validation resets; break ties by closest goal distance, then earlier iteration |
 | Stage 10: exact held-out policy | Evaluate the initial and selected weights on paired, untouched test resets; verify initial physical-state hashes |
 | Stage 11: quality decision | Report the measured success threshold independently of workflow completion |
 | Stage 8: visual evaluation | Independently judge paired initial/trained captures through Token Factory; compare frame-cited judgments with synchronized physical measurements |
-| Stage 14: factual visualization | Convert actual Isaac RTX frames and synchronized state/actions with the existing Isaac-to-LeRobot adapter; record named Franka telemetry and embedded videos in Rerun |
+| Stage 14: factual visualization | Convert actual Isaac RTX frames and synchronized state/actions with the existing Isaac-to-LeRobot adapter; record the selected robot's named telemetry and embedded videos in Rerun |
 
 The experiment uses simulator rewards and privileged object state. Its VLM
 evaluation is a post-training audit; its outputs do not shape PPO rewards or
@@ -155,6 +165,7 @@ procedure.
 | `eval_episodes` | 128 | Environments per validation checkpoint and per test condition/arm |
 | `minimum_success` | 0.7 | Required success rate in every test condition |
 | `asset` | `spool` | Target part: `spool`, `hex_nut`, or `bottle`; changing it requires a new training run |
+| `embodiment` | `franka` | Native robot: `franka`, `ur10e_robotiq85`, or `kinova_jaco7`; each trains independently |
 | `vlm_model` | `MiniMaxAI/MiniMax-M3` | Exact Token Factory vision model, checked against the account's model list |
 | `bucket`, `prefix` | Project binding and run-specific prefix | Durable stage artifacts |
 
@@ -290,18 +301,20 @@ The final `reports/` directory contains:
 
 - `report.json`, `trials.csv`, and `success.png`: measured simulation outcomes.
 - `visual-evaluation.json`: per-episode VLM judgments, physical comparisons, model usage, and additional quality gates. The `visual/` stage retains exact request, response, and sampled-frame artifacts.
-- `lerobot/`: Franka state, applied joint-control actions, and real RTX video.
+- `lerobot/`: selected robot state, applied joint-control actions, and actual RTX video.
 - `capture.json`: exact checkpoint, capture stream, timing, and per-episode
   success labels. Recorded failures remain failures; these are policy rollouts,
   not automatically accepted expert demonstrations.
-- `franka.rrd`: the actual rendered embodiment with its synchronized telemetry.
+- `<embodiment>.rrd`: the actual rendered embodiment with its synchronized telemetry.
 - `recording-validation.json`: decoded row counts for every camera, joint, and
   action channel, with the workflow run ID used as the recording ID.
 
 Capture uses a third stream beginning at 300,000, independent of checkpoint selection and
 test scoring; each capture index has a fixed seed reused across arms and conditions.
-Nine Franka joint positions are recorded with eight control
-actions: seven scaled joint-position targets and one binary gripper command.
+The export records actual articulation joint names and action ordering. The
+Franka default has nine joint positions and eight actions: seven scaled
+joint-position targets and one binary gripper command. Other embodiments retain
+their own native joint dimensions and gripper bindings.
 These normalized simulator actions require an explicit controller mapping
 before use on hardware.
 
