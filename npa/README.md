@@ -97,11 +97,6 @@ For a headless machine, choose
 Separate skills cover unattended service identities, SSH callback forwarding,
 and the original private callback copy/paste helper.
 
-For an existing Agent, `npa agent bootstrap --output-prefix <subtree>` selects
-and persists its deployment-bucket output scope. Keep live-verification fixtures
-in a dedicated subtree; `--artifact-source-file` configures separate read-only
-evidence sources. See [Agent storage configuration](../docs/agent.md).
-
 Managed workbench teardown reuses the saved Terraform backend. See
 [Terraform state](../docs/configuration.md#terraform-state-for-managed-workbenches)
 for its storage path and permissions.

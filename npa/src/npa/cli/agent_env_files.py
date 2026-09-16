@@ -198,9 +198,10 @@ def _write_agent_s3_env(
     access_key: str,
     secret_key: str,
     region: str,
-    artifact_storage: tuple[str, str, str, str, str, str] | None = None,
 ) -> None:
-    """Stage deployment writes and optional artifact reads as separate roles."""
+    """Stage S3 discovery credentials on the VM (read-only operator scope preferred)."""
+    if not (bucket.strip() and access_key.strip() and secret_key.strip()):
+        return
     env_lines = [
         f"NPA_AGENT_S3_BUCKET={bucket.strip()}",
         f"NPA_AGENT_S3_PREFIX={prefix.strip().strip('/')}",
@@ -209,25 +210,12 @@ def _write_agent_s3_env(
         f"AWS_SECRET_ACCESS_KEY={secret_key.strip()}",
         f"AWS_REGION={region.strip() or 'eu-north1'}",
     ]
-    env_lines.extend(_artifact_storage_env(artifact_storage, region))
     env_lines.append("")
     _stage_private_text(
         ssh,
         content="\n".join(env_lines),
         target="/opt/npa-agent/s3.env",
     )
-
-
-def _artifact_storage_env(
-    storage: tuple[str, str, str, str, str, str] | None, region: str
-) -> list[str]:
-    """Stage source credentials without replacing global deployment credentials."""
-    names = ("BUCKET", "PREFIX", "ENDPOINT", "ACCESS_KEY_ID", "SECRET_ACCESS_KEY", "REGION")
-    values = (*storage[:5], region) if storage is not None else ("",) * len(names)
-    return [
-        "NPA_AGENT_ARTIFACT_S3_CONFIGURED=" + ("1" if storage is not None else "0"),
-        *("NPA_AGENT_ARTIFACT_S3_" + key + "=" + value.strip() for key, value in zip(names, values, strict=True)),
-    ]
 
 
 def _write_agent_artifact_sources_env(
@@ -237,14 +225,14 @@ def _write_agent_artifact_sources_env(
 ) -> None:
     """Stage durable read selectors independently of S3 credentials."""
     normalized_sources = normalize_configured_artifact_sources(artifact_sources)
-    env_lines: list[str] = ["NPA_AGENT_ARTIFACT_SOURCES_B64="]
+    env_lines: list[str] = []
     if normalized_sources:
         encoded_sources = base64.urlsafe_b64encode(
             json.dumps(
                 list(normalized_sources), separators=(",", ":"), sort_keys=True
             ).encode("utf-8")
         ).decode("ascii")
-        env_lines = [f"NPA_AGENT_ARTIFACT_SOURCES_B64={encoded_sources}"]
+        env_lines.append(f"NPA_AGENT_ARTIFACT_SOURCES_B64={encoded_sources}")
     env_lines.append("")
     _stage_private_text(
         ssh,

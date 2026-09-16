@@ -500,8 +500,9 @@ _CAPABILITY_MANIFEST = {
             "SHA-256 and byte size for every retained artifact",
         ],
         "handled_runtime_or_evidence_failure": {
-            "result": "After evaluation setup succeeds, handled runtime/evidence errors write a failed result.json and hashes for whatever artifacts were produced, then attempt publication. A storage publication failure retains the private local copy.",
+            "result": "After evaluation setup succeeds, handled runtime/evidence errors write a failed result.json and hashes for whatever artifacts were produced, then attempt publication. A storage publication failure retains a mode-0700 private local copy.",
             "partial_artifacts": "Logs, scalar phase journals, raw video, capture sidecar, and initial or terminal PNGs are retained only if created. An unfinished recorder buffer is separately marked unscored; it never becomes a completed episode or task-success result.",
+            "retention_limitation": "Publication-failure copies have no automatic age, count, or byte pruning. The reported local path must be recovered or removed by the operator; repeated failures can consume worker disk.",
         },
         "phase_diagnostics": {
             "artifact": "simulator-phases-rank*.jsonl, when emitted",
@@ -571,7 +572,7 @@ _CAPABILITY_MANIFEST = {
             "progress_adapters": _TASK_PROGRESS_CAPABILITIES,
             "policy_adapters": _TASK_QUALIFIED_POLICIES,
             "requires": "Current-run JSONL and simulator HDF5 agree on task success; numeric success_rate is greater than zero; a registered policy adapter has measured finite, nonzero, varied policy-to-environment actions without synthetic padding or a dominant numerically held tail; replay actions exactly match the prepared private tensor prefix through the native terminal.",
-            "visual_interval": "Each task-progress adapter declares its visual interval strategy, leading context, progress signal, normalized task-object region, and spatial association radius. The microwave adapter admits bounded approach/contact context, requires accepted coherent motion to overlap the exact first-progress-to-success interval, and requires connected monotonic structural change inside the microwave workspace and adjacent to that tracked motion.",
+            "visual_interval": "The sole current task-progress adapter is gr1_open_microwave. It declares its visual interval strategy, leading context, progress signal, normalized task-object region, and spatial association radius; admits bounded approach/contact context; requires accepted coherent motion to overlap the exact first-progress-to-success interval; and requires connected monotonic structural change inside the microwave workspace adjacent to that tracked motion.",
             "shared_contract": "Measured policy-to-environment actions without synthetic padding or a dominant numerically held tail, one native successful scored episode, registered environment/policy progress, exact full-episode simulator capture steps, a consistent capture/PNG/raw/evidence frame-hash chain, and noise-resistant video motion temporally and spatially bound to adapter-selected progress must all describe the same episode. The task adapter explicitly selects the visual context, task region, signal, and association radius.",
             "other_environments": "Ordinary scored evaluation remains implemented; nonzero-policy visual qualification requires an explicitly registered task-progress adapter and is otherwise unsupported.",
             "zero_action": "Viewport baseline only; task-qualified visual evidence is not claimed.",

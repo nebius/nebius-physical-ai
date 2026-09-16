@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import asdict, dataclass
+from importlib import import_module
 import json
 import math
 import os
@@ -49,6 +50,7 @@ from .ground_truth import simulator_ground_truth as _simulator_ground_truth
 from .acceptance import qualify_visual_acceptance as _qualify_visual_acceptance
 from .action_evidence import read_action_evidence as _read_action_evidence
 from .simulator_video import legacy_rtx_kit_args
+from .runtime_identity import assert_runtime_identity
 
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
@@ -361,19 +363,24 @@ def _summarize(run_dir: Path) -> tuple[dict[str, Any], list[Path]]:
 
 def _gpu_info() -> dict[str, Any]:
     try:
-        import torch
-
-        return {
-            "available": bool(torch.cuda.is_available()),
-            "device_name": torch.cuda.get_device_name(0)
-            if torch.cuda.is_available()
-            else "",
-            "compute_capability": list(torch.cuda.get_device_capability(0))
-            if torch.cuda.is_available()
-            else [],
-        }
-    except Exception:
+        torch = import_module("torch")
+    except ModuleNotFoundError as exc:
+        if exc.name != "torch":
+            raise IsaacArenaError("PyTorch import failed because a dependency is missing") from exc
         return {"available": False, "device_name": "", "compute_capability": []}
+    except ImportError as exc:
+        raise IsaacArenaError("PyTorch could not be imported for CUDA inspection") from exc
+    try:
+        available = bool(torch.cuda.is_available())
+        if not available:
+            return {"available": False, "device_name": "", "compute_capability": []}
+        return {
+            "available": True,
+            "device_name": torch.cuda.get_device_name(0),
+            "compute_capability": list(torch.cuda.get_device_capability(0)),
+        }
+    except (AssertionError, OSError, RuntimeError) as exc:
+        raise IsaacArenaError("CUDA driver/device query failed during Arena evidence capture") from exc
 
 
 def _publish(local_dir: Path, output_path: str) -> str:
@@ -427,6 +434,7 @@ def _runtime_metadata(request: IsaacArenaRequest) -> dict[str, Any]:
             "validated": False,
         },
         "isaac_runtime_fetch": True,
+        "runtime_identity": assert_runtime_identity(),
         "lightwheel_sdk": {
             "version": LIGHTWHEEL_SDK_VERSION,
             "baked": True,

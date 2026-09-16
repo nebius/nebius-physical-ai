@@ -2,8 +2,12 @@
 
 ISAAC_ARENA_VERSION = "0.3.0"
 ISAAC_ARENA_REVISION = "ed0fd12be862078be316c73eb7cf423ba9b1c5cd"
+ISAAC_ARENA_ARCHIVE_SHA256 = (
+    "4e62ddbd7edc40fb47e62a0d5ba523eebc129482b4ce083612f17c79f1fc40a8"
+)
 LIGHTWHEEL_SDK_VERSION = "1.0.3"
 ISAAC_ARENA_ROOT = "/opt/isaac-arena"
+SOURCE_IDENTITY_SCHEMA = "npa.workbench.isaac_arena.source_identity.v1"
 ARTIFACT_SCHEMA = "npa.workbench.isaac_arena.evaluation.v1"
 CAPABILITIES_SCHEMA = "npa.workbench.isaac_arena.capabilities.v1"
 SUPPORTED_POLICIES = frozenset({"zero_action", "replay", "rsl_rl"})

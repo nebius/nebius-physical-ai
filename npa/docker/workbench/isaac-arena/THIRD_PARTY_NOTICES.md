@@ -21,9 +21,14 @@ the integration changes; the build helper is removed from the final image.
 - Distribution: <https://pypi.org/project/lightwheel-sdk/1.0.3/>
 - License: Apache License 2.0
 - Wheel SHA-256: `841ec064ab21a403de024e1e860541e9949e0ea2330d51961b1fdf49d0ec21cd`
+- Wheel METADATA SHA-256: `9c6ca9f214143e66b7ca8827b730a3b261437ae43ffd7ef494e5225f2dc4e850`
 - License evidence: the exact wheel's package description contains an
   Apache-2.0 license notice and URL; several client modules repeat the notice.
   It has no standalone license member or structured license metadata field.
+- Machine-readable evidence: `/opt/npa/docker/workbench/isaac-arena/license-evidence.json`;
+  the image build reads the installed distribution's actual `METADATA` bytes,
+  checks their hash and notice, and fails if the absent standalone-license or
+  structured-license-field shape changes.
 - Full license text shipped with the image: `/opt/isaac-arena/LICENSE.md`
 - Copyright notice: Copyright 2025 Lightwheel Team; retained in the installed
   distribution metadata and the applicable client modules
@@ -36,6 +41,10 @@ not redistribute them or grant rights to them.
 The pinned wheel also contains nested copies of its public client build tree
 and Python tests. These are included in the installed-byte security and license
 inspection; they are not registry assets or evidence of runtime asset rights.
+PyPI publishes no source distribution or standalone license artifact for this
+release. The redistribution basis is therefore the exact wheel's own immutable
+metadata and repeated module notices, not an inferred repository license. A
+different wheel or metadata hash requires a new review and fails the image build.
 
 ## Open-source evaluation dependencies
 
@@ -71,7 +80,12 @@ operator inputs and Lightwheel assets remains separate from these packages.
 ## NVIDIA Isaac Sim and Isaac Lab
 
 Neither is included in image layers. The pinned Isaac Lab 3.0.0b2.post1 wheel
-declares BSD-3-Clause. Its Isaac Sim and proprietary runtime dependencies have
+(`sha256:dd32886588479ffd70f7348019aeac1582eb9ad16c40244f41d9f458f96f73c3`)
+has `METADATA` hash
+`365d9b867dddc244d5aebe02becfe7a9bb8afea8fcdbfef7a4a9fb0a0266fae0`
+and declares `License: BSD-3-Clause`; it has no standalone license member. The
+runtime bootstrap hash-verifies the wheel and rejects a different installed
+license field. Its Isaac Sim and proprietary runtime dependencies have
 separate NVIDIA Omniverse, Isaac Sim additional software, and NVIDIA software
 license terms. The inherited `npa-isaac-lab` bootstrap fetches these runtime
 components only after the operator's acceptance of those applicable terms;

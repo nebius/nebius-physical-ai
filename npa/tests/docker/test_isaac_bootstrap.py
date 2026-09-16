@@ -137,6 +137,9 @@ case "${{1:-}}" in
             mkdir -p "$dist"
             printf 'Metadata-Version: 2.1\\nName: %s\\nVersion: %s\\n' "$name" "$version" \\
               > "$dist/METADATA"
+            if [ "$name" = "isaaclab" ]; then
+              printf 'License: BSD-3-Clause\\n' >> "$dist/METADATA"
+            fi
             printf 'Wheel-Version: 1.0\\n' > "$dist/WHEEL"
           done < "$reqfile"
         fi
@@ -296,6 +299,32 @@ def test_bootstrap_accepts_and_downloads_when_eula_is_unset(tmp_path: Path) -> N
     assert result.returncode == 0, result.stderr
     assert harness.downloaded_anything()
     assert result.stdout.strip()
+
+
+def test_isaac3_bootstrap_verifies_the_reviewed_lab_wheel_license(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    result = harness.run(
+        "ensure",
+        ISAAC_SIM_VERSION="6.0.1.0",
+        ISAAC_LAB_VERSION="3.0.0b2.post1",
+        NPA_ISAAC_WHEELS_FILE=str(ISAAC3_WHEELS),
+        NPA_ISAAC_OSS_DEPS_FILE=str(ISAAC3_OSS_DEPS),
+        NPA_ISAAC_LAB_METADATA_LICENSE="BSD-3-Clause",
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_isaac3_bootstrap_rejects_changed_lab_wheel_license(tmp_path: Path) -> None:
+    result = Harness(tmp_path).run(
+        "ensure",
+        ISAAC_SIM_VERSION="6.0.1.0",
+        ISAAC_LAB_VERSION="3.0.0b2.post1",
+        NPA_ISAAC_WHEELS_FILE=str(ISAAC3_WHEELS),
+        NPA_ISAAC_OSS_DEPS_FILE=str(ISAAC3_OSS_DEPS),
+        NPA_ISAAC_LAB_METADATA_LICENSE="unexpected-license",
+    )
+    assert result.returncode == EX_SOFTWARE
+    assert "isaaclab wheel license" in result.stderr
 
 
 def test_refusal_links_the_terms_the_operator_is_accepting(tmp_path: Path) -> None:

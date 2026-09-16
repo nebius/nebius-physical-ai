@@ -12,13 +12,18 @@ from .hashing import file_sha256
 
 
 def _plain_state(value: Any) -> Any:
-    import torch
+    try:
+        import torch
+    except ModuleNotFoundError as exc:
+        if exc.name != "torch":
+            raise
+        torch = None
 
     if isinstance(value, dict):
         return {key: _plain_state(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_plain_state(item) for item in value]
-    if isinstance(value, torch.Tensor):
+    if torch is not None and isinstance(value, torch.Tensor):
         return value.detach().cpu().tolist()
     if isinstance(value, (np.ndarray, np.generic)):
         return value.tolist()

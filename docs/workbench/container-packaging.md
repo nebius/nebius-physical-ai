@@ -182,8 +182,10 @@ The Isaac runtime images previously baked **NVIDIA Omniverse Kit (Isaac Sim)**.
 Isaac Sim's Apache-2.0 source license does not cover its proprietary Kit SDK and
 runtime dependencies. Classify each exact wheel and its bundled components:
 the `isaaclab==3.0.0b2.post1` wheel selected by Arena declares **BSD-3-Clause**,
-while Isaac Sim 6.0.1.0 and its proprietary runtime dependencies retain their
-separate NVIDIA terms. Do not apply a license finding from another wheel or
+in its structured `METADATA` License field. The exact wheel and metadata hashes
+are recorded in Arena's `license-evidence.json`; the wheel has no standalone
+license member. Isaac Sim 6.0.1.0 and its proprietary runtime dependencies
+retain their separate NVIDIA terms. Do not apply a license finding from another wheel or
 version to this Lab wheel, or extend its BSD license to the complete runtime.
 The [Arena third-party notices](../../npa/docker/workbench/isaac-arena/THIRD_PARTY_NOTICES.md)
 record these component boundaries.

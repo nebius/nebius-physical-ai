@@ -11,13 +11,10 @@ from npa.orchestration.skypilot.k8s_gpu_catalog import (
     KubernetesGpuInventory,
     KubernetesGpuNode,
     UnsatisfiableAcceleratorError,
-    _WORKFLOW_STORAGE_ENV_NAMES,
-    _cluster_validation_environment,
     context_from_infra,
     discover_kubernetes_gpu_catalog,
     discover_kubernetes_gpu_inventory,
     label_known_kubernetes_gpus_for_skypilot,
-    kubernetes_sky_environment,
     parse_kubernetes_gpu_catalog,
     preflight_kubernetes_gpu_gang,
     resolve_kubernetes_accelerator,
@@ -257,111 +254,6 @@ def test_discover_passes_exact_context_config_and_kubeconfig(
     assert set(catalog.quantities_by_accelerator) == {
         "RTXPRO-6000-BLACKWELL-SERVER-EDITION"
     }
-
-
-def test_cluster_validation_environment_is_stable_across_workflow_storage() -> None:
-    common = {
-        "KUBECONFIG": "/operator/kubeconfig",
-        "NEBIUS_PROFILE": "cluster-operator",
-        "AWS_REGION": "region-a",
-    }
-    first = _cluster_validation_environment(
-        {
-            **common,
-            "AWS_ACCESS_KEY_ID": "opaque-a",
-            "AWS_SECRET_ACCESS_KEY": "opaque-a",
-            "AWS_SESSION_TOKEN": "opaque-a",
-            "AWS_ENDPOINT_URL": "https://first.invalid",
-            "AWS_ENDPOINT_URL_S3": "https://first.invalid",
-            "NEBIUS_S3_ENDPOINT": "https://first.invalid",
-            "NEBIUS_S3_BUCKET": "first-bucket",
-            "NPA_CHECKPOINT_BUCKET": "first-checkpoints",
-            "NPA_S3_BUCKET": "first-bucket",
-            "NPA_S3_PREFIX": "runs/first",
-            "NPA_SRC_S3_URI": "s3://first-bucket/source",
-            "NPA_STORAGE_ENDPOINT": "https://first.invalid",
-            "NPA_WORKFLOW_RUN_PREFIX_URI": "s3://first-bucket/runs/first",
-            "NPA_WORKFLOW_S3_BUCKET": "first-bucket",
-            "NPA_WORKFLOW_S3_PREFIX": "runs/first",
-            "NPA_WORKFLOW_S3_PREFIX_RESOLVED": "runs/first",
-            "RCLONE_CONFIG_S3_ENDPOINT": "https://first.invalid",
-            "RCLONE_S3_ENDPOINT": "https://first.invalid",
-            "S3_BUCKET": "first-bucket",
-            "S3_ENDPOINT_URL": "https://first.invalid",
-            "SONIC_OUTPUT_PREFIX": "runs/first",
-        }
-    )
-    second = _cluster_validation_environment(
-        {
-            **common,
-            "AWS_ACCESS_KEY_ID": "opaque-b",
-            "AWS_SECRET_ACCESS_KEY": "opaque-b",
-            "AWS_SESSION_TOKEN": "opaque-b",
-            "AWS_ENDPOINT_URL": "https://second.invalid",
-            "AWS_ENDPOINT_URL_S3": "https://second.invalid",
-            "NEBIUS_S3_ENDPOINT": "https://second.invalid",
-            "NEBIUS_S3_BUCKET": "second-bucket",
-            "NPA_CHECKPOINT_BUCKET": "second-checkpoints",
-            "NPA_S3_BUCKET": "second-bucket",
-            "NPA_S3_PREFIX": "runs/second",
-            "NPA_SRC_S3_URI": "s3://second-bucket/source",
-            "NPA_STORAGE_ENDPOINT": "https://second.invalid",
-            "NPA_WORKFLOW_RUN_PREFIX_URI": "s3://second-bucket/runs/second",
-            "NPA_WORKFLOW_S3_BUCKET": "second-bucket",
-            "NPA_WORKFLOW_S3_PREFIX": "runs/second",
-            "NPA_WORKFLOW_S3_PREFIX_RESOLVED": "runs/second",
-            "RCLONE_CONFIG_S3_ENDPOINT": "https://second.invalid",
-            "RCLONE_S3_ENDPOINT": "https://second.invalid",
-            "S3_BUCKET": "second-bucket",
-            "S3_ENDPOINT_URL": "https://second.invalid",
-            "SONIC_OUTPUT_PREFIX": "runs/second",
-        }
-    )
-
-    assert first == second == common
-
-
-def test_isolated_cluster_discovery_reuses_one_storage_neutral_api(
-    tmp_path, monkeypatch, sky_bin: str
-) -> None:  # noqa: ANN001 - pytest fixtures
-    from npa.orchestration.skypilot import _bin, cleanup, local_api
-
-    kubeconfig = tmp_path / "kubeconfig"
-    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
-    isolated_root = tmp_path / "isolated"
-    environments: list[dict[str, str]] = []
-    ensures: list[dict[str, object]] = []
-
-    monkeypatch.delenv("SKYPILOT_GLOBAL_CONFIG", raising=False)
-    monkeypatch.setattr(_bin, "resolve_isolated_config_dir", lambda: isolated_root)
-
-    def fake_sky_environment(scope, *, environment):  # noqa: ANN001, ANN202
-        assert scope.is_relative_to(isolated_root / "cluster-validation")
-        environments.append(dict(environment))
-        return dict(environment)
-
-    monkeypatch.setattr(cleanup, "sky_environment", fake_sky_environment)
-    monkeypatch.setattr(
-        local_api, "ensure_isolated_api", lambda **kwargs: ensures.append(kwargs)
-    )
-
-    for suffix in ("a", "b"):
-        monkeypatch.setenv("AWS_ACCESS_KEY_ID", f"opaque-{suffix}")
-        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", f"opaque-{suffix}")
-        monkeypatch.setenv("AWS_ENDPOINT_URL", f"https://{suffix}.invalid")
-        monkeypatch.setenv("NPA_S3_BUCKET", f"bucket-{suffix}")
-        monkeypatch.setenv("NPA_S3_PREFIX", f"runs/{suffix}")
-        kubernetes_sky_environment(
-            context="owned-context",
-            kubeconfig=kubeconfig,
-            sky_executable=sky_bin,
-        )
-
-    assert len(environments) == len(ensures) == 2
-    assert environments[0] == environments[1]
-    assert ensures[0]["isolated_dir"] == ensures[1]["isolated_dir"]
-    assert environments[0]["KUBECONFIG"] == str(kubeconfig.resolve())
-    assert not _WORKFLOW_STORAGE_ENV_NAMES.intersection(environments[0])
 
 
 def test_discover_surfaces_a_failing_sky_invocation(sky_bin: str) -> None:

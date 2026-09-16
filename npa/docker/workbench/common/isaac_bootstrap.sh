@@ -64,6 +64,7 @@ OSS_DEPS_FILE="${NPA_ISAAC_OSS_DEPS_FILE:-$(dirname "$WHEELS_FILE")/isaac-oss-de
 BASE_PYTHON="${NPA_ISAAC_BASE_PYTHON:-}"
 ISAAC_SIM_VERSION="${ISAAC_SIM_VERSION:-5.1.0.0}"
 ISAAC_LAB_VERSION="${ISAAC_LAB_VERSION:-2.3.2.post1}"
+ISAAC_LAB_METADATA_LICENSE="${NPA_ISAAC_LAB_METADATA_LICENSE:-}"
 # Isaac Lab v2.3.2. The GitHub repo is BSD-3-Clause (unlike the wheel) and is the only
 # source of scripts/reinforcement_learning/, which every SkyPilot Isaac task invokes -
 # the wheel ships the library but no scripts/. Pinned by COMMIT, not tag: git tags are
@@ -297,6 +298,7 @@ EOF
 verify_tree() {
   local root="$1"
   ISAAC_SIM_VERSION="$ISAAC_SIM_VERSION" ISAAC_LAB_VERSION="$ISAAC_LAB_VERSION" \
+  ISAAC_LAB_METADATA_LICENSE="$ISAAC_LAB_METADATA_LICENSE" \
   NPA_ISAAC_TREE="$root" "$root/venv/bin/python" - >&2 <<'PY'
 import importlib.util
 import os
@@ -319,6 +321,14 @@ for package, expected in (
         problems.append(f"{package} is {found}, expected {expected}")
     if importlib.util.find_spec(package) is None:
         problems.append(f"{package} has no importable module")
+
+expected_license = os.environ["ISAAC_LAB_METADATA_LICENSE"]
+isaaclab_license = metadata.metadata("isaaclab").get("License", "")
+if expected_license and isaaclab_license != expected_license:
+    problems.append(
+        f"isaaclab wheel license is {isaaclab_license!r}, expected "
+        f"{expected_license!r}"
+    )
 
 train = root / "isaaclab-src" / "scripts" / "reinforcement_learning" / "rsl_rl" / "train.py"
 if not train.is_file():

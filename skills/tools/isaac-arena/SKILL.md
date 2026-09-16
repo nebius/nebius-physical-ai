@@ -99,10 +99,10 @@ a sanitized policy-to-`env.step` action journal covering the full scored episode
 finite nonzero varied actions, and zero synthetic padding. Replay must match the
 exact prepared private action-sequence prefix through the native terminal, while
 the complete prepared source sequence independently passes held-tail checks.
-Require each task-progress registry entry to declare its visual interval
-strategy, bounded context, progress visual signal, normalized task-object region,
-and spatial association radius. Keep its measured
-task-progress interval separately; for the microwave adapter, include up to 30
+Only `gr1_open_microwave` currently has semantic task-progress wiring. Its
+adapter must declare the visual interval strategy, bounded context, progress
+visual signal, normalized task-object region, and spatial association radius.
+Keep its measured task-progress interval separately; include up to 30
 leading action steps for approach/contact context, require an accepted coherent
 track to overlap native progress, and require connected monotonic structural
 change inside the exact progress interval, microwave workspace, and declared
@@ -297,6 +297,9 @@ B200 no-video and RTX required-video distinction in evidence.
 
 Cancel exact workflow runs before removing any dedicated resources. Do not
 destroy shared clusters, buckets, or reserved capacity after a validation run.
+Publication-failure copies are private mode `0700` but are not automatically
+bounded or pruned. Recover or remove the reported local directory after triage;
+repeated failures can consume worker disk.
 
 ## Diagnose
 

@@ -1,6 +1,7 @@
 """Verify Arena packaging, exact-source patches, and replay reset semantics."""
 
 import importlib.util
+import json
 import subprocess
 import sys
 import textwrap
@@ -27,6 +28,9 @@ REDISTRIBUTION = (
 )
 EVIDENCE_PATCH = (
     ROOT / "npa" / "docker" / "workbench" / "isaac-arena" / "patch_npa_evidence.py"
+)
+LICENSE_EVIDENCE = (
+    ROOT / "npa" / "docker" / "workbench" / "isaac-arena" / "license-evidence.json"
 )
 
 
@@ -60,6 +64,9 @@ def test_isaac_arena_image_is_exact_source_and_payload_clean_by_construction() -
     assert "'lightwheel-sdk':'1.0.3'" in text
     assert "'termcolor':'3.3.0'" in text
     assert "Licensed under the Apache License, Version 2.0" in text
+    assert ".npa-source-identity.json" in text
+    assert "verify_license_evidence.py" in text
+    assert "license-evidence.json" in text
     assert "test ! -e /home/ubuntu/.cache/lightwheel_sdk" in text
     assert "npa workbench isaac-arena evaluate" in text
     assert "patch_npa_evidence.py" in text
@@ -402,6 +409,47 @@ def test_isaac_arena_runtime_dependency_closure_is_hash_locked() -> None:
     redistribution = REDISTRIBUTION.read_text(encoding="utf-8")
     assert "exactly matches the loaded kernel driver" in redistribution
     assert "never installs these bytes on the node" in redistribution
+
+
+def test_isaac_arena_license_evidence_matches_exact_distribution_bytes() -> None:
+    evidence = json.loads(LICENSE_EVIDENCE.read_text(encoding="utf-8"))
+    assert evidence["schema"] == "npa.workbench.isaac_arena.license_evidence.v1"
+    lightwheel = evidence["lightwheel_sdk"]
+    assert lightwheel == {
+        "artifact_url": (
+            "https://files.pythonhosted.org/packages/21/e3/"
+            "68448f351bea9e1412bf13b62aa69eaf67ce652fd99a4aeafa4a5da3e1fb/"
+            "lightwheel_sdk-1.0.3-py3-none-any.whl"
+        ),
+        "declared_license": "Apache-2.0",
+        "declaration_form": "distribution description and installed module notices",
+        "distribution_name": "lightwheel-sdk",
+        "metadata_member": "lightwheel_sdk-1.0.3.dist-info/METADATA",
+        "metadata_sha256": (
+            "9c6ca9f214143e66b7ca8827b730a3b261437ae43ffd7ef494e5225f2dc4e850"
+        ),
+        "standalone_license_member": None,
+        "version": "1.0.3",
+        "wheel_sha256": (
+            "841ec064ab21a403de024e1e860541e9949e0ea2330d51961b1fdf49d0ec21cd"
+        ),
+    }
+    requirements = RUNTIME_REQUIREMENTS.read_text(encoding="utf-8")
+    assert lightwheel["wheel_sha256"] in requirements
+    isaaclab = evidence["isaac_lab_runtime_wheel"]
+    assert isaaclab["declared_license"] == "BSD-3-Clause"
+    assert isaaclab["declaration_form"] == "structured METADATA License field"
+    assert isaaclab["metadata_sha256"] == (
+        "365d9b867dddc244d5aebe02becfe7a9bb8afea8fcdbfef7a4a9fb0a0266fae0"
+    )
+    assert isaaclab["wheel_sha256"] == (
+        "dd32886588479ffd70f7348019aeac1582eb9ad16c40244f41d9f458f96f73c3"
+    )
+    assert isaaclab["standalone_license_member"] is None
+    isaac_wheels = (
+        ROOT / "npa" / "docker" / "workbench" / "common" / "isaac3-nvidia-wheels.txt"
+    ).read_text(encoding="utf-8")
+    assert isaaclab["wheel_sha256"] in isaac_wheels
 
 
 def test_isaac_arena_image_catalog_identity() -> None:

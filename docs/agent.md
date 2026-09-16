@@ -106,37 +106,9 @@ source as an owner default. Create a mode-`0600` JSON file outside the checkout:
 ]
 ```
 
-Then refresh the existing agent with:
-
-```bash
-npa agent bootstrap --project "<alias>" --name "<agent-name>" \
-  --artifact-source-file "<owner-only-json>" \
-  --output-prefix "<separate-agent-output-subtree>"
-```
-
-`--output-prefix` selects a key subtree in the deployment's existing output
-bucket. It cannot select a different bucket, credential, or project. Bootstrap
-persists its normalized value as `output_prefix`; later bootstraps reuse it.
-Without the option or a saved value, the existing deployment prefix remains the
-default. Equal, ancestor, or descendant overlap with a configured source in the
-same bucket is rejected, including a bucket-root default: choose a separate
-output subtree first. An empty read-source prefix covers its entire bucket, so
-that bucket cannot also hold Agent outputs.
-
-Session state defaults to `npa-agent/session-state` beneath the output subtree.
-A legacy `NPA_AGENT_STATE_S3_PREFIX` override must remain inside that subtree;
-an escaping or malformed override is rejected before storage access. Deployments
-without an output subtree retain their existing session-state prefix behavior.
-
-Artifact reads use the exact source project's owner-stored credentials; a source
-tuple never replaces deployment write credentials or the attached service
-account. Workflow outputs, chat/session persistence, and insights use deployment
-storage. `verify-live` exercises mutable APIs and writes validation artifacts:
-give it a dedicated Agent output subtree before running it, separate from any
-evaluation or golden-run prefix. Changing `--artifact-source-file` only selects
-readable evidence; it does not authorize publication into that source.
-
-Bootstrap persists the source tuple in the
+Then refresh the existing agent with
+`npa agent bootstrap --project <alias> --name <agent-name>
+--artifact-source-file <owner-only-json>`. Bootstrap persists the tuple in the
 owner-only NPA configuration and stages it in the service environment, so an
 ordinary exact run-id search continues to use the source after a restart. The
 tuple grants no access: the backend still verifies live S3 list/read capability,
@@ -144,13 +116,6 @@ and exact searches do not fall through to broader tenant discovery. Later
 bootstraps reuse the persisted source without requiring the file again.
 Passing a new source file explicitly replaces the saved default after a
 successful bootstrap.
-
-Bootstrap stages deployment storage in `NPA_AGENT_S3_*` and the ordinary AWS
-credential variables. It stages the artifact reader separately in
-`NPA_AGENT_ARTIFACT_S3_*` within the same owner-only environment file. These are
-bootstrap-managed service settings; setting an output variable on the machine
-running `verify-live` does not change the remote Agent's output scope. Passing
-an empty source list clears the saved selectors and separate read credentials.
 
 The `whole_path_capacity` check first reads the tenant quota aggregate. A
 project-scoped administrator may be forbidden from that tenant-wide read even
@@ -232,11 +197,6 @@ Deploy and bootstrap are **reconciled phased operations**. If a client loses the
 final Terraform/SSH response, repeating the exact same command adopts a matching
 healthy VM or resumes its first incomplete phase. It does not replace a healthy
 VM because a response went missing.
-
-Explicit `--output-prefix` or `--artifact-source-file` requests always restage
-the requested storage settings. If transport fails, an older healthy VM does
-not prove those settings were applied: bootstrap remains pending until the same
-command completes successfully.
 
 A completed service installer writes a private receipt before credential staging.
 On an interrupted retry, NPA reuses that install when the verified owner and

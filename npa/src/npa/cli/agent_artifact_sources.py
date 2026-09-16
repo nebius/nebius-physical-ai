@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import Any, Callable
-from urllib.parse import unquote
 
 from npa.clients.project_credential_store import project_credential_record
 from npa.cli.agent_access import normalize_configured_artifact_sources
@@ -80,11 +79,10 @@ def resolve_configured_artifact_storage_credentials(
     deployment_project_id: str,
     current: tuple[str, str, str, str, str, str],
 ) -> tuple[str, str, str, str, str, str]:
-    """Select an exact source project's owner-stored identity for artifact reads.
+    """Select an exact source project's owner-stored S3 identity.
 
     A source tuple is not a grant. Cross-project defaults therefore resolve
-    credentials only from that exact project's private credential record. The
-    returned tuple must never replace deployment output credentials or scope.
+    credentials only from that exact project's private credential record.
     """
     sources = normalize_configured_artifact_sources(artifact_sources)
     if not sources:
@@ -148,72 +146,6 @@ def resolve_configured_artifact_storage_credentials(
     )
 
 
-def _output_prefix(value: str) -> str:
-    """Normalize an output subtree and reject encoded or literal traversal."""
-    prefix = value.strip().strip("/")
-    decoded = prefix
-    for _ in range(3):
-        if decoded and (
-            "://" in decoded
-            or "\\" in decoded
-            or any(ord(char) < 32 for char in decoded)
-            or any(part in {"", ".", ".."} for part in decoded.split("/"))
-        ):
-            raise AgentStorageCredentialError(
-                "Agent output prefix must be an S3 key subtree."
-            )
-        decoded = unquote(decoded)
-    if decoded != prefix:
-        raise AgentStorageCredentialError(
-            "Agent output prefix must not contain URL escapes."
-        )
-    return prefix
-
-
-def resolve_agent_output_prefix(
-    record: dict[str, Any],
-    *,
-    requested: str,
-    bucket: str,
-    current_prefix: str,
-    artifact_sources: tuple[dict[str, str], ...] | list[dict[str, str]],
-) -> str:
-    """Choose deployment output scope independently of configured read sources.
-
-    Args:
-        record: Existing durable Agent configuration.
-        requested: Explicit bootstrap output prefix, or empty to reuse configuration.
-        bucket: Deployment output bucket, never inferred from a read selector.
-        current_prefix: Previously resolved deployment storage prefix.
-        artifact_sources: Normalized read-only project/bucket/prefix selectors.
-    Returns:
-        The normalized output subtree.
-    Raises:
-        AgentStorageCredentialError: The prefix is malformed or overlaps a read source.
-    """
-    prefix = _output_prefix(
-        requested or str(record.get("output_prefix", current_prefix))
-    )
-    for source in normalize_configured_artifact_sources(artifact_sources):
-        read_prefix = source["resolved_prefix"]
-        if source["bucket"] == bucket and _prefixes_overlap(prefix, read_prefix):
-            raise AgentStorageCredentialError(
-                "Agent outputs overlap a read-only artifact source; select a separate --output-prefix."
-            )
-    return prefix
-
-
-def _prefixes_overlap(output: str, source: str) -> bool:
-    """Compare whole key components, including a bucket-root scope."""
-    return (
-        not output
-        or not source
-        or output == source
-        or output.startswith(source + "/")
-        or source.startswith(output + "/")
-    )
-
-
 def resolve_agent_artifact_sources(
     record: dict[str, Any], *, artifact_source_file: str = ""
 ) -> tuple[dict[str, str], ...]:
@@ -227,7 +159,6 @@ __all__ = [
     "AgentStorageCredentialError",
     "resolve_agent_artifact_sources",
     "resolve_agent_service_account_id",
-    "resolve_agent_output_prefix",
     "resolve_agent_storage_credentials",
     "resolve_configured_artifact_storage_credentials",
 ]

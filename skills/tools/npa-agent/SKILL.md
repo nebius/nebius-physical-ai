@@ -33,16 +33,6 @@ bash npa/scripts/verify_agent_rerun_bundle.sh
 bash npa/scripts/verify_byof_onboarding_live.sh
 ```
 
-`verify-live` exercises mutable APIs and writes validation artifacts. Configure
-a dedicated deployment-bucket subtree with `npa agent bootstrap --output-prefix
-<subtree>` before running it. The prefix persists across bootstraps and must not
-overlap a configured read-only artifact source. `--artifact-source-file` selects
-evidence using separate source credentials; it never changes deployment writes,
-the remote operator profile, or the attached service account. An empty source
-list clears the separate read selectors and credentials. A host environment
-override does not change the remote Agent's output scope. See
-[Agent storage configuration](../../../docs/agent.md).
-
 ### Audit the capability surface without a VM
 
 Before claiming the agent does or does not support something, render the exact

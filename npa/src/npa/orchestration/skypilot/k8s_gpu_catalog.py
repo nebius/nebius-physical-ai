@@ -35,38 +35,6 @@ DEFAULT_DISCOVERY_TIMEOUT_SECONDS = 180
 DEFAULT_READINESS_TIMEOUT_SECONDS = 600
 DEFAULT_READINESS_POLL_SECONDS = 10.0
 
-# The cluster-validation API only queries the Kubernetes control plane.  It
-# must not inherit workflow artifact credentials or a run-specific S3 source
-# tuple: a prior standalone ``workflow gpus`` command and the later submit must
-# be able to reuse this exact kubeconfig/context-scoped daemon.  Keep provider
-# profile/config variables intact because the selected kubeconfig's exec plugin
-# may need them to authenticate to Kubernetes.
-_WORKFLOW_STORAGE_ENV_NAMES = frozenset(
-    {
-        "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY",
-        "AWS_SESSION_TOKEN",
-        "AWS_ENDPOINT_URL",
-        "AWS_ENDPOINT_URL_S3",
-        "NEBIUS_S3_ENDPOINT",
-        "NEBIUS_S3_BUCKET",
-        "NPA_CHECKPOINT_BUCKET",
-        "NPA_S3_BUCKET",
-        "NPA_S3_PREFIX",
-        "NPA_SRC_S3_URI",
-        "NPA_STORAGE_ENDPOINT",
-        "NPA_WORKFLOW_RUN_PREFIX_URI",
-        "NPA_WORKFLOW_S3_BUCKET",
-        "NPA_WORKFLOW_S3_PREFIX",
-        "NPA_WORKFLOW_S3_PREFIX_RESOLVED",
-        "RCLONE_CONFIG_S3_ENDPOINT",
-        "RCLONE_S3_ENDPOINT",
-        "S3_BUCKET",
-        "S3_ENDPOINT_URL",
-        "SONIC_OUTPUT_PREFIX",
-    }
-)
-
 
 class KubernetesGpuCatalogError(RuntimeError):
     """Raised when the live Kubernetes GPU catalog cannot be discovered."""
@@ -101,21 +69,8 @@ def _kubeconfig_env(kubeconfig: Kubeconfig) -> dict[str, str] | None:
     return env
 
 
-def _cluster_validation_environment(environment: Mapping[str, str]) -> dict[str, str]:
-    """Remove workflow-storage identity from read-only cluster discovery."""
-
-    return {
-        key: value
-        for key, value in environment.items()
-        if key not in _WORKFLOW_STORAGE_ENV_NAMES
-    }
-
-
 def kubernetes_sky_environment(
-    *,
-    context: str,
-    kubeconfig: Kubeconfig,
-    sky_executable: str,
+    *, context: str, kubeconfig: Kubeconfig, sky_executable: str,
 ) -> dict[str, str]:
     """Bind cluster checks and discovery to one exact owned API when isolated."""
     env = _kubeconfig_env(kubeconfig) or os.environ.copy()
@@ -130,7 +85,6 @@ def kubernetes_sky_environment(
             )
         kubeconfig_path = Path(selected).expanduser().resolve(strict=True)
         env["KUBECONFIG"] = str(kubeconfig_path)
-        env = _cluster_validation_environment(env)
         # Cluster validation may launch a GPU task. It must never fall through
         # to the operator's shared API, even before workflow submission exists.
         from npa.orchestration.skypilot.cleanup import sky_environment

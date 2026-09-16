@@ -357,6 +357,9 @@ That example concerns `isaaclab==2.3.2.post1`. The Arena-selected
 `isaaclab==3.0.0b2.post1` wheel instead declares BSD-3-Clause, as recorded in
 [Arena's notices](../../../npa/docker/workbench/isaac-arena/THIRD_PARTY_NOTICES.md).
 Its exact wheel hash is in the [runtime lock](../../../npa/docker/workbench/common/isaac3-nvidia-wheels.txt).
+The exact wheel has no standalone license member; Arena's machine-readable
+license evidence records the wheel and `METADATA` hashes, and the runtime
+bootstrap rejects a changed installed `License` field.
 Do not transfer the older wheel's classification to this version, or extend
 the Lab wheel's BSD grant to Isaac Sim 6.0.1.0 and its proprietary dependencies.
 Arena still fetches the complete simulator runtime closure at run time; its

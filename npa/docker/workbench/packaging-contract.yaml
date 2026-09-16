@@ -505,7 +505,12 @@ images:
       Isaac Lab-Arena 0.3.0 Apache-2.0 source from its checksum-verified release
       commit plus the hash-locked Apache-2.0 Lightwheel SDK client and the
       open-source Pinocchio, Pink, ONNX Runtime, and solver dependency closure
-      that Arena imports during registry discovery.
+      that Arena imports during registry discovery. The exact Lightwheel wheel
+      and METADATA hashes are recorded in machine-readable evidence and checked
+      against the installed image bytes; upstream publishes no standalone
+      license member or source distribution for that SDK release. The exact
+      runtime-fetched Isaac Lab wheel's structured BSD-3-Clause metadata field
+      is also asserted after its wheel hash is verified.
       Upstream tests, sample checkpoints, demonstration data, and documentation
       media are removed. Isaac Sim/Lab, Lightwheel registry assets, operator
       replay data, RSL-RL checkpoints, generated evaluation artifacts,

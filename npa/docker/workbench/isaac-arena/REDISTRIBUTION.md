@@ -7,6 +7,11 @@ Lightwheel SDK 1.0.3, Pinocchio, Pink, ONNX Runtime, and solver dependency
 closure. The exact Lightwheel wheel's package description includes an
 Apache-2.0 license notice and URL; several client modules repeat that notice.
 The wheel has no standalone license file or structured license metadata field.
+Its reviewed wheel and `METADATA` hashes are recorded in
+`license-evidence.json`, which the image build verifies against the installed
+distribution bytes. PyPI publishes no source distribution or stronger
+standalone license artifact for 1.0.3, so a different wheel, metadata hash, or
+license-file shape fails closed for renewed review.
 Recipients receive the full Apache-2.0 text at `/opt/isaac-arena/LICENSE.md`,
 alongside the retained Lightwheel copyright and license notices. The image
 inherits the accepted payload-clean `npa-isaac-lab` digest and does not contain

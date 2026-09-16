@@ -29,6 +29,7 @@ ENV NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     ISAAC_ARENA_VERSION=${ISAAC_ARENA_VERSION} \
     ISAAC_ARENA_REVISION=${ISAAC_ARENA_REVISION} \
     ISAAC_ARENA_ROOT=/opt/isaac-arena \
+    NPA_ISAAC_LAB_METADATA_LICENSE=BSD-3-Clause \
     PYTHONPATH=/opt/isaac-arena:/opt/npa/src
 
 USER root
@@ -48,8 +49,10 @@ COPY docker/workbench/isaac-arena/runtime-requirements.txt /opt/npa/docker/workb
 COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh /usr/local/bin/npa-workflow-entrypoint
 COPY docker/workbench/isaac-arena/REDISTRIBUTION.md /opt/npa/docker/workbench/isaac-arena/REDISTRIBUTION.md
 COPY docker/workbench/isaac-arena/THIRD_PARTY_NOTICES.md /opt/npa/docker/workbench/isaac-arena/THIRD_PARTY_NOTICES.md
+COPY docker/workbench/isaac-arena/license-evidence.json /opt/npa/docker/workbench/isaac-arena/license-evidence.json
 COPY --chmod=0755 docker/workbench/isaac-arena/smoke_functional.sh /opt/npa/docker/workbench/isaac-arena/smoke_functional.sh
 COPY docker/workbench/isaac-arena/patch_npa_evidence.py /tmp/patch_npa_evidence.py
+COPY docker/workbench/isaac-arena/verify_license_evidence.py /tmp/verify_license_evidence.py
 
 RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && dpkg-query -W openssh-server rsync sudo >/dev/null \
@@ -62,6 +65,9 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && printf '%s  %s\n' "${ISAAC_ARENA_ARCHIVE_SHA256}" /tmp/isaac-arena.tar.gz | sha256sum -c - \
     && tar -xzf /tmp/isaac-arena.tar.gz --strip-components=1 -C /opt/isaac-arena \
     && rm -f /tmp/isaac-arena.tar.gz \
+    && printf '%s\n' \
+      "{\"archive_sha256\":\"${ISAAC_ARENA_ARCHIVE_SHA256}\",\"revision\":\"${ISAAC_ARENA_REVISION}\",\"schema\":\"npa.workbench.isaac_arena.source_identity.v1\",\"version\":\"${ISAAC_ARENA_VERSION}\"}" \
+      > /opt/isaac-arena/.npa-source-identity.json \
     && /opt/npa/sim/venv/bin/python /tmp/patch_npa_evidence.py \
       /opt/isaac-arena/isaaclab_arena/evaluation/policy_runner.py \
       /opt/isaac-arena/isaaclab_arena/embodiments/embodiment_base.py \
@@ -111,6 +117,9 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
       --require-hashes -r /opt/npa/docker/workbench/isaac-arena/runtime-requirements.txt \
     && /opt/npa/sim/venv/bin/python -c \
       "import importlib.metadata as m; import lightwheel_sdk.loader; import onnxruntime, pinocchio, pink; expected={'pin':'4.0.0','pin-pink':'3.3.0','onnxruntime':'1.27.0','daqp':'0.8.5','qpsolvers':'4.12.0','lightwheel-sdk':'1.0.3','termcolor':'3.3.0'}; actual={name:m.version(name) for name in expected}; assert actual == expected, (expected, actual); metadata=m.distribution('lightwheel-sdk').read_text('METADATA') or ''; assert 'Licensed under the Apache License, Version 2.0' in metadata" \
+    && /opt/npa/sim/venv/bin/python /tmp/verify_license_evidence.py \
+      /opt/npa/docker/workbench/isaac-arena/license-evidence.json \
+    && rm -f /tmp/verify_license_evidence.py \
     && rm -rf /root/.cache/lightwheel_sdk \
     && test ! -e /root/.cache/lightwheel_sdk \
     && test ! -e /home/ubuntu/.cache/lightwheel_sdk \

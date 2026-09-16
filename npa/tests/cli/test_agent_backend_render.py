@@ -831,7 +831,7 @@ def test_chat_memory_is_deployment_scoped_and_rejects_legacy_tenant_state(
     monkeypatch.setenv("NPA_AGENT_NAME", "agent-test")
     monkeypatch.setattr(
         module,
-        "_agent_output_s3_settings",
+        "_agent_s3_settings",
         lambda: {"bucket": "private-bucket"},
     )
     try:
@@ -2504,7 +2504,7 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
     monkeypatch.setattr(module, "_load_state", lambda: state)
     monkeypatch.setattr(module, "_save_state", lambda payload: state.update(payload))
     monkeypatch.setattr(
-        module, "_agent_output_s3_settings", lambda: {"bucket": "configured-bucket", "prefix": ""}
+        module, "_agent_s3_settings", lambda: {"bucket": "configured-bucket"}
     )
     monkeypatch.setattr(
         module,
@@ -2541,7 +2541,7 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
     )
     assert "Could not generate runnable" not in reply
 
-    monkeypatch.setattr(module, "_agent_output_s3_settings", lambda: {"bucket": "", "prefix": ""})
+    monkeypatch.setattr(module, "_agent_s3_settings", lambda: {"bucket": ""})
     blocked = module._maybe_toolground_chat_reply("create sim2real yaml")
     assert blocked[3] is None
     assert blocked[4]["ok"] is False

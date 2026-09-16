@@ -159,6 +159,9 @@ and an HTML report are not guaranteed. An unfinished recorder buffer is retained
 separately as unscored diagnostic data when finalization runs. Request validation
 or input/setup failures can occur before a result tree exists, and interrupted
 workers may leave only workflow logs.
+Publication-failure copies are mode `0700` but have no automatic age, count, or
+byte pruning. Recover or remove the reported local directory after diagnosing the
+destination; repeated publication failures can otherwise consume worker disk.
 The original operator input and the normalized execution HDF5 are never output
 artifacts. The result redacts their location and binds both the source SHA-256
 and prepared execution-input SHA-256, along with source and prepared step counts.
@@ -198,9 +201,9 @@ contract requires one horizon across executed
 actions, the native scored episode, task progress, simulator capture, and video;
 replay steps must be nonzero and must not be synthetically padded or dominated by
 an effectively held tail. Environment-specific
-progress semantics are explicit registry entries rather than generic motion
-thresholds, and each entry declares its supported policy types. The sole current
-entry supports `gr1_open_microwave` with `replay` or `rsl_rl`: the upstream JSONL, numeric
+progress semantics are explicit adapters rather than generic motion thresholds.
+Only `gr1_open_microwave` currently has semantic task-progress wiring, for
+`replay` or `rsl_rl`: the upstream JSONL, numeric
 `success_rate > 0`, and HDF5 success flag must agree, the final door openness
 must exceed the upstream threshold of `0.8`, and maximum openness must increase
 at least `0.5` from the initial state. The adapter retains the progress interval
