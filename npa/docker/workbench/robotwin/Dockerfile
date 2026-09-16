@@ -23,7 +23,7 @@ COPY --chmod=0644 docker/workbench/robotwin/apt-packages.lock \
 RUN set -eux; \
     test "$(sha256sum /usr/share/keyrings/ubuntu-archive-keyring.gpg | cut -d ' ' -f1)" = "1a4dd63e5c76728960a2edddae22e2e0fc53df8e8b87806deb971030ac704eb0"; \
     test "$(sha256sum /opt/npa/robotwin/apt-packages.lock | cut -d ' ' -f1)" = "554ae7df404eb46788608a5b7d16e20c9d8f055e2678294b2f03b82a9caf666d"; \
-    test "$(sha256sum /opt/npa/robotwin/runtime-requirements.lock | cut -d ' ' -f1)" = "728845a6914f7ea3a94c0e4be2eb306496327cff224340c38aa9aaef24be7e33"; \
+    test "$(sha256sum /opt/npa/robotwin/runtime-requirements.lock | cut -d ' ' -f1)" = "17aeab03a727e6247bafff6bb03f3ecefc843ed3a4d76d14d1c174718eb6334a"; \
     rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; \
     printf '%s\n' \
       'Types: deb deb-src' \

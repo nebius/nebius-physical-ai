@@ -163,19 +163,25 @@ limits use to noncommercial research/evaluation. The operator's exact
 `noncommercial` statement for this bounded run is compatible with that field of
 use for containerization and technical workload validation/evaluation; it
 expires with the run and does not authorize hosted service or broader outputs.
-Those service/output questions stay human-gated even though a
+CuRobo's field-of-use limit continues to bind use and service claims and every
+generated workload. No additional generated-output restriction was found in
+the inspected authoritative terms for the five declared classes: native HDF5
+action/state data, decoded MP4, rendered frames, smoke JSON, and summary JSON.
+Hosted-service use remains unapproved even though a
 zero-vendor-payload bootstrap may be eligible for public redistribution after
 exact-byte review. Public artifacts require exact-revision payload probes;
 gated artifacts additionally require the customer's own runtime-only credential
 and an exact provider/artifact/revision/terms access result before provisioning.
 No generic consent flag is used. The candidate remains unbuilt,
 publication-quarantined, and absent from the public image table. The Hugging Face
-asset repository card says MIT, while the
-aggregate object archive includes mixed documented source families; future
-tasks must review the terms of their selected objects. Registry credentials,
-runtime fetch, and the byte-absence scan do not grant permission; the
-customer-issued exact-terms entitlement and the separate unresolved
-member-asset provenance/output treatment remain pre-fetch/pre-run gates. See
+asset repository card classifies the exact locked `embodiments.zip` and
+`objects.zip` members at revision
+`785feb15aa4a4f532395ad2b1d2be5f28cb561ad` as MIT. Other embodiments,
+unselected future task assets, training/evaluation, physical deployment, and
+their outputs remain independently deferred. Registry credentials, runtime
+fetch, and the byte-absence scan do not grant permission. Customer-issued
+entitlement for CUDA, cuDNN, and CuRobo plus the exact applicable payload probes
+remain pre-fetch/pre-run gates. See
 [`byof-robotwin.md`](byof-robotwin.md) for the exact license, GPU, workflow, and
 artifact contract.
 

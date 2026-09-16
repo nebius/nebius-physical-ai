@@ -250,13 +250,22 @@ noncommercial research/evaluation field-of-use restriction remains binding on
 use and service claims. Official assets remain a
 runtime fetch. The guarded live harness must refuse before building when the
 customer-issued, run/manifest/expiry-bound exact-terms entitlement is missing,
-declined, stale, or mismatched, and while aggregate member-asset provenance and
-output treatment remain unresolved. It must scan the pushed exact digest's
-rootfs and every layer for asset/cache/output bytes and launch only that scanned
-digest. Runtime fetch, a credential, a private registry, or a passing byte scan
-does not grant permission. Do not add the BYOF image to public GHCR or the
-public image catalog. The full 50-task sweep, policy training, and physical
-deployment are deferred.
+declined, stale, or mismatched. The repository MIT card classifies the two exact
+locked runtime members, `embodiments.zip` and `objects.zip`, at revision
+`785feb15aa4a4f532395ad2b1d2be5f28cb561ad`. No additional restriction was
+found in the inspected authoritative terms for the five declared output
+classes: native HDF5 action/state data, decoded MP4, rendered frames, smoke
+JSON, and summary JSON. CuRobo's noncommercial research/evaluation limit still
+binds their generating workload and all use/service claims; hosted service is
+not approved. Exact provider/artifact/revision payload probes remain required
+before provisioning, with the customer's runtime-only credential when an
+artifact is gated and no generic NPA terms boolean. The harness must scan the
+pushed exact digest's rootfs and every layer for asset/cache/output bytes and
+launch only that scanned digest. Runtime fetch, a credential, a private
+registry, or a passing byte scan does not grant permission. Do not add the BYOF
+image to public GHCR or the public image catalog. Other embodiments, unselected
+future task assets, the full 50-task sweep, policy training/evaluation, physical
+deployment, and their outputs remain independently deferred.
 
 ### OpenPI (`byof-openpi.yaml` + `openpi-pi05-four-mode.yaml`)
 
