@@ -40,6 +40,7 @@ Python and HTTP access follow each tool's documented contract.
 | Simulation-to-policy pipeline | [Sim2Real runbook](guides/sim2real-workflow.md) · [data contracts](guides/sim2real-data-contracts.md) · [customer assets](guides/sim2real-customer-assets.md) · [robot spec](guides/sim2real-robot-spec.md) |
 | Browser teleoperation | [LeIsaac](leisaac-teleoperation.md) · [latency measurement](guides/leisaac-transport-latency.md) |
 | Motion planning | [cuRobo](curobo.md) |
+| BEHAVIOR 2026 household challenge | [Evaluation workflow and rules](behavior-challenge.md) — requires a licensed runtime and fixed policy; GPU results pending |
 | Isaac Lab versions | [Isaac Lab 3](isaac-lab-3.md) |
 
 ## Data and evaluation

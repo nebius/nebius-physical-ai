@@ -1,0 +1,60 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "cb277c302c16112dab6ee824157b04e03e242eccdeb745ec2ddf853b97f77ca2",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec accepted the workflow and plan-spec rendered the evaluate stage with the pinned module and configured S3 input/output paths. This does not establish runtime readiness.",
+      "evidence": [
+        "workflows/testing/behavior-challenge-eval.yaml",
+        "npa/tests/orchestration/npa_workflow/test_submit_live_matrix.py",
+        "npa/tests/smoke/test_all_workflow_yamls.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Commands invoke the pinned official evaluator for prescribed cases; all 1000 report commands were accepted by upstream argparse. No policy score or training result is established.",
+      "evidence": [
+        "npa/tests/workflows/test_behavior_challenge.py",
+        "https://github.com/StanfordVL/BEHAVIOR-1K/tree/v3.9.2/OmniGibson/omnigibson/eval"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "Selected-project storage and exact private-prefix write/read probes passed for development. Operators must still replace the template bucket and verify their own output prefix.",
+      "evidence": [
+        "docs/workbench/behavior-challenge.md"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "Task-scoped approval was recorded and exact official asset archives and the radio checkpoint were staged privately. The template still requires operator-prepared mounted assets and policy configuration; real rollout validation remains pending.",
+      "evidence": [
+        "docs/workbench/behavior-challenge.md"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Selected-project storage and provider authentication passed, and the exact pinned upstream asset and model payloads were accessed. Credentials and licensed payloads remain private.",
+      "evidence": [
+        "docs/workbench/behavior-challenge.md"
+      ]
+    },
+    "source_image": {
+      "status": "blocked",
+      "reason": "The template runtime image is an operator placeholder. Private development uses a digest-pinned public bootstrap image with a separately prepared official Isaac Sim 5.1 runtime; simulator and policy compatibility remain unverified.",
+      "evidence": [
+        "docs/workbench/behavior-challenge.md"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The official radio policy loaded its verified checkpoint and passed HTTP readiness on RTX PRO 6000. The first simulator startup failed on a compute-only target without graphics mounts; its evidence was retained. A replacement rendering target passed stability, CUDA, GLX/EGL loading, and NVIDIA Vulkan enumeration on both GPU nodes. Official rollouts remain unverified.",
+      "evidence": [
+        "docs/workbench/behavior-challenge.md"
+      ]
+    }
+  }
+}
