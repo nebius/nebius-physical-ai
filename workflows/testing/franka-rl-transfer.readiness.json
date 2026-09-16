@@ -1,0 +1,63 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "f5377607715dc2c918b02954b82e91082f1039c213b7f9e5d52292618b0cd8f7",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec pass with five ordinary runtime stages.",
+      "evidence": [
+        "npa workbench workflow validate-spec",
+        "npa workbench workflow plan-spec --waves"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Native Franka, Kinova JACO2, and UR10e/Robotiq PPO use sealed USD parts, paired physics tests, per-episode hosted visual judgments, and actual LeRobot/Rerun exports.",
+      "evidence": [
+        "npa/tests/workflows/test_franka_rl.py",
+        "docs/workbench/guides/franka-rl-transfer.md"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "Dedicated project storage passed S3 credential preflight.",
+      "evidence": [
+        "Private operator preflight"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "All prepared asset bundles passed checksum readback. Each native embodiment completed 1500 PPO updates across 4096 environments without recorded PhysX errors; recorded joints, actions, and tool frames match the selected robot.",
+      "evidence": [
+        "docs/workbench/evidence/franka-parts-validation.json",
+        "docs/workbench/evidence/embodiment-parts-validation.json"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Nebius identity, project storage, and Token Factory authentication passed; the requested vision model is available to the account.",
+      "evidence": [
+        "Private operator preflight"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "Both digest-pinned images are pullable; Isaac image carries compatible bootstrap attestation. Branch source must be staged.",
+      "evidence": [
+        "npa workbench workflow preflight-images"
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "Franka baseline execution and both complete Kinova/UR10e workflows have verified native training, paired tests, hosted visual audits, and synchronized video/data/Rerun evidence. This verifies workflow execution; all measured policy qualification gates remain false. No physical robot was tested.",
+      "evidence": [
+        "docs/workbench/evidence/franka-parts-validation.json",
+        "docs/workbench/evidence/kinova_jaco7-parts-rtx.json",
+        "docs/workbench/evidence/ur10e_robotiq85-parts-rtx.json",
+        "docs/workbench/evidence/embodiment-parts-validation.json"
+      ]
+    }
+  }
+}

@@ -1,0 +1,136 @@
+"""Execute native Isaac Lab PPO or evaluation within one workflow-owned GPU task."""
+
+from __future__ import annotations
+
+import argparse
+from importlib.metadata import version
+import json
+import os
+from pathlib import Path
+import shutil
+import time
+
+from npa.workflows.lerobot_transfer_data import file_sha256, write_json
+
+
+def _runtime_versions() -> dict:
+    import torch
+
+    return {"isaaclab": version("isaaclab"), "rsl_rl": version("rsl-rl-lib"),
+            "torch": torch.__version__, "cuda": torch.version.cuda,
+            "gpu": torch.cuda.get_device_name(),
+            "compute_capability": list(torch.cuda.get_device_capability())}
+
+
+def _policy_parameters(runner):
+    import torch
+
+    return torch.cat([parameter.detach().flatten().cpu() for parameter in runner.alg.get_policy().parameters()])
+
+
+def _save_initial(runner, path: Path) -> None:
+    """Save native PPO state before its training logger has been initialized."""
+    import torch
+
+    payload = runner.alg.save()
+    payload.update(iter=runner.current_learning_iteration, infos=None)
+    torch.save(payload, path)
+
+
+def _train(args, recipe: dict, config) -> None:
+    import gymnasium as gym
+    import torch
+
+    from npa.workflows.franka_rl_environment import build_runner, physics_evidence
+
+    output = Path(args.output_path)
+    env = gym.make(recipe["task"], cfg=config)
+    try:
+        wrapped, runner, agent = build_runner(env, recipe, output / "checkpoints")
+        initial = output / "initial.pt"
+        _save_initial(runner, initial)
+        parameters_before = _policy_parameters(runner)
+        applied = physics_evidence(env)
+        started = time.monotonic()
+        runner.learn(num_learning_iterations=recipe["iterations"], init_at_random_ep_len=True)
+        final = output / "checkpoints" / f"model_{recipe['iterations']}.pt"
+        runner.save(str(final))
+        torch.cuda.synchronize()
+        parameter_delta = torch.linalg.vector_norm(_policy_parameters(runner) - parameters_before).item()
+        if not 0 < parameter_delta < float("inf"):
+            raise RuntimeError("Franka PPO policy parameters did not change finitely")
+        checkpoints = sorted((output / "checkpoints").glob("model_*.pt"))
+        if not checkpoints or file_sha256(initial) == file_sha256(final):
+            raise RuntimeError("PPO did not produce a changed checkpoint")
+        write_json(output / "training.json", {
+            "schema": "npa.franka-rl.training.v1", "recipe": recipe,
+            "agent": agent, "runtime": _runtime_versions(), "physics": applied,
+            "duration_seconds": time.monotonic() - started,
+            "policy_parameter_delta_l2": parameter_delta,
+            "transitions": recipe["iterations"] * recipe["num_envs"] * recipe["steps_per_env"],
+            "checkpoints": {p.relative_to(output).as_posix(): file_sha256(p) for p in [initial, *checkpoints]},
+            "policy_loaded": True, "physical_robot_tested": False,
+        })
+    finally:
+        env.close()
+
+
+def _execute_stage(args, recipe: dict, config) -> None:
+    if args.stage == "train":
+        _train(args, recipe, config)
+    elif args.stage == "capture":
+        from npa.workflows.franka_rl_capture import capture_policy
+
+        filename = "initial.pt" if args.capture_arm == "initial" else "selected.pt"
+        capture_policy(args.input_path / filename, args.output_path, recipe,
+                       arm=args.capture_arm, condition=args.condition)
+    else:
+        from npa.workflows.franka_rl_eval import evaluate_checkpoints, validate_checkpoints
+
+        operation = validate_checkpoints if args.stage == "validate" else evaluate_checkpoints
+        operation(args.input_path, args.output_path, recipe, _runtime_versions())
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Launch the pinned Isaac runtime and perform real simulation work.
+
+    Args:
+        argv: Native stage and Isaac launcher arguments.
+    Returns:
+        Zero after a complete native stage.
+    Raises:
+        RuntimeError: Runtime, training, checkpoint loading, or rendering fails.
+        ValueError: The experiment configuration is invalid.
+    """
+    from isaaclab_tasks.utils import add_launcher_args, launch_simulation
+    from isaaclab.utils.seed import configure_seed
+
+    from npa.workflows.franka_rl_environment import environment_config
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("stage", choices=("train", "validate", "test", "capture"))
+    parser.add_argument("--input-path", type=Path, required=True)
+    parser.add_argument("--output-path", type=Path, required=True)
+    parser.add_argument("--capture-arm", choices=("initial", "trained"), default="trained")
+    parser.add_argument("--condition", default="nominal")
+    add_launcher_args(parser)
+    args = parser.parse_args(argv)
+    recipe = json.loads((args.input_path / "recipe.json").read_text())
+    seed_key = {"train": "seed", "validate": "validation_seed", "test": "test_seed", "capture": "capture_seed"}
+    configure_seed(recipe[seed_key[args.stage]])
+    os.environ["OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA"] = "1"
+    config = environment_config(recipe, training=args.stage == "train", capture=args.stage == "capture",
+                                condition=args.condition, asset_root=args.input_path)
+    config.seed = recipe[seed_key[args.stage]]
+    args.enable_cameras = args.stage == "capture"
+    args.output_path.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(args.input_path / "recipe.json", args.output_path / "recipe.json")
+    if "assets" in recipe:
+        shutil.copytree(args.input_path / "assets", args.output_path / "assets", dirs_exist_ok=True)
+    with launch_simulation(config, args):
+        _execute_stage(args, recipe, config)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
