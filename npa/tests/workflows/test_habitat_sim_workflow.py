@@ -45,6 +45,55 @@ class Response(io.BytesIO):
         self.close()
 
 
+class Storage:
+    def __init__(self, *, fail_after: int | None = None):
+        self.objects: dict[tuple[str, str], bytes] = {}
+        self.fail_after = fail_after
+        self.uploads = 0
+        self.deleted: list[tuple[str, str]] = []
+
+    def _store(self, bucket: str, key: str, payload: bytes) -> None:
+        self.uploads += 1
+        if self.fail_after is not None and self.uploads > self.fail_after:
+            raise OSError("fixture interrupted upload")
+        self.objects[(bucket, key)] = payload
+
+    def upload_file(self, path, bucket, key):
+        self._store(bucket, key, Path(path).read_bytes())
+
+    def put_object(self, *, Bucket, Key, Body, ContentType, IfNoneMatch):
+        assert ContentType in {
+            "application/json",
+            "application/x-npy",
+            "image/png",
+        }
+        assert IfNoneMatch == "*"
+        if (Bucket, Key) in self.objects:
+            raise OSError("fixture immutable object already exists")
+        self._store(Bucket, Key, bytes(Body))
+
+    def head_object(self, *, Bucket, Key):
+        return {"ContentLength": len(self.objects[(Bucket, Key)])}
+
+    def get_object(self, *, Bucket, Key):
+        return {"Body": io.BytesIO(self.objects[(Bucket, Key)])}
+
+    def list_objects_v2(self, *, Bucket, Prefix, ContinuationToken=None):
+        assert ContinuationToken is None
+        return {
+            "IsTruncated": False,
+            "Contents": [
+                {"Key": key}
+                for bucket, key in sorted(self.objects)
+                if bucket == Bucket and key.startswith(Prefix)
+            ],
+        }
+
+    def delete_object(self, *, Bucket, Key):
+        self.deleted.append((Bucket, Key))
+        self.objects.pop((Bucket, Key), None)
+
+
 def _archive(scene: bytes = b"scene", navmesh: bytes = b"navmesh") -> bytes:
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
@@ -90,7 +139,8 @@ def test_one_state_workflow_validates_plans_and_never_selects_b200() -> None:
     assert resource["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
     assert resource["image"] == "tool://habitat-sim"
     assert "B200" not in json.dumps(payload)
-    assert "habitat-sim-smoke.json" in json.dumps(payload["states"])
+    assert "habitat-sim-publication-ready.json" in json.dumps(payload["states"])
+    assert payload["config"]["plan_sha256"] == "0" * 64
 
 
 def test_renderer_preserves_the_exact_one_rtx_habitat_placement() -> None:
@@ -192,6 +242,57 @@ def test_official_archive_extracts_only_exact_members_and_removes_bundle(
     assert {path.name for path in root.iterdir()} == {H.NAVMESH_NAME, H.SCENE_NAME}
 
 
+def test_archive_redirect_is_refused_before_target_contact(tmp_path, monkeypatch) -> None:
+    events: list[str] = []
+
+    class Opener:
+        def __init__(self, handler):
+            self.handler = handler
+
+        def open(self, request, timeout):
+            assert timeout == 120 and request.full_url == H.ARCHIVE_URL
+            events.append("official-origin")
+            with pytest.raises(H.SmokeFailure, match="redirects are not permitted"):
+                self.handler.redirect_request(
+                    request,
+                    None,
+                    302,
+                    "Found",
+                    {},
+                    "https://redirect-target.invalid/archive.zip",
+                )
+            events.append("refused-before-target")
+            raise H.SmokeFailure("redirects are not permitted")
+
+    def build_opener(handler):
+        assert isinstance(handler, H._RefuseRedirects)
+        return Opener(handler)
+
+    monkeypatch.setattr(H.urllib.request, "build_opener", build_opener)
+    with pytest.raises(H.SmokeFailure, match="redirects are not permitted"):
+        H._download(tmp_path / "archive.part")
+    assert events == ["official-origin", "refused-before-target"]
+    assert not (tmp_path / "archive.part").exists()
+
+
+def test_archive_origin_is_validated_before_open(tmp_path, monkeypatch) -> None:
+    contacted = False
+
+    def opener(*_args, **_kwargs):
+        nonlocal contacted
+        contacted = True
+        raise AssertionError("opener must not be called")
+
+    monkeypatch.setattr(
+        H,
+        "ARCHIVE_URL",
+        "http://dl.fbaipublicfiles.com/habitat/habitat-test-scenes.zip",
+    )
+    with pytest.raises(H.SmokeFailure, match="pinned HTTPS origin"):
+        H._download(tmp_path / "archive.part", opener=opener)
+    assert contacted is False
+
+
 @pytest.mark.parametrize("payload", [b"unavailable", b"not-a-zip"])
 def test_missing_or_corrupt_archive_never_leaves_partial_payload(
     tmp_path, monkeypatch, payload
@@ -249,6 +350,10 @@ def test_runtime_cache_cleanup_refuses_preexisting_or_replaced_path(tmp_path) ->
                 str(tmp_path / "outputs"),
                 "--output-uri",
                 "s3://fixture/output",
+                "--run-id",
+                "fixture-run",
+                "--plan-sha256",
+                "a" * 64,
             ]
         )
     assert sentinel.read_text(encoding="utf-8") == "not run owned"
@@ -275,7 +380,7 @@ def test_main_removes_its_claimed_cache_after_fetch_failure(
     monkeypatch.setattr(H, "_immutable_image", lambda: ("image", "digest"))
     monkeypatch.setattr(H, "query_gpu", lambda: {})
 
-    def fail_fetch(root, _opener=H.urllib.request.urlopen, *, create_root=True):
+    def fail_fetch(root, _opener=None, *, create_root=True):
         assert root == cache and create_root is False
         assert (root / ".npa-run-owner").is_file()
         (root / "partial").write_bytes(b"partial")
@@ -289,6 +394,10 @@ def test_main_removes_its_claimed_cache_after_fetch_failure(
                 str(output),
                 "--output-uri",
                 "s3://fixture/output",
+                "--run-id",
+                "fixture-run",
+                "--plan-sha256",
+                "a" * 64,
             ]
         )
     assert not cache.exists()
@@ -341,6 +450,10 @@ def _live_receipt(tmp_path: Path) -> dict[str, object]:
     registry_path.write_text(json.dumps(registry_evidence), encoding="utf-8")
     registry_path.chmod(0o600)
     return {
+        "schema_version": "npa.habitat-sim.image-live.v1",
+        "head": "fixture-head",
+        "workflow_sha256": hashlib.sha256(WORKFLOW.read_bytes()).hexdigest(),
+        "run_id": "habitat-fixture",
         "transaction_started_at": "2026-09-10T23:59:59Z",
         "registry": "private.invalid/task-owned",
         "image": image,
@@ -351,6 +464,15 @@ def _live_receipt(tmp_path: Path) -> dict[str, object]:
         "kubernetes_context": provider["kubernetes_context"],
         "project": provider["project"],
         "project_id": provider["project_id"],
+        "namespace": "habitat-fixture",
+        "pod_name": "habitat-fixture-pod",
+        "pod_uid": "habitat-fixture-pod-uid",
+        "kubeconfig": str(owner / "kubeconfig"),
+        "storage": {
+            "endpoint": "https://storage.invalid",
+            "bucket": "fixture-bucket",
+            "prefix": "run-owned/habitat-fixture",
+        },
         "target": {
             "policy": "STRICT",
             "accelerator": provider["accelerator"],
@@ -371,6 +493,236 @@ def _live_receipt(tmp_path: Path) -> dict[str, object]:
             "verified_at": provider["verified_at"],
         },
     }
+
+
+def _bound_live_fixture(tmp_path: Path):
+    import numpy as np
+
+    receipt = _live_receipt(tmp_path)
+    owner = Path(receipt["reservation"]["provider_receipt_path"]).parent
+    image = receipt["image"]
+    runtime_output = str(tmp_path / "runtime-output")
+    plan = {
+        "schema_version": "npa.habitat-sim.rendered-plan.v1",
+        "workflow_name": "habitat-sim-smoke",
+        "workflow_sha256": receipt["workflow_sha256"],
+        "run_id": receipt["run_id"],
+        "image": image,
+        "namespace": receipt["namespace"],
+        "pod_name": receipt["pod_name"],
+        "node_name": "worker-fixture",
+        "output_dir": runtime_output,
+        "output_uri": "s3://fixture-bucket/run-owned/habitat-fixture/",
+        "pod_command": ["python3", "-m", "npa.workflows.habitat_sim_smoke"],
+        "pod_args": [
+            "--output-dir",
+            runtime_output,
+            "--output-uri",
+            "s3://fixture-bucket/run-owned/habitat-fixture/",
+            "--run-id",
+            "habitat-fixture",
+            "--plan-sha256",
+            LIVE.PLAN_PLACEHOLDER,
+        ],
+        "environment": {
+            "NPA_TASK_IMAGE": image,
+            "NPA_WORKFLOW_NAME": "habitat-sim-smoke",
+            "NPA_WORKFLOW_RUN_ID": receipt["run_id"],
+            "NPA_WORKFLOW_STATE": "render-traversal",
+        },
+        "runtime_uid": 1000,
+        "gpu": {
+            "accelerator": "RTX PRO 6000 Blackwell",
+            "count": 1,
+            "compute_capability": "12.0",
+        },
+    }
+    plan_path = owner / "rendered-plan.json"
+    plan_path.write_text(json.dumps(plan, sort_keys=True), encoding="utf-8")
+    plan_path.chmod(0o600)
+    plan_sha256 = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+    receipt["rendered_plan"] = {"path": str(plan_path), "sha256": plan_sha256}
+
+    outputs = tmp_path / "outputs"
+    observations = outputs / "habitat-sim-observations"
+    observations.mkdir(parents=True)
+    frame_records = []
+    for index in range(2):
+        rgb = f"rgb-{index}".encode()
+        depth = f"depth-{index}".encode()
+        preview = f"preview-{index}".encode()
+        rgb_path = observations / f"rgb-{index:04d}.png"
+        depth_path = observations / f"depth-{index:04d}.npy"
+        preview_path = observations / f"depth-{index:04d}.png"
+        rgb_path.write_bytes(rgb)
+        depth_path.write_bytes(depth)
+        preview_path.write_bytes(preview)
+        frame_records.append(
+            {
+                "index": index,
+                "action": "move_forward",
+                "rgb_shape": [240, 320, 4],
+                "rgb_raw_sha256": hashlib.sha256(rgb + b"-raw").hexdigest(),
+                "rgb_png_path": str(rgb_path.relative_to(outputs)),
+                "rgb_png_media_type": "image/png",
+                "rgb_png_bytes": len(rgb),
+                "rgb_png_sha256": hashlib.sha256(rgb).hexdigest(),
+                "depth_shape": [240, 320],
+                "depth_raw_sha256": hashlib.sha256(depth + b"-raw").hexdigest(),
+                "depth_npy_path": str(depth_path.relative_to(outputs)),
+                "depth_npy_media_type": "application/x-npy",
+                "depth_npy_bytes": len(depth),
+                "depth_npy_sha256": hashlib.sha256(depth).hexdigest(),
+                "depth_preview_png_path": str(preview_path.relative_to(outputs)),
+                "depth_preview_png_media_type": "image/png",
+                "depth_preview_png_bytes": len(preview),
+                "depth_preview_png_sha256": hashlib.sha256(preview).hexdigest(),
+            }
+        )
+    member_records = {
+        H.SCENE_NAME: {
+            "name": H.MEMBER_SPECS[H.SCENE_NAME]["archive_member"],
+            "bytes": H.MEMBER_SPECS[H.SCENE_NAME]["bytes"],
+            "compressed_bytes": 1,
+            "crc32": H.MEMBER_SPECS[H.SCENE_NAME]["crc32"],
+            "sha256": H.SCENE_SHA256,
+        },
+        H.NAVMESH_NAME: {
+            "name": H.MEMBER_SPECS[H.NAVMESH_NAME]["archive_member"],
+            "bytes": H.MEMBER_SPECS[H.NAVMESH_NAME]["bytes"],
+            "compressed_bytes": 1,
+            "crc32": H.MEMBER_SPECS[H.NAVMESH_NAME]["crc32"],
+            "sha256": H.NAVMESH_SHA256,
+        },
+    }
+    archive = {
+        "url": H.ARCHIVE_URL,
+        "url_role": "mutable official locator only",
+        "checked_at_utc": "2026-09-11T00:00:00+00:00",
+        "response_metadata": {
+            "status": 200,
+            "content_length": str(H.ARCHIVE_BYTES),
+            "content_type": "application/zip",
+            "etag": None,
+            "last_modified": None,
+        },
+        "bytes": H.ARCHIVE_BYTES,
+        "sha256": H.ARCHIVE_SHA256,
+        "url_is_mutable": True,
+        "zip_integrity": "pass",
+        "ephemeral_copy_removed": True,
+        "unrelated_members_extracted": False,
+    }
+    traversal = {
+        "count": 2,
+        "finite_depth": np.array([0.5, 1.0, 2.0], dtype=np.float32),
+        "start": np.array([0.0, 0.0, 0.0]),
+        "end": np.array([1.0, 0.0, 0.0]),
+        "goal": np.array([2.0, 0.0, 0.0]),
+        "displacement": 1.0,
+        "geodesic": 2.0,
+        "actions": ["move_forward", "move_forward"],
+        "collisions": 0,
+        "physics_start": 0.0,
+        "physics_end": 2.0 / 60.0,
+        "fps": 30.0,
+        "egl": {
+            "backend": "EGL",
+            "display_unset": True,
+            "gl": {
+                "vendor": "NVIDIA Corporation",
+                "renderer": "NVIDIA RTX PRO 6000 Blackwell",
+                "version": "fixture",
+            },
+            "libraries": ["/usr/lib/libEGL.so.1", "/usr/lib/libEGL_nvidia.so.0"],
+        },
+        "rgb_hash": "a" * 64,
+        "depth_hash": "b" * 64,
+        "records": frame_records,
+    }
+    source_manifest = ROOT / "npa/docker/workbench/habitat-sim/source-manifest.json"
+    source = {
+        "repository": "https://github.com/facebookresearch/habitat-sim",
+        "requested_revision": H.SOURCE_REVISION,
+        "observed_revision": H.SOURCE_REVISION,
+        "license": "MIT",
+        "manifest_sha256": hashlib.sha256(source_manifest.read_bytes()).hexdigest(),
+    }
+    gpu = {
+        "count": 1,
+        "model": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "architecture": "Blackwell",
+        "compute_capability": "12.0",
+        "observation_source": "nvidia-smi inside the workload pod",
+    }
+    proof = H._proof(
+        source,
+        image,
+        image.rsplit("@", 1)[1],
+        gpu,
+        archive,
+        member_records,
+        traversal,
+        receipt["run_id"],
+        plan_sha256,
+    )
+    proof_path = outputs / "habitat-sim-smoke.json"
+    proof_path.write_text(
+        json.dumps(proof, allow_nan=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    storage = Storage()
+    publication = H._upload_directory(
+        outputs,
+        "s3://fixture-bucket/run-owned/habitat-fixture/",
+        client=storage,
+        stage_token="1" * 32,
+    )
+    termination_path = tmp_path / "termination.json"
+    H._write_termination_receipt(publication, proof, termination_path)
+    termination = json.loads(termination_path.read_text(encoding="utf-8"))
+    pod = {
+        "metadata": {"uid": receipt["pod_uid"]},
+        "spec": {
+            "nodeName": "worker-fixture",
+            "containers": [
+                {
+                    "name": "smoke",
+                    "image": image,
+                    "command": plan["pod_command"],
+                    "args": [
+                        plan_sha256 if item == LIVE.PLAN_PLACEHOLDER else item
+                        for item in plan["pod_args"]
+                    ],
+                    "env": [
+                        {"name": name, "value": value}
+                        for name, value in plan["environment"].items()
+                    ],
+                    "securityContext": {"runAsNonRoot": True, "runAsUser": 1000},
+                }
+            ],
+        },
+        "status": {
+            "phase": "Succeeded",
+            "containerStatuses": [
+                {
+                    "name": "smoke",
+                    "imageID": "docker-pullable://" + image,
+                    "state": {
+                        "terminated": {
+                            "exitCode": 0,
+                            "message": json.dumps(termination),
+                        }
+                    },
+                }
+            ],
+        },
+    }
+    node = {
+        "metadata": {"name": "worker-fixture"},
+        "spec": {"providerID": "nebius://instance-fixture"},
+    }
+    return receipt, plan, plan_sha256, pod, node, storage, publication
 
 
 def test_live_receipt_binds_private_image_and_strict_provider_readback(
@@ -497,6 +849,8 @@ def test_named_smoke_proof_declares_schema_at_artifact_root() -> None:
         {"bytes": 3, "sha256": "d" * 64},
         records,
         traversal,
+        "fixture-run",
+        "d" * 64,
     )
 
     assert proof["schema_version"] == "npa.habitat-sim.smoke.v1"
@@ -522,37 +876,140 @@ def test_live_selector_binds_pod_node_to_provider_receipt(tmp_path) -> None:
         LIVE._assert_pod_provider_node(pod, node, provider)
 
 
-def test_live_selector_requires_exact_digest_and_terminated_zero_exit() -> None:
-    image = "private.invalid/task/npa-habitat-sim@sha256:" + "a" * 64
-    pod = {
-        "spec": {"containers": [{"name": "smoke", "image": image}]},
-        "status": {
-            "phase": "Succeeded",
-            "containerStatuses": [
-                {
-                    "name": "smoke",
-                    "imageID": "docker-pullable://" + image,
-                    "state": {"terminated": {"exitCode": 0}},
-                }
-            ],
-        },
+def _validate_bound_fixture(tmp_path: Path, monkeypatch):
+    receipt, _plan, _plan_hash, pod, node, storage, _publication = (
+        _bound_live_fixture(tmp_path)
+    )
+    monkeypatch.setattr(LIVE, "_storage_client", lambda _receipt: storage)
+    provider = LIVE._assert_provider_binding(receipt)
+    plan, plan_hash = LIVE._rendered_plan(receipt, provider)
+    LIVE._assert_pod_provider_node(pod, node, provider)
+    image_id, termination = LIVE._assert_pod_completion(
+        pod, receipt, plan, plan_hash
+    )
+    ready, manifest, client = LIVE._publication(receipt, termination)
+    proof, payload = LIVE._proof(receipt, ready, client)
+    LIVE._assert_proof(proof, receipt, provider, plan_hash, manifest)
+    LIVE._assert_observation_readback(proof, receipt, manifest, client)
+    return {
+        "receipt": receipt,
+        "provider": provider,
+        "plan": plan,
+        "plan_hash": plan_hash,
+        "pod": pod,
+        "node": node,
+        "storage": storage,
+        "ready": ready,
+        "manifest": manifest,
+        "proof": proof,
+        "payload": payload,
+        "image_id": image_id,
+        "termination": termination,
     }
-    assert LIVE._assert_pod_completion(pod, image).endswith("@sha256:" + "a" * 64)
-    pod["status"]["containerStatuses"][0]["state"]["terminated"]["exitCode"] = 1
-    with pytest.raises(AssertionError):
-        LIVE._assert_pod_completion(pod, image)
-    pod["status"]["containerStatuses"][0]["state"]["terminated"]["exitCode"] = 0
-    pod["status"]["containerStatuses"][0]["imageID"] = (
-        "docker-pullable://private.invalid/task/npa-habitat-sim@sha256:" + "b" * 64
+
+
+def test_live_selector_accepts_only_fully_bound_mock_evidence(
+    tmp_path, monkeypatch
+) -> None:
+    validated = _validate_bound_fixture(tmp_path, monkeypatch)
+    assert validated["image_id"].endswith("@sha256:" + "a" * 64)
+    assert validated["proof"]["exit_status"] == 0
+
+
+@pytest.mark.parametrize("field", ["command", "args", "image", "uid", "plan"])
+def test_live_selector_rejects_unbound_pod_execution(tmp_path, field) -> None:
+    receipt, plan, plan_hash, pod, _node, _storage, _publication = (
+        _bound_live_fixture(tmp_path)
     )
+    if field == "command":
+        pod["spec"]["containers"][0]["command"] = ["python3", "--help"]
+    elif field == "args":
+        pod["spec"]["containers"][0]["args"] = ["--help"]
+    elif field == "image":
+        pod["spec"]["containers"][0]["image"] = (
+            "private.invalid/task/npa-habitat-sim@sha256:" + "b" * 64
+        )
+    elif field == "uid":
+        pod["spec"]["containers"][0]["securityContext"]["runAsUser"] = 0
+    else:
+        terminated = pod["status"]["containerStatuses"][0]["state"]["terminated"]
+        message = json.loads(terminated["message"])
+        message["rendered_plan_sha256"] = "b" * 64
+        terminated["message"] = json.dumps(message)
     with pytest.raises(AssertionError):
-        LIVE._assert_pod_completion(pod, image)
-    pod["status"]["containerStatuses"][0]["imageID"] = "docker-pullable://" + image
-    pod["spec"]["containers"][0]["image"] = (
-        "private.invalid/task/npa-habitat-sim@sha256:" + "b" * 64
+        LIVE._assert_pod_completion(pod, receipt, plan, plan_hash)
+
+
+def test_live_selector_rejects_wrong_node_gpu_workflow_and_extra_proof(
+    tmp_path, monkeypatch
+) -> None:
+    receipt, _plan, _plan_hash, pod, node, storage, _publication = (
+        _bound_live_fixture(tmp_path)
     )
+    monkeypatch.setattr(LIVE, "_storage_client", lambda _receipt: storage)
+    provider = LIVE._assert_provider_binding(receipt)
+    plan, plan_hash = LIVE._rendered_plan(receipt, provider)
+    _image_id, termination = LIVE._assert_pod_completion(
+        pod, receipt, plan, plan_hash
+    )
+    ready, manifest, client = LIVE._publication(receipt, termination)
+    proof, _payload = LIVE._proof(receipt, ready, client)
+
+    node["metadata"]["name"] = "wrong-worker"
     with pytest.raises(AssertionError):
-        LIVE._assert_pod_completion(pod, image)
+        LIVE._assert_pod_provider_node(pod, node, provider)
+    node["metadata"]["name"] = "worker-fixture"
+
+    proof["observed_gpu"]["model"] = "NVIDIA B200"
+    with pytest.raises(AssertionError):
+        LIVE._assert_proof(proof, receipt, provider, plan_hash, manifest)
+    proof["observed_gpu"]["model"] = "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+
+    proof["execution_binding"]["workflow_name"] = "fabricated-workflow"
+    with pytest.raises(AssertionError):
+        LIVE._assert_proof(proof, receipt, provider, plan_hash, manifest)
+    proof["execution_binding"]["workflow_name"] = "habitat-sim-smoke"
+    proof["caller_selected_extra"] = True
+    with pytest.raises(AssertionError):
+        LIVE._assert_proof(proof, receipt, provider, plan_hash, manifest)
+
+
+def test_live_selector_rejects_fabricated_proof_and_incomplete_inventory(
+    tmp_path, monkeypatch
+) -> None:
+    receipt, plan, plan_hash, pod, _node, storage, publication = (
+        _bound_live_fixture(tmp_path)
+    )
+    monkeypatch.setattr(LIVE, "_storage_client", lambda _receipt: storage)
+    _image_id, termination = LIVE._assert_pod_completion(
+        pod, receipt, plan, plan_hash
+    )
+    ready, _manifest, client = LIVE._publication(receipt, termination)
+    proof_key = (receipt["storage"]["bucket"], ready["proof_key"])
+    storage.objects[proof_key] += b" "
+    with pytest.raises(AssertionError):
+        LIVE._proof(receipt, ready, client)
+
+    storage.objects[proof_key] = storage.objects[proof_key][:-1]
+    observation_key = next(
+        row["key"] for row in publication["objects"] if row["path"].endswith(".npy")
+    )
+    storage.objects.pop((receipt["storage"]["bucket"], observation_key))
+    with pytest.raises(AssertionError):
+        LIVE._publication(receipt, termination)
+
+
+def test_live_selector_ignores_stage_without_ready_marker(tmp_path, monkeypatch) -> None:
+    receipt, plan, plan_hash, pod, _node, storage, publication = (
+        _bound_live_fixture(tmp_path)
+    )
+    monkeypatch.setattr(LIVE, "_storage_client", lambda _receipt: storage)
+    _image_id, termination = LIVE._assert_pod_completion(
+        pod, receipt, plan, plan_hash
+    )
+    storage.objects.pop((receipt["storage"]["bucket"], publication["ready_key"]))
+    with pytest.raises(KeyError):
+        LIVE._publication(receipt, termination)
 
 
 def test_live_receipt_reader_rejects_symlink_and_foreign_owner(
@@ -655,34 +1112,69 @@ def test_runtime_contract_requires_real_gpu_egl_bullet_navigation_and_attributio
     assert H.ARCHIVE_URL.startswith("https://dl.fbaipublicfiles.com/")
 
 
-def test_storage_upload_reads_back_hashes_and_records_media_types(
-    tmp_path, monkeypatch
+def test_interrupted_storage_publication_deletes_only_exact_staged_keys(
+    tmp_path,
 ) -> None:
-    outputs = tmp_path / "outputs"
-    outputs.mkdir()
-    (outputs / "proof.json").write_bytes(b"{}\n")
-    (outputs / "rgb.png").write_bytes(b"png")
-    (outputs / "depth.npy").write_bytes(b"npy")
+    _bound_live_fixture(tmp_path)
+    storage = Storage(fail_after=8)
+    with pytest.raises(OSError, match="interrupted upload"):
+        H._upload_directory(
+            tmp_path / "outputs",
+            "s3://fixture-bucket/run-owned/interrupted/",
+            client=storage,
+            stage_token="2" * 32,
+        )
+    assert storage.objects == {}
+    assert storage.deleted
+    allowed_ready = "run-owned/interrupted/habitat-sim-publication-ready.json"
+    assert all(
+        key == allowed_ready
+        or key.startswith("run-owned/interrupted/.staging/" + "2" * 32 + "/")
+        for _bucket, key in storage.deleted
+    )
 
-    class Storage:
-        def __init__(self):
-            self.objects = {}
 
-        def upload_file(self, path, bucket, key):
-            self.objects[(bucket, key)] = Path(path).read_bytes()
-
-        def head_object(self, Bucket, Key):
-            return {"ContentLength": len(self.objects[(Bucket, Key)])}
-
-        def get_object(self, Bucket, Key):
-            return {"Body": io.BytesIO(self.objects[(Bucket, Key)])}
-
-    storage = Storage()
-    monkeypatch.setattr("boto3.client", lambda *_a, **_k: storage)
-    receipt = H._upload_directory(outputs, "s3://fixture-bucket/run-owned/")
-    assert receipt["object_count"] == 3
-    assert {row["media_type"] for row in receipt["objects"]} == {
+def test_transactional_publication_records_verified_media_and_commits_last(
+    tmp_path,
+) -> None:
+    *_prefix, storage, publication = _bound_live_fixture(tmp_path)
+    assert publication["object_count"] == 7
+    assert {row["media_type"] for row in publication["objects"]} == {
         "application/json",
         "application/x-npy",
         "image/png",
     }
+    ready = storage.objects[("fixture-bucket", publication["ready_key"])]
+    assert hashlib.sha256(ready).hexdigest() == publication["ready_sha256"]
+    assert storage.uploads == publication["object_count"] + 2
+
+
+def test_ready_marker_race_preserves_the_unowned_object(tmp_path) -> None:
+    _bound_live_fixture(tmp_path)
+
+    class ReadyMarkerRace(Storage):
+        def put_object(self, *, Bucket, Key, Body, ContentType, IfNoneMatch):
+            if Key.endswith("/" + H.READY_MARKER_NAME):
+                self.objects[(Bucket, Key)] = b"foreign-ready-marker\n"
+                raise OSError("fixture immutable object already exists")
+            return super().put_object(
+                Bucket=Bucket,
+                Key=Key,
+                Body=Body,
+                ContentType=ContentType,
+                IfNoneMatch=IfNoneMatch,
+            )
+
+    storage = ReadyMarkerRace()
+    ready_key = "run-owned/race/habitat-sim-publication-ready.json"
+    with pytest.raises(OSError, match="immutable object already exists"):
+        H._upload_directory(
+            tmp_path / "outputs",
+            "s3://fixture-bucket/run-owned/race/",
+            client=storage,
+            stage_token="3" * 32,
+        )
+    assert storage.objects == {
+        ("fixture-bucket", ready_key): b"foreign-ready-marker\n"
+    }
+    assert ("fixture-bucket", ready_key) not in storage.deleted

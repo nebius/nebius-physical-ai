@@ -151,6 +151,10 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.output_dir}}",
             "--output-uri",
             "{{config.output_uri}}",
+            "--run-id",
+            "{{run.id}}",
+            "--plan-sha256",
+            "{{config.plan_sha256}}",
         ],
     ),
     "workbench.curobo.prepare": ToolEntry(

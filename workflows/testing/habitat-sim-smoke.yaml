@@ -12,6 +12,9 @@ config:
   prefix: "habitat-sim-smoke/{{run.id}}"
   output_dir: "/tmp/habitat-sim-{{run.id}}"
   output_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  # Planning may use this sentinel. Execution refuses it; an authorized submitter
+  # must replace it with the SHA-256 of the immutable rendered-plan contract.
+  plan_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
 
 resources:
   rtx-renderer:
@@ -30,8 +33,6 @@ states:
     toolRef: workflow.habitat_sim.smoke
     resources: rtx-renderer
     outputs:
-      - uri: "{{config.output_uri}}habitat-sim-smoke.json"
-        schema: npa.habitat-sim.smoke.v1
-      - uri: "{{config.output_uri}}habitat-sim-observations/"
-        schema: application/x-directory
+      - uri: "{{config.output_uri}}habitat-sim-publication-ready.json"
+        schema: npa.habitat-sim.publication-ready.v1
     terminal: true

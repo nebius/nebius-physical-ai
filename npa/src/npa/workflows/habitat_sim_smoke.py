@@ -17,6 +17,7 @@ import stat
 import subprocess
 import time
 from typing import BinaryIO, Callable
+import urllib.parse
 import urllib.request
 import zipfile
 
@@ -35,6 +36,10 @@ ORIGINAL_ASSET_URL = (
     "https://sketchfab.com/3d-models/the-kings-hall-d18155613363445b9b68c0c67196d98d"
 )
 CAPABILITY = "skokloster_castle_rgb_depth_bullet_traversal"
+WORKFLOW_NAME = "habitat-sim-smoke"
+READY_MARKER_NAME = "habitat-sim-publication-ready.json"
+PUBLICATION_MANIFEST_NAME = "habitat-sim-publication-manifest.json"
+SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 EXPECTED_RGB_SHAPE = [240, 320, 4]
 EXPECTED_DEPTH_SHAPE = [240, 320]
 MEMBER_SPECS = {
@@ -61,6 +66,14 @@ class SmokeFailure(RuntimeError):
     """The exact live capability contract was not satisfied."""
 
 
+class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects before urllib contacts the proposed target."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        del req, fp, code, msg, headers, newurl
+        raise SmokeFailure("official archive redirects are not permitted")
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -71,8 +84,21 @@ def sha256_file(path: Path) -> str:
 
 def _download(
     destination: Path,
-    opener: Callable[..., BinaryIO] = urllib.request.urlopen,
+    opener: Callable[..., BinaryIO] | None = None,
 ) -> dict[str, object]:
+    parsed = urllib.parse.urlsplit(ARCHIVE_URL)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "dl.fbaipublicfiles.com"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port not in {None, 443}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise SmokeFailure("official archive URL is not the pinned HTTPS origin")
+    if opener is None:
+        opener = urllib.request.build_opener(_RefuseRedirects()).open
     request = urllib.request.Request(
         ARCHIVE_URL, headers={"User-Agent": "npa-habitat-sim-smoke/2"}
     )
@@ -206,7 +232,7 @@ def _extract_assets(archive_path: Path, root: Path) -> dict[str, dict[str, objec
 
 def fetch_scene_assets(
     root: Path,
-    opener: Callable[..., BinaryIO] = urllib.request.urlopen,
+    opener: Callable[..., BinaryIO] | None = None,
     *,
     create_root: bool = True,
 ) -> tuple[Path, Path, dict[str, object], dict[str, dict[str, object]]]:
@@ -554,6 +580,8 @@ def _proof(
     archive: dict[str, object],
     records: dict[str, dict[str, object]],
     traversal: dict[str, object],
+    run_id: str,
+    plan_sha256: str,
 ) -> dict[str, object]:
     import numpy as np
 
@@ -569,6 +597,13 @@ def _proof(
             "bullet_physics_world_step",
             "greedy_geodesic_agent_traversal",
         ],
+        "execution_binding": {
+            "workflow_name": WORKFLOW_NAME,
+            "run_id": run_id,
+            "rendered_plan_sha256": plan_sha256,
+            "runtime_uid": os.geteuid(),
+            "runtime_gid": os.getegid(),
+        },
         "source_revision": SOURCE_REVISION,
         "source": source,
         "scene_id": "habitat_test_scenes/skokloster-castle.glb",
@@ -633,51 +668,327 @@ def _proof(
     }
 
 
-def _upload_directory(output_dir: Path, output_uri: str) -> dict[str, object]:
-    if not output_uri.startswith("s3://"):
-        raise SmokeFailure("output URI must be an s3:// URI")
-    import boto3
+def _json_bytes(value: object) -> bytes:
+    return (
+        json.dumps(value, allow_nan=False, separators=(",", ":"), sort_keys=True)
+        + "\n"
+    ).encode("utf-8")
 
-    bucket, _, prefix = output_uri.removeprefix("s3://").partition("/")
-    if not bucket or not prefix:
-        raise SmokeFailure("output URI requires a bucket and run-owned prefix")
-    client = boto3.client(
-        "s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL_S3") or None
-    )
-    inventory = []
-    for path in sorted(
-        candidate for candidate in output_dir.rglob("*") if candidate.is_file()
+
+def _readback_object(client: object, bucket: str, key: str) -> bytes:
+    return client.get_object(Bucket=bucket, Key=key)["Body"].read()
+
+
+def _verify_object(
+    client: object, bucket: str, key: str, expected: bytes, label: str
+) -> None:
+    head = client.head_object(Bucket=bucket, Key=key)
+    if int(head["ContentLength"]) != len(expected):
+        raise SmokeFailure(f"storage readback size mismatch for {label}")
+    if hashlib.sha256(_readback_object(client, bucket, key)).hexdigest() != (
+        hashlib.sha256(expected).hexdigest()
     ):
+        raise SmokeFailure(f"storage readback hash mismatch for {label}")
+
+
+def _put_owned_object(
+    client: object,
+    bucket: str,
+    key: str,
+    payload: bytes,
+    media_type: str,
+    label: str,
+    owned_keys: list[str],
+) -> None:
+    try:
+        client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=payload,
+            ContentType=media_type,
+            IfNoneMatch="*",
+        )
+    except Exception:
+        try:
+            if _readback_object(client, bucket, key) == payload:
+                owned_keys.append(key)
+        except Exception:
+            pass
+        raise
+    owned_keys.append(key)
+    _verify_object(client, bucket, key, payload, label)
+
+
+def _listed_exact_keys(client: object, bucket: str, prefix: str) -> set[str]:
+    keys: set[str] = set()
+    token: str | None = None
+    while True:
+        kwargs: dict[str, object] = {"Bucket": bucket, "Prefix": prefix}
+        if token is not None:
+            kwargs["ContinuationToken"] = token
+        response = client.list_objects_v2(**kwargs)
+        keys.update(
+            str(row["Key"])
+            for row in response.get("Contents", [])
+            if str(row["Key"]).startswith(prefix)
+        )
+        if not response.get("IsTruncated"):
+            return keys
+        token = str(response["NextContinuationToken"])
+
+
+def _cleanup_exact_objects(client: object, bucket: str, keys: list[str]) -> None:
+    failures: list[str] = []
+    for key in reversed(keys):
+        try:
+            client.delete_object(Bucket=bucket, Key=key)
+        except Exception:
+            failures.append(key)
+    for key in keys:
+        try:
+            if key in _listed_exact_keys(client, bucket, key):
+                failures.append(key)
+        except Exception:
+            failures.append(key)
+    if failures:
+        raise SmokeFailure(
+            "exact staged-object cleanup failed for: " + ", ".join(sorted(set(failures)))
+        )
+
+
+def _publication_provenance(proof: dict[str, object]) -> dict[str, object]:
+    scene = proof["scene"]
+    return {
+        "source_revision": proof["source_revision"],
+        "source_license": proof["source"]["license"],
+        "source_manifest_sha256": proof["source"]["manifest_sha256"],
+        "archive_url": scene["archive"]["url"],
+        "archive_sha256": scene["archive"]["sha256"],
+        "scene_id": proof["scene_id"],
+        "scene_sha256": proof["scene_sha256"],
+        "navmesh_sha256": scene["navmesh_sha256"],
+        "asset_license": proof["scene_license"],
+        "asset_license_url": scene["license_url"],
+        "attribution": scene["attribution"],
+        "original_asset": scene["original_asset"],
+        "modification_notice": scene["modification_notice"],
+    }
+
+
+def _load_named_proof(output_dir: Path) -> dict[str, object]:
+    proof_path = output_dir / "habitat-sim-smoke.json"
+    if not proof_path.is_file() or proof_path.is_symlink():
+        raise SmokeFailure("named Habitat-Sim proof is missing from the output root")
+    proof = json.loads(proof_path.read_text(encoding="utf-8"))
+    if proof.get("schema_version") != "npa.habitat-sim.smoke.v1":
+        raise SmokeFailure("named Habitat-Sim proof schema is invalid")
+    return proof
+
+
+def _stage_output_files(
+    client: object,
+    bucket: str,
+    stage_prefix: str,
+    output_dir: Path,
+    owned_keys: list[str],
+) -> list[dict[str, object]]:
+    media_types = {
+        ".json": "application/json",
+        ".npy": "application/x-npy",
+        ".png": "image/png",
+    }
+    inventory: list[dict[str, object]] = []
+    paths = sorted(candidate for candidate in output_dir.rglob("*") if candidate.is_file())
+    for path in paths:
         relative = path.relative_to(output_dir).as_posix()
-        key = f"{prefix.rstrip('/')}/{relative}"
-        client.upload_file(str(path), bucket, key)
-        head = client.head_object(Bucket=bucket, Key=key)
-        if int(head["ContentLength"]) != path.stat().st_size:
-            raise SmokeFailure(f"storage readback size mismatch for {relative}")
-        readback = client.get_object(Bucket=bucket, Key=key)["Body"].read()
-        if hashlib.sha256(readback).hexdigest() != sha256_file(path):
-            raise SmokeFailure(f"storage readback hash mismatch for {relative}")
-        media_types = {
-            ".json": "application/json",
-            ".npy": "application/x-npy",
-            ".png": "image/png",
-        }
+        if path.suffix not in media_types:
+            raise SmokeFailure(f"unsupported output media type for {relative}")
+        key = f"{stage_prefix}/{relative}"
+        payload = path.read_bytes()
+        _put_owned_object(
+            client,
+            bucket,
+            key,
+            payload,
+            media_types[path.suffix],
+            relative,
+            owned_keys,
+        )
         inventory.append(
             {
                 "path": relative,
-                "bytes": path.stat().st_size,
-                "sha256": sha256_file(path),
+                "key": key,
+                "bytes": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
                 "media_type": media_types[path.suffix],
             }
         )
-    return {"object_count": len(inventory), "objects": inventory}
+    return inventory
+
+
+def _stage_publication_manifest(
+    client: object,
+    bucket: str,
+    manifest_key: str,
+    proof: dict[str, object],
+    inventory: list[dict[str, object]],
+    owned_keys: list[str],
+) -> bytes:
+    manifest = {
+        "schema_version": "npa.habitat-sim.publication-manifest.v1",
+        "solution": "habitat-sim",
+        "capability": CAPABILITY,
+        "execution_binding": proof["execution_binding"],
+        "provenance": _publication_provenance(proof),
+        "object_count": len(inventory),
+        "objects": inventory,
+    }
+    payload = _json_bytes(manifest)
+    _put_owned_object(
+        client,
+        bucket,
+        manifest_key,
+        payload,
+        "application/json",
+        PUBLICATION_MANIFEST_NAME,
+        owned_keys,
+    )
+    return payload
+
+
+def _publication_receipt(
+    stage_prefix: str,
+    manifest_key: str,
+    manifest_bytes: bytes,
+    ready_key: str,
+    inventory: list[dict[str, object]],
+) -> tuple[dict[str, object], bytes]:
+    proof_rows = [row for row in inventory if row["path"] == "habitat-sim-smoke.json"]
+    if len(proof_rows) != 1:
+        raise SmokeFailure("staged artifact inventory must name exactly one proof")
+    ready = {
+        "schema_version": "npa.habitat-sim.publication-ready.v1",
+        "stage_prefix": stage_prefix,
+        "manifest_key": manifest_key,
+        "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        "inventory_sha256": hashlib.sha256(_json_bytes(inventory)).hexdigest(),
+        "object_count": len(inventory),
+        "proof_key": proof_rows[0]["key"],
+        "proof_sha256": proof_rows[0]["sha256"],
+    }
+    payload = _json_bytes(ready)
+    publication = {
+        **ready,
+        "ready_key": ready_key,
+        "ready_sha256": hashlib.sha256(payload).hexdigest(),
+        "objects": inventory,
+    }
+    return publication, payload
+
+
+def _commit_ready_marker(
+    client: object,
+    bucket: str,
+    ready_key: str,
+    payload: bytes,
+    owned_keys: list[str],
+) -> None:
+    _put_owned_object(
+        client,
+        bucket,
+        ready_key,
+        payload,
+        "application/json",
+        READY_MARKER_NAME,
+        owned_keys,
+    )
+
+
+def _upload_directory(
+    output_dir: Path,
+    output_uri: str,
+    *,
+    client: object | None = None,
+    stage_token: str | None = None,
+    before_commit: Callable[[dict[str, object]], None] | None = None,
+) -> dict[str, object]:
+    import boto3
+
+    bucket, separator, prefix = output_uri.removeprefix("s3://").partition("/")
+    if not output_uri.startswith("s3://") or not separator or not bucket or not prefix:
+        raise SmokeFailure("output URI requires an s3:// bucket and run-owned prefix")
+    if client is None:
+        client = boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL_S3") or None)
+    token = stage_token or secrets.token_hex(16)
+    if re.fullmatch(r"[0-9a-f]{32}", token) is None:
+        raise SmokeFailure("staging token must be an exact 128-bit lowercase hex value")
+    final_prefix = prefix.rstrip("/")
+    stage_prefix = f"{final_prefix}/.staging/{token}"
+    ready_key = f"{final_prefix}/{READY_MARKER_NAME}"
+    manifest_key = f"{stage_prefix}/{PUBLICATION_MANIFEST_NAME}"
+    if _listed_exact_keys(client, bucket, stage_prefix + "/"):
+        raise SmokeFailure("run-owned staging prefix is not empty")
+    if ready_key in _listed_exact_keys(client, bucket, ready_key):
+        raise SmokeFailure("immutable publication ready marker already exists")
+    proof = _load_named_proof(output_dir)
+    owned_keys: list[str] = []
+    try:
+        inventory = _stage_output_files(client, bucket, stage_prefix, output_dir, owned_keys)
+        manifest = _stage_publication_manifest(
+            client, bucket, manifest_key, proof, inventory, owned_keys
+        )
+        expected = {row["key"] for row in inventory} | {manifest_key}
+        if _listed_exact_keys(client, bucket, stage_prefix + "/") != expected:
+            raise SmokeFailure("staged artifact inventory is incomplete or contains extras")
+        publication, ready_bytes = _publication_receipt(
+            stage_prefix, manifest_key, manifest, ready_key, inventory
+        )
+        if before_commit is not None:
+            before_commit(publication)
+        _commit_ready_marker(client, bucket, ready_key, ready_bytes, owned_keys)
+        return publication
+    except Exception:
+        _cleanup_exact_objects(client, bucket, owned_keys)
+        raise
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--output-uri", required=True)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--plan-sha256", required=True)
     return parser
+
+
+def _execution_identity(run_id: str, plan_sha256: str) -> tuple[str, str]:
+    if re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", run_id) is None:
+        raise SmokeFailure("workflow run ID is not DNS-safe")
+    if SHA256_PATTERN.fullmatch(plan_sha256) is None or plan_sha256 == "0" * 64:
+        raise SmokeFailure("rendered plan SHA-256 is missing or invalid")
+    if os.geteuid() == 0:
+        raise SmokeFailure("Habitat-Sim qualification refuses root execution")
+    return run_id, plan_sha256
+
+
+def _write_termination_receipt(
+    publication: dict[str, object], proof: dict[str, object], path: Path
+) -> None:
+    binding = proof["execution_binding"]
+    payload = {
+        "schema_version": "npa.habitat-sim.pod-termination.v1",
+        "workflow_name": binding["workflow_name"],
+        "run_id": binding["run_id"],
+        "rendered_plan_sha256": binding["rendered_plan_sha256"],
+        "image_digest": proof["pod_observed_image_digest"],
+        "proof_sha256": publication["proof_sha256"],
+        "manifest_key": publication["manifest_key"],
+        "manifest_sha256": publication["manifest_sha256"],
+        "ready_key": publication["ready_key"],
+        "ready_sha256": publication["ready_sha256"],
+        "exit_status": 0,
+    }
+    path.write_bytes(_json_bytes(payload))
 
 
 def _claim_runtime_cache(cache: Path) -> tuple[int, int, str]:
@@ -753,6 +1064,7 @@ def _remove_runtime_cache(
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    run_id, plan_sha256 = _execution_identity(args.run_id, args.plan_sha256)
     output_dir = args.output_dir.resolve()
     configured_output = os.environ.get("NPA_SMOKE_OUTPUT_DIR")
     if configured_output and Path(configured_output).resolve() != output_dir:
@@ -772,14 +1084,30 @@ def main(argv: list[str] | None = None) -> int:
                 "scene and navmesh names do not satisfy auto-load contract"
             )
         traversal = _run_traversal(scene, output_dir)
-        proof = _proof(source, image, digest, gpu, archive, records, traversal)
+        proof = _proof(
+            source,
+            image,
+            digest,
+            gpu,
+            archive,
+            records,
+            traversal,
+            run_id,
+            plan_sha256,
+        )
         proof_path = output_dir / "habitat-sim-smoke.json"
         proof_path.write_text(
             json.dumps(proof, allow_nan=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
         os.chmod(proof_path, 0o600)
-        upload = _upload_directory(output_dir, args.output_uri)
+        upload = _upload_directory(
+            output_dir,
+            args.output_uri,
+            before_commit=lambda publication: _write_termination_receipt(
+                publication, proof, Path("/dev/termination-log")
+            ),
+        )
         print(
             json.dumps({"proof": proof, "storage": upload}, sort_keys=True), flush=True
         )

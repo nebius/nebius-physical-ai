@@ -141,20 +141,30 @@ The spec has one `workflow.habitat_sim.smoke` state, selects
 `RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`. Habitat-Sim is a renderer: use a
 manager-proven STRICT RTX PRO 6000 Blackwell target, never B200.
 
-The required proof is `$NPA_SMOKE_OUTPUT_DIR/habitat-sim-smoke.json`. Success
+The required local proof is `$NPA_SMOKE_OUTPUT_DIR/habitat-sim-smoke.json`.
+Before submission, the operator must hash a mode-restricted immutable rendered-plan
+contract and replace the workflow's all-zero `plan_sha256` planning sentinel; the
+workload refuses the sentinel, a malformed run ID, and root execution. Success
 requires multiple distinct saved RGBA/depth frames, declared shapes and hashes,
 finite depth statistics, genuine pathfinder actions, nonzero agent displacement,
 Bullet build/enable/step/world-time evidence, measured FPS, NVIDIA EGL/GL library
 and vendor evidence, exactly one RTX PRO 6000 with compute capability 12.0, exact
 source/scene/archive/member provenance, immutable image identity, and exit zero.
-An independent live selector also compares the Kubernetes `containerStatuses`
-image ID and re-reads the proof from storage.
+The workload stages every proof and observation under a unique run-owned storage
+prefix, verifies each byte, publishes a complete provenance manifest, and only
+then conditionally creates `habitat-sim-publication-ready.json`. Consumers follow
+that marker to the manifest and reject missing markers, missing or extra staged
+objects, and any hash mismatch. Failed publication deletes and verifies only the
+exact keys attempted by that transaction. An independent live selector compares
+the Kubernetes `containerStatuses` image ID, command, arguments, selected
+environment, provider-bound node, and termination message with the immutable
+rendered-plan contract before it accepts the staged proof.
 
 The dedicated selector is intentionally inert unless all three owner-controlled
 gates are present: `NPA_INTEGRATION_E2E=1`,
 `NPA_HABITAT_SIM_IMAGE_LIVE=1`, and a mode-restricted
 `NPA_HABITAT_SIM_IMAGE_LIVE_RECEIPT`. The receipt binds the exact Git/workflow
-bytes, private image digest, pod UID, storage proof hash, and the hashes of
+bytes, private image digest, pod UID, run identity, rendered-plan bytes, and the hashes of
 separate owner-only registry and provider readbacks. Registry evidence must show
 an anonymous 401/403 refusal and authenticated exact-digest pull; known public
 registry hosts and equivalent GHCR spellings are rejected. The STRICT provider
@@ -163,8 +173,9 @@ the selector requires a `READY` readback performed no earlier than the live
 transaction start, reads that node back, and requires the completed pod to name it.
 Owner-only JSON is read through mode- and UID-checked no-follow descriptors and
 bound to the same directory entry before and after parsing. The selector also
-requires the pod's declared container image, observed image ID, and receipt to
-name the same immutable digest, plus a succeeded pod and terminated zero exit.
+requires the pod's declared container image, observed image ID, non-root runtime
+identity, and proof-bound termination receipt to name the same immutable digest.
+A succeeded pod or caller-selected proof hash alone cannot pass.
 A live transaction and cleanup require separate manager
 authorization.
 
