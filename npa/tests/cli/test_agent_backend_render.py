@@ -1786,6 +1786,182 @@ def test_agent_adopts_confirmed_discovered_cluster(monkeypatch, tmp_path) -> Non
     ]
 
 
+def test_workflow_gpu_preflight_blocks_before_execution_confirmation(
+    monkeypatch, tmp_path
+) -> None:
+    """A GPU workflow must not reach the runtime when its target has no GPUs."""
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_workflow_gpu_preflight_backend"
+    )
+    state: dict[str, object] = {}
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("apiVersion: npa.workflow/v0.0.1\n", encoding="utf-8")
+    monkeypatch.setattr(module, "_resolve_workflow_yaml", lambda _body: "workflow")
+    monkeypatch.setattr(
+        module,
+        "validate_workflow_yaml_text",
+        lambda *_args, **_kwargs: {"ok": True, "name": "gpu-required"},
+    )
+    monkeypatch.setattr(
+        module,
+        "plan_workflow_yaml_text",
+        lambda *_args, **_kwargs: {"ok": True, "steps": [{"state": "gpu-stage"}]},
+    )
+    monkeypatch.setattr(module, "_agent_project_alias", lambda value: value or "demo")
+    monkeypatch.setattr(
+        module,
+        "_agent_k8s_backends",
+        lambda _project: {
+            "has_infra": True,
+            "configured": [
+                {"cluster_name": "gpu-target", "context": "gpu-target-context"}
+            ],
+        },
+    )
+    monkeypatch.setattr(module, "_write_workflow_temp_yaml", lambda _text: yaml_path)
+    monkeypatch.setattr(module, "_run_agent_npa_json", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(module, "_workflow_yaml_requests_gpu", lambda _yaml: True)
+    monkeypatch.setattr(
+        module, "_agent_context_has_schedulable_gpu", lambda **_kwargs: False
+    )
+    monkeypatch.setattr(module, "_load_state", lambda: state)
+    monkeypatch.setattr(module, "_save_state", lambda value: state.update(value))
+    monkeypatch.setattr(module, "_save_workflow_draft", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "_record_sim_viz_run", lambda *_args: None)
+
+    response = module.submit_npa_workflow(
+        {"yaml": "workflow", "run_id": "gpu-preflight", "project": "demo", "prepare_execution": True}
+    )
+
+    assert response["ok"] is False
+    assert response["gpu_preflight"] == {"required": True, "status": "blocked"}
+    assert response["run_id"] == "gpu-preflight"
+    assert "no schedulable GPU capacity" in response["reason"]
+
+
+def test_workflow_gpu_request_detection_and_context_capacity(monkeypatch, tmp_path) -> None:
+    """GPU detection is declarative and capacity ignores unready GPU nodes."""
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_gpu_capacity_helpers"
+    )
+    assert module._workflow_yaml_requests_gpu(
+        """\
+apiVersion: npa.workflow/v0.0.1
+resources:
+  accelerated:
+    accelerators: RTXPRO6000:1
+states:
+  run:
+    resources: accelerated
+"""
+    )
+    assert not module._workflow_yaml_requests_gpu(
+        """\
+apiVersion: npa.workflow/v0.0.1
+resources:
+  cpu:
+    cpus: 4
+states:
+  run:
+    resources: cpu
+"""
+    )
+    monkeypatch.setattr(
+        module,
+        "_agent_workflow_operation_env",
+        lambda _project, _context: {"PATH": "/usr/bin"},
+    )
+
+    class Completed:
+        returncode = 0
+        stdout = json.dumps(
+            {
+                "items": [
+                    {
+                        "status": {
+                            "conditions": [{"type": "Ready", "status": "False"}],
+                            "allocatable": {"nvidia.com/gpu": "1"},
+                        }
+                    },
+                    {
+                        "status": {
+                            "conditions": [{"type": "Ready", "status": "True"}],
+                            "allocatable": {"nvidia.com/gpu": "1"},
+                        }
+                    },
+                ]
+            }
+        )
+
+    monkeypatch.setattr(module.subprocess, "run", lambda *_args, **_kwargs: Completed())
+    assert module._agent_context_has_schedulable_gpu(
+        project="demo", kubernetes_context="context"
+    )
+
+
+def test_agent_provision_adds_named_gpu_profile_to_adopted_empty_target(
+    monkeypatch, tmp_path
+) -> None:
+    """A confirmed RTX profile augments an adopted CPU-only target once."""
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_adopted_gpu_profile"
+    )
+    from npa import provisioning
+
+    monkeypatch.setattr(module, "_agent_npa_ready", lambda: (True, ""))
+    monkeypatch.setattr(
+        module,
+        "_agent_k8s_backends",
+        lambda _project: {
+            "configured": [
+                {"cluster_name": "npa-cluster", "context": "npa-cluster"}
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        module, "_agent_context_has_schedulable_gpu", lambda **_kwargs: False
+    )
+    additions: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        module,
+        "_agent_add_gpu_node_group",
+        lambda **kwargs: additions.append(kwargs)
+        or {"ok": True, "status": "ready", "actions": ["gpu-node-group"]},
+    )
+    provision_calls: list[dict[str, object]] = []
+
+    class Result:
+        def to_dict(self):
+            return {"status": "ok", "actions": ["validated"]}
+
+    monkeypatch.setattr(
+        provisioning,
+        "provision_if_absent",
+        lambda **kwargs: provision_calls.append(kwargs) or Result(),
+    )
+
+    response = module._provision_agent_infra(
+        "demo",
+        "npa-cluster",
+        desired={"gpu_nodes": 1, "gpu_workload_profile": "rtx-rendering"},
+    )
+
+    assert additions == [
+        {
+            "project": "demo",
+            "cluster_name": "npa-cluster",
+            "requested": {
+                "gpu_type": "rtx6000",
+                "node_count": 1,
+                "gpu_driver_mode": "operator",
+            },
+        }
+    ]
+    assert len(provision_calls) == 1
+    assert response["ok"] is True
+    assert response["actions"] == ["gpu-node-group", "validated"]
+
+
 def test_agent_execution_resolves_catalog_secret_hints(monkeypatch, tmp_path) -> None:
     module = _import_rendered_backend(
         monkeypatch, tmp_path, module_name="npa_rendered_workflow_secret_hints_backend"

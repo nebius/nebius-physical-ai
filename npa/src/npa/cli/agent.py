@@ -4241,6 +4241,174 @@ def _workflow_kubernetes_placement(
     return cluster_name or context, context
 
 
+def _workflow_yaml_requests_gpu(yaml_text: str) -> bool:
+    # Return whether a workflow selects an accelerator-backed resource profile.
+
+    try:
+        document = yaml.safe_load(yaml_text) or {{}}
+    except yaml.YAMLError:
+        return False
+    if not isinstance(document, dict):
+        return False
+    profiles = document.get("resources")
+    profiles = profiles if isinstance(profiles, dict) else {{}}
+    states = document.get("states")
+    states = states if isinstance(states, dict) else {{}}
+    for state in states.values():
+        if not isinstance(state, dict):
+            continue
+        selected = state.get("resources")
+        profile = profiles.get(selected) if isinstance(selected, str) else selected
+        if not isinstance(profile, dict):
+            continue
+        accelerators = profile.get("accelerators")
+        if isinstance(accelerators, str) and accelerators.strip():
+            return True
+        if isinstance(accelerators, (dict, list, tuple)) and accelerators:
+            return True
+        for key in ("gpu", "gpus", "nvidia.com/gpu"):
+            value = profile.get(key)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)) and value > 0:
+                return True
+            if isinstance(value, str) and value.strip() not in {{"", "0"}}:
+                return True
+    return False
+
+
+def _agent_context_has_schedulable_gpu(*, project: str, kubernetes_context: str) -> bool:
+    # Check selected-context GPU capacity without exposing node metadata to the browser.
+
+    environment = _agent_workflow_operation_env(project, kubernetes_context)
+    kubectl = str(environment.get("NPA_KUBECTL_BIN") or "kubectl")
+    try:
+        result = subprocess.run(
+            [
+                kubectl,
+                "get",
+                "nodes",
+                "--context",
+                kubernetes_context,
+                "-o",
+                "json",
+                "--request-timeout=20s",
+            ],
+            env=environment,
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        if result.returncode:
+            return False
+        payload = json.loads(result.stdout or "{{}}")
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+        return False
+    items = payload.get("items") if isinstance(payload, dict) else []
+    if not isinstance(items, list):
+        return False
+    for node in items:
+        if not isinstance(node, dict):
+            continue
+        conditions = (node.get("status") or {{}}).get("conditions") or []
+        ready = any(
+            isinstance(condition, dict)
+            and condition.get("type") == "Ready"
+            and condition.get("status") == "True"
+            for condition in conditions
+        )
+        if not ready:
+            continue
+        capacity = (node.get("status") or {{}}).get("allocatable") or {{}}
+        try:
+            if int(str(capacity.get("nvidia.com/gpu") or "0")) > 0:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def _agent_gpu_node_group_request(desired: dict) -> dict:
+    # Convert only a named NPA workload profile into the CLI's portable GPU type.
+    # The UI never invents a SKU from a workflow accelerator string or a tenant.
+    profile = str((desired or {{}}).get("gpu_workload_profile") or "").strip().lower()
+    if profile != "rtx-rendering":
+        return {{}}
+    try:
+        node_count = int((desired or {{}}).get("gpu_nodes") or 0)
+    except (TypeError, ValueError):
+        return {{}}
+    if node_count < 1:
+        return {{}}
+    return {{
+        "gpu_type": "rtx6000",
+        "node_count": node_count,
+        "gpu_driver_mode": "operator",
+    }}
+
+
+def _agent_add_gpu_node_group(*, project: str, cluster_name: str, requested: dict) -> dict:
+    # Mutate only through the public NPA node-group CLI, after the browser's
+    # existing infrastructure confirmation. Do not infer provider identifiers.
+    gpu_type = str(requested.get("gpu_type") or "").strip().lower()
+    try:
+        node_count = int(requested.get("node_count") or 0)
+    except (TypeError, ValueError):
+        node_count = 0
+    if gpu_type != "rtx6000" or node_count < 1:
+        return {{
+            "ok": False,
+            "status": "invalid",
+            "error": "The requested GPU profile is not supported for an adopted Kubernetes target.",
+        }}
+    try:
+        existing = _run_agent_npa_json(
+            [
+                "cluster", "node-group", "list", "--cluster-name", cluster_name,
+                "--format", "json",
+            ],
+            timeout_s=180,
+            extra_env=_agent_workflow_operation_env(project, ""),
+        )
+        rows = existing if isinstance(existing, list) else []
+        if any(
+            isinstance(row, dict)
+            and str(row.get("gpu_type") or "").strip().lower() == gpu_type
+            for row in rows
+        ):
+            return {{
+                "ok": False,
+                "status": "blocked",
+                "error": (
+                    "The selected target already has this GPU profile but no schedulable GPU "
+                    "is currently advertised. No duplicate node group was created."
+                ),
+            }}
+        _run_agent_npa_json(
+            [
+                "cluster", "node-group", "add", "--cluster-name", cluster_name,
+                "--gpu-type", gpu_type, "--node-count", str(node_count),
+                "--gpu-driver-mode", str(requested.get("gpu_driver_mode") or "operator"),
+                "--wait",
+            ],
+            timeout_s=35 * 60,
+            expect_json=False,
+            extra_env=_agent_workflow_operation_env(project, ""),
+        )
+    except Exception:
+        return {{
+            "ok": False,
+            "status": "error",
+            "error": "The requested GPU node group could not be created; review the protected NPA operator diagnostics.",
+        }}
+    return {{
+        "ok": True,
+        "status": "ready",
+        "actions": ["k8s:confirmed GPU node-group creation completed"],
+    }}
+
+
 def _agent_mk8s_numeric(value, *, field: str, minimum: int) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, str)):
         raise ValueError(f"{{field}} must be an integer >= {{minimum}}")
@@ -4275,6 +4443,7 @@ def _provision_agent_infra(
     skip_s3: bool = True,
     desired: dict | None = None,
     preemptible: bool | None = None,
+    _gpu_capacity_remediated: bool = False,
 ) -> dict:
     ready, reason = _agent_npa_ready()
     if not ready:
@@ -4283,6 +4452,42 @@ def _provision_agent_infra(
         from npa.provisioning import provision_if_absent
 
         requested = _normalize_agent_mk8s_desired(desired)
+        gpu_node_group = _agent_gpu_node_group_request(requested)
+        infra = _agent_k8s_backends(project)
+        selected = resolve_workflow_infrastructure(infra)
+        selected_context = str(selected.get("context") or "").strip()
+        selected_cluster_name = str(selected.get("cluster_name") or selected_context).strip()
+        if (
+            gpu_node_group
+            and not dry_run
+            and not _gpu_capacity_remediated
+            and selected_context
+            and selected_cluster_name == cluster_name
+            and not _agent_context_has_schedulable_gpu(
+                project=project, kubernetes_context=selected_context
+            )
+        ):
+            remediation = _agent_add_gpu_node_group(
+                project=project,
+                cluster_name=selected_cluster_name,
+                requested=gpu_node_group,
+            )
+            if not remediation.get("ok"):
+                return remediation
+            validated = _provision_agent_infra(
+                project,
+                cluster_name,
+                dry_run=False,
+                validate=validate,
+                skip_s3=skip_s3,
+                desired=requested,
+                preemptible=preemptible,
+                _gpu_capacity_remediated=True,
+            )
+            actions = list(validated.get("actions") or [])
+            actions[:0] = list(remediation.get("actions") or [])
+            validated["actions"] = actions
+            return validated
         mig_value = requested.get("mig", False)
         mig_mapping = mig_value if isinstance(mig_value, dict) else {{}}
         result = provision_if_absent(
@@ -9324,6 +9529,21 @@ def submit_npa_workflow(payload: dict):
             infra=infra_after,
             requested_cluster_name=requested_cluster_name,
         )
+    if _workflow_yaml_requests_gpu(yaml_text) and not _agent_context_has_schedulable_gpu(
+        project=project, kubernetes_context=kubernetes_context
+    ):
+        return {{
+            "ok": False,
+            "run_id": run_id,
+            "validation": validation,
+            "plan": plan,
+            "gpu_preflight": {{"required": True, "status": "blocked"}},
+            "reason": (
+                "The selected Kubernetes target has no schedulable GPU capacity. "
+                "Use the Agent chat to request an explicit GPU profile, confirm its "
+                "deployment and health validation, then submit this workflow again."
+            ),
+        }}
     state = _load_state()
     _save_workflow_draft(state, yaml_text, validation, plan=plan, runnable=True)
     step_count = len(plan.get("steps") or plan.get("states") or [])
