@@ -207,20 +207,44 @@ def test_success_restart_finishes_only_missing_agent_load(tmp_path: Path, monkey
     artifact_uri = f"s3://unit/{key}"
     methods: list[str] = []
 
+    inventory = {
+        "ok": True,
+        "run_id": "paidf-hermetic",
+        "run_ref": "npa1_paidf_hermetic",
+        "project_id": "project-a",
+        "bucket": "unit",
+        "resource_bucket": "unit",
+        "resolved_prefix": "physical-ai-data-factory",
+        "source_selected": True,
+        "artifacts": [{"key": key, "s3_uri": artifact_uri}],
+        "next_cursor": "",
+        "truncated": False,
+    }
+    ready = {
+        "run_id": "paidf-hermetic",
+        "artifact_uri": artifact_uri,
+        "artifact_key": key,
+        "artifact_render": "rerun",
+        "artifact_run_ref": "npa1_paidf_hermetic",
+        "project_id": "project-a",
+        "bucket": "unit",
+        "resolved_prefix": "physical-ai-data-factory",
+        "rerun_ready": True,
+    }
+    status_calls = 0
+
     def request(method: str, _url: str, **_kwargs):  # noqa: ANN202
+        nonlocal status_calls
         methods.append(method)
+        if "/api/artifacts/run/" in _url:
+            return Response(200, inventory)
         if method == "POST":
-            return Response(200, {"ok": True})
-        if len(methods) == 1:
+            assert "s3_uri" not in (_kwargs.get("json") or {})
+            return Response(200, {"ok": True, "sim_viz": ready})
+        status_calls += 1
+        if status_calls == 1:
             return Response(200, {"rerun_ready": False})
-        return Response(
-            200,
-            {
-                "artifact_uri": artifact_uri,
-                "artifact_render": "rerun",
-                "rerun_ready": True,
-            },
-        )
+        return Response(200, ready)
 
     result = load_final_artifact_into_agent(
         project="demo",
@@ -238,7 +262,7 @@ def test_success_restart_finishes_only_missing_agent_load(tmp_path: Path, monkey
     )
 
     assert result.verified and resumed.verified
-    assert methods == ["GET", "POST", "GET", "GET"]
+    assert methods == ["GET", "GET", "POST", "GET", "GET", "GET"]
     state = load_submission_state("demo", "paidf-hermetic")
     assert state["launch"]["sky_job_id"] == "77"  # no duplicate launch
     assert state["artifact_load"]["artifact_uri"] == artifact_uri

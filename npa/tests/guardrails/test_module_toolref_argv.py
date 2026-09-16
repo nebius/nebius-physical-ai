@@ -43,6 +43,7 @@ PARSER_FACTORIES = {
     "npa.workflows.byof.openpi_full_droid": "build_parser",
     "npa.workflows.byof.openpi_service": "build_parser",
     "npa.workflows.content_agents": "build_parser",
+    "npa.workflows.paidf_native": "build_parser",
 }
 
 
@@ -73,6 +74,9 @@ def _dummy(value: str, *, action: argparse.Action | None) -> str:
 
     if not PLACEHOLDER.search(value):
         return value
+    choices = tuple(getattr(action, "choices", ()) or ()) if action is not None else ()
+    if choices:
+        return str(choices[0])
     caster = getattr(action, "type", None) if action is not None else None
     if caster is None:
         return "dummy"

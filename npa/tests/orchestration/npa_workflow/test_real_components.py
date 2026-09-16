@@ -1,4 +1,4 @@
-"""Enforce the real-components skill for the Physical AI Data Factory blueprint.
+"""Enforce real components in the NVIDIA-derived PAIDF VDA workflow.
 
 Fails if the blueprint uses a known-stub toolRef, if a run.shell stage isn't a
 real command/module call, or if the augment stage isn't the real Cosmos execute.
@@ -22,8 +22,8 @@ from npa.cli.agent_workflow import (
     generate_sim2real_staged_yaml,
 )
 
-BLUEPRINT = resolve_npa_workflow_spec("physical-ai-data-factory.yaml")
-assert BLUEPRINT is not None, "physical-ai-data-factory.yaml not found in any spec root"
+BLUEPRINT = resolve_npa_workflow_spec("nvidia-paidf-vda-cosmos-transfer25.yaml")
+assert BLUEPRINT is not None, "NVIDIA-derived PAIDF VDA spec not found"
 
 NUREC_BLUEPRINT = resolve_npa_workflow_spec("nurec-reconstruct.yaml")
 assert NUREC_BLUEPRINT is not None, "nurec-reconstruct.yaml not found in any spec root"
@@ -43,7 +43,12 @@ KNOWN_STUB_TOOLREFS = {
     "workbench.fiftyone.launch_app",  # echo hook
     "workbench.sim2real.write_decision",  # demo stub
 }
-REAL_RUN_MARKERS = ("npa workbench", "data_factory_stages", "data_factory_viz")
+REAL_RUN_MARKERS = (
+    "npa workbench",
+    "data_factory_stages",
+    "data_factory_viz",
+    "paidf_upstream",
+)
 
 
 def _states() -> dict:
@@ -59,6 +64,10 @@ def _memory_gi(value: object) -> int:
     match = re.fullmatch(r"(\d+)Gi", str(value))
     assert match is not None, f"expected Gi memory value, got {value!r}"
     return int(match.group(1))
+
+
+def test_blueprint_requires_runtime_decision_execution() -> None:
+    assert _spec()["metadata"]["executionMode"] == "runtime"
 
 
 def test_blueprint_uses_no_stub_toolrefs() -> None:
@@ -146,6 +155,60 @@ def test_blueprint_run_shell_stages_are_real() -> None:
         assert any(m in command for m in REAL_RUN_MARKERS), (
             f"stage '{name}' run is not a real command/module call: {command[:100]}"
         )
+
+
+def test_blueprint_records_official_upstream_boundary_first() -> None:
+    spec = _spec()
+    state = spec["states"]["record-upstream"]
+    command = " ".join(str(item) for item in state["run"]["argv"])
+
+    assert spec["initial"] == "record-upstream"
+    assert "paidf_upstream" in command
+    assert "write_upstream_contract" in command
+    assert state["outputs"] == [
+        {
+            "uri": "{{config.upstream_contract_uri}}",
+            "schema": "npa.paidf.upstream.v1",
+        }
+    ]
+
+
+def test_blueprint_overlays_reviewed_source_on_baked_component_images(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        render_skypilot_yaml,
+    )
+
+    monkeypatch.delenv("NPA_SRC_OVERLAY", raising=False)
+    monkeypatch.setenv(
+        "NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa/reviewed-source"
+    )
+    spec = load_spec(BLUEPRINT)
+    plan = build_plan(
+        spec, run_id="overlay-contract", assume_decision="promote_checkpoint"
+    )
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="overlay-contract",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    tasks = [
+        task
+        for task in yaml.safe_load_all(rendered)
+        if task and (task.get("resources") or {}).get("image_id")
+    ]
+
+    assert tasks
+    assert all(task["envs"]["NPA_SRC_OVERLAY"] == "1" for task in tasks)
+    assert all(
+        task["envs"]["NPA_SRC_S3_URI"]
+        == "s3://example-bucket/npa-src/npa/reviewed-source"
+        for task in tasks
+    )
 
 
 def test_augment_runs_real_cosmos_transfer() -> None:
@@ -297,11 +360,33 @@ def test_quality_gate_reads_the_evaluator_report() -> None:
 
 
 def test_gpu_resource_has_headroom_for_multi_variant_fanout() -> None:
-    gpu = _spec()["resources"]["gpu"]
-    assert int(gpu["cpus"]) >= 16, "4-way Cosmos fan-out needs CPU headroom"
+    document = _spec()
+    gpu = document["resources"]["gpu"]
+    assert int(document["config"]["augment_cpus"]) >= 16, (
+        "the default 4-way Cosmos fan-out needs CPU headroom"
+    )
+    assert gpu["cpus"] == "{{config.augment_cpus}}"
     assert _memory_gi(gpu["memory"]) >= 128, (
         "4-way Cosmos fan-out OOMs with the old 16Gi profile"
     )
+
+
+def test_single_gpu_augment_cpu_request_can_fit_existing_cluster_headroom(
+    tmp_path: pathlib.Path,
+) -> None:
+    from npa.orchestration.npa_workflow.spec import resolve_resource_profile
+
+    raw = _spec()
+    raw["config"]["augment_cpus"] = "12"
+    path = tmp_path / "single-gpu-existing-cluster.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    spec = load_spec(path)
+    resolved = resolve_resource_profile(
+        "gpu", spec.resources["gpu"], config=spec.config, run={"id": "capacity"}
+    )
+
+    assert resolved["cpus"] == "12"
+    assert resolved["accelerators"] == "RTXPRO6000:1"
 
 
 def test_optional_sam2_config_is_validated_before_provisioning(

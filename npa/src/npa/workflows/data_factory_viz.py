@@ -167,7 +167,11 @@ def _log_frame(rr: Any, rec: Any, entity: str, arr: Any) -> None:
 
         buf = io.BytesIO()
         _PILImage.fromarray(arr).save(buf, format="JPEG", quality=RRD_JPEG_QUALITY)
-        rr.log(entity, rr.EncodedImage(contents=buf.getvalue(), media_type="image/jpeg"), recording=rec)
+        rr.log(
+            entity,
+            rr.EncodedImage(contents=buf.getvalue(), media_type="image/jpeg"),
+            recording=rec,
+        )
     except Exception:  # noqa: BLE001 - fall back to raw image if EncodedImage/PIL unavailable
         rr.log(entity, _image(rr, arr), recording=rec)
 
@@ -179,11 +183,138 @@ def _set_frame(rr: Any, rec: Any, idx: int) -> None:
         rr.set_time_sequence("frame", idx, recording=rec)
 
 
+def _log_video_asset(rr: Any, rec: Any, entity: str, path: Path) -> int:
+    """Log one video and its real decoded timestamps on the duration timeline."""
+
+    asset = rr.AssetVideo(path=path)
+    rr.log(entity, asset, static=True, recording=rec)
+    timestamps = asset.read_frame_timestamps_nanos()
+    if not len(timestamps):
+        raise DataFactoryVizError(f"video has no decoded frame timestamps: {path.name}")
+    references = rr.VideoFrameReference.columns_nanos(timestamps)
+    rr.send_columns(
+        entity,
+        indexes=[rr.TimeColumn("video_time", duration=1e-9 * timestamps)],
+        columns=references,
+        recording=rec,
+    )
+    # Keep ordinal navigation as an explicitly secondary timeline. The default
+    # viewer uses ``video_time`` and therefore never invents playback speed.
+    rr.send_columns(
+        entity,
+        indexes=[rr.TimeColumn("frame", sequence=range(len(timestamps)))],
+        columns=references,
+        recording=rec,
+    )
+    return len(timestamps)
+
+
 def _image(rr: Any, arr: Any):
     try:
         return rr.Image(arr, color_model="RGB")
     except TypeError:
         return rr.Image(arr)
+
+
+def _build_data_factory_blueprint(
+    rrb: Any,
+    *,
+    source_entities: list[str],
+    candidate_entities: list[str],
+    has_controls: bool,
+    has_captions: bool,
+    has_pipeline_evidence: bool,
+    default_timeline: str,
+) -> Any:
+    """Foreground media comparison while keeping factual evidence in another tab."""
+
+    def media_group(entities: list[str], name: str) -> Any:
+        views = [
+            rrb.Spatial2DView(
+                origin=entity,
+                contents=f"{entity}/**",
+                name=entity.rsplit("/", 1)[-1].replace("_", " "),
+            )
+            for entity in entities
+        ]
+        if len(views) == 1:
+            return views[0]
+        return rrb.Tabs(*views, active_tab=0, name=name)
+
+    media_columns: list[Any] = []
+    if source_entities:
+        media_columns.append(media_group(source_entities, "Original source"))
+    if candidate_entities:
+        media_columns.append(media_group(candidate_entities, "Generated candidates"))
+    media_tab: Any = (
+        media_columns[0]
+        if len(media_columns) == 1
+        else rrb.Horizontal(
+            *media_columns,
+            column_shares=[1.0] * len(media_columns),
+            name="Original versus generated",
+        )
+    )
+
+    context_views: list[Any] = []
+    if has_controls:
+        context_views.append(
+            rrb.Spatial2DView(
+                origin="control",
+                contents="control/**",
+                name="Conditioning controls and masks",
+            )
+        )
+    if has_captions:
+        context_views.append(
+            rrb.TextDocumentView(
+                origin="captions", contents="captions/**", name="Prompt and captions"
+            )
+        )
+    if has_pipeline_evidence:
+        context_views.append(
+            rrb.TextDocumentView(
+                origin="pipeline",
+                contents="pipeline/**",
+                name="Evaluator scores and disposition",
+            )
+        )
+    if candidate_entities:
+        context_views.append(
+            rrb.TextDocumentView(
+                origin="augmented",
+                contents="augmented/**/disposition",
+                name="Per-candidate accept/reject disposition",
+            )
+        )
+    foreground_rows: list[Any] = [media_tab]
+    if context_views:
+        foreground_rows.append(
+            context_views[0]
+            if len(context_views) == 1
+            else rrb.Horizontal(
+                *context_views,
+                column_shares=[1.0] * len(context_views),
+                name="Conditioning, evaluator scores, and disposition",
+            )
+        )
+    layout: Any = (
+        foreground_rows[0]
+        if len(foreground_rows) == 1
+        else rrb.Vertical(
+            *foreground_rows,
+            row_shares=[3.0, 1.0],
+            name="Media-first quality review",
+        )
+    )
+    return rrb.Blueprint(
+        layout,
+        rrb.BlueprintPanel(state=rrb.PanelState.Hidden),
+        rrb.SelectionPanel(state=rrb.PanelState.Hidden),
+        rrb.TimePanel(state=rrb.PanelState.Expanded, timeline=default_timeline),
+        auto_layout=False,
+        collapse_panels=True,
+    )
 
 
 def build_run_rrd(
@@ -207,8 +338,11 @@ def build_run_rrd(
 
     try:
         import rerun as rr
+        import rerun.blueprint as rrb
     except ImportError as exc:  # pragma: no cover - rerun is a repo dependency
-        raise DataFactoryVizError(f"rerun-sdk is required to build the recording: {exc}") from exc
+        raise DataFactoryVizError(
+            f"rerun-sdk is required to build the recording: {exc}"
+        ) from exc
 
     run_id = _run_id_from_uri(input_uri)
     active_storage = storage_client
@@ -223,9 +357,8 @@ def build_run_rrd(
             active_storage = StorageClient.from_environment()
         source_bucket, source_prefix = _split_s3_prefix(input_uri)
         output_bucket, output_object_key = _split_s3_object(output_uri)
-        if (
-            output_bucket != source_bucket
-            or not output_object_key.startswith(source_prefix)
+        if output_bucket != source_bucket or not output_object_key.startswith(
+            source_prefix
         ):
             raise DataFactoryVizError(
                 "remote RRD publication must remain inside the canonical run prefix"
@@ -234,9 +367,7 @@ def build_run_rrd(
         require_colmap_lineage = _inventory_has_colmap_lineage(
             source_inventory, source_prefix
         )
-        output_exists = any(
-            row["key"] == output_object_key for row in source_inventory
-        )
+        output_exists = any(row["key"] == output_object_key for row in source_inventory)
 
     with tempfile.TemporaryDirectory(prefix="npa-df-viz-") as tmp:
         local = _materialize_run(
@@ -246,6 +377,46 @@ def build_run_rrd(
             require_colmap_lineage=require_colmap_lineage,
         )
         captions = _load_captions(local)
+        input_root = local / "input"
+        input_provenance = _read_json(input_root / "provenance.json")
+        source_kind = (
+            str(input_provenance.get("source_kind") or "")
+            if isinstance(input_provenance, dict)
+            else ""
+        )
+        source_entities: set[str] = set()
+        for frame in _image_files(input_root):
+            if frame.name.startswith("conditioning-frame-"):
+                source_entities.add("conditioning/derived")
+            elif source_kind == "synthetic_fixture":
+                source_entities.add("fixture/synthetic_seeded")
+            else:
+                source_entities.add(f"source/{_input_entity(frame, input_root)}")
+        source_video_records: list[dict[str, Any]] = []
+        for name, entity in (
+            ("source.mp4", "source/original"),
+            ("conditioning.mp4", "conditioning/derived"),
+        ):
+            video = input_root / name
+            if video.is_file():
+                source_entities.add(entity)
+                source_video_records.append({"entity": entity, "video": video})
+        variant_records = _committed_variant_records(local)
+        candidate_entities = [
+            f"augmented/{record['candidate_id']}" for record in variant_records
+        ]
+        stage_docs = _load_stage_docs(local)
+        has_controls = bool(_image_files(local / "cosmos_control"))
+        if app_id == APPLICATION_ID and variant_records and not source_entities:
+            raise DataFactoryVizError(
+                "committed augmented candidates require source media for comparison"
+            )
+        has_video_timing = bool(source_video_records) and any(
+            isinstance(record.get("video"), Path)
+            and record["video"].is_file()
+            for record in variant_records
+        )
+        default_timeline = "video_time" if has_video_timing else "frame"
 
         out_path = Path(tmp) / "sim2real.rrd"
         rec = rr.RecordingStream(app_id, recording_id=run_id)
@@ -254,16 +425,33 @@ def build_run_rrd(
         # without its footer/manifest when the temporary directory is published.
         # Rerun can often read that stream, while `rerun rrd verify` correctly
         # rejects it as incomplete.
-        rec.save(str(out_path))
+        if app_id == APPLICATION_ID and (source_entities or candidate_entities):
+            rec.save(
+                str(out_path),
+                default_blueprint=_build_data_factory_blueprint(
+                    rrb,
+                    source_entities=sorted(source_entities),
+                    candidate_entities=candidate_entities,
+                    has_controls=has_controls,
+                    has_captions=bool(captions),
+                    has_pipeline_evidence=bool(stage_docs),
+                    default_timeline=default_timeline,
+                ),
+            )
+        else:
+            rec.save(str(out_path))
         logged = 0
 
-        input_root = local / "input"
-        input_provenance = _read_json(input_root / "provenance.json")
-        source_kind = (
-            str(input_provenance.get("source_kind") or "")
-            if isinstance(input_provenance, dict)
-            else ""
-        )
+        source_video_count = 0
+        for source_video in source_video_records:
+            _log_video_asset(
+                rr,
+                rec,
+                f"{source_video['entity']}/video",
+                source_video["video"],
+            )
+            source_video_count += 1
+
         for frame in _subsample(_image_files(input_root), RRD_MAX_FRAMES_PER_ENTITY):
             _set_frame(rr, rec, _frame_index(frame.stem))
             if frame.name.startswith("conditioning-frame-"):
@@ -292,51 +480,43 @@ def build_run_rrd(
         augmented_entities: set[str] = set()
         augmented_frame_count = 0
         augmented_video_count = 0
-        variant_records = _committed_variant_records(local)
         if variant_records:
             disposition = _read_json(local / "grade" / "quality_disposition.json")
-            quality_status = str(
-                disposition.get("quality_status") or "UNKNOWN"
-            ).upper() if isinstance(disposition, dict) else "UNKNOWN"
+            quality_status = (
+                str(disposition.get("quality_status") or "UNKNOWN").upper()
+                if isinstance(disposition, dict)
+                else "UNKNOWN"
+            )
             for record in variant_records:
                 d = record["directory"]
                 label = _augmentation_label(d)
                 candidate = str(record["candidate_id"])
                 entity = f"augmented/{candidate}"
                 augmented_entities.add(entity)
-                for png in _subsample(sorted(d.glob("*.png")), RRD_MAX_FRAMES_PER_ENTITY):
+                for png in _subsample(
+                    sorted(d.glob("*.png")), RRD_MAX_FRAMES_PER_ENTITY
+                ):
                     _set_frame(rr, rec, _frame_index(png.stem))
                     _log_frame(rr, rec, entity, _load_rgb(png))
                     logged += 1
                     augmented_frame_count += 1
                 video = record.get("video")
                 if isinstance(video, Path) and video.is_file():
-                    asset = rr.AssetVideo(path=video)
-                    rr.log(f"{entity}/video", asset, static=True, recording=rec)
                     try:
-                        timestamps = asset.read_frame_timestamps_nanos()
-                        if len(timestamps):
-                            rr.send_columns(
-                                f"{entity}/video",
-                                indexes=[
-                                    rr.TimeColumn(
-                                        "video_time", duration=1e-9 * timestamps
-                                    )
-                                ],
-                                columns=rr.VideoFrameReference.columns_nanos(
-                                    timestamps
-                                ),
-                                recording=rec,
-                            )
+                        _log_video_asset(rr, rec, f"{entity}/video", video)
                     except Exception as exc:  # noqa: BLE001 - asset remains reviewable
-                        _log.debug(
-                            "could not attach video frame references for %s: %s",
-                            video,
-                            exc,
-                        )
+                        rec.disconnect()
+                        raise DataFactoryVizError(
+                            "generated video timing could not be decoded"
+                        ) from exc
                     augmented_video_count += 1
                 if label:
-                    rr.log(entity, rr.TextDocument(f"{d.name}: {label}"), static=True, recording=rec)
+                    rr.log(
+                        entity,
+                        rr.TextDocument(f"{d.name}: {label}"),
+                        static=True,
+                        recording=rec,
+                    )
                 rr.log(
                     f"{entity}/disposition",
                     rr.TextDocument(
@@ -396,7 +576,7 @@ def build_run_rrd(
         # curation report, the finalize aggregate, and a stage log/timeline — is
         # inspectable inside the embedded Rerun viewer alongside the input/output
         # images, not just the frames.
-        for entity, body in _load_stage_docs(local).items():
+        for entity, body in stage_docs.items():
             rr.log(
                 entity,
                 rr.TextDocument(body, media_type="text/markdown"),
@@ -422,6 +602,7 @@ def build_run_rrd(
                 existing_path,
                 variant_records=variant_records,
                 quality_status=quality_status if variant_records else "UNKNOWN",
+                source_video_records=source_video_records,
             )
             written_uri = output_uri
         else:
@@ -450,6 +631,23 @@ def build_run_rrd(
         "augmented_media_entities": len(augmented_entities),
         "augmented_frame_components": augmented_frame_count,
         "augmented_video_components": augmented_video_count,
+        "source_video_components": source_video_count,
+        "presentation": {
+            "default_timeline": default_timeline,
+            "default_view": "original-versus-generated",
+            "source_entities": sorted(source_entities),
+            "source_video_entities": [
+                str(record["entity"]) for record in source_video_records
+            ],
+            "candidate_entities": candidate_entities,
+            "conditioning_context": has_controls,
+            "evaluator_disposition_context": bool(stage_docs),
+            "timing_basis": (
+                "decoded-video-timestamps" if has_video_timing else "frame-sequence"
+            ),
+        }
+        if app_id == APPLICATION_ID
+        else {},
         **inventory_proof,
     }
 
@@ -522,9 +720,7 @@ def _verify_additive_publication(
         raise DataFactoryVizError(
             "RRD publication changed the canonical source object inventory"
         )
-    workflow_before = {
-        key for key in before_by_key if key.startswith(workflow_prefix)
-    }
+    workflow_before = {key for key in before_by_key if key.startswith(workflow_prefix)}
     if not workflow_before.issubset(after_by_key):
         raise DataFactoryVizError("RRD publication removed workflow evidence")
     unexpected = {
@@ -536,7 +732,9 @@ def _verify_additive_publication(
         raise DataFactoryVizError("RRD publication added undeclared run artifacts")
     output = after_by_key.get(output_key)
     if output is None or int(output.get("size") or 0) <= 0:
-        raise DataFactoryVizError("RRD publication did not produce a non-empty artifact")
+        raise DataFactoryVizError(
+            "RRD publication did not produce a non-empty artifact"
+        )
     if output_key in before_by_key and output != before_by_key[output_key]:
         raise DataFactoryVizError("RRD publication changed an existing recording")
     return source_before
@@ -547,6 +745,7 @@ def _verify_terminal_rrd_media(
     *,
     variant_records: list[dict[str, Any]],
     quality_status: str,
+    source_video_records: list[dict[str, Any]] | None = None,
 ) -> dict[str, int]:
     """Prove a preserved RRD contains each candidate's exact video and disposition."""
 
@@ -565,11 +764,38 @@ def _verify_terminal_rrd_media(
 
     verified_videos = 0
     verified_dispositions = 0
+    verified_source_videos = 0
+    for record in source_video_records or []:
+        entity = str(record.get("entity") or "")
+        video_path = record.get("video")
+        if not entity or not isinstance(video_path, Path) or not video_path.is_file():
+            raise DataFactoryVizError(
+                "existing RRD verification requires every source video"
+            )
+        embedded: list[bytes] = []
+        for chunk in by_entity.get(f"/{entity}/video", []):
+            batch = chunk.to_record_batch()
+            if "AssetVideo:blob" not in batch.schema.names:
+                continue
+            for row in batch.column("AssetVideo:blob").to_pylist():
+                if row:
+                    embedded.append(bytes(row[0]))
+        if len(embedded) != 1 or hashlib.sha256(
+            embedded[0]
+        ).hexdigest() != _sha256_path(video_path):
+            raise DataFactoryVizError(
+                "existing RRD source video differs from its canonical input"
+            )
+        verified_source_videos += 1
     expected_status = str(quality_status or "UNKNOWN").upper()
     for record in variant_records:
         candidate = str(record.get("candidate_id") or "")
         video_path = record.get("video")
-        if not candidate or not isinstance(video_path, Path) or not video_path.is_file():
+        if (
+            not candidate
+            or not isinstance(video_path, Path)
+            or not video_path.is_file()
+        ):
             raise DataFactoryVizError(
                 "existing RRD verification requires every committed candidate video"
             )
@@ -583,9 +809,9 @@ def _verify_terminal_rrd_media(
             for row in batch.column("AssetVideo:blob").to_pylist():
                 if row:
                     embedded.append(bytes(row[0]))
-        if len(embedded) != 1 or hashlib.sha256(embedded[0]).hexdigest() != _sha256_path(
-            video_path
-        ):
+        if len(embedded) != 1 or hashlib.sha256(
+            embedded[0]
+        ).hexdigest() != _sha256_path(video_path):
             raise DataFactoryVizError(
                 "existing RRD augmented video differs from its canonical candidate"
             )
@@ -597,8 +823,12 @@ def _verify_terminal_rrd_media(
             for name in batch.schema.names:
                 if "text" not in name.lower() and "body" not in name.lower():
                     continue
-                text_values.extend(str(value) for value in batch.column(name).to_pylist())
-        if not text_values or not any(expected_status in value.upper() for value in text_values):
+                text_values.extend(
+                    str(value) for value in batch.column(name).to_pylist()
+                )
+        if not text_values or not any(
+            expected_status in value.upper() for value in text_values
+        ):
             raise DataFactoryVizError(
                 "existing RRD candidate disposition is missing or inconsistent"
             )
@@ -606,6 +836,7 @@ def _verify_terminal_rrd_media(
     if not variant_records:
         raise DataFactoryVizError("existing RRD has no committed candidates to verify")
     return {
+        "source_video_entities": verified_source_videos,
         "augmented_video_entities": verified_videos,
         "augmented_disposition_entities": verified_dispositions,
     }
@@ -665,7 +896,10 @@ def _log_nurec_entities(rr: Any, rec: Any, local: Path) -> int:
     recording as real run data.
     """
     logged = 0
-    for directory, prefix in (("novel_views", "novel_view"), ("reconstruction", "reconstruction")):
+    for directory, prefix in (
+        ("novel_views", "novel_view"),
+        ("reconstruction", "reconstruction"),
+    ):
         root = local / directory
         if not root.is_dir():
             continue
@@ -829,9 +1063,7 @@ def _committed_variant_dirs(local: Path) -> list[Path]:
 def _candidate_evaluation(local: Path, iteration: int, clip: str) -> dict[str, Any]:
     grade_root = local / "grade"
     grade_dir = (
-        grade_root / f"iteration-{iteration}" / "ranking"
-        if iteration
-        else grade_root
+        grade_root / f"iteration-{iteration}" / "ranking" if iteration else grade_root
     )
     try:
         from npa.workbench.cosmos_evaluator import RESULT_FILENAME as result_name
@@ -958,7 +1190,11 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
     cfg = _read_json(local / "configs" / "manifest.json")
     if isinstance(cfg, dict):
         combos = cfg.get("augmentations") or []
-        lines = [f"**Scene:** {cfg.get('scene', 'n/a')}", f"**Scenarios sampled:** {len(combos)}", ""]
+        lines = [
+            f"**Scene:** {cfg.get('scene', 'n/a')}",
+            f"**Scenarios sampled:** {len(combos)}",
+            "",
+        ]
         for i, combo in enumerate(combos):
             if isinstance(combo, dict):
                 prompt = str(combo.get("prompt") or "")
@@ -966,7 +1202,9 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
                 lines.append(f"- **scenario {i}** — {attrs}")
                 if prompt:
                     lines.append(f"    - prompt: _{prompt}_")
-        docs["pipeline/1_scenarios"] = "## Config generation — sampled scenarios\n\n" + "\n".join(lines) + "\n"
+        docs["pipeline/1_scenarios"] = (
+            "## Config generation — sampled scenarios\n\n" + "\n".join(lines) + "\n"
+        )
         stage_log.append(f"configs: {len(combos)} scenario(s) sampled")
 
     input_provenance = _read_json(local / "input" / "provenance.json")
@@ -1042,7 +1280,9 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
     # Curation reports from both real components, when available.
     curator = _read_json(local / "curation" / "cosmos_curator.json")
     if isinstance(curator, dict):
-        docs["pipeline/4_cosmos_curator"] = _json_block("Cosmos Curator report", curator)
+        docs["pipeline/4_cosmos_curator"] = _json_block(
+            "Cosmos Curator report", curator
+        )
         stage_log.append(f"cosmos-curator: {curator.get('clip_count', 0)} clip(s)")
     cur = _read_json(local / "curation" / "report.json")
     if isinstance(cur, dict):
@@ -1063,7 +1303,9 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
 
     if stage_log:
         docs["pipeline/0_log"] = (
-            "## Pipeline stage log\n\n" + "\n".join(f"- {line}" for line in stage_log) + "\n"
+            "## Pipeline stage log\n\n"
+            + "\n".join(f"- {line}" for line in stage_log)
+            + "\n"
         )
     return docs
 
@@ -1179,7 +1421,9 @@ def _load_ncore_manifest_docs(local: Path, stage_log: list[str]) -> dict[str, st
                 f"({rig.get('pose_count', 0)} poses)",
                 f"**Poses component group:** `{rig.get('poses_component_group', 'n/a')}`",
             ]
-        docs["pipeline/1_ncore"] = "## NCore input capture\n\n" + "\n".join(lines) + "\n"
+        docs["pipeline/1_ncore"] = (
+            "## NCore input capture\n\n" + "\n".join(lines) + "\n"
+        )
         stage_log.append(
             f"ncore: {manifest.get('scene', 'n/a')} "
             f"({manifest.get('shard_count', 0)} shard(s), "
@@ -1283,7 +1527,9 @@ def _load_captions(local: Path) -> dict[str, str]:
             continue
         items = payload.get("captions", []) if isinstance(payload, dict) else []
         body = "\n\n".join(
-            f"- {c.get('image')}: {c.get('caption')}" for c in items[:12] if isinstance(c, dict)
+            f"- {c.get('image')}: {c.get('caption')}"
+            for c in items[:12]
+            if isinstance(c, dict)
         )
         if body:
             # Prefix a self-identifying header so a caption panel is never confused
@@ -1319,11 +1565,7 @@ def _materialize_run(
 
 
 def _download_colmap_lineage(client, root: str, dest: Path, *, required: bool) -> None:
-    lineage_paths = (
-        _COLMAP_LINEAGE_PATHS
-        if required
-        else ("source/attribution.json",)
-    )
+    lineage_paths = _COLMAP_LINEAGE_PATHS if required else ("source/attribution.json",)
     for relative in lineage_paths:
         local_path = dest / relative
         try:
@@ -1333,7 +1575,9 @@ def _download_colmap_lineage(client, root: str, dest: Path, *, required: bool) -
                 raise
 
 
-def _publish(local_path: str, output_uri: str, *, storage_client: "StorageClient | None") -> str:
+def _publish(
+    local_path: str, output_uri: str, *, storage_client: "StorageClient | None"
+) -> str:
     if not output_uri.startswith("s3://"):
         out = Path(output_uri)
         out.parent.mkdir(parents=True, exist_ok=True)

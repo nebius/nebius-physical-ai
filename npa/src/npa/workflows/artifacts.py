@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import base64
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace as dataclass_replace
 from datetime import datetime, timezone
+from functools import partial
 import json
 import math
 import mimetypes
@@ -298,6 +300,65 @@ class ArtifactListPage:
 
 
 @dataclass(frozen=True)
+class ArtifactSource:
+    """One authorized direct run-parent in durable artifact storage.
+
+    ``resolved_prefix`` is the exact directory *above* run ids.  Keeping the
+    owning project alongside the bucket matters even when a provider happens to
+    expose equal bucket names through one credential scope: authorization and
+    ambiguity are defined by the complete source tuple, not by bucket name.
+
+    Args:
+        project_id: Project whose credentials authorize this source.
+        bucket: Object-storage bucket containing the source.
+        resolved_prefix: Exact object prefix directly above run ids.
+
+    Returns:
+        None.
+
+    Raises:
+        ArtifactDiscoveryError: If any source identity field is invalid.
+    """
+
+    project_id: str
+    bucket: str
+    resolved_prefix: str = ""
+
+    def __post_init__(self) -> None:
+        project_id = str(self.project_id or "").strip()
+        bucket = str(self.bucket or "").strip()
+        resolved_prefix = _validate_source_prefix(self.resolved_prefix)
+        if (
+            not project_id
+            or len(project_id) > 255
+            or "/" in project_id
+            or "\\" in project_id
+            or any(ord(char) < 33 for char in project_id)
+        ):
+            raise ArtifactDiscoveryError("artifact source project_id is invalid")
+        if not _SAFE_BUCKET_RE.fullmatch(bucket):
+            raise ArtifactDiscoveryError("artifact source bucket is invalid")
+        object.__setattr__(self, "project_id", project_id)
+        object.__setattr__(self, "bucket", bucket)
+        object.__setattr__(self, "resolved_prefix", resolved_prefix)
+
+    @property
+    def identity(self) -> tuple[str, str, str]:
+        """Return the complete tuple used for authorization and de-duplication.
+
+        Args:
+            None.
+
+        Returns:
+            The project, bucket, and resolved-prefix tuple.
+
+        Raises:
+            None.
+        """
+        return (self.project_id, self.bucket, self.resolved_prefix)
+
+
+@dataclass(frozen=True)
 class RunSummary:
     run_id: str
     last_modified: str
@@ -421,6 +482,56 @@ class RunListPage:
         }
 
 
+def _run_storage_path(run: RunSummary) -> str:
+    prefix = str(run.resolved_prefix or "").strip("/")
+    run_id = str(run.run_id or "").strip("/")
+    return "/".join(part for part in (prefix, run_id) if part)
+
+
+def _artifact_source_covers_run(source: ArtifactSource, run: RunSummary) -> bool:
+    if source.bucket != run.bucket:
+        return False
+    if source.project_id and run.project_id != source.project_id:
+        return False
+    prefix = str(source.resolved_prefix or "").strip("/")
+    run_path = _run_storage_path(run)
+    return not prefix or run_path == prefix or run_path.startswith(prefix + "/")
+
+
+def exclude_run_source_subtrees(
+    page: RunListPage,
+    sources: "list[ArtifactSource] | tuple[ArtifactSource, ...]",
+) -> RunListPage:
+    """Remove generic rows covered by exact sources while preserving S3 case.
+
+    Args:
+        page: Generic-discovery page to filter.
+        sources: Authorized exact sources whose subtrees are covered elsewhere.
+
+    Returns:
+        A page with covered rows removed and its observed total adjusted.
+
+    Raises:
+        None.
+    """
+    exact_sources = tuple(sources)
+    runs = [
+        run
+        for run in page.runs
+        if not any(_artifact_source_covers_run(source, run) for source in exact_sources)
+    ]
+
+    removed = len(page.runs) - len(runs)
+    return RunListPage(
+        runs=runs,
+        truncated=page.truncated,
+        total_runs=max(0, int(page.total_runs) - removed),
+        limit=page.limit,
+        discovery_complete=page.discovery_complete,
+        source_errors=page.source_errors,
+    )
+
+
 def _without_infrastructure_roots(page: RunListPage) -> RunListPage:
     """Remove infrastructure-only root rows from a fallback run page."""
     runs = [item for item in page.runs if not is_infrastructure_root(item.run_id)]
@@ -452,12 +563,11 @@ class RunResolution:
 def _merge_staging_resolutions(
     matches: list[RunResolution],
 ) -> list[RunResolution]:
-    """Attach input-only staging roots to one authoritative output root.
+    """De-duplicate repeated observations without crossing source tuples.
 
-    A submitted workflow can stage source and data below its workflow
-    namespace while the runner writes completed outputs at the bucket root.
-    Those are one run, not an ambiguous duplicate. Two roots that both contain
-    outputs remain separate and therefore fail closed.
+    Input/output roles are not proof that two prefixes share one authorization
+    identity. Distinct source tuples therefore remain distinct and force a
+    caller using a plain run id to select the server-issued tuple explicitly.
     """
 
     grouped: dict[tuple[str, str], list[RunResolution]] = {}
@@ -469,54 +579,10 @@ def _merge_staging_resolutions(
     return merged
 
 
-def prefer_complete_run_resolution(
-    matches: list[RunResolution],
-) -> RunResolution | None:
-    """Choose one provable strict-superset source, otherwise remain ambiguous.
-
-    Viewer/checkpoint publication must never hide a canonical run behind a
-    same-basename one-file mirror. Relative artifact identity and byte size let us
-    prove that such a mirror is a strict subset. Legitimate duplicate runs whose
-    overlapping bytes differ, or where neither inventory contains the other,
-    remain fail-closed and require the server-issued source-qualified ``run_ref``.
-    """
-
-    if len(matches) < 2:
-        return matches[0] if matches else None
-
-    def inventory(match: RunResolution) -> dict[str, tuple[int, str]]:
-        return {
-            str(artifact.relative_key or artifact.key): (
-                int(artifact.size),
-                str(artifact.render),
-            )
-            for artifact in match.artifacts
-        }
-
-    inventories = [(match, inventory(match)) for match in matches]
-    dominant: list[RunResolution] = []
-    for candidate, candidate_inventory in inventories:
-        if not candidate_inventory:
-            continue
-        strictly_larger = False
-        for other, other_inventory in inventories:
-            if other is candidate:
-                continue
-            if not other_inventory.items() <= candidate_inventory.items():
-                break
-            strictly_larger = strictly_larger or len(candidate_inventory) > len(
-                other_inventory
-            )
-        else:
-            if strictly_larger:
-                dominant.append(candidate)
-    return dominant[0] if len(dominant) == 1 else None
-
-
 def _merge_staging_resolution_group(
     matches: list[RunResolution],
 ) -> list[RunResolution]:
-    """Merge one bucket/run-id group without crossing authorization roots."""
+    """Merge duplicate observations of the same exact source only."""
     by_source: dict[tuple[str, str], RunResolution] = {}
     for match in matches:
         source_key = (match.source_prefix, match.run_id)
@@ -536,78 +602,24 @@ def _merge_staging_resolution_group(
             source_prefix=match.source_prefix,
             artifacts=sorted(artifacts.values(), key=lambda item: item.key),
         )
-    unique = list(by_source.values())
-    authoritative = [
-        match
-        for match in unique
-        if any(artifact.role == "output" for artifact in match.artifacts)
-    ]
-    staging = [
-        match
-        for match in unique
-        if match.artifacts
-        and all(artifact.role == "input" for artifact in match.artifacts)
-    ]
-    if len(authoritative) != 1 or len(authoritative) + len(staging) != len(unique):
-        return unique
-    primary = authoritative[0]
-    artifacts = {
-        artifact.key: artifact
-        for match in (*staging, primary)
-        for artifact in match.artifacts
-    }
-    return [
-        RunResolution(
-            run_id=primary.run_id,
-            bucket=primary.bucket,
-            source_prefix=primary.source_prefix,
-            artifacts=sorted(artifacts.values(), key=lambda item: item.key),
-        )
-    ]
+    return list(by_source.values())
 
 
 def _merge_staging_summaries(runs: list[RunSummary]) -> list[RunSummary]:
-    grouped: dict[tuple[str, str], list[RunSummary]] = {}
+    """De-duplicate repeated summaries without collapsing distinct sources."""
+    merged: dict[tuple[str, str, str, str], RunSummary] = {}
     for run in runs:
-        grouped.setdefault((run.bucket, run.run_id), []).append(run)
-    merged: list[RunSummary] = []
-    for same_id in grouped.values():
-        authoritative = [run for run in same_id if run.output_artifact_count > 0]
-        staging = [
-            run
-            for run in same_id
-            if run.output_artifact_count == 0 and run.input_artifact_count > 0
-        ]
-        if len(authoritative) != 1 or len(authoritative) + len(staging) != len(same_id):
-            merged.extend(same_id)
-            continue
-        primary = authoritative[0]
-        merged.append(
-            dataclass_replace(
-                primary,
-                last_modified=max(
-                    (run.last_modified for run in same_id if run.last_modified),
-                    default=primary.last_modified,
-                ),
-                started_at=min(
-                    (run.started_at for run in same_id if run.started_at),
-                    default=primary.started_at,
-                ),
-                artifact_count=sum(run.artifact_count for run in same_id),
-                has_viewable=any(run.has_viewable for run in same_id),
-                input_artifact_count=sum(run.input_artifact_count for run in same_id),
-                metadata_artifact_count=sum(
-                    run.metadata_artifact_count for run in same_id
-                ),
-                namespaces=tuple(
-                    dict.fromkeys(
-                        namespace for run in same_id for namespace in run.namespaces
-                    )
-                ),
-                canonical_score=sum(run.canonical_score for run in same_id),
-            )
+        identity = (
+            str(run.project_id or ""),
+            str(run.bucket or ""),
+            str(run.resolved_prefix or "").strip("/"),
+            str(run.run_id or ""),
         )
-    return merged
+        existing = merged.get(identity)
+        merged[identity] = (
+            _merge_same_run_summary(existing, run) if existing is not None else run
+        )
+    return list(merged.values())
 
 
 _RUN_REF_PREFIX = "npa1_"
@@ -1658,6 +1670,182 @@ def _run_identity_for_object_key(
     return parent, run_id
 
 
+def _run_index_observation(
+    item: dict[str, Any], *, base_prefix: str, excluded: set[str]
+) -> tuple[str, str, str] | None:
+    key = str(item.get("Key") or "")
+    identity = _run_identity_for_object_key(
+        key,
+        base_prefix=base_prefix,
+        excluded=excluded,
+    )
+    if identity is None:
+        return None
+    parent, untrusted_run_id = identity
+    try:
+        run_id = _validate_run_basename(untrusted_run_id)
+    except ArtifactDiscoveryError:
+        return None
+    discovered_path = "/".join(part for part in (parent, run_id) if part)
+    if _is_excluded_prefix(discovered_path, excluded):
+        return None
+    return parent, run_id, key
+
+
+def _new_run_index_summary() -> dict[str, Any]:
+    return {
+        "artifact_count": 0,
+        "last_modified": "",
+        "earliest": "",
+        "has_viewable": False,
+        "output_artifact_count": 0,
+        "input_artifact_count": 0,
+        "canonical_score": 0,
+    }
+
+
+def _update_run_index_times(summary: dict[str, Any], modified: Any) -> None:
+    timestamp = _to_iso8601(modified)
+    if not timestamp:
+        return
+    summary["last_modified"] = max(str(summary["last_modified"]), timestamp)
+    if not summary["earliest"] or timestamp < str(summary["earliest"]):
+        summary["earliest"] = timestamp
+
+
+def _record_run_index_observation(
+    summaries: dict[tuple[str, str], dict[str, Any]],
+    observation: tuple[str, str, str],
+    modified: Any,
+) -> None:
+    parent, run_id, key = observation
+    summary = summaries.setdefault((parent, run_id), _new_run_index_summary())
+    summary["artifact_count"] = int(summary["artifact_count"]) + 1
+    scope = "/".join(part for part in (parent, run_id) if part)
+    relative_key = key[len(scope) :].lstrip("/") if key.startswith(scope) else key
+    role = artifact_role_for_relative_key(relative_key)
+    count_key = "input_artifact_count" if role == "input" else "output_artifact_count"
+    summary[count_key] = int(summary[count_key]) + 1
+    summary["canonical_score"] = int(
+        summary["canonical_score"]
+    ) + _artifact_output_signal_score(relative_key)
+    summary["has_viewable"] = bool(
+        summary["has_viewable"] or render_hint_for_object(key=key) != "download"
+    )
+    _update_run_index_times(summary, modified)
+
+
+def _scan_run_index_page(
+    contents: list[dict[str, Any]],
+    *,
+    object_count: int,
+    summaries: dict[tuple[str, str], dict[str, Any]],
+    base_prefix: str,
+    excluded: set[str],
+) -> tuple[int, bool]:
+    for item in contents:
+        object_count += 1
+        if object_count > MAX_RUN_DISCOVERY_OBJECTS:
+            return object_count, False
+        observation = _run_index_observation(
+            item,
+            base_prefix=base_prefix,
+            excluded=excluded,
+        )
+        if observation is not None:
+            _record_run_index_observation(
+                summaries,
+                observation,
+                item.get("LastModified"),
+            )
+    return object_count, True
+
+
+def _scan_artifact_run_index(
+    bucket: str, *, base_prefix: str, excluded: set[str], s3
+) -> tuple[dict[tuple[str, str], dict[str, Any]], bool]:
+    summaries: dict[tuple[str, str], dict[str, Any]] = {}
+    object_count = 0
+    try:
+        paginator = s3.get_paginator("list_objects_v2")
+        pages = paginator.paginate(Bucket=bucket, Prefix="")
+        for page_count, page in enumerate(pages, start=1):
+            if page_count > MAX_RUN_DISCOVERY_PAGES:
+                return summaries, False
+            contents = page.get("Contents", []) or []
+            object_count, complete = _scan_run_index_page(
+                contents,
+                object_count=object_count,
+                summaries=summaries,
+                base_prefix=base_prefix,
+                excluded=excluded,
+            )
+            if not complete:
+                return summaries, False
+    except (ClientError, BotoCoreError) as exc:
+        raise ArtifactDiscoveryError(
+            f"failed to build run index for s3://{bucket}: {exc}"
+        ) from exc
+    return summaries, True
+
+
+def _run_index_summary(
+    bucket: str,
+    identity: tuple[str, str],
+    payload: dict[str, Any],
+    *,
+    complete: bool,
+) -> RunSummary:
+    parent, run_id = identity
+    return RunSummary(
+        run_id=run_id,
+        last_modified=str(payload["last_modified"]),
+        started_at=_run_started_at(run_id, str(payload["earliest"])),
+        artifact_count=int(payload["artifact_count"]),
+        has_viewable=bool(payload["has_viewable"]),
+        bucket=bucket,
+        summary_complete=complete,
+        resolved_prefix=parent,
+        output_artifact_count=int(payload["output_artifact_count"]),
+        input_artifact_count=int(payload["input_artifact_count"]),
+        namespaces=(parent,),
+        canonical_score=int(payload["canonical_score"]),
+    )
+
+
+def _artifact_run_index_page(
+    bucket: str,
+    summaries: dict[tuple[str, str], dict[str, Any]],
+    *,
+    complete: bool,
+    contains: str,
+    limit: int,
+) -> RunListPage:
+    needle = str(contains or "").strip().lower()
+    runs = [
+        _run_index_summary(bucket, identity, payload, complete=complete)
+        for identity, payload in summaries.items()
+        if not needle or needle in identity[1].lower()
+    ]
+    runs = _merge_staging_summaries(runs)
+    runs.sort(
+        key=lambda item: (
+            item.last_modified,
+            item.run_id.lower(),
+            item.resolved_prefix,
+        ),
+        reverse=True,
+    )
+    total = len(runs)
+    return RunListPage(
+        runs=runs[:limit],
+        truncated=total > limit or not complete,
+        total_runs=total,
+        limit=limit,
+        discovery_complete=complete,
+    )
+
+
 def _list_artifact_run_index(
     bucket: str,
     *,
@@ -1673,124 +1861,18 @@ def _list_artifact_run_index(
     if s3 is None:
         raise ArtifactDiscoveryError("s3 client is required")
     excluded = _normalized_discovery_exclusions(exclude)
-    summaries: dict[tuple[str, str], dict[str, Any]] = {}
-    object_count = 0
-    page_count = 0
-    discovery_complete = True
-    try:
-        paginator = s3.get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=bucket, Prefix=""):
-            page_count += 1
-            if page_count > MAX_RUN_DISCOVERY_PAGES:
-                discovery_complete = False
-                break
-            for item in page.get("Contents", []) or []:
-                object_count += 1
-                if object_count > MAX_RUN_DISCOVERY_OBJECTS:
-                    discovery_complete = False
-                    break
-                key = str(item.get("Key") or "")
-                identity = _run_identity_for_object_key(
-                    key,
-                    base_prefix=base_prefix,
-                    excluded=excluded,
-                )
-                if identity is None:
-                    continue
-                parent, untrusted_run_id = identity
-                try:
-                    run_id = _validate_run_basename(untrusted_run_id)
-                except ArtifactDiscoveryError:
-                    # Buckets can contain abandoned template output such as a
-                    # literal ``${RUN_ID}`` directory. It is not an NPA run and
-                    # must not poison discovery for every valid sibling.
-                    continue
-                identity = (parent, run_id)
-                discovered_path = "/".join(part for part in (parent, run_id) if part)
-                if _is_excluded_prefix(discovered_path, excluded):
-                    continue
-                current = summaries.setdefault(
-                    identity,
-                    {
-                        "artifact_count": 0,
-                        "last_modified": "",
-                        "earliest": "",
-                        "has_viewable": False,
-                        "output_artifact_count": 0,
-                        "input_artifact_count": 0,
-                        "canonical_score": 0,
-                    },
-                )
-                current["artifact_count"] = int(current["artifact_count"]) + 1
-                scope = "/".join(part for part in (parent, run_id) if part)
-                relative_key = (
-                    key[len(scope) :].lstrip("/") if key.startswith(scope) else key
-                )
-                role = artifact_role_for_relative_key(relative_key)
-                count_key = (
-                    "input_artifact_count"
-                    if role == "input"
-                    else "output_artifact_count"
-                )
-                current[count_key] = int(current[count_key]) + 1
-                current["canonical_score"] = int(
-                    current["canonical_score"]
-                ) + _artifact_output_signal_score(relative_key)
-                current["has_viewable"] = bool(
-                    current["has_viewable"]
-                    or render_hint_for_object(key=key) != "download"
-                )
-                timestamp = _to_iso8601(item.get("LastModified"))
-                if timestamp:
-                    current["last_modified"] = max(
-                        str(current["last_modified"]), timestamp
-                    )
-                    if not current["earliest"] or timestamp < str(current["earliest"]):
-                        current["earliest"] = timestamp
-            if not discovery_complete:
-                break
-    except (ClientError, BotoCoreError) as exc:
-        raise ArtifactDiscoveryError(
-            f"failed to build run index for s3://{bucket}: {exc}"
-        ) from exc
-
-    needle = str(contains or "").strip().lower()
-    runs = [
-        RunSummary(
-            run_id=run_id,
-            last_modified=str(payload["last_modified"]),
-            started_at=_run_started_at(run_id, str(payload["earliest"])),
-            artifact_count=int(payload["artifact_count"]),
-            has_viewable=bool(payload["has_viewable"]),
-            bucket=bucket,
-            summary_complete=discovery_complete,
-            resolved_prefix=parent,
-            output_artifact_count=int(payload["output_artifact_count"]),
-            input_artifact_count=int(payload["input_artifact_count"]),
-            namespaces=(parent,),
-            canonical_score=int(payload["canonical_score"]),
-        )
-        for (parent, run_id), payload in summaries.items()
-        if not needle or needle in run_id.lower()
-    ]
-    # Keep one fail-closed implementation for the staging + authoritative
-    # output shape.  All other duplicate basenames remain source-qualified.
-    runs = _merge_staging_summaries(runs)
-    runs.sort(
-        key=lambda item: (
-            item.last_modified,
-            item.run_id.lower(),
-            item.resolved_prefix,
-        ),
-        reverse=True,
+    summaries, complete = _scan_artifact_run_index(
+        bucket,
+        base_prefix=base_prefix,
+        excluded=excluded,
+        s3=s3,
     )
-    total = len(runs)
-    return RunListPage(
-        runs=runs[:limit],
-        truncated=total > limit or not discovery_complete,
-        total_runs=total,
+    return _artifact_run_index_page(
+        bucket,
+        summaries,
+        complete=complete,
+        contains=contains,
         limit=limit,
-        discovery_complete=discovery_complete,
     )
 
 
@@ -1814,6 +1896,137 @@ def list_all_runs(
     )
 
 
+def _direct_run_candidates(
+    bucket: str,
+    *,
+    parent: str,
+    limit: int,
+    contains: str,
+    excluded: set[str],
+    s3,
+) -> tuple[list[tuple[str, str]], bool]:
+    candidates = list_run_categories(
+        bucket,
+        base_prefix=parent,
+        max_results=limit + 1,
+        s3=s3,
+    )
+    children: list[tuple[str, str]] = []
+    needle = str(contains or "").strip().lower()
+    for child in candidates[:limit]:
+        try:
+            run_id = _validate_run_basename(child.rsplit("/", 1)[-1].strip())
+        except ArtifactDiscoveryError:
+            continue
+        if is_infrastructure_root(run_id) or _is_excluded_prefix(child, excluded):
+            continue
+        if needle and needle not in run_id.lower():
+            continue
+        children.append((child, run_id))
+    return children, len(candidates) > limit
+
+
+def _lightweight_run_observations(
+    bucket: str, child: str, *, s3
+) -> tuple[str, int, bool, bool]:
+    last_modified = ""
+    observed_count = 0
+    has_viewable = False
+    complete = False
+    try:
+        page = s3.list_objects_v2(
+            Bucket=bucket,
+            Prefix=_normalize_prefix(child),
+            MaxKeys=LIGHTWEIGHT_RUN_SUMMARY_PAGE_SIZE,
+        )
+        contents = page.get("Contents", []) if isinstance(page, dict) else []
+        observed_count = len(contents)
+        complete = not bool(page.get("IsTruncated"))
+        for artifact in contents:
+            if not isinstance(artifact, dict):
+                continue
+            timestamp = _to_iso8601(artifact.get("LastModified"))
+            if timestamp > last_modified:
+                last_modified = timestamp
+            key = str(artifact.get("Key") or "")
+            if key and render_hint_for_object(key=key) != "download":
+                has_viewable = True
+    except (ClientError, BotoCoreError):
+        pass
+    return last_modified, observed_count, has_viewable, complete
+
+
+def _summarize_direct_run_prefix(
+    item: tuple[str, str], *, bucket: str, parent: str, s3
+) -> RunSummary:
+    child, run_id = item
+    last_modified, observed_count, has_viewable, complete = (
+        _lightweight_run_observations(bucket, child, s3=s3)
+    )
+    started_at = _run_started_at(run_id, "")
+    return RunSummary(
+        run_id=run_id,
+        last_modified=last_modified or started_at,
+        started_at=started_at,
+        artifact_count=observed_count if complete else 0,
+        has_viewable=True if has_viewable else False if complete else None,
+        bucket=bucket,
+        resolved_prefix=parent,
+        summary_complete=complete,
+    )
+
+
+def _summarize_direct_run_prefixes(
+    children: list[tuple[str, str]],
+    summarize: "Callable[[tuple[str, str]], RunSummary]",
+) -> list[RunSummary]:
+    worker_count = min(len(children), RUN_DISCOVERY_MAX_WORKERS)
+    if worker_count <= 1:
+        return [summarize(children[0])] if children else []
+    with ThreadPoolExecutor(max_workers=worker_count) as pool:
+        return list(pool.map(summarize, children))
+
+
+def _list_direct_run_prefixes(
+    bucket: str,
+    *,
+    prefix: str,
+    limit: int,
+    contains: str,
+    exclude: "set[str] | None",
+    s3,
+) -> RunListPage:
+    if limit <= 0:
+        raise ArtifactDiscoveryError("limit must be > 0")
+    if s3 is None:
+        raise ArtifactDiscoveryError("s3 client is required")
+    parent = str(prefix or "").strip().strip("/")
+    children, source_truncated = _direct_run_candidates(
+        bucket,
+        parent=parent,
+        limit=limit,
+        contains=contains,
+        excluded=_normalized_discovery_exclusions(exclude),
+        s3=s3,
+    )
+    summarize = partial(
+        _summarize_direct_run_prefix, bucket=bucket, parent=parent, s3=s3
+    )
+    summaries = _summarize_direct_run_prefixes(children, summarize)
+    summaries.sort(
+        key=lambda item: (item.last_modified, item.started_at, item.run_id),
+        reverse=True,
+    )
+    total = len(summaries)
+    return RunListPage(
+        runs=summaries[:limit],
+        truncated=source_truncated or total > limit,
+        total_runs=total,
+        limit=limit,
+        discovery_complete=not source_truncated,
+    )
+
+
 def list_run_prefixes(
     bucket: str,
     *,
@@ -1823,88 +2036,29 @@ def list_run_prefixes(
     exclude: "set[str] | None" = None,
     s3=None,
 ) -> RunListPage:
-    """Discover immediate run directories with one bounded native S3 page each.
+    """Discover immediate run directories with bounded S3 summary probes.
 
-    S3 ``CommonPrefixes`` makes cold agent discovery proportional to the number
-    of run directories rather than the total artifact population. A complete
-    first page supplies an exact count/viewability summary; a truncated page
-    preserves observed viewability and represents unknown values explicitly.
+    Args:
+        bucket: Authorized object-storage bucket to inspect.
+        prefix: Exact directory directly above run ids.
+        limit: Maximum number of candidate runs to summarize.
+        contains: Optional case-insensitive run-id substring.
+        exclude: Structural prefix subtrees that discovery must skip.
+        s3: Authorized S3-compatible client used for object listing.
+
+    Returns:
+        A bounded run page with explicit completeness and truncation state.
+
+    Raises:
+        ArtifactDiscoveryError: If inputs are invalid or S3 discovery fails.
     """
-    if limit <= 0:
-        raise ArtifactDiscoveryError("limit must be > 0")
-    if s3 is None:
-        raise ArtifactDiscoveryError("s3 client is required")
-    parent = str(prefix or "").strip().strip("/")
-    needle = str(contains or "").strip().lower()
-    excluded = _normalized_discovery_exclusions(exclude)
-    children = []
-    for child in list_run_categories(bucket, base_prefix=parent, s3=s3):
-        run_id = child.rsplit("/", 1)[-1].strip()
-        if (
-            not run_id
-            or is_infrastructure_root(run_id)
-            or (needle and needle not in run_id.lower())
-            or _is_excluded_prefix(child, excluded)
-        ):
-            continue
-        children.append((child, run_id))
-
-    def _summary(item: tuple[str, str]) -> RunSummary:
-        child, run_id = item
-        last_modified = ""
-        observed_count = 0
-        has_viewable = False
-        complete = False
-        try:
-            page = s3.list_objects_v2(
-                Bucket=bucket,
-                Prefix=_normalize_prefix(child),
-                MaxKeys=LIGHTWEIGHT_RUN_SUMMARY_PAGE_SIZE,
-            )
-            contents = page.get("Contents", []) if isinstance(page, dict) else []
-            observed_count = len(contents)
-            complete = not bool(page.get("IsTruncated"))
-            for artifact in contents:
-                if not isinstance(artifact, dict):
-                    continue
-                timestamp = _to_iso8601(artifact.get("LastModified"))
-                if timestamp > last_modified:
-                    last_modified = timestamp
-                key = str(artifact.get("Key") or "")
-                if key and render_hint_for_object(key=key) != "download":
-                    has_viewable = True
-        except (ClientError, BotoCoreError):
-            pass
-        id_started_at = _run_started_at(run_id, "")
-        return RunSummary(
-            run_id=run_id,
-            last_modified=last_modified or id_started_at,
-            started_at=id_started_at,
-            artifact_count=observed_count if complete else 0,
-            has_viewable=True if has_viewable else False if complete else None,
-            bucket=bucket,
-            resolved_prefix=parent,
-            summary_complete=complete,
-        )
-
-    max_workers = min(len(children), RUN_DISCOVERY_MAX_WORKERS)
-    if max_workers <= 1:
-        summaries = [_summary(children[0])] if children else []
-    else:
-        from concurrent.futures import ThreadPoolExecutor
-
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            summaries = list(pool.map(_summary, children))
-    summaries.sort(
-        key=lambda item: (item.last_modified, item.started_at, item.run_id),
-        reverse=True,
-    )
-    total = len(summaries)
-    return RunListPage(
-        runs=summaries[:limit],
-        truncated=total > limit,
-        total_runs=total,
+    return _list_direct_run_prefixes(
+        bucket,
+        prefix=prefix,
         limit=limit,
+        contains=contains,
+        exclude=exclude,
+        s3=s3,
     )
 
 
@@ -1928,10 +2082,309 @@ def list_all_run_prefixes(
     )
 
 
+def _run_source_identity(run: RunSummary) -> tuple[str, str, str, str]:
+    return (run.project_id, run.bucket, run.resolved_prefix, run.run_id)
+
+
+def _preferred_run_summary(first: RunSummary, second: RunSummary) -> RunSummary:
+    return max(
+        (first, second),
+        key=lambda item: (
+            bool(item.summary_complete),
+            item.artifact_count,
+            item.canonical_score,
+            item.last_modified,
+        ),
+    )
+
+
+def _merged_run_viewability(first: RunSummary, second: RunSummary) -> bool | None:
+    if first.has_viewable is True or second.has_viewable is True:
+        return True
+    summaries = (first, second)
+    if any(item.summary_complete and item.has_viewable is False for item in summaries):
+        return False
+    if first.has_viewable is None or second.has_viewable is None:
+        return None
+    return False
+
+
+def _merge_same_run_summary(first: RunSummary, second: RunSummary) -> RunSummary:
+    """Merge repeated observations of one exact source without double-counting."""
+    if _run_source_identity(first) != _run_source_identity(second):
+        raise ArtifactDiscoveryError("cannot merge different artifact run sources")
+    preferred = _preferred_run_summary(first, second)
+    started = [value for value in (first.started_at, second.started_at) if value]
+    return dataclass_replace(
+        preferred,
+        last_modified=max(first.last_modified, second.last_modified),
+        started_at=min(started) if started else "",
+        artifact_count=max(first.artifact_count, second.artifact_count),
+        has_viewable=_merged_run_viewability(first, second),
+        summary_complete=first.summary_complete or second.summary_complete,
+        output_artifact_count=max(
+            first.output_artifact_count, second.output_artifact_count
+        ),
+        input_artifact_count=max(
+            first.input_artifact_count, second.input_artifact_count
+        ),
+        metadata_artifact_count=max(
+            first.metadata_artifact_count, second.metadata_artifact_count
+        ),
+        namespaces=tuple(dict.fromkeys((*first.namespaces, *second.namespaces))),
+        canonical_score=max(first.canonical_score, second.canonical_score),
+    )
+
+
+def _run_summary_sort_key(run: RunSummary) -> tuple[Any, ...]:
+    return (
+        run.started_at or run.last_modified,
+        run.run_id.lower(),
+        run.canonical_score,
+        run.artifact_count,
+        run.last_modified,
+        run.project_id,
+        run.bucket,
+        run.resolved_prefix,
+    )
+
+
+def _merge_run_page_summaries(pages: list[RunListPage]) -> list[RunSummary]:
+    merged: dict[tuple[str, str, str, str], RunSummary] = {}
+    for page in pages:
+        for run in page.runs:
+            identity = _run_source_identity(run)
+            existing = merged.get(identity)
+            merged[identity] = (
+                _merge_same_run_summary(existing, run) if existing is not None else run
+            )
+    return sorted(merged.values(), key=_run_summary_sort_key, reverse=True)
+
+
+def _merge_run_page_errors(pages: list[RunListPage]) -> tuple[dict[str, str], ...]:
+    source_errors: list[dict[str, str]] = []
+    seen_errors: set[tuple[tuple[str, str], ...]] = set()
+    for page in pages:
+        for error in page.source_errors:
+            normalized = {str(key): str(value) for key, value in error.items()}
+            identity = tuple(sorted(normalized.items()))
+            if identity in seen_errors:
+                continue
+            seen_errors.add(identity)
+            source_errors.append(normalized)
+    return tuple(source_errors)
+
+
+def merge_run_list_pages(
+    pages: "list[RunListPage] | tuple[RunListPage, ...]",
+    *,
+    limit: int,
+) -> RunListPage:
+    """Merge bounded pages by complete source identity.
+
+    When every input is exhaustive, ``total_runs`` is an exact de-duplicated
+    total.  Otherwise it is only the number of distinct rows actually observed;
+    ``truncated``/``discovery_complete`` keep callers from presenting that count
+    as a global total.
+
+    Args:
+        pages: Source pages whose rows and errors should be combined.
+        limit: Maximum number of sorted rows to return.
+
+    Returns:
+        A de-duplicated page preserving incomplete and truncation semantics.
+
+    Raises:
+        ArtifactDiscoveryError: If ``limit`` is not positive.
+    """
+    if limit <= 0:
+        raise ArtifactDiscoveryError("limit must be > 0")
+    page_list = list(pages)
+    ordered = _merge_run_page_summaries(page_list)
+    total = len(ordered)
+    incomplete = any(
+        page.truncated or not page.discovery_complete for page in page_list
+    )
+    return RunListPage(
+        runs=ordered[:limit],
+        truncated=incomplete or total > limit,
+        total_runs=total,
+        limit=limit,
+        discovery_complete=all(page.discovery_complete for page in page_list),
+        source_errors=_merge_run_page_errors(page_list),
+    )
+
+
 # --- Multi-bucket discovery ---------------------------------------------------
 # The agent may be configured with several buckets. Discovery spans only the
 # primary and explicitly configured extras; it never enumerates unrelated buckets
 # merely because the credentials happen to be able to see them.
+
+
+def _unique_artifact_sources(
+    sources: "list[ArtifactSource] | tuple[ArtifactSource, ...]",
+) -> list[ArtifactSource]:
+    unique: list[ArtifactSource] = []
+    seen: set[tuple[str, str, str]] = set()
+    for source in sources:
+        if not isinstance(source, ArtifactSource):
+            raise ArtifactDiscoveryError(
+                "direct artifact discovery requires ArtifactSource values"
+            )
+        if source.identity in seen:
+            continue
+        seen.add(source.identity)
+        unique.append(source)
+    return unique
+
+
+def _source_discovery_failure(
+    source: ArtifactSource, *, limit: int, code: str, message: str
+) -> RunListPage:
+    error = {
+        "project_id": source.project_id,
+        "bucket": source.bucket,
+        "resolved_prefix": source.resolved_prefix,
+        "code": code,
+        "message": message,
+    }
+    return RunListPage(
+        runs=[],
+        truncated=True,
+        total_runs=0,
+        limit=limit,
+        discovery_complete=False,
+        source_errors=(error,),
+    )
+
+
+def _qualify_source_run_page(page: RunListPage, source: ArtifactSource) -> RunListPage:
+    runs = [
+        dataclass_replace(
+            run,
+            project_id=source.project_id,
+            bucket=source.bucket,
+            resolved_prefix=source.resolved_prefix,
+            namespaces=(source.resolved_prefix,),
+        )
+        for run in page.runs
+    ]
+    return dataclass_replace(page, runs=runs)
+
+
+def _discover_runs_for_source(
+    source: ArtifactSource,
+    *,
+    limit: int,
+    contains: str,
+    exclude: "set[str] | None",
+    excluded: set[str],
+    s3,
+) -> RunListPage:
+    if _path_in_non_run_tree(source.resolved_prefix, excluded):
+        return _source_discovery_failure(
+            source,
+            limit=limit,
+            code="artifact_source_not_searchable",
+            message="The configured artifact source is not a searchable run parent.",
+        )
+    try:
+        page = list_run_prefixes(
+            source.bucket,
+            prefix=source.resolved_prefix,
+            limit=limit,
+            contains=contains,
+            exclude=exclude,
+            s3=s3,
+        )
+    except (ArtifactDiscoveryError, ClientError, BotoCoreError):
+        return _source_discovery_failure(
+            source,
+            limit=limit,
+            code="artifact_discovery_unavailable",
+            message="Run discovery is unavailable for this artifact source.",
+        )
+    return _qualify_source_run_page(page, source)
+
+
+def _discover_source_run_pages(
+    sources: list[ArtifactSource], discover: "Callable[[ArtifactSource], RunListPage]"
+) -> list[RunListPage]:
+    worker_count = min(len(sources), RUN_DISCOVERY_MAX_WORKERS)
+    if worker_count <= 1:
+        return [discover(sources[0])]
+    with ThreadPoolExecutor(max_workers=worker_count) as pool:
+        return list(pool.map(discover, sources))
+
+
+def _list_direct_source_runs(
+    sources: "list[ArtifactSource] | tuple[ArtifactSource, ...]",
+    *,
+    limit: int,
+    contains: str,
+    exclude: "set[str] | None",
+    s3,
+) -> RunListPage:
+    if limit <= 0:
+        raise ArtifactDiscoveryError("limit must be > 0")
+    if s3 is None:
+        raise ArtifactDiscoveryError("s3 client is required")
+    unique_sources = _unique_artifact_sources(sources)
+    if not unique_sources:
+        return RunListPage(runs=[], truncated=False, total_runs=0, limit=limit)
+    discover = partial(
+        _discover_runs_for_source,
+        limit=limit,
+        contains=contains,
+        exclude=exclude,
+        excluded=_normalized_discovery_exclusions(exclude),
+        s3=s3,
+    )
+    pages = _discover_source_run_pages(unique_sources, discover)
+    merged = merge_run_list_pages(pages, limit=limit)
+    observed_total = sum(page.total_runs for page in pages)
+    return dataclass_replace(
+        merged,
+        total_runs=observed_total,
+        truncated=merged.truncated or observed_total > limit,
+    )
+
+
+def list_runs_across_sources(
+    sources: "list[ArtifactSource] | tuple[ArtifactSource, ...]",
+    *,
+    limit: int = 50,
+    contains: str = "",
+    exclude: "set[str] | None" = None,
+    s3=None,
+) -> RunListPage:
+    """Discover immediate runs below authorized direct-parent sources.
+
+    Unlike generic bucket discovery, an ``ArtifactSource`` explicitly says its
+    prefix is already the directory above run ids.  That makes timestamp-less
+    ids discoverable without guessing whether the prefix is a category
+    container.  Every returned row retains the full project/bucket/prefix tuple.
+
+    Args:
+        sources: Authorized source tuples whose prefixes are direct run parents.
+        limit: Maximum rows returned after source pages are merged.
+        contains: Optional case-insensitive run-id substring.
+        exclude: Structural prefix subtrees that discovery must skip.
+        s3: Authorized S3-compatible client used for object listing.
+
+    Returns:
+        A merged page that preserves source tuples and incomplete-source errors.
+
+    Raises:
+        ArtifactDiscoveryError: If inputs are invalid or no S3 client is supplied.
+    """
+    return _list_direct_source_runs(
+        sources,
+        limit=limit,
+        contains=contains,
+        exclude=exclude,
+        s3=s3,
+    )
 
 
 def list_accessible_buckets(
@@ -1965,6 +2418,190 @@ def list_accessible_buckets(
     return ordered
 
 
+@dataclass(frozen=True)
+class _BucketRunQuery:
+    base_prefix: str
+    prefix: str
+    limit: int
+    exclude: set[str] | None
+    contains: str
+    bucket_projects: dict[str, str] | None
+    lightweight: bool
+
+
+@dataclass(frozen=True)
+class _BucketRunResult:
+    runs: list[RunSummary]
+    total: int
+    complete: bool
+    truncated: bool
+    source_error: dict[str, str] | None
+
+
+def _bucket_run_page(
+    bucket: str, query: _BucketRunQuery, *, all_categories: bool, s3
+) -> RunListPage:
+    if all_categories:
+        discover = list_all_run_prefixes if query.lightweight else list_all_runs
+        return discover(
+            bucket,
+            base_prefix=query.base_prefix,
+            limit=query.limit,
+            exclude=query.exclude,
+            contains=query.contains,
+            s3=s3,
+        )
+    discover = list_run_prefixes if query.lightweight else list_runs
+    return discover(
+        bucket,
+        prefix=query.prefix,
+        limit=query.limit,
+        contains=query.contains,
+        s3=s3,
+    )
+
+
+def _bucket_discovery_error(
+    bucket: str, projects: "dict[str, str] | None"
+) -> dict[str, str]:
+    return {
+        "bucket": bucket,
+        "project_id": str((projects or {}).get(bucket) or ""),
+        "code": "artifact_discovery_unavailable",
+        "message": "Run discovery is unavailable for this object storage resource.",
+    }
+
+
+def _qualify_bucket_run(
+    run: RunSummary,
+    *,
+    bucket: str,
+    project_id: str,
+    resolved_prefix: str | None,
+) -> RunSummary:
+    changes = {"bucket": bucket, "project_id": project_id}
+    if resolved_prefix is not None:
+        changes["resolved_prefix"] = resolved_prefix
+    return dataclass_replace(run, **changes)
+
+
+def _discover_bucket_runs(
+    bucket: str, *, query: _BucketRunQuery, all_categories: bool, s3
+) -> _BucketRunResult:
+    try:
+        page = _bucket_run_page(
+            bucket,
+            query,
+            all_categories=all_categories,
+            s3=s3,
+        )
+    except (ArtifactDiscoveryError, ClientError, BotoCoreError):
+        return _BucketRunResult(
+            [],
+            0,
+            False,
+            True,
+            _bucket_discovery_error(bucket, query.bucket_projects),
+        )
+    resolved_prefix = (
+        None if all_categories else str(query.prefix or "").strip().strip("/")
+    )
+    project_id = str((query.bucket_projects or {}).get(bucket) or "")
+    runs = [
+        _qualify_bucket_run(
+            run,
+            bucket=bucket,
+            project_id=project_id,
+            resolved_prefix=resolved_prefix,
+        )
+        for run in page.runs
+    ]
+    return _BucketRunResult(
+        runs, page.total_runs, page.discovery_complete, page.truncated, None
+    )
+
+
+def _discover_bucket_run_pages(
+    buckets: list[str], discover: "Callable[[str], _BucketRunResult]"
+) -> list[_BucketRunResult]:
+    worker_count = min(len(buckets), RUN_DISCOVERY_MAX_WORKERS)
+    if worker_count <= 1:
+        return [discover(buckets[0])]
+    with ThreadPoolExecutor(max_workers=worker_count) as pool:
+        return list(pool.map(discover, buckets))
+
+
+def _bucket_run_sort_key(run: RunSummary, *, all_categories: bool) -> tuple[Any, ...]:
+    if all_categories:
+        return _run_summary_sort_key(run)
+    return (
+        run.started_at or run.last_modified,
+        run.run_id,
+        run.canonical_score,
+        run.artifact_count,
+        run.last_modified,
+    )
+
+
+def _merge_bucket_run_results(
+    results: list[_BucketRunResult],
+    *,
+    limit: int,
+    all_categories: bool,
+) -> RunListPage:
+    merged: dict[tuple[str, str, str, str], RunSummary] = {}
+    for result in results:
+        for run in result.runs:
+            merged[_run_source_identity(run)] = run
+    ordered = sorted(
+        merged.values(),
+        key=partial(_bucket_run_sort_key, all_categories=all_categories),
+        reverse=True,
+    )
+    total = sum(int(result.total or 0) for result in results)
+    complete = all(result.complete for result in results)
+    any_truncated = any(result.truncated for result in results)
+    observed_over_limit = total > limit if all_categories else len(ordered) > limit
+    return RunListPage(
+        runs=ordered[:limit],
+        truncated=any_truncated or observed_over_limit or not complete,
+        total_runs=total,
+        limit=limit,
+        discovery_complete=complete,
+        source_errors=tuple(
+            result.source_error for result in results if result.source_error is not None
+        ),
+    )
+
+
+def _list_bucket_runs(
+    buckets: "list[str] | tuple[str, ...]",
+    *,
+    query: _BucketRunQuery,
+    all_categories: bool,
+    s3,
+) -> RunListPage:
+    if query.limit <= 0:
+        raise ArtifactDiscoveryError("limit must be > 0")
+    if s3 is None:
+        raise ArtifactDiscoveryError("s3 client is required")
+    bucket_list = [str(bucket).strip() for bucket in buckets if str(bucket).strip()]
+    if not bucket_list:
+        return RunListPage(runs=[], truncated=False, total_runs=0, limit=query.limit)
+    discover = partial(
+        _discover_bucket_runs,
+        query=query,
+        all_categories=all_categories,
+        s3=s3,
+    )
+    results = _discover_bucket_run_pages(bucket_list, discover)
+    return _merge_bucket_run_results(
+        results,
+        limit=query.limit,
+        all_categories=all_categories,
+    )
+
+
 def list_all_runs_across_buckets(
     buckets: "list[str] | tuple[str, ...]",
     *,
@@ -1978,114 +2615,30 @@ def list_all_runs_across_buckets(
 ) -> RunListPage:
     """Discover runs across every accessible bucket, latest-first.
 
-    Each bucket is scanned with :func:`list_all_runs` (concurrently), every run
-    tagged with its bucket, then merged by exact source-qualified identity.
+    Args:
+        buckets: Authorized buckets to search.
+        base_prefix: Optional storage root used to interpret generic layouts.
+        limit: Maximum number of merged rows to return.
+        exclude: Structural prefix subtrees that discovery must skip.
+        contains: Optional case-insensitive run-id substring.
+        bucket_projects: Owning project id for each bucket.
+        lightweight: Whether to use direct-parent summary probes.
+        s3: Authorized S3-compatible client used for object listing.
+
+    Returns:
+        A source-qualified page spanning every supplied bucket.
+
+    Raises:
+        ArtifactDiscoveryError: If inputs are invalid or no client is supplied.
     """
-    if limit <= 0:
-        raise ArtifactDiscoveryError("limit must be > 0")
-    if s3 is None:
-        raise ArtifactDiscoveryError("s3 client is required")
-    bucket_list = [str(b).strip() for b in buckets if str(b).strip()]
-    if not bucket_list:
-        return RunListPage(runs=[], truncated=False, total_runs=0, limit=limit)
-
-    def _runs_for_bucket(
-        bucket: str,
-    ) -> "tuple[str, list[RunSummary], int, bool, bool, dict[str, str] | None]":
-        try:
-            discover = list_all_run_prefixes if lightweight else list_all_runs
-            page = discover(
-                bucket,
-                base_prefix=base_prefix,
-                limit=limit,
-                exclude=exclude,
-                contains=contains,
-                s3=s3,
-            )
-        except (ArtifactDiscoveryError, ClientError, BotoCoreError):
-            return (
-                bucket,
-                [],
-                0,
-                False,
-                True,
-                {
-                    "bucket": bucket,
-                    "project_id": str((bucket_projects or {}).get(bucket) or ""),
-                    "code": "artifact_discovery_unavailable",
-                    "message": "Run discovery is unavailable for this object storage resource.",
-                },
-            )
-        tagged = [
-            dataclass_replace(
-                run,
-                bucket=bucket,
-                project_id=str((bucket_projects or {}).get(bucket) or ""),
-            )
-            for run in page.runs
-        ]
-        return (
-            bucket,
-            tagged,
-            page.total_runs,
-            page.discovery_complete,
-            page.truncated,
-            None,
-        )
-
-    from concurrent.futures import ThreadPoolExecutor
-
-    max_workers = min(len(bucket_list), 8)
-    if max_workers <= 1:
-        results = [_runs_for_bucket(bucket_list[0])]
-    else:
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            results = list(pool.map(_runs_for_bucket, bucket_list))
-
-    merged: dict[tuple[str, str, str], RunSummary] = {}
-    discovery_complete = True
-    any_bucket_truncated = False
-    total = 0
-    source_errors: list[dict[str, str]] = []
-    for (
-        _bucket,
-        runs,
-        bucket_total,
-        bucket_complete,
-        bucket_truncated,
-        source_error,
-    ) in results:
-        discovery_complete = discovery_complete and bool(bucket_complete)
-        any_bucket_truncated = any_bucket_truncated or bool(bucket_truncated)
-        total += int(bucket_total or 0)
-        if source_error is not None:
-            source_errors.append(source_error)
-        for run in runs:
-            merged[(run.bucket, run.resolved_prefix, run.run_id)] = run
-    ordered = sorted(
-        merged.values(),
-        key=lambda item: (
-            item.started_at or item.last_modified,
-            item.run_id.lower(),
-            item.canonical_score,
-            item.artifact_count,
-            item.last_modified,
-            item.project_id,
-            item.bucket,
-            item.resolved_prefix,
-        ),
-        reverse=True,
+    query = _BucketRunQuery(
+        base_prefix, "", limit, exclude, contains, bucket_projects, lightweight
     )
-    truncated = any_bucket_truncated or total > limit or not discovery_complete
-    if len(ordered) > limit:
-        ordered = ordered[:limit]
-    return RunListPage(
-        runs=ordered,
-        truncated=truncated,
-        total_runs=total,
-        limit=limit,
-        discovery_complete=discovery_complete,
-        source_errors=tuple(source_errors),
+    return _list_bucket_runs(
+        buckets,
+        query=query,
+        all_categories=True,
+        s3=s3,
     )
 
 
@@ -2099,88 +2652,31 @@ def list_runs_at_prefix_across_buckets(
     lightweight: bool = False,
     s3=None,
 ) -> RunListPage:
-    """List one run-parent prefix across every accessible bucket."""
-    if limit <= 0:
-        raise ArtifactDiscoveryError("limit must be > 0")
-    if s3 is None:
-        raise ArtifactDiscoveryError("s3 client is required")
-    bucket_list = [str(bucket).strip() for bucket in buckets if str(bucket).strip()]
-    if not bucket_list:
-        return RunListPage(runs=[], truncated=False, total_runs=0, limit=limit)
+    """List one run-parent prefix across every accessible bucket.
 
-    def _runs_for_bucket(
-        bucket: str,
-    ) -> "tuple[list[RunSummary], int, bool, bool, dict[str, str] | None]":
-        try:
-            discover = list_run_prefixes if lightweight else list_runs
-            page = discover(
-                bucket, prefix=prefix, limit=limit, contains=contains, s3=s3
-            )
-        except (ArtifactDiscoveryError, ClientError, BotoCoreError):
-            return (
-                [],
-                0,
-                True,
-                False,
-                {
-                    "bucket": bucket,
-                    "project_id": str((bucket_projects or {}).get(bucket) or ""),
-                    "code": "artifact_discovery_unavailable",
-                    "message": "Run discovery is unavailable for this object storage resource.",
-                },
-            )
-        tagged = [
-            dataclass_replace(
-                run,
-                bucket=bucket,
-                project_id=str((bucket_projects or {}).get(bucket) or ""),
-                resolved_prefix=str(prefix or "").strip().strip("/"),
-            )
-            for run in page.runs
-        ]
-        return tagged, page.total_runs, page.truncated, page.discovery_complete, None
+    Args:
+        buckets: Authorized buckets to search.
+        prefix: Exact directory directly above run ids.
+        limit: Maximum number of merged rows to return.
+        contains: Optional case-insensitive run-id substring.
+        bucket_projects: Owning project id for each bucket.
+        lightweight: Whether to use direct-parent summary probes.
+        s3: Authorized S3-compatible client used for object listing.
 
-    from concurrent.futures import ThreadPoolExecutor
+    Returns:
+        A source-qualified page for the prefix across supplied buckets.
 
-    max_workers = min(len(bucket_list), 8)
-    if max_workers <= 1:
-        results = [_runs_for_bucket(bucket_list[0])]
-    else:
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            results = list(pool.map(_runs_for_bucket, bucket_list))
-
-    merged: dict[tuple[str, str, str], RunSummary] = {}
-    total = 0
-    discovery_complete = True
-    any_bucket_truncated = False
-    source_errors: list[dict[str, str]] = []
-    for runs, bucket_total, bucket_truncated, bucket_complete, source_error in results:
-        total += int(bucket_total or 0)
-        discovery_complete = discovery_complete and bool(bucket_complete)
-        any_bucket_truncated = any_bucket_truncated or bool(bucket_truncated)
-        if source_error is not None:
-            source_errors.append(source_error)
-        for run in runs:
-            merged[(run.bucket, run.resolved_prefix, run.run_id)] = run
-    ordered = sorted(
-        merged.values(),
-        key=lambda item: (
-            item.started_at or item.last_modified,
-            item.run_id,
-            item.canonical_score,
-            item.artifact_count,
-            item.last_modified,
-        ),
-        reverse=True,
+    Raises:
+        ArtifactDiscoveryError: If inputs are invalid or no client is supplied.
+    """
+    query = _BucketRunQuery(
+        "", prefix, limit, None, contains, bucket_projects, lightweight
     )
-    truncated = any_bucket_truncated or len(ordered) > limit or not discovery_complete
-    return RunListPage(
-        runs=ordered[:limit],
-        truncated=truncated,
-        total_runs=total,
-        limit=limit,
-        discovery_complete=discovery_complete,
-        source_errors=tuple(source_errors),
+    return _list_bucket_runs(
+        buckets,
+        query=query,
+        all_categories=False,
+        s3=s3,
     )
 
 
@@ -2207,6 +2703,68 @@ def _s3_cache_identity(s3) -> str:
     return f"{endpoint}|{access_key}"
 
 
+def _multi_run_cache_key(
+    buckets: tuple[str, ...], query: _BucketRunQuery, *, s3
+) -> tuple:
+    return (
+        "__multi__",
+        _s3_cache_identity(s3),
+        buckets,
+        query.base_prefix,
+        query.prefix,
+        int(query.limit),
+        tuple(sorted(query.exclude or ())),
+        str(query.contains or ""),
+        tuple(sorted((query.bucket_projects or {}).items())),
+        bool(query.lightweight),
+    )
+
+
+def _discover_multi_bucket_run_page(
+    buckets: tuple[str, ...], query: _BucketRunQuery, *, s3
+) -> RunListPage:
+    if query.prefix:
+        return list_runs_at_prefix_across_buckets(
+            list(buckets),
+            prefix=query.prefix,
+            limit=query.limit,
+            contains=query.contains,
+            bucket_projects=query.bucket_projects,
+            lightweight=query.lightweight,
+            s3=s3,
+        )
+    return list_all_runs_across_buckets(
+        list(buckets),
+        base_prefix=query.base_prefix,
+        limit=query.limit,
+        exclude=query.exclude,
+        contains=query.contains,
+        bucket_projects=query.bucket_projects,
+        lightweight=query.lightweight,
+        s3=s3,
+    )
+
+
+def _cached_multi_bucket_run_page(
+    buckets: "list[str] | tuple[str, ...]",
+    query: _BucketRunQuery,
+    s3,
+    ttl: "float | None",
+    refresh_sync: bool,
+) -> RunListPage:
+    effective_ttl = DEFAULT_RUN_LIST_TTL if ttl is None else ttl
+    bucket_list = tuple(
+        str(bucket).strip() for bucket in buckets if str(bucket).strip()
+    )
+    compute = partial(_discover_multi_bucket_run_page, bucket_list, query, s3=s3)
+    return _cached_run_list_page(
+        _multi_run_cache_key(bucket_list, query, s3=s3),
+        compute,
+        ttl=float(effective_ttl),
+        refresh_sync=refresh_sync,
+    )
+
+
 def list_runs_cached_multi(
     buckets: "list[str] | tuple[str, ...]",
     *,
@@ -2221,63 +2779,161 @@ def list_runs_cached_multi(
     ttl: "float | None" = None,
     refresh_sync: bool = False,
 ) -> RunListPage:
-    """Cache generic or explicit-prefix discovery across accessible buckets."""
-    # DEFAULT_RUN_LIST_TTL is defined below this block; resolve at call time.
-    if ttl is None:
-        ttl = DEFAULT_RUN_LIST_TTL
-    bucket_list = tuple(str(b).strip() for b in buckets if str(b).strip())
-    key = (
-        "__multi__",
+    """Cache generic or explicit-prefix discovery across accessible buckets.
+    Args:
+        buckets: Authorized buckets to search.
+        base_prefix: Optional storage root for generic discovery.
+        prefix: Exact run-parent prefix, when one is selected.
+        limit: Maximum number of merged rows to return.
+        exclude: Structural prefix subtrees that discovery must skip.
+        contains: Optional case-insensitive run-id substring.
+        bucket_projects: Owning project id for each bucket.
+        lightweight: Whether to use direct-parent summary probes.
+        s3: Authorized S3-compatible client used for object listing.
+        ttl: Cache lifetime in seconds, or the default when omitted.
+        refresh_sync: Whether stale data must be refreshed before returning.
+    Returns:
+        The credential-scoped cached or freshly discovered run page.
+    Raises:
+        ArtifactDiscoveryError: If inputs are invalid or discovery fails.
+    """
+    query = _BucketRunQuery(
+        base_prefix, prefix, limit, exclude, contains, bucket_projects, lightweight
+    )
+    return _cached_multi_bucket_run_page(buckets, query, s3, ttl, refresh_sync)
+
+
+def _source_run_cache_key(
+    sources: tuple[ArtifactSource, ...],
+    *,
+    s3,
+    limit: int,
+    exclude: "set[str] | None",
+    contains: str,
+) -> tuple:
+    return (
+        "__sources__",
         _s3_cache_identity(s3),
-        bucket_list,
-        base_prefix,
-        prefix,
+        tuple(sorted(source.identity for source in sources)),
         int(limit),
         tuple(sorted(exclude or ())),
         str(contains or ""),
-        tuple(sorted((bucket_projects or {}).items())),
-        bool(lightweight),
     )
 
-    def _compute() -> RunListPage:
-        if prefix:
-            return list_runs_at_prefix_across_buckets(
-                list(bucket_list),
-                prefix=prefix,
-                limit=limit,
-                contains=contains,
-                bucket_projects=bucket_projects,
-                lightweight=lightweight,
+
+def _cached_direct_source_runs(
+    sources: "list[ArtifactSource] | tuple[ArtifactSource, ...]",
+    *,
+    limit: int,
+    contains: str,
+    exclude: "set[str] | None",
+    s3,
+    ttl: "float | None",
+    refresh_sync: bool,
+) -> RunListPage:
+    effective_ttl = DEFAULT_RUN_LIST_TTL if ttl is None else ttl
+    source_list = tuple(sources)
+    if any(not isinstance(source, ArtifactSource) for source in source_list):
+        raise ArtifactDiscoveryError(
+            "direct artifact discovery requires ArtifactSource values"
+        )
+    key = _source_run_cache_key(
+        source_list,
+        s3=s3,
+        limit=limit,
+        exclude=exclude,
+        contains=contains,
+    )
+    compute = partial(
+        list_runs_across_sources,
+        source_list,
+        limit=limit,
+        contains=contains,
+        exclude=exclude,
+        s3=s3,
+    )
+    return _cached_run_list_page(
+        key,
+        compute,
+        ttl=float(effective_ttl),
+        refresh_sync=refresh_sync,
+    )
+
+
+def list_runs_cached_sources(
+    sources: "list[ArtifactSource] | tuple[ArtifactSource, ...]",
+    *,
+    limit: int = 50,
+    contains: str = "",
+    exclude: "set[str] | None" = None,
+    s3=None,
+    ttl: "float | None" = None,
+    refresh_sync: bool = False,
+) -> RunListPage:
+    """Cache discovery for explicit direct-parent source tuples.
+
+    Args:
+        sources: Authorized source tuples whose prefixes are direct run parents.
+        limit: Maximum number of merged rows to return.
+        contains: Optional case-insensitive run-id substring.
+        exclude: Structural prefix subtrees that discovery must skip.
+        s3: Authorized S3-compatible client used for object listing.
+        ttl: Cache lifetime in seconds, or the default when omitted.
+        refresh_sync: Whether stale data must be refreshed before returning.
+
+    Returns:
+        The credential-scoped cached or freshly discovered source page.
+
+    Raises:
+        ArtifactDiscoveryError: If a source value is invalid or discovery fails.
+    """
+    return _cached_direct_source_runs(
+        sources,
+        limit=limit,
+        contains=contains,
+        exclude=exclude,
+        s3=s3,
+        ttl=ttl,
+        refresh_sync=refresh_sync,
+    )
+
+
+def _find_run_matches_across_buckets(
+    buckets: "list[str] | tuple[str, ...]",
+    *,
+    base_prefix: str,
+    run_id: str,
+    s3,
+) -> tuple[list[RunResolution], bool]:
+    matches: list[RunResolution] = []
+    incomplete = False
+    for bucket in buckets:
+        name = str(bucket).strip()
+        if not name:
+            continue
+        try:
+            found = find_run_artifact_matches(
+                name,
+                base_prefix=base_prefix,
+                run_id=run_id,
                 s3=s3,
             )
-        return list_all_runs_across_buckets(
-            list(bucket_list),
-            base_prefix=base_prefix,
-            limit=limit,
-            exclude=exclude,
-            contains=contains,
-            bucket_projects=bucket_projects,
-            lightweight=lightweight,
-            s3=s3,
-        )
+        except (ArtifactDiscoveryError, ClientError, BotoCoreError):
+            incomplete = True
+            continue
+        matches.extend(found)
+    return matches, incomplete
 
-    now = time.monotonic()
-    with _RUN_LIST_LOCK:
-        entry = _RUN_LIST_CACHE.get(key)
-    if entry is not None:
-        ts, page = entry
-        if now - ts < ttl:
-            return page
-        _schedule_run_list_refresh(key, _compute, sync=refresh_sync)
-        if refresh_sync:
-            with _RUN_LIST_LOCK:
-                entry = _RUN_LIST_CACHE.get(key)
-            return entry[1] if entry else page
-        return page
-    page = _compute()
-    with _RUN_LIST_LOCK:
-        _RUN_LIST_CACHE[key] = (time.monotonic(), page)
-    return page
+
+def _unique_run_resolution(
+    run_id: str, matches: list[RunResolution]
+) -> RunResolution | None:
+    unique = _merge_staging_resolutions(matches)
+    if not unique:
+        return None
+    if len(unique) > 1:
+        raise AmbiguousRunError(run_id, [item.run_ref for item in unique])
+    return unique[0]
 
 
 def find_run_artifacts_across_buckets(
@@ -2287,37 +2943,34 @@ def find_run_artifacts_across_buckets(
     run_id: str,
     s3=None,
 ) -> "tuple[str, list[Artifact]]":
-    """Locate a unique run across configured buckets or fail on ambiguity."""
+    """Locate a unique run across configured buckets or fail on ambiguity.
+    Args:
+        buckets: Authorized buckets to search.
+        base_prefix: Optional storage root used to interpret generic layouts.
+        run_id: Validated run basename to resolve.
+        s3: Authorized S3-compatible client used for object listing.
+    Returns:
+        The unique bucket and artifact list, or an empty pair when absent.
+    Raises:
+        ArtifactDiscoveryError: If discovery is invalid or incomplete.
+        AmbiguousRunError: If the basename matches multiple source tuples.
+    """
     if s3 is None:
         raise ArtifactDiscoveryError("s3 client is required")
-    matches: list[RunResolution] = []
-    discovery_incomplete = False
-    for bucket in buckets:
-        name = str(bucket).strip()
-        if not name:
-            continue
-        try:
-            matches.extend(
-                find_run_artifact_matches(
-                    name, base_prefix=base_prefix, run_id=run_id, s3=s3
-                )
-            )
-        except (ArtifactDiscoveryError, ClientError, BotoCoreError):
-            discovery_incomplete = True
-            continue
-    if discovery_incomplete:
+    matches, incomplete = _find_run_matches_across_buckets(
+        buckets,
+        base_prefix=base_prefix,
+        run_id=run_id,
+        s3=s3,
+    )
+    if incomplete:
         raise ArtifactDiscoveryError(
             "run source discovery was incomplete; select an exact source"
         )
-    matches = _merge_staging_resolutions(matches)
-    if not matches:
+    resolution = _unique_run_resolution(run_id, matches)
+    if resolution is None:
         return "", []
-    if len(matches) > 1:
-        complete = prefer_complete_run_resolution(matches)
-        if complete is None:
-            raise AmbiguousRunError(run_id, [item.run_ref for item in matches])
-        return complete.bucket, complete.artifacts
-    return matches[0].bucket, matches[0].artifacts
+    return resolution.bucket, resolution.artifacts
 
 
 # --- Run-list cache (TTL + stale-while-revalidate) ----------------------------
@@ -2332,43 +2985,209 @@ def find_run_artifacts_across_buckets(
 # work, it does not approximate counts or ordering.
 DEFAULT_RUN_LIST_TTL = 30.0
 _RUN_LIST_CACHE: "dict[tuple, tuple[float, RunListPage]]" = {}
-_RUN_LIST_INFLIGHT: "set[tuple]" = set()
+_RUN_LIST_INFLIGHT: "dict[tuple, tuple[int, threading.Event]]" = {}
 _RUN_LIST_LOCK = threading.Lock()
+_RUN_LIST_GENERATION = 0
+
+
+@dataclass(frozen=True)
+class _RunListRefreshLease:
+    generation: int
+    event: threading.Event
+    token: tuple[int, threading.Event]
+    owner: bool
 
 
 def _run_list_cache_clear() -> None:
-    """Drop all cached run-list pages (test/maintenance helper)."""
+    """Invalidate cached pages, including results from older in-flight work."""
+    global _RUN_LIST_GENERATION
     with _RUN_LIST_LOCK:
+        _RUN_LIST_GENERATION += 1
         _RUN_LIST_CACHE.clear()
-        _RUN_LIST_INFLIGHT.clear()
+
+
+def _acquire_run_list_refresh_lease(key: tuple) -> _RunListRefreshLease:
+    with _RUN_LIST_LOCK:
+        generation = _RUN_LIST_GENERATION
+        existing = _RUN_LIST_INFLIGHT.get(key)
+        if existing is not None and existing[0] == generation:
+            return _RunListRefreshLease(generation, existing[1], existing, False)
+        event = threading.Event()
+        token = (generation, event)
+        _RUN_LIST_INFLIGHT[key] = token
+        return _RunListRefreshLease(generation, event, token, True)
+
+
+def _release_run_list_refresh_lease(
+    key: tuple, lease: _RunListRefreshLease, page: RunListPage | None
+) -> None:
+    with _RUN_LIST_LOCK:
+        if page is not None and lease.generation == _RUN_LIST_GENERATION:
+            _RUN_LIST_CACHE[key] = (time.monotonic(), page)
+        if _RUN_LIST_INFLIGHT.get(key) == lease.token:
+            _RUN_LIST_INFLIGHT.pop(key, None)
+    lease.event.set()
+
+
+def _execute_run_list_refresh(
+    key: tuple,
+    compute: "Callable[[], RunListPage]",
+    lease: _RunListRefreshLease,
+    *,
+    sync: bool,
+) -> None:
+    page: RunListPage | None = None
+    failure: Exception | None = None
+    try:
+        page = compute()
+    except Exception as exc:  # noqa: BLE001 - async refresh degrades to stale
+        failure = exc
+    finally:
+        _release_run_list_refresh_lease(key, lease, page)
+    if failure is not None and sync:
+        raise failure
 
 
 def _schedule_run_list_refresh(
     key: tuple, compute: "Callable[[], RunListPage]", *, sync: bool = False
 ) -> "threading.Thread | None":
-    """Refresh a stale cache entry. Runs in a daemon thread unless ``sync``."""
-
-    def _run() -> None:
-        try:
-            page = compute()
-        except Exception:  # noqa: BLE001 - background refresh must never raise
-            page = None
-        finally:
-            with _RUN_LIST_LOCK:
-                if page is not None:
-                    _RUN_LIST_CACHE[key] = (time.monotonic(), page)
-                _RUN_LIST_INFLIGHT.discard(key)
-
-    with _RUN_LIST_LOCK:
-        if key in _RUN_LIST_INFLIGHT:
-            return None
-        _RUN_LIST_INFLIGHT.add(key)
-    if sync:
-        _run()
+    """Refresh one entry, waiting for equivalent in-flight work when requested."""
+    lease = _acquire_run_list_refresh_lease(key)
+    if not lease.owner:
+        if sync:
+            lease.event.wait()
         return None
-    thread = threading.Thread(target=_run, name="npa-runlist-refresh", daemon=True)
+    refresh = partial(_execute_run_list_refresh, key, compute, lease, sync=sync)
+    if sync:
+        refresh()
+        return None
+    thread = threading.Thread(target=refresh, name="npa-runlist-refresh", daemon=True)
     thread.start()
     return thread
+
+
+def _run_list_cache_snapshot(
+    key: tuple,
+) -> tuple[tuple[float, RunListPage] | None, int]:
+    with _RUN_LIST_LOCK:
+        return _RUN_LIST_CACHE.get(key), _RUN_LIST_GENERATION
+
+
+def _store_cold_run_list_page(
+    key: tuple, compute: "Callable[[], RunListPage]", generation: int
+) -> RunListPage:
+    page = compute()
+    with _RUN_LIST_LOCK:
+        if generation == _RUN_LIST_GENERATION:
+            _RUN_LIST_CACHE[key] = (time.monotonic(), page)
+    return page
+
+
+def _newer_cached_run_list_page(
+    key: tuple, previous_timestamp: float
+) -> RunListPage | None:
+    with _RUN_LIST_LOCK:
+        refreshed = _RUN_LIST_CACHE.get(key)
+    if refreshed is None or refreshed[0] <= previous_timestamp:
+        return None
+    return refreshed[1]
+
+
+def _cached_run_list_page(
+    key: tuple,
+    compute: "Callable[[], RunListPage]",
+    *,
+    ttl: float,
+    refresh_sync: bool,
+) -> RunListPage:
+    """Serve one cached page, with an optionally authoritative sync refresh."""
+    now = time.monotonic()
+    entry, generation = _run_list_cache_snapshot(key)
+    if entry is None:
+        return _store_cold_run_list_page(key, compute, generation)
+
+    timestamp, stale_page = entry
+    if not refresh_sync and now - timestamp < ttl:
+        return stale_page
+
+    _schedule_run_list_refresh(key, compute, sync=refresh_sync)
+    if not refresh_sync:
+        return stale_page
+
+    refreshed_page = _newer_cached_run_list_page(key, timestamp)
+    if refreshed_page is not None:
+        return refreshed_page
+
+    # An already-running asynchronous refresh may have failed or been invalidated
+    # while this caller waited. A synchronous request must not silently return the
+    # stale (notably empty) page, so retry once as the foreground owner.
+    _schedule_run_list_refresh(key, compute, sync=True)
+    return _newer_cached_run_list_page(key, timestamp) or stale_page
+
+
+def _single_run_cache_key(
+    bucket: str, query: _BucketRunQuery, *, all_categories: bool, s3
+) -> tuple:
+    return (
+        bucket,
+        _s3_cache_identity(s3),
+        query.base_prefix,
+        query.prefix,
+        int(query.limit),
+        tuple(sorted(query.exclude or ())),
+        str(query.contains or ""),
+        bool(all_categories),
+    )
+
+
+def _discover_single_bucket_run_page(
+    bucket: str, query: _BucketRunQuery, *, all_categories: bool, s3
+) -> RunListPage:
+    if all_categories:
+        return list_all_runs(
+            bucket,
+            base_prefix=query.base_prefix,
+            limit=query.limit,
+            exclude=query.exclude,
+            contains=query.contains,
+            s3=s3,
+        )
+    return list_runs(
+        bucket,
+        prefix=query.prefix,
+        limit=query.limit,
+        contains=query.contains,
+        s3=s3,
+    )
+
+
+def _cached_single_bucket_run_page(
+    bucket: str,
+    query: _BucketRunQuery,
+    s3,
+    all_categories: bool,
+    ttl: float,
+    refresh_sync: bool,
+) -> RunListPage:
+    compute = partial(
+        _discover_single_bucket_run_page,
+        bucket,
+        query,
+        all_categories=all_categories,
+        s3=s3,
+    )
+    key = _single_run_cache_key(
+        bucket,
+        query,
+        all_categories=all_categories,
+        s3=s3,
+    )
+    return _cached_run_list_page(
+        key,
+        compute,
+        ttl=float(ttl),
+        refresh_sync=refresh_sync,
+    )
 
 
 def list_runs_cached(
@@ -2384,58 +3203,27 @@ def list_runs_cached(
     ttl: float = DEFAULT_RUN_LIST_TTL,
     refresh_sync: bool = False,
 ) -> RunListPage:
-    """TTL + stale-while-revalidate wrapper over :func:`list_runs` /
-    :func:`list_all_runs`.
-
-    - Fresh cache hit (age < ``ttl``): returned immediately, no S3 calls.
-    - Stale cache hit: the cached page is returned immediately AND a single
-      background refresh is scheduled (``refresh_sync`` forces it inline, for
-      tests) so the next caller sees fresh data.
-    - Cold miss: computed synchronously, cached, returned.
-
-    ``all_categories=True`` discovers across every category (no user prefix);
-    otherwise it lists a single ``prefix``.
+    """Cache single-bucket discovery with stale-while-revalidate behavior.
+    Args:
+        bucket: Authorized object-storage bucket to inspect.
+        prefix: Exact run-parent prefix for single-prefix discovery.
+        base_prefix: Optional storage root for all-category discovery.
+        limit: Maximum number of rows to return.
+        exclude: Structural prefix subtrees that discovery must skip.
+        contains: Optional case-insensitive run-id substring.
+        s3: Authorized S3-compatible client used for object listing.
+        all_categories: Whether to discover generic layouts across the bucket.
+        ttl: Cache lifetime in seconds.
+        refresh_sync: Whether stale data must be refreshed before returning.
+    Returns:
+        The credential-scoped cached or freshly discovered run page.
+    Raises:
+        ArtifactDiscoveryError: If inputs are invalid or discovery fails.
     """
-    key = (
-        bucket,
-        _s3_cache_identity(s3),
-        base_prefix,
-        prefix,
-        int(limit),
-        tuple(sorted(exclude or ())),
-        str(contains or ""),
-        bool(all_categories),
+    query = _BucketRunQuery(base_prefix, prefix, limit, exclude, contains, None, False)
+    return _cached_single_bucket_run_page(
+        bucket, query, s3, all_categories, ttl, refresh_sync
     )
-
-    def _compute() -> RunListPage:
-        if all_categories:
-            return list_all_runs(
-                bucket,
-                base_prefix=base_prefix,
-                limit=limit,
-                exclude=exclude,
-                contains=contains,
-                s3=s3,
-            )
-        return list_runs(bucket, prefix=prefix, limit=limit, contains=contains, s3=s3)
-
-    now = time.monotonic()
-    with _RUN_LIST_LOCK:
-        entry = _RUN_LIST_CACHE.get(key)
-    if entry is not None:
-        ts, page = entry
-        if now - ts < ttl:
-            return page
-        _schedule_run_list_refresh(key, _compute, sync=refresh_sync)
-        if refresh_sync:
-            with _RUN_LIST_LOCK:
-                entry = _RUN_LIST_CACHE.get(key)
-            return entry[1] if entry else page
-        return page
-    page = _compute()
-    with _RUN_LIST_LOCK:
-        _RUN_LIST_CACHE[key] = (time.monotonic(), page)
-    return page
 
 
 def _cached_server_discovered_run_summary(
@@ -2527,6 +3315,84 @@ def find_run_artifact_matches(
     ]
 
 
+def _cached_summary_resolution(
+    observed: RunSummary,
+    *,
+    bucket: str,
+    source_prefix: str,
+    run_id: str,
+    s3,
+) -> RunResolution:
+    artifacts = [
+        artifact
+        for namespace in (observed.namespaces or (source_prefix,))
+        for artifact in list_artifacts(
+            bucket,
+            run_id,
+            prefix=namespace,
+            s3=s3,
+        )
+    ]
+    return RunResolution(
+        run_id=run_id,
+        bucket=bucket,
+        source_prefix=source_prefix,
+        artifacts=artifacts,
+    )
+
+
+def _resolve_exact_run_reference(
+    configured: list[str], *, base_prefix: str, requested: str, s3
+) -> RunResolution | None:
+    bucket, source_prefix, run_id = decode_run_ref(requested)
+    if bucket not in configured:
+        raise ArtifactDiscoveryError("run_ref bucket is not configured for this agent")
+    observed = _cached_server_discovered_run_summary(
+        bucket=bucket,
+        source_prefix=source_prefix,
+        run_id=run_id,
+        s3=s3,
+    )
+    if observed is not None:
+        return _cached_summary_resolution(
+            observed,
+            bucket=bucket,
+            source_prefix=source_prefix,
+            run_id=run_id,
+            s3=s3,
+        )
+    matches = find_run_artifact_matches(
+        bucket,
+        base_prefix=base_prefix,
+        run_id=run_id,
+        exact_source_prefix=source_prefix,
+        s3=s3,
+    )
+    exact = [
+        item
+        for item in _merge_staging_resolutions(matches)
+        if item.source_prefix == source_prefix
+    ]
+    return _unique_run_resolution(run_id, exact)
+
+
+def _resolve_plain_run_id(
+    configured: list[str], *, base_prefix: str, requested: str, s3
+) -> RunResolution | None:
+    run_id = _validate_run_basename(requested)
+    matches, incomplete = _find_run_matches_across_buckets(
+        configured,
+        base_prefix=base_prefix,
+        run_id=run_id,
+        s3=s3,
+    )
+    if incomplete:
+        raise ArtifactDiscoveryError(
+            "run source discovery was incomplete; select a server-discovered exact source"
+        )
+    return _unique_run_resolution(run_id, matches)
+
+
 def resolve_run_artifacts(
     buckets: "list[str] | tuple[str, ...]",
     *,
@@ -2534,86 +3400,35 @@ def resolve_run_artifacts(
     run_ref_or_id: str,
     s3=None,
 ) -> RunResolution | None:
-    """Resolve an exact run_ref, or a unique plain run basename."""
+    """Resolve an exact run reference or a unique plain run basename.
+    Args:
+        buckets: Authorized buckets that may contain the run.
+        base_prefix: Optional storage root used to interpret generic layouts.
+        run_ref_or_id: Server-issued run reference or validated run basename.
+        s3: Authorized S3-compatible client used for object listing.
+    Returns:
+        The unique source-qualified resolution, or ``None`` when absent.
+    Raises:
+        ArtifactDiscoveryError: If selection is unauthorized or incomplete.
+        AmbiguousRunError: If a basename matches multiple source tuples.
+    """
     if s3 is None:
         raise ArtifactDiscoveryError("s3 client is required")
     configured = [str(bucket).strip() for bucket in buckets if str(bucket).strip()]
     requested = str(run_ref_or_id or "").strip()
     if requested.startswith(_RUN_REF_PREFIX):
-        bucket, source_prefix, run_id = decode_run_ref(requested)
-        if bucket not in configured:
-            raise ArtifactDiscoveryError(
-                "run_ref bucket is not configured for this agent"
-            )
-        observed = _cached_server_discovered_run_summary(
-            bucket=bucket,
-            source_prefix=source_prefix,
-            run_id=run_id,
+        return _resolve_exact_run_reference(
+            configured,
+            base_prefix=base_prefix,
+            requested=requested,
             s3=s3,
         )
-        if observed is not None:
-            return RunResolution(
-                run_id=run_id,
-                bucket=bucket,
-                source_prefix=source_prefix,
-                artifacts=[
-                    artifact
-                    for namespace in (observed.namespaces or (source_prefix,))
-                    for artifact in list_artifacts(
-                        bucket,
-                        run_id,
-                        prefix=namespace,
-                        s3=s3,
-                    )
-                ],
-            )
-        # A run_ref is a stable selector, not an authorization capability. Prove
-        # that its exact bucket/prefix tuple is present in the server-discovered
-        # bounded run index before listing objects beneath a caller-supplied path.
-        exact_source_matches = _merge_staging_resolutions(
-            find_run_artifact_matches(
-                bucket,
-                base_prefix=base_prefix,
-                run_id=run_id,
-                exact_source_prefix=source_prefix,
-                s3=s3,
-            )
-        )
-        exact = [
-            item for item in exact_source_matches if item.source_prefix == source_prefix
-        ]
-        if not exact:
-            return None
-        if len(exact) > 1:
-            raise AmbiguousRunError(run_id, [item.run_ref for item in exact])
-        return exact[0]
-
-    run_id = _validate_run_basename(requested)
-    matches: list[RunResolution] = []
-    failures = 0
-    for bucket in configured:
-        try:
-            matches.extend(
-                find_run_artifact_matches(
-                    bucket, base_prefix=base_prefix, run_id=run_id, s3=s3
-                )
-            )
-        except (ArtifactDiscoveryError, ClientError, BotoCoreError):
-            failures += 1
-            continue
-    if failures:
-        raise ArtifactDiscoveryError(
-            "run source discovery was incomplete; select a server-discovered exact source"
-        )
-    matches = _merge_staging_resolutions(matches)
-    if not matches:
-        return None
-    if len(matches) > 1:
-        complete = prefer_complete_run_resolution(matches)
-        if complete is None:
-            raise AmbiguousRunError(run_id, [item.run_ref for item in matches])
-        return complete
-    return matches[0]
+    return _resolve_plain_run_id(
+        configured,
+        base_prefix=base_prefix,
+        requested=requested,
+        s3=s3,
+    )
 
 
 def find_run_artifacts(
@@ -2623,6 +3438,19 @@ def find_run_artifacts(
 
     Probes every candidate parent prefix and returns the unique match. Duplicate
     basenames fail closed rather than silently selecting the first category.
+
+    Args:
+        bucket: Authorized object-storage bucket to search.
+        base_prefix: Optional storage root used to interpret generic layouts.
+        run_id: Validated run basename to resolve.
+        s3: Authorized S3-compatible client used for object listing.
+
+    Returns:
+        The unique run's artifacts, or an empty list when absent.
+
+    Raises:
+        ArtifactDiscoveryError: If discovery is invalid or incomplete.
+        AmbiguousRunError: If the basename matches multiple source tuples.
     """
     if s3 is None:
         raise ArtifactDiscoveryError("s3 client is required")
@@ -2633,10 +3461,7 @@ def find_run_artifacts(
     if not matches:
         return []
     if len(matches) > 1:
-        complete = prefer_complete_run_resolution(matches)
-        if complete is None:
-            raise AmbiguousRunError(run_id, [item.run_ref for item in matches])
-        return complete.artifacts
+        raise AmbiguousRunError(run_id, [item.run_ref for item in matches])
     return matches[0].artifacts
 
 

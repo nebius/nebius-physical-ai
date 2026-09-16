@@ -194,7 +194,7 @@ def _enforce_workflow_access(
         blocked,
         probe_requirements,
     )
-    from npa.workbench.nurec.nurec import check_ngc_image_access
+    from npa.workbench.model_access import check_ngc_artifact_access
 
     credentials = load_credentials() if hf_token is None or ngc_key is None else None
     resolved_hf = (
@@ -215,7 +215,7 @@ def _enforce_workflow_access(
         hf_token=resolved_hf,
         ngc_key=resolved_ngc,
         hf_validator=validate_hf_access,
-        ngc_validator=check_ngc_image_access,
+        ngc_validator=check_ngc_artifact_access,
         state_path=state_path,
     )
     plan = approval_plan(evidence, resume_command=resume_command)
@@ -1662,12 +1662,27 @@ def submit_cmd(
                 plan_paidf_input,
                 prepare_paidf_input,
             )
+            from npa.orchestration.npa_workflow.run_state import (
+                NVIDIA_PAIDF_VDA_WORKFLOW_NAME,
+                PAIDF_COSMOS3_WORKFLOW_NAME,
+            )
+
+            paidf_input_artifact_prefix = ""
+            if workflow_identity == NVIDIA_PAIDF_VDA_WORKFLOW_NAME:
+                from npa.orchestration.npa_workflow.runtime import _resolved_config
+
+                assert merged_npa_spec is not None
+                paidf_input_artifact_prefix = str(
+                    _resolved_config(merged_npa_spec, resolved_run_id).get("prefix")
+                    or ""
+                ).strip("/")
 
             try:
                 if plan_only:
                     prepared_input = plan_paidf_input(
                         run_id=resolved_run_id,
                         bucket=bucket_for_source,
+                        artifact_prefix=paidf_input_artifact_prefix,
                         input_video=input_video,
                         input_uri=input_uri,
                         lerobot_uri=lerobot_uri,
@@ -1683,6 +1698,7 @@ def submit_cmd(
                     prepared_input = prepare_paidf_input(
                         run_id=resolved_run_id,
                         bucket=bucket_for_source,
+                        artifact_prefix=paidf_input_artifact_prefix,
                         input_video=input_video,
                         input_uri=input_uri,
                         lerobot_uri=lerobot_uri,
@@ -1704,9 +1720,6 @@ def submit_cmd(
                 _fail(str(exc))
                 return
             prepared_overrides = prepared_input.config_overrides()
-            from npa.orchestration.npa_workflow.run_state import (
-                PAIDF_COSMOS3_WORKFLOW_NAME,
-            )
 
             if workflow_identity == PAIDF_COSMOS3_WORKFLOW_NAME:
                 # The independent Cosmos3 spec owns its run-local provenance URI.
@@ -2690,10 +2703,15 @@ def _run_npa_workflow_runtime(
             _fail(str(exc))
             return
     artifact_load: dict[str, object] | None = None
+    from npa.orchestration.npa_workflow.run_state import (
+        NVIDIA_PAIDF_VDA_WORKFLOW_NAME,
+    )
+
     if (
         report.status == "succeeded"
         and auto_load
-        and report.workflow == "physical-ai-data-factory"
+        and report.workflow
+        in {"physical-ai-data-factory", NVIDIA_PAIDF_VDA_WORKFLOW_NAME}
     ):
         artifact_load = _load_paidf_artifact(
             project=project,

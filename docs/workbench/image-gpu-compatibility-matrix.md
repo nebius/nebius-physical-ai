@@ -56,6 +56,10 @@ Two compatibility rules govern every cell:
 | `npa-sonic` | `…-0.1.2-k8s-runtime-…-20260803T034152Z` | 2.9.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
 | `npa-cosmos` | `cu128-torch27-sm100-1.0.9-20260803T002017Z` | 2.7.0+cu128 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
 | `npa-alpamayo2-super` | `0.1.0-cu128` (index `sha256:2164450f8baf…`) | 2.8.0+cu128 | `sm_70 sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
+| `npa-paidf-anomalygen-sky` | operator-private child `sha256:5aff3f4b40a4…` | 2.13.0+cu132 / CUDA 13.2 | full wheel architecture list not separately recorded; native CUDA and attention executed on B200 | yes; measured on B200 |
+| `npa-paidf-image-edit-sky` | operator-private child `sha256:ef7450cfc12e…` | 2.11.0+cu130 / CUDA 13.0 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes; measured on B200 |
+| `npa-paidf-event-video-sky` | operator-private child `sha256:277a255e8bce…` | 2.11.0+cu130 / CUDA 13.0 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes; measured on B200 |
+| `npa-paidf-detection-sky` | operator-private child `sha256:6fa1c78eddad…` | 2.13.0a0+9186a08b2c.nv26.07 / CUDA 13.3 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes; measured on B200 |
 
 The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/torch-2.7 replacement now carries `sm_100`, and the custom kernels passed on B200. Predict2 v1.0.9 still has a separate software allowlist that rejects L40S, RTX PRO 6000, and B300 before dispatch, so wheel coverage alone does not make those cells supported. The 2026-08-03 Genesis and Sim2Real tags compiled their runtime kernels and passed their real smokes on B200 and B300; the inherited Taichi blocker did not reproduce. Cells for a newer accepted release mark those runs historical unless the newer digest was independently qualified. SONIC remains separately blocked on the NVIDIA Isaac vendor stack. Not measured yet: `npa-workbench-cuda-base` and `npa-groot` on datacenter GPUs.
 
@@ -89,6 +93,13 @@ likewise predates its current coherent release.
 | `npa-cosmos3-nano-video` (operator-private) | not validated | not validated | not validated | **verified** [67] | not validated |
 | `npa-cosmos3-ray-serve` | supported | supported | **verified** [66] | **verified** [65] | supported (same-major `sm_100` coverage; not measured) |
 | `npa-content-agents` | supported (RT cores) | blocked (no RT cores) | **verified** [64] | blocked (no RT cores) | blocked (no RT cores) |
+| `npa-paidf-anomalygen-sky` | built; unmeasured | built; unmeasured | built; unmeasured | **CUDA, four native attention cases, and full native DIG verified** [PAIDF](#paidf-private-image-evidence) | built; unmeasured |
+| `npa-paidf-image-edit-sky` | built; unmeasured | built; unmeasured | built; unmeasured | **hardware and IAA verified** [PAIDF](#paidf-private-image-evidence) | built; unmeasured |
+| `npa-paidf-event-video-sky` | built; unmeasured | built; unmeasured | built; unmeasured | **hardware and EVG verified** [PAIDF](#paidf-private-image-evidence) | built; unmeasured |
+| `npa-paidf-detection-sky` | built; unmeasured | built; unmeasured | built; unmeasured | hardware + detection/tracking verified; EVG passed [PAIDF](#paidf-private-image-evidence) | built; unmeasured |
+| `npa-paidf-captioning-sky` | GPU decoding; unmeasured | GPU decoding; unmeasured | GPU decoding; unmeasured | CUVID and captioning passed; EVG passed [PAIDF](#paidf-private-image-evidence) | GPU decoding; unmeasured |
+| `npa-paidf-visual-qa-sky` | GPU decoding; unmeasured | GPU decoding; unmeasured | GPU decoding; unmeasured | CUVID and VQA passed; qualified answers [PAIDF](#paidf-private-image-evidence) | GPU decoding; unmeasured |
+| `npa-paidf-attribute-search-sky` | CPU client | CPU client | CPU client | CPU client; IAA/EVG passed [PAIDF](#paidf-private-image-evidence) | CPU client |
 | `npa-wan2-2` | supported | supported | **verified** [accepted records](#accepted-release-evidence) | **historical evidence** [61]; current distributed path unqualified | supported |
 | `npa-ltx2` | unverified runtime | unverified runtime | **verified** [accepted records](#accepted-release-evidence) | unverified runtime | unverified runtime |
 | `npa-openpi` | blocked (RTX-only runtime contract) | blocked (RTX-only runtime contract) | pending exact-digest full-DROID qualification | blocked (`sm_120`-only probe/runtime contract) | blocked (`sm_120`-only probe/runtime contract) |
@@ -293,3 +304,82 @@ npa/scripts/validate_blackwell_image.sh "$NPA_REGISTRY/npa-base:<tag>" --target 
 # (substitute NPA_IMAGE / NPA_GPU_INSTANCE / NPA_TARGET_* and apply)
 kubectl apply -f npa/scripts/blackwell-gpu-validation-job.yaml
 ```
+
+
+## PAIDF private image evidence
+
+Exactly seven PAIDF compatibility images have verified operator-private
+publication, built-byte security/SBOM records, and actual SkyPilot bootstrap and
+NPA-install proofs. Seven distinct digest/run-bound recordings are documented in
+the
+[per-image Rerun evidence](guides/paidf-image-evidence.md). Exact immutable
+digests and source commits are recorded in the
+[container catalog](container-image-catalog.md#external-paidf-runtime-images).
+Their restricted publication does not make them NPA public GHCR images.
+
+The seventh image is `npa-paidf-anomalygen-sky`. Its accepted child, OCI index,
+and config are distinct digest identities. The exact-layer/rootfs review covered
+22 diff IDs, 21 unique blobs, 67,908 files, and 10,673,751,967 bytes; its
+1,683-package SPDX SBOM and nonempty vulnerability inventory remain recorded in
+the catalog. All 1,924 weight-shaped candidates were reviewed, with no gated
+runtime model weights, credential paths, or populated model-cache paths accepted
+as payload. One JWT-shaped scanner match and six PEM blocks remain retained as
+classified public-source fixtures. Passing the fixed-CRITICAL policy is not a
+zero-vulnerability claim, and private acceptance does not grant redistribution.
+
+The exact AnomalyGen image measured Python 3.13.15, Torch 2.13.0+cu132, CUDA
+13.2, and B200 capability 10.0. FlashAttention maximum absolute error was
+`0.000273943`; Triton maximum absolute error was `0`. Four native causal/full
+attention cases passed, with maximum relative L2 `0.00305612 < 0.015`.
+Training exercised default NATTEN `blackwell-fmha` with Q/K/V gradients;
+inference exercised default cuDNN. The diagnostic loaded no model weights and
+ran no full model forward. It is component evidence, recorded separately from
+the full workload result.
+
+The same exact image completed durable native DIG run
+`paidf-dig-15395d41fe18`. Resume retained the valid attempt-1
+`record-upstream` state; attempt 8 completed checkpoint preparation, exactly
+15,000 training iterations with early stopping disabled, and inference. The
+evaluator selected checkpoint 13,000. All 30 requests were accounted as 24
+generated RGB images plus six enforcing text-guardrail blocks. The upstream
+image preset applies face blurring but has no image-content classifier, so image
+guardrail enforcement remains false.
+
+The exact IAA image completed all nine native workflow states on B200,
+including generation, CPU postprocessing, attribute search and terminal artifact
+lineage. Separate exact-image B200 diagnostics verified device capability
+`(10, 0)`, measured `sm_100` in all three Torch wheels, and produced the exact
+float32 4×4 matrix-product sum `3680.0`. IAA/EVG use Torch `2.11.0+cu130`, CUDA
+`13.0`, Python `3.12.13`; detection uses Torch
+`2.13.0a0+9186a08b2c.nv26.07`, CUDA `13.3`, Python `3.12.3`. The accepted child
+digests, recovered logs and source were independently bound; no owned diagnostic
+pods remained. The manifest records this B200 hardware result separately from
+full workflow acceptance.
+
+EVG retained seven completed stages, including real video generation,
+detection/tracking and GPU H.264 CUVID captioning. The standard resume with the
+explicit ten-image sampling adaptation completed anomaly and person Visual QA.
+Person QA retains 29 valid normalized answers for its 33-question bank: two
+empty answers are skipped and two questions were omitted, with upstream warnings
+preserved. All 12 logical EVG stages and the separate final acceptance check
+passed: one scene, 47 assembled files, 12 validated artifacts and zero trackless
+scenes. The assembled H.264 video was independently reopened and all 93 frames
+decoded at 1280×720; its 5,020,456 bytes retain SHA-256
+`d98203dba3798514b1b20dcef0a830aa26e4b1b75b8803082ec2f0895b799a0b`.
+
+Captioning and Visual QA perform model inference through the configured hosted
+endpoint, while their pinned FFmpeg H.264 CUVID decoder requires a local GPU.
+The canonical EVG profiles each reserve one B200; crop-only person QA shares the
+Visual QA profile. Their accepted SBOMs contain no architecture-specific
+Torch/CUDA-extension distributions, so the manifest classifies them as
+GPU-agnostic driver-API images. `not-required` waives an architecture-specific
+wheel/SASS assertion; it does not waive GPU scheduling or real decode validation.
+Attribute search remains a CPU client and passed in both complete workflows.
+
+No PAIDF B300 or RTX PRO 6000 workload acceptance is claimed. The restricted
+`npa-paidf-anomalygen-sky` image has verified private publication, complete
+built-byte/security/SBOM review, SkyPilot bootstrap, offline runtime checks, and
+the real B200 CUDA/attention result above. Full AnomalyGen fine-tuning,
+inference, media decoding, label/mask validation, 30-request accounting, and
+checkpoint lineage passed. The seventh digest/run-bound recording is
+`npa-paidf-anomalygen-sky-fb099f7b670fede587398c1d5374db7cb6a231bad0fc839432c9da49b6870074.rrd`.

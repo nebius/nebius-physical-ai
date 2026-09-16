@@ -25,8 +25,17 @@ _TEMPLATES = (
     "byof",
     "rl-policy-success",
     "physical-ai-data-factory",
+    "paidf-defect-image-generation",
+    "paidf-image-attribute-augmentation",
+    "paidf-event-video-generation",
     "sim2real-staged",
 )
+
+_STATIC_WORKFLOW_TEMPLATES = {
+    "paidf-defect-image-generation": "paidf-defect-image-generation.yaml",
+    "paidf-image-attribute-augmentation": "paidf-image-attribute-augmentation.yaml",
+    "paidf-event-video-generation": "paidf-event-video-generation.yaml",
+}
 
 
 class _FoldedStr(str):
@@ -104,6 +113,15 @@ _TEMPLATE_ALIASES: dict[str, str] = {
     "augment_multiply": "physical-ai-data-factory",
     "multiply": "physical-ai-data-factory",
     "fanout-augment": "physical-ai-data-factory",
+    "dig": "paidf-defect-image-generation",
+    "defect-image-generation": "paidf-defect-image-generation",
+    "defect_image_generation": "paidf-defect-image-generation",
+    "iaa": "paidf-image-attribute-augmentation",
+    "image-attribute-augmentation": "paidf-image-attribute-augmentation",
+    "image_attribute_augmentation": "paidf-image-attribute-augmentation",
+    "evg": "paidf-event-video-generation",
+    "event-video-generation": "paidf-event-video-generation",
+    "event_video_generation": "paidf-event-video-generation",
     "sim2real-staged": "sim2real-staged",
     "sim-to-real": "sim2real-staged",
     "staged-sim2real": "sim2real-staged",
@@ -174,6 +192,21 @@ _TEMPLATE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "scenario variants",
         "cosmos transfer",
         "amplify",
+    ),
+    "paidf-defect-image-generation": (
+        "defect image generation",
+        "anomalygen",
+        "manual roi",
+        "manual-roi",
+    ),
+    "paidf-image-attribute-augmentation": (
+        "image attribute augmentation",
+        "clothing attribute augmentation",
+    ),
+    "paidf-event-video-generation": (
+        "event video generation",
+        "safety event video",
+        "anomaly video generation",
     ),
     "sim2real-staged": (
         "sim2real",
@@ -2015,6 +2048,26 @@ def choose_workflow_template(
     )
     if data_factory_explicit:
         scores["physical-ai-data-factory"] += 10
+    paidf_specific = {
+        "paidf-defect-image-generation": (
+            "defect image generation",
+            "anomalygen",
+            "manual roi",
+            "manual-roi",
+        ),
+        "paidf-image-attribute-augmentation": (
+            "image attribute augmentation",
+            "clothing attribute augmentation",
+        ),
+        "paidf-event-video-generation": (
+            "event video generation",
+            "safety event video",
+            "anomaly video generation",
+        ),
+    }
+    for template, phrases in paidf_specific.items():
+        if any(phrase in text for phrase in phrases):
+            scores[template] += 20
     if ("augment" in text or "cosmos transfer" in text) and any(
         token in text
         for token in (
@@ -2644,6 +2697,24 @@ def _build_spec(
     infrastructure: dict[str, Any] | None = None,
 ) -> OrderedDict[str, Any]:
     normalized = _normalize_template(template)
+    if normalized in _STATIC_WORKFLOW_TEMPLATES:
+        from npa.orchestration.npa_workflow.blueprints import (
+            resolve_npa_workflow_spec,
+        )
+
+        path = resolve_npa_workflow_spec(_STATIC_WORKFLOW_TEMPLATES[normalized])
+        if path is None:
+            raise ValueError(f"shipped workflow template is missing: {normalized}")
+        root = yaml.safe_load(path.read_text(encoding="utf-8"))
+        root["metadata"]["name"] = str(name or root["metadata"]["name"])
+        root["config"]["bucket"] = str(bucket)
+        _apply_workflow_infrastructure(
+            root["resources"],
+            template=normalized,
+            params=params or {},
+            infrastructure=infrastructure,
+        )
+        return root
     if normalized in {"vlm-rl-loop", "sim2real-staged"}:
         canonical = _canonical_sim2real_spec(bucket=bucket, name=name)
         if params:

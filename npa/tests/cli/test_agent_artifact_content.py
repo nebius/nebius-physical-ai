@@ -473,15 +473,28 @@ def test_artifact_failures_are_logged_and_never_echo_raw_exception_text() -> Non
     assert '"error": str(exc)' not in download
 
 
-def test_load_artifact_s3_uri_requires_inventory_run_id_with_stable_error() -> None:
+def test_load_artifact_rejects_raw_uri_and_requires_exact_inventory_source() -> None:
     source = AGENT_MODULE.read_text(encoding="utf-8")
     block = source.split("def sim_viz_load_artifact", 1)[1].split(
         "def _foxglove_convert_run", 1
     )[0]
-    assert '"code": "run_id_required_for_s3_uri"' in block
-    assert '"contract_version": "npa.agent.load-artifact.v2"' in block
-    assert '"migration"' in block
-    assert '"required_fields": ["run_id", "s3_uri"]' in block
+    migration = source.split("def _raw_artifact_uri_migration_detail", 1)[1].split(
+        "def _exact_artifact_load_missing_fields", 1
+    )[0]
+    assert '"code": "raw_artifact_uri_not_supported"' in migration
+    assert '"contract_version": "npa.agent.load-artifact.v3"' in migration
+    assert '"migration"' in migration
+    for field in (
+        "run_id",
+        "run_ref",
+        "key",
+        "project_id",
+        "resource_bucket",
+        "resolved_prefix",
+        "source_selected",
+    ):
+        assert f'"{field}"' in migration
+    assert "not an artifact authorization selector" in migration
     assert "_resolved_artifact_for_content(" in block
     assert '"error": "artifact storage request failed"' in block
     assert '"error": str(exc)' not in block

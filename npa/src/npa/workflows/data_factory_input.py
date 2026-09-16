@@ -42,6 +42,26 @@ MAX_LEROBOT_EPISODE_METADATA_BYTES = 64_000_000
 MAX_LEROBOT_VIDEO_PATH_BYTES = 1_024
 
 
+def _paidf_input_prefix(run_id: str, *, artifact_prefix: str = "") -> str:
+    """Resolve one safe object-key prefix while preserving the legacy default."""
+
+    if not artifact_prefix:
+        return f"physical-ai-data-factory/{run_id}"
+    prefix = str(artifact_prefix).strip().strip("/")
+    parts = prefix.split("/")
+    if (
+        not prefix
+        or "://" in prefix
+        or "\\" in prefix
+        or any(part in {"", ".", ".."} for part in parts)
+        or any(ord(character) < 32 for character in prefix)
+    ):
+        raise PaidfInputError(
+            "PAIDF input artifact prefix must be a safe relative object-key prefix"
+        )
+    return prefix
+
+
 @dataclass(frozen=True)
 class PreparedPaidfInput:
     """Non-secret result injected into workflow config and manifests."""
@@ -154,6 +174,7 @@ def plan_paidf_input(
     *,
     run_id: str,
     bucket: str,
+    artifact_prefix: str = "",
     input_video: Path | None = None,
     input_uri: str = "",
     lerobot_uri: str = "",
@@ -178,8 +199,9 @@ def plan_paidf_input(
         require_explicit_selection=require_explicit_lerobot_selection,
         episode_was_explicit=lerobot_episode_was_explicit,
     )
+    input_prefix = _paidf_input_prefix(run_id, artifact_prefix=artifact_prefix)
     base_uri = (
-        f"s3://{bucket}/physical-ai-data-factory/{run_id}/input/"
+        f"s3://{bucket}/{input_prefix}/input/"
         if bucket and bucket != "example-bucket"
         else ""
     )
@@ -236,6 +258,7 @@ def prepare_paidf_input(
     *,
     run_id: str,
     bucket: str,
+    artifact_prefix: str = "",
     input_video: Path | None = None,
     input_uri: str = "",
     lerobot_uri: str = "",
@@ -282,7 +305,10 @@ def prepare_paidf_input(
             "PAIDF input preparation requires the real object-storage bucket; "
             "pass --var bucket=<bucket>"
         )
-    base_uri = f"s3://{clean_bucket}/physical-ai-data-factory/{clean_run_id}/input/"
+    input_prefix = _paidf_input_prefix(
+        clean_run_id, artifact_prefix=artifact_prefix
+    )
+    base_uri = f"s3://{clean_bucket}/{input_prefix}/input/"
 
     if storage_client is None:
         from npa.clients.storage import StorageClient

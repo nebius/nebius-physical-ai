@@ -645,12 +645,15 @@ def _guardrail_nltk_tree_sha256(files: dict[str, dict[str, Any]]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _write_guardrail_nltk_ready_marker(root: Path) -> None:
+def _write_guardrail_nltk_ready_marker(
+    root: Path, *, repository: str = GUARDRAIL_REPO,
+    revision: str = GUARDRAIL_REVISION,
+) -> None:
     files = _guardrail_nltk_inventory(root)
     payload = {
         "schema": GUARDRAIL_NLTK_MANIFEST_SCHEMA,
-        "repo_id": GUARDRAIL_REPO,
-        "revision": GUARDRAIL_REVISION,
+        "repo_id": repository,
+        "revision": revision,
         "file_count": len(files),
         "files": files,
         "tree_sha256": _guardrail_nltk_tree_sha256(files),
@@ -663,7 +666,10 @@ def _write_guardrail_nltk_ready_marker(root: Path) -> None:
     os.chmod(marker, 0o444)
 
 
-def _verify_guardrail_nltk_materialization(destination: Path) -> int:
+def _verify_guardrail_nltk_materialization(
+    destination: Path, *, repository: str = GUARDRAIL_REPO,
+    revision: str = GUARDRAIL_REVISION,
+) -> int:
     """Verify exact revision identity and every copied byte before cache reuse."""
 
     marker = destination / GUARDRAIL_NLTK_READY_MARKER
@@ -683,8 +689,8 @@ def _verify_guardrail_nltk_materialization(destination: Path) -> int:
         ) from exc
     expected_identity = (
         payload.get("schema") == GUARDRAIL_NLTK_MANIFEST_SCHEMA
-        and payload.get("repo_id") == GUARDRAIL_REPO
-        and payload.get("revision") == GUARDRAIL_REVISION
+        and payload.get("repo_id") == repository
+        and payload.get("revision") == revision
     )
     if not expected_identity or not isinstance(payload.get("files"), dict):
         raise GuardrailNLTKDataError(
@@ -706,7 +712,9 @@ def _verify_guardrail_nltk_materialization(destination: Path) -> int:
     return len(files)
 
 
-def _guardrail_nltk_download_error(exc: Exception) -> GuardrailNLTKDataError:
+def _guardrail_nltk_download_error(
+    exc: Exception, *, revision: str = GUARDRAIL_REVISION
+) -> GuardrailNLTKDataError:
     name = type(exc).__name__.lower()
     response = getattr(exc, "response", None)
     status = getattr(response, "status_code", None)
@@ -719,7 +727,7 @@ def _guardrail_nltk_download_error(exc: Exception) -> GuardrailNLTKDataError:
     if "revisionnotfound" in name or "revision_not_found" in name:
         return GuardrailNLTKDataError(
             "revision_unavailable",
-            f"Pinned Cosmos guardrail revision {GUARDRAIL_REVISION} is unavailable; "
+            f"Pinned Cosmos guardrail revision {revision} is unavailable; "
             "do not substitute another revision without a reviewed source update",
         )
     if status in {401, 403} or "gatedrepo" in name or "repositorynotfound" in name:
@@ -735,7 +743,10 @@ def _guardrail_nltk_download_error(exc: Exception) -> GuardrailNLTKDataError:
     )
 
 
-def prepare_guardrail_nltk_data(*, hf_home: str | None = None) -> int:
+def prepare_guardrail_nltk_data(
+    *, hf_home: str | None = None, repository: str = GUARDRAIL_REPO,
+    revision: str = GUARDRAIL_REVISION, snapshot_path: Path | None = None,
+) -> int:
     """Download and safely materialize the pinned guardrail tokenizer data.
 
     Hugging Face snapshots represent files as symlinks into their local blob
@@ -749,30 +760,44 @@ def prepare_guardrail_nltk_data(*, hf_home: str | None = None) -> int:
     """
 
     home = Path(hf_home or os.environ.get("HF_HOME", "/opt/cosmos-data/hf_cache"))
-    destination = home / GUARDRAIL_NLTK_MATERIALIZED_DIR / GUARDRAIL_REVISION
+    if not re.fullmatch(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+", repository) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise GuardrailNLTKDataError("content_invalid", "Guardrail repository and revision must be exact reviewed identities")
+    destination = _guardrail_nltk_data_path(str(home), repository=repository, revision=revision)
+    ancestor = destination.parent
+    while True:
+        if ancestor.is_symlink():
+            raise GuardrailNLTKDataError(
+                "cache_invalid", "Cosmos guardrail NLTK cache contains an unsafe ancestor link"
+            )
+        if ancestor == home:
+            break
+        ancestor = ancestor.parent
     if destination.exists() or destination.is_symlink():
-        return _verify_guardrail_nltk_materialization(destination)
-
-    try:
-        from huggingface_hub import snapshot_download
-    except ImportError as exc:
-        raise GuardrailNLTKDataError(
-            "runtime_invalid",
-            "The audited Cosmos Transfer runtime is missing huggingface_hub; "
-            "rebuild the pinned image before fetching guardrail data",
-        ) from exc
+        return _verify_guardrail_nltk_materialization(destination, repository=repository, revision=revision)
 
     hub = (home / "hub").resolve()
-    try:
-        downloaded = snapshot_download(
-            repo_id=GUARDRAIL_REPO,
-            revision=GUARDRAIL_REVISION,
-            allow_patterns=["blocklist/nltk_data/**"],
-            cache_dir=hub,
-            token=os.environ.get("HF_TOKEN"),
-        )
-    except Exception as exc:
-        raise _guardrail_nltk_download_error(exc) from exc
+    if snapshot_path is None:
+        try:
+            from huggingface_hub import snapshot_download
+        except ImportError as exc:
+            raise GuardrailNLTKDataError(
+                "runtime_invalid",
+                "The audited Cosmos Transfer runtime is missing huggingface_hub; "
+                "rebuild the pinned image before fetching guardrail data",
+            ) from exc
+        try:
+            downloaded = snapshot_download(
+                repo_id=repository, revision=revision,
+                allow_patterns=["blocklist/nltk_data/**"], cache_dir=hub,
+                token=os.environ.get("HF_TOKEN"),
+            )
+        except Exception as exc:
+            raise _guardrail_nltk_download_error(exc, revision=revision) from exc
+    else:
+        downloaded = snapshot_path
+        expected = hub / ("models--" + repository.replace("/", "--")) / "snapshots" / revision
+        if snapshot_path.is_symlink() or snapshot_path.resolve() != expected:
+            raise GuardrailNLTKDataError("content_invalid", "Staged guardrail snapshot differs from the exact repository revision")
     snapshot = Path(downloaded).resolve()
     nltk_data = (snapshot / "blocklist" / "nltk_data").resolve()
     if (
@@ -788,7 +813,7 @@ def prepare_guardrail_nltk_data(*, hf_home: str | None = None) -> int:
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(
-        tempfile.mkdtemp(prefix=f".{GUARDRAIL_REVISION}.", dir=destination.parent)
+        tempfile.mkdtemp(prefix=f".{revision}.", dir=destination.parent)
     )
     materialized = 0
     try:
@@ -815,13 +840,13 @@ def prepare_guardrail_nltk_data(*, hf_home: str | None = None) -> int:
             raise GuardrailNLTKDataError(
                 "content_invalid", "Pinned Cosmos guardrail NLTK subtree is empty"
             )
-        _write_guardrail_nltk_ready_marker(staging)
+        _write_guardrail_nltk_ready_marker(staging, repository=repository, revision=revision)
         try:
             os.replace(staging, destination)
         except OSError:
             if not destination.exists():
                 raise
-            winner_count = _verify_guardrail_nltk_materialization(destination)
+            winner_count = _verify_guardrail_nltk_materialization(destination, repository=repository, revision=revision)
             shutil.rmtree(staging)
             return winner_count
     except GuardrailNLTKDataError:
@@ -838,17 +863,19 @@ def prepare_guardrail_nltk_data(*, hf_home: str | None = None) -> int:
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
-    return _verify_guardrail_nltk_materialization(destination)
+    return _verify_guardrail_nltk_materialization(destination, repository=repository, revision=revision)
 
 
-def _guardrail_nltk_data_path(hf_home: str) -> Path:
+def _guardrail_nltk_data_path(
+    hf_home: str, *, repository: str = GUARDRAIL_REPO,
+    revision: str = GUARDRAIL_REVISION,
+) -> Path:
     """Return the regular-file NLTK tree created for the pinned guardrail."""
 
-    return (
-        Path(hf_home)
-        / GUARDRAIL_NLTK_MATERIALIZED_DIR
-        / GUARDRAIL_REVISION
-    )
+    root = Path(hf_home) / GUARDRAIL_NLTK_MATERIALIZED_DIR
+    if repository != GUARDRAIL_REPO:
+        root /= "models--" + repository.replace("/", "--")
+    return root / revision
 
 
 def _spec_with_prompt(repo: Path, spec: str, prompt: str, *, tag: str = "") -> str:

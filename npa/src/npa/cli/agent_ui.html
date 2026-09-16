@@ -7381,8 +7381,21 @@
         }
       }
       async function refreshAccess(force) {
-        const invalidatedAction = cancelAccessAction(true);
-        if (force && invalidatedAction) {
+        cancelAccessAction(true);
+        if (force) {
+          // A forced access refresh starts a new authorization generation even
+          // when the UI was idle. Never leave cards, source tuples, or object
+          // inventory from the previous generation selectable while the server
+          // is re-probing effective access.
+          selectedRunLoadGeneration += 1;
+          activeRunSelectionGeneration += 1;
+          runSearchRequestId += 1;
+          artifactLoadRequestId += 1;
+          if (artifactRunsAbortController) {
+            artifactRunsAbortController.abort();
+            artifactRunsAbortController = null;
+          }
+          artifactSourceHistoryQuarantined = true;
           discoveredArtifactRuns = [];
           applyMergedRunSelectors("");
           clearVisibleRunState("Access refreshed. Select a resource to list or read fresh artifacts.");
@@ -12239,6 +12252,11 @@
       }
       let knownAvailableRuns = [];
       let discoveredArtifactRuns = [];
+      // Persisted sim-viz history is useful during ordinary startup, but a
+      // forced access refresh creates a new authorization generation. From
+      // that point onward, source-qualified history must be rediscovered before
+      // it can become actionable again.
+      let artifactSourceHistoryQuarantined = false;
       let mergedRunsCache = [];
       let activeRunEntryKey = "";
       let autoLoadedPreferredKey = "";
@@ -12292,31 +12310,46 @@
         const fallback = String(selected || "").trim();
         if (!query) return fallback;
         const exact = mergedRunsCache.filter((run) => String((run && run.run_id) || "") === query);
-        if (exact.length === 1) return String(exact[0].run_ref || exact[0].run_id || "").trim();
-        if (exact.length > 1 && exact.some((run) => String((run && run.run_ref) || "") === fallback)) {
-          return fallback;
+        if (exact.length === 1) {
+          return String(exact[0].entry_key || exact[0].run_ref || exact[0].run_id || "").trim();
+        }
+        if (exact.length > 1) {
+          const selectedMatch = exactMergedRunEntry(fallback);
+          if (selectedMatch && exact.includes(selectedMatch)) {
+            return String(selectedMatch.entry_key || "").trim();
+          }
         }
         const lowered = query.toLowerCase();
         const matches = mergedRunsCache.filter((run) =>
           String((run && run.run_id) || "").toLowerCase().includes(lowered)
         );
-        if (matches.length === 1) return String(matches[0].run_ref || matches[0].run_id || "").trim();
+        if (matches.length === 1) {
+          return String(matches[0].entry_key || matches[0].run_ref || matches[0].run_id || "").trim();
+        }
         if (matches.length > 1) {
-          const selectedMatch = matches.find((run) =>
-            String((run && (run.entry_key || run.run_ref || run.run_id)) || "").trim() === fallback
-          );
-          if (selectedMatch) return fallback;
+          const selectedMatch = exactMergedRunEntry(fallback);
+          if (selectedMatch && matches.includes(selectedMatch)) {
+            return String(selectedMatch.entry_key || "").trim();
+          }
         }
         // Allow loading a pasted id that is not yet in the cached list.
         return query;
       }
+      function exactMergedRunEntry(value) {
+        const requested = String(value || "").trim();
+        if (!requested) return null;
+        const byEntryKey = mergedRunsCache.find((run) =>
+          String((run && run.entry_key) || "").trim() === requested
+        );
+        if (byEntryKey) return byEntryKey;
+        const byRunRef = mergedRunsCache.filter((run) =>
+          String((run && run.run_ref) || "").trim() === requested
+        );
+        return byRunRef.length === 1 ? byRunRef[0] : null;
+      }
       function resolveRunSelection(value) {
         const requested = String(value || "").trim();
-        const match = mergedRunsCache.find((run) => {
-          const entryKey = String((run && run.entry_key) || "").trim();
-          const runRef = String((run && run.run_ref) || "").trim();
-          return entryKey === requested || runRef === requested;
-        });
+        const match = exactMergedRunEntry(requested);
         return {
           run_id: String((match && match.run_id) || requested).trim(),
           run_ref: String((match && match.run_ref) || "").trim(),
@@ -12346,24 +12379,33 @@
           artifact_storage: "S3 artifacts",
         }[sourceType] || String(sourceType || "run").replaceAll("_", " ");
       }
-      function runEntryIdentity(runId, sourceType, run) {
+      function runSourceTupleIdentity(runId, run) {
         const bucket = String((run && run.bucket) || "").trim();
         const project = String((run && run.project_id) || "").trim();
         const resolvedPrefix = String((run && run.resolved_prefix) || "").trim();
-        return [sourceType, project, bucket, resolvedPrefix, runId].join("|");
+        return [project, bucket, resolvedPrefix, String(runId || "").trim()].join("|");
+      }
+      function runEntryIdentity(runId, sourceType, run) {
+        return [String(sourceType || "").trim(), runSourceTupleIdentity(runId, run)].join("|");
+      }
+      function sameRunSource(a, b) {
+        const aRunId = String((a && a.run_id) || "").trim();
+        const bRunId = String((b && b.run_id) || "").trim();
+        return Boolean(aRunId && bRunId) &&
+          runSourceTupleIdentity(aRunId, a) === runSourceTupleIdentity(bRunId, b);
+      }
+      function hasExactRunSource(run) {
+        return Boolean(
+          run && String(run.project_id || "").trim() && String(run.bucket || "").trim() &&
+          Object.prototype.hasOwnProperty.call(run, "resolved_prefix")
+        );
       }
       function artifactSourceGroupIdentity(run) {
-        return [
-          String((run && run.project_id) || "").trim(),
-          String((run && run.bucket) || "").trim(),
-          String((run && run.run_id) || "").trim(),
-        ].join("|");
+        return runSourceTupleIdentity(String((run && run.run_id) || ""), run);
       }
       function artifactSourceStableIdentity(run) {
         return [
-          String((run && run.project_id) || "").trim(),
-          String((run && run.bucket) || "").trim(),
-          String((run && run.resolved_prefix) || "").trim(),
+          runSourceTupleIdentity(String((run && run.run_id) || ""), run),
           String((run && run.run_ref) || "").trim(),
         ].join("|");
       }
@@ -12435,7 +12477,7 @@
           const sourceType = normalizeRunSource(run, source);
           const runRef = String((run && run.run_ref) || "").trim();
           const identity = String(
-            forcedKey || runRef || runEntryIdentity(runId, sourceType, run)
+            forcedKey || runEntryIdentity(runId, sourceType, run)
           );
           const existing = map.get(identity);
           const prev = existing || {
@@ -12501,23 +12543,25 @@
           // sources for the same basename. Reuse that source identity instead
           // of manufacturing a third `history:<run-id>` option.
           const knownRunRef = String((run && run.run_ref) || "").trim();
-          const matchingRunRef = knownRunRef && matches.some((match) =>
-            String((match && match.run_ref) || "").trim() === knownRunRef ||
-            (Array.isArray(match && match.alternate_sources) && match.alternate_sources.some((alternate) =>
-              String((alternate && alternate.run_ref) || "").trim() === knownRunRef
-            ))
-          );
-          const matchedSource = matchingRunRef && matches.find((match) =>
-            String((match && match.run_ref) || "").trim() === knownRunRef ||
-            (Array.isArray(match && match.alternate_sources) && match.alternate_sources.some((alternate) =>
-              String((alternate && alternate.run_ref) || "").trim() === knownRunRef
-            ))
-          );
+          let matchedSource = hasExactRunSource(run)
+            ? matches.find((match) => sameRunSource(run, match))
+            : null;
+          if (!matchedSource && knownRunRef) {
+            const runRefMatches = matches.filter((match) =>
+              String((match && match.run_ref) || "").trim() === knownRunRef ||
+              (Array.isArray(match && match.alternate_sources) && match.alternate_sources.some((alternate) =>
+                String((alternate && alternate.run_ref) || "").trim() === knownRunRef
+              ))
+            );
+            // A run_ref does not carry project identity. It can associate a
+            // history row only when it resolves to one exact source tuple.
+            if (runRefMatches.length === 1) matchedSource = runRefMatches[0];
+          }
           const key = matchedSource
-            ? String(matchedSource.run_ref || runId)
+            ? runEntryIdentity(runId, "artifact_storage", matchedSource)
             : matches.length === 1
-            ? String(matches[0].run_ref || runId)
-            : "history:" + runId;
+            ? runEntryIdentity(runId, "artifact_storage", matches[0])
+            : "";
           ingest(run, "known", key);
         }
         return [...map.values()].sort((a, b) => {
@@ -12533,9 +12577,12 @@
         if (!select) return;
         const previous = String(select.value || "").trim();
         const runIdCounts = new Map();
+        const runRefCounts = new Map();
         for (const run of runs) {
           const runId = String((run && run.run_id) || run || "").trim();
           if (runId) runIdCounts.set(runId, Number(runIdCounts.get(runId) || 0) + 1);
+          const runRef = String((run && run.run_ref) || "").trim();
+          if (runRef) runRefCounts.set(runRef, Number(runRefCounts.get(runRef) || 0) + 1);
         }
         const placeholder = select.id === "stagesRunSelect"
           ? "(select run)"
@@ -12550,7 +12597,9 @@
           // Legacy/history entries may not have a run_ref. When the basename is
           // duplicated across sources, keep each option addressable with its
           // source-qualified entry identity instead of emitting duplicate values.
-          const selector = runRef || (runIdCounts.get(runId) > 1 ? entryKey : runId) || runId;
+          const selector = runRef && runRefCounts.get(runRef) === 1
+            ? runRef
+            : entryKey || (runIdCounts.get(runId) > 1 ? "" : runId) || runId;
           const opt = document.createElement("option");
           opt.value = selector;
           opt.dataset.entryKey = String((run && run.entry_key) || "");
@@ -12576,7 +12625,8 @@
           const currentText = String(current || "");
           if (
             (!selectedSet && currentText && (
-              run.entry_key === currentText || selector === currentText || runId === currentText
+              run.entry_key === currentText || selector === currentText ||
+              (runIdCounts.get(runId) === 1 && runId === currentText)
             )) ||
             (!selectedSet && !currentText && selector === previous)
           ) {
@@ -12594,6 +12644,9 @@
         const key = String(option.dataset.entryKey || "");
         const runRef = String(option.dataset.runRef || "");
         const sourceType = String(option.dataset.sourceType || "workflow_history");
+        const projectId = String(option.dataset.projectId || "");
+        const bucket = String(option.dataset.bucket || "");
+        const resolvedPrefix = String(option.dataset.resolvedPrefix || "");
         // Duplicate run basenames can exist in workflow history and one or more
         // artifact buckets. Match every identity field represented by the chosen
         // option; an entry-key-only lookup can silently return the S3 sibling when
@@ -12601,33 +12654,38 @@
         return mergedRunsCache.find((item) =>
           String(item.entry_key || "") === key &&
           String(item.run_ref || "") === runRef &&
-          String(item.source_type || "workflow_history") === sourceType
+          String(item.source_type || "workflow_history") === sourceType &&
+          String(item.project_id || "") === projectId &&
+          String(item.bucket || "") === bucket &&
+          String(item.resolved_prefix || "") === resolvedPrefix &&
+          String(item.run_id || "") === runId
         ) || {
           run_id: runId,
           entry_key: key,
           run_ref: runRef,
           source_type: sourceType,
           source_label: String(option.dataset.sourceLabel || "workflow history"),
-          bucket: String(option.dataset.bucket || ""),
-          project_id: String(option.dataset.projectId || ""),
-          resolved_prefix: String(option.dataset.resolvedPrefix || ""),
+          bucket,
+          project_id: projectId,
+          resolved_prefix: resolvedPrefix,
         };
       }
       function preferredRunEntry(runId) {
         const rid = String(runId || "").trim();
         if (!rid) return null;
-        const exact = mergedRunsCache.find((item) =>
-          String(item.entry_key || "") === rid || String(item.run_ref || "") === rid
-        );
+        const exact = exactMergedRunEntry(rid);
         if (exact) return exact;
         if (activeRunEntryKey) {
           const active = mergedRunsCache.find((item) => item.entry_key === activeRunEntryKey && item.run_id === rid);
           if (active) return active;
         }
         if (activeArtifactRunRef && activeRunId === rid) {
-          const activeSource = mergedRunsCache.find((item) =>
+          const activeRefMatches = mergedRunsCache.filter((item) =>
             String(item.run_ref || "") === activeArtifactRunRef && item.run_id === rid
           );
+          const activeSource = activeRunResourceScope && hasExactRunSource(activeRunResourceScope)
+            ? activeRefMatches.find((item) => sameRunSource(item, activeRunResourceScope))
+            : (activeRefMatches.length === 1 ? activeRefMatches[0] : null);
           if (activeSource) return activeSource;
         }
         const matches = mergedRunsCache.filter((item) => String(item.run_id || "") === rid);
@@ -12720,16 +12778,31 @@
         // Once an access action selects a project/bucket, keep the existing
         // browser scoped to those S3 results instead of mixing in unrelated
         // local/workflow-history runs.
+        // Persisted viewer history is display state, not current authorization.
+        // A forced access refresh clears discoveredArtifactRuns, and periodic
+        // status polling can immediately repopulate knownAvailableRuns with an
+        // old source-qualified row.  Admit such a row only after this UI
+        // generation has independently rediscovered the same full source
+        // tuple.  The discovered row remains authoritative for run_ref and
+        // inventory, including when broader tenant discovery is incomplete.
+        const currentSourceHistory = knownAvailableRuns.filter((run) => {
+          if (!artifactSourceHistoryQuarantined) return true;
+          const artifactBacked = normalizeRunSource(run, "known") === "artifact_storage" ||
+            hasExactRunSource(run);
+          if (!artifactBacked) return true;
+          if (!hasExactRunSource(run)) return false;
+          return discoveredArtifactRuns.some((discovered) =>
+            hasExactRunSource(discovered) && sameRunSource(run, discovered)
+          );
+        });
         const merged = activeArtifactBrowseScope
           ? mergeRunsLatestFirst([], discoveredArtifactRuns)
-          : mergeRunsLatestFirst(knownAvailableRuns, discoveredArtifactRuns);
+          : mergeRunsLatestFirst(currentSourceHistory, discoveredArtifactRuns);
         mergedRunsCache = merged;
         const chosen = String(
           activeRunEntryKey || activeArtifactRunRef || current || activeRunId || ""
         ).trim();
-        const selectedEntry = merged.find((item) =>
-          item.entry_key === chosen || item.run_ref === chosen
-        );
+        const selectedEntry = exactMergedRunEntry(chosen);
         const chosenRun = String(
           activeRunId ||
           ((selectedEntry || {}).run_id) ||
@@ -12831,13 +12904,11 @@
             // the entire tenant/bucket walk, so a 0.3-second first page remained
             // invisible for minutes and all run-dependent controls looked inert.
             if (q) {
-              const identity = (r) => String((r && r.run_ref) || "") || [
-                String((r && r.source_type) || "artifact_storage"),
-                String((r && r.project_id) || ""),
-                String((r && r.bucket) || ""),
-                String((r && r.resolved_prefix) || ""),
+              const identity = (r) => runEntryIdentity(
                 String((r && r.run_id) || ""),
-              ].join("|");
+                normalizeRunSource(r, "discovered"),
+                r,
+              );
               const byId = new Map((discoveredArtifactRuns || []).map((r) => [identity(r), r]));
               for (const r of runs) byId.set(identity(r), r);
               discoveredArtifactRuns = [...byId.values()];
@@ -13153,7 +13224,9 @@
       function completeSelectedArtifactInventory() {
         const requestedRun = selectedRunIdFromUi();
         const selection = resolveRunSelection(requestedRun);
-        const entry = preferredRunEntry(selection.run_ref || selection.run_id);
+        const entry = preferredRunEntry(
+          selection.entry_key || selection.run_ref || selection.run_id
+        );
         // Discovery can omit provenance that the first inventory response
         // resolves. Continue that exact displayed source only while the same
         // original selection remains current; a changed discovery row must
@@ -13177,7 +13250,7 @@
         const selection = resolveRunSelection(requestedRun);
         const entry = (explicitEntry && typeof explicitEntry === "object")
           ? explicitEntry
-          : preferredRunEntry(selection.run_ref || selection.run_id);
+          : preferredRunEntry(selection.entry_key || selection.run_ref || selection.run_id);
         let runId = String((entry && entry.run_id) || selection.run_id || requestedRun).trim();
         let runRef = String((entry && entry.run_ref) || selection.run_ref || "").trim();
         // Older callers passed refresh-only options in the second slot. Keep
@@ -13275,15 +13348,19 @@
             const pageArtifacts = Array.isArray(page && page.artifacts) ? page.artifacts : [];
             if (!pageArtifacts.length) paginationEmptyPageCount += 1;
             for (const item of pageArtifacts) {
-              const identity = String((item && item.s3_uri) || "").trim() ||
-                [selectedSource.bucket, String((item && item.key) || "")].join("/");
+              const identity = [
+                runSourceTupleIdentity(selectedSource.run_id, selectedSource),
+                String((item && item.key) || "").trim(),
+              ].join("|");
               if (merged.has(identity)) paginationDuplicateCount += 1;
               merged.set(identity, item);
             }
           };
           for (const item of previous) {
-            const identity = String((item && item.s3_uri) || "").trim() ||
-              [selectedSource.bucket, String((item && item.key) || "")].join("/");
+            const identity = [
+              runSourceTupleIdentity(selectedSource.run_id, selectedSource),
+              String((item && item.key) || "").trim(),
+            ].join("|");
             merged.set(identity, item);
           }
           mergePage(firstPage);
@@ -13394,7 +13471,17 @@
         runRef = String(data.run_ref || runRef).trim();
         setActiveRunId(runId);
         activeArtifactRunRef = runRef;
-        activeRunEntryKey = String((entry && entry.entry_key) || runRef || "");
+        activeRunEntryKey = String(
+          (entry && entry.entry_key) || runEntryIdentity(
+            runId,
+            "artifact_storage",
+            {
+              project_id: data.project_id,
+              bucket: data.bucket,
+              resolved_prefix: data.resolved_prefix,
+            },
+          )
+        );
         syncRunChooserFields(runId, activeRunEntryKey || runRef);
         const searchResult = document.getElementById("stagesRunSearchResult");
         if (searchResult) {
@@ -13757,7 +13844,11 @@
         return loadArtifactsForSelectedRun(runRef, null, {
           run_id: runId,
           run_ref: runRef,
-          entry_key: runRef,
+          entry_key: runEntryIdentity(runId, "artifact_storage", {
+            project_id: projectId,
+            bucket,
+            resolved_prefix: String(source.resolved_prefix || ""),
+          }),
           source_type: "artifact_storage",
           source_label: "S3 artifacts",
           bucket,
@@ -13936,7 +14027,7 @@
       }
       function artifactSourceQuery(runId) {
         const rid = String(runId || activeRunId || "").trim();
-        const entry = preferredRunEntry(activeArtifactRunRef || rid) || {};
+        const entry = preferredRunEntry(activeRunEntryKey || activeArtifactRunRef || rid) || {};
         const scope = activeRunResourceScope && activeRunResourceScope.run_id === rid
           ? activeRunResourceScope
           : entry;
@@ -14937,15 +15028,26 @@
         // available before background discovery has hydrated the run cache.
         const restoredRef = String((simViz && (simViz.artifact_run_ref || simViz.active_run_ref)) || "").trim();
         const reportedRun = String((simViz && simViz.run_id) || "").trim();
+        const reportedHasSource = Boolean(
+          simViz && simViz.bucket && simViz.project_id &&
+          Object.prototype.hasOwnProperty.call(simViz, "resolved_prefix")
+        );
+        const reportedSourceMatches = !reportedHasSource ||
+          !activeRunResourceScope || !hasExactRunSource(activeRunResourceScope) ||
+          sameRunSource(
+            { ...simViz, run_id: currentRun },
+            activeRunResourceScope,
+          );
         const selectionMatches = currentRun === activeRunId &&
           (!reportedRun || reportedRun === currentRun) &&
-          (!activeArtifactRunRef || activeArtifactRunRef === currentRef);
+          (!activeArtifactRunRef || activeArtifactRunRef === currentRef) &&
+          reportedSourceMatches;
         const restoreSource = selectionMatches && restoredRef &&
-          simViz.bucket && simViz.project_id &&
-          Object.prototype.hasOwnProperty.call(simViz, "resolved_prefix");
+          reportedHasSource;
         if (restoreSource) {
+          const restoredEntryKey = runEntryIdentity(currentRun, "artifact_storage", simViz);
           activeRunResourceScope = {
-            run_id: currentRun, run_ref: restoredRef, entry_key: currentRef,
+            run_id: currentRun, run_ref: restoredRef, entry_key: restoredEntryKey,
             bucket: String(simViz.bucket), project_id: String(simViz.project_id),
             resolved_prefix: String(simViz.resolved_prefix || ""), source_selected: true,
           };
@@ -14953,9 +15055,7 @@
         if (selectionMatches) {
           if (currentRef) activeArtifactRunRef = currentRef;
           if (currentRun && simViz && simViz.bucket) {
-            activeRunEntryKey = currentRef || runEntryIdentity(
-              currentRun, "artifact_storage", simViz
-            );
+            activeRunEntryKey = runEntryIdentity(currentRun, "artifact_storage", simViz);
           }
         }
         applyMergedRunSelectors(activeRunEntryKey || activeArtifactRunRef || activeRunId);
@@ -15507,7 +15607,7 @@
         if (leisaacUiEnabled()) await refreshLeIsaacCapability();
         appendChat("assistant", "Loaded run context (workflow history) — **run_id**: `" + targetRunId + "`.");
         await loadRunDetails(targetRunId, {
-          entry: preferredRunEntry(activeArtifactRunRef || targetRunId) || {},
+          entry: preferredRunEntry(activeRunEntryKey || activeArtifactRunRef || targetRunId) || {},
         });
         if (!isCurrent()) return null;
         if (
@@ -15533,6 +15633,7 @@
           : resolveRunSelection(selectedRunIdFromUi());
         const runId = String(requested.run_id || "").trim();
         const runRef = String(requested.run_ref || "").trim();
+        const entryKey = String(requested.entry_key || "").trim();
         if (!runId) {
           throw new Error("Enter or select a run_id first");
         }
@@ -15548,7 +15649,7 @@
           artifactRunsAbortController.abort();
           artifactRunsAbortController = null;
         }
-        const preferredEntry = preferredRunEntry(runRef || runId);
+        const preferredEntry = preferredRunEntry(entryKey || runRef || runId);
         const exactEntry = preferredEntry && preferredEntry.source_type === "artifact_storage"
           ? preferredEntry
           : {
@@ -16012,7 +16113,11 @@
             const active = activeSource && typeof activeSource === "object" ? activeSource : {};
             activeRunId = String(active.run_id || "").trim();
             activeArtifactRunRef = String(active.run_ref || "").trim();
-            activeRunEntryKey = String(active.entry_key || active.run_ref || "").trim();
+            activeRunEntryKey = String(
+              active.entry_key || (hasExactRunSource(active)
+                ? runEntryIdentity(active.run_id, "artifact_storage", active)
+                : active.run_ref) || ""
+            ).trim();
             knownAvailableRuns = Array.isArray(knownRuns) ? knownRuns.slice() : [];
             discoveredArtifactRuns = Array.isArray(discoveredRuns) ? discoveredRuns.slice() : [];
             return applyMergedRunSelectors(activeRunEntryKey || activeArtifactRunRef || activeRunId);

@@ -48,7 +48,7 @@
     "validated": "get_device_capability() confirmed on a real B200/B300 node with the image's real capability smoke passing.",
     "pending-hardware": "Wheel arch set confirmed on the built image, but not yet run on a real datacenter Blackwell node.",
     "pending-build": "The Dockerfile is in tree but the image has not been built, so no wheel arch set and no GPU result exist yet. Never upgrade this from a reading of the Dockerfile.",
-    "not-required": "CPU-only image; no arch assertion applies.",
+    "not-required": "CPU-only or GPU-agnostic driver-API image; no architecture-specific wheel/SASS assertion applies. GPU scheduling and real capability checks remain required when the workload uses a GPU.",
     "pending-gpu": "The image has been built and its bytes checked (payload scan, layer history), but it has never run on a real datacenter Blackwell node, so no wheel arch set and no GPU result exist. Distinct from pending-build, which means no artifact exists at all."
   },
   "images": [
@@ -606,7 +606,7 @@
       "build_script": "groot/build.sh",
       "verdict": "ready",
       "validation": "validated",
-      "smoke": "NVIDIA standalone_inference_script.py: GR00T-N1.7-3B PyTorch eager inference on DROID sample \u2014 24 steps, 0.204s avg/step, 3/3 checks",
+      "smoke": "NVIDIA standalone_inference_script.py: GR00T-N1.7-3B PyTorch eager inference on DROID sample — 24 steps, 0.204s avg/step, 3/3 checks",
       "notes": "VALIDATED on physical NVIDIA RTX PRO 6000 Blackwell Server Edition (capability 12.0) on 2026-09-01. The exact public GHCR tag npa-groot:0.1.0 (manifest sha256:47fd6b727f249fbdb0ec237dc748c8bdc7cbf38474dc12c1cffe82f17fdde37b) ran real GR00T-N1.7-3B standalone PyTorch eager inference on the DROID sample: model loaded in 49.9s, 24 inference steps at 0.204s avg/step, exit 0, 3/3 checks passed. The cu128 index torch 2.7.1 wheel carries sm_100 (datacenter) and sm_120 (RTX PRO 6000). GR00T uses CUDA 12.8, not CUDA 13; the prior blocker was based on stale evidence.",
       "torch": "2.7.1+cu128 (from Isaac-GR00T pyproject.toml cu128 index pin)",
       "source_compiled_extensions": [],
@@ -847,6 +847,96 @@
       ],
       "smoke": "npa.smoke.test_curobo_functional: actual Franka pose solve, validated joint/FK artifacts and decoded RRD",
       "notes": "The 0.8.0-cuda13-b300-unbuilt candidate has no built-image or GPU evidence. The tag family is a build target, not an observed B300 compatibility claim. Complete MotionBenchMaker/MPiNets kinematic and dynamics benchmarks are a separate workload gate."
+    },
+    {
+      "name": "npa-paidf-image-edit-sky",
+      "dockerfile": "paidf-image-edit-sky/Dockerfile",
+      "verdict": "ready",
+      "validation": "validated",
+      "smoke": "On the exact accepted image, verify B200 device capability, the built Torch architecture set and an exact float32 4x4 matmul, then require real native component outputs and their lineage. The exact image completed the full nine-state native IAA workflow on B200, including real image generation, evaluator decisions, CPU postprocessing, attribute search and terminal artifact lineage.",
+      "notes": "Restricted operator-private image; publication, built-byte scans/SBOM, SkyPilot bootstrap and isolated NPA installation preserving vendor files passed. Actual B200 capability [10,0], sm_100 wheel coverage and the tensor check passed. The exact image completed the full nine-state native IAA workflow on B200, including real image generation, evaluator decisions, CPU postprocessing, attribute search and terminal artifact lineage. Hardware validation is scoped to B200; no B300 or RTX PRO 6000 workload acceptance is claimed.",
+      "measured_torch": "2.11.0+cu130",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ]
+    },
+    {
+      "name": "npa-paidf-event-video-sky",
+      "dockerfile": "paidf-event-video-sky/Dockerfile",
+      "verdict": "ready",
+      "validation": "validated",
+      "smoke": "On the exact accepted image, verify B200 device capability, the built Torch architecture set and an exact float32 4x4 matmul, then require real native component outputs and their lineage. The exact image generated a real guarded 93-frame 1280x720 H.264 video in native EVG. The full native EVG workflow passed all 12 logical stages and independent final acceptance: one scene, 47 assembled files, 12 validated artifacts and zero trackless scenes.",
+      "notes": "Restricted operator-private image; publication, built-byte scans/SBOM, SkyPilot bootstrap and isolated NPA installation preserving vendor files passed. Actual B200 capability [10,0], sm_100 wheel coverage and the tensor check passed. The exact image generated a real guarded 93-frame 1280x720 H.264 video in native EVG. The full native EVG workflow passed all 12 logical stages and independent final acceptance: one scene, 47 assembled files, 12 validated artifacts and zero trackless scenes. Hardware validation is scoped to B200; no B300 or RTX PRO 6000 workload acceptance is claimed.",
+      "measured_torch": "2.11.0+cu130",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ]
+    },
+    {
+      "name": "npa-paidf-anomalygen-sky",
+      "dockerfile": "paidf-anomalygen-sky/Dockerfile",
+      "verdict": "ready",
+      "validation": "validated",
+      "smoke": "On the exact accepted image, verify B200 device capability and real CUDA/FlashAttention/Triton execution, then exercise the native Cosmos attention frontend in its default training and inference backends. Full workflow acceptance separately requires paidf-defect-image-generation.yaml through genuine AnomalyGen fine-tuning, inference, decoded media, native labels/masks and checkpoint lineage.",
+      "notes": "Restricted operator-private image; exact-layer/rootfs inventory, vulnerability policy, SPDX SBOM, SkyPilot bootstrap, isolated NPA installation, offline CPU/runtime probes, and real B200 CUDA plus four-case native attention checks passed. The diagnostic measured capability 10.0 and exercised default NATTEN blackwell-fmha training with Q/K/V gradients and default cuDNN inference. It loaded no model weights and ran no full model forward. The same exact image separately completed the full native DIG workload: 15,000 iterations with early stopping disabled and all 30 requests accounted. No B300 or RTX PRO 6000 acceptance is claimed, and no unmeasured architecture is inferred from build flags.",
+      "measured_python": "3.13.15",
+      "measured_torch": "2.13.0+cu132",
+      "measured_cuda": "13.2"
+    },
+    {
+      "name": "npa-paidf-detection-sky",
+      "dockerfile": "paidf-detection-sky/Dockerfile",
+      "verdict": "ready",
+      "validation": "validated",
+      "smoke": "On the exact accepted image, verify B200 device capability, the built Torch architecture set and an exact float32 4x4 matmul, then require real native component outputs and their lineage. The exact image completed real RF-DETR detection/tracking and native sidecars on the generated EVG video. The full native EVG workflow passed all 12 logical stages and independent final acceptance: one scene, 47 assembled files, 12 validated artifacts and zero trackless scenes.",
+      "notes": "Restricted operator-private image; publication, built-byte scans/SBOM, SkyPilot bootstrap and isolated NPA installation preserving vendor files passed. Actual B200 capability [10,0], sm_100 wheel coverage and the tensor check passed. The exact image completed real RF-DETR detection/tracking and native sidecars on the generated EVG video. The full native EVG workflow passed all 12 logical stages and independent final acceptance: one scene, 47 assembled files, 12 validated artifacts and zero trackless scenes. Hardware validation is scoped to B200; no B300 or RTX PRO 6000 workload acceptance is claimed.",
+      "measured_torch": "2.13.0a0+9186a08b2c.nv26.07",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120",
+        "compute_120"
+      ]
+    },
+    {
+      "name": "npa-paidf-captioning-sky",
+      "dockerfile": "paidf-captioning-sky/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "Execute the real PAIDF labeling stage within the complete IAA/EVG workflow; require native sidecars and final artifact lineage.",
+      "notes": "Restricted operator-private wrapper; built-byte scans, SPDX SBOM, SkyPilot bootstrap and isolated NPA installation preserving vendor files passed. Configured remote VLM/LLM performs inference; local H.264 decoding uses FFmpeg CUVID and the canonical EVG profile reserves B200:1. The accepted SBOM contains no architecture-specific Torch/CUDA-extension distributions. The exact private image completed actual H.264 CUVID decoding and the native captioning stage on B200. Subsequent Visual QA stages completed after the explicit ten-image sampling adaptation. The full native EVG workflow passed all 12 logical stages and independent final acceptance: one scene, 47 assembled files, 12 validated artifacts and zero trackless scenes. No B300 or RTX PRO 6000 workload acceptance is claimed.",
+      "local_gpu_use": "FFmpeg CUVID H.264 video decoding"
+    },
+    {
+      "name": "npa-paidf-visual-qa-sky",
+      "dockerfile": "paidf-visual-qa-sky/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "Execute the real PAIDF labeling stage within the complete IAA/EVG workflow; require native sidecars and final artifact lineage.",
+      "notes": "Restricted operator-private wrapper; built-byte scans, SPDX SBOM, SkyPilot bootstrap and isolated NPA installation preserving vendor files passed. Configured remote VLM/LLM performs inference; local H.264 decoding uses FFmpeg CUVID and the canonical EVG profile reserves B200:1. The accepted SBOM contains no architecture-specific Torch/CUDA-extension distributions. Crop-only person QA shares the GPU profile. The exact private image decoded the generated H.264 video on B200 and completed anomaly/person Visual QA after the explicit ten-image sampling adaptation. Person QA retains 29 valid normalized answers for a 33-question bank; two empty answers were skipped and two questions omitted, with upstream warnings preserved. The full native EVG workflow passed all 12 logical stages and independent final acceptance: one scene, 47 assembled files, 12 validated artifacts and zero trackless scenes. No B300 or RTX PRO 6000 workload acceptance is claimed.",
+      "local_gpu_use": "FFmpeg CUVID H.264 video decoding"
+    },
+    {
+      "name": "npa-paidf-attribute-search-sky",
+      "dockerfile": "paidf-attribute-search-sky/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "Execute the real PAIDF labeling stage within the complete IAA/EVG workflow; require native sidecars and final artifact lineage.",
+      "notes": "Restricted operator-private wrapper; built-byte scans, SPDX SBOM, SkyPilot bootstrap and isolated NPA installation preserving vendor files passed. CPU client uses the configured remote VLM/LLM; no local GPU is requested. The exact private CPU image completed native attribute search in the fully accepted nine-state IAA workflow. EVG attribute search and independent terminal acceptance also passed. No B300 or RTX PRO 6000 workload acceptance is claimed.",
+      "local_gpu_use": "none"
     }
   ],
   "validation_evidence": {
@@ -1234,6 +1324,251 @@
       ],
       "notes": "B200 path not re-validated on hardware but sm_100 SASS is in the cu130 torch wheel"
     },
+    "npa-paidf-captioning-sky": {
+      "built": true,
+      "validated_digest": "sha256:ce97a86413005dbf844ae454a47b6e0a41ce521bd0403237e133c26bfed63ff7",
+      "validated_registry_scope": "operator",
+      "source_commit": "b7ae4f198b20f087afef46d31fffee367eb4fa2e",
+      "skypilot_bootstrap_contract": "skypilot-0.12.2-v1",
+      "payload_scan": "Complete built-byte layer/license/secret review, vulnerability policy and SPDX SBOM passed. No model weights are added by the compatibility layer.",
+      "architecture_specific_cuda_distributions": 0,
+      "hardware_run": "The exact private image completed actual H.264 CUVID decoding and the native captioning stage on B200. Subsequent Visual QA stages completed after the explicit ten-image sampling adaptation. The full native EVG workflow passed all 12 logical stages and independent final acceptance: one scene, 47 assembled files, 12 validated artifacts and zero trackless scenes.",
+      "full_workflow_acceptance": {
+        "EVG": "passed"
+      }
+    },
+    "npa-paidf-visual-qa-sky": {
+      "built": true,
+      "validated_digest": "sha256:27f600a12ccfb71c6744394d7b41375c36eed2df53833fb883b9ec5fa73070e4",
+      "validated_registry_scope": "operator",
+      "source_commit": "b7ae4f198b20f087afef46d31fffee367eb4fa2e",
+      "skypilot_bootstrap_contract": "skypilot-0.12.2-v1",
+      "payload_scan": "Complete built-byte layer/license/secret review, vulnerability policy and SPDX SBOM passed. No model weights are added by the compatibility layer.",
+      "architecture_specific_cuda_distributions": 0,
+      "hardware_run": "The exact private image decoded the generated H.264 video on B200 and completed anomaly/person Visual QA after the explicit ten-image sampling adaptation. Person QA retains 29 valid normalized answers for a 33-question bank; two empty answers were skipped and two questions omitted, with upstream warnings preserved. The full native EVG workflow passed all 12 logical stages and independent final acceptance: one scene, 47 assembled files, 12 validated artifacts and zero trackless scenes.",
+      "full_workflow_acceptance": {
+        "EVG": "passed"
+      }
+    },
+    "npa-paidf-attribute-search-sky": {
+      "built": true,
+      "validated_digest": "sha256:d61d56ae69bf2971fbf5b03fe97a492a865c317906b1ec5c67a46133b5b97641",
+      "validated_registry_scope": "operator",
+      "source_commit": "b7ae4f198b20f087afef46d31fffee367eb4fa2e",
+      "skypilot_bootstrap_contract": "skypilot-0.12.2-v1",
+      "payload_scan": "Complete built-byte layer/license/secret review, vulnerability policy and SPDX SBOM passed. No model weights are added by the compatibility layer.",
+      "architecture_specific_cuda_distributions": 0,
+      "hardware_run": "The exact private CPU image completed native attribute search in the fully accepted nine-state IAA workflow. EVG attribute search and independent terminal acceptance also passed.",
+      "full_workflow_acceptance": {
+        "IAA": "passed",
+        "EVG": "passed"
+      }
+    },
+    "npa-paidf-anomalygen-sky": {
+      "built": true,
+      "validated_digest": "sha256:5aff3f4b40a4340ece2594c567ce8e5683a82ddc295c39d80588e228a13a28cf",
+      "validated_registry_scope": "operator",
+      "source_commit": "743d87df3a19fc0571d95c1d98b2bc53a2b438e9",
+      "upstream_source_commit": "dbaf7d7d9003f048230f9026da5969e9e5931785",
+      "oci_index_digest": "sha256:c8e96df2ed5ef71427e075817649f5c80eef426b0148aa9c7b15e801ee0a7060",
+      "config_digest": "sha256:17f17fe9a5debdff93711a75e8a5910571b22c30cfa5d7e20dba88d112fe45e5",
+      "skypilot_bootstrap_contract": "skypilot-0.12.2-v1",
+      "payload_scan": "Generic exact-layer/rootfs inventory covered 22 diff IDs, 21 unique blobs, 67,908 files and 10,673,751,967 bytes. All 1,924 weight-shaped candidates were reviewed; no gated runtime model weights, credential paths or populated model-cache paths were accepted as payload. One JWT-shaped scanner match and six PEM blocks were retained and classified against exact public source.",
+      "byte_audit_sha256": "ce049048587669de54ec20f02c3b9832c76cfdb2cad5ba7854c9baef062d4d7e",
+      "byte_audit_size": 757547,
+      "sbom_sha256": "296731803937d2d20392da5671e53979c61099868c15f45ad47ace04dc5eb5dc",
+      "sbom_size": 4282800,
+      "sbom_packages": 1683,
+      "vulnerability_inventory": {
+        "CRITICAL": {"total": 5, "with_fixed_version": 0},
+        "HIGH": {"total": 186, "with_fixed_version": 13},
+        "MEDIUM": {"total": 2173, "with_fixed_version": 90},
+        "LOW": {"total": 268, "with_fixed_version": 43},
+        "UNKNOWN": {"total": 3, "with_fixed_version": 2}
+      },
+      "fixed_critical_policy": "passed-without-new-ignore",
+      "measured_python": "3.13.15",
+      "measured_torch": "2.13.0+cu132",
+      "measured_cuda": "13.2",
+      "validated_gpus": {
+        "B200": {
+          "capability": "10.0",
+          "result": "passed",
+          "flash_attn_version": "2.8.3",
+          "flash_attn_max_abs_error": 0.0002739429473876953,
+          "triton_version": "3.7.1",
+          "triton_max_abs_error": 0,
+          "attention_cases": ["train-causal", "train-full", "infer-causal", "infer-full"],
+          "training_backend": "natten:blackwell-fmha",
+          "training_qkv_gradients": true,
+          "inference_backend": "cudnn",
+          "largest_relative_l2_error": 0.0030561191545551937,
+          "relative_l2_limit": 0.015,
+          "model_weights_loaded": false,
+          "full_model_forward_executed": false
+        }
+      },
+      "diagnostic_review_sha256": "69b5f9e549b22bb87e468f46e019084fe0ef602583f26f5e7d1715953eb7b4da",
+      "hardware_run": "The exact accepted image and source passed B200 CUDA/FlashAttention/Triton checks and four native causal/full attention cases. Training exercised default NATTEN blackwell-fmha with Q/K/V gradients; inference exercised default cuDNN. This no-weight component diagnostic is separate from the full native DIG workload, which the same exact image subsequently completed on B200.",
+      "full_workflow_run": {
+        "run_id": "paidf-dig-15395d41fe18",
+        "result": "passed",
+        "independent_native_validation": "passed",
+        "runtime_source_commit": "ff198c6c289ee05ec5953e5968dc2c626ab27eee",
+        "upstream_workflow_revision": "e4c663cbbdcf159ad952751274c883c81d3ab4be",
+        "states": {
+          "record-upstream": {"attempt": 1, "source_commit": "743d87df3a19fc0571d95c1d98b2bc53a2b438e9", "duration_seconds": 185},
+          "prepare-base-checkpoints": {"attempt": 8, "source_commit": "ff198c6c289ee05ec5953e5968dc2c626ab27eee", "duration_seconds": 1002},
+          "finetune": {"attempt": 8, "source_commit": "ff198c6c289ee05ec5953e5968dc2c626ab27eee", "duration_seconds": 4710},
+          "anomaly-infer": {"attempt": 8, "source_commit": "ff198c6c289ee05ec5953e5968dc2c626ab27eee", "duration_seconds": 1051}
+        },
+        "max_iterations": 15000,
+        "validation_interval": 1000,
+        "checkpoint_interval": 1000,
+        "early_stop_enabled": false,
+        "early_stop_artifact_count": 0,
+        "selected_checkpoint_iteration": 13000,
+        "selected_checkpoint_sha256": "f54b720e786229395717f8a6bde9c8a2864735cddcada6f45d147cd5add04f65",
+        "selected_checkpoint_score": 0.4711651623249054,
+        "terminal_checkpoint_score": 0.4695567297935487,
+        "loss_sample_count": 1500,
+        "gpu_observation_samples": 56,
+        "gpu_utilization_percent_maximum": 100,
+        "gpu_memory_used_mib_maximum": 40688,
+        "gpu_power_watts_maximum": 945.84,
+        "request_target": 30,
+        "request_accounted": 30,
+        "generated_images": 24,
+        "guardrail_blocked": 6,
+        "annotation_count": 24,
+        "media_total_bytes": 605744,
+        "output_object_count": 293,
+        "output_total_bytes": 3541820,
+        "run_inventory_object_count": 5007,
+        "run_inventory_total_bytes": 157040084602,
+        "inference_measured_total_seconds": 98.84547686576843,
+        "model_init_seconds": 22.04356336593628,
+        "guardrail_init_seconds": 2.491468906402588,
+        "generation_seconds": 74.26396036148071,
+        "generation_seconds_per_image": 3.094331681728363,
+        "guardrail_seconds": 6.4521825313568115,
+        "timing_summary_sha256": "9c6738a56d9b2fc7d593b0d9b83e50497b1c601ba7fddbeba35bc046457ed5c3",
+        "media_manifest_sha256": "c8eb3b5da00dbfabf2ff3e4b3fd3f96b7d73a827e26227dbdf847127059fb115",
+        "labels_sha256": "b330be50a83692d05a5bdc692e4d84ff2e7645991d891b1eabe07d78e33d06e8",
+        "text_guardrail_enforcing": true,
+        "image_guardrail_enforcing": false,
+        "image_guardrail_limitation": "The upstream preset applies face blurring but has no image-content classifier."
+      },
+      "full_workflow_acceptance": {
+        "DIG": "passed"
+      }
+    },
+    "npa-paidf-image-edit-sky": {
+      "built": true,
+      "validated_digest": "sha256:ef7450cfc12efb92a0260f09df9a83f4b0590ccb4a9fc6157b819721adc56cd8",
+      "validated_registry_scope": "operator",
+      "source_commit": "a04508698d3813785263831741f02b8bb8040d6d",
+      "skypilot_bootstrap_contract": "skypilot-0.12.2-v1",
+      "payload_scan": "Complete built-byte layer/license/secret review, repository vulnerability policy and SPDX SBOM passed; image acceptance remains separate from workflow acceptance.",
+      "measured_python": "3.12.13",
+      "measured_torch": "2.11.0+cu130",
+      "measured_cuda": "13.0",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ],
+      "validated_gpus": {
+        "B200": {
+          "capability": "10.0",
+          "result": "passed",
+          "tensor_operation": "float32-4x4-matmul",
+          "tensor_correct": true,
+          "tensor_sum": 3680.0
+        }
+      },
+      "diagnostic_receipt_sha256": "24e1cd24b1d1b28ca7c0282d0b744770794a10840f165ebdd33d40dc36abffd7",
+      "diagnostic_source_commit": "f466e119f1249de81e2e752ff3092098c5839964",
+      "diagnostic_source_fingerprint": "a6e4259238ae14393cc05bf49dbf2ba32c6ed90c782256f65cc7c6c278fd0ae5",
+      "hardware_run": "The exact image completed the full nine-state native IAA workflow on B200, including real image generation, evaluator decisions, CPU postprocessing, attribute search and terminal artifact lineage. The separate exact-image B200 diagnostic verified device capability and a correct tensor result; its recovered logs were bound to the source, accepted image and owned pod. Zero owned pods remained after the diagnostic.",
+      "full_workflow_acceptance": {
+        "IAA": "passed"
+      }
+    },
+    "npa-paidf-event-video-sky": {
+      "built": true,
+      "validated_digest": "sha256:277a255e8bce7bd6e0e8561f2cc6cca2ecc86abdb791c57b33eca287d0d0d29a",
+      "validated_registry_scope": "operator",
+      "source_commit": "b7ae4f198b20f087afef46d31fffee367eb4fa2e",
+      "skypilot_bootstrap_contract": "skypilot-0.12.2-v1",
+      "payload_scan": "Complete built-byte layer/license/secret review, repository vulnerability policy and SPDX SBOM passed; image acceptance remains separate from workflow acceptance.",
+      "measured_python": "3.12.13",
+      "measured_torch": "2.11.0+cu130",
+      "measured_cuda": "13.0",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ],
+      "validated_gpus": {
+        "B200": {
+          "capability": "10.0",
+          "result": "passed",
+          "tensor_operation": "float32-4x4-matmul",
+          "tensor_correct": true,
+          "tensor_sum": 3680.0
+        }
+      },
+      "diagnostic_receipt_sha256": "24e1cd24b1d1b28ca7c0282d0b744770794a10840f165ebdd33d40dc36abffd7",
+      "diagnostic_source_commit": "f466e119f1249de81e2e752ff3092098c5839964",
+      "diagnostic_source_fingerprint": "a6e4259238ae14393cc05bf49dbf2ba32c6ed90c782256f65cc7c6c278fd0ae5",
+      "hardware_run": "The exact image generated a real guarded 93-frame 1280x720 H.264 video in native EVG. The full native EVG workflow passed all 12 logical stages and independent final acceptance: one scene, 47 assembled files, 12 validated artifacts and zero trackless scenes. The separate exact-image B200 diagnostic verified device capability and a correct tensor result; its recovered logs were bound to the source, accepted image and owned pod. Zero owned pods remained after the diagnostic.",
+      "full_workflow_acceptance": {
+        "EVG": "passed"
+      }
+    },
+    "npa-paidf-detection-sky": {
+      "built": true,
+      "validated_digest": "sha256:6fa1c78eddad6f6d2bea732b246aa37b512008d8724a0e987291188d0e17b0b2",
+      "validated_registry_scope": "operator",
+      "source_commit": "ce010547321e8fee7b8783f684349a311ace63b2",
+      "skypilot_bootstrap_contract": "skypilot-0.12.2-v1",
+      "payload_scan": "Complete built-byte layer/license/secret review, repository vulnerability policy and SPDX SBOM passed; image acceptance remains separate from workflow acceptance.",
+      "measured_python": "3.12.3",
+      "measured_torch": "2.13.0a0+9186a08b2c.nv26.07",
+      "measured_cuda": "13.3",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120",
+        "compute_120"
+      ],
+      "validated_gpus": {
+        "B200": {
+          "capability": "10.0",
+          "result": "passed",
+          "tensor_operation": "float32-4x4-matmul",
+          "tensor_correct": true,
+          "tensor_sum": 3680.0
+        }
+      },
+      "diagnostic_receipt_sha256": "24e1cd24b1d1b28ca7c0282d0b744770794a10840f165ebdd33d40dc36abffd7",
+      "diagnostic_source_commit": "f466e119f1249de81e2e752ff3092098c5839964",
+      "diagnostic_source_fingerprint": "a6e4259238ae14393cc05bf49dbf2ba32c6ed90c782256f65cc7c6c278fd0ae5",
+      "hardware_run": "The exact image completed real RF-DETR detection/tracking and native sidecars on the generated EVG video. The full native EVG workflow passed all 12 logical stages and independent final acceptance: one scene, 47 assembled files, 12 validated artifacts and zero trackless scenes. The separate exact-image B200 diagnostic verified device capability and a correct tensor result; its recovered logs were bound to the source, accepted image and owned pod. Zero owned pods remained after the diagnostic.",
+      "full_workflow_acceptance": {
+        "EVG": "passed"
+      }
+    },
     "npa-cosmos3-nano-video": {
       "built": true,
       "validated_date": "2026-09-06",
@@ -1320,7 +1655,7 @@
   "measurement_note": "measured_arch_list is torch._C._cuda_getArchFlags() read from the published image on 2026-08-02/03. It is the wheel's fixed fat-binary arch set, so it decides which GPUs the image can execute on regardless of TORCH_CUDA_ARCH_LIST. Reproduce with npa/scripts/validate_blackwell_image.sh <image> --target b200.",
   "validated_gpus": {
     "npa-workbench-cuda-base": {
-      "hardware_run": "Validated directly on a physical NVIDIA RTX PRO 6000 Blackwell Server Edition (capability 12.0) on 2026-08-30. The exact image confirmed sm_120 wheel coverage, executed bf16 tensor-core matmul (131.7ms, 1024^2), SDPA bf16 (5.15ms), fp32 GEMM (99.8ms, 2048^2), elementwise CUDA ops, and memory bandwidth test \u2014 all passing with finite, non-NaN results before CUDA_BASE_RTX_PRO_6000_VALIDATION_PASSED.",
+      "hardware_run": "Validated directly on a physical NVIDIA RTX PRO 6000 Blackwell Server Edition (capability 12.0) on 2026-08-30. The exact image confirmed sm_120 wheel coverage, executed bf16 tensor-core matmul (131.7ms, 1024^2), SDPA bf16 (5.15ms), fp32 GEMM (99.8ms, 2048^2), elementwise CUDA ops, and memory bandwidth test — all passing with finite, non-NaN results before CUDA_BASE_RTX_PRO_6000_VALIDATION_PASSED.",
       "validated_gpus": {
         "RTX PRO 6000": {
           "platform": "gpu-rtx6000",

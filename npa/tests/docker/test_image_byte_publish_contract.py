@@ -233,6 +233,21 @@ def test_minimal_curobo_base_gets_the_unchanged_critical_vulnerability_gate():
     assert gate["with"]["exit-code"] == "1"
 
 
+def test_fiftyone_base_gets_the_unchanged_critical_vulnerability_gate():
+    spec = yaml.safe_load(SECURITY.read_text())
+    job = spec["jobs"]["base-image-cve-scan"]
+    dockerfile = ROOT / "npa/docker/workbench/fiftyone/Dockerfile"
+    base = dockerfile.read_text().split("FROM ", 1)[1].splitlines()[0]
+    entries = [
+        entry
+        for entry in job["strategy"]["matrix"]["include"]
+        if entry["image"] == base
+    ]
+
+    assert len(entries) == 1
+    assert entries[0]["purge_linux_libc_dev"] is False
+
+
 def test_publisher_policy_pin_matches_the_reviewed_product_catalog():
     # This verifies the checked-in binding; it does not authorize a changed file.
     policy = ROOT / "npa/scripts/image_byte_scan/public_policies/curobo-v2.json"

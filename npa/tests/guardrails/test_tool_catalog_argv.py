@@ -75,6 +75,21 @@ NON_CLI_ARGV = frozenset(
         "workbench.content_agents.physics",
         "workbench.content_agents.validate",
         "workbench.content_agents.package",
+        "workflow.paidf.prepare_images",
+        "workflow.paidf.build_configs",
+        "workflow.paidf.run_iaa_augmentation",
+        "workflow.paidf.run_evg_augmentation",
+        "workflow.paidf.validate_augmentation",
+        "workflow.paidf.postprocess_iaa",
+        "workflow.paidf.run_detection",
+        "workflow.paidf.run_captioning",
+        "workflow.paidf.run_visual_qa",
+        "workflow.paidf.run_attribute_search",
+        "workflow.paidf.finalize_dataset",
+        "workflow.paidf.validate_dataset",
+        "workflow.paidf.dig_infer",
+        "workflow.paidf.dig_train",
+        "workflow.paidf.dig_prepare_pretrained",
     }
 )
 

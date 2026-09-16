@@ -33,11 +33,31 @@ All calls are same-origin (`/api/...`) on the authenticated agent VM.
 GET /api/artifacts/runs?prefix=&limit=100
 ```
 
+Run discovery is durable-S3-first. A filtered search refreshes a cold, empty, or
+stale bounded source index before applying `q`; the in-process cache is only an
+accelerator. Follow the opaque `next_cursor` with the same query and source
+selection. It traverses one immutable server-side snapshot and becomes stale
+after an access refresh, backend restart/cache reset, or changed query/source
+context; restart at page one in that case.
+
+Do not interpret a partial access scope as a complete empty search. Observed
+matches remain available, but incomplete responses keep `total_runs=null`,
+`query_complete=false`, and `pagination_complete=false` and include source
+errors for the unsearched scope. An absent exact id is a trustworthy 404 only
+after complete effective-source discovery.
+
 2. List artifacts for one run:
 
 ```http
 GET /api/artifacts/run/{run_id}
 ```
+
+Exact lookup searches every authorized effective source, including configured
+direct run-parent sources. A configured source is the exact
+`(project_id, bucket, resolved_prefix)` tuple where `resolved_prefix` is the
+directory immediately above run ids. If multiple tuples contain the same run
+id, preserve the `409 ambiguous_run_id` result and have the caller select one;
+never pick an arbitrary or apparently more complete source.
 
 3. Load one explicit artifact:
 
@@ -78,6 +98,10 @@ Check `artifact_key`, `artifact_render`, `artifact_uri`, and `rerun_ready`.
 - `download` (fallback for unknown/new types)
 
 Unknown types must stay visible/selectable.
+
+Backend restart durability comes from rediscovering the authorized durable S3
+sources, not from retaining process cache entries or accepting a local-file
+fallback.
 
 ## Safety
 

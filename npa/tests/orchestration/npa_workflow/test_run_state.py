@@ -7,8 +7,21 @@ import pytest
 from npa.orchestration.npa_workflow.run_state import (
     RunManifest,
     RunStateStore,
+    is_paidf_input_workflow_name,
     reconcile_submitted_manifest,
 )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "physical-ai-data-factory",
+        "paidf-cosmos3",
+        "nvidia-paidf-vda-cosmos-transfer25",
+    ],
+)
+def test_submit_recognizes_every_paidf_input_workflow(name: str) -> None:
+    assert is_paidf_input_workflow_name(name)
 
 
 def test_run_state_store_roundtrip() -> None:
