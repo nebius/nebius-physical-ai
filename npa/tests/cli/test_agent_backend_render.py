@@ -256,9 +256,7 @@ def test_rendered_artifact_write_migration_is_explicit_and_scope_bound(
     ).decode("ascii")
     artifact = {
         "NPA_AGENT_ARTIFACT_CREDENTIAL_MODE": "deployment-write-migration",
-        "NPA_AGENT_ARTIFACT_CREDENTIAL_MIGRATION": (
-            "deployment-write-exact-source-v1"
-        ),
+        "NPA_AGENT_ARTIFACT_CREDENTIAL_MIGRATION": ("deployment-write-exact-source-v1"),
         "NPA_AGENT_ARTIFACT_SOURCES_B64": source,
         "NPA_AGENT_ARTIFACT_S3_BUCKET": "deployment-bucket",
         "NPA_AGENT_ARTIFACT_S3_ENDPOINT": "https://deployment.example",
@@ -943,15 +941,17 @@ def test_load_artifact_rejects_raw_uri_and_requires_exact_source_tuple(
             module,
             "_resolved_artifact_for_content",
             lambda client, _settings, **kwargs: (
-                "run-1",
-                "bucket-b",
-                artifact,
-            )
-            if client is s3
-            and kwargs["key"] == key
-            and kwargs["resolved_prefix"] == "team"
-            and kwargs["source_authorized"] is True
-            else pytest.fail("unexpected exact artifact resolution"),
+                (
+                    "run-1",
+                    "bucket-b",
+                    artifact,
+                )
+                if client is s3
+                and kwargs["key"] == key
+                and kwargs["resolved_prefix"] == "team"
+                and kwargs["source_authorized"] is True
+                else pytest.fail("unexpected exact artifact resolution")
+            ),
         )
         monkeypatch.setattr(
             module,
@@ -1989,8 +1989,7 @@ def test_source_qualified_rrd_loads_keep_independent_history(
             "run-two",
         ]
         snapshots = {
-            item["artifact_run_ref"]: item
-            for item in state["sim_viz_runs"].values()
+            item["artifact_run_ref"]: item for item in state["sim_viz_runs"].values()
         }
         assert set(snapshots) == {ref_one, ref_two}
         assert snapshots[ref_one]["artifact_key"].endswith(
@@ -2485,6 +2484,12 @@ def test_rendered_exact_query_refreshes_durable_source_without_claiming_partial_
         resolved_prefix="preserved/runs",
     )
     calls: list[dict[str, object]] = []
+    source_probe_calls: list[tuple[str, str]] = []
+
+    def probe_configured_source(bucket: str, prefix: str):
+        source_probe_calls.append((bucket, prefix))
+        return module.BucketProbe("available", "available")
+
     try:
         monkeypatch.setattr(
             module,
@@ -2519,8 +2524,9 @@ def test_rendered_exact_query_refreshes_durable_source_without_claiming_partial_
                 module.AccessProbeError("denied", "list project buckets")
             ),
             probe_bucket=lambda _bucket: module.BucketProbe(
-                "available", "available"
+                "denied", "denied", "Bucket-root listing is denied."
             ),
+            probe_configured_source=probe_configured_source,
         )
         monkeypatch.setattr(module, "_agent_access_report", lambda **_kwargs: report)
         monkeypatch.setattr(module, "_begin_agent_artifact_access", lambda: report)
@@ -2561,6 +2567,7 @@ def test_rendered_exact_query_refreshes_durable_source_without_claiming_partial_
                 for item in response["source_errors"]
             )
         assert len(calls) == 2
+        assert source_probe_calls == [("bucket-exact", "preserved/runs")]
         assert all(call["refresh_sync"] is True for call in calls)
         assert all(
             call["sources"][0].identity
@@ -2731,9 +2738,7 @@ def test_configured_prefix_does_not_hide_duplicate_in_inventory_bucket(
         assert list_calls[0]["base_prefix"] == ""
         assert list_calls[0]["exclude"] == {"state"}
 
-        monkeypatch.setattr(
-            module, "find_run_sources_across_buckets", _find_generic
-        )
+        monkeypatch.setattr(module, "find_run_sources_across_buckets", _find_generic)
         monkeypatch.setattr(
             module,
             "_find_configured_exact_run_sources",
@@ -2776,9 +2781,7 @@ def test_default_artifact_credentials_keep_nonempty_prefix_as_layout_hint(
     artifact = module.Artifact(
         run_id=run_id,
         key=f"deployment/runs/category/{run_id}/report.rrd",
-        s3_uri=(
-            f"s3://deployment-bucket/deployment/runs/category/{run_id}/report.rrd"
-        ),
+        s3_uri=(f"s3://deployment-bucket/deployment/runs/category/{run_id}/report.rrd"),
         size=128,
         last_modified="2031-01-01T00:00:00Z",
         render="rerun",
@@ -2909,9 +2912,7 @@ def test_configured_bucket_root_is_not_reparsed_as_a_generic_category(
         monkeypatch.setattr(
             module,
             "list_runs_cached_sources",
-            lambda *_args, **_kwargs: module.RunListPage(
-                [run], False, 1, 10_000
-            ),
+            lambda *_args, **_kwargs: module.RunListPage([run], False, 1, 10_000),
         )
         monkeypatch.setattr(
             module,
@@ -4509,9 +4510,7 @@ def test_viewer_history_preserves_project_distinct_sources(preload_backend_body)
     history_key = _preload_function(
         "_sim_viz_history_key", namespace, preload_backend_body
     )
-    record = _preload_function(
-        "_record_sim_viz_run", namespace, preload_backend_body
-    )
+    record = _preload_function("_record_sim_viz_run", namespace, preload_backend_body)
     lookup = _preload_function("_sim_viz_for_run", namespace, preload_backend_body)
     common = {
         "run_id": "same-run",
@@ -4832,4 +4831,7 @@ def test_rendered_catalog_action_reaches_factual_completion(monkeypatch, tmp_pat
     assert calls[0]["status"] == "ok"
     assert calls[0]["observation"] == {"tool_refs": expected}
     catalog_observation = {"tool": "tools_catalog", "result": {"tool_refs": expected}}
-    assert json.dumps(catalog_observation, sort_keys=True) in planner_inputs[1][-1]["content"]
+    assert (
+        json.dumps(catalog_observation, sort_keys=True)
+        in planner_inputs[1][-1]["content"]
+    )

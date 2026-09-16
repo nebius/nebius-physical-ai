@@ -303,10 +303,11 @@ def _artifact_project_capabilities_complete(project: dict[str, Any]) -> bool:
 
 def _artifact_resource_capabilities_complete(resource: dict[str, Any]) -> bool:
     capabilities = resource.get("capabilities") or {}
-    return (
-        (capabilities.get("artifact_discovery") or {}).get("status") == "available"
-        and (capabilities.get("artifact_read") or {}).get("status") == "available"
-    )
+    return (capabilities.get("artifact_discovery") or {}).get(
+        "status"
+    ) == "available" and (capabilities.get("artifact_read") or {}).get(
+        "status"
+    ) == "available"
 
 
 def _artifact_project_inventory_complete(project: Any) -> bool:
@@ -469,11 +470,15 @@ def _agent_list_project_buckets(project_id: str) -> list:
     return items if isinstance(items, list) else []
 
 
-def _agent_probe_bucket(s3, bucket: str) -> "BucketProbe":
+def _agent_probe_bucket(s3, bucket: str, *, prefix: str = "") -> "BucketProbe":
     if s3 is None:
         raise AccessProbeError("unavailable", "probe object storage bucket")
+    list_kwargs = {"Bucket": bucket, "MaxKeys": 1}
+    exact_prefix = str(prefix or "").strip().strip("/")
+    if exact_prefix:
+        list_kwargs["Prefix"] = f"{exact_prefix}/"
     try:
-        page = s3.list_objects_v2(Bucket=bucket, MaxKeys=1)
+        page = s3.list_objects_v2(**list_kwargs)
     except Exception as exc:
         raise _access_probe_error("list objects in bucket", str(exc)) from exc
     contents = page.get("Contents", []) if isinstance(page, dict) else []
@@ -533,6 +538,9 @@ def _discover_agent_access_report() -> "AgentAccessReport":
         list_projects=_agent_list_tenant_projects,
         list_buckets=_agent_list_project_buckets,
         probe_bucket=lambda bucket: _agent_probe_bucket(s3, bucket),
+        probe_configured_source=lambda bucket, prefix: _agent_probe_bucket(
+            s3, bucket, prefix=prefix
+        ),
         service_account_id=str(
             os.environ.get("NEBIUS_SERVICE_ACCOUNT_ID") or ""
         ).strip(),
@@ -614,9 +622,7 @@ def _invalidate_agent_artifact_discovery() -> None:
         _run_list_cache_clear()
     _clear_artifact_run_cursor_snapshots()
     _clear_exact_run_ref_source_authorizations()
-    clear_foxglove_inventory = globals().get(
-        "_clear_foxglove_exact_artifact_inventory"
-    )
+    clear_foxglove_inventory = globals().get("_clear_foxglove_exact_artifact_inventory")
     if callable(clear_foxglove_inventory):
         clear_foxglove_inventory()
 
@@ -937,9 +943,7 @@ def _agent_access_api_response(refresh: bool = False):
         credential_mode = str(
             artifact_settings.get("credential_mode") or "unconfigured"
         )
-        credential_status = str(
-            artifact_settings.get("credential_status") or "blocked"
-        )
+        credential_status = str(artifact_settings.get("credential_status") or "blocked")
         return {
             "ok": True,
             **report.to_dict(),
@@ -1128,11 +1132,15 @@ def _exact_run_source_authorization_is_cached(
 
 
 def _require_searchable_artifact_bucket(
-    s3, bucket: str, *, configured: bool
+    s3, bucket: str, *, configured: bool, prefix: str = ""
 ) -> None:
     label = "configured artifact source" if configured else "artifact bucket"
     try:
-        probe = _agent_probe_bucket(s3, bucket)
+        probe = (
+            _agent_probe_bucket(s3, bucket, prefix=prefix)
+            if prefix
+            else _agent_probe_bucket(s3, bucket)
+        )
     except Exception as exc:
         status = getattr(exc, "status", "unavailable")
         raise HTTPException(
@@ -1168,7 +1176,12 @@ def _configured_exact_run_source(selection: _ExactRunSourceSelection) -> bool:
 def _authorize_configured_exact_run_source(
     s3, selection: _ExactRunSourceSelection
 ) -> None:
-    _require_searchable_artifact_bucket(s3, selection.bucket, configured=True)
+    _require_searchable_artifact_bucket(
+        s3,
+        selection.bucket,
+        configured=True,
+        prefix=selection.prefix,
+    )
     _remember_exact_run_source(selection)
 
 
@@ -1186,7 +1199,8 @@ def _require_exact_source_project_access(
         )
     try:
         visible_projects = {
-            _project_identity(item)[0] for item in _agent_list_tenant_projects(tenant_id)
+            _project_identity(item)[0]
+            for item in _agent_list_tenant_projects(tenant_id)
         }
     except Exception as exc:
         raise HTTPException(
@@ -1204,7 +1218,8 @@ def _require_exact_source_project_access(
 def _artifact_project_bucket_inventory(project_id: str) -> tuple[set[str], bool]:
     try:
         buckets = {
-            _bucket_identity(item)[1] for item in _agent_list_project_buckets(project_id)
+            _bucket_identity(item)[1]
+            for item in _agent_list_project_buckets(project_id)
         }
         return buckets, False
     except Exception:

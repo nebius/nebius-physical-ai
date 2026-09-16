@@ -129,6 +129,82 @@ def test_configured_artifact_sources_are_narrow_and_deduplicated() -> None:
         normalize_configured_artifact_sources([{"project_id": "project-exact"}])
 
 
+def test_configured_source_uses_exact_prefix_when_bucket_root_is_denied() -> None:
+    root_calls: list[str] = []
+    exact_calls: list[tuple[str, str]] = []
+
+    def root_probe(bucket: str) -> BucketProbe:
+        root_calls.append(bucket)
+        return BucketProbe("denied", "denied", "Bucket-root listing is denied.")
+
+    def exact_probe(bucket: str, prefix: str) -> BucketProbe:
+        exact_calls.append((bucket, prefix))
+        return BucketProbe(
+            "available", "available", "Exact source prefix list/read verified."
+        )
+
+    report = _discover(
+        configured_sources=[
+            {
+                "project_id": "project-a",
+                "bucket": "bucket-a",
+                "resolved_prefix": "preserved/runs",
+            }
+        ],
+        probe_bucket=root_probe,
+        probe_configured_source=exact_probe,
+    )
+    project = report.to_dict()["projects"][0]
+    resource = next(
+        item
+        for item in project["resources"]
+        if item["source"] == "configured_artifact_source"
+    )
+    root_resource = next(
+        item for item in project["resources"] if item["source"] == "project_inventory"
+    )
+
+    assert resource["source"] == "configured_artifact_source"
+    assert resource["capabilities"]["artifact_discovery"]["status"] == "available"
+    assert resource["capabilities"]["artifact_read"]["status"] == "available"
+    assert root_resource["capabilities"]["artifact_discovery"]["status"] == "denied"
+    assert exact_calls == [("bucket-a", "preserved/runs")]
+    assert sorted(root_calls) == ["bucket-a", "bucket-b"]
+    assert scoped_artifact_buckets(
+        report, project_id="project-a", resource_bucket="bucket-a"
+    ) == ["bucket-a"]
+
+
+def test_agent_bucket_probe_lists_and_reads_inside_exact_prefix() -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class S3:
+        def list_objects_v2(self, **kwargs):
+            calls.append(("list", kwargs))
+            return {"Contents": [{"Key": "preserved/runs/object.json"}]}
+
+        def head_object(self, **kwargs):
+            calls.append(("head", kwargs))
+            return {"ContentLength": 1}
+
+    probe = runtime._agent_probe_bucket(S3(), "bucket-exact", prefix="preserved/runs")
+
+    assert probe.list_status == "available"
+    assert probe.read_status == "available"
+    assert calls == [
+        (
+            "list",
+            {"Bucket": "bucket-exact", "MaxKeys": 1, "Prefix": "preserved/runs/"},
+        ),
+        (
+            "head",
+            {"Bucket": "bucket-exact", "Key": "preserved/runs/object.json"},
+        ),
+    ]
+
+
 def test_selected_artifact_scope_is_verified_against_project_ownership() -> None:
     report = _discover()
 
@@ -933,8 +1009,13 @@ def test_configured_exact_source_authorization_survives_process_cache_reset(
     monkeypatch.setattr(
         runtime,
         "_agent_probe_bucket",
-        lambda _s3, bucket: (
-            probes.append(bucket) or BucketProbe("available", "available")
+        lambda _s3, bucket, *, prefix="": (
+            (
+                pytest.fail("configured source must retain its exact prefix")
+                if prefix != "nested/source"
+                else None
+            )
+            or (probes.append(bucket) or BucketProbe("available", "available"))
         ),
     )
     run_ref = encode_run_ref("selected-bucket", "nested/source", "run-one")
@@ -1170,9 +1251,7 @@ def test_exact_run_ref_authorization_rejects_owned_but_undiscovered_prefix(
             s3=object(),
             settings={},
             run_id="run-one",
-            run_ref=encode_run_ref(
-                "selected-bucket", "caller/chosen", "run-one"
-            ),
+            run_ref=encode_run_ref("selected-bucket", "caller/chosen", "run-one"),
             resource_bucket="selected-bucket",
             project_id="selected-project",
             resolved_prefix="caller/chosen",
@@ -1369,7 +1448,9 @@ def test_access_refresh_invalidates_all_derived_artifact_state(monkeypatch) -> N
     assert stale.value.status_code == 409
 
 
-def test_access_refresh_waits_for_artifact_reader_before_publishing(monkeypatch) -> None:
+def test_access_refresh_waits_for_artifact_reader_before_publishing(
+    monkeypatch,
+) -> None:
     """An old report cannot repopulate derived caches after a refresh publishes."""
     from npa.cli import agent_access_runtime as runtime
 
@@ -1523,13 +1604,26 @@ def test_unshadowed_deployment_fallback_keeps_its_existing_capabilities(
             else []
         ),
         probe_bucket=probe,
+        probe_configured_source=lambda bucket, prefix: (
+            calls.append(f"{bucket}:{prefix}") or BucketProbe("available", "available")
+        ),
     )
-    resource = report.to_dict()["projects"][0]["resources"][0]
-    assert resource["source"] == "agent_configuration"
-    assert resource["capabilities"]["artifact_discovery"]["status"] == "available"
-    assert resource["capabilities"]["artifact_read"]["status"] == "available"
-    assert resource["capabilities"]["artifact_write"]["status"] == "unverified"
-    assert calls == ["bucket-a"]
+    resources = report.to_dict()["projects"][0]["resources"]
+    fallback = next(
+        item for item in resources if item["source"] == "agent_configuration"
+    )
+    assert fallback["capabilities"]["artifact_discovery"]["status"] == "available"
+    assert fallback["capabilities"]["artifact_read"]["status"] == "available"
+    assert fallback["capabilities"]["artifact_write"]["status"] == "unverified"
+    if same_project_source:
+        exact = next(
+            item for item in resources if item["source"] == "configured_artifact_source"
+        )
+        assert exact["capabilities"]["artifact_discovery"]["status"] == "available"
+        assert exact["capabilities"]["artifact_read"]["status"] == "available"
+        assert sorted(calls) == ["bucket-a", "bucket-a:"]
+    else:
+        assert calls == ["bucket-a"]
     assert scoped_artifact_buckets(
         report, project_id="project-a", resource_bucket="bucket-a"
     ) == ["bucket-a"]
