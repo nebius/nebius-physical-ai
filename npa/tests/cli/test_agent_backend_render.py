@@ -1868,7 +1868,11 @@ def test_workflow_execution_requires_and_uses_action_bound_confirmation(
         env
         for command, env in command_envs
         if command[:2] in (["skypilot", "bootstrap"], ["skypilot", "bind-controller"])
-        or command[:3] in (["workbench", "workflow", "stage-src"], ["workbench", "workflow", "submit"])
+        or command[:3] in (
+            ["workbench", "workflow", "run-spec"],
+            ["workbench", "workflow", "stage-src"],
+            ["workbench", "workflow", "submit"],
+        )
     ]
     assert context_bound_commands
     assert all(

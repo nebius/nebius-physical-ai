@@ -3382,6 +3382,19 @@ def _agent_workflow_submit_env(project: str, environment: dict) -> dict:
     return submit_env
 
 
+def _agent_workflow_operation_env(
+    project: str, kubernetes_context: str, *, environment: dict | None = None,
+) -> dict[str, str]:
+    # A scheduler-plan preview can be the first operation to start the Agent's
+    # isolated SkyPilot API. Keep its Kubernetes context and project-scoped
+    # storage identity identical to staging and the confirmed submit, or the
+    # API correctly rejects the later command as a credential-bound change.
+    agent_env = environment if environment is not None else _agent_command_env()
+    command_env = _agent_workflow_context_env(kubernetes_context)
+    command_env.update(_agent_workflow_submit_env(project, agent_env))
+    return command_env
+
+
 def _agent_cloud_mk8s_clusters(project: str = "") -> list[dict]:
     config = _load_agent_config_yaml()
     projects = config.get("projects")
@@ -4157,13 +4170,14 @@ def _execute_agent_workflow_yaml(
 ) -> dict:
     # Preserve the generated backend's test seam while shipping the complex
     # durable execution mechanics as an importable backend module.
-    command_env = _agent_workflow_context_env(kubernetes_context)
+    agent_env = _agent_command_env()
+    command_env = _agent_workflow_operation_env(
+        project, kubernetes_context, environment=agent_env
+    )
     # The Agent always owns an isolated SkyPilot state when configured. That
     # state derives a stable controller identity, so attempting to bind the
     # unrelated shared-controller owner before submit can reject a valid Agent
     # workflow with an ownership mismatch.
-    agent_env = _agent_command_env()
-    command_env.update(_agent_workflow_submit_env(project, agent_env))
     bind_shared_controller = not bool(
         str(agent_env.get("NPA_SKYPILOT_ISOLATED_CONFIG_DIR") or "").strip()
     )
@@ -9224,6 +9238,7 @@ def submit_npa_workflow(payload: dict):
                     "--json",
                 ],
                 timeout_s=180,
+                extra_env=_agent_workflow_operation_env(project, kubernetes_context),
             )
         finally:
             try:
