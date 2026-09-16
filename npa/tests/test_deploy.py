@@ -431,7 +431,7 @@ def test_terraform_optionally_binds_a_public_ipv4_pool_to_new_networks() -> None
     main_tf = (PACKAGE_ROOT / "src/npa/deploy/terraform/main.tf").read_text()
     variables_tf = (PACKAGE_ROOT / "src/npa/deploy/terraform/variables.tf").read_text()
 
-    pool_variable = variables_tf.split('variable "public_ipv4_pool_id"', 1)[1].split(
+    pool_variable = variables_tf.split('variable "ipv4_public_pool_id"', 1)[1].split(
         "}", 1
     )[0]
     network = main_tf.split('resource "nebius_vpc_v1_network" "workbench"', 1)[1].split(
@@ -442,9 +442,9 @@ def test_terraform_optionally_binds_a_public_ipv4_pool_to_new_networks() -> None
     )[0]
 
     assert 'default     = ""' in pool_variable
-    assert "var.public_ipv4_pool_id" in network
-    assert "pools = [{ id = trimspace(var.public_ipv4_pool_id) }]" in network
-    assert "var.public_ipv4_pool_id" in subnet
+    assert "var.ipv4_public_pool_id" in network
+    assert "pools = [{ id = trimspace(var.ipv4_public_pool_id) }]" in network
+    assert "var.ipv4_public_pool_id" in subnet
     assert "use_network_pools = true" in subnet
 
 

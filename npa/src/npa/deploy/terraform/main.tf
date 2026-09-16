@@ -30,7 +30,7 @@ resource "nebius_vpc_v1_subnet" "workbench" {
 
   # Bind the subnet to the network's selected public pool so a VM public-IP
   # allocation uses the same explicit source as its network.
-  ipv4_public_pools = trimspace(var.public_ipv4_pool_id) == "" ? null : {
+  ipv4_public_pools = trimspace(var.ipv4_public_pool_id) == "" ? null : {
     use_network_pools = true
   }
 }

@@ -117,13 +117,14 @@ def write_remote_env_file(
     group: str | None = None,
 ) -> None:
     """Atomically install a private shell env file on the VM."""
+    options: dict[str, str] = {"owner": owner, "mode": "0600"}
+    if group is not None:
+        options["group"] = group
     write_remote_text_file(
         ssh,
         remote_path,
         render_shell_env_file(env),
-        owner=owner,
-        group=group,
-        mode="0600",
+        **options,
     )
 
 
@@ -136,13 +137,14 @@ def write_remote_docker_env_file(
     group: str | None = None,
 ) -> None:
     """Atomically install a private Docker env file without shell quoting."""
+    options: dict[str, str] = {"owner": owner, "mode": "0600"}
+    if group is not None:
+        options["group"] = group
     write_remote_text_file(
         ssh,
         remote_path,
         render_docker_env_file(env),
-        owner=owner,
-        group=group,
-        mode="0600",
+        **options,
     )
 
 
