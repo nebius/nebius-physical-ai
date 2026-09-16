@@ -29,6 +29,7 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
     PUBLIC_CONTEXT_ENV,
     RUNTIME_LOCK_SHA256,
     TRANSPORT_CONTEXT_ENV,
+    decode_transport,
     encode_transport,
     load_runtime_authorization,
 )
@@ -297,7 +298,8 @@ def _robotwin_transport_fixture(tmp_path: Path) -> tuple[list[str], str]:
     authorization = load_runtime_authorization(
         {PUBLIC_CONTEXT_ENV: str(context)},
         customer_authorization_boundary=SimpleNamespace(
-            consume_once=lambda _request: assertion
+            trusted_issuer="https://customer-auth.example.invalid",
+            consume_once=lambda _request: assertion,
         ),
     )
     argv = build_byof_argv(
@@ -495,3 +497,35 @@ def test_robotwin_caller_supplied_transport_cannot_activate_internal_runner(
     assert result.exit_code == 2
     assert "Phase A worker bridge is disabled" in result.output
     assert observed == {}
+
+
+def test_robotwin_internal_cli_runner_signature_passes_only_validated_authorization(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner_module = byof_cli._load_runner()
+    argv, transport = _robotwin_transport_fixture(tmp_path)
+    authorization = decode_transport(transport)
+    observed: dict[str, object] = {}
+    monkeypatch.setenv("UNBOUND_PRIVATE_OVERRIDE", "ambient-private-canary")
+    monkeypatch.setattr(
+        runner_module, "require_runtime_lock_complete", lambda value: value
+    )
+
+    def run_byof(args, *, authorization, **kwargs):
+        observed.update(args=args, authorization=authorization, kwargs=kwargs)
+        return 0
+
+    monkeypatch.setattr(runner_module, "_run_byof", run_byof)
+
+    assert (
+        runner_module._run_authorized_robotwin(
+            argv,
+            authorization=authorization,
+        )
+        == 0
+    )
+    assert observed["authorization"] is authorization
+    assert "environment" not in observed["kwargs"]
+    assert "ambient-private-canary" not in json.dumps(
+        observed["kwargs"], default=str, sort_keys=True
+    )

@@ -450,13 +450,12 @@ def run_cmd(
     runner = _load_runner()
     with _robotwin_runtime_materialization(runner, argv) as (
         authorization,
-        runtime_environment,
+        _runtime_environment,
     ):
         code = int(
             runner._run_authorized_robotwin(
                 argv,
                 authorization=authorization,
-                environment=runtime_environment,
             )
             if authorization is not None
             else runner.main(argv)

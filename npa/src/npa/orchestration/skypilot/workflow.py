@@ -1013,6 +1013,8 @@ def _strip_confidential_task_context(
                 raise ValueError("confidential output binding changed during preflight")
             environment.pop("NPA_EXECUTION_OUTPUTS")
     allowed = tuple(value for value in allowed_rendered_values if value)
+    if any(value != "${NPA_SRC_S3_URI}" for value in allowed):
+        raise ValueError("confidential source binding changed during preflight")
     observed: list[str] = []
     for document in documents:
         environment = document.get("envs")
@@ -1104,8 +1106,8 @@ def _preflight_confidential_robotwin_inner(
         or not secret
         or environment.get("AWS_SESSION_TOKEN")
         or environment.get("AWS_SECURITY_TOKEN")
-        or task_environment.get("AWS_ENDPOINT_URL") != endpoint
-        or task_environment.get("NEBIUS_S3_ENDPOINT") != endpoint
+        or task_environment.get("AWS_ENDPOINT_URL") != "${AWS_ENDPOINT_URL}"
+        or task_environment.get("NEBIUS_S3_ENDPOINT") != "${NEBIUS_S3_ENDPOINT}"
         or any(
             environment.get(name) not in {None, "", endpoint}
             for name in STORAGE_ENDPOINT_ENV_NAMES
@@ -1381,9 +1383,10 @@ def submit_workflow(
             elif runtime_config.isolated_config_dir is None:
                 owned_submission_dir = submission_dir
             prepared_yaml = submission_dir / "workflow.yaml"
-            shutil.copy2(yaml_path, prepared_yaml)
-            # The task YAML can carry registry/docker auth + S3 creds; keep it owner-only.
-            _chmod_owner_only(prepared_yaml)
+            if robotwin_authorization is None:
+                shutil.copy2(yaml_path, prepared_yaml)
+                # The task YAML can carry registry/docker auth + S3 creds; keep it owner-only.
+                _chmod_owner_only(prepared_yaml)
             sky_executable = str(ensure_skypilot_version(runtime_config.sky_bin))
             controller_context = _controller_region_from_infra(infra, controller_backend)
             base_config = (
@@ -1454,11 +1457,10 @@ def submit_workflow(
             if (
                 robotwin_submit_context is not None
                 and robotwin_submit_context.layer == "outer"
-                and robotwin_submit_context.rendered_private_values
             ):
-                env["NPA_SRC_S3_URI"] = (
-                    robotwin_submit_context.rendered_private_values[0]
-                )
+                env["NPA_SRC_S3_URI"] = dict(robotwin_submit_context.private_environment)[
+                    "NPA_SRC_S3_URI"
+                ]
             control_env = env
             if robotwin_authorization is not None:
                 from npa.orchestration.npa_workflow.robotwin_preflight import (
@@ -1487,7 +1489,6 @@ def submit_workflow(
                         raise SkyPilotSubmitError(
                             "RoboTwin confidential storage endpoint is unavailable"
                         )
-                    inner_environment[name] = env[name]
                 inner_environment["NPA_EXECUTION_OUTPUTS"] = json.dumps(
                     [{"uri": robotwin_authorization.summary_uri, "kind": "file"}]
                 )
@@ -1550,7 +1551,14 @@ def submit_workflow(
                         if robotwin_submit_context.layer == "inner"
                         else None
                     ),
-                    allowed_rendered_values=robotwin_submit_context.rendered_private_values,
+                    allowed_rendered_values=("${NPA_SRC_S3_URI}",)
+                    if robotwin_submit_context.layer == "outer"
+                    and any(
+                        isinstance(document.get("envs"), dict)
+                        and document["envs"].get("NPA_SRC_S3_URI") == "${NPA_SRC_S3_URI}"
+                        for document in docs
+                    )
+                    else (),
                 )
             # Native preflight pins the exact project/region in this per-submit
             # configuration; persist the verified version before any controller.
@@ -1578,16 +1586,6 @@ def submit_workflow(
         for secret_name in secret_envs or ():
             if env.get(secret_name):
                 cmd[-1:-1] = ["--secret", secret_name]
-        if (
-            robotwin_submit_context is not None
-            and robotwin_submit_context.layer == "outer"
-            and robotwin_submit_context.rendered_private_values
-        ):
-            if not env.get("NPA_SRC_S3_URI"):
-                raise SkyPilotSubmitError(
-                    "RoboTwin confidential source secret is unavailable"
-                )
-            cmd[-1:-1] = ["--secret", "NPA_SRC_S3_URI"]
         stable_cwd = _stable_sky_cwd(runtime_config.isolated_config_dir)
         api_daemon_health = _ensure_local_api_daemon_cwd_locked(
             sky_executable,
@@ -1684,6 +1682,12 @@ def submit_workflow(
             if initial_controller_absent:
                 initial_controller_absent = False
                 return ReconciliationEvidence(ReconciliationState.ABSENT)
+            if robotwin_authorization is not None:
+                from npa.orchestration.npa_workflow.robotwin_preflight import (
+                    require_customer_authorization_fresh,
+                )
+
+                require_customer_authorization_fresh(robotwin_authorization)
             return _reconcile_managed_job_env(
                 run_id,
                 env=control_env,
@@ -1695,6 +1699,12 @@ def submit_workflow(
         def _launch() -> tuple[
             subprocess.CompletedProcess[str], list[SkyPilotDiagnosis]
         ]:
+            if robotwin_authorization is not None:
+                from npa.orchestration.npa_workflow.robotwin_preflight import (
+                    require_customer_authorization_fresh,
+                )
+
+                require_customer_authorization_fresh(robotwin_authorization)
             try:
                 launch_result, diagnoses = _run_launch(
                     cmd,
@@ -1884,11 +1894,16 @@ def workflow_status(
     ]
     if runtime_config.global_config_path is not None:
         cmd[3:3] = ["--config", str(runtime_config.global_config_path)]
+    status_environment = (
+        sky_environment(runtime_config.isolated_config_dir)
+        if environment is None
+        else sky_environment(
+            runtime_config.isolated_config_dir, environment=environment
+        )
+    )
     result = subprocess.run(
         cmd,
-        env=sky_environment(
-            runtime_config.isolated_config_dir, environment=environment
-        ),
+        env=status_environment,
         cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
         text=True,
         stdout=subprocess.PIPE,

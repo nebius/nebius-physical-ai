@@ -42,8 +42,11 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
     CHILD_OUTPUT_PREFIX_ENV,
     CHILD_RUN_ID_ENV,
     CHILD_RUNTIME_AUTH_ENV,
+    OPTIONAL_STORAGE_SECRET_NAME,
     RobotwinAuthorization,
     RobotwinSubmitContext,
+    STORAGE_CREDENTIAL_SECRET_NAMES,
+    STORAGE_ENDPOINT_SECRET_NAMES,
     prepare_inner_submit,
 )
 
@@ -68,8 +71,9 @@ DEFAULT_IMAGE_PULL_SECRETS = ("agent-sa",)
 #: inside the pod: vendor terms acceptances, a gated-repository token, or hashes
 #: of owner-only authorization/scan records. These are not workflow
 #: configuration, so they travel through SkyPilot's redacted secret channel and
-#: never appear in rendered YAML. Unset names are dropped, so a run that holds
-#: nothing forwards nothing and the container's own gate refuses.
+#: never appear in rendered YAML. Ordinary solutions drop unset names. RoboTwin
+#: returns its exact required name set so its bridge can reject any missing
+#: value before controller, scheduler, or GPU effects.
 #:
 #: Keyed by solution, because these are per-vendor answers and a single shared
 #: tuple quietly widens every other image's environment: a variable added for
@@ -116,11 +120,22 @@ def resolve_secret_envs(
     An explicit ``--secret-env`` list replaces the default storage names. The
     operator-runtime gates *this solution* reads are appended in either case, so
     runtime decisions/evidence cannot fall back to rendered YAML — and a
-    solution never receives another solution's values. Names with no value are
-    dropped, since SkyPilot rejects a secret it cannot resolve.
+    solution never receives another solution's values. Ordinary solutions drop
+    names with no value. RoboTwin instead returns its exact required set (plus
+    an optional session token only when present), allowing its confidential
+    bridge to refuse missing values before SkyPilot sees them.
     """
 
     source = os.environ if environment is None else environment
+    if solution_name.strip().lower() == "robotwin":
+        names = [
+            *OPERATOR_RUNTIME_ENVS_BY_SOLUTION["robotwin"],
+            *STORAGE_CREDENTIAL_SECRET_NAMES,
+            *STORAGE_ENDPOINT_SECRET_NAMES,
+        ]
+        if source.get(OPTIONAL_STORAGE_SECRET_NAME):
+            names.append(OPTIONAL_STORAGE_SECRET_NAME)
+        return list(dict.fromkeys(names))
     names = list(explicit if explicit is not None else DEFAULT_SECRET_ENVS)
     # Operator decisions/evidence are runtime state, not workflow configuration.
     # Always carry an explicitly set gate through SkyPilot's redacted secret
@@ -660,16 +675,16 @@ def _submit_and_wait(
         )
         rendered_yaml = render_dir / "byof-container.rendered.yaml"
         _write_yaml_documents(rendered_yaml, docs)
-        print(
-            json.dumps(
-                {
-                    "run_id": run_id,
-                    "rendered_yaml": str(rendered_yaml),
-                    "outputs": outputs,
-                },
-                indent=2,
-            )
+        payload = (
+            {"launch_id": scheduler_run_id, "status": "rendered"}
+            if robotwin_submit_context is not None
+            else {
+                "run_id": run_id,
+                "rendered_yaml": str(rendered_yaml),
+                "outputs": outputs,
+            }
         )
+        print(json.dumps(payload, indent=2))
         return 0
 
     submit_environment = authorized_env
@@ -685,9 +700,7 @@ def _submit_and_wait(
     ) as tmp:
         tmp_path = Path(tmp)
         previous_kubeconfig = (
-            os.environ.get("KUBECONFIG")
-            if robotwin_submit_context is None
-            else None
+            os.environ.get("KUBECONFIG") if robotwin_submit_context is None else None
         )
         robotwin_control_env = (
             _robotwin_control_environment(
@@ -754,7 +767,6 @@ def _submit_and_wait(
             return_code = 1
             confidential_submission_dir: Path | None = None
             try:
-                teardown_guard.mark_launched()
                 submit_config_path = Path(config_path) if config_path else None
                 result = submit_workflow(
                     rendered_yaml,
@@ -782,6 +794,7 @@ def _submit_and_wait(
                         scheduler_run_id if robotwin_submit_context is not None else ""
                     ),
                 )
+                teardown_guard.mark_launched()
                 submitted_config_path = (
                     Path(result.log_paths["config"])
                     if result.log_paths.get("config")
@@ -792,11 +805,15 @@ def _submit_and_wait(
                         result.log_paths["submission_dir"]
                     )
                 teardown_guard.mark_launched(config_path=submitted_config_path)
-                summary = {
-                    "run_id": run_id,
-                    "submit": result.__dict__,
-                    "outputs": outputs,
-                }
+                summary = (
+                    {"launch_id": scheduler_run_id, "status": "submitted"}
+                    if robotwin_submit_context is not None
+                    else {
+                        "run_id": run_id,
+                        "submit": result.__dict__,
+                        "outputs": outputs,
+                    }
+                )
                 final, wait_diagnostics = _wait_for_terminal(
                     scheduler_run_id,
                     sky_bin=sky_bin,
@@ -806,8 +823,12 @@ def _submit_and_wait(
                     config_path=submit_config_path,
                     environment=robotwin_control_env,
                 )
-                summary["final"] = final.__dict__
-                summary["wait"] = wait_diagnostics
+                if robotwin_submit_context is not None:
+                    summary["status"] = final.status.lower()
+                    summary["returncode"] = int(final.returncode)
+                else:
+                    summary["final"] = final.__dict__
+                    summary["wait"] = wait_diagnostics
                 return_code = 0 if final.status == "SUCCEEDED" else 1
                 if (
                     robotwin_submit_context is None
@@ -821,7 +842,12 @@ def _submit_and_wait(
                     teardown_guard.teardown()
                 if confidential_submission_dir is not None:
                     shutil.rmtree(confidential_submission_dir, ignore_errors=True)
-            print(json.dumps(summary or {"run_id": run_id}, indent=2, sort_keys=True))
+            fallback = (
+                {"launch_id": scheduler_run_id, "status": "failed"}
+                if robotwin_submit_context is not None
+                else {"run_id": run_id}
+            )
+            print(json.dumps(summary or fallback, indent=2, sort_keys=True))
             return return_code
         finally:
             if robotwin_submit_context is None:

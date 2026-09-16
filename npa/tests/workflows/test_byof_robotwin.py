@@ -11,12 +11,11 @@ from pathlib import Path
 import pytest
 import yaml
 
+from npa.cli.workbench.workflow import submit_cmd
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.robotwin_preflight import (
-    CUSTOMER_ENTITLEMENT_ENV,
-    CUSTOMER_TERMS,
-    CUSTOMER_USE_SCOPE,
     RobotwinPreflightError,
+    prepare_live_submit,
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -259,7 +258,6 @@ def test_robotwin_live_gate_requires_context_and_authenticated_customer_boundary
         live_e2e.test_live_robotwin_build_push_run_and_artifacts
     ).parameters == {}
     for required in (
-        "load_runtime_authorization",
         '"workflow"',
         '"submit"',
         '"--secret-env"',
@@ -268,7 +266,10 @@ def test_robotwin_live_gate_requires_context_and_authenticated_customer_boundary
         '"npa"',
     ):
         assert required in live_test
+    assert "prepare_live_submit(" in inspect.getsource(submit_cmd)
+    assert "load_runtime_authorization(" in inspect.getsource(prepare_live_submit)
     for forbidden in (
+        "load_runtime_authorization",
         '"--registry"',
         '"--project"',
         '"--config-path"',
@@ -317,88 +318,6 @@ def test_robotwin_live_gate_refuses_missing_owner_context_before_work(
     )
 
     with pytest.raises(RobotwinPreflightError, match="context-missing"):
-        live_e2e.test_live_robotwin_build_push_run_and_artifacts()
-
-
-def test_robotwin_live_gate_refuses_unsigned_customer_entitlement(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    kubeconfig = tmp_path / "kubeconfig"
-    kubeconfig.write_text(
-        "apiVersion: v1\nkind: Config\n"
-        "contexts: [{name: private-context, context: {}}]\nusers: []\n",
-        encoding="utf-8",
-    )
-    skypilot = tmp_path / "skypilot.yaml"
-    skypilot.write_text("kubernetes: {}\n", encoding="utf-8")
-    kubeconfig.chmod(0o600)
-    skypilot.chmod(0o600)
-    context = tmp_path / "runtime-context.json"
-    context.write_text(
-        json.dumps(
-            {
-                "solution": "robotwin",
-                "ownership_provenance": "manager-issued",
-                "customer_scope_id": "private-customer",
-                "workflow_sha256": "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3",
-                "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
-                "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
-                "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-                "runtime_lock_sha256": "dda9bfebe81250247d25259d655589f8f3b95af7d8629d31b49c59a6af3150ee",
-                "bootstrap_image": "registry.example/private/robotwin/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "reservation": {
-                    "policy": "STRICT",
-                    "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
-                    "count": 1,
-                },
-                "project": "private-project",
-                "nebius_profile": "private-profile",
-                "kubeconfig": str(kubeconfig),
-                "kubernetes_context": "private-context",
-                "skypilot_config_path": str(skypilot),
-                "bucket": "private-bucket",
-                "output_root": "s3://private-bucket/robotwin-output",
-                "run_id": "robotwin-private-run",
-            }
-        ),
-        encoding="utf-8",
-    )
-    context.chmod(0o600)
-    entitlement = tmp_path / "customer-entitlement.json"
-    entitlement.write_text(
-        json.dumps(
-            {
-                "provenance": "customer-issued",
-                "customer_scope_id": "private-customer",
-                "run_id": "robotwin-private-run",
-                "runtime_manifest_sha256": (
-                    "dda9bfebe81250247d25259d655589f8f3b95af7d8629d31b49c59a6af3150ee"
-                ),
-                "expires_at": "2099-01-01T00:00:00Z",
-                "decision": "declined",
-                "intended_activity": CUSTOMER_USE_SCOPE,
-                "terms": list(CUSTOMER_TERMS),
-            },
-            sort_keys=True,
-        ),
-        encoding="utf-8",
-    )
-    entitlement.chmod(0o600)
-    monkeypatch.setattr(live_e2e, "REPO_ROOT", repo)
-    monkeypatch.setenv("NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT", str(context))
-    monkeypatch.setenv(CUSTOMER_ENTITLEMENT_ENV, str(entitlement))
-    monkeypatch.setattr(
-        live_e2e.subprocess,
-        "run",
-        lambda *_: pytest.fail("entitlement refusal occurred too late"),
-    )
-
-    with pytest.raises(
-        RobotwinPreflightError,
-        match="customer-authorization-unsigned-local-file",
-    ):
         live_e2e.test_live_robotwin_build_push_run_and_artifacts()
 
 

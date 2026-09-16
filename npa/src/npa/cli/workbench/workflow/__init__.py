@@ -54,20 +54,22 @@ def _robotwin_render_process(
     plan: Any,
     run_id: str,
     options: Any,
-    source_uri: str,
 ) -> None:
-    """Render in an isolated process whose source URI cannot affect siblings."""
+    """Render only the fixed source-secret placeholder in an isolated process."""
 
     try:
-        os.environ["NPA_SRC_S3_URI"] = source_uri
+        os.environ["NPA_SRC_S3_URI"] = "${NPA_SRC_S3_URI}"
         os.environ.pop("NPA_E2E_NPA_SRC_S3_URI", None)
         from npa.orchestration.npa_workflow.skypilot_render import (
-            assert_no_unresolved_placeholders,
             render_skypilot_yaml,
         )
 
-        rendered = render_skypilot_yaml(spec, plan, run_id=run_id, options=options)
-        assert_no_unresolved_placeholders(rendered)
+        rendered = render_skypilot_yaml(
+            spec,
+            plan,
+            run_id=run_id,
+            options=replace(options, aws_endpoint_url="${AWS_ENDPOINT_URL}"),
+        )
         connection.send((True, rendered))
     except BaseException as exc:  # child boundary returns only a bounded category
         connection.send((False, type(exc).__name__))
@@ -81,7 +83,6 @@ def _prepare_robotwin_submit_without_global_source(
     run_id: str,
     assume_decision: str,
     render_options: Any,
-    source_uri: str,
 ) -> Any:
     """Prepare the fixed outer task while keeping its private source run-local."""
 
@@ -96,7 +97,7 @@ def _prepare_robotwin_submit_without_global_source(
     receiver, sender = context.Pipe(duplex=False)
     process = context.Process(
         target=_robotwin_render_process,
-        args=(sender, spec, plan, run_id, render_options, source_uri),
+        args=(sender, spec, plan, run_id, render_options),
     )
     process.start()
     sender.close()
@@ -439,7 +440,9 @@ def prepare_run_cmd(
             workflow_identity=spec.name,
             resume_run=requested,
         )
-        from npa.orchestration.npa_workflow.submission_state import record_submission_plan
+        from npa.orchestration.npa_workflow.submission_state import (
+            record_submission_plan,
+        )
 
         record_submission_plan(
             project or "default",
@@ -1021,9 +1024,19 @@ def submit_cmd(
 
             robotwin_contract = recognize_contract(merged_npa_spec)
             if not plan_only and robotwin_contract:
+                control_plane_source_uri = (
+                    os.environ.get("NPA_SRC_S3_URI", "")
+                    or os.environ.get("NPA_E2E_NPA_SRC_S3_URI", "")
+                ).strip()
                 robotwin_submit_context = prepare_live_submit(
                     merged_npa_spec,
                     requested_secret_envs=secret_env,
+                    control_plane_source_uri=control_plane_source_uri,
+                    control_plane_source_origin=(
+                        "environment" if control_plane_source_uri else "default"
+                    ),
+                    control_plane_source_fingerprint=_local_source_fingerprint(),
+                    control_plane_source_staging_requested=stage_src is True,
                 )
                 if robotwin_submit_context is not None:
                     _SUBMIT_PRIVATE_REDACTIONS.set(
@@ -1032,6 +1045,7 @@ def submit_cmd(
                                 (
                                     *robotwin_submit_context.authorization.redactions,
                                     robotwin_submit_context.transport_value,
+                                    *robotwin_submit_context.private_values,
                                 )
                             )
                         )
@@ -1060,14 +1074,19 @@ def submit_cmd(
                         ),
                         runtime_requested=runtime is True,
                     )
+                    from npa.orchestration.npa_workflow.robotwin_preflight import (
+                        OPTIONAL_STORAGE_SECRET_NAME,
+                        STORAGE_CREDENTIAL_SECRET_NAMES,
+                        STORAGE_ENDPOINT_SECRET_NAMES,
+                    )
+
                     secret_env[:] = [
-                        name
-                        for name in secret_env
-                        if name
-                        not in {
-                            "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
-                        }
+                        "NPA_SRC_S3_URI",
+                        *STORAGE_CREDENTIAL_SECRET_NAMES,
+                        *STORAGE_ENDPOINT_SECRET_NAMES,
                     ]
+                    if os.environ.get(OPTIONAL_STORAGE_SECRET_NAME):
+                        secret_env.append(OPTIONAL_STORAGE_SECRET_NAME)
         except Exception as exc:
             _fail(str(exc))
             return
@@ -1152,9 +1171,7 @@ def submit_cmd(
         _fail("--plan-migration-reason requires --allow-terminal-plan-migration")
         return
     if adopt_absent_in_flight_outputs and not (resume_run or (resume and run_id)):
-        _fail(
-            "--adopt-absent-in-flight-outputs requires an explicit --resume-run ID"
-        )
+        _fail("--adopt-absent-in-flight-outputs requires an explicit --resume-run ID")
         return
     if not project:
         from npa.clients.config import default_project_name
@@ -1278,7 +1295,8 @@ def submit_cmd(
             requested=required_secret_env,
             workflow_env=(
                 _raw_workflow_environment(yaml_path, substitutions)
-                if not is_npa_spec and not materializer else None
+                if not is_npa_spec and not materializer
+                else None
             ),
         )
         secret_env[:] = list(dict.fromkeys(required_secret_env))
@@ -1310,9 +1328,40 @@ def submit_cmd(
     if resolved_access_key:
         extra_env.setdefault("AWS_ACCESS_KEY_ID", resolved_access_key)
     if resolved_secret_key:
-        extra_env.setdefault(
-            "AWS_SECRET_ACCESS_KEY", resolved_secret_key
+        extra_env.setdefault("AWS_SECRET_ACCESS_KEY", resolved_secret_key)
+    if robotwin_submit_context is not None:
+        from npa.orchestration.npa_workflow.robotwin_preflight import (
+            OPTIONAL_STORAGE_SECRET_NAME,
+            STORAGE_CREDENTIAL_SECRET_NAMES,
+            STORAGE_ENDPOINT_SECRET_NAMES,
+            TRANSPORT_CONTEXT_ENV,
         )
+
+        source_value = dict(robotwin_submit_context.private_environment).get(
+            "NPA_SRC_S3_URI", ""
+        )
+        exact_environment = {
+            "KUBECONFIG": robotwin_submit_context.authorization.kubeconfig_source,
+            TRANSPORT_CONTEXT_ENV: robotwin_submit_context.transport_value,
+            "NPA_SRC_S3_URI": source_value,
+            **{
+                name: str(extra_env.get(name) or "")
+                for name in STORAGE_CREDENTIAL_SECRET_NAMES
+            },
+            **{name: s3_endpoint for name in STORAGE_ENDPOINT_SECRET_NAMES},
+        }
+        session_token = str(extra_env.get(OPTIONAL_STORAGE_SECRET_NAME) or "")
+        if session_token:
+            exact_environment[OPTIONAL_STORAGE_SECRET_NAME] = session_token
+        extra_env = exact_environment
+        secret_env[:] = [
+            TRANSPORT_CONTEXT_ENV,
+            "NPA_SRC_S3_URI",
+            *STORAGE_CREDENTIAL_SECRET_NAMES,
+            *STORAGE_ENDPOINT_SECRET_NAMES,
+        ]
+        if session_token:
+            secret_env.append(OPTIONAL_STORAGE_SECRET_NAME)
     missing_secrets = list(submit_credentials.missing)
     if checkpoint_access_required and "HF_TOKEN" in missing_secrets:
         missing_secrets.remove("HF_TOKEN")
@@ -1412,11 +1461,7 @@ def submit_cmd(
                 return
             infra_context = declared_contexts[0]
             infra = f"k8s/{infra_context}"
-        if (
-            infra_context
-            and not plan_only
-            and robotwin_submit_context is None
-        ):
+        if infra_context and not plan_only and robotwin_submit_context is None:
             _adopt_npa_kubeconfig(infra_context)
             # Applying the shipped claim is the whole opt-in for durable weights:
             # look for it here rather than making every submitting shell remember
@@ -1480,11 +1525,10 @@ def submit_cmd(
             s3_bucket or spec_config.get("bucket", "") or ""
         ).strip()
         if robotwin_submit_context is not None:
-            existing_source_uri = (
-                os.environ.get("NPA_SRC_S3_URI", "")
-                or os.environ.get("NPA_E2E_NPA_SRC_S3_URI", "")
-            ).strip()
-            source_origin = "environment" if existing_source_uri else "default"
+            existing_source_uri = dict(robotwin_submit_context.private_environment).get(
+                "NPA_SRC_S3_URI", ""
+            )
+            source_origin = "environment"
         else:
             existing_source_uri, source_origin = _resolve_submit_src_s3_uri_with_origin(
                 project
@@ -1508,30 +1552,6 @@ def submit_cmd(
                     _fail(f"npa source staging is not feasible: {exc}")
                     return
         if robotwin_submit_context is not None and requires_npa_source:
-            from npa.orchestration.npa_workflow.robotwin_preflight import (
-                validate_control_plane_source,
-            )
-
-            try:
-                existing_source_uri = validate_control_plane_source(
-                    robotwin_submit_context.authorization,
-                    source_uri=existing_source_uri,
-                    source_origin=source_origin,
-                    local_fingerprint=local_source_fingerprint,
-                    source_staging_requested=stage_src is True,
-                )
-            except Exception as exc:
-                _fail(str(exc))
-                return
-            robotwin_submit_context = replace(
-                robotwin_submit_context,
-                private_values=tuple(
-                    dict.fromkeys(
-                        (*robotwin_submit_context.private_values, existing_source_uri)
-                    )
-                ),
-                rendered_private_values=(existing_source_uri,),
-            )
             _SUBMIT_PRIVATE_REDACTIONS.set(
                 tuple(
                     dict.fromkeys(
@@ -1706,24 +1726,37 @@ def submit_cmd(
             # bootstrap or deployIfAbsent creates compute. This identity gate
             # remains mandatory even when convenience preflights are skipped.
             try:
-                execution_target, execution_preflight_report = _execution_target_preflight(
-                    merged_npa_spec, project=project, context=infra_context,
-                    region=region, run_id=resolved_run_id,
-                    assume_decision=assume_decision, credentials=submit_credentials,
-                    source_uri=planned_source_uri if stage_source_planned else "",
-                    authorized_output_uri=(
-                        robotwin_submit_context.authorization.summary_uri
-                        if robotwin_submit_context is not None
-                        else ""
-                    ),
-                    verify_cluster=(
-                        robotwin_submit_context is not None or not deploy_if_absent
-                    ),
-                    gpu_check=(lambda: _preflight_submit_gang_capacity(
-                        merged_npa_spec, context=infra_context, allowed_nodes=None,
-                        sky_bin=sky_bin, config_path=config_path,
-                        isolated_config_dir=isolated_config_dir,
-                    )) if infra_context and not deploy_if_absent and not runtime else None,
+                execution_target, execution_preflight_report = (
+                    _execution_target_preflight(
+                        merged_npa_spec,
+                        project=project,
+                        context=infra_context,
+                        region=region,
+                        run_id=resolved_run_id,
+                        assume_decision=assume_decision,
+                        credentials=submit_credentials,
+                        source_uri=planned_source_uri if stage_source_planned else "",
+                        authorized_output_uri=(
+                            robotwin_submit_context.authorization.summary_uri
+                            if robotwin_submit_context is not None
+                            else ""
+                        ),
+                        verify_cluster=(
+                            robotwin_submit_context is not None or not deploy_if_absent
+                        ),
+                        gpu_check=(
+                            lambda: _preflight_submit_gang_capacity(
+                                merged_npa_spec,
+                                context=infra_context,
+                                allowed_nodes=None,
+                                sky_bin=sky_bin,
+                                config_path=config_path,
+                                isolated_config_dir=isolated_config_dir,
+                            )
+                        )
+                        if infra_context and not deploy_if_absent and not runtime
+                        else None,
+                    )
                 )
             except (RuntimeError, ValueError) as exc:
                 _fail(str(exc), code=_submit_failure_code(exc))
@@ -1880,7 +1913,12 @@ def submit_cmd(
                     bind_controller=bind_controller is True,
                     isolated_config_dir=isolated_config_dir,
                 )
-            except (ClusterOwnerIdentityMismatchError, OSError, RuntimeError, ValueError) as exc:
+            except (
+                ClusterOwnerIdentityMismatchError,
+                OSError,
+                RuntimeError,
+                ValueError,
+            ) as exc:
                 _fail(str(exc))
                 return
 
@@ -1915,7 +1953,9 @@ def submit_cmd(
                     new_run_id="" if resume else resolved_run_id,
                     persist=True,
                 )
-                from npa.orchestration.npa_workflow.submission_state import record_submission_plan
+                from npa.orchestration.npa_workflow.submission_state import (
+                    record_submission_plan,
+                )
 
                 record_submission_plan(
                     project or "default",
@@ -2027,6 +2067,7 @@ def submit_cmd(
             not stage_source_planned
             and not plan_only
             and requires_npa_source
+            and robotwin_submit_context is None
             and re.fullmatch(r"[0-9a-f]{64}", existing_fingerprint)
         ):
             from npa.orchestration.npa_workflow.src_staging import (
@@ -2077,16 +2118,20 @@ def submit_cmd(
         image_overrides.update(specific_image_overrides)
 
         render_endpoint = (
-            s3_endpoint or os.environ.get("AWS_ENDPOINT_URL")
+            s3_endpoint
+            or os.environ.get("AWS_ENDPOINT_URL")
             or os.environ.get("NEBIUS_S3_ENDPOINT")
             or "https://storage.eu-north1.nebius.cloud"
         )
         runtime_environment = (
             _runtime_submit_environment(
-                merged_npa_spec, run_id=resolved_run_id,
-                secret_env_values=extra_env, endpoint=render_endpoint,
+                merged_npa_spec,
+                run_id=resolved_run_id,
+                secret_env_values=extra_env,
+                endpoint=render_endpoint,
             )
-            if runtime and not plan_only else None
+            if runtime and not plan_only
+            else None
         )
         npa_render_options = SkypilotRenderOptions(
             registry=_resolve_submit_registry(registry, project),
@@ -2152,9 +2197,15 @@ def submit_cmd(
 
                 if execution_target is not None:
                     import yaml
-                    from npa.execution_preflight import verify_execution_target, verify_worker_environment
+                    from npa.execution_preflight import (
+                        verify_execution_target,
+                        verify_worker_environment,
+                    )
 
-                    verify_worker_environment(execution_target, list(yaml.safe_load_all(_wave_yaml.read_text())))
+                    verify_worker_environment(
+                        execution_target,
+                        list(yaml.safe_load_all(_wave_yaml.read_text())),
+                    )
                     verify_execution_target(execution_target)
 
                 refreshed_pins = _preflight_submit_images(
@@ -2164,9 +2215,7 @@ def submit_cmd(
                     assume_decision=assume_decision,
                     enabled=preflight_images,
                     infra=infra,
-                    image_bootstrap_timeout_seconds=(
-                        image_bootstrap_timeout_seconds
-                    ),
+                    image_bootstrap_timeout_seconds=(image_bootstrap_timeout_seconds),
                 )
                 if preflight_images and refreshed_pins != image_digest_pins:
                     raise RuntimeError(
@@ -2238,7 +2287,6 @@ def submit_cmd(
                     run_id=resolved_run_id,
                     assume_decision=assume_decision,
                     render_options=npa_render_options,
-                    source_uri=existing_source_uri,
                 )
                 if robotwin_submit_context is not None
                 else prepare_npa_workflow_for_submit(
@@ -2456,9 +2504,16 @@ def submit_cmd(
 
         if not is_npa_spec and not plan_only:
             import yaml
-            from npa.execution_preflight import ExecutionPreflightError, skypilot_task_documents
+            from npa.execution_preflight import (
+                ExecutionPreflightError,
+                skypilot_task_documents,
+            )
 
-            actual_path = submitted_yaml_path if submitted_yaml_path.exists() else source_yaml_path
+            actual_path = (
+                submitted_yaml_path
+                if submitted_yaml_path.exists()
+                else source_yaml_path
+            )
             documents = list(yaml.safe_load_all(actual_path.read_text()))
             original_documents = json.dumps(documents, sort_keys=True)
             if s3_bucket:
@@ -2475,14 +2530,22 @@ def submit_cmd(
                         envs["S3_BUCKET"] = s3_bucket
                 if s3_prefix:
                     envs["NPA_S3_PREFIX"] = s3_prefix
-                    if "SONIC_OUTPUT_PREFIX" in envs and str(envs["SONIC_OUTPUT_PREFIX"]).strip("/") != s3_prefix.strip("/"):
+                    if "SONIC_OUTPUT_PREFIX" in envs and str(
+                        envs["SONIC_OUTPUT_PREFIX"]
+                    ).strip("/") != s3_prefix.strip("/"):
                         envs["SONIC_OUTPUT_PREFIX"] = s3_prefix
             try:
-                execution_target, execution_preflight_report, injected = _raw_execution_preflight(
-                    documents, project=project, infra=infra, extra_env=extra_env,
-                    sky_bin=sky_bin, config_path=config_path,
-                    isolated_config_dir=isolated_config_dir,
-                    controller_backend=controller_backend.value,
+                execution_target, execution_preflight_report, injected = (
+                    _raw_execution_preflight(
+                        documents,
+                        project=project,
+                        infra=infra,
+                        extra_env=extra_env,
+                        sky_bin=sky_bin,
+                        config_path=config_path,
+                        isolated_config_dir=isolated_config_dir,
+                        controller_backend=controller_backend.value,
+                    )
                 )
             except (ExecutionPreflightError, ValueError, RuntimeError) as exc:
                 _fail(str(exc))
@@ -2490,9 +2553,15 @@ def submit_cmd(
             extra_env.update(injected)
             if json.dumps(documents, sort_keys=True) != original_documents:
                 if submitted_yaml_context is None:
-                    submitted_yaml_context = tempfile.TemporaryDirectory(prefix="npa-workflow-")
-                    submitted_yaml_path = Path(submitted_yaml_context.name) / yaml_path.name
-                submitted_yaml_path.write_text(yaml.safe_dump_all(documents, sort_keys=False))
+                    submitted_yaml_context = tempfile.TemporaryDirectory(
+                        prefix="npa-workflow-"
+                    )
+                    submitted_yaml_path = (
+                        Path(submitted_yaml_context.name) / yaml_path.name
+                    )
+                submitted_yaml_path.write_text(
+                    yaml.safe_dump_all(documents, sort_keys=False)
+                )
                 submitted_yaml_path.chmod(0o600)
 
         if durable_s3:
@@ -2517,9 +2586,14 @@ def submit_cmd(
                 )
                 submitted_yaml_path.write_text(instrumented.yaml_text, encoding="utf-8")
                 if execution_target is not None:
-                    from npa.execution_preflight import replace_execution_outputs, verify_execution_target
+                    from npa.execution_preflight import (
+                        replace_execution_outputs,
+                        verify_execution_target,
+                    )
 
-                    execution_target = replace_execution_outputs(execution_target, {workflow_state.uri: "directory"})
+                    execution_target = replace_execution_outputs(
+                        execution_target, {workflow_state.uri: "directory"}
+                    )
                     verify_execution_target(execution_target)
                 write_manifest(instrumented.manifest, workflow_state)
                 extra_env.update(workflow_state.secret_env())
@@ -2853,11 +2927,17 @@ def _workflow_submission_receipt(spec, steps, run_id: str) -> dict[str, object]:
 
 
 def _runtime_submit_environment(
-    spec, *, run_id: str, secret_env_values: Mapping[str, str], endpoint: str,
+    spec,
+    *,
+    run_id: str,
+    secret_env_values: Mapping[str, str],
+    endpoint: str,
 ) -> dict[str, str]:
     """Resolve the same private environment before API readiness and runtime."""
     from npa.orchestration.npa_workflow.interpreter import _make_context
-    from npa.orchestration.npa_workflow.submit_credentials import STORAGE_ENDPOINT_ENV_NAMES
+    from npa.orchestration.npa_workflow.submit_credentials import (
+        STORAGE_ENDPOINT_ENV_NAMES,
+    )
 
     environment = dict(secret_env_values)
     resolved_config = _make_context(spec, run_id=run_id).config
@@ -2996,14 +3076,17 @@ def _run_npa_workflow_runtime(
         pre_submit_hook=pre_submit_hook,
     )
     runtime_env = _runtime_submit_environment(
-        spec, run_id=run_id, secret_env_values=secret_env_values,
+        spec,
+        run_id=run_id,
+        secret_env_values=secret_env_values,
         endpoint=str(getattr(render_options, "aws_endpoint_url", "") or "").strip(),
     )
     with _temporary_runtime_environment(runtime_env):
         # Record entry into the runtime before it can launch a wave. A runtime
         # receipt has multiple job identities in S3, so no single job ID belongs here.
         update_submission_state(
-            project or "default", run_id,
+            project or "default",
+            run_id,
             {"launch": {"status": "launching", "kind": "runtime"}},
         )
         try:
@@ -3474,10 +3557,7 @@ def _preflight_image_bootstrap_contracts(
         try:
             reference = parse_image_reference(image)
             image_tool = tool_for_image_name(reference.repository.rsplit("/", 1)[-1])
-            if (
-                image_tool
-                and image_tool not in SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS
-            ):
+            if image_tool and image_tool not in SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS:
                 # The packaging contract deliberately scopes this attestation to
                 # a subset of NPA images. Anonymous manifest pullability is the
                 # complete preflight for registered images outside that subset.
@@ -3765,7 +3845,8 @@ def _preflight_submit_gang_capacity(
                 isolated_config_dir=isolated_config_dir,
             )
         effective = normalize_resources(
-            {**resolved, "cloud": "kubernetes"}, accelerator_overrides=accelerator_overrides,
+            {**resolved, "cloud": "kubernetes"},
+            accelerator_overrides=accelerator_overrides,
         )
         selected = str(effective["accelerators"])
         cpus, memory = kubernetes_gpu_quantities(effective, accelerator=selected)
@@ -4394,15 +4475,24 @@ def _submit_prerequisites(
 
 
 def _execution_target_preflight(
-    spec, *, project: str, context: str, region: str, run_id: str,
-    assume_decision: str, credentials, source_uri: str = "",
+    spec,
+    *,
+    project: str,
+    context: str,
+    region: str,
+    run_id: str,
+    assume_decision: str,
+    credentials,
+    source_uri: str = "",
     authorized_output_uri: str = "",
     verify_cluster: bool = True,
     gpu_check: Callable[[], Any] | None = None,
 ):
     """Bind the actual resolved plan to the shared CLI/SDK execution gate."""
     from npa.execution_preflight import (
-        resolve_execution_target, verify_execution_target, workflow_output_destinations,
+        resolve_execution_target,
+        verify_execution_target,
+        workflow_output_destinations,
     )
 
     destinations = workflow_output_destinations(
@@ -4418,10 +4508,16 @@ def _execution_target_preflight(
             raise ValueError("RoboTwin declared output binding is not unique")
         destinations = {authorized_output_uri: destinations[declared[0]]}
     target = resolve_execution_target(
-        project=project, context=context, region=region, output_uris=list(destinations), output_kinds=destinations,
+        project=project,
+        context=context,
+        region=region,
+        output_uris=list(destinations),
+        output_kinds=destinations,
         credentials=credentials,
     )
-    report = verify_execution_target(target, verify_cluster=verify_cluster, gpu_check=gpu_check)
+    report = verify_execution_target(
+        target, verify_cluster=verify_cluster, gpu_check=gpu_check
+    )
     if source_uri:
         source_destination = source_uri.rstrip("/") + "/"
         source_target = resolve_execution_target(
@@ -4449,29 +4545,52 @@ def _raw_workflow_environment(yaml_path: Path, substitutions: Mapping[str, str])
     import yaml
     from npa.execution_preflight import skypilot_workflow_environment
 
-    content = _substitute_workflow_vars(yaml_path, substitutions) if substitutions else yaml_path.read_text()
+    content = (
+        _substitute_workflow_vars(yaml_path, substitutions)
+        if substitutions
+        else yaml_path.read_text()
+    )
     return skypilot_workflow_environment(list(yaml.safe_load_all(content)))
 
 
 def _raw_execution_preflight(
-    documents, *, sky_bin="", config_path=None, isolated_config_dir=None,
-    controller_backend="kubernetes", **kwargs,
+    documents,
+    *,
+    sky_bin="",
+    config_path=None,
+    isolated_config_dir=None,
+    controller_backend="kubernetes",
+    **kwargs,
 ):
     from npa.execution_preflight import preflight_skypilot_submission
     from npa.orchestration.skypilot._bin import resolve_config, ensure_skypilot_version
-    from npa.orchestration.skypilot.workflow import _load_base_config, _controller_config_for_execution, _stable_sky_cwd, sky_environment
+    from npa.orchestration.skypilot.workflow import (
+        _load_base_config,
+        _controller_config_for_execution,
+        _stable_sky_cwd,
+        sky_environment,
+    )
 
-    runtime = resolve_config(sky_bin=sky_bin or None, global_config_path=config_path,
-                             isolated_config_dir=isolated_config_dir)
+    runtime = resolve_config(
+        sky_bin=sky_bin or None,
+        global_config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+    )
     config = _controller_config_for_execution(
-        _load_base_config(runtime.global_config_path), controller_backend=controller_backend,
+        _load_base_config(runtime.global_config_path),
+        controller_backend=controller_backend,
         infra=kwargs.get("infra", ""),
     )
     env = sky_environment(runtime.isolated_config_dir)
     env.update(kwargs.pop("extra_env", None) or {})
-    return preflight_skypilot_submission(documents, **kwargs, global_config=config,
-        extra_env=env, cwd=_stable_sky_cwd(runtime.isolated_config_dir),
-        sky_bin=str(ensure_skypilot_version(runtime.sky_bin)))
+    return preflight_skypilot_submission(
+        documents,
+        **kwargs,
+        global_config=config,
+        extra_env=env,
+        cwd=_stable_sky_cwd(runtime.isolated_config_dir),
+        sky_bin=str(ensure_skypilot_version(runtime.sky_bin)),
+    )
 
 
 def _fail_missing_prerequisites(

@@ -12,7 +12,7 @@ from pathlib import Path
 import posixpath
 import re
 import stat
-from typing import Any, Mapping, Protocol, Sequence
+from typing import Any, Callable, Mapping, Protocol, Sequence
 from urllib.parse import unquote, urlparse, urlsplit
 
 import yaml
@@ -32,6 +32,12 @@ CHILD_OUTPUT_PREFIX_ENV = "NPA_INTERNAL_BYOF_ROBOTWIN_OUTPUT_PREFIX"
 CHILD_BUCKET_ENV = "NPA_INTERNAL_BYOF_ROBOTWIN_BUCKET"
 CHILD_RUNTIME_AUTH_ENV = "NPA_INTERNAL_BYOF_ROBOTWIN_RUNTIME_AUTH_V1"
 CHILD_CONFIG_PATH_ENV = "NPA_INTERNAL_BYOF_ROBOTWIN_CHILD_SKYPILOT_CONFIG"
+STORAGE_CREDENTIAL_SECRET_NAMES = (
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+)
+OPTIONAL_STORAGE_SECRET_NAME = "AWS_SESSION_TOKEN"
+STORAGE_ENDPOINT_SECRET_NAMES = ("AWS_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT")
 CONTEXT_ENV_NAMES = (
     PUBLIC_CONTEXT_ENV,
     CUSTOMER_ENTITLEMENT_ENV,
@@ -59,7 +65,7 @@ ASSET_REVISION = "785feb15aa4a4f532395ad2b1d2be5f28cb561ad"
 WORKFLOW_SHA256 = "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3"
 RUNTIME_LOCK_SHA256 = "dda9bfebe81250247d25259d655589f8f3b95af7d8629d31b49c59a6af3150ee"
 RUNTIME_LOCK_STATUS = "bootstrap-complete-runtime-disabled"
-RUNTIME_AUTH_SCHEMA = "npa.byof.robotwin.runtime-authorization.v3"
+RUNTIME_AUTH_SCHEMA = "npa.byof.robotwin.inner-launch-capability.v1"
 CUSTOMER_AUTHORIZATION_SCHEMA = (
     "npa.byof.robotwin.authenticated-customer-authorization.v1"
 )
@@ -309,6 +315,7 @@ def customer_acceptance_notice() -> dict[str, Any]:
 class CustomerAuthorizationRequest:
     """Exact bindings requested from an authenticated, replay-safe boundary."""
 
+    expected_issuer: str
     customer_scope_id: str
     run_id: str
     runtime_manifest_sha256: str
@@ -340,6 +347,8 @@ class AuthenticatedCustomerAssertion(Protocol):
 
 class CustomerAuthorizationBoundary(Protocol):
     """Typed trust boundary that atomically authenticates and consumes once."""
+
+    trusted_issuer: str
 
     def consume_once(
         self, request: CustomerAuthorizationRequest
@@ -793,6 +802,7 @@ def _canonical_customer_authorization(
     *,
     customer_scope_id: str,
     run_id: str,
+    expected_issuer: str,
     context: bytes,
     now: datetime | None = None,
 ) -> _VerifiedCustomerAuthorization:
@@ -836,10 +846,17 @@ def _canonical_customer_authorization(
     assertion_id = values["assertion_id"]
     nonce = values["nonce"]
     if (
+        not isinstance(expected_issuer, str)
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@-]{2,255}", expected_issuer) is None
+    ):
+        raise _refusal("customer-authorization-trusted-issuer-invalid", context)
+    if (
         not isinstance(issuer, str)
         or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@-]{2,255}", issuer) is None
     ):
         raise _refusal("customer-authorization-issuer-invalid", context)
+    if issuer != expected_issuer:
+        raise _refusal("customer-authorization-issuer-mismatch", context)
     if (
         not isinstance(assertion_id, str)
         or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{7,255}", assertion_id) is None
@@ -899,7 +916,11 @@ def _consume_customer_authorization(
 
     if boundary is None:
         raise _refusal("needs_customer_acceptance", context)
+    expected_issuer = getattr(boundary, "trusted_issuer", None)
+    if not isinstance(expected_issuer, str) or not expected_issuer:
+        raise _refusal("customer-authorization-trusted-issuer-unavailable", context)
     request = CustomerAuthorizationRequest(
+        expected_issuer=expected_issuer,
         customer_scope_id=customer_scope_id,
         run_id=run_id,
         runtime_manifest_sha256=RUNTIME_LOCK_SHA256,
@@ -924,6 +945,7 @@ def _consume_customer_authorization(
         assertion,
         customer_scope_id=customer_scope_id,
         run_id=run_id,
+        expected_issuer=expected_issuer,
         context=context,
         now=now,
     )
@@ -970,6 +992,10 @@ def _parse_transported_customer_authorization(
         assertion,
         customer_scope_id=customer_scope_id,
         run_id=run_id,
+        # The private transport is produced only after the outer authenticated
+        # boundary performed the exact issuer comparison. Revalidation binds
+        # that canonical byte receipt without inventing a local issuer source.
+        expected_issuer=str(payload.get("issuer") or ""),
         context=context,
         now=now,
     )
@@ -1067,23 +1093,20 @@ def _validate_destination(values: Mapping[str, str], raw: bytes) -> str:
     return f"{values['output_root'].rstrip('/')}/{run_id}/npa_byof_summary.json"
 
 
-def validate_control_plane_source(
-    authorization: RobotwinAuthorization,
+ControlPlaneSourceProof = Callable[[str, str], None]
+
+
+def _validate_control_plane_source_fields(
     *,
+    output_bucket: str,
+    private_values: Sequence[str],
     source_uri: str,
     source_origin: str,
     local_fingerprint: str,
     source_staging_requested: bool = False,
+    proof_provider: ControlPlaneSourceProof | None = None,
 ) -> str:
-    """Require a separate, immutable, explicitly supplied NPA source prefix.
-
-    RoboTwin's manager context authorizes exactly one workload-output
-    destination.  It does not authorize source staging into that bucket, and a
-    normal submit must not create or persist a source-stage destination.  The
-    operator therefore pre-stages the current NPA tree through the existing
-    control-plane mechanism and passes its content-addressed URI only in the
-    submitting process environment.
-    """
+    """Prove one immutable source population before consuming launch authority."""
 
     if source_staging_requested:
         raise _refusal("control-plane-source-staging-forbidden")
@@ -1106,12 +1129,43 @@ def validate_control_plane_source(
         or path_parts[-1] != local_fingerprint
     ):
         raise _refusal("control-plane-source-not-immutable")
-    if parsed.netloc == authorization.bucket:
+    if parsed.netloc == output_bucket:
         raise _refusal("control-plane-source-output-bucket-reuse")
-    if any(private and private in value for private in authorization.redactions):
+    if any(private and private in value for private in private_values):
         raise _refusal("control-plane-source-private-coordinate")
-    _require_verified_control_plane_source_bytes(value, local_fingerprint)
+    verifier = proof_provider or _require_verified_control_plane_source_bytes
+    verifier(value, local_fingerprint)
     return value
+
+
+def validate_control_plane_source(
+    authorization: RobotwinAuthorization,
+    *,
+    source_uri: str,
+    source_origin: str,
+    local_fingerprint: str,
+    source_staging_requested: bool = False,
+    proof_provider: ControlPlaneSourceProof | None = None,
+) -> str:
+    """Require a separate, immutable, explicitly supplied NPA source prefix.
+
+    RoboTwin's manager context authorizes exactly one workload-output
+    destination.  It does not authorize source staging into that bucket, and a
+    normal submit must not create or persist a source-stage destination.  The
+    operator therefore pre-stages the current NPA tree through the existing
+    control-plane mechanism and passes its content-addressed URI only in the
+    submitting process environment.
+    """
+
+    return _validate_control_plane_source_fields(
+        output_bucket=authorization.bucket,
+        private_values=authorization.redactions,
+        source_uri=source_uri,
+        source_origin=source_origin,
+        local_fingerprint=local_fingerprint,
+        source_staging_requested=source_staging_requested,
+        proof_provider=proof_provider,
+    )
 
 
 def _require_verified_control_plane_source_bytes(
@@ -1300,6 +1354,11 @@ def load_runtime_authorization(
     environ: Mapping[str, str] | None = None,
     *,
     customer_authorization_boundary: CustomerAuthorizationBoundary | None = None,
+    control_plane_source_uri: str = "",
+    control_plane_source_origin: str = "",
+    control_plane_source_fingerprint: str = "",
+    control_plane_source_staging_requested: bool = False,
+    source_proof_provider: ControlPlaneSourceProof | None = None,
     now: datetime | None = None,
 ) -> RobotwinAuthorization:
     """Load context and require authenticated customer-origin authorization."""
@@ -1365,6 +1424,30 @@ def load_runtime_authorization(
         ),
         config_bytes=config_bytes,
     )
+    if control_plane_source_uri or control_plane_source_origin:
+        _validate_control_plane_source_fields(
+            output_bucket=context_values["bucket"],
+            private_values=tuple(
+                dict.fromkeys(
+                    (
+                        *(
+                            value
+                            for value in context_values.values()
+                            if isinstance(value, str)
+                        ),
+                        *_portable_config_redactions(config_bytes["kubeconfig"]),
+                        *_portable_config_redactions(
+                            config_bytes["skypilot_config_path"]
+                        ),
+                    )
+                )
+            ),
+            source_uri=control_plane_source_uri,
+            source_origin=control_plane_source_origin,
+            local_fingerprint=control_plane_source_fingerprint,
+            source_staging_requested=control_plane_source_staging_requested,
+            proof_provider=source_proof_provider,
+        )
     verified = (
         _parse_transported_customer_authorization(
             transported_raw,
@@ -1414,6 +1497,25 @@ def require_runtime_lock_complete(
     return authorization
 
 
+def require_customer_authorization_fresh(
+    authorization: RobotwinAuthorization, *, now: datetime | None = None
+) -> None:
+    """Recheck authenticated expiry at the last launch/adoption boundary."""
+
+    expiry = _parse_customer_timestamp(
+        authorization.customer_authorization_expires_at,
+        label="expiry",
+        context=authorization.raw_context,
+    )
+    current = datetime.now(timezone.utc) if now is None else now
+    if current.tzinfo is None:
+        raise _refusal(
+            "customer-authorization-clock-invalid", authorization.raw_context
+        )
+    if expiry <= current.astimezone(timezone.utc):
+        raise _refusal("customer-authorization-stale", authorization.raw_context)
+
+
 def encode_transport(authorization: RobotwinAuthorization) -> str:
     """Encode one validated context and config byte set for secret-value transport."""
 
@@ -1436,21 +1538,35 @@ def encode_transport(authorization: RobotwinAuthorization) -> str:
 
 
 def encode_runtime_authorization(authorization: RobotwinAuthorization) -> str:
-    """Encode only validated context bytes for the GPU bootstrap secret."""
+    """Encode one minimal launch-bound capability for the GPU bootstrap."""
+
+    runtime_binding = {
+        "bootstrap_image": authorization.bootstrap_image,
+        "bucket": authorization.bucket,
+        "output_prefix": (
+            f"{authorization.output_root.rstrip('/')}/{authorization.run_id}/"
+        ),
+        "run_id": authorization.run_id,
+    }
 
     return json.dumps(
         {
             "schema_version": RUNTIME_AUTH_SCHEMA,
-            "context_base64": base64.b64encode(authorization.raw_context).decode(
-                "ascii"
-            ),
-            "context_sha256": authorization.context_sha256,
-            "customer_authorization_base64": base64.b64encode(
-                authorization.raw_customer_authorization
-            ).decode("ascii"),
-            "customer_authorization_sha256": (
-                authorization.customer_authorization_sha256
-            ),
+            "capability_id": authorization.inner_launch_id,
+            "runtime_manifest_sha256": RUNTIME_LOCK_SHA256,
+            "workflow_sha256": WORKFLOW_SHA256,
+            "source_revision": SOURCE_REVISION,
+            "curobo_revision": CUROBO_REVISION,
+            "asset_revision": ASSET_REVISION,
+            "bootstrap_image_sha256": hashlib.sha256(
+                authorization.bootstrap_image.encode("utf-8")
+            ).hexdigest(),
+            "runtime_binding_sha256": hashlib.sha256(
+                json.dumps(
+                    runtime_binding, separators=(",", ":"), sort_keys=True
+                ).encode("utf-8")
+            ).hexdigest(),
+            "expires_at": authorization.customer_authorization_expires_at,
         },
         separators=(",", ":"),
         sort_keys=True,
@@ -1656,8 +1772,13 @@ def prepare_live_submit(
     spec: Any,
     *,
     requested_secret_envs: Sequence[str],
+    control_plane_source_uri: str,
+    control_plane_source_origin: str,
+    control_plane_source_fingerprint: str,
+    control_plane_source_staging_requested: bool = False,
     environ: Mapping[str, str] | None = None,
     customer_authorization_boundary: CustomerAuthorizationBoundary | None = None,
+    source_proof_provider: ControlPlaneSourceProof | None = None,
 ) -> RobotwinSubmitContext | None:
     """Validate RoboTwin locally and return its value-only secret transport."""
 
@@ -1683,12 +1804,22 @@ def prepare_live_submit(
         load_runtime_authorization(
             source,
             customer_authorization_boundary=customer_authorization_boundary,
+            control_plane_source_uri=control_plane_source_uri,
+            control_plane_source_origin=control_plane_source_origin,
+            control_plane_source_fingerprint=control_plane_source_fingerprint,
+            control_plane_source_staging_requested=(
+                control_plane_source_staging_requested
+            ),
+            source_proof_provider=source_proof_provider,
         )
     )
+    source_uri = str(control_plane_source_uri).strip()
     return RobotwinSubmitContext(
         authorization.context_sha256,
         authorization,
         encode_transport(authorization),
+        private_values=(source_uri,),
+        private_environment=(("NPA_SRC_S3_URI", source_uri),),
     )
 
 
@@ -1737,6 +1868,13 @@ def prepare_inner_submit(
         or environment.get("NEBIUS_S3_ENDPOINT") != endpoint
     ):
         raise _refusal("inner-storage-endpoint-mismatch", authorization.raw_context)
+    credentials = {
+        name: str(environment.get(name) or "")
+        for name in STORAGE_CREDENTIAL_SECRET_NAMES
+    }
+    if any(not value for value in credentials.values()):
+        raise _refusal("inner-storage-credentials-missing", authorization.raw_context)
+    session_token = str(environment.get(OPTIONAL_STORAGE_SECRET_NAME) or "")
     bound_environment = {
         "KUBECONFIG": authorization.kubeconfig_source,
         CHILD_BUCKET_ENV: authorization.bucket,
@@ -1749,13 +1887,18 @@ def prepare_inner_submit(
         "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256": (authorization.context_sha256),
         "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256": scan_sha256,
         "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES": scan_archives,
+        **credentials,
     }
+    if session_token:
+        bound_environment[OPTIONAL_STORAGE_SECRET_NAME] = session_token
     private_values = tuple(
         dict.fromkeys(
             (
                 *authorization.redactions,
                 image,
                 endpoint,
+                *credentials.values(),
+                session_token,
                 scan_sha256,
                 authorization.context_sha256,
                 runtime_authorization,
@@ -1847,25 +1990,25 @@ def _recognize_rendered_contract(documents: Sequence[Mapping[str, Any]]) -> bool
         *required_environment,
         "NPA_WORKFLOW_RUN_ID",
         "NPA_WORKFLOW_ATTEMPT_ID",
-        "NPA_SRC_S3_URI",
         "AWS_ENDPOINT_URL",
     }
+    source_placeholder = environment.get("NPA_SRC_S3_URI")
+    if source_placeholder is not None:
+        allowed_environment.add("NPA_SRC_S3_URI")
     if set(environment) != allowed_environment or any(
         environment.get(name) != value for name, value in required_environment.items()
     ):
         return False
     run_id = environment.get("NPA_WORKFLOW_RUN_ID")
     attempt_id = environment.get("NPA_WORKFLOW_ATTEMPT_ID")
-    source_uri = urlparse(str(environment.get("NPA_SRC_S3_URI") or ""))
     endpoint = str(environment.get("AWS_ENDPOINT_URL") or "")
     if (
         not isinstance(run_id, str)
         or not run_id
         or command.count(run_id) != 1
         or re.fullmatch(r"[0-9a-f]{64}", str(attempt_id or "")) is None
-        or source_uri.scheme != "s3"
-        or not source_uri.netloc
-        or re.fullmatch(r"https://storage\.[a-z0-9-]+\.nebius\.cloud", endpoint) is None
+        or source_placeholder not in {None, "${NPA_SRC_S3_URI}"}
+        or endpoint != "${AWS_ENDPOINT_URL}"
     ):
         return False
     normalized_command = command.replace(run_id, "<run-id>")
@@ -1978,6 +2121,7 @@ def _validate_preverified_target(
     authorization: RobotwinAuthorization,
     target: Any,
     report: Mapping[str, Any] | None,
+    private_environment: Mapping[str, str],
 ) -> None:
     """Require the exact owner/output target and its completed verification report."""
 
@@ -2004,6 +2148,7 @@ def _validate_preverified_target(
     ):
         raise _refusal("submit-target-mismatch", authorization.raw_context)
     output_uris = tuple(getattr(target, "output_uris", ()) or ())
+    credentials = getattr(target, "credentials", None)
     summary_outputs = [
         uri for uri in output_uris if str(uri).endswith("/npa_byof_summary.json")
     ]
@@ -2013,6 +2158,24 @@ def _validate_preverified_target(
         or output_kinds.get(authorization.summary_uri) != "file"
     ):
         raise _refusal("submit-output-binding-mismatch", authorization.raw_context)
+    if (
+        getattr(credentials, "endpoint_url", None)
+        != private_environment.get("AWS_ENDPOINT_URL")
+        or private_environment.get("NEBIUS_S3_ENDPOINT")
+        != private_environment.get("AWS_ENDPOINT_URL")
+        or getattr(credentials, "access_key_id", None)
+        != private_environment.get("AWS_ACCESS_KEY_ID")
+        or getattr(credentials, "secret_access_key", None)
+        != private_environment.get("AWS_SECRET_ACCESS_KEY")
+        or (
+            OPTIONAL_STORAGE_SECRET_NAME in private_environment
+            and dict(getattr(credentials, "secret_values", {}) or {}).get(
+                OPTIONAL_STORAGE_SECRET_NAME
+            )
+            != private_environment[OPTIONAL_STORAGE_SECRET_NAME]
+        )
+    ):
+        raise _refusal("submit-storage-binding-mismatch", authorization.raw_context)
 
 
 def validate_confidential_submit_bridge(
@@ -2035,12 +2198,10 @@ def validate_confidential_submit_bridge(
         raise _refusal("submit-bridge-context-mismatch", authorization.raw_context)
     expected_infra = f"k8s/{authorization.kubernetes_context}"
     expected_config = authorization.skypilot_config_source
-    storage_secrets = {
-        "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY",
-        "AWS_SESSION_TOKEN",
-    }
-    endpoints = {"AWS_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT"}
+    storage_secrets = set(STORAGE_CREDENTIAL_SECRET_NAMES)
+    if str(extra_env.get(OPTIONAL_STORAGE_SECRET_NAME) or ""):
+        storage_secrets.add(OPTIONAL_STORAGE_SECRET_NAME)
+    endpoints = set(STORAGE_ENDPOINT_SECRET_NAMES)
     common_valid = (
         infra == expected_infra
         and config_path is not None
@@ -2048,6 +2209,7 @@ def validate_confidential_submit_bridge(
         and extra_env.get("KUBECONFIG") == authorization.kubeconfig_source
         and PUBLIC_CONTEXT_ENV not in secret_envs
         and CUSTOMER_ENTITLEMENT_ENV not in secret_envs
+        and len(tuple(secret_envs)) == len(set(secret_envs))
     )
     if context.layer == "outer":
         if not _recognize_rendered_contract(documents):
@@ -2061,19 +2223,27 @@ def validate_confidential_submit_bridge(
         allowed_extra_env = {
             "KUBECONFIG",
             TRANSPORT_CONTEXT_ENV,
+            "NPA_SRC_S3_URI",
             *storage_secrets,
             *endpoints,
         }
+        required_secrets = {
+            TRANSPORT_CONTEXT_ENV,
+            "NPA_SRC_S3_URI",
+            *storage_secrets,
+            *endpoints,
+        }
+        expected_source = dict(context.private_environment).get("NPA_SRC_S3_URI")
         layer_valid = (
-            TRANSPORT_CONTEXT_ENV in secret_envs
+            set(secret_envs) == required_secrets
             and transport == context.transport_value
             and transport == encode_transport(authorization)
-            and len(context.rendered_private_values) == 1
             and isinstance(task_environment, Mapping)
-            and task_environment.get("NPA_SRC_S3_URI")
-            == context.rendered_private_values[0]
-            and context.rendered_private_values[0] in context.private_values
-            and set(extra_env).issubset(allowed_extra_env)
+            and task_environment.get("NPA_SRC_S3_URI") in {None, "${NPA_SRC_S3_URI}"}
+            and extra_env.get("NPA_SRC_S3_URI") == expected_source
+            and expected_source in context.private_values
+            and set(extra_env) == allowed_extra_env
+            and all(str(extra_env.get(name) or "") for name in required_secrets)
         )
     elif context.layer == "inner":
         if not _recognize_inner_rendered_contract(documents):
@@ -2087,19 +2257,21 @@ def validate_confidential_submit_bridge(
             "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES",
             "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256",
             "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256",
+            *storage_secrets,
+            *endpoints,
         }
         expected_inner = dict(context.private_environment)
-        allowed_extra_env = {*expected_inner, *storage_secrets}
+        allowed_extra_env = set(expected_inner)
         layer_valid = (
             not context.transport_value
             and TRANSPORT_CONTEXT_ENV not in secret_envs
             and TRANSPORT_CONTEXT_ENV not in extra_env
             and execution_target is None
             and execution_report is None
-            and required_secrets.issubset(secret_envs)
+            and set(secret_envs) == required_secrets
             and CHILD_CONFIG_PATH_ENV not in secret_envs
             and CHILD_OUTPUT_ROOT_ENV not in secret_envs
-            and set(extra_env).issubset(allowed_extra_env)
+            and set(extra_env) == allowed_extra_env
             and all(
                 extra_env.get(name) == value for name, value in expected_inner.items()
             )
@@ -2109,7 +2281,9 @@ def validate_confidential_submit_bridge(
     if not common_valid or not layer_valid:
         raise _refusal("submit-bridge-input-mismatch", authorization.raw_context)
     if context.layer == "outer":
-        _validate_preverified_target(authorization, execution_target, execution_report)
+        _validate_preverified_target(
+            authorization, execution_target, execution_report, extra_env
+        )
     return authorization
 
 

@@ -138,7 +138,8 @@ def _robotwin_bridge_fixture(
     authorization = validate_context_bytes(
         raw,
         customer_authorization_boundary=SimpleNamespace(
-            consume_once=lambda _request: assertion
+            trusted_issuer="https://customer-auth.example.invalid",
+            consume_once=lambda _request: assertion,
         ),
         config_bytes={
             "kubeconfig": kubeconfig,
@@ -152,7 +153,7 @@ def _robotwin_bridge_fixture(
         authorization,
         transport,
         private_values=(source_uri,),
-        rendered_private_values=(source_uri,),
+        private_environment=(("NPA_SRC_S3_URI", source_uri),),
     )
     summary = f"{output_root}/{run_id}/npa_byof_summary.json"
     target = ExecutionTarget(
@@ -165,8 +166,8 @@ def _robotwin_bridge_fixture(
         output_kinds={summary: "file"},
         credentials=SubmitCredentialContext(
             endpoint_url="https://storage.eu-north1.nebius.cloud",
-            access_key_id="inner-access-canary",
-            secret_access_key="inner-secret-canary",
+            access_key_id="outer-access-canary",
+            secret_access_key="outer-secret-canary",
         ),
     )
     report: dict[str, object] = {
@@ -182,7 +183,7 @@ def _robotwin_bridge_fixture(
             "storage_write_read": "pass",
         },
     }
-    monkeypatch.setenv("NPA_SRC_S3_URI", source_uri)
+    monkeypatch.setenv("NPA_SRC_S3_URI", "${NPA_SRC_S3_URI}")
     spec_path = (
         Path(__file__).resolve().parents[4] / "workflows/testing/byof-robotwin.yaml"
     )
@@ -191,19 +192,33 @@ def _robotwin_bridge_fixture(
         spec,
         build_plan(spec, run_id="robotwin-public-launcher"),
         run_id="robotwin-public-launcher",
-        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        options=SkypilotRenderOptions(
+            materialize_registry_secrets=False,
+            aws_endpoint_url="${AWS_ENDPOINT_URL}",
+        ),
     )
     yaml_path = tmp_path / "robotwin-rendered.yaml"
     yaml_path.write_text(rendered, encoding="utf-8")
     extra_env = {
         "KUBECONFIG": authorization.kubeconfig_source,
         TRANSPORT_CONTEXT_ENV: transport,
+        "NPA_SRC_S3_URI": source_uri,
+        "AWS_ACCESS_KEY_ID": "outer-access-canary",
+        "AWS_SECRET_ACCESS_KEY": "outer-secret-canary",
+        "AWS_ENDPOINT_URL": "https://storage.eu-north1.nebius.cloud",
+        "NEBIUS_S3_ENDPOINT": "https://storage.eu-north1.nebius.cloud",
     }
     return yaml_path, submit_context, target, report, extra_env
 
 
 def _is_status_cmd(cmd: list[str]) -> bool:
     return len(cmd) >= 2 and cmd[1] == "status"
+
+
+def _robotwin_secret_envs(extra_env: dict[str, str]) -> tuple[str, ...]:
+    """Return the exact value-only secret names for a fixture environment."""
+
+    return tuple(name for name in extra_env if name != "KUBECONFIG")
 
 
 def _healthy_status(cmd: list[str]) -> subprocess.CompletedProcess[str]:
@@ -1615,7 +1630,7 @@ def test_robotwin_confidential_submit_bridge_hides_context_after_preflight(
         config_path=Path(authorization.skypilot_config_source),
         sky_bin=_fake_sky(tmp_path),
         infra=f"k8s/{authorization.kubernetes_context}",
-        secret_envs=(TRANSPORT_CONTEXT_ENV,),
+        secret_envs=_robotwin_secret_envs(extra_env),
         extra_env=extra_env,
         project=authorization.project,
         execution_target=target,
@@ -1633,7 +1648,8 @@ def test_robotwin_confidential_submit_bridge_hides_context_after_preflight(
     secret_pairs = [
         launch_cmd[index : index + 2] for index in range(len(launch_cmd) - 1)
     ]
-    assert ["--secret", TRANSPORT_CONTEXT_ENV] in secret_pairs
+    for secret_name in _robotwin_secret_envs(extra_env):
+        assert secret_pairs.count(["--secret", secret_name]) == 1
     assert all(private not in serialized_argv for private in private_values)
     assert launch_kwargs["stdout"] == subprocess.PIPE
     assert launch_kwargs["stderr"] == subprocess.PIPE
@@ -1652,7 +1668,7 @@ def test_robotwin_confidential_submit_bridge_hides_context_after_preflight(
     assert ["--secret", "NPA_SRC_S3_URI"] in secret_pairs
     assert (
         launch_kwargs["env"]["NPA_SRC_S3_URI"]
-        == submit_context.rendered_private_values[0]
+        == dict(submit_context.private_environment)["NPA_SRC_S3_URI"]
     )
     assert "region:" not in prepared
     assert not Path(captured_files["submission_dir"]).exists()
@@ -1843,6 +1859,15 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
     control_calls = [item for item in calls if item[0] != launch_cmd]
     assert "--infra" not in launch_cmd
     assert all(private not in json.dumps(launch_cmd) for private in private_values)
+    secret_pairs = [
+        launch_cmd[index : index + 2] for index in range(len(launch_cmd) - 1)
+    ]
+    expected_secret_names = module.resolve_secret_envs(
+        None, solution_name="robotwin", environment=environment
+    )
+    for secret_name in expected_secret_names:
+        assert secret_pairs.count(["--secret", secret_name]) == 1
+    assert launch_cmd.count("--secret") == len(expected_secret_names)
     assert all(
         value not in kwargs["env"].values()
         for _cmd, kwargs in control_calls
@@ -1893,13 +1918,81 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
     )
 
 
+@pytest.mark.parametrize("effect", ("launch", "reconcile"))
+def test_robotwin_expiry_is_rechecked_at_each_final_scheduler_effect(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, effect: str
+) -> None:
+    from npa.orchestration.npa_workflow import robotwin_preflight
+
+    yaml_path, submit_context, target, report, extra_env = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    authorization = submit_context.authorization
+    events: list[str] = []
+    records: list[dict[str, object]] = []
+
+    def preflight(documents, **_kwargs):
+        documents[1]["resources"]["region"] = authorization.kubernetes_context
+        return target, report, {}
+
+    def stale(observed) -> None:
+        assert observed is authorization
+        events.append("freshness")
+        raise robotwin_preflight.RobotwinPreflightError("customer-authorization-stale")
+
+    def run_transaction(**kwargs):
+        events.append(f"transaction-{effect}")
+        return kwargs[effect]()
+
+    monkeypatch.setattr(workflow_module, "_execution_preflight", preflight)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **_kwargs: (
+            _healthy_status(cmd)
+            if _is_status_cmd(cmd)
+            else subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        ),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "_run_launch",
+        lambda *_args, **_kwargs: pytest.fail("stale authority reached launch"),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "_reconcile_managed_job_env",
+        lambda *_args, **_kwargs: pytest.fail("stale authority reached reconcile"),
+    )
+    monkeypatch.setattr(workflow_module, "run_launch_transaction", run_transaction)
+    monkeypatch.setattr(
+        robotwin_preflight, "require_customer_authorization_fresh", stale
+    )
+
+    with pytest.raises(SkyPilotSubmitError, match="customer-authorization-stale"):
+        submit_workflow(
+            yaml_path,
+            "robotwin-public-launcher",
+            isolated_config_dir=tmp_path / "sky-state",
+            config_path=Path(authorization.skypilot_config_source),
+            sky_bin=_fake_sky(tmp_path),
+            infra=f"k8s/{authorization.kubernetes_context}",
+            secret_envs=_robotwin_secret_envs(extra_env),
+            extra_env=extra_env,
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report=report,
+            robotwin_submit_context=submit_context,
+            transaction_recorder=records.append,
+        )
+
+    assert events == [f"transaction-{effect}", "freshness"]
+    assert records == []
+
+
 def test_robotwin_confidential_submit_bridge_refuses_before_side_effects(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from npa.orchestration.npa_workflow.robotwin_preflight import (
-        TRANSPORT_CONTEXT_ENV,
-    )
-
     yaml_path, submit_context, target, _report, extra_env = _robotwin_bridge_fixture(
         monkeypatch, tmp_path
     )
@@ -1919,7 +2012,7 @@ def test_robotwin_confidential_submit_bridge_refuses_before_side_effects(
             config_path=Path(authorization.skypilot_config_source),
             sky_bin=_fake_sky(tmp_path),
             infra=f"k8s/{authorization.kubernetes_context}",
-            secret_envs=(TRANSPORT_CONTEXT_ENV,),
+            secret_envs=_robotwin_secret_envs(extra_env),
             extra_env=extra_env,
             project=authorization.project,
             execution_target=target,
@@ -1928,6 +2021,109 @@ def test_robotwin_confidential_submit_bridge_refuses_before_side_effects(
         )
     assert exc_info.value.__cause__ is None
     assert exc_info.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    ("mutation", "name"),
+    [
+        *(
+            ("missing-secret", name)
+            for name in (
+                "NPA_INTERNAL_BYOF_ROBOTWIN_CONTEXT_V1",
+                "NPA_SRC_S3_URI",
+                "AWS_ACCESS_KEY_ID",
+                "AWS_SECRET_ACCESS_KEY",
+                "AWS_ENDPOINT_URL",
+                "NEBIUS_S3_ENDPOINT",
+            )
+        ),
+        ("missing-value", "AWS_ACCESS_KEY_ID"),
+        ("missing-value", "AWS_SECRET_ACCESS_KEY"),
+        ("missing-value", "AWS_ENDPOINT_URL"),
+        ("missing-value", "NEBIUS_S3_ENDPOINT"),
+        ("duplicate-secret", "AWS_ACCESS_KEY_ID"),
+        ("extra-secret", "AWS_SECURITY_TOKEN"),
+    ],
+)
+def test_robotwin_outer_bridge_requires_exact_value_only_secret_set_before_effects(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mutation: str,
+    name: str,
+) -> None:
+    yaml_path, submit_context, target, report, extra_env = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    authorization = submit_context.authorization
+    secret_envs = list(_robotwin_secret_envs(extra_env))
+    if mutation == "missing-secret":
+        secret_envs.remove(name)
+    elif mutation == "missing-value":
+        extra_env[name] = ""
+    elif mutation == "duplicate-secret":
+        secret_envs.append(name)
+    else:
+        secret_envs.append(name)
+        extra_env[name] = "private-extra-canary"
+    monkeypatch.setattr(
+        workflow_module,
+        "resolve_config",
+        lambda **_kwargs: pytest.fail("secret mismatch reached runtime resolution"),
+    )
+
+    with pytest.raises(SkyPilotSubmitError, match="submit-bridge-input-mismatch"):
+        submit_workflow(
+            yaml_path,
+            "robotwin-public-launcher",
+            config_path=Path(authorization.skypilot_config_source),
+            sky_bin=_fake_sky(tmp_path),
+            infra=f"k8s/{authorization.kubernetes_context}",
+            secret_envs=secret_envs,
+            extra_env=extra_env,
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report=report,
+            robotwin_submit_context=submit_context,
+        )
+
+
+@pytest.mark.parametrize(
+    "name",
+    (
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_ENDPOINT_URL",
+        "NEBIUS_S3_ENDPOINT",
+    ),
+)
+def test_robotwin_outer_bridge_binds_storage_secret_values_to_verified_target(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str
+) -> None:
+    yaml_path, submit_context, target, report, extra_env = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    authorization = submit_context.authorization
+    extra_env[name] = f"different-{name.lower()}-canary"
+    monkeypatch.setattr(
+        workflow_module,
+        "resolve_config",
+        lambda **_kwargs: pytest.fail("storage mismatch reached runtime resolution"),
+    )
+
+    with pytest.raises(SkyPilotSubmitError, match="submit-storage-binding-mismatch"):
+        submit_workflow(
+            yaml_path,
+            "robotwin-public-launcher",
+            config_path=Path(authorization.skypilot_config_source),
+            sky_bin=_fake_sky(tmp_path),
+            infra=f"k8s/{authorization.kubernetes_context}",
+            secret_envs=_robotwin_secret_envs(extra_env),
+            extra_env=extra_env,
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report=report,
+            robotwin_submit_context=submit_context,
+        )
 
 
 @pytest.mark.parametrize(
@@ -1941,10 +2137,6 @@ def test_robotwin_confidential_submit_bridge_refuses_before_side_effects(
 def test_robotwin_bridge_rejects_every_unbound_extra_env_before_resolution(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unexpected: str
 ) -> None:
-    from npa.orchestration.npa_workflow.robotwin_preflight import (
-        TRANSPORT_CONTEXT_ENV,
-    )
-
     yaml_path, submit_context, target, report, extra_env = _robotwin_bridge_fixture(
         monkeypatch, tmp_path
     )
@@ -1961,7 +2153,7 @@ def test_robotwin_bridge_rejects_every_unbound_extra_env_before_resolution(
             config_path=Path(authorization.skypilot_config_source),
             sky_bin=_fake_sky(tmp_path),
             infra=f"k8s/{authorization.kubernetes_context}",
-            secret_envs=(TRANSPORT_CONTEXT_ENV,),
+            secret_envs=_robotwin_secret_envs(extra_env),
             extra_env={**extra_env, unexpected: "private-canary"},
             project=authorization.project,
             execution_target=target,
@@ -2009,12 +2201,53 @@ def test_robotwin_control_plane_source_is_allowed_only_in_its_task_env() -> None
         )
 
 
+def test_robotwin_concrete_source_document_refuses_before_file_or_runtime_effects(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    yaml_path, submit_context, target, report, extra_env = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    documents = list(yaml.safe_load_all(yaml_path.read_text(encoding="utf-8")))
+    source = extra_env["NPA_SRC_S3_URI"]
+    documents[1]["envs"]["NPA_SRC_S3_URI"] = source
+    yaml_path.write_text(
+        yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8"
+    )
+    sky_bin = _fake_sky(tmp_path)
+    before = {path.relative_to(tmp_path) for path in tmp_path.rglob("*")}
+    monkeypatch.setattr(
+        workflow_module,
+        "resolve_config",
+        lambda **_kwargs: pytest.fail("concrete source reached runtime resolution"),
+    )
+    monkeypatch.setattr(
+        workflow_module.shutil,
+        "copy2",
+        lambda *_args, **_kwargs: pytest.fail("concrete source reached file copy"),
+    )
+    authorization = submit_context.authorization
+
+    with pytest.raises(SkyPilotSubmitError, match="submit-bridge-contract-mismatch"):
+        submit_workflow(
+            yaml_path,
+            "robotwin-public-launcher",
+            config_path=Path(authorization.skypilot_config_source),
+            sky_bin=sky_bin,
+            infra=f"k8s/{authorization.kubernetes_context}",
+            secret_envs=_robotwin_secret_envs(extra_env),
+            extra_env=extra_env,
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report=report,
+            robotwin_submit_context=submit_context,
+        )
+
+    assert {path.relative_to(tmp_path) for path in tmp_path.rglob("*")} == before
+
+
 def test_robotwin_gpu_catalog_error_discards_private_exception_graph(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from npa.orchestration.npa_workflow.robotwin_preflight import (
-        TRANSPORT_CONTEXT_ENV,
-    )
     from npa.orchestration.skypilot.k8s_gpu_catalog import (
         KubernetesGpuCatalogError,
     )
@@ -2048,7 +2281,7 @@ def test_robotwin_gpu_catalog_error_discards_private_exception_graph(
             config_path=Path(authorization.skypilot_config_source),
             sky_bin=_fake_sky(tmp_path),
             infra=f"k8s/{private}",
-            secret_envs=(TRANSPORT_CONTEXT_ENV,),
+            secret_envs=_robotwin_secret_envs(extra_env),
             extra_env=extra_env,
             project=authorization.project,
             execution_target=target,
@@ -2064,10 +2297,6 @@ def test_robotwin_gpu_catalog_error_discards_private_exception_graph(
 def test_confidential_bridge_cannot_select_a_generic_workflow(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from npa.orchestration.npa_workflow.robotwin_preflight import (
-        TRANSPORT_CONTEXT_ENV,
-    )
-
     _path, submit_context, target, report, extra_env = _robotwin_bridge_fixture(
         monkeypatch, tmp_path
     )
@@ -2089,7 +2318,7 @@ def test_confidential_bridge_cannot_select_a_generic_workflow(
             config_path=Path(authorization.skypilot_config_source),
             sky_bin=_fake_sky(tmp_path),
             infra=f"k8s/{authorization.kubernetes_context}",
-            secret_envs=(TRANSPORT_CONTEXT_ENV,),
+            secret_envs=_robotwin_secret_envs(extra_env),
             extra_env=extra_env,
             project=authorization.project,
             execution_target=target,
@@ -2101,10 +2330,6 @@ def test_confidential_bridge_cannot_select_a_generic_workflow(
 def test_confidential_bridge_rejects_modified_robotwin_command_before_resolution(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from npa.orchestration.npa_workflow.robotwin_preflight import (
-        TRANSPORT_CONTEXT_ENV,
-    )
-
     path, submit_context, target, report, extra_env = _robotwin_bridge_fixture(
         monkeypatch, tmp_path
     )
@@ -2125,7 +2350,7 @@ def test_confidential_bridge_rejects_modified_robotwin_command_before_resolution
             config_path=Path(authorization.skypilot_config_source),
             sky_bin=_fake_sky(tmp_path),
             infra=f"k8s/{authorization.kubernetes_context}",
-            secret_envs=(TRANSPORT_CONTEXT_ENV,),
+            secret_envs=_robotwin_secret_envs(extra_env),
             extra_env=extra_env,
             project=authorization.project,
             execution_target=target,

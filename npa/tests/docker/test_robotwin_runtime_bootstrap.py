@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
+import tempfile
 
 import pytest
 
@@ -45,112 +46,44 @@ def test_runtime_lock_digest_is_bound_to_both_validators() -> None:
     assert lock_sha256 == robotwin_preflight.RUNTIME_LOCK_SHA256
 
 
-def _context(**updates: object) -> dict[str, object]:
+def _environment(
+    *,
+    capability_updates: dict[str, object] | None = None,
+    environment_updates: dict[str, str] | None = None,
+) -> dict[str, str]:
     image = "registry.example/private/npa-robotwin@sha256:" + "a" * 64
-    payload: dict[str, object] = {
-        "solution": "robotwin",
-        "ownership_provenance": "manager-issued",
-        "customer_scope_id": "customer-scope-canary",
+    bucket = "manager-bucket-canary"
+    run_id = "robotwin-manager-canary"
+    output_prefix = f"s3://{bucket}/robotwin-output/{run_id}/"
+    binding = {
+        "bootstrap_image": image,
+        "bucket": bucket,
+        "output_prefix": output_prefix,
+        "run_id": run_id,
+    }
+    capability: dict[str, object] = {
+        "schema_version": runtime.AUTH_SCHEMA,
+        "capability_id": "robotwin-inner-" + "1" * 20,
+        "runtime_manifest_sha256": runtime.RUNTIME_LOCK_SHA256,
         "workflow_sha256": runtime.WORKFLOW_SHA256,
         "source_revision": runtime.SOURCE_REVISION,
         "curobo_revision": runtime.CUROBO_REVISION,
         "asset_revision": runtime.ASSET_REVISION,
-        "runtime_lock_sha256": runtime.RUNTIME_LOCK_SHA256,
-        "bootstrap_image": image,
-        "reservation": {
-            "policy": "STRICT",
-            "accelerator": runtime.ACCELERATOR,
-            "count": 1,
-        },
-        "project": "manager-project-canary",
-        "nebius_profile": "manager-profile-canary",
-        "kubeconfig": "/owner-only/kubeconfig-canary",
-        "kubernetes_context": "manager-context-canary",
-        "skypilot_config_path": "/owner-only/skypilot-canary",
-        "bucket": "manager-bucket-canary",
-        "output_root": "s3://manager-bucket-canary/robotwin-output",
-        "run_id": "robotwin-manager-canary",
-    }
-    payload.update(updates)
-    return payload
-
-
-def _customer_authorization(
-    payload: dict[str, object], **updates: object
-) -> dict[str, object]:
-    value: dict[str, object] = {
-        "schema_version": runtime.CUSTOMER_AUTHORIZATION_SCHEMA,
-        "issuer": "https://customer-auth.example.invalid",
-        "customer_scope_id": payload["customer_scope_id"],
-        "run_id": payload["run_id"],
-        "runtime_manifest_sha256": runtime.RUNTIME_LOCK_SHA256,
-        "issued_at": "2026-01-01T00:00:00Z",
+        "bootstrap_image_sha256": hashlib.sha256(image.encode()).hexdigest(),
+        "runtime_binding_sha256": hashlib.sha256(
+            json.dumps(binding, separators=(",", ":"), sort_keys=True).encode()
+        ).hexdigest(),
         "expires_at": "2099-01-01T00:00:00Z",
-        "decision": "accepted",
-        "intended_activity": runtime.CUSTOMER_USE_SCOPE,
-        "terms": list(runtime.CUSTOMER_TERMS),
-        "assertion_id": "assertion-canary-0001",
-        "nonce": "nonce-canary-00000001",
     }
-    value.update(updates)
-    return value
-
-
-def _environment(**updates: object) -> dict[str, str]:
-    payload = _context(**updates)
-    raw = json.dumps(payload, sort_keys=True).encode()
-    authorization_raw = json.dumps(
-        _customer_authorization(payload), separators=(",", ":"), sort_keys=True
-    ).encode()
-    envelope = json.dumps(
-        {
-            "schema_version": runtime.AUTH_SCHEMA,
-            "context_base64": base64.b64encode(raw).decode(),
-            "context_sha256": hashlib.sha256(raw).hexdigest(),
-            "customer_authorization_base64": base64.b64encode(
-                authorization_raw
-            ).decode(),
-            "customer_authorization_sha256": hashlib.sha256(
-                authorization_raw
-            ).hexdigest(),
-        },
-        sort_keys=True,
-    )
-    return {
-        runtime.AUTH_ENV: envelope,
-        "BYOF_IMAGE": str(payload["bootstrap_image"]),
-        "NPA_BYOF_RUN_ID": str(payload["run_id"]),
-        "NPA_S3_BUCKET": str(payload["bucket"]),
-        "S3_OUTPUT_PREFIX": (
-            f"{str(payload['output_root']).rstrip('/')}/{payload['run_id']}/"
-        ),
+    capability.update(capability_updates or {})
+    environment = {
+        runtime.AUTH_ENV: json.dumps(capability, separators=(",", ":"), sort_keys=True),
+        "BYOF_IMAGE": image,
+        "NPA_BYOF_RUN_ID": run_id,
+        "NPA_S3_BUCKET": bucket,
+        "S3_OUTPUT_PREFIX": output_prefix,
     }
-
-
-def _environment_with_customer_authorization(**updates: object) -> dict[str, str]:
-    payload = _context()
-    raw = json.dumps(payload, sort_keys=True).encode()
-    authorization_raw = json.dumps(
-        _customer_authorization(payload, **updates),
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode()
-    envelope = json.dumps(
-        {
-            "schema_version": runtime.AUTH_SCHEMA,
-            "context_base64": base64.b64encode(raw).decode(),
-            "context_sha256": hashlib.sha256(raw).hexdigest(),
-            "customer_authorization_base64": base64.b64encode(
-                authorization_raw
-            ).decode(),
-            "customer_authorization_sha256": hashlib.sha256(
-                authorization_raw
-            ).hexdigest(),
-        },
-        sort_keys=True,
-    )
-    environment = _environment()
-    environment[runtime.AUTH_ENV] = envelope
+    environment.update(environment_updates or {})
     return environment
 
 
@@ -171,42 +104,12 @@ def test_missing_authorization_refuses_before_lock_access(monkeypatch) -> None:
         ({"curobo_revision": "main"}, "curobo-revision-mismatch"),
         ({"asset_revision": "latest"}, "asset-revision-mismatch"),
         ({"workflow_sha256": "0" * 64}, "workflow-sha256-mismatch"),
-        ({"runtime_lock_sha256": "0" * 64}, "runtime-lock-sha256-mismatch"),
-        (
-            {"bootstrap_image": "registry.example/npa-robotwin:latest"},
-            "bootstrap-image-not-immutable",
-        ),
-        (
-            {
-                "reservation": {
-                    "policy": "STRICT",
-                    "accelerator": "B200",
-                    "count": 1,
-                }
-            },
-            "reservation-accelerator-mismatch",
-        ),
-        (
-            {
-                "reservation": {
-                    "policy": "STRICT",
-                    "accelerator": runtime.ACCELERATOR,
-                    "count": True,
-                }
-            },
-            "reservation-count-not-one",
-        ),
-        (
-            {
-                "reservation": {
-                    "policy": "STRICT",
-                    "accelerator": runtime.ACCELERATOR,
-                    "count": 1.0,
-                }
-            },
-            "reservation-count-not-one",
-        ),
-        ({"run_id": "robotwin-other"}, "runtime-binding-mismatch"),
+        ({"runtime_manifest_sha256": "0" * 64}, "runtime-manifest-sha256-mismatch"),
+        ({"bootstrap_image_sha256": "0" * 64}, "bootstrap-image-binding-mismatch"),
+        ({"runtime_binding_sha256": "0" * 64}, "runtime-binding-mismatch"),
+        ({"capability_id": "not-a-capability"}, "capability-id-invalid"),
+        ({"expires_at": "not-a-date"}, "capability-expiry-invalid"),
+        ({"expires_at": "2000-01-01T00:00:00Z"}, "capability-stale"),
     ],
 )
 def test_mutated_authorization_refuses_before_lock_access(
@@ -219,9 +122,7 @@ def test_mutated_authorization_refuses_before_lock_access(
         "_load_lock",
         lambda *_args, **_kwargs: pytest.fail("lock read preceded authorization"),
     )
-    environment = _environment(**updates)
-    if "run_id" in updates:
-        environment["NPA_BYOF_RUN_ID"] = "robotwin-divergent"
+    environment = _environment(capability_updates=updates)
     with pytest.raises(runtime.Refusal, match=category):
         runtime.run(lock_path=LOCK, environ=environment)
 
@@ -229,24 +130,17 @@ def test_mutated_authorization_refuses_before_lock_access(
 @pytest.mark.parametrize(
     ("updates", "category"),
     [
-        ({"issuer": ""}, "customer-authorization-issuer-invalid"),
-        ({"decision": "declined"}, "customer-authorization-declined"),
-        ({"customer_scope_id": "other"}, "customer-authorization-wrong-customer"),
-        ({"run_id": "robotwin-other"}, "customer-authorization-wrong-run"),
         (
-            {"runtime_manifest_sha256": "0" * 64},
-            "customer-authorization-wrong-manifest",
+            {"BYOF_IMAGE": "registry.example/npa-robotwin:latest"},
+            "bootstrap-image-not-immutable",
         ),
-        ({"expires_at": "not-a-date"}, "customer-authorization-expiry-invalid"),
-        ({"expires_at": "2000-01-01T00:00:00Z"}, "customer-authorization-stale"),
-        ({"terms": []}, "customer-authorization-terms-mismatch"),
-        ({"assertion_id": "short"}, "customer-authorization-assertion-id-invalid"),
-        ({"nonce": "short"}, "customer-authorization-nonce-invalid"),
+        ({"NPA_BYOF_RUN_ID": "robotwin-divergent"}, "runtime-binding-mismatch"),
+        ({"S3_OUTPUT_PREFIX": "s3://other/output/"}, "runtime-binding-mismatch"),
     ],
 )
-def test_customer_authorization_refuses_before_lock_access(
+def test_mutated_runtime_binding_refuses_before_lock_access(
     monkeypatch: pytest.MonkeyPatch,
-    updates: dict[str, object],
+    updates: dict[str, str],
     category: str,
 ) -> None:
     monkeypatch.setattr(
@@ -257,11 +151,11 @@ def test_customer_authorization_refuses_before_lock_access(
     with pytest.raises(runtime.Refusal, match=category):
         runtime.run(
             lock_path=LOCK,
-            environ=_environment_with_customer_authorization(**updates),
+            environ=_environment(environment_updates=updates),
         )
 
 
-def test_runtime_expiry_refusal_discards_private_exception_graph(
+def test_old_raw_authority_envelope_and_extra_fields_refuse_before_lock_access(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -269,14 +163,126 @@ def test_runtime_expiry_refusal_discards_private_exception_graph(
         "_load_lock",
         lambda *_args, **_kwargs: pytest.fail("lock read preceded authorization"),
     )
+    old = _environment()
+    old[runtime.AUTH_ENV] = json.dumps(
+        {
+            "schema_version": runtime.AUTH_SCHEMA,
+            "context_base64": "manager-context-canary",
+            "customer_authorization_base64": "customer-assertion-canary",
+        }
+    )
+    extra = _environment()
+    payload = json.loads(extra[runtime.AUTH_ENV])
+    payload["issuer"] = "customer-issuer-canary"
+    extra[runtime.AUTH_ENV] = json.dumps(payload)
+
+    for environment in (old, extra):
+        with pytest.raises(runtime.Refusal, match="authorization-envelope-invalid"):
+            runtime.run(lock_path=LOCK, environ=environment)
+
+
+def test_capability_parse_refusal_discards_private_exception_graph(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "_load_lock",
+        lambda *_args, **_kwargs: pytest.fail("lock read preceded authorization"),
+    )
+    private = "private-expiry-canary"
     with pytest.raises(runtime.Refusal) as caught:
         runtime.run(
             lock_path=LOCK,
-            environ=_environment_with_customer_authorization(
-                expires_at="private-expiry-canary"
-            ),
+            environ=_environment(capability_updates={"expires_at": private}),
         )
-    assert "private-expiry-canary" not in str(caught.value)
+    assert private not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_exact_capability_contains_no_raw_authority_or_manager_context() -> None:
+    encoded = _environment()[runtime.AUTH_ENV]
+    assert set(json.loads(encoded)) == runtime.CAPABILITY_FIELDS
+    for private in (
+        "customer-assertion-canary",
+        "customer-issuer-canary",
+        "nonce-canary",
+        "manager-project-canary",
+        "manager-profile-canary",
+        "manager-context-canary",
+        "kubeconfig-canary",
+        "skypilot-canary",
+    ):
+        assert private not in encoded
+
+
+def test_capability_default_state_is_owner_controlled_and_not_temporary() -> None:
+    assert runtime.CAPABILITY_STATE_DIR == Path(
+        "/home/ubuntu/.local/state/npa/robotwin/capabilities"
+    )
+    assert Path(tempfile.gettempdir()) not in runtime.CAPABILITY_STATE_DIR.parents
+
+
+def test_capability_state_directory_is_created_owner_only(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state" / "capabilities"
+    capability = json.loads(_environment()[runtime.AUTH_ENV])
+
+    runtime._consume_capability(capability, state_dir=state_dir)
+
+    metadata = state_dir.stat()
+    assert metadata.st_uid == os.geteuid()
+    assert metadata.st_mode & 0o777 == 0o700
+
+
+def test_capability_state_refuses_insecure_directory(tmp_path: Path) -> None:
+    state_dir = tmp_path / "capabilities"
+    state_dir.mkdir()
+    state_dir.chmod(0o755)
+    assert stat.S_IMODE(state_dir.stat().st_mode) == 0o755
+    capability = json.loads(_environment()[runtime.AUTH_ENV])
+
+    with pytest.raises(runtime.Refusal, match="capability-state-not-owner-only"):
+        runtime._consume_capability(capability, state_dir=state_dir)
+
+
+def test_capability_marker_does_not_follow_symlink(tmp_path: Path) -> None:
+    state_dir = tmp_path / "capabilities"
+    state_dir.mkdir(mode=0o700)
+    capability = json.loads(_environment()[runtime.AUTH_ENV])
+    marker_name = hashlib.sha256(capability["capability_id"].encode()).hexdigest()
+    target = tmp_path / "target"
+    target.write_bytes(b"unchanged\n")
+    (state_dir / marker_name).symlink_to(target)
+
+    with pytest.raises(runtime.Refusal, match="capability-replayed"):
+        runtime._consume_capability(capability, state_dir=state_dir)
+
+    assert target.read_bytes() == b"unchanged\n"
+
+
+def test_capability_is_consumed_once_immediately_before_runtime_fetch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(runtime, "CAPABILITY_STATE_DIR", tmp_path / "capabilities")
+    monkeypatch.setattr(
+        runtime,
+        "_load_lock",
+        lambda *_args, **_kwargs: {
+            "bootstrap": {"status": "complete"},
+            "runtime_delivery": {"status": "complete"},
+        },
+    )
+    environment = _environment()
+
+    with pytest.raises(runtime.Refusal, match="runtime-fetch-not-implemented"):
+        runtime.run(lock_path=LOCK, environ=environment)
+    with pytest.raises(runtime.Refusal, match="capability-replayed") as caught:
+        runtime.run(lock_path=LOCK, environ=environment)
+
+    markers = list((tmp_path / "capabilities").iterdir())
+    assert len(markers) == 1
+    assert markers[0].read_bytes() == b"consumed\n"
+    assert markers[0].stat().st_mode & 0o777 == 0o600
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
 

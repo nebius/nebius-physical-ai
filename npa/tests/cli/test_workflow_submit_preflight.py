@@ -213,7 +213,10 @@ def _install_robotwin_submit_context(
             assertion_id="assertion-cli-canary-0001",
             nonce="nonce-cli-canary-00000001",
         )
-        boundary = SimpleNamespace(consume_once=lambda _request: assertion)
+        boundary = SimpleNamespace(
+            trusted_issuer="https://customer-auth.example.invalid",
+            consume_once=lambda _request: assertion,
+        )
 
         def prepare_with_authenticated_boundary(*args, **kwargs):
             kwargs["customer_authorization_boundary"] = boundary
@@ -289,11 +292,29 @@ def test_robotwin_customer_entitlement_refuses_before_external_boundaries(
     missing: bool,
     category: str,
 ) -> None:
+    from npa.orchestration.npa_workflow import robotwin_preflight
+
     _install_robotwin_submit_context(
         monkeypatch,
         tmp_path,
         assertion_decision="declined",
         install_authenticated_boundary=False,
+    )
+    source_fingerprint = "a" * 64
+    source_uri = f"s3://fixture-source-bucket/npa-src/{source_fingerprint}"
+    source_proof_calls: list[tuple[str, str]] = []
+
+    def prove_source_bytes(uri: str, fingerprint: str) -> None:
+        source_proof_calls.append((uri, fingerprint))
+
+    monkeypatch.setenv("NPA_SRC_S3_URI", source_uri)
+    monkeypatch.setattr(
+        workflow_cli, "_local_source_fingerprint", lambda: source_fingerprint
+    )
+    monkeypatch.setattr(
+        robotwin_preflight,
+        "_require_verified_control_plane_source_bytes",
+        prove_source_bytes,
     )
     secret_args: tuple[str, ...] = ()
     if not missing:
@@ -324,6 +345,8 @@ def test_robotwin_customer_entitlement_refuses_before_external_boundaries(
     assert result.exit_code == 1
     assert category in result.output
     assert CUSTOMER_TERMS[0]["url"] in result.output
+    expected_source_proof_calls = [(source_uri, source_fingerprint)] if missing else []
+    assert source_proof_calls == expected_source_proof_calls
     for boundary in boundaries:
         boundary.assert_not_called()
 
@@ -415,8 +438,7 @@ def test_non_robotwin_live_submit_never_enters_robotwin_preflight(
     assert result.exit_code != 0
     assert (
         "HF_TOKEN is required to verify the exact gated Cosmos Transfer checkpoint "
-        "before provisioning or GPU work"
-        in result.output
+        "before provisioning or GPU work" in result.output
     )
     special.assert_not_called()
 
@@ -528,6 +550,14 @@ def test_robotwin_normal_submit_uses_only_internal_value_secret_and_bound_output
     assert ROBOTWIN_ENTITLEMENT_ENV not in submit_kwargs["secret_envs"]
     assert ROBOTWIN_TRANSPORT_ENV in submit_kwargs["secret_envs"]
     assert ROBOTWIN_TRANSPORT_ENV in submit_kwargs["extra_env"]
+    assert set(submit_kwargs["secret_envs"]) == {
+        ROBOTWIN_TRANSPORT_ENV,
+        "NPA_SRC_S3_URI",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_ENDPOINT_URL",
+        "NEBIUS_S3_ENDPOINT",
+    }
     assert submit_kwargs["infra"] == "k8s/robotwin-context"
     assert submit_kwargs["robotwin_submit_context"] is not None
     assert submit_kwargs["execution_preflight_report"] == {
@@ -537,6 +567,10 @@ def test_robotwin_normal_submit_uses_only_internal_value_secret_and_bound_output
     rendered = str(captured["rendered"])
     assert ROBOTWIN_CONTEXT_ENV in rendered
     assert ROBOTWIN_TRANSPORT_ENV not in rendered
+    assert source_uri not in rendered
+    rendered_environment = list(yaml.safe_load_all(rendered))[1]["envs"]
+    assert rendered_environment["NPA_SRC_S3_URI"] == "${NPA_SRC_S3_URI}"
+    assert rendered_environment["AWS_ENDPOINT_URL"] == "${AWS_ENDPOINT_URL}"
     for field in (
         "project",
         "nebius_profile",

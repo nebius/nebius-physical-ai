@@ -115,7 +115,53 @@ def test_robotwin_gate_evidence_uses_secret_channel(monkeypatch) -> None:
     monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
     monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
 
-    assert module.resolve_secret_envs(None, solution_name="robotwin") == evidence_names
+    assert module.resolve_secret_envs(None, solution_name="robotwin") == list(
+        dict.fromkeys(
+            (
+                *module.OPERATOR_RUNTIME_ENVS_BY_SOLUTION["robotwin"],
+                "AWS_ACCESS_KEY_ID",
+                "AWS_SECRET_ACCESS_KEY",
+                "AWS_ENDPOINT_URL",
+                "NEBIUS_S3_ENDPOINT",
+            )
+        )
+    )
+
+
+def test_robotwin_secret_set_is_exact_and_session_token_is_the_only_optional_name(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    environment = {
+        name: f"private-{name.lower()}"
+        for name in (
+            *module.OPERATOR_RUNTIME_ENVS_BY_SOLUTION["robotwin"],
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_ENDPOINT_URL",
+            "NEBIUS_S3_ENDPOINT",
+            "AWS_SESSION_TOKEN",
+            "AWS_SECURITY_TOKEN",
+            "UNBOUND_PRIVATE_ALIAS",
+        )
+    }
+
+    assert module.resolve_secret_envs(
+        ["UNBOUND_PRIVATE_ALIAS"],
+        solution_name="robotwin",
+        environment=environment,
+    ) == list(
+        dict.fromkeys(
+            (
+                *module.OPERATOR_RUNTIME_ENVS_BY_SOLUTION["robotwin"],
+                "AWS_ACCESS_KEY_ID",
+                "AWS_SECRET_ACCESS_KEY",
+                "AWS_ENDPOINT_URL",
+                "NEBIUS_S3_ENDPOINT",
+                "AWS_SESSION_TOKEN",
+            )
+        )
+    )
 
 
 def test_robotwin_inner_coordinates_use_only_secret_values_and_ignore_ambient_controls(
@@ -325,6 +371,167 @@ def test_authorized_robotwin_failure_leaves_process_environment_unchanged(
             environment={"RUN_SECRET": "failure"},
         )
     assert dict(os.environ) == before
+
+
+@pytest.mark.parametrize(
+    ("status", "returncode", "expected_rc"),
+    (("SUCCEEDED", 0, 0), ("FAILED", 1, 1), ("RUNNING", 0, 1)),
+)
+def test_robotwin_terminal_summary_never_discloses_destination_or_customer_run(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    status: str,
+    returncode: int,
+    expected_rc: int,
+) -> None:
+    module = _load_module()
+    run_canary = "robotwin-customer-run-private-canary"
+    root_canary = "s3://private-destination-canary/output"
+    launch_id = "robotwin-inner-" + "1" * 20
+    authorization = SimpleNamespace(
+        inner_launch_id=launch_id,
+        project="private-project-canary",
+        kubeconfig_source=str(tmp_path / "private-kubeconfig"),
+    )
+    context = SimpleNamespace(authorization=authorization)
+    environment = {"PRIVATE_CANARY": "private-value"}
+    confidential_dir = tmp_path / "confidential-submission"
+    confidential_dir.mkdir()
+
+    monkeypatch.setattr(
+        module,
+        "render_workflow",
+        lambda *_args, **_kwargs: [{"name": "meta"}, {"name": "task"}],
+    )
+    monkeypatch.setattr(module, "_write_yaml_documents", lambda *_args: None)
+    monkeypatch.setattr(module, "_bootstrap_robotwin_sky", lambda *_args: "/sky")
+    monkeypatch.setattr(
+        module,
+        "_normalize_kubeconfig_current_context",
+        lambda _path, values: values,
+    )
+    monkeypatch.setattr(module, "_robotwin_control_environment", lambda *_args: {})
+    monkeypatch.setattr(module, "install_teardown_signal_handlers", lambda *_args: {})
+    monkeypatch.setattr(module, "restore_signal_handlers", lambda *_args: None)
+    stop_commands: list[list[str]] = []
+
+    def stop_sky_api(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        assert command == ["/sky", "api", "stop"]
+        stop_commands.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", stop_sky_api)
+
+    class Teardown:
+        def __init__(self, **_kwargs):
+            pass
+
+        def mark_launched(self, **_kwargs):
+            pass
+
+        def teardown(self):
+            pass
+
+    monkeypatch.setattr(module, "_RobotwinSignalTeardown", Teardown)
+    monkeypatch.setattr(
+        module,
+        "submit_workflow",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            log_paths={"submission_dir": str(confidential_dir)}
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "_wait_for_terminal",
+        lambda *_args, **_kwargs: (
+            SimpleNamespace(status=status, returncode=returncode),
+            {"private": root_canary},
+        ),
+    )
+    args = module._parse_args(
+        [
+            "--yaml",
+            str(YAML_PATH),
+            "--solution-name",
+            "robotwin",
+            "--run-id",
+            run_canary,
+            "--output-root",
+            root_canary,
+            "--infra",
+            "k8s/private-context-canary",
+            "--config-path",
+            str(tmp_path / "private-skypilot.yaml"),
+            "--no-direct-launch",
+        ]
+    )
+
+    assert (
+        module._submit_and_wait(
+            args,
+            robotwin_submit_context=context,
+            authorized_env=environment,
+        )
+        == expected_rc
+    )
+    assert stop_commands == [["/sky", "api", "stop"]]
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    assert payload == {
+        "launch_id": launch_id,
+        "returncode": returncode,
+        "status": status.lower(),
+    }
+    assert run_canary not in output
+    assert root_canary not in output
+    assert "private-destination-canary" not in output
+
+
+def test_robotwin_render_only_summary_is_opaque(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    module = _load_module()
+    run_canary = "robotwin-render-customer-run-private-canary"
+    root_canary = "s3://private-render-destination-canary/output"
+    launch_id = "robotwin-inner-" + "2" * 20
+    context = SimpleNamespace(authorization=SimpleNamespace(inner_launch_id=launch_id))
+    monkeypatch.setattr(
+        module,
+        "render_workflow",
+        lambda *_args, **_kwargs: [{"name": "meta"}, {"name": "task"}],
+    )
+    monkeypatch.setattr(module, "_write_yaml_documents", lambda *_args: None)
+    args = module._parse_args(
+        [
+            "--yaml",
+            str(YAML_PATH),
+            "--solution-name",
+            "robotwin",
+            "--run-id",
+            run_canary,
+            "--output-root",
+            root_canary,
+            "--render-only",
+        ]
+    )
+
+    assert (
+        module._submit_and_wait(
+            args,
+            robotwin_submit_context=context,
+            authorized_env={},
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert json.loads(output) == {"launch_id": launch_id, "status": "rendered"}
+    assert run_canary not in output
+    assert root_canary not in output
 
 
 def test_robotwin_sky_bootstrap_is_worker_local_and_pinned(

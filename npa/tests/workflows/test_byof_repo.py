@@ -128,7 +128,8 @@ def _install_robotwin_context(module, monkeypatch, tmp_path, **updates: object):
     authorization = validate_context_bytes(
         json.dumps(receipt_context).encode(),
         customer_authorization_boundary=SimpleNamespace(
-            consume_once=lambda _request: assertion
+            trusted_issuer="https://customer-auth.example.invalid",
+            consume_once=lambda _request: assertion,
         ),
     )
     receipt = tmp_path / "authenticated-customer-authorization.json"
@@ -840,6 +841,55 @@ def test_robotwin_derived_runtime_secret_is_redacted_from_complete_error_graph(
     assert str(caught.value) == "<redacted>"
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
+
+
+def test_robotwin_runtime_redaction_closes_over_every_value_and_normalized_alias() -> (
+    None
+):
+    module = _load_module()
+    endpoint = "https://private-endpoint-canary.invalid/private%2Fpath/"
+    image = "registry.example/private/repository-canary@sha256:" + "a" * 64
+    capability = json.dumps(
+        {
+            "schema_version": "private-capability-schema-canary",
+            "capability_id": "private-capability-id-canary",
+            "expires_at": "2099-01-01T00:00:00Z",
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    environment = {
+        "AWS_ACCESS_KEY_ID": "private-access-key-canary",
+        "AWS_SECRET_ACCESS_KEY": "private-secret-key-canary",
+        "AWS_SESSION_TOKEN": "private-session-token-canary",
+        "AWS_ENDPOINT_URL": endpoint,
+        "NEBIUS_S3_ENDPOINT": endpoint,
+        "KUBECONTEXT": "private-kubernetes-context-canary",
+        "NPA_BYOF_K8S_CONTEXT": "private-kubernetes-context-canary",
+        "NPA_NEBIUS_PROFILE": "private-profile-canary",
+        "NEBIUS_PROFILE": "private-profile-canary",
+        "NPA_BYOF_PROJECT": "private-project-canary",
+        module.ROBOTWIN_CHILD_IMAGE_ENV: image,
+        module.ROBOTWIN_CHILD_RUNTIME_AUTH_ENV: capability,
+    }
+    redactions = module._private_runtime_redactions(environment)
+    aliases = (
+        *environment.values(),
+        "private-endpoint-canary.invalid",
+        "/private/path",
+        "/private/path/",
+        "registry.example/private/repository-canary",
+        "private-capability-schema-canary",
+        "private-capability-id-canary",
+        "2099-01-01T00:00:00Z",
+    )
+    hostile = {alias: f"nested {alias}" for alias in aliases}
+    sanitized = module._redact_payload(hostile, redactions)
+    serialized = json.dumps(sanitized, sort_keys=True)
+
+    for alias in aliases:
+        assert alias not in serialized
+    assert "<redacted>" in serialized
 
 
 def test_authorized_subprocess_environment_does_not_inherit_runtime_controls(

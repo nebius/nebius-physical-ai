@@ -21,7 +21,7 @@ from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import s3_client_for_project
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.robotwin_preflight import (
-    load_runtime_authorization,
+    read_owner_context,
 )
 from npa.workflows.byof.live import (
     byof_ubuntu_validation_repo,
@@ -101,10 +101,10 @@ def _parse_last_json_blob(text: str) -> dict[str, object]:
 def _robotwin_runtime_context() -> tuple[dict[str, object], str]:
     """Load the manager-owned, owner-local authorization for this live run."""
 
-    authorization = load_runtime_authorization()
-    payload = json.loads(authorization.raw_context)
+    raw = read_owner_context()
+    payload = json.loads(raw)
     assert isinstance(payload, dict)
-    return payload, authorization.context_sha256
+    return payload, hashlib.sha256(raw).hexdigest()
 
 
 def _robotwin_private_runtime_values(runtime: dict[str, object]) -> tuple[str, ...]:

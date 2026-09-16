@@ -53,19 +53,19 @@ from npa.orchestration.npa_workflow.spec import load_spec
 ROOT = Path(__file__).resolve().parents[4]
 ROBOTWIN_SPEC = ROOT / "workflows" / "testing" / "byof-robotwin.yaml"
 _REAL_SOURCE_BYTE_GATE = preflight_module._require_verified_control_plane_source_bytes
+SOURCE_FINGERPRINT = "f" * 64
+SOURCE_URI = f"s3://control-source-bucket/npa-src/npa/{SOURCE_FINGERPRINT}/"
 
 
-@pytest.fixture(autouse=True)
-def _supply_source_byte_proof_only_inside_unit_tests(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Let structural tests reach post-source-proof checks without weakening production."""
-
-    monkeypatch.setattr(
-        preflight_module,
-        "_require_verified_control_plane_source_bytes",
-        lambda _uri, _fingerprint: None,
-    )
+def _source_contract(**updates: object) -> dict[str, object]:
+    values: dict[str, object] = {
+        "control_plane_source_uri": SOURCE_URI,
+        "control_plane_source_origin": "environment",
+        "control_plane_source_fingerprint": SOURCE_FINGERPRINT,
+        "source_proof_provider": lambda _uri, _fingerprint: None,
+    }
+    values.update(updates)
+    return values
 
 
 def _config_files(
@@ -173,6 +173,7 @@ class _AuthenticatedBoundary:
         refusal: str = "",
     ) -> None:
         self.assertion = assertion
+        self.trusted_issuer = "https://customer-auth.example.invalid"
         self.refusal = refusal
         self.requests: list[object] = []
         self.consumed = False
@@ -393,6 +394,7 @@ def test_control_plane_source_is_explicit_immutable_and_separate(
             source_uri=source,
             source_origin="environment",
             local_fingerprint=fingerprint,
+            proof_provider=lambda _uri, _fingerprint: None,
         )
         == source
     )
@@ -419,6 +421,7 @@ def test_control_plane_source_is_explicit_immutable_and_separate(
                 source_uri=value,
                 source_origin=origin,
                 local_fingerprint=local,
+                proof_provider=lambda _uri, _fingerprint: None,
             )
     with pytest.raises(RobotwinPreflightError, match="source-staging-forbidden"):
         validate_control_plane_source(
@@ -427,6 +430,7 @@ def test_control_plane_source_is_explicit_immutable_and_separate(
             source_origin="environment",
             local_fingerprint=fingerprint,
             source_staging_requested=True,
+            proof_provider=lambda _uri, _fingerprint: None,
         )
 
 
@@ -549,6 +553,7 @@ def test_authenticated_boundary_is_exact_bound_and_replay_safe(tmp_path: Path) -
     )
     assert len(boundary.requests) == 1
     request = boundary.requests[0]
+    assert request.expected_issuer == "https://customer-auth.example.invalid"
     assert request.customer_scope_id == "customer-scope-canary"
     assert request.run_id == "robotwin-private-run-canary"
     assert request.runtime_manifest_sha256 == preflight_module.RUNTIME_LOCK_SHA256
@@ -558,6 +563,54 @@ def test_authenticated_boundary_is_exact_bound_and_replay_safe(tmp_path: Path) -
         load_runtime_authorization(
             environment, customer_authorization_boundary=boundary
         )
+
+
+@pytest.mark.parametrize(
+    ("issuer", "category"),
+    (
+        ("https://attacker-auth.example.invalid", "issuer-mismatch"),
+        ("https://CUSTOMER-auth.example.invalid", "issuer-mismatch"),
+        ("https://customer-auth.example.invalid/", "issuer-mismatch"),
+        ("https://manager-auth.example.invalid", "issuer-mismatch"),
+        ("https://customer-auth.exampıe.invalid", "issuer-invalid"),
+    ),
+)
+def test_authenticated_boundary_requires_exact_trusted_issuer(
+    tmp_path: Path, issuer: str, category: str
+) -> None:
+    environment, _path, raw, _unsigned_path, _unsigned_raw = _authorization_environment(
+        tmp_path
+    )
+    boundary = _AuthenticatedBoundary(
+        _entitlement_payload(json.loads(raw), issuer=issuer)
+    )
+
+    with pytest.raises(RobotwinPreflightError, match=category):
+        load_runtime_authorization(
+            environment, customer_authorization_boundary=boundary
+        )
+
+    assert len(boundary.requests) == 1
+    assert boundary.requests[0].expected_issuer == boundary.trusted_issuer
+
+
+def test_authenticated_boundary_requires_a_trusted_issuer_before_consumption(
+    tmp_path: Path,
+) -> None:
+    environment, _path, raw, _unsigned_path, _unsigned_raw = _authorization_environment(
+        tmp_path
+    )
+    assertion = _entitlement_payload(json.loads(raw))
+    calls: list[object] = []
+    boundary = SimpleNamespace(
+        consume_once=lambda request: calls.append(request) or assertion
+    )
+
+    with pytest.raises(RobotwinPreflightError, match="trusted-issuer-unavailable"):
+        load_runtime_authorization(
+            environment, customer_authorization_boundary=boundary
+        )
+    assert calls == []
 
 
 @pytest.mark.parametrize(
@@ -864,6 +917,8 @@ def test_inner_submit_reuses_the_validated_authorization_without_a_consent_proxy
     )
     authorization = _load_authorization(environment, raw)
     image = authorization.bootstrap_image
+    runtime_capability = encode_runtime_authorization(authorization)
+    capability_payload = json.loads(runtime_capability)
     environment = {
         "KUBECONFIG": authorization.kubeconfig_source,
         "KUBECONTEXT": authorization.kubernetes_context,
@@ -879,12 +934,14 @@ def test_inner_submit_reuses_the_validated_authorization_without_a_consent_proxy
         ),
         CHILD_OUTPUT_ROOT_ENV: authorization.output_root,
         CHILD_RUN_ID_ENV: authorization.run_id,
-        CHILD_RUNTIME_AUTH_ENV: encode_runtime_authorization(authorization),
+        CHILD_RUNTIME_AUTH_ENV: runtime_capability,
         "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256": (authorization.context_sha256),
         "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256": "b" * 64,
         "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES": "2",
         "AWS_ENDPOINT_URL": "https://storage.eu-north1.nebius.cloud",
         "NEBIUS_S3_ENDPOINT": "https://storage.eu-north1.nebius.cloud",
+        "AWS_ACCESS_KEY_ID": "storage-access-canary",
+        "AWS_SECRET_ACCESS_KEY": "storage-secret-canary",
     }
 
     context = prepare_inner_submit(authorization, environment)
@@ -892,6 +949,30 @@ def test_inner_submit_reuses_the_validated_authorization_without_a_consent_proxy
     assert context.layer == "inner"
     assert context.transport_value == ""
     assert image not in repr(context)
+    assert set(capability_payload) == {
+        "schema_version",
+        "capability_id",
+        "runtime_manifest_sha256",
+        "workflow_sha256",
+        "source_revision",
+        "curobo_revision",
+        "asset_revision",
+        "bootstrap_image_sha256",
+        "runtime_binding_sha256",
+        "expires_at",
+    }
+    for forbidden in (
+        authorization.raw_context.decode(),
+        authorization.raw_customer_authorization.decode(),
+        authorization.project,
+        authorization.profile,
+        authorization.kubernetes_context,
+        authorization.bucket,
+        authorization.output_root,
+        "assertion-canary-0001",
+        "nonce-canary-00000001",
+    ):
+        assert forbidden not in runtime_capability
     with pytest.raises(RobotwinPreflightError, match="inner-environment-mismatch"):
         prepare_inner_submit(
             authorization,
@@ -913,7 +994,12 @@ def test_live_submit_requires_public_secret_name_and_binds_coordinates(
     spec = load_spec(ROBOTWIN_SPEC)
 
     with pytest.raises(RobotwinPreflightError, match="secret-not-requested"):
-        prepare_live_submit(spec, requested_secret_envs=(), environ=environment)
+        prepare_live_submit(
+            spec,
+            requested_secret_envs=(),
+            environ=environment,
+            **_source_contract(),
+        )
     with pytest.raises(
         RobotwinPreflightError, match="needs_customer_acceptance"
     ) as caught:
@@ -921,6 +1007,7 @@ def test_live_submit_requires_public_secret_name_and_binds_coordinates(
             spec,
             requested_secret_envs=(PUBLIC_CONTEXT_ENV,),
             environ=environment,
+            **_source_contract(),
         )
     assert caught.value.notice == preflight_module.customer_acceptance_notice()
     assert caught.value.notice["side_effects_started"] is False
@@ -931,6 +1018,7 @@ def test_live_submit_requires_public_secret_name_and_binds_coordinates(
             spec,
             requested_secret_envs=(PUBLIC_CONTEXT_ENV, CUSTOMER_ENTITLEMENT_ENV),
             environ=environment,
+            **_source_contract(),
         )
     boundary = _AuthenticatedBoundary(_entitlement_payload(json.loads(_raw)))
     context = prepare_live_submit(
@@ -938,6 +1026,7 @@ def test_live_submit_requires_public_secret_name_and_binds_coordinates(
         requested_secret_envs=(PUBLIC_CONTEXT_ENV,),
         environ=environment,
         customer_authorization_boundary=boundary,
+        **_source_contract(),
     )
     assert context is not None
     project, infra, config_path = bind_submit_coordinates(
@@ -967,6 +1056,65 @@ def test_live_submit_requires_public_secret_name_and_binds_coordinates(
             outer_override_requested=False,
             runtime_requested=False,
         )
+
+
+def test_live_submit_proves_exact_source_once_before_consuming_authority(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(preflight_module, "RUNTIME_LOCK_STATUS", "complete")
+    environment, _context_path, raw, _entitlement_path, _entitlement_raw = (
+        _authorization_environment(tmp_path)
+    )
+    events: list[tuple[str, ...]] = []
+
+    def prove_source(uri: str, fingerprint: str) -> None:
+        events.append(("source-proof", uri, fingerprint))
+
+    class OrderedBoundary(_AuthenticatedBoundary):
+        def consume_once(self, request: object) -> SimpleNamespace:
+            events.append(("consume-once",))
+            return super().consume_once(request)
+
+    boundary = OrderedBoundary(_entitlement_payload(json.loads(raw)))
+    context = prepare_live_submit(
+        load_spec(ROBOTWIN_SPEC),
+        requested_secret_envs=(PUBLIC_CONTEXT_ENV,),
+        environ=environment,
+        customer_authorization_boundary=boundary,
+        **_source_contract(source_proof_provider=prove_source),
+    )
+
+    assert context is not None
+    assert events == [
+        ("source-proof", SOURCE_URI, SOURCE_FINGERPRINT),
+        ("consume-once",),
+    ]
+    assert len(boundary.requests) == 1
+
+
+def test_live_submit_real_source_proof_refuses_before_authority_consumption(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(preflight_module, "RUNTIME_LOCK_STATUS", "complete")
+    environment, _context_path, raw, _entitlement_path, _entitlement_raw = (
+        _authorization_environment(tmp_path)
+    )
+    boundary = _AuthenticatedBoundary(_entitlement_payload(json.loads(raw)))
+
+    with pytest.raises(
+        RobotwinPreflightError,
+        match="control-plane-source-byte-proof-unavailable",
+    ):
+        prepare_live_submit(
+            load_spec(ROBOTWIN_SPEC),
+            requested_secret_envs=(PUBLIC_CONTEXT_ENV,),
+            environ=environment,
+            customer_authorization_boundary=boundary,
+            **_source_contract(source_proof_provider=None),
+        )
+
+    assert boundary.requests == []
+    assert boundary.consumed is False
 
 
 @pytest.mark.parametrize(
@@ -999,6 +1147,7 @@ def test_live_submit_rejects_every_internal_context_channel_before_loading(
             customer_authorization_boundary=_AuthenticatedBoundary(
                 _entitlement_payload(json.loads(_raw))
             ),
+            **_source_contract(),
         )
 
     assert "private-internal-channel-canary" not in str(caught.value)
@@ -1040,6 +1189,7 @@ def test_live_submit_refuses_disabled_runtime_after_context_validation(
             customer_authorization_boundary=_AuthenticatedBoundary(
                 _entitlement_payload(json.loads(raw))
             ),
+            **_source_contract(),
         )
 
 

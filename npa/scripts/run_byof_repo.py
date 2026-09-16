@@ -17,6 +17,7 @@ from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
@@ -112,6 +113,8 @@ WAN_POSTPROCESS_CONTRACTS = {
         "wan2_2_ti2v_5b_multigpu.json",
     ),
 }
+
+
 def _redact_text(value: str, redactions: tuple[str, ...]) -> str:
     result = value
     for secret in sorted((item for item in redactions if item), key=len, reverse=True):
@@ -127,7 +130,10 @@ def _redact_payload(value: Any, redactions: tuple[str, ...]) -> Any:
     if isinstance(value, tuple):
         return tuple(_redact_payload(item, redactions) for item in value)
     if isinstance(value, dict):
-        return {key: _redact_payload(item, redactions) for key, item in value.items()}
+        return {
+            _redact_text(str(key), redactions): _redact_payload(item, redactions)
+            for key, item in value.items()
+        }
     return value
 
 
@@ -493,10 +499,10 @@ def _dockerfile_text() -> str:
         "    set -eu; \\\n"
         '    test -n "${BYOF_SOURCE_CACHE_KEY}"; \\\n'
         '    repo_url="${OSS_REPO_URL}"; repo_ref="${OSS_REPO_REF}"; \\\n'
-        "    if [ -s /run/secrets/npa_byof_repo_url ]; then repo_url=\"$(cat /run/secrets/npa_byof_repo_url)\"; fi; \\\n"
-        "    if [ -s /run/secrets/npa_byof_repo_ref ]; then repo_ref=\"$(cat /run/secrets/npa_byof_repo_ref)\"; fi; \\\n"
+        '    if [ -s /run/secrets/npa_byof_repo_url ]; then repo_url="$(cat /run/secrets/npa_byof_repo_url)"; fi; \\\n'
+        '    if [ -s /run/secrets/npa_byof_repo_ref ]; then repo_ref="$(cat /run/secrets/npa_byof_repo_ref)"; fi; \\\n'
         "    export GIT_TERMINAL_PROMPT=0; \\\n"
-        "    git_with_auth() { git \"$@\"; }; \\\n"
+        '    git_with_auth() { git "$@"; }; \\\n'
         "    if [ -s /run/secrets/npa_byof_repo_token ]; then \\\n"
         "      printf '%s\\n' '#!/bin/sh' \\\n"
         "        '[ \"$1\" = get ] || exit 0' \\\n"
@@ -505,19 +511,19 @@ def _dockerfile_text() -> str:
         "        'printf \"\\\\n\\\\n\"' \\\n"
         "        > /tmp/npa-byof-git-credential; \\\n"
         "      chmod 700 /tmp/npa-byof-git-credential; \\\n"
-        "      git_with_auth() { git -c credential.useHttpPath=true -c credential.helper=/tmp/npa-byof-git-credential \"$@\"; }; \\\n"
+        '      git_with_auth() { git -c credential.useHttpPath=true -c credential.helper=/tmp/npa-byof-git-credential "$@"; }; \\\n'
         "    fi; \\\n"
         f'    git_with_auth clone --depth 1 --branch "$repo_ref" "$repo_url" {BYOF_REPO_MOUNT} \\\n'
         f"    || (rm -rf {BYOF_REPO_MOUNT}; \\\n"
         f'      git_with_auth clone "$repo_url" {BYOF_REPO_MOUNT}; \\\n'
-        f"      cd {BYOF_REPO_MOUNT}; git checkout \"$repo_ref\"); \\\n"
-        f"    if [ \"${{BYOF_SOURCE_VISIBILITY}}\" = private ]; then \\\n"
+        f'      cd {BYOF_REPO_MOUNT}; git checkout "$repo_ref"); \\\n'
+        f'    if [ "${{BYOF_SOURCE_VISIBILITY}}" = private ]; then \\\n'
         "      repo_sha=\"$(printf '%s' \"$repo_url\" | sha256sum | cut -d' ' -f1)\"; \\\n"
         "      ref_sha=\"$(printf '%s' \"$repo_ref\" | sha256sum | cut -d' ' -f1)\"; \\\n"
-        f"      printf '{{\"source\":\"private-byof\",\"repository_sha256\":\"%s\",\"ref_sha256\":\"%s\"}}\\n' \"$repo_sha\" \"$ref_sha\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
+        f'      printf \'{{"source":"private-byof","repository_sha256":"%s","ref_sha256":"%s"}}\\n\' "$repo_sha" "$ref_sha" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n'
         f"      rm -rf {BYOF_REPO_MOUNT}/.git; \\\n"
         "    else \\\n"
-        f"      printf '{{\\n  \"source\": \"oss-byof\",\\n  \"repo\": \"%s\",\\n  \"ref\": \"%s\"\\n}}\\n' \"$repo_url\" \"$repo_ref\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
+        f'      printf \'{{\\n  "source": "oss-byof",\\n  "repo": "%s",\\n  "ref": "%s"\\n}}\\n\' "$repo_url" "$repo_ref" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n'
         "    fi; \\\n"
         "    rm -f /tmp/npa-byof-git-credential; \\\n"
         f"    chown -R ubuntu:ubuntu {BYOF_REPO_MOUNT}\n"
@@ -674,21 +680,33 @@ def _authorized_live_env(
         name: os.environ[name]
         for name in (
             "AWS_ACCESS_KEY_ID",
-            "AWS_DEFAULT_REGION",
-            "AWS_ENDPOINT_URL",
-            "AWS_ENDPOINT_URL_S3",
             "AWS_SECRET_ACCESS_KEY",
-            "AWS_SECURITY_TOKEN",
             "AWS_SESSION_TOKEN",
-            "NEBIUS_S3_ENDPOINT",
-            "NPA_STORAGE_ENDPOINT",
-            "S3_ENDPOINT_URL",
         )
         if os.environ.get(name)
     }
-    output_prefix = (
-        f"{authorization.output_root.rstrip('/')}/{authorization.run_id}/"
+    endpoint = next(
+        (
+            os.environ[name]
+            for name in (
+                "AWS_ENDPOINT_URL",
+                "NEBIUS_S3_ENDPOINT",
+                "AWS_ENDPOINT_URL_S3",
+                "NPA_STORAGE_ENDPOINT",
+                "S3_ENDPOINT_URL",
+            )
+            if os.environ.get(name)
+        ),
+        "",
     )
+    if endpoint:
+        env.update(
+            {
+                "AWS_ENDPOINT_URL": endpoint,
+                "NEBIUS_S3_ENDPOINT": endpoint,
+            }
+        )
+    output_prefix = f"{authorization.output_root.rstrip('/')}/{authorization.run_id}/"
     env.update(
         {
             "KUBECONFIG": authorization.kubeconfig,
@@ -717,27 +735,56 @@ def _authorized_live_env(
 
 
 def _private_runtime_redactions(env: dict[str, str]) -> tuple[str, ...]:
-    return tuple(
-        value
-        for key in (
-            "AWS_ACCESS_KEY_ID",
-            "AWS_SECRET_ACCESS_KEY",
-            "AWS_SESSION_TOKEN",
-            "AWS_SECURITY_TOKEN",
-            "AWS_ENDPOINT_URL",
-            "NEBIUS_S3_ENDPOINT",
-            "NPA_S3_BUCKET",
-            "S3_BUCKET",
-            ROBOTWIN_CHILD_BUCKET_ENV,
-            ROBOTWIN_CHILD_CONFIG_PATH_ENV,
-            ROBOTWIN_CHILD_IMAGE_ENV,
-            ROBOTWIN_CHILD_OUTPUT_PREFIX_ENV,
-            ROBOTWIN_CHILD_OUTPUT_ROOT_ENV,
-            ROBOTWIN_CHILD_RUN_ID_ENV,
-            ROBOTWIN_CHILD_RUNTIME_AUTH_ENV,
+    """Close over every private environment value and useful textual alias."""
+
+    aliases: list[str] = []
+    public_evidence_names = {"NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES"}
+
+    def scalar_values(value: Any) -> list[str]:
+        if isinstance(value, dict):
+            return [item for nested in value.values() for item in scalar_values(nested)]
+        if isinstance(value, (list, tuple)):
+            return [item for nested in value for item in scalar_values(nested)]
+        return [str(value)] if isinstance(value, (str, int, float)) else []
+
+    def add_aliases(raw: str) -> None:
+        value = raw.strip()
+        if not value:
+            return
+        decoded = unquote(value)
+        candidates = {value, decoded, value.rstrip("/"), decoded.rstrip("/")}
+        for candidate in (value, decoded):
+            try:
+                parsed = urlsplit(candidate)
+            except ValueError:
+                parsed = None
+            if parsed is not None and parsed.scheme and parsed.netloc:
+                candidates.update(
+                    {
+                        f"{parsed.netloc}{parsed.path}".rstrip("/"),
+                        parsed.netloc,
+                        parsed.path,
+                        parsed.path.rstrip("/"),
+                    }
+                )
+        if "@sha256:" in value:
+            candidates.add(value.split("@sha256:", 1)[0])
+        aliases.extend(
+            candidate for candidate in candidates if candidate and len(candidate) >= 4
         )
-        if (value := env.get(key, "").strip())
-    )
+
+    for name, raw_value in env.items():
+        value = str(raw_value or "").strip()
+        if not value or name in public_evidence_names:
+            continue
+        add_aliases(value)
+        try:
+            structured = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            structured = None
+        for scalar in scalar_values(structured):
+            add_aliases(scalar)
+    return tuple(dict.fromkeys(aliases))
 
 
 def _run_robotwin_container_verify(
@@ -1422,10 +1469,12 @@ def _run_byof(
                 if authorization is not None
                 else _run(cmd, **run_kwargs)
             )
-            sys.stdout.write(_redact_text(run_proc.stdout, effective_redactions))
-            if run_proc.stderr:
-                sys.stderr.write(_redact_text(run_proc.stderr, effective_redactions))
-            parsed_run = _parse_last_json(run_proc.stdout) or {"status": "submitted"}
+            sanitized_stdout = _redact_text(run_proc.stdout, effective_redactions)
+            sanitized_stderr = _redact_text(run_proc.stderr, effective_redactions)
+            sys.stdout.write(sanitized_stdout)
+            if sanitized_stderr:
+                sys.stderr.write(sanitized_stderr)
+            parsed_run = _parse_last_json(sanitized_stdout) or {"status": "submitted"}
             summary["run"] = _redact_payload(parsed_run, effective_redactions)
             _postprocess_solution(args, postprocess_key, summary)
         else:

@@ -154,13 +154,11 @@ def test_robotwin_source_uri_is_process_isolated_between_renders(
     spec = load_spec(NPA_SPECS / "byof-robotwin.yaml")
     observed: list[str] = []
     for suffix in ("a" * 64, "b" * 64):
-        source_uri = f"s3://control-source/npa-src/npa/{suffix}"
         prepared = workflow_cli._prepare_robotwin_submit_without_global_source(
             spec=spec,
             run_id=f"robotwin-{suffix[0]}",
             assume_decision="",
             render_options=SkypilotRenderOptions(materialize_registry_secrets=False),
-            source_uri=source_uri,
         )
         try:
             task = [
@@ -175,8 +173,8 @@ def test_robotwin_source_uri_is_process_isolated_between_renders(
             prepared.temp_dir.cleanup()
         assert os.environ["NPA_SRC_S3_URI"] == ambient
     assert observed == [
-        "s3://control-source/npa-src/npa/" + "a" * 64,
-        "s3://control-source/npa-src/npa/" + "b" * 64,
+        "${NPA_SRC_S3_URI}",
+        "${NPA_SRC_S3_URI}",
     ]
 
 
