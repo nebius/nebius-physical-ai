@@ -1,5 +1,5 @@
 # Replace this local-only placeholder with the operator's assigned Antioch
-# project ID before dispatch. Never commit a live project or machine ID.
+# project ID before dispatch. Never commit a live project or session ID.
 id: "replace-at-runtime"
 name: "npa-openpi-live"
 scenario_paths: ["src/scenario_v2.py"]
@@ -10,18 +10,14 @@ services:
       context: "."
       dockerfile: "Dockerfile"
     ports:
-      # Antioch publishes this only on the adapter pod's localhost while services
-      # are up. The persistent sim service terminates authenticated TLS here;
-      # the same-pod bounded relay carries the other verified WSS leg to the
-      # B200 gateway.
+      # The cluster controller owns `antioch service ports --serve` in the same
+      # pod and binds this named route only on localhost. The persistent sim
+      # service terminates authenticated TLS here; the bounded relay carries the
+      # other verified WSS leg to the policy gateway.
       - name: policy-relay
-        target: 8444
-        published: 18444
-    watch:
-      - action: rebuild
-        path: Dockerfile
-      - action: rebuild
-        path: src/relay_bridge.py
+        port: 8444
+        protocol: tcp
+        direction: client-to-service
 
 suites:
   mk8s_native:

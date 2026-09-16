@@ -19,6 +19,7 @@ from npa.workbench.antioch.manager import (
     AntiochManager,
     AntiochOperationError,
     _dataset_metadata,
+    _local_status,
     _manifest_artifact_size,
     _validate_downloaded_artifact,
     operation_key,
@@ -114,6 +115,22 @@ def test_submit_metadata_is_required_and_non_cartpole_values_are_preserved() -> 
     request = _submit()
     assert request.robot_type == "dual-camera-cart"
     assert request.task == "Move the cart to the requested target"
+
+
+@pytest.mark.parametrize(
+    "phase,expected",
+    [
+        ("prepared", "queued"),
+        ("assigned", "queued"),
+        ("running", "running"),
+        ("finishing", "running"),
+        ("completed", "completed"),
+    ],
+)
+def test_current_antioch_phases_map_to_durable_status(
+    phase: str, expected: str
+) -> None:
+    assert _local_status(phase, "") == expected
 
 
 def test_collection_fails_closed_for_legacy_state_without_dataset_metadata() -> None:
@@ -222,13 +239,13 @@ def test_cli_rejects_malformed_success(monkeypatch: pytest.MonkeyPatch) -> None:
     [
         (lambda cli: cli.submit_suite(Path("."), "suite"), []),
         (lambda cli: cli.submit_scenario(Path("."), "scenario"), {}),
-        (lambda cli: cli.list_for_project(Path("."), kind="suite", project_id="p"), {"items": {}}),
         (lambda cli: cli.download(Path("."), scenario_run_id="r", output=Path(".")), {"files": {}}),
         (lambda cli: cli.logs(Path("."), scenario_run_id="r"), []),
-        (lambda cli: cli.services_up(Path(".")), []),
-        (lambda cli: cli.services_down(Path(".")), []),
-        (lambda cli: cli.machine_status(Path("."), project_id="p"), []),
-        (lambda cli: cli.machine_release(Path("."), project_id="p"), []),
+        (lambda cli: cli.project_build(Path(".")), []),
+        (lambda cli: cli.session_new(Path(".")), []),
+        (lambda cli: cli.session_status(Path(".")), []),
+        (lambda cli: cli.session_release(Path(".")), []),
+        (lambda cli: cli.service_ps(Path(".")), []),
     ],
 )
 def test_vendor_cli_rejects_malformed_response_shapes_directly(
@@ -246,6 +263,24 @@ def test_vendor_cli_rejects_malformed_response_shapes_directly(
     assert raised.value.error_type == "malformed_cli_output"
 
 
+def test_project_list_rejects_malformed_response_shape(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "antioch.yaml").write_text("id: project-for-test\n", encoding="utf-8")
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **_kwargs: subprocess.CompletedProcess(
+            args, 0, '{"items": {}}', ""
+        ),
+    )
+    with pytest.raises(AntiochCliError) as raised:
+        AntiochCli("antioch").list_for_project(
+            tmp_path, kind="suite", project_id="project-for-test"
+        )
+    assert raised.value.error_type == "malformed_cli_output"
+
+
 def test_supported_live_service_commands_never_inline_credentials(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -258,23 +293,37 @@ def test_supported_live_service_commands_never_inline_credentials(
 
     monkeypatch.setattr(subprocess, "run", run)
     cli = AntiochCli("antioch")
-    cli.services_build(tmp_path, service="sim")
-    cli.services_up(tmp_path)
-    cli.services_exec(
+    cli.project_build(tmp_path, service="sim")
+    cli.session_new(tmp_path)
+    cli.service_exec(
         tmp_path, "sim", ["install", "-d", "-m", "0700", "/workspace/client"]
     )
-    cli.services_copy(tmp_path, tmp_path / "api-key", "sim:/workspace/client/api-key")
-    cli.services_down(tmp_path)
-    cli.machine_release(tmp_path, project_id="assigned-project-for-test")
+    cli.service_copy(tmp_path, tmp_path / "api-key", "sim:/workspace/client/api-key")
+    cli.service_ps(tmp_path, service="sim")
+    cli.session_release(tmp_path, force=True)
+    assert cli.service_ports_args(
+        service="sim", route="policy-relay", host="127.0.0.1", port=18444
+    ) == [
+        "service",
+        "ports",
+        "--bind",
+        "sim.policy-relay=127.0.0.1:18444",
+        "--serve",
+        "sim",
+    ]
 
     assert calls == [
-        ["antioch", "services", "build", "--service", "sim", "--json"],
-        ["antioch", "services", "up", "--json"],
+        ["antioch", "project", "build", "sim", "--json"],
+        ["antioch", "session", "new", "--json"],
         [
             "antioch",
-            "services",
+            "service",
             "exec",
+            "--no-stream",
+            "--no-tty",
+            "--service",
             "sim",
+            "--",
             "install",
             "-d",
             "-m",
@@ -283,23 +332,68 @@ def test_supported_live_service_commands_never_inline_credentials(
         ],
         [
             "antioch",
-            "services",
+            "service",
             "cp",
             str(tmp_path / "api-key"),
             "sim:/workspace/client/api-key",
             "--json",
         ],
-        ["antioch", "services", "down", "--json"],
-        [
-            "antioch",
-            "machine",
-            "release",
-            "--project",
-            "assigned-project-for-test",
-            "--yes",
-            "--json",
-        ],
+        ["antioch", "service", "ps", "sim", "--json"],
+        ["antioch", "session", "release", "--force", "--yes", "--json"],
     ]
+
+
+def test_health_verifies_registry_access_not_only_local_token_decode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):  # noqa: ANN001, ANN202
+        calls.append(list(args))
+        if args[-1] == "--version":
+            return subprocess.CompletedProcess(args, 0, "antioch 0.4.188\n", "")
+        if args[1:3] == ["auth", "whoami"]:
+            payload: object = {"environment": "deployment-for-test"}
+        else:
+            payload = []
+        return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert AntiochCli("antioch").health() == {
+        "authenticated": True,
+        "cli_version": "0.4.188",
+    }
+    assert calls[-1] == ["antioch", "project", "list", "--json"]
+
+
+def test_current_project_list_is_cwd_scoped_without_retired_project_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "antioch.yaml").write_text("id: project-for-test\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):  # noqa: ANN001, ANN202
+        calls.append(list(args))
+        return subprocess.CompletedProcess(args, 0, '{"items": []}', "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert (
+        AntiochCli("antioch").list_for_project(
+            tmp_path, kind="scenario", project_id="project-for-test"
+        )
+        == []
+    )
+    assert calls == [
+        ["antioch", "scenario", "list", "--mine", "--limit", "200", "--json"]
+    ]
+
+
+def test_current_project_list_requires_exact_local_manifest(tmp_path: Path) -> None:
+    with pytest.raises(AntiochCliError, match="manifest is unavailable") as raised:
+        AntiochCli("antioch").list_for_project(
+            tmp_path, kind="scenario", project_id="project-for-test"
+        )
+    assert raised.value.error_type == "project_identity_unavailable"
 
 
 def _project_bundle(
@@ -416,7 +510,7 @@ def _episode(path: Path, **replacements: Any) -> None:
         seed=7,
         parameters={"mass": 1.0},
         engine_version="1",
-        sdk_version="0.3.63",
+        sdk_version="0.4.188",
         source_sha256="a" * 64,
         assets_sha256={"cart": "b" * 64},
         observation_schema=["position", "velocity"],
@@ -478,7 +572,7 @@ def test_episode_contract_rejects_single_channel_act_data(tmp_path: Path) -> Non
         seed=7,
         parameters={},
         engine_version="1",
-        sdk_version="0.3.63",
+        sdk_version="0.4.188",
         source_sha256="a" * 64,
         assets_sha256={"cart": "b" * 64},
         observation_schema=["position", "velocity"],
@@ -1521,6 +1615,5 @@ def test_health_reports_runtime_failure_as_degraded_typed_response(
         "cli_installed": False,
         "authenticated": False,
         "cli_version": "",
-        "environment": "",
         "detail": "runtime cache is unavailable",
     }

@@ -51,7 +51,7 @@ class SubmitRequest(BaseModel):
     scenario: str = ""
     scenario_case: str = ""
     parameters: dict[str, str | int | float | bool] = Field(default_factory=dict)
-    expected_cli_version: str = "0.3.63"
+    expected_cli_version: str = "0.4.188"
 
     @field_validator("input_path", "output_path")
     @classmethod
@@ -172,7 +172,6 @@ class HealthResponse(BaseModel):
     cli_installed: bool
     authenticated: bool
     cli_version: str = ""
-    environment: str = ""
     detail: str = ""
 
 

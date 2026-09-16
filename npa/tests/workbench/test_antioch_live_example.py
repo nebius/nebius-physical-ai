@@ -45,37 +45,6 @@ def _load_live_scenario(monkeypatch: pytest.MonkeyPatch, module_name: str):
     return scenario
 
 
-def _daemon_status(
-    *, state: str = "idle", scenario_run_id: str = "", session: bool = True
-) -> dict[str, object]:
-    observed = int(time.time() * 1_000_000)
-    stream = {"state": state, "scenario_run_id": scenario_run_id}
-    leases: list[dict[str, str]] = []
-    if scenario_run_id:
-        leases = [
-            {"kind": "process", "label": "scenario"},
-            {"kind": "stream", "label": "stream"},
-        ]
-        if session:
-            leases.append(
-                {"kind": "session", "label": "antioch scenario run"}
-            )
-    observation = {"observed_at": observed, "leases": leases, "stream": stream}
-    return {
-        "daemon_error": None,
-        "runtime": observation,
-        "runtime_status": {
-            "guest_state": "healthy",
-            "guest_observed_at": observed,
-            "guest_failure_started_at": None,
-            "observation": observation,
-        },
-        # Deliberately include the cached compatibility field. Production
-        # liveness must ignore it and use the two structured observations.
-        "stream": stream,
-    }
-
-
 def test_live_example_uses_only_runtime_project_identity() -> None:
     manifest = yaml.safe_load((EXAMPLE / "antioch.yaml").read_text(encoding="utf-8"))
     assert manifest["id"] == "replace-at-runtime"
@@ -83,12 +52,14 @@ def test_live_example_uses_only_runtime_project_identity() -> None:
     assert "image" not in sim
     assert sim["build"] == {"context": ".", "dockerfile": "Dockerfile"}
     assert sim["ports"] == [
-        {"name": "policy-relay", "target": 8444, "published": 18444}
+        {
+            "name": "policy-relay",
+            "port": 8444,
+            "protocol": "tcp",
+            "direction": "client-to-service",
+        }
     ]
-    assert sim["watch"] == [
-        {"action": "rebuild", "path": "Dockerfile"},
-        {"action": "rebuild", "path": "src/relay_bridge.py"},
-    ]
+    assert "watch" not in sim
     rendered = (EXAMPLE / "antioch.yaml").read_text(encoding="utf-8")
     assert not re.search(r"(?:project|tenant|cluster)-[a-z0-9]+", rendered)
 
@@ -1339,7 +1310,7 @@ def test_live_protocol_codec_round_trips_arrays_and_rejects_objects() -> None:
 
 def test_live_sim_image_contains_only_protocol_dependencies() -> None:
     dockerfile = (EXAMPLE / "Dockerfile").read_text(encoding="utf-8")
-    assert dockerfile.startswith("FROM antioch-engine/isaac-sim-6.0.1:0.3.63\n")
+    assert dockerfile.startswith("FROM antioch-engine/isaac-sim-6.0.1:0.4.188\n")
     assert 'npa.antioch.live-transport="declared-port-double-wss-v1"' in dockerfile
     assert '"msgpack==1.1.1"' in dockerfile
     assert '"websockets==15.0.1"' in dockerfile
@@ -1379,7 +1350,7 @@ def test_live_sim_image_contains_only_protocol_dependencies() -> None:
 
 def test_live_example_documents_supported_renewal_boundary() -> None:
     readme = (EXAMPLE / "README.md").read_text(encoding="utf-8")
-    assert "antioch services cp" in readme
+    assert "antioch service cp" in readme
     assert "finite supported timeout" in readme
     assert "resets the simulated episode" in readme
     assert "not one infinitely lived simulator process" in readme
@@ -1432,15 +1403,15 @@ def test_supervisor_has_finite_run_boundary_but_no_total_limit(tmp_path: Path) -
     assert source.index("npa.workbench.antioch.live_reconcile") < source.index(
         "scenario run --scenario openpi_droid_live"
     )
-    assert "services cp" in source
-    assert "services exec sim /bin/sh -lc" in source
-    assert "npa-live-supervisor-source-" in source
+    assert "service cp" in source
+    assert "service exec --no-stream --no-tty --service sim -- /bin/sh -lc" in source
+    assert ".npa-live-source-upload-" in source
     assert "sha256sum /workspace/project/src/scenario_v2.py" in source
     assert "sha256sum /workspace/project/src/openpi_protocol.py" in source
     assert "install -m 0644" in source
-    assert "services up --json" in source
-    assert "services build --service sim --json" in source
-    assert "services exec sim /bin/true" in source
+    assert "services up" not in source
+    assert "services build" not in source
+    assert "service exec --no-stream --no-tty --service sim -- /bin/true" in source
     assert "NPA_ANTIOCH_SERVICE_NOT_READY" in source
     assert "npa-live-client-generation-" in source
     assert "npa-live-client-upload-" in source
@@ -1474,7 +1445,7 @@ def test_relay_supervisor_has_no_credential_values_in_arguments(tmp_path: Path) 
     subprocess.run(["sh", "-n", str(script)], check=True)
 
 
-def test_bridge_supervisor_uses_short_health_exec_calls(tmp_path: Path) -> None:
+def test_bridge_supervisor_owns_supported_named_route(tmp_path: Path) -> None:
     script = tmp_path / "bridge-supervise.sh"
     live._write_bridge_supervisor(
         script,
@@ -1482,10 +1453,8 @@ def test_bridge_supervisor_uses_short_health_exec_calls(tmp_path: Path) -> None:
         stop_file=tmp_path / ".stop",
     )
     source = script.read_text(encoding="utf-8")
-    assert "services exec sim /usr/local/bin/python -c" in source
-    assert "socket.create_connection" in source
-    assert "NPA_ANTIOCH_BRIDGE_HEALTHY" in source
-    assert "NPA_ANTIOCH_BRIDGE_NOT_READY" in source
+    assert "service ports --bind sim.policy-relay=127.0.0.1:18444 --serve sim" in source
+    assert "NPA_ANTIOCH_ROUTE_RESTART" in source
     assert "relay_bridge.py" not in source
     assert "nohup" not in source
     assert "api-key" not in source
@@ -1573,12 +1542,15 @@ def test_initial_bundle_staging_recovers_from_service_recreation(
     class Cli:
         directory_attempts = 0
 
-        def services_exec(self, _runtime, _service, command):  # noqa: ANN001, ANN202
+        def service_exec(self, _runtime, _service, command):  # noqa: ANN001, ANN202
             calls.append("exec:" + str(command[0]))
             if command[:2] == ["install", "-d"]:
                 self.directory_attempts += 1
+            if command[0] == "sha256sum":
+                return hashlib.sha256(b"private").hexdigest()
+            return ""
 
-        def services_copy(self, _runtime, source, _destination):  # noqa: ANN001, ANN202
+        def service_copy(self, _runtime, source, _destination):  # noqa: ANN001, ANN202
             calls.append("copy:" + source.name)
             assert source.stat().st_mode & 0o777 == 0o644
             assert source.parent.stat().st_mode & 0o777 == 0o700
@@ -1610,13 +1582,13 @@ def test_runtime_source_is_staged_through_supported_service_copy(
     calls: list[tuple[str, object]] = []
 
     class Cli:
-        def services_exec(self, _runtime, _service, command):  # noqa: ANN001, ANN202
+        def service_exec(self, _runtime, _service, command):  # noqa: ANN001, ANN202
             calls.append(("exec", command))
             if command[0] == "sha256sum":
                 return hashlib.sha256(b"# reviewed public source\n").hexdigest()
             return ""
 
-        def services_copy(self, _runtime, path, destination):  # noqa: ANN001, ANN202
+        def service_copy(self, _runtime, path, destination):  # noqa: ANN001, ANN202
             calls.append(("copy", (path.name, destination)))
 
     live._stage_runtime_source(Cli(), runtime=tmp_path)  # type: ignore[arg-type]
@@ -1624,10 +1596,14 @@ def test_runtime_source_is_staged_through_supported_service_copy(
     assert calls[0][0] == "exec"
     copies = [call for call in calls if call[0] == "copy"]
     assert copies[0][1][0] == "scenario_v2.py"
-    assert copies[0][1][1].startswith("sim:/tmp/npa-live-source-")
+    assert copies[0][1][1].startswith(
+        "sim:/workspace/project/.npa-live-source-upload-"
+    )
     assert copies[0][1][1].endswith("/scenario_v2.py")
     assert copies[1][1][0] == "openpi_protocol.py"
-    assert copies[1][1][1].startswith("sim:/tmp/npa-live-source-")
+    assert copies[1][1][1].startswith(
+        "sim:/workspace/project/.npa-live-source-upload-"
+    )
     assert copies[1][1][1].endswith("/openpi_protocol.py")
     assert copies[2][1][0] == "relay_bridge.py"
     assert copies[2][1][1].endswith("/relay_bridge.py")
@@ -1646,14 +1622,14 @@ def test_runtime_source_staging_recovers_from_service_recreation(
     class Cli:
         attempts = 0
 
-        def services_exec(self, _runtime, _service, command):  # noqa: ANN001, ANN202
+        def service_exec(self, _runtime, _service, command):  # noqa: ANN001, ANN202
             if command[:2] == ["install", "-d"]:
                 self.attempts += 1
             if command[0] == "sha256sum":
                 return hashlib.sha256(b"# reviewed public source\n").hexdigest()
             return ""
 
-        def services_copy(self, _runtime, path, _destination):  # noqa: ANN001, ANN202
+        def service_copy(self, _runtime, path, _destination):  # noqa: ANN001, ANN202
             copies.append(path.name)
             if self.attempts == 1 and path.name == "openpi_protocol.py":
                 raise AntiochCliError("container recreated")
@@ -1666,6 +1642,55 @@ def test_runtime_source_staging_recovers_from_service_recreation(
     assert copies.count("scenario_v2.py") == 2
     assert copies.count("openpi_protocol.py") == 2
     assert copies.count("relay_bridge.py") == 1
+
+
+def test_runtime_source_probe_requires_exact_remote_hashes(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    for name in live.RUNTIME_SOURCE_FILES:
+        (source / name).write_text(f"# {name}\n", encoding="utf-8")
+
+    class Cli:
+        mismatch = ""
+
+        def service_exec(self, _runtime, _service, command):  # noqa: ANN001, ANN202
+            remote = Path(command[1]).name
+            if remote == self.mismatch:
+                return "0" * 64
+            return hashlib.sha256((source / remote).read_bytes()).hexdigest()
+
+    cli = Cli()
+    assert live._runtime_source_matches(cli, runtime=tmp_path) is True  # type: ignore[arg-type]
+    cli.mismatch = "openpi_protocol.py"
+    assert live._runtime_source_matches(cli, runtime=tmp_path) is False  # type: ignore[arg-type]
+
+
+def test_private_bundle_probe_requires_exact_remote_hashes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    for name in live.REQUIRED_BUNDLE_FILES:
+        (bundle / name).write_text(f"private-{name}\n", encoding="utf-8")
+    monkeypatch.setattr(live, "_validate_bundle", lambda _path: None)
+
+    class Cli:
+        mismatch = ""
+
+        def service_exec(self, _runtime, _service, command):  # noqa: ANN001, ANN202
+            remote = Path(command[1]).name
+            if remote == self.mismatch:
+                return ""
+            return hashlib.sha256((bundle / remote).read_bytes()).hexdigest()
+
+    cli = Cli()
+    assert live._private_bundle_matches(  # type: ignore[arg-type]
+        cli, runtime=tmp_path, client_bundle=bundle
+    )
+    cli.mismatch = "relay-api-key"
+    assert not live._private_bundle_matches(  # type: ignore[arg-type]
+        cli, runtime=tmp_path, client_bundle=bundle
+    )
 
 
 def test_live_cleanup_cancels_only_exact_active_scenario(
@@ -1701,9 +1726,6 @@ def test_live_cleanup_cancels_only_exact_active_scenario(
         def list_for_project(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
             return next(pages)
 
-        def machine_status(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
-            return _daemon_status()
-
         def show(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
             return {
                 "scenario": "openpi_droid_live",
@@ -1735,7 +1757,7 @@ def test_live_cleanup_accepts_exact_list_cancel_terminalization_race(
             [
                 {
                     "scenario": "openpi_droid_live",
-                    "phase": "booting",
+                    "phase": "assigned",
                     "scenario_run_id": "just-terminalized",
                 }
             ],
@@ -1748,9 +1770,6 @@ def test_live_cleanup_accepts_exact_list_cancel_terminalization_race(
     class Cli:
         def list_for_project(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
             return next(pages)
-
-        def machine_status(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
-            return _daemon_status()
 
         def cancel(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
             raise AntiochCliError("scenario run 'just-terminalized' was not found")
@@ -1772,11 +1791,6 @@ def test_live_cleanup_accepts_terminal_failed_stream_record(
     class Cli:
         def list_for_project(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
             return []
-
-        def machine_status(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
-            return _daemon_status(
-                state="failed", scenario_run_id="terminal", session=False
-            )
 
         def show(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
             return {
@@ -1819,9 +1833,6 @@ def test_live_cleanup_tolerates_typed_missing_run_during_cancel(
         def list_for_project(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
             return next(pages)
 
-        def machine_status(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
-            return _daemon_status()
-
         def cancel(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
             raise AntiochCliError(
                 "remote run is gone",
@@ -1840,7 +1851,7 @@ def test_live_cleanup_tolerates_typed_missing_run_during_cancel(
     )
 
 
-def test_live_reconcile_adopts_only_machine_stream_owner(tmp_path: Path) -> None:
+def test_live_reconcile_adopts_only_current_session_owner(tmp_path: Path) -> None:
     class Cli:
         def list_for_project(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
             return [
@@ -1848,11 +1859,31 @@ def test_live_reconcile_adopts_only_machine_stream_owner(tmp_path: Path) -> None
                     "scenario": "openpi_droid_live",
                     "phase": "running",
                     "scenario_run_id": "exact-active",
+                    "session_id": "exact-session",
                 }
             ]
 
-        def machine_status(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
-            return _daemon_status(state="ready", scenario_run_id="exact-active")
+        def session_status(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+            return {
+                "session_id": "exact-session",
+                "project_id": "assigned-project-for-test",
+                "state": "running",
+                "access_phase": "ready",
+            }
+
+        def service_ps(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+            return {
+                "session_id": "exact-session",
+                "state": "running",
+                "services": [
+                    {
+                        "service": "sim",
+                        "state": "running",
+                        "process_healthy": True,
+                        "session_ready": True,
+                    }
+                ],
+            }
 
     active = live_reconcile._active_run(
         Cli(),  # type: ignore[arg-type]
@@ -1861,19 +1892,48 @@ def test_live_reconcile_adopts_only_machine_stream_owner(tmp_path: Path) -> None
     )
     assert active is not None
     assert active["scenario_run_id"] == "exact-active"
+    assert active["session_id"] == "exact-session"
 
 
-def test_live_reconcile_rejects_unlisted_stream_owner(tmp_path: Path) -> None:
+def test_live_reconcile_rejects_run_owned_by_a_different_session(
+    tmp_path: Path,
+) -> None:
     class Cli:
         def list_for_project(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
-            return []
+            return [
+                {
+                    "scenario": "openpi_droid_live",
+                    "phase": "running",
+                    "scenario_run_id": "exact-active",
+                    "session_id": "different-session",
+                }
+            ]
 
-        def machine_status(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
-            return _daemon_status(state="ready", scenario_run_id="other")
+        def session_status(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+            return {
+                "session_id": "exact-session",
+                "project_id": "assigned-project-for-test",
+                "state": "running",
+                "access_phase": "ready",
+            }
+
+        def service_ps(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+            return {
+                "session_id": "exact-session",
+                "state": "running",
+                "services": [
+                    {
+                        "service": "sim",
+                        "state": "running",
+                        "process_healthy": True,
+                        "session_ready": True,
+                    }
+                ],
+            }
 
     with pytest.raises(
         live_reconcile.AntiochLiveReconcileError,
-        match="absent from the exact project",
+        match="different Antioch session",
     ):
         live_reconcile._active_run(
             Cli(),  # type: ignore[arg-type]
@@ -1882,26 +1942,21 @@ def test_live_reconcile_rejects_unlisted_stream_owner(tmp_path: Path) -> None:
         )
 
 
-def test_daemon_liveness_requires_exact_machine_stream_owner(tmp_path: Path) -> None:
+def test_live_reconcile_requires_running_phase_for_foreground_owner(
+    tmp_path: Path,
+) -> None:
     class Cli:
         def list_for_project(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
             return [
                 {
                     "scenario": "openpi_droid_live",
-                    "phase": "running",
+                    "phase": "assigned",
                     "scenario_run_id": "listed-but-unowned",
+                    "session_id": "exact-session",
                 }
             ]
 
-        def machine_status(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
-            return _daemon_status()
-
     cli = Cli()
-    assert live_reconcile._active_run(  # type: ignore[arg-type]
-        cli,
-        runtime=tmp_path,
-        project_id="assigned-project-for-test",
-    ) is not None
     assert (
         live_reconcile._active_run(  # type: ignore[arg-type]
             cli,
@@ -1913,50 +1968,64 @@ def test_daemon_liveness_requires_exact_machine_stream_owner(tmp_path: Path) -> 
     )
 
 
-def test_stdout_compatible_cached_stream_cannot_mask_dead_rome_heartbeat() -> None:
-    machine = _daemon_status(state="ready", scenario_run_id="exact-active")
-    runtime_status = machine["runtime_status"]
-    assert isinstance(runtime_status, dict)
-    runtime_status["guest_state"] = "unreachable"
-    runtime_status["guest_failure_started_at"] = int(time.time() * 1_000_000)
+def test_live_reconcile_rejects_unready_simulator_session(tmp_path: Path) -> None:
+    class Cli:
+        def session_status(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+            return {
+                "session_id": "exact-session",
+                "project_id": "assigned-project-for-test",
+                "state": "running",
+                "access_phase": "ready",
+            }
+
+        def service_ps(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+            return {
+                "session_id": "exact-session",
+                "services": [
+                    {
+                        "service": "sim",
+                        "state": "running",
+                        "process_healthy": False,
+                        "session_ready": True,
+                    }
+                ],
+            }
 
     with pytest.raises(
         live_reconcile.AntiochLiveReconcileError,
-        match="Rome daemon liveness is unhealthy",
+        match="simulator session is not ready",
     ):
-        live_reconcile._daemon_runtime_snapshot(machine)
+        live_reconcile._session_runtime_snapshot(
+            Cli(),  # type: ignore[arg-type]
+            runtime=tmp_path,
+            project_id="assigned-project-for-test",
+            require_ready=True,
+        )
 
 
-def test_stale_exact_stream_without_vendor_session_fails_closed() -> None:
-    machine = _daemon_status(
-        state="ready", scenario_run_id="exact-active", session=False
-    )
+def test_live_reconcile_rejects_mismatched_service_board(tmp_path: Path) -> None:
+    class Cli:
+        def session_status(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+            return {
+                "session_id": "exact-session",
+                "project_id": "assigned-project-for-test",
+                "state": "running",
+                "access_phase": "ready",
+            }
+
+        def service_ps(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+            return {"session_id": "other-session", "services": []}
+
     with pytest.raises(
         live_reconcile.AntiochLiveReconcileError,
-        match="process/session/stream lease ownership",
+        match="different session",
     ):
-        live_reconcile._daemon_runtime_snapshot(machine)
-
-
-def test_malformed_or_stale_daemon_observation_fails_closed() -> None:
-    malformed = _daemon_status(state="ready", scenario_run_id="exact-active")
-    runtime = malformed["runtime"]
-    assert isinstance(runtime, dict)
-    runtime["observed_at"] = "not-a-timestamp"
-    with pytest.raises(
-        live_reconcile.AntiochLiveReconcileError, match="timestamp is malformed"
-    ):
-        live_reconcile._daemon_runtime_snapshot(malformed)
-
-    stale = _daemon_status(state="ready", scenario_run_id="exact-active")
-    stale_runtime = stale["runtime"]
-    assert isinstance(stale_runtime, dict)
-    stale_runtime["observed_at"] = int((time.time() - 31) * 1_000_000)
-    with pytest.raises(
-        live_reconcile.AntiochLiveReconcileError,
-        match="direct daemon observation is stale",
-    ):
-        live_reconcile._daemon_runtime_snapshot(stale)
+        live_reconcile._session_runtime_snapshot(
+            Cli(),  # type: ignore[arg-type]
+            runtime=tmp_path,
+            project_id="assigned-project-for-test",
+            require_ready=True,
+        )
 
 
 def test_double_wss_relay_forwards_bounded_request_reply(
@@ -2121,12 +2190,8 @@ def test_live_stop_cancels_scenario_before_service(
             calls.append("list-live-runs")
             return []
 
-        def machine_status(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
-            calls.append("machine-status")
-            return _daemon_status()
-
-        def services_down(self, _runtime: Path) -> None:
-            calls.append("services-down")
+        def session_release(self, _runtime: Path) -> None:
+            calls.append("session-release")
 
     monkeypatch.setattr(live, "AntiochCli", FakeCli)
     result = live.stop_live(project_id="assigned-project-for-test")
@@ -2134,14 +2199,11 @@ def test_live_stop_cancels_scenario_before_service(
     assert calls == [
         "tmux:send-keys -t exact-session:scenario.0 C-c",
         "list-live-runs",
-        "machine-status",
         "list-live-runs",
-        "machine-status",
         "list-live-runs",
-        "machine-status",
-        "services-down",
+        "session-release",
     ]
-    assert result["service_stopped_after_scenario"] is True
+    assert result["session_released_after_scenario"] is True
     assert result["cancelled_remote_runs"] == 0
     assert (runtime / ".stop").stat().st_mode & 0o777 == 0o600
 
@@ -2176,19 +2238,26 @@ def test_start_live_failure_cleans_owned_session_and_service(
             raise live.AntiochLiveError("injected startup failure")
 
     monkeypatch.setattr(live, "_tmux", tmux)
+    monkeypatch.setattr(
+        live,
+        "_cancel_remote_live_runs",
+        lambda *_args, **_kwargs: calls.append("cancel-live-runs"),
+    )
 
     class Cli:
         def __init__(self, _path: Path) -> None:
             pass
 
-        def services_build(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
-            calls.append("services-build")
+        def project_build(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+            calls.append("project-build")
+            return {"revision_id": "revision-for-test"}
 
-        def services_up(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
-            calls.append("services-up")
+        def session_new(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+            calls.append("session-new")
+            return {"session_id": "session-for-test"}
 
-        def services_down(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
-            calls.append("services-down")
+        def session_release(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+            calls.append("session-release")
 
     monkeypatch.setattr(live, "AntiochCli", Cli)
     with pytest.raises(live.AntiochLiveError, match="injected startup failure"):
@@ -2199,5 +2268,5 @@ def test_start_live_failure_cleans_owned_session_and_service(
         )
     assert calls[-2:] == [
         "tmux:kill-session -t " + live._session_name("assigned-project-for-test"),
-        "services-down",
+        "session-release",
     ]

@@ -5,7 +5,7 @@ description: Use when deploying, operating, debugging, or composing the Antioch 
 
 # Antioch Workbench
 
-Use the supported structured Antioch CLI only. Never call undocumented Rome HTTP
+Use the supported structured Antioch CLI only. Never call undocumented HTTP
 endpoints, print identity/config/environment data, or inspect unrelated runs.
 
 ## Before spending
@@ -31,42 +31,49 @@ endpoints, print identity/config/environment data, or inspect unrelated runs.
 
 ### Continuing live viewport + external policy
 
-- Use only `antioch services build|up|exec|cp|down` and `antioch scenario run
-  --stream --verbose`. Do not call Rome or infer a console URL.
-- Start the sim service before copying a run-scoped CA/API-key/endpoint bundle into
-  a 0700 service directory. Never use `--set`, environment dumps, tmux command
-  arguments, or project source for policy credentials.
+- Use only current structured commands: `antioch project build`, `antioch session
+  new|status|release`, `antioch service exec|cp|ps|ports`, and `antioch scenario
+  list|run|cancel`. Run the live scenario with `--stream --verbose`. Do not call
+  undocumented HTTP endpoints or infer an API origin from a console URL.
+- Resolve the exact deployment through the CLI's supported `ANTIOCH_ENV` profile
+  and preserve it explicitly in the runtime. Discover organization/project
+  topology with supported JSON commands; never hardcode a discovered endpoint,
+  project, organization, or session as a product default.
+- Create the run-scoped config directory from the current CLI login and include
+  only its owner-readable `auth.json` and optional `workspace.json`. Never carry
+  forward legacy machine, SSH, tunnel, lock, or cached endpoint state.
+- Start the exact project session before copying a run-scoped
+  CA/API-key/endpoint bundle. `service cp` accepts only paths under
+  `/workspace/project`; upload there, then use `service exec` to install one
+  owner-only generation under `/tmp`. Never use `--set`, environment dumps,
+  command arguments, or project source for policy credentials.
 - The supported steady-state path is the MK8s adapter Deployment: run the Antioch
-  service tunnel and bounded relay in one pod network namespace and target a
+  named-route client and bounded relay in one pod network namespace and target a
   ClusterIP policy Service. The operator VM may deploy/status it but must not
   carry frames or actions. The legacy tmux path is recovery-only and must not be
   retained after a cluster-native cutover.
-- An accepted interactive run can outlive a detached foreground CLI. Before a
-  renewal, reconcile the exact project-scoped scenario through supported
-  `scenario list` and `machine status` JSON. Adopt only the matching stream owner,
-  wait for terminal state, and fail closed on absent or ambiguous ownership;
-  never dispatch another run merely because the local CLI reported the occupied
-  lease.
+- Reconcile the exact project-scoped scenario through supported `scenario list`,
+  `session status`, and `service ps` JSON. The one live scenario's `session_id`
+  must equal the current project session and the simulator process/session must
+  be ready. Fail closed on absent, mismatched, or ambiguous ownership.
 - A scenario dispatch or renewal may recreate the sim container. While the
-  foreground run lives, verify every required bundle file through `services exec` and
-  re-stage missing files with `services cp`; never bake them into the sim image.
-- Treat the built service image as machine-local too. If a recycled assignment
-  makes `services up` report that its image is absent, run the supported
-  `services build --service sim` before `services up`. Do not submit a scenario
-  until the service, reviewed source hashes, and every private bundle file verify.
-  Stage a full bundle generation and atomically switch one symlink so a renewing
-  bridge cannot observe a certificate/key or token generation mix.
+  foreground run lives, verify every required bundle file through `service exec`
+  and re-stage missing files with `service cp`; never bake them into the sim image.
+  Stage a full generation and atomically switch one symlink so a renewing bridge
+  cannot observe a certificate/key or token generation mix.
+- Build an immutable revision with `project build`, start it with `session new
+  --revision`, and do not force-replace unrelated active work. On a lost session,
+  cancel and prove the exact scenario absent before creating one successor.
+  Retry only structured retryable connectivity, 429, or 5xx failures.
 - When direct policy egress is unavailable, use a declared Antioch service port
-  published only on adapter-pod localhost. When the streamed scenario is not the
-  declared-port owner, terminate authenticated WSS in the persistent sim service,
-  preferably as the detached service entrypoint waiting for the runtime-staged
-  bundle. Use short `services exec` health probes rather than a long exec-held
-  daemon. Let the scenario connect outbound with a distinct authenticated role, and
-  run the same-pod relay that bridges the operator role to the policy's independently
-  authenticated, CA-verified ClusterIP WSS port 443. Bound messages, queues, connections,
-  requests, timeouts, and reconnect backoff; never substitute an unauthenticated
-  public proxy, disabled TLS verification, a token in a URL, or an undocumented
-  Antioch endpoint.
+  bound only on adapter-pod localhost. Directly own `service ports --bind
+  sim.policy-relay=127.0.0.1:18444 --serve sim` as a foreground child of the pod
+  controller. Terminate authenticated WSS in the sim service and let the scenario
+  connect outbound with a distinct authenticated role. The same-pod relay bridges
+  the client role to the policy's independently authenticated, CA-verified
+  ClusterIP WSS port 443. Bound messages, queues, connections, requests, timeouts,
+  and reconnect backoff; never substitute an unauthenticated public proxy,
+  disabled TLS verification, a token in a URL, or an undocumented endpoint.
 - Treat livestream state `ready` as published but awaiting an authenticated Mission
   Control viewer. Do not claim an actively viewed frame until a supported viewer
   connection advances the first render, and never inspect browser auth storage.
@@ -92,8 +99,8 @@ endpoints, print identity/config/environment data, or inspect unrelated runs.
 
 ## Cleanup and evidence
 
-Cancel the exact test run before releasing its exact project machine. A requested
-retained live demo is the exception: leave its exact sim service and policy
+Cancel the exact test run before releasing its exact project session. A requested
+retained live demo is the exception: leave its exact session and policy
 Deployment running, and provide exact supported stop commands privately. Record only
 run ids, states, check names, schemas, checksums, artifact basenames, and sanitized
 links. Never record tokens, signed URLs, config contents, organization/customer

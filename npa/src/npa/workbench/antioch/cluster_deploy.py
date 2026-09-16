@@ -21,7 +21,7 @@ from npa.workflows.byof.openpi_live import LIVE_MANAGED_BY, _certificate
 from .live import _relay_certificate
 
 CONFIG_SCHEMA = "npa.antioch.mk8s-live-config.v2"
-ANTIOCH_TLS_EGRESS_PORTS = (22, 443, 8443)
+ANTIOCH_TLS_EGRESS_PORTS = (443,)
 UNRESTRICTED_VENDOR_EGRESS_CIDR = "0.0.0.0/0"
 MANAGED_BY = "npa-antioch-mk8s-live"
 SCENARIO = "openpi_franka_mk8s_live_v2"
@@ -29,6 +29,7 @@ _DNS_LABEL = re.compile(r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$")
 _SECRET_KEY = re.compile(r"^[A-Za-z0-9._-]+$")
 _METRIC_KEY = re.compile(r"^[a-z][a-z0-9_]*$")
 _ANTIOCH_TERMS_ENV = "NPA_ANTIOCH_ACCEPT_TERMS"
+_ANTIOCH_CREDENTIAL_FILES = frozenset({"auth.json", "workspace.json"})
 # Every use is backed by the deployment's pod-scoped emptyDir volume, not a
 # host-shared temporary directory.
 _POD_TMP_PATH = str(PurePosixPath("/") / "tmp")
@@ -242,7 +243,7 @@ def build_public_manifests(config: ClusterLiveConfig) -> dict[str, dict[str, Any
             config.identity,
             "--health-port",
             "18080",
-            "--daemon-max-age-seconds",
+            "--session-max-age-seconds",
             "120",
             "--stop-file",
             f"{state_root}/stop",
@@ -351,7 +352,7 @@ def build_public_manifests(config: ClusterLiveConfig) -> dict[str, dict[str, Any
                 "spec": {
                     "automountServiceAccountToken": False,
                     # Five supported cancellation rounds can each make bounded
-                    # list/machine/cancel calls (3 * 60s), followed by the bounded
+                    # list/show/cancel calls, followed by the bounded
                     # supervisor and service teardown. Keep SIGKILL outside that path.
                     "terminationGracePeriodSeconds": 1_100,
                     "securityContext": {
@@ -570,27 +571,23 @@ def _config_archive(directory: Path) -> dict[str, bytes]:
     ):
         raise ClusterLiveError("private Antioch config directory must be mode 0700")
     members: list[tuple[Path, Path]] = []
-    nonempty_files = 0
-    for path in sorted(directory.rglob("*")):
-        relative = path.relative_to(directory)
-        if path.is_symlink() or any(
-            not _SECRET_KEY.fullmatch(component) for component in relative.parts
-        ):
-            raise ClusterLiveError("Antioch config contains an unsafe path")
-        mode = stat.S_IMODE(path.stat().st_mode)
-        if mode & 0o077:
-            raise ClusterLiveError("Antioch config entries must be owner-only")
-        if path.is_dir():
-            members.append((path, relative))
-            continue
-        if not path.is_file():
+    for path in sorted(directory.iterdir()):
+        if path.name not in _ANTIOCH_CREDENTIAL_FILES:
             raise ClusterLiveError(
-                "Antioch config must contain only regular files and directories"
+                "Antioch config must contain only current credential files"
             )
-        nonempty_files += int(path.stat().st_size > 0)
-        members.append((path, relative))
-    if not nonempty_files:
-        raise ClusterLiveError("private Antioch config directory is empty")
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or stat.S_IMODE(path.stat().st_mode) & 0o077
+            or not path.stat().st_size
+        ):
+            raise ClusterLiveError(
+                "Antioch credential files must be nonempty mode-0600 regular files"
+            )
+        members.append((path, Path(path.name)))
+    if not any(relative.name == "auth.json" for _path, relative in members):
+        raise ClusterLiveError("Antioch config must contain auth.json")
     archive = io.BytesIO()
     with tarfile.open(fileobj=archive, mode="w") as output:
         for path, relative in members:
@@ -600,15 +597,10 @@ def _config_archive(directory: Path) -> dict[str, bytes]:
             info.gid = 10001
             info.uname = ""
             info.gname = ""
-            if path.is_dir():
-                info.type = tarfile.DIRTYPE
-                info.mode = 0o700
-                output.addfile(info)
-            else:
-                value = path.read_bytes()
-                info.size = len(value)
-                info.mode = 0o600
-                output.addfile(info, io.BytesIO(value))
+            value = path.read_bytes()
+            info.size = len(value)
+            info.mode = 0o600
+            output.addfile(info, io.BytesIO(value))
     return {"config.tar": archive.getvalue()}
 
 
@@ -1222,7 +1214,7 @@ def apply_cluster(config: ClusterLiveConfig) -> dict[str, Any]:
         "identity": config.identity,
         "actions": actions,
         "policy_service_type": "ClusterIP",
-        "transport": "same-pod-antioch-tunnel-to-cluster-local-policy",
+        "transport": "same-pod-antioch-named-route-to-cluster-local-policy",
         "dev_vm_in_data_path": False,
         "credentials_emitted": False,
     }
@@ -1336,7 +1328,7 @@ def cluster_status(config: ClusterLiveConfig) -> dict[str, Any]:
                 "schema",
                 "schema_version",
                 "status",
-                "daemon_status",
+                "session_status",
                 "owner_identity",
                 "session_id",
                 "scenario",
@@ -1356,12 +1348,17 @@ def cluster_status(config: ClusterLiveConfig) -> dict[str, Any]:
                 "vendor_pid",
                 "vendor_parent_pid",
                 "vendor_process_group_isolated",
-                "daemon_guest_state",
-                "daemon_observed_at",
-                "rome_guest_observed_at",
-                "scenario_session_leases",
-                "process_leases",
-                "stream_leases",
+                "route_process_status",
+                "route_pid",
+                "route_parent_pid",
+                "route_process_group_isolated",
+                "antioch_session_id",
+                "antioch_session_state",
+                "antioch_session_access_phase",
+                "sim_service_state",
+                "sim_process_healthy",
+                "antioch_session_ready",
+                "session_observed_at",
                 "transport",
                 "dev_vm_in_data_path",
             }
@@ -1476,7 +1473,7 @@ def cluster_status(config: ClusterLiveConfig) -> dict[str, Any]:
         "identity": config.identity,
         "adapter_ready": ready,
         "kubernetes_ready": kubernetes_ready,
-        "daemon_liveness_ready": controller_ready,
+        "controller_liveness_ready": controller_ready,
         "relay_liveness_ready": relay_ready,
         "policy_ready": policy_ready,
         "policy_placement": policy_placement,

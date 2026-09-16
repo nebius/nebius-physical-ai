@@ -46,14 +46,14 @@ CLIENT_ROOT = Path(tempfile.gettempdir()) / "npa-live-client-current"
 ACTION_SHAPE = (15, 8)
 CONTROL_HZ = 15.0
 CAMERA_SENSOR_TICK_RATE_HZ = CONTROL_HZ
-PINNED_ANTIOCH_SDK_VERSION = "0.3.63"
+PINNED_ANTIOCH_SDK_VERSION = "0.4.188"
 PINNED_ANTIOCH_ENGINE = "isaac-sim-6.0.1"
 TARGETS_PER_QUERY = 5
 TELEMETRY_DISPLAY_HZ = 5.0
 TELEMETRY_WORKER_JOIN_SECONDS = 0.5
 CAMERA_READY_CONSECUTIVE_FRAMES = 2
 CAMERA_STATUS_INTERVAL_FRAMES = 120
-# A cold B200 model request can take tens of seconds even though warmed requests
+# A cold policy-model request can take tens of seconds even though warmed requests
 # are normally tens of milliseconds. This is a stale-response safety deadline,
 # not a real-time claim or a total run limit.
 MAX_RESPONSE_AGE_SECONDS = 90.0

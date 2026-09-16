@@ -13,7 +13,7 @@ from pathlib import Path
 from websockets.sync.server import serve
 
 MAX_MESSAGE_BYTES = 32 * 1024 * 1024
-# The declared Antioch service port must be reachable from the tunnel sidecar;
+# The declared Antioch service port must be reachable from the named-route sidecar;
 # WSS client certificates and the API token gate every request.
 LISTEN_HOST = str(ipaddress.IPv4Address(0))
 ROLES = frozenset({"operator", "simulation"})

@@ -31,9 +31,11 @@ from .vendor_cli import AntiochCli, AntiochCliError
 # These fixed roots exist only inside the single-run Antioch service container;
 # generation and upload paths append an unpredictable UUID before use.
 REMOTE_TEMP_ROOT = str(PurePosixPath("/") / "tmp")
+REMOTE_PROJECT_ROOT = str(PurePosixPath("/") / "workspace" / "project")
 REMOTE_CLIENT_ROOT = f"{REMOTE_TEMP_ROOT}/npa-live-client-current"
 REMOTE_CLIENT_STAGING_PREFIX = f"{REMOTE_TEMP_ROOT}/npa-live-client-generation-"
-REMOTE_CLIENT_UPLOAD_PREFIX = f"{REMOTE_TEMP_ROOT}/npa-live-client-upload-"
+REMOTE_CLIENT_UPLOAD_PREFIX = f"{REMOTE_PROJECT_ROOT}/.npa-live-client-upload-"
+REMOTE_SOURCE_UPLOAD_PREFIX = f"{REMOTE_PROJECT_ROOT}/.npa-live-source-upload-"
 UPSTREAM_BUNDLE_FILES = ("ca.crt", "api-key", "endpoint.json")
 RELAY_BUNDLE_FILES = (
     "relay-ca.crt",
@@ -42,6 +44,7 @@ RELAY_BUNDLE_FILES = (
     "relay-api-key",
 )
 REQUIRED_BUNDLE_FILES = UPSTREAM_BUNDLE_FILES + RELAY_BUNDLE_FILES
+RUNTIME_SOURCE_FILES = ("scenario_v2.py", "openpi_protocol.py", "relay_bridge.py")
 RELAY_TARGET_PORT = 8_444
 RELAY_PUBLISHED_PORT = 18_444
 
@@ -217,7 +220,7 @@ def _prepare_copyable_bundle(source: Path, destination: Path) -> None:
     """Make transport-readable copies protected by an owner-only parent.
 
     Antioch's supported service copy preserves file modes but assigns files to
-    the machine-side copy user.  A 0644 transport copy is therefore required
+    the session-service copy user. A 0644 transport copy is therefore required
     for the uid-1000 service to read it.  The enclosing directory remains 0700,
     and the service immediately installs a separate uid-owned 0600 generation.
     """
@@ -231,6 +234,55 @@ def _prepare_copyable_bundle(source: Path, destination: Path) -> None:
         target = destination / name
         target.write_bytes((source / name).read_bytes())
         os.chmod(target, 0o644)
+
+
+def _remote_file_matches(
+    cli: AntiochCli,
+    *,
+    runtime: Path,
+    remote_path: str,
+    expected_sha256: str,
+) -> bool:
+    """Compare one remote file through the documented service exec surface."""
+
+    observed = cli.service_exec(runtime, "sim", ["sha256sum", remote_path])
+    fields = observed.split(maxsplit=1)
+    return bool(fields) and secrets.compare_digest(fields[0], expected_sha256)
+
+
+def _private_bundle_matches(
+    cli: AntiochCli, *, runtime: Path, client_bundle: Path
+) -> bool:
+    """Return whether the active service bundle matches the local generation."""
+
+    _validate_bundle(client_bundle)
+    return all(
+        _remote_file_matches(
+            cli,
+            runtime=runtime,
+            remote_path=f"{REMOTE_CLIENT_ROOT}/{name}",
+            expected_sha256=hashlib.sha256((client_bundle / name).read_bytes()).hexdigest(),
+        )
+        for name in REQUIRED_BUNDLE_FILES
+    )
+
+
+def _runtime_source_matches(cli: AntiochCli, *, runtime: Path) -> bool:
+    """Return whether the live service contains the exact reviewed source."""
+
+    source = runtime / "src"
+    for name in RUNTIME_SOURCE_FILES:
+        path = source / name
+        if not path.is_file() or path.is_symlink():
+            raise AntiochLiveError(f"live runtime source {name!r} is unavailable")
+        if not _remote_file_matches(
+            cli,
+            runtime=runtime,
+            remote_path=f"{REMOTE_PROJECT_ROOT}/src/{name}",
+            expected_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+        ):
+            return False
+    return True
 
 
 def _stage_private_bundle(
@@ -252,13 +304,13 @@ def _stage_private_bundle(
             upload_files = [f"{upload}/{name}" for name in REQUIRED_BUNDLE_FILES]
             remote_files = [f"{staging}/{name}" for name in REQUIRED_BUNDLE_FILES]
             try:
-                cli.services_exec(
+                cli.service_exec(
                     runtime,
                     "sim",
                     ["install", "-d", "-m", "0700", upload, staging],
                 )
                 for name in REQUIRED_BUNDLE_FILES:
-                    cli.services_copy(
+                    cli.service_copy(
                         runtime,
                         local_upload / name,
                         f"sim:{upload}/{name}",
@@ -266,22 +318,28 @@ def _stage_private_bundle(
                 for source, destination in zip(
                     upload_files, remote_files, strict=True
                 ):
-                    cli.services_exec(
+                    cli.service_exec(
                         runtime,
                         "sim",
                         ["install", "-m", "0600", source, destination],
                     )
-                cli.services_exec(
-                    runtime,
-                    "sim",
-                    [
-                        "/bin/sh",
-                        "-lc",
-                        "test " + " -a ".join(f"-r {path}" for path in remote_files),
-                    ],
-                )
-                cli.services_exec(runtime, "sim", ["rm", "-rf", upload])
-                cli.services_exec(
+                for name, destination in zip(
+                    REQUIRED_BUNDLE_FILES, remote_files, strict=True
+                ):
+                    expected = hashlib.sha256(
+                        (client_bundle / name).read_bytes()
+                    ).hexdigest()
+                    if not _remote_file_matches(
+                        cli,
+                        runtime=runtime,
+                        remote_path=destination,
+                        expected_sha256=expected,
+                    ):
+                        raise AntiochLiveError(
+                            f"private live bundle file {name!r} failed verification"
+                        )
+                cli.service_exec(runtime, "sim", ["rm", "-rf", upload])
+                cli.service_exec(
                     runtime,
                     "sim",
                     [
@@ -309,39 +367,43 @@ def _stage_runtime_source(
     """Copy reviewed source, retrying across a service-container recreation."""
 
     source = runtime / "src"
-    names = ("scenario_v2.py", "openpi_protocol.py", "relay_bridge.py")
-    for name in names:
+    for name in RUNTIME_SOURCE_FILES:
         path = source / name
         if not path.is_file() or path.is_symlink():
             raise AntiochLiveError(f"live runtime source {name!r} is unavailable")
     last_error: Exception | None = None
     for attempt in range(attempts):
         # UUID suffix plus mode 0700 makes this service-container-local staging.
-        staging = f"{REMOTE_TEMP_ROOT}/npa-live-source-{uuid.uuid4().hex}"
+        staging = f"{REMOTE_SOURCE_UPLOAD_PREFIX}{uuid.uuid4().hex}"
         try:
-            cli.services_exec(
+            cli.service_exec(
                 runtime,
                 "sim",
                 ["install", "-d", "-m", "0700", staging, "/workspace/project/src"],
             )
-            for name in names:
-                cli.services_copy(
+            for name in RUNTIME_SOURCE_FILES:
+                cli.service_copy(
                     runtime,
                     source / name,
                     f"sim:{staging}/{name}",
                 )
-            for name in names:
+            for name in RUNTIME_SOURCE_FILES:
                 staged = f"{staging}/{name}"
                 destination = f"/workspace/project/src/{name}"
-                cli.services_exec(
+                cli.service_exec(
                     runtime, "sim", ["install", "-m", "0644", staged, destination]
                 )
-                observed = cli.services_exec(runtime, "sim", ["sha256sum", destination])
                 expected = hashlib.sha256((source / name).read_bytes()).hexdigest()
-                if observed.split(maxsplit=1)[0] != expected:
+                if not _remote_file_matches(
+                    cli,
+                    runtime=runtime,
+                    remote_path=destination,
+                    expected_sha256=expected,
+                ):
                     raise AntiochLiveError(
                         f"live runtime source {name!r} failed verification"
                     )
+            cli.service_exec(runtime, "sim", ["rm", "-rf", staging])
             return
         except (AntiochCliError, AntiochLiveError) as exc:
             last_error = exc
@@ -364,8 +426,7 @@ def _cancel_remote_live_runs(
 
     cancelled: set[str] = set()
     terminal: set[str] = set()
-    live_phases = {"queued", "booting", "running"}
-    terminal_stream_states = {"failed", "stopped", "idle"}
+    live_phases = {"prepared", "assigned", "running", "finishing"}
     stable_absence = 0
     for attempt in range(attempts):
         rows = cli.list_for_project(runtime, kind="scenario", project_id=project_id)
@@ -377,25 +438,7 @@ def _cancel_remote_live_runs(
             and row.get("scenario_run_id")
             and str(row["scenario_run_id"]) not in terminal
         }
-        machine = cli.machine_status(runtime, project_id=project_id)
-        # Import locally to keep the legacy live module independent at import
-        # time while sharing the exact supported Rome/direct-daemon contract.
-        from .live_reconcile import _daemon_runtime_snapshot
-
-        stream = _daemon_runtime_snapshot(
-            machine, require_session_owner=False
-        )["stream"]
-        stream_run_id = str(stream.get("scenario_run_id") or "")
-        stream_state = str(stream.get("state") or "").lower()
-        stream_live = bool(stream_run_id) and stream_state not in terminal_stream_states
-        if stream_live and stream_run_id not in candidates:
-            if stream_run_id in terminal:
-                stream_live = False
-            else:
-                raise AntiochLiveError(
-                    "the active stream owner was absent from this project's exact live runs"
-                )
-        if not candidates and not stream_live:
+        if not candidates:
             stable_absence += 1
             if stable_absence >= 3:
                 return len(cancelled)
@@ -433,7 +476,7 @@ def _stage_project(source: Path, destination: Path, project_id: str) -> None:
         raise AntiochLiveError("live source is not an Antioch project")
     shutil.copytree(source, destination)
     os.chmod(destination, 0o700)
-    # ``antioch services cp`` preserves the local source mode while transferring
+    # ``antioch service cp`` preserves the local source mode while transferring
     # through the assignment's SSH user.  The service itself runs as uid 1000,
     # so owner-only files become unreadable after that supported copy boundary.
     # These three files are reviewed public source (never the private bundle),
@@ -503,25 +546,33 @@ def _write_supervisor(
     source_check = shlex.join(
         [
             str(cli_path),
-            "services",
+            "service",
             "exec",
+            "--no-stream",
+            "--no-tty",
+            "--service",
             "sim",
+            "--",
             "/bin/sh",
             "-lc",
             f"test {source_check_expression}",
         ]
     )
-    # UUID suffix plus mode 0700 makes this service-container-local staging.
+    # Current service copy accepts project-root paths only.
     source_staging = (
-        f"{REMOTE_TEMP_ROOT}/npa-live-supervisor-source-{uuid.uuid4().hex}"
+        f"{REMOTE_SOURCE_UPLOAD_PREFIX}{uuid.uuid4().hex}"
     )
     source_stage_commands = [
         shlex.join(
             [
                 str(cli_path),
-                "services",
+                "service",
                 "exec",
+                "--no-stream",
+                "--no-tty",
+                "--service",
                 "sim",
+                "--",
                 "install",
                 "-d",
                 "-m",
@@ -534,7 +585,7 @@ def _write_supervisor(
             shlex.join(
                 [
                     str(cli_path),
-                    "services",
+                    "service",
                     "cp",
                     str(source_paths[name]),
                     f"sim:{source_staging}/{name}",
@@ -547,9 +598,13 @@ def _write_supervisor(
             shlex.join(
                 [
                     str(cli_path),
-                    "services",
+                    "service",
                     "exec",
+                    "--no-stream",
+                    "--no-tty",
+                    "--service",
                     "sim",
+                    "--",
                     "install",
                     "-m",
                     "0644",
@@ -565,15 +620,15 @@ def _write_supervisor(
     service_check = shlex.join(
         [
             str(cli_path),
-            "services",
+            "service",
             "exec",
+            "--no-stream",
+            "--no-tty",
+            "--service",
             "sim",
+            "--",
             "/bin/true",
         ]
-    )
-    service_rebind = shlex.join([str(cli_path), "services", "up", "--json"])
-    service_rebuild = shlex.join(
-        [str(cli_path), "services", "build", "--service", "sim", "--json"]
     )
     bundle_hashes = {
         name: hashlib.sha256((client_bundle / name).read_bytes()).hexdigest()
@@ -587,9 +642,13 @@ def _write_supervisor(
     bundle_check = shlex.join(
         [
             str(cli_path),
-            "services",
+            "service",
             "exec",
+            "--no-stream",
+            "--no-tty",
+            "--service",
             "sim",
+            "--",
             "/bin/sh",
             "-lc",
             f"test {bundle_check_expression}",
@@ -605,9 +664,13 @@ def _write_supervisor(
         shlex.join(
             [
                 str(cli_path),
-                "services",
+                "service",
                 "exec",
+                "--no-stream",
+                "--no-tty",
+                "--service",
                 "sim",
+                "--",
                 "install",
                 "-d",
                 "-m",
@@ -620,7 +683,7 @@ def _write_supervisor(
             shlex.join(
                 [
                     str(cli_path),
-                    "services",
+                    "service",
                     "cp",
                     str(local_bundle_upload / name),
                     f"sim:{bundle_upload}/{name}",
@@ -633,9 +696,13 @@ def _write_supervisor(
             shlex.join(
                 [
                     str(cli_path),
-                    "services",
+                    "service",
                     "exec",
+                    "--no-stream",
+                    "--no-tty",
+                    "--service",
                     "sim",
+                    "--",
                     "install",
                     "-m",
                     "0600",
@@ -648,9 +715,13 @@ def _write_supervisor(
         shlex.join(
             [
                 str(cli_path),
-                "services",
+                "service",
                 "exec",
+                "--no-stream",
+                "--no-tty",
+                "--service",
                 "sim",
+                "--",
                 "rm",
                 "-rf",
                 bundle_upload,
@@ -659,9 +730,13 @@ def _write_supervisor(
         shlex.join(
             [
                 str(cli_path),
-                "services",
+                "service",
                 "exec",
+                "--no-stream",
+                "--no-tty",
+                "--service",
                 "sim",
+                "--",
                 "/bin/sh",
                 "-lc",
                 f"ln -s {shlex.quote(bundle_staging)} {REMOTE_CLIENT_ROOT}.new && "
@@ -702,10 +777,9 @@ set -u
 (
   while [ ! -f {shlex.quote(str(stop_file))} ]; do
     if ! {service_check} >/dev/null 2>&1; then
-      if ! {service_rebind} >/dev/null 2>&1; then
-        {service_rebuild} >/dev/null 2>&1 && \
-          {service_rebind} >/dev/null 2>&1 || true
-      fi
+      printf 'NPA_ANTIOCH_SESSION_NOT_READY\n'
+      sleep 5
+      continue
     fi
     if ! {bundle_check} >/dev/null 2>&1; then
       {{
@@ -799,17 +873,17 @@ done
 
 
 def _write_bridge_supervisor(path: Path, *, cli_path: Path, stop_file: Path) -> None:
-    """Probe the service-owned bridge with finite supported exec calls."""
+    """Own the current CLI's foreground named-route bridge."""
 
     command = shlex.join(
         [
             str(cli_path),
-            "services",
-            "exec",
+            "service",
+            "ports",
+            "--bind",
+            f"sim.policy-relay=127.0.0.1:{RELAY_PUBLISHED_PORT}",
+            "--serve",
             "sim",
-            "/usr/local/bin/python",
-            "-c",
-            "import socket; s=socket.create_connection(('127.0.0.1',8444),2); s.close()",
         ]
     )
     content = f"""#!/bin/sh
@@ -820,12 +894,8 @@ while [ ! -f {shlex.quote(str(stop_file))} ]; do
   if [ -f {shlex.quote(str(stop_file))} ]; then
     break
   fi
-  if [ "$status" -eq 0 ]; then
-    printf 'NPA_ANTIOCH_BRIDGE_HEALTHY\n'
-  else
-    printf 'NPA_ANTIOCH_BRIDGE_NOT_READY exit_code=%s\n' "$status"
-  fi
-  sleep 10
+  printf 'NPA_ANTIOCH_ROUTE_RESTART exit_code=%s\n' "$status"
+  sleep 2
 done
 """
     path.write_text(content, encoding="utf-8")
@@ -891,8 +961,20 @@ def start_live(
 
     service_started = False
     try:
-        cli.services_build(runtime, service="sim")
-        cli.services_up(runtime)
+        _cancel_remote_live_runs(
+            cli,
+            runtime=runtime,
+            project_id=project_id,
+            scenario="openpi_droid_live",
+            attempts=5,
+        )
+        built = cli.project_build(runtime, service="sim")
+        revision_id = str(built.get("revision_id") or "")
+        if not revision_id:
+            raise AntiochLiveError("Antioch project build returned no revision")
+        started = cli.session_new(runtime, revision=revision_id)
+        if not str(started.get("session_id") or ""):
+            raise AntiochLiveError("Antioch session startup returned no session")
         service_started = True
         _stage_runtime_source(cli, runtime=runtime)
         _stage_private_bundle(
@@ -962,7 +1044,7 @@ def start_live(
             _tmux("kill-session", "-t", session, check=False)
         if service_started:
             try:
-                cli.services_down(runtime)
+                cli.session_release(runtime)
             except AntiochCliError:
                 pass
         raise
@@ -1079,11 +1161,11 @@ def stop_live(*, project_id: str, timeout_seconds: float = 120.0) -> dict[str, A
             raise AntiochLiveError(
                 "bridge cancellation did not finish; refusing to tear down its service"
             )
-    cli.services_down(runtime)
+    cli.session_release(runtime)
     return {
         "status": "stopped",
         "session": session,
-        "service_stopped_after_scenario": True,
+        "session_released_after_scenario": True,
         "cancelled_remote_runs": cancelled_remote_runs,
         "runtime_preserved": str(runtime),
     }

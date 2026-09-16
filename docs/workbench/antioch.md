@@ -19,7 +19,7 @@ npa workbench antioch health --output json
 
 `NPA_ANTIOCH_ACCEPT_TERMS=YES` is an exact, explicit attestation that the
 operator reviewed the [Antioch Terms of Service](https://antioch.com/terms)
-(version dated 2026-02-28) for the scoped use of `antioch-sim==0.3.63` and the
+(version dated 2026-02-28) for the scoped use of `antioch-sim==0.4.188` and the
 Antioch Service. Any customer MSA or order form remains controlling. Other
 spellings fail closed. The adapter records only the agreement name, public URL,
 version, scope, and accepted boolean in durable operation state; it never stores
@@ -39,7 +39,7 @@ modules. The optional secret uses
 the ordinary `AWS_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and
 optional `AWS_SESSION_TOKEN` keys.
 
-The public adapter pins `antioch-sim==0.3.63` and its reviewed SHA-256. On first
+The public adapter pins `antioch-sim==0.4.188` and its reviewed SHA-256. On first
 use it fetches the wheel directly from the vendor's PyPI delivery into
 `NPA_ANTIOCH_RUNTIME_CACHE`, verifies it, and installs it in that writable volume.
 `NPA_ANTIOCH_RUNTIME_OFFLINE=1` fails closed when the cache is cold. Neither the
@@ -106,7 +106,7 @@ idempotent. Cancelling a completed, failed, or already-cancelled operation is a
 no-op that preserves its status and immutable completion/dataset records. Cancel
 Operation failures retain the CLI's retryable/terminal classification in both the
 returned error envelope and durable operation state. Cancel test work before
-releasing any machine it used.
+releasing its project session.
 
 Collection uses a durable S3 compare-and-swap lease refreshed across download,
 checksum verification, conversion, upload, manifest, and final-state publication.
@@ -119,7 +119,7 @@ The sanitized operation record contains the vendor run id. Open that run in the
 Antioch Mission Control console using the authenticated account; never paste a
 signed console URL into logs, manifests, issues, or pull requests. If a supported
 CLI response supplies a non-signed console URL, the adapter may expose its
-redacted form. It does not construct undocumented Rome URLs.
+redacted form. It does not construct undocumented service URLs.
 
 ## Continuing OpenPI live demonstration
 
@@ -168,18 +168,18 @@ and advancing; viewer state and control-loop iterations are not producer clocks.
 
 | Surface | Reviewed contract | Upgrade treatment |
 | --- | --- | --- |
-| Antioch SDK/CLI | `antioch-sim==0.3.63`; public scenario surface exposes `scenario`, `ScenarioRun`, `Logger`, `world`, and `engine` | Exact runtime check; any other version is unsupported until reviewed. |
-| Antioch engine | `antioch-engine/isaac-sim-6.0.1:0.3.63` / engine identity `isaac-sim-6.0.1` | Exact runtime check; do not substitute a newer engine under the old scenario. |
+| Antioch SDK/CLI | `antioch-sim==0.4.188`; public scenario surface exposes `scenario`, `ScenarioRun`, `Logger`, `world`, and `engine` | Exact runtime check; any other version is unsupported until reviewed. |
+| Antioch engine | `antioch-engine/isaac-sim-6.0.1:0.4.188` / engine identity `isaac-sim-6.0.1` | Exact runtime check; do not substitute a newer engine under the old scenario. |
 | Isaac camera | `isaacsim.sensors.experimental.rtx.RtxCamera` + `CameraSensor`, documented uint8 RGB CPU output, immediate scenario-owned copy, nonzero sensor tick | Capability is exercised through public Isaac Sim 6 APIs. |
 | Render advancement | synchronous `omni.replicator.core.orchestrator.step` with `wait_for_render=True` | Missing or incompatible signatures fail clearly; no implicit autoplay fallback. |
-| Current Antioch direction | The public Antioch site advertises higher-level `Simulation` and `antioch.sensors.RgbCamera` authoring | Directional drift evidence only. It is absent from the installed 0.3.63 public exports and is not a migration specification. |
+| Antioch control plane | Project revisions, project sessions, singular `service` operations, and named session routes | Re-discover the supported profile and project through structured CLI commands; never persist a service endpoint or console hostname. |
 
 The Isaac contracts above are documented in the official [Isaac Sim 6 camera
 guide](https://docs.isaacsim.omniverse.nvidia.com/6.0.0/sensors/isaacsim_sensors_camera.html)
 and [Replicator workflow guide](https://docs.isaacsim.omniverse.nvidia.com/6.0.0/replicator_tutorials/tutorial_replicator_sdg_workflows.html).
-The higher-level Antioch surface is visible on the [public Antioch
-site](https://antioch.com/), but public marketing alone is insufficient to
-change this adapter.
+The current CLI package and its structured command help are the control-plane
+contract. The [public Antioch site](https://antioch.com/) is product context, not
+an API endpoint or a substitute for supported discovery.
 
 To upgrade safely, obtain versioned vendor SDK and engine documentation, inspect
 the installed public exports without reading auth state, update this boundary
@@ -201,7 +201,7 @@ stall boundary explicit. These are bounded observability semantics, not a hard
 real-time claim.
 
 The OpenPI bootstrap is publicly installed as `npa-openpi-live-deploy` (implemented
-by `npa.workflows.byof.openpi_live`): a single B200
+by `npa.workflows.byof.openpi_live`): a single dynamically selected supported GPU
 Deployment with readiness/liveness, `Recreate` rollout semantics, and a PVC-backed
 runtime checkpoint cache. Only a bounded TLS WebSocket gateway is exposed; an
 API-key Secret and TLS Secret are generated per live deployment, while the raw
@@ -217,10 +217,11 @@ payload never enter the public image or project source.
 The steady-state deployment is MK8s-native. `live-k8s-deploy` reads one
 operator-owned mode-0600 runtime file and reconciles a two-container adapter
 Deployment in the `workbench` namespace. The controller container runs only
-supported `antioch services build|up|exec|cp|down` operations and `antioch
-scenario run --stream --verbose`. The supported service tunnel binds on pod
-localhost. A bounded relay container in that same pod network namespace connects
-the tunnel's authenticated WSS operator role to a CA-verified, authenticated
+supported `antioch project build`, `antioch session new|status|release`,
+`antioch service exec|cp|ps|ports`, and `antioch scenario list|run|cancel`
+operations. Its foreground named-route bridge binds only on pod localhost. A
+bounded relay container in that same pod network namespace connects the route's
+authenticated WSS client role to a CA-verified, authenticated
 ClusterIP OpenPI Service. The operator VM launches and observes this Deployment
 but carries no camera frames, policy messages, or actions.
 
@@ -240,18 +241,18 @@ The policy Service is `ClusterIP` by default. Its NetworkPolicy permits the WSS
 gateway only from the exact adapter identity and permits health ports only from
 the enumerated kubelet node addresses. The adapter denies all ingress and limits
 egress to cluster DNS, the selected policy pods, and vendor service ports only.
-Antioch SaaS has no stable destination CIDRs, so TCP 443 and 8443 (plus supported
-service SSH on TCP 22) necessarily use `0.0.0.0/0`. "Restricted traffic" here
+Antioch's current HTTPS/WSS control and session edges have no stable destination
+CIDRs, so TCP 443 necessarily uses `0.0.0.0/0`. "Restricted traffic" here
 means port- and direction-restricted, not destination-restricted; a manifest
 assertion pins that limitation. A former
 owned LoadBalancer may remain temporarily for rollback; run
 `live-k8s-finalize-cutover` only after sustained acceptance to remove that exact
-public Service. The retained B200 Deployment and checkpoint PVC are reused, not
+public Service. The retained policy Deployment and checkpoint PVC are reused, not
 duplicated.
 
 `live-k8s-stop` waits for sanitized controller evidence written only after the
-exact scenario is terminal or stably absent and the service is down, then scales
-the Deployment to zero. Missing/malformed evidence, `cleanup_failed`, timeout,
+exact scenario is terminal or stably absent and the project session is released,
+then scales the Deployment to zero. Missing/malformed evidence, `cleanup_failed`, timeout,
 or forced/SIGKILL termination remains unproven and is never reported as stopped.
 
 ```bash
@@ -265,7 +266,10 @@ The runtime schema is `npa.antioch.mk8s-live-config.v2`; the checked-in example
 uses only placeholders. `antioch_deployment_profile` is required and is forwarded
 to the controller as the vendor CLI's supported `ANTIOCH_ENV` selector; it has no
 default because silently falling back to a different deployment can bind the wrong
-project namespace. `workflow_run` plus `state_id` derive every adapter identity,
+project namespace. `antioch_config_dir` must be a fresh owner-only copy containing
+only the current CLI's `auth.json` and optional `workspace.json`; legacy machine,
+tunnel, lock, or cached endpoint state is rejected instead of copied into the pod.
+`workflow_run` plus `state_id` derive every adapter identity,
 so independent Antioch stages cannot collide. `adapter_image` must be an immutable
 digest. Deployment, status, stop, and cutover-finalization refuse unowned objects.
 
@@ -274,37 +278,33 @@ indefinitely until explicitly stopped. Renewal resets the simulated episode and
 briefly interrupts the viewport; it is continuous service supervision, not one
 immortal scenario process.
 The supervisor atomically rechecks and re-stages the private client bundle after
-container recreation, and rebuilds the machine-local service image after a machine
-recycle before dispatching another scenario. If a dead pod leaves the exact project's
-machine assignment bound to its former local SSH client, the replacement cancels the
-exact live run, releases only that project assignment through the supported CLI, and
-retries the service build before dispatch. Typed retryable control-plane failures during
-service build or startup remain in the same controller startup and use capped backoff;
-fatal errors still fail immediately. A Mission Control stream in `ready` state is
+session replacement. It builds an immutable project revision and starts that exact
+revision through `session new`; an existing idle project session may be replaced,
+but unrelated active work is never force-released. Typed retryable control-plane
+failures during build or session startup remain in the same controller startup and
+use capped backoff; fatal errors still fail immediately. A Mission Control stream in `ready` state is
 published but waiting for an authenticated viewer; do not describe it as actively
 viewed until the viewer connects and the first rendered frame advances.
-The controller owns `antioch scenario run --stream --verbose` as its direct
-foreground child and drains its output in-process. A remote run cannot be adopted
-after that child exits: the daemon session heartbeat belongs to the departed CLI.
+The controller owns both the foreground `antioch service ports --bind
+sim.policy-relay=127.0.0.1:18444 --serve sim` process and `antioch scenario run
+--stream --verbose` as direct children. It drains scenario output in-process.
 The controller cancels only the matching project-scoped run, proves stable exact
-absence through supported `scenario list` and `machine status` JSON, and then starts
-one successor. This prevents both a stale run with no client heartbeat and duplicate
-stream dispatch.
+absence through supported `scenario list` JSON, and then starts one successor.
+This prevents duplicate stream dispatch.
 
-Adapter readiness is an exact daemon-ownership contract, not a process or open-port
-check. The controller continuously reconciles the project-scoped scenario inventory
-with the supported structured `machine status` contract. Readiness requires Rome's
-`runtime_status.guest_state` to be healthy and freshly observed, a fresh direct-daemon
-`runtime` observation, matching Rome/direct exact stream ownership, exactly one
-`antioch scenario run` session lease, process and stream leases, and a live direct
-child whose parent is container PID 1. State uses versioned JSON and owner-only atomic replacement. Local and
+Adapter readiness is an exact session-ownership contract, not an open-port check.
+The controller continuously reconciles the project-scoped scenario inventory with
+supported structured `session status` and `service ps` output. Readiness requires
+one running scenario whose session identity matches the current ready project
+session, a healthy simulator process, and live directly owned scenario and named-route
+children whose parent is container PID 1. State uses versioned JSON and owner-only atomic replacement. Local and
 status-command readers base64-frame the file bytes to prevent transport-level JSON
 coercion and retry a bounded number of transient empty/partial reads. Kubelet probes
 use the same fail-closed state predicates over pod-local HTTP because exec-probe RPC
 failures are not application-health evidence; ingress is restricted to the configured
 kubelet CIDRs and the health ports have no Service. A
-missing schema, malformed value, wrong identity, stale heartbeat, absent stream owner,
-missing vendor session, unhealthy/stale Rome observation, child exit, or unreadable
+missing schema, malformed value, wrong identity, stale heartbeat, absent scenario owner,
+mismatched or unhealthy session/service state, child exit, or unreadable
 state revokes readiness. Converged loss terminates the exact child process group,
 cancels the exact run, rebuilds and re-stages after recycle when needed, and starts one
 successor with capped backoff. Ambiguous ownership fails closed. The operator/Codex
@@ -377,5 +377,5 @@ The adapter filters sensitive keys and bearer/JWT/signed-URL forms from CLI erro
 and log objects. It never emits environment dumps, identity fields, config files,
 tokens, or customer metadata. Use only synthetic/public projects for validation.
 After a smoke, cancel only the run ids created for that smoke, then release only
-the associated project machine if one was allocated; queued managed execution
-normally requires no persistent operator machine.
+the associated project session. Detached background execution is cancelled through
+its exact run rather than through an unrelated interactive session.

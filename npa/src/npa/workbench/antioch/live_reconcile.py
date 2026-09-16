@@ -6,7 +6,6 @@ import argparse
 import json
 import os
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -14,113 +13,73 @@ import yaml
 
 from .vendor_cli import AntiochCli
 
-LIVE_PHASES = {"queued", "booting", "running"}
-TERMINAL_STREAM_STATES = {"failed", "stopped", "idle"}
+LIVE_PHASES = {"prepared", "assigned", "running", "finishing"}
+LIVE_SESSION_STATES = {"created", "preparing", "waiting", "starting", "running"}
 NO_ACTIVE_RUN = 3
-DAEMON_OBSERVATION_MAX_AGE_SECONDS = 30.0
 
 
 class AntiochLiveReconcileError(RuntimeError):
     """The supported run inventory could not identify one exact live run."""
 
 
-def _timestamp_seconds(value: object) -> float:
-    """Normalize the timestamp encodings exposed by the structured CLI."""
-
-    if isinstance(value, bool):
-        raise AntiochLiveReconcileError("daemon observation timestamp is malformed")
-    if isinstance(value, (int, float)):
-        resolved = float(value)
-        # Antioch JSON timestamps are currently epoch microseconds.  Retain
-        # seconds for compatibility with older structured clients.
-        return resolved / 1_000_000.0 if resolved > 100_000_000_000 else resolved
-    if isinstance(value, str) and value.strip():
-        try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(
-                timezone.utc
-            ).timestamp()
-        except ValueError as exc:
-            raise AntiochLiveReconcileError(
-                "daemon observation timestamp is malformed"
-            ) from exc
-    raise AntiochLiveReconcileError("daemon observation timestamp is unavailable")
-
-
-def _daemon_runtime_snapshot(
-    machine: dict[str, Any],
+def _session_runtime_snapshot(
+    cli: AntiochCli,
     *,
-    now: float | None = None,
-    max_age_seconds: float = DAEMON_OBSERVATION_MAX_AGE_SECONDS,
-    require_session_owner: bool = True,
+    runtime: Path,
+    project_id: str,
+    require_ready: bool,
 ) -> dict[str, Any]:
-    """Validate Rome and direct-daemon liveness from supported status JSON."""
+    """Validate the current supported session and its simulator service."""
 
-    observed_now = time.time() if now is None else now
-    runtime = machine.get("runtime")
-    rome = machine.get("runtime_status")
-    if not isinstance(runtime, dict) or not isinstance(rome, dict):
-        raise AntiochLiveReconcileError("daemon runtime status is unavailable")
-    if machine.get("daemon_error"):
-        raise AntiochLiveReconcileError("direct daemon status is unhealthy")
-    if str(rome.get("guest_state") or "").lower() != "healthy":
-        raise AntiochLiveReconcileError("Rome daemon liveness is unhealthy")
-    if rome.get("guest_failure_started_at") is not None:
-        raise AntiochLiveReconcileError("Rome daemon liveness failure is active")
-
-    direct_observed_at = _timestamp_seconds(runtime.get("observed_at"))
-    rome_observed_at = _timestamp_seconds(rome.get("guest_observed_at"))
-    direct_age = observed_now - direct_observed_at
-    rome_age = observed_now - rome_observed_at
-    if not (-5.0 <= direct_age <= max_age_seconds):
-        raise AntiochLiveReconcileError("direct daemon observation is stale")
-    if not (-5.0 <= rome_age <= max_age_seconds):
-        raise AntiochLiveReconcileError("Rome daemon liveness observation is stale")
-
-    direct_stream = runtime.get("stream")
-    rome_observation = rome.get("observation")
-    rome_stream = (
-        rome_observation.get("stream")
-        if isinstance(rome_observation, dict)
-        else None
-    )
-    if not isinstance(direct_stream, dict) or not isinstance(rome_stream, dict):
-        raise AntiochLiveReconcileError("daemon stream status is malformed")
-    direct_run_id = str(direct_stream.get("scenario_run_id") or "")
-    rome_run_id = str(rome_stream.get("scenario_run_id") or "")
-    if direct_run_id != rome_run_id:
+    session = cli.session_status(runtime)
+    session_id = str(session.get("session_id") or "")
+    state = str(session.get("state") or "").lower()
+    access_phase = str(session.get("access_phase") or "").lower()
+    if not session_id or session.get("project_id") != project_id:
         raise AntiochLiveReconcileError(
-            "Rome and direct daemon stream owners disagree"
+            "current Antioch session does not match the exact project"
         )
+    if state not in LIVE_SESSION_STATES:
+        raise AntiochLiveReconcileError("current Antioch session is not live")
 
-    leases = runtime.get("leases")
-    if not isinstance(leases, list):
-        raise AntiochLiveReconcileError("daemon lease status is malformed")
-    lease_kinds = [
-        (str(item.get("kind") or ""), str(item.get("label") or ""))
-        for item in leases
-        if isinstance(item, dict)
+    board = cli.service_ps(runtime, service="sim")
+    if board.get("session_id") != session_id:
+        raise AntiochLiveReconcileError(
+            "Antioch service status belongs to a different session"
+        )
+    board_state = str(board.get("state") or "").lower()
+    services = board.get("services")
+    if not isinstance(services, list):
+        raise AntiochLiveReconcileError("Antioch service status is malformed")
+    matching = [
+        item
+        for item in services
+        if isinstance(item, dict) and item.get("service") == "sim"
     ]
-    scenario_sessions = sum(
-        kind == "session" and label == "antioch scenario run"
-        for kind, label in lease_kinds
-    )
-    process_leases = sum(kind == "process" for kind, _label in lease_kinds)
-    stream_leases = sum(kind == "stream" for kind, _label in lease_kinds)
-    if require_session_owner and direct_run_id and (
-        scenario_sessions != 1 or process_leases < 1 or stream_leases != 1
-    ):
+    if len(matching) != 1:
         raise AntiochLiveReconcileError(
-            "exact vendor process/session/stream lease ownership is unhealthy"
+            "Antioch session does not expose one exact simulator service"
         )
+    service = matching[0]
+    service_state = str(service.get("state") or "").lower()
+    ready = bool(
+        state == "running"
+        and board_state == "running"
+        and access_phase == "ready"
+        and service_state == "running"
+        and service.get("process_healthy") is True
+        and service.get("session_ready") is True
+    )
+    if require_ready and not ready:
+        raise AntiochLiveReconcileError("Antioch simulator session is not ready")
     return {
-        "stream": direct_stream,
-        "rome_stream": rome_stream,
-        "guest_state": "healthy",
-        "direct_observed_at": direct_observed_at,
-        "rome_observed_at": rome_observed_at,
-        "scenario_session_leases": scenario_sessions,
-        "process_leases": process_leases,
-        "stream_leases": stream_leases,
+        "session_id": session_id,
+        "session_state": state,
+        "session_access_phase": access_phase,
+        "service_state": service_state,
+        "service_process_healthy": service.get("process_healthy") is True,
+        "session_ready": service.get("session_ready") is True,
+        "session_observed_at": time.time(),
     }
 
 
@@ -148,38 +107,34 @@ def _active_run_snapshot(
         and row.get("phase") in LIVE_PHASES
         and row.get("scenario_run_id")
     }
-    machine = cli.machine_status(runtime, project_id=project_id)
-    daemon = _daemon_runtime_snapshot(machine)
-    stream = daemon["stream"]
-    stream_run_id = str(stream.get("scenario_run_id") or "")
-    stream_state = str(stream.get("state") or "").lower()
-    if stream_run_id and stream_state not in TERMINAL_STREAM_STATES:
-        selected = candidates.get(stream_run_id)
-        if selected is None:
-            raise AntiochLiveReconcileError(
-                "active stream owner is absent from the exact project run inventory"
-            )
-        return {
-            **selected,
-            "scenario_run_id": stream_run_id,
-            "stream_state": stream_state,
-            "daemon_guest_state": daemon["guest_state"],
-            "daemon_observed_at": daemon["direct_observed_at"],
-            "rome_guest_observed_at": daemon["rome_observed_at"],
-            "scenario_session_leases": daemon["scenario_session_leases"],
-            "process_leases": daemon["process_leases"],
-            "stream_leases": daemon["stream_leases"],
-        }
     if len(candidates) > 1:
         raise AntiochLiveReconcileError(
             "multiple exact live runs are active; refusing ambiguous adoption"
         )
-    if require_stream_owner:
-        return None
     selected = next(iter(candidates.values()), None)
     if selected is None:
         return None
-    return {**selected, "stream_state": stream_state or "unavailable"}
+    if require_stream_owner and str(selected.get("phase") or "") != "running":
+        return None
+    session = _session_runtime_snapshot(
+        cli,
+        runtime=runtime,
+        project_id=project_id,
+        require_ready=require_stream_owner,
+    )
+    selected_session_id = str(selected.get("session_id") or "")
+    if not selected_session_id:
+        if require_stream_owner:
+            return None
+    elif selected_session_id != session["session_id"]:
+        raise AntiochLiveReconcileError(
+            "active scenario belongs to a different Antioch session"
+        )
+    return {
+        **selected,
+        **session,
+        "stream_state": str(selected.get("phase") or ""),
+    }
 
 
 def _active_run(

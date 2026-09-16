@@ -8,7 +8,7 @@ bounded exponential backoff. Antioch telemetry and a viewport overlay report the
 live counters; neither is reconstructed from a recording.
 
 The client uses a 90-second response-age safety deadline because a cold request
-can take tens of seconds even though warmed B200 requests are normally tens of
+can take tens of seconds even though warmed supported-GPU requests are normally tens of
 milliseconds. The reviewed `pi05_droid_jointpos_polaris` output contract is seven
 absolute arm joints plus one DROID gripper-position command. The simulator uses the
 DROID reset posture and maps its finger joints into DROID's `0=open, 1=closed`
@@ -48,7 +48,7 @@ response evidence.
 The checked-in project ID is deliberately unusable. The cluster-native controller
 creates a private runtime copy with an assigned Antioch project ID, starts the
 supported sim service, and copies a 0600 run bundle into the running sim service
-with `antioch services cp`. The bundle contains the cluster-local B200 gateway
+with `antioch service cp`. The bundle contains the cluster-local policy gateway
 CA/API key/endpoint plus a separate short-lived CA, certificate, key, and API key
 for the service-side bridge. Credentials are never passed through scenario
 parameters, Kubernetes arguments/annotations, Git, or images.
@@ -57,7 +57,7 @@ The sim declares an Antioch-managed port that is reachable only at the adapter
 pod's localhost while services are up. A bounded authenticated WSS rendezvous runs in
 the persistent `sim` service. The streamed scenario connects to its `simulation`
 role first; the same Kubernetes pod's bounded relay connects to its
-`operator` role and only then connects to the persistent B200 gateway by verified
+`operator` role and only then connects to the selected policy gateway by verified
 WSS through a ClusterIP Service on port 443. Both controller and relay are
 containers in one MK8s pod, so the operator VM is not in the frame/action path.
 This double-WSS route is not a public unauthenticated proxy. Both legs reconnect
@@ -68,40 +68,33 @@ The project Dockerfile adds only pinned `msgpack` and `websockets` wire-protocol
 dependencies to Antioch's version-matched Isaac Sim base. The small local codec
 is adapted from the pinned Apache-2.0 OpenPI client and rejects object arrays;
 neither OpenPI model code nor weights are included in the sim image.
-The controller copies the reviewed scenario, codec, and bounded WSS bridge through supported
-`services cp` and verifies their readability before dispatch, avoiding dependence
-on a retained remote build or source-sync cache. Dockerfile changes retain a
-separate rebuild rule, and the baked bridge entrypoint has its own explicit
-rebuild rule.
+The controller copies the reviewed scenario, codec, and bounded WSS bridge through
+supported `service cp` and verifies their readability before dispatch. Because the
+current CLI restricts copies to `/workspace/project`, it uploads there and uses
+`service exec` to install the private bundle as a 0600 generation under `/tmp`.
+The controller builds one immutable project revision and starts that exact revision
+as the project session.
 
 The scenario is continuous within one Antioch run. Since scenario runs have a
 finite supported timeout, the pod controller renews them until explicitly
 stopped. A renewal resets the simulated episode and briefly interrupts the
 viewport; it is service continuity, not one infinitely lived simulator process.
-The supervisor also verifies every private bundle file and swaps a complete
-staged generation into place atomically because Antioch may legitimately recreate
-the sim container. A machine recycle can also discard its machine-local built
-service image; in that case the supervisor runs the supported service build before
-bringing the exact service back, re-staging source and credentials, or dispatching
-another scenario. The bridge is the detached service container's entrypoint and
-waits for the supported runtime bundle staging before accepting traffic. Separate
-bridge health and relay state remain supervised across replacement; health uses
-only short service-exec socket probes, while the bridge remains bound to the
-replaceable service container instead of the CLI exec lifetime. The pod controller
-owns the foreground `antioch scenario run --stream --verbose` client directly;
-no shell wrapper, operator process, tunnel, or retained exec owns its daemon
-session heartbeat. Supported structured `machine status` must show both a fresh
-Rome daemon-health observation and a fresh direct-daemon observation, with
-matching exact stream ownership and one scenario session lease. A child exit or
-missing/stale lease revokes readiness immediately. Recovery cancels only the exact
-run, proves stable absence, rebuilds and re-stages after recycle when needed, and
-starts one successor with capped backoff; ambiguous ownership fails closed.
+The supervisor verifies every private bundle file and atomically swaps one complete
+generation into place after session replacement. The pod controller directly owns
+both `antioch service ports --bind sim.policy-relay=127.0.0.1:18444 --serve sim`
+and `antioch scenario run --stream --verbose` as foreground children. Supported
+structured `scenario list`, `session status`, and `service ps` must agree on the
+exact current session; the simulator process and session must be ready. A child
+exit, mismatched session, unhealthy process, or stale observation revokes readiness.
+Recovery cancels only the exact scenario, proves stable absence, rebuilds an
+immutable revision when the session is lost, re-stages source and credentials, and
+starts one successor with capped backoff. Ambiguous ownership fails closed.
 
 Mission Control's livestream state is independent of policy-camera readiness.
 The scenario waits in safe hold for both RTX render products to return distinct,
 advancing RGB frames; it never treats a viewer connection or the control-loop
 counter as a camera producer clock. The supported lifecycle follows the reviewed
-`antioch-sim==0.3.63` and `isaac-sim-6.0.1` runtime identity: timeline play is
+`antioch-sim==0.4.188` and `isaac-sim-6.0.1` runtime identity: timeline play is
 committed once, then every sensor read follows a completed rendered world step. See the
 [compatibility matrix](../../../docs/workbench/antioch.md#live-camera-compatibility-contract)
 before changing either pin.

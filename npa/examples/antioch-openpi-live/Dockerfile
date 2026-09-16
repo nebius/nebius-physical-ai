@@ -1,9 +1,9 @@
-FROM antioch-engine/isaac-sim-6.0.1:0.3.63
+FROM antioch-engine/isaac-sim-6.0.1:0.4.188
 
 LABEL npa.antioch.live-transport="declared-port-double-wss-v1"
 
 # Protocol-only dependencies. OpenPI source, model code, and weights are not
-# copied into this image; the policy implementation remains on the B200 side.
+# copied into this image; the policy implementation remains on the GPU side.
 RUN uv pip install --system --no-cache \
     "msgpack==1.1.1" \
     "websockets==15.0.1"
@@ -26,6 +26,6 @@ ENV HOME=/tmp/npa-home \
 USER 1000:1000
 
 # The declared-port owner is the detached Antioch service container. Runtime
-# credentials arrive later through supported `antioch services cp`; the bridge
+# credentials arrive later through supported `antioch service cp`; the bridge
 # waits without logging or accepting traffic until the complete bundle appears.
 ENTRYPOINT ["/usr/local/bin/python", "/workspace/project/src/relay_bridge.py", "--bundle", "/tmp/npa-live-client-current", "--wait-for-bundle"]

@@ -23,8 +23,8 @@ from npa.workbench.antioch.vendor_cli import AntiochCliError
 def _config(tmp_path: Path, **updates: object) -> cluster_deploy.ClusterLiveConfig:
     config_dir = tmp_path / "antioch-config"
     config_dir.mkdir(mode=0o700)
-    (config_dir / "config.json").write_text("{}", encoding="utf-8")
-    os.chmod(config_dir / "config.json", 0o600)
+    (config_dir / "auth.json").write_text("{}", encoding="utf-8")
+    os.chmod(config_dir / "auth.json", 0o600)
     project = tmp_path / "project-id"
     project.write_text("private-project-id\n", encoding="utf-8")
     os.chmod(project, 0o600)
@@ -39,7 +39,7 @@ def _config(tmp_path: Path, **updates: object) -> cluster_deploy.ClusterLiveConf
         "policy_auth_secret_name": "openpi-auth",
         "policy_tls_secret_name": "openpi-tls",
         "policy_cache_pvc_name": "openpi-cache",
-        "antioch_deployment_profile": "production",
+        "antioch_deployment_profile": "profile-for-test",
         "antioch_config_dir": str(config_dir),
         "antioch_project_id_file": str(project),
         "kubelet_source_cidrs": ["192.0.2.10/32"],
@@ -179,54 +179,41 @@ def test_cluster_live_terms_acceptance_is_process_scoped(
     assert "antioch_terms_file" not in type(config).model_fields
 
 
-def test_config_archive_preserves_owner_only_nested_assignment_state(
+def test_config_archive_copies_only_current_credential_files(
     tmp_path: Path,
 ) -> None:
     config = _config(tmp_path)
     root = Path(config.antioch_config_dir)
-    ssh = root / "ssh"
-    ssh.mkdir(mode=0o700)
-    private_key = ssh / "assigned-machine"
-    private_key.write_bytes(b"private-runtime-state")
-    os.chmod(private_key, 0o600)
-    lock = root / "session.lock"
-    lock.touch(mode=0o600)
-    os.chmod(lock, 0o600)
+    workspace = root / "workspace.json"
+    workspace.write_bytes(b'{"credential":"private-runtime-state"}')
+    os.chmod(workspace, 0o600)
 
     first = cluster_deploy._config_archive(root)["config.tar"]
     second = cluster_deploy._config_archive(root)["config.tar"]
     assert first == second
     with tarfile.open(fileobj=io.BytesIO(first), mode="r") as archive:
         members = {member.name: member for member in archive.getmembers()}
-        assert set(members) == {
-            "config.json",
-            "session.lock",
-            "ssh",
-            "ssh/assigned-machine",
-        }
-        assert members["ssh"].isdir()
-        assert members["ssh"].mode == 0o700
-        assert members["ssh/assigned-machine"].isfile()
-        assert members["ssh/assigned-machine"].mode == 0o600
-        extracted = archive.extractfile(members["ssh/assigned-machine"])
+        assert set(members) == {"auth.json", "workspace.json"}
+        assert members["workspace.json"].isfile()
+        assert members["workspace.json"].mode == 0o600
+        extracted = archive.extractfile(members["workspace.json"])
         assert extracted is not None
-        assert extracted.read() == b"private-runtime-state"
+        assert extracted.read() == b'{"credential":"private-runtime-state"}'
 
 
-def test_config_archive_rejects_non_owner_only_nested_state(tmp_path: Path) -> None:
+def test_config_archive_rejects_legacy_machine_state(tmp_path: Path) -> None:
     config = _config(tmp_path)
     nested = Path(config.antioch_config_dir) / "ssh"
-    # Deliberately violate the owner-only contract for this negative test.
-    permissive = (
-        stat.S_IRWXU
-        | stat.S_IRGRP
-        | stat.S_IXGRP
-        | stat.S_IROTH
-        | stat.S_IXOTH
-    )
-    nested.mkdir(mode=permissive)
-    os.chmod(nested, permissive)
-    with pytest.raises(cluster_deploy.ClusterLiveError, match="owner-only"):
+    nested.mkdir(mode=0o700)
+    with pytest.raises(cluster_deploy.ClusterLiveError, match="credential files"):
+        cluster_deploy._config_archive(Path(config.antioch_config_dir))
+
+
+def test_config_archive_rejects_non_owner_only_credential(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    auth = Path(config.antioch_config_dir) / "auth.json"
+    os.chmod(auth, 0o640)
+    with pytest.raises(cluster_deploy.ClusterLiveError, match="mode-0600"):
         cluster_deploy._config_archive(Path(config.antioch_config_dir))
 
 
@@ -332,9 +319,7 @@ def test_public_manifests_keep_vm_out_and_policy_cluster_local(tmp_path: Path) -
             }
         ],
         "ports": [
-            {"protocol": "TCP", "port": 22},
             {"protocol": "TCP", "port": 443},
-            {"protocol": "TCP", "port": 8443},
         ],
     }
 
@@ -350,24 +335,28 @@ def test_cluster_runtime_probe_is_fail_closed(tmp_path: Path) -> None:
     state.write_text(json.dumps({"status": "starting"}), encoding="utf-8")
     assert cluster_runtime.probe(state, **kwargs) == 1
     healthy = {
-        "schema_version": 3,
+        "schema_version": 4,
         "owner_identity": "owner",
         "session_id": "session",
         "scenario_run_id": "run",
         "status": "running",
-        "daemon_status": "owned",
+        "session_status": "owned",
         "heartbeat_unix": time.time(),
         "vendor_process_status": "running",
-        "daemon_guest_state": "healthy",
+        "route_process_status": "running",
         "controller_pid": 1,
         "vendor_pid": 2,
         "vendor_parent_pid": 1,
         "vendor_process_group_isolated": True,
-        "daemon_observed_at": time.time(),
-        "rome_guest_observed_at": time.time(),
-        "scenario_session_leases": 1,
-        "process_leases": 1,
-        "stream_leases": 1,
+        "route_pid": 3,
+        "route_parent_pid": 1,
+        "route_process_group_isolated": True,
+        "antioch_session_id": "antioch-session",
+        "antioch_session_state": "running",
+        "antioch_session_access_phase": "ready",
+        "sim_process_healthy": True,
+        "antioch_session_ready": True,
+        "session_observed_at": time.time(),
     }
     state.write_text(json.dumps(healthy), encoding="utf-8")
     assert cluster_runtime.probe(state, **kwargs) == 0
@@ -477,7 +466,7 @@ def test_recovery_heartbeat_keeps_liveness_fresh_but_readiness_revoked(
     state = tmp_path / "controller.json"
     recovery = {
         "status": "recovering",
-        "daemon_status": "replacing_supervisor",
+        "session_status": "replacing_supervisor",
         "owner_identity": "owner",
         "session_id": "session",
         "scenario": "scenario",
@@ -521,11 +510,11 @@ def test_recovery_heartbeat_keeps_liveness_fresh_but_readiness_revoked(
                 "consecutive_absence": 3,
                 "age_seconds": 31.0,
             },
-            "daemon_owner_absent",
+            "session_owner_absent",
         ),
         (
             {"consecutive_errors": 3, "age_seconds": 31.0},
-            "daemon_state_unreadable",
+            "session_state_unreadable",
         ),
         ({"consecutive_errors": 1, "age_seconds": 31.0}, ""),
     ],
@@ -658,31 +647,20 @@ def test_successor_launch_proves_absence_and_dispatches_once(
     assert calls == ["reconcile-absence", "dispatch"]
 
 
-def test_bound_provider_assignment_is_released_after_exact_run_cleanup(
+def test_service_start_builds_revision_and_replaces_only_idle_project_session(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []
 
     class Cli:
-        build_attempts = 0
-
-        def services_build(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        def project_build(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
             calls.append("build")
-            self.build_attempts += 1
-            if self.build_attempts == 1:
-                raise AntiochCliError(
-                    "assignment SSH is already bound to another local client"
-                )
-            return {}
+            return {"revision_id": "revision-for-test"}
 
-        def services_up(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
-            calls.append("up")
-            return {}
-
-        def machine_release(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
-            calls.append("release")
-            return {}
+        def session_new(self, *_args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+            calls.append("new:" + str(kwargs["revision"]))
+            return {"session_id": "new-session", "replaced_session_id": "old-idle"}
 
     def cancel(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
         calls.append("cancel")
@@ -695,7 +673,7 @@ def test_bound_provider_assignment_is_released_after_exact_run_cleanup(
         scenario="openpi_franka_mk8s_live",
     )
     assert recovered is True
-    assert calls == ["build", "cancel", "release", "build", "up"]
+    assert calls == ["cancel", "build", "new:revision-for-test"]
 
 
 def test_retryable_service_start_failure_recovers_with_capped_backoff(
@@ -706,7 +684,7 @@ def test_retryable_service_start_failure_recovers_with_capped_backoff(
     attempts = 0
 
     class Cli:
-        def services_build(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        def project_build(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
             nonlocal attempts
             calls.append("build")
             attempts += 1
@@ -717,14 +695,17 @@ def test_retryable_service_start_failure_recovers_with_capped_backoff(
                     retryable=True,
                     http_status=503,
                 )
-            return {}
+            return {"revision_id": "revision-for-test"}
 
-        def services_up(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
-            calls.append("up")
-            return {}
+        def session_new(self, *_args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+            calls.append("new:" + str(kwargs["revision"]))
+            return {"session_id": "new-session", "replaced_session_id": None}
 
-        def machine_release(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
-            raise AssertionError("must not be called")
+    monkeypatch.setattr(
+        cluster_runtime,
+        "_cancel_remote_live_runs",
+        lambda *_args, **_kwargs: calls.append("cancel"),
+    )
 
     monkeypatch.setattr(
         cluster_runtime.time,
@@ -738,7 +719,15 @@ def test_retryable_service_start_failure_recovers_with_capped_backoff(
         scenario="openpi_franka_mk8s_live",
     )
     assert recovered is False
-    assert calls == ["build", "sleep:2.0", "build", "sleep:5.0", "build", "up"]
+    assert calls == [
+        "cancel",
+        "build",
+        "sleep:2.0",
+        "build",
+        "sleep:5.0",
+        "build",
+        "new:revision-for-test",
+    ]
 
 
 def test_fatal_service_start_failure_remains_fatal_without_releasing_assignment(
@@ -748,7 +737,7 @@ def test_fatal_service_start_failure_remains_fatal_without_releasing_assignment(
     calls: list[str] = []
 
     class Cli:
-        def services_build(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        def project_build(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
             calls.append("build")
             raise AntiochCliError(
                 "authentication denied",
@@ -757,11 +746,14 @@ def test_fatal_service_start_failure_remains_fatal_without_releasing_assignment(
                 http_status=401,
             )
 
-        def services_up(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        def session_new(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
             raise AssertionError("must not be called")
 
-        def machine_release(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
-            raise AssertionError("must not be called")
+    monkeypatch.setattr(
+        cluster_runtime,
+        "_cancel_remote_live_runs",
+        lambda *_args, **_kwargs: calls.append("cancel"),
+    )
 
     monkeypatch.setattr(
         cluster_runtime.time,
@@ -776,7 +768,7 @@ def test_fatal_service_start_failure_remains_fatal_without_releasing_assignment(
             scenario="openpi_franka_mk8s_live",
         )
     assert raised.value.retryable is False
-    assert calls == ["build"]
+    assert calls == ["cancel", "build"]
 
 
 def test_remote_state_read_recovers_transient_exec_fragment(
@@ -1120,7 +1112,7 @@ def test_cluster_status_reports_sanitized_probe_exception_classes(
                     {
                         "status": "running",
                         "scenario": "openpi_franka_mk8s_live",
-                        "transport": "same-pod-antioch-tunnel-double-wss",
+                        "transport": "same-pod-antioch-named-route-double-wss",
                         "dev_vm_in_data_path": False,
                     }
                 ).encode()
@@ -1132,7 +1124,7 @@ def test_cluster_status_reports_sanitized_probe_exception_classes(
     monkeypatch.setattr("kubernetes.stream.stream", failing_stream)
     result = cluster_deploy.cluster_status(config)
     assert result["status"] == "not_ready"
-    assert result["daemon_liveness_ready"] is False
+    assert result["controller_liveness_ready"] is False
     assert result["relay_liveness_ready"] is False
     assert result["probe_diagnostics"] == {
         "relay_state": {"status": "failed", "exception_class": "RuntimeError"},
@@ -1152,7 +1144,7 @@ def test_cluster_status_reports_sanitized_probe_exception_classes(
         "error_type": None,
         "scenario": "openpi_franka_mk8s_live",
         "status": "running",
-        "transport": "same-pod-antioch-tunnel-double-wss",
+        "transport": "same-pod-antioch-named-route-double-wss",
     }
     rendered = json.dumps(result)
     assert "private relay" not in rendered
@@ -1228,13 +1220,15 @@ def test_source_uses_only_supported_antioch_live_commands() -> None:
     assert "if cleanup_complete:" in live
     assert "restartPolicy" in live
     for command in (
-        "services_build",
-        "services_up",
-        "services_exec",
-        "services_copy",
-        "services_down",
+        "project_build",
+        "session_new",
+        "service_exec",
+        "service_copy",
+        "session_release",
     ):
         assert command in helper
+    for retired in ("services_build", "services_up", "services_down", "machine_"):
+        assert retired not in live + helper
     assert '"scenario",\n            "run"' in helper
 
 

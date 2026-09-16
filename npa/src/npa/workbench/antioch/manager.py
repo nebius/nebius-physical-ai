@@ -73,7 +73,7 @@ def _local_status(phase: str, outcome: str) -> str:
         return "failed" if outcome in {"failed", "failure", "error"} else "completed"
     if outcome in {"passed", "success", "succeeded"}:
         return "completed"
-    if phase in {"running", "executing"}:
+    if phase in {"running", "executing", "finishing"}:
         return "running"
     return "queued"
 
@@ -193,7 +193,7 @@ class AntiochManager:
         self.storage = storage
         self.states = StateStore(self.storage)
 
-    def _cli(self, expected_version: str = "0.3.63") -> AntiochCli:
+    def _cli(self, expected_version: str = "0.4.188") -> AntiochCli:
         return AntiochCli(ensure_runtime(expected_version=expected_version))
 
     def _record_for(self, request: ResumeRequest) -> OperationRecord:

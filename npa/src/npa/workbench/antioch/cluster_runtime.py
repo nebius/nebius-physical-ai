@@ -1,7 +1,7 @@
 """PID-1 controller for the cluster-native Antioch live adapter pod.
 
-The supported Antioch service tunnel is created in this pod.  A sibling relay
-container shares the pod network namespace and connects to the tunnel only on
+The supported Antioch named route is created in this pod. A sibling relay
+container shares the pod network namespace and connects to the route only on
 localhost, so the operator VM never carries frame or action traffic.
 """
 
@@ -26,6 +26,8 @@ from typing import Any
 from .live import (
     AntiochLiveError,
     _cancel_remote_live_runs,
+    _private_bundle_matches,
+    _runtime_source_matches,
     _stage_private_bundle,
     _stage_project,
     _stage_runtime_source,
@@ -37,17 +39,16 @@ from .runtime import ensure_runtime
 from .vendor_cli import AntiochCli, AntiochCliError
 
 
-SCHEMA = "npa.workbench.antioch-cluster-live.v3"
-SCHEMA_VERSION = 3
+SCHEMA = "npa.workbench.antioch-cluster-live.v4"
+SCHEMA_VERSION = 4
 RELAY_SCHEMA_VERSION = 2
 DEFAULT_CONTROLLER_MAX_AGE_SECONDS = 30.0
 DEFAULT_RELAY_MAX_AGE_SECONDS = 150.0
 STATE_READ_ATTEMPTS = 3
-DAEMON_POLL_SECONDS = 5.0
-DAEMON_ABSENCE_THRESHOLD = 3
-DAEMON_ERROR_THRESHOLD = 3
-DAEMON_STARTUP_GRACE_SECONDS = 600.0
-ASSIGNMENT_BOUND_MARKER = "SSH is already bound to another local client"
+SESSION_POLL_SECONDS = 5.0
+SESSION_ABSENCE_THRESHOLD = 3
+SESSION_ERROR_THRESHOLD = 3
+SESSION_STARTUP_GRACE_SECONDS = 600.0
 RESTAGE_INTERVAL_SECONDS = 60.0
 RECOVERY_BACKOFF_SECONDS = (2.0, 5.0, 10.0, 20.0, 30.0)
 _METRIC_KEY = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -225,6 +226,52 @@ class VendorStreamProcess:
             self._drain.join(timeout=5)
 
 
+@dataclass
+class VendorPortProcess:
+    """Directly own the current CLI's foreground named-route bridge."""
+
+    process: subprocess.Popen[bytes]
+
+    @classmethod
+    def start(
+        cls,
+        *,
+        cli: AntiochCli,
+        executable: Path,
+        runtime: Path,
+    ) -> "VendorPortProcess":
+        process = subprocess.Popen(
+            [
+                str(executable),
+                *cli.service_ports_args(
+                    service="sim",
+                    route="policy-relay",
+                    host="127.0.0.1",
+                    port=18_444,
+                ),
+            ],
+            cwd=runtime,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        return cls(process=process)
+
+    def exit_snapshot(self) -> tuple[str, int | None]:
+        code = self.process.poll()
+        if code is None:
+            return "running", None
+        if code < 0:
+            return "signal", code
+        if code == 0:
+            return "completed", code
+        return "nonzero", code
+
+    def terminate(self) -> None:
+        _terminate_process_group(self.process)
+
+
 def _write_state(path: Path, **values: Any) -> None:
     state = {
         "schema": SCHEMA,
@@ -326,25 +373,29 @@ def _state_ready(
     observed_now = time.time() if now is None else now
 
     def vendor_session_ready() -> bool:
-        daemon_observed = state.get("daemon_observed_at")
-        rome_observed = state.get("rome_guest_observed_at")
-        if not all(
-            isinstance(value, (int, float)) and not isinstance(value, bool)
-            for value in (daemon_observed, rome_observed)
+        session_observed = state.get("session_observed_at")
+        if not isinstance(session_observed, (int, float)) or isinstance(
+            session_observed, bool
         ):
             return False
         return bool(
             state.get("vendor_process_status") == "running"
-            and state.get("daemon_guest_state") == "healthy"
+            and state.get("route_process_status") == "running"
+            and state.get("antioch_session_state") == "running"
+            and state.get("antioch_session_access_phase") == "ready"
+            and state.get("sim_process_healthy") is True
+            and state.get("antioch_session_ready") is True
+            and str(state.get("antioch_session_id") or "")
             and int(state.get("controller_pid") or 0) == 1
             and int(state.get("vendor_parent_pid") or 0) == 1
             and int(state.get("vendor_pid") or 0) > 1
             and state.get("vendor_process_group_isolated") is True
-            and int(state.get("scenario_session_leases") or 0) == 1
-            and int(state.get("process_leases") or 0) >= 1
-            and int(state.get("stream_leases") or 0) == 1
-            and -5.0 <= observed_now - float(daemon_observed) <= max_age_seconds
-            and -5.0 <= observed_now - float(rome_observed) <= max_age_seconds
+            and int(state.get("route_parent_pid") or 0) == 1
+            and int(state.get("route_pid") or 0) > 1
+            and state.get("route_process_group_isolated") is True
+            and -5.0
+            <= observed_now - float(session_observed)
+            <= max_age_seconds
         )
 
     if component == "controller-liveness":
@@ -368,7 +419,7 @@ def _state_ready(
     if component == "controller":
         return bool(
             state.get("status") == "running"
-            and state.get("daemon_status") == "owned"
+            and state.get("session_status") == "owned"
             and str(state.get("scenario_run_id") or "")
             and str(state.get("session_id") or "")
             and vendor_session_ready()
@@ -418,14 +469,14 @@ def _supervisor_recovery_reason(
         return "controller_child_exit"
     if (
         last_owned_heartbeat
-        and consecutive_absence >= DAEMON_ABSENCE_THRESHOLD
+        and consecutive_absence >= SESSION_ABSENCE_THRESHOLD
         and age_seconds > max_age_seconds
     ):
-        return "daemon_owner_absent"
-    if not last_owned_heartbeat and startup_age_seconds >= DAEMON_STARTUP_GRACE_SECONDS:
-        return "daemon_owner_startup_timeout"
-    if consecutive_errors >= DAEMON_ERROR_THRESHOLD and age_seconds > max_age_seconds:
-        return "daemon_state_unreadable"
+        return "session_owner_absent"
+    if not last_owned_heartbeat and startup_age_seconds >= SESSION_STARTUP_GRACE_SECONDS:
+        return "session_owner_startup_timeout"
+    if consecutive_errors >= SESSION_ERROR_THRESHOLD and age_seconds > max_age_seconds:
+        return "session_state_unreadable"
     return ""
 
 
@@ -445,36 +496,39 @@ def _start_cluster_service(
     project_id: str,
     scenario: str,
 ) -> bool:
-    """Start the service, recovering typed transient control-plane failures.
+    """Build one revision and start its project session fail-closed.
 
-    A provider machine can outlive the Kubernetes pod whose local SSH client
-    owned it.  The supported service command then fails deterministically
-    before any new stream is dispatched.  Cancel the exact project's live run
-    first and release that exact assignment.  Structured retryable failures use
-    capped backoff until the control plane recovers; fatal failures stay
-    fail-closed.
+    The current platform owns compute through a project-scoped session.  First
+    prove this exact scenario absent, then let ``session new`` replace only an
+    idle prior session. Structured retryable failures use capped backoff;
+    identity, authentication, and active-work conflicts stay terminal.
     """
 
-    released_assignment = False
+    _cancel_remote_live_runs(
+        cli,
+        runtime=runtime,
+        project_id=project_id,
+        scenario=scenario,
+        attempts=5,
+    )
     retryable_failures = 0
     while True:
         try:
-            cli.services_build(runtime, service="sim")
-            cli.services_up(runtime)
-            return released_assignment
-        except AntiochCliError as exc:
-            if ASSIGNMENT_BOUND_MARKER in str(exc) and not released_assignment:
-                _cancel_remote_live_runs(
-                    cli,
-                    runtime=runtime,
-                    project_id=project_id,
-                    scenario=scenario,
-                    attempts=5,
+            built = cli.project_build(runtime, service="sim")
+            revision_id = str(built.get("revision_id") or "")
+            if not revision_id:
+                raise AntiochCliError(
+                    "Antioch project build did not return a revision",
+                    error_type="malformed_cli_output",
                 )
-                cli.machine_release(runtime, project_id=project_id)
-                released_assignment = True
-                retryable_failures = 0
-                continue
+            session = cli.session_new(runtime, revision=revision_id)
+            if not str(session.get("session_id") or ""):
+                raise AntiochCliError(
+                    "Antioch session startup did not return a session",
+                    error_type="malformed_cli_output",
+                )
+            return bool(session.get("replaced_session_id"))
+        except AntiochCliError as exc:
             if not exc.retryable:
                 raise
             delay = RECOVERY_BACKOFF_SECONDS[
@@ -537,6 +591,7 @@ def run_cluster(args: argparse.Namespace) -> int:
     cli_path = ensure_runtime()
     cli = AntiochCli(cli_path, config_dir=str(private_root / "antioch-config"))
     vendor: VendorStreamProcess | None = None
+    port_bridge: VendorPortProcess | None = None
     stopping = False
     cleanup_complete = False
     failed = False
@@ -551,6 +606,8 @@ def run_cluster(args: argparse.Namespace) -> int:
         stop_file.touch(mode=0o600, exist_ok=True)
         if vendor is not None and vendor.process.poll() is None:
             vendor.terminate()
+        if port_bridge is not None and port_bridge.process.poll() is None:
+            port_bridge.terminate()
 
     signal.signal(signal.SIGTERM, request_stop)
     signal.signal(signal.SIGINT, request_stop)
@@ -559,7 +616,7 @@ def run_cluster(args: argparse.Namespace) -> int:
         _write_state(
             state_path,
             status="starting",
-            daemon_status="awaiting_owner",
+            session_status="awaiting_owner",
             owner_identity=args.owner_identity,
             session_id=session_id,
             scenario=args.scenario,
@@ -591,7 +648,7 @@ def run_cluster(args: argparse.Namespace) -> int:
         health.start()
         startup_state = {
             "status": "starting",
-            "daemon_status": "starting_service",
+            "session_status": "starting_session",
             "owner_identity": args.owner_identity,
             "session_id": session_id,
             "scenario": args.scenario,
@@ -607,9 +664,14 @@ def run_cluster(args: argparse.Namespace) -> int:
         service_started = True
         _stage_runtime_source(cli, runtime=runtime)
         _stage_private_bundle(cli, runtime=runtime, client_bundle=bundle)
+        port_bridge = VendorPortProcess.start(
+            cli=cli,
+            executable=Path(cli_path),
+            runtime=runtime,
+        )
         # A predecessor foreground client cannot be adopted across a pod
-        # lifecycle: its exact daemon session heartbeat belongs to that
-        # process. Reconcile and cancel only this project's exact live run,
+        # lifecycle: its exact stream ownership belongs to that process.
+        # Reconcile and cancel only this project's exact live run,
         # prove stable absence, then create one cluster-owned successor.
         vendor = _launch_vendor_successor(
             cli,
@@ -630,7 +692,10 @@ def run_cluster(args: argparse.Namespace) -> int:
             if stop_file.exists() and not stopping:
                 request_stop(signal.SIGTERM, None)
                 break
-            child_dead = vendor.process.poll() is not None
+            child_dead = (
+                vendor.process.poll() is not None
+                or port_bridge.process.poll() is not None
+            )
             recovery_reason = _supervisor_recovery_reason(
                 child_dead=child_dead,
                 last_owned_heartbeat=last_owned_heartbeat,
@@ -642,7 +707,7 @@ def run_cluster(args: argparse.Namespace) -> int:
                     else time.monotonic() - supervisor_started
                 ),
                 startup_age_seconds=time.monotonic() - supervisor_started,
-                max_age_seconds=args.daemon_max_age_seconds,
+                max_age_seconds=args.session_max_age_seconds,
             )
             if not child_dead:
                 try:
@@ -667,12 +732,12 @@ def run_cluster(args: argparse.Namespace) -> int:
                                 else time.monotonic() - supervisor_started
                             ),
                             startup_age_seconds=time.monotonic() - supervisor_started,
-                            max_age_seconds=args.daemon_max_age_seconds,
+                            max_age_seconds=args.session_max_age_seconds,
                         )
                         _write_state(
                             state_path,
                             status=("degraded" if last_owned_heartbeat else "starting"),
-                            daemon_status="owner_absent",
+                            session_status="owner_absent",
                             owner_identity=args.owner_identity,
                             session_id=session_id,
                             scenario=args.scenario,
@@ -680,6 +745,7 @@ def run_cluster(args: argparse.Namespace) -> int:
                             heartbeat_unix=last_owned_heartbeat,
                             recoveries=recoveries,
                             vendor_process_status=vendor.exit_snapshot()[0],
+                            route_process_status=port_bridge.exit_snapshot()[0],
                         )
                     else:
                         consecutive_absence = 0
@@ -688,7 +754,7 @@ def run_cluster(args: argparse.Namespace) -> int:
                         _write_state(
                             state_path,
                             status="running",
-                            daemon_status="owned",
+                            session_status="owned",
                             owner_identity=args.owner_identity,
                             session_id=session_id,
                             scenario=args.scenario,
@@ -698,6 +764,7 @@ def run_cluster(args: argparse.Namespace) -> int:
                             heartbeat_unix=last_owned_heartbeat,
                             recoveries=recoveries,
                             vendor_process_status=vendor.exit_snapshot()[0],
+                            route_process_status=port_bridge.exit_snapshot()[0],
                             vendor_output_bytes=vendor.output_snapshot()[0],
                             vendor_output_age_seconds=round(
                                 vendor.output_snapshot()[1], 3
@@ -708,19 +775,24 @@ def run_cluster(args: argparse.Namespace) -> int:
                             vendor_process_group_isolated=(
                                 os.getpgid(vendor.process.pid) == vendor.process.pid
                             ),
-                            daemon_guest_state=str(
-                                active.get("daemon_guest_state") or ""
+                            route_pid=port_bridge.process.pid,
+                            route_parent_pid=os.getpid(),
+                            route_process_group_isolated=(
+                                os.getpgid(port_bridge.process.pid)
+                                == port_bridge.process.pid
                             ),
-                            daemon_observed_at=float(active["daemon_observed_at"]),
-                            rome_guest_observed_at=float(
-                                active["rome_guest_observed_at"]
+                            antioch_session_id=str(active["session_id"]),
+                            antioch_session_state=str(active["session_state"]),
+                            antioch_session_access_phase=str(
+                                active["session_access_phase"]
                             ),
-                            scenario_session_leases=int(
-                                active["scenario_session_leases"]
+                            sim_service_state=str(active["service_state"]),
+                            sim_process_healthy=bool(
+                                active["service_process_healthy"]
                             ),
-                            process_leases=int(active["process_leases"]),
-                            stream_leases=int(active["stream_leases"]),
-                            transport="same-pod-antioch-tunnel-double-wss",
+                            antioch_session_ready=bool(active["session_ready"]),
+                            session_observed_at=float(active["session_observed_at"]),
+                            transport="same-pod-antioch-named-route-double-wss",
                             dev_vm_in_data_path=False,
                         )
                 except (
@@ -742,12 +814,12 @@ def run_cluster(args: argparse.Namespace) -> int:
                         consecutive_errors=consecutive_errors,
                         age_seconds=age,
                         startup_age_seconds=time.monotonic() - supervisor_started,
-                        max_age_seconds=args.daemon_max_age_seconds,
+                        max_age_seconds=args.session_max_age_seconds,
                     )
                     _write_state(
                         state_path,
                         status="degraded",
-                        daemon_status="unreadable",
+                        session_status="unreadable",
                         owner_identity=args.owner_identity,
                         session_id=session_id,
                         scenario=args.scenario,
@@ -756,13 +828,14 @@ def run_cluster(args: argparse.Namespace) -> int:
                         error_type=type(exc).__name__,
                         recoveries=recoveries,
                         vendor_process_status=vendor.exit_snapshot()[0],
+                        route_process_status=port_bridge.exit_snapshot()[0],
                     )
             if recovery_reason:
                 recoveries += 1
                 exit_class, exit_code = vendor.exit_snapshot()
                 recovery_state = {
                     "status": "recovering",
-                    "daemon_status": "replacing_supervisor",
+                    "session_status": "replacing_supervisor",
                     "owner_identity": args.owner_identity,
                     "session_id": session_id,
                     "scenario": args.scenario,
@@ -776,6 +849,7 @@ def run_cluster(args: argparse.Namespace) -> int:
                 _write_state(state_path, **recovery_state)
                 with _recovery_heartbeat(state_path, **recovery_state):
                     vendor.terminate()
+                    port_bridge.terminate()
                     _cancel_remote_live_runs(
                         cli,
                         runtime=runtime,
@@ -784,15 +858,21 @@ def run_cluster(args: argparse.Namespace) -> int:
                         attempts=60,
                     )
                     try:
-                        cli.services_exec(runtime, "sim", ["/bin/true"])
+                        cli.service_exec(runtime, "sim", ["/bin/true"])
                     except AntiochCliError:
-                        try:
-                            cli.services_up(runtime)
-                        except AntiochCliError:
-                            cli.services_build(runtime, service="sim")
-                            cli.services_up(runtime)
+                        _start_cluster_service(
+                            cli,
+                            runtime=runtime,
+                            project_id=project_id,
+                            scenario=args.scenario,
+                        )
                     _stage_runtime_source(cli, runtime=runtime)
                     _stage_private_bundle(cli, runtime=runtime, client_bundle=bundle)
+                    port_bridge = VendorPortProcess.start(
+                        cli=cli,
+                        executable=Path(cli_path),
+                        runtime=runtime,
+                    )
                     delay = RECOVERY_BACKOFF_SECONDS[
                         min(recoveries - 1, len(RECOVERY_BACKOFF_SECONDS) - 1)
                     ]
@@ -814,26 +894,44 @@ def run_cluster(args: argparse.Namespace) -> int:
                 last_owned_heartbeat = 0.0
                 last_run_id = ""
             elif time.monotonic() - last_restage >= RESTAGE_INTERVAL_SECONDS:
-                # Finite supported probes ensure a recycled service is rebuilt
-                # and atomically restaged without an exec-held daemon.
+                # Finite supported probes detect a recycled service or missing
+                # bytes without retaining a remote exec process.
                 try:
-                    cli.services_exec(runtime, "sim", ["/bin/true"])
+                    cli.service_exec(runtime, "sim", ["/bin/true"])
+                    source_matches = _runtime_source_matches(cli, runtime=runtime)
+                    bundle_matches = _private_bundle_matches(
+                        cli, runtime=runtime, client_bundle=bundle
+                    )
                 except AntiochCliError:
-                    try:
-                        cli.services_up(runtime)
-                    except AntiochCliError:
-                        cli.services_build(runtime, service="sim")
-                        cli.services_up(runtime)
+                    port_bridge.terminate()
+                    _start_cluster_service(
+                        cli,
+                        runtime=runtime,
+                        project_id=project_id,
+                        scenario=args.scenario,
+                    )
                     _stage_runtime_source(cli, runtime=runtime)
                     _stage_private_bundle(cli, runtime=runtime, client_bundle=bundle)
+                    port_bridge = VendorPortProcess.start(
+                        cli=cli,
+                        executable=Path(cli_path),
+                        runtime=runtime,
+                    )
+                else:
+                    if not source_matches:
+                        _stage_runtime_source(cli, runtime=runtime)
+                    if not bundle_matches:
+                        _stage_private_bundle(
+                            cli, runtime=runtime, client_bundle=bundle
+                        )
                 last_restage = time.monotonic()
-            time.sleep(args.daemon_poll_seconds)
+            time.sleep(args.session_poll_seconds)
     except Exception as exc:
         failed = True
         _write_state(
             state_path,
             status="failed",
-            daemon_status="failed",
+            session_status="failed",
             owner_identity=args.owner_identity,
             session_id=session_id,
             scenario=args.scenario,
@@ -845,6 +943,8 @@ def run_cluster(args: argparse.Namespace) -> int:
         stop_file.touch(mode=0o600, exist_ok=True)
         if vendor is not None and vendor.process.poll() is None:
             vendor.terminate()
+        if port_bridge is not None and port_bridge.process.poll() is None:
+            port_bridge.terminate()
         if service_started:
             try:
                 _cancel_remote_live_runs(
@@ -854,13 +954,13 @@ def run_cluster(args: argparse.Namespace) -> int:
                     scenario=args.scenario,
                     attempts=5,
                 )
-                cli.services_down(runtime)
+                cli.session_release(runtime)
             except (AntiochCliError, AntiochLiveError) as exc:
                 cleanup_error = exc
                 _write_state(
                     state_path,
                     status="cleanup_failed",
-                    daemon_status="cleanup_failed",
+                    session_status="cleanup_failed",
                     owner_identity=args.owner_identity,
                     session_id=session_id,
                     scenario=args.scenario,
@@ -877,7 +977,7 @@ def run_cluster(args: argparse.Namespace) -> int:
         _write_state(
             state_path,
             status=terminal_status,
-            daemon_status=terminal_status,
+            session_status=terminal_status,
             owner_identity=args.owner_identity,
             session_id=session_id,
             scenario=args.scenario,
@@ -899,7 +999,7 @@ def run_cluster(args: argparse.Namespace) -> int:
                 _write_state(
                     state_path,
                     status="stopped",
-                    daemon_status="terminal",
+                    session_status="terminal",
                     owner_identity=args.owner_identity,
                     session_id=session_id,
                     scenario=args.scenario,
@@ -943,9 +1043,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--scenario-timeout-seconds", type=int, default=14_400)
     run.add_argument("--owner-identity", required=True)
     run.add_argument("--health-port", type=int, default=18_080)
-    run.add_argument("--daemon-poll-seconds", type=float, default=DAEMON_POLL_SECONDS)
+    run.add_argument("--session-poll-seconds", type=float, default=SESSION_POLL_SECONDS)
     run.add_argument(
-        "--daemon-max-age-seconds",
+        "--session-max-age-seconds",
         type=float,
         default=DEFAULT_CONTROLLER_MAX_AGE_SECONDS,
     )

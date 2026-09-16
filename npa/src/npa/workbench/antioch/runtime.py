@@ -21,12 +21,12 @@ from urllib.parse import urlsplit
 from .vendor_cli import AntiochCli, AntiochCliError
 
 
-ANTIOCH_CLI_VERSION = "0.3.63"
-ANTIOCH_CLI_SHA256 = "cbcf4775472dacab19f1536053d8d1d2f9dd12d47c1af8a39599ee2dbdc2f39e"
+ANTIOCH_CLI_VERSION = "0.4.188"
+ANTIOCH_CLI_SHA256 = "e19f8b893a91eb8401d1a9c395588d8004470513437f96b4128ede849bf57e8c"
 ANTIOCH_CLI_URL = (
-    "https://files.pythonhosted.org/packages/4e/d3/"
-    "bfa7d596641baad314860087bf0ea62d3e0afa77f66155e8ef5cb426cab4/"
-    "antioch_sim-0.3.63-py3-none-any.whl"
+    "https://files.pythonhosted.org/packages/9a/1b/"
+    "45baa5ed04379b57c3e42d542d4b42b31ae01d0141995cd21804401848bd/"
+    "antioch_sim-0.4.188-py3-none-any.whl"
 )
 ANTIOCH_TERMS_ENV = "NPA_ANTIOCH_ACCEPT_TERMS"
 ANTIOCH_TERMS_NAME = "Antioch Terms of Service"
@@ -180,14 +180,14 @@ def ensure_runtime(*, expected_version: str = ANTIOCH_CLI_VERSION) -> Path:
             )
         if expected_sha != ANTIOCH_CLI_SHA256:
             raise AntiochRuntimeError(
-                "NPA_ANTIOCH_CLI_SHA256 must match the adapter's reviewed 0.3.63 wheel digest"
+                "NPA_ANTIOCH_CLI_SHA256 must match the adapter's reviewed 0.4.188 wheel digest"
             )
 
         with tempfile.TemporaryDirectory(
             prefix=".antioch-install-", dir=root
         ) as temp_name:
             temp = Path(temp_name)
-            wheel = temp / "antioch_sim-0.3.63-py3-none-any.whl"
+            wheel = temp / "antioch_sim-0.4.188-py3-none-any.whl"
             try:
                 with (
                     # Scheme and authority are checked immediately above and the

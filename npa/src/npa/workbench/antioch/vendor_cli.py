@@ -1,6 +1,6 @@
 """Structured subprocess client for the supported Antioch CLI surface.
 
-This module deliberately does not call Rome or any other undocumented HTTP API.
+This module deliberately does not call undocumented HTTP APIs.
 """
 
 from __future__ import annotations
@@ -11,6 +11,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
+
+import yaml
 
 from .redaction import redact_payload, redact_text
 
@@ -75,6 +77,7 @@ class AntiochCli:
         *,
         cwd: Path | None = None,
         expect_json: bool = True,
+        timeout_seconds: float | None = 60,
     ) -> CommandResult:
         env = dict(os.environ)
         env["NO_COLOR"] = "1"
@@ -88,7 +91,7 @@ class AntiochCli:
                 text=True,
                 capture_output=True,
                 check=False,
-                timeout=60,
+                timeout=timeout_seconds,
             )
         except subprocess.TimeoutExpired as exc:
             raise AntiochCliError(
@@ -130,22 +133,44 @@ class AntiochCli:
                 "Antioch identity response was not an object",
                 error_type="malformed_cli_output",
             )
+        projects = self._run(["project", "list", "--json"]).payload
+        if not isinstance(projects, list):
+            raise AntiochCliError(
+                "Antioch project registry response was not an array",
+                error_type="malformed_cli_output",
+            )
         return {
             "authenticated": True,
             "cli_version": version,
-            "environment": str(identity.get("environment") or ""),
         }
 
     def submit_suite(self, cwd: Path, suite: str) -> dict[str, Any]:
         payload = self._run(
-            ["suite", "run", suite, "--queue", "--json"], cwd=cwd
+            ["suite", "run", suite, "--detach", "--json"], cwd=cwd,
+            timeout_seconds=None,
         ).payload
-        if not isinstance(payload, dict):
+        if (
+            not isinstance(payload, list)
+            or not payload
+            or not all(isinstance(item, dict) for item in payload)
+        ):
             raise AntiochCliError(
-                "queued suite response was not an object",
+                "detached suite response was not a non-empty array",
                 error_type="malformed_cli_output",
             )
-        return payload
+        suite_ids = {str(item.get("suite_run_id") or "") for item in payload}
+        invocation_ids = {str(item.get("invocation_id") or "") for item in payload}
+        if len(suite_ids) != 1 or "" in suite_ids or len(invocation_ids) != 1:
+            raise AntiochCliError(
+                "detached suite response did not identify one invocation",
+                error_type="malformed_cli_output",
+            )
+        return {
+            "suite_run_id": suite_ids.pop(),
+            "invocation_id": invocation_ids.pop(),
+            "suite": suite,
+            "phase": "prepared",
+        }
 
     def submit_scenario(
         self,
@@ -160,15 +185,15 @@ class AntiochCli:
             args.extend(["--case", scenario_case])
         for key, value in sorted((parameters or {}).items()):
             args.extend(["--set", f"{key}={json.dumps(value, separators=(',', ':'))}"])
-        args.extend(["--queue", "--json"])
-        payload = self._run(args, cwd=cwd).payload
+        args.extend(["--detach", "--json"])
+        payload = self._run(args, cwd=cwd, timeout_seconds=None).payload
         if (
             not isinstance(payload, list)
             or not payload
             or not isinstance(payload[0], dict)
         ):
             raise AntiochCliError(
-                "queued scenario response was not a non-empty array",
+                "detached scenario response was not a non-empty array",
                 error_type="malformed_cli_output",
             )
         return payload[0]
@@ -176,11 +201,32 @@ class AntiochCli:
     def list_for_project(
         self, cwd: Path, *, kind: str, project_id: str
     ) -> list[dict[str, Any]]:
+        if kind not in {"scenario", "suite"}:
+            raise AntiochCliError(
+                "Antioch run kind must be scenario or suite",
+                error_type="invalid_request",
+            )
+        manifest_path = cwd / "antioch.yaml"
+        if not manifest_path.is_file() or manifest_path.is_symlink():
+            raise AntiochCliError(
+                "Antioch project manifest is unavailable",
+                error_type="project_identity_unavailable",
+            )
+        try:
+            manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError) as exc:
+            raise AntiochCliError(
+                "Antioch project manifest could not be read",
+                error_type="project_identity_unavailable",
+            ) from exc
+        if not isinstance(manifest, dict) or manifest.get("id") != project_id:
+            raise AntiochCliError(
+                "Antioch current project does not match the required identity",
+                error_type="project_identity_mismatch",
+            )
         args = [
             kind,
             "list",
-            "--project",
-            project_id,
             "--mine",
             "--limit",
             "200",
@@ -251,32 +297,68 @@ class AntiochCli:
             )
         return redact_payload(payload)
 
-    def services_up(self, cwd: Path) -> dict[str, Any]:
-        payload = self._run(["services", "up", "--json"], cwd=cwd).payload
-        if not isinstance(payload, dict):
-            raise AntiochCliError(
-                "Antioch service startup response was malformed",
-                error_type="malformed_cli_output",
-            )
-        return payload
-
-    def services_build(self, cwd: Path, *, service: str = "sim") -> Any:
+    def project_build(self, cwd: Path, *, service: str = "sim") -> dict[str, Any]:
         if not service:
             raise AntiochCliError(
-                "Antioch service build requires an exact service",
+                "Antioch project build requires an exact service",
                 error_type="invalid_request",
             )
         payload = self._run(
-            ["services", "build", "--service", service, "--json"], cwd=cwd
+            ["project", "build", service, "--json"],
+            cwd=cwd,
+            timeout_seconds=None,
         ).payload
-        if not isinstance(payload, (dict, list)):
+        if not isinstance(payload, dict):
             raise AntiochCliError(
-                "Antioch service build response was malformed",
+                "Antioch project build response was malformed",
                 error_type="malformed_cli_output",
             )
         return payload
 
-    def services_exec(self, cwd: Path, service: str, command: Sequence[str]) -> str:
+    def session_new(
+        self, cwd: Path, *, revision: str = "", force: bool = False
+    ) -> dict[str, Any]:
+        args = ["session", "new"]
+        if revision:
+            args.extend(["--revision", revision])
+        if force:
+            args.append("--force")
+        args.append("--json")
+        payload = self._run(
+            args,
+            cwd=cwd,
+            timeout_seconds=None,
+        ).payload
+        if not isinstance(payload, dict):
+            raise AntiochCliError(
+                "Antioch session startup response was malformed",
+                error_type="malformed_cli_output",
+            )
+        return payload
+
+    def session_status(self, cwd: Path) -> dict[str, Any]:
+        payload = self._run(["session", "status", "--json"], cwd=cwd).payload
+        if not isinstance(payload, dict):
+            raise AntiochCliError(
+                "Antioch session status response was malformed",
+                error_type="malformed_cli_output",
+            )
+        return payload
+
+    def session_release(self, cwd: Path, *, force: bool = False) -> dict[str, Any]:
+        args = ["session", "release"]
+        if force:
+            args.append("--force")
+        args.extend(["--yes", "--json"])
+        payload = self._run(args, cwd=cwd, timeout_seconds=None).payload
+        if not isinstance(payload, dict):
+            raise AntiochCliError(
+                "Antioch session release response was malformed",
+                error_type="malformed_cli_output",
+            )
+        return payload
+
+    def service_exec(self, cwd: Path, service: str, command: Sequence[str]) -> str:
         if not service or not command:
             raise AntiochCliError(
                 "Antioch service exec requires a service and command",
@@ -284,17 +366,29 @@ class AntiochCli:
             )
         return str(
             self._run(
-                ["services", "exec", service, *command],
+                [
+                    "service",
+                    "exec",
+                    "--no-stream",
+                    "--no-tty",
+                    "--service",
+                    service,
+                    "--",
+                    *command,
+                ],
                 cwd=cwd,
                 expect_json=False,
+                timeout_seconds=None,
             ).payload
         )
 
-    def services_copy(
+    def service_copy(
         self, cwd: Path, source: Path, destination: str
     ) -> dict[str, Any]:
         payload = self._run(
-            ["services", "cp", str(source), destination, "--json"], cwd=cwd
+            ["service", "cp", str(source), destination, "--json"],
+            cwd=cwd,
+            timeout_seconds=None,
         ).payload
         if not isinstance(payload, dict):
             raise AntiochCliError(
@@ -303,46 +397,42 @@ class AntiochCli:
             )
         return payload
 
-    def services_down(self, cwd: Path) -> dict[str, Any]:
-        payload = self._run(["services", "down", "--json"], cwd=cwd).payload
+    def service_ps(self, cwd: Path, *, service: str = "") -> dict[str, Any]:
+        args = ["service", "ps"]
+        if service:
+            args.append(service)
+        args.append("--json")
+        payload = self._run(args, cwd=cwd).payload
         if not isinstance(payload, dict):
             raise AntiochCliError(
-                "Antioch service teardown response was malformed",
+                "Antioch service status response was malformed",
                 error_type="malformed_cli_output",
             )
         return payload
 
-    def machine_status(self, cwd: Path, *, project_id: str) -> dict[str, Any]:
-        payload = self._run(
-            ["machine", "status", "--project", project_id, "--json"], cwd=cwd
-        ).payload
-        if not isinstance(payload, dict):
-            raise AntiochCliError(
-                "Antioch machine status response was malformed",
-                error_type="malformed_cli_output",
-            )
-        return payload
+    def service_ports_args(
+        self, *, service: str, route: str, host: str, port: int
+    ) -> list[str]:
+        """Return the supported foreground route command for direct ownership."""
 
-    def machine_release(self, cwd: Path, *, project_id: str) -> dict[str, Any]:
-        """Release only the exact project's assigned machine without prompting."""
-
-        payload = self._run(
-            [
-                "machine",
-                "release",
-                "--project",
-                project_id,
-                "--yes",
-                "--json",
-            ],
-            cwd=cwd,
-        ).payload
-        if not isinstance(payload, dict):
+        if not service or not route or host not in {"127.0.0.1", "::1"}:
             raise AntiochCliError(
-                "Antioch machine release response was malformed",
-                error_type="malformed_cli_output",
+                "Antioch service route requires exact names and a loopback host",
+                error_type="invalid_request",
             )
-        return payload
+        if not 1 <= port <= 65_535:
+            raise AntiochCliError(
+                "Antioch service route port is outside 1..65535",
+                error_type="invalid_request",
+            )
+        return [
+            "service",
+            "ports",
+            "--bind",
+            f"{service}.{route}={host}:{port}",
+            "--serve",
+            service,
+        ]
 
 
 def remote_id(payload: dict[str, Any], *, kind: str) -> str:
