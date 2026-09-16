@@ -863,12 +863,15 @@ def ensure_isolated_api(
             raise IsolatedApiError("isolated SkyPilot API cannot inherit unverified server plugins")
         daemon_env["SKYPILOT_SERVER_PLUGINS_CONFIG"] = str(plugins_path)
         # Retain only hashes of settings that determine executing identity.
+        # Artifact destination varies for each workflow, while this daemon is
+        # the shared control plane for all of them. Binding it to a run prefix
+        # would reject a valid later workflow before it can submit.
         identity_keys = ("HOME", "SKYPILOT_USER_ID", "KUBECONFIG", "NEBIUS_CONFIG_DIR", "NEBIUS_PROFILE",
                          "NPA_NEBIUS_CREDENTIAL_SOURCE",
                          "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_ENDPOINT_URL",
                          "AWS_ENDPOINT_URL_S3", "AWS_REGION", "AWS_DEFAULT_REGION", "AWS_PROFILE", "AWS_CONFIG_FILE",
                          "AWS_SHARED_CREDENTIALS_FILE", "S3_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT", "NPA_STORAGE_ENDPOINT",
-                         "NPA_CONFIG_DIR", "NPA_SKYPILOT_PROJECT", "NPA_S3_BUCKET", "NPA_S3_PREFIX",
+                         "NPA_CONFIG_DIR", "NPA_SKYPILOT_PROJECT",
                          "NEBIUS_IAM_TOKEN", "NEBIUS_IAM_TOKEN_FILE", "NPA_NEBIUS_IAM_TOKEN", "NPA_NEBIUS_IAM_TOKEN_FILE",
                          "SKYPILOT_GLOBAL_CONFIG", "SKYPILOT_SERVER_PLUGINS_CONFIG", "PYTHONPATH", _ENDPOINT, _MARKER)
         binding = {key: hashlib.sha256(daemon_env.get(key, "").encode()).hexdigest() for key in identity_keys}
@@ -880,6 +883,14 @@ def ensure_isolated_api(
                 raise IsolatedApiError("running isolated SkyPilot API has a different verified configuration; preserve its jobs before restarting")
             if record["environment_binding"] != binding or record.get("identity_files") != files:
                 raise IsolatedApiError("running isolated SkyPilot API has a different executing identity or changed credential configuration")
+            runtime_settings = {
+                setting: daemon_env[name]
+                for setting, name in _RUNTIME_SETTINGS.items()
+                if daemon_env.get(name)
+            }
+            if record.get("runtime_settings") != runtime_settings:
+                record["runtime_settings"] = runtime_settings
+                _write(root / "daemon.json", record)
         else:
             # No process with this marker exists; starting the same persistent
             # API database recovers controller/job identity, never submits again.

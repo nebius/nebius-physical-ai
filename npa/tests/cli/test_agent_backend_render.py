@@ -1872,7 +1872,10 @@ def test_workflow_execution_requires_and_uses_action_bound_confirmation(
     ]
     assert context_bound_commands
     assert all(
-        env == {"KUBECONFIG": "selected/existing-context/kubeconfig"}
+        env == {
+            "KUBECONFIG": "selected/existing-context/kubeconfig",
+            "NPA_SKYPILOT_PROJECT": "demo",
+        }
         for env in context_bound_commands
     )
     assert completed["submit_mode"] == "agent-live-infra-executing"
@@ -1938,6 +1941,72 @@ def test_agent_execution_skips_shared_controller_binding_for_isolated_state(
     )
 
     assert observed == [False]
+
+
+def test_agent_execution_binds_project_credentials_before_workflow_commands(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.orchestration.npa_workflow import submit_credentials
+
+    module = _import_rendered_backend(
+        monkeypatch,
+        tmp_path,
+        module_name="npa_rendered_project_scoped_workflow_backend",
+    )
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        module,
+        "_agent_workflow_context_env",
+        lambda _context: {"KUBECONFIG": "selected-kubeconfig"},
+    )
+    monkeypatch.setattr(
+        module,
+        "_agent_command_env",
+        lambda: {"NPA_SKYPILOT_ISOLATED_CONFIG_DIR": "/owned/agent-sky"},
+    )
+    monkeypatch.setattr(
+        submit_credentials,
+        "resolve_submit_credentials",
+        lambda **_kwargs: submit_credentials.SubmitCredentialContext(
+            endpoint_url="https://storage.test.invalid",
+            access_key_id="test-access",
+            secret_access_key="test-secret",
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "_execute_workflow_yaml",
+        lambda *_args, **kwargs: captured.update(kwargs) or {},
+    )
+    command_envs: list[dict[str, str]] = []
+    monkeypatch.setattr(
+        module,
+        "_run_agent_npa_json",
+        lambda *_args, extra_env=None, **_kwargs: command_envs.append(
+            dict(extra_env or {})
+        ) or {},
+    )
+
+    module._execute_agent_workflow_yaml(
+        "apiVersion: npa.workflow/v0.0.1\n",
+        run_id="project-bound-run",
+        project="demo",
+        kubernetes_context="selected-context",
+    )
+
+    captured["run_npa_json"](["workbench", "workflow", "submit"])
+
+    assert command_envs == [{
+        "KUBECONFIG": "selected-kubeconfig",
+        "NPA_SKYPILOT_PROJECT": "demo",
+        "AWS_ACCESS_KEY_ID": "test-access",
+        "AWS_SECRET_ACCESS_KEY": "test-secret",
+        "AWS_ENDPOINT_URL_S3": "https://storage.test.invalid",
+        "AWS_ENDPOINT_URL": "https://storage.test.invalid",
+        "NEBIUS_S3_ENDPOINT": "https://storage.test.invalid",
+        "NPA_STORAGE_ENDPOINT": "https://storage.test.invalid",
+        "S3_ENDPOINT_URL": "https://storage.test.invalid",
+    }]
 
 
 def test_workflow_execution_failure_observability_is_safe_and_actionable(

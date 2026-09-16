@@ -433,7 +433,7 @@ def test_same_path_mutated_kubeconfig_is_not_same_identity(local_runtime):
 
 @pytest.mark.parametrize("setting", [
     "AWS_ENDPOINT_URL_S3", "AWS_REGION", "NEBIUS_PROFILE", "NPA_SKYPILOT_PROJECT",
-    "NPA_S3_PREFIX", "NPA_S3_BUCKET", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
 ])
 def test_all_effective_provider_settings_checked_on_adoption(local_runtime, setting):
     api.ensure_isolated_api(**local_runtime)
@@ -443,6 +443,27 @@ def test_all_effective_provider_settings_checked_on_adoption(local_runtime, sett
         api.ensure_isolated_api(**local_runtime)
     assert _record(local_runtime) == original
     assert api._process(original)["pid"] == original["pid"]
+
+
+def test_run_scoped_storage_does_not_change_control_plane_identity(local_runtime):
+    local_runtime["environment"].update(
+        NPA_S3_BUCKET="first-task-bucket",
+        NPA_S3_PREFIX="first/task-prefix",
+    )
+    api.ensure_isolated_api(**local_runtime)
+    original = _record(local_runtime)
+    local_runtime["environment"].update(
+        NPA_S3_BUCKET="second-task-bucket",
+        NPA_S3_PREFIX="second/task-prefix",
+    )
+
+    assert api.ensure_isolated_api(**local_runtime)["healthy"]
+
+    current = _record(local_runtime)
+    assert current["pid"] == original["pid"]
+    assert current["environment_binding"] == original["environment_binding"]
+    assert current["runtime_settings"]["storage_bucket"] == "second-task-bucket"
+    assert current["runtime_settings"]["storage_prefix"] == "second/task-prefix"
 
 
 def test_surviving_queue_child_blocks_duplicate_server_then_owned_cleanup(local_runtime):

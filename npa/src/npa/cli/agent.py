@@ -3359,6 +3359,29 @@ def _agent_workflow_context_env(kubernetes_context: str) -> dict[str, str]:
     return dict(KUBECONFIG=str(path)) if path is not None else {{}}
 
 
+def _agent_workflow_submit_env(project: str, environment: dict) -> dict:
+    # Resolve one project identity before any workflow subcommand can create or
+    # adopt the Agent-owned SkyPilot API. Per-run bucket and prefix remain task
+    # configuration and are injected by the workflow runtime itself.
+    from npa.orchestration.npa_workflow.submit_credentials import (
+        STORAGE_ENDPOINT_ENV_NAMES,
+        resolve_submit_credentials,
+    )
+
+    credentials = resolve_submit_credentials(project=project, environ=environment)
+    submit_env = {{"NPA_SKYPILOT_PROJECT": project}}
+    for name, value in (
+        ("AWS_ACCESS_KEY_ID", credentials.access_key_id),
+        ("AWS_SECRET_ACCESS_KEY", credentials.secret_access_key),
+    ):
+        if value:
+            submit_env[name] = value
+    if credentials.endpoint_url:
+        for name in STORAGE_ENDPOINT_ENV_NAMES:
+            submit_env[name] = credentials.endpoint_url
+    return submit_env
+
+
 def _agent_cloud_mk8s_clusters(project: str = "") -> list[dict]:
     config = _load_agent_config_yaml()
     projects = config.get("projects")
@@ -4140,6 +4163,7 @@ def _execute_agent_workflow_yaml(
     # unrelated shared-controller owner before submit can reject a valid Agent
     # workflow with an ownership mismatch.
     agent_env = _agent_command_env()
+    command_env.update(_agent_workflow_submit_env(project, agent_env))
     bind_shared_controller = not bool(
         str(agent_env.get("NPA_SKYPILOT_ISOLATED_CONFIG_DIR") or "").strip()
     )
