@@ -128,6 +128,22 @@ def test_neutral_image_boundaries_and_locks_are_explicit() -> None:
     assert runtime["packages"]["torch"] == "2.7.1+cu128"
     assert runtime["packages"]["nvidia-cudnn-cu12"] == "9.7.1.26"
     assert runtime["artifact_hash_closure"] == "required-in-runtime-inventory"
+    entitlement = runtime["customer_entitlement"]
+    assert entitlement["schema"] == "npa.robomimic.customer-runtime-entitlement.v1"
+    assert entitlement["field_of_use"] == "noncommercial"
+    assert entitlement["maximum_validity_seconds"] == 86_400
+    assert entitlement["responsibilities"][-1] == "no-redistribution-grant"
+    assert [term["url"] for term in entitlement["terms"]] == [
+        "https://docs.nvidia.com/cuda/eula/index.html",
+        (
+            "https://www.nvidia.com/en-us/agreements/enterprise-software/"
+            "nvidia-software-license-agreement/"
+        ),
+        (
+            "https://docs.nvidia.com/deeplearning/cudnn/backend/latest/"
+            "reference/eula.html"
+        ),
+    ]
     for filename in (
         "debian-packages.lock",
         "REDISTRIBUTION.md",
@@ -140,7 +156,7 @@ def test_neutral_image_boundaries_and_locks_are_explicit() -> None:
         assert (IMAGE_ROOT / filename).is_file()
 
 
-def test_no_local_consent_proxy_exists() -> None:
+def test_no_unbound_boolean_consent_proxy_exists() -> None:
     combined = "\n".join(
         path.read_text(encoding="utf-8")
         for path in IMAGE_ROOT.iterdir()

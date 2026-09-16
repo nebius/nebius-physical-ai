@@ -384,6 +384,9 @@ def _robomimic_live_selectors(e2e_project: str | None) -> dict[str, str]:
         "runtime_inventory_sha256": os.environ.get(
             "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256", ""
         ).strip(),
+        "runtime_entitlement_file": os.environ.get(
+            "NPA_BYOF_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE", ""
+        ).strip(),
         "storage_endpoint": _robomimic_storage_endpoint(endpoint_candidates.pop()),
     }
     assert selectors["project"] and e2e_project == selectors["project"]
@@ -398,8 +401,11 @@ def _robomimic_live_selectors(e2e_project: str | None) -> dict[str, str]:
         "a manager-issued pre-populated runtime PVC is required"
     )
     assert re.fullmatch(r"[0-9a-f]{64}", selectors["runtime_inventory_sha256"]), (
-        "a manager-approved exact runtime inventory digest is required"
+        "an operator-selected exact runtime inventory digest is required"
     )
+    assert selectors["runtime_entitlement_file"] and Path(
+        selectors["runtime_entitlement_file"]
+    ).is_file(), "a customer-created runtime entitlement record is required"
     assert os.environ.get("NPA_E2E_MK8S_RESERVED_CAPACITY") == "1", (
         "the manager's STRICT reserved-capacity gate is required"
     )
@@ -415,6 +421,7 @@ def _robomimic_runner_command(
     output_root: str,
     run_id: str,
     profile_yaml: Path,
+    runtime_entitlement_file: str,
 ) -> list[str]:
     options = (
         ("--registry", registry),
@@ -433,6 +440,7 @@ def _robomimic_runner_command(
         ("--output-root", output_root),
         ("--wait-timeout", "-1"),
         ("--run-id", run_id),
+        ("--robomimic-runtime-entitlement-file", runtime_entitlement_file),
     )
     return [
         sys.executable,
@@ -448,8 +456,11 @@ def _materialize_robomimic_attested_profile(
     service_account: str,
     runtime_pvc: str,
     runtime_inventory_sha256: str,
+    runtime_entitlement_file: str,
+    runtime_entitlement_sha256: str,
+    customer_binding_sha256: str,
 ) -> Path:
-    """Bind the manager's STRICT gate into a run-local profile, never the repo."""
+    """Bind STRICT placement and customer entitlement into a run-local profile."""
 
     assert os.environ.get("NPA_E2E_MK8S_RESERVED_CAPACITY") == "1"
     source = resolve_byof_profile_path("byof-solution-smoke-robomimic-b200-gpu")
@@ -460,10 +471,19 @@ def _materialize_robomimic_attested_profile(
     assert task["envs"]["NPA_ROBOMIMIC_EXPECTED_NAMESPACE"] == ""
     assert task["envs"]["NPA_ROBOMIMIC_EXPECTED_SERVICE_ACCOUNT"] == ""
     assert task["envs"]["NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256"] == ""
+    assert task["envs"]["NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_SHA256"] == ""
+    assert task["envs"]["NPA_ROBOMIMIC_CUSTOMER_BINDING_SHA256"] == ""
     task["envs"]["NPA_ROBOMIMIC_STRICT_B200_ATTESTED"] = "1"
     task["envs"]["NPA_ROBOMIMIC_EXPECTED_NAMESPACE"] = namespace
     task["envs"]["NPA_ROBOMIMIC_EXPECTED_SERVICE_ACCOUNT"] = service_account
     task["envs"]["NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256"] = runtime_inventory_sha256
+    task["envs"]["NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_SHA256"] = (
+        runtime_entitlement_sha256
+    )
+    task["envs"]["NPA_ROBOMIMIC_CUSTOMER_BINDING_SHA256"] = customer_binding_sha256
+    task["file_mounts"]["/opt/npa-runtime-authorization/robomimic.json"] = (
+        runtime_entitlement_file
+    )
     task["config"]["kubernetes"]["pod_config"]["spec"]["serviceAccountName"] = (
         service_account
     )
@@ -958,6 +978,14 @@ def _invoke_robomimic_gate(
             service_account=service_account,
             runtime_pvc=selectors["runtime_pvc"],
             runtime_inventory_sha256=selectors["runtime_inventory_sha256"],
+            runtime_entitlement_file=selectors["runtime_entitlement_file"],
+            runtime_entitlement_sha256=hashlib.sha256(
+                Path(selectors["runtime_entitlement_file"]).read_bytes()
+            ).hexdigest(),
+            customer_binding_sha256=hashlib.sha256(
+                b"npa.robomimic.customer-binding.v1\0"
+                + selectors["project"].encode("utf-8")
+            ).hexdigest(),
         )
         cmd = _robomimic_runner_command(
             config,
@@ -966,6 +994,7 @@ def _invoke_robomimic_gate(
             f"s3://{bucket}/oss-solutions/robomimic",
             run_id,
             profile_yaml,
+            selectors["runtime_entitlement_file"],
         )
         env = _robomimic_target_env(selectors["project"], selectors, cmd)
         with _robomimic_observer_rbac(
@@ -1061,7 +1090,12 @@ def _assert_robomimic_runtime(
     external_runtime = artifact["external_runtime"]
     assert external_runtime["prepopulated"] is True
     assert external_runtime["read_only"] is True
-    assert external_runtime["manager_inventory_digest_matched"] is True
+    assert external_runtime["runtime_manifest_digest_matched"] is True
+    entitlement = artifact["customer_runtime_entitlement"]
+    assert entitlement["run_binding_matched"] is True
+    assert entitlement["customer_binding_matched"] is True
+    assert entitlement["field_of_use"] == "noncommercial"
+    assert entitlement["redistribution_granted"] is False
     assert external_runtime["atomic_private_snapshot_published"] is True
     assert external_runtime["snapshot_write_bits_absent"] is True
     assert re.fullmatch(r"[0-9a-f]{64}", external_runtime["lock_sha256"])

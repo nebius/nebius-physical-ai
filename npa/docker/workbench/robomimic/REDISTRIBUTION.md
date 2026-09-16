@@ -20,20 +20,24 @@ resulting layer, complete license/security/SBOM/provenance checks, validate the
 private digest, and prove anonymous pull of that identical digest. None of
 those claims is established by the checked-in candidate.
 
-The CUDA-capable training runtime is a separate boundary. An operator-supplied,
-pre-populated, read-only runtime volume may be considered only after the applicable
-CUDA/cuDNN distribution, use, and service-rights decision is recorded by an
-authorized Nebius/operator representative, with NVIDIA guidance when needed. A
-runtime fetch, credential, private registry, image selector, or environment flag
-does not grant that permission.
+The CUDA-capable training runtime is a separate boundary. Before an
+operator-supplied, pre-populated, read-only runtime volume is accessed, the
+customer must explicitly accept the exact official CUDA/cuDNN terms for its
+bounded run. The owner-only record binds the customer, run, noncommercial field
+of use, runtime lock, independently selected inventory digest, terms, and
+expiry. A manager signature, runtime fetch, credential, private registry, image
+selector, or environment flag does not grant that permission. The acceptance
+action requires the exact digest emitted by the preceding notice action.
 
-The runtime volume's own inventory is not self-attestation. The manager must
+The runtime volume's own inventory is not self-attestation. The operator must
 select its exact inventory SHA-256 independently, and the bootstrap must match
-that hash while observing the mount read-only. Execution copies only declared
+that hash and the customer entitlement while observing the mount read-only.
+Execution copies only declared
 objects into a private staging tree, verifies the copy again, removes write
 bits, and atomically publishes that run-local snapshot before invoking its
 interpreter. Because the runtime UID owns this copy, absent write bits are
 hygiene rather than an enforced read-only boundary. The independently selected
 inventory hash and observed read-only source mount supply byte identity; the
-private snapshot supplies point-in-time race resistance only. Neither grants a
-license, entitlement, redistribution, or service right.
+private snapshot supplies point-in-time race resistance only. The customer
+record authorizes only the bound use under the listed terms; none of these
+mechanisms grants redistribution, publication, or broader service rights.

@@ -165,8 +165,9 @@ source and 40 hash-locked non-CUDA dependencies only. CUDA/PyTorch is an
 externally prepared exact-inventory read-only runtime; the official HDF5 is an
 immutable runtime fetch; pretrained weights are unnecessary. No runtime/data
 bytes were fetched, no image was built or published, and no B200 result is
-claimed. An authoritative CUDA/cuDNN runtime-use decision plus separate manager
-transaction authorization must precede the hard gate.
+claimed. A customer-created, unexpired entitlement bound to the noncommercial
+run, exact runtime lock and inventory must precede runtime access; separate
+image, infrastructure, dataset, and B200 transaction gates still apply.
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |

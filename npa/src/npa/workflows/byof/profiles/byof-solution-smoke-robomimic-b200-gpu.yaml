@@ -3,6 +3,10 @@ name: byof-solution-smoke-robomimic-b200-gpu
 execution: serial
 ---
 name: byof-solution-smoke-robomimic-b200-gpu
+file_mounts:
+  # The dedicated host gate replaces this inert path with the exact owner-only
+  # customer record after validating its run, manifest, terms, and expiry.
+  /opt/npa-runtime-authorization/robomimic.json: "<customer-runtime-entitlement-file>"
 resources:
   cloud: kubernetes
   accelerators: B200:1
@@ -50,9 +54,13 @@ envs:
   BYOF_SMOKE_ARTIFACT_NAME: ""
   BYOF_IMAGE: ""
   NPA_ROBOMIMIC_RUNTIME_ROOT: "/opt/npa-runtime/robomimic"
-  # Exact identity only, never legal acceptance. The authorized live harness
-  # fills the manager-approved digest of inventory.json in its run-local copy.
+  # Exact identity only. The authorized live harness fills the
+  # operator-selected digest of inventory.json in its run-local copy.
   NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256: ""
+  NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE: "/opt/npa-runtime-authorization/robomimic.json"
+  NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_SHA256: ""
+  # This is a one-way digest of the customer identity, never the identity.
+  NPA_ROBOMIMIC_CUSTOMER_BINDING_SHA256: ""
   # The authorized live harness materializes this boolean in a run-local copy
   # only after checking the manager's STRICT-capacity gate. The private
   # reservation identity stays outside rendered task YAML and repo artifacts.

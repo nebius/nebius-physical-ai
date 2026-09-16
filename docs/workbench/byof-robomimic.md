@@ -18,13 +18,21 @@ anonymous pull proof, runtime-use approval, or B200 result.
 | Baked runtime | Digest-pinned `python:3.11.16-slim-bookworm` plus exactly 40 hash-locked non-CUDA Python distributions for the headless low-dimensional gate. | Candidate only. It must contain no torch, torchvision, Triton, NVIDIA distribution, CUDA, cuDNN, or NCCL payload. Base and dependency licenses remain subject to built-byte review; PyTorch source licensing is not closure for wheel/base binary dependencies. |
 | Weights | No pretrained weights are required or allowed in the image. | The four-step smoke produces its own run-scoped checkpoint only after authorization. Scanner rules reject common weight/checkpoint paths in every image layer. |
 | Data and assets | Official Lift proficient-human low-dimensional HDF5 at `robomimic/robomimic_datasets@74fa018461f479cd9fd15b924a16103012096203`, path `v1.5/lift/ph/low_dim_v15.hdf5`. | Runtime fetch only after all gates. Accept only SHA-256 `2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540` and 21,084,088 bytes. Delete a mismatching partial before opening it. No simulator assets or rendering. |
-| Runtime cache | A pre-populated operator volume mounted read-only at `/opt/npa-runtime/robomimic`. | The image cannot populate it. The verifier requires the manager-approved `inventory.json` SHA-256 plus the exact lock, package map, ABI, source revision, complete regular-file/symlink inventory, hashes, sizes, and executable interpreter. Missing, corrupt, extra, escaping, or mismatched objects refuse with exit 78 without mutation. Execution copies only declared objects into a private staging tree, verifies that copy, removes its write bits, and atomically renames it before invoking Python, so later changes to the external volume cannot change the point-in-time copy. Write-bit removal is hygiene, not a read-only isolation claim: the runtime UID owns the snapshot and can restore them. The observed source PVC remains the authoritative read-only boundary. |
+| Runtime cache | A pre-populated operator volume mounted read-only at `/opt/npa-runtime/robomimic`. | The image cannot populate it. Before access, the verifier requires an unexpired customer-created entitlement bound to the customer, run, exact runtime lock, and operator-selected `inventory.json` SHA-256. It then verifies the exact lock, package map, ABI, source revision, complete regular-file/symlink inventory, hashes, sizes, and executable interpreter. Missing, declined, stale, wrong-run, wrong-manifest, corrupt, extra, escaping, or mismatched inputs refuse with exit 78 without runtime or dataset mutation. Execution copies only declared objects into a private staging tree, verifies that copy, removes its write bits, and atomically renames it before invoking Python, so later changes to the external volume cannot change the point-in-time copy. Write-bit removal is hygiene, not a read-only isolation claim: the runtime UID owns the snapshot and can restore them. The observed source PVC remains the authoritative read-only boundary. |
 | Outputs | `/workspace/byof-runs/<run-id>` is separate from the input emptyDir and runtime PVC. | A later authorized run may write the checkpoint, config, logs, summary, and `robomimic-smoke.json` to its run-owned output prefix. Upload preflights regular single-link files, allows at most 1 GiB per file and 2 GiB in aggregate, and streams in at most 1 MiB chunks. Image and cache scans must prove output absence. Output rights remain a separate operator responsibility. |
 
 Runtime fetching changes delivery, not permission. A credential, environment
-flag, private registry, click-through proxy, or pre-populated cache is not
+flag, private registry, manager signature, or pre-populated cache is not
 evidence that restricted bytes may be used, redistributed, or offered as a
-service. Phase A deliberately adds no local consent proxy.
+service. The dedicated runner instead offers `notice`, `accept`, `decline`, and
+`resume` actions. `accept` is an explicit customer action that writes an
+owner-only, value-free record bound to that customer, run, runtime lock,
+inventory digest, noncommercial field of use, exact official terms, and an
+expiry of at most 24 hours. It never accepts vendor terms on the customer's
+behalf and never grants redistribution, publication, derivative, service, or
+output rights beyond those terms. Recording acceptance also requires the exact
+notice digest returned by the immediately preceding `notice` action, so an old
+or altered term set cannot be accepted silently.
 
 ## Neutral candidate
 
@@ -56,8 +64,10 @@ SkyPilot Kubernetes bootstrap contract.
 deferred gate. It is not a downloader and its version list is not an artifact
 hash closure. The external runtime inventory must supply that closure for every
 installed file before consumption, and its exact document hash must be selected
-by the manager outside the runtime volume. That digest is identity, never terms
-acceptance. `runtime_bootstrap.sh` exposes only
+by the operator outside the runtime volume. The lock also records the exact
+customer notice contract and official term URLs. The inventory digest is
+identity, never terms acceptance; the separate customer record must bind that
+identity before the runtime is inspected or executed. `runtime_bootstrap.sh` exposes only
 `verify`, `exec`, and `assert-refusal`; it has no ensure, fetch, install, sync,
 warm, or network path. `exec` verifies the read-only source, constructs a
 run-private snapshot from only declared objects, independently verifies the
@@ -90,13 +100,20 @@ build-time runtime or dataset population, and invented acceptance variables.
 Unreadable or unsupported images fail closed. This describes a future gate; it
 is not a claim that built bytes were scanned in Phase A.
 
-## CUDA and cuDNN decision
+## CUDA and cuDNN customer entitlement
 
-The dependent capability remains private and deferred. An authorized
-Nebius/operator representative must record the exact CUDA/cuDNN distribution,
-use, and service-rights decision. When authoritative NVIDIA interpretation is
-needed, use NVIDIA's official license contact. Only then may the manager issue a
-separate private staging/runtime transaction authorization.
+The dependent capability remains private and live validation remains deferred,
+but an avoidable manager-signature hold is not part of the runtime-use gate.
+For this bounded noncommercial field of use, the customer reviews the exact
+[CUDA Toolkit EULA](https://docs.nvidia.com/cuda/eula/index.html),
+[NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/),
+and [cuDNN Software License Agreement](https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html).
+The runner presents those URLs and the customer's runtime, derivative, service,
+output, and non-redistribution responsibilities before any governed fetch,
+install, cache mutation, image pull, dataset fetch, or GPU action. Decline and
+missing, stale, wrong-customer, wrong-run, wrong-lock, or wrong-inventory records
+fail closed without starting those actions. When authoritative interpretation
+is needed, the customer must use NVIDIA's official license contact.
 
 The preferred sequence remains:
 
@@ -111,14 +128,13 @@ The first option is not currently closed. CUDA and cuDNN licenses identify some
 redistributable runtime components, but that does not prove every byte in the
 PyTorch/NVIDIA wheels is redistributable, excludes developer/static/header
 payloads, satisfies notices/pass-through duties, or authorizes anonymous
-distribution and downstream service use. The runner therefore retains a Phase A
-refusal for the exact registered source revision and for every recognized
-robomimic label, repository, image, capability, and smoke identity. Generic BYOF
-remains an operator-controlled arbitrary-source facility, not a content-aware
-license firewall. When the manager eventually records an accepted immutable
-image, the runner and workflow gate also recognize that digest under a renamed
-repository reference. This is defense in depth, not permission to relabel
-equivalent unrecognized bytes around the rights decision.
+distribution and downstream service use. Customer runtime entitlement closes
+only the customer's bound use decision; it does not close public-image or
+service redistribution. Generic BYOF remains an operator-controlled
+arbitrary-source facility, not a content-aware license firewall. The runner and
+workflow gate recognize the exact accepted private image digest under a renamed
+repository reference, so relabeling cannot bypass the customer record or other
+technical gates.
 
 Official sources for the later human/vendor decision include the NVIDIA CUDA
 Toolkit EULA, cuDNN Software License Agreement, CUDA container license, PyTorch
@@ -128,7 +144,8 @@ before any transaction; repository prose is not the decision.
 
 ## Deferred exact-digest hard gate
 
-After legal and transaction authorization, a future manager-approved stage must:
+After a valid customer entitlement and separate transaction authorization, the
+private exact-digest stage must:
 
 1. Build the reviewed neutral image under a full repository SHA without
    downloading runtime/data payloads into a layer.

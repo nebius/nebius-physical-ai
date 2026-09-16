@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "84de8aa4b6c14fce5e688c5d7e776cb548b19ea42415624d93dc5a04f040c4bf",
+  "workflow_sha256": "93112d026d421f5fba6cd6ee6ecee20f8bf35a5b81beacf6abb4017638159415",
   "planning": {
     "validation": {
       "status": "verified",
@@ -39,10 +39,11 @@
     },
     "credentials": {
       "status": "blocked",
-      "reason": "A credential, environment flag, private registry, runtime fetch, or click-through proxy is not legal acceptance. An authorized Nebius/operator representative must record the applicable CUDA/cuDNN distribution, use, and service-rights decision before a separate manager transaction authorization.",
+      "reason": "The runner now presents exact official CUDA/cuDNN terms and accepts only a customer-created, unexpired record bound to the customer, run, noncommercial field of use, exact runtime lock and inventory. No such live-run record exists in this static readiness file; credentials, manager signatures, environment flags, private registries, and runtime fetches are not substitutes.",
       "evidence": [
-        "runtime bootstrap contains no acceptance proxy",
-        "production runner refuses the exact registered source revision and every recognized robomimic identity during Phase A"
+        "notice, accept, decline, and resume are customer-controlled runner actions",
+        "missing, declined, stale, wrong-customer, wrong-run, wrong-lock, or wrong-inventory records refuse before external action",
+        "the record grants no redistribution or publication right"
       ]
     },
     "source_image": {
@@ -56,10 +57,10 @@
     },
     "target_runtime": {
       "status": "blocked",
-      "reason": "The exact-inventory read-only runtime contract exists only as code. No runtime bytes or cache were populated, and the applicable runtime-use decision and B200 authorization remain absent.",
+      "reason": "The exact-inventory read-only runtime and customer-entitlement contracts exist only as code. No runtime bytes or cache were populated, no run-bound customer record was created, and B200 authorization remains absent.",
       "evidence": [
         "profile requires one B200 and a read-only external runtime PVC",
-        "missing or mismatched manager-selected runtime inventory exits 78 before workload execution",
+        "missing or mismatched customer entitlement or operator-selected runtime inventory exits 78 before workload execution",
         "execution uses an atomically published independently reverified run-private snapshot",
         "no B200 or live capability claim is made"
       ]

@@ -423,9 +423,10 @@ historical evidence.
   hash-locked non-CUDA dependencies on a digest-pinned Python base. PyTorch,
   torchvision, Triton, NVIDIA CUDA/cuDNN/NCCL distributions, weights, official
   Lift PH data, populated runtime cache, credentials, and outputs are excluded.
-  The CUDA runtime is a separate exact-inventory read-only operator mount whose
-  use remains deferred pending an authoritative rights decision and manager
-  transaction authorization. No accepted digest, built-byte scan, SBOM,
+  The CUDA runtime is a separate exact-inventory read-only operator mount. Its
+  access requires a customer-created record bound to the customer, run, exact
+  runtime lock and inventory, official terms, and expiry; that record does not
+  grant redistribution or publication. No accepted digest, built-byte scan, SBOM,
   provenance, private B200 result, anonymous pull proof, or public availability
   is claimed; `NEUTRAL_UNBUILT_CANDIDATE_TOOLS` and the composed
   `PUBLICATION_QUARANTINE_TOOLS` mechanically preserve quarantine. Its packaging

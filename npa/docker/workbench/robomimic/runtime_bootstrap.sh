@@ -5,12 +5,30 @@ readonly runtime_root="${NPA_ROBOMIMIC_RUNTIME_ROOT:-/opt/npa-runtime/robomimic}
 readonly verifier="/opt/npa/robomimic/verify_image.py"
 readonly runtime_lock="/opt/npa/robomimic/runtime-requirements.lock"
 readonly expected_inventory_sha256="${NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256:-}"
+readonly entitlement_file="${NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE:-}"
+readonly expected_entitlement_sha256="${NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_SHA256:-}"
+readonly expected_customer_binding_sha256="${NPA_ROBOMIMIC_CUSTOMER_BINDING_SHA256:-}"
+
+verify_entitlement() {
+  if [[ -z "${entitlement_file}" ]]; then
+    echo "NPA_ROBOMIMIC_RUNTIME_REFUSED: customer runtime entitlement file is required" >&2
+    return 78
+  fi
+  /usr/local/bin/python3 "${verifier}" entitlement \
+    --entitlement "${entitlement_file}" \
+    --runtime-lock "${runtime_lock}" \
+    --expected-entitlement-sha256 "${expected_entitlement_sha256}" \
+    --expected-customer-binding-sha256 "${expected_customer_binding_sha256}" \
+    --expected-run-id "${NPA_BYOF_RUN_ID:-}" \
+    --expected-inventory-sha256 "${expected_inventory_sha256}"
+}
 
 verify_runtime() {
   if [[ ! "${expected_inventory_sha256}" =~ ^[0-9a-f]{64}$ ]]; then
-    echo "NPA_ROBOMIMIC_RUNTIME_REFUSED: manager-approved runtime inventory digest is required" >&2
+    echo "NPA_ROBOMIMIC_RUNTIME_REFUSED: operator-selected runtime inventory digest is required" >&2
     return 78
   fi
+  verify_entitlement >/dev/null
   /usr/local/bin/python3 "${verifier}" runtime \
     --runtime-root "${runtime_root}" \
     --expected-inventory-sha256 "${expected_inventory_sha256}"
@@ -22,6 +40,7 @@ case "${1:-}" in
     ;;
   exec)
     shift
+    verify_entitlement >/dev/null
     snapshot_parent=""
     child_pid=""
     pending_signal=""

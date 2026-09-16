@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -73,6 +74,31 @@ ROBOMIMIC_PROFILE = (
     / "profiles"
     / "byof-solution-smoke-robomimic-b200-gpu.yaml"
 )
+ROBOMIMIC_RUNTIME_LOCK = (
+    SCRIPT_DIR.parent / "docker" / "workbench" / "robomimic" / "runtime-requirements.lock"
+)
+ROBOMIMIC_ENTITLEMENT_TARGET = "/opt/npa-runtime-authorization/robomimic.json"
+ROBOMIMIC_ENTITLEMENT_MAX_BYTES = 16 * 1024
+ROBOMIMIC_ENTITLEMENT_TERMS = [
+    {
+        "name": "NVIDIA CUDA Toolkit EULA",
+        "url": "https://docs.nvidia.com/cuda/eula/index.html",
+    },
+    {
+        "name": "NVIDIA Software License Agreement",
+        "url": (
+            "https://www.nvidia.com/en-us/agreements/enterprise-software/"
+            "nvidia-software-license-agreement/"
+        ),
+    },
+    {
+        "name": "NVIDIA cuDNN Software License Agreement",
+        "url": (
+            "https://docs.nvidia.com/deeplearning/cudnn/backend/latest/"
+            "reference/eula.html"
+        ),
+    },
+]
 
 DEFAULT_REPO_URL = "https://github.com/LightwheelAI/leisaac.git"
 DEFAULT_REPO_REF = "main"
@@ -201,12 +227,321 @@ def _require_robomimic_safe_run_id(run_id: str) -> None:
         )
 
 
+def _robomimic_customer_binding_sha256(customer_identity: str) -> str:
+    identity = customer_identity.strip()
+    if not identity:
+        raise ValueError("robomimic customer identity is required")
+    return hashlib.sha256(
+        b"npa.robomimic.customer-binding.v1\0" + identity.encode("utf-8")
+    ).hexdigest()
+
+
+def _robomimic_runtime_lock() -> tuple[dict[str, Any], str]:
+    raw = ROBOMIMIC_RUNTIME_LOCK.read_bytes()
+    lock = json.loads(raw)
+    if not isinstance(lock, dict):
+        raise ValueError("robomimic runtime lock is invalid")
+    contract = lock.get("customer_entitlement")
+    if not isinstance(contract, dict) or set(contract) != {
+        "schema",
+        "field_of_use",
+        "maximum_validity_seconds",
+        "responsibilities",
+        "terms",
+    }:
+        raise ValueError("robomimic customer entitlement contract is invalid")
+    if (
+        contract.get("schema")
+        != "npa.robomimic.customer-runtime-entitlement.v1"
+        or contract.get("field_of_use") != "noncommercial"
+        or contract.get("maximum_validity_seconds") != 86_400
+        or contract.get("responsibilities")
+        != [
+            "runtime-use",
+            "derivative-use",
+            "service-use",
+            "output-use",
+            "no-redistribution-grant",
+        ]
+    ):
+        raise ValueError("robomimic customer entitlement contract is invalid")
+    terms = contract.get("terms")
+    if terms != ROBOMIMIC_ENTITLEMENT_TERMS:
+        raise ValueError("robomimic customer entitlement terms are invalid")
+    return lock, hashlib.sha256(raw).hexdigest()
+
+
+def _robomimic_entitlement_notice_sha256(
+    *, lock: dict[str, Any], lock_sha256: str
+) -> str:
+    contract = lock["customer_entitlement"]
+    notice_identity = {
+        "schema": contract["schema"],
+        "runtime_id": lock["runtime_id"],
+        "runtime_lock_sha256": lock_sha256,
+        "field_of_use": contract["field_of_use"],
+        "terms": contract["terms"],
+        "customer_responsibilities": contract["responsibilities"],
+    }
+    return hashlib.sha256(
+        json.dumps(
+            notice_identity, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _robomimic_utc_timestamp(value: str, *, field: str) -> datetime:
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"robomimic entitlement {field} is invalid") from exc
+
+
+def _read_robomimic_entitlement(path: Path) -> tuple[dict[str, Any], bytes]:
+    flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise ValueError("robomimic customer entitlement file is unavailable") from exc
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_uid != os.geteuid()
+            or opened.st_mode & 0o077
+        ):
+            raise ValueError(
+                "robomimic customer entitlement must be an owner-only regular file"
+            )
+        if opened.st_size > ROBOMIMIC_ENTITLEMENT_MAX_BYTES:
+            raise ValueError("robomimic customer entitlement exceeds its byte limit")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            raw = handle.read(ROBOMIMIC_ENTITLEMENT_MAX_BYTES + 1)
+        closed = os.fstat(descriptor)
+        if (
+            len(raw) != opened.st_size
+            or closed.st_size != opened.st_size
+            or closed.st_dev != opened.st_dev
+            or closed.st_ino != opened.st_ino
+            or closed.st_nlink != 1
+        ):
+            raise ValueError("robomimic customer entitlement changed while read")
+    finally:
+        os.close(descriptor)
+    try:
+        value = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("robomimic customer entitlement is invalid JSON") from exc
+    if not isinstance(value, dict):
+        raise ValueError("robomimic customer entitlement must be a JSON object")
+    return value, raw
+
+
+def _verify_robomimic_entitlement(
+    *,
+    path: Path,
+    customer_identity: str,
+    run_id: str,
+    runtime_inventory_sha256: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    record, raw = _read_robomimic_entitlement(path)
+    lock, lock_sha256 = _robomimic_runtime_lock()
+    contract = lock["customer_entitlement"]
+    expected = {
+        "schema": contract["schema"],
+        "decision": "accepted",
+        "customer_binding_sha256": _robomimic_customer_binding_sha256(
+            customer_identity
+        ),
+        "run_id": run_id,
+        "source_revision": lock["source_revision"],
+        "runtime_id": lock["runtime_id"],
+        "runtime_manifest_sha256": runtime_inventory_sha256,
+        "runtime_lock_sha256": lock_sha256,
+        "field_of_use": contract["field_of_use"],
+        "terms": contract["terms"],
+        "customer_responsibilities": contract["responsibilities"],
+        "notice_sha256": _robomimic_entitlement_notice_sha256(
+            lock=lock, lock_sha256=lock_sha256
+        ),
+    }
+    expected_keys = set(expected) | {"accepted_at", "expires_at"}
+    if set(record) != expected_keys:
+        raise ValueError("robomimic customer entitlement fields are invalid")
+    mismatched = sorted(
+        key for key, expected_value in expected.items() if record.get(key) != expected_value
+    )
+    if mismatched:
+        raise ValueError(
+            "robomimic customer entitlement binding mismatch: " + ", ".join(mismatched)
+        )
+    accepted_at = _robomimic_utc_timestamp(record["accepted_at"], field="accepted_at")
+    expires_at = _robomimic_utc_timestamp(record["expires_at"], field="expires_at")
+    observed_now = now or datetime.now(timezone.utc)
+    if accepted_at > observed_now:
+        raise ValueError("robomimic customer entitlement acceptance is in the future")
+    validity_seconds = int((expires_at - accepted_at).total_seconds())
+    if validity_seconds <= 0 or validity_seconds > contract["maximum_validity_seconds"]:
+        raise ValueError("robomimic customer entitlement validity is out of bounds")
+    if observed_now >= expires_at:
+        raise ValueError("robomimic customer entitlement has expired")
+    return {
+        "record_sha256": hashlib.sha256(raw).hexdigest(),
+        "customer_binding_sha256": expected["customer_binding_sha256"],
+        "expires_at": record["expires_at"],
+    }
+
+
+def _robomimic_entitlement_notice() -> dict[str, Any]:
+    lock, lock_sha256 = _robomimic_runtime_lock()
+    contract = lock["customer_entitlement"]
+    return {
+        "schema": "npa.robomimic.customer-runtime-entitlement-notice.v1",
+        "runtime_id": lock["runtime_id"],
+        "runtime_lock_sha256": lock_sha256,
+        "field_of_use": contract["field_of_use"],
+        "terms": contract["terms"],
+        "customer_responsibilities": contract["responsibilities"],
+        "notice_sha256": _robomimic_entitlement_notice_sha256(
+            lock=lock, lock_sha256=lock_sha256
+        ),
+        "notice": (
+            "The customer must determine that its use of the exact runtime is "
+            "permitted by these terms. Acceptance authorizes only this customer's "
+            "bound run and does not grant redistribution, publication, service, "
+            "derivative, or output rights beyond the applicable terms."
+        ),
+        "actions": ["accept", "decline", "resume"],
+    }
+
+
+def _write_robomimic_entitlement(path: Path, record: dict[str, Any]) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    raw = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    if len(raw) > ROBOMIMIC_ENTITLEMENT_MAX_BYTES:
+        raise ValueError("robomimic customer entitlement exceeds its byte limit")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb", closefd=False) as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.close(descriptor)
+        descriptor = -1
+        try:
+            os.link(temporary, path)
+        except FileExistsError as exc:
+            raise ValueError(
+                "robomimic customer entitlement already exists; refuse overwrite"
+            ) from exc
+        os.unlink(temporary)
+        temporary = Path()
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if temporary != Path():
+            temporary.unlink(missing_ok=True)
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _handle_robomimic_entitlement_action(
+    args: argparse.Namespace,
+) -> tuple[int, dict[str, Any]] | None:
+    action = args.robomimic_runtime_entitlement_action
+    notice = _robomimic_entitlement_notice()
+    if action == "notice":
+        return 64, {"status": "notice", **notice, "external_action_started": False}
+    if action == "decline":
+        return 64, {
+            "status": "declined",
+            **notice,
+            "external_action_started": False,
+        }
+    entitlement_value = args.robomimic_runtime_entitlement_file.strip()
+    if not entitlement_value:
+        raise ValueError("robomimic customer runtime entitlement file is required")
+    entitlement_path = Path(os.path.abspath(Path(entitlement_value).expanduser()))
+    runtime_inventory = os.environ.get(
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256", ""
+    ).strip()
+    if re.fullmatch(r"[0-9a-f]{64}", runtime_inventory) is None:
+        raise ValueError("robomimic exact runtime inventory digest is required")
+    _require_robomimic_safe_run_id(args.run_id)
+    if action == "accept":
+        if not args.robomimic_runtime_entitlement_expires_at.strip():
+            raise ValueError("robomimic customer entitlement expiry is required")
+        accepted_at = datetime.now(timezone.utc).replace(microsecond=0)
+        expires_at = _robomimic_utc_timestamp(
+            args.robomimic_runtime_entitlement_expires_at.strip(), field="expires_at"
+        )
+        lock, lock_sha256 = _robomimic_runtime_lock()
+        contract = lock["customer_entitlement"]
+        notice_sha256 = _robomimic_entitlement_notice_sha256(
+            lock=lock, lock_sha256=lock_sha256
+        )
+        if args.robomimic_runtime_entitlement_notice_sha256 != notice_sha256:
+            raise ValueError(
+                "robomimic customer must present the exact current notice digest"
+            )
+        validity_seconds = int((expires_at - accepted_at).total_seconds())
+        if validity_seconds <= 0 or validity_seconds > contract["maximum_validity_seconds"]:
+            raise ValueError("robomimic customer entitlement validity is out of bounds")
+        record = {
+            "schema": contract["schema"],
+            "decision": "accepted",
+            "customer_binding_sha256": _robomimic_customer_binding_sha256(
+                args.project
+            ),
+            "run_id": args.run_id,
+            "source_revision": lock["source_revision"],
+            "runtime_id": lock["runtime_id"],
+            "runtime_manifest_sha256": runtime_inventory,
+            "runtime_lock_sha256": lock_sha256,
+            "field_of_use": contract["field_of_use"],
+            "terms": contract["terms"],
+            "customer_responsibilities": contract["responsibilities"],
+            "notice_sha256": notice_sha256,
+            "accepted_at": accepted_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expires_at": expires_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        record_sha256 = _write_robomimic_entitlement(entitlement_path, record)
+        return 0, {
+            "status": "entitlement-recorded",
+            **notice,
+            "record_sha256": record_sha256,
+            "run_binding_recorded": True,
+            "runtime_manifest_binding_recorded": True,
+            "external_action_started": False,
+        }
+    proof = _verify_robomimic_entitlement(
+        path=entitlement_path,
+        customer_identity=args.project,
+        run_id=args.run_id,
+        runtime_inventory_sha256=runtime_inventory,
+    )
+    args._robomimic_runtime_entitlement_file = str(entitlement_path)
+    args._robomimic_runtime_entitlement_sha256 = proof["record_sha256"]
+    args._robomimic_customer_binding_sha256 = proof["customer_binding_sha256"]
+    return None
+
+
 def _robomimic_expected_profile(
     *,
     run_id: str,
     namespace: str,
     runtime_pvc: str,
     runtime_inventory_sha256: str,
+    entitlement_file: str,
+    entitlement_sha256: str,
+    customer_binding_sha256: str,
 ) -> list[dict[str, Any]]:
     documents = list(yaml.safe_load_all(ROBOMIMIC_PROFILE.read_text(encoding="utf-8")))
     if len(documents) != 2 or not all(isinstance(doc, dict) for doc in documents):
@@ -217,6 +552,11 @@ def _robomimic_expected_profile(
     task["envs"]["NPA_ROBOMIMIC_EXPECTED_NAMESPACE"] = namespace
     task["envs"]["NPA_ROBOMIMIC_EXPECTED_SERVICE_ACCOUNT"] = service_account
     task["envs"]["NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256"] = runtime_inventory_sha256
+    task["envs"]["NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_SHA256"] = entitlement_sha256
+    task["envs"]["NPA_ROBOMIMIC_CUSTOMER_BINDING_SHA256"] = (
+        customer_binding_sha256
+    )
+    task["file_mounts"][ROBOMIMIC_ENTITLEMENT_TARGET] = entitlement_file
     task["config"]["kubernetes"]["pod_config"]["spec"]["serviceAccountName"] = (
         service_account
     )
@@ -234,6 +574,9 @@ def _require_robomimic_profile(
     namespace: str,
     runtime_pvc: str,
     runtime_inventory_sha256: str,
+    entitlement_file: str,
+    entitlement_sha256: str,
+    customer_binding_sha256: str,
 ) -> None:
     try:
         profile = resolve_byof_profile_path(args.yaml)
@@ -250,6 +593,9 @@ def _require_robomimic_profile(
         namespace=namespace,
         runtime_pvc=runtime_pvc,
         runtime_inventory_sha256=runtime_inventory_sha256,
+        entitlement_file=entitlement_file,
+        entitlement_sha256=entitlement_sha256,
+        customer_binding_sha256=customer_binding_sha256,
     )
     template = list(yaml.safe_load_all(ROBOMIMIC_PROFILE.read_text(encoding="utf-8")))
     if observed not in (expected, template):
@@ -262,7 +608,7 @@ def _require_robomimic_profile(
 def _materialize_robomimic_profile_for_launch(
     destination: Path, *, args: argparse.Namespace
 ) -> Path:
-    """Render the reviewed template with manager-issued execution identities."""
+    """Render the reviewed template with run-bound execution identities."""
 
     documents = _robomimic_expected_profile(
         run_id=args.run_id,
@@ -271,6 +617,9 @@ def _materialize_robomimic_profile_for_launch(
         runtime_inventory_sha256=os.environ[
             "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256"
         ],
+        entitlement_file=args._robomimic_runtime_entitlement_file,
+        entitlement_sha256=args._robomimic_runtime_entitlement_sha256,
+        customer_binding_sha256=args._robomimic_customer_binding_sha256,
     )
     destination.write_text(
         yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8"
@@ -293,7 +642,7 @@ def _require_robomimic_immutable_inputs(
     )
     if accepted_pattern.fullmatch(accepted_image) is None:
         raise ValueError(
-            "manager-published robomimic image must be an exact private npa-robomimic digest"
+            "operator-selected robomimic image must be an exact private npa-robomimic digest"
         )
     values = {
         "repository": (args.repo_url, ROBOMIMIC_REPO_URL),
@@ -316,7 +665,7 @@ def _require_robomimic_immutable_inputs(
         raise ValueError("robomimic forbids skip-push, skip-run, and no-cleanup")
     if not args.skip_build:
         raise ValueError(
-            "robomimic requires skip-build with the exact manager-published candidate digest"
+            "robomimic requires skip-build with the exact operator-selected candidate digest"
         )
     hashes = {
         "build command": hashlib.sha256(args.build_command.encode()).hexdigest(),
@@ -335,17 +684,20 @@ def _require_robomimic_immutable_inputs(
         namespace=namespace,
         runtime_pvc=runtime_pvc,
         runtime_inventory_sha256=runtime_inventory_sha256,
+        entitlement_file=args._robomimic_runtime_entitlement_file,
+        entitlement_sha256=args._robomimic_runtime_entitlement_sha256,
+        customer_binding_sha256=args._robomimic_customer_binding_sha256,
     )
 
 
-def _require_robomimic_manager_context(
+def _require_robomimic_execution_context(
     args: argparse.Namespace, *, registry: str, image: str, base_profile: str
 ) -> None:
-    """Refuse the governed robomimic run before pulling any runtime or data bytes.
+    """Validate the governed robomimic run before pulling runtime or data bytes.
 
-    These values attest only the manager-selected execution target and registry
-    visibility. They do not represent, or substitute for, the operator's
-    separate CUDA/cuDNN terms decision.
+    These values attest only the operator-selected execution target and registry
+    visibility. Runtime-use permission is established independently by the
+    customer-created entitlement record.
     """
 
     if not _is_robomimic_request(args):
@@ -381,31 +733,31 @@ def _require_robomimic_manager_context(
     missing = sorted(name for name, value in selectors.items() if not value)
     if missing:
         raise ValueError(
-            "robomimic manager context is incomplete; missing: " + ", ".join(missing)
+            "robomimic execution context is incomplete; missing: " + ", ".join(missing)
         )
     if args.project.strip() != selectors["NPA_E2E_PROJECT"]:
         raise ValueError(
-            "robomimic --project does not match the manager-issued project"
+            "robomimic --project does not match the operator-selected project"
         )
     if base_profile != "prebuilt":
         raise ValueError("robomimic requires its immutable prebuilt profile")
     selected_registry = registry.rstrip("/")
     if selected_registry != selectors["NPA_BYOF_ROBOMIMIC_REGISTRY"].rstrip("/"):
         raise ValueError(
-            "robomimic registry does not match the manager-issued registry"
+            "robomimic registry does not match the operator-selected registry"
         )
     if _is_public_robomimic_registry(selected_registry):
         raise ValueError("robomimic requires an operator-private registry")
     effective_registry = _registry_path(image).rstrip("/")
     if effective_registry != selected_registry:
         raise ValueError(
-            "robomimic image does not target the manager-issued private registry"
+            "robomimic image does not target the operator-selected private registry"
         )
     if _is_public_robomimic_registry(effective_registry):
         raise ValueError("robomimic image must not target a public registry")
     if selectors["NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY"].lower() != "private":
         raise ValueError(
-            "manager-published robomimic registry visibility must be private"
+            "operator-selected robomimic registry visibility must be private"
         )
     output_bucket = _bare_s3_bucket(args.output_root)
     manager_bucket = _bare_s3_bucket(selectors["NPA_E2E_S3_BUCKET"])
@@ -415,15 +767,15 @@ def _require_robomimic_manager_context(
         or args.output_root.strip().rstrip("/") != expected_output_root
     ):
         raise ValueError(
-            "robomimic --output-root must be the manager-issued bucket and solution prefix"
+            "robomimic --output-root must be the operator-selected bucket and solution prefix"
         )
     kubeconfig = Path(selectors["NPA_BYOF_KUBECONFIG"])
     if not kubeconfig.is_file():
-        raise ValueError("manager-issued robomimic kubeconfig is not a readable file")
+        raise ValueError("operator-selected robomimic kubeconfig is not a readable file")
     if selectors["NPA_BYOF_K8S_NAMESPACE"] == "default":
-        raise ValueError("robomimic requires a manager-issued non-default namespace")
+        raise ValueError("robomimic requires an operator-selected non-default namespace")
     if selectors["NPA_E2E_MK8S_RESERVED_CAPACITY"] != "1":
-        raise ValueError("robomimic requires the manager's STRICT capacity binding")
+        raise ValueError("robomimic requires the operator's STRICT capacity binding")
     if (
         selectors["NPA_BYOF_LIVE_GPU"] != "1"
         or selectors["NPA_BYOF_ROBOMIMIC_LIVE_B200"] != "1"
@@ -439,7 +791,7 @@ def _require_robomimic_manager_context(
         is None
     ):
         raise ValueError(
-            "robomimic requires a manager-approved exact runtime inventory digest"
+            "robomimic requires an operator-selected exact runtime inventory digest"
         )
     _require_robomimic_immutable_inputs(
         args,
@@ -451,10 +803,6 @@ def _require_robomimic_manager_context(
         runtime_inventory_sha256=selectors[
             "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256"
         ],
-    )
-    raise ValueError(
-        "robomimic CUDA/cuDNN runtime use remains deferred pending an authoritative "
-        "Nebius/operator decision and separate manager transaction authorization"
     )
 
 
@@ -912,6 +1260,39 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=os.environ.get("NPA_BYOF_SMOKE_ARTIFACT_NAME", ""),
     )
     parser.add_argument(
+        "--robomimic-runtime-entitlement-action",
+        choices=("notice", "accept", "decline", "resume"),
+        default="resume",
+        help=(
+            "Customer-controlled robomimic runtime terms step. Notice and decline "
+            "never mutate; accept records a run-bound decision and exits; resume "
+            "requires that exact unexpired record."
+        ),
+    )
+    parser.add_argument(
+        "--robomimic-runtime-entitlement-file",
+        default=os.environ.get(
+            "NPA_BYOF_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE", ""
+        ),
+        help="Owner-only path for the run-bound robomimic runtime entitlement record.",
+    )
+    parser.add_argument(
+        "--robomimic-runtime-entitlement-expires-at",
+        default="",
+        help=(
+            "UTC expiry for a new robomimic entitlement record, formatted "
+            "YYYY-MM-DDTHH:MM:SSZ and no more than 24 hours after acceptance."
+        ),
+    )
+    parser.add_argument(
+        "--robomimic-runtime-entitlement-notice-sha256",
+        default="",
+        help=(
+            "Exact digest returned by the preceding robomimic notice action; "
+            "required when recording acceptance."
+        ),
+    )
+    parser.add_argument(
         "--wan-acceptance-candidate-image",
         default="",
         help=(
@@ -996,6 +1377,29 @@ def main(argv: list[str] | None = None) -> int:
     robomimic_request = _is_robomimic_request(args)
     if robomimic_request and not args.project.strip():
         args.project = os.environ.get("NPA_E2E_PROJECT", "").strip()
+    if robomimic_request:
+        try:
+            entitlement_result = _handle_robomimic_entitlement_action(args)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "refused",
+                        "solution_name": args.solution_name or "robomimic",
+                        "build_started": False,
+                        "push_started": False,
+                        "run_started": False,
+                        "error": str(exc),
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 64
+        if entitlement_result is not None:
+            status, payload = entitlement_result
+            print(json.dumps(payload, indent=2, sort_keys=True))
+            return status
     registry = args.registry.strip()
     if not registry and robomimic_request:
         registry = os.environ.get("NPA_BYOF_ROBOMIMIC_REGISTRY", "").strip()
@@ -1007,7 +1411,7 @@ def main(argv: list[str] | None = None) -> int:
     if not image and not robomimic_request:
         image = f"{registry.rstrip('/')}/npa-byof:{args.run_id}"
     try:
-        _require_robomimic_manager_context(
+        _require_robomimic_execution_context(
             args, registry=registry, image=image, base_profile=base_profile
         )
     except ValueError as exc:

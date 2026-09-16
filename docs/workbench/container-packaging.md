@@ -501,9 +501,10 @@ The CUDA-capable Python environment is not a runtime downloader. It is an exact
 file/package/ABI inventory prepared outside the image and mounted read-only.
 The bootstrap can verify, execute with, or prove refusal of that inventory; it
 cannot populate it or accept terms. This packaging split does not supply
-distribution, use, or service rights. Until an authoritative rights decision,
-manager transaction authorization, built-byte/security/SBOM/provenance gates,
-private exact-digest B200 qualification, and anonymous pull proof all pass, the
+distribution, use, or service rights. Until an unexpired customer-created
+run/manifest entitlement, transaction
+authorization, built-byte/security/SBOM/provenance gates, private exact-digest
+B200 qualification, and anonymous pull proof all pass, the
 tool remains in `NEUTRAL_UNBUILT_CANDIDATE_TOOLS`, is included in
 `PUBLICATION_QUARANTINE_TOOLS`, and has no public catalog row.
 

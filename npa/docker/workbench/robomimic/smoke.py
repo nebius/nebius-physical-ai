@@ -21,7 +21,7 @@ import numpy as np
 import torch
 from robomimic.config import config_factory
 from robomimic.utils.file_utils import policy_from_checkpoint
-from verify_image import verified_source_identity
+from verify_image import verify_customer_runtime_entitlement, verified_source_identity
 
 
 SOURCE_REVISION = "d309eaecc18acf4152a830a895a6984b8ac71b05"
@@ -389,8 +389,22 @@ def main() -> None:
         or _sha256(runtime_root / "inventory.json") != expected_runtime_inventory
     ):
         raise RuntimeError(
-            "runtime inventory does not match the manager-approved digest"
+            "runtime inventory does not match the operator-selected digest"
         )
+    entitlement = verify_customer_runtime_entitlement(
+        entitlement_path=Path(
+            os.environ["NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE"]
+        ),
+        runtime_lock_path=runtime_lock,
+        expected_entitlement_sha256=os.environ.get(
+            "NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_SHA256", ""
+        ).strip(),
+        expected_customer_binding_sha256=os.environ.get(
+            "NPA_ROBOMIMIC_CUSTOMER_BINDING_SHA256", ""
+        ).strip(),
+        expected_run_id=os.environ.get("NPA_BYOF_RUN_ID", "").strip(),
+        expected_inventory_sha256=expected_runtime_inventory,
+    )
 
     pod = _pod_identity(runtime_image, match.group(1), runtime_mount_root)
     runtime_mount_proof = pod.get("runtime_mount")
@@ -575,11 +589,12 @@ def main() -> None:
             "inventory_sha256": _sha256(runtime_root / "inventory.json"),
             "runtime_id": runtime_inventory["runtime_id"],
             "prepopulated": True,
-            "manager_inventory_digest_matched": True,
+            "runtime_manifest_digest_matched": True,
             "read_only": runtime_mount_proof.get("read_only") is True,
             "atomic_private_snapshot_published": True,
             "snapshot_write_bits_absent": runtime_root.stat().st_mode & 0o222 == 0,
         },
+        "customer_runtime_entitlement": entitlement,
         "dataset": {
             "repository": "robomimic/robomimic_datasets",
             "revision": DATASET_REVISION,
