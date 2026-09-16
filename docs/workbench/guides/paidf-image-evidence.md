@@ -211,21 +211,24 @@ together; a corrected evidence document receives a distinct identity.
 
 The `stage_index` timeline preserves supplied evidence order. The separate
 `source_frame` timeline preserves each file's decoded frame indices; it does not
-assert synchronization between different media files. Every frame is encoded
-losslessly without source-file metadata. The output uses mode 0600, is created
-atomically, and cannot overwrite an existing recording. Publishing and protected
-Agent discovery verification are separate steps after conversion succeeds.
+assert synchronization between different media files. Video recordings also
+carry a `media_time` duration timeline derived from the source's decoded
+presentation timestamps, preserving variable or non-default frame timing.
+Every frame is encoded losslessly without source-file metadata. The output uses
+mode 0600, is created atomically, and cannot overwrite an existing recording.
+Publishing and protected Agent discovery verification are separate steps after
+conversion succeeds.
 
-The embedded default is the media-review tab on `source_frame`, never the
-`stage_index` metric sequence. DIG orders source, mask, overlay, and generated
-media before provenance and explicitly avoids inferring realism or detector
-improvement. IAA orders source before generated/postprocessed media and reports
-only supplied fidelity and composition checks. EVG orders source video before
-generated video and detection overlays; its expected-versus-actual panel names
-only executed event, detection, caption, and VQA stages. Stage events remain in
-a separate tab, and the scalar-metric pane is omitted when no metrics exist.
-Thus an unavailable category is neither a blank default view nor an implied
-pass.
+The embedded default is the media-review tab on `source_frame` for images and
+`media_time` for video, never the `stage_index` metric sequence. DIG orders
+source, mask, overlay, and generated media before provenance and explicitly
+avoids inferring realism or detector improvement. IAA orders source before
+generated/postprocessed media and reports only supplied fidelity and
+composition checks. EVG orders source video before generated video and
+detection overlays; its expected-versus-actual panel names only executed event,
+detection, caption, and VQA stages. Stage events remain in a separate tab, and
+the scalar-metric pane is omitted when no metrics exist. Thus an unavailable
+category is neither a blank default view nor an implied pass.
 
 Validate converter changes with:
 

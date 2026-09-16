@@ -11,6 +11,7 @@ import pytest
 
 from npa.workflows.data_factory_viz import (
     DataFactoryVizError,
+    _build_data_factory_blueprint,
     _committed_variant_dirs,
     _frame_index,
     build_run_rrd,
@@ -21,6 +22,31 @@ def _write_png(path: Path, color: tuple[int, int, int]) -> None:
     Image = pytest.importorskip("PIL.Image")
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.new("RGB", (32, 24), color).save(path)
+
+
+def _write_mp4_from_png(image: Path, video: Path) -> None:
+    encoded = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-loop",
+            "1",
+            "-i",
+            str(image),
+            "-t",
+            "0.2",
+            "-pix_fmt",
+            "yuv420p",
+            "-y",
+            str(video),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert encoded.returncode == 0, encoded.stderr
 
 
 def test_build_run_rrd_from_local_run(tmp_path: Path) -> None:
@@ -70,31 +96,14 @@ def test_rejected_rrd_component_stats_include_actual_augmented_media(
 
     pytest.importorskip("rerun")
     run = tmp_path / "rejected-run"
+    source_frame = run / "input" / "source-frame.png"
+    _write_png(source_frame, (4, 8, 12))
+    source_video = run / "input" / "source.mp4"
+    _write_mp4_from_png(source_frame, source_video)
     candidate = run / "cosmos_augmented" / "iteration-1" / "candidate-a"
     _write_png(candidate / "frame-00000.png", (12, 34, 56))
     video = candidate / "augmented_video.mp4"
-    encoded = subprocess.run(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-loop",
-            "1",
-            "-i",
-            str(candidate / "frame-00000.png"),
-            "-t",
-            "0.2",
-            "-pix_fmt",
-            "yuv420p",
-            "-y",
-            str(video),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert encoded.returncode == 0, encoded.stderr
+    _write_mp4_from_png(candidate / "frame-00000.png", video)
     (candidate.parent / "manifest.json").write_text(
         json.dumps(
             {
@@ -165,6 +174,7 @@ def test_rejected_rrd_component_stats_include_actual_augmented_media(
     assert "augmented/iteration-1/candidate-a" in component_stats
     assert "@EncodedImage:blob" in component_stats
     assert "@AssetVideo:blob" in component_stats
+    assert "source/original/video" in component_stats
     assert "augmented/iteration-1/candidate-a/disposition" in component_stats
     assert "Blueprint" in component_stats
     from rerun.recording import load_recording
@@ -180,12 +190,14 @@ def test_rejected_rrd_component_stats_include_actual_augmented_media(
         for batch in video_frame_batches
     )
     assert result["presentation"] == {
-        "default_timeline": "frame",
+        "default_timeline": "video_time",
         "default_view": "original-versus-generated",
-        "source_entities": [],
+        "source_entities": ["source/original", "source/source-frame"],
+        "source_video_entities": ["source/original"],
         "candidate_entities": ["augmented/iteration-1/candidate-a"],
         "conditioning_context": False,
         "evaluator_disposition_context": True,
+        "timing_basis": "decoded-video-timestamps",
     }
     import npa.workflows.data_factory_viz as viz
 
@@ -198,8 +210,12 @@ def test_rejected_rrd_component_stats_include_actual_augmented_media(
             }
         ],
         quality_status="REJECTED",
+        source_video_records=[
+            {"entity": "source/original", "video": source_video}
+        ],
     )
     assert verified == {
+        "source_video_entities": 1,
         "augmented_video_entities": 1,
         "augmented_disposition_entities": 1,
     }
@@ -214,7 +230,45 @@ def test_rejected_rrd_component_stats_include_actual_augmented_media(
                 }
             ],
             quality_status="REJECTED",
+            source_video_records=[
+                {"entity": "source/original", "video": source_video}
+            ],
         )
+
+
+def test_vda_blueprint_foregrounds_per_candidate_disposition() -> None:
+    rrb = pytest.importorskip("rerun.blueprint")
+    blueprint = _build_data_factory_blueprint(
+        rrb,
+        source_entities=["source/original"],
+        candidate_entities=["augmented/iteration-1/candidate-a"],
+        has_controls=True,
+        has_captions=False,
+        has_pipeline_evidence=True,
+        default_timeline="video_time",
+    )
+
+    assert blueprint.root_container.name == "Media-first quality review"
+    context = blueprint.root_container.contents[1]
+    dispositions = [
+        view
+        for view in context.contents
+        if view.name == "Per-candidate accept/reject disposition"
+    ]
+    assert len(dispositions) == 1
+    assert dispositions[0].origin == "augmented"
+    assert dispositions[0].contents == "augmented/**/disposition"
+    assert blueprint.time_panel.timeline == "video_time"
+
+
+def test_vda_recording_rejects_generated_only_comparison(tmp_path: Path) -> None:
+    pytest.importorskip("rerun")
+    run = tmp_path / "generated-only"
+    candidate = run / "cosmos_augmented" / "candidate-a"
+    _write_png(candidate / "frame-00000.png", (12, 34, 56))
+
+    with pytest.raises(DataFactoryVizError, match="require source media"):
+        build_run_rrd(str(run), str(tmp_path / "generated-only.rrd"))
 
 
 def test_frame_index_parses_both_naming_schemes() -> None:
@@ -233,6 +287,10 @@ def test_augmented_frames_get_distinct_time_points(tmp_path: Path, monkeypatch) 
     import npa.workflows.data_factory_viz as viz
 
     run = tmp_path / "df-run"
+    source_frame = tmp_path / "df-source.png"
+    _write_png(source_frame, (2, 4, 6))
+    (run / "input").mkdir(parents=True)
+    _write_mp4_from_png(source_frame, run / "input" / "source.mp4")
     aug = run / "cosmos_augmented" / "aug-run"
     for i in range(4):
         _write_png(aug / f"frame-{i:05d}.png", (10 * i, 20, 30))
@@ -430,6 +488,10 @@ def test_control_maps_are_logged_beside_the_variants_they_conditioned(
     pytest.importorskip("rerun")
 
     run = tmp_path / "run"
+    source_frame = tmp_path / "control-source.png"
+    _write_png(source_frame, (2, 4, 6))
+    (run / "input").mkdir(parents=True)
+    _write_mp4_from_png(source_frame, run / "input" / "source.mp4")
     aug = run / "cosmos_augmented" / "aug-0"
     _write_png(aug / "frame-00000.png", (11, 22, 33))
     control = run / "cosmos_control" / "aug-0"

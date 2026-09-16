@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import multiprocessing
+import subprocess
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -344,6 +345,7 @@ def test_candidate_selection_is_additive_and_preserves_complete_ranking_pool(
 ) -> None:
     augment_uri = "s3://b/run/cosmos_augmented/iteration-1/"
     selection_uri = "s3://b/run/selection/iteration-1/"
+    attempt_uri = f"{selection_uri}_attempts/fence-1/"
     source_rows = [
         {
             "key": "run/cosmos_augmented/iteration-1/manifest.json",
@@ -422,6 +424,7 @@ def test_candidate_selection_is_additive_and_preserves_complete_ranking_pool(
     ranking_uri = "s3://b/run/grade/iteration-1/ranking/cosmos_evaluator.json"
     stored_json = {ranking_uri: ranking}
     copied_keys: list[str] = []
+    lock_state: dict[str, object] = {"synthetic": True, "generation": 1}
     if expected_selected:
         # A crashed owner may have conditionally committed one media object
         # before its lease expired. Recovery must preserve it and finish the
@@ -429,20 +432,26 @@ def test_candidate_selection_is_additive_and_preserves_complete_ranking_pool(
         destination_rows.append(
             {
                 **source_rows[1],
-                "key": "run/selection/iteration-1/candidate-a/augmented_video.mp4",
+                "key": (
+                    "run/selection/iteration-1/_attempts/fence-1/"
+                    "candidate-a/augmented_video.mp4"
+                ),
             }
         )
 
     def inventory(uri: str) -> list[dict]:
         if uri == augment_uri:
             return [dict(row) for row in source_rows]
-        if uri == selection_uri:
+        if uri == attempt_uri:
             return [dict(row) for row in destination_rows]
         raise AssertionError(uri)
 
     @contextmanager
     def destination_lock(_uri: str):
-        yield {"synthetic": True}
+        yield lock_state
+
+    def commit_lock(lock: dict, commit: dict) -> None:
+        lock["_committed_record"] = dict(commit)
 
     def immutable_copy(
         *, source_bucket, source_row, destination_bucket, destination_key
@@ -461,18 +470,22 @@ def test_candidate_selection_is_additive_and_preserves_complete_ranking_pool(
                 )
             return uri
         stored_json[uri] = json.loads(json.dumps(payload))
-        if uri == f"{selection_uri}manifest.json":
+        if uri == f"{attempt_uri}manifest.json":
             destination_rows.append(
                 {
-                    "key": "run/selection/iteration-1/manifest.json",
+                    "key": (
+                        "run/selection/iteration-1/_attempts/fence-1/manifest.json"
+                    ),
                     "size": 100,
                     "etag": "sm",
                 }
             )
-        elif uri == f"{selection_uri}selection.json":
+        elif uri == f"{attempt_uri}selection.json":
             destination_rows.append(
                 {
-                    "key": "run/selection/iteration-1/selection.json",
+                    "key": (
+                        "run/selection/iteration-1/_attempts/fence-1/selection.json"
+                    ),
                     "size": 100,
                     "etag": "sr",
                 }
@@ -486,6 +499,7 @@ def test_candidate_selection_is_additive_and_preserves_complete_ranking_pool(
     monkeypatch.setattr(dfs, "_download_json", lambda uri: stored_json[uri])
     monkeypatch.setattr(dfs, "_candidate_selection_destination_lock", destination_lock)
     monkeypatch.setattr(dfs, "_renew_candidate_selection_lock", lambda _lock: None)
+    monkeypatch.setattr(dfs, "_commit_candidate_selection_lock", commit_lock)
     monkeypatch.setattr(dfs, "_immutable_candidate_copy", immutable_copy)
     monkeypatch.setattr(dfs, "_put_immutable_json", immutable_json)
 
@@ -503,10 +517,17 @@ def test_candidate_selection_is_additive_and_preserves_complete_ranking_pool(
     assert any(row["key"].endswith("manifest.json") for row in destination_rows)
     if expected_selected:
         assert any(
-            "candidate-a/augmented_video.mp4" in row["key"] for row in destination_rows
+            "/_attempts/fence-1/candidate-a/augmented_video.mp4" in row["key"]
+            for row in destination_rows
         )
-        assert not any("candidate-a/augmented_video.mp4" in key for key in copied_keys)
-        assert any("candidate-a/metadata.json" in key for key in copied_keys)
+        assert not any(
+            "/_attempts/fence-1/candidate-a/augmented_video.mp4" in key
+            for key in copied_keys
+        )
+        assert any(
+            "/_attempts/fence-1/candidate-a/metadata.json" in key
+            for key in copied_keys
+        )
     assert not any("candidate-b/" in row["key"] for row in destination_rows)
 
     copied_once = list(copied_keys)
@@ -517,8 +538,26 @@ def test_candidate_selection_is_additive_and_preserves_complete_ranking_pool(
         "s3://b/run/selection/iteration-1/selection.json",
         0.75,
     )
-    assert replay == result
+    assert {key: value for key, value in replay.items() if key != "replayed"} == {
+        key: value for key, value in result.items() if key != "replayed"
+    }
+    assert replay["replayed"] is True
     assert copied_keys == copied_once
+
+    original_etag = destination_rows[0]["etag"]
+    destination_rows[0]["etag"] = '"tampered"'
+    with pytest.raises(
+        dfs.CandidateSelectionLockError,
+        match="committed generation inventory changed",
+    ):
+        dfs.select_hard_passing_candidates(
+            augment_uri,
+            "s3://b/run/grade/iteration-1/ranking/",
+            selection_uri,
+            "s3://b/run/selection/iteration-1/selection.json",
+            0.75,
+        )
+    destination_rows[0]["etag"] = original_etag
 
     stored_json[f"{selection_uri}selection.json"]["selected_count"] = 99
     with pytest.raises(RuntimeError, match="prior evidence differs"):
@@ -635,6 +674,118 @@ def test_candidate_selection_lock_recovers_stale_owner_and_fences_release(
         assert final["owner"] == "recovery-successor"
         assert final["state"] == "held"
         assert final_etag == successor_etag
+
+
+def test_stale_selection_owner_cannot_publish_after_continuing_attempt_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale writer may finish only in its private generation, never commit it."""
+
+    context = multiprocessing.get_context("fork")
+    with context.Manager() as manager:
+        storage = _SharedConditionalStorage(
+            manager.dict(), manager.RLock(), manager.Value("i", 0)
+        )
+        selection_uri = "s3://synthetic/run/selection/fenced/"
+        monkeypatch.setattr(dfs, "_storage", lambda: storage)
+
+        with pytest.raises(
+            dfs.CandidateSelectionLockError,
+            match="lost during the critical section",
+        ):
+            with dfs._candidate_selection_destination_lock(selection_uri) as stale:
+                stale_attempt = dfs._candidate_selection_attempt_uri(
+                    selection_uri, stale
+                )
+                successor_owner = "successor"
+                successor_generation = int(stale["generation"]) + 1
+                successor_payload = dfs._candidate_selection_lock_payload(
+                    owner=successor_owner,
+                    generation=successor_generation,
+                    state="held",
+                    now=datetime.now(timezone.utc),
+                )
+                successor_etag = storage.put_bytes_conditional(
+                    dfs._canonical_json_bytes(successor_payload),
+                    stale["uri"],
+                    if_match=stale["etag"],
+                )
+
+                # The expired process can still finish an in-flight object call,
+                # but that byte lands only in its generation-scoped attempt.
+                objects = storage.objects
+                objects[stale_attempt + "candidate/media.mp4"] = (
+                    b"stale-attempt-byte",
+                    '"stale-object"',
+                )
+                successor = {
+                    "storage": storage,
+                    "uri": stale["uri"],
+                    "owner": successor_owner,
+                    "generation": successor_generation,
+                    "etag": successor_etag,
+                    "_guard": multiprocessing.RLock(),
+                    "_lost": False,
+                }
+                successor_attempt = dfs._candidate_selection_attempt_uri(
+                    selection_uri, successor
+                )
+                assert successor_attempt != stale_attempt
+                commit = {
+                    "attempt_uri": successor_attempt,
+                    "manifest_uri": successor_attempt + "manifest.json",
+                    "report_uri": successor_attempt + "selection.json",
+                    "canonical_manifest_uri": selection_uri + "manifest.json",
+                    "canonical_report_uri": selection_uri + "selection.json",
+                    "manifest_sha256": "a" * 64,
+                    "report_sha256": "b" * 64,
+                    "attempt_inventory_sha256": "c" * 64,
+                }
+                dfs._commit_candidate_selection_lock(successor, commit)
+                with pytest.raises(dfs.CandidateSelectionLockError):
+                    dfs._commit_candidate_selection_lock(stale, commit)
+
+        raw, _etag = storage.read_bytes_with_etag(
+            dfs._candidate_selection_lock_uri(selection_uri)
+        )
+        committed = dfs._candidate_selection_lock_record(
+            raw, label="candidate selection lock"
+        )
+        assert committed["state"] == "committed"
+        assert committed["owner"] == "successor"
+        assert committed["commit"]["attempt_uri"] == successor_attempt
+
+
+def test_selection_heartbeat_accepts_its_own_terminal_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = multiprocessing.get_context("fork")
+    with context.Manager() as manager:
+        storage = _SharedConditionalStorage(
+            manager.dict(), manager.RLock(), manager.Value("i", 0)
+        )
+        monkeypatch.setattr(dfs, "_storage", lambda: storage)
+        monkeypatch.setattr(
+            dfs, "_CANDIDATE_SELECTION_LOCK_LEASE_SECONDS", 0.15
+        )
+        selection_uri = "s3://synthetic/run/selection/committed/"
+        with dfs._candidate_selection_destination_lock(selection_uri) as lock:
+            attempt_uri = dfs._candidate_selection_attempt_uri(selection_uri, lock)
+            dfs._commit_candidate_selection_lock(
+                lock,
+                {
+                    "attempt_uri": attempt_uri,
+                    "manifest_uri": attempt_uri + "manifest.json",
+                    "report_uri": attempt_uri + "selection.json",
+                    "canonical_manifest_uri": selection_uri + "manifest.json",
+                    "canonical_report_uri": selection_uri + "selection.json",
+                    "manifest_sha256": "a" * 64,
+                    "report_sha256": "b" * 64,
+                    "attempt_inventory_sha256": "c" * 64,
+                },
+            )
+            time.sleep(0.12)
+            assert lock["_lost"] is False
 
 
 def test_candidate_selection_lock_releases_after_stage_error(
@@ -2051,8 +2202,30 @@ def test_publish_transfer_layout_interoperates_with_curate_and_viz(
     from npa.workbench.cosmos import transfer as tx
     from npa.workflows.data_factory_viz import build_run_rrd
 
+    source_frame = _png(tmp_path / "source.png")
     video = tmp_path / "out.mp4"
-    video.write_bytes(b"x" * 200_000)
+    encoded = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-loop",
+            "1",
+            "-i",
+            str(source_frame),
+            "-t",
+            "0.2",
+            "-pix_fmt",
+            "yuv420p",
+            "-y",
+            str(video),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert encoded.returncode == 0, encoded.stderr
 
     # Mock frame extraction (no cosmos venv here); write real PNGs into dest.
     def fake_extract(vp, dest, max_frames=8):
@@ -2075,7 +2248,7 @@ def test_publish_transfer_layout_interoperates_with_curate_and_viz(
             return uri
 
     manifest = tx.publish_transfer_to_s3(
-        {"video_path": str(video), "video_bytes": 200_000, "spec": "s"},
+        {"video_path": str(video), "video_bytes": video.stat().st_size, "spec": "s"},
         "s3://bkt/run1/cosmos_augmented/",
         run_id="run1",
         variables={"weather": "rainy", "time_of_day": "night"},
@@ -2101,6 +2274,9 @@ def test_publish_transfer_layout_interoperates_with_curate_and_viz(
     assert "manifest.json" not in report["clip_ids"]
 
     # (b) build_run_rrd must consume the same per-clip layout (frames + metadata).
+    input_frame = mirror / "run1" / "input" / "source-frame.png"
+    input_frame.parent.mkdir(parents=True)
+    input_frame.write_bytes(source_frame.read_bytes())
     out_rrd = tmp_path / "reports" / "sim2real.rrd"
     result = build_run_rrd(str(mirror / "run1"), str(out_rrd))
     assert result["frames_logged"] >= 3

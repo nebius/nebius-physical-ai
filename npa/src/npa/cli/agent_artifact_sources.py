@@ -165,6 +165,69 @@ def resolve_agent_storage_credentials(
     )
 
 
+def _provider_verified_artifact_read_identity(
+    *,
+    storage: dict[str, Any],
+    source_project_id: str,
+    project_sources: list[dict[str, str]],
+    access_key: str,
+    service_account_id: str,
+) -> bool:
+    """Verify key ownership and exact read-only bucket policy from Nebius state."""
+
+    group_id = str(storage.get("iam_group_id") or "").strip()
+    credential_project = str(
+        storage.get("credential_project_id") or source_project_id
+    ).strip()
+    if not all((group_id, credential_project, access_key, service_account_id)):
+        return False
+    try:
+        from npa.clients import nebius
+
+        if not nebius._group_has_member(group_id, service_account_id):
+            return False
+        key_matches = False
+        for key in nebius.list_access_keys_for_service_account(
+            credential_project, service_account_id, strict=True
+        ):
+            resource_id = str(key.get("id") or "").strip()
+            if not resource_id:
+                continue
+            live = nebius._run_json(
+                ["iam", "v2", "access-key", "get", "--id", resource_id]
+            )
+            if (
+                str((live.get("status") or {}).get("aws_access_key_id") or "")
+                == access_key
+            ):
+                key_matches = True
+                break
+        if not key_matches:
+            return False
+        for source in project_sources:
+            bucket = str(source.get("bucket") or "").strip()
+            prefix = str(source.get("resolved_prefix") or "").strip().strip("/")
+            item = nebius.get_bucket_by_name(source_project_id, bucket)
+            spec = (item or {}).get("spec") if isinstance(item, dict) else None
+            policy = spec.get("bucket_policy") if isinstance(spec, dict) else None
+            rules = policy.get("rules") if isinstance(policy, dict) else None
+            expected_path = f"{prefix}/*"
+            if not isinstance(rules, list) or not any(
+                isinstance(rule, dict)
+                and str(rule.get("group_id") or "") == group_id
+                and sorted(str(value) for value in rule.get("paths", []))
+                == [expected_path]
+                and sorted(str(value) for value in rule.get("roles", []))
+                == ["storage.viewer"]
+                and not rule.get("anonymous")
+                for rule in rules
+            ):
+                return False
+    except Exception:  # noqa: BLE001 - fail closed without provider diagnostics
+        return False
+    return True
+
+
 def resolve_configured_artifact_storage_identity(
     artifact_sources: tuple[dict[str, str], ...] | list[dict[str, str]],
     *,
@@ -307,6 +370,7 @@ def resolve_configured_artifact_storage_identity(
         if (
             saved_project != source_project
             or saved_role != "storage.viewer"
+            or not saved_service_account
             or any(
                 item["resolved_prefix"] not in scopes.get(item["bucket"], set())
                 for item in project_sources
@@ -314,6 +378,16 @@ def resolve_configured_artifact_storage_identity(
         ):
             raise AgentStorageCredentialError(
                 "artifact read credential scope does not match the exact configured source"
+            )
+        if not _provider_verified_artifact_read_identity(
+            storage=storage,
+            source_project_id=source_project,
+            project_sources=project_sources,
+            access_key=saved_access_key,
+            service_account_id=saved_service_account,
+        ):
+            raise AgentStorageCredentialError(
+                "artifact read credential identity or storage.viewer binding could not be verified"
             )
         identity = (
             saved_endpoint,

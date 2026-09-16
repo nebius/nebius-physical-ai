@@ -616,6 +616,14 @@ writes `grade/quality_disposition.json` with `quality_status: rejected` and stop
 the workflow before labeling or curation. Workflow execution status and dataset
 quality status therefore remain separate and auditable.
 
+Selection publication is fenced per destination in durable object storage.
+Each lock generation writes only beneath its private `_attempts/fence-N/`
+prefix; a conditional lock commit makes exactly one generation authoritative
+before immutable compatibility aliases appear. Retries verify the committed
+input inventory, ranking digest, media, manifest, and report, then repair only
+missing aliases. An expired owner may finish writes only in its superseded
+generation and cannot publish them as the selected batch.
+
 Refinement is adaptive by default. `prepare-refinement` writes
 `configs/refinement.json` before each render and keeps immutable
 `refinement-attempt-NN.json` copies plus commit markers. The established first-pass
@@ -919,6 +927,14 @@ augmented frames and captions (via `npa.workflows.data_factory_viz.build_run_rrd
 so the run renders in the NPA agent's **embedded Rerun viewer** — the agent
 prefers `reports/sim2real.rrd`, so selecting the run and loading it (or clicking
 the `.rrd` in the artifact browser) shows it in the Rerun panel.
+
+For video runs, the default Rerun clock is `video_time`, derived from each
+embedded MP4's decoded presentation timestamps; ordinal `frame` remains a
+secondary navigation timeline. The foreground layout places original and
+generated media together with conditioning/mask context, evaluator scores, and
+the explicit per-candidate accept/reject disposition. Image-only runs continue
+to default to their factual frame sequence. Metrics remain available without
+replacing the media comparison as the initial view.
 
 After refinement, `quality-disposition` branches on the persisted final result.
 Accepted runs continue through re-captioning and curation before `visualize`.

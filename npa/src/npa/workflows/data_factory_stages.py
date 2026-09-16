@@ -361,10 +361,15 @@ def _candidate_selection_lock_uri(selection_uri: str) -> str:
 
 
 def _candidate_selection_lock_payload(
-    *, owner: str, generation: int, state: str, now: datetime
+    *,
+    owner: str,
+    generation: int,
+    state: str,
+    now: datetime,
+    commit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     expires = now + timedelta(seconds=_CANDIDATE_SELECTION_LOCK_LEASE_SECONDS)
-    return {
+    payload = {
         "schema": _CANDIDATE_SELECTION_LOCK_SCHEMA,
         "owner": owner,
         "generation": generation,
@@ -372,6 +377,9 @@ def _candidate_selection_lock_payload(
         "updated_at": now.isoformat(),
         "expires_at": expires.isoformat() if state == "held" else now.isoformat(),
     }
+    if commit is not None:
+        payload["commit"] = dict(commit)
+    return payload
 
 
 def _candidate_selection_lock_record(raw: bytes, *, label: str) -> dict[str, Any]:
@@ -386,11 +394,27 @@ def _candidate_selection_lock_record(raw: bytes, *, label: str) -> dict[str, Any
     if (
         not isinstance(payload, dict)
         or payload.get("schema") != _CANDIDATE_SELECTION_LOCK_SCHEMA
-        or payload.get("state") not in {"held", "released"}
+        or payload.get("state") not in {"held", "released", "committed"}
         or not str(payload.get("owner") or "")
         or generation < 1
     ):
         raise CandidateSelectionLockError(f"{label} is malformed")
+    if payload.get("state") == "committed":
+        commit = payload.get("commit")
+        required = {
+            "attempt_uri",
+            "manifest_uri",
+            "report_uri",
+            "canonical_manifest_uri",
+            "canonical_report_uri",
+            "manifest_sha256",
+            "report_sha256",
+            "attempt_inventory_sha256",
+        }
+        if not isinstance(commit, dict) or any(
+            not str(commit.get(field) or "").strip() for field in required
+        ):
+            raise CandidateSelectionLockError(f"{label} is malformed")
     payload["generation"] = generation
     payload["_expires"] = expires.astimezone(timezone.utc)
     return payload
@@ -444,6 +468,18 @@ def _renew_candidate_selection_lock(lock: dict[str, Any]) -> None:
             record = _candidate_selection_lock_record(
                 current[0], label="candidate selection lock"
             )
+            committed = lock.get("_committed_record")
+            if (
+                isinstance(committed, dict)
+                and record["state"] == "committed"
+                and record["owner"] == lock["owner"]
+                and record["generation"] == lock["generation"]
+                and current[1] == lock["etag"]
+                and record.get("commit") == committed
+            ):
+                # A heartbeat that wakes after the publication CAS observes the
+                # same terminal fence and has nothing left to renew.
+                return
             if (
                 record["state"] != "held"
                 or record["owner"] != lock["owner"]
@@ -476,6 +512,53 @@ def _renew_candidate_selection_lock(lock: dict[str, Any]) -> None:
             raise CandidateSelectionLockError(
                 f"candidate selection lock renewal failed ({type(exc).__name__})"
             ) from None
+
+
+def _commit_candidate_selection_lock(
+    lock: dict[str, Any], commit: dict[str, Any]
+) -> None:
+    """Atomically turn the held lease into the authoritative publication fence."""
+
+    from npa.clients.storage import StoragePreconditionFailed
+
+    with lock["_guard"]:
+        try:
+            current = lock["storage"].read_bytes_with_etag(lock["uri"])
+            if current is None:
+                raise CandidateSelectionLockError(
+                    "candidate selection lock disappeared before publication"
+                )
+            record = _candidate_selection_lock_record(
+                current[0], label="candidate selection lock"
+            )
+            if (
+                record["state"] != "held"
+                or record["owner"] != lock["owner"]
+                or record["generation"] != lock["generation"]
+                or current[1] != lock["etag"]
+            ):
+                raise CandidateSelectionLockError(
+                    "candidate selection lock was superseded before publication"
+                )
+            payload = _candidate_selection_lock_payload(
+                owner=lock["owner"],
+                generation=lock["generation"],
+                state="committed",
+                now=datetime.now(timezone.utc),
+                commit=commit,
+            )
+            lock["etag"] = _candidate_selection_lock_write(
+                lock["storage"], lock["uri"], payload, etag=lock["etag"]
+            )
+            lock["_committed_record"] = dict(commit)
+        except StoragePreconditionFailed:
+            lock["_lost"] = True
+            raise CandidateSelectionLockError(
+                "candidate selection publication was fenced by a newer owner"
+            ) from None
+        except CandidateSelectionLockError:
+            lock["_lost"] = True
+            raise
 
 
 def _candidate_selection_lock_heartbeat(lock: dict[str, Any]) -> None:
@@ -516,6 +599,20 @@ def _candidate_selection_destination_lock(
             record = _candidate_selection_lock_record(
                 current[0], label="candidate selection lock"
             )
+            if record["state"] == "committed":
+                lock = {
+                    "storage": storage,
+                    "uri": lock_uri,
+                    "owner": record["owner"],
+                    "generation": record["generation"],
+                    "etag": current[1],
+                    "_guard": threading.Lock(),
+                    "_stop": threading.Event(),
+                    "_lost": False,
+                    "_committed_record": dict(record["commit"]),
+                    "_replay": True,
+                }
+                break
             if record["state"] == "held" and record["_expires"] > now:
                 time.sleep(
                     min(1.0, max(0.05, (record["_expires"] - now).total_seconds()))
@@ -542,13 +639,15 @@ def _candidate_selection_destination_lock(
             "_stop": threading.Event(),
             "_lost": False,
         }
-    heartbeat = threading.Thread(
-        target=_candidate_selection_lock_heartbeat,
-        args=(lock,),
-        name="npa-paidf-selection-lock",
-        daemon=True,
-    )
-    heartbeat.start()
+    heartbeat = None
+    if not lock.get("_replay"):
+        heartbeat = threading.Thread(
+            target=_candidate_selection_lock_heartbeat,
+            args=(lock,),
+            name="npa-paidf-selection-lock",
+            daemon=True,
+        )
+        heartbeat.start()
     body_failed = False
     try:
         yield lock
@@ -556,44 +655,54 @@ def _candidate_selection_destination_lock(
         body_failed = True
         raise
     finally:
-        lock["_stop"].set()
-        heartbeat.join()
-        with lock["_guard"]:
-            current = storage.read_bytes_with_etag(lock_uri)
-            if current is not None:
-                record = _candidate_selection_lock_record(
-                    current[0], label="candidate selection lock"
-                )
-                if (
-                    record["state"] == "held"
-                    and record["owner"] == owner
-                    and record["generation"] == lock["generation"]
-                    and current[1] == lock["etag"]
-                ):
-                    payload = _candidate_selection_lock_payload(
-                        owner=owner,
-                        generation=lock["generation"],
-                        state="released",
-                        now=datetime.now(timezone.utc),
+        if heartbeat is not None:
+            lock["_stop"].set()
+            heartbeat.join()
+            with lock["_guard"]:
+                current = storage.read_bytes_with_etag(lock_uri)
+                if current is not None:
+                    record = _candidate_selection_lock_record(
+                        current[0], label="candidate selection lock"
                     )
-                    try:
-                        _candidate_selection_lock_write(
-                            storage, lock_uri, payload, etag=lock["etag"]
+                    if lock.get("_committed_record"):
+                        if not (
+                            record["state"] == "committed"
+                            and record["owner"] == owner
+                            and record["generation"] == lock["generation"]
+                            and current[1] == lock["etag"]
+                            and record.get("commit") == lock["_committed_record"]
+                        ):
+                            lock["_lost"] = True
+                    elif (
+                        record["state"] == "held"
+                        and record["owner"] == owner
+                        and record["generation"] == lock["generation"]
+                        and current[1] == lock["etag"]
+                    ):
+                        payload = _candidate_selection_lock_payload(
+                            owner=owner,
+                            generation=lock["generation"],
+                            state="released",
+                            now=datetime.now(timezone.utc),
                         )
-                    except StoragePreconditionFailed:
-                        # A newer recovery owner is authoritative; never release it.
+                        try:
+                            _candidate_selection_lock_write(
+                                storage, lock_uri, payload, etag=lock["etag"]
+                            )
+                        except StoragePreconditionFailed:
+                            # A newer recovery owner is authoritative; never release it.
+                            lock["_lost"] = True
+                    else:
+                        # A successor became authoritative between the last heartbeat
+                        # and exit. Fence this result even if the body did not perform
+                        # another explicit renewal.
                         lock["_lost"] = True
                 else:
-                    # A successor became authoritative between the last heartbeat
-                    # and exit. Fence this result even if the body did not perform
-                    # another explicit renewal.
                     lock["_lost"] = True
-            else:
-                lock["_lost"] = True
-        if lock["_lost"] and not body_failed:
-            raise CandidateSelectionLockError(
-                "candidate selection lock was lost during the critical section"
-            )
+            if lock["_lost"] and not body_failed:
+                raise CandidateSelectionLockError(
+                    "candidate selection lock was lost during the critical section"
+                )
 
 
 def _immutable_candidate_copy(
@@ -2478,6 +2587,117 @@ def select_hard_passing_candidates(
         )
 
 
+def _candidate_selection_attempt_uri(
+    selection_uri: str, destination_lock: dict[str, Any]
+) -> str:
+    return (
+        selection_uri.rstrip("/")
+        + f"/_attempts/fence-{int(destination_lock['generation'])}/"
+    )
+
+
+def _replay_committed_candidate_selection(
+    *,
+    commit: dict[str, Any],
+    augment_uri: str,
+    ranking_scores_uri: str,
+    selection_uri: str,
+    selection_report_uri: str,
+    threshold: float | str,
+) -> dict[str, Any]:
+    """Verify one immutable committed generation and repair only its aliases."""
+
+    canonical_manifest_uri = selection_uri.rstrip("/") + "/manifest.json"
+    if (
+        commit.get("canonical_manifest_uri") != canonical_manifest_uri
+        or commit.get("canonical_report_uri") != selection_report_uri
+    ):
+        raise CandidateSelectionLockError(
+            "candidate selection commit targets a different destination"
+        )
+    manifest = _download_json(str(commit["manifest_uri"]))
+    report = _download_json(str(commit["report_uri"]))
+    if not isinstance(manifest, dict) or not isinstance(report, dict):
+        raise CandidateSelectionLockError(
+            "candidate selection commit references invalid evidence"
+        )
+    if (
+        _payload_sha256(manifest) != commit["manifest_sha256"]
+        or _payload_sha256(report) != commit["report_sha256"]
+    ):
+        raise CandidateSelectionLockError(
+            "candidate selection committed evidence changed after publication"
+        )
+    source_rows = _inventory_rows(augment_uri)
+    source_manifest = _committed_augment_manifest(
+        augment_uri, listed_keys=[str(row["key"]) for row in source_rows]
+    )
+    ranking_uri = (
+        ranking_scores_uri
+        if ranking_scores_uri.endswith(".json")
+        else ranking_scores_uri.rstrip("/") + "/cosmos_evaluator.json"
+    )
+    ranking = _download_json(ranking_uri)
+    if (
+        not isinstance(source_manifest, dict)
+        or not isinstance(ranking, dict)
+        or report.get("ranking_pool_inventory_sha256")
+        != _inventory_digest(source_rows)
+        or report.get("ranking_report_sha256") != _payload_sha256(ranking)
+        or manifest.get("source_manifest_sha256")
+        != _payload_sha256(source_manifest)
+        or float(report.get("threshold", -1.0)) != _quality_threshold(threshold)
+    ):
+        raise CandidateSelectionLockError(
+            "candidate selection inputs differ from the committed generation"
+        )
+    attempt_rows = {
+        str(row["key"]): row
+        for row in _inventory_rows(str(commit["attempt_uri"]))
+    }
+    if _inventory_digest(list(attempt_rows.values())) != commit.get(
+        "attempt_inventory_sha256"
+    ):
+        raise CandidateSelectionLockError(
+            "candidate selection committed generation inventory changed"
+        )
+    attempt_bucket, attempt_prefix = _split(str(commit["attempt_uri"]))
+    del attempt_bucket
+    required_keys = {
+        _split(str(commit["manifest_uri"]))[1],
+        _split(str(commit["report_uri"]))[1],
+    }
+    for variant in manifest.get("variants", []):
+        video_uri = str(variant.get("augmented_video_uri") or "")
+        video_bucket, video_key = _split(video_uri)
+        if video_bucket != _split(selection_uri)[0] or not video_key.startswith(
+            attempt_prefix
+        ):
+            raise CandidateSelectionLockError(
+                "candidate selection commit references media outside its generation"
+            )
+        required_keys.update(
+            key
+            for key in attempt_rows
+            if key.startswith(video_key.rsplit("/", 1)[0] + "/")
+        )
+    if not required_keys.issubset(attempt_rows) or any(
+        int(attempt_rows[key].get("size") or 0) <= 0 for key in required_keys
+    ):
+        raise CandidateSelectionLockError(
+            "candidate selection committed generation is incomplete"
+        )
+    _put_immutable_json(
+        manifest, canonical_manifest_uri, label="candidate selection manifest alias"
+    )
+    _put_immutable_json(
+        report,
+        selection_report_uri,
+        label="candidate selection report alias",
+    )
+    return {**report, "written_uri": selection_report_uri, "replayed": True}
+
+
 def _select_hard_passing_candidates_locked(
     augment_uri: str,
     ranking_scores_uri: str,
@@ -2489,18 +2709,30 @@ def _select_hard_passing_candidates_locked(
 ) -> dict[str, Any]:
     """Execute selection while holding the destination's durable fence."""
 
+    committed = destination_lock.get("_committed_record")
+    if isinstance(committed, dict):
+        return _replay_committed_candidate_selection(
+            commit=committed,
+            augment_uri=augment_uri,
+            ranking_scores_uri=ranking_scores_uri,
+            selection_uri=selection_uri,
+            selection_report_uri=selection_report_uri,
+            threshold=threshold,
+        )
     _renew_candidate_selection_lock(destination_lock)
     source_rows = _inventory_rows(augment_uri)
-    destination_rows = _inventory_rows(selection_uri)
+    attempt_uri = _candidate_selection_attempt_uri(selection_uri, destination_lock)
+    destination_rows = _inventory_rows(attempt_uri)
     listed_keys = [str(row["key"]) for row in source_rows]
     manifest = _committed_augment_manifest(augment_uri, listed_keys=listed_keys)
     if not isinstance(manifest, dict):
         raise RuntimeError("candidate selection requires a committed augment manifest")
-    ranking = _download_json(
+    ranking_uri = (
         ranking_scores_uri
         if ranking_scores_uri.endswith(".json")
         else ranking_scores_uri.rstrip("/") + "/cosmos_evaluator.json"
     )
+    ranking = _download_json(ranking_uri)
     if not isinstance(ranking, dict) or ranking.get("status") != "completed":
         raise RuntimeError("candidate selection requires a completed ranking report")
     numeric_threshold = _quality_threshold(threshold)
@@ -2521,7 +2753,7 @@ def _select_hard_passing_candidates_locked(
     }
     source_bucket, _source_prefix = _split(augment_uri)
     destination_bucket, destination_prefix = _split(
-        selection_uri if selection_uri.endswith("/") else selection_uri + "/"
+        attempt_uri if attempt_uri.endswith("/") else attempt_uri + "/"
     )
     if source_bucket != destination_bucket:
         raise RuntimeError("candidate selection must remain in canonical run storage")
@@ -2576,8 +2808,10 @@ def _select_hard_passing_candidates_locked(
     }
     from npa.workbench.cosmos.transfer import validate_committed_run_manifest
 
-    validate_committed_run_manifest(selected_manifest, selection_uri)
+    validate_committed_run_manifest(selected_manifest, attempt_uri)
     manifest_uri = selection_uri.rstrip("/") + "/manifest.json"
+    attempt_manifest_uri = attempt_uri.rstrip("/") + "/manifest.json"
+    attempt_report_uri = attempt_uri.rstrip("/") + "/selection.json"
     result = {
         "schema": "npa.paidf.candidate-selection/v1",
         "status": "completed",
@@ -2587,8 +2821,11 @@ def _select_hard_passing_candidates_locked(
         "threshold": numeric_threshold,
         "selected_clip_ids": [item["clip"] for item in selected_variants],
         "ranking_pool_inventory_sha256": _inventory_digest(source_rows),
+        "ranking_report_sha256": _payload_sha256(ranking),
         "ranking_pool_unchanged_after_selection": True,
         "selection_manifest_uri": manifest_uri,
+        "selection_attempt_uri": attempt_uri,
+        "publication_generation": int(destination_lock["generation"]),
         "candidate_results": [
             {
                 "clip_id": clip,
@@ -2600,14 +2837,18 @@ def _select_hard_passing_candidates_locked(
         ],
     }
 
-    report_bucket, report_key = _split(selection_report_uri)
-    manifest_bucket, manifest_key = _split(manifest_uri)
-    if report_bucket != destination_bucket or manifest_bucket != destination_bucket:
+    report_bucket, _report_key = _split(selection_report_uri)
+    manifest_bucket, manifest_key = _split(attempt_manifest_uri)
+    report_attempt_bucket, report_attempt_key = _split(attempt_report_uri)
+    if any(
+        bucket != destination_bucket
+        for bucket in (report_bucket, manifest_bucket, report_attempt_bucket)
+    ):
         raise RuntimeError("candidate selection evidence left canonical storage")
     expected_rows = {
         destination_key: source_row for source_row, destination_key in candidate_copies
     }
-    expected_keys = {*expected_rows, manifest_key, report_key}
+    expected_keys = {*expected_rows, manifest_key, report_attempt_key}
     actual_rows = {str(row["key"]): row for row in destination_rows}
     unexpected = set(actual_rows).difference(expected_keys)
     if unexpected:
@@ -2626,16 +2867,20 @@ def _select_hard_passing_candidates_locked(
         )
     _renew_candidate_selection_lock(destination_lock)
     _put_immutable_json(
-        selected_manifest, manifest_uri, label="candidate selection manifest"
+        selected_manifest,
+        attempt_manifest_uri,
+        label="candidate selection attempt manifest",
     )
     after_source = _inventory_rows(augment_uri)
     if source_rows != after_source:
         raise RuntimeError("candidate selection changed the preserved ranking pool")
     _renew_candidate_selection_lock(destination_lock)
     _put_immutable_json(
-        result, selection_report_uri, label="candidate selection report"
+        result,
+        attempt_report_uri,
+        label="candidate selection attempt report",
     )
-    selected_rows = {str(row["key"]): row for row in _inventory_rows(selection_uri)}
+    selected_rows = {str(row["key"]): row for row in _inventory_rows(attempt_uri)}
     if set(selected_rows) != expected_keys or any(
         int(row["size"]) <= 0 for row in selected_rows.values()
     ):
@@ -2645,6 +2890,26 @@ def _select_hard_passing_candidates_locked(
             raise RuntimeError(
                 "candidate selection prior media size differs from source"
             )
+    commit = {
+        "attempt_uri": attempt_uri,
+        "manifest_uri": attempt_manifest_uri,
+        "report_uri": attempt_report_uri,
+        "canonical_manifest_uri": manifest_uri,
+        "canonical_report_uri": selection_report_uri,
+        "manifest_sha256": _payload_sha256(selected_manifest),
+        "report_sha256": _payload_sha256(result),
+        "attempt_inventory_sha256": _inventory_digest(list(selected_rows.values())),
+    }
+    _commit_candidate_selection_lock(destination_lock, commit)
+    # These canonical objects are immutable compatibility aliases. They are
+    # written only after the lock object's compare-and-swap made this attempt
+    # authoritative; a stale generation can write solely under its own prefix.
+    _put_immutable_json(
+        selected_manifest, manifest_uri, label="candidate selection manifest alias"
+    )
+    _put_immutable_json(
+        result, selection_report_uri, label="candidate selection report alias"
+    )
     print(
         json.dumps(
             {
@@ -2653,10 +2918,11 @@ def _select_hard_passing_candidates_locked(
                 "selected_count": result["selected_count"],
                 "ranking_pool_unchanged": True,
                 "replayed": replayed,
+                "publication_generation": destination_lock["generation"],
             }
         )
     )
-    return {**result, "written_uri": selection_report_uri}
+    return {**result, "written_uri": selection_report_uri, "replayed": replayed}
 
 
 def curate(

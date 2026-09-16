@@ -1535,14 +1535,23 @@ def test_artifact_only_load_run_preserves_ui_contract_and_active_state(
         "_agent_artifact_s3_client",
         lambda: (object(), {"bucket": "bucket", "prefix": ""}),
     )
-    monkeypatch.setattr(module, "list_artifacts", lambda *_args, **_kwargs: artifacts)
+    monkeypatch.setattr(
+        module,
+        "_load_scoped_legacy_run_artifacts",
+        lambda **_kwargs: (
+            "artifact-only-run",
+            "bucket",
+            "project",
+            "category",
+            artifacts,
+            "server-issued-run-ref",
+        ),
+    )
     monkeypatch.setattr(module, "_load_state", lambda: state)
     monkeypatch.setattr(module, "_save_state", lambda value: state.update(value))
     monkeypatch.setattr(module, "_record_sim_viz_run", lambda *_args: None)
 
-    response = module.sim_viz_load_run(
-        {"run_id": "artifact-only-run", "prefix": "category"}
-    )
+    response = module.sim_viz_load_run({"run_id": "artifact-only-run"})
 
     sim_viz = response["sim_viz"]
     assert response["artifacts_available"] is True
@@ -2197,12 +2206,6 @@ def test_same_run_without_preferred_rrd_preserves_canonical_mcap(
         render="json",
         inline=True,
     )
-    resolution = module.RunResolution(
-        run_id,
-        "artifact-bucket",
-        "nested/root",
-        [artifact],
-    )
     try:
         monkeypatch.setattr(module, "_load_state", lambda: state)
         monkeypatch.setattr(module, "_save_state", lambda _state: None)
@@ -2213,12 +2216,17 @@ def test_same_run_without_preferred_rrd_preserves_canonical_mcap(
             lambda: (object(), {"bucket": "artifact-bucket", "prefix": ""}),
         )
         monkeypatch.setattr(
-            module, "_agent_s3_buckets", lambda *_args, **_kwargs: ["artifact-bucket"]
+            module,
+            "_load_scoped_legacy_run_artifacts",
+            lambda **_kwargs: (
+                run_id,
+                "artifact-bucket",
+                "project",
+                "nested/root",
+                [artifact],
+                "server-issued-run-ref",
+            ),
         )
-        monkeypatch.setattr(
-            module, "resolve_run_artifacts", lambda *_args, **_kwargs: resolution
-        )
-        monkeypatch.setattr(module, "_agent_access_report", lambda: {})
 
         loaded = module.sim_viz_load_run({"run_id": run_id})
 
@@ -3557,9 +3565,15 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
 
         load_patch.setattr(
             module,
-            "resolve_run_artifacts",
+            "_load_scoped_legacy_run_artifacts",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(
-                module.AmbiguousRunError("foreign-run-1", ["source-a", "source-b"])
+                module.HTTPException(
+                    status_code=409,
+                    detail=(
+                        "run selection is ambiguous; use its server-issued "
+                        "run_ref or exact source tuple"
+                    ),
+                )
             ),
         )
         with pytest.raises(module.HTTPException) as ambiguous_load:

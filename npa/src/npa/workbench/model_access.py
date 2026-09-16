@@ -520,7 +520,10 @@ def _ngc_needed(capabilities: Iterable[str] | None) -> bool:
     wanted = {item.strip() for item in capabilities if item and item.strip()}
     if not wanted:
         return True
-    return bool(wanted.intersection(NGC_CAPABILITIES))
+    expanded = set(wanted)
+    for capability in wanted:
+        expanded.update(ACCESS_CAPABILITY_ALIASES.get(capability, ()))
+    return bool(expanded.intersection(NGC_CAPABILITIES))
 
 
 def _cap_suffix(asset: GatedAsset) -> str:

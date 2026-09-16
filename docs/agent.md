@@ -135,9 +135,12 @@ runtime keys are:
 | `NPA_AGENT_ARTIFACT_S3_SECRET_ACCESS_KEY` | Matching isolated read secret; required with the bucket and access-key id. |
 | `NPA_AGENT_ARTIFACT_S3_REGION` | Storage region; defaults to `eu-north1` when omitted. |
 
-If the isolated bucket/credential triple is absent or incomplete, the backend
-uses the Agent's normal S3 identity. Source tuples still act only as selectors:
-they never grant access and cannot authorize an arbitrary S3 URI.
+If the isolated bucket/credential triple is absent or incomplete, artifact
+discovery is unconfigured and fails closed; it never silently borrows the
+Agent's deployment writer. The only compatibility exception is the explicit,
+same-project `deployment-write-migration` mode described below. Source tuples
+still act only as selectors: they never grant access and cannot authorize an
+arbitrary S3 URI.
 
 The `whole_path_capacity` check first reads the tenant quota aggregate. A
 project-scoped administrator may be forbidden from that tenant-wide read even
@@ -334,6 +337,14 @@ if their endpoint, key, or service-account identity differs; the backend never
 mixes credentials or silently substitutes the deployment writer. `npa agent status`,
 `GET /api/access`, and `GET /api/health` report the artifact credential mode
 without exposing key material.
+
+Bootstrap does not trust those saved labels alone. It reads the provider state
+back and verifies that the staged access key belongs to the recorded service
+account, that the account is in the recorded reader group, and that every
+configured bucket has an exact, non-anonymous `storage.viewer` policy for only
+the registered `<run-parent-prefix>/*`. A missing service-account/group record,
+key-owner mismatch, broader or absent path rule, or unavailable readback blocks
+artifact discovery before credentials are staged.
 
 For a same-project deployment being migrated, an operator may explicitly pass
 `--allow-artifact-write-identity-migration` for one exact registered source.

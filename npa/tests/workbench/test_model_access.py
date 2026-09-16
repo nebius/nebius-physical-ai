@@ -197,6 +197,29 @@ def test_paidf_umbrella_alias_contains_every_specific_capability_asset() -> None
         assert set(assets_for([capability])).issubset(umbrella), capability
 
 
+def test_paidf_umbrella_probes_every_ngc_artifact() -> None:
+    observed: list[str] = []
+
+    results = check_workbench_access(
+        hf_token="hf_x",
+        ngc_key="nvapi-x",
+        hf_validator=lambda *args: _HFResult(ok=True),
+        ngc_validator=lambda _key, *, image: observed.append(image) or "reachable",
+        capabilities=["paidf"],
+        gated_only=True,
+    )
+
+    expected = {
+        asset.repo for asset in assets_for(["paidf"]) if asset.provider == NGC
+    }
+    assert expected
+    assert set(observed) == expected
+    assert len(observed) == len(expected)
+    ngc = next(result for result in results if result.name == "ngc")
+    assert ngc.status == PASS
+    assert f"all {len(expected)} selected NGC artifact(s)" in ngc.summary
+
+
 def test_paidf_access_covers_translation_models_and_transfer_checkpoints() -> None:
     from npa.workbench.cosmos.control_contract import COSMOS_TRANSFER_CHECKPOINTS
 

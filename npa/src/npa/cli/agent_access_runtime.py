@@ -51,6 +51,7 @@ if __name__ == "npa.cli.agent_access_runtime":
     )
     from npa.workflows.artifacts import (
         decode_run_ref,
+        encode_run_ref,
         find_run_sources_across_buckets,
         list_artifacts,
         parse_s3_uri,
@@ -1328,6 +1329,217 @@ def _authorize_exact_run_ref_source(
     _require_discovered_exact_run_source(s3, settings, selection)
     _remember_exact_run_source(selection)
     return selection.result()
+
+
+def _independent_artifact_inventory_projects(report, bucket: str) -> set[str]:
+    """Return projects that independently authorize a whole artifact bucket."""
+
+    payload = report.to_dict() if hasattr(report, "to_dict") else report
+    projects: set[str] = set()
+    if not isinstance(payload, dict):
+        return projects
+    for project in payload.get("projects") or []:
+        if not isinstance(project, dict):
+            continue
+        project_id = str(project.get("id") or "").strip()
+        for resource in project.get("resources") or []:
+            if not isinstance(resource, dict):
+                continue
+            capabilities = resource.get("capabilities") or {}
+            discovery = capabilities.get("artifact_discovery") or {}
+            if (
+                str(resource.get("name") or "").strip() == bucket
+                and str(resource.get("source") or "").strip()
+                != "configured_artifact_source"
+                and discovery.get("status") == "available"
+                and project_id
+            ):
+                projects.add(project_id)
+    return projects
+
+
+def _authorized_artifact_parent_project(report, bucket: str, prefix: str) -> str:
+    """Resolve an exact configured parent or independent whole-bucket grant."""
+
+    configured = {
+        str(source.get("project_id") or "").strip()
+        for source in _configured_agent_artifact_sources()
+        if str(source.get("bucket") or "").strip() == bucket
+        and str(source.get("resolved_prefix") or "").strip().strip("/") == prefix
+        and str(source.get("project_id") or "").strip()
+    }
+    if len(configured) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail="artifact parent has conflicting configured project scopes",
+        )
+    if configured:
+        return next(iter(configured))
+    projects = _independent_artifact_inventory_projects(report, bucket)
+    if len(projects) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail="artifact bucket has ambiguous project ownership",
+        )
+    if not projects:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "artifact prefix is outside effective whole-bucket or configured "
+                "exact-source access"
+            ),
+        )
+    return next(iter(projects))
+
+
+def _effective_legacy_artifact_prefix(settings, prefix: str) -> str:
+    resolver = globals().get("_artifact_discovery_prefix")
+    if callable(resolver):
+        return str(resolver(settings, prefix) or "").strip().strip("/")
+    requested = _validated_resolved_prefix(str(prefix or "").strip().strip("/"))
+    base = _validated_resolved_prefix(
+        str((settings or {}).get("prefix") or "").strip().strip("/")
+    )
+    return "/".join(part for part in (base, requested) if part)
+
+
+def _load_scoped_legacy_run_artifacts(
+    *,
+    s3,
+    settings,
+    run_id: str,
+    run_ref: str = "",
+    prefix: str = "",
+) -> tuple[str, str, str, str, list[Any], str]:
+    """Resolve legacy run selectors without turning a bucket into a prefix grant."""
+
+    normalized_run = validate_run_id(str(run_id or "").strip())
+    _begin_agent_artifact_access()
+    try:
+        report = _agent_access_report()
+        selected_bucket = ""
+        selected_prefix = ""
+        selected_project = ""
+        exact_ref = str(run_ref or "").strip()
+        if exact_ref:
+            ref_bucket, ref_prefix, ref_run = _decoded_exact_run_ref(exact_ref)
+            if ref_run != normalized_run:
+                raise HTTPException(
+                    status_code=409, detail="run_ref does not identify run_id"
+                )
+            selected_bucket = ref_bucket
+            selected_prefix = ref_prefix
+            selected_project = _authorized_artifact_parent_project(
+                report, selected_bucket, selected_prefix
+            )
+        elif prefix:
+            selected_bucket = str((settings or {}).get("bucket") or "").strip()
+            selected_prefix = _effective_legacy_artifact_prefix(settings, prefix)
+            selected_project = _authorized_artifact_parent_project(
+                report, selected_bucket, selected_prefix
+            )
+            exact_ref = encode_run_ref(
+                selected_bucket, selected_prefix, normalized_run
+            )
+        else:
+            candidates: dict[tuple[str, str, str], list[Any]] = {}
+            for source in _configured_agent_artifact_sources():
+                bucket = str(source.get("bucket") or "").strip()
+                source_prefix = str(
+                    source.get("resolved_prefix") or ""
+                ).strip().strip("/")
+                project = str(source.get("project_id") or "").strip()
+                artifacts = list_artifacts(
+                    bucket, normalized_run, prefix=source_prefix, s3=s3
+                )
+                if artifacts:
+                    candidates[(bucket, project, source_prefix)] = artifacts
+            bucket_projects = artifact_bucket_projects(report)
+            for bucket in _agent_s3_buckets(s3, settings):
+                projects = _independent_artifact_inventory_projects(report, bucket)
+                if not projects:
+                    continue
+                sources, source_errors, complete = find_run_sources_across_buckets(
+                    [bucket],
+                    base_prefix=str((settings or {}).get("prefix") or ""),
+                    run_id=normalized_run,
+                    exact_prefix=None,
+                    exclude=(
+                        globals()["_discovery_exclude_roots"]()
+                        if callable(globals().get("_discovery_exclude_roots"))
+                        else set()
+                    ),
+                    bucket_projects=bucket_projects,
+                    s3=s3,
+                )
+                if source_errors or not complete:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="artifact run-source discovery was incomplete",
+                    )
+                for source in sources:
+                    identity = (
+                        str(source.bucket or "").strip(),
+                        str(source.project_id or "").strip(),
+                        str(source.resolved_prefix or "").strip().strip("/"),
+                    )
+                    candidates.setdefault(identity, []).extend(
+                        list_artifacts(
+                            identity[0], normalized_run, prefix=identity[2], s3=s3
+                        )
+                    )
+            candidates = {
+                identity: artifacts
+                for identity, artifacts in candidates.items()
+                if artifacts
+            }
+            if len(candidates) > 1:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "run selection is ambiguous; use its server-issued run_ref "
+                        "or exact source tuple"
+                    ),
+                )
+            if not candidates:
+                raise HTTPException(
+                    status_code=404,
+                    detail="run artifacts not found in authorized artifact sources",
+                )
+            (selected_bucket, selected_project, selected_prefix), _ = next(
+                iter(candidates.items())
+            )
+            exact_ref = encode_run_ref(
+                selected_bucket, selected_prefix, normalized_run
+            )
+
+        _authorize_exact_run_ref_source(
+            s3=s3,
+            settings=settings,
+            run_id=normalized_run,
+            run_ref=exact_ref,
+            resource_bucket=selected_bucket,
+            project_id=selected_project,
+            resolved_prefix=selected_prefix,
+        )
+        artifacts = list_artifacts(
+            selected_bucket, normalized_run, prefix=selected_prefix, s3=s3
+        )
+        if not artifacts:
+            raise HTTPException(
+                status_code=404,
+                detail="run artifacts not found in authorized artifact source",
+            )
+        return (
+            normalized_run,
+            selected_bucket,
+            selected_project,
+            selected_prefix,
+            artifacts,
+            exact_ref,
+        )
+    finally:
+        _end_agent_artifact_access()
 
 
 def _remember_exact_run_ref_source_authorization(

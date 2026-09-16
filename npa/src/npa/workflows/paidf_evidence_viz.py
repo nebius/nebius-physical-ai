@@ -268,21 +268,30 @@ def _validate(evidence: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def _frames(contents: bytes, media_type: str):
-    """Decode all source frames; reencoding pixels removes source file metadata."""
+    """Decode frames with factual video PTS; strip source file metadata."""
     from PIL import Image, ImageSequence
 
     if media_type == "image":
         with Image.open(BytesIO(contents)) as source:
             for frame in ImageSequence.Iterator(source):
-                yield frame.convert("RGB")
+                yield frame.convert("RGB"), None
     else:
         import av
 
         with av.open(BytesIO(contents)) as source:
             if not source.streams.video:
                 raise PaidfEvidenceError("source video has no video stream")
+            prior_timestamp = -1
             for frame in source.decode(video=0):
-                yield frame.to_image().convert("RGB")
+                if frame.pts is None or frame.time_base is None:
+                    raise PaidfEvidenceError("source video frame has no factual PTS")
+                timestamp_ns = int(round(float(frame.pts * frame.time_base) * 1e9))
+                if timestamp_ns < 0 or timestamp_ns <= prior_timestamp:
+                    raise PaidfEvidenceError(
+                        "source video frame timestamps are not strictly increasing"
+                    )
+                prior_timestamp = timestamp_ns
+                yield frame.to_image().convert("RGB"), timestamp_ns
 
 
 def _recording_id(evidence: dict[str, Any]) -> str:
@@ -401,6 +410,16 @@ def _presentation_documents(
 
 
 def _build_paidf_blueprint(rrb: Any, evidence: dict[str, Any], roles: list[str]) -> Any:
+    artifacts = {
+        str(item.get("role") or ""): item
+        for item in evidence.get("source_artifacts", [])
+        if isinstance(item, dict)
+    }
+    default_timeline = (
+        "media_time"
+        if any((artifacts.get(role) or {}).get("media_type") == "video" for role in roles)
+        else "source_frame"
+    )
     media_views = [
         rrb.Spatial2DView(
             origin=f"media/{role}",
@@ -441,7 +460,7 @@ def _build_paidf_blueprint(rrb: Any, evidence: dict[str, Any], roles: list[str])
         rrb.Tabs(media_tab, evidence_tab, stages_tab, active_tab=0),
         rrb.BlueprintPanel(state=rrb.PanelState.Hidden),
         rrb.SelectionPanel(state=rrb.PanelState.Hidden),
-        rrb.TimePanel(state=rrb.PanelState.Expanded, timeline="source_frame"),
+        rrb.TimePanel(state=rrb.PanelState.Expanded, timeline=default_timeline),
         auto_layout=False,
         collapse_panels=True,
     )
@@ -469,7 +488,7 @@ def _inspect(
         batches.setdefault(str(chunk.entity_path), []).append(batch)
         timelines.update(
             name
-            for name in ("stage_index", "source_frame")
+            for name in ("stage_index", "source_frame", "media_time")
             if name in batch.schema.names
         )
 
@@ -486,6 +505,19 @@ def _inspect(
                 (index, value[0]) for index, value in zip(indices, values) if value
             )
         return sorted(found, key=lambda row: -1 if row[0] is None else row[0])
+
+    def duration_ns(value: Any) -> int | None:
+        """Normalize Arrow's typed duration scalar without losing nanoseconds."""
+
+        if value is None:
+            return None
+        nanoseconds = getattr(value, "value", None)
+        if isinstance(nanoseconds, int):
+            return nanoseconds
+        total_seconds = getattr(value, "total_seconds", None)
+        if callable(total_seconds):
+            return int(round(float(total_seconds()) * 1e9))
+        raise PaidfEvidenceError("decoded media timeline has an unsupported value")
 
     provenance = rows("provenance/run", "TextDocument:text")
     if len(provenance) != 1 or json.loads(provenance[0][1]) != evidence:
@@ -516,22 +548,43 @@ def _inspect(
             )
     for role, expected in expected_media.items():
         decoded = []
-        for index, blob in rows(f"media/{role}", "EncodedImage:blob", "source_frame"):
-            with Image.open(BytesIO(bytes(blob))) as source:
-                rgb = source.convert("RGB")
-                decoded.append(
-                    {
-                        "index": index,
-                        "width": rgb.width,
-                        "height": rgb.height,
-                        "rgb_sha256": hashlib.sha256(rgb.tobytes()).hexdigest(),
-                    }
-                )
+        for batch in batches.get(f"/media/{role}", []):
+            if "EncodedImage:blob" not in batch.schema.names:
+                continue
+            indices = batch.column("source_frame").to_pylist()
+            timestamps = (
+                batch.column("media_time").to_pylist()
+                if "media_time" in batch.schema.names
+                else [None] * len(indices)
+            )
+            blobs = batch.column("EncodedImage:blob").to_pylist()
+            for index, timestamp, blob in zip(indices, timestamps, blobs):
+                if not blob:
+                    continue
+                with Image.open(BytesIO(bytes(blob[0]))) as source:
+                    rgb = source.convert("RGB")
+                    decoded.append(
+                        {
+                            "index": index,
+                            "timestamp_ns": duration_ns(timestamp),
+                            "width": rgb.width,
+                            "height": rgb.height,
+                            "rgb_sha256": hashlib.sha256(rgb.tobytes()).hexdigest(),
+                        }
+                    )
+        decoded.sort(key=lambda item: item["index"])
         if decoded != expected["frames"] or not decoded:
             raise PaidfEvidenceError(
                 "decoded media pixels or frame sequence differ from the source"
             )
-    if timelines != {"stage_index", "source_frame"}:
+    expected_timelines = {"stage_index", "source_frame"}
+    if any(
+        frame.get("timestamp_ns") is not None
+        for item in expected_media.values()
+        for frame in item["frames"]
+    ):
+        expected_timelines.add("media_time")
+    if timelines != expected_timelines:
         raise PaidfEvidenceError("recording is missing factual timelines")
     return {
         "recording_id": recording.recording_id(),
@@ -561,8 +614,10 @@ def build_image_evidence_rrd(
     outputs or service-result context must be selected by the caller.
 
     ``stage_index`` means evidence-list order, not elapsed wall time. The separate
-    ``source_frame`` timeline is each media file's zero-based decoded frame index;
-    different files are not asserted to share capture times. Every decoded frame
+    ``source_frame`` timeline is each media file's zero-based decoded frame index.
+    Video roles also carry their decoded presentation timestamps on the shared
+    ``media_time`` duration timeline; different files are not asserted to share
+    capture starts. Every decoded frame
     is embedded losslessly after removing ancillary metadata. No source path is
     logged or returned. The output is atomically created with mode 0600 and never
     overwrites existing evidence. The returned manifest describes readback, not
@@ -622,7 +677,8 @@ def build_image_evidence_rrd(
             rr.TextDocument(
                 "NVIDIA Physical AI Data Factory; NPA evidence adaptation. stage_index is "
                 "the supplied evidence order. source_frame is each source file's decoded "
-                "frame index; files are not asserted to be synchronized. Media privacy "
+                "frame index. media_time preserves decoded video presentation timestamps; "
+                "files are not asserted to share capture starts. Media privacy "
                 "and licensing and original run bindings are established by the caller."
             ),
             static=True,
@@ -643,6 +699,7 @@ def build_image_evidence_rrd(
         recording.reset_time()
         for role in ordered_roles:
             try:
+                recording.reset_time()
                 contents = Path(media_paths[role]).read_bytes()
                 artifact = artifacts[role]
                 if (
@@ -653,12 +710,13 @@ def build_image_evidence_rrd(
                         "media hash or size differs from its source artifact"
                     )
                 frames = []
-                for index, frame in enumerate(
+                for index, (frame, timestamp_ns) in enumerate(
                     _frames(contents, artifact["media_type"])
                 ):
                     frames.append(
                         {
                             "index": index,
+                            "timestamp_ns": timestamp_ns,
                             "width": frame.width,
                             "height": frame.height,
                             "rgb_sha256": hashlib.sha256(frame.tobytes()).hexdigest(),
@@ -668,6 +726,10 @@ def build_image_evidence_rrd(
                     frame.info.clear()
                     frame.save(buffer, format="PNG")
                     recording.set_time("source_frame", sequence=index)
+                    if timestamp_ns is not None:
+                        recording.set_time(
+                            "media_time", duration=float(timestamp_ns) * 1e-9
+                        )
                     recording.log(
                         f"media/{role}",
                         rr.EncodedImage(
@@ -705,7 +767,14 @@ def build_image_evidence_rrd(
             "decoded": decoded,
             "presentation": {
                 "kind": _presentation_kind(evidence["image_name"]),
-                "default_timeline": "source_frame",
+                "default_timeline": (
+                    "media_time"
+                    if any(
+                        artifact.get("media_type") == "video"
+                        for artifact in artifacts.values()
+                    )
+                    else "source_frame"
+                ),
                 "default_media_roles": ordered_roles,
                 "stage_metrics_default": False,
             },

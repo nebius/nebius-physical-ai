@@ -6326,6 +6326,12 @@ def test_cross_project_artifact_source_uses_exact_private_credential_record(
 
     monkeypatch.setattr(
         agent_artifact_sources,
+        "_provider_verified_artifact_read_identity",
+        lambda **_kwargs: True,
+    )
+
+    monkeypatch.setattr(
+        agent_artifact_sources,
         "project_credential_record",
         lambda project_id, **_kwargs: {
             "project_id": project_id,
@@ -6374,6 +6380,12 @@ def test_multiple_artifact_projects_require_one_shared_exact_reader(
     monkeypatch,
 ) -> None:
     from npa.cli import agent_artifact_sources
+
+    monkeypatch.setattr(
+        agent_artifact_sources,
+        "_provider_verified_artifact_read_identity",
+        lambda **_kwargs: True,
+    )
 
     records = {
         "project-one": {
@@ -6430,6 +6442,12 @@ def test_multiple_artifact_projects_require_one_shared_exact_reader(
 
 def test_multiple_artifact_projects_reject_mixed_reader_identities(monkeypatch) -> None:
     from npa.cli import agent_artifact_sources
+
+    monkeypatch.setattr(
+        agent_artifact_sources,
+        "_provider_verified_artifact_read_identity",
+        lambda **_kwargs: True,
+    )
 
     def record(project_id, **_kwargs):
         suffix = project_id.rsplit("-", 1)[-1]
@@ -6508,6 +6526,120 @@ def test_cross_project_artifact_source_rejects_mismatched_private_bucket(
         )
 
 
+def test_artifact_reader_requires_service_account_and_live_identity_proof(
+    monkeypatch,
+) -> None:
+    from npa.cli import agent_artifact_sources
+
+    source = {
+        "project_id": "project-exact",
+        "bucket": "bucket-exact",
+        "resolved_prefix": "preserved/runs",
+    }
+    storage = {
+        "bucket": "bucket-exact",
+        "endpoint_url": "https://objects.example",
+        "aws_access_key_id": "synthetic-access",
+        "aws_secret_access_key": "synthetic-secret",
+        "project_id": "project-exact",
+        "resolved_prefixes": ["preserved/runs"],
+        "iam_role": "storage.viewer",
+        "iam_group_id": "reader-group",
+    }
+    monkeypatch.setattr(
+        agent_artifact_sources,
+        "project_credential_record",
+        lambda _project_id, **_kwargs: {"artifact_read_storage": dict(storage)},
+    )
+    with pytest.raises(
+        agent_module.AgentStorageCredentialError,
+        match="scope does not match",
+    ):
+        agent_module._resolve_configured_artifact_storage_credentials(
+            [source],
+            deployment_project_id="project-deployment",
+            current=("", "", "", "", "", ""),
+        )
+
+    storage["service_account_id"] = "reader-service-account"
+    monkeypatch.setattr(
+        agent_artifact_sources,
+        "_provider_verified_artifact_read_identity",
+        lambda **_kwargs: False,
+    )
+    with pytest.raises(
+        agent_module.AgentStorageCredentialError,
+        match="identity or storage.viewer binding could not be verified",
+    ):
+        agent_module._resolve_configured_artifact_storage_credentials(
+            [source],
+            deployment_project_id="project-deployment",
+            current=("", "", "", "", "", ""),
+        )
+
+
+def test_artifact_reader_provider_proof_binds_key_account_and_exact_policy(
+    monkeypatch,
+) -> None:
+    from npa.cli import agent_artifact_sources
+    from npa.clients import nebius
+
+    monkeypatch.setattr(nebius, "_group_has_member", lambda group, account: True)
+    monkeypatch.setattr(
+        nebius,
+        "list_access_keys_for_service_account",
+        lambda project, account, strict: [
+            {"id": "key-resource", "service_account_id": account}
+        ],
+    )
+    monkeypatch.setattr(
+        nebius,
+        "_run_json",
+        lambda _args: {"status": {"aws_access_key_id": "read-access"}},
+    )
+    monkeypatch.setattr(
+        nebius,
+        "get_bucket_by_name",
+        lambda project, bucket: {
+            "spec": {
+                "bucket_policy": {
+                    "rules": [
+                        {
+                            "group_id": "reader-group",
+                            "paths": ["preserved/runs/*"],
+                            "roles": ["storage.viewer"],
+                        }
+                    ]
+                }
+            }
+        },
+    )
+    storage = {
+        "credential_project_id": "credential-project",
+        "iam_group_id": "reader-group",
+    }
+    source = {
+        "project_id": "source-project",
+        "bucket": "source-bucket",
+        "resolved_prefix": "preserved/runs",
+    }
+
+    assert agent_artifact_sources._provider_verified_artifact_read_identity(
+        storage=storage,
+        source_project_id="source-project",
+        project_sources=[source],
+        access_key="read-access",
+        service_account_id="reader-account",
+    )
+    assert not agent_artifact_sources._provider_verified_artifact_read_identity(
+        storage=storage,
+        source_project_id="source-project",
+        project_sources=[{**source, "resolved_prefix": "other/runs"}],
+        access_key="read-access",
+        service_account_id="reader-account",
+    )
+
+
 def test_absent_artifact_read_identity_never_falls_back_to_deployment_write() -> None:
     current = (
         "deployment-bucket",
@@ -6564,6 +6696,12 @@ def test_same_project_prefers_independent_read_identity_over_write_migration(
     monkeypatch,
 ) -> None:
     from npa.cli import agent_artifact_sources
+
+    monkeypatch.setattr(
+        agent_artifact_sources,
+        "_provider_verified_artifact_read_identity",
+        lambda **_kwargs: True,
+    )
 
     monkeypatch.setattr(
         agent_artifact_sources,

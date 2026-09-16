@@ -6749,29 +6749,21 @@ def sim_viz_load_run(payload: dict | None = None):
                 exclude=_discovery_exclude_roots(),
             )
             resolved_ref = encode_run_ref(selected_bucket, selected_prefix, run_id)
-        elif requested_prefix:
-            effective_prefix = _artifact_discovery_prefix(settings, requested_prefix)
-            artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=effective_prefix, s3=s3)
-            selected_bucket = settings["bucket"]
-            selected_prefix = effective_prefix
-            if artifacts:
-                resolved_ref = encode_run_ref(selected_bucket, selected_prefix, run_id)
-        if not artifacts:
-            resolution = resolve_run_artifacts(
-                _agent_s3_buckets(s3, settings),
-                base_prefix=settings.get("prefix", ""),
-                run_ref_or_id=requested_run_ref or run_id,
+        else:
+            (
+                resolved_run_id,
+                selected_bucket,
+                selected_project,
+                selected_prefix,
+                artifacts,
+                resolved_ref,
+            ) = _load_scoped_legacy_run_artifacts(
                 s3=s3,
+                settings=settings,
+                run_id=run_id,
+                run_ref=requested_run_ref,
+                prefix=requested_prefix,
             )
-            if resolution is not None:
-                artifacts = resolution.artifacts
-                selected_bucket = resolution.bucket
-                selected_prefix = resolution.source_prefix
-                selected_project = artifact_bucket_projects(
-                    _agent_access_report()
-                ).get(selected_bucket, "")
-                resolved_run_id = resolution.run_id
-                resolved_ref = resolution.run_ref
         preferred = select_preferred_artifact(artifacts)
         # Prefer a run-scoped Rerun recording over stale history entries.
         if preferred and (preferred.render == "rerun" or (requested_bucket and source_selected)):
@@ -7174,37 +7166,32 @@ def artifacts_runs(
         if lease_active:
             _end_agent_artifact_access()
 def _resolved_run_artifacts(s3, settings, run_ref_or_id: str, *, prefix: str = ""):
-    effective_prefix = _artifact_discovery_prefix(settings, prefix)
-    resolution = None
-    if prefix:
-        normalized_run = _validate_run_basename(run_ref_or_id)
-        artifacts = list_artifacts(
-            settings["bucket"], normalized_run, prefix=effective_prefix, s3=s3
-        )
-        if artifacts:
-            resolution = RunResolution(
-                normalized_run, settings["bucket"], effective_prefix, artifacts
-            )
+    requested = str(run_ref_or_id or "").strip()
+    if requested.startswith("npa1_"):
+        _bucket, _prefix, normalized_run = decode_run_ref(requested)
+        run_ref = requested
     else:
-        allowed_buckets, _scope = _agent_artifact_list_scope(
-            _agent_access_report(), "", ""
-        )
-        resolution = resolve_run_artifacts(
-            allowed_buckets,
-            base_prefix=settings.get("prefix", ""),
-            run_ref_or_id=run_ref_or_id,
-            s3=s3,
-        )
-    if resolution is None:
-        raise HTTPException(
-            status_code=404,
-            detail="run artifacts not found in configured S3 storage",
-        )
+        normalized_run = _validate_run_basename(requested)
+        run_ref = ""
+    (
+        resolved_run,
+        bucket,
+        _project,
+        resolved_prefix,
+        artifacts,
+        _resolved_ref,
+    ) = _load_scoped_legacy_run_artifacts(
+        s3=s3,
+        settings=settings,
+        run_id=normalized_run,
+        run_ref=run_ref,
+        prefix=prefix,
+    )
     return (
-        resolution.run_id,
-        resolution.bucket,
-        resolution.artifacts,
-        resolution.source_prefix,
+        resolved_run,
+        bucket,
+        artifacts,
+        resolved_prefix,
     )
 
 
@@ -7542,16 +7529,22 @@ def artifacts_stage(
             )
             if selected_project:
                 bucket_projects[run_bucket] = selected_project
-        elif prefix:
-            artifacts = list_artifacts(
-                settings["bucket"], normalized_run, prefix=_artifact_discovery_prefix(settings, prefix), s3=s3
+        else:
+            (
+                _resolved_run,
+                run_bucket,
+                selected_project,
+                exact_prefix,
+                artifacts,
+                _resolved_ref,
+            ) = _load_scoped_legacy_run_artifacts(
+                s3=s3,
+                settings=settings,
+                run_id=normalized_run,
+                prefix=prefix,
             )
-        if not artifacts and not resource_bucket:
-            run_bucket, artifacts = find_run_artifacts_across_buckets(
-                _agent_s3_buckets(s3, settings), base_prefix=settings.get("prefix", ""), run_id=normalized_run, s3=s3
-            )
-            if not run_bucket:
-                run_bucket = settings["bucket"]
+            if selected_project:
+                bucket_projects[run_bucket] = selected_project
         wanted = str(stage_key or "").strip()
         keys = [str(item.key or "") for item in artifacts]
         marker = "/" + normalized_run + "/"
@@ -7640,16 +7633,20 @@ def fiftyone_dataset(
                 source_selected=source_selected,
                 exclude=_discovery_exclude_roots(),
             )
-        elif prefix:
-            artifacts = list_artifacts(
-                settings["bucket"], normalized_run, prefix=_artifact_discovery_prefix(settings, prefix), s3=s3
+        else:
+            (
+                _resolved_run,
+                bucket,
+                selected_project,
+                exact_prefix,
+                artifacts,
+                _resolved_ref,
+            ) = _load_scoped_legacy_run_artifacts(
+                s3=s3,
+                settings=settings,
+                run_id=normalized_run,
+                prefix=prefix,
             )
-        if not artifacts and not resource_bucket:
-            bucket, artifacts = find_run_artifacts_across_buckets(
-                _agent_s3_buckets(s3, settings), base_prefix=settings.get("prefix", ""), run_id=normalized_run, s3=s3
-            )
-            if not bucket:
-                bucket = settings["bucket"]
 
         def _read_json(key: str):
             if not key:
@@ -7710,14 +7707,19 @@ def artifacts_run_provenance(
                 source_selected=source_selected,
                 exclude=_discovery_exclude_roots(),
             )
-        elif prefix:
-            artifacts = list_artifacts(settings["bucket"], normalized_run, prefix=_artifact_discovery_prefix(settings, prefix), s3=s3)
-        if not artifacts and not resource_bucket:
-            run_bucket, artifacts = find_run_artifacts_across_buckets(
-                _agent_s3_buckets(s3, settings),
-                base_prefix=settings.get("prefix", ""),
-                run_id=normalized_run,
+        else:
+            (
+                _resolved_run,
+                run_bucket,
+                selected_project,
+                exact_prefix,
+                artifacts,
+                _resolved_ref,
+            ) = _load_scoped_legacy_run_artifacts(
                 s3=s3,
+                settings=settings,
+                run_id=normalized_run,
+                prefix=prefix,
             )
         keys = [str(a.key or "") for a in artifacts]
 

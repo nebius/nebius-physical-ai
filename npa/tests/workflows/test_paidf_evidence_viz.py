@@ -502,6 +502,11 @@ def test_video_preserves_every_decoded_source_frame(tmp_path: Path) -> None:
     rows = _rows(output, "/media/visual_output", "EncodedImage:blob", "source_frame")
     assert [row[0] for row in rows] == [0, 1, 2]
     assert result["decoded"]["media"]["visual_output"]["frame_count"] == 3
+    assert result["presentation"]["default_timeline"] == "media_time"
+    assert [
+        frame["timestamp_ns"]
+        for frame in result["decoded"]["media"]["visual_output"]["frames"]
+    ] == [0, 200_000_000, 400_000_000]
     for (_, blob), pixels in zip(rows, expected):
         with Image.open(BytesIO(bytes(blob))) as image:
             assert image.convert("RGB").tobytes() == pixels

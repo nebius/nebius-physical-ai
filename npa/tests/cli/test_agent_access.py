@@ -1643,3 +1643,69 @@ def test_deployment_inventory_is_not_downgraded_as_a_fallback() -> None:
     assert resource["capabilities"]["artifact_discovery"]["status"] == "available"
     assert resource["capabilities"]["artifact_read"]["status"] == "available"
     assert resource["capabilities"]["artifact_write"]["status"] == "unverified"
+
+
+def test_legacy_prefix_loader_never_broadens_a_configured_exact_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    source = {
+        "project_id": "project-b",
+        "bucket": "bucket-exact",
+        "resolved_prefix": "authorized/runs",
+    }
+    report = _discover(
+        list_buckets=lambda _project: [],
+        fallback_buckets=[],
+        configured_sources=[source],
+        probe_configured_source=lambda _bucket, _prefix: _available_probe("exact"),
+    )
+    monkeypatch.setattr(runtime, "_begin_agent_artifact_access", lambda: report)
+    monkeypatch.setattr(runtime, "_end_agent_artifact_access", lambda: None)
+    monkeypatch.setattr(runtime, "_agent_access_report", lambda: report)
+    monkeypatch.setattr(
+        runtime, "_configured_agent_artifact_sources", lambda: (source,)
+    )
+    monkeypatch.setattr(
+        runtime,
+        "list_artifacts",
+        lambda *_args, **_kwargs: pytest.fail(
+            "an unauthorized guessed prefix must fail before object listing"
+        ),
+    )
+
+    with pytest.raises(HTTPException) as denied:
+        runtime._load_scoped_legacy_run_artifacts(
+            s3=object(),
+            settings={"bucket": "bucket-exact", "prefix": ""},
+            run_id="run-one",
+            prefix="guessed/private",
+        )
+    assert denied.value.status_code == 403
+
+    artifact = SimpleNamespace(key="authorized/runs/run-one/report.rrd")
+    authorized: list[dict[str, str]] = []
+    monkeypatch.setattr(
+        runtime, "list_artifacts", lambda *_args, **_kwargs: [artifact]
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_authorize_exact_run_ref_source",
+        lambda **kwargs: authorized.append(kwargs)
+        or (
+            kwargs["resource_bucket"],
+            kwargs["project_id"],
+            kwargs["resolved_prefix"],
+        ),
+    )
+    loaded = runtime._load_scoped_legacy_run_artifacts(
+        s3=object(),
+        settings={"bucket": "bucket-exact", "prefix": ""},
+        run_id="run-one",
+        prefix="authorized/runs",
+    )
+    assert loaded[1:4] == ("bucket-exact", "project-b", "authorized/runs")
+    assert loaded[4] == [artifact]
+    assert len(authorized) == 1
+    assert authorized[0]["resolved_prefix"] == "authorized/runs"
