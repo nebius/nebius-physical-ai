@@ -159,7 +159,7 @@ def test_checkpoint_verification_detects_different_loaded_weights(prepared):
 def test_checkpoint_verification_rejects_extra_files(prepared):
     args, plan, _ = prepared
     (args.policy_checkpoint / "model.safetensors").write_bytes(b"alternate model")
-    with pytest.raises(ValueError, match="files or radio normalization"):
+    with pytest.raises(ValueError, match="files or normalization"):
         policy._verify_checkpoint(
             args.policy_archive,
             args.policy_checkpoint,

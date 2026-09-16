@@ -11,6 +11,9 @@ from .protocol import make_plan, verify_upstream
 
 
 def _add_policy_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--policy-kind", choices=("official", "rlc"), default="official"
+    )
     for field in ("root", "python", "checkpoint", "archive"):
         parser.add_argument(f"--policy-{field}", type=Path)
 

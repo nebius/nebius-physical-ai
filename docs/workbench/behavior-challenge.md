@@ -10,6 +10,7 @@ implementations.
 
 **Status:** the complete ten-instance radio development selection ran through
 Workbench, with **one success and mean Q = 0.10**. All nine failures are retained.
+The subsequent ten-instance radio reporting selection scored **Q = 0.00**.
 This validates the evaluation path and a task-specific baseline; performance on
 the other 99 tasks and 24 GB serving compliance require separate validation.
 Organizer submission is a separate step. The runtime image, licensed
@@ -52,6 +53,53 @@ radio. The success label comes from the official evaluator.
 The **0.10 development mean is not a reporting challenge score**. Development
 artifacts have `challenge_score: null` and contain no submission ZIP. Reporting
 requires its separate prescribed instances and the full 1,000-case denominator.
+
+## Developing a stronger policy
+
+`--policy-kind rlc` selects a development-only transfer of the published
+[RLC 2025 winning solution](https://github.com/IliaLarchenko/behavior-1k-solution).
+Its learned task/stage memory, rolling action inpainting, compression and
+proprioception-based recovery replace the radio-only baseline controller.
+This is a transfer candidate, with no measured 2026 improvement yet.
+The authors' 2025 results do not establish 2026 performance.
+
+The candidate requires the clean source checkout at
+`ca556f74a455cef7987a2be4537b5ac85cc56dd7`, including its pinned OpenPI and
+BEHAVIOR submodules. The historical BEHAVIOR submodule supplies task names only;
+**simulation still uses the unchanged official 2026 v3.9.2 checkout**.
+All original 50 task names match the first 50 entries in the 2026 registry.
+The remaining 50 tasks are unsupported by these checkpoints.
+
+Use the existing four managed-policy arguments with `--policy-kind rlc`:
+
+- `--policy-root`: the pinned RLC source checkout.
+- `--policy-python`: a Python 3.11 environment with the pinned OpenPI dependencies.
+- `--policy-checkpoint`: the published checkpoint directory selected by the
+  upstream task mapping, such as `checkpoint_2` for radio.
+- `--policy-archive`: a ZIP with that directory as its top-level prefix. Put
+  its SHA-256 in the recipe's `policy_checkpoint_sha256` field.
+
+The default `--policy-kind official` retains the original radio policy.
+RLC requires a one-task `development` recipe and rejects reporting selections.
+The runner checks both extracted weights against the ZIP and every file against
+Hugging Face revision `89545bc1b7aa7f2e687bc0032d091f132d715d4e` of
+[`IliaLarchenko/behavior_submission`](https://huggingface.co/IliaLarchenko/behavior_submission).
+Source and weights remain runtime inputs; Workbench does not redistribute them.
+Retain upstream attribution and satisfy the existing OpenPI/Gemma use terms.
+
+The launcher creates a temporary policy-source copy with exactly two import
+changes to use the 2026 proprioception layout. It accepts only the three onboard
+RGB images and the 61-element proprioception vector. The task is configured from
+the public registry; incoming task/instance metadata cannot override it.
+Episode resets clear policy memory and queued actions without adding an extra
+WebSocket response. Original checkpoints and evaluator code remain unchanged.
+
+One transfer limitation needs measurement: the 2025 training vector's base
+velocity convention differs from the robot-local velocity supplied in 2026.
+The adapter passes the permitted local velocity directly, without consulting
+simulator pose. Development rollouts will determine whether fine-tuning on the
+2026 training demonstrations is needed. Full-task coverage, a new reporting
+score, and the policy memory requirement remain unverified.
 
 ## Rules and pinned source
 

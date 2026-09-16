@@ -1,4 +1,4 @@
-"""Supervise the official radio-task policy and verify its loaded checkpoint bytes."""
+"""Supervise managed BEHAVIOR policies and verify their loaded checkpoint bytes."""
 
 from __future__ import annotations
 
@@ -36,7 +36,14 @@ def _verify_source(root: Path) -> None:
         )
 
 
-def _verify_checkpoint(archive: Path, checkpoint: Path, expected: str) -> dict:
+def _verify_checkpoint(
+    archive: Path,
+    checkpoint: Path,
+    expected: str,
+    *,
+    prefix: str = CHECKPOINT_PREFIX,
+    normalization: str = "assets/turning_on_radio/norm_stats.json",
+) -> dict:
     if file_digest(archive) != expected:
         raise ValueError("Policy archive differs from the frozen recipe checkpoint")
     files = {}
@@ -44,7 +51,7 @@ def _verify_checkpoint(archive: Path, checkpoint: Path, expected: str) -> dict:
         for member in source.infolist():
             if member.is_dir():
                 continue
-            relative = member.filename.removeprefix(CHECKPOINT_PREFIX)
+            relative = member.filename.removeprefix(prefix)
             target = (checkpoint / relative).resolve()
             if (
                 relative == member.filename
@@ -62,8 +69,8 @@ def _verify_checkpoint(archive: Path, checkpoint: Path, expected: str) -> dict:
     actual = {
         str(p.relative_to(checkpoint)) for p in checkpoint.rglob("*") if p.is_file()
     }
-    if actual != set(files) or "assets/turning_on_radio/norm_stats.json" not in files:
-        raise ValueError("Checkpoint files or radio normalization assets do not match")
+    if actual != set(files) or normalization not in files:
+        raise ValueError("Checkpoint files or normalization assets do not match")
     return files
 
 
@@ -124,6 +131,10 @@ def _prepare_policy(args: argparse.Namespace, plan: dict, output: Path) -> list[
     require_openpi_terms()
     if args.host not in {"localhost", "127.0.0.1"}:
         raise ValueError("Managed policy requires a loopback evaluator host")
+    if getattr(args, "policy_kind", "official") == "rlc":
+        from .rlc_policy import prepare_policy
+
+        return prepare_policy(args, plan, output)
     if plan["recipe"]["tasks"] != ["turning_on_radio"]:
         raise ValueError(
             "The supplied official checkpoint supports turning_on_radio only"
@@ -170,7 +181,7 @@ def _record_policy(args, plan, output, command, files):
 
 @contextmanager
 def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
-    """Optionally serve the verified official radio checkpoint during evaluation.
+    """Optionally serve a verified baseline or RLC checkpoint during evaluation.
 
     Args:
         args: Evaluator arguments with all four policy paths, or none.
@@ -201,9 +212,9 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
             stderr=subprocess.STDOUT,
         )
         try:
-            print("Waiting for the official radio policy to become ready.", flush=True)
+            print("Waiting for the managed policy to become ready.", flush=True)
             _wait_for_policy(process, args.port)
-            print("Official radio policy is ready.", flush=True)
+            print("Managed policy is ready.", flush=True)
             yield
         finally:
             _stop_policy(process)
