@@ -32,7 +32,9 @@ expiry of at most 24 hours. It never accepts vendor terms on the customer's
 behalf and never grants redistribution, publication, derivative, service, or
 output rights beyond those terms. Recording acceptance also requires the exact
 notice digest returned by the immediately preceding `notice` action, so an old
-or altered term set cannot be accepted silently.
+or altered term set cannot be accepted silently. The record path must already
+be inside a customer-owned `0700` directory; symlinked or permissive parents,
+special files, overwrite attempts, and parent replacement races fail closed.
 
 ## Neutral candidate
 

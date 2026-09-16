@@ -12,6 +12,7 @@ import re
 import stat
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from collections.abc import Callable
 from pathlib import Path
@@ -397,6 +398,98 @@ def test_robomimic_gate_refuses_missing_manager_context_in_default_suite(
 
     with pytest.raises(AssertionError):
         _live_e2e_module()._robomimic_live_selectors("manager-project")
+
+
+def test_robomimic_live_harness_refuses_entitlement_before_any_side_effect(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = _live_e2e_module()
+    run_id = "preflight-refusal"
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    entitlement = _customer_entitlement(
+        tmp_path, project="manager-project", run_id=run_id
+    )
+    record = json.loads(entitlement.read_text(encoding="utf-8"))
+    record["decision"] = "declined"
+    entitlement.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
+    entitlement.chmod(0o600)
+    selectors = {
+        "NPA_E2E_PROJECT": "manager-project",
+        "NPA_BYOF_ROBOMIMIC_REGISTRY": "private.invalid/robomimic",
+        "NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY": "private",
+        "NPA_BYOF_KUBECONFIG": str(kubeconfig),
+        "NPA_BYOF_K8S_CONTEXT": "manager-context",
+        "NPA_BYOF_K8S_NAMESPACE": "robomimic-validation",
+        "NPA_E2E_S3_BUCKET": "manager-bucket",
+        "NPA_E2E_MK8S_RESERVED_CAPACITY": "1",
+        "NPA_BYOF_LIVE_GPU": "1",
+        "NPA_BYOF_ROBOMIMIC_LIVE_B200": "1",
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_PVC": "robomimic-runtime-exact",
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256": "a" * 64,
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE": str(entitlement),
+        "NPA_BYOF_ROBOMIMIC_RUN_ID": run_id,
+        "AWS_ENDPOINT_URL": "https://storage.test-region.nebius.cloud",
+    }
+    for variable, value in selectors.items():
+        monkeypatch.setenv(variable, value)
+
+    def unexpected_side_effect(*_args, **_kwargs):
+        pytest.fail("invalid entitlement reached a live or local side effect")
+
+    monkeypatch.setattr(module, "_activate_nebius_profile", unexpected_side_effect)
+    monkeypatch.setattr(module, "load_spec", unexpected_side_effect)
+    monkeypatch.setattr(module, "resolve_container_registry", unexpected_side_effect)
+    monkeypatch.setattr(module, "live_bucket", unexpected_side_effect)
+    monkeypatch.setattr(module.tempfile, "TemporaryDirectory", unexpected_side_effect)
+    monkeypatch.setattr(module, "_robomimic_observer_rbac", unexpected_side_effect)
+    monkeypatch.setattr(module.subprocess, "run", unexpected_side_effect)
+    before = {
+        path.relative_to(tmp_path).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+
+    with pytest.raises(RuntimeError, match="binding mismatch"):
+        module._invoke_robomimic_gate("manager-project")
+
+    after = {
+        path.relative_to(tmp_path).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+
+
+def test_robomimic_live_preflight_matches_runner_entitlement_proof(
+    tmp_path: Path,
+) -> None:
+    module = _live_e2e_module()
+    runner = _byof_runner_module()
+    run_id = "preflight-match"
+    entitlement = _customer_entitlement(
+        tmp_path, project="manager-project", run_id=run_id
+    )
+    selectors = {
+        "project": "manager-project",
+        "runtime_inventory_sha256": "a" * 64,
+        "runtime_entitlement_file": str(entitlement),
+    }
+
+    harness_proof = module._preflight_robomimic_runtime_entitlement(
+        selectors=selectors, run_id=run_id
+    )
+    runner_proof = runner._verify_robomimic_entitlement(
+        path=entitlement,
+        customer_identity="manager-project",
+        run_id=run_id,
+        runtime_inventory_sha256="a" * 64,
+    )
+
+    assert harness_proof == {
+        "record_sha256": runner_proof["record_sha256"],
+        "customer_binding_sha256": runner_proof["customer_binding_sha256"],
+    }
 
 
 @pytest.mark.parametrize(
@@ -1062,6 +1155,154 @@ def test_robomimic_customer_accept_refuses_stale_notice_without_writing(
     assert payload["push_started"] is False
     assert payload["run_started"] is False
     assert not record.exists()
+
+
+def test_robomimic_entitlement_refuses_symlinked_or_permissive_parent(
+    tmp_path: Path,
+) -> None:
+    runner = _byof_runner_module()
+    private_parent = tmp_path / "private"
+    private_parent.mkdir(mode=0o700)
+    symlinked_parent = tmp_path / "linked"
+    symlinked_parent.symlink_to(private_parent, target_is_directory=True)
+    permissive_parent = tmp_path / "permissive"
+    permissive_parent.mkdir(mode=0o755)
+    permissive_parent.chmod(0o755)
+
+    for record in (
+        symlinked_parent / "entitlement.json",
+        permissive_parent / "entitlement.json",
+    ):
+        with pytest.raises(runner.RobomimicEntitlementError) as raised:
+            runner._write_robomimic_entitlement(record, {"decision": "accepted"})
+        assert raised.value.code == "unsafe-parent"
+        assert not record.exists()
+
+    source = private_parent / "entitlement.json"
+    source.write_text('{"decision":"accepted"}\n', encoding="utf-8")
+    source.chmod(0o600)
+    with pytest.raises(runner.RobomimicEntitlementError) as raised:
+        runner._read_robomimic_entitlement(
+            symlinked_parent / "entitlement.json"
+        )
+    assert raised.value.code == "unsafe-parent"
+
+
+def test_robomimic_entitlement_publication_detects_parent_replacement(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner = _byof_runner_module()
+    parent = tmp_path / "records"
+    parent.mkdir(mode=0o700)
+    displaced = tmp_path / "records-displaced"
+    record = parent / "entitlement.json"
+    real_link = runner.os.link
+
+    def replace_parent_after_link(*args, **kwargs) -> None:
+        real_link(*args, **kwargs)
+        parent.rename(displaced)
+        parent.mkdir(mode=0o700)
+
+    monkeypatch.setattr(runner.os, "link", replace_parent_after_link)
+
+    with pytest.raises(runner.RobomimicEntitlementError) as raised:
+        runner._write_robomimic_entitlement(record, {"decision": "accepted"})
+
+    assert raised.value.code == "parent-changed"
+    assert not record.exists()
+    assert list(parent.iterdir()) == []
+    assert list(displaced.iterdir()) == []
+
+
+def test_robomimic_entitlement_read_detects_parent_replacement(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner = _byof_runner_module()
+    parent = tmp_path / "records"
+    parent.mkdir(mode=0o700)
+    record = parent / "entitlement.json"
+    record.write_text('{"decision":"accepted"}\n', encoding="utf-8")
+    record.chmod(0o600)
+    displaced = tmp_path / "records-displaced"
+    real_fdopen = runner.os.fdopen
+    replaced = False
+
+    def replace_parent_before_read(*args, **kwargs):
+        nonlocal replaced
+        if not replaced:
+            parent.rename(displaced)
+            parent.mkdir(mode=0o700)
+            replaced = True
+        return real_fdopen(*args, **kwargs)
+
+    monkeypatch.setattr(runner.os, "fdopen", replace_parent_before_read)
+
+    with pytest.raises(runner.RobomimicEntitlementError) as raised:
+        runner._read_robomimic_entitlement(record)
+
+    assert raised.value.code == "parent-changed"
+    assert not record.exists()
+    assert (displaced / "entitlement.json").is_file()
+
+
+def test_robomimic_entitlement_fifo_refuses_without_blocking(tmp_path: Path) -> None:
+    runner = _byof_runner_module()
+    fifo = tmp_path / "entitlement.json"
+    os.mkfifo(fifo, mode=0o600)
+
+    started = time.monotonic()
+    with pytest.raises(runner.RobomimicEntitlementError) as raised:
+        runner._read_robomimic_entitlement(fifo)
+
+    assert time.monotonic() - started < 1.0
+    assert raised.value.code == "unsafe-file"
+
+
+def test_robomimic_entitlement_errors_never_disclose_exception_values(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runner = _byof_runner_module()
+    marker = "private-customer-path-marker"
+    monkeypatch.setenv("NPA_E2E_PROJECT", "customer-project")
+    monkeypatch.setenv("NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256", "a" * 64)
+    monkeypatch.setattr(
+        runner,
+        "_write_robomimic_entitlement",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError(marker)),
+    )
+    expiry = (datetime.now(timezone.utc) + timedelta(hours=1)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+    status = runner.main(
+        [
+            "--repo-url",
+            "https://github.com/ARISE-Initiative/robomimic.git",
+            "--repo-ref",
+            SOURCE_REVISION,
+            "--solution-name",
+            "robomimic",
+            "--run-id",
+            "redacted-refusal",
+            "--robomimic-runtime-entitlement-action",
+            "accept",
+            "--robomimic-runtime-entitlement-file",
+            str(tmp_path / marker / "entitlement.json"),
+            "--robomimic-runtime-entitlement-expires-at",
+            expiry,
+            "--robomimic-runtime-entitlement-notice-sha256",
+            runner._robomimic_entitlement_notice()["notice_sha256"],
+        ]
+    )
+
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    assert status == 64
+    assert payload["error_code"] == "entitlement-refused"
+    assert payload["error"] == "robomimic customer runtime entitlement refused"
+    assert marker not in output
 
 
 def test_robomimic_customer_decline_does_not_create_record(

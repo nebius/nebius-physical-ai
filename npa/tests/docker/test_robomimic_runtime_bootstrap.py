@@ -520,6 +520,85 @@ def test_customer_runtime_entitlement_refuses_linked_metadata(
         )
 
 
+@pytest.mark.parametrize("unsafe_kind", ("permissive-mode", "wrong-owner"))
+def test_customer_runtime_entitlement_requires_owner_private_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unsafe_kind: str
+) -> None:
+    path, record_sha256 = _entitlement(tmp_path)
+    if unsafe_kind == "permissive-mode":
+        path.chmod(0o644)
+    else:
+        observed_uid = path.stat().st_uid
+        monkeypatch.setattr(verifier.os, "geteuid", lambda: observed_uid + 1)
+
+    with pytest.raises(verifier.VerificationError, match="must be owner-only"):
+        verifier.verify_customer_runtime_entitlement(
+            entitlement_path=path,
+            runtime_lock_path=IMAGE_ROOT / "runtime-requirements.lock",
+            expected_entitlement_sha256=record_sha256,
+            expected_customer_binding_sha256="b" * 64,
+            expected_run_id="entitled-run",
+            expected_inventory_sha256="a" * 64,
+            now=datetime(2026, 9, 16, 6, tzinfo=timezone.utc),
+        )
+
+
+def test_customer_runtime_entitlement_fifo_refuses_without_blocking(
+    tmp_path: Path,
+) -> None:
+    fifo = tmp_path / "entitlement.fifo"
+    os.mkfifo(fifo, mode=0o600)
+
+    started = time.monotonic()
+    with pytest.raises(verifier.VerificationError, match="required regular file"):
+        verifier._bounded_json_object(
+            fifo,
+            maximum_size=verifier.RUNTIME_ENTITLEMENT_MAX_BYTES,
+            require_single_link=True,
+            require_owner_only=True,
+        )
+
+    assert time.monotonic() - started < 1.0
+
+
+def test_entitlement_cli_refusal_redacts_customer_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    marker = "private-customer-path-marker"
+    missing = tmp_path / marker / "entitlement.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "verify_image.py",
+            "entitlement",
+            "--entitlement",
+            str(missing),
+            "--runtime-lock",
+            str(IMAGE_ROOT / "runtime-requirements.lock"),
+            "--expected-entitlement-sha256",
+            "a" * 64,
+            "--expected-customer-binding-sha256",
+            "b" * 64,
+            "--expected-run-id",
+            "entitled-run",
+            "--expected-inventory-sha256",
+            "c" * 64,
+        ],
+    )
+
+    status = verifier.main()
+
+    output = capsys.readouterr().err
+    assert status == verifier.RUNTIME_REFUSAL_STATUS
+    assert output.strip() == (
+        "NPA_ROBOMIMIC_RUNTIME_REFUSED: customer runtime entitlement refused"
+    )
+    assert marker not in output
+
+
 def _artifact(index: int, *, size: int) -> dict[str, object]:
     return {
         "name": f"package-{index}",

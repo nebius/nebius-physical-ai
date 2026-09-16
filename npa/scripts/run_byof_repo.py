@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import stat
 import subprocess
 import sys
@@ -99,6 +100,15 @@ ROBOMIMIC_ENTITLEMENT_TERMS = [
         ),
     },
 ]
+
+
+class RobomimicEntitlementError(ValueError):
+    """A stable, value-free customer-entitlement refusal."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.public_message = message
 
 DEFAULT_REPO_URL = "https://github.com/LightwheelAI/leisaac.git"
 DEFAULT_REPO_REF = "main"
@@ -299,12 +309,82 @@ def _robomimic_utc_timestamp(value: str, *, field: str) -> datetime:
         raise ValueError(f"robomimic entitlement {field} is invalid") from exc
 
 
-def _read_robomimic_entitlement(path: Path) -> tuple[dict[str, Any], bytes]:
-    flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+def _open_robomimic_entitlement_parent(path: Path) -> int:
+    """Open and pin one symlink-free, owner-private record parent directory."""
+
+    if not path.is_absolute() or path.name in {"", ".", ".."}:
+        raise RobomimicEntitlementError(
+            "invalid-path", "robomimic customer entitlement path is invalid"
+        )
+    flags = (
+        os.O_RDONLY
+        | os.O_CLOEXEC
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = -1
     try:
-        descriptor = os.open(path, flags)
+        descriptor = os.open(os.sep, flags)
+        for component in path.parent.parts[1:]:
+            next_descriptor = os.open(component, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = next_descriptor
     except OSError as exc:
-        raise ValueError("robomimic customer entitlement file is unavailable") from exc
+        if descriptor >= 0:
+            os.close(descriptor)
+        raise RobomimicEntitlementError(
+            "unsafe-parent",
+            "robomimic customer entitlement parent is unavailable or unsafe",
+        ) from exc
+    details = os.fstat(descriptor)
+    if (
+        not stat.S_ISDIR(details.st_mode)
+        or details.st_uid != os.geteuid()
+        or details.st_mode & 0o077
+    ):
+        os.close(descriptor)
+        raise RobomimicEntitlementError(
+            "unsafe-parent",
+            "robomimic customer entitlement parent must be owner-only",
+        )
+    return descriptor
+
+
+def _require_robomimic_entitlement_parent_identity(
+    path: Path, expected: os.stat_result
+) -> None:
+    """Reject a parent pathname replaced after its directory was pinned."""
+
+    descriptor = _open_robomimic_entitlement_parent(path)
+    try:
+        observed = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    if (observed.st_dev, observed.st_ino) != (expected.st_dev, expected.st_ino):
+        raise RobomimicEntitlementError(
+            "parent-changed",
+            "robomimic customer entitlement parent changed during access",
+        )
+
+
+def _read_robomimic_entitlement(path: Path) -> tuple[dict[str, Any], bytes]:
+    parent_descriptor = _open_robomimic_entitlement_parent(path)
+    parent_identity = os.fstat(parent_descriptor)
+    flags = (
+        os.O_RDONLY
+        | os.O_CLOEXEC
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    descriptor = -1
+    try:
+        descriptor = os.open(path.name, flags, dir_fd=parent_descriptor)
+    except OSError as exc:
+        os.close(parent_descriptor)
+        raise RobomimicEntitlementError(
+            "file-unavailable",
+            "robomimic customer entitlement file is unavailable",
+        ) from exc
     try:
         opened = os.fstat(descriptor)
         if (
@@ -313,11 +393,15 @@ def _read_robomimic_entitlement(path: Path) -> tuple[dict[str, Any], bytes]:
             or opened.st_uid != os.geteuid()
             or opened.st_mode & 0o077
         ):
-            raise ValueError(
+            raise RobomimicEntitlementError(
+                "unsafe-file",
                 "robomimic customer entitlement must be an owner-only regular file"
             )
         if opened.st_size > ROBOMIMIC_ENTITLEMENT_MAX_BYTES:
-            raise ValueError("robomimic customer entitlement exceeds its byte limit")
+            raise RobomimicEntitlementError(
+                "oversized-file",
+                "robomimic customer entitlement exceeds its byte limit",
+            )
         with os.fdopen(descriptor, "rb", closefd=False) as handle:
             raw = handle.read(ROBOMIMIC_ENTITLEMENT_MAX_BYTES + 1)
         closed = os.fstat(descriptor)
@@ -327,16 +411,32 @@ def _read_robomimic_entitlement(path: Path) -> tuple[dict[str, Any], bytes]:
             or closed.st_dev != opened.st_dev
             or closed.st_ino != opened.st_ino
             or closed.st_nlink != 1
+            or closed.st_uid != os.geteuid()
+            or closed.st_mode & 0o077
         ):
-            raise ValueError("robomimic customer entitlement changed while read")
+            raise RobomimicEntitlementError(
+                "file-changed",
+                "robomimic customer entitlement changed while read",
+            )
+        _require_robomimic_entitlement_parent_identity(path, parent_identity)
+    except OSError as exc:
+        raise RobomimicEntitlementError(
+            "file-read-failed",
+            "robomimic customer entitlement could not be read safely",
+        ) from exc
     finally:
         os.close(descriptor)
+        os.close(parent_descriptor)
     try:
         value = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError("robomimic customer entitlement is invalid JSON") from exc
+        raise RobomimicEntitlementError(
+            "invalid-json", "robomimic customer entitlement is invalid JSON"
+        ) from exc
     if not isinstance(value, dict):
-        raise ValueError("robomimic customer entitlement must be a JSON object")
+        raise RobomimicEntitlementError(
+            "invalid-json", "robomimic customer entitlement must be a JSON object"
+        )
     return value, raw
 
 
@@ -420,35 +520,106 @@ def _robomimic_entitlement_notice() -> dict[str, Any]:
 
 
 def _write_robomimic_entitlement(path: Path, record: dict[str, Any]) -> str:
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     raw = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8")
     if len(raw) > ROBOMIMIC_ENTITLEMENT_MAX_BYTES:
-        raise ValueError("robomimic customer entitlement exceeds its byte limit")
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", dir=path.parent
+        raise RobomimicEntitlementError(
+            "oversized-file", "robomimic customer entitlement exceeds its byte limit"
+        )
+    parent_descriptor = _open_robomimic_entitlement_parent(path)
+    parent_identity = os.fstat(parent_descriptor)
+    temporary_name = f".{path.name}.{secrets.token_hex(16)}"
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | os.O_CLOEXEC
+        | getattr(os, "O_NOFOLLOW", 0)
     )
-    temporary = Path(temporary_name)
+    descriptor = -1
+    temporary_exists = False
+    target_created = False
+    published = False
     try:
+        descriptor = os.open(
+            temporary_name, flags, 0o600, dir_fd=parent_descriptor
+        )
+        temporary_exists = True
         os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "wb", closefd=False) as handle:
             handle.write(raw)
             handle.flush()
             os.fsync(handle.fileno())
-        os.close(descriptor)
-        descriptor = -1
         try:
-            os.link(temporary, path)
+            os.link(
+                temporary_name,
+                path.name,
+                src_dir_fd=parent_descriptor,
+                dst_dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
         except FileExistsError as exc:
-            raise ValueError(
+            raise RobomimicEntitlementError(
+                "record-exists",
                 "robomimic customer entitlement already exists; refuse overwrite"
             ) from exc
-        os.unlink(temporary)
-        temporary = Path()
+        target_created = True
+        target_descriptor = os.open(
+            path.name,
+            os.O_RDONLY
+            | os.O_CLOEXEC
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0),
+            dir_fd=parent_descriptor,
+        )
+        try:
+            source_identity = os.fstat(descriptor)
+            target_identity = os.fstat(target_descriptor)
+            if (source_identity.st_dev, source_identity.st_ino) != (
+                target_identity.st_dev,
+                target_identity.st_ino,
+            ):
+                raise RobomimicEntitlementError(
+                    "publication-race",
+                    "robomimic customer entitlement publication raced",
+                )
+        finally:
+            os.close(target_descriptor)
+        os.unlink(temporary_name, dir_fd=parent_descriptor)
+        temporary_exists = False
+        final_identity = os.fstat(descriptor)
+        if (
+            final_identity.st_nlink != 1
+            or final_identity.st_uid != os.geteuid()
+            or final_identity.st_mode & 0o077
+        ):
+            raise RobomimicEntitlementError(
+                "publication-race",
+                "robomimic customer entitlement publication raced",
+            )
+        _require_robomimic_entitlement_parent_identity(path, parent_identity)
+        os.fsync(parent_descriptor)
+        published = True
+    except RobomimicEntitlementError:
+        raise
+    except OSError as exc:
+        raise RobomimicEntitlementError(
+            "write-failed",
+            "robomimic customer entitlement could not be written safely",
+        ) from exc
     finally:
         if descriptor >= 0:
             os.close(descriptor)
-        if temporary != Path():
-            temporary.unlink(missing_ok=True)
+        if target_created and not published:
+            try:
+                os.unlink(path.name, dir_fd=parent_descriptor)
+            except FileNotFoundError:
+                pass
+        if temporary_exists:
+            try:
+                os.unlink(temporary_name, dir_fd=parent_descriptor)
+            except FileNotFoundError:
+                pass
+        os.close(parent_descriptor)
     return hashlib.sha256(raw).hexdigest()
 
 
@@ -488,7 +659,8 @@ def _handle_robomimic_entitlement_action(
             lock=lock, lock_sha256=lock_sha256
         )
         if args.robomimic_runtime_entitlement_notice_sha256 != notice_sha256:
-            raise ValueError(
+            raise RobomimicEntitlementError(
+                "notice-mismatch",
                 "robomimic customer must present the exact current notice digest"
             )
         validity_seconds = int((expires_at - accepted_at).total_seconds())
@@ -1381,6 +1553,12 @@ def main(argv: list[str] | None = None) -> int:
         try:
             entitlement_result = _handle_robomimic_entitlement_action(args)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
+            if isinstance(exc, RobomimicEntitlementError):
+                error_code = exc.code
+                error_message = exc.public_message
+            else:
+                error_code = "entitlement-refused"
+                error_message = "robomimic customer runtime entitlement refused"
             print(
                 json.dumps(
                     {
@@ -1389,7 +1567,8 @@ def main(argv: list[str] | None = None) -> int:
                         "build_started": False,
                         "push_started": False,
                         "run_started": False,
-                        "error": str(exc),
+                        "error_code": error_code,
+                        "error": error_message,
                     },
                     indent=2,
                     sort_keys=True,
