@@ -8,9 +8,11 @@ proprioception and returns robot actions over WebSocket. This workflow evaluates
 a fixed policy; training and serving use the challenge's upstream baseline
 implementations.
 
-**Status:** protocol planning, supervised radio serving, and local artifact tests are implemented. GPU
-evaluation, a trained challenge solution, policy memory measurements, and an
-official submission have not been demonstrated. The runtime image, licensed
+**Status:** protocol planning, supervised radio serving, and real GPU rollouts
+are implemented and exercised. The initial completed development trials failed
+the radio task with Q = 0.0; valid execution is not a successful challenge solution.
+A completed reporting selection, 24 GB serving compliance, and an official
+submission have not been demonstrated. The runtime image, licensed
 asset volume, and policy endpoint are required operator inputs. This integration
 does not add a published BEHAVIOR container to the Workbench image catalog.
 
@@ -27,8 +29,10 @@ The replacement rendering worker passed Workbench's stability, CUDA,
 GLX/EGL loading, and NVIDIA Vulkan device checks. It loaded the official scene
 and connected to the policy, then failed on its first observation: the evaluator
 uses `robot_r1` while the pinned baseline expects `robot`. That failed attempt's
-original evidence is retained. The managed policy now adapts those lookup names;
-completed rollout validation remains pending.
+original evidence is retained. The managed policy now adapts those lookup names.
+The resulting rollouts produced original JSON and MP4 artifacts that passed full
+video decoding and SHA-256 readback checks. The prescribed development selection
+is still running; its failed trials are retained.
 
 ## Rules and pinned source
 
