@@ -9179,20 +9179,27 @@ def submit_npa_workflow(payload: dict):
     validate_infra = bool(body.get("validate_infra", True))
     confirm_token = str(body.get("confirm_token") or "").strip()
     infra_before = _agent_k8s_backends(project)
+    # Cloud discovery is useful evidence, but a discovered cluster is not an
+    # execution target until this Agent has a configured kubeconfig/context for
+    # it.  Treating those two states as equivalent caused the UI to reject a
+    # prepare request before it could offer the deliberate infrastructure
+    # confirmation that establishes the missing context.
+    initial_target = resolve_workflow_infrastructure(infra_before)
+    has_execution_context = bool(str(initial_target.get("context") or "").strip())
     cluster_name = requested_cluster_name or "npa-cluster"
     kubernetes_context = ""
-    if not infra_before.get("has_infra") and not allow_provision:
+    if not has_execution_context and not allow_provision:
         return _workflow_no_infra_response(validation=validation, plan=plan, run_id=run_id, infra=infra_before)
-    if infra_before.get("has_infra"):
+    if has_execution_context:
         cluster_name, kubernetes_context = _workflow_kubernetes_placement(
             project=project,
             infra=infra_before,
             requested_cluster_name=requested_cluster_name,
         )
     provision = {{"ok": True, "status": "skipped", "actions": ["k8s:existing backend detected"]}}
-    if allow_provision and (dry_run or not infra_before.get("has_infra")):
+    if allow_provision and (dry_run or not has_execution_context):
         # Real (non-dry-run) provision requires the confirm-token gate.
-        if not dry_run and not infra_before.get("has_infra"):
+        if not dry_run and not has_execution_context:
             provision_action = {{
                 "action": "provision_infra",
                 "project": project,

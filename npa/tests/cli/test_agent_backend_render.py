@@ -1646,6 +1646,60 @@ def test_workflow_dry_run_plans_provision_even_with_existing_infra(
     ]
 
 
+def test_workflow_prepare_confirms_infra_when_cloud_discovery_has_no_context(
+    monkeypatch, tmp_path
+) -> None:
+    """A discovered cluster is not runnable until the Agent owns its context."""
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_workflow_discovered_only_backend"
+    )
+    monkeypatch.setattr(module, "_resolve_workflow_yaml", lambda _body: "workflow")
+    monkeypatch.setattr(
+        module,
+        "validate_workflow_yaml_text",
+        lambda *_args, **_kwargs: {"ok": True, "name": "discovered-only"},
+    )
+    monkeypatch.setattr(
+        module,
+        "plan_workflow_yaml_text",
+        lambda *_args, **_kwargs: {"ok": True, "states": []},
+    )
+    monkeypatch.setattr(module, "_agent_project_alias", lambda value: value or "demo")
+    monkeypatch.setattr(
+        module,
+        "_agent_k8s_backends",
+        lambda _project: {
+            "has_infra": True,
+            "project": "demo",
+            "configured": [],
+            "local_clusters": [],
+            "cloud_clusters": [{"name": "discovered-cluster"}],
+        },
+    )
+    monkeypatch.setattr(module, "_issue_agent_confirm_token", lambda *_args: "token")
+
+    response = module.submit_npa_workflow(
+        {
+            "yaml": "workflow",
+            "run_id": "discovered-only-run",
+            "project": "demo",
+            "allow_provision": True,
+            "prepare_execution": True,
+        }
+    )
+
+    assert response["ok"] is False
+    assert response["needs_confirmation"] is True
+    assert response["confirm_token"] == "token"
+    assert response["proposed_action"] == {
+        "action": "provision_infra",
+        "project": "demo",
+        "cluster_name": "npa-cluster",
+        "via": "workflows/submit",
+        "dry_run": False,
+    }
+
+
 def test_agent_execution_resolves_catalog_secret_hints(monkeypatch, tmp_path) -> None:
     module = _import_rendered_backend(
         monkeypatch, tmp_path, module_name="npa_rendered_workflow_secret_hints_backend"
