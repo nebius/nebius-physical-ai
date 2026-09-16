@@ -1109,25 +1109,48 @@ def test_robomimic_gate_rejects_known_public_registry_hosts(
     tmp_path: Path,
     public_registry: str,
 ) -> None:
+    module = _live_e2e_module()
+    project = "manager-project"
     kubeconfig = tmp_path / "kubeconfig"
     kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    entitlement = _customer_entitlement(
+        tmp_path, project=project, run_id="public-registry-gate"
+    )
     values = {
-        "NPA_E2E_PROJECT": "manager-project",
+        "NPA_E2E_PROJECT": project,
         "NPA_BYOF_ROBOMIMIC_REGISTRY": public_registry,
         "NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY": "private",
+        "NPA_BYOF_ROBOMIMIC_IMAGE": (
+            f"{public_registry}/npa-robomimic@sha256:" + "a" * 64
+        ),
         "NPA_BYOF_KUBECONFIG": str(kubeconfig),
         "NPA_BYOF_K8S_CONTEXT": "manager-context",
         "NPA_BYOF_K8S_NAMESPACE": "robomimic-validation",
         "NPA_E2E_S3_BUCKET": "manager-bucket",
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_PVC": "robomimic-runtime-pvc",
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256": "a" * 64,
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE": str(entitlement),
         "NPA_E2E_MK8S_RESERVED_CAPACITY": "1",
         "NPA_BYOF_LIVE_GPU": "1",
         "NPA_BYOF_ROBOMIMIC_LIVE_B200": "1",
+        "AWS_ENDPOINT_URL": "https://storage.test-region.nebius.cloud",
     }
     for variable, value in values.items():
         monkeypatch.setenv(variable, value)
+    monkeypatch.delenv("NEBIUS_S3_ENDPOINT", raising=False)
+    checked_registries: list[str] = []
+    original_public_check = module.is_public_registry
+
+    def record_public_check(registry: str) -> bool:
+        checked_registries.append(registry)
+        return original_public_check(registry)
+
+    monkeypatch.setattr(module, "is_public_registry", record_public_check)
 
     with pytest.raises(RuntimeError, match="context-invalid"):
-        _live_e2e_module()._robomimic_live_selectors("manager-project")
+        module._robomimic_live_selectors(project)
+
+    assert checked_registries == [public_registry]
 
 
 def test_robomimic_publication_quarantine_covers_explicit_dev_tags() -> None:
@@ -2424,9 +2447,10 @@ def test_robomimic_profile_is_exactly_one_compute_only_b200() -> None:
     assert "MAX_OUTPUT_FILE_BYTES" in profile_text
     assert "MAX_OUTPUT_TOTAL_BYTES" in profile_text
     assert "MAX_OUTPUT_ENTRY_COUNT" in profile_text
+    assert "MAX_OUTPUT_PENDING_DIRECTORY_COUNT" in profile_text
     assert "MAX_OUTPUT_OBJECT_COUNT" in profile_text
-    assert 'for path in root.rglob("*"):' in profile_text
-    assert 'sorted(root.rglob("*"))' not in profile_text
+    assert "with os.scandir(current) as entries:" in profile_text
+    assert 'root.rglob("*")' not in profile_text
     assert "RESERVED_JSON_MAX_BYTES" in profile_text
     assert "smoke_artifact_path.read_text" not in profile_text
     assert '(root / "npa_byof_summary.json").write_text' not in profile_text
@@ -2492,6 +2516,20 @@ def test_robomimic_profile_refuses_directory_entry_fanout_before_upload(
         module.upload_outputs(NoUploadS3(), "bucket", "prefix/", root)
 
 
+def test_robomimic_profile_bounds_pending_directories_as_entries_arrive(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = _profile_upload_module(tmp_path)
+    root = tmp_path / "outputs"
+    root.mkdir()
+    (root / "first").mkdir()
+    (root / "second").mkdir()
+    monkeypatch.setattr(module, "MAX_OUTPUT_PENDING_DIRECTORY_COUNT", 1)
+
+    with pytest.raises(RuntimeError, match="pending directory limit"):
+        module.checked_output_files(root)
+
+
 def test_robomimic_profile_refuses_zero_byte_object_fanout_before_upload(
     tmp_path: Path,
 ) -> None:
@@ -2520,14 +2558,35 @@ def test_robomimic_profile_consumes_recursive_entries_lazily(
     unsafe = root / "first-entry"
     unsafe.symlink_to(outside)
 
-    def hostile_entries(_root: Path, _pattern: str):
-        yield unsafe
-        pytest.fail("recursive entries were materialized before validation")
+    class HostileScandir:
+        def __init__(self) -> None:
+            self.consumed = False
+            self.closed = False
 
-    monkeypatch.setattr(Path, "rglob", hostile_entries)
+        def __enter__(self) -> HostileScandir:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            self.closed = True
+
+        def __iter__(self) -> HostileScandir:
+            return self
+
+        def __next__(self) -> object:
+            if self.consumed:
+                pytest.fail("recursive entries were materialized before validation")
+            self.consumed = True
+            return SimpleNamespace(
+                path=str(unsafe),
+                stat=lambda *, follow_symlinks: unsafe.lstat(),
+            )
+
+    iterator = HostileScandir()
+    monkeypatch.setattr(module.os, "scandir", lambda _root: iterator)
 
     with pytest.raises(RuntimeError, match="output symlink is forbidden"):
         module.checked_output_files(root)
+    assert iterator.closed is True
 
 
 def test_robomimic_profile_uploads_legal_bounded_output_set(tmp_path: Path) -> None:
@@ -2716,14 +2775,20 @@ def test_robomimic_profile_transport_refusals_are_value_free(
     assert error.__context__ is None
 
 
-def test_robomimic_profile_endpoint_refusal_is_value_free(tmp_path: Path) -> None:
+@pytest.mark.parametrize("malformation", ("port", "bracketed-host"))
+def test_robomimic_profile_endpoint_refusal_is_value_free(
+    tmp_path: Path, malformation: str
+) -> None:
     module = _profile_upload_module(tmp_path)
     marker = "private-uploader-port-marker"
+    endpoint = (
+        f"https://storage.test-region.nebius.cloud:{marker}"
+        if malformation == "port"
+        else f"https://[{marker}"
+    )
 
     with pytest.raises(RuntimeError, match="endpoint is malformed") as raised:
-        module.checked_storage_endpoint(
-            f"https://storage.test-region.nebius.cloud:{marker}"
-        )
+        module.checked_storage_endpoint(endpoint)
 
     error = raised.value
     serialized = json.dumps(
@@ -2775,14 +2840,21 @@ def test_robomimic_profile_atomically_replaces_symlinked_summary(
     assert outside.read_text(encoding="utf-8") == '{"preserve": true}\n'
 
 
-def test_robomimic_download_refuses_a_malformed_allowed_host_port(
+@pytest.mark.parametrize("malformation", ("port", "bracketed-host"))
+def test_robomimic_download_refuses_a_malformed_allowed_host(
     monkeypatch: pytest.MonkeyPatch,
+    malformation: str,
 ) -> None:
     module = _smoke_module(monkeypatch)
     marker = "private-invalid-port-marker"
+    url = (
+        f"https://huggingface.co:{marker}/file"
+        if malformation == "port"
+        else f"https://[{marker}"
+    )
     with pytest.raises(RuntimeError, match="malformed approved HTTPS URL") as raised:
         module._open_allowed_https(
-            f"https://huggingface.co:{marker}/file",
+            url,
             headers={},
             allowed_hosts=("huggingface.co",),
         )
@@ -2799,6 +2871,51 @@ def test_robomimic_download_refuses_a_malformed_allowed_host_port(
     assert marker not in serialized
     assert error.__cause__ is None
     assert error.__context__ is None
+    assert not getattr(error, "__notes__", ())
+
+
+def test_robomimic_download_refuses_a_malformed_redirect_value_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _smoke_module(monkeypatch)
+    marker = "private-redirect-authority-marker"
+
+    class RedirectResponse:
+        status = 302
+
+        def getheader(self, _name: str) -> str:
+            return f"https://[{marker}"
+
+        def close(self) -> None:
+            return None
+
+    class RedirectConnection:
+        def request(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        def getresponse(self) -> RedirectResponse:
+            return RedirectResponse()
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        module.http.client,
+        "HTTPSConnection",
+        lambda *_args, **_kwargs: RedirectConnection(),
+    )
+    with pytest.raises(RuntimeError, match="malformed approved HTTPS redirect") as raised:
+        module._open_allowed_https(
+            "https://huggingface.co/approved",
+            headers={},
+            allowed_hosts=("huggingface.co",),
+        )
+
+    diagnostics = _serialized_entitlement_refusal(raised.value)
+    assert marker not in diagnostics
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert not getattr(raised.value, "__notes__", ())
 
 
 def test_robomimic_download_transport_refusal_is_value_free(

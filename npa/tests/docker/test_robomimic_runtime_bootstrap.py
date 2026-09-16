@@ -928,6 +928,74 @@ def test_symlink_escape_is_rejected(tmp_path: Path) -> None:
         )
 
 
+def test_runtime_symlink_loop_refusal_is_value_free(tmp_path: Path) -> None:
+    runtime_root, lock_path, _ = _runtime(tmp_path)
+    marker = "private-runtime-symlink-loop-marker"
+    link = runtime_root / "payload" / marker
+    link.symlink_to(marker)
+    inventory_path = runtime_root / "inventory.json"
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    inventory["symlinks"] = [{"path": f"payload/{marker}", "target": marker}]
+    inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+    marker_path = runtime_root / ".ready.json"
+    ready = json.loads(marker_path.read_text(encoding="utf-8"))
+    ready["inventory_sha256"] = _sha(inventory_path)
+    marker_path.write_text(json.dumps(ready), encoding="utf-8")
+
+    with pytest.raises(
+        verifier.VerificationError, match="runtime symlink resolution failed"
+    ) as raised:
+        verifier.verify_external_runtime(
+            runtime_root=runtime_root,
+            runtime_lock_path=lock_path,
+            expected_inventory_sha256=_sha(inventory_path),
+            require_read_only_mount=False,
+        )
+
+    serialized = json.dumps(
+        {
+            "args": raised.value.args,
+            "cause": repr(raised.value.__cause__),
+            "context": repr(raised.value.__context__),
+            "notes": list(getattr(raised.value, "__notes__", ())),
+            "traceback": "".join(traceback.format_exception(raised.value)),
+        }
+    )
+    assert marker not in serialized
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert not getattr(raised.value, "__notes__", ())
+
+
+def test_runtime_filesystem_failure_is_value_free(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
+    marker = "private-runtime-filesystem-marker"
+    original_rglob = Path.rglob
+
+    def refused_rglob(path: Path, pattern: str):
+        if path == runtime_root:
+            raise OSError(marker)
+        return original_rglob(path, pattern)
+
+    monkeypatch.setattr(Path, "rglob", refused_rglob)
+    with pytest.raises(
+        verifier.VerificationError, match="runtime filesystem verification failed"
+    ) as raised:
+        verifier.verify_external_runtime(
+            runtime_root=runtime_root,
+            runtime_lock_path=lock_path,
+            expected_inventory_sha256=inventory_sha256,
+            require_read_only_mount=False,
+        )
+
+    diagnostics = "".join(traceback.format_exception(raised.value))
+    assert marker not in diagnostics
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+
 def test_runtime_inventory_digest_is_an_external_trust_anchor(tmp_path: Path) -> None:
     runtime_root, lock_path, _ = _runtime(tmp_path)
     with pytest.raises(verifier.VerificationError, match="operator-selected digest"):
@@ -1005,6 +1073,52 @@ def test_runtime_execution_uses_an_atomic_verified_snapshot(tmp_path: Path) -> N
     for path in destination.rglob("*"):
         if path.is_dir() and not path.is_symlink():
             path.chmod(0o755)
+
+
+def test_runtime_snapshot_cleans_read_only_staging_after_publication_race(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
+    destination = tmp_path / "private" / "active-runtime"
+    original_replace = Path.replace
+
+    def collide_on_publish(path: Path, target: Path) -> Path:
+        if target == destination:
+            destination.mkdir()
+            raise FileExistsError("simulated publication race")
+        return original_replace(path, target)
+
+    monkeypatch.setattr(Path, "replace", collide_on_publish)
+    with pytest.raises(
+        verifier.VerificationError, match="runtime snapshot materialization failed"
+    ):
+        verifier.materialize_external_runtime(
+            runtime_root=runtime_root,
+            runtime_lock_path=lock_path,
+            expected_inventory_sha256=inventory_sha256,
+            destination=destination,
+            require_source_read_only=False,
+        )
+
+    assert destination.is_dir()
+    assert list(destination.parent.iterdir()) == [destination]
+
+
+def test_runtime_snapshot_cleanup_refuses_replaced_staging_identity(
+    tmp_path: Path,
+) -> None:
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    expected = verifier._owned_snapshot_identity(staging)
+    displaced = tmp_path / "displaced"
+    staging.rename(displaced)
+    staging.mkdir()
+
+    with pytest.raises(verifier.VerificationError, match="snapshot cleanup failed"):
+        verifier._cleanup_snapshot_staging(staging, expected)
+
+    assert staging.is_dir()
+    assert displaced.is_dir()
 
 
 def test_runtime_snapshot_rejects_source_growth_after_verification(

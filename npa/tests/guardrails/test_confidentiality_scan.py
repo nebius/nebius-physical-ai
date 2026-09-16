@@ -4,9 +4,12 @@ import io
 import hashlib
 import json
 import lzma
+import os
 from pathlib import Path
 import re
+import stat
 import subprocess
+import time
 
 import pytest
 
@@ -645,6 +648,100 @@ def test_robomimic_cached_proof_mismatch_remains_unresolved(
     captured = capsys.readouterr()
     assert "raw=1 dispositioned=0 unresolved=1" in captured.err
     assert "robomimic public-attribution proof could not be verified" in captured.err
+
+
+def _cached_public_proof(payload: bytes) -> robomimic_attribution._PublicProof:
+    return robomimic_attribution._PublicProof(
+        "cached-proof",
+        "https://snapshot.debian.org/cached-proof",
+        hashlib.sha256(payload).hexdigest(),
+        len(payload),
+        "snapshot.debian.org",
+    )
+
+
+def test_robomimic_cached_proof_read_is_pinned_and_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = b"canonical-public-proof"
+    proof = _cached_public_proof(payload)
+    path = tmp_path / proof.name
+    path.write_bytes(payload)
+    path.chmod(0o600)
+    original_read = robomimic_attribution.os.read
+    requested: list[int] = []
+
+    def bounded_read(descriptor: int, amount: int) -> bytes:
+        requested.append(amount)
+        return original_read(descriptor, amount)
+
+    monkeypatch.setattr(robomimic_attribution.os, "read", bounded_read)
+
+    assert robomimic_attribution._verified_file(path, proof) == payload
+    assert requested
+    assert max(requested) <= proof.size + 1
+
+
+def test_robomimic_oversized_cached_proof_is_rejected_before_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proof = _cached_public_proof(b"pin")
+    path = tmp_path / proof.name
+    path.write_bytes(b"oversized-cache-entry")
+    path.chmod(0o600)
+
+    def unexpected_read(_descriptor: int, _amount: int) -> bytes:
+        pytest.fail("oversized cached proof was read before its size check")
+
+    monkeypatch.setattr(robomimic_attribution.os, "read", unexpected_read)
+    with pytest.raises(ValueError, match="public pin"):
+        robomimic_attribution._verified_file(path, proof)
+
+
+@pytest.mark.parametrize("object_kind", ("fifo", "symlink"))
+def test_robomimic_cached_proof_refuses_nonregular_objects_without_blocking(
+    tmp_path: Path, object_kind: str
+) -> None:
+    proof = _cached_public_proof(b"pin")
+    path = tmp_path / proof.name
+    if object_kind == "fifo":
+        os.mkfifo(path)
+    else:
+        target = tmp_path / "target"
+        target.write_bytes(b"pin")
+        target.chmod(0o600)
+        path.symlink_to(target)
+
+    started = time.monotonic()
+    with pytest.raises(ValueError, match="regular file"):
+        robomimic_attribution._verified_file(path, proof)
+    assert time.monotonic() - started < 1.0
+
+
+def test_robomimic_cached_proof_revalidates_descriptor_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = b"canonical-public-proof"
+    proof = _cached_public_proof(payload)
+    path = tmp_path / proof.name
+    path.write_bytes(payload)
+    path.chmod(0o600)
+    original_fstat = robomimic_attribution.os.fstat
+    calls = 0
+
+    def changed_identity(descriptor: int) -> os.stat_result:
+        nonlocal calls
+        calls += 1
+        details = original_fstat(descriptor)
+        if calls != 2:
+            return details
+        values = list(details)
+        values[stat.ST_INO] += 1
+        return os.stat_result(values)
+
+    monkeypatch.setattr(robomimic_attribution.os, "fstat", changed_identity)
+    with pytest.raises(ValueError, match="changed while being read"):
+        robomimic_attribution._verified_file(path, proof)
 
 
 def test_robomimic_independent_copyright_bytes_must_agree(

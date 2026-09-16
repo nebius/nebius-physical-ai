@@ -42,6 +42,34 @@ CAPABILITIES = [
 _HTTPS_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
 
+def _parsed_https_url(value: str) -> tuple[urllib.parse.SplitResult, str, int | None]:
+    """Parse one HTTPS URL behind a value-free diagnostic boundary."""
+
+    parsing_failed = False
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        hostname = (parsed.hostname or "").lower()
+        port = parsed.port
+    except (UnicodeError, ValueError):
+        parsing_failed = True
+    if parsing_failed:
+        raise RuntimeError("refusing malformed approved HTTPS URL") from None
+    return parsed, hostname, port
+
+
+def _resolved_redirect_url(current_url: str, location: str) -> str:
+    """Resolve one redirect without retaining a rejected authority."""
+
+    resolution_failed = False
+    try:
+        resolved = urllib.parse.urljoin(current_url, location)
+    except (UnicodeError, ValueError):
+        resolution_failed = True
+    if resolution_failed:
+        raise RuntimeError("refusing malformed approved HTTPS redirect") from None
+    return resolved
+
+
 def _open_allowed_https(
     url: str,
     *,
@@ -53,15 +81,7 @@ def _open_allowed_https(
     """Open a tightly scoped HTTPS GET without urllib's multi-scheme opener."""
     current_url = url
     for _ in range(6):
-        parsed = urllib.parse.urlsplit(current_url)
-        hostname = (parsed.hostname or "").lower()
-        invalid_port = False
-        try:
-            port = parsed.port
-        except ValueError:
-            invalid_port = True
-        if invalid_port:
-            raise RuntimeError("refusing malformed approved HTTPS URL")
+        parsed, hostname, port = _parsed_https_url(current_url)
         allowed = hostname in allowed_hosts or (
             allow_hf_redirects
             and (
@@ -102,7 +122,7 @@ def _open_allowed_https(
             connection.close()
             if not location:
                 raise RuntimeError("HTTPS redirect omitted its destination")
-            current_url = urllib.parse.urljoin(current_url, location)
+            current_url = _resolved_redirect_url(current_url, location)
             continue
         if response.status != 200:
             status = response.status

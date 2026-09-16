@@ -140,17 +140,60 @@ def _require_private_directory(proof_directory: Path) -> None:
         raise ValueError("proof directory must be caller-owned and private")
 
 
-def _verified_file(path: Path, proof: _PublicProof) -> bytes:
-    details = path.lstat()
-    if not stat.S_ISREG(details.st_mode) or path.is_symlink():
+def _open_cached_proof(path: Path) -> int:
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    nonblock = getattr(os, "O_NONBLOCK", None)
+    if nofollow is None or nonblock is None:
+        raise ValueError("cached proof verification requires safe descriptor flags")
+    open_failed = False
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | nofollow | nonblock)
+    except OSError:
+        open_failed = True
+    if open_failed:
         raise ValueError("cached proof must be a regular file")
+    return descriptor
+
+
+def _read_pinned_descriptor(descriptor: int, size: int) -> bytes:
+    payload = bytearray()
+    remaining = size + 1
+    while remaining:
+        chunk = os.read(descriptor, min(1024 * 1024, remaining))
+        if not chunk:
+            break
+        payload.extend(chunk)
+        remaining -= len(chunk)
+    return bytes(payload)
+
+
+def _verified_file(path: Path, proof: _PublicProof) -> bytes:
+    descriptor = _open_cached_proof(path)
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            raise ValueError("cached proof must be a regular file")
+        if (
+            opened.st_uid != os.getuid()
+            or opened.st_nlink != 1
+            or stat.S_IMODE(opened.st_mode) & 0o077
+        ):
+            raise ValueError("cached proof must be caller-owned and private")
+        if opened.st_size != proof.size:
+            raise ValueError("cached proof does not match its public pin")
+        payload = _read_pinned_descriptor(descriptor, proof.size)
+        closed = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
     if (
-        details.st_uid != os.getuid()
-        or details.st_nlink != 1
-        or stat.S_IMODE(details.st_mode) & 0o077
+        closed.st_dev != opened.st_dev
+        or closed.st_ino != opened.st_ino
+        or closed.st_mode != opened.st_mode
+        or closed.st_uid != opened.st_uid
+        or closed.st_nlink != opened.st_nlink
+        or closed.st_size != opened.st_size
     ):
-        raise ValueError("cached proof must be caller-owned and private")
-    payload = path.read_bytes()
+        raise ValueError("cached proof changed while being read")
     if len(payload) != proof.size or _digest(payload) != proof.sha256:
         raise ValueError("cached proof does not match its public pin")
     return payload
