@@ -72,6 +72,8 @@ ROBOMIMIC_RUNTIME_LOCK = (
     / "runtime-requirements.lock"
 )
 ROBOMIMIC_ENTITLEMENT_MAX_BYTES = 16 * 1024
+ROBOMIMIC_SMOKE_PROOF_MAX_BYTES = 64 * 1024
+_ROBOMIMIC_SMOKE_PROOF_ERROR = "robomimic smoke proof validation failed"
 ROBOMIMIC_ENTITLEMENT_TERMS = [
     {
         "name": "NVIDIA CUDA Toolkit EULA",
@@ -180,7 +182,10 @@ def live_byof_built_image(e2e_project: str | None) -> str:
     _activate_nebius_profile()
     registry = resolve_container_registry(e2e_project)
     repo_url, repo_ref = byof_validation_repo()
-    run_id = os.environ.get("NPA_BYOF_CONTAINER_RUN_ID") or f"byof-container-live-{os.getpid()}"
+    run_id = (
+        os.environ.get("NPA_BYOF_CONTAINER_RUN_ID")
+        or f"byof-container-live-{os.getpid()}"
+    )
     proc = subprocess.run(
         [
             sys.executable,
@@ -236,7 +241,9 @@ def test_live_isaac_byof_workflow_validate_and_plan(
 ) -> None:
     bucket = live_bucket(e2e_project)
     path = _materialize_byof_spec(tmp_path, bucket=bucket)
-    validate = RUNNER.invoke(app, ["workbench", "workflow", "validate-spec", str(path), "--json"])
+    validate = RUNNER.invoke(
+        app, ["workbench", "workflow", "validate-spec", str(path), "--json"]
+    )
     payload = parse_json_payload(validate, forbidden_markers)
     assert payload["status"] == "valid"
     assert payload["name"] == "byof"
@@ -257,7 +264,11 @@ def test_live_isaac_byof_workflow_validate_and_plan(
     plan_payload = parse_json_payload(plan, forbidden_markers)
     steps = plan_payload.get("steps", [])
     assert steps
-    tool_refs = {step.get("tool_ref") or step.get("toolRef") for step in steps if isinstance(step, dict)}
+    tool_refs = {
+        step.get("tool_ref") or step.get("toolRef")
+        for step in steps
+        if isinstance(step, dict)
+    }
     assert "workbench.byof.repo" in tool_refs
 
 
@@ -271,7 +282,9 @@ def test_live_isaac_byof_plan_builder_matches_cli(
     spec = load_spec(path)
     plan = build_plan(spec, run_id="byof-plan-builder")
     assert plan.steps
-    assert_no_credential_leakage(json.dumps(plan.to_dict()), extra_forbidden=forbidden_markers)
+    assert_no_credential_leakage(
+        json.dumps(plan.to_dict()), extra_forbidden=forbidden_markers
+    )
     assert any(step.tool_ref == "workbench.byof.repo" for step in plan.steps)
 
 
@@ -318,7 +331,9 @@ def test_live_agent_byof_workflow_draft_validate() -> None:
     assert "<repo-url>" in workflow_yaml
     assert "<workload>" in workflow_yaml
 
-    validate = ctx.post("/api/workflows/validate", json={"yaml": workflow_yaml}, timeout=15.0)
+    validate = ctx.post(
+        "/api/workflows/validate", json={"yaml": workflow_yaml}, timeout=15.0
+    )
     validate.raise_for_status()
     validate_payload = validate.json()
     assert validate_payload.get("ok") is True
@@ -330,7 +345,9 @@ def test_live_agent_byof_workflow_draft_validate() -> None:
 )
 def test_live_byof_runner_container_build_push(live_byof_built_image: str) -> None:
     assert live_byof_built_image
-    assert "npa-byof" in live_byof_built_image or "npa-isaac-lab" in live_byof_built_image
+    assert (
+        "npa-byof" in live_byof_built_image or "npa-isaac-lab" in live_byof_built_image
+    )
 
 
 @pytest.mark.skipif(
@@ -418,9 +435,7 @@ def _robomimic_storage_endpoint(value: str) -> str:
         re.fullmatch(r"storage\.[a-z0-9-]+\.nebius\.cloud", host) is not None
     )
     canonical = f"https://{host}"
-    _require_robomimic_entitlement_context(
-        candidate.rstrip("/") == canonical
-    )
+    _require_robomimic_entitlement_context(candidate.rstrip("/") == canonical)
     return canonical
 
 
@@ -471,8 +486,7 @@ def _robomimic_live_selectors(e2e_project: str | None) -> dict[str, str]:
         re.fullmatch(expected_image, selectors["image"]) is not None
     )
     _require_robomimic_entitlement_context(
-        bool(selectors["kubeconfig"])
-        and Path(selectors["kubeconfig"]).is_file()
+        bool(selectors["kubeconfig"]) and Path(selectors["kubeconfig"]).is_file()
     )
     _require_robomimic_entitlement_context(bool(selectors["context"]))
     _require_robomimic_entitlement_context(
@@ -481,20 +495,13 @@ def _robomimic_live_selectors(e2e_project: str | None) -> dict[str, str]:
     _require_robomimic_entitlement_context(bool(selectors["bucket"]))
     _require_robomimic_entitlement_context(bool(selectors["runtime_pvc"]))
     _require_robomimic_entitlement_context(
-        re.fullmatch(
-            r"[0-9a-f]{64}", selectors["runtime_inventory_sha256"]
-        )
-        is not None
+        re.fullmatch(r"[0-9a-f]{64}", selectors["runtime_inventory_sha256"]) is not None
     )
-    _require_robomimic_entitlement_context(
-        bool(selectors["runtime_entitlement_file"])
-    )
+    _require_robomimic_entitlement_context(bool(selectors["runtime_entitlement_file"]))
     _require_robomimic_entitlement_context(
         os.environ.get("NPA_E2E_MK8S_RESERVED_CAPACITY") == "1"
     )
-    _require_robomimic_entitlement_context(
-        os.environ.get("NPA_BYOF_LIVE_GPU") == "1"
-    )
+    _require_robomimic_entitlement_context(os.environ.get("NPA_BYOF_LIVE_GPU") == "1")
     _require_robomimic_entitlement_context(
         os.environ.get("NPA_BYOF_ROBOMIMIC_LIVE_B200") == "1"
     )
@@ -520,9 +527,7 @@ def _robomimic_private_record_bytes(path_value: str) -> bytes:
         try:
             descriptor = os.open(os.sep, directory_flags)
             for component in path.parent.parts[1:]:
-                next_descriptor = os.open(
-                    component, directory_flags, dir_fd=descriptor
-                )
+                next_descriptor = os.open(component, directory_flags, dir_fd=descriptor)
                 os.close(descriptor)
                 descriptor = next_descriptor
         except OSError:
@@ -651,9 +656,9 @@ def _preflight_robomimic_runtime_entitlement(
         "terms": contract.get("terms"),
         "customer_responsibilities": contract.get("responsibilities"),
         "notice_sha256": hashlib.sha256(
-            json.dumps(
-                notice_identity, sort_keys=True, separators=(",", ":")
-            ).encode("utf-8")
+            json.dumps(notice_identity, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
         ).hexdigest(),
     }
     if set(record) != set(expected) | {"accepted_at", "expires_at"}:
@@ -1309,9 +1314,62 @@ def _invoke_robomimic_gate(
 def _robomimic_artifact(
     e2e_project: str | None, bucket: str, run_id: str
 ) -> dict[str, object]:
-    client = s3_client_for_project(e2e_project, allow_host_creds=True)
     key = f"oss-solutions/robomimic/{run_id}/robomimic-smoke.json"
-    return json.loads(client.get_object(Bucket=bucket, Key=key)["Body"].read())
+    body: object | None = None
+    artifact: dict[str, object] | None = None
+    failed = False
+    try:
+        client = s3_client_for_project(e2e_project, allow_host_creds=True)
+        response = client.get_object(Bucket=bucket, Key=key)
+        if not isinstance(response, dict):
+            raise ValueError
+        body = response.get("Body")
+        if body is None:
+            raise ValueError
+        declared_size = response.get("ContentLength")
+        if not _valid_robomimic_smoke_proof_size(declared_size):
+            raise ValueError
+        artifact = _decode_robomimic_smoke_proof(body, declared_size)
+    except Exception:
+        failed = True
+    finally:
+        if body is not None and not _close_robomimic_smoke_proof(body):
+            failed = True
+    if failed or artifact is None:
+        raise RuntimeError(_ROBOMIMIC_SMOKE_PROOF_ERROR) from None
+    return artifact
+
+
+def _valid_robomimic_smoke_proof_size(value: object) -> bool:
+    """Accept only bounded, non-negative integer S3 object lengths."""
+
+    return type(value) is int and 0 <= value <= ROBOMIMIC_SMOKE_PROOF_MAX_BYTES
+
+
+def _decode_robomimic_smoke_proof(
+    body: object, declared_size: int
+) -> dict[str, object]:
+    """Read and decode one bounded robomimic smoke proof."""
+
+    payload = body.read(ROBOMIMIC_SMOKE_PROOF_MAX_BYTES + 1)
+    if not isinstance(payload, bytes):
+        raise ValueError
+    if len(payload) > ROBOMIMIC_SMOKE_PROOF_MAX_BYTES or len(payload) != declared_size:
+        raise ValueError
+    artifact = json.loads(payload.decode("utf-8"))
+    if not isinstance(artifact, dict):
+        raise ValueError
+    return artifact
+
+
+def _close_robomimic_smoke_proof(body: object) -> bool:
+    """Close one proof body without exposing a cleanup exception."""
+
+    try:
+        body.close()
+    except Exception:
+        return False
+    return True
 
 
 def _assert_robomimic_inputs(artifact: dict[str, object]) -> None:
@@ -1532,11 +1590,15 @@ def test_live_byof_runner_submit_smoke(
 @pytest.fixture(scope="module")
 def live_byof_ubuntu_built_image(e2e_project: str | None) -> str:
     if os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1":
-        pytest.skip("Set NPA_BYOF_LIVE_UBUNTU=1 for Ubuntu OSS BYOF container build/push.")
+        pytest.skip(
+            "Set NPA_BYOF_LIVE_UBUNTU=1 for Ubuntu OSS BYOF container build/push."
+        )
     _activate_nebius_profile()
     registry = resolve_container_registry(e2e_project)
     repo_url, repo_ref = byof_ubuntu_validation_repo()
-    run_id = os.environ.get("NPA_BYOF_UBUNTU_RUN_ID") or f"byof-ubuntu-live-{os.getpid()}"
+    run_id = (
+        os.environ.get("NPA_BYOF_UBUNTU_RUN_ID") or f"byof-ubuntu-live-{os.getpid()}"
+    )
     proc = subprocess.run(
         [
             sys.executable,
@@ -1589,7 +1651,9 @@ def test_live_agent_oss_repo_onboard_solution_chat() -> None:
     os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1",
     reason="Set NPA_BYOF_LIVE_UBUNTU=1 for Ubuntu OSS BYOF container build/push.",
 )
-def test_live_byof_ubuntu_oss_container_build_push(live_byof_ubuntu_built_image: str) -> None:
+def test_live_byof_ubuntu_oss_container_build_push(
+    live_byof_ubuntu_built_image: str,
+) -> None:
     assert live_byof_ubuntu_built_image
     assert "npa-byof" in live_byof_ubuntu_built_image
 
@@ -1598,7 +1662,9 @@ def test_live_byof_ubuntu_oss_container_build_push(live_byof_ubuntu_built_image:
     os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1",
     reason="Set NPA_BYOF_LIVE_UBUNTU=1 for Ubuntu OSS BYOF container metadata inspect.",
 )
-def test_live_byof_ubuntu_oss_container_metadata(live_byof_ubuntu_built_image: str) -> None:
+def test_live_byof_ubuntu_oss_container_metadata(
+    live_byof_ubuntu_built_image: str,
+) -> None:
     repo_url, repo_ref = byof_ubuntu_validation_repo()
     meta_proc = subprocess.run(
         [
@@ -1622,7 +1688,8 @@ def test_live_byof_ubuntu_oss_container_metadata(live_byof_ubuntu_built_image: s
 
 
 @pytest.mark.skipif(
-    os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1" or os.environ.get("NPA_BYOF_LIVE_GPU") != "1",
+    os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1"
+    or os.environ.get("NPA_BYOF_LIVE_GPU") != "1",
     reason="Set NPA_BYOF_LIVE_UBUNTU=1 and NPA_BYOF_LIVE_GPU=1 for Ubuntu container-verify SkyPilot smoke.",
 )
 def test_live_byof_ubuntu_oss_container_verify_submit(
@@ -1630,7 +1697,9 @@ def test_live_byof_ubuntu_oss_container_verify_submit(
     live_byof_ubuntu_built_image: str,
 ) -> None:
     registry = resolve_container_registry(e2e_project)
-    yaml_override = resolve_byof_resource_yaml(e2e_project, smoke=True, workload="container-verify")
+    yaml_override = resolve_byof_resource_yaml(
+        e2e_project, smoke=True, workload="container-verify"
+    )
     cmd = [
         sys.executable,
         str(BYOF_RUNNER),

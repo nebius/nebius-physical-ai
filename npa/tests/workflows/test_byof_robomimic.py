@@ -106,9 +106,7 @@ def _customer_entitlement(
         "customer_responsibilities": contract["responsibilities"],
         "notice_sha256": _entitlement_notice_sha256(lock, lock_sha256),
         "accepted_at": accepted.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "expires_at": (accepted + timedelta(hours=1)).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        ),
+        "expires_at": (accepted + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     path = tmp_path / f"{run_id}-entitlement.json"
     path.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
@@ -164,7 +162,9 @@ def _profile_upload_module(tmp_path: Path) -> ModuleType:
     parsed = ast.parse(script)
     declarations = []
     for node in parsed.body:
-        if isinstance(node, (ast.Import, ast.ImportFrom, ast.ClassDef, ast.FunctionDef)):
+        if isinstance(
+            node, (ast.Import, ast.ImportFrom, ast.ClassDef, ast.FunctionDef)
+        ):
             declarations.append(node)
         elif isinstance(node, ast.Assign) and all(
             isinstance(target, ast.Name) and target.id.isupper()
@@ -221,6 +221,73 @@ def _serialized_entitlement_refusal(error: BaseException) -> str:
         },
         sort_keys=True,
     )
+
+
+class _SmokeProofBody:
+    """Record bounded reads and cleanup for one mocked S3 response body."""
+
+    def __init__(
+        self,
+        payload: bytes,
+        *,
+        read_error: Exception | None = None,
+        close_error: Exception | None = None,
+    ) -> None:
+        self.payload = payload
+        self.read_error = read_error
+        self.close_error = close_error
+        self.read_amounts: list[int] = []
+        self.closed = False
+
+    def read(self, amount: int) -> bytes:
+        self.read_amounts.append(amount)
+        if self.read_error is not None:
+            raise self.read_error
+        return self.payload
+
+    def close(self) -> None:
+        self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
+
+
+def _mock_robomimic_artifact_client(
+    monkeypatch: pytest.MonkeyPatch,
+    module: ModuleType,
+    response: dict[str, object] | Exception,
+) -> list[dict[str, object]]:
+    """Replace the live S3 client with one deterministic mocked response."""
+
+    calls: list[dict[str, object]] = []
+
+    class Client:
+        def get_object(self, **kwargs: object) -> dict[str, object]:
+            calls.append(kwargs)
+            if isinstance(response, Exception):
+                raise response
+            return response
+
+    monkeypatch.setattr(
+        module, "s3_client_for_project", lambda *_args, **_kwargs: Client()
+    )
+    return calls
+
+
+def _assert_value_free_artifact_refusal(
+    module: ModuleType, marker: str
+) -> RuntimeError:
+    """Call the mocked artifact reader and require a constant safe refusal."""
+
+    with pytest.raises(
+        RuntimeError, match="^robomimic smoke proof validation failed$"
+    ) as raised:
+        module._robomimic_artifact(marker, marker, marker)
+    diagnostics = _serialized_entitlement_refusal(raised.value)
+    assert marker not in diagnostics
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert not getattr(raised.value, "__notes__", ())
+    return raised.value
 
 
 def _fake_robomimic_kubectl(
@@ -469,7 +536,9 @@ def test_robomimic_live_harness_refuses_entitlement_before_any_side_effect(
     monkeypatch.setattr(module, "_robomimic_observer_rbac", unexpected_side_effect)
     monkeypatch.setattr(module.subprocess, "run", unexpected_side_effect)
     before = {
-        path.relative_to(tmp_path).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        path.relative_to(tmp_path).as_posix(): hashlib.sha256(
+            path.read_bytes()
+        ).hexdigest()
         for path in tmp_path.rglob("*")
         if path.is_file()
     }
@@ -478,7 +547,9 @@ def test_robomimic_live_harness_refuses_entitlement_before_any_side_effect(
         module._invoke_robomimic_gate("manager-project")
 
     after = {
-        path.relative_to(tmp_path).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        path.relative_to(tmp_path).as_posix(): hashlib.sha256(
+            path.read_bytes()
+        ).hexdigest()
         for path in tmp_path.rglob("*")
         if path.is_file()
     }
@@ -526,7 +597,9 @@ def test_robomimic_live_harness_freezes_exact_image_before_side_effects(
         pytest.fail("invalid image selector reached a side effect")
 
     monkeypatch.setattr(module, "_activate_nebius_profile", unexpected_side_effect)
-    monkeypatch.setattr(module, "_preflight_robomimic_runtime_entitlement", unexpected_side_effect)
+    monkeypatch.setattr(
+        module, "_preflight_robomimic_runtime_entitlement", unexpected_side_effect
+    )
     monkeypatch.setattr(module, "_robomimic_observer_rbac", unexpected_side_effect)
     monkeypatch.setattr(module.subprocess, "run", unexpected_side_effect)
 
@@ -629,9 +702,7 @@ def test_robomimic_e2e_context_refusal_discards_sensitive_assertion(
 
     error = raised.value
     assert error.category == "context-invalid"
-    assert error.args == (
-        "robomimic customer entitlement refused: context-invalid",
-    )
+    assert error.args == ("robomimic customer entitlement refused: context-invalid",)
     assert error.__cause__ is None
     assert error.__context__ is None
     assert not getattr(error, "__notes__", ())
@@ -900,7 +971,9 @@ def test_robomimic_observer_cleanup_checks_every_resource_after_delete_failure(
         ):
             raise RuntimeError("simulated gate failure")
 
-    assert any("cleanup failed" in note for note in _exception_diagnostics(raised.value))
+    assert any(
+        "cleanup failed" in note for note in _exception_diagnostics(raised.value)
+    )
     assert sum("delete" in command for command in calls) == 3
     assert sum("-o" in command and "name" in command for command in calls) == 6
 
@@ -1015,9 +1088,7 @@ def test_robomimic_observer_cleanup_contains_every_lookup_oserror(
         ):
             raise RuntimeError("simulated gate failure")
 
-    assert any(
-        expected_note in note for note in _exception_diagnostics(raised.value)
-    )
+    assert any(expected_note in note for note in _exception_diagnostics(raised.value))
     assert sum("-o" in command and "name" in command for command in calls) == 6
 
 
@@ -1265,9 +1336,7 @@ def test_robomimic_customer_accept_records_only_bound_value_free_identity(
     customer = "private-customer-identity"
     record = tmp_path / "entitlement.json"
     monkeypatch.setenv("NPA_E2E_PROJECT", customer)
-    monkeypatch.setenv(
-        "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256", "a" * 64
-    )
+    monkeypatch.setenv("NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256", "a" * 64)
     monkeypatch.setattr(
         runner,
         "_base_image_candidates",
@@ -1384,9 +1453,7 @@ def test_robomimic_entitlement_refuses_symlinked_or_permissive_parent(
     source.write_text('{"decision":"accepted"}\n', encoding="utf-8")
     source.chmod(0o600)
     with pytest.raises(runner.RobomimicEntitlementError) as raised:
-        runner._read_robomimic_entitlement(
-            symlinked_parent / "entitlement.json"
-        )
+        runner._read_robomimic_entitlement(symlinked_parent / "entitlement.json")
     assert raised.value.code == "unsafe-parent"
 
 
@@ -2050,9 +2117,7 @@ def test_robomimic_runner_rejects_every_immutable_contract_bypass(
     entitlement = _customer_entitlement(
         tmp_path, project="manager-project", run_id=run_id
     )
-    monkeypatch_env["NPA_BYOF_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE"] = str(
-        entitlement
-    )
+    monkeypatch_env["NPA_BYOF_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE"] = str(entitlement)
     profile = module._materialize_robomimic_attested_profile(
         tmp_path / "attested.yaml",
         namespace="robomimic-validation",
@@ -2690,12 +2755,16 @@ def test_robomimic_profile_refuses_regular_file_to_fifo_open_race(
     module = _profile_upload_module(tmp_path)
     root = tmp_path / "outputs"
     root.mkdir()
-    source = root / ("reserved.json" if source_kind == "reserved-json" else "output.bin")
+    source = root / (
+        "reserved.json" if source_kind == "reserved-json" else "output.bin"
+    )
     source.write_text("{}\n", encoding="utf-8")
     original_open = module.os.open
     replaced = False
 
-    def replace_before_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
+    def replace_before_open(
+        path: object, flags: int, *args: object, **kwargs: object
+    ) -> int:
         nonlocal replaced
         if Path(path) == source and not replaced:
             replaced = True
@@ -2753,6 +2822,7 @@ def test_robomimic_profile_transport_refusals_are_value_free(
             return module.create_output_client({"endpoint_url": marker})
 
     else:
+
         def operation() -> object:
             return module.verify_uploaded_objects(
                 RefusingS3(), "private-bucket", ["private-key"]
@@ -2904,7 +2974,9 @@ def test_robomimic_download_refuses_a_malformed_redirect_value_free(
         "HTTPSConnection",
         lambda *_args, **_kwargs: RedirectConnection(),
     )
-    with pytest.raises(RuntimeError, match="malformed approved HTTPS redirect") as raised:
+    with pytest.raises(
+        RuntimeError, match="malformed approved HTTPS redirect"
+    ) as raised:
         module._open_allowed_https(
             "https://huggingface.co/approved",
             headers={},
@@ -2913,6 +2985,39 @@ def test_robomimic_download_refuses_a_malformed_redirect_value_free(
 
     diagnostics = _serialized_entitlement_refusal(raised.value)
     assert marker not in diagnostics
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert not getattr(raised.value, "__notes__", ())
+
+
+@pytest.mark.parametrize("target_kind", ("path", "query"))
+def test_robomimic_download_refuses_non_ascii_target_before_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    target_kind: str,
+) -> None:
+    module = _smoke_module(monkeypatch)
+    marker = "private-non-ascii-request-marker"
+    url = (
+        f"https://huggingface.co/{marker}-\N{SNOWMAN}"
+        if target_kind == "path"
+        else f"https://huggingface.co/approved?token={marker}-\N{SNOWMAN}"
+    )
+    connection_attempts = 0
+
+    def fail_connection(*_args: object, **_kwargs: object) -> None:
+        nonlocal connection_attempts
+        connection_attempts += 1
+        pytest.fail("connection creation reached after request-target refusal")
+
+    monkeypatch.setattr(module.http.client, "HTTPSConnection", fail_connection)
+    with pytest.raises(RuntimeError, match="approved HTTPS transport failed") as raised:
+        module._open_allowed_https(
+            url,
+            headers={},
+            allowed_hosts=("huggingface.co",),
+        )
+    assert connection_attempts == 0
+    assert marker not in _serialized_entitlement_refusal(raised.value)
     assert raised.value.__cause__ is None
     assert raised.value.__context__ is None
     assert not getattr(raised.value, "__notes__", ())
@@ -2958,6 +3063,100 @@ def test_robomimic_download_transport_refusal_is_value_free(
     assert error.__context__ is None
 
 
+@pytest.mark.parametrize("declared_size", (None, "12", -1, 64 * 1024 + 1))
+def test_robomimic_artifact_refuses_invalid_size_and_closes(
+    monkeypatch: pytest.MonkeyPatch,
+    declared_size: object,
+) -> None:
+    module = _live_e2e_module()
+    marker = "private-artifact-size-marker"
+    body = _SmokeProofBody(b'{"solution":"robomimic"}')
+    response = {"Body": body}
+    if declared_size is not None:
+        response["ContentLength"] = declared_size
+    calls = _mock_robomimic_artifact_client(monkeypatch, module, response)
+    _assert_value_free_artifact_refusal(module, marker)
+    assert len(calls) == 1
+    assert body.read_amounts == []
+    assert body.closed is True
+
+
+@pytest.mark.parametrize("stream_kind", ("lying-length", "oversized"))
+def test_robomimic_artifact_refuses_invalid_stream_and_closes(
+    monkeypatch: pytest.MonkeyPatch,
+    stream_kind: str,
+) -> None:
+    module = _live_e2e_module()
+    marker = "private-artifact-stream-marker"
+    payload = (
+        b"{}"
+        if stream_kind == "lying-length"
+        else b"x" * (module.ROBOMIMIC_SMOKE_PROOF_MAX_BYTES + 1)
+    )
+    body = _SmokeProofBody(payload)
+    response = {"Body": body, "ContentLength": 1}
+    _mock_robomimic_artifact_client(monkeypatch, module, response)
+    _assert_value_free_artifact_refusal(module, marker)
+    assert body.read_amounts == [module.ROBOMIMIC_SMOKE_PROOF_MAX_BYTES + 1]
+    assert body.closed is True
+
+
+@pytest.mark.parametrize("failure_kind", ("read", "decode", "json"))
+def test_robomimic_artifact_sanitizes_content_failures_and_closes(
+    monkeypatch: pytest.MonkeyPatch,
+    failure_kind: str,
+) -> None:
+    module = _live_e2e_module()
+    marker = "private-artifact-content-marker"
+    payload = b"\xff" if failure_kind == "decode" else marker.encode()
+    read_error = OSError(marker) if failure_kind == "read" else None
+    body = _SmokeProofBody(payload, read_error=read_error)
+    response = {"Body": body, "ContentLength": len(payload)}
+    _mock_robomimic_artifact_client(monkeypatch, module, response)
+    _assert_value_free_artifact_refusal(module, marker)
+    assert body.read_amounts == [module.ROBOMIMIC_SMOKE_PROOF_MAX_BYTES + 1]
+    assert body.closed is True
+
+
+def test_robomimic_artifact_sanitizes_transport_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _live_e2e_module()
+    marker = "private-artifact-transport-marker"
+    calls = _mock_robomimic_artifact_client(monkeypatch, module, OSError(marker))
+    _assert_value_free_artifact_refusal(module, marker)
+    assert len(calls) == 1
+
+
+def test_robomimic_artifact_sanitizes_close_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _live_e2e_module()
+    marker = "private-artifact-close-marker"
+    payload = b'{"solution":"robomimic"}'
+    body = _SmokeProofBody(payload, close_error=OSError(marker))
+    response = {"Body": body, "ContentLength": len(payload)}
+    _mock_robomimic_artifact_client(monkeypatch, module, response)
+    _assert_value_free_artifact_refusal(module, marker)
+    assert body.read_amounts == [module.ROBOMIMIC_SMOKE_PROOF_MAX_BYTES + 1]
+    assert body.closed is True
+
+
+def test_robomimic_artifact_reads_once_bounded_and_closes_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _live_e2e_module()
+    payload = b'{"solution":"robomimic"}'
+    body = _SmokeProofBody(payload)
+    response = {"Body": body, "ContentLength": len(payload)}
+    calls = _mock_robomimic_artifact_client(monkeypatch, module, response)
+    artifact = module._robomimic_artifact("project", "bucket", "run")
+    assert artifact == {"solution": "robomimic"}
+    assert len(calls) == 1
+    assert body.read_amounts == [module.ROBOMIMIC_SMOKE_PROOF_MAX_BYTES + 1]
+    assert body.closed is True
+
+
 def test_robomimic_smoke_entitlement_refusal_is_value_free(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2969,7 +3168,9 @@ def test_robomimic_smoke_entitlement_refusal_is_value_free(
         lambda **_kwargs: (_ for _ in ()).throw(RuntimeError(marker)),
     )
 
-    with pytest.raises(RuntimeError, match="customer runtime entitlement refused") as raised:
+    with pytest.raises(
+        RuntimeError, match="customer runtime entitlement refused"
+    ) as raised:
         module._value_free_customer_entitlement(record=marker)
 
     error = raised.value

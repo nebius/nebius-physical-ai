@@ -70,6 +70,20 @@ def _resolved_redirect_url(current_url: str, location: str) -> str:
     return resolved
 
 
+def _approved_request_target(parsed: urllib.parse.SplitResult) -> str:
+    """Build an ASCII HTTP request target without retaining rejected values."""
+
+    target_failed = False
+    try:
+        target = urllib.parse.urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
+        target.encode("ascii")
+    except (UnicodeError, ValueError):
+        target_failed = True
+    if target_failed:
+        raise RuntimeError("approved HTTPS transport failed") from None
+    return target
+
+
 def _open_allowed_https(
     url: str,
     *,
@@ -100,7 +114,7 @@ def _open_allowed_https(
             or parsed.fragment
         ):
             raise RuntimeError("refusing URL outside the approved HTTPS origins")
-        target = urllib.parse.urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
+        target = _approved_request_target(parsed)
         connection = http.client.HTTPSConnection(
             hostname,
             port=port,
@@ -111,11 +125,11 @@ def _open_allowed_https(
         try:
             connection.request("GET", target, headers=headers)
             response = connection.getresponse()
-        except (OSError, http.client.HTTPException):
+        except (OSError, http.client.HTTPException, UnicodeError, ValueError):
             connection.close()
             transport_failed = True
         if transport_failed:
-            raise RuntimeError("approved HTTPS transport failed")
+            raise RuntimeError("approved HTTPS transport failed") from None
         if response.status in _HTTPS_REDIRECT_STATUSES:
             location = response.getheader("Location")
             response.close()
@@ -433,9 +447,7 @@ def main() -> None:
             "runtime inventory does not match the operator-selected digest"
         )
     entitlement = _value_free_customer_entitlement(
-        entitlement_path=Path(
-            os.environ["NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE"]
-        ),
+        entitlement_path=Path(os.environ["NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE"]),
         runtime_lock_path=runtime_lock,
         expected_entitlement_sha256=os.environ.get(
             "NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_SHA256", ""
