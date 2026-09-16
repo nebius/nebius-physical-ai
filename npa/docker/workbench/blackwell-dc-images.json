@@ -324,6 +324,16 @@
       "validated_registry_scope": "operator"
     },
     {
+      "name": "npa-flex-pi",
+      "dockerfile": "flex-pi/Dockerfile",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "redistribution": "public",
+      "source_compiled_extensions": [],
+      "smoke": "Real four-step action-only inference produces a finite 32x14 bimanual action chunk from a hash-pinned public RoboTwin observation.",
+      "notes": "The public-eligible candidate contains pinned MIT source/runtime only. Checkpoint, Wan/T5/DINOv3 assets, observation media, credentials, and populated caches are runtime fetches. RTX PRO 6000 is the required onboarding target; datacenter Blackwell remains a separate unverified claim."
+    },
+    {
       "name": "npa-cosmos3-reason",
       "dockerfile": "cosmos3-reason/Dockerfile",
       "verdict": "ready",

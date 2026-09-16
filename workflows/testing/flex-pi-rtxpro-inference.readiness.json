@@ -1,0 +1,46 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "65946a95b9e96560e3c29a6936883b8a66e0547e49f63188c6880cf9efb6f13d",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec both completed successfully.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/flex-pi-rtxpro-inference.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/flex-pi-rtxpro-inference.yaml --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The stage invokes the pinned upstream checkpoint and policy adapter, then requires a finite 32x14 action chunk.",
+      "evidence": ["docs/workbench/flex-pi.md#artifacts-and-acceptance"]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The selected project's object-storage credential preflight passed before allocation.",
+      "evidence": ["npa workbench health preflight --checks nebius,s3 --json (sanitized private record)"]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "The public input manifest pins every source object and SHA-256 digest.",
+      "evidence": ["npa/docker/workbench/flex-pi/public_robotwin_sample.json"]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Exact pinned checkpoint, observation, tokenizer, DINOv3, and converted Wan asset endpoints were reachable before allocation.",
+      "evidence": ["sanitized private access-preflight record; no credential values retained"]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The immutable development digest has not yet passed its build and payload gates.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "Real RTX PRO 6000 policy inference has not yet been recorded.",
+      "evidence": []
+    }
+  }
+}
