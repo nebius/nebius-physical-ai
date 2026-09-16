@@ -10,6 +10,7 @@ import json
 import math
 import os
 from pathlib import Path
+import subprocess
 import time
 
 import av
@@ -20,7 +21,12 @@ import torch
 
 
 MODELSCOPE_REPOSITORY = "DiffSynth-Studio/Wan-Series-Converted-Safetensors"
-MODELSCOPE_REVISION = "150f75d811d51f6c7760154aa7fec371dccda529"
+MODELSCOPE_BRANCH = "master"
+MODELSCOPE_GIT_COMMIT = "150f75d811d51f6c7760154aa7fec371dccda529"
+MODELSCOPE_GIT_URL = (
+    "https://www.modelscope.cn/DiffSynth-Studio/"
+    "Wan-Series-Converted-Safetensors.git"
+)
 MODELSCOPE_FILES = {
     "models_t5_umt5-xxl-enc-bf16.safetensors": (
         "d92de679881d38af9c89eff7bb1b6d6c9d96cb2b69831e4027e9ecabdd38eb23"
@@ -133,10 +139,25 @@ def _prepare_runtime_models() -> dict[str, str]:
     """Materialize ancillary weights from immutable revisions and verify bytes."""
     from modelscope import snapshot_download as modelscope_snapshot_download
 
+    # ModelScope's public SDK accepts branch/tag names for this repository but
+    # rejects raw Git object IDs.  Bind the supported branch locator to the
+    # immutable Git head before asking the SDK to download, then independently
+    # verify every selected large file by SHA-256 below.  A branch move or a
+    # byte change therefore fails closed before model construction.
+    remote = subprocess.run(
+        ["git", "ls-remote", MODELSCOPE_GIT_URL, f"refs/heads/{MODELSCOPE_BRANCH}"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    fields = remote.stdout.strip().split()
+    if remote.returncode != 0 or fields[:1] != [MODELSCOPE_GIT_COMMIT]:
+        raise RuntimeError("immutable ModelScope branch head verification failed")
+
     base = Path(os.environ["DIFFSYNTH_MODEL_BASE_PATH"])
     converted = Path(modelscope_snapshot_download(
         MODELSCOPE_REPOSITORY,
-        revision=MODELSCOPE_REVISION,
+        revision=MODELSCOPE_BRANCH,
         local_dir=str(base / MODELSCOPE_REPOSITORY),
         allow_file_pattern=list(MODELSCOPE_FILES),
     ))

@@ -79,8 +79,9 @@ down a shared or pre-existing cluster.
 
 ## Troubleshoot
 
-- ModelScope 404 for VAE/T5: leave `DIFFSYNTH_DOWNLOAD_SOURCE` unset; those
-  converted assets are not mirrored at the Hugging Face path used by flex-pi.
+- ModelScope VAE/T5 fetch failures: this repository exposes only `master` to the
+  SDK. Do not pass its raw commit as `revision`; require `master` to match the
+  pinned Git commit, then enforce the two maintained SHA-256 file digests.
 - Missing DINO weights: confirm access to the timm DINOv3 repository and its
   model terms before retrying.
 - CUDA OOM: verify action-only flags and absence of competing workloads. Do not

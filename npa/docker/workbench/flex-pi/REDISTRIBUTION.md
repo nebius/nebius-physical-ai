@@ -12,9 +12,10 @@ The `flex-pi/flexpi-robotwin` checkpoint is MIT-labelled. The public
 `flex-pi/robotwin_3d` dataset card declares no license, so NPA does not infer
 one from the MIT RoboTwin simulator source and never redistributes sample bytes.
 Wan/T5 converted weights are fetched from the Apache-2.0 ModelScope repository
-at a pinned revision, while DINOv3 uses its separate model license through timm
-at a pinned revision. All are runtime-only, under the operator's accepted terms
-and authorized use. None of those weights,
+after its SDK-supported branch is bound to a pinned Git commit; both selected
+files are then SHA-256 verified. DINOv3 uses its separate model license through
+timm at a pinned revision. All are runtime-only, under the operator's accepted
+terms and authorized use. None of those weights,
 observation media, populated caches, credentials, or generated actions are
 present in image layers.
 

@@ -66,6 +66,15 @@ def test_dockerfile_pins_source_base_and_nonroot() -> None:
     assert "rm -rf /opt/nvidia/nsight-compute/2025.1.0" in text
     assert "security-dependencies.patch" in text
 
+    inference = (
+        Path(__file__).resolve().parents[2]
+        / "docker/workbench/flex-pi/inference.py"
+    ).read_text()
+    assert 'MODELSCOPE_BRANCH = "master"' in inference
+    assert 'MODELSCOPE_GIT_COMMIT = "150f75d811d51f6c7760154aa7fec371dccda529"' in inference
+    assert '"git", "ls-remote", MODELSCOPE_GIT_URL' in inference
+    assert "immutable ModelScope branch head verification failed" in inference
+
     dependency_patch = (
         Path(__file__).resolve().parents[2]
         / "docker/workbench/flex-pi/pins/security-dependencies.patch"

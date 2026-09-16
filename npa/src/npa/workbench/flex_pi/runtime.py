@@ -12,6 +12,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -146,7 +147,18 @@ def _execute(argv: list[str], request: FlexPiRequest, runner: Callable[..., Any]
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
     )
     if completed.returncode != 0:
-        raise FlexPiError(f"upstream flex-pi inference failed ({completed.returncode})")
+        # Preserve a bounded, secret-safe diagnostic tail instead of reducing
+        # upstream failures to an exit code. Runtime URLs can be signed and
+        # SDKs may echo bearer tokens, so redact those shapes before the
+        # message reaches job logs.
+        tail = str(completed.stdout or "")[-8_192:]
+        tail = re.sub(r"(?i)Bearer\s+\S+", "Bearer <redacted>", tail)
+        tail = re.sub(r"\b(?:hf_|gh[pousr]_|github_pat_|sk-)[A-Za-z0-9_-]{12,}\b", "<redacted>", tail)
+        tail = re.sub(r"(?:s3|https?)://\S+", "<uri-ref>", tail)
+        detail = tail.strip() or "no diagnostic output"
+        raise FlexPiError(
+            f"upstream flex-pi inference failed ({completed.returncode}): {detail}"
+        )
 
 
 def _validate_action_artifact(path: Path, request: FlexPiRequest) -> dict[str, Any]:

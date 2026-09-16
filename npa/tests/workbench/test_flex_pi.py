@@ -71,6 +71,37 @@ def test_invalid_action_shape_is_not_published(tmp_path: Path) -> None:
     assert not output.exists()
 
 
+def test_failed_upstream_output_is_bounded_and_redacted(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path / "input.json")
+
+    def broken(argv, **kwargs):  # type: ignore[no-untyped-def]
+        return subprocess.CompletedProcess(
+            argv,
+            1,
+            stdout=(
+                "prefix " * 2_000
+                + "Bearer private-value https://example.invalid/object?signature=private "
+                + "hf_abcdefghijklmnopqrstuvwxyz"
+            ),
+        )
+
+    try:
+        run_inference(
+            FlexPiRequest(input_path=str(manifest), output_path=str(tmp_path / "output")),
+            runner=broken,
+        )
+    except FlexPiError as exc:
+        message = str(exc)
+        assert "<uri-ref>" in message
+        assert "<redacted>" in message
+        assert "private-value" not in message
+        assert "example.invalid" not in message
+        assert "hf_abcdefghijklmnopqrstuvwxyz" not in message
+        assert len(message) < 8_400
+    else:
+        raise AssertionError("failed upstream execution was accepted")
+
+
 def test_cli_sdk_and_service_share_dry_run(tmp_path: Path, monkeypatch) -> None:
     manifest = _manifest(tmp_path / "input.json")
     monkeypatch.setattr(

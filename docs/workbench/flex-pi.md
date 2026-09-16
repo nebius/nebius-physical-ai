@@ -35,7 +35,9 @@ does not redistribute its bytes, and fetches only the five hash-pinned objects
 needed for the authorized observation. The ModelScope converted Wan VAE/T5
 repository is Apache-2.0; DINOv3 retains its separate model license. Ancillary
 assets are fetched from immutable revisions and verified by SHA-256 before model
-construction. See the image's
+construction. ModelScope exposes only its `master` branch to the SDK for this
+repository, so NPA first requires that branch to resolve to the pinned Git
+commit and then verifies both selected files by SHA-256. See the image's
 `REDISTRIBUTION.md` and `THIRD_PARTY_NOTICES.md` for the maintained boundary.
 
 ## CLI and SDK
