@@ -913,12 +913,12 @@ skills:
         path: workflows/testing/cosmos3-generate.yaml
   - name: cosmos3-post-training
     category: workflows
-    when_to_use: "Plan or review Cosmos3 supervised fine-tuning and post-training support."
+    when_to_use: "Operate the experimental native LIBERO policy workflow or plan and review other Cosmos3 post-training recipes."
     path: skills/workflows/cosmos3-post-training/SKILL.md
     smoke:
       - type: cli_help
-        args: ["workbench", "cosmos", "train", "--help"]
-        contains: "runtime"
+        args: ["workbench", "cosmos3", "policy-train", "--help"]
+        contains: "SFT"
   - name: sim-to-real
     category: workflows
     when_to_use: "Design, review, or operate sim-to-real data, training, evaluation, and loop-control workflows."
