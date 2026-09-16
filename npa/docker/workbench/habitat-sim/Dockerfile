@@ -72,6 +72,7 @@ ARG CA_CONFIG_SHA256
 ARG CA_BUNDLE_BYTES
 ARG CA_BUNDLE_SHA256
 ARG NPA_SOURCE_SHA
+ARG NPA_SOURCE_MANIFEST_SHA256
 USER root
 COPY --from=npa-ca-trust /etc/ca-certificates.conf /etc/ca-certificates.conf
 COPY --from=npa-ca-trust /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
@@ -141,14 +142,32 @@ RUN test -n "${NPA_SOURCE_SHA}" && printf '%s' "${NPA_SOURCE_SHA}" | grep -Eq '^
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/npa-build
-COPY docker/workbench/habitat-sim/source-manifest.json source-manifest.json
-COPY docker/workbench/habitat-sim/licenses.json licenses.json
-COPY docker/workbench/habitat-sim/apt-build.lock apt-build.lock
-COPY docker/workbench/habitat-sim/apt-runtime.lock apt-runtime.lock
-COPY docker/workbench/habitat-sim/requirements-build.lock requirements-build.lock
-COPY docker/workbench/habitat-sim/requirements-runtime.lock requirements-runtime.lock
-COPY docker/workbench/habitat-sim/runtime-payload.json runtime-payload.json
-COPY docker/workbench/habitat-sim/prepare_source.py prepare_source.py
+COPY --from=npa-source-provenance / /opt/npa-source-provenance/
+RUN test -n "${NPA_SOURCE_SHA}" && printf '%s' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$' && \
+    test -n "${NPA_SOURCE_MANIFEST_SHA256}" && \
+    printf '%s' "${NPA_SOURCE_MANIFEST_SHA256}" | grep -Eq '^[0-9a-f]{64}$' && \
+    printf '%s  %s\n' "${NPA_SOURCE_MANIFEST_SHA256}" \
+      /opt/npa-source-provenance/npa-source-manifest.sha256 | sha256sum -c - && \
+    cd /opt/npa-source-provenance && \
+    sha256sum -c npa-source-manifest.sha256 && \
+    sed -n 's/^[0-9a-f]\{64\}  //p' npa-source-manifest.sha256 | \
+      LC_ALL=C sort -u > /tmp/npa-source-expected-paths && \
+    find inputs -type f -printf '%p\n' | LC_ALL=C sort -u \
+      > /tmp/npa-source-observed-paths && \
+    test -s /tmp/npa-source-expected-paths && \
+    cmp /tmp/npa-source-expected-paths /tmp/npa-source-observed-paths && \
+    printf '{"manifest_sha256":"%s","schema_version":"npa.source-provenance.v1","source_revision":"%s"}\n' \
+      "${NPA_SOURCE_MANIFEST_SHA256}" "${NPA_SOURCE_SHA}" \
+      > /opt/npa-source-provenance/npa-source-provenance.json && \
+    rm -f /tmp/npa-source-expected-paths /tmp/npa-source-observed-paths
+COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/source-manifest.json source-manifest.json
+COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/licenses.json licenses.json
+COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/apt-build.lock apt-build.lock
+COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/apt-runtime.lock apt-runtime.lock
+COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/requirements-build.lock requirements-build.lock
+COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/requirements-runtime.lock requirements-runtime.lock
+COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/runtime-payload.json runtime-payload.json
+COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/prepare_source.py prepare_source.py
 RUN python3 prepare_source.py --manifest source-manifest.json --output /opt/habitat-sim \
       --inventory-output /opt/npa-build/source-projection.json && \
     python3 -m venv /opt/build-venv && \
@@ -205,6 +224,7 @@ ARG CA_CONFIG_SHA256
 ARG CA_BUNDLE_BYTES
 ARG CA_BUNDLE_SHA256
 ARG NPA_SOURCE_SHA
+ARG NPA_SOURCE_MANIFEST_SHA256
 USER root
 COPY --from=npa-ca-trust /etc/ca-certificates.conf /etc/ca-certificates.conf
 COPY --from=npa-ca-trust /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
@@ -251,19 +271,31 @@ RUN test "$(wc -l < /etc/ca-certificates.conf)" -eq "${CA_CERT_COUNT}" && \
     test "$(id -u ubuntu)" -eq 1000 && \
     test "$(id -g ubuntu)" -eq 1000 && \
     install -d -o ubuntu -g ubuntu -m 0700 /home/ubuntu/.ssh && \
+    install -d -m 0755 /etc/ssh/sshd_config.d && \
+    printf '%s\n' 'PasswordAuthentication no' 'PermitRootLogin no' \
+      > /etc/ssh/sshd_config.d/99-npa-worker.conf && \
     printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/90-npa-skypilot && \
     chmod 0440 /etc/sudoers.d/90-npa-skypilot
 
 COPY --from=build /opt/venv /opt/venv
 COPY --from=build /opt/source-projection /usr/src/habitat-sim
 COPY --from=build /opt/notices /usr/share/doc/npa-habitat-sim
-COPY src/npa/__init__.py /opt/npa-runtime/npa/__init__.py
-COPY src/npa/workflows/__init__.py /opt/npa-runtime/npa/workflows/__init__.py
-COPY src/npa/workflows/habitat_sim_smoke.py /opt/npa-runtime/npa/workflows/habitat_sim_smoke.py
-COPY docker/workbench/habitat-sim/entrypoint.sh /usr/local/bin/npa-habitat-entrypoint
-COPY docker/workbench/habitat-sim/REDISTRIBUTION.md /usr/share/doc/npa-habitat-sim/REDISTRIBUTION.md
-COPY docker/workbench/habitat-sim/THIRD_PARTY_NOTICES.md /usr/share/doc/npa-habitat-sim/THIRD_PARTY_NOTICES.md
-RUN chmod 0755 /usr/local/bin/npa-habitat-entrypoint && \
+COPY --from=build /opt/npa-source-provenance /usr/share/doc/npa-habitat-sim/npa-source-provenance
+COPY --from=npa-source-provenance /inputs/src/npa/__init__.py /opt/npa-runtime/npa/__init__.py
+COPY --from=npa-source-provenance /inputs/src/npa/workflows/__init__.py /opt/npa-runtime/npa/workflows/__init__.py
+COPY --from=npa-source-provenance /inputs/src/npa/workflows/habitat_sim_smoke.py /opt/npa-runtime/npa/workflows/habitat_sim_smoke.py
+COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/entrypoint.sh /usr/local/bin/npa-habitat-entrypoint
+COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/REDISTRIBUTION.md /usr/share/doc/npa-habitat-sim/REDISTRIBUTION.md
+COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/THIRD_PARTY_NOTICES.md /usr/share/doc/npa-habitat-sim/THIRD_PARTY_NOTICES.md
+RUN printf '%s  %s\n' "${NPA_SOURCE_MANIFEST_SHA256}" \
+      /usr/share/doc/npa-habitat-sim/npa-source-provenance/npa-source-manifest.sha256 | \
+      sha256sum -c - && \
+    cd /usr/share/doc/npa-habitat-sim/npa-source-provenance && \
+    sha256sum -c npa-source-manifest.sha256 && \
+    printf '{"manifest_sha256":"%s","schema_version":"npa.source-provenance.v1","source_revision":"%s"}\n' \
+      "${NPA_SOURCE_MANIFEST_SHA256}" "${NPA_SOURCE_SHA}" | \
+      cmp - npa-source-provenance.json && \
+    chmod 0755 /usr/local/bin/npa-habitat-entrypoint && \
     chown -R root:root /opt/venv /opt/npa-runtime /usr/src/habitat-sim \
       /usr/share/doc/npa-habitat-sim && \
     ! find / -xdev \( -name 'habitat-test-scenes.zip' -o -name 'skokloster-castle.glb' \
@@ -282,8 +314,11 @@ LABEL org.opencontainers.image.source="https://github.com/facebookresearch/habit
       org.opencontainers.image.licenses="MIT" \
       npa.tool="habitat-sim" \
       npa.version="0.3.3-public-unbuilt" \
+      org.nebius.npa.source-manifest-sha256="${NPA_SOURCE_MANIFEST_SHA256}" \
+      org.nebius.npa.source-provenance-schema="npa.source-provenance.v1" \
       org.nebius.npa.upstream-revision="57ee4941dc4765240f0f91f70b2c97a919bf9038" \
       org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1" \
+      org.nebius.npa.sudo-bootstrap-contract="habitat-sim-skypilot-0.12.2-v1" \
       org.nebius.npa.publication-status="quarantined-unbuilt"
 USER ubuntu
 ENTRYPOINT ["/usr/local/bin/npa-habitat-entrypoint"]

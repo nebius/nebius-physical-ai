@@ -133,10 +133,20 @@ def _copy_directives(dockerfile_text: str) -> tuple[list[str], list[str]]:
         stripped = line.strip()
         if not stripped.upper().startswith("COPY "):
             continue
-        tokens = [t for t in stripped.split()[1:] if not t.startswith("--")]
+        tokens = stripped.split()[1:]
+        options: list[str] = []
+        while tokens and tokens[0].startswith("--"):
+            options.append(tokens.pop(0))
         if len(tokens) < 2:
             continue
-        sources.extend(tokens[:-1])
+        for source in tokens[:-1]:
+            if (
+                "--from=npa-source-provenance" in options
+                and source.startswith("/inputs/")
+                and ".." not in Path(source.removeprefix("/inputs/")).parts
+            ):
+                source = source.removeprefix("/inputs/")
+            sources.append(source)
         dests.append(tokens[-1])
     return sources, dests
 

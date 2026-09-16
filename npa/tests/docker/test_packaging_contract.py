@@ -40,6 +40,19 @@ def _cmds(dockerfile_text: str) -> list[str]:
     return re.findall(r"(?im)^\s*CMD\s+(.+?)\s*$", dockerfile_text)
 
 
+def _named_provenance_source(options: str, source: str) -> str | None:
+    """Map one bound provenance-context source to its path beneath ``npa/``."""
+
+    if "--from=npa-source-provenance" not in options.split():
+        return None
+    if not source.startswith("/inputs/"):
+        return None
+    relative = source.removeprefix("/inputs/")
+    if not relative or ".." in Path(relative).parts:
+        return None
+    return relative
+
+
 def _runtime_commands(dockerfile_text: str) -> list[str]:
     """ENTRYPOINT preferred; bare CMD is accepted for service images."""
     return _entrypoints(dockerfile_text) or _cmds(dockerfile_text)
@@ -314,12 +327,17 @@ def test_declared_skypilot_images_enforce_the_versioned_build_contract() -> None
         script = dockerfile.parent / Path(entrypoint_path).name
         if not script.is_file():
             copy_match = re.search(
-                rf"(?im)^COPY\s+(?:--\S+\s+)*(?P<src>\S+)\s+"
+                rf"(?im)^COPY\s+(?P<options>(?:--\S+\s+)*)(?P<src>\S+)\s+"
                 rf"{re.escape(entrypoint_path)}\s*$",
                 _normalize_dockerfile(dockerfile_text),
             )
             if copy_match:
-                script = ROOT / "npa" / copy_match.group("src")
+                source = copy_match.group("src")
+                source = (
+                    _named_provenance_source(copy_match.group("options"), source)
+                    or source
+                )
+                script = ROOT / "npa" / source
         assert script.is_file(), f"{name}: entrypoint source not found: {script}"
         entrypoint_text = script.read_text(encoding="utf-8")
         assert (

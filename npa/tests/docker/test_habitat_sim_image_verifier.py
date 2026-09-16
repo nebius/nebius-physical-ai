@@ -55,6 +55,7 @@ def _oci(
     user: str = "ubuntu",
     diff_ids: list[str] | None = None,
     source_revision: str = SOURCE_REVISION,
+    source_manifest_sha256: str | None = None,
 ) -> tuple[Path, str, list[str]]:
     blobs: dict[str, bytes] = {}
 
@@ -67,6 +68,14 @@ def _oci(
     packed_layers = [blob(gzip.compress(raw, mtime=0), LAYER) for raw in raw_layers]
     labels = copy.deepcopy(CONTRACT["required_labels"])
     labels["org.opencontainers.image.revision"] = source_revision
+    if source_manifest_sha256 is not None:
+        labels["org.nebius.npa.source-manifest-sha256"] = source_manifest_sha256
+        labels["org.nebius.npa.source-provenance-schema"] = (
+            VERIFIER.PROVENANCE_SCHEMA
+        )
+        labels["org.nebius.npa.sudo-bootstrap-contract"] = (
+            "habitat-sim-skypilot-0.12.2-v1"
+        )
     actual_diff_ids = ["sha256:" + _digest(raw) for raw in raw_layers]
     configured_diff_ids = diff_ids or actual_diff_ids
     config = blob(
@@ -370,11 +379,57 @@ def _verify(
         os.close(fd)
 
 
-def _cli_fixture(tmp_path: Path) -> dict[str, object]:
+def _cli_source_manifest() -> tuple[bytes, dict[str, bytes]]:
+    inputs = {
+        path: f"committed fixture:{path}\n".encode()
+        for path in VERIFIER.NPA_SOURCE_PATHS
+    }
+    rows = [
+        f"{_digest(payload)}  inputs/{path}\n".encode()
+        for path, payload in inputs.items()
+    ]
+    return b"".join(sorted(rows, key=lambda row: row.split(b"  ", 1)[1])), inputs
+
+
+def _cli_fixture(
+    tmp_path: Path,
+    *,
+    mutation: str | None = None,
+    label_manifest_sha256: str | None = None,
+    image_source_revision: str = SOURCE_REVISION,
+) -> dict[str, object]:
     analysis = tmp_path / "analysis"
     analysis.mkdir(mode=0o700)
     contract, entries = _fixture()
-    archive, expected, diff_ids = _oci(analysis, [entries])
+    manifest, source_inputs = _cli_source_manifest()
+    manifest_sha256 = _digest(manifest)
+    provenance = VERIFIER._provenance_bytes(SOURCE_REVISION, manifest_sha256)
+    provenance_entries = [
+        file(
+            f"{VERIFIER.PROVENANCE_ROOT}/npa-source-manifest.sha256",
+            manifest if mutation != "manifest" else manifest + b"hostile\n",
+        ),
+        file(
+            f"{VERIFIER.PROVENANCE_ROOT}/npa-source-provenance.json",
+            provenance if mutation != "provenance" else provenance + b"hostile\n",
+        ),
+    ]
+    for path, payload in source_inputs.items():
+        if mutation == "file" and path == VERIFIER.NPA_SOURCE_PATHS[0]:
+            payload += b"hostile\n"
+        provenance_entries.append(
+            file(f"{VERIFIER.PROVENANCE_ROOT}/inputs/{path}", payload)
+        )
+    if mutation == "path-set":
+        provenance_entries.append(
+            file(f"{VERIFIER.PROVENANCE_ROOT}/inputs/undeclared.txt", b"hostile\n")
+        )
+    archive, expected, diff_ids = _oci(
+        analysis,
+        [[*entries, *provenance_entries]],
+        source_revision=image_source_revision,
+        source_manifest_sha256=label_manifest_sha256 or manifest_sha256,
+    )
     archive.chmod(0o600)
     contract["required_base_diff_ids"] = [diff_ids[0]]
     baseline_root = tmp_path / "baseline"
@@ -383,10 +438,15 @@ def _cli_fixture(tmp_path: Path) -> dict[str, object]:
     contract_path = analysis / "runtime-payload.json"
     contract_path.write_text(json.dumps(contract), encoding="utf-8")
     contract_path.chmod(0o600)
+    manifest_path = analysis / "expected-npa-source-manifest.sha256"
+    manifest_path.write_bytes(manifest)
+    manifest_path.chmod(0o600)
     return {
         "analysis": analysis,
         "archive": archive,
         "contract": contract_path,
+        "manifest": manifest_path,
+        "manifest_sha256": manifest_sha256,
         "expected": expected,
         "dpkg": baseline["dpkg_inventory_sha256"],
         "python": baseline["python_venv_inventory_sha256"],
@@ -411,8 +471,10 @@ def _write_cli_wrapper(wrapper: Path) -> None:
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             contract = json.loads(Path(sys.argv[1]).read_text())
+            manifest = Path(sys.argv[2]).read_bytes()
             module._load_contract = lambda: contract
-            raise SystemExit(module.main(sys.argv[2:]))
+            module._source_manifest_from_git = lambda _revision: manifest
+            raise SystemExit(module.main(sys.argv[3:]))
             """
         ),
         encoding="utf-8",
@@ -431,6 +493,7 @@ def _cli_arguments(
         sys.executable,
         str(wrapper),
         str(fixture["contract"]),
+        str(fixture["manifest"]),
         "--analysis-root",
         str(analysis_root or fixture["analysis"]),
         "--trusted-root",
@@ -441,6 +504,8 @@ def _cli_arguments(
         str(fixture["expected"]),
         "--expected-source-revision",
         SOURCE_REVISION,
+        "--expected-npa-source-manifest-sha256",
+        str(fixture["manifest_sha256"]),
         "--expected-dpkg-inventory-sha256",
         str(fixture["dpkg"]),
         "--expected-python-venv-inventory-sha256",
@@ -524,6 +589,42 @@ def test_host_verifier_cli_accepts_owner_only_synthetic_oci(tmp_path) -> None:
     result, report = _run_cli(tmp_path, fixture)
     assert result.returncode == 0, result.stderr
     assert report["valid"] is True
+    assert report["npa_source_manifest_sha256"] == fixture["manifest_sha256"]
+    assert report["npa_source_file_count"] == len(VERIFIER.NPA_SOURCE_PATHS)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_code"),
+    [
+        ("manifest", "required_file_hash_mismatch"),
+        ("provenance", "required_file_hash_mismatch"),
+        ("file", "required_file_hash_mismatch"),
+        ("path-set", "source_provenance_unexpected_path"),
+    ],
+)
+def test_host_verifier_cli_refuses_source_provenance_mutations(
+    tmp_path: Path, mutation: str, expected_code: str
+) -> None:
+    fixture = _cli_fixture(tmp_path, mutation=mutation)
+    result, report = _run_cli(tmp_path, fixture)
+    assert result.returncode == 1
+    assert expected_code in _codes(report)
+
+
+def test_host_verifier_cli_refuses_source_label_or_revision_drift(tmp_path) -> None:
+    label = tmp_path / "label"
+    label.mkdir()
+    fixture = _cli_fixture(label, label_manifest_sha256="0" * 64)
+    result, report = _run_cli(label, fixture)
+    assert result.returncode == 1
+    assert "required_label_mismatch" in _codes(report)
+
+    revision = tmp_path / "revision"
+    revision.mkdir()
+    fixture = _cli_fixture(revision, image_source_revision="b" * 40)
+    result, report = _run_cli(revision, fixture)
+    assert result.returncode == 1
+    assert "source_revision_label_mismatch" in _codes(report)
 
 
 @pytest.mark.parametrize(

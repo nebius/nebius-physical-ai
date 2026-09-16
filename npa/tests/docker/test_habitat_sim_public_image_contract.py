@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import os
 from pathlib import Path
 import re
 import subprocess
+
+import pytest
+import yaml
 
 from npa.deploy import images
 
@@ -14,6 +18,22 @@ from npa.deploy import images
 ROOT = Path(__file__).resolve().parents[3]
 PACKAGE = ROOT / "npa/docker/workbench/habitat-sim"
 DOCKERFILE = (PACKAGE / "Dockerfile").read_text(encoding="utf-8")
+PACKAGING = yaml.safe_load(
+    (ROOT / "npa/docker/workbench/packaging-contract.yaml").read_text(
+        encoding="utf-8"
+    )
+)
+EXPECTED_RUNTIME_IDENTITY_COMMANDS = (
+    "groupadd --gid 1000 ubuntu",
+    "useradd --uid 1000 --gid 1000 --create-home --home-dir /home/ubuntu "
+    "--shell /bin/bash --no-log-init ubuntu",
+    'test "$(id -u ubuntu)" -eq 1000',
+    'test "$(id -g ubuntu)" -eq 1000',
+    "install -d -o ubuntu -g ubuntu -m 0700 /home/ubuntu/.ssh",
+    "install -d -m 0755 /etc/ssh/sshd_config.d",
+    "printf '%s\\n' 'PasswordAuthentication no' 'PermitRootLogin no' "
+    "> /etc/ssh/sshd_config.d/99-npa-worker.conf",
+)
 
 
 def _run_bash(
@@ -72,16 +92,73 @@ def _runtime_identity_commands(dockerfile: str) -> list[str]:
     start = runtime.index("groupadd --gid 1000 ubuntu")
     end = runtime.index(" && \\\n    printf 'ubuntu ALL=", start)
     command = runtime[start:end].replace("\\\n", " ")
-    return [part.strip() for part in re.split(r"\s+&&\s+", command)]
+    return [
+        " ".join(part.split()) for part in re.split(r"\s+&&\s+", command)
+    ]
 
 
 def _runtime_identity_contract(dockerfile: str) -> bool:
     runtime = _runtime_stage(dockerfile)
-    group = runtime.find("groupadd --gid 1000 ubuntu")
-    user = runtime.find("useradd --uid 1000 --gid 1000")
-    ownership = runtime.find("install -d -o ubuntu -g ubuntu")
     runtime_users = re.findall(r"(?m)^USER\s+(\S+)\s*$", runtime)
-    return 0 <= group < user < ownership and runtime_users[-1:] == ["ubuntu"]
+    return (
+        tuple(_runtime_identity_commands(dockerfile))
+        == EXPECTED_RUNTIME_IDENTITY_COMMANDS
+        and runtime_users[-1:] == ["ubuntu"]
+    )
+
+
+def _validate_habitat_root_exemption(
+    dockerfile: str, exemption: dict[str, object]
+) -> None:
+    assert exemption["id"] == "habitat-sim-skypilot-0.12.2-v1"
+    assert exemption["sources"] == ["habitat-sim/Dockerfile"]
+    assert exemption["grants"] == [
+        {
+            "source": "habitat-sim/Dockerfile",
+            "sudoers_entry": "ubuntu ALL=(ALL) NOPASSWD:ALL",
+        }
+    ]
+    rationale = exemption["rationale"]
+    for boundary in (
+        "package, SSH, rsync",
+        "runtime-selected",
+        "finite command allowlist cannot preserve",
+        "container",
+        "trust boundary",
+    ):
+        assert boundary in rationale
+    controls = exemption["compensating_controls"]
+    assert controls == {
+        "bootstrap_contract": "skypilot-0.12.2-v1",
+        "build_time_host_keys_deleted": True,
+        "capability_evidence": "runtime_probe_required",
+        "entrypoint": "command-passthrough",
+        "exact_digest_required": True,
+        "final_user": "ubuntu",
+        "no_baked_credentials": True,
+        "no_default_sshd": True,
+        "no_exposed_ssh_port": True,
+        "trust_boundary": "ephemeral-workflow-task-container",
+    }
+    assert exemption["prohibited_uses"] == [
+        "default-sshd",
+        "public-ingress",
+        "baked-credentials",
+        "mutable-image-capability-claim",
+    ]
+    assert dockerfile.count("ubuntu ALL=(ALL) NOPASSWD:ALL") == 1
+    assert "rm -f /etc/ssh/ssh_host_*" in dockerfile
+    assert "PasswordAuthentication no" in dockerfile
+    assert "PermitRootLogin no" in dockerfile
+    assert not re.search(r"(?im)^EXPOSE\s+.*\b22(?:/tcp)?\b", dockerfile)
+    assert 'ENTRYPOINT ["/usr/local/bin/npa-habitat-entrypoint"]' in dockerfile
+    assert dockerfile.rstrip().endswith(
+        'CMD ["python3", "-m", "npa.workflows.habitat_sim_smoke", "--help"]'
+    )
+    assert re.findall(r"(?m)^USER\s+(\S+)$", dockerfile)[-1] == "ubuntu"
+    entrypoint = (PACKAGE / "entrypoint.sh").read_text(encoding="utf-8")
+    assert 'exec "$@"' in entrypoint
+    assert "sshd" not in entrypoint
 
 
 def _write_identity_dispatcher(bin_dir: Path) -> None:
@@ -107,8 +184,18 @@ case ${0##*/} in
     case "$1" in -u|-g) printf '1000\\n' ;; *) exit 64 ;; esac
     ;;
   install)
-    test "$(cat "$state")" = user
-    test "$*" = "-d -o ubuntu -g ubuntu -m 0700 /home/ubuntu/.ssh"
+    case "$*" in
+      "-d -o ubuntu -g ubuntu -m 0700 /home/ubuntu/.ssh")
+        test "$(cat "$state")" = user
+        printf ownership > "$state"
+        ;;
+      "-d -m 0755 $NPA_SSHD_CONFIG_DIR")
+        test "$(cat "$state")" = ownership
+        mkdir -p "$NPA_SSHD_CONFIG_DIR"
+        printf ssh-config-dir > "$state"
+        ;;
+      *) exit 64 ;;
+    esac
     ;;
   *) exit 64 ;;
 esac
@@ -126,12 +213,18 @@ def _run_identity_commands(
     bin_dir = root / "bin"
     bin_dir.mkdir(parents=True)
     _write_identity_dispatcher(bin_dir)
+    sshd_config_dir = root / "etc/ssh/sshd_config.d"
+    sandboxed_commands = [
+        command.replace("/etc/ssh/sshd_config.d", str(sshd_config_dir))
+        for command in commands
+    ]
     env = {
         **os.environ,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "NPA_IDENTITY_STATE": str(root / "identity-state"),
+        "NPA_SSHD_CONFIG_DIR": str(sshd_config_dir),
     }
-    return _run_bash(" && ".join(commands), env=env)
+    return _run_bash(" && ".join(sandboxed_commands), env=env)
 
 
 def _create_ca(tmp_path: Path, name: str) -> bytes:
@@ -569,7 +662,10 @@ def test_final_notices_exclude_builder_and_verifier_control_inputs() -> None:
     assert "requirements-build.lock" not in notice_copy.group()
     assert "runtime-payload.json" not in notice_copy.group()
     assert "-r requirements-build.lock" in build
-    assert "COPY docker/workbench/habitat-sim/runtime-payload.json" in build
+    assert (
+        "COPY --from=npa-source-provenance "
+        "/inputs/docker/workbench/habitat-sim/runtime-payload.json" in build
+    )
 
 
 def test_openexr_fetchcontent_is_bound_to_local_exact_imath_source() -> None:
@@ -599,8 +695,59 @@ def test_final_stage_is_non_root_and_skypilot_bootstrap_capable() -> None:
         assert package in final
     assert "ubuntu ALL=(ALL) NOPASSWD:ALL" in final
     assert "rm -f /etc/ssh/ssh_host_*" in final
+    assert "PasswordAuthentication no" in final
+    assert "PermitRootLogin no" in final
+    assert "EXPOSE 22" not in final
+    assert (
+        'org.nebius.npa.sudo-bootstrap-contract='
+        '"habitat-sim-skypilot-0.12.2-v1"' in final
+    )
     assert "safe.directory" not in DOCKERFILE
     assert "-name '.gitconfig'" in final
+
+
+def test_skypilot_general_escalation_is_structured_and_mechanically_bounded() -> None:
+    docs = (ROOT / "docs/workbench/container-packaging.md").read_text(
+        encoding="utf-8"
+    )
+    skill = (ROOT / "skills/workflows/byof-onboard/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    normalized_docs = " ".join(docs.split())
+    normalized_skill = " ".join(skill.split())
+    assert "root or verified passwordless sudo" in normalized_docs
+    assert (
+        "installs missing SSH, rsync, and service packages" in normalized_docs
+    )
+    assert "passwordless `sudo`" in normalized_skill
+    exemption = PACKAGING["images"]["habitat-sim"]["passwordless_root_exemption"]
+    _validate_habitat_root_exemption(DOCKERFILE, exemption)
+
+
+@pytest.mark.parametrize(
+    ("token", "replacement"),
+    [
+        ("rm -f /etc/ssh/ssh_host_*", ":"),
+        ("PasswordAuthentication no", "PasswordAuthentication yes"),
+        ("PermitRootLogin no", "PermitRootLogin yes"),
+        ("\nUSER ubuntu\n", "\nUSER root\n"),
+        ('ENTRYPOINT ["/usr/local/bin/npa-habitat-entrypoint"]', "EXPOSE 22"),
+    ],
+)
+def test_skypilot_root_exemption_rejects_compensating_control_drift(
+    token: str, replacement: str
+) -> None:
+    exemption = PACKAGING["images"]["habitat-sim"]["passwordless_root_exemption"]
+    assert token in DOCKERFILE
+    with pytest.raises(AssertionError):
+        _validate_habitat_root_exemption(
+            DOCKERFILE.replace(token, replacement, 1), exemption
+        )
+
+    mutated = copy.deepcopy(exemption)
+    mutated["compensating_controls"]["exact_digest_required"] = False
+    with pytest.raises(AssertionError):
+        _validate_habitat_root_exemption(DOCKERFILE, mutated)
 
 
 def test_runtime_identity_order_and_final_user_refuse_hostile_mutants(
@@ -608,15 +755,25 @@ def test_runtime_identity_order_and_final_user_refuse_hostile_mutants(
 ) -> None:
     commands = _runtime_identity_commands(DOCKERFILE)
 
-    assert len(commands) == 5
+    assert commands == list(EXPECTED_RUNTIME_IDENTITY_COMMANDS)
     assert _runtime_identity_contract(DOCKERFILE)
-    valid = _run_identity_commands(commands, tmp_path / "valid")
+    valid_root = tmp_path / "valid"
+    valid = _run_identity_commands(commands, valid_root)
     assert valid.returncode == 0, valid.stderr
+    assert (
+        valid_root / "etc/ssh/sshd_config.d/99-npa-worker.conf"
+    ).read_text() == "PasswordAuthentication no\nPermitRootLogin no\n"
 
     ownership_first = _run_identity_commands(
-        [commands[-1], *commands[:-1]], tmp_path / "ownership-first"
+        [commands[4], *commands[:4], *commands[5:]], tmp_path / "ownership-first"
     )
     assert ownership_first.returncode != 0
+
+    config_before_directory = _run_identity_commands(
+        [*commands[:5], commands[6], commands[5]],
+        tmp_path / "config-before-directory",
+    )
+    assert config_before_directory.returncode != 0
 
     root_mutant = DOCKERFILE.replace(
         "\nUSER ubuntu\nENTRYPOINT", "\nUSER root\nENTRYPOINT"
@@ -647,8 +804,13 @@ def test_local_builder_outputs_attested_oci_without_push_or_load() -> None:
     assert "type=oci,dest=$output" in script
     assert "--provenance=mode=max" in script and "--sbom=true" in script
     assert "--push" not in script and "--load" not in script
-    assert "git rev-parse --verify HEAD" in script
+    assert "git -C \"$repo_root\" rev-parse --verify HEAD^{commit}" in script
     assert "^[0-9a-f]{40}$" in script
+    assert "git -C \"$repo_root\" diff --quiet" in script
+    assert "git -C \"$repo_root\" diff --cached --quiet" in script
+    assert "git -C \"$repo_root\" cat-file blob" in script
+    assert "--build-context \"npa-source-provenance=$projection\"" in script
+    assert "NPA_SOURCE_MANIFEST_SHA256=$manifest_sha256" in script
 
 
 def test_verifier_requires_reviewed_complete_runtime_closure_hashes() -> None:
@@ -659,6 +821,26 @@ def test_verifier_requires_reviewed_complete_runtime_closure_hashes() -> None:
     assert '"--expected-dpkg-inventory-sha256", required=True' in verifier
     assert '"--expected-python-venv-inventory-sha256", required=True' in verifier
     assert '"--expected-native-closure-sha256", required=True' in verifier
+    assert '"--expected-npa-source-manifest-sha256", required=True' in verifier
+
+
+def test_dockerfile_recomputes_and_records_committed_npa_source_manifest() -> None:
+    assert (
+        "COPY --from=npa-source-provenance / /opt/npa-source-provenance/"
+        in DOCKERFILE
+    )
+    assert DOCKERFILE.count("sha256sum -c npa-source-manifest.sha256") == 2
+    assert "npa-source-expected-paths" in DOCKERFILE
+    assert "npa-source-observed-paths" in DOCKERFILE
+    assert "cmp /tmp/npa-source-expected-paths" in DOCKERFILE
+    assert "/usr/share/doc/npa-habitat-sim/npa-source-provenance" in DOCKERFILE
+    assert (
+        'org.nebius.npa.source-manifest-sha256="${NPA_SOURCE_MANIFEST_SHA256}"'
+        in DOCKERFILE
+    )
+    assert 'org.opencontainers.image.revision="${NPA_SOURCE_SHA}"' in DOCKERFILE
+    assert "COPY src/" not in DOCKERFILE
+    assert "COPY docker/workbench/habitat-sim/" not in DOCKERFILE
 
 
 def test_trusted_public_workflow_refuses_phase_a_candidate() -> None:

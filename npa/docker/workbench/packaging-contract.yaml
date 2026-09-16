@@ -167,10 +167,36 @@ images:
     tier: interactive
     redistribution: public
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
-    passwordless_root_exemption: >-
-      SkyPilot's Kubernetes bootstrap may invoke package and SSH setup through
-      passwordless sudo as the non-root ubuntu user. The image starts no SSH
-      service by default, removes build-time host keys, and bakes no credentials.
+    passwordless_root_exemption:
+      id: habitat-sim-skypilot-0.12.2-v1
+      rationale: >-
+        SkyPilot 0.12.2 Kubernetes workers require general package, SSH, rsync,
+        and service bootstrap through passwordless sudo from the non-root ubuntu
+        account; the package and service arguments are runtime-selected, so a
+        finite command allowlist cannot preserve the mechanically tested worker
+        contract. The ephemeral workflow task container, not a network service,
+        is the reviewed trust boundary.
+      sources:
+        - habitat-sim/Dockerfile
+      grants:
+        - source: habitat-sim/Dockerfile
+          sudoers_entry: ubuntu ALL=(ALL) NOPASSWD:ALL
+      compensating_controls:
+        bootstrap_contract: skypilot-0.12.2-v1
+        build_time_host_keys_deleted: true
+        capability_evidence: runtime_probe_required
+        entrypoint: command-passthrough
+        exact_digest_required: true
+        final_user: ubuntu
+        no_baked_credentials: true
+        no_default_sshd: true
+        no_exposed_ssh_port: true
+        trust_boundary: ephemeral-workflow-task-container
+      prohibited_uses:
+        - default-sshd
+        - public-ingress
+        - baked-credentials
+        - mutable-image-capability-claim
     notes: >-
       Unbuilt, publication-quarantined candidate. It bakes only the exact MIT
       Habitat-Sim 0.3.3 source projection and its hash-locked redistributable
