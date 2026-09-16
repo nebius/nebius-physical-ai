@@ -8,11 +8,11 @@ proprioception and returns robot actions over WebSocket. This workflow evaluates
 a fixed policy; training and serving use the challenge's upstream baseline
 implementations.
 
-**Status:** protocol planning, supervised radio serving, and real GPU rollouts
-are implemented and exercised. The initial completed development trials failed
-the radio task with Q = 0.0; valid execution is not a successful challenge solution.
-A completed reporting selection, 24 GB serving compliance, and an official
-submission have not been demonstrated. The runtime image, licensed
+**Status:** the complete ten-instance radio development selection ran through
+Workbench, with **one success and mean Q = 0.10**. All nine failures are retained.
+This validates the evaluation path and a task-specific baseline; performance on
+the other 99 tasks and 24 GB serving compliance require separate validation.
+Organizer submission is a separate step. The runtime image, licensed
 asset volume, and policy endpoint are required operator inputs. This integration
 does not add a published BEHAVIOR container to the Workbench image catalog.
 
@@ -31,8 +31,27 @@ and connected to the policy, then failed on its first observation: the evaluator
 uses `robot_r1` while the pinned baseline expects `robot`. That failed attempt's
 original evidence is retained. The managed policy now adapts those lookup names.
 The resulting rollouts produced original JSON and MP4 artifacts that passed full
-video decoding and SHA-256 readback checks. The prescribed development selection
-is still running; its failed trials are retained.
+video decoding and SHA-256 readback checks.
+
+## Recorded development result
+
+The September 16, 2026 validation completed all prescribed development instances
+311–320 with one rollout each, the frozen official checkpoint, and the observation
+name adapter described below. Workbench reported the workflow as succeeded.
+
+| Instances | Count | Official task result | Q per trial | Steps and decoded frames per trial |
+| --- | ---: | --- | ---: | ---: |
+| 317 | 1 | Success | 1.0 | 1,921 |
+| 311–316, 318–320 | 9 | Failure | 0.0 | 3,225 |
+
+An independent check of the downloaded artifacts verified the exact case and
+attempt lists, original JSON/MP4 hashes, and every video frame. Representative
+frames from the successful rollout show the robot grasping and manipulating the
+radio. The success label comes from the official evaluator.
+
+The **0.10 development mean is not a reporting challenge score**. Development
+artifacts have `challenge_score: null` and contain no submission ZIP. Reporting
+requires its separate prescribed instances and the full 1,000-case denominator.
 
 ## Rules and pinned source
 
@@ -288,6 +307,7 @@ prepared GPU runtime, set `NPA_INTEGRATION_E2E=1` and
 radio server, also supply `policy_root`, `policy_python`, `policy_checkpoint`,
 and `policy_archive`, with the same run-scoped terms opt-in. Use a fresh development
 selection; invoking it consumes the prescribed cases and claims its prefix.
-The submit matrix currently plans this recipe because the template needs an
-operator-prepared runtime, asset volume, and policy. Live coverage must pass before this draft is
-presented as a validated challenge integration.
+The submit matrix plans this recipe because the template needs an
+operator-prepared runtime, asset volume, and policy. The recorded live validation
+used the standard workflow CLI. The opt-in test exercises the same evaluator
+entrypoint and requires its own fresh development selection.

@@ -13,10 +13,11 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Commands invoke the pinned official evaluator for prescribed cases; all 1000 report commands were accepted by upstream argparse. No policy score or training result is established.",
+      "reason": "Commands invoke the pinned official evaluator for prescribed cases; all 1000 report commands were accepted by upstream argparse. The complete private radio development selection produced one success and mean Q 0.10. Performance on the other 99 tasks is not established.",
       "evidence": [
         "npa/tests/workflows/test_behavior_challenge.py",
-        "https://github.com/StanfordVL/BEHAVIOR-1K/tree/v3.9.2/OmniGibson/omnigibson/eval"
+        "https://github.com/StanfordVL/BEHAVIOR-1K/tree/v3.9.2/OmniGibson/omnigibson/eval",
+        "docs/workbench/behavior-challenge.md"
       ]
     }
   },
@@ -29,8 +30,8 @@
       ]
     },
     "worker_input": {
-      "status": "unverified",
-      "reason": "Task-scoped approval was recorded and exact official asset archives and the radio checkpoint were staged privately. The template still requires operator-prepared mounted assets and policy configuration; real rollout validation remains pending.",
+      "status": "verified",
+      "reason": "Task-scoped approval was recorded, exact official assets and checkpoint bytes were verified, and all ten development rollouts completed. Licensed inputs remain private; users of the template must supply their own prepared assets and policy configuration.",
       "evidence": [
         "docs/workbench/behavior-challenge.md"
       ]
@@ -44,14 +45,14 @@
     },
     "source_image": {
       "status": "blocked",
-      "reason": "The template runtime image is an operator placeholder. Private development uses a digest-pinned public bootstrap image with a separately prepared official Isaac Sim 5.1 runtime; simulator and policy compatibility remain unverified.",
+      "reason": "The template runtime image remains an operator placeholder. Private validation used a digest-pinned public bootstrap with a separately prepared official Isaac Sim 5.1 runtime and completed all ten development cases. This does not add a published BEHAVIOR runtime image.",
       "evidence": [
         "docs/workbench/behavior-challenge.md"
       ]
     },
     "target_runtime": {
-      "status": "unverified",
-      "reason": "The official radio policy loaded its verified checkpoint and passed HTTP readiness on RTX PRO 6000. The first simulator startup failed on a compute-only target without graphics mounts; its evidence was retained. A replacement rendering target passed stability, CUDA, GLX/EGL loading, and NVIDIA Vulkan enumeration on both GPU nodes. Official rollouts remain unverified.",
+      "status": "verified",
+      "reason": "The RTX PRO 6000 rendering worker passed stability, CUDA, GLX/EGL, and NVIDIA Vulkan checks. All ten official radio development cases completed: one success, nine failures, mean Q 0.10. Original metrics and complete video decodes passed independent hash verification. Earlier infrastructure and observation-name failures are retained; 24 GB serving compliance is unverified.",
       "evidence": [
         "docs/workbench/behavior-challenge.md"
       ]
