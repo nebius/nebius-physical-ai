@@ -6322,6 +6322,106 @@ def test_cross_project_artifact_source_uses_exact_private_credential_record(
     )
 
 
+def test_multiple_artifact_projects_require_one_shared_exact_reader(
+    monkeypatch,
+) -> None:
+    from npa.cli import agent_artifact_sources
+
+    records = {
+        "project-one": {
+            "bucket": "bucket-one",
+            "prefix": "preserved/one",
+        },
+        "project-two": {
+            "bucket": "bucket-two",
+            "prefix": "preserved/two",
+        },
+    }
+
+    def record(project_id, **_kwargs):
+        scope = records[project_id]
+        return {
+            "artifact_read_storage": {
+                "bucket": scope["bucket"],
+                "endpoint_url": "https://objects.example",
+                "aws_access_key_id": "shared-read-access",
+                "aws_secret_access_key": "shared-read-secret",
+                "source_project_id": project_id,
+                "resolved_prefixes": [scope["prefix"]],
+                "iam_role": "storage.viewer",
+                "service_account_id": "shared-artifact-reader",
+            }
+        }
+
+    monkeypatch.setattr(agent_artifact_sources, "project_credential_record", record)
+    sources = [
+        {
+            "project_id": project_id,
+            "bucket": scope["bucket"],
+            "resolved_prefix": scope["prefix"],
+        }
+        for project_id, scope in records.items()
+    ]
+
+    resolution = agent_artifact_sources.resolve_configured_artifact_storage_identity(
+        sources,
+        deployment_project_id="deployment-project",
+        current=("", "", "", "", "", ""),
+    )
+
+    assert resolution.mode == "isolated-read"
+    assert resolution.credentials == (
+        "bucket-one",
+        "",
+        "https://objects.example",
+        "shared-read-access",
+        "shared-read-secret",
+        "shared-artifact-reader",
+    )
+
+
+def test_multiple_artifact_projects_reject_mixed_reader_identities(monkeypatch) -> None:
+    from npa.cli import agent_artifact_sources
+
+    def record(project_id, **_kwargs):
+        suffix = project_id.rsplit("-", 1)[-1]
+        return {
+            "artifact_read_storage": {
+                "bucket": f"bucket-{suffix}",
+                "endpoint_url": "https://objects.example",
+                "aws_access_key_id": f"read-access-{suffix}",
+                "aws_secret_access_key": f"read-secret-{suffix}",
+                "source_project_id": project_id,
+                "resolved_prefixes": [f"preserved/{suffix}"],
+                "iam_role": "storage.viewer",
+                "service_account_id": f"reader-{suffix}",
+            }
+        }
+
+    monkeypatch.setattr(agent_artifact_sources, "project_credential_record", record)
+
+    with pytest.raises(
+        agent_module.AgentStorageCredentialError,
+        match="do not share one read-only identity",
+    ):
+        agent_artifact_sources.resolve_configured_artifact_storage_identity(
+            [
+                {
+                    "project_id": "project-one",
+                    "bucket": "bucket-one",
+                    "resolved_prefix": "preserved/one",
+                },
+                {
+                    "project_id": "project-two",
+                    "bucket": "bucket-two",
+                    "resolved_prefix": "preserved/two",
+                },
+            ],
+            deployment_project_id="deployment-project",
+            current=("", "", "", "", "", ""),
+        )
+
+
 def test_cross_project_artifact_source_rejects_mismatched_private_bucket(
     monkeypatch,
 ) -> None:
@@ -6345,7 +6445,7 @@ def test_cross_project_artifact_source_rejects_mismatched_private_bucket(
 
     with pytest.raises(
         agent_module.AgentStorageCredentialError,
-        match="no exact matching artifact read credentials",
+        match="scope does not match",
     ):
         agent_module._resolve_configured_artifact_storage_credentials(
             [

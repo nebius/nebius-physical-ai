@@ -182,7 +182,12 @@ def test_rendered_artifact_reads_use_an_identity_isolated_from_state_writes(
                         "project_id": "artifact-project",
                         "bucket": "artifact-bucket",
                         "resolved_prefix": "preserved/runs",
-                    }
+                    },
+                    {
+                        "project_id": "second-artifact-project",
+                        "bucket": "second-artifact-bucket",
+                        "resolved_prefix": "other/runs",
+                    },
                 ]
             ).encode("utf-8")
         ).decode("ascii"),

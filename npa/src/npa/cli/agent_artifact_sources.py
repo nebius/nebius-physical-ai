@@ -172,12 +172,15 @@ def resolve_configured_artifact_storage_identity(
     current: tuple[str, str, str, str, str, str],
     allow_deployment_write_migration: bool = False,
 ) -> ArtifactStorageCredentialResolution:
-    """Select an exact source project's owner-stored artifact-read identity.
+    """Select one shared owner-stored identity for exact artifact sources.
 
     A source tuple is not a grant. The normal path therefore requires a
-    separately recorded ``storage.viewer`` identity for the exact project,
-    bucket, and source prefixes. Reuse of the deployment writer exists only as
-    an explicit same-project migration mode and is never an implicit fallback.
+    separately recorded ``storage.viewer`` scope for every exact project,
+    bucket, and source prefix. Multiple source records may reference the same
+    dedicated key, but mixed identities fail closed because the shipped backend
+    has one artifact-read channel. Reuse of the deployment writer exists only
+    as an explicit single-source same-project migration mode and is never an
+    implicit fallback.
     """
     sources = normalize_configured_artifact_sources(artifact_sources)
     if not sources:
@@ -189,101 +192,147 @@ def resolve_configured_artifact_storage_identity(
             credentials=("", "", "", "", "", ""), mode="unconfigured"
         )
     source_projects = {item["project_id"] for item in sources}
-    if len(source_projects) != 1:
-        raise AgentStorageCredentialError(
-            "configured artifact sources must use one exact credential project"
-        )
-    source_project = next(iter(source_projects))
-    source_buckets = {item["bucket"] for item in sources}
-    if len(source_buckets) != 1:
-        raise AgentStorageCredentialError(
-            "configured artifact sources must use one exact credential bucket"
-        )
-    source_bucket = next(iter(source_buckets))
-    source_prefixes = tuple(sorted({item["resolved_prefix"] for item in sources}))
-    source_prefix = source_prefixes[0] if len(source_prefixes) == 1 else ""
+    primary_source = sources[0]
+    source_bucket = primary_source["bucket"]
+    source_prefix = primary_source["resolved_prefix"] if len(sources) == 1 else ""
     current_bucket, _prefix, endpoint, access_key, secret_key, service_account_id = (
         current
     )
-    record = project_credential_record(source_project, migrate_legacy=False)
-    raw_storage = (
-        record.get("artifact_read_storage") if isinstance(record, dict) else None
-    )
-    if raw_storage is None:
-        if source_project != str(deployment_project_id or "").strip():
+    shared_identity: tuple[str, str, str, str] | None = None
+    for source_project in sorted(source_projects):
+        project_sources = [
+            item for item in sources if item["project_id"] == source_project
+        ]
+        record = project_credential_record(source_project, migrate_legacy=False)
+        raw_storage = (
+            record.get("artifact_read_storage") if isinstance(record, dict) else None
+        )
+        if raw_storage is None:
+            single_source_migration = (
+                len(sources) == 1
+                and source_project == str(deployment_project_id or "").strip()
+            )
+            if not single_source_migration:
+                raise AgentStorageCredentialError(
+                    "owner credential store has no exact matching artifact read credentials"
+                )
+            if not allow_deployment_write_migration:
+                raise AgentStorageCredentialError(
+                    "configured artifact sources require an independent read-only "
+                    "artifact identity; deployment-write fallback is disabled"
+                )
+            if current_bucket != source_bucket:
+                raise AgentStorageCredentialError(
+                    "deployment-write migration bucket does not match the exact artifact source"
+                )
+            if not (endpoint and access_key and secret_key):
+                raise AgentStorageCredentialError(
+                    "deployment project has no owner-stored S3 credentials for the "
+                    "configured artifact source"
+                )
+            return ArtifactStorageCredentialResolution(
+                credentials=(
+                    source_bucket,
+                    source_prefix,
+                    endpoint,
+                    access_key,
+                    secret_key,
+                    service_account_id,
+                ),
+                mode="deployment-write-migration",
+            )
+        if not isinstance(raw_storage, dict):
+            raise AgentStorageCredentialError(
+                "owner credential store has malformed artifact read credentials"
+            )
+        storage = raw_storage
+        saved_endpoint = str(
+            storage.get("endpoint_url") or storage.get("endpoint") or ""
+        ).strip()
+        saved_access_key = str(
+            storage.get("aws_access_key_id") or storage.get("access_key_id") or ""
+        ).strip()
+        saved_secret_key = str(
+            storage.get("aws_secret_access_key")
+            or storage.get("secret_access_key")
+            or ""
+        ).strip()
+        saved_service_account = str(storage.get("service_account_id") or "").strip()
+        saved_project = str(
+            storage.get("source_project_id")
+            or storage.get("project_id")
+            or source_project
+        ).strip()
+        saved_role = str(storage.get("iam_role") or "").strip()
+        raw_scopes = storage.get("source_scopes")
+        if raw_scopes is None:
+            saved_bucket = (
+                str(storage.get("bucket") or storage.get("s3_bucket") or "")
+                .removeprefix("s3://")
+                .strip("/")
+            )
+            raw_scopes = [
+                {
+                    "bucket": saved_bucket,
+                    "resolved_prefixes": storage.get("resolved_prefixes") or (),
+                }
+            ]
+        if not isinstance(raw_scopes, (list, tuple)):
+            raise AgentStorageCredentialError(
+                "owner credential store has malformed artifact read credentials"
+            )
+        scopes: dict[str, set[str]] = {}
+        for scope in raw_scopes:
+            if not isinstance(scope, dict):
+                raise AgentStorageCredentialError(
+                    "owner credential store has malformed artifact read credentials"
+                )
+            bucket = (
+                str(scope.get("bucket") or scope.get("s3_bucket") or "")
+                .removeprefix("s3://")
+                .strip("/")
+            )
+            prefixes = scope.get("resolved_prefixes")
+            if not bucket or not isinstance(prefixes, (list, tuple)):
+                raise AgentStorageCredentialError(
+                    "owner credential store has malformed artifact read credentials"
+                )
+            scopes.setdefault(bucket, set()).update(
+                str(item or "").strip().strip("/") for item in prefixes
+            )
+        if not (saved_endpoint and saved_access_key and saved_secret_key):
             raise AgentStorageCredentialError(
                 "owner credential store has no exact matching artifact read credentials"
             )
-        if not allow_deployment_write_migration:
-            raise AgentStorageCredentialError(
-                "configured artifact sources require an independent read-only "
-                "artifact identity; deployment-write fallback is disabled"
+        if (
+            saved_project != source_project
+            or saved_role != "storage.viewer"
+            or any(
+                item["resolved_prefix"] not in scopes.get(item["bucket"], set())
+                for item in project_sources
             )
-        if current_bucket != source_bucket:
+        ):
             raise AgentStorageCredentialError(
-                "deployment-write migration bucket does not match the exact artifact source"
+                "artifact read credential scope does not match the exact configured source"
             )
-        if not (endpoint and access_key and secret_key):
+        identity = (
+            saved_endpoint,
+            saved_access_key,
+            saved_secret_key,
+            saved_service_account,
+        )
+        if shared_identity is not None and identity != shared_identity:
             raise AgentStorageCredentialError(
-                "deployment project has no owner-stored S3 credentials for the "
-                "configured artifact source"
+                "configured artifact sources do not share one read-only identity"
             )
-        return ArtifactStorageCredentialResolution(
-            credentials=(
-                source_bucket,
-                source_prefix,
-                endpoint,
-                access_key,
-                secret_key,
-                service_account_id,
-            ),
-            mode="deployment-write-migration",
-        )
-    if not isinstance(raw_storage, dict):
-        raise AgentStorageCredentialError(
-            "owner credential store has malformed artifact read credentials"
-        )
-    storage = raw_storage
-    storage = storage if isinstance(storage, dict) else {}
-    saved_bucket = (
-        str(storage.get("bucket") or storage.get("s3_bucket") or "")
-        .removeprefix("s3://")
-        .strip("/")
-    )
-    saved_endpoint = str(
-        storage.get("endpoint_url") or storage.get("endpoint") or ""
-    ).strip()
-    saved_access_key = str(
-        storage.get("aws_access_key_id") or storage.get("access_key_id") or ""
-    ).strip()
-    saved_secret_key = str(
-        storage.get("aws_secret_access_key") or storage.get("secret_access_key") or ""
-    ).strip()
-    saved_project = str(storage.get("project_id") or source_project).strip()
-    saved_role = str(storage.get("iam_role") or "").strip()
-    saved_prefixes = tuple(
-        sorted(
-            {
-                str(item or "").strip().strip("/")
-                for item in (storage.get("resolved_prefixes") or ())
-                if str(item or "").strip().strip("/")
-            }
-        )
-    )
-    if saved_bucket != source_bucket or not (
-        saved_endpoint and saved_access_key and saved_secret_key
-    ):
+        shared_identity = identity
+    if shared_identity is None:
         raise AgentStorageCredentialError(
             "owner credential store has no exact matching artifact read credentials"
         )
-    if (
-        saved_project != source_project
-        or saved_role != "storage.viewer"
-        or not set(source_prefixes).issubset(saved_prefixes)
-    ):
-        raise AgentStorageCredentialError(
-            "artifact read credential scope does not match the exact configured source"
-        )
+    saved_endpoint, saved_access_key, saved_secret_key, saved_service_account = (
+        shared_identity
+    )
     return ArtifactStorageCredentialResolution(
         credentials=(
             source_bucket,
@@ -291,7 +340,7 @@ def resolve_configured_artifact_storage_identity(
             saved_endpoint,
             saved_access_key,
             saved_secret_key,
-            str(storage.get("service_account_id") or "").strip(),
+            saved_service_account,
         ),
         mode="isolated-read",
     )

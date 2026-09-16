@@ -2160,7 +2160,7 @@ def _agent_artifact_s3_settings() -> dict[str, str]:
         status, reason = "blocked", "artifact_read_identity_absent"
     elif not complete or not sources:
         status, reason = "blocked", "artifact_read_identity_incomplete"
-    elif source_buckets != {{artifact_bucket}}:
+    elif artifact_bucket not in source_buckets:
         status, reason = "blocked", "artifact_read_identity_scope_mismatch"
     elif mode == "deployment-write-migration":
         deployment = _agent_s3_settings()

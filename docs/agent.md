@@ -327,10 +327,11 @@ caches before subsequent requests use it.
 
 Workflow submission and artifact writes/deletes stay **scoped to the deployment
 project**. Artifact discovery uses a separate owner-stored
-`artifact_read_storage` identity whose contract is `storage.viewer` for one
-exact project, bucket, and configured set of run-parent prefixes. Bootstrap
-blocks when that read identity is absent, incomplete, or scope-mismatched; it
-does not silently substitute the deployment writer. `npa agent status`,
+`artifact_read_storage` identity whose contract is `storage.viewer` for every
+exact project, bucket, and configured set of run-parent prefixes. Multiple
+source-project records may name the same dedicated reader, but bootstrap blocks
+if their endpoint, key, or service-account identity differs; the backend never
+mixes credentials or silently substitutes the deployment writer. `npa agent status`,
 `GET /api/access`, and `GET /api/health` report the artifact credential mode
 without exposing key material.
 
