@@ -36,6 +36,13 @@ your Python environment; remote workloads use their container dependencies.
 See [installation](../docs/install.md) for supported platforms, virtual
 environments, and the separate SkyPilot environment.
 
+The cluster GPU smoke manages an owned SkyPilot API session through workload
+cleanup; see [SkyPilot setup](../docs/orchestration/skypilot-setup.md#verify).
+The [PAIDF starter guide](../workflows/guides/paidf-cosmos3.md#audit-a-completed-default-starter-run)
+also provides a read-only live audit using the selected run URI, project, and
+saved pre-submission UTC timestamp. Its test settings are scoped to the audit
+shell and do not submit work.
+
 Extra tools required by specific commands:
 
 - `ray[default]==2.58.0` in the NPA application environment for

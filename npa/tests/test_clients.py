@@ -669,6 +669,37 @@ def test_nebius_iam_token_from_metadata_fallback(mocker) -> None:
     assert nebius.get_iam_token() == "meta-token"
 
 
+@pytest.mark.parametrize("source", ["environment", "file", "metadata"])
+def test_nebius_cli_compatibility_error_keeps_existing_token_fallbacks(
+    mocker, source: str, capsys
+) -> None:
+    mocker.patch(
+        "npa.clients.nebius._run",
+        side_effect=nebius.NebiusCliCompatibilityError("Unsupported Nebius CLI"),
+    )
+    sentinel = "synthetic-private-token"
+    environment = mocker.patch(
+        "npa.clients.nebius._env_iam_token",
+        return_value=sentinel if source == "environment" else "",
+    )
+    mocker.patch("npa.clients.nebius._candidate_iam_token_files", return_value=["/token"])
+    file = mocker.patch(
+        "npa.clients.nebius._read_iam_token_file",
+        return_value=sentinel if source == "file" else "",
+    )
+    metadata = mocker.patch(
+        "npa.clients.nebius._metadata_iam_token", return_value=sentinel,
+    )
+
+    assert nebius.get_iam_token() == sentinel
+
+    environment.assert_called_once()
+    assert file.call_count == (0 if source == "environment" else 1)
+    assert metadata.call_count == (1 if source == "metadata" else 0)
+    captured = capsys.readouterr()
+    assert sentinel not in captured.out + captured.err
+
+
 def test_nebius_service_account_reuses_existing(mocker) -> None:
     run_json = mocker.patch(
         "npa.clients.nebius._run_json",
