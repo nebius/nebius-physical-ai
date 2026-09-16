@@ -3957,7 +3957,15 @@ def _workflow_execution_failure_summary(error: Exception) -> str:
 def _workflow_execution_failure_observability(error: Exception) -> dict[str, str]:
     # Return stable, browser-safe failure evidence without subprocess detail.
 
-    detail = str(getattr(error, "detail", "") or error).lower()
+    raw_detail = str(getattr(error, "detail", "") or error)
+    detail = raw_detail.lower()
+    transaction_payload = {{}}
+    try:
+        parsed = json.loads(raw_detail)
+        candidate = parsed.get("transaction") if isinstance(parsed, dict) else {{}}
+        transaction_payload = candidate if isinstance(candidate, dict) else {{}}
+    except (TypeError, ValueError):
+        pass
     categories = (
         ("sky_api_transport", ("connection refused", "api server", "api endpoint")),
         ("sky_controller", ("jobs controller", "sky controller", "controller pod")),
@@ -3969,13 +3977,19 @@ def _workflow_execution_failure_observability(error: Exception) -> dict[str, str
         ("source_staging", ("stage-src", "source stage", "source cache")),
         ("skypilot_runtime", ("skypilot", "sky launch", "sky status")),
     )
-    category = next(
-        (name for name, markers in categories if any(marker in detail for marker in markers)),
-        "runtime",
-    )
+    category = str(transaction_payload.get("category") or "")
+    if not re.fullmatch(r"[a-z0-9_]{{1,96}}", category):
+        category = next(
+            (name for name, markers in categories if any(marker in detail for marker in markers)),
+            "runtime",
+        )
     transaction = getattr(error, "transaction", None)
-    decision = str(getattr(transaction, "recovery_decision", "") or "")
-    if not re.fullmatch(r"[a-z0-9_]{1,96}", decision):
+    decision = str(
+        transaction_payload.get("recovery_decision")
+        or getattr(transaction, "recovery_decision", "")
+        or ""
+    )
+    if not re.fullmatch(r"[a-z0-9_]{{1,96}}", decision):
         decision = ""
     return {{"failure_category": category, "recovery_decision": decision}}
 

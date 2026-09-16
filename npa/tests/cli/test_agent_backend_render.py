@@ -1917,6 +1917,27 @@ def test_workflow_execution_failure_observability_is_safe_and_actionable(
         "recovery_decision": "",
     }
 
+    structured = module._workflow_execution_failure_observability(
+        type(
+            "StructuredFailure",
+            (),
+            {
+                "detail": json.dumps(
+                    {
+                        "transaction": {
+                            "category": "kubernetes_transport",
+                            "recovery_decision": "readiness_blocked",
+                        }
+                    }
+                )
+            },
+        )()
+    )
+    assert structured == {
+        "failure_category": "kubernetes_transport",
+        "recovery_decision": "readiness_blocked",
+    }
+
 
 @pytest.mark.parametrize(
     ("module", "marker"),
