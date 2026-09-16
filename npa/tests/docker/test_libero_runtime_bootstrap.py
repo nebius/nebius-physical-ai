@@ -194,11 +194,15 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
         "candidate_image": "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:"
         + "9" * 64,
         "runtime_manifest_sha256": manifest_sha,
+        "workflow_profile_sha256": "a" * 64,
+        "upstream_source_revision": manifest["source"]["revision"],
         "terms": [
             {"id": term["id"], "version": term["version"]}
             for term in manifest["governing_terms"]
         ],
-        "issuer": "npa-customer-control-plane",
+        "issuer": "customer",
+        "evidence_type": "customer-controlled-signature",
+        "customer_signer_public_key_b64": "",
         "acknowledged_at": datetime.now(timezone.utc).isoformat(),
         "issued_at": datetime.now(timezone.utc).isoformat(),
         "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
@@ -213,6 +217,9 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
     customer_public_key = customer_key.public_key().public_bytes(
         serialization.Encoding.Raw, serialization.PublicFormat.Raw
     )
+    authorization["customer_signer_public_key_b64"] = module.base64.b64encode(
+        customer_public_key
+    ).decode("ascii")
     trust_root = tmp_path / "customer-authorization-public-key.b64"
     trust_root.write_bytes(module.base64.b64encode(customer_public_key))
     trust_root.chmod(0o444)
@@ -249,6 +256,12 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
             "NPA_BYOF_RUN_ID": authorization["run_id"],
             "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256": authorization[
                 "customer_identity_sha256"
+            ],
+            "NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256": _sha(
+                customer_public_key
+            ),
+            "NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256": authorization[
+                "workflow_profile_sha256"
             ],
         }
     )
@@ -289,7 +302,7 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
 def test_runtime_manifest_rejects_unknown_or_stale_contract_metadata(
     tmp_path: Path, mutation: str, expected: str
 ) -> None:
-    module, args, _fixture_values = _fixture(tmp_path)
+    module, args, fixture = _fixture(tmp_path)
     manifest_path = Path(args.manifest)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if mutation == "unknown_top_level":
@@ -359,9 +372,7 @@ def test_output_storage_authorization_is_hash_bound_scoped_and_temporary(
         "output_prefix": prefix,
         "endpoint_url": endpoint,
         "access_key_id_sha256": _sha(credentials["AWS_ACCESS_KEY_ID"].encode()),
-        "secret_access_key_sha256": _sha(
-            credentials["AWS_SECRET_ACCESS_KEY"].encode()
-        ),
+        "secret_access_key_sha256": _sha(credentials["AWS_SECRET_ACCESS_KEY"].encode()),
         "session_token_sha256": _sha(credentials["AWS_SESSION_TOKEN"].encode()),
         "policy_sha256": policy_sha256,
         "issued_at": datetime.now(timezone.utc).isoformat(),
@@ -670,7 +681,9 @@ def test_locally_invented_customer_authorization_refuses_before_network_or_cache
         lambda *_args: pytest.fail("network authorization began for a local signer"),
     )
 
-    with pytest.raises(module.BootstrapRefusal, match="authorization signature invalid"):
+    with pytest.raises(
+        module.BootstrapRefusal, match="authorization signature invalid"
+    ):
         module.ensure(args)
 
     assert not Path(args.cache_root).exists()
@@ -684,7 +697,9 @@ def test_customer_authorization_payload_cannot_select_its_trust_root(tmp_path) -
     args.authorization_sha256 = _write_json(Path(args.authorization), payload)
 
     assert module._trusted_customer_authorization_public_key() == authoritative_key
-    with pytest.raises(module.CustomerAcceptanceRequired, match="authorization signature invalid"):
+    with pytest.raises(
+        module.CustomerAcceptanceRequired, match="authorization signature invalid"
+    ):
         module._validate_customer_authorization(
             Path(args.authorization),
             args.authorization_sha256,
@@ -715,7 +730,9 @@ def test_customer_authorization_rejects_descriptor_metadata_race(
 
     monkeypatch.setattr(module.os, "fstat", racing_fstat)
 
-    with pytest.raises(module.CustomerAcceptanceRequired, match="authorization file invalid"):
+    with pytest.raises(
+        module.CustomerAcceptanceRequired, match="authorization file invalid"
+    ):
         module._validate_customer_authorization(
             authorization_path,
             args.authorization_sha256,
@@ -776,9 +793,7 @@ def test_incomplete_runtime_artifact_review_refuses_before_cache_mutation(
     module, args, _fixture_values = _fixture(tmp_path)
     manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
     manifest["runtime_artifacts"][0].pop(field)
-    module.EXPECTED_RUNTIME_MANIFEST_SHA256 = _write_json(
-        Path(args.manifest), manifest
-    )
+    module.EXPECTED_RUNTIME_MANIFEST_SHA256 = _write_json(Path(args.manifest), manifest)
 
     with pytest.raises(module.BootstrapRefusal, match="size/license review"):
         module.ensure(args)
@@ -793,11 +808,27 @@ def test_invalid_runtime_artifact_version_refuses_before_requirements_dereferenc
     module, args, _fixture_values = _fixture(tmp_path)
     manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
     manifest["runtime_artifacts"][0]["version"] = version
-    module.EXPECTED_RUNTIME_MANIFEST_SHA256 = _write_json(
-        Path(args.manifest), manifest
-    )
+    module.EXPECTED_RUNTIME_MANIFEST_SHA256 = _write_json(Path(args.manifest), manifest)
 
     with pytest.raises(module.BootstrapRefusal, match="runtime artifact version"):
+        module.ensure(args)
+
+    assert not Path(args.cache_root).exists()
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["../escape.whl", "/absolute.whl", "nested/package.whl", ".", "..", "bad name.whl"],
+)
+def test_runtime_artifact_filename_must_be_a_canonical_leaf(
+    tmp_path: Path, filename: str
+) -> None:
+    module, args, _fixture_values = _fixture(tmp_path)
+    manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
+    manifest["runtime_artifacts"][0]["filename"] = filename
+    module.EXPECTED_RUNTIME_MANIFEST_SHA256 = _write_json(Path(args.manifest), manifest)
+
+    with pytest.raises(module.BootstrapRefusal, match="filename"):
         module.ensure(args)
 
     assert not Path(args.cache_root).exists()
@@ -811,9 +842,7 @@ def test_runtime_artifact_total_size_budget_refuses_before_cache_mutation(
     manifest["runtime_artifacts"][0]["size_bytes"] = (
         module.MAX_RUNTIME_CACHE_DOWNLOAD_BYTES + 1
     )
-    module.EXPECTED_RUNTIME_MANIFEST_SHA256 = _write_json(
-        Path(args.manifest), manifest
-    )
+    module.EXPECTED_RUNTIME_MANIFEST_SHA256 = _write_json(Path(args.manifest), manifest)
 
     with pytest.raises(module.BootstrapRefusal, match="cache budget"):
         module.ensure(args)
@@ -823,33 +852,56 @@ def test_runtime_artifact_total_size_budget_refuses_before_cache_mutation(
 
 @pytest.mark.parametrize(
     "mutation",
-    ["hash", "run", "customer", "manifest", "expired", "denied", "acceptance-proxy"],
+    [
+        "hash",
+        "run",
+        "customer",
+        "manifest",
+        "workflow-profile",
+        "source-revision",
+        "customer-signer",
+        "expired",
+        "denied",
+        "acceptance-proxy",
+    ],
 )
 def test_mismatched_customer_authorization_refuses_before_cache_mutation(
     tmp_path, mutation
 ) -> None:
-    module, args, _fixture_values = _fixture(tmp_path)
+    module, args, fixture = _fixture(tmp_path)
     if mutation == "hash":
         args.authorization_sha256 = "0" * 64
     else:
-        authorization = json.loads(
-            Path(args.authorization).read_text(encoding="utf-8")
-        )
+        authorization = json.loads(Path(args.authorization).read_text(encoding="utf-8"))
         if mutation == "run":
             authorization["run_id"] = "libero-wrong-customer-run"
         elif mutation == "customer":
             authorization["customer_identity_sha256"] = "7" * 64
         elif mutation == "manifest":
             authorization["runtime_manifest_sha256"] = "0" * 64
+        elif mutation == "workflow-profile":
+            authorization["workflow_profile_sha256"] = "0" * 64
+        elif mutation == "source-revision":
+            authorization["upstream_source_revision"] = "0" * 40
+        elif mutation == "customer-signer":
+            authorization["customer_signer_public_key_b64"] = module.base64.b64encode(
+                b"x" * 32
+            ).decode("ascii")
+            authorization["signature"]["public_key_sha256"] = hashlib.sha256(
+                b"x" * 32
+            ).hexdigest()
         elif mutation == "expired":
             authorization["expires_at"] = "2000-01-01T00:00:00+00:00"
         elif mutation == "denied":
             authorization["status"] = "denied"
         else:
             authorization["ACCEPT_LIBERO_TERMS"] = "YES"
-        args.authorization_sha256 = _write_json(
-            Path(args.authorization), authorization
-        )
+        authorization["signature"]["signature_b64"] = module.base64.b64encode(
+            fixture["customer_private_key"].sign(
+                module._customer_authorization_signature_payload(authorization)
+            )
+        ).decode("ascii")
+        args.authorization_sha256 = _write_json(Path(args.authorization), authorization)
 
     with pytest.raises(module.CustomerAcceptanceRequired):
         module.ensure(args)
@@ -860,27 +912,21 @@ def test_signed_customer_denial_notifies_before_network_or_cache_mutation(
     monkeypatch, tmp_path
 ) -> None:
     module, args, fixture = _fixture(tmp_path)
-    authorization = json.loads(
-        Path(args.authorization).read_text(encoding="utf-8")
-    )
+    authorization = json.loads(Path(args.authorization).read_text(encoding="utf-8"))
     authorization["status"] = "denied"
     authorization["signature"]["signature_b64"] = module.base64.b64encode(
         fixture["customer_private_key"].sign(
             module._customer_authorization_signature_payload(authorization)
         )
     ).decode("ascii")
-    args.authorization_sha256 = _write_json(
-        Path(args.authorization), authorization
-    )
+    args.authorization_sha256 = _write_json(Path(args.authorization), authorization)
     monkeypatch.setattr(
         module,
         "_verify_governing_terms",
         lambda *_args: pytest.fail("network began after a signed customer denial"),
     )
 
-    with pytest.raises(
-        module.CustomerAcceptanceRequired, match="authorization denied"
-    ):
+    with pytest.raises(module.CustomerAcceptanceRequired, match="authorization denied"):
         module.ensure(args)
     assert not Path(args.cache_root).exists()
 
@@ -993,9 +1039,9 @@ def test_runtime_install_uses_only_hash_locked_no_dependency_commands(
         / "site-packages"
         / "npa-libero-source.pth"
     )
-    assert source_path.read_text(encoding="utf-8") == str(
-        published_root / "source"
-    ) + "\n"
+    assert (
+        source_path.read_text(encoding="utf-8") == str(published_root / "source") + "\n"
+    )
 
 
 def test_source_fetch_uses_only_the_credential_free_materialization_environment(
@@ -1093,9 +1139,7 @@ def test_materialized_source_path_targets_published_cache_after_rename(
     module.ensure(args)
 
     final = Path(args.cache_root) / fixture["scope_sha"]
-    source_record = (
-        final / "venv" / "lib" / "site-packages" / "npa-libero-source.pth"
-    )
+    source_record = final / "venv" / "lib" / "site-packages" / "npa-libero-source.pth"
     recorded_path = source_record.read_text(encoding="utf-8").strip()
     assert recorded_path == str(final / "source")
     assert Path(recorded_path).is_dir()
@@ -1135,10 +1179,14 @@ def _execution_descriptors(module, args, final):
     try:
         with ExitStack() as stack:
             execution_lock = stack.enter_context(
-                module._cache_lock(root_fd, ".execution.lock", exclusive=True, create=True)
+                module._cache_lock(
+                    root_fd, ".execution.lock", exclusive=True, create=True
+                )
             )
             bootstrap_lock = stack.enter_context(
-                module._cache_lock(root_fd, ".bootstrap.lock", exclusive=False, create=False)
+                module._cache_lock(
+                    root_fd, ".bootstrap.lock", exclusive=False, create=False
+                )
             )
             yield cache_fd, authorization_fd, execution_lock, bootstrap_lock
     finally:
@@ -1164,7 +1212,7 @@ def test_execute_returns_the_exact_smoke_exit_code(monkeypatch, tmp_path) -> Non
                 "-f",
                 str(allowed_signers),
                 "-I",
-                "npa-customer-control-plane",
+                "customer",
                 "-n",
                 module.CUSTOMER_AUTHORIZATION_NAMESPACE.decode("ascii"),
                 "-s",
@@ -1238,7 +1286,7 @@ def test_execute_rejects_post_smoke_cache_identity_drift(
                 "-f",
                 str(allowed_signers),
                 "-I",
-                "npa-customer-control-plane",
+                "customer",
                 "-n",
                 module.CUSTOMER_AUTHORIZATION_NAMESPACE.decode("ascii"),
                 "-s",
@@ -1407,9 +1455,7 @@ def test_manifest_cache_entry_swap_is_refused_before_descriptor_validation(
             final.symlink_to(output, target_is_directory=True)
         return identity
 
-    monkeypatch.setattr(
-        module, "_cache_entry_identity_at", swap_after_initial_identity
-    )
+    monkeypatch.setattr(module, "_cache_entry_identity_at", swap_after_initial_identity)
     monkeypatch.setattr(
         module,
         "_verify_governing_terms",
@@ -1643,9 +1689,7 @@ def test_post_rename_rollback_attempts_independent_cleanup_after_fault(
     expected = module._cache_entry_identity(final)
     assert expected is not None
     (cache / "current").symlink_to(final.name)
-    parent_descriptor = os.open(
-        cache, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    )
+    parent_descriptor = os.open(cache, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     calls = 0
 
     if fault == "identity":
@@ -1718,7 +1762,9 @@ def test_inner_execution_rejects_path_substitution_after_outer_descriptor_open(
         with _execution_descriptors(module, args, final) as descriptors:
             final.rename(preserved)
             final.mkdir(mode=0o550)
-            with pytest.raises(module.BootstrapRefusal, match="descriptor identity changed"):
+            with pytest.raises(
+                module.BootstrapRefusal, match="descriptor identity changed"
+            ):
                 module.execute(*descriptors)
     finally:
         if final.exists():
@@ -1805,7 +1851,9 @@ def test_cache_lock_refuses_a_symlink_through_the_retained_root(tmp_path) -> Non
 def test_customer_authorization_must_be_owner_private_regular_file(tmp_path) -> None:
     module, args, _fixture_values = _fixture(tmp_path)
     os.chmod(args.authorization, 0o644)
-    with pytest.raises(module.CustomerAcceptanceRequired, match="authorization file invalid"):
+    with pytest.raises(
+        module.CustomerAcceptanceRequired, match="authorization file invalid"
+    ):
         module.ensure(args)
 
 
@@ -2060,7 +2108,7 @@ def test_execute_and_upload_holds_descriptor_and_cache_lock_through_readback(
                 "-f",
                 str(allowed_signers),
                 "-I",
-                "npa-customer-control-plane",
+                "customer",
                 "-n",
                 module.CUSTOMER_AUTHORIZATION_NAMESPACE.decode("ascii"),
                 "-s",
@@ -2164,6 +2212,12 @@ def test_output_upload_is_commit_last_and_cleans_exact_failed_transaction(
     monkeypatch.setenv("NPA_BYOF_RUN_ID", run_id)
     monkeypatch.setenv("S3_OUTPUT_PREFIX", f"s3://fixture-bucket/byof/{run_id}/")
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.fixture.invalid")
+    lease_key = f"byof/{run_id}/.npa-output-lease"
+    lease_etag = '"lease-etag"'
+    lease_version = "lease-version"
+    monkeypatch.setenv("NPA_LIBERO_EXPECTED_OUTPUT_LEASE_KEY", lease_key)
+    monkeypatch.setenv("NPA_LIBERO_EXPECTED_OUTPUT_LEASE_ETAG", lease_etag)
+    monkeypatch.setenv("NPA_LIBERO_EXPECTED_OUTPUT_LEASE_VERSION_ID", lease_version)
     capability = {"capability_id": "libero-output-capability-fixture-0001"}
     validation_calls = 0
 
@@ -2172,10 +2226,11 @@ def test_output_upload_is_commit_last_and_cleans_exact_failed_transaction(
         validation_calls += 1
         return capability
 
-    objects: dict[str, tuple[bytes, str, str]] = {}
+    objects: dict[str, tuple[bytes, str, str, str]] = {}
     puts: list[str] = []
     deletes: list[str] = []
     injected = False
+    lease_present = True
 
     def request(
         method,
@@ -2185,36 +2240,73 @@ def test_output_upload_is_commit_last_and_cleans_exact_failed_transaction(
         extra_headers=None,
         expected_statuses=frozenset({200}),
     ):
-        nonlocal injected
+        nonlocal injected, lease_present
+        base_url, _, query = url.partition("?versionId=")
+        if lease_key in base_url:
+            assert query == lease_version
+            if method == "HEAD":
+                if not lease_present:
+                    return 404, {}, b""
+                return (
+                    200,
+                    {
+                        "etag": lease_etag,
+                        "x-amz-version-id": lease_version,
+                    },
+                    b"",
+                )
+            assert method == "DELETE"
+            assert lease_present
+            assert extra_headers == {"if-match": lease_etag}
+            deletes.append(url)
+            lease_present = False
+            return 204, {}, b""
         if method == "PUT":
             puts.append(url)
             if failure in {"artifact-put", "delete", "absence"} and len(puts) == 2:
                 raise module.BootstrapRefusal("injected staging upload failure")
-            checksum = extra_headers["x-amz-checksum-sha256"]
-            objects[url] = (payload, checksum, f'"fixture-{len(puts)}"')
             if failure == "receipt-put" and url.endswith("/npa_upload_receipt.json"):
                 raise module.BootstrapRefusal("injected receipt upload failure")
-            return 200, {}, b""
+            checksum = extra_headers["x-amz-checksum-sha256"]
+            etag = f'"fixture-{len(puts)}"'
+            version = f"version-{len(puts)}"
+            objects[url] = (payload, checksum, etag, version)
+            return 200, {"etag": etag, "x-amz-version-id": version}, b""
         if method == "GET":
-            observed, checksum, _etag = objects[url]
-            return 200, {"x-amz-checksum-sha256": checksum}, observed
+            observed, checksum, etag, version = objects[base_url]
+            assert query == version
+            return (
+                200,
+                {
+                    "x-amz-checksum-sha256": checksum,
+                    "x-amz-version-id": version,
+                    "etag": etag,
+                },
+                observed,
+            )
         if method == "HEAD":
-            if url not in objects:
+            if base_url not in objects:
                 return 404, {}, b""
-            observed, checksum, etag = objects[url]
-            return 200, {
-                "content-length": str(len(observed)),
-                "etag": etag,
-                "x-amz-checksum-sha256": checksum,
-            }, b""
+            observed, checksum, etag, version = objects[base_url]
+            assert query == version
+            return (
+                200,
+                {
+                    "content-length": str(len(observed)),
+                    "etag": etag,
+                    "x-amz-checksum-sha256": checksum,
+                    "x-amz-version-id": version,
+                },
+                b"",
+            )
         assert method == "DELETE"
         deletes.append(url)
-        assert extra_headers == {"if-match": objects[url][2]}
+        assert extra_headers == {"if-match": objects[base_url][2]}
         if failure == "delete" and not injected:
             injected = True
             raise module.BootstrapRefusal("injected delete failure")
         if failure != "absence" or injected:
-            objects.pop(url, None)
+            objects.pop(base_url, None)
         else:
             injected = True
         return 204, {}, b""
@@ -2231,7 +2323,7 @@ def test_output_upload_is_commit_last_and_cleans_exact_failed_transaction(
             )
             with pytest.raises(module.BootstrapRefusal, match=expected):
                 module.upload_outputs(0, root_fd=root_fd)
-            assert not any(url.endswith("/npa_output_commit.json") for url in puts)
+            assert not any(url.endswith("/npa_upload_receipt.json") for url in objects)
             if failure in {"artifact-put", "receipt-put"}:
                 assert objects == {}
             else:
@@ -2243,20 +2335,50 @@ def test_output_upload_is_commit_last_and_cleans_exact_failed_transaction(
 
     assert result["status"] == "verified"
     assert puts[-1].endswith("/npa_upload_receipt.json")
-    assert not any("/.npa-staging/" in url for url in puts)
-    assert not deletes
+    assert all("/.npa-transactions/" in url for url in puts[:-1])
+    assert deletes == [
+        "https://storage.fixture.invalid/fixture-bucket/"
+        f"{lease_key}?versionId={lease_version}"
+    ]
     receipt = json.loads(objects[puts[-1]][0])
-    assert receipt["schema"] == "npa.libero.s3-upload-readback.v1"
+    assert receipt["schema"] == "npa.libero.s3-upload-readback.v2"
     assert receipt["status"] == "verified"
     assert receipt["commit_marker"] == "npa_upload_receipt.json"
     assert {item["name"] for item in receipt["artifacts"]} == set(
         module.OUTPUT_SIZE_LIMITS
     )
     assert all(
-        item["object_key"].endswith("/" + item["name"])
+        item["object_key"].startswith(receipt["transaction_prefix"])
+        and item["object_key"].endswith("/" + item["name"])
+        and item["version_id"]
+        and item["etag"]
         for item in receipt["artifacts"]
     )
     assert validation_calls == len(puts) + 1
+
+
+def test_failed_conditional_output_put_never_claims_or_deletes_existing_object(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    attempted: dict[str, dict[str, object]] = {}
+
+    def refuse_existing(*_args, **_kwargs):
+        raise module.BootstrapRefusal("conditional create refused existing object")
+
+    monkeypatch.setattr(module, "_sigv4_request", refuse_existing)
+    with pytest.raises(module.BootstrapRefusal, match="existing object"):
+        module._verified_output_put(
+            endpoint="https://storage.fixture.invalid",
+            bucket="fixture-bucket",
+            object_key="byof/run/.npa-transactions/transaction/artifact.json",
+            name="artifact.json",
+            payload=b"immutable\n",
+            digest=hashlib.sha256(b"immutable\n").hexdigest(),
+            attempted=attempted,
+        )
+
+    assert attempted == {}
 
 
 def test_output_cleanup_preserves_replacement_between_head_and_delete(
@@ -2269,7 +2391,11 @@ def test_output_cleanup_preserves_replacement_between_head_and_delete(
     checksum = module.base64.b64encode(
         bytes.fromhex(hashlib.sha256(original).hexdigest())
     ).decode()
-    state = {"payload": original, "etag": '"original-etag"'}
+    state = {
+        "payload": original,
+        "etag": '"original-etag"',
+        "version_id": "original-version",
+    }
     delete_attempts = 0
 
     def request(
@@ -2285,11 +2411,16 @@ def test_output_cleanup_preserves_replacement_between_head_and_delete(
         if method == "HEAD":
             observed = state.copy()
             state.update(payload=replacement, etag='"replacement-etag"')
-            return 200, {
-                "content-length": str(len(observed["payload"])),
-                "etag": observed["etag"],
-                "x-amz-checksum-sha256": checksum,
-            }, b""
+            return (
+                200,
+                {
+                    "content-length": str(len(observed["payload"])),
+                    "etag": observed["etag"],
+                    "x-amz-checksum-sha256": checksum,
+                    "x-amz-version-id": observed["version_id"],
+                },
+                b"",
+            )
         assert method == "DELETE"
         delete_attempts += 1
         assert extra_headers == {"if-match": '"original-etag"'}
@@ -2302,11 +2433,22 @@ def test_output_cleanup_preserves_replacement_between_head_and_delete(
         module._cleanup_output_attempts(
             endpoint="https://storage.fixture.invalid",
             bucket="fixture-bucket",
-            attempted={object_key: (len(original), checksum)},
+            attempted={
+                object_key: {
+                    "size_bytes": len(original),
+                    "checksum": checksum,
+                    "etag": '"original-etag"',
+                    "version_id": "original-version",
+                }
+            },
         )
 
     assert delete_attempts == 1
-    assert state == {"payload": replacement, "etag": '"replacement-etag"'}
+    assert state == {
+        "payload": replacement,
+        "etag": '"replacement-etag"',
+        "version_id": "original-version",
+    }
 
 
 def test_supervisor_evidence_rejects_group_writable_and_symlinked_files(

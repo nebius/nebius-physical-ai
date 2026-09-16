@@ -35,9 +35,7 @@ config:
   libero_customer_runtime_authorization_file: ""
   libero_authenticated_caller_identity_file: ""
   output_root: s3://{{config.bucket}}/oss-solutions/libero
-  summary_uri: "{{config.output_root}}/{{run.id}}/npa_byof_summary.json"
-  smoke_uri: "{{config.output_root}}/{{run.id}}/libero-smoke.json"
-  checkpoint_uri: "{{config.output_root}}/{{run.id}}/libero-bc-rnn-smoke.pth"
+  receipt_uri: "{{config.output_root}}/{{run.id}}/npa_upload_receipt.json"
 resources:
   gpu:
     cloud: kubernetes
@@ -57,10 +55,6 @@ states:
     toolRef: workbench.byof.repo
     resources: gpu
     outputs:
-      - uri: "{{config.summary_uri}}"
-        schema: npa.workbench.byof.summary.v1
-      - uri: "{{config.smoke_uri}}"
-        schema: npa.workbench.libero.bc-smoke.v1
-      - uri: "{{config.checkpoint_uri}}"
-        schema: npa.workbench.libero.bc-checkpoint.v1
+      - uri: "{{config.receipt_uri}}"
+        schema: npa.libero.s3-upload-readback.v2
     terminal: true

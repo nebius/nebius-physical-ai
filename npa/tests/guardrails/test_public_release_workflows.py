@@ -71,7 +71,9 @@ def test_public_publisher_builds_only_immutable_public_development_refs() -> Non
         assert stale_variable not in text
 
 
-def test_public_development_build_runner_is_dispatch_scoped_and_defaults_hosted() -> None:
+def test_public_development_build_runner_is_dispatch_scoped_and_defaults_hosted() -> (
+    None
+):
     spec = _spec(PUBLISH)
     triggers = spec.get("on") or spec[True]
     inputs = triggers["workflow_dispatch"]["inputs"]
@@ -148,13 +150,19 @@ def test_publication_uses_the_locked_cryptography_dependency() -> None:
     project = (ROOT / "npa" / "pyproject.toml").read_text(encoding="utf-8")
 
     assert project.count('"cryptography==50.0.0"') == 1
-    assert text.count(
-        'npa/.venv/bin/pip install -c npa/requirements-lock.txt -e "npa[dev]"'
-    ) == 2
-    assert text.count(
-        "npa/.venv/bin/python -c 'import cryptography; "
-        'assert cryptography.__version__ == "50.0.0"\''
-    ) == 2
+    assert (
+        text.count(
+            'npa/.venv/bin/pip install -c npa/requirements-lock.txt -e "npa[dev]"'
+        )
+        == 2
+    )
+    assert (
+        text.count(
+            "npa/.venv/bin/python -c 'import cryptography; "
+            'assert cryptography.__version__ == "50.0.0"\''
+        )
+        == 2
+    )
 
 
 def test_public_base_pull_authentication_precedes_local_build() -> None:
@@ -256,7 +264,10 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     prepush = text.index("Prove destination cannot expose unvalidated tagged bytes")
     push = text.index("Push only after every pre-publication gate passes")
     assert prepush < push
-    assert "Empty private destination unexpectedly contains tagged versions" in text[prepush:push]
+    assert (
+        "Empty private destination unexpectedly contains tagged versions"
+        in text[prepush:push]
+    )
     assert "tagged_count" in text[prepush:push]
     steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
     attestations = {
@@ -276,12 +287,16 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     }
     for step in attestations.values():
         assert step["if"] == "matrix.tool != 'ncore'"
-    assert attestations["Attest exact pushed digest provenance"]["with"][
-        "push-to-registry"
-    ] == "${{ matrix.tool != 'libero' }}"
-    assert attestations["Attest exact pushed digest SBOM"]["with"][
-        "push-to-registry"
-    ] == "${{ matrix.tool != 'libero' }}"
+    assert (
+        attestations["Attest exact pushed digest provenance"]["with"][
+            "push-to-registry"
+        ]
+        == "${{ matrix.tool != 'libero' && env.NPA_FIRST_PUBLICATION_REQUIRED != '1' }}"
+    )
+    assert (
+        attestations["Attest exact pushed digest SBOM"]["with"]["push-to-registry"]
+        == "${{ matrix.tool != 'libero' && env.NPA_FIRST_PUBLICATION_REQUIRED != '1' }}"
+    )
     result_gate = attestations["Require both digest-bound attestation results"]["run"]
     result_lines = result_gate.splitlines()
     assert result_lines[:2] == [
@@ -292,6 +307,16 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     assert 'if [ "$TOOL" != libero ]; then' in result_gate
     assert 'test -n "$PROVENANCE_URL" && test -n "$SBOM_URL"' in result_gate
     verify = text[text.index("Verify pushed bytes") :]
+    first_publication = verify[
+        verify.index('elif [ "$NPA_FIRST_PUBLICATION_REQUIRED" = 1 ]') :
+    ]
+    visibility = first_publication.index(
+        'gh api --method PATCH "$package_api" -f visibility=public'
+    )
+    assert "length == 1" in first_publication[:visibility]
+    assert "all(.[]; .name == $root" in first_publication[:visibility]
+    assert "adjacent-package-versions.json" in first_publication[:visibility]
+    assert "sort_by(.id)" in first_publication[:visibility]
     assert "pushed-payload-attempt-${payload_attempt}.log" in verify
     assert "anonymous-manifest-attempt-${anonymous_attempt}.log" in verify
     assert verify.count("TOOMANYREQUESTS|429 Too Many Requests") == 2
@@ -307,10 +332,17 @@ def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
     # Two calls bind the pulled digest to the local image; the third binds the
     # independent cuRobo archive verifier to that same inspected remote image.
     assert post_push.count("docker image inspect --format '{{.Id}}'") == 3
-    assert ('test "$(docker image inspect --format \'{{.Id}}\' "$exact")" = \\\n'
-            '                "$(docker image inspect --format \'{{.Id}}\' "$IMAGE")"') in post_push
-    assert '--expected-image-id "$(docker image inspect --format \'{{.Id}}\' "$exact")"' in post_push
-    assert 'docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"' in post_push
+    assert (
+        'test "$(docker image inspect --format \'{{.Id}}\' "$exact")" = \\\n'
+        '                "$(docker image inspect --format \'{{.Id}}\' "$IMAGE")"'
+    ) in post_push
+    assert (
+        '--expected-image-id "$(docker image inspect --format \'{{.Id}}\' "$exact")"'
+        in post_push
+    )
+    assert (
+        'docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"' in post_push
+    )
     assert '--tarball "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
     assert 'rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
     assert 'scan_image_omniverse_payload.py \\\n+            "$exact"' not in post_push
@@ -352,6 +384,9 @@ def test_failed_development_cleanup_is_exact_and_refuses_shared_digest() -> None
     assert 'gh api -i "$package_api"' in script
     assert "grep -q '^HTTP/.* 404 '" in script
     assert "Failed-build package absence is unverified" in script
+    assert "A subject relationship is not proof" in script
+    assert 'if row["id"] == root_id:' in script
+    assert "subprocess.check_output" not in script
 
 
 def test_public_health_is_anonymous_and_read_only() -> None:
@@ -377,19 +412,33 @@ def test_additive_release_inputs_are_scoped_to_promotion() -> None:
     assert spec["concurrency"]["group"] == "public-image-registry-mutation"
     assert "inputs." not in spec["concurrency"]["group"]
     assert spec["concurrency"]["cancel-in-progress"] is False
-    assert "needs.resolve.result == 'success'" in spec["jobs"]["cleanup-requested"]["if"]
-    resolve = next(step for step in spec["jobs"]["resolve"]["steps"] if step.get("name") == "Validate additive release selection without changing defaults")
+    assert (
+        "needs.resolve.result == 'success'" in spec["jobs"]["cleanup-requested"]["if"]
+    )
+    resolve = next(
+        step
+        for step in spec["jobs"]["resolve"]["steps"]
+        if step.get("name")
+        == "Validate additive release selection without changing defaults"
+    )
     assert 'test "$BUILD_COUNT" = 0 && test "$CLEANUP_COUNT" = 0' in resolve["run"]
     assert resolve["env"]["DEVELOPMENT_SHA"] == "${{ inputs.development_sha }}"
     assert "--mode plan" in resolve["run"]
     promote = spec["jobs"]["promote"]
     assert promote["env"]["RELEASE_TAG"] == "${{ inputs.release_tag }}"
-    assert promote["env"]["EXPECTED_SOURCE_DIGEST"] == "${{ inputs.expected_source_digest }}"
+    assert (
+        promote["env"]["EXPECTED_SOURCE_DIGEST"]
+        == "${{ inputs.expected_source_digest }}"
+    )
     for name in ("build-development", "cleanup-requested", "cleanup-failed-build"):
-        assert "--release-tag" not in "\n".join(step.get("run", "") for step in spec["jobs"][name]["steps"])
+        assert "--release-tag" not in "\n".join(
+            step.get("run", "") for step in spec["jobs"][name]["steps"]
+        )
 
 
-def test_additive_workflow_forwards_exact_selector_and_digest_without_shell_expansion(tmp_path) -> None:
+def test_additive_workflow_forwards_exact_selector_and_digest_without_shell_expansion(
+    tmp_path,
+) -> None:
     """Run the checked-in trusted shell adapter against an argv-recording executable."""
     import json
     import os
@@ -405,22 +454,66 @@ def test_additive_workflow_forwards_exact_selector_and_digest_without_shell_expa
         "    output.write(json.dumps(sys.argv[1:]) + '\\n')\n"
     )
     executable.chmod(0o700)
-    env = {**os.environ, "TARGET": "ghcr.io/nebius/nebius-physical-ai", "DEVELOPMENT_SHA": "b" * 40, "SELECTED_TOOLS": "detection-training", "RELEASE_TAG": "runtime-recovery-1", "EXPECTED_SOURCE_DIGEST": "sha256:" + "a" * 64, "ARGV_RECORD": str(recorder)}
+    env = {
+        **os.environ,
+        "TARGET": "ghcr.io/nebius/nebius-physical-ai",
+        "DEVELOPMENT_SHA": "b" * 40,
+        "SELECTED_TOOLS": "detection-training",
+        "RELEASE_TAG": "runtime-recovery-1",
+        "EXPECTED_SOURCE_DIGEST": "sha256:" + "a" * 64,
+        "ARGV_RECORD": str(recorder),
+    }
     steps = _spec(PUBLISH)["jobs"]["promote"]["steps"]
-    scripts = [step["run"] for step in steps if step.get("name") in {"Plan and preflight immutable public development digests", "Promote exact validated digests and verify public parity"}]
+    scripts = [
+        step["run"]
+        for step in steps
+        if step.get("name")
+        in {
+            "Plan and preflight immutable public development digests",
+            "Promote exact validated digests and verify public parity",
+        }
+    ]
     # These trusted steps have one harmless GitHub expression in the unselected
     # all-image branch. Render that expression as Actions does before bash parses it.
     for script in scripts:
-        script = script.replace("${{ inputs.skip_missing && '--skip-missing' || '' }}", "")
-        subprocess.run(["bash", "-euo", "pipefail", "-c", script], cwd=tmp_path, env={**env, "GITHUB_STEP_SUMMARY": str(tmp_path / "summary")}, check=True, capture_output=True)
+        script = script.replace(
+            "${{ inputs.skip_missing && '--skip-missing' || '' }}", ""
+        )
+        subprocess.run(
+            ["bash", "-euo", "pipefail", "-c", script],
+            cwd=tmp_path,
+            env={**env, "GITHUB_STEP_SUMMARY": str(tmp_path / "summary")},
+            check=True,
+            capture_output=True,
+        )
     records = [json.loads(line) for line in recorder.read_text().splitlines()]
     assert [record[-1] for record in records] == ["plan", "preflight", "publish"]
     for record in records:
-        assert record == [".github/scripts/publish_selected_public_image.py", "--target", env["TARGET"], "--development-sha", env["DEVELOPMENT_SHA"], "--release-tag", env["RELEASE_TAG"], "--expected-source-digest", env["EXPECTED_SOURCE_DIGEST"], "--tool", "detection-training", "--mode", record[-1]]
-    resolve = next(step for step in _spec(PUBLISH)["jobs"]["resolve"]["steps"] if step.get("name") == "Validate additive release selection without changing defaults")
+        assert record == [
+            ".github/scripts/publish_selected_public_image.py",
+            "--target",
+            env["TARGET"],
+            "--development-sha",
+            env["DEVELOPMENT_SHA"],
+            "--release-tag",
+            env["RELEASE_TAG"],
+            "--expected-source-digest",
+            env["EXPECTED_SOURCE_DIGEST"],
+            "--tool",
+            "detection-training",
+            "--mode",
+            record[-1],
+        ]
+    resolve = next(
+        step
+        for step in _spec(PUBLISH)["jobs"]["resolve"]["steps"]
+        if step.get("name")
+        == "Validate additive release selection without changing defaults"
+    )
     for build_count, cleanup_count in [("1", "0"), ("0", "1"), ("1", "1")]:
         result = subprocess.run(
-            ["bash", "-euo", "pipefail", "-c", resolve["run"]], cwd=tmp_path,
+            ["bash", "-euo", "pipefail", "-c", resolve["run"]],
+            cwd=tmp_path,
             env={**env, "BUILD_COUNT": build_count, "CLEANUP_COUNT": cleanup_count},
             capture_output=True,
         )

@@ -154,15 +154,25 @@ bootstrap_apt_get() {
     fi
     verify_contract >/dev/null || exit $?
     prepare_private_state_directory || exit $?
+    exec 9>"$guard_runtime_dir/apt.lock" \
+        || { contract_failure private-state-lock-open 87; exit $?; }
+    flock -x 9 \
+        || { contract_failure private-state-lock-acquire 87; exit $?; }
     read_guard_state || exit $?
     operation=${1:-}
-    if [ "$operation" = update ] && [ -z "$state" ]; then
-        write_guard_state verified-update \
-            || { contract_failure private-state-write 87; exit $?; }
+    if [ "$operation" = update ]; then
+        case "$state" in
+        "")
+            write_guard_state verified-update \
+                || { contract_failure private-state-write 87; exit $?; }
+            ;;
+        verified-update|complete) ;;
+        *) contract_failure "unexpected-state:$state" 87; exit $? ;;
+        esac
         printf '%s\n' 'NPA_SKYPILOT_BOOTSTRAP_APT_BYPASSED status=0 operation=update'
         exit 0
     fi
-    if [ "$operation" = install ] && [ "$state" = verified-update ]; then
+    if [ "$operation" = install ] && { [ "$state" = verified-update ] || [ "$state" = complete ]; }; then
         shift
         requested=""
         while [ "$#" -gt 0 ]; do
@@ -181,13 +191,16 @@ bootstrap_apt_get() {
             contract_failure "unexpected-install:${requested# }" 87
             exit $?
         fi
-        write_guard_state complete \
-            || { contract_failure private-state-write 87; exit $?; }
+        if [ "$state" = verified-update ]; then
+            write_guard_state complete \
+                || { contract_failure private-state-write 87; exit $?; }
+        fi
         printf '%s\n' \
             'NPA_SKYPILOT_BOOTSTRAP_APT_BYPASSED status=0 operation=install package=fuse provider=fuse3'
         exit 0
     fi
-    exec "$real_apt_get" "$@"
+    contract_failure "unexpected-operation:${operation:-missing}:state:${state:-empty}" 87
+    exit $?
 }
 
 bootstrap_timeout() {

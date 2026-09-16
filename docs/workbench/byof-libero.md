@@ -17,24 +17,27 @@ tag or digest and the public image table remains unchanged.
 
 Image qualification and customer acceptance are separate. The checked-in
 qualification binds independently reviewed immutable image and publication
-lineage. A customer authorization is issued only by the authenticated NPA
-customer/control-plane surface after that customer reviews and acknowledges all
-seven exact terms for one run. Its canonical JSON carries an Ed25519 signature
-verified against an owner-private public trust-root file whose decoded key
-fingerprint is pinned by the independently reviewed image qualification;
-symlinks, non-owner files, group/world permissions, and caller-selected keys
-fail closed. The same public key is baked into the qualified neutral image.
-Signing material, customer identity, credentials,
-acceptance records, terms payloads, and runtime payloads never are.
+lineage. After reviewing all seven exact terms for one run, the customer signs
+the canonical authorization JSON directly with a customer-controlled Ed25519
+key. A separately authenticated caller assertion binds that signer fingerprint
+to the customer and run. NPA may authenticate the caller, transport the signed
+evidence, and validate it, but neither the manager nor control plane accepts,
+acknowledges, issues, or signs the customer's terms assertion. An optional
+owner-private transported copy of the customer public key must equal the key in
+the signed evidence; symlinks, non-owner files, group/world permissions, and
+mismatched keys fail closed. Private signing material, customer identity,
+credentials, acceptance records, terms payloads, and runtime payloads are never
+baked into the neutral image.
 
 The authenticated control plane supplies these inputs; they are not customer
 acceptance switches and must not be synthesized locally:
 
 | Input | Boundary |
 | --- | --- |
-| `--libero-customer-runtime-authorization-file` | Owner-private, short-lived signed authorization for this customer and run. The signed customer identity is authoritative; no ambient customer-identity variable is trusted. Missing input or a valid signed denial returns the structured terms notification. |
-| `NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE` | Owner-private host copy of the control-plane public trust root. Its decoded fingerprint must equal the checked-in qualified-image record, so a caller-provided or inline key cannot replace it. |
-| `NPA_LIBERO_CUSTOMER_IDENTITY_SHA256` | Identity hash derived from the verified signed authorization and forwarded to the isolated runtime; customers do not set it directly. |
+| `--libero-customer-runtime-authorization-file` | Owner-private, short-lived, directly customer-signed authorization for this customer, signer, run, workflow digest, immutable source revision, image, manifest, and exact terms. Missing input or a valid signed denial returns the structured terms notification. |
+| `NPA_LIBERO_AUTHENTICATED_CALLER_B64` | Short-lived control-plane authentication assertion. It binds customer identity, run, and the customer's signer fingerprint but contains no terms decision and cannot authorize runtime fetch alone. |
+| `NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE` | Optional owner-private transported copy of the customer's public key. It must byte-match the key embedded in the customer-signed authorization; it is not an NPA signing authority. |
+| `NPA_LIBERO_CUSTOMER_IDENTITY_SHA256` | Identity hash derived from the verified caller assertion and customer evidence and forwarded to the isolated runtime; customers do not set it directly. |
 
 The authorization file contains no access credential. HF/NGC credentials are
 separate upstream-access inputs and never establish terms acknowledgement.
@@ -44,11 +47,11 @@ separate upstream-access inputs and never establish terms acknowledgement.
 | Boundary | Phase A contract |
 | --- | --- |
 | Source | `Lifelong-Robot-Learning/LIBERO@8f1084e3132a39270c3a13ebe37270a43ece2a01`, MIT. Source is absent from the image. An authorized runtime sparse-fetch retains only training/config/task-definition paths, verifies the source tree and license hash, and removes `.git`. `libero/libero/assets` is excluded. |
-| Baked runtime | The proposed public bytes are the exact linux/amd64 `python:3.10-slim-bookworm` manifest `sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496`, snapshot-pinned Debian bootstrap packages, the public Ed25519 customer-control-plane verification key, and NPA-owned files. The corresponding private signing key never enters the build, image, workflow, or repository. `debian-packages.lock` records every binary and corresponding source. Docker Official Images' immutable in-toto provenance independently binds the base to rootfs material `sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867`. The image contains no PyTorch, CUDA, cuDNN, NCCL, NVIDIA wheel, MuJoCo, robomimic, or robosuite byte. |
+| Baked runtime | The proposed public bytes are the exact linux/amd64 `python:3.10-slim-bookworm` manifest `sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496`, snapshot-pinned Debian bootstrap packages, NPA verification material for transport/storage separation, and NPA-owned files. No customer key or private signing key enters the build, image, workflow, or repository. `debian-packages.lock` records every binary and corresponding source. Docker Official Images' immutable in-toto provenance independently binds the base to rootfs material `sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867`. The image contains no PyTorch, CUDA, cuDNN, NCCL, NVIDIA wheel, MuJoCo, robomimic, or robosuite byte. |
 | Weights | None are baked. Exact `google-bert/bert-base-cased@cd5ef92a9fb2f889e972770a36d4ed042daf221e` files are runtime-only and Apache-2.0. |
 | Data and task inputs | No demonstration or task/render asset is baked. The selected official demonstration is runtime-only: `yifengzhu-hf/LIBERO-datasets@f13aa24a3da8c43c7225569f28c562979fa0e35a`, 508,779,600 bytes, SHA-256 `ff6f26121653c77280eb40a38773a74141c11a8509f3466058cb56dd2cc60ead`, upstream-declared CC BY 4.0 with LIBERO attribution. The MIT BDDL and initial-state files are fetched only with the sparse source and verified by SHA-256. |
 | Runtime cache | `/workspace/.cache/npa/libero/<customer-run-manifest-scope-sha256>` is customer/run/manifest-addressed, atomically completed, sealed group-readable/non-writable, and separate from output. The bootstrap owner and execution UID are distinct, so fetched code cannot restore cache write bits. A shared lock and stable directory descriptor remain held through smoke/upload execution, with full inventory checks before and after. A cold population resolves all seven hash-bound official governing-terms sources after authorization and before the first cache mutation. The cache is never uploaded. Missing, denied, expired, invalid, wrong-customer/run, wrong-image, or wrong-manifest authorization refuses before cache or network effects. Runtime fetch changes delivery, not permission. |
-| Outputs | Execution begins in an owner-controlled sticky staging directory, while the bootstrap receipt remains in a separate owner-writable/group-readable cache directory. After the execution UID exits, the supervisor proves that no process under that UID remains, seals the output directory owner-only, and materializes the protected bootstrap/cache receipts itself. Exactly nine named qualification files may then exist beneath a stable, descriptor-opened `$NPA_SMOKE_OUTPUT_DIR`; any missing or additional entry refuses. Every regular, single-link file is opened with `O_NOFOLLOW`, copied to stable in-memory bytes while inode/size/mtime identity is checked, and all nine snapshots are complete before network output begins. Each snapshot is hashed, conditionally uploaded with an S3 SHA-256 checksum, then GET/read back byte-for-byte. A tenth receipt records all nine identities and is itself uploaded and read back. Credentials, source, models, packages, input data, and caches are never output artifacts. |
+| Outputs | Execution begins in an owner-controlled sticky staging directory, while the bootstrap receipt remains in a separate owner-writable/group-readable cache directory. After the execution UID exits, the supervisor proves that no process under that UID remains, seals the output directory owner-only, and materializes the protected bootstrap/cache receipts itself. Exactly nine named qualification files may then exist beneath a stable, descriptor-opened `$NPA_SMOKE_OUTPUT_DIR`; any missing or additional entry refuses. Every regular, single-link file is opened with `O_NOFOLLOW`, copied to stable in-memory bytes while inode/size/mtime identity is checked, and all nine snapshots are complete before network output begins. An exact version-bound output lease is retained for the transaction. Each snapshot is conditionally created below a unique immutable transaction prefix, then read back by provider-issued version ID, ETag, checksum, and bytes. The final create-only receipt binds every exact object key, version, ETag, size, and digest; pre-existing state refuses without being claimed or deleted. Credentials, source, models, packages, input data, and caches are never output artifacts. |
 
 The task mentions Google Scanned Objects and a HOPE distractor, but their meshes
 and textures are neither fetched nor needed for stored-observation behavior
@@ -157,7 +160,7 @@ files, seven official governing-terms documents, and 135 runtime artifacts by
 URL, reviewed size, license expression, and SHA-256. The checked-in inventory is
 complete at 3,277,640,175 total artifact bytes, but materialization fails closed
 until the customer personally acknowledges the exact named terms at their
-official URLs in the authenticated NPA customer/control-plane surface.
+official URLs and produces direct customer-controlled signed evidence.
 `runtime-requirements.txt` is itself hash-bound and must match the ordered
 artifact manifest exactly; both bootstrap and remaining installs use
 `pip --require-hashes --no-deps --no-index`.
@@ -166,10 +169,12 @@ Before authorization, preflight returns a structured
 `needs_customer_acceptance` result containing the exact term names, URLs and
 content-hash versions, runtime-manifest digest, acknowledgement instructions,
 and an explicit refusal path. It also states that HF/NGC credentials establish
-upstream access only. The control plane may then issue one signed, maximum
-24-hour authorization bound to the hashed customer identity, run ID,
-runtime-manifest digest, exact term IDs/versions, immutable qualified image when
-available, and issue/expiry data. Missing, denied, expired, wrong-customer/run,
+upstream access only. The customer may then sign one maximum-24-hour
+authorization bound to the authenticated customer and signer, run ID, complete
+executable workflow-profile digest, runtime-manifest digest, immutable source
+revision, exact term IDs/versions, immutable qualified image, and
+acknowledgement/issue/expiry data. The control plane validates and transports
+this evidence only. Missing, denied, expired, wrong-customer/run,
 wrong-manifest/image, malformed, or improperly signed records refuse before the
 first download, install, cache write, or workload operation. No local flag,
 `ACCEPT_*` variable, token, access probe, or successful download substitutes for
@@ -177,11 +182,12 @@ the authorization, and NPA never automates a vendor acceptance action.
 
 The authorization travels only through the scheduler's redacted secret channel
 and is materialized owner-private for bootstrap verification. The neutral image
-verifies it with `/usr/bin/ssh-keygen` against the root-owned, read-only public
-control-plane trust root. A caller-provided key, locally invented issuer, or
-matching environment hashes cannot substitute for that root. Only after this
-check does bootstrap resolve and hash the official terms into ephemeral storage;
-changed or unavailable terms refuse before cache mutation.
+verifies it with `/usr/bin/ssh-keygen` against the customer public key embedded
+in the signed payload and requires its fingerprint to match the separately
+authenticated caller assertion. A control-plane-only signature, locally
+invented issuer, or matching environment hashes cannot authorize fetch. Only
+after this check does bootstrap resolve and hash the official terms into
+ephemeral storage; changed or unavailable terms refuse before cache mutation.
 
 The workflow uses `base_profile: prebuilt`, an empty build command, and the
 dedicated B200 profile. `run_byof_repo.py` rejects an empty or mutable candidate,
@@ -191,11 +197,11 @@ always passes `--no-direct-launch` for LIBERO. `run_byof_container_verify.py`
 submits through the managed scheduler, requires its nonempty scheduler job ID,
 and polls that ID—not the human run name. Absence remains a failure.
 
-The signed customer authorization, complete short-lived storage credential
+The direct customer-signed authorization, complete short-lived storage credential
 triplet, and output-storage authorization bytes travel only through the
 scheduler's redacted secret channel, never ordinary rendered workflow state or
 persisted prepared YAML. Customer identity remains represented only by its
-control-plane hash in redacted runtime audit receipts.
+authenticated hash in redacted runtime audit receipts.
 The common SDK submission preflight independently verifies the repository's
 image qualification, signed customer/run authorization, exact run ID, immutable
 candidate image, and the digest of the profile bytes it is about to submit

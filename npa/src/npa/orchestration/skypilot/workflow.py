@@ -7,6 +7,7 @@ import os
 import re
 import hashlib
 import fcntl
+import stat
 import shutil
 import subprocess
 import sys
@@ -340,14 +341,10 @@ def _probe_local_api_daemon_cwd(
     daemon_roots = {
         pid
         for pid, (_ppid, cmdline, _process) in records.items()
-        if cmdline
-        and "-m" in cmdline
-        and "sky.server.server" in cmdline
+        if cmdline and "-m" in cmdline and "sky.server.server" in cmdline
     }
     roots = {
-        pid
-        for pid in daemon_roots
-        if _api_server_port(records[pid][1]) == str(port)
+        pid for pid in daemon_roots if _api_server_port(records[pid][1]) == str(port)
     }
     if caller_network_namespace is not None or caller_mount_namespace is not None:
         # Localhost is scoped by network namespace, not the interpreter or
@@ -464,9 +461,11 @@ def _probe_local_api_daemon_cwd(
     runtime_roots: set[int] = set()
     for pid, environment in environments.items():
         daemon_home = environment.get("HOME", "").strip()
-        if expected_home and Path(daemon_home).expanduser().absolute() != Path(
+        if (
             expected_home
-        ).expanduser().absolute():
+            and Path(daemon_home).expanduser().absolute()
+            != Path(expected_home).expanduser().absolute()
+        ):
             return unhealthy_runtime(
                 "stale_runtime_environment",
                 process_count=len(runtime_roots) + 1,
@@ -675,8 +674,10 @@ def _ensure_local_api_daemon_cwd_locked(
     isolated_api_dir = env.get("NPA_SKYPILOT_ISOLATED_API_DIR")
     if isolated_api_dir:
         return _ensure_isolated_api(
-            isolated_dir=Path(isolated_api_dir), sky_executable=sky_executable,
-            environment=env, cwd=cwd,
+            isolated_dir=Path(isolated_api_dir),
+            sky_executable=sky_executable,
+            environment=env,
+            cwd=cwd,
         )
 
     # SkyPilot 0.12 exposes one local API server on a fixed loopback port per
@@ -698,7 +699,10 @@ def _ensure_local_api_daemon_cwd_locked(
 
 
 def _ensure_isolated_api(**kwargs) -> ApiDaemonCwdProbe:
-    from npa.orchestration.skypilot.local_api import IsolatedApiError, ensure_isolated_api
+    from npa.orchestration.skypilot.local_api import (
+        IsolatedApiError,
+        ensure_isolated_api,
+    )
 
     try:
         return ApiDaemonCwdProbe(**ensure_isolated_api(**kwargs))
@@ -814,9 +818,6 @@ class _PreparedWorkflowSubmission:
     config_path: Path
     sky_executable: str
     global_config: dict[str, Any]
-    prepared_profile_bytes: bytes
-    run_id: str
-    submission_backend: str
     libero_submission: bool = False
     env: dict[str, str] = field(default_factory=dict)
 
@@ -837,45 +838,41 @@ def _submission_global_config(runtime, controller_backend, infra):
     return config
 
 
-def _preflight_prepared_submission(prepared, *, project, infra, extra_env, target):
-    from npa.execution_preflight import ExecutionPreflightError
+def _preflight_prepared_submission(
+    runtime, docs, global_config, sky_executable, run_id, submission_backend,
+    *, project, infra, extra_env, target,
+):
+    from npa.execution_preflight import (
+        ExecutionPreflightError,
+        libero_executable_profile_sha256,
+    )
 
-    executable_profile_sha256 = hashlib.sha256(prepared.prepared_profile_bytes).hexdigest()
-    env = sky_environment(prepared.runtime_config.isolated_config_dir)
+    executable_profile_sha256 = libero_executable_profile_sha256(docs)
+    env = sky_environment(runtime.isolated_config_dir)
     for key, value in (extra_env or {}).items():
         if value or key in {"NPA_S3_BUCKET", "NPA_S3_PREFIX"}:
             env[key] = value
-    env["SKYPILOT_GLOBAL_CONFIG"] = str(prepared.config_path)
     try:
         selected, _report, injected = _execution_preflight(
-            prepared.docs, project=project, infra=infra, extra_env=env,
-            target=target, global_config=prepared.global_config,
-            submission_backend=prepared.submission_backend,
-            run_id=prepared.run_id,
+            docs, project=project, infra=infra, extra_env=env,
+            target=target, global_config=global_config,
+            submission_backend=submission_backend,
+            run_id=run_id,
             executable_profile_sha256=executable_profile_sha256,
-            sky_bin=prepared.sky_executable,
-            cwd=_stable_sky_cwd(prepared.runtime_config.isolated_config_dir),
+            sky_bin=sky_executable,
+            cwd=_stable_sky_cwd(runtime.isolated_config_dir),
         )
     except (ExecutionPreflightError, ValueError) as exc:
         raise SkyPilotSubmitError(str(exc), launch_attempted=False) from exc
-    prepared.libero_submission = (
+    libero_submission = (
         (_report.get("checks") or {}).get("libero_authorization") == "pass"
     )
     env.update(injected)
     if selected is not None:
         env["NPA_SKYPILOT_PROJECT"] = selected.project
-    prepared.env = env
-    prepared.config_path.write_text(yaml.safe_dump(prepared.global_config, sort_keys=False), encoding="utf-8")
-    _chmod_owner_only(prepared.config_path)
-    prepared_profile_bytes = yaml.safe_dump_all(prepared.docs, sort_keys=False).encode()
-    if prepared.libero_submission and hashlib.sha256(prepared_profile_bytes).hexdigest() != executable_profile_sha256:
+    if libero_submission and libero_executable_profile_sha256(docs) != executable_profile_sha256:
         raise SkyPilotSubmitError("LIBERO executable profile changed after preflight")
-    prepared.yaml_path.write_bytes(prepared_profile_bytes)
-    _chmod_owner_only(prepared.yaml_path)
-    if prepared.libero_submission:
-        # Seal the exact accepted bytes before controller or workload effects.
-        prepared.config_path.chmod(0o400)
-        prepared.yaml_path.chmod(0o400)
+    return env, libero_submission
 
 
 def _prepare_workflow_submission(
@@ -888,24 +885,29 @@ def _prepare_workflow_submission(
     _, docs = _load_yaml_documents(Path(yaml_path))
     if not docs:
         raise ValueError("SkyPilot YAML is empty")
-    prepared_profile_bytes = yaml.safe_dump_all(docs, sort_keys=False).encode()
+    executable = str(ensure_skypilot_version(runtime.sky_bin))
+    global_config = _submission_global_config(runtime, controller_backend, infra)
+    env, libero_submission = _preflight_prepared_submission(
+        runtime, docs, global_config, executable, run_id, controller_backend,
+        project=project, infra=infra, extra_env=extra_env, target=execution_target,
+    )
+    # Refuse and sanitize before any submission artifact exists.
     directory = _submission_dir(run_id, runtime.isolated_config_dir)
     try:
         rendered = directory / "workflow.yaml"
-        rendered.write_bytes(prepared_profile_bytes)
+        rendered.write_bytes(yaml.safe_dump_all(docs, sort_keys=False).encode())
         _chmod_owner_only(rendered)
-        executable = str(ensure_skypilot_version(runtime.sky_bin))
-        global_config = _submission_global_config(runtime, controller_backend, infra)
         generated = directory / "skypilot-config.yaml"
         generated.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")
         _chmod_owner_only(generated)
-        prepared = _PreparedWorkflowSubmission(runtime, docs, directory, rendered,
-                                                generated, executable, global_config,
-                                                prepared_profile_bytes,
-                                                run_id, controller_backend)
-        _preflight_prepared_submission(prepared, project=project, infra=infra,
-                                      extra_env=extra_env, target=execution_target)
-        return prepared
+        env["SKYPILOT_GLOBAL_CONFIG"] = str(generated)
+        if libero_submission:
+            generated.chmod(0o400)
+            rendered.chmod(0o400)
+        return _PreparedWorkflowSubmission(
+            runtime, docs, directory, rendered, generated, executable, global_config,
+            libero_submission=libero_submission, env=env,
+        )
     except BaseException:
         if runtime.isolated_config_dir is None:
             _cleanup_owned_submission_dir(directory)
@@ -980,6 +982,8 @@ def submit_workflow(
             LIBERO_SKYPILOT_SECRET_ENV_NAMES,
         )
         libero_submission = prepared.libero_submission
+        workflow_identity = _private_file_identity(prepared_yaml)
+        config_identity = _private_file_identity(generated_config_path)
         cmd = [
             sky_executable,
             "jobs",
@@ -1083,6 +1087,13 @@ def submit_workflow(
             subprocess.CompletedProcess[str], list[SkyPilotDiagnosis]
         ]:
             try:
+                if (
+                    _private_file_identity(prepared_yaml) != workflow_identity
+                    or _private_file_identity(generated_config_path) != config_identity
+                ):
+                    raise _SkyPilotLaunchCommandError(
+                        "validated SkyPilot submission artifacts changed before launch"
+                    )
                 launch_result, diagnoses = _run_launch(
                     cmd,
                     env=env,
@@ -2143,9 +2154,7 @@ def _wait_for_healthy_jobs_controller(
         if (
             "--refresh" in status_args
             and result.returncode != 0
-            and _can_ignore_foreign_controller_refresh(
-                result, env
-            )
+            and _can_ignore_foreign_controller_refresh(result, env)
         ):
             # A Kubernetes cloud can expose a controller from another namespace
             # while this process has an explicit, distinct SkyPilot user ID.  A
@@ -2407,9 +2416,12 @@ def _execution_preflight(*args, **kwargs):
 
 
 def _controller_config_for_execution(base_config, *, controller_backend, infra):
-    configured = ((base_config.get("jobs") or {}).get("controller") or {}).get("resources") or {}
+    configured = ((base_config.get("jobs") or {}).get("controller") or {}).get(
+        "resources"
+    ) or {}
     config = apply_controller_override(
-        base_config, controller_backend=controller_backend,
+        base_config,
+        controller_backend=controller_backend,
         controller_region=_controller_region_from_infra(infra, controller_backend),
     )
     if controller_backend == "nebius" and not configured.get("region"):
@@ -2444,6 +2456,42 @@ def _chmod_owner_only(path: Path, *, is_dir: bool = False) -> None:
         path.chmod(0o700 if is_dir else 0o600)
     except OSError:  # pragma: no cover - unusual filesystems (e.g. mounted FAT)
         pass
+
+
+def _private_file_identity(path: Path) -> tuple[int, int, int, int, str]:
+    """Read one no-follow regular file and bind its identity plus bytes."""
+
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        before = os.fstat(descriptor)
+        payload = b""
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            payload += chunk
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid != os.getuid()
+        or before.st_nlink != 1
+        or stat.S_IMODE(before.st_mode) & 0o077
+        or before.st_size != len(payload)
+        or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+    ):
+        raise SkyPilotSubmitError(
+            "SkyPilot submission artifact is not stable and owner-private"
+        )
+    return (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+        hashlib.sha256(payload).hexdigest(),
+    )
 
 
 def _submission_dir(run_id: str, isolated_config_dir: Path | None) -> Path:

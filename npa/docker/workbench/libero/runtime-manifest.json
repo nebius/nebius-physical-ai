@@ -1509,7 +1509,7 @@
     }
   ],
   "customer_runtime_authorization": {
-    "schema": "npa.libero.customer-runtime-authorization.v1",
+    "schema": "npa.libero.customer-runtime-authorization.v2",
     "required": true,
     "credentials_establish_acceptance": false
   },

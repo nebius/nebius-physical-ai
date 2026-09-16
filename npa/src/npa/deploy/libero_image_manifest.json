@@ -25,7 +25,7 @@
   },
   "runtime_payloads_baked": false,
   "customer_runtime_authorization_required": true,
-  "runtime_manifest_sha256": "9c17c8b7df841520a855897b92cf07e38894841efeed4a2a65694cce3a0708e1",
+  "runtime_manifest_sha256": "a319f5ac5fbd0eeb1390940eeda62828d621cd7dd0dd828789182024562c5b44",
   "runtime_requirements_sha256": "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99",
   "governing_terms_count": 7,
   "runtime_artifact_review": {
@@ -38,7 +38,7 @@
     "schema": "npa.libero.customer-acceptance-requirements.v1",
     "required": true,
     "credentials_establish_acceptance": false,
-    "authorization_schema": "npa.libero.customer-runtime-authorization.v1",
+    "authorization_schema": "npa.libero.customer-runtime-authorization.v2",
     "terms": [
       {
         "id": "libero-mit",
@@ -120,7 +120,7 @@
     "package_writer_repository": "",
     "customer_authorization_public_key_sha256": "",
     "output_storage_authorization_public_key_sha256": "",
-    "runtime_manifest_sha256": "9c17c8b7df841520a855897b92cf07e38894841efeed4a2a65694cce3a0708e1"
+    "runtime_manifest_sha256": "a319f5ac5fbd0eeb1390940eeda62828d621cd7dd0dd828789182024562c5b44"
   },
   "catalog_release": false
 }

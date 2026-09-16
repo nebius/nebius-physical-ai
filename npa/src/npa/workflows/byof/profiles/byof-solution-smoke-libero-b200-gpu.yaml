@@ -16,6 +16,21 @@ resources:
     pod_config:
       spec:
         serviceAccountName: npa-byof-libero-payload
+        automountServiceAccountToken: true
+        hostNetwork: false
+        hostPID: false
+        hostIPC: false
+        securityContext:
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        containers:
+          - securityContext:
+              privileged: false
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop: ["ALL"]
 envs:
   NPA_BYOF_RUN_ID: "<your-run-id>"
   BYOF_REPO_ROOT: "/opt/byof"
@@ -37,11 +52,17 @@ envs:
   NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT: ""
   NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_PREFIX_SHA256: ""
   NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256: ""
+  NPA_LIBERO_EXPECTED_OUTPUT_LEASE_KEY: ""
+  NPA_LIBERO_EXPECTED_OUTPUT_LEASE_ETAG: ""
+  NPA_LIBERO_EXPECTED_OUTPUT_LEASE_VERSION_ID: ""
+  NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256: ""
+  NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256: ""
   NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
   S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/byof/${NPA_BYOF_RUN_ID}/"
   AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
 setup: |
   set -euo pipefail
+  /opt/npa/libero/runtime-bootstrap.py wait-for-release
   test -x /usr/local/sbin/npa-skypilot-bootstrap-guard
   /usr/local/sbin/npa-skypilot-bootstrap-guard verify
   test "$(id -u)" = 1000

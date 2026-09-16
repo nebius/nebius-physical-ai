@@ -5,7 +5,9 @@ The public image contains this fetcher and immutable manifests, not LIBERO,
 PyTorch/CUDA wheels, demonstrations, task assets, models, or populated caches.
 Download success is never treated as permission: ``ensure`` refuses before the
 first network or cache effect unless a customer/run authorization is present,
-hash-bound, and signed by the authenticated NPA customer control plane.
+hash-bound, and signed directly by a customer-controlled key. The NPA control
+plane authenticates the caller and transports and validates the evidence; it
+does not accept or sign the customer's terms assertion.
 """
 
 from __future__ import annotations
@@ -25,18 +27,22 @@ import os
 import pwd
 import re
 import shutil
+import ssl
 import stat
 import struct
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.parse
 from uuid import uuid4
 from pathlib import Path
 from typing import Any
 
+PAYLOAD_RELEASE_ANNOTATION = "npa.nebius.com/libero-release"
+
 SCHEMA = "npa.libero.runtime-manifest.v1"
-CUSTOMER_AUTHORIZATION_SCHEMA = "npa.libero.customer-runtime-authorization.v1"
+CUSTOMER_AUTHORIZATION_SCHEMA = "npa.libero.customer-runtime-authorization.v2"
 OUTPUT_STORAGE_AUTHORIZATION_SCHEMA = "npa.libero.output-storage-authorization.v3"
 COMPLETE_SCHEMA = "npa.libero.runtime-cache.v1"
 INVENTORY_SCHEMA = "npa.libero.runtime-cache-inventory.v1"
@@ -72,7 +78,7 @@ EXPECTED_BOUNDARIES = {
     "rendering": False,
 }
 EXPECTED_RUNTIME_MANIFEST_SHA256 = (
-    "9c17c8b7df841520a855897b92cf07e38894841efeed4a2a65694cce3a0708e1"
+    "a319f5ac5fbd0eeb1390940eeda62828d621cd7dd0dd828789182024562c5b44"
 )
 EXPECTED_RUNTIME_REQUIREMENTS_SHA256 = (
     "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99"
@@ -180,6 +186,8 @@ RUNTIME_EXECUTION_PASSTHROUGH_ENV_NAMES = frozenset(
         "LC_CTYPE",
         "NPA_BYOF_RUN_ID",
         "NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT",
+        "NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256",
+        "NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256",
         "NPA_LIBERO_EXPECTED_ALLOWED_NODE_SHA256",
         "NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256",
         "NPA_LIBERO_EXPECTED_CLUSTER_IDENTITY_SHA256",
@@ -189,6 +197,12 @@ RUNTIME_EXECUTION_PASSTHROUGH_ENV_NAMES = frozenset(
         "NPA_LIBERO_EXPECTED_NAMESPACE_INVENTORY_SHA256",
         "NPA_LIBERO_EXPECTED_NAMESPACE_SHA256",
         "NPA_LIBERO_EXPECTED_NAMESPACE_UID_SHA256",
+        "NPA_LIBERO_EXPECTED_OUTPUT_LEASE_ETAG",
+        "NPA_LIBERO_EXPECTED_OUTPUT_LEASE_KEY",
+        "NPA_LIBERO_EXPECTED_OUTPUT_LEASE_VERSION_ID",
+        "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_AUTHORIZATION_SHA256",
+        "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256",
+        "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_PREFIX_SHA256",
         "NPA_LIBERO_EXPECTED_PAYLOAD_KUBECONFIG_SHA256",
         "NPA_LIBERO_EXPECTED_PUBLICATION_BUNDLE_SHA256",
         "NPA_LIBERO_EXPECTED_RBAC_SPEC_SHA256",
@@ -219,7 +233,7 @@ OUTPUT_SIZE_LIMITS = {
 }
 MAX_OUTPUT_BYTES = 320 * 1024 * 1024
 OUTPUT_RECEIPT_NAME = "npa_upload_receipt.json"
-OUTPUT_RECEIPT_SCHEMA = "npa.libero.s3-upload-readback.v1"
+OUTPUT_RECEIPT_SCHEMA = "npa.libero.s3-upload-readback.v2"
 
 
 class BootstrapRefusal(RuntimeError):
@@ -252,9 +266,7 @@ def _load_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def _read_private_regular_bytes(
-    path: Path, *, limit: int, input_name: str
-) -> bytes:
+def _read_private_regular_bytes(path: Path, *, limit: int, input_name: str) -> bytes:
     """Read one stable owner-private file through a no-follow descriptor."""
 
     try:
@@ -461,7 +473,14 @@ def _validate_manifest(
             raise BootstrapRefusal("runtime artifact entry is not an object")
         name = str(item.get("name") or "")
         filename = str(item.get("filename") or "")
-        if name in names or filename in filenames or not name or not filename:
+        if (
+            name in names
+            or filename in filenames
+            or not name
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,254}", filename) is None
+            or Path(filename).name != filename
+            or filename in {".", ".."}
+        ):
             raise BootstrapRefusal(
                 "runtime artifact names and filenames must be unique"
             )
@@ -479,9 +498,7 @@ def _validate_manifest(
         size_bytes = item.get("size_bytes")
         license_expression = str(item.get("license_expression") or "").strip()
         if require_runtime_closure and (
-            not isinstance(size_bytes, int)
-            or size_bytes <= 0
-            or not license_expression
+            not isinstance(size_bytes, int) or size_bytes <= 0 or not license_expression
         ):
             raise BootstrapRefusal(
                 f"runtime artifact size/license review is incomplete for {name}"
@@ -576,6 +593,67 @@ def _validate_redirect_url(
     return parsed
 
 
+def wait_for_release() -> dict[str, str]:
+    """Block all payload setup until the manager releases this exact Pod UID."""
+
+    host = os.environ.get("KUBERNETES_SERVICE_HOST", "")
+    port = int(os.environ.get("KUBERNETES_SERVICE_PORT", "443"))
+    name = os.environ.get("HOSTNAME", "")
+    service_account = Path("/var/run/secrets/kubernetes.io/serviceaccount")
+    namespace = (service_account / "namespace").read_text(encoding="utf-8").strip()
+    token = (service_account / "token").read_text(encoding="utf-8").strip()
+    if not host or not name or not namespace or not token:
+        raise BootstrapRefusal("payload release identity is incomplete")
+    context = ssl.create_default_context(cafile=str(service_account / "ca.crt"))
+    path = (
+        "/api/v1/namespaces/"
+        + urllib.parse.quote(namespace, safe="")
+        + "/pods/"
+        + urllib.parse.quote(name, safe="")
+    )
+    deadline = datetime.now(timezone.utc).timestamp() + 600
+    while datetime.now(timezone.utc).timestamp() < deadline:
+        connection = http.client.HTTPSConnection(
+            host, port, timeout=10, context=context
+        )
+        try:
+            connection.request(
+                "GET", path, headers={"Authorization": f"Bearer {token}"}
+            )
+            response = connection.getresponse()
+            payload = response.read(1024 * 1024)
+            status = response.status
+        finally:
+            connection.close()
+        if status == 403:
+            time.sleep(1)
+            continue
+        if status != 200:
+            raise BootstrapRefusal("payload release observation failed")
+        try:
+            pod = json.loads(payload)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise BootstrapRefusal("payload release response is invalid") from exc
+        metadata = pod.get("metadata") or {}
+        uid = str(metadata.get("uid") or "")
+        expected = hashlib.sha256(
+            f"{uid}:{name}:npa-libero-release-v1".encode()
+        ).hexdigest()
+        observed = str(
+            (metadata.get("annotations") or {}).get(PAYLOAD_RELEASE_ANNOTATION, "")
+        )
+        if (
+            metadata.get("name") != name
+            or metadata.get("namespace") != namespace
+            or not uid
+            or not hmac.compare_digest(observed, expected)
+        ):
+            time.sleep(1)
+            continue
+        return {"pod_uid_sha256": hashlib.sha256(uid.encode()).hexdigest()}
+    raise BootstrapRefusal("payload release was not granted before the deadline")
+
+
 def _open_https_download(
     url: str, *, terms: bool = False
 ) -> tuple[http.client.HTTPSConnection, http.client.HTTPResponse]:
@@ -638,9 +716,7 @@ def _create_cache_root_component(
     try:
         os.mkdir(name, CACHE_ROOT_MODE, dir_fd=parent_descriptor)
     except FileExistsError:
-        raise BootstrapRefusal(
-            "runtime cache root appeared during creation"
-        ) from None
+        raise BootstrapRefusal("runtime cache root appeared during creation") from None
     except OSError as exc:
         raise BootstrapRefusal("runtime cache root could not be created") from exc
     child: int | None = None
@@ -656,9 +732,9 @@ def _create_cache_root_component(
         if child is not None:
             os.close(child)
         raise BootstrapRefusal("runtime cache root changed during creation") from exc
-    if (
-        not stat.S_ISDIR(created.st_mode)
-        or (created.st_dev, created.st_ino) != (opened.st_dev, opened.st_ino)
+    if not stat.S_ISDIR(created.st_mode) or (created.st_dev, created.st_ino) != (
+        opened.st_dev,
+        opened.st_ino,
     ):
         os.close(child)
         raise BootstrapRefusal("runtime cache root changed during creation")
@@ -692,10 +768,10 @@ def _open_cache_root_descriptor(
                 )
             except FileNotFoundError:
                 if not (create and final):
-                    raise BootstrapRefusal("runtime cache root is unavailable") from None
-                child = _create_cache_root_component(
-                    descriptor, part, before_create
-                )
+                    raise BootstrapRefusal(
+                        "runtime cache root is unavailable"
+                    ) from None
+                child = _create_cache_root_component(descriptor, part, before_create)
             except OSError as exc:
                 raise BootstrapRefusal(
                     "runtime cache root contains a link or invalid component"
@@ -745,7 +821,9 @@ def _cache_lock(
             try:
                 group_id = grp.getgrnam(RUNTIME_EXECUTION_GROUP).gr_gid
             except KeyError as exc:
-                raise BootstrapRefusal("runtime execution group is unavailable") from exc
+                raise BootstrapRefusal(
+                    "runtime execution group is unavailable"
+                ) from exc
             os.fchown(descriptor, -1, group_id)
             os.fchmod(descriptor, 0o640)
         elif stat.S_IMODE(opened.st_mode) != 0o640:
@@ -1045,9 +1123,7 @@ def _sshsig_signature_payload(namespace: bytes, canonical: bytes) -> bytes:
 
 
 def _customer_authorization_sshsig(public_key: bytes, signature: bytes) -> bytes:
-    return _sshsig_envelope(
-        CUSTOMER_AUTHORIZATION_NAMESPACE, public_key, signature
-    )
+    return _sshsig_envelope(CUSTOMER_AUTHORIZATION_NAMESPACE, public_key, signature)
 
 
 def _sshsig_envelope(namespace: bytes, public_key: bytes, signature: bytes) -> bytes:
@@ -1082,18 +1158,14 @@ def _trusted_public_key(path: Path, *, owner_uid: int, label: str) -> bytes:
             os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
         )
     except OSError as exc:
-        raise BootstrapRefusal(
-            f"{label} trust root is unavailable"
-        ) from exc
+        raise BootstrapRefusal(f"{label} trust root is unavailable") from exc
     try:
         before = os.fstat(descriptor)
         with os.fdopen(descriptor, "rb", closefd=False) as stream:
             encoded = stream.read()
         after = os.fstat(descriptor)
     except OSError as exc:
-        raise BootstrapRefusal(
-            f"{label} trust root is unavailable"
-        ) from exc
+        raise BootstrapRefusal(f"{label} trust root is unavailable") from exc
     finally:
         os.close(descriptor)
     if (
@@ -1123,9 +1195,7 @@ def _trusted_public_key(path: Path, *, owner_uid: int, label: str) -> bytes:
         )
         or encoded != encoded.strip()
     ):
-        raise BootstrapRefusal(
-            f"{label} trust root is mutable or invalid"
-        )
+        raise BootstrapRefusal(f"{label} trust root is mutable or invalid")
     try:
         public_key = base64.b64decode(encoded, validate=True)
     except ValueError as exc:
@@ -1158,13 +1228,23 @@ def _trusted_output_storage_authorization_public_key() -> bytes:
 def _verify_customer_authorization_signature(
     payload: dict[str, Any], signature_record: dict[str, Any]
 ) -> None:
-    public_key = _trusted_customer_authorization_public_key()
+    try:
+        public_key = base64.b64decode(
+            str(payload.get("customer_signer_public_key_b64") or ""), validate=True
+        )
+    except ValueError as exc:
+        raise BootstrapRefusal("customer signer identity is invalid") from exc
     claimed_fingerprint = str(signature_record.get("public_key_sha256") or "")
+    expected_fingerprint = os.environ.get(
+        "NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256", ""
+    )
     if (
-        not _is_hex(claimed_fingerprint, 64)
+        len(public_key) != 32
+        or not _is_hex(claimed_fingerprint, 64)
         or hashlib.sha256(public_key).hexdigest() != claimed_fingerprint
+        or not hmac.compare_digest(claimed_fingerprint, expected_fingerprint)
     ):
-        raise BootstrapRefusal("customer-authorization trust root differs")
+        raise BootstrapRefusal("customer signer identity differs")
     try:
         signature = base64.b64decode(
             str(signature_record.get("signature_b64") or ""), validate=True
@@ -1176,7 +1256,7 @@ def _verify_customer_authorization_signature(
     canonical = _canonical_unsigned_customer_authorization(payload)
     public_key_blob = _ssh_string(b"ssh-ed25519") + _ssh_string(public_key)
     allowed_signer = (
-        "npa-customer-control-plane ssh-ed25519 "
+        "customer ssh-ed25519 "
         + base64.b64encode(public_key_blob).decode("ascii")
         + "\n"
     )
@@ -1200,7 +1280,7 @@ def _verify_customer_authorization_signature(
                 "-f",
                 str(allowed_path),
                 "-I",
-                "npa-customer-control-plane",
+                "customer",
                 "-n",
                 CUSTOMER_AUTHORIZATION_NAMESPACE.decode("ascii"),
                 "-s",
@@ -1228,7 +1308,9 @@ def _verify_output_storage_authorization_signature(
             str(signature_record.get("signature_b64") or ""), validate=True
         )
     except ValueError as exc:
-        raise BootstrapRefusal("output storage authorization signature is invalid") from exc
+        raise BootstrapRefusal(
+            "output storage authorization signature is invalid"
+        ) from exc
     if len(signature) != 64:
         raise BootstrapRefusal("output storage authorization signature is invalid")
     unsigned = json.loads(json.dumps(payload))
@@ -1236,9 +1318,9 @@ def _verify_output_storage_authorization_signature(
     canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
     allowed_signer = (
         "npa-output-storage-control-plane ssh-ed25519 "
-        + base64.b64encode(_ssh_string(b"ssh-ed25519") + _ssh_string(public_key)).decode(
-            "ascii"
-        )
+        + base64.b64encode(
+            _ssh_string(b"ssh-ed25519") + _ssh_string(public_key)
+        ).decode("ascii")
         + "\n"
     )
     with tempfile.TemporaryDirectory(prefix="npa-libero-storage-signature-") as root:
@@ -1246,7 +1328,9 @@ def _verify_output_storage_authorization_signature(
         signature_path = Path(root) / "authorization.sig"
         allowed_path.write_text(allowed_signer, encoding="ascii")
         signature_path.write_bytes(
-            _sshsig_envelope(OUTPUT_STORAGE_AUTHORIZATION_NAMESPACE, public_key, signature)
+            _sshsig_envelope(
+                OUTPUT_STORAGE_AUTHORIZATION_NAMESPACE, public_key, signature
+            )
         )
         os.chmod(allowed_path, 0o600)
         os.chmod(signature_path, 0o600)
@@ -1303,9 +1387,10 @@ def _customer_acceptance_notification(
         "acknowledgement": {
             "required": True,
             "instructions": (
-                "Review every listed official term in the authenticated NPA "
-                "customer/control-plane surface, then obtain a short-lived "
-                "authorization for this exact customer and run."
+                "Review every listed official term and authorize this exact "
+                "customer and run using a customer-controlled signing key. "
+                "The authenticated NPA surface transports and validates that "
+                "evidence but does not accept or sign the terms assertion."
             ),
             "refusal": (
                 "Decline or omit authorization to stop before runtime fetch, "
@@ -1371,8 +1456,12 @@ def _validate_customer_authorization_bytes(
         "run_id",
         "candidate_image",
         "runtime_manifest_sha256",
+        "workflow_profile_sha256",
+        "upstream_source_revision",
         "terms",
         "issuer",
+        "evidence_type",
+        "customer_signer_public_key_b64",
         "acknowledged_at",
         "issued_at",
         "expires_at",
@@ -1409,15 +1498,17 @@ def _validate_customer_authorization_bytes(
         )
         is None
         or authorization.get("runtime_manifest_sha256") != manifest_sha256
+        or authorization.get("workflow_profile_sha256")
+        != os.environ.get("NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256")
+        or authorization.get("upstream_source_revision")
+        != (manifest.get("source") or {}).get("revision")
         or authorization.get("terms") != expected_terms
-        or authorization.get("issuer") != "npa-customer-control-plane"
+        or authorization.get("issuer") != "customer"
+        or authorization.get("evidence_type") != "customer-controlled-signature"
         or not isinstance(signature_record, dict)
-        or set(signature_record)
-        != {"algorithm", "public_key_sha256", "signature_b64"}
+        or set(signature_record) != {"algorithm", "public_key_sha256", "signature_b64"}
         or signature_record.get("algorithm") != "ed25519"
-        or re.fullmatch(
-            r"[A-Za-z0-9_-]{32,128}", str(authorization.get("nonce") or "")
-        )
+        or re.fullmatch(r"[A-Za-z0-9_-]{32,128}", str(authorization.get("nonce") or ""))
         is None
     ):
         raise CustomerAcceptanceRequired("authorization_wrong_scope")
@@ -1681,9 +1772,13 @@ def _install_runtime(
     materialization_environment = _runtime_materialization_environment(root)
     wheelhouse = root / "downloads"
     wheelhouse.mkdir(mode=0o700)
+    resolved_wheelhouse = wheelhouse.resolve(strict=True)
     for item in artifacts:
+        destination = wheelhouse / item["filename"]
+        if destination.resolve(strict=False).parent != resolved_wheelhouse:
+            raise BootstrapRefusal("runtime artifact destination leaves the wheelhouse")
         _download_verified(
-            wheelhouse / item["filename"],
+            destination,
             url=item["url"],
             sha256=item["sha256"],
             size=int(item["size_bytes"]),
@@ -1858,9 +1953,7 @@ def _seal_cache_tree(root: Path) -> None:
         elif stat.S_ISREG(info.st_mode):
             os.chmod(
                 path,
-                SEALED_EXECUTABLE_MODE
-                if info.st_mode & 0o111
-                else SEALED_REGULAR_MODE,
+                SEALED_EXECUTABLE_MODE if info.st_mode & 0o111 else SEALED_REGULAR_MODE,
             )
         else:
             raise BootstrapRefusal("runtime cache contains an unsupported entry")
@@ -2115,9 +2208,7 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
     governing_terms_sha256: str | None = None
     cache_root_created = False
 
-    def verify_terms_before_cache_creation(
-        _parent_descriptor: int, _name: str
-    ) -> None:
+    def verify_terms_before_cache_creation(_parent_descriptor: int, _name: str) -> None:
         nonlocal cache_root_created, governing_terms_sha256
         governing_terms_sha256 = _verify_governing_terms(manifest)
         cache_root_created = True
@@ -2195,7 +2286,9 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
                     _seal_cache_tree(partial)
                     renamed_identity = _cache_entry_identity(partial)
                     if renamed_identity is None:
-                        raise BootstrapRefusal("materialized runtime cache is unavailable")
+                        raise BootstrapRefusal(
+                            "materialized runtime cache is unavailable"
+                        )
                     os.rename(
                         partial.name,
                         scope_sha256,
@@ -2205,7 +2298,9 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
                     renamed = True
                     locked_identity = _cache_entry_identity_at(root_fd, scope_sha256)
                     if locked_identity != renamed_identity:
-                        raise BootstrapRefusal("materialized runtime cache is unavailable")
+                        raise BootstrapRefusal(
+                            "materialized runtime cache is unavailable"
+                        )
                     record = _validate_and_publish_cache(
                         cache_root=stable_cache_root,
                         final=final,
@@ -2264,9 +2359,7 @@ def status(args: argparse.Namespace) -> dict[str, Any]:
             authorization_sha256 = str(
                 record.get("customer_authorization_sha256") or ""
             )
-            customer_identity_sha256 = str(
-                record.get("customer_identity_sha256") or ""
-            )
+            customer_identity_sha256 = str(record.get("customer_identity_sha256") or "")
             run_id = str(record.get("run_id") or "")
             if not _is_hex(authorization_sha256, 64):
                 raise BootstrapRefusal(
@@ -2458,13 +2551,19 @@ def _storage_authorization(
     try:
         payload = base64.b64decode(encoded, validate=True)
     except ValueError as exc:
-        raise BootstrapRefusal("output storage authorization is not valid Base64") from exc
+        raise BootstrapRefusal(
+            "output storage authorization is not valid Base64"
+        ) from exc
     if not _is_hex(expected, 64) or hashlib.sha256(payload).hexdigest() != expected:
-        raise BootstrapRefusal("output storage authorization is not control-plane-bound")
+        raise BootstrapRefusal(
+            "output storage authorization is not control-plane-bound"
+        )
     try:
         authorization = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise BootstrapRefusal("output storage authorization is not valid JSON") from exc
+        raise BootstrapRefusal(
+            "output storage authorization is not valid JSON"
+        ) from exc
     keys = {
         "schema",
         "issuer",
@@ -2579,9 +2678,7 @@ def _sigv4_request(
     canonical_headers = "".join(
         f"{name}:{' '.join(headers[name].split())}\n" for name in sorted(headers)
     )
-    canonical_uri = urllib.parse.quote(
-        urllib.parse.unquote(parsed.path), safe="/-_.~"
-    )
+    canonical_uri = urllib.parse.quote(urllib.parse.unquote(parsed.path), safe="/-_.~")
     if parsed.path != canonical_uri:
         raise BootstrapRefusal("output storage object path is not canonical")
     canonical_request = "\n".join(
@@ -2611,7 +2708,9 @@ def _sigv4_request(
         sign(sign(sign(("AWS4" + secret_key).encode(), date_stamp), region), "s3"),
         "aws4_request",
     )
-    signature = hmac.new(signing_key, string_to_sign.encode(), hashlib.sha256).hexdigest()
+    signature = hmac.new(
+        signing_key, string_to_sign.encode(), hashlib.sha256
+    ).hexdigest()
     request_headers = {
         **headers,
         "authorization": (
@@ -2648,7 +2747,9 @@ def _sigv4_request(
     finally:
         connection.close()
     if len(body) > MAX_OUTPUT_BYTES:
-        raise BootstrapRefusal("output storage response exceeds the aggregate size budget")
+        raise BootstrapRefusal(
+            "output storage response exceeds the aggregate size budget"
+        )
     return status_code, response_headers, body
 
 
@@ -2665,8 +2766,7 @@ def _s3_object_url(endpoint: str, bucket: str, object_key: str) -> str:
     ):
         raise BootstrapRefusal("output storage object identity is invalid")
     path = "/".join(
-        urllib.parse.quote(segment, safe="-_.~")
-        for segment in (bucket, *segments)
+        urllib.parse.quote(segment, safe="-_.~") for segment in (bucket, *segments)
     )
     return f"{endpoint}/{path}"
 
@@ -2706,24 +2806,38 @@ def _verified_output_put(
     name: str,
     payload: bytes,
     digest: str,
-    attempted: dict[str, tuple[int, str]],
+    attempted: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     checksum = base64.b64encode(bytes.fromhex(digest)).decode()
     url = _s3_object_url(endpoint, bucket, object_key)
-    attempted[object_key] = (len(payload), checksum)
-    _sigv4_request(
+    _, created_headers, _ = _sigv4_request(
         "PUT",
         url,
         payload=payload,
         extra_headers={"if-none-match": "*", "x-amz-checksum-sha256": checksum},
     )
+    version_id = created_headers.get("x-amz-version-id", "")
+    etag = created_headers.get("etag", "")
+    if not version_id or re.fullmatch(r'"[^\"]+"', etag) is None:
+        raise BootstrapRefusal(
+            "output storage did not return immutable creation identity"
+        )
+    attempted[object_key] = {
+        "size_bytes": len(payload),
+        "checksum": checksum,
+        "etag": etag,
+        "version_id": version_id,
+    }
+    version_url = url + "?versionId=" + urllib.parse.quote(version_id, safe="")
     _, headers, observed = _sigv4_request(
-        "GET", url, extra_headers={"x-amz-checksum-mode": "ENABLED"}
+        "GET", version_url, extra_headers={"x-amz-checksum-mode": "ENABLED"}
     )
     if (
         observed != payload
         or hashlib.sha256(observed).hexdigest() != digest
         or headers.get("x-amz-checksum-sha256") != checksum
+        or headers.get("x-amz-version-id") != version_id
+        or headers.get("etag") != etag
     ):
         raise BootstrapRefusal("output storage checksum/readback differs")
     return {
@@ -2731,6 +2845,8 @@ def _verified_output_put(
         "object_key": object_key,
         "size_bytes": len(payload),
         "sha256": digest,
+        "etag": etag,
+        "version_id": version_id,
     }
 
 
@@ -2750,38 +2866,46 @@ def _cleanup_object_etag(
 
 
 def _cleanup_output_attempts(
-    *, endpoint: str, bucket: str, attempted: dict[str, tuple[int, str]]
+    *, endpoint: str, bucket: str, attempted: dict[str, dict[str, Any]]
 ) -> None:
     failures: list[str] = []
-    for object_key, (size_bytes, checksum) in reversed(attempted.items()):
+    for object_key, identity in reversed(attempted.items()):
         url = _s3_object_url(endpoint, bucket, object_key)
+        version_id = str(identity["version_id"])
+        version_url = url + "?versionId=" + urllib.parse.quote(version_id, safe="")
         key_hash = hashlib.sha256(object_key.encode()).hexdigest()
         try:
             status_code, headers, _ = _sigv4_request(
                 "HEAD",
-                url,
+                version_url,
                 extra_headers={"x-amz-checksum-mode": "ENABLED"},
                 expected_statuses=frozenset({200, 404}),
             )
             if status_code == 404:
                 continue
             etag = _cleanup_object_etag(
-                headers, size_bytes=size_bytes, checksum=checksum
+                headers,
+                size_bytes=int(identity["size_bytes"]),
+                checksum=str(identity["checksum"]),
             )
-            if not etag:
+            if (
+                not etag
+                or etag != identity["etag"]
+                or headers.get("x-amz-version-id") != version_id
+            ):
                 failures.append(key_hash)
                 continue
             delete_status, _, _ = _sigv4_request(
                 "DELETE",
-                url,
-                extra_headers={"if-match": etag},
+                version_url,
+                extra_headers={"if-match": str(identity["etag"])},
                 expected_statuses=frozenset({200, 204, 412}),
             )
             if delete_status == 412:
                 failures.append(key_hash)
                 continue
             status_code, _, _ = _sigv4_request(
-                "HEAD", url, expected_statuses=frozenset({200, 404})
+                "HEAD", version_url, expected_statuses=frozenset({200, 404})
             )
             if status_code != 404:
                 failures.append(key_hash)
@@ -2792,6 +2916,48 @@ def _cleanup_output_attempts(
             "output transaction cleanup is incomplete for exact key hashes: "
             + ",".join(sorted(set(failures)))
         )
+
+
+def _verify_output_lease(*, endpoint: str, bucket: str) -> tuple[str, str, str]:
+    """Require the exact manager-created, version-bound output lease."""
+
+    key = os.environ.get("NPA_LIBERO_EXPECTED_OUTPUT_LEASE_KEY", "")
+    etag = os.environ.get("NPA_LIBERO_EXPECTED_OUTPUT_LEASE_ETAG", "")
+    version_id = os.environ.get("NPA_LIBERO_EXPECTED_OUTPUT_LEASE_VERSION_ID", "")
+    if not key or re.fullmatch(r'"[^\"]+"', etag) is None or not version_id:
+        raise BootstrapRefusal("output transaction lease binding is incomplete")
+    url = _s3_object_url(endpoint, bucket, key)
+    version_url = url + "?versionId=" + urllib.parse.quote(version_id, safe="")
+    status, headers, _ = _sigv4_request(
+        "HEAD", version_url, expected_statuses=frozenset({200, 404})
+    )
+    if (
+        status != 200
+        or headers.get("etag") != etag
+        or headers.get("x-amz-version-id") != version_id
+    ):
+        raise BootstrapRefusal("output transaction lease changed or disappeared")
+    return key, etag, version_id
+
+
+def _release_output_lease(
+    *, endpoint: str, bucket: str, key: str, etag: str, version_id: str
+) -> None:
+    url = _s3_object_url(endpoint, bucket, key)
+    version_url = url + "?versionId=" + urllib.parse.quote(version_id, safe="")
+    status, _, _ = _sigv4_request(
+        "DELETE",
+        version_url,
+        extra_headers={"if-match": etag},
+        expected_statuses=frozenset({200, 204, 412}),
+    )
+    if status == 412:
+        raise BootstrapRefusal("output transaction lease identity changed")
+    status, _, _ = _sigv4_request(
+        "HEAD", version_url, expected_statuses=frozenset({200, 404})
+    )
+    if status != 404:
+        raise BootstrapRefusal("output transaction lease cleanup is incomplete")
 
 
 def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
@@ -2805,9 +2971,7 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
     if parsed.scheme != "s3" or not parsed.netloc:
         raise BootstrapRefusal("output prefix must be an S3 URI")
     endpoint = (
-        os.environ.get("AWS_ENDPOINT_URL")
-        or os.environ.get("NEBIUS_S3_ENDPOINT")
-        or ""
+        os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT") or ""
     ).rstrip("/")
     if not endpoint:
         raise BootstrapRefusal("output storage endpoint is required")
@@ -2815,6 +2979,9 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
     if endpoint_parts.scheme != "https" or not endpoint_parts.netloc:
         raise BootstrapRefusal("output storage endpoint must be HTTPS")
     storage_authorization = _storage_authorization(output_prefix, run_id, endpoint)
+    lease_key, lease_etag, lease_version_id = _verify_output_lease(
+        endpoint=endpoint, bucket=parsed.netloc
+    )
     root_info = os.fstat(root_fd)
     if (
         not stat.S_ISDIR(root_info.st_mode)
@@ -2848,6 +3015,7 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
 
     prefix = parsed.path.lstrip("/")
     transaction_id = uuid4().hex
+    transaction_prefix = prefix + ".npa-transactions/" + transaction_id + "/"
     if set(os.listdir(root_fd)) != set(OUTPUT_SIZE_LIMITS):
         raise BootstrapRefusal("output differs from the exact artifact allowlist")
     observed_total = sum(
@@ -2860,7 +3028,7 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
     for name, limit in sorted(OUTPUT_SIZE_LIMITS.items()):
         payload, digest = _immutable_output_bytes(root_fd, name, limit)
         snapshots.append((name, payload, digest))
-    attempted: dict[str, tuple[int, str]] = {}
+    attempted: dict[str, dict[str, Any]] = {}
     receipts: list[dict[str, Any]] = []
     committed = False
     try:
@@ -2879,7 +3047,7 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
                 _verified_output_put(
                     endpoint=endpoint,
                     bucket=parsed.netloc,
-                    object_key=prefix + name,
+                    object_key=transaction_prefix + name,
                     name=name,
                     payload=payload,
                     digest=digest,
@@ -2903,6 +3071,7 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
                         "",
                     ),
                     "transaction_id": transaction_id,
+                    "transaction_prefix": transaction_prefix,
                     "status": "verified",
                     "commit_marker": OUTPUT_RECEIPT_NAME,
                     "artifacts": receipts,
@@ -2938,6 +3107,14 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
             attempted=attempted,
         )
         committed = True
+        _verify_output_lease(endpoint=endpoint, bucket=parsed.netloc)
+        _release_output_lease(
+            endpoint=endpoint,
+            bucket=parsed.netloc,
+            key=lease_key,
+            etag=lease_etag,
+            version_id=lease_version_id,
+        )
     except Exception:
         if not committed:
             try:
@@ -2997,17 +3174,15 @@ def _execution_uid_processes() -> list[int]:
         try:
             execution_uid = pwd.getpwnam(RUNTIME_EXECUTION_USER).pw_uid
         except KeyError as exc:
-            raise BootstrapRefusal(
-                "runtime execution account is unavailable"
-            ) from exc
+            raise BootstrapRefusal("runtime execution account is unavailable") from exc
         discovered = []
         for process in Path("/proc").iterdir():
             if not process.name.isdigit():
                 continue
             try:
-                status_lines = (process / "status").read_text(
-                    encoding="utf-8"
-                ).splitlines()
+                status_lines = (
+                    (process / "status").read_text(encoding="utf-8").splitlines()
+                )
             except (FileNotFoundError, PermissionError, ProcessLookupError):
                 continue
             uid_line = next(
@@ -3025,9 +3200,7 @@ def _execution_uid_processes() -> list[int]:
         raise BootstrapRefusal("execution process inventory is unavailable") from exc
 
 
-def _materialize_supervisor_artifact(
-    root_fd: int, name: str, payload: bytes
-) -> None:
+def _materialize_supervisor_artifact(root_fd: int, name: str, payload: bytes) -> None:
     descriptor = os.open(
         name,
         os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
@@ -3042,7 +3215,9 @@ def _materialize_supervisor_artifact(
 def _bind_inherited_descriptors(sources: tuple[int, ...]) -> Iterator[tuple[int, ...]]:
     """Expose exact retained descriptors at the sudo close-from boundary."""
 
-    targets = tuple(range(INHERITED_CACHE_DESCRIPTOR, INHERITED_CACHE_DESCRIPTOR + len(sources)))
+    targets = tuple(
+        range(INHERITED_CACHE_DESCRIPTOR, INHERITED_CACHE_DESCRIPTOR + len(sources))
+    )
     preserved = [os.dup(source) for source in sources]
     try:
         for source, target in zip(preserved, targets, strict=True):
@@ -3072,7 +3247,10 @@ def execute_and_upload() -> int:
     authorization_fd = -1
     try:
         output_info = os.fstat(output_fd)
-        if output_info.st_uid != os.getuid() or stat.S_IMODE(output_info.st_mode) != 0o1770:
+        if (
+            output_info.st_uid != os.getuid()
+            or stat.S_IMODE(output_info.st_mode) != 0o1770
+        ):
             raise BootstrapRefusal("execution output staging directory is invalid")
         try:
             authorization_fd = os.open(
@@ -3081,7 +3259,9 @@ def execute_and_upload() -> int:
                 dir_fd=output_fd,
             )
         except OSError as exc:
-            raise CustomerAcceptanceRequired("authorization_missing_at_execution") from exc
+            raise CustomerAcceptanceRequired(
+                "authorization_missing_at_execution"
+            ) from exc
         try:
             authorization_bytes = _read_private_regular_descriptor(
                 authorization_fd,
@@ -3114,7 +3294,9 @@ def execute_and_upload() -> int:
             if identity is None:
                 raise BootstrapRefusal("runtime cache is not materialized")
             if os.readlink("current", dir_fd=cache_root_fd) != scope_sha256:
-                raise BootstrapRefusal("runtime current link differs from accepted cache")
+                raise BootstrapRefusal(
+                    "runtime current link differs from accepted cache"
+                )
             with _cache_lock(
                 cache_root_fd, ".execution.lock", exclusive=True, create=True
             ) as execution_lock_fd:
@@ -3131,7 +3313,9 @@ def execute_and_upload() -> int:
                     try:
                         opened = os.fstat(descriptor)
                         if (opened.st_dev, opened.st_ino) != identity:
-                            raise BootstrapRefusal("runtime cache descriptor identity changed")
+                            raise BootstrapRefusal(
+                                "runtime cache descriptor identity changed"
+                            )
                         stable_root = Path("/proc/self/fd") / str(descriptor)
                         governing_terms_sha256 = _governing_terms_identity(manifest)
                         _validate_complete(
@@ -3164,16 +3348,18 @@ def execute_and_upload() -> int:
                         except Exception:
                             os.close(stdout_fd)
                             raise
-                        with os.fdopen(stdout_fd, "wb") as stdout, os.fdopen(
-                            stderr_fd, "wb"
-                        ) as stderr, _bind_inherited_descriptors(
-                            (
-                                descriptor,
-                                authorization_fd,
-                                execution_lock_fd,
-                                bootstrap_lock_fd,
-                            )
-                        ) as inherited:
+                        with (
+                            os.fdopen(stdout_fd, "wb") as stdout,
+                            os.fdopen(stderr_fd, "wb") as stderr,
+                            _bind_inherited_descriptors(
+                                (
+                                    descriptor,
+                                    authorization_fd,
+                                    execution_lock_fd,
+                                    bootstrap_lock_fd,
+                                )
+                            ) as inherited,
+                        ):
                             _validate_customer_authorization_bytes(
                                 authorization_bytes,
                                 authorization_sha256,
@@ -3226,11 +3412,10 @@ def execute_and_upload() -> int:
                                 + ",".join(str(pid) for pid in remaining_processes)
                             )
                         current_output = output_root.stat(follow_symlinks=False)
-                        if (
-                            not stat.S_ISDIR(current_output.st_mode)
-                            or (current_output.st_dev, current_output.st_ino)
-                            != (output_info.st_dev, output_info.st_ino)
-                        ):
+                        if not stat.S_ISDIR(current_output.st_mode) or (
+                            current_output.st_dev,
+                            current_output.st_ino,
+                        ) != (output_info.st_dev, output_info.st_ino):
                             raise BootstrapRefusal(
                                 "execution output staging directory changed during execution"
                             )
@@ -3245,7 +3430,9 @@ def execute_and_upload() -> int:
                             named_authorization.st_dev,
                             named_authorization.st_ino,
                         ):
-                            raise BootstrapRefusal("protected authorization identity changed")
+                            raise BootstrapRefusal(
+                                "protected authorization identity changed"
+                            )
                         os.unlink(PROTECTED_AUTHORIZATION_NAME, dir_fd=output_fd)
                         _materialize_supervisor_artifact(
                             output_fd, "npa_runtime_bootstrap.json", bootstrap_payload
@@ -3258,19 +3445,25 @@ def execute_and_upload() -> int:
                             artifact_info = os.stat(
                                 artifact_name, dir_fd=output_fd, follow_symlinks=False
                             )
-                            artifact_is_regular = stat.S_ISREG(
-                                artifact_info.st_mode
-                            ) and artifact_info.st_nlink == 1
+                            artifact_is_regular = (
+                                stat.S_ISREG(artifact_info.st_mode)
+                                and artifact_info.st_nlink == 1
+                            )
                         except OSError:
                             artifact_is_regular = False
-                        if artifact_name not in OUTPUT_SIZE_LIMITS or not artifact_is_regular:
+                        if (
+                            artifact_name not in OUTPUT_SIZE_LIMITS
+                            or not artifact_is_regular
+                        ):
                             error_fd = os.open(
                                 "solution_smoke_stderr.log",
                                 os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW,
                                 dir_fd=output_fd,
                             )
                             with os.fdopen(error_fd, "a", encoding="utf-8") as stderr:
-                                stderr.write(f"missing required smoke artifact: {artifact_name}\n")
+                                stderr.write(
+                                    f"missing required smoke artifact: {artifact_name}\n"
+                                )
                             smoke_exit_code = 1
                         upload_outputs(smoke_exit_code, root_fd=output_fd)
                         _validate_complete(
@@ -3283,10 +3476,17 @@ def execute_and_upload() -> int:
                             requirements_sha256,
                             governing_terms_sha256,
                         )
-                        if _cache_entry_identity_at(cache_root_fd, scope_sha256) != identity:
-                            raise BootstrapRefusal("runtime cache changed before readback")
+                        if (
+                            _cache_entry_identity_at(cache_root_fd, scope_sha256)
+                            != identity
+                        ):
+                            raise BootstrapRefusal(
+                                "runtime cache changed before readback"
+                            )
                         if os.readlink("current", dir_fd=cache_root_fd) != scope_sha256:
-                            raise BootstrapRefusal("runtime current link changed before readback")
+                            raise BootstrapRefusal(
+                                "runtime current link changed before readback"
+                            )
                         return smoke_exit_code
                     finally:
                         os.close(descriptor)
@@ -3299,7 +3499,14 @@ def execute_and_upload() -> int:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "command", choices=("ensure", "status", "execute", "execute-and-upload")
+        "command",
+        choices=(
+            "wait-for-release",
+            "ensure",
+            "status",
+            "execute",
+            "execute-and-upload",
+        ),
     )
     parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
     parser.add_argument("--requirements", default=str(DEFAULT_REQUIREMENTS))
@@ -3314,6 +3521,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
+        if args.command == "wait-for-release":
+            print(
+                json.dumps({**wait_for_release(), "status": "released"}, sort_keys=True)
+            )
+            return 0
         if args.command == "execute":
             return execute()
         if args.command == "execute-and-upload":

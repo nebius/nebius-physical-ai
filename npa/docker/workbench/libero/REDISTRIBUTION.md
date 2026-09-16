@@ -27,10 +27,13 @@ equivalent corresponding-source access for copyleft packages. Python 3.10.21
 is distributed under the Python Software Foundation License; its upstream
 source hash is `a0da1e72132e950154eca0f6f47d5db828454700de20e5113667940d81e0db04`.
 
-At run time the customer must personally acknowledge the seven exact terms in
-the authenticated NPA customer/control-plane surface. That surface supplies a
-short-lived authorization bound to the customer, run, exact terms and runtime
-manifest, plus the immutable qualified image when available. Missing, denied,
+At run time the customer must personally acknowledge the seven exact terms and
+sign a short-lived authorization with a customer-controlled key. NPA may
+authenticate the caller, transport the evidence, and validate it, but neither
+the manager nor the control plane accepts or signs the terms assertion. The
+authorization binds the customer signer and identity, run, workflow profile,
+exact terms, source revision, runtime manifest, and immutable qualified image.
+Missing, denied,
 expired, invalid, or mismatched authorization refuses before cache creation or
 network access. HF/NGC credentials prove upstream access only. Runtime fetch
 changes delivery only; it is not consent and

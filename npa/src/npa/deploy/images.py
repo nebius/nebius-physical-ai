@@ -48,9 +48,7 @@ NCORE_IMAGE_MANIFEST_RESOURCE = "ncore_image_manifest.json"
 LIBERO_IMAGE_MANIFEST_RESOURCE = "libero_image_manifest.json"
 PUBLIC_RELEASE_MANIFEST_RESOURCE = "public_release_manifest.json"
 
-LIBERO_CUSTOMER_AUTHORIZATION_SCHEMA = (
-    "npa.libero.customer-runtime-authorization.v1"
-)
+LIBERO_CUSTOMER_AUTHORIZATION_SCHEMA = "npa.libero.customer-runtime-authorization.v2"
 LIBERO_AUTHENTICATED_CALLER_SCHEMA = "npa.libero.authenticated-caller.v1"
 LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV = (
     "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE"
@@ -68,7 +66,7 @@ LIBERO_UPSTREAM_SOURCE_REVISION = "8f1084e3132a39270c3a13ebe37270a43ece2a01"
 
 
 class LiberoCustomerAuthorizationDenied(RuntimeError):
-    """A valid control-plane signature records the customer's refusal."""
+    """Valid direct customer evidence records the customer's refusal."""
 
 
 LIBERO_BUILD_INPUT_PATHS = (
@@ -126,12 +124,8 @@ LIBERO_PUBLICATION_ENFORCEMENT_PYTHON_ROOTS = (
     "npa/src/npa",
     "npa/tests/e2e",
 )
-LIBERO_PUBLICATION_ENFORCEMENT_LIBERO_TEST_ROOTS = (
-    "npa/tests",
-)
-LIBERO_PUBLICATION_ENFORCEMENT_TEST_MARKER = (
-    b"# npa: publication-enforcement=libero"
-)
+LIBERO_PUBLICATION_ENFORCEMENT_LIBERO_TEST_ROOTS = ("npa/tests",)
+LIBERO_PUBLICATION_ENFORCEMENT_TEST_MARKER = b"# npa: publication-enforcement=libero"
 LIBERO_PUBLICATION_ENFORCEMENT_CRITICAL_TEST_REFERENCES = (
     b"_cleanup_libero_access_objects",
     b"_libero_external_rbac_inventory_sha256",
@@ -485,7 +479,9 @@ def content_agents_accepted_image_manifest() -> dict[str, Any]:
         .read_text(encoding="utf-8")
     )
     if not isinstance(payload, dict):
-        raise RuntimeError("Content Agents accepted image manifest must be a JSON object")
+        raise RuntimeError(
+            "Content Agents accepted image manifest must be a JSON object"
+        )
     if payload.get("format") != "npa_content_agents_accepted_image_manifest_v1":
         raise RuntimeError("Unsupported Content Agents accepted image manifest format")
     if payload.get("tag") != SUPPORTED_TOOL_VERSIONS["content-agents"]:
@@ -576,65 +572,42 @@ def _verify_libero_customer_authorization_signature(
         "signature_b64",
     }:
         raise RuntimeError(
-            "LIBERO customer authorization requires a closed control-plane signature"
+            "LIBERO customer authorization requires a closed customer signature"
         )
     if signature_record.get("algorithm") != "ed25519":
         raise RuntimeError(
             "LIBERO customer authorization requires an Ed25519 signature"
         )
-    key_path_value = public_key_file.strip() or os.environ.get(
-        LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV, ""
-    ).strip()
     try:
-        key_descriptor = os.open(
-            key_path_value,
-            os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        public_key = base64.b64decode(
+            str(payload.get("customer_signer_public_key_b64") or ""), validate=True
         )
-    except OSError as exc:
-        raise RuntimeError(
-            "LIBERO customer-authorization trust-root file is unavailable"
-        ) from exc
-    try:
-        before = os.fstat(key_descriptor)
-        with os.fdopen(key_descriptor, "rb", closefd=False) as key_stream:
-            encoded_key = key_stream.read()
-        after = os.fstat(key_descriptor)
-    finally:
-        os.close(key_descriptor)
-    if (
-        not stat.S_ISREG(before.st_mode)
-        or before.st_uid != os.getuid()
-        or before.st_nlink != 1
-        or stat.S_IMODE(before.st_mode) & 0o077
-        or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
-        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-        or encoded_key != encoded_key.strip()
-    ):
-        raise RuntimeError(
-            "LIBERO customer-authorization trust-root file is mutable or invalid"
-        )
-    try:
-        public_key = base64.b64decode(encoded_key, validate=True)
         signature = base64.b64decode(
             str(signature_record.get("signature_b64") or ""), validate=True
         )
     except (ValueError, binascii.Error) as exc:
-        raise RuntimeError(
-            "LIBERO customer-authorization signature material is invalid"
-        ) from exc
+        raise RuntimeError("LIBERO customer signature material is invalid") from exc
     if (
         len(public_key) != 32
         or len(signature) != 64
         or hashlib.sha256(public_key).hexdigest() != expected_public_key_sha256
         or signature_record.get("public_key_sha256") != expected_public_key_sha256
     ):
-        raise RuntimeError("LIBERO customer-authorization trust root differs")
+        raise RuntimeError("LIBERO customer signer identity differs")
+    if public_key_file:
+        transported = _libero_trust_root_bytes(
+            public_key_file, label="transported customer signer"
+        )
+        if not hmac.compare_digest(public_key, transported):
+            raise RuntimeError("LIBERO transported customer signer differs")
     try:
         Ed25519PublicKey.from_public_bytes(public_key).verify(
             signature, libero_customer_authorization_signature_payload(payload)
         )
     except (ValueError, InvalidSignature) as exc:
-        raise RuntimeError("LIBERO customer authorization signature is invalid") from exc
+        raise RuntimeError(
+            "LIBERO customer authorization signature is invalid"
+        ) from exc
 
 
 def _repository_file_bundle_sha256(
@@ -650,7 +623,9 @@ def _repository_file_bundle_sha256(
         try:
             payload = path.read_bytes()
         except OSError as exc:
-            raise RuntimeError(f"LIBERO build input is unavailable: {relative}") from exc
+            raise RuntimeError(
+                f"LIBERO build input is unavailable: {relative}"
+            ) from exc
         records.append(
             {
                 "path": relative,
@@ -732,10 +707,13 @@ def libero_publication_enforcement_paths(repository_root: Path) -> tuple[str, ..
             marked = LIBERO_PUBLICATION_ENFORCEMENT_TEST_MARKER in (
                 content.splitlines()
             )
-            if any(
-                reference in content
-                for reference in LIBERO_PUBLICATION_ENFORCEMENT_CRITICAL_TEST_REFERENCES
-            ) and not marked:
+            if (
+                any(
+                    reference in content
+                    for reference in LIBERO_PUBLICATION_ENFORCEMENT_CRITICAL_TEST_REFERENCES
+                )
+                and not marked
+            ):
                 unmarked_critical_tests.append(relative)
             if marked:
                 paths.add(relative)
@@ -869,9 +847,10 @@ def libero_customer_acceptance_notification(
         "acknowledgement": {
             "required": True,
             "instructions": (
-                "Review every listed official term in the authenticated NPA "
-                "customer/control-plane surface, then obtain a short-lived "
-                "authorization for this exact customer and run."
+                "Review every listed official term and authorize this exact "
+                "customer and run using a customer-controlled signing key. "
+                "NPA authenticates the caller and transports and validates "
+                "the evidence but does not accept or sign it."
             ),
             "refusal": (
                 "Decline or omit authorization to stop before runtime fetch, "
@@ -1023,8 +1002,7 @@ def validate_libero_qualified_image_manifest(payload: Any) -> dict[str, Any]:
         and package_version_digests == sorted(set(package_version_digests))
         and qualification.get("oci_digest") in package_version_digests
         and qualification.get("platform_manifest_digest") in package_version_digests
-        and qualification.get("attestation_manifest_digest")
-        in package_version_digests,
+        and qualification.get("attestation_manifest_digest") in package_version_digests,
         "closed package version digest set",
     )
     require(
@@ -1033,7 +1011,8 @@ def validate_libero_qualified_image_manifest(payload: Any) -> dict[str, Any]:
         "development SHA",
     )
     require(
-        qualification.get("upstream_source_revision") == LIBERO_UPSTREAM_SOURCE_REVISION,
+        qualification.get("upstream_source_revision")
+        == LIBERO_UPSTREAM_SOURCE_REVISION,
         "upstream source revision",
     )
     require(
@@ -1050,9 +1029,7 @@ def validate_libero_qualified_image_manifest(payload: Any) -> dict[str, Any]:
         "canonical_build_metadata_sha256": qualification.get(
             "canonical_build_metadata_sha256"
         ),
-        "attestation_manifest_digest": qualification.get(
-            "attestation_manifest_digest"
-        ),
+        "attestation_manifest_digest": qualification.get("attestation_manifest_digest"),
         "attestation_config_digest": qualification.get("attestation_config_digest"),
         "attestation_layers": attestation_layers,
         "package_version_digests": package_version_digests,
@@ -1106,7 +1083,9 @@ def validate_libero_qualified_image_manifest(payload: Any) -> dict[str, Any]:
             str(qualification["expires_at"]).replace("Z", "+00:00")
         )
     except (TypeError, ValueError) as exc:
-        raise RuntimeError("LIBERO qualification requires valid UTC timestamps") from exc
+        raise RuntimeError(
+            "LIBERO qualification requires valid UTC timestamps"
+        ) from exc
     current = datetime.now(timezone.utc)
     require(
         qualified_at.tzinfo is not None
@@ -1132,10 +1111,12 @@ def validate_libero_customer_runtime_authorization(
     image_manifest: dict[str, Any],
     run_id: str,
     customer_identity_sha256: str | None = None,
+    customer_signer_public_key_sha256: str | None = None,
+    executable_profile_sha256: str | None = None,
     public_key_file: str = "",
     now: datetime | None = None,
 ) -> tuple[dict[str, Any], str]:
-    """Validate one control-plane-issued customer/run authorization."""
+    """Validate direct customer-controlled evidence for one exact run."""
 
     try:
         authorization = json.loads(authorization_bytes)
@@ -1150,8 +1131,12 @@ def validate_libero_customer_runtime_authorization(
         "run_id",
         "candidate_image",
         "runtime_manifest_sha256",
+        "workflow_profile_sha256",
+        "upstream_source_revision",
         "terms",
         "issuer",
+        "evidence_type",
+        "customer_signer_public_key_b64",
         "acknowledged_at",
         "issued_at",
         "expires_at",
@@ -1185,15 +1170,26 @@ def validate_libero_customer_runtime_authorization(
             != customer_identity_sha256
         )
         or authorization.get("run_id") != run_id
-        or authorization.get("candidate_image")
-        != qualification.get("candidate_image")
+        or authorization.get("candidate_image") != qualification.get("candidate_image")
         or authorization.get("runtime_manifest_sha256")
         != image_manifest.get("runtime_manifest_sha256")
-        or authorization.get("terms") != expected_terms
-        or authorization.get("issuer") != "npa-customer-control-plane"
         or re.fullmatch(
-            r"[A-Za-z0-9_-]{32,128}", str(authorization.get("nonce") or "")
+            r"[0-9a-f]{64}", str(authorization.get("workflow_profile_sha256") or "")
         )
+        is None
+        or (
+            executable_profile_sha256 is not None
+            and not hmac.compare_digest(
+                str(authorization.get("workflow_profile_sha256")),
+                executable_profile_sha256,
+            )
+        )
+        or authorization.get("upstream_source_revision")
+        != qualification.get("upstream_source_revision")
+        or authorization.get("terms") != expected_terms
+        or authorization.get("issuer") != "customer"
+        or authorization.get("evidence_type") != "customer-controlled-signature"
+        or re.fullmatch(r"[A-Za-z0-9_-]{32,128}", str(authorization.get("nonce") or ""))
         is None
     ):
         raise RuntimeError(
@@ -1210,7 +1206,9 @@ def validate_libero_customer_runtime_authorization(
             str(authorization["expires_at"]).replace("Z", "+00:00")
         )
     except (TypeError, ValueError) as exc:
-        raise RuntimeError("LIBERO customer authorization timestamps are invalid") from exc
+        raise RuntimeError(
+            "LIBERO customer authorization timestamps are invalid"
+        ) from exc
     current = now or datetime.now(timezone.utc)
     if (
         acknowledged_at.tzinfo is None
@@ -1224,11 +1222,25 @@ def validate_libero_customer_runtime_authorization(
         or expires_at - issued_at > timedelta(hours=24)
     ):
         raise RuntimeError("LIBERO customer authorization is expired or replayable")
+    try:
+        customer_public_key = base64.b64decode(
+            str(authorization.get("customer_signer_public_key_b64") or ""),
+            validate=True,
+        )
+    except (ValueError, binascii.Error) as exc:
+        raise RuntimeError("LIBERO customer signer identity is invalid") from exc
+    customer_signer_sha256 = hashlib.sha256(customer_public_key).hexdigest()
+    if (
+        len(customer_public_key) != 32
+        or customer_signer_public_key_sha256 is None
+        or not hmac.compare_digest(
+            customer_signer_sha256, customer_signer_public_key_sha256
+        )
+    ):
+        raise RuntimeError("LIBERO customer signer identity differs")
     _verify_libero_customer_authorization_signature(
         authorization,
-        expected_public_key_sha256=qualification[
-            "customer_authorization_public_key_sha256"
-        ],
+        expected_public_key_sha256=customer_signer_sha256,
         public_key_file=public_key_file,
     )
     if authorization["status"] == "denied":
@@ -1301,12 +1313,15 @@ def validate_libero_authenticated_caller_assertion(
     try:
         assertion = json.loads(assertion_bytes)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise RuntimeError("LIBERO authenticated-caller assertion is invalid JSON") from exc
+        raise RuntimeError(
+            "LIBERO authenticated-caller assertion is invalid JSON"
+        ) from exc
     keys = {
         "schema",
         "issuer",
         "session_id",
         "customer_identity_sha256",
+        "customer_signer_public_key_sha256",
         "run_id",
         "issued_at",
         "expires_at",
@@ -1327,6 +1342,11 @@ def validate_libero_authenticated_caller_assertion(
             r"[0-9a-f]{64}", str(assertion.get("customer_identity_sha256") or "")
         )
         is None
+        or re.fullmatch(
+            r"[0-9a-f]{64}",
+            str(assertion.get("customer_signer_public_key_sha256") or ""),
+        )
+        is None
         or assertion.get("run_id") != run_id
         or re.fullmatch(r"[A-Za-z0-9_-]{32,128}", str(assertion.get("nonce") or ""))
         is None
@@ -1343,7 +1363,9 @@ def validate_libero_authenticated_caller_assertion(
             str(assertion["expires_at"]).replace("Z", "+00:00")
         )
     except (TypeError, ValueError) as exc:
-        raise RuntimeError("LIBERO authenticated-caller timestamps are invalid") from exc
+        raise RuntimeError(
+            "LIBERO authenticated-caller timestamps are invalid"
+        ) from exc
     current = now or datetime.now(timezone.utc)
     if (
         issued_at.tzinfo is None
@@ -1353,13 +1375,14 @@ def validate_libero_authenticated_caller_assertion(
         or expires_at <= current
         or expires_at - issued_at > timedelta(minutes=15)
     ):
-        raise RuntimeError("LIBERO authenticated-caller assertion is expired or replayable")
-    key_path = public_key_file.strip() or os.environ.get(
-        LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV, ""
-    ).strip()
-    public_key = _libero_trust_root_bytes(
-        key_path, label="authenticated-caller"
+        raise RuntimeError(
+            "LIBERO authenticated-caller assertion is expired or replayable"
+        )
+    key_path = (
+        public_key_file.strip()
+        or os.environ.get(LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV, "").strip()
     )
+    public_key = _libero_trust_root_bytes(key_path, label="authenticated-caller")
     fingerprint = hashlib.sha256(public_key).hexdigest()
     if signature.get("public_key_sha256") != fingerprint:
         raise RuntimeError("LIBERO authenticated-caller trust root differs")
@@ -1396,7 +1419,9 @@ def validate_libero_output_storage_authorization(
     try:
         authorization = json.loads(authorization_bytes)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise RuntimeError("LIBERO output storage authorization is invalid JSON") from exc
+        raise RuntimeError(
+            "LIBERO output storage authorization is invalid JSON"
+        ) from exc
     keys = {
         "schema",
         "issuer",
@@ -1449,7 +1474,9 @@ def validate_libero_output_storage_authorization(
             str(customer_authorization["expires_at"]).replace("Z", "+00:00")
         )
     except (KeyError, TypeError, ValueError) as exc:
-        raise RuntimeError("LIBERO output storage authorization timestamps are invalid") from exc
+        raise RuntimeError(
+            "LIBERO output storage authorization timestamps are invalid"
+        ) from exc
     current = now or datetime.now(timezone.utc)
     valid = (
         authorization.get("schema") == LIBERO_OUTPUT_STORAGE_AUTHORIZATION_SCHEMA
@@ -1461,7 +1488,9 @@ def validate_libero_output_storage_authorization(
         is not None
         and authorization.get("customer_identity_sha256")
         == customer_authorization.get("customer_identity_sha256")
-        and authorization.get("run_id") == run_id == customer_authorization.get("run_id")
+        and authorization.get("run_id")
+        == run_id
+        == customer_authorization.get("run_id")
         and authorization.get("candidate_image")
         == customer_authorization.get("candidate_image")
         == qualification.get("candidate_image")
@@ -1479,8 +1508,13 @@ def validate_libero_output_storage_authorization(
         == hashlib.sha256(session_token.encode()).hexdigest()
         and re.fullmatch(r"[0-9a-f]{64}", str(authorization.get("policy_sha256") or ""))
         is not None
-        and (not expected_policy_sha256 or authorization.get("policy_sha256") == expected_policy_sha256)
-        and re.fullmatch(r"[A-Za-z0-9_-]{32,128}", str(authorization.get("nonce") or ""))
+        and (
+            not expected_policy_sha256
+            or authorization.get("policy_sha256") == expected_policy_sha256
+        )
+        and re.fullmatch(
+            r"[A-Za-z0-9_-]{32,128}", str(authorization.get("nonce") or "")
+        )
         is not None
         and issued_at.tzinfo is not None
         and expires_at.tzinfo is not None
@@ -1492,12 +1526,16 @@ def validate_libero_output_storage_authorization(
     )
     if not valid:
         raise RuntimeError("LIBERO output storage authorization is invalid or expired")
-    customer_key_path = customer_public_key_file.strip() or os.environ.get(
-        LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV, ""
-    ).strip()
-    storage_key_path = storage_public_key_file.strip() or os.environ.get(
-        LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE_ENV, ""
-    ).strip()
+    customer_key_path = (
+        customer_public_key_file.strip()
+        or os.environ.get(LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV, "").strip()
+    )
+    storage_key_path = (
+        storage_public_key_file.strip()
+        or os.environ.get(
+            LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE_ENV, ""
+        ).strip()
+    )
     customer_key = _libero_trust_root_bytes(
         customer_key_path, label="customer-authorization"
     )
@@ -1507,13 +1545,16 @@ def validate_libero_output_storage_authorization(
     customer_fingerprint = hashlib.sha256(customer_key).hexdigest()
     storage_fingerprint = hashlib.sha256(storage_key).hexdigest()
     if (
-        customer_fingerprint != qualification["customer_authorization_public_key_sha256"]
+        customer_fingerprint
+        != qualification["customer_authorization_public_key_sha256"]
         or storage_fingerprint
         != qualification["output_storage_authorization_public_key_sha256"]
         or hmac.compare_digest(customer_fingerprint, storage_fingerprint)
         or signature.get("public_key_sha256") != storage_fingerprint
     ):
-        raise RuntimeError("LIBERO output storage trust root differs or is not independent")
+        raise RuntimeError(
+            "LIBERO output storage trust root differs or is not independent"
+        )
     try:
         signature_bytes = base64.b64decode(
             str(signature.get("signature_b64") or ""), validate=True
@@ -1523,7 +1564,9 @@ def validate_libero_output_storage_authorization(
             libero_output_storage_authorization_signature_payload(authorization),
         )
     except (ValueError, binascii.Error, InvalidSignature) as exc:
-        raise RuntimeError("LIBERO output storage authorization signature is invalid") from exc
+        raise RuntimeError(
+            "LIBERO output storage authorization signature is invalid"
+        ) from exc
     return authorization, hashlib.sha256(authorization_bytes).hexdigest()
 
 
@@ -1719,7 +1762,9 @@ def public_release_manifest() -> dict[str, Any]:
     if payload.get("format") != "npa_public_release_manifest_v1":
         raise RuntimeError("Unsupported public release manifest format")
     if payload.get("registry") != DEFAULT_PUBLIC_CONTAINER_REGISTRY:
-        raise RuntimeError("Public release manifest registry drifted from official GHCR")
+        raise RuntimeError(
+            "Public release manifest registry drifted from official GHCR"
+        )
     releases = payload.get("releases")
     pending = payload.get("publication_pending")
     if not isinstance(releases, dict) or not isinstance(pending, dict):
@@ -1731,12 +1776,17 @@ def public_release_manifest() -> dict[str, Any]:
         )
     for tool, entry in releases.items():
         if not isinstance(entry, dict):
-            raise RuntimeError(f"Public release manifest entry {tool!r} must be an object")
+            raise RuntimeError(
+                f"Public release manifest entry {tool!r} must be an object"
+            )
         if entry.get("tag") != public_release_tag_for_tool(tool):
             raise RuntimeError(f"Public release tag drifted for {tool!r}")
-        if re.fullmatch(
-            r"sha256:[0-9a-f]{64}", str(entry.get("published_digest") or "")
-        ) is None:
+        if (
+            re.fullmatch(
+                r"sha256:[0-9a-f]{64}", str(entry.get("published_digest") or "")
+            )
+            is None
+        ):
             raise RuntimeError(f"Public release digest is invalid for {tool!r}")
         development_sha = entry.get("development_sha")
         if development_sha is not None:
@@ -1863,7 +1913,10 @@ def sonic_image_variant_for_gpu(
             token = _normalize_gpu_target(str(match))
             # The family name also occurs in datacenter GPU labels. Those must
             # reach their model-specific rule, never the workstation default.
-            if token == "blackwell" and classify_gpu_target(normalized) == DATACENTER_HEADLESS:
+            if (
+                token == "blackwell"
+                and classify_gpu_target(normalized) == DATACENTER_HEADLESS
+            ):
                 continue
             if token in normalized:
                 if not requested:

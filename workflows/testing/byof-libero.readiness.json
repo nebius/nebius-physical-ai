@@ -2,16 +2,16 @@
   "schema_version": "workflow-readiness/v1",
   "solution": "libero",
   "status": "quarantined_unbuilt_unvalidated",
-  "workflow_sha256": "074fd21aeff11a5feee6e7203cac3828f68a596a97fa1685fe02bbfe7c752080",
-  "resource_profile_sha256": "14d98cef455a97011ddeff5f68e16dd694b8971719d7b30c3f459603f75f9682",
+  "workflow_sha256": "f188cb01b5dd567d793e5fb92c015d4527afb8d44e140fd49dd2c753d8d4962b",
+  "resource_profile_sha256": "54ed5a71a6ecb78c88efe603ec15dc1673e69e1f8ca4ce518904a33e4d1fe968",
   "input_sha256": {
-    "workflow": "074fd21aeff11a5feee6e7203cac3828f68a596a97fa1685fe02bbfe7c752080",
-    "resource_profile": "14d98cef455a97011ddeff5f68e16dd694b8971719d7b30c3f459603f75f9682",
-    "runtime_manifest": "9c17c8b7df841520a855897b92cf07e38894841efeed4a2a65694cce3a0708e1",
+    "workflow": "f188cb01b5dd567d793e5fb92c015d4527afb8d44e140fd49dd2c753d8d4962b",
+    "resource_profile": "54ed5a71a6ecb78c88efe603ec15dc1673e69e1f8ca4ce518904a33e4d1fe968",
+    "runtime_manifest": "a319f5ac5fbd0eeb1390940eeda62828d621cd7dd0dd828789182024562c5b44",
     "runtime_requirements": "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99",
-    "runtime_bootstrap": "2bc58fe36eaa47f6588f0eb80ca189228a83247d2374793386da813b4e9f9a18",
-    "smoke": "4959102a280d64656ab67b0403f84378f3e1613241ebf772569ac511ecb4a45c",
-    "image_manifest": "03eb04aca2589f5d627185935924d3dd13a247f87ba7453751120f9d06c81fae"
+    "runtime_bootstrap": "e5251028236ff658be3dec9bc4cfdada0f1ffbf1c2a3776a5045d457b0f59261",
+    "smoke": "8cda6a6b4090b3b48f81f4a37bc3c4d26394b2360632cf7bdf22deed2297e774",
+    "image_manifest": "e5bfcd001564c80d9dcf20cd054b159c1f44f7ceabfdc9c2bde34de72a767c07"
   },
   "public_image_digest": "",
   "anonymous_pull_verified": false,
@@ -43,7 +43,7 @@
     },
     "worker_input": {
       "status": "blocked",
-      "reason": "The image contains only immutable metadata. All 135 artifact sizes and license classifications are reviewed, but runtime materialization remains disabled until the customer personally acknowledges the exact terms and the authenticated NPA customer/control-plane surface issues an exact customer/run authorization; no source, runtime, data, task, or model bytes were fetched during metadata review.",
+      "reason": "The image contains only immutable metadata. All 135 artifact sizes and license classifications are reviewed, but runtime materialization remains disabled until the customer personally acknowledges the exact terms and directly signs exact customer/run evidence with a customer-controlled key; NPA only authenticates, transports, and validates that evidence, and no source, runtime, data, task, or model bytes were fetched during metadata review.",
       "evidence": [
         "npa/docker/workbench/libero/runtime-manifest.json",
         "npa/docker/workbench/libero/REDISTRIBUTION.md"
@@ -51,7 +51,7 @@
     },
     "credentials": {
       "status": "blocked",
-      "reason": "Live use requires a mode-private customer/run authorization signed by the authenticated NPA customer/control-plane surface and bound to the exact terms, manifest, and qualified image. Image qualification, provider targets, and customer authorization are absent, and no repository value or HF/NGC credential stands in for acceptance.",
+      "reason": "Live use requires a mode-private direct customer-signed authorization bound to the authenticated customer and signer, run, complete workflow profile, exact terms, immutable source revision, manifest, and qualified image. Image qualification, provider targets, and customer authorization are absent, and no repository value, control-plane signature, or HF/NGC credential stands in for acceptance.",
       "evidence": [
         "npa/docker/workbench/libero/runtime-bootstrap.py",
         "docs/workbench/byof-libero.md"

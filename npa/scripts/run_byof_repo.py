@@ -38,7 +38,6 @@ from npa.workflows.byof.live import (
     resolve_byof_kubernetes_target,
     resolve_byof_profile_path,
 )
-from npa.workflows.byof.openpi import is_openpi_request, require_openpi_terms
 from npa.workflows.byof.postprocess import (
     PostprocessContext,
     has_registered_postprocess,
@@ -243,9 +242,7 @@ def _owner_private_file_bytes(path: Path, *, label: str) -> bytes:
     except FileNotFoundError as exc:
         raise ValueError(f"LIBERO {label} file is unavailable") from exc
     except OSError as exc:
-        raise ValueError(
-            f"LIBERO {label} file is unavailable or invalid"
-        ) from exc
+        raise ValueError(f"LIBERO {label} file is unavailable or invalid") from exc
     try:
         before = os.fstat(descriptor)
         with os.fdopen(descriptor, "rb", closefd=False) as stream:
@@ -263,9 +260,7 @@ def _owner_private_file_bytes(path: Path, *, label: str) -> bytes:
         or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
         != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
     ):
-        raise ValueError(
-            f"LIBERO {label} must be a stable owner-private regular file"
-        )
+        raise ValueError(f"LIBERO {label} must be a stable owner-private regular file")
     return authorization_bytes
 
 
@@ -794,15 +789,25 @@ bootstrap_apt_get() {
     fi
     verify_contract >/dev/null || exit $?
     prepare_private_state_directory || exit $?
+    exec 9>"$guard_runtime_dir/apt.lock" \
+        || { contract_failure private-state-lock-open 87; exit $?; }
+    flock -x 9 \
+        || { contract_failure private-state-lock-acquire 87; exit $?; }
     read_guard_state || exit $?
     operation=${1:-}
-    if [ "$operation" = update ] && [ -z "$state" ]; then
-        write_guard_state verified-update \
-            || { contract_failure private-state-write 87; exit $?; }
+    if [ "$operation" = update ]; then
+        case "$state" in
+        "")
+            write_guard_state verified-update \
+                || { contract_failure private-state-write 87; exit $?; }
+            ;;
+        verified-update|complete) ;;
+        *) contract_failure "unexpected-state:$state" 87; exit $? ;;
+        esac
         printf '%s\n' 'NPA_SKYPILOT_BOOTSTRAP_APT_BYPASSED status=0 operation=update'
         exit 0
     fi
-    if [ "$operation" = install ] && [ "$state" = verified-update ]; then
+    if [ "$operation" = install ] && { [ "$state" = verified-update ] || [ "$state" = complete ]; }; then
         shift
         requested=""
         while [ "$#" -gt 0 ]; do
@@ -821,13 +826,16 @@ bootstrap_apt_get() {
             contract_failure "unexpected-install:${requested# }" 87
             exit $?
         fi
-        write_guard_state complete \
-            || { contract_failure private-state-write 87; exit $?; }
+        if [ "$state" = verified-update ]; then
+            write_guard_state complete \
+                || { contract_failure private-state-write 87; exit $?; }
+        fi
         printf '%s\n' \
             'NPA_SKYPILOT_BOOTSTRAP_APT_BYPASSED status=0 operation=install package=fuse provider=fuse3'
         exit 0
     fi
-    exec "$real_apt_get" "$@"
+    contract_failure "unexpected-operation:${operation:-missing}:state:${state:-empty}" 87
+    exit $?
 }
 
 bootstrap_timeout() {
@@ -928,12 +936,12 @@ def _dockerfile_text() -> str:
         "    set -eu; \\\n"
         '    test -n "${BYOF_SOURCE_CACHE_KEY}"; \\\n'
         '    repo_url="${OSS_REPO_URL}"; repo_ref="${OSS_REPO_REF}"; \\\n'
-        "    if [ -s /run/secrets/npa_byof_repo_url ]; then repo_url=\"$(cat /run/secrets/npa_byof_repo_url)\"; fi; \\\n"
-        "    if [ -s /run/secrets/npa_byof_repo_ref ]; then repo_ref=\"$(cat /run/secrets/npa_byof_repo_ref)\"; fi; \\\n"
+        '    if [ -s /run/secrets/npa_byof_repo_url ]; then repo_url="$(cat /run/secrets/npa_byof_repo_url)"; fi; \\\n'
+        '    if [ -s /run/secrets/npa_byof_repo_ref ]; then repo_ref="$(cat /run/secrets/npa_byof_repo_ref)"; fi; \\\n'
         '    source_prune_path="${BYOF_SOURCE_PRUNE_PATH}"; \\\n'
-        "    if [ -s /run/secrets/npa_byof_source_prune_path ]; then source_prune_path=\"$(cat /run/secrets/npa_byof_source_prune_path)\"; fi; \\\n"
+        '    if [ -s /run/secrets/npa_byof_source_prune_path ]; then source_prune_path="$(cat /run/secrets/npa_byof_source_prune_path)"; fi; \\\n'
         "    export GIT_TERMINAL_PROMPT=0; \\\n"
-        "    git_with_auth() { git \"$@\"; }; \\\n"
+        '    git_with_auth() { git "$@"; }; \\\n'
         "    if [ -s /run/secrets/npa_byof_repo_token ]; then \\\n"
         "      printf '%s\\n' '#!/bin/sh' \\\n"
         "        '[ \"$1\" = get ] || exit 0' \\\n"
@@ -942,15 +950,15 @@ def _dockerfile_text() -> str:
         "        'printf \"\\\\n\\\\n\"' \\\n"
         "        > /tmp/npa-byof-git-credential; \\\n"
         "      chmod 700 /tmp/npa-byof-git-credential; \\\n"
-        "      git_with_auth() { git -c credential.useHttpPath=true -c credential.helper=/tmp/npa-byof-git-credential \"$@\"; }; \\\n"
+        '      git_with_auth() { git -c credential.useHttpPath=true -c credential.helper=/tmp/npa-byof-git-credential "$@"; }; \\\n'
         "    fi; \\\n"
         f'    git_with_auth clone --depth 1 --branch "$repo_ref" "$repo_url" {BYOF_REPO_MOUNT} \\\n'
         f"    || (rm -rf {BYOF_REPO_MOUNT}; \\\n"
         f'      git_with_auth clone "$repo_url" {BYOF_REPO_MOUNT}; \\\n'
-        f"      cd {BYOF_REPO_MOUNT}; git checkout \"$repo_ref\"); \\\n"
+        f'      cd {BYOF_REPO_MOUNT}; git checkout "$repo_ref"); \\\n'
         f'    observed_commit="$(git -C {BYOF_REPO_MOUNT} rev-parse HEAD)"; \\\n'
-        '    git_objects_removed=false; \\\n'
-        '    source_pruned=false; \\\n'
+        "    git_objects_removed=false; \\\n"
+        "    source_pruned=false; \\\n"
         '    if [ -n "${source_prune_path}" ]; then \\\n'
         '      case "${source_prune_path}" in /*|*..*|.git|.git/*|*/.git|*/.git/*) echo "invalid source prune path" >&2; exit 2;; esac; \\\n'
         '      old_ifs="$IFS"; IFS="/"; set -f; set -- $source_prune_path; set +f; IFS="$old_ifs"; \\\n'
@@ -959,11 +967,11 @@ def _dockerfile_text() -> str:
         '      test -e "$prune_target"; \\\n'
         f'      rm -rf -- "$prune_target" {BYOF_REPO_MOUNT}/.git; \\\n'
         '      test ! -e "$prune_target"; \\\n'
-        f'      test ! -e {BYOF_REPO_MOUNT}/.git; \\\n'
-        '      git_objects_removed=true; \\\n'
-        '      source_pruned=true; \\\n'
+        f"      test ! -e {BYOF_REPO_MOUNT}/.git; \\\n"
+        "      git_objects_removed=true; \\\n"
+        "      source_pruned=true; \\\n"
         "    fi; \\\n"
-        f"    if [ \"${{BYOF_SOURCE_VISIBILITY}}\" = private ]; then \\\n"
+        f'    if [ "${{BYOF_SOURCE_VISIBILITY}}" = private ]; then \\\n'
         "      repo_sha=\"$(printf '%s' \"$repo_url\" | sha256sum | cut -d' ' -f1)\"; \\\n"
         "      ref_sha=\"$(printf '%s' \"$repo_ref\" | sha256sum | cut -d' ' -f1)\"; \\\n"
         "      commit_sha=\"$(printf '%s' \"$observed_commit\" | sha256sum | cut -d' ' -f1)\"; \\\n"
@@ -971,9 +979,9 @@ def _dockerfile_text() -> str:
         '      if [ -n "$source_prune_path" ]; then prune_label="<private-source-prune-path>"; else prune_label=""; fi; \\\n'
         f"      rm -rf {BYOF_REPO_MOUNT}/.git; \\\n"
         f"      test ! -e {BYOF_REPO_MOUNT}/.git; git_objects_removed=true; \\\n"
-        f"      printf '{{\"source\":\"private-byof\",\"repository_sha256\":\"%s\",\"ref_sha256\":\"%s\",\"commit\":\"<private-commit>\",\"commit_sha256\":\"%s\",\"source_prune_path\":\"%s\",\"source_prune_path_sha256\":\"%s\",\"source_pruned\":%s,\"git_objects_removed\":%s}}\\n' \"$repo_sha\" \"$ref_sha\" \"$commit_sha\" \"$prune_label\" \"$prune_sha\" \"$source_pruned\" \"$git_objects_removed\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
+        f'      REPO_SHA="$repo_sha" REF_SHA="$ref_sha" COMMIT_SHA="$commit_sha" PRUNE_LABEL="$prune_label" PRUNE_SHA="$prune_sha" SOURCE_PRUNED="$source_pruned" GIT_OBJECTS_REMOVED="$git_objects_removed" python3 -c \'import json, os; print(json.dumps({{"source":"private-byof","repository_sha256":os.environ["REPO_SHA"],"ref_sha256":os.environ["REF_SHA"],"commit":"<private-commit>","commit_sha256":os.environ["COMMIT_SHA"],"source_prune_path":os.environ["PRUNE_LABEL"],"source_prune_path_sha256":os.environ["PRUNE_SHA"],"source_pruned":os.environ["SOURCE_PRUNED"]=="true","git_objects_removed":os.environ["GIT_OBJECTS_REMOVED"]=="true"}}, sort_keys=True))\' > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n'
         "    else \\\n"
-        f"      printf '{{\\n  \"source\": \"oss-byof\",\\n  \"repo\": \"%s\",\\n  \"ref\": \"%s\",\\n  \"commit\": \"%s\",\\n  \"source_prune_path\": \"%s\",\\n  \"source_pruned\": %s,\\n  \"git_objects_removed\": %s\\n}}\\n' \"$repo_url\" \"$repo_ref\" \"$observed_commit\" \"$source_prune_path\" \"$source_pruned\" \"$git_objects_removed\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
+        f'      REPO_URL="$repo_url" REPO_REF="$repo_ref" OBSERVED_COMMIT="$observed_commit" SOURCE_PRUNE_PATH="$source_prune_path" SOURCE_PRUNED="$source_pruned" GIT_OBJECTS_REMOVED="$git_objects_removed" python3 -c \'import json, os; print(json.dumps({{"source":"oss-byof","repo":os.environ["REPO_URL"],"ref":os.environ["REPO_REF"],"commit":os.environ["OBSERVED_COMMIT"],"source_prune_path":os.environ["SOURCE_PRUNE_PATH"],"source_pruned":os.environ["SOURCE_PRUNED"]=="true","git_objects_removed":os.environ["GIT_OBJECTS_REMOVED"]=="true"}}, sort_keys=True))\' > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n'
         "    fi; \\\n"
         "    rm -f /tmp/npa-byof-git-credential; \\\n"
         f"    chown -R ubuntu:ubuntu {BYOF_REPO_MOUNT}\n"
@@ -1243,25 +1251,6 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 1
-    if is_openpi_request(
-        solution_name=args.solution_name,
-        repo_url=args.repo_url,
-        smoke_command=args.smoke_command,
-    ):
-        try:
-            require_openpi_terms()
-        except ValueError as exc:
-            print(
-                json.dumps(
-                    {
-                        "status": "failed",
-                        "solution_name": args.solution_name or "openpi",
-                        "error": str(exc),
-                    },
-                    indent=2,
-                )
-            )
-            return 1
     explicit_base = _normalize_optional(args.base_image)
     if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME:
         explicit_base = _libero_qualified_candidate(
@@ -1486,37 +1475,37 @@ def _run_byof(
                     )
                     try:
                         build_cmd = [
-                                "docker",
-                                "build",
-                                "--platform",
-                                "linux/amd64",
-                                "--build-arg",
-                                f"BYOF_BASE_IMAGE={base_image}",
-                                "--build-arg",
-                                f"BYOF_BASE_IMAGE_DIGEST={_immutable_image_digest(base_image)}",
-                                "--build-arg",
-                                f"BYOF_SOURCE_VISIBILITY={'private' if source_secrets else 'public'}",
-                                "--build-arg",
-                                (
-                                    "BYOF_SOURCE_CACHE_KEY="
-                                    + (
-                                        source_secrets.repository_sha256
-                                        + source_secrets.ref_sha256
-                                        + source_secrets.source_prune_path_sha256
-                                        if source_secrets
-                                        else "public"
-                                    )
-                                ),
-                                "--build-arg",
-                                f"BYOF_SOURCE_LABEL_REPO={'<private-repository>' if source_secrets else args.repo_url}",
-                                "--build-arg",
-                                f"BYOF_SOURCE_LABEL_REF={'<private-ref>' if source_secrets else args.repo_ref}",
-                                "--build-arg",
-                                f"BYOF_BUILD_COMMAND={args.build_command}",
-                                "-t",
-                                image,
-                                str(context),
-                            ]
+                            "docker",
+                            "build",
+                            "--platform",
+                            "linux/amd64",
+                            "--build-arg",
+                            f"BYOF_BASE_IMAGE={base_image}",
+                            "--build-arg",
+                            f"BYOF_BASE_IMAGE_DIGEST={_immutable_image_digest(base_image)}",
+                            "--build-arg",
+                            f"BYOF_SOURCE_VISIBILITY={'private' if source_secrets else 'public'}",
+                            "--build-arg",
+                            (
+                                "BYOF_SOURCE_CACHE_KEY="
+                                + (
+                                    source_secrets.repository_sha256
+                                    + source_secrets.ref_sha256
+                                    + source_secrets.source_prune_path_sha256
+                                    if source_secrets
+                                    else "public"
+                                )
+                            ),
+                            "--build-arg",
+                            f"BYOF_SOURCE_LABEL_REPO={'<private-repository>' if source_secrets else args.repo_url}",
+                            "--build-arg",
+                            f"BYOF_SOURCE_LABEL_REF={'<private-ref>' if source_secrets else args.repo_ref}",
+                            "--build-arg",
+                            f"BYOF_BUILD_COMMAND={args.build_command}",
+                            "-t",
+                            image,
+                            str(context),
+                        ]
                         if source_secrets is None:
                             build_cmd[8:8] = [
                                 "--build-arg",

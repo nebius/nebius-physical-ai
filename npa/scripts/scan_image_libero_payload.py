@@ -37,7 +37,7 @@ BASE_PROVENANCE_SHA256 = (
 )
 BASE_SOURCE_REVISION = "688a0b86bb44289df16a363e9f41d90514c1a5f9"
 RUNTIME_MANIFEST_SHA256 = (
-    "9c17c8b7df841520a855897b92cf07e38894841efeed4a2a65694cce3a0708e1"
+    "a319f5ac5fbd0eeb1390940eeda62828d621cd7dd0dd828789182024562c5b44"
 )
 RUNTIME_MANIFEST = (
     Path(__file__).resolve().parents[1]
@@ -189,7 +189,7 @@ FORBIDDEN_PAYLOAD_CONTENT: tuple[re.Pattern[bytes], ...] = (
 )
 NEUTRAL_PAYLOAD_CONTENT_ALLOWLIST = {
     "opt/npa/libero/libero_smoke.py": (
-        "4959102a280d64656ab67b0403f84378f3e1613241ebf772569ac511ecb4a45c"
+        "8cda6a6b4090b3b48f81f4a37bc3c4d26394b2360632cf7bdf22deed2297e774"
     )
 }
 NEVER_MATCH_ELF = re.compile(rb"(?!)")
@@ -366,10 +366,15 @@ def canonical_build_metadata_bytes(metadata: dict[str, Any]) -> bytes:
             or not uri
             or not isinstance(digests, dict)
             or not digests
-            or any(not isinstance(key, str) or not isinstance(value, str) for key, value in digests.items())
+            or any(
+                not isinstance(key, str) or not isinstance(value, str)
+                for key, value in digests.items()
+            )
         ):
             raise RuntimeError("Buildx provenance material identity is invalid")
-        canonical_materials.append({"uri": uri, "digest": dict(sorted(digests.items()))})
+        canonical_materials.append(
+            {"uri": uri, "digest": dict(sorted(digests.items()))}
+        )
     canonical_materials.sort(
         key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":"))
     )
@@ -530,7 +535,9 @@ def _uncompressed_tar_file(path: Path) -> Any:
         while chunk := stream.read(1024 * 1024):
             total += len(chunk)
             if total > MAX_UNCOMPRESSED_ARCHIVE_BYTES:
-                raise RuntimeError("uncompressed archive exceeds the scanner size budget")
+                raise RuntimeError(
+                    "uncompressed archive exceeds the scanner size budget"
+                )
             digest.update(chunk)
             if temporary is not None:
                 temporary.write(chunk)
@@ -576,7 +583,9 @@ def _archive_records(
                         normalized = _normalized_tar_path(member.name)
                     except ValueError as exc:
                         findings.append(
-                            walker.Finding("unsafe_archive_member", member.name, str(exc))
+                            walker.Finding(
+                                "unsafe_archive_member", member.name, str(exc)
+                            )
                         )
                         continue
                     if member.offset < cursor or member.offset_data < member.offset:
@@ -618,11 +627,12 @@ def _archive_records(
                         )
                     descriptor: tuple[object, ...]
                     if member.isfile():
-                        content = memoryview(mapped)[member.offset_data:data_end]
+                        content = memoryview(mapped)[member.offset_data : data_end]
                         content_sha256 = hashlib.sha256(content).hexdigest()
                         descriptor = ("file", member.size, content_sha256)
                         forbidden = scan_payload_content and any(
-                            pattern.search(content) for pattern in FORBIDDEN_PAYLOAD_CONTENT
+                            pattern.search(content)
+                            for pattern in FORBIDDEN_PAYLOAD_CONTENT
                         )
                         if forbidden and (
                             NEUTRAL_PAYLOAD_CONTENT_ALLOWLIST.get(normalized)
@@ -653,14 +663,21 @@ def _archive_records(
                             target = _normalized_tar_path(member.linkname)
                         except ValueError as exc:
                             findings.append(
-                                walker.Finding("unsafe_archive_hardlink", normalized, str(exc))
+                                walker.Finding(
+                                    "unsafe_archive_hardlink", normalized, str(exc)
+                                )
                             )
                             target = ""
                         descriptor = ("hardlink", target)
-                    elif member.ischr() and member.devmajor == 0 and member.devminor == 0:
+                    elif (
+                        member.ischr() and member.devmajor == 0 and member.devminor == 0
+                    ):
                         descriptor = ("whiteout-device", member.size)
                     else:
-                        descriptor = ("unsupported", member.type.decode(errors="replace"))
+                        descriptor = (
+                            "unsupported",
+                            member.type.decode(errors="replace"),
+                        )
                         findings.append(
                             walker.Finding(
                                 "unsupported_archive_member",
@@ -925,9 +942,7 @@ def _accepted_lineage_findings(
         canonical_metadata = canonical_build_metadata_bytes(build_metadata)
     except RuntimeError as exc:
         findings.append(
-            walker.Finding(
-                "accepted_build_lineage", "<buildx-metadata>", str(exc)
-            )
+            walker.Finding("accepted_build_lineage", "<buildx-metadata>", str(exc))
         )
         canonical_metadata = b""
     for kind, label, payload, expected in (
@@ -945,9 +960,14 @@ def _accepted_lineage_findings(
         ),
     ):
         observed = hashlib.sha256(payload).hexdigest()
-        if re.fullmatch(r"[0-9a-f]{64}", expected or "") is None or observed != expected:
+        if (
+            re.fullmatch(r"[0-9a-f]{64}", expected or "") is None
+            or observed != expected
+        ):
             findings.append(
-                walker.Finding(kind, label, "bytes differ from checked-in qualification")
+                walker.Finding(
+                    kind, label, "bytes differ from checked-in qualification"
+                )
             )
     return findings
 
@@ -1336,9 +1356,7 @@ def _build_oci_attestation_findings(
         attestations = [
             item
             for item in manifests
-            if (item[0].get("annotations") or {}).get(
-                "vnd.docker.reference.type"
-            )
+            if (item[0].get("annotations") or {}).get("vnd.docker.reference.type")
             == "attestation-manifest"
         ]
         if len(runtime) != 1 or len(attestations) != 1 or len(manifests) != 2:
@@ -1436,9 +1454,7 @@ def _build_oci_attestation_findings(
                 )
                 statement = json.loads(blob)
                 subjects = (
-                    statement.get("subject")
-                    if isinstance(statement, dict)
-                    else None
+                    statement.get("subject") if isinstance(statement, dict) else None
                 )
                 bound = isinstance(subjects, list) and any(
                     isinstance(subject, dict)
@@ -1447,8 +1463,7 @@ def _build_oci_attestation_findings(
                     for subject in subjects
                 )
                 if (
-                    str(layer.get("mediaType") or "")
-                    != "application/vnd.in-toto+json"
+                    str(layer.get("mediaType") or "") != "application/vnd.in-toto+json"
                     or not isinstance(statement, dict)
                     or statement.get("_type")
                     not in {
@@ -1600,7 +1615,9 @@ def scan_tars(
                 canonical_metadata
             ).hexdigest()
     if expected_base_provenance_sha256 is None:
-        expected_base_provenance_sha256 = hashlib.sha256(base_provenance_bytes).hexdigest()
+        expected_base_provenance_sha256 = hashlib.sha256(
+            base_provenance_bytes
+        ).hexdigest()
     return [
         *findings,
         *_renamed_payload_content_findings(layer_tars, config),

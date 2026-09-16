@@ -726,13 +726,13 @@ jobs:
           # Metadata only: this fetches Docker Official Images' published in-toto
           # provenance blob, not an image layer or a runtime payload.
           crane blob \
-            index.docker.io/library/python@sha256:0d66ce85e6ecad0d044a1d4bae712afe24ff2eb0a5d89eb224944df3895f226b \
+            index.docker.io/library/python sha256:0d66ce85e6ecad0d044a1d4bae712afe24ff2eb0a5d89eb224944df3895f226b \
             > "$RUNNER_TEMP/libero-base-provenance.intoto.json"
           echo \
             '0d66ce85e6ecad0d044a1d4bae712afe24ff2eb0a5d89eb224944df3895f226b  '"$RUNNER_TEMP/libero-base-provenance.intoto.json" | \
             sha256sum --check --strict
           crane blob \
-            index.docker.io/library/python@sha256:b290dbd3087fc5d2cf4af106f1d253c417a26080b70bdcf440ff96314a12c2bb \
+            index.docker.io/library/python sha256:b290dbd3087fc5d2cf4af106f1d253c417a26080b70bdcf440ff96314a12c2bb \
             > "$RUNNER_TEMP/libero-base-sbom.intoto.json"
           echo \
             'b290dbd3087fc5d2cf4af106f1d253c417a26080b70bdcf440ff96314a12c2bb  '"$RUNNER_TEMP/libero-base-sbom.intoto.json" | \
@@ -790,7 +790,7 @@ jobs:
           config = manifest.get("config") or {}
           if config.get("digest") != os.environ["LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST"]:
               raise SystemExit("qualified attestation config descriptor differs")
-          config_bytes = read(["crane", "blob", f"{repository}@{config['digest']}"])
+          config_bytes = read(["crane", "blob", repository, config["digest"]])
           if "sha256:" + hashlib.sha256(config_bytes).hexdigest() != config["digest"] or len(config_bytes) != config.get("size"):
               raise SystemExit("qualified attestation config bytes differ")
           expected_layers = json.loads(os.environ["LIBERO_QUALIFIED_ATTESTATION_LAYERS"])
@@ -800,7 +800,7 @@ jobs:
           for layer, expected in zip(layers, expected_layers, strict=True):
               if {"predicate_type": (layer.get("annotations") or {}).get("in-toto.io/predicate-type"), "digest": layer.get("digest"), "size_bytes": layer.get("size")} != expected:
                   raise SystemExit("qualified attestation layer descriptor differs")
-              payload = read(["crane", "blob", f"{repository}@{expected['digest']}"])
+              payload = read(["crane", "blob", repository, expected["digest"]])
               if len(payload) != expected["size_bytes"] or "sha256:" + hashlib.sha256(payload).hexdigest() != expected["digest"]:
                   raise SystemExit("qualified attestation layer bytes differ")
               statement = json.loads(payload)
@@ -1172,7 +1172,7 @@ jobs:
           subject-digest: ${{ steps.push.outputs.digest }}
           # LIBERO preserves its separately qualified embedded OCI graph. Its
           # immutable-action workflow attestation is not another GHCR version.
-          push-to-registry: ${{ matrix.tool != 'libero' }}
+          push-to-registry: ${{ matrix.tool != 'libero' && env.NPA_FIRST_PUBLICATION_REQUIRED != '1' }}
 
       - name: Attest exact pushed digest SBOM
         if: matrix.tool != 'ncore'
@@ -1183,7 +1183,7 @@ jobs:
           subject-name: ${{ steps.push.outputs.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
           sbom-path: ${{ runner.temp }}/${{ matrix.tool }}-sbom.spdx.json
-          push-to-registry: ${{ matrix.tool != 'libero' }}
+          push-to-registry: ${{ matrix.tool != 'libero' && env.NPA_FIRST_PUBLICATION_REQUIRED != '1' }}
 
       - name: Require both digest-bound attestation results
         if: matrix.tool != 'ncore'
@@ -1406,7 +1406,7 @@ jobs:
             test "$(jq -r '.config.digest' "$attestation_manifest")" = \
               "$LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST"
             config_blob="$RUNNER_TEMP/libero-final-attestation-config.json"
-            crane blob "${repository}@${LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST}" > "$config_blob"
+            crane blob "$repository" "$LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST" > "$config_blob"
             test "sha256:$(sha256sum "$config_blob" | cut -d ' ' -f 1)" = \
               "$LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST"
             expected_layers="$RUNNER_TEMP/libero-final-expected-layers.json"
@@ -1422,7 +1422,7 @@ jobs:
               layer_size="$(jq -r '.size_bytes' <<<"$expected")"
               predicate_type="$(jq -r '.predicate_type' <<<"$expected")"
               layer="$RUNNER_TEMP/libero-final-attestation-layer-$index.json"
-              crane blob "${repository}@${layer_digest}" > "$layer"
+              crane blob "$repository" "$layer_digest" > "$layer"
               test "$(wc -c < "$layer")" = "$layer_size"
               test "sha256:$(sha256sum "$layer" | cut -d ' ' -f 1)" = "$layer_digest"
               jq -e --arg predicate "$predicate_type" \
@@ -1438,17 +1438,20 @@ jobs:
             versions="$RUNNER_TEMP/${TOOL}-final-package-versions.json"
             gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"
             jq -e --arg root "$DIGEST" --arg tag "dev-$DEVELOPMENT_SHA" '
-              length >= 1 and
+              length == 1 and
               all(.[]; (.name | test("^sha256:[0-9a-f]{64}$"))) and
               ([.[] | select(.name == $root)] | length) == 1 and
-              all(.[];
-                if .name == $root
-                then (.metadata.container.tags // []) == [$tag]
-                else (.metadata.container.tags // []) == []
-                end)
+              all(.[]; .name == $root and (.metadata.container.tags // []) == [$tag])
             ' "$versions" >/dev/null
           fi
           if [ "$(gh api "$package_api" --jq .visibility)" != public ]; then
+            test "$(gh api "$package_api" --jq .visibility)" = private
+            test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
+              "$GITHUB_REPOSITORY"
+            adjacent_versions="$RUNNER_TEMP/${TOOL}-adjacent-package-versions.json"
+            gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$adjacent_versions"
+            test "$(jq -Sc '[.[] | {id:(.id|tostring),name,tags:(.metadata.container.tags // [])}] | sort_by(.id)' "$versions")" = \
+              "$(jq -Sc '[.[] | {id:(.id|tostring),name,tags:(.metadata.container.tags // [])}] | sort_by(.id)' "$adjacent_versions")"
             gh api --method PATCH "$package_api" -f visibility=public >/dev/null
           fi
           test "$(gh api "$package_api" --jq .visibility)" = public
@@ -1861,25 +1864,10 @@ jobs:
                       raise SystemExit("failed-build root candidate identity changed")
                   owned.append(row)
                   continue
-              if row["tags"]:
-                  unrelated.append(row)
-                  continue
-              manifest = json.loads(subprocess.check_output(["crane", "manifest", f"{repository}@{row['name']}"]))
-              annotations = manifest.get("annotations") or {}
-              subject = manifest.get("subject") or {}
-              if (
-                  manifest.get("schemaVersion") == 2
-                  and manifest.get("mediaType") == "application/vnd.oci.image.manifest.v1+json"
-                  and isinstance(manifest.get("layers"), list)
-                  and manifest["layers"]
-                  and (
-                      subject.get("digest") == root
-                      or annotations.get("vnd.docker.reference.digest") == root
-                  )
-              ):
-                  owned.append(row)
-              else:
-                  unrelated.append(row)
+              # A subject relationship is not proof that this run created a
+              # version. Preserve every identity except the exact root id,
+              # digest, and singleton tag captured from this run's push.
+              unrelated.append(row)
           owned.sort(key=lambda row: (row["name"] == root, row["id"]))
           unrelated.sort(key=lambda row: row["id"])
           with open(output_path, "w", encoding="utf-8") as stream:

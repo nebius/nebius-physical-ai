@@ -17,7 +17,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from fnmatch import fnmatchcase
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 from urllib.parse import urlparse
 
@@ -81,6 +81,7 @@ LIBERO_PAYLOAD_SERVICE_ACCOUNT = "npa-byof-libero-payload"
 LIBERO_PAYLOAD_ROLE = "npa-byof-libero-pod-reader"
 LIBERO_PAYLOAD_ROLE_BINDING = "npa-byof-libero-payload-pod-reader"
 LIBERO_PAYLOAD_UNBOUND_RESOURCE_NAME = "npa-libero-unbound-pod"
+LIBERO_PAYLOAD_RELEASE_ANNOTATION = "npa.nebius.com/libero-release"
 LIBERO_CONTROLLER_ROLE = f"{SKYPILOT_ENGINE_SERVICE_ACCOUNT}-role"
 LIBERO_CONTROLLER_ROLE_BINDING = f"{SKYPILOT_ENGINE_SERVICE_ACCOUNT}-role-binding"
 LIBERO_CONTROLLER_RULES = [
@@ -132,9 +133,7 @@ LIBERO_RUNTIME_MANIFEST = (
 #: one solution is forwarded into every other BYOF run whenever it happens to be
 #: set in the operator's shell. A solution that is not listed forwards none.
 OPERATOR_RUNTIME_ENVS_BY_SOLUTION: dict[str, tuple[str, ...]] = {
-    "openpi": ("NPA_OPENPI_ACCEPT_GEMMA_TERMS",),
     "ltx2.5": (
-        "NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS",
         # The gated-repository entitlement, which the container requires for the
         # LTX source as well as the weights.
         "HF_TOKEN",
@@ -276,8 +275,7 @@ def _uses_libero_payload_service_account(documents: list[dict[str, Any]]) -> boo
         pod_spec = pod_config.get("spec")
         if (
             isinstance(pod_spec, dict)
-            and pod_spec.get("serviceAccountName")
-            == LIBERO_PAYLOAD_SERVICE_ACCOUNT
+            and pod_spec.get("serviceAccountName") == LIBERO_PAYLOAD_SERVICE_ACCOUNT
         ):
             return True
     return False
@@ -290,6 +288,12 @@ def _sha256_json(value: Any) -> str:
 
 def _libero_allowed_node(global_config: dict[str, Any]) -> str:
     kubernetes = global_config.get("kubernetes") or {}
+    if not isinstance(kubernetes, dict) or not set(kubernetes) <= {
+        "allowed_nodes",
+        "allowed_contexts",
+        "pod_config",
+    }:
+        raise ValueError("LIBERO Kubernetes configuration is not closed")
     allowed = kubernetes.get("allowed_nodes") if isinstance(kubernetes, dict) else None
     if not isinstance(allowed, dict) or set(allowed) != {"names"}:
         raise ValueError(
@@ -303,7 +307,9 @@ def _libero_allowed_node(global_config: dict[str, Any]) -> str:
         or not names[0].strip()
         or names[0] != names[0].strip()
     ):
-        raise ValueError("LIBERO requires exactly one exact non-empty allowed node name")
+        raise ValueError(
+            "LIBERO requires exactly one exact non-empty allowed node name"
+        )
     return names[0]
 
 
@@ -343,13 +349,13 @@ def _mode_private_regular_file(value: str, *, label: str) -> Path:
         or metadata.st_uid != os.getuid()
         or metadata.st_mode & 0o077
     ):
-        raise ValueError(
-            f"LIBERO {label} must be an owner-private regular file"
-        )
+        raise ValueError(f"LIBERO {label} must be an owner-private regular file")
     return path.resolve()
 
 
-def _stable_owner_private_bytes(path: Path, *, label: str, limit: int = 8 << 20) -> bytes:
+def _stable_owner_private_bytes(
+    path: Path, *, label: str, limit: int = 8 << 20
+) -> bytes:
     """Snapshot one owner-private file through a stable no-follow descriptor."""
 
     try:
@@ -370,8 +376,7 @@ def _stable_owner_private_bytes(path: Path, *, label: str, limit: int = 8 << 20)
         or stat.S_IMODE(before.st_mode) & 0o077
         or len(payload) > limit
         or before.st_size != len(payload)
-        or identity
-        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+        or identity != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
     ):
         raise ValueError(f"LIBERO {label} is not a stable owner-private file")
     return payload
@@ -447,12 +452,10 @@ def _libero_isolated_state_root(path: Path | None, run_id: str) -> Path:
 
 
 def _libero_global_config_path(args: argparse.Namespace) -> str:
-    configured = args.config_path or os.environ.get(
-        "NPA_LIBERO_SKYPILOT_CONFIG", ""
-    ).strip()
-    return str(
-        _mode_private_regular_file(configured, label="SkyPilot global config")
+    configured = (
+        args.config_path or os.environ.get("NPA_LIBERO_SKYPILOT_CONFIG", "").strip()
     )
+    return str(_mode_private_regular_file(configured, label="SkyPilot global config"))
 
 
 def _libero_context_contract(
@@ -478,7 +481,9 @@ def _libero_context_contract(
         raise RuntimeError("LIBERO selected context has no namespace")
     selected_cluster = str(context_record.get("cluster") or "").strip()
     clusters = [
-        item for item in config.get("clusters") or [] if item.get("name") == selected_cluster
+        item
+        for item in config.get("clusters") or []
+        if item.get("name") == selected_cluster
     ]
     if len(clusters) != 1:
         raise RuntimeError("LIBERO selected cluster is absent or ambiguous")
@@ -782,7 +787,9 @@ def _reject_libero_cross_namespace_role_bindings(
             raise RuntimeError("LIBERO all-namespace RoleBinding is invalid")
         for subject in subjects:
             if not isinstance(subject, dict):
-                raise RuntimeError("LIBERO all-namespace RoleBinding subject is invalid")
+                raise RuntimeError(
+                    "LIBERO all-namespace RoleBinding subject is invalid"
+                )
             kind = subject.get("kind")
             name = subject.get("name")
             reaches_run_account = (
@@ -801,7 +808,9 @@ def _reject_libero_cross_namespace_role_bindings(
                 and binding_name
                 in {LIBERO_PAYLOAD_ROLE_BINDING, LIBERO_CONTROLLER_ROLE_BINDING}
             )
-            if (reaches_run_account or reaches_run_group) and not intended_local_binding:
+            if (
+                reaches_run_account or reaches_run_group
+            ) and not intended_local_binding:
                 raise RuntimeError(
                     "LIBERO service accounts may not receive cross-namespace "
                     "RoleBindings"
@@ -841,11 +850,11 @@ def _libero_external_rbac_inventory_sha256(
 ) -> str:
     records = [
         *_reject_libero_cluster_role_bindings(kubeconfig, context, namespace),
-        *_reject_libero_cross_namespace_role_bindings(
-            kubeconfig, context, namespace
-        ),
+        *_reject_libero_cross_namespace_role_bindings(kubeconfig, context, namespace),
     ]
-    records.sort(key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")))
+    records.sort(
+        key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":"))
+    )
     return _sha256_json(records)
 
 
@@ -1000,9 +1009,7 @@ def _libero_rbac_evidence(
         "serviceaccount",
         LIBERO_PAYLOAD_SERVICE_ACCOUNT,
     )
-    role = _libero_resource(
-        kubeconfig, context, namespace, "role", LIBERO_PAYLOAD_ROLE
-    )
+    role = _libero_resource(kubeconfig, context, namespace, "role", LIBERO_PAYLOAD_ROLE)
     binding = _libero_resource(
         kubeconfig,
         context,
@@ -1028,7 +1035,9 @@ def _libero_rbac_evidence(
             "LIBERO payload Role is not scoped to the exact Pod resourceName"
         )
     if binding.get("subjects") != subjects or binding.get("roleRef") != role_ref:
-        raise RuntimeError("LIBERO payload RoleBinding differs from the reviewed contract")
+        raise RuntimeError(
+            "LIBERO payload RoleBinding differs from the reviewed contract"
+        )
     external_rbac_inventory_sha256 = _libero_external_rbac_inventory_sha256(
         kubeconfig, context, namespace
     )
@@ -1039,9 +1048,7 @@ def _libero_rbac_evidence(
         "service_account_uid_sha256": hashlib.sha256(
             account["metadata"]["uid"].encode()
         ).hexdigest(),
-        "role_uid_sha256": hashlib.sha256(
-            role["metadata"]["uid"].encode()
-        ).hexdigest(),
+        "role_uid_sha256": hashlib.sha256(role["metadata"]["uid"].encode()).hexdigest(),
         "role_binding_uid_sha256": hashlib.sha256(
             binding["metadata"]["uid"].encode()
         ).hexdigest(),
@@ -1099,6 +1106,9 @@ def _bind_libero_runtime_contract(
 ) -> LiberoRuntimeBinding | None:
     if not _is_libero_invocation(args, documents):
         return None
+    from npa.execution_preflight import libero_executable_profile_sha256
+
+    executable_profile_sha256 = libero_executable_profile_sha256(documents)
     if args.solution_name.strip().lower() != LIBERO_SOLUTION_NAME:
         raise ValueError("the LIBERO profile requires --solution-name libero")
     if args.direct_launch:
@@ -1140,9 +1150,7 @@ def _bind_libero_runtime_contract(
         "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64", ""
     ).strip()
     try:
-        authorization_bytes = base64.b64decode(
-            encoded_authorization, validate=True
-        )
+        authorization_bytes = base64.b64decode(encoded_authorization, validate=True)
     except (ValueError, binascii.Error) as exc:
         raise ValueError("LIBERO customer authorization secret is invalid") from exc
     try:
@@ -1152,6 +1160,10 @@ def _bind_libero_runtime_contract(
                 image_manifest=image_manifest,
                 run_id=run_id,
                 customer_identity_sha256=authenticated_customer_identity,
+                customer_signer_public_key_sha256=str(
+                    caller["customer_signer_public_key_sha256"]
+                ),
+                executable_profile_sha256=executable_profile_sha256,
             )
         )
     except RuntimeError as exc:
@@ -1168,8 +1180,7 @@ def _bind_libero_runtime_contract(
     ).hexdigest()
     if (
         runtime_manifest_sha256 != qualification["runtime_manifest_sha256"]
-        or runtime_manifest_sha256
-        != customer_authorization["runtime_manifest_sha256"]
+        or runtime_manifest_sha256 != customer_authorization["runtime_manifest_sha256"]
     ):
         raise ValueError("LIBERO runtime manifest differs from authorized lineage")
     build_metadata_sha256 = qualification["canonical_build_metadata_sha256"]
@@ -1206,7 +1217,9 @@ def _bind_libero_runtime_contract(
         require_namespace=True,
     )
     if payload_cluster_sha256 != execution_cluster_sha256:
-        raise ValueError("LIBERO payload and execution kubeconfigs select different clusters")
+        raise ValueError(
+            "LIBERO payload and execution kubeconfigs select different clusters"
+        )
     if execution_namespace != namespace:
         raise ValueError(
             "LIBERO payload and execution contexts must select the exact run namespace"
@@ -1278,15 +1291,19 @@ def _bind_libero_runtime_contract(
         envs["NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_AUTHORIZATION_SHA256"] = (
             output_authorization_sha256
         )
-        envs["NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_PREFIX_SHA256"] = (
-            hashlib.sha256(output_prefix.encode()).hexdigest()
-        )
+        envs["NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_PREFIX_SHA256"] = hashlib.sha256(
+            output_prefix.encode()
+        ).hexdigest()
         envs["NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256"] = (
             storage_authorization["policy_sha256"]
         )
-    task_names = {
-        str(document.get("name") or "").strip() for document in documents[1:]
-    }
+        envs["NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256"] = (
+            executable_profile_sha256
+        )
+        envs["NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256"] = str(
+            caller["customer_signer_public_key_sha256"]
+        )
+    task_names = {str(document.get("name") or "").strip() for document in documents[1:]}
     if task_names != {LIBERO_PROFILE_TASK_NAME}:
         raise ValueError("LIBERO requires one exact named SkyPilot task")
     return LiberoRuntimeBinding(
@@ -1348,7 +1365,9 @@ def _libero_payload_pod_record(
     if scheduler_job_id and display_name != _libero_managed_job_display_name(
         binding.task_name, scheduler_job_id
     ):
-        raise RuntimeError("LIBERO payload Pod differs from the submitted scheduler job")
+        raise RuntimeError(
+            "LIBERO payload Pod differs from the submitted scheduler job"
+        )
     if state.payload_pod_name and (
         pod_name != state.payload_pod_name
         or pod_uid != state.payload_pod_uid
@@ -1357,6 +1376,8 @@ def _libero_payload_pod_record(
         raise RuntimeError("LIBERO payload Pod identity changed after exact binding")
     if spec.get("serviceAccountName") != LIBERO_PAYLOAD_SERVICE_ACCOUNT:
         raise RuntimeError("LIBERO payload Pod used a different service account")
+    if spec.get("automountServiceAccountToken") is not True:
+        raise RuntimeError("LIBERO payload Pod release token contract is absent")
     containers = spec.get("containers")
     if (
         not isinstance(containers, list)
@@ -1366,7 +1387,57 @@ def _libero_payload_pod_record(
         or spec.get("initContainers")
         or spec.get("ephemeralContainers")
     ):
-        raise RuntimeError("LIBERO payload Pod differs from the accepted candidate image")
+        raise RuntimeError(
+            "LIBERO payload Pod differs from the accepted candidate image"
+        )
+    if any(
+        spec.get(name) not in (None, False)
+        for name in ("hostNetwork", "hostPID", "hostIPC", "shareProcessNamespace")
+    ) or spec.get("runtimeClassName") not in (None, ""):
+        raise RuntimeError("LIBERO payload Pod uses an unsafe host or runtime boundary")
+    pod_security = spec.get("securityContext") or {}
+    if (
+        pod_security.get("runAsNonRoot") is not True
+        or (pod_security.get("seccompProfile") or {}).get("type") != "RuntimeDefault"
+    ):
+        raise RuntimeError("LIBERO payload Pod security context is not confined")
+    container = containers[0]
+    security = container.get("securityContext") or {}
+    capabilities = security.get("capabilities") or {}
+    if (
+        security.get("privileged") not in (None, False)
+        or security.get("allowPrivilegeEscalation") is not False
+        or security.get("readOnlyRootFilesystem") is not True
+        or set(capabilities.get("drop") or ()) != {"ALL"}
+        or capabilities.get("add")
+        or any(port.get("hostPort") for port in (container.get("ports") or ()))
+    ):
+        raise RuntimeError("LIBERO payload container security context is not confined")
+    volumes = spec.get("volumes") or []
+    volume_types: dict[str, str] = {}
+    for volume in volumes:
+        if not isinstance(volume, dict) or not volume.get("name"):
+            raise RuntimeError("LIBERO payload volume identity is invalid")
+        kinds = set(volume) - {"name"}
+        if len(kinds) != 1 or not kinds <= {"emptyDir", "projected"}:
+            raise RuntimeError("LIBERO payload Pod contains a forbidden volume")
+        volume_types[str(volume["name"])] = next(iter(kinds))
+    safe_writable_roots = (
+        "/workspace",
+        str(PurePosixPath("/") / "tmp"),
+        str(PurePosixPath("/dev") / "shm"),
+    )
+    for mount in container.get("volumeMounts") or []:
+        mount_path = str(mount.get("mountPath") or "")
+        volume_type = volume_types.get(str(mount.get("name") or ""))
+        if volume_type is None or (
+            mount.get("readOnly") is not True
+            and not any(
+                mount_path == root or mount_path.startswith(root + "/")
+                for root in safe_writable_roots
+            )
+        ):
+            raise RuntimeError("LIBERO payload Pod contains a broad writable mount")
     evidence = {
         "payload_pod_name_sha256": hashlib.sha256(pod_name.encode()).hexdigest(),
         "payload_pod_uid_sha256": hashlib.sha256(pod_uid.encode()).hexdigest(),
@@ -1395,9 +1466,11 @@ def _libero_manager_live_evidence(
     resources = containers[0].get("resources") or {}
     requests = resources.get("requests") or {}
     limits = resources.get("limits") or {}
-    if str(limits.get("nvidia.com/gpu") or "") != "1" or str(
-        requests.get("nvidia.com/gpu") or limits.get("nvidia.com/gpu") or ""
-    ) != "1":
+    if (
+        str(limits.get("nvidia.com/gpu") or "") != "1"
+        or str(requests.get("nvidia.com/gpu") or limits.get("nvidia.com/gpu") or "")
+        != "1"
+    ):
         raise RuntimeError("LIBERO payload Pod did not request exactly one GPU")
     statuses = (pod.get("status") or {}).get("containerStatuses") or []
     if (
@@ -1407,10 +1480,14 @@ def _libero_manager_live_evidence(
         or statuses[0].get("name") != containers[0].get("name")
     ):
         raise RuntimeError("LIBERO payload container status is not exact")
-    image_ids = re.findall(r"sha256:[0-9a-f]{64}", str(statuses[0].get("imageID") or ""))
+    image_ids = re.findall(
+        r"sha256:[0-9a-f]{64}", str(statuses[0].get("imageID") or "")
+    )
     expected_digest = binding.candidate_image.rsplit("@", 1)[-1]
     if image_ids != [expected_digest]:
-        raise RuntimeError("LIBERO payload status differs from the accepted image digest")
+        raise RuntimeError(
+            "LIBERO payload status differs from the accepted image digest"
+        )
 
     execution_kubeconfig = binding.access_state.execution_kubeconfig
     if execution_kubeconfig is None:
@@ -1434,14 +1511,12 @@ def _libero_manager_live_evidence(
         or not node_metadata.get("creationTimestamp")
     ):
         raise RuntimeError("LIBERO live node identity is incomplete")
-    labels = node_metadata.get("labels") or {}
-    products = {
-        str(labels.get(key) or "").strip()
-        for key in ("nvidia.com/gpu.product", "nebius.com/gpu-name")
-        if labels.get(key)
-    }
-    if not products or any("B200" not in product.upper() for product in products):
-        raise RuntimeError("LIBERO live node is not independently labelled B200")
+    provider_id = str((node.get("spec") or {}).get("providerID") or "")
+    node_info = node_status.get("nodeInfo") or {}
+    machine_id = str(node_info.get("machineID") or "")
+    system_uuid = str(node_info.get("systemUUID") or "")
+    if not provider_id or not machine_id or not system_uuid:
+        raise RuntimeError("LIBERO live node provider identity is incomplete")
     try:
         allocatable_gpus = int(
             (node_status.get("allocatable") or {}).get("nvidia.com/gpu", 0)
@@ -1450,9 +1525,25 @@ def _libero_manager_live_evidence(
         raise RuntimeError("LIBERO live node GPU capacity is invalid") from exc
     if allocatable_gpus < 1:
         raise RuntimeError("LIBERO live node has no allocatable GPU")
-    product_sha256 = hashlib.sha256(
-        json.dumps(sorted(products), separators=(",", ":")).encode()
-    ).hexdigest()
+    exact_resource = "nvidia.com/b200"
+    try:
+        b200_count = int((node_status.get("allocatable") or {}).get(exact_resource, 0))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("LIBERO live node B200 inventory is invalid") from exc
+    allocated = statuses[0].get("allocatedResourcesStatus") or []
+    if (
+        b200_count < 1
+        or len(allocated) != 1
+        or allocated[0].get("name") != exact_resource
+        or not allocated[0].get("resources")
+        or len(allocated[0]["resources"]) != 1
+        or not str(allocated[0]["resources"][0].get("resourceID") or "").startswith(
+            "GPU-"
+        )
+    ):
+        raise RuntimeError(
+            "LIBERO live Pod lacks authoritative B200 allocation evidence"
+        )
     return {
         "schema": "npa.libero.manager-live-evidence.v1",
         "scheduler_job_id_sha256": hashlib.sha256(
@@ -1466,6 +1557,10 @@ def _libero_manager_live_evidence(
         "node_uid_sha256": hashlib.sha256(
             str(node_metadata["uid"]).encode()
         ).hexdigest(),
+        "provider_identity_sha256": hashlib.sha256(provider_id.encode()).hexdigest(),
+        "machine_identity_sha256": hashlib.sha256(
+            f"{machine_id}:{system_uuid}".encode()
+        ).hexdigest(),
         "service_account_uid_sha256": hashlib.sha256(
             binding.access_state.service_account_uid.encode()
         ).hexdigest(),
@@ -1473,9 +1568,50 @@ def _libero_manager_live_evidence(
         "gpu_family": "B200",
         "pod_gpu_count": 1,
         "node_allocatable_gpu_count": allocatable_gpus,
-        "node_gpu_products_sha256": product_sha256,
-        "observation_method": "manager_kubernetes_pod_status_and_node_labels",
+        "node_allocatable_b200_count": b200_count,
+        "device_resource_id_sha256": hashlib.sha256(
+            str(allocated[0]["resources"][0]["resourceID"]).encode()
+        ).hexdigest(),
+        "observation_method": "manager_kubernetes_provider_and_device_plugin",
     }
+
+
+def _revoke_libero_payload_access(binding: LiberoRuntimeBinding) -> None:
+    """Return the payload Role to its inert exact-name rule."""
+
+    _kubectl_json(
+        [
+            "--context",
+            binding.access_state.context,
+            "--namespace",
+            binding.access_state.namespace,
+            "patch",
+            "role",
+            LIBERO_PAYLOAD_ROLE,
+            "--type=json",
+            "--patch",
+            json.dumps(
+                [
+                    {
+                        "op": "test",
+                        "path": "/metadata/uid",
+                        "value": binding.access_state.role_uid,
+                    },
+                    {
+                        "op": "replace",
+                        "path": "/rules",
+                        "value": _libero_payload_rules(
+                            LIBERO_PAYLOAD_UNBOUND_RESOURCE_NAME
+                        ),
+                    },
+                ],
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        ],
+        purpose="LIBERO payload Role revocation",
+        kubeconfig=binding.access_state.kubeconfig,
+    )
 
 
 def _bind_libero_payload_pod_access(
@@ -1527,11 +1663,70 @@ def _bind_libero_payload_pod_access(
         purpose="LIBERO exact payload Role binding",
         kubeconfig=binding.access_state.kubeconfig,
     )
-    if (
-        (role.get("metadata") or {}).get("uid") != binding.access_state.role_uid
-        or role.get("rules") != bound_rules
-    ):
+    if (role.get("metadata") or {}).get(
+        "uid"
+    ) != binding.access_state.role_uid or role.get("rules") != bound_rules:
         raise RuntimeError("LIBERO payload Role exact binding was not observed")
+    release_value = hashlib.sha256(
+        f"{pod_uid}:{pod_name}:npa-libero-release-v1".encode()
+    ).hexdigest()
+    try:
+        execution_kubeconfig = binding.access_state.execution_kubeconfig
+        if execution_kubeconfig is None:
+            raise RuntimeError("LIBERO execution kubeconfig is unavailable")
+        released = _kubectl_json(
+            [
+                "--context",
+                binding.access_state.execution_context,
+                "--namespace",
+                binding.access_state.namespace,
+                "patch",
+                "pod",
+                pod_name,
+                "--type=json",
+                "--patch",
+                json.dumps(
+                    [
+                        {"op": "test", "path": "/metadata/uid", "value": pod_uid},
+                        {
+                            "op": "add",
+                            "path": "/metadata/annotations/npa.nebius.com~1libero-release",
+                            "value": release_value,
+                        },
+                    ],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            ],
+            purpose="LIBERO exact payload release",
+            kubeconfig=execution_kubeconfig,
+        )
+        released_metadata = released.get("metadata") or {}
+        if (
+            released_metadata.get("name") != pod_name
+            or released_metadata.get("uid") != pod_uid
+            or (released_metadata.get("annotations") or {}).get(
+                LIBERO_PAYLOAD_RELEASE_ANNOTATION
+            )
+            != release_value
+        ):
+            raise RuntimeError("LIBERO payload release identity differs")
+        reread, _ = _libero_payload_pod_record(
+            binding, scheduler_job_id=scheduler_job_id
+        )
+        reread_metadata = reread.get("metadata") or {}
+        if (
+            reread_metadata.get("name") != pod_name
+            or reread_metadata.get("uid") != pod_uid
+            or (reread_metadata.get("annotations") or {}).get(
+                LIBERO_PAYLOAD_RELEASE_ANNOTATION
+            )
+            != release_value
+        ):
+            raise RuntimeError("LIBERO payload Pod changed during exact release")
+    except Exception:
+        _revoke_libero_payload_access(binding)
+        raise
     observed, observed_state = _libero_rbac_evidence(
         binding.access_state.kubeconfig,
         binding.access_state.context,
@@ -1563,6 +1758,7 @@ def _bind_libero_payload_pod_access(
         "scheduler_job_id_sha256": hashlib.sha256(
             scheduler_job_id.encode()
         ).hexdigest(),
+        "payload_release_sha256": hashlib.sha256(release_value.encode()).hexdigest(),
     }
     bound = replace(binding, evidence=evidence, access_state=state)
     _libero_payload_pod_record(bound, scheduler_job_id=scheduler_job_id)
@@ -1590,6 +1786,12 @@ def _verify_libero_payload_unchanged(
     allow_bound_pod_absent: bool = False,
 ) -> None:
     state = binding.access_state
+
+    def refuse(message: str) -> None:
+        if state.payload_pod_name:
+            _revoke_libero_payload_access(binding)
+        raise RuntimeError(message)
+
     observed, observed_state = _libero_rbac_evidence(
         state.kubeconfig,
         state.context,
@@ -1607,26 +1809,32 @@ def _verify_libero_payload_unchanged(
             else name
         )
         if binding.evidence.get(expected_name) != value:
-            raise RuntimeError("LIBERO payload RBAC changed after binding")
+            refuse("LIBERO payload RBAC changed after binding")
     identities = (
         "namespace_uid",
         "service_account_uid",
         "role_uid",
         "role_binding_uid",
     )
-    if any(getattr(state, name) != getattr(observed_state, name) for name in identities):
-        raise RuntimeError("LIBERO payload RBAC identity changed after binding")
+    if any(
+        getattr(state, name) != getattr(observed_state, name) for name in identities
+    ):
+        refuse("LIBERO payload RBAC identity changed after binding")
     if state.payload_pod_name:
         try:
             _, pod_evidence = _libero_payload_pod_record(binding)
         except LookupError:
             if allow_bound_pod_absent:
+                _revoke_libero_payload_access(binding)
                 return
-            raise RuntimeError(
-                "LIBERO payload Pod disappeared before terminal status"
-            ) from None
-        if any(binding.evidence.get(name) != value for name, value in pod_evidence.items()):
-            raise RuntimeError("LIBERO payload Pod changed after exact binding")
+            refuse("LIBERO payload Pod disappeared before terminal status")
+        except RuntimeError:
+            _revoke_libero_payload_access(binding)
+            raise
+        if any(
+            binding.evidence.get(name) != value for name, value in pod_evidence.items()
+        ):
+            refuse("LIBERO payload Pod changed after exact binding")
 
 
 def _validate_libero_output_storage_authorization(
@@ -1662,14 +1870,16 @@ def _validate_libero_output_storage_authorization(
         or parsed_endpoint.query
         or parsed_endpoint.fragment
     ):
-        raise ValueError("LIBERO output storage endpoint must be an origin-only HTTPS URL")
-    encoded = os.environ.get(
-        "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64", ""
-    ).strip()
+        raise ValueError(
+            "LIBERO output storage endpoint must be an origin-only HTTPS URL"
+        )
+    encoded = os.environ.get("NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64", "").strip()
     try:
         payload = base64.b64decode(encoded, validate=True)
     except (ValueError, binascii.Error) as exc:
-        raise ValueError("LIBERO output storage authorization secret is invalid") from exc
+        raise ValueError(
+            "LIBERO output storage authorization secret is invalid"
+        ) from exc
     try:
         authorization, authorization_sha256 = (
             validate_libero_output_storage_authorization(
@@ -1855,16 +2065,15 @@ def _libero_output_storage_client() -> Any:
         raise ValueError(
             "LIBERO output storage requires one complete authorized credential triplet"
         )
-    endpoint_names = (
-        "AWS_ENDPOINT_URL_S3",
-        "AWS_ENDPOINT_URL",
-        "NEBIUS_S3_ENDPOINT",
-        "NPA_STORAGE_ENDPOINT",
-        "S3_ENDPOINT_URL",
-    )
     endpoints = {
         str(os.environ.get(name) or "").strip().rstrip("/")
-        for name in endpoint_names
+        for name in (
+            "AWS_ENDPOINT_URL_S3",
+            "AWS_ENDPOINT_URL",
+            "NEBIUS_S3_ENDPOINT",
+            "NPA_STORAGE_ENDPOINT",
+            "S3_ENDPOINT_URL",
+        )
         if os.environ.get(name)
     }
     if len(endpoints) != 1:
@@ -1879,9 +2088,47 @@ def _libero_output_storage_client() -> Any:
     )
 
 
+@dataclass(frozen=True)
+class OutputPrefixLease:
+    bucket: str
+    key: str
+    etag: str
+    version_id: str
+
+
+def _release_output_prefix_lease(lease: OutputPrefixLease) -> None:
+    """Delete only the exact version created by this manager transaction."""
+
+    client = _libero_output_storage_client()
+    try:
+        head = client.head_object(
+            Bucket=lease.bucket, Key=lease.key, VersionId=lease.version_id
+        )
+    except Exception as exc:  # noqa: BLE001 - 404 is provider-specific
+        response = getattr(exc, "response", {})
+        status = (response.get("ResponseMetadata") or {}).get("HTTPStatusCode")
+        if status == 404:
+            return
+        raise
+    if head.get("ETag") != lease.etag or head.get("VersionId") != lease.version_id:
+        raise RuntimeError("LIBERO output-prefix lease identity changed")
+    client.delete_object(Bucket=lease.bucket, Key=lease.key, VersionId=lease.version_id)
+    try:
+        client.head_object(
+            Bucket=lease.bucket, Key=lease.key, VersionId=lease.version_id
+        )
+    except Exception as exc:  # noqa: BLE001 - 404 is provider-specific
+        response = getattr(exc, "response", {})
+        status = (response.get("ResponseMetadata") or {}).get("HTTPStatusCode")
+        if status == 404:
+            return
+        raise
+    raise RuntimeError("LIBERO output-prefix lease cleanup is incomplete")
+
+
 def preflight_output_storage(
     *, output_root: str, run_id: str, libero: bool = False
-) -> None:
+) -> OutputPrefixLease | None:
     """Reserve a new S3 run prefix and prove it is writable before compute."""
 
     parsed = urlparse(_normalize_output_root(output_root))
@@ -1890,7 +2137,7 @@ def preflight_output_storage(
         raise ValueError("BYOF output root must be a valid s3:// URI")
     prefix = parsed.path.strip("/")
     run_prefix = "/".join(part for part in (prefix, run_id) if part).rstrip("/") + "/"
-    key = run_prefix + ".npa-write-preflight"
+    key = run_prefix + (".npa-output-lease" if libero else ".npa-write-preflight")
     if libero:
         client = _libero_output_storage_client()
     else:
@@ -1911,7 +2158,7 @@ def preflight_output_storage(
             raise RuntimeError(
                 "refusing to reuse a non-empty BYOF run prefix; choose a new run ID"
             )
-        client.put_object(
+        created_response = client.put_object(
             Bucket=bucket,
             Key=key,
             Body=b"npa BYOF write preflight\n",
@@ -1919,15 +2166,30 @@ def preflight_output_storage(
             IfNoneMatch="*",
         )
         created = True
-        head = client.head_object(Bucket=bucket, Key=key)
+        version_id = str(created_response.get("VersionId") or "")
+        etag = str(created_response.get("ETag") or "")
+        if libero and (not version_id or re.fullmatch(r'"[^\"]+"', etag) is None):
+            raise RuntimeError("output lease lacks immutable provider identity")
+        head_kwargs = {"Bucket": bucket, "Key": key}
+        if version_id:
+            head_kwargs["VersionId"] = version_id
+        head = client.head_object(**head_kwargs)
         if int(head.get("ContentLength", -1)) <= 0:
             raise RuntimeError("S3 write preflight object is unexpectedly empty")
+        if libero:
+            if head.get("ETag") != etag or head.get("VersionId") != version_id:
+                raise RuntimeError("output lease readback identity differs")
+            return OutputPrefixLease(bucket, key, etag, version_id)
         client.delete_object(Bucket=bucket, Key=key)
         created = False
+        return None
     except Exception as exc:  # noqa: BLE001 - preserve provider error as launch blocker
         if created:
             try:
-                client.delete_object(Bucket=bucket, Key=key)
+                delete_kwargs = {"Bucket": bucket, "Key": key}
+                if "version_id" in locals() and version_id:
+                    delete_kwargs["VersionId"] = version_id
+                client.delete_object(**delete_kwargs)
             except Exception:  # noqa: BLE001 - retain the original preflight failure
                 pass
         raise RuntimeError(
@@ -2127,9 +2389,7 @@ def _cancel_then_teardown_managed_job(
         "poll_interval": poll_interval,
     }
     try:
-        final, _ = _wait_for_terminal(
-            scheduler_job_id, wait_timeout=0, **status_kwargs
-        )
+        final, _ = _wait_for_terminal(scheduler_job_id, wait_timeout=0, **status_kwargs)
     except Exception:  # noqa: BLE001 - cleanup must still attempt exact cancellation
         final = None
     if final is None or final.status not in VERIFIED_DRAIN_STATUSES:
@@ -2478,8 +2738,7 @@ def _complete_libero_cleanup(
     cleanup.extend(access_cleanup)
     cleanup.verified = cleanup.verified and access_cleanup.verified
     cleanup.remote_absence_verified = (
-        cleanup.remote_absence_verified
-        and access_cleanup.remote_absence_verified
+        cleanup.remote_absence_verified and access_cleanup.remote_absence_verified
     )
     access_absent = bool(
         cleanup.ok and cleanup.verified and cleanup.remote_absence_verified
@@ -2515,8 +2774,7 @@ def _complete_libero_cleanup(
     cleanup.extend(local_cleanup)
     cleanup.verified = cleanup.verified and local_cleanup.verified
     cleanup.remote_absence_verified = (
-        cleanup.remote_absence_verified
-        and local_cleanup.remote_absence_verified
+        cleanup.remote_absence_verified and local_cleanup.remote_absence_verified
     )
     return cleanup, True, True
 
@@ -2547,7 +2805,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         cluster_name_patterns_for_run(run_id)
     outputs = {
         "root": output_root.rstrip("/") + f"/{run_id}/",
-        "summary": output_root.rstrip("/") + f"/{run_id}/npa_byof_summary.json",
+        "receipt": output_root.rstrip("/") + f"/{run_id}/npa_upload_receipt.json",
     }
 
     if args.render_only:
@@ -2572,9 +2830,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         previous_customer_authorization = os.environ.get(
             "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64"
         )
-        previous_payload_kubeconfig = os.environ.get(
-            "NPA_LIBERO_PAYLOAD_KUBECONFIG"
-        )
+        previous_payload_kubeconfig = os.environ.get("NPA_LIBERO_PAYLOAD_KUBECONFIG")
         sky_bin = str(
             resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN"))
         )
@@ -2595,44 +2851,36 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         early_cleanup_result: CleanupResult | None = None
         submission_started = False
         submission_absence_proven = False
+        output_lease: OutputPrefixLease | None = None
         try:
+            rendered_yaml = Path(tmp) / "byof-container.rendered.yaml"
+            infra = args.infra or _default_infra()
             if is_libero:
                 payload_source = _mode_private_regular_file(
                     os.environ.get("NPA_LIBERO_PAYLOAD_KUBECONFIG", ""),
                     label="payload kubeconfig",
                 )
-                payload_copy = _immutable_exact_run_copy(
-                    payload_source,
-                    isolated_config_dir / "libero-payload-kubeconfig",
-                    label="payload kubeconfig",
+                execution_source = _mode_private_regular_file(
+                    os.environ.get("KUBECONFIG", ""),
+                    label="NPA execution kubeconfig",
                 )
-                os.environ["NPA_LIBERO_PAYLOAD_KUBECONFIG"] = str(payload_copy)
-            _normalize_kubeconfig_current_context(tmp_path, immutable=is_libero)
-            rendered_yaml = Path(tmp) / "byof-container.rendered.yaml"
-            infra = args.infra or _default_infra()
-            if is_libero:
                 config_source = Path(_libero_global_config_path(args))
-                config_path = str(
-                    _immutable_exact_run_copy(
-                        config_source,
-                        isolated_config_dir / "libero-skypilot-config.yaml",
-                        label="SkyPilot global config",
-                    )
-                )
+                config_path = str(config_source)
             else:
+                _normalize_kubeconfig_current_context(tmp_path)
                 config_path = args.config_path or _write_default_k8s_config(
                     tmp_path, infra
                 )
             api_config_path = Path(config_path) if config_path else None
             global_config: dict[str, Any] = {}
             if config_path:
-                loaded_config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+                loaded_config = yaml.safe_load(
+                    Path(config_path).read_text(encoding="utf-8")
+                )
                 if loaded_config is not None and not isinstance(loaded_config, dict):
                     raise ValueError("SkyPilot global config must be a mapping")
                 global_config = loaded_config or {}
-            verify_solution_payload_service_accounts(
-                docs, global_config=global_config
-            )
+            verify_solution_payload_service_accounts(docs, global_config=global_config)
             libero_binding = _bind_libero_runtime_contract(
                 args,
                 docs,
@@ -2641,6 +2889,37 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 run_id=run_id,
             )
             if libero_binding is not None:
+                # Authentication, authorization, inline-secret rejection, and
+                # exact profile validation above are entirely in memory and
+                # use the owner-supplied inputs directly. Only now may the
+                # submission transaction create its immutable input copies.
+                payload_copy = _immutable_exact_run_copy(
+                    payload_source,
+                    isolated_config_dir / "libero-payload-kubeconfig",
+                    label="payload kubeconfig",
+                )
+                execution_copy = _immutable_exact_run_copy(
+                    execution_source,
+                    isolated_config_dir / "libero-execution-kubeconfig",
+                    label="execution kubeconfig",
+                )
+                config_copy = _immutable_exact_run_copy(
+                    config_source,
+                    isolated_config_dir / "libero-skypilot-config.yaml",
+                    label="SkyPilot global config",
+                )
+                os.environ["NPA_LIBERO_PAYLOAD_KUBECONFIG"] = str(payload_copy)
+                os.environ["KUBECONFIG"] = str(execution_copy)
+                config_path = str(config_copy)
+                api_config_path = config_copy
+                libero_binding = replace(
+                    libero_binding,
+                    access_state=replace(
+                        libero_binding.access_state,
+                        kubeconfig=payload_copy,
+                        execution_kubeconfig=execution_copy,
+                    ),
+                )
                 os.environ["NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64"] = (
                     libero_binding.customer_authorization_b64
                 )
@@ -2678,10 +2957,6 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 signal_previous_handlers = install_teardown_signal_handlers(
                     cleanup_active_transaction
                 )
-            _write_yaml_documents(rendered_yaml, docs)
-            preflight_output_storage(
-                output_root=output_root, run_id=run_id, libero=is_libero
-            )
             _ensure_infra_enabled(
                 sky_bin=sky_bin,
                 infra=infra,
@@ -2696,6 +2971,20 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     libero_binding, require_empty_inventory=True
                 )
                 _verify_libero_controller_unchanged(libero_binding)
+            output_lease = preflight_output_storage(
+                output_root=output_root, run_id=run_id, libero=is_libero
+            )
+            if libero_binding is not None:
+                if output_lease is None:
+                    raise RuntimeError("LIBERO output-prefix lease is unavailable")
+                for document in docs[1:]:
+                    envs = document.setdefault("envs", {})
+                    envs["NPA_LIBERO_EXPECTED_OUTPUT_LEASE_KEY"] = output_lease.key
+                    envs["NPA_LIBERO_EXPECTED_OUTPUT_LEASE_ETAG"] = output_lease.etag
+                    envs["NPA_LIBERO_EXPECTED_OUTPUT_LEASE_VERSION_ID"] = (
+                        output_lease.version_id
+                    )
+            _write_yaml_documents(rendered_yaml, docs)
             if args.direct_launch:
                 return _direct_launch(
                     rendered_yaml=rendered_yaml,
@@ -2719,10 +3008,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
             scheduler_job_id = ""
             submitted_config_path = Path(config_path) if config_path else None
             expected_submission_config_path = (
-                isolated_config_dir
-                / "submissions"
-                / run_id
-                / "skypilot-config.yaml"
+                isolated_config_dir / "submissions" / run_id / "skypilot-config.yaml"
                 if isolated_config_dir is not None
                 else None
             )
@@ -2794,6 +3080,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 )
             summary: dict[str, Any] | None = None
             return_code = 1
+            libero_live_evidence: dict[str, Any] | None = None
             try:
                 teardown_guard.mark_launched()
                 submit_config_path = Path(config_path) if config_path else None
@@ -2846,12 +3133,17 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 if libero_binding is not None:
 
                     def verify_libero_observation(status: str) -> None:
+                        nonlocal libero_live_evidence
                         _verify_libero_payload_unchanged(
                             libero_binding,
                             require_empty_inventory=False,
                             allow_bound_pod_absent=status in TERMINAL_STATUSES,
                         )
                         _verify_libero_controller_unchanged(libero_binding)
+                        if status == "RUNNING" and libero_live_evidence is None:
+                            libero_live_evidence = _libero_manager_live_evidence(
+                                libero_binding, scheduler_job_id
+                            )
 
                     observation_guard = verify_libero_observation
                 final, wait_diagnostics = _wait_for_terminal(
@@ -2867,11 +3159,11 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 summary["wait"] = wait_diagnostics
                 if libero_binding is not None:
                     if final.status == "SUCCEEDED":
-                        summary["libero_manager_live_evidence"] = (
-                            _libero_manager_live_evidence(
-                                libero_binding, scheduler_job_id
+                        if libero_live_evidence is None:
+                            raise RuntimeError(
+                                "LIBERO completed without retained live hardware evidence"
                             )
-                        )
+                        summary["libero_manager_live_evidence"] = libero_live_evidence
                     _verify_libero_payload_unchanged(
                         libero_binding,
                         require_empty_inventory=False,
@@ -2892,9 +3184,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 if transaction is not None and transaction.job_id:
                     reconciled_scheduler_job_id = True
                     try:
-                        scheduler_job_id = _exact_scheduler_job_id(
-                            transaction.job_id
-                        )
+                        scheduler_job_id = _exact_scheduler_job_id(transaction.job_id)
                     except ValueError:
                         scheduler_job_id = ""
                 if (
@@ -2921,9 +3211,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                         "status": "failed",
                         "error_type": type(exc).__name__,
                         "scheduler_job_id_recovered": bool(scheduler_job_id),
-                        "reconciled_scheduler_job_id": (
-                            reconciled_scheduler_job_id
-                        ),
+                        "reconciled_scheduler_job_id": (reconciled_scheduler_job_id),
                         "generated_config_recovered": generated_config_recovered,
                     },
                     "outputs": outputs,
@@ -3022,9 +3310,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     "errors": cleanup_result.errors,
                     "resources_removed": cleanup_result.resources_removed,
                     "verified": cleanup_result.verified,
-                    "remote_absence_verified": (
-                        cleanup_result.remote_absence_verified
-                    ),
+                    "remote_absence_verified": (cleanup_result.remote_absence_verified),
                 }
             print(json.dumps(summary or {"run_id": run_id}, indent=2, sort_keys=True))
             return return_code
@@ -3038,6 +3324,8 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 early_cleanup_result = active_signal_cleanup()
             if signal_previous_handlers is not None:
                 restore_signal_handlers(signal_previous_handlers)
+            if output_lease is not None:
+                _release_output_prefix_lease(output_lease)
             # Restore KUBECONFIG and stop the Sky API so a temp kubeconfig path
             # written under TemporaryDirectory cannot poison later sky launches.
             if previous_kubeconfig is None:

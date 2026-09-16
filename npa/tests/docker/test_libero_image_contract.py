@@ -54,21 +54,23 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
     assert "groupadd --gid 1001 npa-libero-exec" in text
     assert "useradd --no-log-init --uid 1001 --gid npa-libero-exec" in text
     assert (
-        "install -d -m 1770 -o ubuntu -g npa-libero-exec /workspace/byof-runs"
-        in text
+        "install -d -m 1770 -o ubuntu -g npa-libero-exec /workspace/byof-runs" in text
     )
-    assert "install -d -m 0770 -o ubuntu -g npa-libero-exec /workspace/byof-runs" not in text
+    assert (
+        "install -d -m 0770 -o ubuntu -g npa-libero-exec /workspace/byof-runs"
+        not in text
+    )
     assert "ubuntu ALL=(npa-libero-exec) NOPASSWD: NPA_LIBERO_EXEC" in text
     assert "NPA_LIBERO_EXEC = /opt/npa/libero/runtime-bootstrap.py execute" in text
     assert "Defaults!NPA_LIBERO_EXEC closefrom_override" in text
     exec_environment = next(
-        line for line in text.splitlines() if "Defaults!NPA_LIBERO_EXEC env_keep" in line
+        line
+        for line in text.splitlines()
+        if "Defaults!NPA_LIBERO_EXEC env_keep" in line
     )
     assert exec_environment.count("NPA_LIBERO_BOOTSTRAP_RECEIPT") == 1
     assert (
-        exec_environment.count(
-            "NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT"
-        )
+        exec_environment.count("NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT")
         == 1
     )
     assert "NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_ID" not in exec_environment
@@ -118,23 +120,19 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
     )
     assert "output-storage-authorization-public-key.b64" in text
     assert (
-        "customer-authorization-public-key.b64)\" != \\\n"
-        "      \"$(cat /opt/npa/libero/output-storage-authorization-public-key.b64)\""
+        'customer-authorization-public-key.b64)" != \\\n'
+        '      "$(cat /opt/npa/libero/output-storage-authorization-public-key.b64)"'
         in text
     )
     assert (
         "base64 -d /opt/npa/libero/customer-authorization-public-key.b64"
-        " \\\n      > /tmp/npa-libero-customer-authorization-public-key.raw"
-        in text
+        " \\\n      > /tmp/npa-libero-customer-authorization-public-key.raw" in text
     )
+    assert "wc -c < /tmp/npa-libero-customer-authorization-public-key.raw" in text
+    assert "base64 -w 0 < /tmp/npa-libero-customer-authorization-public-key.raw" in text
     assert (
-        "wc -c < /tmp/npa-libero-customer-authorization-public-key.raw" in text
+        "base64 -d /opt/npa/libero/customer-authorization-public-key.b64 |" not in text
     )
-    assert (
-        "base64 -w 0 < /tmp/npa-libero-customer-authorization-public-key.raw"
-        in text
-    )
-    assert "base64 -d /opt/npa/libero/customer-authorization-public-key.b64 |" not in text
     assert "chmod 0444 /opt/npa/libero/customer-authorization-public-key.b64" in text
     for forbidden in (
         "nvidia/cuda:",
@@ -287,7 +285,10 @@ def test_skypilot_failure_sentinels_do_not_follow_preplaced_symlinks(tmp_path) -
 
     result = subprocess.run(
         [keygen, "-f", str(tmp_path / "unexpected")],
-        env={"PATH": "/usr/bin:/bin"}, capture_output=True, text=True, check=False,
+        env={"PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=False,
     )
 
     expected = (
@@ -390,7 +391,7 @@ def test_runtime_manifest_is_metadata_only_and_never_an_acceptance_proxy() -> No
     )
     assert "ACCEPT_" not in serialized
     assert manifest["customer_runtime_authorization"] == {
-        "schema": "npa.libero.customer-runtime-authorization.v1",
+        "schema": "npa.libero.customer-runtime-authorization.v2",
         "required": True,
         "credentials_establish_acceptance": False,
     }
@@ -469,9 +470,7 @@ def test_image_manifest_binds_runtime_manifest_requirements_and_terms() -> None:
             "official_url": term["url"],
             "version": term["version"],
         }
-        for term in json.loads(MANIFEST.read_text(encoding="utf-8"))[
-            "governing_terms"
-        ]
+        for term in json.loads(MANIFEST.read_text(encoding="utf-8"))["governing_terms"]
     ]
 
 
@@ -552,21 +551,20 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
         )
         == 2
     )
-    assert 'history = subprocess.check_output(' in text
+    assert "history = subprocess.check_output(" in text
     assert 'if tool != "libero"' not in text
     assert "--provenance=mode=max" in text
     assert "--sbom=true" in text
     assert "type=oci,dest=$RUNNER_TEMP/libero-build.oci.tar" in text
-    archive_verification = (
-        '--verify-build-oci "$RUNNER_TEMP/libero-build.oci.tar"'
-    )
+    archive_verification = '--verify-build-oci "$RUNNER_TEMP/libero-build.oci.tar"'
     archive_refusal = (
-        "LIBERO archive import remains disabled while public disclosure is "
-        "quarantined."
+        "LIBERO archive import remains disabled while public disclosure is quarantined."
     )
-    assert text.index("type=oci,dest=$RUNNER_TEMP/libero-build.oci.tar") < text.index(
-        archive_verification
-    ) < text.index(archive_refusal)
+    assert (
+        text.index("type=oci,dest=$RUNNER_TEMP/libero-build.oci.tar")
+        < text.index(archive_verification)
+        < text.index(archive_refusal)
+    )
     assert "docker-daemon:" not in text
     assert archive_refusal in text
     assert "Install the LIBERO OCI archive importer" not in text
@@ -600,8 +598,7 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
         "${{ matrix.libero_private_image_inventory_sha256 }}"
     ) in text
     assert (
-        "LIBERO_PRIVATE_CONFIG_DIGEST: "
-        "${{ matrix.libero_private_config_digest }}"
+        "LIBERO_PRIVATE_CONFIG_DIGEST: ${{ matrix.libero_private_config_digest }}"
     ) in text
     assert 'version_count="$(jq \'length\' "$versions")"' in text
     assert "closed unpublished candidate/referrer graph before retry" in text
@@ -611,9 +608,7 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert "group: public-image-registry-mutation" in text
     assert "group: public-image-${{" not in text
     assert re.search(r"^\s*- uses: [^#\n]+@v", text, re.MULTILINE) is None
-    assert re.search(
-        r"^\s*uses:\s*[^#\n]+@v[0-9]+\s*$", text, re.MULTILINE
-    ) is None
+    assert re.search(r"^\s*uses:\s*[^#\n]+@v[0-9]+\s*$", text, re.MULTILINE) is None
     assert 'visibility="$(gh api "$package_api" --jq .visibility)"' in text
     final_inventory = text.index("libero-final-package-versions.json")
     visibility_change = text.index(
@@ -621,7 +616,7 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
         final_inventory,
     )
     assert final_inventory < visibility_change
-    assert '${TOOL}-public-package-versions.json' in text
+    assert "${TOOL}-public-package-versions.json" in text
     assert "NPA_FIRST_PUBLICATION_REQUIRED=1" in text
     assert "reject every unexpected tag" in text
     assert "Failed LIBERO cleanup cannot isolate every qualified" in text
@@ -643,9 +638,7 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert "LIBERO_QUALIFIED_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_SHA256" in text
     assert "LIBERO_QUALIFIED_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_SHA256" in text
     assert "customer_authorization_public_key_sha256" in text
-    assert (
-        'base64 -d "$key_file" | sha256sum | cut -d\' \' -f1' in text
-    )
+    assert "base64 -d \"$key_file\" | sha256sum | cut -d' ' -f1" in text
     assert (
         "--secret id=npa_libero_customer_authorization_public_key_b64,"
         "env=NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64"
@@ -704,7 +697,9 @@ def test_libero_requested_cleanup_executes_complete_exact_graph_or_refuses(
 ) -> None:
     spec = yaml.safe_load(PUBLICATION_WORKFLOW.read_text(encoding="utf-8"))
     job = spec["jobs"]["cleanup-requested"]
-    step = next(item for item in job["steps"] if item.get("name", "").startswith("Delete"))
+    step = next(
+        item for item in job["steps"] if item.get("name", "").startswith("Delete")
+    )
     script = step["run"]
     sha = "1" * 40
     root = "sha256:" + "a" * 64
@@ -838,8 +833,7 @@ def test_failed_build_cleanup_accepts_only_proven_package_absence(
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "FIXTURE_FAILURE": failure,
-            "IMAGE": "ghcr.io/nebius/nebius-physical-ai/npa-libero:dev-"
-            + "1" * 40,
+            "IMAGE": "ghcr.io/nebius/nebius-physical-ai/npa-libero:dev-" + "1" * 40,
             "TOOL": "libero",
             "LIBERO_QUALIFIED_OCI_DIGEST": "sha256:" + "a" * 64,
             "LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS": "[]",
@@ -885,7 +879,11 @@ def test_failed_libero_cleanup_removes_only_qualified_versions_under_graph_drift
                 {"id": 1, "name": root, "metadata": {"container": {"tags": [tag]}}},
                 {"id": 2, "name": platform, "metadata": {"container": {"tags": []}}},
                 {"id": 3, "name": attestation, "metadata": {"container": {"tags": []}}},
-                {"id": 99, "name": unrelated, "metadata": {"container": {"tags": ["stable-other"]}}},
+                {
+                    "id": 99,
+                    "name": unrelated,
+                    "metadata": {"container": {"tags": ["stable-other"]}},
+                },
             ]
         ),
         encoding="utf-8",

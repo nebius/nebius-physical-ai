@@ -217,7 +217,9 @@ def test_libero_smoke_uses_real_upstream_conditioned_training_and_heldout() -> N
     assert "offscreen" not in smoke.lower()
 
 
-def test_libero_profile_binds_payload_identity_customer_authorization_and_headless_gpu() -> None:
+def test_libero_profile_binds_payload_identity_customer_authorization_and_headless_gpu() -> (
+    None
+):
     documents = list(yaml.safe_load_all(PROFILE_PATH.read_text(encoding="utf-8")))
     assert len(documents) == 2
     task = documents[1]
@@ -260,8 +262,8 @@ def test_libero_profile_binds_payload_identity_customer_authorization_and_headle
     assert "os.fstat(stream.fileno())" in bootstrap
     assert '"if-none-match": "*"' in bootstrap
     assert '"x-amz-checksum-mode": "ENABLED"' in bootstrap
-    assert "headers.get(\"x-amz-checksum-sha256\") != checksum" in bootstrap
-    assert 'OUTPUT_RECEIPT_SCHEMA = "npa.libero.s3-upload-readback.v1"' in bootstrap
+    assert 'headers.get("x-amz-checksum-sha256") != checksum' in bootstrap
+    assert 'OUTPUT_RECEIPT_SCHEMA = "npa.libero.s3-upload-readback.v2"' in bootstrap
     assert 'OUTPUT_RECEIPT_NAME = "npa_upload_receipt.json"' in bootstrap
     assert "current_authorization = _storage_authorization" in bootstrap
     assert "set(os.listdir(root_fd)) != set(OUTPUT_SIZE_LIMITS)" in bootstrap
@@ -282,8 +284,7 @@ def test_libero_profile_binds_payload_identity_customer_authorization_and_headle
     assert "prepared_yaml.chmod(0o400)" in workflow_source
     assert profile.count("unset NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64") == 2
     assert (
-        "/usr/local/bin/python /opt/npa/libero/runtime-bootstrap.py "
-        "execute-and-upload"
+        "/usr/local/bin/python /opt/npa/libero/runtime-bootstrap.py execute-and-upload"
     ) in profile
     assert "runtime-bootstrap.py upload" not in profile
     assert "execute-python" not in profile
@@ -330,9 +331,7 @@ def test_libero_image_manifest_remains_quarantined_and_unpublished() -> None:
     assert manifest["qualification"]["candidate_image"] == ""
     assert manifest["qualification"]["customer_authorization_public_key_sha256"] == ""
     assert (
-        manifest["qualification"][
-            "output_storage_authorization_public_key_sha256"
-        ]
+        manifest["qualification"]["output_storage_authorization_public_key_sha256"]
         == ""
     )
     assert manifest["customer_runtime_authorization_required"] is True
@@ -382,6 +381,14 @@ def test_libero_qualification_and_customer_authorization_are_separate(
     key_file = tmp_path / "customer-authorization-public-key.b64"
     key_file.write_bytes(base64.b64encode(public_key))
     key_file.chmod(0o600)
+    customer_private_key = Ed25519PrivateKey.generate()
+    customer_public_key = customer_private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    customer_key_file = tmp_path / "direct-customer-public-key.b64"
+    customer_key_file.write_bytes(base64.b64encode(customer_public_key))
+    customer_key_file.chmod(0o600)
     storage_private_key = Ed25519PrivateKey.generate()
     storage_public_key = storage_private_key.public_key().public_bytes(
         encoding=serialization.Encoding.Raw,
@@ -453,30 +460,20 @@ def test_libero_qualification_and_customer_authorization_are_separate(
                 "attestation_manifest_digest": qualification[
                     "attestation_manifest_digest"
                 ],
-                "attestation_config_digest": qualification[
-                    "attestation_config_digest"
-                ],
+                "attestation_config_digest": qualification["attestation_config_digest"],
                 "attestation_layers": qualification["attestation_layers"],
-                "package_version_digests": qualification[
-                    "package_version_digests"
-                ],
+                "package_version_digests": qualification["package_version_digests"],
                 "complete_image_inventory_sha256": qualification[
                     "complete_image_inventory_sha256"
                 ],
                 "base_provenance_sha256": qualification["base_provenance_sha256"],
                 "development_sha": qualification["development_sha"],
-                "upstream_source_revision": qualification[
-                    "upstream_source_revision"
-                ],
-                "build_input_bundle_sha256": qualification[
-                    "build_input_bundle_sha256"
-                ],
+                "upstream_source_revision": qualification["upstream_source_revision"],
+                "build_input_bundle_sha256": qualification["build_input_bundle_sha256"],
                 "publication_enforcement_bundle_sha256": qualification[
                     "publication_enforcement_bundle_sha256"
                 ],
-                "package_writer_repository": qualification[
-                    "package_writer_repository"
-                ],
+                "package_writer_repository": qualification["package_writer_repository"],
                 "customer_authorization_public_key_sha256": qualification[
                     "customer_authorization_public_key_sha256"
                 ],
@@ -493,13 +490,13 @@ def test_libero_qualification_and_customer_authorization_are_separate(
         qualification, ROOT, development_sha="d" * 40
     )
     assert lineage["candidate_image"] == qualification["candidate_image"]
-    assert lineage["platform_manifest_digest"] == qualification[
-        "platform_manifest_digest"
-    ]
+    assert (
+        lineage["platform_manifest_digest"] == qualification["platform_manifest_digest"]
+    )
 
     run_id = "libero-customer-run-0001"
     authorization = {
-        "schema": "npa.libero.customer-runtime-authorization.v1",
+        "schema": "npa.libero.customer-runtime-authorization.v2",
         "solution": "libero",
         "status": "authorized",
         "authorization_id": "libero-customer-authorization-0001",
@@ -507,23 +504,31 @@ def test_libero_qualification_and_customer_authorization_are_separate(
         "run_id": run_id,
         "candidate_image": qualification["candidate_image"],
         "runtime_manifest_sha256": manifest["runtime_manifest_sha256"],
+        "workflow_profile_sha256": "a" * 64,
+        "upstream_source_revision": qualification["upstream_source_revision"],
         "terms": [
             {"id": term["id"], "version": term["version"]}
             for term in manifest["customer_acceptance"]["terms"]
         ],
-        "issuer": "npa-customer-control-plane",
+        "issuer": "customer",
+        "evidence_type": "customer-controlled-signature",
+        "customer_signer_public_key_b64": base64.b64encode(customer_public_key).decode(
+            "ascii"
+        ),
         "acknowledged_at": now.isoformat(),
         "issued_at": now.isoformat(),
         "expires_at": (now + timedelta(hours=1)).isoformat(),
         "nonce": "customer-authorization-nonce-000001",
         "signature": {
             "algorithm": "ed25519",
-            "public_key_sha256": hashlib.sha256(public_key).hexdigest(),
+            "public_key_sha256": hashlib.sha256(customer_public_key).hexdigest(),
             "signature_b64": "",
         },
     }
     authorization["signature"]["signature_b64"] = base64.b64encode(
-        private_key.sign(libero_customer_authorization_signature_payload(authorization))
+        customer_private_key.sign(
+            libero_customer_authorization_signature_payload(authorization)
+        )
     ).decode("ascii")
     authorization_bytes = json.dumps(authorization, sort_keys=True).encode()
     validated, observed_sha256 = validate_libero_customer_runtime_authorization(
@@ -531,7 +536,11 @@ def test_libero_qualification_and_customer_authorization_are_separate(
         image_manifest=manifest,
         run_id=run_id,
         customer_identity_sha256="9" * 64,
-        public_key_file=str(key_file),
+        customer_signer_public_key_sha256=hashlib.sha256(
+            customer_public_key
+        ).hexdigest(),
+        executable_profile_sha256="a" * 64,
+        public_key_file=str(customer_key_file),
         now=now,
     )
     assert validated == authorization
@@ -542,6 +551,9 @@ def test_libero_qualification_and_customer_authorization_are_separate(
         "issuer": "npa-authenticated-caller-control-plane",
         "session_id": "libero-caller-session-0001",
         "customer_identity_sha256": authorization["customer_identity_sha256"],
+        "customer_signer_public_key_sha256": hashlib.sha256(
+            customer_public_key
+        ).hexdigest(),
         "run_id": run_id,
         "issued_at": now.isoformat(),
         "expires_at": (now + timedelta(minutes=10)).isoformat(),
@@ -553,7 +565,9 @@ def test_libero_qualification_and_customer_authorization_are_separate(
         },
     }
     caller_assertion["signature"]["signature_b64"] = base64.b64encode(
-        private_key.sign(libero_authenticated_caller_signature_payload(caller_assertion))
+        private_key.sign(
+            libero_authenticated_caller_signature_payload(caller_assertion)
+        )
     ).decode("ascii")
     caller_bytes = json.dumps(caller_assertion, sort_keys=True).encode()
     validated_caller, caller_sha256 = validate_libero_authenticated_caller_assertion(
@@ -562,9 +576,10 @@ def test_libero_qualification_and_customer_authorization_are_separate(
         public_key_file=str(key_file),
         now=now,
     )
-    assert validated_caller["customer_identity_sha256"] == authorization[
-        "customer_identity_sha256"
-    ]
+    assert (
+        validated_caller["customer_identity_sha256"]
+        == authorization["customer_identity_sha256"]
+    )
     assert caller_sha256 == hashlib.sha256(caller_bytes).hexdigest()
 
     output_prefix = f"s3://customer-output/libero/{run_id}/"
@@ -598,9 +613,7 @@ def test_libero_qualification_and_customer_authorization_are_separate(
     }
     storage_authorization["signature"]["signature_b64"] = base64.b64encode(
         storage_private_key.sign(
-            libero_output_storage_authorization_signature_payload(
-                storage_authorization
-            )
+            libero_output_storage_authorization_signature_payload(storage_authorization)
         )
     ).decode("ascii")
     storage_bytes = json.dumps(storage_authorization, sort_keys=True).encode()
@@ -623,9 +636,9 @@ def test_libero_qualification_and_customer_authorization_are_separate(
     assert storage_sha256 == hashlib.sha256(storage_bytes).hexdigest()
 
     forged_storage = json.loads(storage_bytes)
-    forged_storage["signature"]["signature_b64"] = base64.b64encode(
-        b"\0" * 64
-    ).decode("ascii")
+    forged_storage["signature"]["signature_b64"] = base64.b64encode(b"\0" * 64).decode(
+        "ascii"
+    )
     with pytest.raises(RuntimeError, match="signature is invalid"):
         validate_libero_output_storage_authorization(
             json.dumps(forged_storage, sort_keys=True).encode(),
@@ -646,7 +659,9 @@ def test_libero_qualification_and_customer_authorization_are_separate(
     denied = json.loads(authorization_bytes)
     denied["status"] = "denied"
     denied["signature"]["signature_b64"] = base64.b64encode(
-        private_key.sign(libero_customer_authorization_signature_payload(denied))
+        customer_private_key.sign(
+            libero_customer_authorization_signature_payload(denied)
+        )
     ).decode("ascii")
     with pytest.raises(
         LiberoCustomerAuthorizationDenied, match="declined the required runtime terms"
@@ -656,7 +671,11 @@ def test_libero_qualification_and_customer_authorization_are_separate(
             image_manifest=manifest,
             run_id=run_id,
             customer_identity_sha256="9" * 64,
-            public_key_file=str(key_file),
+            customer_signer_public_key_sha256=hashlib.sha256(
+                customer_public_key
+            ).hexdigest(),
+            executable_profile_sha256="a" * 64,
+            public_key_file=str(customer_key_file),
             now=now,
         )
 
@@ -668,23 +687,35 @@ def test_libero_qualification_and_customer_authorization_are_separate(
             image_manifest=manifest,
             run_id=run_id,
             customer_identity_sha256="9" * 64,
-            public_key_file=str(key_file),
+            customer_signer_public_key_sha256=hashlib.sha256(
+                customer_public_key
+            ).hexdigest(),
+            executable_profile_sha256="a" * 64,
+            public_key_file=str(customer_key_file),
             now=now,
         )
 
-    other_public_key = Ed25519PrivateKey.generate().public_key().public_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PublicFormat.Raw,
+    other_public_key = (
+        Ed25519PrivateKey.generate()
+        .public_key()
+        .public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
     )
     wrong_key_file = tmp_path / "wrong-customer-authorization-public-key.b64"
     wrong_key_file.write_bytes(base64.b64encode(other_public_key))
     wrong_key_file.chmod(0o600)
-    with pytest.raises(RuntimeError, match="trust root differs"):
+    with pytest.raises(RuntimeError, match="transported customer signer differs"):
         validate_libero_customer_runtime_authorization(
             authorization_bytes,
             image_manifest=manifest,
             run_id=run_id,
             customer_identity_sha256="9" * 64,
+            customer_signer_public_key_sha256=hashlib.sha256(
+                customer_public_key
+            ).hexdigest(),
+            executable_profile_sha256="a" * 64,
             public_key_file=str(wrong_key_file),
             now=now,
         )
@@ -698,6 +729,9 @@ def test_libero_qualification_and_customer_authorization_are_separate(
     attacker_key_file.write_bytes(base64.b64encode(attacker_public_key))
     attacker_key_file.chmod(0o600)
     attacker_authorization = json.loads(authorization_bytes)
+    attacker_authorization["customer_signer_public_key_b64"] = base64.b64encode(
+        attacker_public_key
+    ).decode("ascii")
     attacker_authorization["signature"]["public_key_sha256"] = hashlib.sha256(
         attacker_public_key
     ).hexdigest()
@@ -706,36 +740,47 @@ def test_libero_qualification_and_customer_authorization_are_separate(
             libero_customer_authorization_signature_payload(attacker_authorization)
         )
     ).decode("ascii")
-    with pytest.raises(RuntimeError, match="trust root differs"):
+    with pytest.raises(RuntimeError, match="customer signer identity differs"):
         validate_libero_customer_runtime_authorization(
             json.dumps(attacker_authorization, sort_keys=True).encode(),
             image_manifest=manifest,
             run_id=run_id,
             customer_identity_sha256="9" * 64,
-            public_key_file=str(attacker_key_file),
+            customer_signer_public_key_sha256=hashlib.sha256(
+                customer_public_key
+            ).hexdigest(),
+            executable_profile_sha256="a" * 64,
             now=now,
         )
 
-    key_file.chmod(0o640)
+    customer_key_file.chmod(0o640)
     with pytest.raises(RuntimeError, match="trust-root file is mutable"):
         validate_libero_customer_runtime_authorization(
             authorization_bytes,
             image_manifest=manifest,
             run_id=run_id,
             customer_identity_sha256="9" * 64,
-            public_key_file=str(key_file),
+            customer_signer_public_key_sha256=hashlib.sha256(
+                customer_public_key
+            ).hexdigest(),
+            executable_profile_sha256="a" * 64,
+            public_key_file=str(customer_key_file),
             now=now,
         )
-    key_file.chmod(0o600)
+    customer_key_file.chmod(0o600)
 
     linked_key_file = tmp_path / "linked-customer-authorization-public-key.b64"
-    linked_key_file.symlink_to(key_file)
+    linked_key_file.symlink_to(customer_key_file)
     with pytest.raises(RuntimeError, match="trust-root file is unavailable"):
         validate_libero_customer_runtime_authorization(
             authorization_bytes,
             image_manifest=manifest,
             run_id=run_id,
             customer_identity_sha256="9" * 64,
+            customer_signer_public_key_sha256=hashlib.sha256(
+                customer_public_key
+            ).hexdigest(),
+            executable_profile_sha256="a" * 64,
             public_key_file=str(linked_key_file),
             now=now,
         )
@@ -747,12 +792,29 @@ def test_libero_qualification_and_customer_authorization_are_separate(
         "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64",
         base64.b64encode(public_key).decode(),
     )
-    with pytest.raises(RuntimeError, match="trust-root file is unavailable"):
+    validated_without_transport, _ = validate_libero_customer_runtime_authorization(
+        authorization_bytes,
+        image_manifest=manifest,
+        run_id=run_id,
+        customer_identity_sha256="9" * 64,
+        customer_signer_public_key_sha256=hashlib.sha256(
+            customer_public_key
+        ).hexdigest(),
+        executable_profile_sha256="a" * 64,
+        now=now,
+    )
+    assert validated_without_transport == authorization
+
+    with pytest.raises(RuntimeError, match="exact customer/run contract"):
         validate_libero_customer_runtime_authorization(
-            authorization_bytes,
+            json.dumps({**authorization, "workflow_profile_sha256": "0" * 64}).encode(),
             image_manifest=manifest,
             run_id=run_id,
             customer_identity_sha256="9" * 64,
+            customer_signer_public_key_sha256=hashlib.sha256(
+                customer_public_key
+            ).hexdigest(),
+            executable_profile_sha256="a" * 64,
             now=now,
         )
 
@@ -763,7 +825,10 @@ def test_libero_qualification_and_customer_authorization_are_separate(
             image_manifest=manifest,
             run_id=run_id,
             customer_identity_sha256="9" * 64,
-            public_key_file=str(key_file),
+            customer_signer_public_key_sha256=hashlib.sha256(
+                customer_public_key
+            ).hexdigest(),
+            executable_profile_sha256="a" * 64,
             now=now,
         )
 
@@ -867,9 +932,7 @@ def test_publication_enforcement_bundle_detects_descendant_policy_drift(
     with pytest.raises(RuntimeError, match="publication-enforcement marker"):
         libero_publication_enforcement_paths(tmp_path)
     critical.write_bytes(
-        LIBERO_PUBLICATION_ENFORCEMENT_TEST_MARKER
-        + b"\n"
-        + critical.read_bytes()
+        LIBERO_PUBLICATION_ENFORCEMENT_TEST_MARKER + b"\n" + critical.read_bytes()
     )
     assert critical.relative_to(tmp_path).as_posix() in (
         libero_publication_enforcement_paths(tmp_path)

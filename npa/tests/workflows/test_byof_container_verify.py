@@ -26,9 +26,7 @@ YAML_PATH = (
     / "profiles"
     / "byof-container-smoke-rtxpro.yaml"
 )
-LIBERO_YAML_PATH = YAML_PATH.with_name(
-    "byof-solution-smoke-libero-b200-gpu.yaml"
-)
+LIBERO_YAML_PATH = YAML_PATH.with_name("byof-solution-smoke-libero-b200-gpu.yaml")
 
 
 def _load_module():
@@ -144,9 +142,10 @@ def test_render_workflow_materializes_libero_payload_account(monkeypatch) -> Non
 
     task = docs[1]
     assert "kubernetes" not in task["resources"]
-    assert task["config"]["kubernetes"]["pod_config"]["spec"][
-        "serviceAccountName"
-    ] == "npa-byof-libero-payload"
+    assert (
+        task["config"]["kubernetes"]["pod_config"]["spec"]["serviceAccountName"]
+        == "npa-byof-libero-payload"
+    )
 
 
 def test_libero_profile_refuses_missing_or_mistyped_solution_name(monkeypatch) -> None:
@@ -220,9 +219,7 @@ def test_official_libero_image_forces_refusal_for_renamed_profile(
     module = _load_module()
     renamed_profile = tmp_path / "renamed-profile.yaml"
     renamed_profile.write_bytes(YAML_PATH.read_bytes())
-    candidate = (
-        "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "9" * 64
-    )
+    candidate = "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "9" * 64
     documents = [
         {"execution": "serial"},
         {
@@ -275,7 +272,9 @@ def test_libero_image_classifier_rejects_other_repositories_and_substrings(
     assert module._is_libero_invocation(args, documents) is False
 
 
-def test_reserved_libero_payload_account_requires_explicit_solution(monkeypatch) -> None:
+def test_reserved_libero_payload_account_requires_explicit_solution(
+    monkeypatch,
+) -> None:
     module = _load_module()
     args = module._parse_args(
         [
@@ -295,9 +294,7 @@ def test_reserved_libero_payload_account_requires_explicit_solution(monkeypatch)
                 "config": {
                     "kubernetes": {
                         "pod_config": {
-                            "spec": {
-                                "serviceAccountName": "npa-byof-libero-payload"
-                            }
+                            "spec": {"serviceAccountName": "npa-byof-libero-payload"}
                         }
                     }
                 }
@@ -329,8 +326,10 @@ def test_libero_isolated_scheduler_state_must_be_owner_private(tmp_path) -> None
 def test_libero_runtime_binding_refuses_disabled_cleanup() -> None:
     module = _load_module()
     args = SimpleNamespace(
-        solution_name="libero", yaml_path=LIBERO_YAML_PATH,
-        direct_launch=False, cleanup=False,
+        solution_name="libero",
+        yaml_path=LIBERO_YAML_PATH,
+        direct_launch=False,
+        cleanup=False,
     )
     documents = [{"execution": "serial"}, {"name": "task"}]
 
@@ -348,8 +347,10 @@ def test_libero_runtime_binding_refuses_disabled_api_lifecycle(monkeypatch) -> N
     module = _load_module()
     monkeypatch.setenv("NPA_BYOF_REFRESH_SKY_API", "0")
     args = SimpleNamespace(
-        solution_name="libero", yaml_path=LIBERO_YAML_PATH,
-        direct_launch=False, cleanup=True,
+        solution_name="libero",
+        yaml_path=LIBERO_YAML_PATH,
+        direct_launch=False,
+        cleanup=True,
     )
 
     with pytest.raises(ValueError, match="verified isolated Sky API shutdown"):
@@ -365,25 +366,29 @@ def test_libero_runtime_binding_refuses_disabled_api_lifecycle(monkeypatch) -> N
 def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context(
     monkeypatch, tmp_path
 ) -> None:
+    from npa.execution_preflight import libero_executable_profile_sha256
+
     module = _load_module()
     run_id = "libero-runtime-binding"
     runtime_manifest_sha256 = module.hashlib.sha256(
         module.LIBERO_RUNTIME_MANIFEST.read_bytes()
     ).hexdigest()
-    candidate = (
-        "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "9" * 64
-    )
+    candidate = "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "9" * 64
     customer_authorization = {
-        "schema": "npa.libero.customer-runtime-authorization.v1",
+        "schema": "npa.libero.customer-runtime-authorization.v2",
         "solution": "libero",
         "status": "authorized",
         "authorization_id": "libero-customer-authorization-test-0001",
         "customer_identity_sha256": "7" * 64,
         "candidate_image": candidate,
         "runtime_manifest_sha256": runtime_manifest_sha256,
+        "workflow_profile_sha256": "f" * 64,
+        "upstream_source_revision": "8f1084e3132a39270c3a13ebe37270a43ece2a01",
         "terms": [],
         "run_id": run_id,
-        "issuer": "npa-customer-control-plane",
+        "issuer": "customer",
+        "evidence_type": "customer-controlled-signature",
+        "customer_signer_public_key_b64": "fixture-customer-key",
         "acknowledged_at": datetime.now(timezone.utc).isoformat(),
         "issued_at": datetime.now(timezone.utc).isoformat(),
         "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
@@ -407,8 +412,12 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
         "output_prefix": output_prefix,
         "endpoint_url": endpoint,
         "access_key_id_sha256": module.hashlib.sha256(access_key.encode()).hexdigest(),
-        "secret_access_key_sha256": module.hashlib.sha256(secret_key.encode()).hexdigest(),
-        "session_token_sha256": module.hashlib.sha256(session_token.encode()).hexdigest(),
+        "secret_access_key_sha256": module.hashlib.sha256(
+            secret_key.encode()
+        ).hexdigest(),
+        "session_token_sha256": module.hashlib.sha256(
+            session_token.encode()
+        ).hexdigest(),
         "policy_sha256": policy_sha256,
         "issued_at": datetime.now(timezone.utc).isoformat(),
         "expires_at": customer_authorization["expires_at"],
@@ -440,12 +449,14 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
         module,
         "_libero_context_contract",
         lambda path, **_kwargs: (
-            "payload-proof-context",
-            "isolated-namespace",
-            "6" * 64,
-        )
-        if path == kubeconfig
-        else ("execution-context", "isolated-namespace", "6" * 64),
+            (
+                "payload-proof-context",
+                "isolated-namespace",
+                "6" * 64,
+            )
+            if path == kubeconfig
+            else ("execution-context", "isolated-namespace", "6" * 64)
+        ),
     )
     rbac = {
         "service_account_uid_sha256": "1" * 64,
@@ -565,9 +576,7 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
         "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64",
         module.base64.b64encode(authorization_bytes).decode("ascii"),
     )
-    monkeypatch.setenv(
-        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256", authorization_sha256
-    )
+    monkeypatch.setenv("NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256", authorization_sha256)
     monkeypatch.setenv(
         "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256",
         customer_authorization["customer_identity_sha256"],
@@ -600,7 +609,8 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
             {
                 "customer_identity_sha256": customer_authorization[
                     "customer_identity_sha256"
-                ]
+                ],
+                "customer_signer_public_key_sha256": "f" * 64,
             },
             caller_sha256,
         ),
@@ -613,7 +623,9 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
 
     def validate_storage(*_args, **kwargs):
         if kwargs["endpoint_url"] != endpoint:
-            raise RuntimeError("LIBERO output storage authorization is invalid or expired")
+            raise RuntimeError(
+                "LIBERO output storage authorization is invalid or expired"
+            )
         return storage_authorization, storage_sha256
 
     monkeypatch.setattr(
@@ -632,6 +644,14 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     )
     documents = runtime_documents(
         {"S3_OUTPUT_PREFIX": output_prefix, "AWS_ENDPOINT_URL": endpoint}
+    )
+    expected_envs.update(
+        {
+            "NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256": "f" * 64,
+            "NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256": libero_executable_profile_sha256(
+                documents
+            ),
+        }
     )
 
     binding = module._bind_libero_runtime_contract(
@@ -982,6 +1002,7 @@ def test_libero_rbac_evidence_refuses_role_or_binding_drift(monkeypatch) -> None
         "_libero_resource",
         lambda _kubeconfig, _context, _namespace, kind, _name: objects[kind],
     )
+
     def kubectl_json(arguments, **_kwargs):
         if arguments[-1] in {"clusterrolebindings", "rolebindings"}:
             return {"items": []}
@@ -1017,22 +1038,19 @@ def test_libero_rbac_evidence_refuses_role_or_binding_drift(monkeypatch) -> None
     evidence, access_state = module._libero_rbac_evidence(
         kubeconfig, "payload-context", namespace, run_id
     )
-    assert evidence["service_account_uid_sha256"] == module.hashlib.sha256(
-        b"account-uid"
-    ).hexdigest()
+    assert (
+        evidence["service_account_uid_sha256"]
+        == module.hashlib.sha256(b"account-uid").hexdigest()
+    )
     assert access_state.namespace_uid == "namespace-uid"
 
     objects["role"]["rules"][0]["verbs"] = ["get", "list"]
     with pytest.raises(RuntimeError, match="exact Pod resourceName"):
-        module._libero_rbac_evidence(
-            kubeconfig, "payload-context", namespace, run_id
-        )
+        module._libero_rbac_evidence(kubeconfig, "payload-context", namespace, run_id)
     objects["role"]["rules"][0]["verbs"] = ["get"]
     objects["rolebinding"]["subjects"][0]["name"] = "default"
     with pytest.raises(RuntimeError, match="differs"):
-        module._libero_rbac_evidence(
-            kubeconfig, "payload-context", namespace, run_id
-        )
+        module._libero_rbac_evidence(kubeconfig, "payload-context", namespace, run_id)
 
 
 def test_libero_post_submit_rbac_recheck_refuses_any_service(monkeypatch) -> None:
@@ -1130,6 +1148,11 @@ def _libero_payload_pod_fixture(module, *, job_id: str = "73") -> dict[str, obje
         },
         "spec": {
             "serviceAccountName": module.LIBERO_PAYLOAD_SERVICE_ACCOUNT,
+            "automountServiceAccountToken": True,
+            "securityContext": {
+                "runAsNonRoot": True,
+                "seccompProfile": {"type": "RuntimeDefault"},
+            },
             "nodeName": "worker",
             "containers": [
                 {
@@ -1139,6 +1162,12 @@ def _libero_payload_pod_fixture(module, *, job_id: str = "73") -> dict[str, obje
                         "requests": {"nvidia.com/gpu": "1"},
                         "limits": {"nvidia.com/gpu": "1"},
                     },
+                    "securityContext": {
+                        "privileged": False,
+                        "allowPrivilegeEscalation": False,
+                        "readOnlyRootFilesystem": True,
+                        "capabilities": {"drop": ["ALL"]},
+                    },
                 }
             ],
         },
@@ -1147,6 +1176,12 @@ def _libero_payload_pod_fixture(module, *, job_id: str = "73") -> dict[str, obje
                 {
                     "name": "ray-node",
                     "imageID": "docker-pullable://" + candidate,
+                    "allocatedResourcesStatus": [
+                        {
+                            "name": "nvidia.com/b200",
+                            "resources": [{"resourceID": "GPU-fixture-b200"}],
+                        }
+                    ],
                 }
             ]
         },
@@ -1156,9 +1191,10 @@ def _libero_payload_pod_fixture(module, *, job_id: str = "73") -> dict[str, obje
 def test_libero_managed_job_name_matches_pinned_skypilot_algorithm() -> None:
     module = _load_module()
 
-    assert module._libero_managed_job_display_name(
-        module.LIBERO_PROFILE_TASK_NAME, "73"
-    ) == "byof-solution-smoke-li-d9-73"
+    assert (
+        module._libero_managed_job_display_name(module.LIBERO_PROFILE_TASK_NAME, "73")
+        == "byof-solution-smoke-li-d9-73"
+    )
     with pytest.raises(RuntimeError, match="scheduler job ID"):
         module._libero_managed_job_display_name(
             module.LIBERO_PROFILE_TASK_NAME, "73-foreign"
@@ -1185,25 +1221,22 @@ def test_libero_payload_pod_record_is_exact_and_singleton(monkeypatch) -> None:
         task_name=module.LIBERO_PROFILE_TASK_NAME,
     )
     items = [pod]
-    monkeypatch.setattr(
-        module, "_kubectl_json", lambda *_a, **_k: {"items": items}
-    )
+    monkeypatch.setattr(module, "_kubectl_json", lambda *_a, **_k: {"items": items})
 
     observed, evidence = module._libero_payload_pod_record(
         binding, scheduler_job_id="73"
     )
     assert observed is pod
-    assert evidence["payload_pod_name_sha256"] == module.hashlib.sha256(
-        pod["metadata"]["name"].encode()
-    ).hexdigest()
+    assert (
+        evidence["payload_pod_name_sha256"]
+        == module.hashlib.sha256(pod["metadata"]["name"].encode()).hexdigest()
+    )
 
     items.append(json.loads(json.dumps(pod)))
     with pytest.raises(RuntimeError, match="exactly one payload Pod"):
         module._libero_payload_pod_record(binding, scheduler_job_id="73")
     items.pop()
-    pod["spec"]["containers"].append(
-        {"name": "foreign", "image": candidate}
-    )
+    pod["spec"]["containers"].append({"name": "foreign", "image": candidate})
     with pytest.raises(RuntimeError, match="accepted candidate image"):
         module._libero_payload_pod_record(binding, scheduler_job_id="73")
     pod["spec"]["containers"].pop()
@@ -1212,7 +1245,66 @@ def test_libero_payload_pod_record_is_exact_and_singleton(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize(
-    "drift", ["none", "node", "product", "gpu-request", "image-status"]
+    ("mutation", "expected"),
+    [
+        ("privileged", "security context"),
+        ("host-network", "host or runtime boundary"),
+        ("host-path", "forbidden volume"),
+        ("host-port", "security context"),
+        ("capability", "security context"),
+        ("writable-root", "broad writable mount"),
+        ("runtime-class", "host or runtime boundary"),
+        ("release-token", "release token contract"),
+    ],
+)
+def test_libero_payload_pod_rejects_every_confinement_bypass(
+    monkeypatch, mutation, expected
+) -> None:
+    module = _load_module()
+    pod = _libero_payload_pod_fixture(module)
+    container = pod["spec"]["containers"][0]
+    if mutation == "privileged":
+        container["securityContext"]["privileged"] = True
+    elif mutation == "host-network":
+        pod["spec"]["hostNetwork"] = True
+    elif mutation == "host-path":
+        pod["spec"]["volumes"] = [
+            {"name": "host", "hostPath": {"path": "/", "type": "Directory"}}
+        ]
+    elif mutation == "host-port":
+        container["ports"] = [{"containerPort": 8080, "hostPort": 8080}]
+    elif mutation == "capability":
+        container["securityContext"]["capabilities"]["add"] = ["SYS_ADMIN"]
+    elif mutation == "writable-root":
+        pod["spec"]["volumes"] = [{"name": "data", "emptyDir": {}}]
+        container["volumeMounts"] = [{"name": "data", "mountPath": "/etc"}]
+    elif mutation == "runtime-class":
+        pod["spec"]["runtimeClassName"] = "unreviewed"
+    else:
+        pod["spec"]["automountServiceAccountToken"] = False
+    binding = module.LiberoRuntimeBinding(
+        evidence={},
+        access_state=module.LiberoAccessState(
+            kubeconfig=Path("/private/payload-kubeconfig"),
+            context="payload-context",
+            namespace="isolated-namespace",
+            namespace_uid="namespace-uid",
+            service_account_uid="service-account-uid",
+            role_uid="role-uid",
+            role_binding_uid="binding-uid",
+            run_id="libero-payload-confinement",
+        ),
+        candidate_image=container["image"],
+        task_name=module.LIBERO_PROFILE_TASK_NAME,
+    )
+    monkeypatch.setattr(module, "_kubectl_json", lambda *_a, **_k: {"items": [pod]})
+
+    with pytest.raises(RuntimeError, match=expected):
+        module._libero_payload_pod_record(binding, scheduler_job_id="73")
+
+
+@pytest.mark.parametrize(
+    "drift", ["none", "node", "b200-resource", "gpu-request", "image-status"]
 )
 def test_libero_manager_live_evidence_is_independent_and_exact(
     monkeypatch, drift
@@ -1233,9 +1325,7 @@ def test_libero_manager_live_evidence_is_independent_and_exact(
         run_id="libero-manager-evidence",
     )
     binding = module.LiberoRuntimeBinding(
-        evidence={
-            "allowed_node_sha256": module.hashlib.sha256(b"worker").hexdigest()
-        },
+        evidence={"allowed_node_sha256": module.hashlib.sha256(b"worker").hexdigest()},
         access_state=state,
         candidate_image=candidate,
         task_name=module.LIBERO_PROFILE_TASK_NAME,
@@ -1247,16 +1337,21 @@ def test_libero_manager_live_evidence_is_independent_and_exact(
             "creationTimestamp": "2026-09-12T00:00:00Z",
             "labels": {"nvidia.com/gpu.product": "NVIDIA-B200"},
         },
-        "status": {"allocatable": {"nvidia.com/gpu": "8"}},
+        "spec": {"providerID": "nebius://fixture-instance"},
+        "status": {
+            "allocatable": {"nvidia.com/gpu": "8", "nvidia.com/b200": "8"},
+            "nodeInfo": {
+                "machineID": "fixture-machine",
+                "systemUUID": "fixture-system-uuid",
+            },
+        },
     }
     if drift == "node":
         pod["spec"]["nodeName"] = "foreign-worker"
-    elif drift == "product":
-        node["metadata"]["labels"]["nvidia.com/gpu.product"] = "NVIDIA-H200"
+    elif drift == "b200-resource":
+        node["status"]["allocatable"].pop("nvidia.com/b200")
     elif drift == "gpu-request":
-        pod["spec"]["containers"][0]["resources"]["limits"][
-            "nvidia.com/gpu"
-        ] = "2"
+        pod["spec"]["containers"][0]["resources"]["limits"]["nvidia.com/gpu"] = "2"
     elif drift == "image-status":
         pod["status"]["containerStatuses"][0]["imageID"] = (
             "docker-pullable://example.invalid/other@sha256:" + "8" * 64
@@ -1279,6 +1374,9 @@ def test_libero_manager_live_evidence_is_independent_and_exact(
     assert evidence["gpu_family"] == "B200"
     assert evidence["pod_gpu_count"] == 1
     assert evidence["node_allocatable_gpu_count"] == 8
+    assert evidence["node_allocatable_b200_count"] == 8
+    assert evidence["provider_identity_sha256"]
+    assert evidence["device_resource_id_sha256"]
 
 
 def test_libero_payload_role_binds_uid_atomically_to_observed_pod(
@@ -1295,6 +1393,8 @@ def test_libero_payload_role_binds_uid_atomically_to_observed_pod(
         service_account_uid="service-account-uid",
         role_uid="role-uid",
         role_binding_uid="binding-uid",
+        execution_kubeconfig=Path("/private/execution-kubeconfig"),
+        execution_context="execution-context",
         run_id="libero-payload-binding",
     )
     base_evidence = {
@@ -1318,6 +1418,11 @@ def test_libero_payload_role_binds_uid_atomically_to_observed_pod(
             return {"items": [pod]}
         patch = json.loads(arguments[arguments.index("--patch") + 1])
         patches.append(patch)
+        if "pod" in arguments:
+            pod["metadata"].setdefault("annotations", {})[
+                module.LIBERO_PAYLOAD_RELEASE_ANNOTATION
+            ] = patch[1]["value"]
+            return pod
         return {
             "metadata": {"uid": "role-uid"},
             "rules": module._libero_payload_rules(pod["metadata"]["name"]),
@@ -1352,9 +1457,16 @@ def test_libero_payload_role_binds_uid_atomically_to_observed_pod(
     assert bound.access_state.payload_pod_name == pod["metadata"]["name"]
     assert bound.access_state.payload_pod_uid == "payload-pod-uid"
     assert bound.evidence["bound_rbac_spec_sha256"] == "7" * 64
-    assert bound.evidence["scheduler_job_id_sha256"] == module.hashlib.sha256(
-        b"73"
-    ).hexdigest()
+    assert (
+        bound.evidence["scheduler_job_id_sha256"]
+        == module.hashlib.sha256(b"73").hexdigest()
+    )
+    assert patches[1][0] == {
+        "op": "test",
+        "path": "/metadata/uid",
+        "value": "payload-pod-uid",
+    }
+    assert patches[1][1]["path"].endswith("libero-release")
 
 
 def test_libero_inventory_refuses_cluster_role_binding_for_namespace(
@@ -1439,9 +1551,7 @@ def test_libero_controller_rbac_is_exact_and_namespace_scoped(monkeypatch) -> No
         }
 
     objects = {
-        "skypilot-service-account": {
-            "metadata": metadata("skypilot-service-account")
-        },
+        "skypilot-service-account": {"metadata": metadata("skypilot-service-account")},
         "skypilot-service-account-role": {
             "metadata": metadata("skypilot-service-account-role"),
             "rules": module.LIBERO_CONTROLLER_RULES,
@@ -1493,9 +1603,7 @@ def test_libero_controller_rbac_is_exact_and_namespace_scoped(monkeypatch) -> No
         )
     objects["skypilot-service-account-role"]["rules"] = module.LIBERO_CONTROLLER_RULES
 
-    objects["skypilot-service-account-role-binding"]["roleRef"]["kind"] = (
-        "ClusterRole"
-    )
+    objects["skypilot-service-account-role-binding"]["roleRef"]["kind"] = "ClusterRole"
     with pytest.raises(RuntimeError, match="RoleBinding differs"):
         module._libero_controller_rbac_evidence(
             Path("/private/execution-kubeconfig"), "execution-context", namespace
@@ -1574,9 +1682,7 @@ def test_libero_rejects_workload_access_for_authenticated_group(monkeypatch) -> 
                             "name": "unsafe-binding",
                             "uid": "unsafe-binding-uid",
                         },
-                        "subjects": [
-                            {"kind": "Group", "name": "system:authenticated"}
-                        ],
+                        "subjects": [{"kind": "Group", "name": "system:authenticated"}],
                         "roleRef": {
                             "apiGroup": "rbac.authorization.k8s.io",
                             "kind": "ClusterRole",
@@ -1588,9 +1694,7 @@ def test_libero_rejects_workload_access_for_authenticated_group(monkeypatch) -> 
         assert arguments[-2:] == ["clusterrole", "unsafe-pod-reader"]
         return {
             "metadata": {"uid": "unsafe-role-uid"},
-            "rules": [
-                {"apiGroups": [""], "resources": ["pods"], "verbs": ["get"]}
-            ]
+            "rules": [{"apiGroups": [""], "resources": ["pods"], "verbs": ["get"]}],
         }
 
     monkeypatch.setattr(module, "_kubectl_json", kubectl_json)
@@ -1614,9 +1718,7 @@ def test_libero_allows_only_discovery_for_authenticated_group(monkeypatch) -> No
                             "name": "discovery-binding",
                             "uid": "discovery-binding-uid",
                         },
-                        "subjects": [
-                            {"kind": "Group", "name": "system:authenticated"}
-                        ],
+                        "subjects": [{"kind": "Group", "name": "system:authenticated"}],
                         "roleRef": {
                             "apiGroup": "rbac.authorization.k8s.io",
                             "kind": "ClusterRole",
@@ -1628,9 +1730,7 @@ def test_libero_allows_only_discovery_for_authenticated_group(monkeypatch) -> No
         assert arguments[-2:] == ["clusterrole", "system:discovery"]
         return {
             "metadata": {"uid": "discovery-role-uid"},
-            "rules": [
-                {"nonResourceURLs": ["/api", "/apis"], "verbs": ["get"]}
-            ]
+            "rules": [{"nonResourceURLs": ["/api", "/apis"], "verbs": ["get"]}],
         }
 
     monkeypatch.setattr(module, "_kubectl_json", kubectl_json)
@@ -1714,9 +1814,7 @@ def test_libero_external_rbac_inventory_is_hash_bound_and_drift_sensitive(
                 "items": [
                     {
                         "metadata": {"name": "discovery", "uid": "binding-uid"},
-                        "subjects": [
-                            {"kind": "Group", "name": "system:authenticated"}
-                        ],
+                        "subjects": [{"kind": "Group", "name": "system:authenticated"}],
                         "roleRef": {
                             "apiGroup": "rbac.authorization.k8s.io",
                             "kind": "ClusterRole",
@@ -1769,46 +1867,6 @@ def test_libero_cleanup_preserves_kubeconfig_outside_run_state(tmp_path) -> None
     assert state_root.is_dir()
 
 
-def test_libero_controller_grant_is_rechecked_immediately_before_submit() -> None:
-    source = SCRIPT_PATH.read_text(encoding="utf-8")
-    submit_function = source[source.index("def _submit_and_wait(") :]
-    submit_call = submit_function.index("result = submit_workflow(")
-    pre_submit = submit_function[:submit_call]
-    last_nonblank_lines = [
-        line.strip() for line in pre_submit.splitlines() if line.strip()
-    ][-7:]
-
-    assert last_nonblank_lines == [
-        "if libero_binding is not None:",
-        "_verify_libero_payload_unchanged(",
-        "libero_binding, require_empty_inventory=True",
-        ")",
-        "_verify_libero_controller_unchanged(libero_binding)",
-        "submission_started = True",
-        "active_signal_cleanup = cleanup_after_signal",
-    ]
-
-    job_id = submit_function.index("scheduler_job_id = _exact_scheduler_job_id(")
-    bind = submit_function.index("_bind_libero_payload_pod_access(")
-    wait = submit_function.index("final, wait_diagnostics = _wait_for_terminal(")
-    assert job_id < bind < wait
-
-
-def test_libero_cleanup_transaction_is_installed_before_every_preflight() -> None:
-    source = SCRIPT_PATH.read_text(encoding="utf-8")
-    submit_function = source[source.index("def _submit_and_wait(") :]
-    binding = submit_function.index("libero_binding = _bind_libero_runtime_contract(")
-    after_binding = submit_function[binding:]
-    install = binding + after_binding.index(
-        "signal_previous_handlers = install_teardown_signal_handlers("
-    )
-    write = binding + after_binding.index("_write_yaml_documents(rendered_yaml, docs)")
-    storage = binding + after_binding.index("preflight_output_storage(")
-    provider = binding + after_binding.index("_ensure_infra_enabled(")
-
-    assert binding < install < write < storage < provider
-
-
 @pytest.mark.parametrize(
     ("failure_stage", "failure_recheck"),
     [
@@ -1841,16 +1899,31 @@ def test_libero_pre_submit_failure_always_runs_no_scheduler_access_cleanup(
     payload_kubeconfig.write_text("apiVersion: v1\nkind: Config\n", encoding="utf-8")
     payload_kubeconfig.chmod(0o600)
     monkeypatch.setenv("NPA_LIBERO_PAYLOAD_KUBECONFIG", str(payload_kubeconfig))
+    execution_kubeconfig = tmp_path / "execution-kubeconfig"
+    execution_kubeconfig.write_text("apiVersion: v1\nkind: Config\n", encoding="utf-8")
+    execution_kubeconfig.chmod(0o600)
+    monkeypatch.setenv("KUBECONFIG", str(execution_kubeconfig))
     sky_config = tmp_path / "skypilot.yaml"
     sky_config.chmod(0o600)
     args.config_path = str(sky_config)
     isolated = tmp_path / args.run_id
     isolated.mkdir(mode=0o700)
     args.isolated_config_dir = str(isolated)
-    binding = SimpleNamespace(
+    binding = module.LiberoRuntimeBinding(
         customer_authorization_b64="signed-customer-authorization",
         evidence={},
-        access_state=SimpleNamespace(kubeconfig=isolated / "payload-kubeconfig"),
+        access_state=module.LiberoAccessState(
+            kubeconfig=payload_kubeconfig,
+            context="payload-context",
+            namespace="isolated-namespace",
+            namespace_uid="namespace-uid",
+            service_account_uid="service-account-uid",
+            role_uid="role-uid",
+            role_binding_uid="role-binding-uid",
+            execution_kubeconfig=Path(os.environ["KUBECONFIG"]),
+            execution_context="execution-context",
+            run_id=args.run_id,
+        ),
     )
     events: list[str] = []
     installed: list[object] = []
@@ -1877,12 +1950,16 @@ def test_libero_pre_submit_failure_always_runs_no_scheduler_access_cleanup(
         module, "_libero_global_config_path", lambda selected: selected.config_path
     )
     monkeypatch.setattr(
-        module, "_bind_libero_runtime_contract", lambda *_a, **_k: binding
+        module,
+        "_bind_libero_runtime_contract",
+        lambda *_a, **_k: events.append("binding") or binding,
     )
     monkeypatch.setattr(
         module,
         "install_teardown_signal_handlers",
-        lambda callback: installed.append(callback) or None,
+        lambda callback: (
+            events.append("handlers") or installed.append(callback) or None
+        ),
     )
     monkeypatch.setattr(module, "restore_signal_handlers", lambda *_a: None)
     monkeypatch.setattr(module, "SignalTeardown", lambda **_k: guard)
@@ -1893,23 +1970,20 @@ def test_libero_pre_submit_failure_always_runs_no_scheduler_access_cleanup(
         return _verified_cleanup(module, "all-bound-access")
 
     monkeypatch.setattr(module, "_cleanup_libero_access_objects", cleanup_access)
-    monkeypatch.setattr(
-        module, "_stop_sky_api", lambda **_k: events.append("api")
-    )
+    monkeypatch.setattr(module, "_stop_sky_api", lambda **_k: events.append("api"))
     monkeypatch.setattr(
         module,
         "_cleanup_libero_local_state",
-        lambda **_k: events.append("local")
-        or _verified_cleanup(module, "libero-local"),
+        lambda **_k: (
+            events.append("local") or _verified_cleanup(module, "libero-local")
+        ),
     )
 
     def cleanup_scheduler(job_id, **_kwargs):
         scheduler_cleanup_ids.append(job_id)
         return module.CleanupResult()
 
-    monkeypatch.setattr(
-        module, "_cancel_then_teardown_managed_job", cleanup_scheduler
-    )
+    monkeypatch.setattr(module, "_cancel_then_teardown_managed_job", cleanup_scheduler)
 
     def submit(*_args, **_kwargs):
         submission_calls.append("submit")
@@ -1923,16 +1997,29 @@ def test_libero_pre_submit_failure_always_runs_no_scheduler_access_cleanup(
     recheck_calls = {"payload": 0, "controller": 0}
 
     def recheck(stage: str) -> None:
+        events.append(stage)
         recheck_calls[stage] += 1
         if failure_stage == stage and recheck_calls[stage] == failure_recheck:
             fail()
 
     if failure_stage == "write":
-        monkeypatch.setattr(module, "_write_yaml_documents", lambda *_a: fail())
+        monkeypatch.setattr(
+            module,
+            "_write_yaml_documents",
+            lambda *_a: events.append("write") or fail(),
+        )
     elif failure_stage == "storage":
-        monkeypatch.setattr(module, "preflight_output_storage", lambda **_k: fail())
+        monkeypatch.setattr(
+            module,
+            "preflight_output_storage",
+            lambda **_k: events.append("storage") or fail(),
+        )
     elif failure_stage == "provider":
-        monkeypatch.setattr(module, "_ensure_infra_enabled", lambda **_k: fail())
+        monkeypatch.setattr(
+            module,
+            "_ensure_infra_enabled",
+            lambda **_k: events.append("provider") or fail(),
+        )
     else:
         monkeypatch.setattr(
             module,
@@ -1944,6 +2031,40 @@ def test_libero_pre_submit_failure_always_runs_no_scheduler_access_cleanup(
             "_verify_libero_controller_unchanged",
             lambda *_a, **_k: recheck("controller"),
         )
+    if failure_stage not in {"payload", "controller"}:
+        monkeypatch.setattr(
+            module,
+            "_verify_libero_payload_unchanged",
+            lambda *_a, **_k: events.append("payload"),
+        )
+        monkeypatch.setattr(
+            module,
+            "_verify_libero_controller_unchanged",
+            lambda *_a, **_k: events.append("controller"),
+        )
+
+    if failure_stage != "provider":
+        monkeypatch.setattr(
+            module, "_ensure_infra_enabled", lambda **_k: events.append("provider")
+        )
+    if failure_stage != "storage":
+        monkeypatch.setattr(
+            module,
+            "preflight_output_storage",
+            lambda **_k: (
+                events.append("storage")
+                or module.OutputPrefixLease(
+                    "bucket", "prefix/.npa-output-lease", '"etag"', "version"
+                )
+            ),
+        )
+    if failure_stage != "write":
+        monkeypatch.setattr(
+            module,
+            "_write_yaml_documents",
+            lambda *_a: events.append("write"),
+        )
+    monkeypatch.setattr(module, "_release_output_prefix_lease", lambda *_a: None)
 
     if failure_recheck == 2:
         assert module._submit_and_wait(args) == 1
@@ -1953,7 +2074,16 @@ def test_libero_pre_submit_failure_always_runs_no_scheduler_access_cleanup(
 
     assert len(installed) == 1
     assert submission_calls == []
-    assert events == ["access", "api", "local"]
+    assert events.index("handlers") < events.index("provider")
+    if "storage" in events:
+        assert events.index("provider") < events.index("storage")
+    if "write" in events:
+        assert events.index("storage") < events.index("write")
+    if "payload" in events and "storage" in events:
+        assert events.index("payload") < events.index("storage")
+    if "controller" in events and "storage" in events:
+        assert events.index("controller") < events.index("storage")
+    assert events[-3:] == ["access", "api", "local"]
     assert not bound_objects
     assert all(job_id == "" for job_id in scheduler_cleanup_ids)
 
@@ -1990,12 +2120,8 @@ def test_libero_payload_grant_recheck_refuses_hash_and_identity_drift(
         return evidence, state
 
     monkeypatch.setattr(module, "_libero_rbac_evidence", unchanged)
-    module._verify_libero_payload_unchanged(
-        binding, require_empty_inventory=True
-    )
-    module._verify_libero_payload_unchanged(
-        binding, require_empty_inventory=False
-    )
+    module._verify_libero_payload_unchanged(binding, require_empty_inventory=True)
+    module._verify_libero_payload_unchanged(binding, require_empty_inventory=False)
     assert calls == [True, False]
 
     monkeypatch.setattr(
@@ -2004,9 +2130,7 @@ def test_libero_payload_grant_recheck_refuses_hash_and_identity_drift(
         lambda *_args, **_kwargs: ({"role_uid_sha256": "c" * 64}, state),
     )
     with pytest.raises(RuntimeError, match="payload RBAC changed"):
-        module._verify_libero_payload_unchanged(
-            binding, require_empty_inventory=False
-        )
+        module._verify_libero_payload_unchanged(binding, require_empty_inventory=False)
 
     changed_identity = module.replace(state, role_uid="replacement-role-uid")
     monkeypatch.setattr(
@@ -2018,9 +2142,7 @@ def test_libero_payload_grant_recheck_refuses_hash_and_identity_drift(
         ),
     )
     with pytest.raises(RuntimeError, match="payload RBAC identity changed"):
-        module._verify_libero_payload_unchanged(
-            binding, require_empty_inventory=False
-        )
+        module._verify_libero_payload_unchanged(binding, require_empty_inventory=False)
 
 
 def test_libero_cleanup_deletes_uid_bound_access_and_namespace(monkeypatch) -> None:
@@ -2085,9 +2207,7 @@ def test_libero_cleanup_deletes_uid_bound_access_and_namespace(monkeypatch) -> N
     package.config = config_module
     monkeypatch.setitem(sys.modules, "kubernetes", package)
     monkeypatch.setitem(sys.modules, "kubernetes.client", client_module)
-    monkeypatch.setitem(
-        sys.modules, "kubernetes.client.exceptions", exceptions_module
-    )
+    monkeypatch.setitem(sys.modules, "kubernetes.client.exceptions", exceptions_module)
     monkeypatch.setitem(sys.modules, "kubernetes.config", config_module)
     state = module.LiberoAccessState(
         kubeconfig=Path("/private/payload-kubeconfig"),
@@ -2218,17 +2338,13 @@ def test_libero_cleanup_attempts_every_uid_bound_position_after_failure(
         def delete_namespaced_role(self, name, *_args, **_kwargs):
             operation(
                 "delete",
-                "controller-role"
-                if name == module.LIBERO_CONTROLLER_ROLE
-                else "role",
+                "controller-role" if name == module.LIBERO_CONTROLLER_ROLE else "role",
             )
 
         def read_namespaced_role(self, name, *_args, **_kwargs):
             operation(
                 "read",
-                "controller-role"
-                if name == module.LIBERO_CONTROLLER_ROLE
-                else "role",
+                "controller-role" if name == module.LIBERO_CONTROLLER_ROLE else "role",
             )
 
     client_module = ModuleType("kubernetes.client")
@@ -2245,9 +2361,7 @@ def test_libero_cleanup_attempts_every_uid_bound_position_after_failure(
     package.config = config_module
     monkeypatch.setitem(sys.modules, "kubernetes", package)
     monkeypatch.setitem(sys.modules, "kubernetes.client", client_module)
-    monkeypatch.setitem(
-        sys.modules, "kubernetes.client.exceptions", exceptions_module
-    )
+    monkeypatch.setitem(sys.modules, "kubernetes.client.exceptions", exceptions_module)
     monkeypatch.setitem(sys.modules, "kubernetes.config", config_module)
     state = module.LiberoAccessState(
         kubeconfig=Path("/private/payload-kubeconfig"),
@@ -2312,17 +2426,17 @@ def test_complete_libero_cleanup_orders_remote_api_and_local_absence(
     monkeypatch.setattr(
         module,
         "_cleanup_libero_access_objects",
-        lambda *_a, **_k: events.append("access")
-        or _verified_cleanup(module, "libero-access"),
+        lambda *_a, **_k: (
+            events.append("access") or _verified_cleanup(module, "libero-access")
+        ),
     )
-    monkeypatch.setattr(
-        module, "_stop_sky_api", lambda **_k: events.append("api")
-    )
+    monkeypatch.setattr(module, "_stop_sky_api", lambda **_k: events.append("api"))
     monkeypatch.setattr(
         module,
         "_cleanup_libero_local_state",
-        lambda **_k: events.append("local")
-        or _verified_cleanup(module, "libero-local"),
+        lambda **_k: (
+            events.append("local") or _verified_cleanup(module, "libero-local")
+        ),
     )
 
     result, attempted, stopped = module._complete_libero_cleanup(
@@ -2406,8 +2520,9 @@ def test_complete_libero_cleanup_preserves_state_on_api_stop_failure(
     monkeypatch.setattr(
         module,
         "_cleanup_libero_access_objects",
-        lambda *_a, **_k: events.append("access")
-        or _verified_cleanup(module, "libero-access"),
+        lambda *_a, **_k: (
+            events.append("access") or _verified_cleanup(module, "libero-access")
+        ),
     )
 
     def fail_api_stop(**_kwargs) -> None:
@@ -2456,16 +2571,34 @@ def test_libero_signal_callback_completes_every_cleanup_layer(
     payload_kubeconfig.write_text("apiVersion: v1\nkind: Config\n", encoding="utf-8")
     payload_kubeconfig.chmod(0o600)
     monkeypatch.setenv("NPA_LIBERO_PAYLOAD_KUBECONFIG", str(payload_kubeconfig))
+    execution_kubeconfig = tmp_path / "execution-kubeconfig"
+    execution_kubeconfig.write_text("apiVersion: v1\nkind: Config\n", encoding="utf-8")
+    execution_kubeconfig.chmod(0o600)
+    monkeypatch.setenv("KUBECONFIG", str(execution_kubeconfig))
     sky_config = tmp_path / "skypilot.yaml"
     sky_config.chmod(0o600)
     args.config_path = str(sky_config)
     isolated = tmp_path / args.run_id
     isolated.mkdir(mode=0o700)
     args.isolated_config_dir = str(isolated)
-    binding = SimpleNamespace(
+    binding = module.LiberoRuntimeBinding(
         customer_authorization_b64="signed-customer-authorization",
         evidence={},
-        access_state=SimpleNamespace(kubeconfig=isolated / "payload-kubeconfig"),
+        access_state=module.LiberoAccessState(
+            kubeconfig=payload_kubeconfig,
+            context="payload-context",
+            namespace="isolated-namespace",
+            namespace_uid="namespace-uid",
+            service_account_uid="service-account-uid",
+            role_uid="role-uid",
+            role_binding_uid="role-binding-uid",
+            execution_kubeconfig=Path(os.environ["KUBECONFIG"]),
+            execution_context="execution-context",
+            run_id=args.run_id,
+        ),
+    )
+    output_prefix_lease = module.OutputPrefixLease(
+        "bucket", "prefix/.npa-output-lease", '"etag"', "version"
     )
     events: list[str] = []
     installed: dict[str, object] = {}
@@ -2492,6 +2625,17 @@ def test_libero_signal_callback_completes_every_cleanup_layer(
     monkeypatch.setattr(
         module, "_bind_libero_payload_pod_access", lambda *_a, **_k: binding
     )
+    monkeypatch.setattr(
+        module, "preflight_output_storage", lambda **_k: output_prefix_lease
+    )
+
+    def release_output_prefix_lease(lease):
+        assert lease is output_prefix_lease
+        events.append("lease")
+
+    monkeypatch.setattr(
+        module, "_release_output_prefix_lease", release_output_prefix_lease
+    )
     monkeypatch.setattr(module, "resolve_secret_envs", lambda *_a, **_k: [])
     monkeypatch.setattr(module, "SignalTeardown", lambda **_k: guard)
 
@@ -2508,23 +2652,24 @@ def test_libero_signal_callback_completes_every_cleanup_layer(
     monkeypatch.setattr(
         module,
         "_cancel_then_teardown_managed_job",
-        lambda *_a, **_k: events.append("managed")
-        or _verified_cleanup(module, "managed"),
+        lambda *_a, **_k: (
+            events.append("managed") or _verified_cleanup(module, "managed")
+        ),
     )
     monkeypatch.setattr(
         module,
         "_cleanup_libero_access_objects",
-        lambda *_a, **_k: events.append("access")
-        or _verified_cleanup(module, "libero-access"),
+        lambda *_a, **_k: (
+            events.append("access") or _verified_cleanup(module, "libero-access")
+        ),
     )
-    monkeypatch.setattr(
-        module, "_stop_sky_api", lambda **_k: events.append("api")
-    )
+    monkeypatch.setattr(module, "_stop_sky_api", lambda **_k: events.append("api"))
     monkeypatch.setattr(
         module,
         "_cleanup_libero_local_state",
-        lambda **_k: events.append("local")
-        or _verified_cleanup(module, "libero-local"),
+        lambda **_k: (
+            events.append("local") or _verified_cleanup(module, "libero-local")
+        ),
     )
 
     def interrupt_wait(*_args, **_kwargs):
@@ -2538,7 +2683,7 @@ def test_libero_signal_callback_completes_every_cleanup_layer(
     with pytest.raises(SystemExit, match="143"):
         module._submit_and_wait(args)
 
-    assert events == ["managed", "access", "api", "local"]
+    assert events == ["managed", "access", "api", "local", "lease"]
 
 
 def test_runtime_secret_channel_has_no_invented_wan_consent(monkeypatch) -> None:
@@ -2555,7 +2700,7 @@ def test_runtime_secret_channel_has_no_invented_wan_consent(monkeypatch) -> None
     assert module.resolve_secret_envs(["HF_TOKEN"], solution_name="wan2.2") == []
 
 
-def test_openpi_runtime_acceptance_uses_secret_channel(monkeypatch) -> None:
+def test_manager_never_forwards_plain_vendor_terms_answers(monkeypatch) -> None:
     module = _load_module()
     monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", "YES")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "probe-id")
@@ -2564,11 +2709,8 @@ def test_openpi_runtime_acceptance_uses_secret_channel(monkeypatch) -> None:
     assert module.resolve_secret_envs(None, solution_name="openpi") == [
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
-        "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
     ]
-    assert module.resolve_secret_envs(["HF_TOKEN"], solution_name="openpi") == [
-        "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
-    ]
+    assert module.resolve_secret_envs(["HF_TOKEN"], solution_name="openpi") == []
 
 
 def test_one_solutions_operator_answers_do_not_widen_anothers(monkeypatch) -> None:
@@ -2597,7 +2739,7 @@ def test_one_solutions_operator_answers_do_not_widen_anothers(monkeypatch) -> No
 
     assert not [name for name in wan if name.startswith("NPA_LTX_")]
     assert "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS" not in ltx
-    assert "NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS" in ltx
+    assert "NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS" not in ltx
     # The entitlement the LTX container needs for both of its fetches.
     assert "HF_TOKEN" in ltx
     # A solution with no vendor answers of its own forwards none, including the
@@ -2618,6 +2760,7 @@ def test_output_storage_preflight_writes_reads_and_deletes(monkeypatch) -> None:
         def put_object(self, *, Bucket, Key, **_kwargs):
             assert _kwargs["IfNoneMatch"] == "*"
             calls.append(("put", Bucket, Key))
+            return {}
 
         def head_object(self, *, Bucket, Key):
             calls.append(("head", Bucket, Key))
@@ -2696,10 +2839,17 @@ def test_libero_output_preflight_first_call_uses_exact_authorized_triplet(
 
         def put_object(self, *, Bucket, Key, **_kwargs):
             calls.append(("put", Bucket, Key))
+            assert _kwargs["IfNoneMatch"] == "*"
+            return {"VersionId": "lease-version", "ETag": '"lease-etag"'}
 
-        def head_object(self, *, Bucket, Key):
+        def head_object(self, *, Bucket, Key, VersionId):
             calls.append(("head", Bucket, Key))
-            return {"ContentLength": 24}
+            assert VersionId == "lease-version"
+            return {
+                "ContentLength": 24,
+                "VersionId": VersionId,
+                "ETag": '"lease-etag"',
+            }
 
         def delete_object(self, *, Bucket, Key):
             calls.append(("delete", Bucket, Key))
@@ -2721,7 +2871,7 @@ def test_libero_output_preflight_first_call_uses_exact_authorized_triplet(
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")
     monkeypatch.setenv("NPA_PROJECT", "saved-project-with-different-credentials")
 
-    module.preflight_output_storage(
+    lease = module.preflight_output_storage(
         output_root="s3://manager-bucket/accepted-prefix",
         run_id="libero-authorized-probe",
         libero=True,
@@ -2733,6 +2883,12 @@ def test_libero_output_preflight_first_call_uses_exact_authorized_triplet(
     assert clients[0]["aws_access_key_id"] == "manager-access"
     assert clients[0]["aws_secret_access_key"] == "manager-secret"
     assert clients[0]["aws_session_token"] == "manager-session"
+    assert lease == module.OutputPrefixLease(
+        "manager-bucket",
+        "accepted-prefix/libero-authorized-probe/.npa-output-lease",
+        '"lease-etag"',
+        "lease-version",
+    )
     assert calls[0] == (
         "list",
         "manager-bucket",
@@ -2802,22 +2958,25 @@ def test_libero_output_prefix_refusal_is_retryable_after_external_cleanup(
     run_id = "libero-authorized-probe"
     prefix = f"accepted-prefix/{run_id}/"
     partial_key = prefix + "npa_runtime_metadata.json"
-    objects = {partial_key}
+    objects: dict[str, tuple[str, str]] = {partial_key: ("", "")}
     deletes: list[str] = []
 
     class FakeS3:
         def list_objects_v2(self, *, Bucket, Prefix, MaxKeys):
             return {"Contents": [{"Key": key} for key in sorted(objects)[:MaxKeys]]}
 
-        def delete_object(self, *, Bucket, Key):
+        def delete_object(self, *, Bucket, Key, VersionId=None):
             deletes.append(Key)
-            objects.discard(Key)
+            objects.pop(Key, None)
 
         def put_object(self, *, Bucket, Key, **_kwargs):
-            objects.add(Key)
+            objects[Key] = ('"lease-etag"', "lease-version")
+            return {"ETag": '"lease-etag"', "VersionId": "lease-version"}
 
-        def head_object(self, *, Bucket, Key):
-            return {"ContentLength": 24}
+        def head_object(self, *, Bucket, Key, VersionId=None):
+            etag, version = objects[Key]
+            assert VersionId == version
+            return {"ContentLength": 24, "ETag": etag, "VersionId": version}
 
     monkeypatch.setattr(boto3, "client", lambda *_args, **_kwargs: FakeS3())
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "manager-access")
@@ -2831,17 +2990,18 @@ def test_libero_output_prefix_refusal_is_retryable_after_external_cleanup(
             run_id=run_id,
             libero=True,
         )
-    assert objects == {partial_key}
+    assert objects == {partial_key: ("", "")}
     assert deletes == []
 
     objects.clear()
-    module.preflight_output_storage(
+    lease = module.preflight_output_storage(
         output_root="s3://manager-bucket/accepted-prefix",
         run_id=run_id,
         libero=True,
     )
-    assert objects == set()
-    assert deletes == [prefix + ".npa-write-preflight"]
+    assert lease is not None
+    assert objects == {prefix + ".npa-output-lease": ('"lease-etag"', "lease-version")}
+    assert deletes == []
 
 
 @pytest.mark.parametrize("suffix", ["npa_upload_receipt.json", "foreign.json"])
@@ -3226,8 +3386,12 @@ def test_managed_cleanup_preserves_clusters_when_exact_cancel_raises(
     )
 
     result = module._cancel_then_teardown_managed_job(
-        "73", teardown_guard=guard, sky_bin="sky",
-        isolated_config_dir=None, config_path=None, poll_interval=1,
+        "73",
+        teardown_guard=guard,
+        sky_bin="sky",
+        isolated_config_dir=None,
+        config_path=None,
+        poll_interval=1,
     )
 
     assert result.errors == ["exact managed-job cancellation raised unexpectedly"]
@@ -3255,8 +3419,12 @@ def test_managed_cleanup_reports_teardown_exception_without_absence_claim(
     )
 
     result = module._cancel_then_teardown_managed_job(
-        "73", teardown_guard=guard, sky_bin="sky",
-        isolated_config_dir=None, config_path=None, poll_interval=1,
+        "73",
+        teardown_guard=guard,
+        sky_bin="sky",
+        isolated_config_dir=None,
+        config_path=None,
+        poll_interval=1,
     )
 
     assert result.errors == ["run-cluster teardown raised unexpectedly"]
@@ -3521,8 +3689,11 @@ def test_post_teardown_inventory_exception_keeps_absence_unverified(
     )
 
     result = module._verify_managed_clusters_absent(
-        run_id="human-run-name", sky_bin="sky", isolated_config_dir=None,
-        config_path=None, timeout=1,
+        run_id="human-run-name",
+        sky_bin="sky",
+        isolated_config_dir=None,
+        config_path=None,
+        timeout=1,
     )
 
     assert result.errors == ["post-teardown SkyPilot cluster inventory raised"]
@@ -3552,9 +3723,7 @@ def test_managed_cleanup_preserves_resources_without_scheduler_id() -> None:
     assert down == []
 
 
-def test_submit_waits_on_scheduler_id_not_human_run_name(
-    monkeypatch, tmp_path
-) -> None:
+def test_submit_waits_on_scheduler_id_not_human_run_name(monkeypatch, tmp_path) -> None:
     module = _load_module()
     args = _indirect_submit_args(module, monkeypatch, tmp_path)
     isolated = tmp_path / args.run_id
@@ -3618,6 +3787,10 @@ def test_libero_refuses_isaac_lab_precheck_failure_override(
     payload_kubeconfig.write_text("apiVersion: v1\nkind: Config\n", encoding="utf-8")
     payload_kubeconfig.chmod(0o600)
     monkeypatch.setenv("NPA_LIBERO_PAYLOAD_KUBECONFIG", str(payload_kubeconfig))
+    execution_kubeconfig = tmp_path / "execution-kubeconfig"
+    execution_kubeconfig.write_text("apiVersion: v1\nkind: Config\n", encoding="utf-8")
+    execution_kubeconfig.chmod(0o600)
+    monkeypatch.setenv("KUBECONFIG", str(execution_kubeconfig))
     sky_config = tmp_path / "skypilot.yaml"
     sky_config.chmod(0o600)
     args.config_path = str(sky_config)
@@ -3626,9 +3799,7 @@ def test_libero_refuses_isaac_lab_precheck_failure_override(
     monkeypatch.setattr(
         module, "_libero_global_config_path", lambda _args: _args.config_path
     )
-    monkeypatch.setattr(
-        module, "_bind_libero_runtime_contract", lambda *_a, **_k: None
-    )
+    monkeypatch.setattr(module, "_bind_libero_runtime_contract", lambda *_a, **_k: None)
     monkeypatch.setattr(
         module,
         "submit_workflow",
@@ -4318,9 +4489,7 @@ def test_submit_and_wait_restores_kubeconfig_after_direct_launch(
     monkeypatch.setattr(module, "resolve_sky_bin", lambda *_a, **_k: "/opt/sky")
     isolated = tmp_path / "isolated-state"
     isolated.mkdir()
-    monkeypatch.setattr(
-        module, "resolve_isolated_config_dir", lambda _value: isolated
-    )
+    monkeypatch.setattr(module, "resolve_isolated_config_dir", lambda _value: isolated)
     monkeypatch.setattr(module, "_default_run_id", lambda: "byof-restore")
     monkeypatch.setattr(
         module,
