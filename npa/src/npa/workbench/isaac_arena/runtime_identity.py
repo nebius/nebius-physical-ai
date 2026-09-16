@@ -6,8 +6,12 @@ from importlib import metadata
 import json
 import os
 from pathlib import Path
-import tomllib
 from typing import Mapping
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised by the Python 3.10 CI lane
+    import tomli as tomllib
 
 from .errors import IsaacArenaError
 from .identity import (
