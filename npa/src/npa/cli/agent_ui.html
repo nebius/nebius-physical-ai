@@ -8612,13 +8612,26 @@
         loadCompletedWorkflowTimeline(runId);
         return true;
       }
+      let monitoredWorkflowExecutionId = "";
       async function monitorWorkflowExecution(runId) {
+        monitoredWorkflowExecutionId = runId;
         try {
           return finishWorkflowExecution(await waitForWorkflowExecution(runId), runId);
         } catch (error) {
           renderWorkflowExecutionStatus({ status: "status unavailable" });
           appendChat("error", "Workflow status could not be refreshed. The durable run continues independently.");
           return false;
+        } finally {
+          if (monitoredWorkflowExecutionId === runId) monitoredWorkflowExecutionId = "";
+        }
+      }
+      function restoreWorkflowExecutionStatus(executions) {
+        const latest = Array.isArray(executions) ? executions[0] : null;
+        if (!latest || typeof latest !== "object") return;
+        renderWorkflowExecutionStatus(latest);
+        const runId = String(latest.run_id || "").trim();
+        if (workflowExecutionIsActive(latest) && runId && monitoredWorkflowExecutionId !== runId) {
+          void monitorWorkflowExecution(runId);
         }
       }
       function showWorkflowExecutionConfirmation(pending) {
@@ -14987,6 +15000,7 @@
               setWorkflowYaml(draftYaml, session.workflow_draft.validation || {});
             }
           }
+          if (session) restoreWorkflowExecutionStatus(session.workflow_executions);
           // An explicit browser selection also drives non-RRD capabilities such
           // as LeIsaac. A sim-viz response can retain the last RRD-capable
           // active_run_id; it must not silently replace the run we requested.
@@ -16045,6 +16059,7 @@
             setChatModels(session.llm.models, currentModel);
           }
           if (restoreChat) renderChatHistory(session.chat_history || []);
+          if (session) restoreWorkflowExecutionStatus(session.workflow_executions);
           const draft = session.workflow_draft;
           if (draft && draft.yaml) {
             setWorkflowYaml(draft.yaml, draft.validation || draft);

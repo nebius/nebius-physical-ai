@@ -1181,6 +1181,56 @@ def test_no_stock_demo_mode_removes_only_the_stock_history(
         sys.modules.pop(module_name, None)
 
 
+def test_artifact_only_execution_snapshots_preserve_browser_safe_status(
+    monkeypatch, tmp_path
+) -> None:
+    """Artifact-only session state retains durable execution status after reload."""
+    import sys
+
+    module_name = "npa_rendered_artifact_only_execution_snapshots"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    module.PRELOAD_STOCK_DEMO = False
+    try:
+        monkeypatch.setattr(
+            module,
+            "_load_state",
+            lambda: {
+                "workflow_executions": {
+                    "older": {
+                        "run_id": "older",
+                        "status": "SUCCEEDED",
+                        "submitted_at": "2026-01-01T00:00:00Z",
+                    },
+                    "newer": {
+                        "run_id": "newer",
+                        "status": "RUNNING",
+                        "state": "running",
+                        "submission_state": "submitting durable workflow",
+                        "submitted_at": "2026-01-02T00:00:00Z",
+                        "private_detail": "must-not-reach-browser",
+                    },
+                }
+            },
+        )
+
+        assert module._workflow_execution_snapshots() == [
+            {
+                "run_id": "newer",
+                "status": "RUNNING",
+                "state": "running",
+                "submission_state": "submitting durable workflow",
+                "submitted_at": "2026-01-02T00:00:00Z",
+            },
+            {
+                "run_id": "older",
+                "status": "SUCCEEDED",
+                "submitted_at": "2026-01-01T00:00:00Z",
+            },
+        ]
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_session_get_does_not_rewrite_durable_state(monkeypatch, tmp_path) -> None:
     """Hydration/listing is a GET and must keep the exact persisted bytes."""
     import sys

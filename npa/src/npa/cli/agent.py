@@ -3995,6 +3995,11 @@ def _workflow_execution_status_payload(run_id: str) -> dict:
     record = executions.get(run_id) if isinstance(executions, dict) else None
     if not isinstance(record, dict):
         raise HTTPException(status_code=404, detail="workflow execution not found")
+    return _public_workflow_execution_record(record)
+
+
+def _public_workflow_execution_record(record: dict) -> dict:
+    # Keep the session/bootstrap payload to fields explicitly safe for the browser.
     allowed = {{
         "run_id",
         "workflow",
@@ -4011,6 +4016,24 @@ def _workflow_execution_status_payload(run_id: str) -> dict:
         "recovery_decision",
     }}
     return {{key: record[key] for key in allowed if key in record}}
+
+
+def _workflow_execution_snapshots(state: dict | None = None) -> list[dict]:
+    # A short newest-first list lets a refreshed UI reattach to durable work.
+    current_state = state if isinstance(state, dict) else _load_state()
+    executions = current_state.get("workflow_executions")
+    if not isinstance(executions, dict):
+        return []
+    records = [
+        _public_workflow_execution_record(value)
+        for value in executions.values()
+        if isinstance(value, dict)
+    ]
+    records.sort(
+        key=lambda value: str(value.get("submitted_at") or value.get("started_at") or ""),
+        reverse=True,
+    )
+    return records[:5]
 
 
 def _workflow_execution_failure_summary(error: Exception) -> str:
@@ -6956,6 +6979,7 @@ def session_bootstrap():
         "infra": _agent_k8s_backends(),
         "workflow_draft": _workflow_draft_from_state(state),
         "workflow_submit": state.get("workflow_submit", {{}}),
+        "workflow_executions": _workflow_execution_snapshots(state),
         "camera_selection": state.get("camera_selection", ["workspace"]),
         "chat_history": history,
         "active_chat_session_id": active_session["id"],

@@ -6864,7 +6864,9 @@ def test_workflow_execution_status_keeps_the_browser_usable() -> None:
 
     assert 'id="workflowExecutionStatus"' in ui
     assert "function monitorWorkflowExecution(runId)" in ui
+    assert "function restoreWorkflowExecutionStatus(executions)" in ui
     assert "void monitorWorkflowExecution(executionRunId);" in ui
+    assert "restoreWorkflowExecutionStatus(session.workflow_executions);" in ui
     assert "its status remains visible while the browser stays usable" in ui
 
 
