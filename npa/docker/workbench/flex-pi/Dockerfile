@@ -42,8 +42,10 @@ USER root
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates git openssh-server patch rsync sudo \
+    && apt-get install -y --only-upgrade linux-libc-dev \
     && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+    && rm -rf /opt/nvidia/nsight-compute/2025.1.0 \
     && conda install -y -c conda-forge 'ffmpeg=7' \
     && conda clean -afy \
     && (id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu) \
@@ -56,9 +58,11 @@ COPY --from=upstream-source /tmp/flex-pi-source/src /opt/flex-pi/src
 COPY --from=upstream-source /tmp/flex-pi-source/configs /opt/flex-pi/configs
 COPY --from=upstream-source /tmp/flex-pi-source/experiments/robotwin/flexpi_policy/deploy_policy.py /opt/flex-pi/experiments/robotwin/flexpi_policy/deploy_policy.py
 COPY docker/workbench/flex-pi/pins/dino-checkpoint.patch /tmp/dino-checkpoint.patch
+COPY docker/workbench/flex-pi/pins/security-dependencies.patch /tmp/security-dependencies.patch
 
 RUN patch --directory=/opt/flex-pi --strip=1 --input=/tmp/dino-checkpoint.patch \
-    && rm /tmp/dino-checkpoint.patch \
+    && patch --directory=/opt/flex-pi --strip=1 --input=/tmp/security-dependencies.patch \
+    && rm /tmp/dino-checkpoint.patch /tmp/security-dependencies.patch \
     && pip install -e /opt/flex-pi --extra-index-url https://download.pytorch.org/whl/cu128 \
     && pip install --force-reinstall --no-deps --index-url https://pypi.org/simple torchcodec==0.5 \
     && rm -f /opt/conda/lib/python3.11/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2 \
