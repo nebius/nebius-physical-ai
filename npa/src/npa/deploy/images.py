@@ -150,7 +150,7 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"openpi", "curobo", "ncore", "diffusers", "lingbot-world", "sam2"}
+    {"openpi", "curobo", "ncore"}
 )
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa"})
 # Compatibility view used by publication callers and public imports. Derive it
@@ -177,6 +177,18 @@ PUBLIC_RELEASE_TAG_OVERRIDES: dict[str, str] = {
 # whose filesystem/layers were scanned and whose advertised GPU capability ran.
 # A newly built dev tag must earn fresh evidence before this mapping changes.
 GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES: dict[str, dict[str, str]] = {
+    "diffusers": {
+        "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3",
+        "oci_digest": "sha256:6422a062a00c9816a945623b0c83a78977fa5d5cec1777a0e6d44d1d746fc42e",
+    },
+    "lingbot-world": {
+        "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3",
+        "oci_digest": "sha256:5e2a3998bf7d54987d0916f7c249b4963ef87f489e9e893ec8d94da196286277",
+    },
+    "sam2": {
+        "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3",
+        "oci_digest": "sha256:fbe20454e97452e447e00f79260a267b552deef5538e3bbbc8c3567a3c576f16",
+    },
     "cosmos3": {
         "development_sha": "1925834f29983dd9a16659eb3dd350a7f5d13d99",
         "oci_digest": "sha256:d8e1fe370f75e5433455a221b70ae6211c30369255a3bb111d03e5c07240e010",
@@ -260,9 +272,9 @@ SUPPORTED_TOOL_VERSIONS = {
     "detection-training": "runtime-v1-20260905",
     # Public-eligible Wan source/CPU base; CUDA torch is operator-gated runtime fetch.
     "wan2-2": "2.2-ti2v5b-rtfetch-cu130-20260817",
-    "diffusers": "0.38.0-rtfetch-unbuilt",
-    "lingbot-world": "a43bec7-rtfetch-unbuilt",
-    "sam2": "2.1-rtfetch-unbuilt",
+    "diffusers": "0.38.0-rtfetch-20260916",
+    "lingbot-world": "a43bec7-rtfetch-20260916",
+    "sam2": "2.1-rtfetch-20260916",
     # LTX source and weights remain operator-entitled runtime fetches. This tag
     # resolves only to the zero-payload digest recorded in ltx2_image_manifest.json.
     "ltx2": "2.5-rtfetch-20260817",

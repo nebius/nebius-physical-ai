@@ -15,7 +15,7 @@ config:
   repo_auth: none
   repo_token_env: GH_TOKEN
   base_profile: prebuilt
-  base_image: <your-registry>/byof-diffusers@sha256:<validated-image-digest>
+  base_image: ghcr.io/nebius/nebius-physical-ai/npa-diffusers@sha256:6422a062a00c9816a945623b0c83a78977fa5d5cec1777a0e6d44d1d746fc42e
   build_command: ''
   pip_extra: viz
   workload: solution-smoke
@@ -24,7 +24,7 @@ config:
     export VIDEO_PROMPT_B64="{{config.prompt|base64}}"
     export VIDEO_NEGATIVE_B64="{{config.negative_prompt|base64}}"
     export VIDEO_SEED_B64="{{config.seed|base64}}"
-    wan-runtime ensure
+    model-runtime ensure
     /opt/byof/.venv/bin/python - <<'PY_VIDEO'
     import base64
     import json

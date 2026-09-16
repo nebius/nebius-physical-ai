@@ -11,7 +11,7 @@ config:
   repo_auth: none
   repo_token_env: GH_TOKEN
   base_profile: prebuilt
-  base_image: <your-registry>/byof-sam2@sha256:<validated-image-digest>
+  base_image: ghcr.io/nebius/nebius-physical-ai/npa-sam2@sha256:fbe20454e97452e447e00f79260a267b552deef5538e3bbbc8c3567a3c576f16
   build_command: ''
   pip_extra: viz
   workload: solution-smoke
@@ -20,7 +20,7 @@ config:
     export VIDEO_INPUT_B64="{{config.input_uri|base64}}"
     export VIDEO_SHA256_B64="{{config.input_sha256|base64}}"
     export VIDEO_BOX_B64="{{config.box_json|base64}}"
-    wan-runtime ensure
+    model-runtime ensure
     export PYTHONPATH="/opt/byof:${PYTHONPATH:-}"
     /opt/byof/.venv/bin/python - <<'PY_VIDEO'
     import base64

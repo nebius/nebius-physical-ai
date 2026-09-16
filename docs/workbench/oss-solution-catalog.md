@@ -307,17 +307,17 @@ These Tier 1 BYOF recipes use immutable Diffusers source and model revisions. Th
 
 | Model | Native API | Capability | Artifact | Workflow | Status |
 | --- | --- | --- | --- | --- | --- |
-| mochi-1 | `MochiPipeline` on CUDA | `mochi-1_text_to_video` | `mochi_1_text_to_video.json` + `video.mp4` | `byof-mochi-1.yaml` | packaged B200 inference verified (2026-09-15) |
-| cogvideox-2b | `CogVideoXPipeline` on CUDA | `cogvideox-2b_text_to_video` | `cogvideox_2b_text_to_video.json` + `video.mp4` | `byof-cogvideox-2b.yaml` | packaged B200 inference verified (2026-09-15) |
-| wan2.1-14b | `WanPipeline` on CUDA | `wan2.1-14b_text_to_video` | `wan2_1_14b_text_to_video.json` + `video.mp4` | `byof-wan2.1-14b.yaml` | packaged B200 inference verified (2026-09-15) |
+| mochi-1 | `MochiPipeline` on CUDA | `mochi-1_text_to_video` | `mochi_1_text_to_video.json` + `video.mp4` | `byof-mochi-1.yaml` | public GHCR image; B200 inference verified (2026-09-16) |
+| cogvideox-2b | `CogVideoXPipeline` on CUDA | `cogvideox-2b_text_to_video` | `cogvideox_2b_text_to_video.json` + `video.mp4` | `byof-cogvideox-2b.yaml` | public GHCR image; B200 inference verified (2026-09-16) |
+| wan2.1-14b | `WanPipeline` on CUDA | `wan2.1-14b_text_to_video` | `wan2_1_14b_text_to_video.json` + `video.mp4` | `byof-wan2.1-14b.yaml` | public GHCR image; B200 inference verified (2026-09-16) |
 
 
 ### LingBot World v1 camera workflow
 
-`byof-lingbot-world.yaml` exercises `lingbot_world_camera_conditioned_video` using pinned upstream `generate.py`, FSDP, and Ulysses on four B200 GPUs. It emits `lingbot_world_camera_conditioned_video.json`, per-rank execution evidence, authored camera controls, the source image, and a fully decoded MP4. Packaged B200 inference verified on 2026-09-15. Camera trajectories and approximate intrinsics are authored, not measured. This v1 recipe does not claim robot action input, training, real-time performance, or support for the separate World Infinity successor.
+`byof-lingbot-world.yaml` exercises `lingbot_world_camera_conditioned_video` using pinned upstream `generate.py`, FSDP, and Ulysses on four B200 GPUs. It emits `lingbot_world_camera_conditioned_video.json`, per-rank execution evidence, authored camera controls, the source image, and a fully decoded MP4. Exact public GHCR image inference verified on B200 on 2026-09-16. Camera trajectories and approximate intrinsics are authored, not measured. This v1 recipe does not claim robot action input, training, real-time performance, or support for the separate World Infinity successor.
 
-- `byof-depth-anything-v2.yaml`: `relative_depth_video` emits `depth_anything_v2_relative_depth.json`, raw prediction arrays and a fully decoded GPU-derived video. Packaged B200 inference verified on 2026-09-15. Model checkpoints are immutable runtime fetches; video inputs require a complete SHA256. No metric-depth, ground-truth-mask, or robot-success claim.
+- `byof-depth-anything-v2.yaml`: `relative_depth_video` emits `depth_anything_v2_relative_depth.json`, raw prediction arrays and a fully decoded GPU-derived video. Exact public GHCR image inference verified on B200 on 2026-09-16. Model checkpoints are immutable runtime fetches; video inputs require a complete SHA256. No metric-depth, ground-truth-mask, or robot-success claim.
 
-- `byof-sam2.1.yaml`: `prompted_video_mask_propagation` emits `sam2_1_video_mask_propagation.json`, raw prediction arrays and a fully decoded GPU-derived video. Packaged B200 inference verified on 2026-09-15. Model checkpoints are immutable runtime fetches; video inputs require a complete SHA256. No metric-depth, ground-truth-mask, or robot-success claim.
+- `byof-sam2.1.yaml`: `prompted_video_mask_propagation` emits `sam2_1_video_mask_propagation.json`, raw prediction arrays and a fully decoded GPU-derived video. Exact public GHCR image inference verified on B200 on 2026-09-16. Model checkpoints are immutable runtime fetches; video inputs require a complete SHA256. No metric-depth, ground-truth-mask, or robot-success claim.
 
-Qualification above used inspected, immutable operator-built images pulled by the GPU worker, native capability execution, a successful worker summary, and complete artifact hash verification. These are Tier 1 BYOF workflows, not new official GHCR images or standalone serving APIs. Concrete run and infrastructure records remain in private validation evidence.
+Qualification above used the exact public GHCR images pulled by GPU workers, native capability execution, successful worker summaries, complete artifact hash verification and independent full video decode. The recipes default to the accepted `npa-diffusers`, `npa-lingbot-world` and `npa-sam2` digests; they are Tier 1 workflows, without standalone serving APIs. [Public capability evidence](validation/studio-public-models-20260916.json) records the bounded results. Concrete infrastructure records remain private.

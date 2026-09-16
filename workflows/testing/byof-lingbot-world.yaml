@@ -14,7 +14,7 @@ config:
   repo_auth: none
   repo_token_env: GH_TOKEN
   base_profile: prebuilt
-  base_image: <your-registry>/byof-lingbot@sha256:<validated-image-digest>
+  base_image: ghcr.io/nebius/nebius-physical-ai/npa-lingbot-world@sha256:5e2a3998bf7d54987d0916f7c249b4963ef87f489e9e893ec8d94da196286277
   build_command: ''
   pip_extra: viz
   workload: solution-smoke
@@ -24,8 +24,7 @@ config:
     export VIDEO_SEED_B64="{{config.seed|base64}}"
     export VIDEO_INPUT_B64="{{config.input_uri|base64}}"
     export VIDEO_SHA256_B64="{{config.input_sha256|base64}}"
-    wan-runtime ensure
-    /opt/byof/.venv/bin/python -m pip install --no-deps protobuf==6.33.6
+    model-runtime ensure
     /opt/byof/.venv/bin/python - <<'PY_VIDEO'
     import base64
     import json

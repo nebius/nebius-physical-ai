@@ -1,4 +1,4 @@
-# GPU video generation through BYOF
+# Native GPU video and perception workflows
 
 Mochi 1, CogVideoX 2B, and Wan 2.1 14B have separate text-to-video
 workflow recipes. Each invokes its native Diffusers pipeline on a B200,
@@ -9,12 +9,32 @@ These are Tier 1 workflow integrations; they do not add standalone model servers
 
 ## Curated public runtime packaging
 
-Three source-only job Dockerfiles now package these integrations for the official
-GHCR publication process: `diffusers/Dockerfile`, `lingbot-world/Dockerfile`, and
-`sam2/Dockerfile` under `npa/docker/workbench`. These are initially development
-candidates; consult the container catalog for accepted digests before use.
-Development tags use the full NPA source SHA. All source/checkpoint revisions,
-credentials, input media, and GPU capability evidence remain distinct records.
+Three source-only job runtimes package these integrations in public GHCR:
+
+| Image under `ghcr.io/nebius/nebius-physical-ai/` | Release | Native capabilities |
+| --- | --- | --- |
+| `npa-diffusers` | `0.38.0-rtfetch-20260916` | Mochi 1, CogVideoX-2B, Wan 2.1 14B and Depth Anything V2 Small |
+| `npa-lingbot-world` | `a43bec7-rtfetch-20260916` | LingBot World v1 camera-conditioned generation |
+| `npa-sam2` | `2.1-rtfetch-20260916` | SAM 2.1 Small video-mask propagation |
+
+The [container catalog](container-image-catalog.md) records accepted digests.
+The [qualification record](validation/studio-public-models-20260916.json) binds
+all six native capabilities to the exact public development images, actual
+B200 execution, complete output hashes and full video decode. B300 remains
+unvalidated for these images. Source revisions, NPA build SHA and model checkpoint
+revisions remain distinct records.
+
+Copy the matching `workflows/testing/byof-<model>.yaml` to your project. Its
+`config.base_image` already selects the immutable public digest. Set your bucket,
+prompt and seed, or the input URI and complete SHA256 for perception and LingBot.
+Run credential/access preflight, validate and plan the spec, then submit to your
+B200 cluster through the standard NPA runtime with `--stage-src`. Configure
+Nebius, storage and model access externally. Public pulls need no registry
+credential or Kubernetes `imagePullSecrets`:
+
+```bash
+docker pull ghcr.io/nebius/nebius-physical-ai/npa-diffusers:0.38.0-rtfetch-20260916
+```
 
 Each image provides `model-runtime health` (source metadata), `ensure` (the
 hash-locked CUDA runtime), `status`, `exec COMMAND`, and `golden OPTIONS`.
@@ -47,8 +67,9 @@ CUDA Python packages, and operator caches are absent from the build context.
 Diffusers and the three selected checkpoints are Apache-2.0. Fetching the runtime
 remains subject to its upstream terms. This operator BYOF image is not a new
 official GHCR release.
-The Mochi, CogVideoX and LingBot recipes also install pinned Protobuf 6.33.6
-into that runtime for native SentencePiece tokenizer conversion.
+Custom Mochi, CogVideoX and LingBot runtimes must include Protobuf 6.33.6 for
+native SentencePiece tokenizer conversion. The public images already contain
+that CPU dependency.
 
 ```bash
 npa/.venv/bin/python npa/scripts/run_byof_repo.py \
@@ -81,7 +102,8 @@ the checked-out `npa.solutions.video_generation` adapter.
 Provide enough writable cache space for the checkpoint and CUDA runtime: the
 recipes request 128 GB for Mochi/Wan and 256 GB for LingBot. On Kubernetes,
 configure that capacity in the node or mounted cache volume; a SkyPilot
-`disk_size` request does not create a Kubernetes persistent volume. The LingBot
+`disk_size` request reserves ephemeral storage; it does not create a Kubernetes
+persistent volume. Account for concurrent jobs' aggregate reservations. The LingBot
 checkpoint cache alone occupied approximately 150 GiB during qualification.
 
 Admission requires the allocated worker to pull those exact image bytes,
@@ -125,7 +147,7 @@ arrays and a decoded MP4 derived from those arrays. The depth visualization uses
 one clip-wide scale. Neither workflow claims metric depth, ground-truth masks,
 or successful robot task execution.
 
-All these workflows require source staging for their NPA adapters. Their images
-remain operator-built BYOF runtimes, with credentials and cache configuration
-supplied externally. Read the catalog's live status before treating a candidate
-as qualified.
+All these workflows use the public runtimes by default, with credentials and
+cache configuration supplied externally. Source staging keeps orchestration
+code aligned with the checkout. Custom images remain available through an
+explicit `config.base_image` override and require fresh qualification.
