@@ -995,7 +995,22 @@ def submit_workflow(
                 progress=echo or _default_launch_echo,
             )
 
+        # A verified absent controller proves that this isolated SkyPilot scope
+        # cannot contain a live managed job.  Do not issue the initial queue
+        # query in that state: SkyPilot 0.12 creates an empty ``INIT``
+        # controller record for that query, and then rejects the immediately
+        # following launch because the record has no pod yet.  The first launch
+        # transaction reconciliation may therefore use the stronger controller
+        # absence evidence.  Every reconciliation after a launch still queries
+        # the exact managed-job queue, preserving durable adoption and retry
+        # semantics once a controller can exist.
+        initial_controller_absent = controller_health.state is ControllerState.ABSENT
+
         def _reconcile() -> ReconciliationEvidence:
+            nonlocal initial_controller_absent
+            if initial_controller_absent:
+                initial_controller_absent = False
+                return ReconciliationEvidence(ReconciliationState.ABSENT)
             return _reconcile_managed_job_env(
                 run_id,
                 env=env,
