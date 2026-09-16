@@ -1179,6 +1179,7 @@ def test_idle_validation_scope_recovery_refuses_a_live_controller(tmp_path) -> N
 @pytest.mark.parametrize("failure_message", [
     "isolated SkyPilot API recovery requires the original executing identity and credential configuration",
     "running isolated SkyPilot API has a different executing identity or changed credential configuration",
+    "isolated SkyPilot API credential configuration changed after verification",
 ])
 def test_validation_environment_recovers_stale_identity_raised_before_api_ensure(
     failure_message: str,

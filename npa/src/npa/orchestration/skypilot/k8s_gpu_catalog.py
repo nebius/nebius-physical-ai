@@ -289,6 +289,7 @@ def kubernetes_sky_environment(
                 for marker in (
                     "recovery requires the original executing identity and credential configuration",
                     "running isolated skypilot api has a different executing identity",
+                    "credential configuration changed after verification",
                 )
             )
             if not stale_validation_identity or not _recover_idle_validation_scope(
