@@ -165,7 +165,7 @@ def _recover_idle_validation_scope(
             stop(scope)
             archive = scope / f"retired-{uuid.uuid4().hex}"
             archive.mkdir(mode=0o700)
-            for name in ("home", "sky-runtime", "local-api"):
+            for name in ("home", "sky-runtime", "local-api", "client-config.yaml"):
                 source = scope / name
                 if source.exists() or source.is_symlink():
                     os.replace(source, archive / name)
@@ -204,6 +204,14 @@ def kubernetes_sky_environment(
         scope.mkdir(mode=0o700, parents=True, exist_ok=True)
         if scope.is_symlink():
             raise RuntimeError("Cluster validation state must not be a symlink")
+        # Keep this derivation adjacent to the scope construction so config
+        # migration can use the same controller selector even before
+        # ``sky_environment`` has returned its derived environment.
+        validation_user_id = str(env.get("SKYPILOT_USER_ID") or "").strip()
+        if not validation_user_id:
+            validation_user_id = "npa-" + hashlib.sha256(
+                str(scope.resolve()).encode()
+            ).hexdigest()[:12]
         config: dict = {}
         inherited = str(env.get("SKYPILOT_GLOBAL_CONFIG") or "")
         if inherited:
@@ -221,14 +229,29 @@ def kubernetes_sky_environment(
         config["allowed_clouds"] = ["kubernetes"]
         config_bytes = yaml.safe_dump(config, sort_keys=True).encode()
         config_path = scope / "client-config.yaml"
+        write_config = False
         try:
             fd = os.open(config_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            write_config = True
         except FileExistsError:
             if config_path.is_symlink() or config_path.read_bytes() != config_bytes:
-                raise RuntimeError(
-                    "Cluster validation configuration changed; reconcile its owned API first"
-                ) from None
-        else:
+                # A new NPA release can make a validation-only config more
+                # restrictive (for example, narrowing provider discovery).
+                # Never overwrite a receipt in place: first prove its exact
+                # controller is absent, archive the complete validation scope,
+                # then create a fresh owner-only config.
+                if config_path.is_symlink() or not _recover_idle_validation_scope(
+                    scope,
+                    context=context,
+                    kubeconfig_path=kubeconfig_path,
+                    user_id=validation_user_id,
+                ):
+                    raise RuntimeError(
+                        "Cluster validation configuration changed; reconcile its owned API first"
+                    ) from None
+                fd = os.open(config_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                write_config = True
+        if write_config:
             with os.fdopen(fd, "wb") as handle:
                 handle.write(config_bytes)
                 handle.flush()
@@ -242,12 +265,6 @@ def kubernetes_sky_environment(
         # receipt is detected there before ``ensure_isolated_api`` is reached.
         # The identity is deterministic when the caller did not explicitly
         # provide one, matching ``sky_environment``'s derivation.
-        validation_user_id = str(base_environment.get("SKYPILOT_USER_ID") or "").strip()
-        if not validation_user_id:
-            validation_user_id = "npa-" + hashlib.sha256(
-                str(scope.resolve()).encode()
-            ).hexdigest()[:12]
-
         def start_validation_api() -> dict[str, str]:
             validation_env = sky_environment(scope, environment=base_environment)
             ensure_isolated_api(

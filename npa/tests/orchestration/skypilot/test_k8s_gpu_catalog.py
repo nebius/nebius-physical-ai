@@ -1117,6 +1117,7 @@ def test_idle_validation_scope_recovery_archives_only_after_two_empty_pod_probes
     scope.mkdir(parents=True)
     for name in ("home", "sky-runtime", "local-api"):
         (scope / name).mkdir()
+    (scope / "client-config.yaml").write_text("allowed_clouds: [nebius]\n", encoding="utf-8")
     kubeconfig = tmp_path / "kubeconfig"
     kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
     calls: list[list[str]] = []
@@ -1140,10 +1141,14 @@ def test_idle_validation_scope_recovery_archives_only_after_two_empty_pod_probes
     assert len(calls) == 2
     assert all("skypilot-cluster-name=sky-jobs-controller-npa-validation" in call for call in calls)
     assert stopped == [scope]
-    assert not any((scope / name).exists() for name in ("home", "sky-runtime", "local-api"))
+    assert not any(
+        (scope / name).exists()
+        for name in ("home", "sky-runtime", "local-api", "client-config.yaml")
+    )
     archives = [path for path in scope.iterdir() if path.name.startswith("retired-")]
     assert len(archives) == 1
     assert all((archives[0] / name).is_dir() for name in ("home", "sky-runtime", "local-api"))
+    assert (archives[0] / "client-config.yaml").is_file()
 
 
 def test_idle_validation_scope_recovery_refuses_a_live_controller(tmp_path) -> None:
@@ -1239,3 +1244,50 @@ def test_validation_environment_recovers_stale_receipt_raised_before_api_ensure(
             str(expected_scope.resolve()).encode()
         ).hexdigest()[:12],
     }]
+
+
+def test_validation_environment_migrates_changed_config_only_after_safe_recovery(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A changed validation config is archived, never overwritten in place."""
+
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    isolated_root = tmp_path / "isolated"
+    context = "exact-context"
+    scope = isolated_root / "cluster-validation" / hashlib.sha256(
+        f"{kubeconfig.resolve()}\0{context}".encode()
+    ).hexdigest()[:24]
+    scope.mkdir(parents=True)
+    stale_config = scope / "client-config.yaml"
+    stale_config.write_text("allowed_clouds: [nebius]\n", encoding="utf-8")
+    monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(isolated_root))
+    monkeypatch.delenv("SKYPILOT_USER_ID", raising=False)
+    recovered: list[str] = []
+
+    from npa.orchestration.skypilot import cleanup, local_api
+
+    def fake_recover(recovery_scope: Path, **_kwargs: object) -> bool:
+        recovered.append(str(recovery_scope))
+        stale_config.unlink()
+        return True
+
+    def fake_sky_environment(
+        _scope: Path, *, environment: dict[str, str]
+    ) -> dict[str, str]:
+        return dict(environment)
+
+    monkeypatch.setattr(gpu_catalog, "_recover_idle_validation_scope", fake_recover)
+    monkeypatch.setattr(cleanup, "sky_environment", fake_sky_environment)
+    monkeypatch.setattr(local_api, "ensure_isolated_api", lambda **_kwargs: None)
+
+    gpu_catalog.kubernetes_sky_environment(
+        context=context,
+        kubeconfig=kubeconfig,
+        sky_executable="/opt/sky/bin/sky",
+    )
+
+    assert recovered == [str(scope)]
+    assert yaml.safe_load(stale_config.read_text(encoding="utf-8"))[
+        "allowed_clouds"
+    ] == ["kubernetes"]
