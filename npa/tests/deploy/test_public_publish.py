@@ -303,9 +303,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
     assert RESTRICTED_DERIVED_IMAGES == frozenset()
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
-    assert UNVALIDATED_PUBLICATION_TOOLS == frozenset(
-        {"openpi", "curobo", "ncore", "flex-pi"}
-    )
+    assert UNVALIDATED_PUBLICATION_TOOLS == frozenset({"openpi", "curobo", "ncore"})
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
         "alpamayo2-super",
         "cosmos3",
@@ -313,6 +311,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
         "cosmos3-serving",
         "detection-training",
         "openarm",
+        "flex-pi",
         "sonic-mujoco",
     }
 
@@ -434,11 +433,12 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
             "detection-training",
             "openarm",
             "alpamayo2-super",
+            "flex-pi",
         )
     }
     # The five Sim2Real roles deliberately share one coherent source. The nine
-    # other accepted sources, including Cosmos3, the detector, OpenArm, and
-    # Alpamayo 2 Super, remain distinct.
+    # other accepted sources, including Cosmos3, the detector, OpenArm,
+    # Alpamayo 2 Super, and flex-pi, remain distinct.
     assert len(set(accepted_shas.values())) == 10
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
@@ -467,6 +467,7 @@ def test_accepted_images_use_distinct_exact_development_sources_and_digests() ->
         "detection-training",
         "openarm",
         "alpamayo2-super",
+        "flex-pi",
     ):
         entry = manifest[tool]
         assert by_tool[tool].source_ref.endswith(

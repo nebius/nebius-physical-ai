@@ -37,7 +37,10 @@ checkpoint. This removes a redundant multi-shard VideoDiT fetch and avoids
 requiring the ActionDiT initialization file that upstream documents as a
 training prerequisite but does not publish with this checkpoint. The upstream
 follow-up is intentionally kept in this integration branch rather than a second
-pull request.
+pull request. A third fail-closed patch rejects every missing or unexpected
+mixture-of-transformers key and requires the released proprio, DINO, and
+pointmap state. The runtime prints `FLEX_PI_REAL_INFERENCE_PASSED` only after
+that complete-state check and artifact validation succeed.
 
 The checkpoint repository is MIT-labelled. The selected public RoboTwin dataset
 card declares no license; NPA does not infer one from the simulator's MIT source,
@@ -112,6 +115,22 @@ A passing run requires terminal job success, all three durable objects,
 read-after-write verification, RTX PRO 6000 identity with compute capability
 12.0, and exact source/checkpoint/data revisions. Raw logs and S3 locations stay
 outside Git; reports and pull requests use only sanitized summaries.
+
+### Measured RTX PRO 6000 acceptance
+
+On 2026-09-16, the exact public-development image later selected for
+`0.1.0-cu128` completed a real action-only run on one NVIDIA RTX PRO 6000
+Blackwell Server Edition (`sm_120`). The strict loader accepted the complete
+released checkpoint, four Euler steps produced 32×14 finite actions in 0.678
+seconds, and peak allocated GPU memory was 25,268,430,336 bytes. The durable
+`actions.json`, `input.json`, and `result.json` objects were read back with
+SHA-256 digests `b69156c1…`, `e2ff5ada…`, and `638e072d…`, respectively.
+
+The run used torch 2.7.1+cu128 and ended with
+`FLEX_PI_REAL_INFERENCE_PASSED`; it had no pod restarts or traceback. This is a
+policy-inference and artifact-integrity result for one public observation, not a
+closed-loop RoboTwin success measurement. L40S, Hopper, B200, and B300 remain
+supported by the measured wheel architectures but unmeasured for this release.
 
 ## Build qualification
 

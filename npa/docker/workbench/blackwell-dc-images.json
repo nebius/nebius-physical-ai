@@ -334,12 +334,32 @@
     {
       "name": "npa-flex-pi",
       "dockerfile": "flex-pi/Dockerfile",
-      "verdict": "unknown",
-      "validation": "pending-build",
+      "verdict": "ready",
+      "validation": "validated",
       "redistribution": "public",
       "source_compiled_extensions": [],
       "smoke": "Real four-step action-only inference produces a finite 32x14 bimanual action chunk from a hash-pinned public RoboTwin observation.",
-      "notes": "The public-eligible candidate contains pinned MIT source/runtime only. Checkpoint, Wan/T5/DINOv3 assets, observation media, credentials, and populated caches are runtime fetches. RTX PRO 6000 is the required onboarding target; datacenter Blackwell remains a separate unverified claim."
+      "notes": "The public image contains pinned MIT source/runtime only. Checkpoint, Wan/T5/DINOv3 assets, observation media, credentials, and populated caches are runtime fetches. The exact release passed complete checkpoint-state loading and real action-only inference on RTX PRO 6000. Its torch wheel also carries sm_100 SASS, but datacenter Blackwell remains unmeasured.",
+      "measured_torch": "2.7.1+cu128",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ],
+      "validated_tag": "0.1.0-cu128",
+      "validated_digest": "sha256:88359258470d9622d9fb5274d8ad39627a57a5682cb8630c7ac85a3f303c7b91",
+      "development_sha": "c0ed82abfa5c3692de5584efa04ac7c453b01458",
+      "validated_registry_scope": "public",
+      "published_tag": "0.1.0-cu128",
+      "published_digest": "sha256:88359258470d9622d9fb5274d8ad39627a57a5682cb8630c7ac85a3f303c7b91",
+      "publication_model": "exact-digest-promoted",
+      "published_registries": [
+        "public-development",
+        "public-release"
+      ]
     },
     {
       "name": "npa-cosmos3-reason",
@@ -937,6 +957,24 @@
       "validated_tag": "0.1.0-cu128-r3",
       "validated_digest": "sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07",
       "development_sha": "5b693476c113c833e9d9d4f8c7aa492492a27505",
+      "validated_registry_scope": "public"
+    },
+    "npa-flex-pi": {
+      "built": true,
+      "payload_scan": "passed source, licensing, full-layer payload, history, vulnerability, secret, SBOM, provenance, and anonymous-pull gates; no checkpoint, observation media, model cache, token, or credential payload was found",
+      "hardware_run": "The exact accepted image completed real four-step action-only inference on a physical RTX PRO 6000 on 2026-09-16. Strict state loading rejected missing or unexpected checkpoint keys. The run produced a finite 32x14 action chunk, required FLEX_PI_REAL_INFERENCE_PASSED, and read back all three durable JSON artifacts. Inference took 0.678 seconds and peak allocated GPU memory was 25,268,430,336 bytes. This observation-level result does not claim closed-loop task success.",
+      "validated_gpus": {
+        "RTX PRO 6000": {
+          "platform": "gpu-rtx6000",
+          "capability": "12.0",
+          "result": "FLEX_PI_REAL_INFERENCE_PASSED",
+          "peak_memory_bytes": 25268430336,
+          "inference_seconds": 0.6778233840013854
+        }
+      },
+      "validated_tag": "0.1.0-cu128",
+      "validated_digest": "sha256:88359258470d9622d9fb5274d8ad39627a57a5682cb8630c7ac85a3f303c7b91",
+      "development_sha": "c0ed82abfa5c3692de5584efa04ac7c453b01458",
       "validated_registry_scope": "public"
     },
     "npa-base": {

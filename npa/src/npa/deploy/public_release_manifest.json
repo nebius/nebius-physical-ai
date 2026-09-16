@@ -34,7 +34,8 @@
     "wan2-2": {"tag": "2.2-ti2v5b-rtfetch-cu130-20260817", "published_digest": "sha256:5780959ca6c6e7eb77ee7ea7d005fcf0f56db50783ce798dddee2809185eb837", "development_sha": "bc18684d35fa171f7912cb84ef1ae16d4fc116e6"},
     "alpamayo2-super": {"tag": "0.1.0-cu128-r3", "published_digest": "sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07", "development_sha": "5b693476c113c833e9d9d4f8c7aa492492a27505"},
     "content-agents": {"tag": "0.5.2-npa2", "published_digest": "sha256:c64aaf6201bdaa013f9d16e8497290cf166907932f036297d7abaa430cbad7db"},
-    "openarm": {"tag": "2.2.0-isaac0.1.0-rtfetch", "published_digest": "sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a", "development_sha": "01fbf3a554cb7b15066283fd171c5b81f6207eda"}
+    "openarm": {"tag": "2.2.0-isaac0.1.0-rtfetch", "published_digest": "sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a", "development_sha": "01fbf3a554cb7b15066283fd171c5b81f6207eda"},
+    "flex-pi": {"tag": "0.1.0-cu128", "published_digest": "sha256:88359258470d9622d9fb5274d8ad39627a57a5682cb8630c7ac85a3f303c7b91", "development_sha": "c0ed82abfa5c3692de5584efa04ac7c453b01458"}
   },
   "publication_pending": {}
 }

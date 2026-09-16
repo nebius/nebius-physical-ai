@@ -70,7 +70,10 @@ Deployment must keep the maintained checkpoint-only patch enabled so upstream
 constructs those experts with `skip_dit_load_from_pretrain=True` and immediately
 loads the released checkpoint. Do not fetch or generate the training-only
 ActionDiT initialization, and do not restore the redundant Wan VideoDiT shard
-download. Treat checkpoint missing/unexpected-key diagnostics as a failed run.
+download. The strict-loader patch must reject every missing or unexpected MoT
+key and require proprio, DINO, and pointmap state. Treat any checkpoint mismatch
+as a failed run; `strict=False` in the upstream call is not permission to accept
+partial model state.
 
 ## Artifacts and acceptance
 
@@ -84,9 +87,18 @@ Require all of the following from the exact image digest:
 - pinned source/checkpoint/dataset identity plus checkpoint, stats, and input
   SHA-256 provenance;
 - non-empty `result.json` and read-after-write verification in operator storage.
+- exactly one `FLEX_PI_REAL_INFERENCE_PASSED` marker after strict state and
+  artifact validation, with no traceback or checkpoint mismatch in the logs.
 
 Keep raw logs and object locations access-controlled. Repository and PR evidence
 may report only sanitized status, metrics, hashes, and generic GPU class.
+
+The accepted 2026-09-16 RTX PRO 6000 run used the exact `0.1.0-cu128` digest,
+torch 2.7.1+cu128, four Euler steps, 0.678 seconds of inference, and
+25,268,430,336 bytes peak allocated GPU memory. It produced a finite 32×14
+action chunk and three read-back-verified JSON objects. Reuse this only as an
+acceptance baseline; it is not a latency SLA or a closed-loop task-success
+claim, and other GPU classes remain unmeasured for this release.
 
 Cancel the exact run before removing only run-owned infrastructure. Never tear
 down a shared or pre-existing cluster.

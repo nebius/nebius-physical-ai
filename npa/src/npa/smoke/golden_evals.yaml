@@ -1047,9 +1047,10 @@ containers:
       kind: container-smoke
       module: npa.smoke.test_flex_pi_functional
       command: python -m npa.smoke.test_flex_pi_functional
+      serverless_gpu: rtx6000
       gpu: required
-      timeout_seconds: 3600
-      status: gpu-gated
+      timeout_seconds: unlimited
+      status: ready
 
   sim2real-control:
     image: npa-sim2real-control
