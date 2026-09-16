@@ -2,14 +2,18 @@
 
 Every pull request, merge queue candidate (`merge_group`), and push to `main`
 runs **Security regression / security-regression**. This required job checks that
-the isolated **security-scanners** job and reusable **image-security** workflow
-passed before running the hostile-input and CPU checkpoint tests introduced on
-main. Image scans cover every PR and merge candidate without path filters and
+the isolated **security-scanners** job, reusable **image-security** workflow, and
+parallel **hostile-input-runtime** job all passed. The runtime job includes the
+CPU checkpoint tests introduced on main; it starts alongside the scanners so
+security depth does not create a serial critical path. Image scans cover every
+PR and merge candidate without path filters and
 block on fixed CRITICAL OS-package vulnerabilities and HIGH/CRITICAL configuration
 findings. Their [patched base targets and regression tests](image-reproducibility.md#cve-scanning)
 are checked separately from the differential application-dependency scan.
 Failed, skipped, or cancelled scanner
-work cannot produce a passing required check. A new finding fails the scanner job
+work cannot produce a passing required check. PRs run each blocking Trivy scan
+once; main, scheduled, and manual image scans additionally generate and upload
+SARIF from a second pass. A new finding fails the scanner job
 with its file, rule or advisory, and remediation detail. Scanner, dependency
 resolution, malformed report, incomplete inventory, and source parsing failures
 also fail the job. There are no path filters or successful fallback results.

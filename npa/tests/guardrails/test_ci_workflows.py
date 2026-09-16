@@ -63,13 +63,24 @@ def test_test_and_lint_do_not_duplicate_feature_branch_pushes() -> None:
         assert workflow["on"]["push"] == {"branches": ["main"]}, name
 
 
-def test_pr_and_main_test_the_full_python_compatibility_matrix() -> None:
+def test_pr_suite_is_sharded_and_main_keeps_full_compatibility() -> None:
     workflow = _load_workflow("test.yml")
     job = workflow["jobs"]["test"]
-    assert job["strategy"]["matrix"]["python-version"] == ["3.10", "3.12", "3.14"]
+    python_matrix = job["strategy"]["matrix"]["python-version"]
+    assert "github.event_name == 'pull_request'" in python_matrix
+    assert '["3.12"]' in python_matrix
+    assert '["3.10", "3.12", "3.14"]' in python_matrix
+    assert job["strategy"]["matrix"]["shard"] == ["1", "2", "3", "4"]
     assert job["strategy"]["fail-fast"] == "false"
     assert "if" not in job and "continue-on-error" not in job
     assert workflow["on"]["pull_request"] == ""
+
+    compatibility = workflow["jobs"]["compatibility"]
+    assert compatibility["if"] == "github.event_name == 'pull_request'"
+    assert compatibility["strategy"]["matrix"]["python-version"] == [
+        "3.10",
+        "3.14",
+    ]
 
 
 def test_compatibility_regressions_run_before_heavy_dependencies() -> None:
@@ -78,7 +89,12 @@ def test_compatibility_regressions_run_before_heavy_dependencies() -> None:
     regression = _step("test.yml", "test", "compatibility and image scan")
     install = _step("test.yml", "test", "CPU checkpoint")
     assert steps.index(regression) < steps.index(install)
-    assert "if" not in regression and "continue-on-error" not in regression
+    assert regression["if"] == "matrix.shard == 1"
+    assert regression["env"] == {
+        "NPA_CI_SHARD_INDEX": "1",
+        "NPA_CI_TOTAL_SHARDS": "1",
+    }
+    assert "continue-on-error" not in regression
     for path in (
         "npa/tests/guardrails/test_ci_workflows.py",
         "npa/tests/docker/test_base_image_scan.py",
@@ -86,6 +102,33 @@ def test_compatibility_regressions_run_before_heavy_dependencies() -> None:
         "npa/tests/workbench/test_cosmos3_nano_video_server.py",
     ):
         assert path in regression["run"]
+
+
+def test_coverage_shards_are_parallel_and_merged_before_enforcement() -> None:
+    workflow = _load_workflow("test.yml")
+    test_job = workflow["jobs"]["test"]
+    pytest_step = _step("test.yml", "test", "pytest coverage shard")
+    assert "-n auto" in pytest_step["run"]
+    assert "--dist worksteal" in pytest_step["run"]
+    assert "--cov=npa" in pytest_step["run"]
+    assert "--cov-fail-under" not in pytest_step["run"]
+    assert test_job["env"] == {
+        "NPA_PROJECT_ID": "project-test-00000000",
+        "NPA_S3_BUCKET": "test-bucket-00000000",
+        "NPA_E2E_PROJECT_ID": "project-test-00000000",
+        "NPA_E2E_GROOT_BUCKET": "test-bucket-00000000",
+        "NPA_CI_SHARD_INDEX": "${{ matrix.shard }}",
+        "NPA_CI_TOTAL_SHARDS": "4",
+        "COVERAGE_FILE": ".coverage.${{ matrix.python-version }}.${{ matrix.shard }}",
+        "NPA_REQUIRE_FFMPEG": "1",
+    }
+
+    coverage = workflow["jobs"]["coverage"]
+    assert coverage["needs"] == "test"
+    assert coverage["if"] == "${{ always() }}"
+    report = _step("test.yml", "coverage", "merged coverage floor")["run"]
+    assert "coverage combine" in report
+    assert "--fail-under=60" in report
 
 
 def _make_recipe(target: str) -> list[str]:
@@ -240,8 +283,8 @@ def test_check_target_does_not_claim_the_coverage_floor() -> None:
     rather than presenting `make check` as the whole gate.
     """
 
-    ci_pytest = _step("test.yml", "test", "pytest")["run"]
-    floor = re.search(r"--cov-fail-under=(\d+)", ci_pytest)
+    coverage_report = _step("test.yml", "coverage", "merged coverage floor")["run"]
+    floor = re.search(r"--fail-under=(\d+)", coverage_report)
     assert floor, "test.yml no longer enforces a coverage floor; update CONTRIBUTING"
 
     # `check` is prerequisites only, so the recipes that matter are its children's.

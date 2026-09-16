@@ -195,10 +195,12 @@ The CPU wheel exercises real checkpoint loading without a GPU. See
 [the CI environment](../.github/workflows/test.yml) for the complete coverage
 gate; some optional checks also use Node, tmux, or Docker.
 
-Pull requests and main pushes run the full coverage suite on Python 3.10, 3.12,
-and 3.14. A focused compatibility check runs before the CPU tensor dependencies
-are installed, so async cancellation and isolated SkyPilot fixture regressions
-surface early. Run it locally with:
+Pull requests split the full Python 3.12 coverage suite across four jobs and
+merge the results before enforcing the floor. Focused Python 3.10 and 3.14
+compatibility jobs still block the PR. Main pushes run the sharded full suite on
+all three supported versions. A focused compatibility check runs before the CPU
+tensor dependencies are installed, so async cancellation and isolated SkyPilot
+fixture regressions surface early. Run it locally with:
 
 ```bash
 npa/.venv/bin/python -m pytest \
@@ -210,7 +212,8 @@ npa/.venv/bin/python -m pytest \
 
 The required [security check](../docs/security/merge-security-gate.md) calls the
 image security workflow once on every PR, merge queue candidate, and main push.
-It waits for successful image scans before running the runtime security tests.
+Runtime security tests start alongside the image and source scanners; the final
+required result passes only after all three branches succeed.
 The image security workflow scans the pinned Python base after the same OS
 update and upgrade used by FiftyOne's Dockerfile. It rebuilds this local scan
 target without cache so newly published security fixes are included, then fails

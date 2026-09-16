@@ -125,7 +125,8 @@ existing PR concurrency controls. Image findings must not produce a passing
 sets a 180s timeout; CI runs with coverage and enforces `--cov-fail-under=60`.
 A local pass is a strong signal, not proof of the CI result.
 
-Run the coverage gate from the package directory, matching CI:
+Run the equivalent coverage floor from the package directory. CI partitions the
+same collection across four deterministic shards and merges their coverage data:
 
 ```bash
 cd npa

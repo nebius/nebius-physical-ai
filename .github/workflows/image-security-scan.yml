@@ -163,7 +163,9 @@ jobs:
           format: table
 
       - name: Trivy config scan (SARIF)
-        if: always()
+        # PRs already block on the table scan above. Generate SARIF only where it
+        # can be uploaded, rather than scanning the same bytes twice on every PR.
+        if: always() && github.event_name != 'pull_request'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: config
@@ -265,7 +267,9 @@ jobs:
           format: table
 
       - name: Trivy image scan (SARIF)
-        if: always()
+        # The blocking table scan above covers every PR. Main, scheduled, and
+        # manual runs retain SARIF publication without duplicating PR scan time.
+        if: always() && github.event_name != 'pull_request'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ steps.scan-target.outputs.image }}

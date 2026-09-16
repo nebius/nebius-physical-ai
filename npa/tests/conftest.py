@@ -137,6 +137,79 @@ _AMBIENT_INFRA_TARGET_ENV_VARS = (
 )
 
 
+def _ci_shard_coordinates() -> tuple[int, int] | None:
+    """Return the zero-based CI shard index and total.
+
+    Args:
+        None.
+    Returns:
+        The shard coordinates, or ``None`` outside sharded CI.
+    Raises:
+        pytest.UsageError: Shard environment variables are incomplete or invalid.
+    """
+
+    raw_index = os.environ.get("NPA_CI_SHARD_INDEX")
+    raw_total = os.environ.get("NPA_CI_TOTAL_SHARDS")
+    if raw_index is None and raw_total is None:
+        return None
+    if raw_index is None or raw_total is None:
+        raise pytest.UsageError(
+            "NPA_CI_SHARD_INDEX and NPA_CI_TOTAL_SHARDS must be set together"
+        )
+
+    try:
+        index = int(raw_index)
+        total = int(raw_total)
+    except ValueError as error:
+        raise pytest.UsageError("CI shard coordinates must be integers") from error
+    if total < 1 or index < 1 or index > total:
+        raise pytest.UsageError("CI shard index must be between 1 and the shard total")
+    return index - 1, total
+
+
+def _items_for_ci_shard(
+    items: list[pytest.Item], shard_index: int, shard_total: int
+) -> list[pytest.Item]:
+    """Select an evenly sized, deterministic slice of collected tests.
+
+    Args:
+        items: Collected pytest items.
+        shard_index: Zero-based shard index.
+        shard_total: Number of shards.
+    Returns:
+        Items assigned to this shard in stable node-id order.
+    Raises:
+        None.
+    """
+
+    ordered_items = sorted(items, key=lambda item: item.nodeid)
+    return ordered_items[shard_index::shard_total]
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    """Partition the full suite when GitHub Actions supplies shard coordinates.
+
+    Args:
+        config: Active pytest configuration.
+        items: Mutable collection of discovered tests.
+    Returns:
+        None.
+    Raises:
+        pytest.UsageError: CI shard coordinates are invalid.
+    """
+
+    coordinates = _ci_shard_coordinates()
+    if coordinates is None:
+        return
+    selected_items = _items_for_ci_shard(items, *coordinates)
+    selected_node_ids = {item.nodeid for item in selected_items}
+    deselected_items = [item for item in items if item.nodeid not in selected_node_ids]
+    config.hook.pytest_deselected(items=deselected_items)
+    items[:] = selected_items
+
+
 def pytest_collection_finish(session: pytest.Session) -> None:
     assert_nonzero_collection(len(session.items))
 

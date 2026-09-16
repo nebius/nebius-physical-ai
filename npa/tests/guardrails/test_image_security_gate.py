@@ -37,7 +37,9 @@ def test_required_security_workflow_calls_image_scans_on_every_candidate():
     }
     required = workflow["jobs"]["security-regression"]
     assert "image-security" in required["needs"]
-    commands = "\n".join(step.get("run", "") for step in required["steps"])
+    assert "security-runtime" in required["needs"]
+    runtime = workflow["jobs"]["security-runtime"]
+    commands = "\n".join(step.get("run", "") for step in runtime["steps"])
     assert "npa/tests/guardrails/test_image_security_gate.py" in commands
 
 
@@ -77,7 +79,11 @@ def test_sarif_uploads_preserve_existing_alert_configuration():
     for name, category in [("base-image-cve-scan", "trivy-image-${{ matrix.name }}"),
                            ("dockerfile-static-scan", "trivy-config")]:
         steps = jobs[name]["steps"]
+        sarif_scan = next(
+            step for step in steps if step.get("name", "").endswith("(SARIF)")
+        )
         upload = next(step for step in steps if "upload-sarif" in step.get("uses", ""))
+        assert sarif_scan["if"] == "always() && github.event_name != 'pull_request'"
         assert upload["if"] == "always() && github.event_name != 'pull_request'"
         assert upload["with"]["category"] == category
         assert upload["env"]["CODEQL_ACTION_ANALYSIS_KEY"] == f".github/workflows/image-security-scan.yml:{name}"

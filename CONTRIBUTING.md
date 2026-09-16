@@ -501,8 +501,15 @@ tree and lets those tests self-skip. Both numbers rise as tests land; the shape 
 the difference, several hundred more collected and skipped in CI, is the part that
 stays true.
 
-`test.yml` runs a Python matrix of 3.10, 3.12, and 3.14 on `main` and 3.12 alone on
-a pull request; `requires-python` is `>=3.10`.
+`test.yml` shards the complete coverage suite across four Python 3.12 jobs on a
+pull request, then merges their coverage before enforcing the 60% floor. Fast
+compatibility jobs install and exercise regression surfaces on Python 3.10 and
+3.14. Pushes to `main` retain the complete four-shard suite on all three Python
+versions; `requires-python` is `>=3.10`.
+
+The internal sharder activates only when `NPA_CI_SHARD_INDEX` and
+`NPA_CI_TOTAL_SHARDS` are both set. The index is one-based and must not exceed
+the total; ordinary local test runs leave both variables unset.
 
 ## Testing Requirements
 
@@ -555,8 +562,9 @@ make test-e2e         # opt-in: real Nebius infrastructure, NPA_INTEGRATION_E2E=
 or help string.
 
 The suite is xdist-safe; `make test PYTEST_ADDOPTS=-nauto` cuts the serial run to
-a few minutes with an identical pass count. CI still runs serially with coverage,
-so treat a parallel pass as the fast signal rather than the gate.
+a few minutes with an identical pass count. CI also uses xdist inside four
+coverage shards, then merges their data before enforcing the floor. A local
+parallel pass remains a strong signal, but it does not reproduce that merge.
 
 `make test` deselects the live/GPU/e2e markers (`gpu`, `multi_gpu`, `e2e`,
 `e2e_serverless`, `e2e_skypilot`, `e2e_pipeline`, `byovm_live`, `ngc_e2e`) by

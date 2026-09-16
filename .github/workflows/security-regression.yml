@@ -71,23 +71,13 @@ jobs:
             --base "$SECURITY_BASE" --head "$GITHUB_SHA" \
             --output-dir "$RUNNER_TEMP/security-report"
 
-  security-regression:
-    name: security-regression
-    needs: [security-scanners, image-security]
-    if: ${{ always() }}
+  security-runtime:
+    name: hostile-input-runtime
     runs-on: ubuntu-latest
     env:
       NPA_PROJECT_ID: project-test-00000000
       NPA_S3_BUCKET: test-bucket-00000000
     steps:
-      - name: Require successful source and image scans
-        env:
-          SCANNER_RESULT: ${{ needs.security-scanners.result }}
-          IMAGE_RESULT: ${{ needs.image-security.result }}
-        run: |
-          test "$SCANNER_RESULT" = success
-          test "$IMAGE_RESULT" = success
-
       - name: Check out repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -131,3 +121,19 @@ jobs:
             npa/tests/orchestration/skypilot/test_local_api.py \
             npa/tests/orchestration/skypilot/test_controller_identity_transaction.py \
             -q
+
+  security-regression:
+    name: security-regression
+    needs: [security-scanners, image-security, security-runtime]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful source, image, and runtime security checks
+        env:
+          SCANNER_RESULT: ${{ needs.security-scanners.result }}
+          IMAGE_RESULT: ${{ needs.image-security.result }}
+          RUNTIME_RESULT: ${{ needs.security-runtime.result }}
+        run: |
+          test "$SCANNER_RESULT" = success
+          test "$IMAGE_RESULT" = success
+          test "$RUNTIME_RESULT" = success
