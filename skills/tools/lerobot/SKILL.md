@@ -70,6 +70,14 @@ CUDA base, then run a real ACT training step from the LeRobot venv.
 
 Input format is `LeRobotDataset` in Hugging Face format. Use the SimToLeRobot adapter to convert Genesis or other simulation outputs.
 
+For manual System 1 subtask labels, load LeRobot v3 into FiftyOne 1.22, create
+complete non-overlapping `subtask:<label>` temporal tags, and run
+`npa workbench fiftyone export-lerobot-subtasks`. The derived dataset retains
+the episode task instruction and adds per-frame `subtask_index`,
+`meta/subtasks.parquet`, and resumable annotation metadata. FiftyOne is the
+review UI; LeRobot remains the durable training format. The source dataset is
+immutable.
+
 Output is a policy checkpoint on S3.
 
 ## Validation

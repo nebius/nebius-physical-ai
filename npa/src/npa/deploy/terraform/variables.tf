@@ -235,7 +235,7 @@ variable "s3_endpoint" {
 variable "fiftyone_version" {
   description = "FiftyOne PyPI version to install when workbench_type is fiftyone"
   type        = string
-  default     = "1.21.0"
+  default     = "1.22.0"
 }
 
 variable "wait_for_ssh" {

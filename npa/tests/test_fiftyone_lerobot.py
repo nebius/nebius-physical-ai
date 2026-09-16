@@ -3,11 +3,13 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
 from npa.fiftyone_lerobot import (
+    _supports_native_lerobot,
     build_lerobot_import_plan,
     materialize_lerobot_source,
 )
@@ -153,3 +155,12 @@ def test_materialize_lerobot_source_detects_local_s3_and_hf(
         hf_target,
         "huggingface",
     )
+
+
+def test_native_lerobot_requires_fiftyone_dataset_type_and_v3() -> None:
+    native = SimpleNamespace(types=SimpleNamespace(LeRobotDataset=object()))
+    legacy = SimpleNamespace(types=SimpleNamespace())
+
+    assert _supports_native_lerobot(native, {"codebase_version": "v3.0"})
+    assert not _supports_native_lerobot(native, {"codebase_version": "v2.1"})
+    assert not _supports_native_lerobot(legacy, {"codebase_version": "v3.0"})

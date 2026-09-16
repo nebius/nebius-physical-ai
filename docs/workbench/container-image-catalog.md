@@ -271,7 +271,8 @@ Transfer and Rerun now select their published coherent Sim2Real releases.
 Private availability and redistribution eligibility do not establish public
 release membership.
 
-The source security candidates update FiftyOne to 1.21.0 with MongoDB 7.0.40,
+The source security candidate updates FiftyOne to 1.22.0 with native LeRobot v3
+multimodal playback and temporal-tag review, while retaining MongoDB 7.0.40,
 and update the SONIC MuJoCo evaluator to the hash-locked Torch 2.13 closure
 on a patched Python base. The Cosmos3 native Ray candidate selects the pinned
 framework's supported Torch 2.13 CUDA 13 group, including its matching NATTEN
