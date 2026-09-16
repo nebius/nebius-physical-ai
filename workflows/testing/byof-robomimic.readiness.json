@@ -39,10 +39,11 @@
     },
     "credentials": {
       "status": "blocked",
-      "reason": "The runner now presents exact official CUDA/cuDNN terms and accepts only a customer-created, unexpired record bound to the customer, run, noncommercial field of use, exact runtime lock and inventory. No such live-run record exists in this static readiness file; credentials, manager signatures, environment flags, private registries, and runtime fetches are not substitutes.",
+      "reason": "The public, anonymously retrievable exact dataset carries its MIT notice and needs no separate NPA acceptance. The external CUDA/cuDNN runtime instead requires a customer-facing notice and a customer-created, unexpired authorization bound to the customer, run, exact runtime lock and inventory, exact terms set, and expiry. No such live-run record exists in this static readiness file; credentials, manager or generic human signatures, environment flags, private registries, and runtime fetches are not substitutes.",
       "evidence": [
         "notice, accept, decline, and resume are customer-controlled runner actions",
-        "missing, declined, stale, wrong-customer, wrong-run, wrong-lock, or wrong-inventory records refuse before external action",
+        "missing, declined, stale, wrong-customer, wrong-run, wrong-lock, wrong-inventory, or wrong-terms records refuse before external action",
+        "a later gated Hugging Face or NGC asset uses only the customer's real vendor entitlement probe, without a duplicate NPA terms boolean",
         "the record grants no redistribution or publication right"
       ]
     },

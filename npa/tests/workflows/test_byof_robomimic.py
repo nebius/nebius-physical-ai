@@ -71,7 +71,6 @@ def _entitlement_notice_sha256(lock: dict[str, object], lock_sha256: str) -> str
         "schema": contract["schema"],
         "runtime_id": lock["runtime_id"],
         "runtime_lock_sha256": lock_sha256,
-        "field_of_use": contract["field_of_use"],
         "terms": contract["terms"],
         "customer_responsibilities": contract["responsibilities"],
     }
@@ -101,7 +100,6 @@ def _customer_entitlement(
         "runtime_id": lock["runtime_id"],
         "runtime_manifest_sha256": runtime_inventory_sha256,
         "runtime_lock_sha256": lock_sha256,
-        "field_of_use": contract["field_of_use"],
         "terms": contract["terms"],
         "customer_responsibilities": contract["responsibilities"],
         "notice_sha256": _entitlement_notice_sha256(lock, lock_sha256),
@@ -1324,6 +1322,7 @@ def test_robomimic_customer_notice_has_no_external_or_file_side_effect(
     assert payload["external_action_started"] is False
     assert payload["actions"] == ["accept", "decline", "resume"]
     assert len(payload["terms"]) == 3
+    assert "field_of_use" not in payload
     assert not record.exists()
 
 
@@ -1380,6 +1379,8 @@ def test_robomimic_customer_accept_records_only_bound_value_free_identity(
     assert stored["runtime_manifest_sha256"] == "a" * 64
     assert stored["decision"] == "accepted"
     assert stored["notice_sha256"] == notice_sha256
+    assert "field_of_use" not in stored
+    assert "field_of_use" not in payload
     assert customer not in stdout
     assert customer not in record.read_text(encoding="utf-8")
 

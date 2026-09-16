@@ -17,7 +17,7 @@ anonymous pull proof, runtime-use approval, or B200 result.
 | Source | Bake only `ARISE-Initiative/robomimic@d309eaecc18acf4152a830a895a6984b8ac71b05`. Its MIT `LICENSE` SHA-256 is `7cdbfab482b23a4d925d59ff169ab0bc5f8c97ceb0db79f9fd5bf46ef8aa1556`. | Intended and statically checked; source bytes were not fetched or built in Phase A. A future build must record the observed commit and tree hash. |
 | Baked runtime | Digest-pinned `python:3.11.16-slim-bookworm` plus exactly 40 hash-locked non-CUDA Python distributions for the headless low-dimensional gate. | Candidate only. It must contain no torch, torchvision, Triton, NVIDIA distribution, CUDA, cuDNN, or NCCL payload. Base and dependency licenses remain subject to built-byte review; PyTorch source licensing is not closure for wheel/base binary dependencies. |
 | Weights | No pretrained weights are required or allowed in the image. | The four-step smoke produces its own run-scoped checkpoint only after authorization. Scanner rules reject common weight/checkpoint paths in every image layer. |
-| Data and assets | Official Lift proficient-human low-dimensional HDF5 at `robomimic/robomimic_datasets@74fa018461f479cd9fd15b924a16103012096203`, path `v1.5/lift/ph/low_dim_v15.hdf5`. | Runtime fetch only after all gates. Accept only SHA-256 `2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540` and 21,084,088 bytes. Delete a mismatching partial before opening it. No simulator assets or rendering. |
+| Data and assets | Official Lift proficient-human low-dimensional HDF5 at `robomimic/robomimic_datasets@74fa018461f479cd9fd15b924a16103012096203`, path `v1.5/lift/ph/low_dim_v15.hdf5`. The exact-revision dataset card declares MIT. | Anonymous runtime fetch only after all other gates. Accept only SHA-256 `2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540` and 21,084,088 bytes. Delete a mismatching partial before opening it. No simulator assets or rendering. |
 | Runtime cache | A pre-populated operator volume mounted read-only at `/opt/npa-runtime/robomimic`. | The image cannot populate it. Before access, the verifier requires an unexpired customer-created entitlement bound to the customer, run, exact runtime lock, and operator-selected `inventory.json` SHA-256. It then verifies the exact lock, package map, ABI, source revision, complete regular-file/symlink inventory, hashes, sizes, and executable interpreter. Missing, declined, stale, wrong-run, wrong-manifest, corrupt, extra, escaping, or mismatched inputs refuse with exit 78 without runtime or dataset mutation. Execution copies only declared objects into a private staging tree, verifies that copy, removes its write bits, and atomically renames it before invoking Python, so later changes to the external volume cannot change the point-in-time copy. Write-bit removal is hygiene, not a read-only isolation claim: the runtime UID owns the snapshot and can restore them. The observed source PVC remains the authoritative read-only boundary. |
 | Outputs | `/workspace/byof-runs/<run-id>` is separate from the input emptyDir and runtime PVC. | A later authorized run may write the checkpoint, config, logs, summary, and `robomimic-smoke.json` to its run-owned output prefix. Upload preflights regular single-link files, allows at most 1 GiB per file and 2 GiB in aggregate, and streams in at most 1 MiB chunks. Image and cache scans must prove output absence. Output rights remain a separate operator responsibility. |
 
@@ -27,8 +27,8 @@ evidence that restricted bytes may be used, redistributed, or offered as a
 service. The dedicated runner instead offers `notice`, `accept`, `decline`, and
 `resume` actions. `accept` is an explicit customer action that writes an
 owner-only, value-free record bound to that customer, run, runtime lock,
-inventory digest, noncommercial field of use, exact official terms, and an
-expiry of at most 24 hours. It never accepts vendor terms on the customer's
+inventory digest, exact official terms, and an expiry of at most 24 hours. It
+never accepts vendor terms on the customer's
 behalf and never grants redistribution, publication, derivative, service, or
 output rights beyond those terms. Recording acceptance also requires the exact
 notice digest returned by the immediately preceding `notice` action, so an old
@@ -42,6 +42,18 @@ The Dockerfile intends to use the exact parent index digest
 `sha256:528257d48c1da0dcecc2e725d1ae34498d60c965f1241e39cd6a85a8859bdf84`.
 An authorized build must re-resolve its Linux/amd64 child and record the result;
 historical resolution metadata is not byte-portable evidence.
+
+The local build helper treats a successful Docker build as an immutable
+transaction, not as a tag claim. Docker must write one validated
+`sha256:<64-hex>` image ID through `--iidfile`; an owner-only success receipt
+binds that ID, the repository revision, a transaction-unique identity, the
+intended full-SHA tag, and the compare-and-set outcome. Assignment of that
+shared tag is serialized. An existing identical ID is idempotent, while an
+existing different or malformed ID refuses without retagging. The helper
+re-reads the iidfile, built image, and shared tag before publishing the receipt.
+All scanning, SBOM, archive, and provenance consumers must use the receipt's
+`consumer_image_ref` immutable ID (or a separately recorded archive digest),
+never the mutable tag alone.
 
 `baked-requirements.lock` contains 40 exact version pins with approved artifact
 hashes. The retained packages cover the pinned source's unconditional import
@@ -106,7 +118,7 @@ is not a claim that built bytes were scanned in Phase A.
 
 The dependent capability remains private and live validation remains deferred,
 but an avoidable manager-signature hold is not part of the runtime-use gate.
-For this bounded noncommercial field of use, the customer reviews the exact
+For the customer's bounded run, the customer reviews the exact
 [CUDA Toolkit EULA](https://docs.nvidia.com/cuda/eula/index.html),
 [NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/),
 and [cuDNN Software License Agreement](https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html).
@@ -137,6 +149,33 @@ arbitrary-source facility, not a content-aware license firewall. The runner and
 workflow gate recognize the exact accepted private image digest under a renamed
 repository reference, so relabeling cannot bypass the customer record or other
 technical gates.
+
+## Lift PH dataset license record
+
+The official Hugging Face repository metadata for exact revision
+`74fa018461f479cd9fd15b924a16103012096203` identifies
+`robomimic/robomimic_datasets` as public and ungated and declares license
+identifier `mit`. Its exact-revision `README.md` is Git object
+`736f9c17ae642026c84d2b534119cc4dfea1548a`, 1,065 bytes, SHA-256
+`e09a24720408bac08425dbaa0b7b55615e4440f1af0a61133303e4b5d5d6b09a`,
+at <https://huggingface.co/datasets/robomimic/robomimic_datasets/raw/74fa018461f479cd9fd15b924a16103012096203/README.md>.
+The same immutable tree binds `v1.5/lift/ph/low_dim_v15.hdf5` to LFS object
+SHA-256 `2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540`
+and 21,084,088 bytes. The exact revision has no standalone `LICENSE` file (the
+official raw-file endpoint returned 404), so the card's MIT declaration is the
+license record that must travel with this identity.
+
+The official provider terms at <https://huggingface.co/terms-of-service> were
+retrieved anonymously on 2026-09-16 at 12:41:42 UTC: HTTP 200,
+`text/html`, 114,631 bytes, SHA-256
+`42020fcaac52b7b036bf7e816910ca45485ad04c2d31faf09e13636a5b48a36b`;
+the page identified an effective date of 2022-09-15. That page is mutable, so
+its URL, retrieval identity, and current terms must be checked again before a
+new transaction. The card and those terms disclosed no dataset-specific
+field-of-use, service-use, or training-output restriction. MIT notice/license
+obligations still apply to copies or substantial portions of the dataset.
+Anonymous reachability does not itself grant rights, and this dataset finding
+does not close the separate CUDA, cuDNN, PyTorch, image, service, or B200 gates.
 
 Official sources for the later human/vendor decision include the NVIDIA CUDA
 Toolkit EULA, cuDNN Software License Agreement, CUDA container license, PyTorch

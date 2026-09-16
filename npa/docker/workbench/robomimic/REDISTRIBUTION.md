@@ -23,8 +23,8 @@ those claims is established by the checked-in candidate.
 The CUDA-capable training runtime is a separate boundary. Before an
 operator-supplied, pre-populated, read-only runtime volume is accessed, the
 customer must explicitly accept the exact official CUDA/cuDNN terms for its
-bounded run. The owner-only record binds the customer, run, noncommercial field
-of use, runtime lock, independently selected inventory digest, terms, and
+bounded run. The owner-only record binds the customer, run, runtime lock,
+independently selected inventory digest, terms, and
 expiry. A manager signature, runtime fetch, credential, private registry, image
 selector, or environment flag does not grant that permission. The acceptance
 action requires the exact digest emitted by the preceding notice action.

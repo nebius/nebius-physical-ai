@@ -47,5 +47,24 @@ later authorized live gate fetches only revision
 `74fa018461f479cd9fd15b924a16103012096203`, path
 `v1.5/lift/ph/low_dim_v15.hdf5`, and accepts only SHA-256
 `2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540`
-with size 21,084,088 bytes. Dataset access and use remain the operator's separate
-responsibility.
+with size 21,084,088 bytes. The official exact-revision repository metadata is
+public and ungated and declares license identifier `mit`; the exact card is Git
+object `736f9c17ae642026c84d2b534119cc4dfea1548a`, 1,065 bytes, SHA-256
+`e09a24720408bac08425dbaa0b7b55615e4440f1af0a61133303e4b5d5d6b09a`,
+at <https://huggingface.co/datasets/robomimic/robomimic_datasets/raw/74fa018461f479cd9fd15b924a16103012096203/README.md>.
+The selected file's tree object is
+`70f345df97259439b111f93803e4007da01ad7a8`; its LFS OID is the SHA-256
+above. The exact revision has no standalone `LICENSE` file (the official raw
+endpoint returned 404), so the MIT card must remain attached to this identity.
+
+The current official provider terms at
+<https://huggingface.co/terms-of-service> were retrieved anonymously on
+2026-09-16 at 12:41:42 UTC as HTTP 200 `text/html`, 114,631 bytes, SHA-256
+`42020fcaac52b7b036bf7e816910ca45485ad04c2d31faf09e13636a5b48a36b`;
+the page reported an effective date of 2022-09-15. That provider page is
+mutable and must be rechecked for a future transaction. The exact card and
+observed provider terms disclosed no dataset-specific field-of-use,
+service-use, or training-output restriction. MIT notice/license obligations
+still apply to copies or substantial portions. Public, anonymous reachability
+is access evidence, not a grant of rights, and does not close the independent
+CUDA, cuDNN, PyTorch, service, output, image, or live-execution boundaries.

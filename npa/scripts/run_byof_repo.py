@@ -254,7 +254,6 @@ def _robomimic_runtime_lock() -> tuple[dict[str, Any], str]:
     contract = lock.get("customer_entitlement")
     if not isinstance(contract, dict) or set(contract) != {
         "schema",
-        "field_of_use",
         "maximum_validity_seconds",
         "responsibilities",
         "terms",
@@ -263,7 +262,6 @@ def _robomimic_runtime_lock() -> tuple[dict[str, Any], str]:
     if (
         contract.get("schema")
         != "npa.robomimic.customer-runtime-entitlement.v1"
-        or contract.get("field_of_use") != "noncommercial"
         or contract.get("maximum_validity_seconds") != 86_400
         or contract.get("responsibilities")
         != [
@@ -289,7 +287,6 @@ def _robomimic_entitlement_notice_sha256(
         "schema": contract["schema"],
         "runtime_id": lock["runtime_id"],
         "runtime_lock_sha256": lock_sha256,
-        "field_of_use": contract["field_of_use"],
         "terms": contract["terms"],
         "customer_responsibilities": contract["responsibilities"],
     }
@@ -462,7 +459,6 @@ def _verify_robomimic_entitlement(
         "runtime_id": lock["runtime_id"],
         "runtime_manifest_sha256": runtime_inventory_sha256,
         "runtime_lock_sha256": lock_sha256,
-        "field_of_use": contract["field_of_use"],
         "terms": contract["terms"],
         "customer_responsibilities": contract["responsibilities"],
         "notice_sha256": _robomimic_entitlement_notice_sha256(
@@ -503,7 +499,6 @@ def _robomimic_entitlement_notice() -> dict[str, Any]:
         "schema": "npa.robomimic.customer-runtime-entitlement-notice.v1",
         "runtime_id": lock["runtime_id"],
         "runtime_lock_sha256": lock_sha256,
-        "field_of_use": contract["field_of_use"],
         "terms": contract["terms"],
         "customer_responsibilities": contract["responsibilities"],
         "notice_sha256": _robomimic_entitlement_notice_sha256(
@@ -677,7 +672,6 @@ def _handle_robomimic_entitlement_action(
             "runtime_id": lock["runtime_id"],
             "runtime_manifest_sha256": runtime_inventory,
             "runtime_lock_sha256": lock_sha256,
-            "field_of_use": contract["field_of_use"],
             "terms": contract["terms"],
             "customer_responsibilities": contract["responsibilities"],
             "notice_sha256": notice_sha256,
