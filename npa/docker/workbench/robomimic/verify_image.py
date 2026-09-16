@@ -1139,7 +1139,20 @@ def _verify_declared_runtime_file(
         os.close(descriptor)
 
 
-def verify_external_runtime(
+def _resolved_runtime_path(path: Path) -> Path:
+    """Resolve a runtime path without retaining filesystem diagnostics."""
+
+    resolution_failed = False
+    try:
+        resolved = path.resolve(strict=False)
+    except (OSError, RuntimeError):
+        resolution_failed = True
+    if resolution_failed:
+        raise VerificationError("runtime symlink resolution failed") from None
+    return resolved
+
+
+def _verify_external_runtime(
     *,
     runtime_root: Path,
     runtime_lock_path: Path,
@@ -1241,7 +1254,7 @@ def verify_external_runtime(
             f"runtime payload inventory mismatch: missing={sorted(declared - observed)} "
             f"extra={sorted(observed - declared)}"
         )
-    payload_resolved = payload_root.resolve()
+    payload_resolved = _resolved_runtime_path(payload_root)
     for relative, entry in files.items():
         path = runtime_root / relative
         _verify_declared_runtime_file(
@@ -1253,7 +1266,7 @@ def verify_external_runtime(
         path = runtime_root / relative
         if not path.is_symlink() or os.readlink(path) != entry["target"]:
             raise VerificationError(f"runtime symlink identity mismatch: {relative}")
-        resolved = path.resolve(strict=False)
+        resolved = _resolved_runtime_path(path)
         try:
             resolved.relative_to(payload_resolved)
         except ValueError as exc:
@@ -1279,6 +1292,32 @@ def verify_external_runtime(
         "payload_symlink_count": len(links),
         "payload_bytes": payload_bytes,
     }
+
+
+def verify_external_runtime(
+    *,
+    runtime_root: Path,
+    runtime_lock_path: Path,
+    expected_inventory_sha256: str,
+    require_read_only_mount: bool,
+) -> dict[str, Any]:
+    """Verify one runtime behind the CLI's value-free filesystem boundary."""
+
+    filesystem_failed = False
+    try:
+        return _verify_external_runtime(
+            runtime_root=runtime_root,
+            runtime_lock_path=runtime_lock_path,
+            expected_inventory_sha256=expected_inventory_sha256,
+            require_read_only_mount=require_read_only_mount,
+        )
+    except VerificationError:
+        raise
+    except OSError:
+        filesystem_failed = True
+    if filesystem_failed:
+        raise VerificationError("runtime filesystem verification failed") from None
+    raise AssertionError("unreachable runtime verification state")
 
 
 def verify_missing_runtime_refusal(
@@ -1399,7 +1438,6 @@ def _copy_runtime_inventory(
 ) -> None:
     """Copy only manager-bound runtime objects into a private staging tree."""
 
-    staging.mkdir(mode=0o700)
     _copy_bounded_regular_file(
         source / ".ready.json",
         staging / ".ready.json",
@@ -1445,6 +1483,76 @@ def _remove_snapshot_write_bits(snapshot: Path) -> None:
     snapshot.chmod(0o555)
 
 
+def _owned_snapshot_identity(snapshot: Path) -> tuple[int, int]:
+    details = snapshot.lstat()
+    if not stat.S_ISDIR(details.st_mode) or details.st_uid != os.geteuid():
+        raise VerificationError("runtime snapshot staging ownership is unsafe")
+    return details.st_dev, details.st_ino
+
+
+def _open_owned_directory(path: Path, expected: tuple[int, int]) -> int:
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    directory = getattr(os, "O_DIRECTORY", None)
+    if nofollow is None or directory is None:
+        raise VerificationError("runtime snapshot cleanup requires safe flags")
+    flags = os.O_RDONLY | os.O_CLOEXEC | nofollow | directory
+    descriptor = os.open(path, flags)
+    details = os.fstat(descriptor)
+    if (
+        not stat.S_ISDIR(details.st_mode)
+        or details.st_uid != os.geteuid()
+        or (details.st_dev, details.st_ino) != expected
+    ):
+        os.close(descriptor)
+        raise VerificationError("runtime snapshot cleanup ownership is unsafe")
+    return descriptor
+
+
+def _restore_owned_directory(path: Path, expected: tuple[int, int]) -> None:
+    descriptor = _open_owned_directory(path, expected)
+    try:
+        details = os.fstat(descriptor)
+        os.fchmod(descriptor, stat.S_IMODE(details.st_mode) | stat.S_IRWXU)
+    finally:
+        os.close(descriptor)
+
+
+def _cleanup_snapshot_staging(snapshot: Path, expected: tuple[int, int]) -> None:
+    cleanup_failed = False
+    try:
+        try:
+            snapshot.lstat()
+        except FileNotFoundError:
+            return
+        directories = [(snapshot, expected)]
+        for current, current_identity in directories:
+            descriptor = _open_owned_directory(current, current_identity)
+            try:
+                with os.scandir(descriptor) as entries:
+                    for entry in entries:
+                        details = entry.stat(follow_symlinks=False)
+                        if stat.S_ISDIR(details.st_mode):
+                            child = current / entry.name
+                            child_identity = (details.st_dev, details.st_ino)
+                            directories.append((child, child_identity))
+                        elif not (
+                            stat.S_ISREG(details.st_mode)
+                            or stat.S_ISLNK(details.st_mode)
+                        ):
+                            raise VerificationError(
+                                "runtime snapshot staging object is unsafe"
+                            )
+            finally:
+                os.close(descriptor)
+        for directory_path, identity in reversed(directories):
+            _restore_owned_directory(directory_path, identity)
+        shutil.rmtree(snapshot)
+    except (OSError, VerificationError):
+        cleanup_failed = True
+    if cleanup_failed:
+        raise VerificationError("runtime snapshot cleanup failed") from None
+
+
 def materialize_external_runtime(
     *,
     runtime_root: Path,
@@ -1467,9 +1575,9 @@ def materialize_external_runtime(
     staging = Path(
         tempfile.mkdtemp(prefix=f".{destination.name}.staging-", dir=destination.parent)
     )
+    staging_identity = _owned_snapshot_identity(staging)
     operating_system_failure = False
     try:
-        staging.rmdir()
         _copy_runtime_inventory(runtime_root, staging, expected_inventory_sha256)
         snapshot_proof = verify_external_runtime(
             runtime_root=staging,
@@ -1480,13 +1588,13 @@ def materialize_external_runtime(
         _remove_snapshot_write_bits(staging)
         staging.replace(destination)
     except VerificationError:
-        shutil.rmtree(staging, ignore_errors=True)
+        _cleanup_snapshot_staging(staging, staging_identity)
         raise
     except OSError:
-        shutil.rmtree(staging, ignore_errors=True)
+        _cleanup_snapshot_staging(staging, staging_identity)
         operating_system_failure = True
     except BaseException:
-        shutil.rmtree(staging, ignore_errors=True)
+        _cleanup_snapshot_staging(staging, staging_identity)
         raise
     if operating_system_failure:
         raise VerificationError("runtime snapshot materialization failed")
