@@ -3419,6 +3419,24 @@ def _tenant_resource_inventory(*, force_refresh: bool = False) -> dict:
     )
 
 
+def _safe_structured_transaction_detail(stdout: str) -> str:
+    # Keep only machine-safe transaction fields from a failed NPA JSON result.
+
+    try:
+        payload = json.loads(str(stdout or ""))
+    except (TypeError, ValueError):
+        return ""
+    transaction = payload.get("transaction") if isinstance(payload, dict) else None
+    if not isinstance(transaction, dict):
+        return ""
+    safe = {{
+        key: str(transaction.get(key) or "")
+        for key in ("category", "recovery_decision")
+        if re.fullmatch(r"[a-z0-9_]{{1,96}}", str(transaction.get(key) or ""))
+    }}
+    return json.dumps({{"transaction": safe}}) if safe else ""
+
+
 def _run_agent_npa_json(
     args: list[str], *, timeout_s: int | None = 300, expect_json: bool = True,
     extra_env: dict[str, str] | None = None,
@@ -3447,7 +3465,12 @@ def _run_agent_npa_json(
     except OSError as exc:
         raise HTTPException(status_code=502, detail=f"NPA command failed to start: {{exc}}") from exc
     if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()
+        # Runtime submissions emit progress on stderr and their typed transaction
+        # receipt on stdout. Prefer a strict safe projection of that receipt so
+        # the browser can render a recovery category without exposing logs.
+        detail = _safe_structured_transaction_detail(proc.stdout)
+        if not detail:
+            detail = (proc.stderr or proc.stdout or "").strip()
         raise HTTPException(status_code=502, detail=detail or f"NPA command failed: {{args}}")
     if not expect_json:
         return {{}}

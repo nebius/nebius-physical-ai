@@ -1939,6 +1939,32 @@ def test_workflow_execution_failure_observability_is_safe_and_actionable(
     }
 
 
+def test_agent_npa_failure_prefers_safe_structured_transaction(monkeypatch, tmp_path) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_safe_transaction_backend"
+    )
+
+    detail = module._safe_structured_transaction_detail(
+        json.dumps(
+            {
+                "transaction": {
+                    "category": "kubernetes_transport",
+                    "recovery_decision": "readiness_blocked",
+                    "raw_error": "must not be reflected",
+                }
+            }
+        )
+    )
+
+    assert json.loads(detail) == {
+        "transaction": {
+            "category": "kubernetes_transport",
+            "recovery_decision": "readiness_blocked",
+        }
+    }
+    assert module._safe_structured_transaction_detail("not json") == ""
+
+
 @pytest.mark.parametrize(
     ("module", "marker"),
     [
