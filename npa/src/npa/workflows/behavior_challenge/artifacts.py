@@ -157,10 +157,8 @@ def build_submission(output: Path, plan: dict, records: list[dict]) -> Path:
         for relative, expected in record["files"].items():
             if file_digest(output / relative) != expected:
                 raise ValueError("Original rollout bytes changed after validation")
-    paths = [
-        output / name
-        for name in ("README.md", "policy.md", "plan.json", "summary.json")
-    ]
+    metadata_files = ("README.md", "policy.md", "plan.json", "summary.json")
+    paths = [output / name for name in metadata_files]
     paths += sorted((output / "evaluator").rglob("*.py"))
     paths += [output / "evaluator/r1pro.yaml", output / "evaluator/LICENSE"]
     paths += [
