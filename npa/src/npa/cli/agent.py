@@ -1452,7 +1452,9 @@ def _normalize_loaded_state(data: dict | None) -> dict:
         merged["active_chat_session_id"] = "default"
     if not PRELOAD_STOCK_DEMO:
         # Artifact-only workspaces preserve source-qualified S3 selections and
-        # discard stock/synthetic verifier state on every restart.
+        # discard stock/synthetic verifier state on every restart. Browser-safe
+        # workflow execution records describe real, confirmation-gated work and
+        # must remain queryable while its durable submission is in progress.
         merged["sim_viz_runs"] = {{
             key: value
             for key, value in merged["sim_viz_runs"].items()
@@ -1470,7 +1472,6 @@ def _normalize_loaded_state(data: dict | None) -> dict:
             "latest_submit",
             "workflow_draft",
             "workflow_submit",
-            "workflow_executions",
         ):
             merged[key] = clean[key]
     return merged

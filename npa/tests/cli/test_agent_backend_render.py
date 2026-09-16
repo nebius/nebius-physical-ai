@@ -1124,6 +1124,14 @@ def test_no_stock_demo_mode_removes_only_the_stock_history(
                 },
                 "latest_submit": {"run_id": "verify-run"},
                 "sim2real_runs": {"verify-run": {"status": "completed"}},
+                "workflow_executions": {
+                    "submitted-run": {
+                        "run_id": "submitted-run",
+                        "status": "RUNNING",
+                        "state": "running",
+                        "submission_state": "submitting durable workflow",
+                    }
+                },
             }
         )
         assert normalized["sim_viz"] == selected
@@ -1131,6 +1139,14 @@ def test_no_stock_demo_mode_removes_only_the_stock_history(
         assert list(normalized["sim_viz_runs"]) == ["customer-run"]
         assert normalized["latest_submit"] == {}
         assert normalized["sim2real_runs"] == {}
+        assert normalized["workflow_executions"] == {
+            "submitted-run": {
+                "run_id": "submitted-run",
+                "status": "RUNNING",
+                "state": "running",
+                "submission_state": "submitting durable workflow",
+            }
+        }
 
         stock_only = module._normalize_loaded_state(
             {
