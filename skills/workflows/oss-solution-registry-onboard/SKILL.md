@@ -297,11 +297,12 @@ dataset revision `robomimic/robomimic_datasets`
 The Phase A image is a quarantined neutral candidate only: bake the pinned MIT
 source and exact non-CUDA lock, with no torch, NVIDIA/CUDA runtime, weights,
 dataset, populated cache, credential, or output. Consume CUDA/PyTorch only from
-an independently prepared exact-inventory read-only operator mount after an
-authoritative runtime-use decision and separate manager transaction
-authorization. The bootstrap verifies or refuses; it must not fetch, install,
-warm, populate, or accept terms. An environment flag, credential, private
-registry, or runtime fetch never supplies permission.
+an independently prepared exact-inventory read-only operator mount after the
+customer creates an unexpired noncommercial-use record bound to its identity,
+run, exact runtime lock and inventory, and official terms. The bootstrap verifies
+or refuses; it must not fetch, install, warm, populate, or accept terms. An
+environment flag, credential, manager signature, private registry, or runtime
+fetch never supplies permission.
 
 The hard gate must pass all three solution-specific capabilities on exactly one
 STRICT-reserved B200 (`sm_100`):
@@ -319,12 +320,13 @@ dataset file hash and trajectory/sample counts, split hashes/counts, losses,
 checkpoint hash, action proof, observed B200 identity, pod-observed image digest,
 and exit status. Dataset inspection, imports, CPU fallback, a mutable image, or a
 zero-step training config fails the gate. CUDA and cuDNN remain governed by the
-NVIDIA CUDA Toolkit EULA and cuDNN Software License Agreement. Those terms have
-no vendor entitlement probe or documented environment acceptance mechanism, so
-do not invent a local consent proxy: require an authorized operator to make the
-legal decision outside the workflow. During Phase A the runner refuses even
-when ordinary target selectors are present. Keep the dependent capability
-private; download the official dataset at runtime only after authorization.
+NVIDIA CUDA Toolkit EULA, NVIDIA Software License Agreement, and cuDNN Software
+License Agreement. They have no vendor token probe, so present the exact notice
+and offer customer-controlled accept, decline, and resume actions. Acceptance
+must be time-limited and bind customer, run, runtime lock, and inventory; reject
+missing, declined, stale, or mismatched records before external action. It is
+not a redistribution/publication grant. Keep the dependent capability private;
+download the official dataset at runtime only after every separate gate passes.
 Defer image-policy sweeps, simulator rollouts, and the full algorithm matrix.
 
 ### Open Dreamer (`byof-open-dreamer.yaml`)

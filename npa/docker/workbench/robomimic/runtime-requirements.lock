@@ -7,6 +7,32 @@
     "torch_cuda": "cu128"
   },
   "artifact_hash_closure": "required-in-runtime-inventory",
+  "customer_entitlement": {
+    "field_of_use": "noncommercial",
+    "maximum_validity_seconds": 86400,
+    "responsibilities": [
+      "runtime-use",
+      "derivative-use",
+      "service-use",
+      "output-use",
+      "no-redistribution-grant"
+    ],
+    "schema": "npa.robomimic.customer-runtime-entitlement.v1",
+    "terms": [
+      {
+        "name": "NVIDIA CUDA Toolkit EULA",
+        "url": "https://docs.nvidia.com/cuda/eula/index.html"
+      },
+      {
+        "name": "NVIDIA Software License Agreement",
+        "url": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/"
+      },
+      {
+        "name": "NVIDIA cuDNN Software License Agreement",
+        "url": "https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html"
+      }
+    ]
+  },
   "packages": {
     "jinja2": "3.1.6",
     "markupsafe": "3.0.2",

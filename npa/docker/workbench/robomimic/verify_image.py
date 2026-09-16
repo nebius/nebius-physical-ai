@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from datetime import datetime, timezone
 from typing import Any
 import urllib.error
 import urllib.parse
@@ -56,8 +57,29 @@ RUNTIME_OBJECT_MAX_BYTES = 4 * 1024 * 1024 * 1024
 RUNTIME_PAYLOAD_MAX_BYTES = 8 * 1024 * 1024 * 1024
 # Installed wheels expand into more filesystem entries than source objects.
 # The metadata ceiling makes this independently bounded limit conservative for
-# the future exact manager-selected inventory while preventing inode exhaustion.
+# the future exact operator-selected inventory while preventing inode exhaustion.
 RUNTIME_PAYLOAD_MAX_ENTRY_COUNT = 65_536
+RUNTIME_ENTITLEMENT_MAX_BYTES = 16 * 1024
+RUNTIME_ENTITLEMENT_TERMS = [
+    {
+        "name": "NVIDIA CUDA Toolkit EULA",
+        "url": "https://docs.nvidia.com/cuda/eula/index.html",
+    },
+    {
+        "name": "NVIDIA Software License Agreement",
+        "url": (
+            "https://www.nvidia.com/en-us/agreements/enterprise-software/"
+            "nvidia-software-license-agreement/"
+        ),
+    },
+    {
+        "name": "NVIDIA cuDNN Software License Agreement",
+        "url": (
+            "https://docs.nvidia.com/deeplearning/cudnn/backend/latest/"
+            "reference/eula.html"
+        ),
+    },
+]
 
 
 class VerificationError(RuntimeError):
@@ -85,7 +107,7 @@ def _json_object(path: Path) -> dict[str, Any]:
 
 
 def _bounded_json_object(
-    path: Path, *, maximum_size: int
+    path: Path, *, maximum_size: int, require_single_link: bool = False
 ) -> tuple[dict[str, Any], bytes]:
     """Read one regular JSON object through a no-link hard byte ceiling.
 
@@ -109,12 +131,23 @@ def _bounded_json_object(
         details = os.fstat(descriptor)
         if not stat.S_ISREG(details.st_mode):
             raise VerificationError(f"required regular file is absent: {path}")
+        if require_single_link and details.st_nlink != 1:
+            raise VerificationError(f"runtime metadata must have one link: {path}")
         if details.st_size > maximum_size:
             raise VerificationError(f"runtime metadata exceeds size limit: {path}")
         with os.fdopen(descriptor, "rb", closefd=False) as handle:
             raw = handle.read(maximum_size + 1)
         if len(raw) > maximum_size:
             raise VerificationError(f"runtime metadata exceeds size limit: {path}")
+        after = os.fstat(descriptor)
+        if (
+            len(raw) != details.st_size
+            or after.st_size != details.st_size
+            or after.st_dev != details.st_dev
+            or after.st_ino != details.st_ino
+            or (require_single_link and after.st_nlink != 1)
+        ):
+            raise VerificationError(f"runtime metadata changed while read: {path}")
     except OSError as exc:
         raise VerificationError(f"invalid JSON at {path}: {exc}") from exc
     finally:
@@ -126,6 +159,174 @@ def _bounded_json_object(
     if not isinstance(value, dict):
         raise VerificationError(f"expected JSON object at {path}")
     return value, raw
+
+
+def _utc_timestamp(value: Any, *, field: str) -> datetime:
+    if not isinstance(value, str):
+        raise VerificationError(f"customer runtime entitlement {field} is invalid")
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError as exc:
+        raise VerificationError(
+            f"customer runtime entitlement {field} is invalid"
+        ) from exc
+    return parsed
+
+
+def _runtime_entitlement_contract(lock: dict[str, Any]) -> dict[str, Any]:
+    contract = lock.get("customer_entitlement")
+    if not isinstance(contract, dict) or set(contract) != {
+        "schema",
+        "field_of_use",
+        "maximum_validity_seconds",
+        "responsibilities",
+        "terms",
+    }:
+        raise VerificationError("runtime lock customer entitlement contract is invalid")
+    if contract.get("schema") != "npa.robomimic.customer-runtime-entitlement.v1":
+        raise VerificationError("runtime lock customer entitlement schema is invalid")
+    if contract.get("field_of_use") != "noncommercial":
+        raise VerificationError("runtime lock customer field of use is invalid")
+    maximum_validity = contract.get("maximum_validity_seconds")
+    if not isinstance(maximum_validity, int) or isinstance(maximum_validity, bool):
+        raise VerificationError("runtime lock entitlement validity is invalid")
+    if maximum_validity <= 0 or maximum_validity > 86_400:
+        raise VerificationError("runtime lock entitlement validity is out of bounds")
+    responsibilities = contract.get("responsibilities")
+    if responsibilities != [
+        "runtime-use",
+        "derivative-use",
+        "service-use",
+        "output-use",
+        "no-redistribution-grant",
+    ]:
+        raise VerificationError("runtime lock customer responsibilities are invalid")
+    terms = contract.get("terms")
+    if terms != RUNTIME_ENTITLEMENT_TERMS:
+        raise VerificationError("runtime lock customer terms are invalid")
+    for term in terms:
+        if not isinstance(term, dict) or set(term) != {"name", "url"}:
+            raise VerificationError("runtime lock customer term is invalid")
+        if not isinstance(term["name"], str) or not term["name"]:
+            raise VerificationError("runtime lock customer term name is invalid")
+        _checked_https_url(term["url"], host=urllib.parse.urlsplit(term["url"]).hostname or "")
+    return contract
+
+
+def _runtime_entitlement_notice_sha256(
+    *, lock: dict[str, Any], lock_sha256: str
+) -> str:
+    contract = _runtime_entitlement_contract(lock)
+    notice_identity = {
+        "schema": contract["schema"],
+        "runtime_id": lock.get("runtime_id"),
+        "runtime_lock_sha256": lock_sha256,
+        "field_of_use": contract["field_of_use"],
+        "terms": contract["terms"],
+        "customer_responsibilities": contract["responsibilities"],
+    }
+    return hashlib.sha256(
+        json.dumps(
+            notice_identity, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def verify_customer_runtime_entitlement(
+    *,
+    entitlement_path: Path,
+    runtime_lock_path: Path,
+    expected_entitlement_sha256: str,
+    expected_customer_binding_sha256: str,
+    expected_run_id: str,
+    expected_inventory_sha256: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Verify a customer-created, run-bound runtime-use record without mutation."""
+
+    for label, digest in (
+        ("entitlement", expected_entitlement_sha256),
+        ("customer binding", expected_customer_binding_sha256),
+        ("runtime inventory", expected_inventory_sha256),
+    ):
+        if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise VerificationError(f"expected {label} digest is absent or malformed")
+    if re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", expected_run_id) is None:
+        raise VerificationError("expected run ID is absent or malformed")
+
+    record, raw = _bounded_json_object(
+        entitlement_path,
+        maximum_size=RUNTIME_ENTITLEMENT_MAX_BYTES,
+        require_single_link=True,
+    )
+    if hashlib.sha256(raw).hexdigest() != expected_entitlement_sha256:
+        raise VerificationError("customer runtime entitlement byte identity mismatch")
+    lock = _json_object(runtime_lock_path)
+    contract = _runtime_entitlement_contract(lock)
+    expected_keys = {
+        "schema",
+        "decision",
+        "customer_binding_sha256",
+        "run_id",
+        "source_revision",
+        "runtime_id",
+        "runtime_manifest_sha256",
+        "runtime_lock_sha256",
+        "field_of_use",
+        "terms",
+        "customer_responsibilities",
+        "notice_sha256",
+        "accepted_at",
+        "expires_at",
+    }
+    if set(record) != expected_keys:
+        raise VerificationError("customer runtime entitlement fields are invalid")
+    expected_values = {
+        "schema": contract["schema"],
+        "decision": "accepted",
+        "customer_binding_sha256": expected_customer_binding_sha256,
+        "run_id": expected_run_id,
+        "source_revision": lock.get("source_revision"),
+        "runtime_id": lock.get("runtime_id"),
+        "runtime_manifest_sha256": expected_inventory_sha256,
+        "runtime_lock_sha256": _sha256(runtime_lock_path),
+        "field_of_use": contract["field_of_use"],
+        "terms": contract["terms"],
+        "customer_responsibilities": contract["responsibilities"],
+        "notice_sha256": _runtime_entitlement_notice_sha256(
+            lock=lock, lock_sha256=_sha256(runtime_lock_path)
+        ),
+    }
+    mismatched = sorted(
+        key for key, expected in expected_values.items() if record.get(key) != expected
+    )
+    if mismatched:
+        raise VerificationError(
+            "customer runtime entitlement binding mismatch: " + ", ".join(mismatched)
+        )
+    accepted_at = _utc_timestamp(record["accepted_at"], field="accepted_at")
+    expires_at = _utc_timestamp(record["expires_at"], field="expires_at")
+    observed_now = now or datetime.now(timezone.utc)
+    if accepted_at > observed_now:
+        raise VerificationError("customer runtime entitlement acceptance is in the future")
+    validity_seconds = int((expires_at - accepted_at).total_seconds())
+    if validity_seconds <= 0 or validity_seconds > contract["maximum_validity_seconds"]:
+        raise VerificationError("customer runtime entitlement validity is out of bounds")
+    if observed_now >= expires_at:
+        raise VerificationError("customer runtime entitlement has expired")
+    return {
+        "schema": "npa.robomimic.customer-runtime-entitlement-verification.v1",
+        "record_sha256": expected_entitlement_sha256,
+        "runtime_manifest_sha256": expected_inventory_sha256,
+        "runtime_lock_sha256": expected_values["runtime_lock_sha256"],
+        "run_binding_matched": True,
+        "customer_binding_matched": True,
+        "field_of_use": contract["field_of_use"],
+        "expires_at": record["expires_at"],
+        "redistribution_granted": False,
+    }
 
 
 def _canonical_name(value: str) -> str:
@@ -877,7 +1078,7 @@ def verify_external_runtime(
 ) -> dict[str, Any]:
     if re.fullmatch(r"[0-9a-f]{64}", expected_inventory_sha256) is None:
         raise VerificationError(
-            "manager-approved runtime inventory digest is absent or malformed"
+            "operator-selected runtime inventory digest is absent or malformed"
         )
     if not runtime_root.is_dir() or runtime_root.is_symlink():
         raise VerificationError("runtime root is absent or is a symlink")
@@ -897,7 +1098,7 @@ def verify_external_runtime(
     inventory_sha256 = hashlib.sha256(inventory_bytes).hexdigest()
     if inventory_sha256 != expected_inventory_sha256:
         raise VerificationError(
-            "runtime inventory does not match the manager-approved digest"
+            "runtime inventory does not match the operator-selected digest"
         )
     expected_common = {
         "runtime_id": lock.get("runtime_id"),
@@ -998,7 +1199,7 @@ def verify_external_runtime(
         "runtime_id": lock["runtime_id"],
         "runtime_lock_sha256": lock_hash,
         "runtime_inventory_sha256": inventory_sha256,
-        "manager_inventory_digest_matched": True,
+        "runtime_manifest_digest_matched": True,
         "read_only_mount_observed": read_only_mount,
         "package_count": len(lock["packages"]),
         "artifact_count": len(artifacts),
@@ -1055,7 +1256,7 @@ def _copy_bounded_regular_file(
     """Copy one regular file without following links or exceeding its identity.
 
     Args:
-        source: File in the manager-selected external runtime.
+        source: File in the operator-selected external runtime.
         destination: New file in the private snapshot staging tree.
         expected_size: Exact inventory size, or ``None`` to lock the opened size.
         expected_sha256: Exact inventory digest when one is available.
@@ -1247,6 +1448,28 @@ def _parser() -> argparse.ArgumentParser:
     runtime.add_argument(
         "--runtime-root", type=Path, default=Path(RUNTIME_ROOT_DEFAULT)
     )
+    entitlement = subparsers.add_parser("entitlement")
+    entitlement.add_argument("--entitlement", type=Path, required=True)
+    entitlement.add_argument(
+        "--runtime-lock",
+        type=Path,
+        default=Path("/opt/npa/robomimic/runtime-requirements.lock"),
+    )
+    entitlement.add_argument(
+        "--expected-entitlement-sha256",
+        default=os.environ.get("NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_SHA256", ""),
+    )
+    entitlement.add_argument(
+        "--expected-customer-binding-sha256",
+        default=os.environ.get("NPA_ROBOMIMIC_CUSTOMER_BINDING_SHA256", ""),
+    )
+    entitlement.add_argument(
+        "--expected-run-id", default=os.environ.get("NPA_BYOF_RUN_ID", "")
+    )
+    entitlement.add_argument(
+        "--expected-inventory-sha256",
+        default=os.environ.get("NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256", ""),
+    )
     runtime.add_argument(
         "--runtime-lock",
         type=Path,
@@ -1317,6 +1540,17 @@ def main() -> int:
                 expected_inventory_sha256=args.expected_inventory_sha256,
                 require_read_only_mount=True,
             )
+        elif args.mode == "entitlement":
+            result = verify_customer_runtime_entitlement(
+                entitlement_path=args.entitlement,
+                runtime_lock_path=args.runtime_lock,
+                expected_entitlement_sha256=args.expected_entitlement_sha256,
+                expected_customer_binding_sha256=(
+                    args.expected_customer_binding_sha256
+                ),
+                expected_run_id=args.expected_run_id,
+                expected_inventory_sha256=args.expected_inventory_sha256,
+            )
         elif args.mode == "snapshot":
             result = materialize_external_runtime(
                 runtime_root=args.runtime_root,
@@ -1333,7 +1567,7 @@ def main() -> int:
         else:
             raise AssertionError(f"unhandled mode: {args.mode}")
     except VerificationError as exc:
-        runtime_mode = args.mode in {"runtime", "snapshot"}
+        runtime_mode = args.mode in {"runtime", "snapshot", "entitlement"}
         runtime_label = runtime_mode or args.mode == "assert-missing-runtime"
         label = "RUNTIME" if runtime_label else "BUILD_INPUT"
         print(f"NPA_ROBOMIMIC_{label}_REFUSED: {exc}", file=sys.stderr)

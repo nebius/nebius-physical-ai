@@ -35,7 +35,10 @@ PyTorch, torchvision, Triton, and the NVIDIA CUDA/cuDNN/NCCL distributions named
 by `runtime-requirements.lock` are not included in the candidate. That lock is a
 compatibility declaration for an independently prepared external runtime. Its
 artifact hashes and installed-file inventory must be supplied and verified at
-the operator boundary after the applicable rights decision. PyTorch source
+the operator boundary. Before access, the customer must create an unexpired
+record bound to the exact run, runtime lock and inventory after reviewing the
+official CUDA Toolkit EULA, NVIDIA Software License Agreement, and cuDNN
+Software License Agreement recorded in that lock. PyTorch source
 licensing is not evidence that wheel or bundled binary dependencies may be
 redistributed or used as a hosted service.
 

@@ -9,6 +9,7 @@ import signal
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -80,6 +81,40 @@ def _runtime(tmp_path: Path) -> tuple[Path, Path, str]:
     return runtime_root, lock_path, _sha(inventory_path)
 
 
+def _entitlement(
+    tmp_path: Path,
+    *,
+    run_id: str = "entitled-run",
+    customer_binding_sha256: str = "b" * 64,
+    runtime_inventory_sha256: str = "a" * 64,
+) -> tuple[Path, str]:
+    lock_path = IMAGE_ROOT / "runtime-requirements.lock"
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    contract = lock["customer_entitlement"]
+    record = {
+        "schema": contract["schema"],
+        "decision": "accepted",
+        "customer_binding_sha256": customer_binding_sha256,
+        "run_id": run_id,
+        "source_revision": lock["source_revision"],
+        "runtime_id": lock["runtime_id"],
+        "runtime_manifest_sha256": runtime_inventory_sha256,
+        "runtime_lock_sha256": _sha(lock_path),
+        "field_of_use": contract["field_of_use"],
+        "terms": contract["terms"],
+        "customer_responsibilities": contract["responsibilities"],
+        "notice_sha256": verifier._runtime_entitlement_notice_sha256(
+            lock=lock, lock_sha256=_sha(lock_path)
+        ),
+        "accepted_at": "2026-09-16T00:00:00Z",
+        "expires_at": "2026-09-16T12:00:00Z",
+    }
+    path = tmp_path / "entitlement.json"
+    path.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
+    path.chmod(0o600)
+    return path, _sha(path)
+
+
 def _bootstrap_with_fake_snapshot(
     tmp_path: Path, *, expose_launch_window: bool = False
 ) -> Path:
@@ -90,6 +125,11 @@ import os
 import sys
 import time
 from pathlib import Path
+
+if sys.argv[1] == "entitlement":
+    if os.environ.get("NPA_TEST_ENTITLEMENT_MODE") == "fail":
+        raise SystemExit(78)
+    raise SystemExit(0)
 
 destination = Path(sys.argv[sys.argv.index("--destination") + 1])
 Path(os.environ["NPA_TEST_SNAPSHOT_RECORD"]).write_text(
@@ -301,6 +341,10 @@ def _exec_environment(
     return {
         **os.environ,
         "NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256": "a" * 64,
+        "NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE": str(tmp_path / "entitlement.json"),
+        "NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_SHA256": "c" * 64,
+        "NPA_ROBOMIMIC_CUSTOMER_BINDING_SHA256": "b" * 64,
+        "NPA_BYOF_RUN_ID": "entitled-run",
         "NPA_TEST_SNAPSHOT_RECORD": str(tmp_path / "snapshot-record"),
         "NPA_TEST_SNAPSHOT_STARTED": str(tmp_path / "snapshot-started"),
         "NPA_TEST_SNAPSHOT_PID": str(tmp_path / "snapshot-pid"),
@@ -348,6 +392,132 @@ def test_exact_external_runtime_inventory_verifies_without_mutation(
     assert result["payload_file_count"] == 1
     assert result["payload_bytes"] == 17
     assert before == after
+
+
+def test_exact_customer_runtime_entitlement_verifies_without_mutation(
+    tmp_path: Path,
+) -> None:
+    path, record_sha256 = _entitlement(tmp_path)
+    before = path.read_bytes()
+
+    result = verifier.verify_customer_runtime_entitlement(
+        entitlement_path=path,
+        runtime_lock_path=IMAGE_ROOT / "runtime-requirements.lock",
+        expected_entitlement_sha256=record_sha256,
+        expected_customer_binding_sha256="b" * 64,
+        expected_run_id="entitled-run",
+        expected_inventory_sha256="a" * 64,
+        now=datetime(2026, 9, 16, 6, tzinfo=timezone.utc),
+    )
+
+    assert result["run_binding_matched"] is True
+    assert result["customer_binding_matched"] is True
+    assert result["field_of_use"] == "noncommercial"
+    assert result["redistribution_granted"] is False
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        ("decision", "binding mismatch: decision"),
+        ("customer", "binding mismatch: customer_binding_sha256"),
+        ("run", "binding mismatch: run_id"),
+        ("manifest", "binding mismatch: runtime_manifest_sha256"),
+        ("lock", "binding mismatch: runtime_lock_sha256"),
+        ("field", "binding mismatch: field_of_use"),
+        ("terms", "binding mismatch: terms"),
+        ("responsibilities", "binding mismatch: customer_responsibilities"),
+        ("notice", "binding mismatch: notice_sha256"),
+        ("stale", "has expired"),
+        ("overlong", "validity is out of bounds"),
+    ),
+)
+def test_customer_runtime_entitlement_hostile_bindings_fail_closed(
+    tmp_path: Path, mutation: str, message: str
+) -> None:
+    path, _ = _entitlement(tmp_path)
+    record = json.loads(path.read_text(encoding="utf-8"))
+    if mutation == "decision":
+        record["decision"] = "declined"
+    elif mutation == "customer":
+        record["customer_binding_sha256"] = "c" * 64
+    elif mutation == "run":
+        record["run_id"] = "other-run"
+    elif mutation == "manifest":
+        record["runtime_manifest_sha256"] = "d" * 64
+    elif mutation == "lock":
+        record["runtime_lock_sha256"] = "e" * 64
+    elif mutation == "field":
+        record["field_of_use"] = "commercial"
+    elif mutation == "terms":
+        record["terms"] = []
+    elif mutation == "responsibilities":
+        record["customer_responsibilities"] = []
+    elif mutation == "notice":
+        record["notice_sha256"] = "f" * 64
+    elif mutation == "stale":
+        record["expires_at"] = "2026-09-16T05:59:59Z"
+    else:
+        record["expires_at"] = "2026-09-17T00:00:01Z"
+    path.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
+
+    with pytest.raises(verifier.VerificationError, match=message):
+        verifier.verify_customer_runtime_entitlement(
+            entitlement_path=path,
+            runtime_lock_path=IMAGE_ROOT / "runtime-requirements.lock",
+            expected_entitlement_sha256=_sha(path),
+            expected_customer_binding_sha256="b" * 64,
+            expected_run_id="entitled-run",
+            expected_inventory_sha256="a" * 64,
+            now=datetime(2026, 9, 16, 6, tzinfo=timezone.utc),
+        )
+
+
+def test_bootstrap_refuses_entitlement_before_snapshot_or_payload(
+    tmp_path: Path,
+) -> None:
+    script = _bootstrap_with_fake_snapshot(tmp_path)
+    env = _exec_environment(tmp_path, import_mode="success", exec_mode="exit")
+    env["NPA_TEST_ENTITLEMENT_MODE"] = "fail"
+
+    result = subprocess.run(
+        ["bash", str(script), "exec", "ignored.py"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.returncode == 78
+    assert not (tmp_path / "snapshot-record").exists()
+    assert not (tmp_path / "import-started").exists()
+    assert not (tmp_path / "exec-started").exists()
+
+
+@pytest.mark.parametrize("unsafe_kind", ("symlink", "hardlink"))
+def test_customer_runtime_entitlement_refuses_linked_metadata(
+    tmp_path: Path, unsafe_kind: str
+) -> None:
+    source, _ = _entitlement(tmp_path)
+    unsafe = tmp_path / "unsafe-entitlement.json"
+    if unsafe_kind == "symlink":
+        unsafe.symlink_to(source)
+        message = "required regular file is absent"
+    else:
+        os.link(source, unsafe)
+        message = "must have one link"
+
+    with pytest.raises(verifier.VerificationError, match=message):
+        verifier.verify_customer_runtime_entitlement(
+            entitlement_path=unsafe,
+            runtime_lock_path=IMAGE_ROOT / "runtime-requirements.lock",
+            expected_entitlement_sha256=_sha(source),
+            expected_customer_binding_sha256="b" * 64,
+            expected_run_id="entitled-run",
+            expected_inventory_sha256="a" * 64,
+            now=datetime(2026, 9, 16, 6, tzinfo=timezone.utc),
+        )
 
 
 def _artifact(index: int, *, size: int) -> dict[str, object]:
@@ -531,9 +701,9 @@ def test_symlink_escape_is_rejected(tmp_path: Path) -> None:
         )
 
 
-def test_manager_inventory_digest_is_an_external_trust_anchor(tmp_path: Path) -> None:
+def test_runtime_inventory_digest_is_an_external_trust_anchor(tmp_path: Path) -> None:
     runtime_root, lock_path, _ = _runtime(tmp_path)
-    with pytest.raises(verifier.VerificationError, match="manager-approved digest"):
+    with pytest.raises(verifier.VerificationError, match="operator-selected digest"):
         verifier.verify_external_runtime(
             runtime_root=runtime_root,
             runtime_lock_path=lock_path,
@@ -592,7 +762,7 @@ def test_runtime_execution_uses_an_atomic_verified_snapshot(tmp_path: Path) -> N
 
     assert result["atomic_snapshot_published"] is True
     assert result["snapshot_write_bits_absent"] is True
-    assert result["manager_inventory_digest_matched"] is True
+    assert result["runtime_manifest_digest_matched"] is True
     assert result["snapshot_root"] == str(destination)
     assert snapshot_interpreter.read_text(encoding="utf-8") == "#!/bin/sh\nexit 0\n"
     assert destination.stat().st_mode & 0o222 == 0

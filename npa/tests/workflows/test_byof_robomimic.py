@@ -9,8 +9,10 @@ import importlib.util
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -54,6 +56,64 @@ DEPENDENCY_LOCK_SHA256 = (
 )
 
 
+def _customer_binding(project: str) -> str:
+    return hashlib.sha256(
+        b"npa.robomimic.customer-binding.v1\0" + project.encode("utf-8")
+    ).hexdigest()
+
+
+def _entitlement_notice_sha256(lock: dict[str, object], lock_sha256: str) -> str:
+    contract = lock["customer_entitlement"]
+    assert isinstance(contract, dict)
+    identity = {
+        "schema": contract["schema"],
+        "runtime_id": lock["runtime_id"],
+        "runtime_lock_sha256": lock_sha256,
+        "field_of_use": contract["field_of_use"],
+        "terms": contract["terms"],
+        "customer_responsibilities": contract["responsibilities"],
+    }
+    return hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _customer_entitlement(
+    tmp_path: Path,
+    *,
+    project: str,
+    run_id: str,
+    runtime_inventory_sha256: str = "a" * 64,
+) -> Path:
+    lock_path = IMAGE_ROOT / "runtime-requirements.lock"
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    contract = lock["customer_entitlement"]
+    lock_sha256 = hashlib.sha256(lock_path.read_bytes()).hexdigest()
+    accepted = datetime.now(timezone.utc).replace(microsecond=0)
+    record = {
+        "schema": contract["schema"],
+        "decision": "accepted",
+        "customer_binding_sha256": _customer_binding(project),
+        "run_id": run_id,
+        "source_revision": lock["source_revision"],
+        "runtime_id": lock["runtime_id"],
+        "runtime_manifest_sha256": runtime_inventory_sha256,
+        "runtime_lock_sha256": lock_sha256,
+        "field_of_use": contract["field_of_use"],
+        "terms": contract["terms"],
+        "customer_responsibilities": contract["responsibilities"],
+        "notice_sha256": _entitlement_notice_sha256(lock, lock_sha256),
+        "accepted_at": accepted.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "expires_at": (accepted + timedelta(hours=1)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        ),
+    }
+    path = tmp_path / f"{run_id}-entitlement.json"
+    path.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
+    path.chmod(0o600)
+    return path
+
+
 def _workflow_config() -> dict[str, object]:
     payload = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     assert isinstance(payload, dict)
@@ -76,6 +136,7 @@ def _smoke_module(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     setattr(config, "config_factory", lambda *_args: None)
     setattr(file_utils, "policy_from_checkpoint", lambda *_args, **_kwargs: None)
     setattr(verifier, "verified_source_identity", lambda *_args: None)
+    setattr(verifier, "verify_customer_runtime_entitlement", lambda **_kwargs: None)
     for name, module in (
         ("h5py", h5py),
         ("robomimic", robomimic),
@@ -299,6 +360,7 @@ def _fake_robomimic_kubectl(
         "NPA_BYOF_ROBOMIMIC_LIVE_B200",
         "NPA_BYOF_ROBOMIMIC_RUNTIME_PVC",
         "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256",
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE",
         "AWS_ENDPOINT_URL",
     ),
 )
@@ -322,6 +384,11 @@ def test_robomimic_gate_refuses_missing_manager_context_in_default_suite(
         "NPA_BYOF_ROBOMIMIC_LIVE_B200": "1",
         "NPA_BYOF_ROBOMIMIC_RUNTIME_PVC": "robomimic-runtime-exact",
         "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256": "a" * 64,
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE": str(
+            _customer_entitlement(
+                tmp_path, project="manager-project", run_id="selector-check"
+            )
+        ),
         "AWS_ENDPOINT_URL": "https://storage.test-region.nebius.cloud",
     }
     for variable, value in selectors.items():
@@ -363,12 +430,18 @@ def test_robomimic_strict_attestation_is_resolved_only_in_run_local_profile(
 ) -> None:
     monkeypatch.setenv("NPA_E2E_MK8S_RESERVED_CAPACITY", "1")
     module = _live_e2e_module()
+    entitlement = _customer_entitlement(
+        tmp_path, project="manager-project", run_id="profile-run"
+    )
     rendered = module._materialize_robomimic_attested_profile(
         tmp_path / "robomimic-attested.yaml",
         namespace="robomimic-validation",
         service_account="npa-robomimic-run-scoped",
         runtime_pvc="robomimic-runtime-exact",
         runtime_inventory_sha256="a" * 64,
+        runtime_entitlement_file=str(entitlement),
+        runtime_entitlement_sha256=hashlib.sha256(entitlement.read_bytes()).hexdigest(),
+        customer_binding_sha256=_customer_binding("manager-project"),
     )
 
     source_task = list(yaml.safe_load_all(PROFILE.read_text(encoding="utf-8")))[1]
@@ -384,6 +457,15 @@ def test_robomimic_strict_attestation_is_resolved_only_in_run_local_profile(
         == "npa-robomimic-run-scoped"
     )
     assert rendered_task["envs"]["NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256"] == "a" * 64
+    assert rendered_task["envs"]["NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_SHA256"] == (
+        hashlib.sha256(entitlement.read_bytes()).hexdigest()
+    )
+    assert rendered_task["envs"]["NPA_ROBOMIMIC_CUSTOMER_BINDING_SHA256"] == (
+        _customer_binding("manager-project")
+    )
+    assert rendered_task["file_mounts"][
+        "/opt/npa-runtime-authorization/robomimic.json"
+    ] == str(entitlement)
     volumes = rendered_task["config"]["kubernetes"]["pod_config"]["spec"]["volumes"]
     runtime_volume = next(
         item for item in volumes if item["name"] == "robomimic-runtime"
@@ -842,6 +924,181 @@ def test_robomimic_runner_refuses_before_build_without_manager_context() -> None
     assert payload["run_started"] is False
 
 
+def test_robomimic_customer_notice_has_no_external_or_file_side_effect(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runner = _byof_runner_module()
+    record = tmp_path / "must-not-exist.json"
+    monkeypatch.setattr(
+        runner,
+        "_base_image_candidates",
+        lambda **_kwargs: pytest.fail("notice reached image resolution"),
+    )
+
+    status = runner.main(
+        [
+            "--repo-url",
+            "https://github.com/ARISE-Initiative/robomimic.git",
+            "--repo-ref",
+            SOURCE_REVISION,
+            "--solution-name",
+            "robomimic",
+            "--robomimic-runtime-entitlement-action",
+            "notice",
+            "--robomimic-runtime-entitlement-file",
+            str(record),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert status == 64
+    assert payload["status"] == "notice"
+    assert payload["external_action_started"] is False
+    assert payload["actions"] == ["accept", "decline", "resume"]
+    assert len(payload["terms"]) == 3
+    assert not record.exists()
+
+
+def test_robomimic_customer_accept_records_only_bound_value_free_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runner = _byof_runner_module()
+    customer = "private-customer-identity"
+    record = tmp_path / "entitlement.json"
+    monkeypatch.setenv("NPA_E2E_PROJECT", customer)
+    monkeypatch.setenv(
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256", "a" * 64
+    )
+    monkeypatch.setattr(
+        runner,
+        "_base_image_candidates",
+        lambda **_kwargs: pytest.fail("accept reached image resolution"),
+    )
+    expiry = (datetime.now(timezone.utc) + timedelta(hours=1)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    notice_sha256 = runner._robomimic_entitlement_notice()["notice_sha256"]
+
+    status = runner.main(
+        [
+            "--repo-url",
+            "https://github.com/ARISE-Initiative/robomimic.git",
+            "--repo-ref",
+            SOURCE_REVISION,
+            "--solution-name",
+            "robomimic",
+            "--run-id",
+            "customer-accept",
+            "--robomimic-runtime-entitlement-action",
+            "accept",
+            "--robomimic-runtime-entitlement-file",
+            str(record),
+            "--robomimic-runtime-entitlement-expires-at",
+            expiry,
+            "--robomimic-runtime-entitlement-notice-sha256",
+            notice_sha256,
+        ]
+    )
+
+    stdout = capsys.readouterr().out
+    payload = json.loads(stdout)
+    stored = json.loads(record.read_text(encoding="utf-8"))
+    assert status == 0
+    assert payload["status"] == "entitlement-recorded"
+    assert payload["external_action_started"] is False
+    assert stat.S_IMODE(record.stat().st_mode) == 0o600
+    assert stored["customer_binding_sha256"] == _customer_binding(customer)
+    assert stored["run_id"] == "customer-accept"
+    assert stored["runtime_manifest_sha256"] == "a" * 64
+    assert stored["decision"] == "accepted"
+    assert stored["notice_sha256"] == notice_sha256
+    assert customer not in stdout
+    assert customer not in record.read_text(encoding="utf-8")
+
+
+def test_robomimic_customer_accept_refuses_stale_notice_without_writing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runner = _byof_runner_module()
+    record = tmp_path / "entitlement.json"
+    monkeypatch.setenv("NPA_E2E_PROJECT", "customer-project")
+    monkeypatch.setenv("NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256", "a" * 64)
+    expiry = (datetime.now(timezone.utc) + timedelta(hours=1)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+    status = runner.main(
+        [
+            "--repo-url",
+            "https://github.com/ARISE-Initiative/robomimic.git",
+            "--repo-ref",
+            SOURCE_REVISION,
+            "--solution-name",
+            "robomimic",
+            "--run-id",
+            "stale-notice",
+            "--robomimic-runtime-entitlement-action",
+            "accept",
+            "--robomimic-runtime-entitlement-file",
+            str(record),
+            "--robomimic-runtime-entitlement-expires-at",
+            expiry,
+            "--robomimic-runtime-entitlement-notice-sha256",
+            "0" * 64,
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert status == 64
+    assert payload["status"] == "refused"
+    assert "exact current notice digest" in payload["error"]
+    assert payload["build_started"] is False
+    assert payload["push_started"] is False
+    assert payload["run_started"] is False
+    assert not record.exists()
+
+
+def test_robomimic_customer_decline_does_not_create_record(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runner = _byof_runner_module()
+    record = tmp_path / "declined.json"
+    monkeypatch.setattr(
+        runner,
+        "_base_image_candidates",
+        lambda **_kwargs: pytest.fail("decline reached image resolution"),
+    )
+
+    status = runner.main(
+        [
+            "--repo-url",
+            "https://github.com/ARISE-Initiative/robomimic.git",
+            "--repo-ref",
+            SOURCE_REVISION,
+            "--solution-name",
+            "robomimic",
+            "--robomimic-runtime-entitlement-action",
+            "decline",
+            "--robomimic-runtime-entitlement-file",
+            str(record),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert status == 64
+    assert payload["status"] == "declined"
+    assert payload["external_action_started"] is False
+    assert not record.exists()
+
+
 def test_robomimic_runner_cannot_disguise_registered_base_image(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -863,6 +1120,7 @@ def test_robomimic_runner_cannot_disguise_registered_base_image(
         "NPA_BYOF_ROBOMIMIC_LIVE_B200",
         "NPA_BYOF_ROBOMIMIC_RUNTIME_PVC",
         "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256",
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE",
     ):
         monkeypatch.delenv(variable, raising=False)
     monkeypatch.setattr(
@@ -1050,7 +1308,7 @@ def test_workflow_refusal_recognizes_accepted_digest_under_renamed_image(
             "quay.io/example/robomimic:latest",
             "s3://manager-bucket/oss-solutions/robomimic",
             (),
-            "image does not target the manager-issued private registry",
+            "image does not target the operator-selected private registry",
         ),
         (
             "quay.io:443/example",
@@ -1068,7 +1326,7 @@ def test_workflow_refusal_recognizes_accepted_digest_under_renamed_image(
             "",
             "s3://other-bucket/oss-solutions/robomimic",
             (),
-            "manager-issued bucket and solution prefix",
+            "operator-selected bucket and solution prefix",
         ),
         (
             "private.invalid/actual",
@@ -1077,7 +1335,7 @@ def test_workflow_refusal_recognizes_accepted_digest_under_renamed_image(
             "",
             "s3://manager-bucket/oss-solutions/robomimic",
             (),
-            "registry does not match the manager-issued registry",
+            "registry does not match the operator-selected registry",
         ),
         (
             "private.invalid/robomimic",
@@ -1128,6 +1386,10 @@ def test_robomimic_runner_rejects_unsafe_manager_targets_before_build(
     }
     accepted_image = f"{manager_registry.rstrip('/')}/npa-robomimic@sha256:{'a' * 64}"
     env["NPA_BYOF_ROBOMIMIC_IMAGE"] = accepted_image
+    run_id = "unsafe-target"
+    entitlement = _customer_entitlement(
+        tmp_path, project="manager-project", run_id=run_id
+    )
     command = [
         sys.executable,
         str(ROOT / "npa" / "scripts" / "run_byof_repo.py"),
@@ -1148,6 +1410,10 @@ def test_robomimic_runner_rejects_unsafe_manager_targets_before_build(
         "--output-root",
         output_root,
         "--skip-build",
+        "--run-id",
+        run_id,
+        "--robomimic-runtime-entitlement-file",
+        str(entitlement),
         *extra_args,
     ]
     command.extend(["--image", image or accepted_image])
@@ -1192,6 +1458,9 @@ def test_robomimic_runner_accepts_only_the_exact_immutable_contract(
         "apiVersion: v1\n", encoding="utf-8"
     )
     run_id = "exact-contract"
+    entitlement = _customer_entitlement(
+        tmp_path, project=selectors["NPA_E2E_PROJECT"], run_id=run_id
+    )
     live_module = _live_e2e_module()
     profile = live_module._materialize_robomimic_attested_profile(
         tmp_path / "attested.yaml",
@@ -1201,6 +1470,9 @@ def test_robomimic_runner_accepts_only_the_exact_immutable_contract(
         runtime_inventory_sha256=selectors[
             "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256"
         ],
+        runtime_entitlement_file=str(entitlement),
+        runtime_entitlement_sha256=hashlib.sha256(entitlement.read_bytes()).hexdigest(),
+        customer_binding_sha256=_customer_binding(selectors["NPA_E2E_PROJECT"]),
     )
     config = _workflow_config()
     runner = _byof_runner_module()
@@ -1243,15 +1515,20 @@ def test_robomimic_runner_accepts_only_the_exact_immutable_contract(
             "--image",
             accepted_image,
             "--skip-build",
+            "--robomimic-runtime-entitlement-file",
+            str(entitlement),
         ]
     )
-    with pytest.raises(ValueError, match="runtime use remains deferred"):
-        runner._require_robomimic_manager_context(
+    assert runner._handle_robomimic_entitlement_action(args) is None
+    assert (
+        runner._require_robomimic_execution_context(
             args,
             registry=args.registry,
             image=accepted_image,
             base_profile=args.base_profile,
         )
+        is None
+    )
     assert (
         runner.ROBOMIMIC_BUILD_COMMAND_SHA256
         == hashlib.sha256(str(config["build_command"]).encode()).hexdigest()
@@ -1262,7 +1539,7 @@ def test_robomimic_runner_accepts_only_the_exact_immutable_contract(
     )
     wrong_image = "private.invalid/robomimic/npa-robomimic@sha256:" + "b" * 64
     with pytest.raises(ValueError, match="immutable inputs"):
-        runner._require_robomimic_manager_context(
+        runner._require_robomimic_execution_context(
             args,
             registry=args.registry,
             image=wrong_image,
@@ -1272,7 +1549,7 @@ def test_robomimic_runner_accepts_only_the_exact_immutable_contract(
     monkeypatch.setenv("NPA_BYOF_ROBOMIMIC_IMAGE", malformed_image)
     args.image = malformed_image
     with pytest.raises(ValueError, match="exact private npa-robomimic digest"):
-        runner._require_robomimic_manager_context(
+        runner._require_robomimic_execution_context(
             args,
             registry=args.registry,
             image=malformed_image,
@@ -1327,6 +1604,12 @@ def test_robomimic_runner_rejects_every_immutable_contract_bypass(
     for variable, value in monkeypatch_env.items():
         monkeypatch.setenv(variable, value)
     run_id = "immutable-contract"
+    entitlement = _customer_entitlement(
+        tmp_path, project="manager-project", run_id=run_id
+    )
+    monkeypatch_env["NPA_BYOF_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE"] = str(
+        entitlement
+    )
     profile = module._materialize_robomimic_attested_profile(
         tmp_path / "attested.yaml",
         namespace="robomimic-validation",
@@ -1335,6 +1618,9 @@ def test_robomimic_runner_rejects_every_immutable_contract_bypass(
         runtime_inventory_sha256=monkeypatch_env[
             "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256"
         ],
+        runtime_entitlement_file=str(entitlement),
+        runtime_entitlement_sha256=hashlib.sha256(entitlement.read_bytes()).hexdigest(),
+        customer_binding_sha256=_customer_binding("manager-project"),
     )
     config = _workflow_config()
     options = {
@@ -1401,6 +1687,8 @@ def test_robomimic_runner_rejects_every_immutable_contract_bypass(
         run_id,
         "--image",
         accepted_image,
+        "--robomimic-runtime-entitlement-file",
+        str(entitlement),
         *(("--skip-build",) if mutation != "build-enabled" else ()),
         *flag,
     ]
@@ -1579,7 +1867,9 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
         '"workload_identity"',
         '"pretrained_weights": False',
         '"runtime_cache": "external-read-only-prepopulated"',
-        '"manager_inventory_digest_matched": True',
+        '"runtime_manifest_digest_matched": True',
+        "verify_customer_runtime_entitlement(",
+        '"customer_runtime_entitlement": entitlement',
         '"atomic_private_snapshot_published": True',
         '"snapshot_write_bits_absent": runtime_root.stat().st_mode & 0o222 == 0',
         '"exit_status": 0',

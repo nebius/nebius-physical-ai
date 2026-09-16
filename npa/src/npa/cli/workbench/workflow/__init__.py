@@ -100,9 +100,10 @@ def _is_dedicated_live_gate_spec(spec) -> bool:  # noqa: ANN001
 def _refuse_dedicated_live_gate_execution(spec) -> None:  # noqa: ANN001
     _fail(
         f"workflow {spec.name!r} is executable only through its dedicated live "
-        "gate, which verifies manager-issued selectors and run-owned cleanup "
-        "before any image/runtime pull, data fetch, or GPU submission; the "
-        "robomimic CUDA runtime-use decision remains deferred, so use planning mode"
+        "gate, which verifies a customer-created run- and manifest-bound runtime "
+        "entitlement, operator-selected execution identities, and run-owned cleanup "
+        "before any image/runtime pull, data fetch, or GPU submission; use planning "
+        "mode unless every separate live gate is available"
     )
 
 
