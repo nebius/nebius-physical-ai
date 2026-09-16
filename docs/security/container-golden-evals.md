@@ -118,7 +118,7 @@ flowchart TB
 | `cosmos3-reason` | `cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | container-smoke | CUDA; real Reason VLM pass | optional | gpu-gated |
 | `sonic` | `0.1.2` | entrypoint-smoke | `/entrypoint.sh smoke`; GPU proofs; JSON artifact | required | gpu-gated |
 | `retargeting` | `0.1.1` | container-smoke | validate_motion_lib on synthetic motion | none | ready |
-| `fiftyone` | `1.15.0.post1` (existing public release; replacement validation pending) | container-smoke | version; dataset creation/query; Brain curation; loopback App launch (functional smoke) | none | ready |
+| `fiftyone` | `1.21.0-skypilot-v1-20260915` | container-smoke | version; dataset creation/query; Brain curation; loopback App launch (functional smoke) | none | ready |
 | `lancedb` | `0.30.3` | server-smoke | server start; create table; vector query; list | optional | ready |
 | `detection-training` | `bdd100k-golden-eval-smoke-*` | server-smoke | server start; `/health`; `/system-info` | optional | ready |
 | `sim2real-control` | `0.1.2-sim2real-coherent-20260904` | container-smoke | load canonical graph; expand promote and loop-back plans across all 14 stages; exact-source guard | none | ready |

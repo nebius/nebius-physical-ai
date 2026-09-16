@@ -142,10 +142,10 @@ image (`public` | `restricted`), enforced by
 
   FiftyOne bundles MongoDB Community Server under SSPL v1, which is
   [not OSI-approved](https://www.mongodb.com/legal/licensing/server-side-public-license/faq).
-  The candidate Dockerfile implements matching source, provenance and delivery
-  directions alongside the retained notices. Built-image verification and
-  publication remain pending. See the
-  [FiftyOne candidate requirements](../../npa/docker/workbench/fiftyone/RELEASE.md).
+  The supported FiftyOne 1.21 image contains verified matching source,
+  provenance and delivery directions alongside the retained notices. Repeat
+  the exact-image checks for each replacement digest. See the
+  [FiftyOne release requirements](../../npa/docker/workbench/fiftyone/RELEASE.md).
   Before any public push, run `npa/.venv/bin/python
   npa/docker/workbench/fiftyone/validate_image.py` from the repository root with
   `--image-id` set to the exact loaded local image ID, `--revision` set to its

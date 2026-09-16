@@ -1,4 +1,13 @@
-# FiftyOne security candidate
+# FiftyOne 1.21 release
+
+The supported image tag is `1.21.0-skypilot-v1-20260915`, bound to
+`sha256:9ba5e723b2af8bad4e442781f3e09e2e5649499352ae583b7508bfdd902d7119`.
+It was built from source revision `17e3c9e82ceee7db1af59efef132b4c1187ede3b`.
+The [trusted build](https://github.com/nebius/nebius-physical-ai/actions/runs/35029858954)
+passed all 29 bare-image, initial-install and post-install checks. Independent
+review verified its layers, source annex, configured scans and signed provenance
+and SBOM. The archive payload scan covered 47,181 paths. These checks retain
+the coverage limits described below.
 
 The Dockerfile and VM installer now require FiftyOne 1.21.0, whose App and media
 routes default to same-origin access. This removes the wildcard CORS behavior
@@ -12,7 +21,7 @@ alive. Kubernetes uses local port-forward access and rejects public LoadBalancer
 exposure. Redeploy existing containers and Kubernetes deployments to replace
 their previous listeners. CORS is not an authentication boundary.
 
-The candidate also includes datasets 5.0.1 with the upstream folder-based
+The release also includes datasets 5.0.1 with the upstream folder-based
 builder metadata-reference fix for
 [CVE-2026-66007](https://www.vulncheck.com/advisories/datasets-path-traversal-via-unsanitized-file-name-metadata),
 Pillow 12.3.0, and Paramiko 5.0.0. The datasets fix applies to
@@ -29,14 +38,14 @@ any wheel-provided copy within the installation layer.
 
 MongoDB Community Server uses SSPL v1, which is
 [not OSI-approved](https://www.mongodb.com/legal/licensing/server-side-public-license/faq).
-The candidate Dockerfile implements a source annex containing the matching
+The image contains a verified source annex with the matching
 `mongodb-source.tar.gz`, `source.json` provenance and `SOURCE.md` delivery
 directions in `/opt/fiftyone/mongodb-notices/`. It also installs
-`MONGODB_SOURCE.md` beside the bundled `mongod`. Built-image verification and
-publication remain pending. Verify the archive, binary-to-source mapping,
-required source contents and recipient access in the rebuilt image before
-publication; the [source-delivery directions](SOURCE.md) describe the supplied
-files. Retaining the three notices alone does not establish source delivery.
+`MONGODB_SOURCE.md` beside the bundled `mongod`. Exact-image verification
+checked the archive, binary-to-source mapping, required source members and
+recipient access; the [source-delivery directions](SOURCE.md) describe the
+supplied files. Retain these checks for each replacement image. The three
+notices alone do not establish source delivery.
 The [SSPL's distribution and service provisions](https://www.mongodb.com/legal/licensing/server-side-public-license)
 need separate review; satisfying image redistribution conditions does not decide
 an operator's service-use obligations.
@@ -132,7 +141,7 @@ the bare Bash entrypoint with command passthrough.
 Prove these behaviors on the exact rebuilt image; the bootstrap label records
 the contract but does not execute or establish it.
 
-The candidate also updates the Python base security release and installs the
+The release also updates the Python base security release and installs the
 hash-locked packaging tools in both Python environments, so the global pip and
 wheel copies cannot retain older vulnerable versions.
 The same installation layer removes an upstream token-bearing historical image

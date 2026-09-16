@@ -524,9 +524,10 @@ images:
       MongoDB Community Server uses SSPL v1, not an OSI-approved license.
       Public redistribution requires the applicable notices and matching
       corresponding-source delivery; service-use obligations need separate
-      review. The candidate implements the source annex; built-image validation
-      and publication remain pending. Verify source delivery and actual bootstrap
-      and functional behavior before any public push; see fiftyone/RELEASE.md.
+      review. The supported FiftyOne 1.21 release includes a verified source
+      annex and passes initial NPA installation, dependency and functional checks.
+      Verify these contracts for each replacement digest before any public push;
+      see fiftyone/RELEASE.md.
     passwordless_root_exemption: >-
       SkyPilot's Kubernetes bootstrap installs and starts its in-pod SSH runtime
       as the non-root ubuntu user. The image deletes all build-time SSH host keys,
