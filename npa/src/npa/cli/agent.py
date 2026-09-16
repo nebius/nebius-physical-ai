@@ -3422,7 +3422,12 @@ def _agent_workflow_operation_env(
     # storage identity identical to staging and the confirmed submit, or the
     # API correctly rejects the later command as a credential-bound change.
     agent_env = environment if environment is not None else _agent_command_env()
-    command_env = _agent_workflow_context_env(kubernetes_context)
+    # Preserve the Agent's normalized configuration and isolated-runtime
+    # selection. Returning only the per-operation overrides silently drops
+    # those values for the child NPA command, sending a confirmed UI workflow
+    # to a different scheduler state than validation and recovery prepared.
+    command_env = dict(agent_env)
+    command_env.update(_agent_workflow_context_env(kubernetes_context))
     command_env.update(_agent_workflow_submit_env(project, agent_env))
     return command_env
 

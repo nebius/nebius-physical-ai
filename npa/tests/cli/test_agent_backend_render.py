@@ -4857,6 +4857,35 @@ def test_rendered_backend_preserves_agent_config_when_metadata_home_changes(
         sys.modules.pop(module_name, None)
 
 
+def test_rendered_backend_keeps_agent_runtime_when_building_workflow_env(
+    monkeypatch, tmp_path
+) -> None:
+    module_name = "npa_rendered_agent_workflow_environment"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    agent_env = {
+        "NPA_CONFIG_DIR": "/agent/config",
+        "NPA_SKYPILOT_ISOLATED_CONFIG_DIR": "/agent/scheduler",
+        "NPA_AGENT_ISOLATED_RECOVERY_REBIND": "v1",
+    }
+    monkeypatch.setattr(module, "_agent_command_env", lambda: dict(agent_env))
+    monkeypatch.setattr(
+        module, "_agent_workflow_context_env", lambda _context: {"KUBECONFIG": "/agent/kubeconfig"}
+    )
+    monkeypatch.setattr(
+        module,
+        "_agent_workflow_submit_env",
+        lambda _project, _environment: {"NPA_SKYPILOT_PROJECT": "agent-project"},
+    )
+    try:
+        assert module._agent_workflow_operation_env("agent-project", "agent-context") == {
+            **agent_env,
+            "KUBECONFIG": "/agent/kubeconfig",
+            "NPA_SKYPILOT_PROJECT": "agent-project",
+        }
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_rendered_backend_normalizes_relative_agent_config_dir(
     monkeypatch, tmp_path
 ) -> None:
