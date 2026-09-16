@@ -65,6 +65,13 @@ maximum, because the converted UMT5 asset is one roughly 11 GB object. Retain
 that default for normal cold starts; an operator may lower it for a constrained
 network.
 
+The released checkpoint contains the trained VideoDiT and ActionDiT experts.
+Deployment must keep the maintained checkpoint-only patch enabled so upstream
+constructs those experts with `skip_dit_load_from_pretrain=True` and immediately
+loads the released checkpoint. Do not fetch or generate the training-only
+ActionDiT initialization, and do not restore the redundant Wan VideoDiT shard
+download. Treat checkpoint missing/unexpected-key diagnostics as a failed run.
+
 ## Artifacts and acceptance
 
 Require all of the following from the exact image digest:
@@ -91,6 +98,9 @@ down a shared or pre-existing cluster.
   pinned Git commit, then enforce the two maintained SHA-256 file digests.
 - Missing DINO weights: confirm access to the timm DINOv3 repository and its
   model terms before retrying.
+- Missing ActionDiT initialization: confirm the checkpoint-only deployment patch
+  is present. The released inference checkpoint replaces that training-only
+  initialization; do not source an unrelated third-party copy.
 - CUDA OOM: verify action-only flags and absence of competing workloads. Do not
   silently reduce cameras, horizon, action dimensions, or checkpoint fidelity.
 - GPU mismatch: inspect scheduler labels and the artifact's device name. Do not

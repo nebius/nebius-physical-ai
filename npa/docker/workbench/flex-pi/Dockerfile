@@ -60,12 +60,15 @@ COPY --from=upstream-source /tmp/flex-pi-source/configs /opt/flex-pi/configs
 COPY --from=upstream-source /tmp/flex-pi-source/experiments/robotwin/flexpi_policy/deploy_policy.py /opt/flex-pi/experiments/robotwin/flexpi_policy/deploy_policy.py
 COPY docker/workbench/flex-pi/pins/dino-checkpoint.patch /tmp/dino-checkpoint.patch
 COPY docker/workbench/flex-pi/pins/hf-snapshot-config.patch /tmp/hf-snapshot-config.patch
+COPY docker/workbench/flex-pi/pins/checkpoint-only-deploy.patch /tmp/checkpoint-only-deploy.patch
 COPY docker/workbench/flex-pi/pins/security-dependencies.patch /tmp/security-dependencies.patch
 
 RUN patch --directory=/opt/flex-pi --strip=1 --input=/tmp/dino-checkpoint.patch \
     && patch --directory=/opt/flex-pi --strip=1 --input=/tmp/hf-snapshot-config.patch \
+    && patch --directory=/opt/flex-pi --strip=1 --input=/tmp/checkpoint-only-deploy.patch \
     && patch --directory=/opt/flex-pi --strip=1 --input=/tmp/security-dependencies.patch \
-    && rm /tmp/dino-checkpoint.patch /tmp/hf-snapshot-config.patch /tmp/security-dependencies.patch \
+    && rm /tmp/dino-checkpoint.patch /tmp/hf-snapshot-config.patch \
+      /tmp/checkpoint-only-deploy.patch /tmp/security-dependencies.patch \
     && pip install -e /opt/flex-pi --extra-index-url https://download.pytorch.org/whl/cu128 \
     && pip install --force-reinstall --no-deps --index-url https://pypi.org/simple torchcodec==0.5 \
     && rm -f /opt/conda/lib/python3.11/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2 \

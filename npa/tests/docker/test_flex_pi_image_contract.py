@@ -66,6 +66,7 @@ def test_dockerfile_pins_source_base_and_nonroot() -> None:
     assert "rm -rf /opt/nvidia/nsight-compute/2025.1.0" in text
     assert "security-dependencies.patch" in text
     assert "hf-snapshot-config.patch" in text
+    assert "checkpoint-only-deploy.patch" in text
     assert "MODELSCOPE_DOWNLOAD_PARALLELS=16" in text
 
     inference = (
@@ -92,4 +93,16 @@ def test_dockerfile_pins_source_base_and_nonroot() -> None:
     assert "resolved_parents" in snapshot_patch
     assert snapshot_patch.index("lexical_parents") < snapshot_patch.index(
         "resolved_parents"
+    )
+
+    deploy_patch = (
+        Path(__file__).resolve().parents[2]
+        / "docker/workbench/flex-pi/pins/checkpoint-only-deploy.patch"
+    ).read_text()
+    assert "model_cfg_copy.skip_dit_load_from_pretrain = True" in deploy_patch
+    assert deploy_patch.index("skip_dit_load_from_pretrain = True") < deploy_patch.index(
+        "self.model = instantiate"
+    )
+    assert deploy_patch.index("self.model = instantiate") < deploy_patch.index(
+        "self.model.load_checkpoint"
     )

@@ -30,8 +30,14 @@ Wan/T5/DINOv3 weights, observation media, credentials, actions, or populated
 cache. A narrow maintained patch makes upstream inspect the lexical Hugging Face
 snapshot path before resolving checkpoint symlinks into the blob store; this
 ensures the released checkpoint's adjacent `config.yaml` defines the model
-architecture. The upstream follow-up is intentionally kept in this integration
-branch rather than a second pull request.
+architecture. A second bounded deployment patch selects upstream's existing
+checkpoint-override path: it constructs both DiT experts without the
+training-only initialization weights and immediately loads the complete released
+checkpoint. This removes a redundant multi-shard VideoDiT fetch and avoids
+requiring the ActionDiT initialization file that upstream documents as a
+training prerequisite but does not publish with this checkpoint. The upstream
+follow-up is intentionally kept in this integration branch rather than a second
+pull request.
 
 The checkpoint repository is MIT-labelled. The selected public RoboTwin dataset
 card declares no license; NPA does not infer one from the simulator's MIT source,
