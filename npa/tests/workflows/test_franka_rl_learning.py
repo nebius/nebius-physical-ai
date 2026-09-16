@@ -209,15 +209,24 @@ def test_curriculum_ignores_initial_resets_and_stale_difficulty_episodes(reward)
 
 @pytest.mark.parametrize("training", [False, True])
 def test_learning_configuration_keeps_full_reset_and_goal_ranges(monkeypatch, training):
+    import builtins
     from copy import deepcopy
     from npa.workflows.franka_rl_learning import configure_learning
 
     monkeypatch.setitem(sys.modules, "isaaclab.managers", SimpleNamespace(
         CurriculumTermCfg=SimpleNamespace, ObservationTermCfg=SimpleNamespace, RewardTermCfg=SimpleNamespace))
-    terms = SimpleNamespace(StableManipulationReward=object(), adapt_training=object(), manipulation_state=object())
-    monkeypatch.setitem(sys.modules, "npa.workflows.franka_rl_learning_terms", terms)
-    monkeypatch.setitem(sys.modules, "npa.workflows.franka_rl_servo",
-                        SimpleNamespace(BoundedJointPositionAction=type("BoundedJointPositionAction", (), {})))
+    class ResolvableString(str):
+        def __call__(self, *args, **kwargs):
+            raise AssertionError("Native terms must not be resolved before simulator startup")
+
+    monkeypatch.setitem(sys.modules, "isaaclab.utils.string", SimpleNamespace(ResolvableString=ResolvableString))
+    original_import = builtins.__import__
+    def before_simulator_import(name, *args, **kwargs):
+        if name.startswith(("pxr", "npa.workflows.franka_rl_servo", "npa.workflows.franka_rl_learning_terms")):
+            raise AssertionError("Runtime term imported before simulator startup")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", before_simulator_import)
     config = SimpleNamespace(actions=SimpleNamespace(arm_action=SimpleNamespace()),
         observations=SimpleNamespace(policy=SimpleNamespace()),
         events={"reset_object": {"x": (-0.1, 0.1)}}, commands={"goal_z": (0.25, 0.5)})
@@ -227,6 +236,9 @@ def test_learning_configuration_keeps_full_reset_and_goal_ranges(monkeypatch, tr
     assert bool(config.curriculum) == training
     assert config.rewards["manipulation"].params["training"] == training
     assert callable(config.actions.arm_action.class_type)
+    assert isinstance(config.actions.arm_action.class_type, ResolvableString)
+    assert config.observations.policy.manipulation.func.endswith(":manipulation_state")
+    assert config.rewards["manipulation"].func.endswith(":StableManipulationReward")
 
 
 def test_normalization_receipt_detects_changed_inference_statistics():

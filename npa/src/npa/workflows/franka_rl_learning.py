@@ -70,14 +70,17 @@ def configure_learning(config, recipe: dict, *, training: bool) -> None:
     if settings is None:
         return
     from isaaclab.managers import CurriculumTermCfg, ObservationTermCfg, RewardTermCfg
-    from npa.workflows.franka_rl_learning_terms import StableManipulationReward, adapt_training, manipulation_state
-    from npa.workflows.franka_rl_servo import BoundedJointPositionAction
+    from isaaclab.utils.string import ResolvableString
 
-    config.actions.arm_action.class_type = BoundedJointPositionAction
-    config.observations.policy.manipulation = ObservationTermCfg(func=manipulation_state)
-    config.rewards = {"manipulation": RewardTermCfg(func=StableManipulationReward, weight=1.0,
+    # Concrete action/manager classes import USD. Resolve them only after Kit
+    # starts; an eager import mixes the image's usd-core with Kit's native USD.
+    # This field is assigned after config initialization, so wrap it explicitly.
+    config.actions.arm_action.class_type = ResolvableString("npa.workflows.franka_rl_servo:BoundedJointPositionAction")
+    terms = "npa.workflows.franka_rl_learning_terms:"
+    config.observations.policy.manipulation = ObservationTermCfg(func=terms + "manipulation_state")
+    config.rewards = {"manipulation": RewardTermCfg(func=terms + "StableManipulationReward", weight=1.0,
                                                    params={"recipe": recipe, "training": training})}
-    config.curriculum = {"training_difficulty": CurriculumTermCfg(func=adapt_training)} if training else {}
+    config.curriculum = {"training_difficulty": CurriculumTermCfg(func=terms + "adapt_training")} if training else {}
     config.npa_learning = settings
 
 

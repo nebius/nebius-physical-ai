@@ -82,9 +82,10 @@ fixed. Both recipes interpret raw arm actions as offsets from the native default
 joint positions with a 0.5-radian scale. The adaptive recipe then constrains the
 physical target and its slew; it does not clip raw actions to a small reachable
 neighborhood. The historical common control convention is a comparison baseline, not a claim of optimal
-embodiment-specific tuning. Initial/trained resets are paired within each embodiment. Different
-joint dimensions can change random-number consumption, so equal seeds do not
-establish identical object/goal resets across robots. This is a comparison of
+embodiment-specific tuning. Initial/trained resets are paired within each embodiment.
+Joint dimensions and adaptive observation widths can change random-number
+consumption, so equal seeds do not establish identical object/goal resets across
+robots or recipes. This is a comparison of
 independently trained systems, not a controlled estimate of morphology alone.
 Each embodiment has its own live evidence below; historical Franka results are
 kept separate from the new Kinova and UR10e measurements.
@@ -124,6 +125,9 @@ all three embodiments:
   at least 70% expands difficulty by 0.15, from 0.25 to 1.0. Old easier episodes
   cannot promote a newer level. At 1.0 the ranges exactly match the original
   distribution. The log records every assessed window, including failed ones.
+  Adaptive training disables the baseline's randomized initial episode lengths
+  so the first curriculum outcomes cover complete episodes. This also synchronizes
+  timeout resets across the parallel environments and can increase sample correlation.
 
 There is no grasp trajectory, waypoint sequence, timed gripper closure, or
 success-conditioned action override. The curriculum changes only the training
@@ -158,7 +162,11 @@ evaluation is a post-training audit; its outputs do not shape PPO rewards or
 checkpoint selection. It omits Cosmos augmentation and environment generation.
 Its task is **lift and hold at a commanded goal**, not object release
 onto a support surface. A hardware student still needs validated perception,
-calibrated action conversion, and a separate physical evaluation.
+calibrated action conversion, and a separate physical evaluation. The adaptive
+teacher additionally consumes simulator object pose/velocity and a hold-progress
+observation computed from those measurements. A hardware policy needs calibrated
+state estimation, validated sensing latency, or distillation into a sensor-based
+student; exporting LeRobot episodes alone does not provide that policy.
 
 ## Reproduce on Nebius
 
