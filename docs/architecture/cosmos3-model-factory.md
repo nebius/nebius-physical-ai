@@ -2,13 +2,16 @@
 
 [Workbench docs](../workbench/README.md)
 
-**Assessment: 2026-09-14. Status: factory integration proposed.**
+**Baseline assessment: 2026-09-14. Follow-on: experimental policy workflow.**
 Repository baseline: `d743f1853` on `origin/main`.
 
 **2026-09-15 implementation follow-on:** the experimental
 [LIBERO policy model-factory workflow](../workbench/cosmos3-policy-model-factory.md)
 adds native training, matching simulator evaluation, and failure-targeted
-generation. Its readiness record tracks GPU qualification separately. The
+generation. Its [live report](../workbench/cosmos3-policy-model-factory-live-20260916.md)
+records completed eight-GPU training, simulator evaluation and failure-targeted
+generation, including the unsuccessful policy and candidate-quality outcomes.
+Its readiness record tracks GPU qualification separately. The
 baseline assessment below explains the wider factory work still required.
 
 ## Recommendation
@@ -72,7 +75,8 @@ A ready HTTP server does not establish compatibility with an arbitrary checkpoin
 Use the matching native server, action statistics, camera transform, and
 simulation client. Current NVIDIA guidance includes both a
 [DROID/RoboLab path](https://github.com/NVIDIA/cosmos-framework/blob/2a8339d46a6e10e96f26c98509e6080d04ead490/docs/action_policy_droid_server.md)
-and the LIBERO path above. Neither is integrated into NPA by this proposal.
+and the LIBERO path above. Neither was integrated at the assessed baseline;
+the follow-on workflow adds the LIBERO integration.
 
 ## Target architecture
 
@@ -189,8 +193,10 @@ training loss, and HTTP readiness cannot replace simulator task success.
 
 ## Implementation sequence and acceptance criteria
 
-These are proposed contribution slices. None is an advertised new command or
-registered runnable workflow. Durations, training schedules, dataset sizes, and
+These are the original proposed contribution slices. The follow-on workflow
+implements the LIBERO training, evaluation, and failure-targeting slice; the
+remaining factory capabilities below still need implementation or qualification.
+Durations, training schedules, dataset sizes, and
 campaign counts remain operator choices.
 
 | Order | Deliverable and code seam | Evidence required before advertising support |

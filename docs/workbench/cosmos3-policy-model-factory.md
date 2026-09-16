@@ -14,6 +14,10 @@ planning are separate from GPU qualification; consult the adjacent
 for the current execution evidence. A successful video run of `paidf-cosmos3`
 does not qualify this workflow.
 
+The [live validation report](cosmos3-policy-model-factory-live-20260916.md)
+records real eight-GPU training, checkpoint reload, simulator evaluation,
+failure feedback, and candidate generation, including the unsuccessful task outcomes.
+
 ## What executes
 
 ```mermaid
@@ -83,6 +87,9 @@ This selects the native Torch 2.10 stack. The simulator uses a separate Python
 Evaluation also selects the native `guardrail` extra and checks its imports.
 Runtime setup completes before the large checkpoint download. The server's
 identity check uses its resolved DCP `model` directory.
+Native configuration resolution is also checked before download. Evaluation
+clears the unused training-dataset root while preserving the dataloader's action
+and prompt settings and the native EMA checkpoint loader.
 
 Workers need network access, git, uv, sufficient local disk for model, dataset,
 environment and DCP staging, and a compatible CUDA driver. In disposable
@@ -92,7 +99,7 @@ VAE and dataset payloads are runtime-fetched into the operator's scope. Enabled
 video guardrails require the operator's existing Hugging Face entitlement.
 No new public container or vendor payload is published by this change.
 
-| Runtime payload | Pinned source | Terms |
+| Training/evaluation payload | Pinned source | Terms |
 | --- | --- | --- |
 | Cosmos framework | `2a8339d46a6e10e96f26c98509e6080d04ead490` | [OpenMDW-1.1](https://github.com/NVIDIA/cosmos-framework/blob/2a8339d46a6e10e96f26c98509e6080d04ead490/LICENSE) |
 | Cosmos3-Nano | `7a312c868bcce8e40b3eb40861300a9d0ba3fde1` | [Model card](https://huggingface.co/nvidia/Cosmos3-Nano) |
@@ -131,8 +138,8 @@ from the submitted checkout. Use unique run-scoped storage prefixes.
 training GPUs. Unknown fields are rejected. A reduced functional validation
 recipe is not a claim of native-scale training or model improvement.
 Reducing the sample batch does not remove the model and optimizer's memory
-requirements. The live training attempt uses the reserved eight-GPU RTX shape;
-single-GPU training is not qualified by this implementation.
+requirements. The five-iteration live training check completed on the reserved
+eight-GPU RTX shape; single-GPU training is not qualified by this implementation.
 
 CLI primitives are `npa workbench cosmos3 policy-train`, `policy-eval`,
 `policy-feedback`, and `failure-candidates`. Their SDK counterparts are
