@@ -233,7 +233,10 @@ def test_mutated_authorization_refuses_before_lock_access(
         ({"decision": "declined"}, "customer-authorization-declined"),
         ({"customer_scope_id": "other"}, "customer-authorization-wrong-customer"),
         ({"run_id": "robotwin-other"}, "customer-authorization-wrong-run"),
-        ({"runtime_manifest_sha256": "0" * 64}, "customer-authorization-wrong-manifest"),
+        (
+            {"runtime_manifest_sha256": "0" * 64},
+            "customer-authorization-wrong-manifest",
+        ),
         ({"expires_at": "not-a-date"}, "customer-authorization-expiry-invalid"),
         ({"expires_at": "2000-01-01T00:00:00Z"}, "customer-authorization-stale"),
         ({"terms": []}, "customer-authorization-terms-mismatch"),
@@ -304,7 +307,7 @@ def test_real_cli_missing_access_refusal_is_numeric_and_nonzero() -> None:
     assert completed.stderr.strip() == "ROBOTWIN_RUNTIME_REFUSED:authorization-missing"
 
 
-def test_assert_refusal_uses_the_real_run_gate() -> None:
+def test_assert_refusal_uses_the_real_run_gate_and_isolated_paths() -> None:
     completed = subprocess.run(
         [sys.executable, str(RUNTIME), "assert-refusal"],
         capture_output=True,

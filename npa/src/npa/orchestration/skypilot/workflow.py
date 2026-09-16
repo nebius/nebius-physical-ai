@@ -342,14 +342,10 @@ def _probe_local_api_daemon_cwd(
     daemon_roots = {
         pid
         for pid, (_ppid, cmdline, _process) in records.items()
-        if cmdline
-        and "-m" in cmdline
-        and "sky.server.server" in cmdline
+        if cmdline and "-m" in cmdline and "sky.server.server" in cmdline
     }
     roots = {
-        pid
-        for pid in daemon_roots
-        if _api_server_port(records[pid][1]) == str(port)
+        pid for pid in daemon_roots if _api_server_port(records[pid][1]) == str(port)
     }
     if caller_network_namespace is not None or caller_mount_namespace is not None:
         # Localhost is scoped by network namespace, not the interpreter or
@@ -466,9 +462,11 @@ def _probe_local_api_daemon_cwd(
     runtime_roots: set[int] = set()
     for pid, environment in environments.items():
         daemon_home = environment.get("HOME", "").strip()
-        if expected_home and Path(daemon_home).expanduser().absolute() != Path(
+        if (
             expected_home
-        ).expanduser().absolute():
+            and Path(daemon_home).expanduser().absolute()
+            != Path(expected_home).expanduser().absolute()
+        ):
             return unhealthy_runtime(
                 "stale_runtime_environment",
                 process_count=len(runtime_roots) + 1,
@@ -677,8 +675,10 @@ def _ensure_local_api_daemon_cwd_locked(
     isolated_api_dir = env.get("NPA_SKYPILOT_ISOLATED_API_DIR")
     if isolated_api_dir:
         return _ensure_isolated_api(
-            isolated_dir=Path(isolated_api_dir), sky_executable=sky_executable,
-            environment=env, cwd=cwd,
+            isolated_dir=Path(isolated_api_dir),
+            sky_executable=sky_executable,
+            environment=env,
+            cwd=cwd,
         )
 
     # SkyPilot 0.12 exposes one local API server on a fixed loopback port per
@@ -700,7 +700,10 @@ def _ensure_local_api_daemon_cwd_locked(
 
 
 def _ensure_isolated_api(**kwargs) -> ApiDaemonCwdProbe:
-    from npa.orchestration.skypilot.local_api import IsolatedApiError, ensure_isolated_api
+    from npa.orchestration.skypilot.local_api import (
+        IsolatedApiError,
+        ensure_isolated_api,
+    )
 
     try:
         return ApiDaemonCwdProbe(**ensure_isolated_api(**kwargs))
@@ -919,9 +922,7 @@ def _redact_private_text(value: object, redactions: Sequence[str]) -> str:
     """Remove exact validated private values from a diagnostic string."""
 
     text = str(value or "")
-    for private in sorted(
-        {item for item in redactions if item}, key=len, reverse=True
-    ):
+    for private in sorted({item for item in redactions if item}, key=len, reverse=True):
         text = text.replace(private, "<redacted>")
     return redact_text(text)
 
@@ -1083,9 +1084,9 @@ def _preflight_confidential_robotwin_inner(
             "worker_environment", "RoboTwin inner task is incomplete"
         )
     expected_context = authorization.kubernetes_context
-    allowed_contexts = ((global_config.get("kubernetes") or {}).get(
+    allowed_contexts = (global_config.get("kubernetes") or {}).get(
         "allowed_contexts"
-    ) or [])
+    ) or []
     if list(allowed_contexts) != [expected_context]:
         raise ExecutionPreflightError(
             "cluster_owner", "RoboTwin inner Kubernetes context is not singular"
@@ -1125,6 +1126,7 @@ def _preflight_confidential_robotwin_inner(
         raise ExecutionPreflightError(
             "gpu", "RoboTwin allowed-node configuration is invalid"
         )
+
     def run_kubectl_current_context(
         argv: list[str], **kwargs: Any
     ) -> subprocess.CompletedProcess[str]:
@@ -1158,9 +1160,7 @@ def _preflight_confidential_robotwin_inner(
         memory=memory,
         allowed_nodes=allowed_nodes,
         pod_spec=(
-            ((resources.get("kubernetes") or {}).get("pod_config") or {}).get(
-                "spec"
-            )
+            ((resources.get("kubernetes") or {}).get("pod_config") or {}).get("spec")
             or {}
         ),
     )
@@ -1227,7 +1227,9 @@ class _CurrentKubeconfigApiProbe:
         stdout = _redact_private_text(result.stdout, self.redactions)
         stderr = _redact_private_text(result.stderr, self.redactions)
         evidence = CommandEvidence(tuple(argv), result.returncode, stdout, stderr)
-        if result.returncode == 0 and str(result.stdout or "").strip().lower().startswith("ok"):
+        if result.returncode == 0 and str(
+            result.stdout or ""
+        ).strip().lower().startswith("ok"):
             return ProbeObservation(
                 EvidenceState.READY,
                 FailureCategory.NONE,
@@ -1285,6 +1287,7 @@ def submit_workflow(
     robotwin_documents: list[dict[str, Any]] | None = None
     if robotwin_submit_context is not None:
         from npa.orchestration.npa_workflow.robotwin_preflight import (
+            RobotwinSubmitContext,
             validate_confidential_submit_bridge,
         )
 
@@ -1303,13 +1306,28 @@ def submit_workflow(
         except (KeyboardInterrupt, SystemExit):
             raise
         except Exception as exc:
+            typed_context = (
+                robotwin_submit_context
+                if isinstance(robotwin_submit_context, RobotwinSubmitContext)
+                else None
+            )
+            authorization = getattr(typed_context, "authorization", None)
+            authorization_redactions = getattr(authorization, "redactions", ())
+            transport_value = getattr(typed_context, "transport_value", "")
+            private_values = getattr(typed_context, "private_values", ())
+            if not isinstance(authorization_redactions, (tuple, list)):
+                authorization_redactions = ()
+            if not isinstance(private_values, (tuple, list)):
+                private_values = ()
             redactions = tuple(
                 dict.fromkeys(
-                    (
-                        *robotwin_submit_context.authorization.redactions,
-                        robotwin_submit_context.transport_value,
-                        *robotwin_submit_context.private_values,
+                    item
+                    for item in (
+                        *authorization_redactions,
+                        transport_value,
+                        *private_values,
                     )
+                    if isinstance(item, str) and item
                 )
             )
             _raise_sanitized_submit_error(_redact_private_text(exc, redactions))
@@ -1409,7 +1427,9 @@ def submit_workflow(
                 _write_owner_bytes(
                     kubeconfig_path, robotwin_authorization.kubeconfig_bytes
                 )
-                environment = dict(os.environ)
+                environment = {
+                    name: value for name, value in (extra_env or {}).items() if value
+                }
                 for name, value in tuple(environment.items()):
                     if any(
                         private and private in value
@@ -1431,6 +1451,14 @@ def submit_workflow(
             if robotwin_authorization is not None:
                 env["KUBECONFIG"] = str(kubeconfig_path)
             env["SKYPILOT_GLOBAL_CONFIG"] = str(generated_config_path)
+            if (
+                robotwin_submit_context is not None
+                and robotwin_submit_context.layer == "outer"
+                and robotwin_submit_context.rendered_private_values
+            ):
+                env["NPA_SRC_S3_URI"] = (
+                    robotwin_submit_context.rendered_private_values[0]
+                )
             control_env = env
             if robotwin_authorization is not None:
                 from npa.orchestration.npa_workflow.robotwin_preflight import (
@@ -1836,6 +1864,7 @@ def workflow_status(
     sky_bin: SkyBin = None,
     controller_backend: ControllerBackend = DEFAULT_CONTROLLER_BACKEND,
     timeout: int = 300,
+    environment: Mapping[str, str] | None = None,
 ) -> WorkflowResult:
     """Query a SkyPilot managed job status via `sky jobs queue`."""
 
@@ -1857,7 +1886,9 @@ def workflow_status(
         cmd[3:3] = ["--config", str(runtime_config.global_config_path)]
     result = subprocess.run(
         cmd,
-        env=sky_environment(runtime_config.isolated_config_dir),
+        env=sky_environment(
+            runtime_config.isolated_config_dir, environment=environment
+        ),
         cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
         text=True,
         stdout=subprocess.PIPE,
@@ -2807,9 +2838,7 @@ def _wait_for_healthy_jobs_controller(
         if (
             "--refresh" in status_args
             and result.returncode != 0
-            and _can_ignore_foreign_controller_refresh(
-                result, env
-            )
+            and _can_ignore_foreign_controller_refresh(result, env)
         ):
             # A Kubernetes cloud can expose a controller from another namespace
             # while this process has an explicit, distinct SkyPilot user ID.  A
@@ -3108,9 +3137,12 @@ def _execution_preflight(*args, **kwargs):
 
 
 def _controller_config_for_execution(base_config, *, controller_backend, infra):
-    configured = ((base_config.get("jobs") or {}).get("controller") or {}).get("resources") or {}
+    configured = ((base_config.get("jobs") or {}).get("controller") or {}).get(
+        "resources"
+    ) or {}
     config = apply_controller_override(
-        base_config, controller_backend=controller_backend,
+        base_config,
+        controller_backend=controller_backend,
         controller_region=_controller_region_from_infra(infra, controller_backend),
     )
     if controller_backend == "nebius" and not configured.get("region"):

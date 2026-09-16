@@ -10,7 +10,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import stat
 import subprocess
 import sys
@@ -116,8 +115,8 @@ ROBOTWIN_FORBIDDEN_HISTORY: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "robotwin_asset_fetch_at_build",
         re.compile(
-            r"\bRUN\b[^\n]*(?:hf_hub_download|(?:hf|huggingface-cli)\s+download|"
-            r"(?:curl|wget)\b)[^\n]*(?:TianxingChen/RoboTwin2\.0|"
+            r"\bRUN\b.*?(?:hf_hub_download|(?:hf|huggingface-cli)\s+download|"
+            r"(?:curl|wget)\b).*?(?:TianxingChen/RoboTwin2\.0|"
             r"embodiments\.zip|objects\.zip|background_texture\.zip)",
             re.I | re.S,
         ),
@@ -125,7 +124,7 @@ ROBOTWIN_FORBIDDEN_HISTORY: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "vendor_runtime_installed_at_build",
         re.compile(
-            r"\bRUN\b[^\n]*(?:pip|uv)\s+(?:install|sync)[^\n]*"
+            r"\bRUN\b.*?(?:pip|uv)\s+(?:install|sync).*?"
             r"(?:curobo|sapien|mplib|warp-lang|torch|nvidia-cuda|nvidia-cudnn)",
             re.I | re.S,
         ),
@@ -133,7 +132,7 @@ ROBOTWIN_FORBIDDEN_HISTORY: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "vendor_source_fetched_at_build",
         re.compile(
-            r"\bRUN\b[^\n]*(?:git\s+clone|curl|wget)[^\n]*"
+            r"\bRUN\b.*?(?:git\s+clone|curl|wget).*?"
             r"(?:RoboTwin-Platform/RoboTwin|NVlabs/curobo)",
             re.I | re.S,
         ),
@@ -146,18 +145,14 @@ ROBOTWIN_FORBIDDEN_HISTORY: tuple[tuple[str, re.Pattern[str]], ...] = (
 FORBIDDEN_HISTORY = (*walker.FORBIDDEN_HISTORY, *ROBOTWIN_FORBIDDEN_HISTORY)
 
 FORBIDDEN_ELF_DEPENDENCY = re.compile(
-    rb"(?:"
-    + walker.FORBIDDEN_ELF_DEPENDENCY.pattern
-    + rb")|(?:libtorch[^\x00]*\.so)",
+    rb"(?:" + walker.FORBIDDEN_ELF_DEPENDENCY.pattern + rb")|(?:libtorch[^\x00]*\.so)",
     re.I,
 )
 
 SECRET_CONTENT = (
     *walker.SECRET_CONTENT,
     re.compile(rb'(?i)"ownership_provenance"\s*:\s*"manager-issued"'),
-    re.compile(
-        rb"npa\.byof\.robotwin\.runtime-(?:transport|authorization)\.v[0-9]+"
-    ),
+    re.compile(rb"npa\.byof\.robotwin\.runtime-(?:transport|authorization)\.v[0-9]+"),
     re.compile(
         rb"npa\.byof\.robotwin\."
         rb"(?:customer-runtime-entitlement|authenticated-customer-authorization)"
@@ -174,6 +169,14 @@ SECRET_CONTENT = (
 MAX_IMAGE_REFERENCE_BYTES = 2048
 MAX_DOCKER_CONFIG_BYTES = 1024 * 1024
 MAX_REGISTRY_METADATA_BYTES = 8 * 1024 * 1024
+MAX_OCI_CONFIG_BYTES = 16 * 1024 * 1024
+MAX_OCI_LAYER_COUNT = 128
+MAX_OCI_COMPRESSED_LAYER_BYTES = 8 * 1024 * 1024 * 1024
+MAX_OCI_COMPRESSED_TOTAL_BYTES = 32 * 1024 * 1024 * 1024
+MAX_OCI_UNCOMPRESSED_LAYER_BYTES = 16 * 1024 * 1024 * 1024
+MAX_OCI_UNCOMPRESSED_TOTAL_BYTES = 64 * 1024 * 1024 * 1024
+MAX_OCI_LAYER_MEMBERS = 2_000_000
+MAX_OCI_FLATTENED_BYTES = 64 * 1024 * 1024 * 1024
 REGISTRY_TIMEOUT_SECONDS = 60
 PUBLIC_IMAGE_REPOSITORY = "ghcr.io/nebius/nebius-physical-ai/npa-robotwin"
 PUBLIC_POLICY_PATH = (
@@ -248,7 +251,10 @@ def _read_docker_config(path: Path) -> dict[str, Any]:
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
         metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_DOCKER_CONFIG_BYTES:
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_size > MAX_DOCKER_CONFIG_BYTES
+        ):
             raise RuntimeError("Docker credential configuration is invalid")
         with os.fdopen(descriptor, "rb") as stream:
             descriptor = None
@@ -338,7 +344,9 @@ def _parse_private_image(image: str) -> tuple[str, str, str]:
     reference = image.removeprefix("docker:")
     repository_ref, separator, digest = reference.rpartition("@")
     if not separator or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
-        raise RuntimeError("private image reference must use an immutable sha256 digest")
+        raise RuntimeError(
+            "private image reference must use an immutable sha256 digest"
+        )
     registry, slash, repository = repository_ref.partition("/")
     if (
         not slash
@@ -365,9 +373,8 @@ class _RegistryClient:
     def __init__(self, registry: str, repository: str) -> None:
         self.registry = registry
         self.repository = repository
-        self.base_url = (
-            f"https://{registry}/v2/"
-            + "/".join(quote(part, safe="._-") for part in repository.split("/"))
+        self.base_url = f"https://{registry}/v2/" + "/".join(
+            quote(part, safe="._-") for part in repository.split("/")
         )
         credentials = _docker_credentials(registry)
         self._basic = ""
@@ -402,14 +409,16 @@ class _RegistryClient:
             raise RuntimeError("registry token service is not secure")
         query = {
             "service": str(values.get("service") or ""),
-            "scope": str(
-                values.get("scope") or f"repository:{self.repository}:pull"
-            ),
+            "scope": str(values.get("scope") or f"repository:{self.repository}:pull"),
         }
         query = {key: value for key, value in query.items() if value}
         token_url = realm + ("&" if parsed_realm.query else "?") + urlencode(query)
         request = Request(token_url, headers={"Accept": "application/json"})
-        if self._basic:
+        registry_origin = urlsplit(f"https://{self.registry}")
+        same_origin = parsed_realm.hostname == registry_origin.hostname and (
+            parsed_realm.port or 443
+        ) == (registry_origin.port or 443)
+        if self._basic and same_origin:
             request.add_header("Authorization", self._basic)
         with _URL_OPENER.open(request, timeout=REGISTRY_TIMEOUT_SECONDS) as response:
             raw = _read_bounded(response, MAX_REGISTRY_METADATA_BYTES)
@@ -448,24 +457,39 @@ class _RegistryClient:
             raise RuntimeError("registry metadata digest mismatch")
         return raw
 
-    def blob(self, digest: str, destination: Path, *, expected_size: int | None) -> None:
+    def blob(
+        self, digest: str, destination: Path, *, expected_size: int | None
+    ) -> None:
         if re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
             raise RuntimeError("OCI blob digest is invalid")
+        if expected_size is None or expected_size > MAX_OCI_COMPRESSED_LAYER_BYTES:
+            raise RuntimeError("OCI blob exceeds the scanner byte limit")
         calculated = hashlib.sha256()
         size = 0
-        with self.open(f"blobs/{quote(digest, safe=':')}") as response:
-            with destination.open("xb") as stream:
-                while True:
-                    chunk = response.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    size += len(chunk)
-                    calculated.update(chunk)
-                    stream.write(chunk)
-        if calculated.hexdigest() != digest.removeprefix("sha256:"):
-            raise RuntimeError("OCI blob digest mismatch")
-        if expected_size is not None and size != expected_size:
-            raise RuntimeError("OCI blob size mismatch")
+        try:
+            with self.open(f"blobs/{quote(digest, safe=':')}") as response:
+                with destination.open("xb") as stream:
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        size += len(chunk)
+                        if (
+                            size > expected_size
+                            or size > MAX_OCI_COMPRESSED_LAYER_BYTES
+                        ):
+                            raise RuntimeError(
+                                "OCI blob exceeds the scanner byte limit"
+                            )
+                        calculated.update(chunk)
+                        stream.write(chunk)
+            if calculated.hexdigest() != digest.removeprefix("sha256:"):
+                raise RuntimeError("OCI blob digest mismatch")
+            if size != expected_size:
+                raise RuntimeError("OCI blob size mismatch")
+        except BaseException:
+            destination.unlink(missing_ok=True)
+            raise
 
 
 def _json_object(raw: bytes, label: str) -> dict[str, Any]:
@@ -490,7 +514,11 @@ def _document_media_type(
 
 
 def _descriptor(
-    record: Any, label: str, allowed_media_types: frozenset[str]
+    record: Any,
+    label: str,
+    allowed_media_types: frozenset[str],
+    *,
+    max_size: int = MAX_REGISTRY_METADATA_BYTES,
 ) -> tuple[str, int, str]:
     if not isinstance(record, dict):
         raise RuntimeError(f"OCI {label} descriptor is invalid")
@@ -501,12 +529,14 @@ def _descriptor(
         raise RuntimeError(f"OCI {label} digest is invalid")
     if type(size_value) is not int or size_value < 0:
         raise RuntimeError(f"OCI {label} size is invalid")
+    if size_value > max_size:
+        raise RuntimeError(f"OCI {label} exceeds the scanner byte limit")
     if media_type not in allowed_media_types:
         raise RuntimeError(f"OCI {label} media type is invalid")
     return digest, size_value, media_type
 
 
-def _uncompressed_layer_digest(path: Path, media_type: str) -> str:
+def _uncompressed_layer_digest(path: Path, media_type: str) -> tuple[str, int]:
     """Return the OCI diff ID for one verified compressed layer blob."""
 
     stream: BinaryIO
@@ -521,29 +551,45 @@ def _uncompressed_layer_digest(path: Path, media_type: str) -> str:
         else:
             stream = raw_stream
         calculated = hashlib.sha256()
+        size = 0
         try:
             while chunk := stream.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_OCI_UNCOMPRESSED_LAYER_BYTES:
+                    raise RuntimeError(
+                        "OCI layer exceeds the uncompressed scanner byte limit"
+                    )
                 calculated.update(chunk)
         finally:
             if stream is not raw_stream:
                 stream.close()
-        return f"sha256:{calculated.hexdigest()}"
+        return f"sha256:{calculated.hexdigest()}", size
     except (OSError, EOFError) as exc:
         raise RuntimeError("OCI layer compression is invalid") from exc
     finally:
         raw_stream.close()
 
 
-def _write_flattened_rootfs(layers: list[Path], destination: Path, temp_dir: Path) -> None:
+def _write_flattened_rootfs(
+    layers: list[Path], destination: Path, temp_dir: Path
+) -> None:
     """Create a whiteout-aware rootfs tar without extracting untrusted paths."""
 
     entries: dict[str, tuple[str, Path | None, str, int]] = {}
     content_root = temp_dir / "rootfs-content"
     content_root.mkdir(mode=0o700)
     content_index = 0
+    member_count = 0
+    extracted_bytes = 0
     for layer in layers:
+        lower_entries = dict(entries)
+        current_entries: dict[str, tuple[str, Path | None, str, int]] = {}
+        whiteouts: list[tuple[str, str]] = []
         with tarfile.open(layer, "r:*") as archive:
             for member in archive:
+                member_count += 1
+                if member_count > MAX_OCI_LAYER_MEMBERS:
+                    raise RuntimeError("OCI layers exceed the member-count limit")
                 path = member.name
                 while path.startswith("./"):
                     path = path[2:]
@@ -559,37 +605,50 @@ def _write_flattened_rootfs(layers: list[Path], destination: Path, temp_dir: Pat
                 leaf = parts[-1]
                 parent = "/".join(parts[:-1])
                 if leaf == ".wh..wh..opq":
-                    prefix = f"{parent}/" if parent else ""
-                    entries = {
-                        name: value
-                        for name, value in entries.items()
-                        if not name.startswith(prefix) or name == parent
-                    }
+                    whiteouts.append(("opaque", parent))
                     continue
                 if leaf.startswith(".wh."):
                     target = "/".join((*parts[:-1], leaf.removeprefix(".wh.")))
-                    entries = {
-                        name: value
-                        for name, value in entries.items()
-                        if name != target and not name.startswith(f"{target}/")
-                    }
+                    whiteouts.append(("remove", target))
                     continue
                 if member.isfile():
+                    if extracted_bytes + member.size > MAX_OCI_FLATTENED_BYTES:
+                        raise RuntimeError("OCI layers exceed the flattened byte limit")
                     extracted = archive.extractfile(member)
                     if extracted is None:
                         raise RuntimeError("OCI layer file is unreadable")
                     content = content_root / f"{content_index:08d}"
                     content_index += 1
+                    written = 0
                     with extracted, content.open("xb") as stream:
-                        shutil.copyfileobj(extracted, stream)
-                    entries[path] = ("file", content, "", member.mode & 0o7777)
+                        while chunk := extracted.read(1024 * 1024):
+                            written += len(chunk)
+                            if extracted_bytes + written > MAX_OCI_FLATTENED_BYTES:
+                                raise RuntimeError(
+                                    "OCI layers exceed the flattened byte limit"
+                                )
+                            stream.write(chunk)
+                    if written != member.size:
+                        raise RuntimeError("OCI layer file size is invalid")
+                    extracted_bytes += written
+                    current_entries[path] = (
+                        "file",
+                        content,
+                        "",
+                        member.mode & 0o7777,
+                    )
                 elif member.isdir():
-                    entries[path] = ("dir", None, "", member.mode & 0o7777)
+                    current_entries[path] = (
+                        "dir",
+                        None,
+                        "",
+                        member.mode & 0o7777,
+                    )
                 elif member.issym() or member.islnk():
                     link = member.linkname
                     if "\x00" in link:
                         raise RuntimeError("OCI layer link is invalid")
-                    entries[path] = (
+                    current_entries[path] = (
                         "symlink" if member.issym() else "hardlink",
                         None,
                         link,
@@ -597,25 +656,49 @@ def _write_flattened_rootfs(layers: list[Path], destination: Path, temp_dir: Pat
                     )
                 else:
                     raise RuntimeError("OCI layer contains an unsupported special file")
-    with tarfile.open(destination, "x") as archive:
-        for path, (kind, content, link, mode) in sorted(entries.items()):
-            info = tarfile.TarInfo(path)
-            info.mode = mode
-            if kind == "file":
-                assert content is not None
-                info.size = content.stat().st_size
-                with content.open("rb") as stream:
-                    archive.addfile(info, stream)
-            elif kind == "dir":
-                info.type = tarfile.DIRTYPE
-                archive.addfile(info)
+        for operation, target in whiteouts:
+            if operation == "opaque":
+                prefix = f"{target}/" if target else ""
+                lower_entries = {
+                    name: value
+                    for name, value in lower_entries.items()
+                    if not name.startswith(prefix) or name == target
+                }
             else:
-                info.type = tarfile.SYMTYPE if kind == "symlink" else tarfile.LNKTYPE
-                info.linkname = link
-                archive.addfile(info)
+                lower_entries = {
+                    name: value
+                    for name, value in lower_entries.items()
+                    if name != target and not name.startswith(f"{target}/")
+                }
+        lower_entries.update(current_entries)
+        entries = lower_entries
+    try:
+        with tarfile.open(destination, "x") as archive:
+            for path, (kind, content, link, mode) in sorted(entries.items()):
+                info = tarfile.TarInfo(path)
+                info.mode = mode
+                if kind == "file":
+                    assert content is not None
+                    info.size = content.stat().st_size
+                    with content.open("rb") as stream:
+                        archive.addfile(info, stream)
+                elif kind == "dir":
+                    info.type = tarfile.DIRTYPE
+                    archive.addfile(info)
+                else:
+                    info.type = (
+                        tarfile.SYMTYPE if kind == "symlink" else tarfile.LNKTYPE
+                    )
+                    info.linkname = link
+                    archive.addfile(info)
+    except BaseException:
+        destination.unlink(missing_ok=True)
+        raise
 
 
-def _private_remote_material(image: str, temp_dir: Path) -> tuple[list[Path], dict[str, Any]]:
+def _private_remote_material(
+    image: str, temp_dir: Path
+) -> tuple[list[Path], dict[str, Any]]:
     registry, repository, digest = _parse_private_image(image)
     client = _RegistryClient(registry, repository)
     manifest_raw = client.metadata(
@@ -632,7 +715,10 @@ def _private_remote_material(image: str, temp_dir: Path) -> tuple[list[Path], di
         candidates: list[tuple[str, int, str]] = []
         for index, record in enumerate(records):
             descriptor = _descriptor(
-                record, f"index manifest {index}", MANIFEST_MEDIA_TYPES
+                record,
+                f"index manifest {index}",
+                MANIFEST_MEDIA_TYPES,
+                max_size=MAX_REGISTRY_METADATA_BYTES,
             )
             platform = record.get("platform") if isinstance(record, dict) else None
             if (
@@ -643,7 +729,9 @@ def _private_remote_material(image: str, temp_dir: Path) -> tuple[list[Path], di
             ):
                 candidates.append(descriptor)
         if len(candidates) != 1:
-            raise RuntimeError("OCI index does not select exactly one linux/amd64 image")
+            raise RuntimeError(
+                "OCI index does not select exactly one linux/amd64 image"
+            )
         child_digest, child_size, child_media_type = candidates[0]
         manifest_raw = client.metadata(
             f"manifests/{quote(child_digest, safe=':')}",
@@ -661,7 +749,10 @@ def _private_remote_material(image: str, temp_dir: Path) -> tuple[list[Path], di
     elif "manifests" in manifest:
         raise RuntimeError("OCI manifest graph shape is invalid")
     config_digest, config_size, _config_media_type = _descriptor(
-        manifest.get("config"), "config", CONFIG_MEDIA_TYPES
+        manifest.get("config"),
+        "config",
+        CONFIG_MEDIA_TYPES,
+        max_size=MAX_OCI_CONFIG_BYTES,
     )
     config_path = temp_dir / "config.json"
     client.blob(config_digest, config_path, expected_size=config_size)
@@ -673,18 +764,29 @@ def _private_remote_material(image: str, temp_dir: Path) -> tuple[list[Path], di
     layer_records = manifest.get("layers")
     if not isinstance(layer_records, list) or not layer_records:
         raise RuntimeError("OCI manifest contains no layers")
+    if len(layer_records) > MAX_OCI_LAYER_COUNT:
+        raise RuntimeError("OCI manifest exceeds the layer-count limit")
     layers: list[Path] = []
     layer_media_types: list[str] = []
+    compressed_total = 0
     for index, record in enumerate(layer_records):
         layer_digest, layer_size, layer_media_type = _descriptor(
-            record, f"layer {index}", LAYER_MEDIA_TYPES
+            record,
+            f"layer {index}",
+            LAYER_MEDIA_TYPES,
+            max_size=MAX_OCI_COMPRESSED_LAYER_BYTES,
         )
+        compressed_total += layer_size
+        if compressed_total > MAX_OCI_COMPRESSED_TOTAL_BYTES:
+            raise RuntimeError("OCI layers exceed the compressed aggregate limit")
         layer_path = temp_dir / f"layer-{index:03d}.tar"
         client.blob(layer_digest, layer_path, expected_size=layer_size)
         layers.append(layer_path)
         layer_media_types.append(layer_media_type)
     rootfs_record = config.get("rootfs")
-    diff_ids = rootfs_record.get("diff_ids") if isinstance(rootfs_record, dict) else None
+    diff_ids = (
+        rootfs_record.get("diff_ids") if isinstance(rootfs_record, dict) else None
+    )
     if (
         not isinstance(rootfs_record, dict)
         or rootfs_record.get("type") != "layers"
@@ -696,10 +798,16 @@ def _private_remote_material(image: str, temp_dir: Path) -> tuple[list[Path], di
         )
     ):
         raise RuntimeError("OCI image config rootfs graph is invalid")
-    actual_diff_ids = [
+    digest_and_sizes = [
         _uncompressed_layer_digest(path, media_type)
         for path, media_type in zip(layers, layer_media_types, strict=True)
     ]
+    if (
+        sum(size for _digest_value, size in digest_and_sizes)
+        > MAX_OCI_UNCOMPRESSED_TOTAL_BYTES
+    ):
+        raise RuntimeError("OCI layers exceed the uncompressed aggregate limit")
+    actual_diff_ids = [digest_value for digest_value, _size in digest_and_sizes]
     if actual_diff_ids != diff_ids:
         raise RuntimeError("OCI image config layer diff IDs do not match")
     rootfs = temp_dir / "rootfs.tar"
@@ -843,9 +951,8 @@ def main(argv: list[str] | None = None) -> int:
 
     result = {
         "format": "npa_robotwin_image_byte_scan_v1",
-        "image": selected_image or (
-            "docker-save" if args.docker_save else "offline-rootfs"
-        ),
+        "image": selected_image
+        or ("docker-save" if args.docker_save else "offline-rootfs"),
         "status": "pass" if not findings else "fail",
         "archives_scanned": len(tars),
         "findings": [asdict(item) for item in findings],

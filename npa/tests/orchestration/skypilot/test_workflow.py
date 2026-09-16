@@ -32,6 +32,8 @@ from npa.orchestration.skypilot.launch_transaction import (
 
 
 _REAL_RUN_LAUNCH_TRANSACTION = workflow_module.run_launch_transaction
+
+
 def _fake_sky(tmp_path: Path) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -73,7 +75,7 @@ def _robotwin_bridge_fixture(
         "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
         "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
         "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-        "runtime_lock_sha256": "507b2d1d2f1241ab43d91666aca2b0ed6c3132cf61046ccb400f1f23b7e6a408",
+        "runtime_lock_sha256": "dda9bfebe81250247d25259d655589f8f3b95af7d8629d31b49c59a6af3150ee",
         "bootstrap_image": "registry.example/robotwin-private/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "reservation": {
             "policy": "STRICT",
@@ -132,9 +134,7 @@ def _robotwin_bridge_fixture(
         },
         sort_keys=False,
     ).encode()
-    skypilot = (
-        f"kubernetes:\n  allowed_contexts: [{context_name}]\n"
-    ).encode()
+    skypilot = (f"kubernetes:\n  allowed_contexts: [{context_name}]\n").encode()
     authorization = validate_context_bytes(
         raw,
         customer_authorization_boundary=SimpleNamespace(
@@ -183,7 +183,9 @@ def _robotwin_bridge_fixture(
         },
     }
     monkeypatch.setenv("NPA_SRC_S3_URI", source_uri)
-    spec_path = Path(__file__).resolve().parents[4] / "workflows/testing/byof-robotwin.yaml"
+    spec_path = (
+        Path(__file__).resolve().parents[4] / "workflows/testing/byof-robotwin.yaml"
+    )
     spec = load_spec(spec_path)
     rendered = render_skypilot_yaml(
         spec,
@@ -218,7 +220,11 @@ def _skip_version_check(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
     monkeypatch.setattr(local_api_module, "_require_linux_host", lambda: None)
     # Separate local_api tests exercise real owned-daemon/socket lifecycle.
     # These transaction/argv fixtures use a fake Sky executable.
-    monkeypatch.setattr(workflow_module, "_ensure_isolated_api", lambda **kwargs: workflow_module.ApiDaemonCwdProbe(True, "test-owned-api"))
+    monkeypatch.setattr(
+        workflow_module,
+        "_ensure_isolated_api",
+        lambda **kwargs: workflow_module.ApiDaemonCwdProbe(True, "test-owned-api"),
+    )
     real_daemon_probe = workflow_module._probe_local_api_daemon_cwd
 
     def fixture_daemon_probe(*args, **kwargs):
@@ -228,7 +234,9 @@ def _skip_version_check(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
             return real_daemon_probe(*args, **kwargs)
         return workflow_module.ApiDaemonCwdProbe(True, "absent")
 
-    monkeypatch.setattr(workflow_module, "_probe_local_api_daemon_cwd", fixture_daemon_probe)
+    monkeypatch.setattr(
+        workflow_module, "_probe_local_api_daemon_cwd", fixture_daemon_probe
+    )
     monkeypatch.setattr(
         workflow_module, "ensure_skypilot_version", lambda sky_bin: Path(sky_bin)
     )
@@ -731,7 +739,9 @@ def test_local_api_daemon_probe_rejects_other_isolated_home(tmp_path) -> None:
 
 
 @pytest.mark.parametrize("port_args", [("--port", "48001"), ("--port=48001",)])
-def test_local_api_daemon_probe_scopes_processes_to_selected_endpoint(tmp_path, port_args) -> None:
+def test_local_api_daemon_probe_scopes_processes_to_selected_endpoint(
+    tmp_path, port_args
+) -> None:
     proc_root = tmp_path / "proc"
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -741,30 +751,46 @@ def test_local_api_daemon_probe_scopes_processes_to_selected_endpoint(tmp_path, 
     for pid, args, cwd, home in (
         (100, port_args, durable, own_home),
         (200, (), tmp_path / "deleted-unrelated-cwd", str(tmp_path / "other-home")),
-        (300, ("--port=48002",), tmp_path / "also-deleted", str(tmp_path / "third-home")),
+        (
+            300,
+            ("--port=48002",),
+            tmp_path / "also-deleted",
+            str(tmp_path / "third-home"),
+        ),
     ):
         _fake_proc_process(
-            proc_root, pid=pid, ppid=1, uid=1234,
+            proc_root,
+            pid=pid,
+            ppid=1,
+            uid=1234,
             cmdline=(str(bin_dir / "python"), "-m", "sky.server.server", *args),
-            cwd=cwd, environment={"HOME": home},
+            cwd=cwd,
+            environment={"HOME": home},
         )
     result = workflow_module._probe_local_api_daemon_cwd(
-        str(bin_dir / "sky"), proc_root=proc_root, uid=1234,
-        expected_endpoint="http://127.0.0.1:48001", expected_home=own_home,
+        str(bin_dir / "sky"),
+        proc_root=proc_root,
+        uid=1234,
+        expected_endpoint="http://127.0.0.1:48001",
+        expected_home=own_home,
     )
     assert result.healthy
     assert result.outcome == "cwd_live"
     assert result.process_count == 1
     absent = workflow_module._probe_local_api_daemon_cwd(
-        str(bin_dir / "sky"), proc_root=proc_root, uid=1234,
-        expected_endpoint="http://127.0.0.1:48003", expected_home=own_home,
+        str(bin_dir / "sky"),
+        proc_root=proc_root,
+        uid=1234,
+        expected_endpoint="http://127.0.0.1:48003",
+        expected_home=own_home,
     )
     assert absent.healthy and absent.outcome == "absent"
 
 
 def test_local_api_daemon_probe_does_not_inspect_remote_server(tmp_path) -> None:
     result = workflow_module._probe_local_api_daemon_cwd(
-        "/opt/sky/bin/sky", proc_root=tmp_path / "missing",
+        "/opt/sky/bin/sky",
+        proc_root=tmp_path / "missing",
         expected_endpoint="https://sky.example.com",
     )
     assert result.healthy and result.outcome == "remote_api_endpoint"
@@ -773,14 +799,17 @@ def test_local_api_daemon_probe_does_not_inspect_remote_server(tmp_path) -> None
 @pytest.mark.parametrize("endpoint", ["invalid", "http://localhost:invalid"])
 def test_local_api_daemon_probe_rejects_invalid_endpoint(endpoint) -> None:
     result = workflow_module._probe_local_api_daemon_cwd(
-        "/opt/sky/bin/sky", expected_endpoint=endpoint,
+        "/opt/sky/bin/sky",
+        expected_endpoint=endpoint,
     )
     assert not result.healthy and result.outcome == "invalid_api_endpoint"
 
 
 @pytest.mark.parametrize("stale_key", ["HOME", "SKYPILOT_USER_ID", "KUBECONFIG"])
 @pytest.mark.parametrize("explicit_endpoint", [False, True])
-@pytest.mark.parametrize("runtime_identity", ["legacy", "matching", "caller-only", "daemon-only"])
+@pytest.mark.parametrize(
+    "runtime_identity", ["legacy", "matching", "caller-only", "daemon-only"]
+)
 def test_api_daemon_repairs_stale_local_environment(
     tmp_path, monkeypatch, stale_key, explicit_endpoint, runtime_identity
 ) -> None:
@@ -808,9 +837,13 @@ def test_api_daemon_repairs_stale_local_environment(
 
     def start(environment):
         _fake_proc_process(
-            proc_root, pid=100, ppid=1, uid=1234,
+            proc_root,
+            pid=100,
+            ppid=1,
+            uid=1234,
             cmdline=(str(bin_dir / "python"), "-m", "sky.server.server", *port_args),
-            cwd=durable, environment=environment,
+            cwd=durable,
+            environment=environment,
         )
 
     start(daemon_env)
@@ -836,7 +869,10 @@ def test_api_daemon_repairs_stale_local_environment(
         return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
 
     result = workflow_module._ensure_local_api_daemon_cwd(
-        str(bin_dir / "sky"), env=env, cwd=str(durable), runner=runner,
+        str(bin_dir / "sky"),
+        env=env,
+        cwd=str(durable),
+        runner=runner,
         sleeper=lambda _seconds: None,
     )
     assert result.healthy and result.outcome == "restarted_from_durable_cwd"
@@ -860,14 +896,22 @@ def test_api_daemon_repair_never_stops_a_proven_different_runtime(
         port_args = ("--port", "48001")
     if with_stale_root:
         _fake_proc_process(
-            proc_root, pid=100, ppid=1, uid=1234,
+            proc_root,
+            pid=100,
+            ppid=1,
+            uid=1234,
             cmdline=(str(bin_dir / "python"), "-m", "sky.server.server", *port_args),
-            cwd=durable, environment={**env, "HOME": str(tmp_path / "stale-home")},
+            cwd=durable,
+            environment={**env, "HOME": str(tmp_path / "stale-home")},
         )
     _fake_proc_process(
-        proc_root, pid=200, ppid=1, uid=1234,
+        proc_root,
+        pid=200,
+        ppid=1,
+        uid=1234,
         cmdline=(str(bin_dir / "python"), "-m", "sky.server.server", *port_args),
-        cwd=durable, environment={**env, "SKY_RUNTIME_DIR": str(tmp_path / "other-runtime")},
+        cwd=durable,
+        environment={**env, "SKY_RUNTIME_DIR": str(tmp_path / "other-runtime")},
     )
     real_probe = workflow_module._probe_local_api_daemon_cwd
 
@@ -878,9 +922,14 @@ def test_api_daemon_repair_never_stops_a_proven_different_runtime(
 
     monkeypatch.setattr(workflow_module, "_probe_local_api_daemon_cwd", inspect)
     calls = []
-    with pytest.raises(SkyPilotSubmitError, match="different SKY_RUNTIME_DIR.*no API server was stopped"):
+    with pytest.raises(
+        SkyPilotSubmitError,
+        match="different SKY_RUNTIME_DIR.*no API server was stopped",
+    ):
         workflow_module._ensure_local_api_daemon_cwd(
-            str(bin_dir / "sky"), env=env, cwd=str(durable),
+            str(bin_dir / "sky"),
+            env=env,
+            cwd=str(durable),
             runner=lambda *args, **kwargs: calls.append(args),
         )
     assert calls == []
@@ -893,18 +942,26 @@ def test_api_daemon_probe_accepts_alias_of_same_runtime(tmp_path) -> None:
     alias = tmp_path / "runtime-alias"
     alias.symlink_to(runtime, target_is_directory=True)
     _fake_proc_process(
-        proc_root, pid=100, ppid=1, uid=1234,
+        proc_root,
+        pid=100,
+        ppid=1,
+        uid=1234,
         cmdline=(str(tmp_path / "bin" / "python"), "-m", "sky.server.server"),
-        cwd=runtime, environment={"SKY_RUNTIME_DIR": str(alias)},
+        cwd=runtime,
+        environment={"SKY_RUNTIME_DIR": str(alias)},
     )
     result = workflow_module._probe_local_api_daemon_cwd(
-        str(tmp_path / "bin" / "sky"), proc_root=proc_root, uid=1234,
+        str(tmp_path / "bin" / "sky"),
+        proc_root=proc_root,
+        uid=1234,
         expected_runtime_dir=str(runtime),
     )
     assert result.healthy and result.outcome == "cwd_live"
 
 
-@pytest.mark.parametrize("cause", ["HOME", "SKYPILOT_USER_ID", "KUBECONFIG", "config", "cwd"])
+@pytest.mark.parametrize(
+    "cause", ["HOME", "SKYPILOT_USER_ID", "KUBECONFIG", "config", "cwd"]
+)
 @pytest.mark.parametrize("peer_scope", ["endpoint", "executable", "mount-namespace"])
 def test_api_daemon_repair_preserves_other_daemons(
     tmp_path, monkeypatch, cause, peer_scope
@@ -928,16 +985,29 @@ def test_api_daemon_repair_preserves_other_daemons(
         stale_env[cause] = str(tmp_path / "stale-value")
     _fake_proc_self_mount_namespace(proc_root, "mnt:[100]")
     _fake_proc_process(
-        proc_root, pid=100, ppid=1, uid=1234,
+        proc_root,
+        pid=100,
+        ppid=1,
+        uid=1234,
         cmdline=(str(bin_dir / "python"), "-m", "sky.server.server"),
-        cwd=cwd, environment=stale_env, mount_namespace="mnt:[100]",
+        cwd=cwd,
+        environment=stale_env,
+        mount_namespace="mnt:[100]",
     )
-    peer_python = tmp_path / "other-bin" / "python" if peer_scope == "executable" else bin_dir / "python"
+    peer_python = (
+        tmp_path / "other-bin" / "python"
+        if peer_scope == "executable"
+        else bin_dir / "python"
+    )
     peer_port = ("--port=48001",) if peer_scope != "mount-namespace" else ()
     _fake_proc_process(
-        proc_root, pid=200, ppid=1, uid=1234,
+        proc_root,
+        pid=200,
+        ppid=1,
+        uid=1234,
         cmdline=(str(peer_python), "-m", "sky.server.server", *peer_port),
-        cwd=durable, environment=env,
+        cwd=durable,
+        environment=env,
         mount_namespace="mnt:[200]" if peer_scope == "mount-namespace" else "mnt:[100]",
     )
     real_probe = workflow_module._probe_local_api_daemon_cwd
@@ -949,23 +1019,35 @@ def test_api_daemon_repair_preserves_other_daemons(
 
     monkeypatch.setattr(workflow_module, "_probe_local_api_daemon_cwd", inspect)
     calls = []
-    with pytest.raises(SkyPilotSubmitError, match="api stop is not endpoint-scoped.*no API server was stopped"):
+    with pytest.raises(
+        SkyPilotSubmitError,
+        match="api stop is not endpoint-scoped.*no API server was stopped",
+    ):
         workflow_module._ensure_local_api_daemon_cwd(
-            str(bin_dir / "sky"), env=env, cwd=str(durable),
+            str(bin_dir / "sky"),
+            env=env,
+            cwd=str(durable),
             runner=lambda *args, **kwargs: calls.append(args),
         )
     assert calls == []
 
 
-def test_api_daemon_probe_rejects_selected_endpoint_from_another_executable(tmp_path) -> None:
+def test_api_daemon_probe_rejects_selected_endpoint_from_another_executable(
+    tmp_path,
+) -> None:
     proc_root = tmp_path / "proc"
     _fake_proc_process(
-        proc_root, pid=100, ppid=1, uid=1234,
+        proc_root,
+        pid=100,
+        ppid=1,
+        uid=1234,
         cmdline=(str(tmp_path / "other-bin" / "python"), "-m", "sky.server.server"),
         cwd=tmp_path,
     )
     result = workflow_module._probe_local_api_daemon_cwd(
-        str(tmp_path / "bin" / "sky"), proc_root=proc_root, uid=1234,
+        str(tmp_path / "bin" / "sky"),
+        proc_root=proc_root,
+        uid=1234,
     )
     assert not result.healthy and result.outcome == "foreign_api_daemon"
     assert "another executable" in result.error
@@ -1250,9 +1332,13 @@ def test_submit_workflow_surfaces_api_precheck_failure(monkeypatch, tmp_path) ->
             return _healthy_status(cmd)
         launches.append(cmd)
         if "--async" in cmd:
-            return subprocess.CompletedProcess(cmd, 0, stdout="Request accepted", stderr="")
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="Request accepted", stderr=""
+            )
         return subprocess.CompletedProcess(
-            cmd, 1, stdout="",
+            cmd,
+            1,
+            stdout="",
             stderr="Cloud-based file_mounts are specified, but no cloud storage is available.",
         )
 
@@ -1545,8 +1631,7 @@ def test_robotwin_confidential_submit_bridge_hides_context_after_preflight(
     serialized_argv = json.dumps(launch_cmd)
     assert "--infra" not in launch_cmd
     secret_pairs = [
-        launch_cmd[index : index + 2]
-        for index in range(len(launch_cmd) - 1)
+        launch_cmd[index : index + 2] for index in range(len(launch_cmd) - 1)
     ]
     assert ["--secret", TRANSPORT_CONTEXT_ENV] in secret_pairs
     assert all(private not in serialized_argv for private in private_values)
@@ -1631,22 +1716,21 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
         CHILD_OUTPUT_ROOT_ENV: authorization.output_root,
         CHILD_RUN_ID_ENV: authorization.run_id,
         CHILD_RUNTIME_AUTH_ENV: encode_runtime_authorization(authorization),
-        "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256": (
-            authorization.context_sha256
-        ),
+        "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256": (authorization.context_sha256),
         "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256": "b" * 64,
         "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES": "2",
     }
     inner_context = prepare_inner_submit(authorization, environment)
-    script = Path(__file__).resolve().parents[3] / "scripts/run_byof_container_verify.py"
+    script = (
+        Path(__file__).resolve().parents[3] / "scripts/run_byof_container_verify.py"
+    )
     spec = importlib.util.spec_from_file_location("robotwin_inner_render", script)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     public_workflow = yaml.safe_load(
         (
-            Path(__file__).resolve().parents[4]
-            / "workflows/testing/byof-robotwin.yaml"
+            Path(__file__).resolve().parents[4] / "workflows/testing/byof-robotwin.yaml"
         ).read_text(encoding="utf-8")
     )
     documents = module.render_workflow(
@@ -1698,9 +1782,7 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
     monkeypatch.setattr(
         k8s_gpu_catalog, "discover_kubernetes_gpu_inventory", discover_inventory
     )
-    monkeypatch.setattr(
-        k8s_gpu_catalog, "preflight_kubernetes_gpu_gang", verify_gpu
-    )
+    monkeypatch.setattr(k8s_gpu_catalog, "preflight_kubernetes_gpu_gang", verify_gpu)
 
     def fake_run(cmd, **kwargs):
         calls.append((list(cmd), kwargs))
@@ -1767,9 +1849,10 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
         for value in private_values
     )
     assert launch_kwargs["env"][CHILD_IMAGE_ENV] == image
-    assert launch_kwargs["env"][CHILD_OUTPUT_PREFIX_ENV] == environment[
-        CHILD_OUTPUT_PREFIX_ENV
-    ]
+    assert (
+        launch_kwargs["env"][CHILD_OUTPUT_PREFIX_ENV]
+        == environment[CHILD_OUTPUT_PREFIX_ENV]
+    )
     assert launch_kwargs["env"]["AWS_ENDPOINT_URL"] == endpoint
     prepared = Path(result.submitted_yaml_path).read_text(encoding="utf-8")
     assert all(private not in prepared for private in private_values)
@@ -1777,9 +1860,7 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
     assert "NPA_EXECUTION_OUTPUTS" not in prepared
     prepared_document = list(yaml.safe_load_all(prepared))[1]
     assert prepared_document["envs"]["AWS_ENDPOINT_URL"] == "${AWS_ENDPOINT_URL}"
-    assert prepared_document["envs"]["NEBIUS_S3_ENDPOINT"] == (
-        "${NEBIUS_S3_ENDPOINT}"
-    )
+    assert prepared_document["envs"]["NEBIUS_S3_ENDPOINT"] == ("${NEBIUS_S3_ENDPOINT}")
     assert "AWS_ENDPOINT_URL_S3" not in prepared_document["envs"]
     assert "NPA_STORAGE_ENDPOINT" not in prepared_document["envs"]
     assert "S3_ENDPOINT_URL" not in prepared_document["envs"]
@@ -1810,6 +1891,7 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
     assert all(
         private not in json.dumps(records, sort_keys=True) for private in private_values
     )
+
 
 def test_robotwin_confidential_submit_bridge_refuses_before_side_effects(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -1843,9 +1925,69 @@ def test_robotwin_confidential_submit_bridge_refuses_before_side_effects(
             execution_target=target,
             execution_preflight_report={},
             robotwin_submit_context=submit_context,
-    )
+        )
     assert exc_info.value.__cause__ is None
     assert exc_info.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "unexpected",
+    [
+        "NPA_BYOF_ROBOTWIN_CUSTOMER_ENTITLEMENT",
+        "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
+        "UNBOUND_PRIVATE_OVERRIDE",
+    ],
+)
+def test_robotwin_bridge_rejects_every_unbound_extra_env_before_resolution(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unexpected: str
+) -> None:
+    from npa.orchestration.npa_workflow.robotwin_preflight import (
+        TRANSPORT_CONTEXT_ENV,
+    )
+
+    yaml_path, submit_context, target, report, extra_env = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    authorization = submit_context.authorization
+    monkeypatch.setattr(
+        workflow_module,
+        "resolve_config",
+        lambda **_kwargs: pytest.fail("unbound environment reached resolution"),
+    )
+    with pytest.raises(SkyPilotSubmitError, match="submit-bridge-input-mismatch"):
+        submit_workflow(
+            yaml_path,
+            "robotwin-public-launcher",
+            config_path=Path(authorization.skypilot_config_source),
+            sky_bin=_fake_sky(tmp_path),
+            infra=f"k8s/{authorization.kubernetes_context}",
+            secret_envs=(TRANSPORT_CONTEXT_ENV,),
+            extra_env={**extra_env, unexpected: "private-canary"},
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report=report,
+            robotwin_submit_context=submit_context,
+        )
+
+
+def test_malformed_robotwin_bridge_context_is_sanitized_before_resolution(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "workflow.yaml"
+    path.write_text("name: invalid\n", encoding="utf-8")
+    private = "malformed-private-context-canary"
+    malformed = SimpleNamespace(authorization=SimpleNamespace(secret=private))
+    monkeypatch.setattr(
+        workflow_module,
+        "resolve_config",
+        lambda **_kwargs: pytest.fail("malformed context reached resolution"),
+    )
+
+    with pytest.raises(SkyPilotSubmitError) as caught:
+        submit_workflow(path, "run", robotwin_submit_context=malformed)
+    assert private not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
 
 
 def test_robotwin_control_plane_source_is_allowed_only_in_its_task_env() -> None:

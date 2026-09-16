@@ -47,7 +47,7 @@ def _robotwin_context(**updates: object) -> dict[str, object]:
         "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
         "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
         "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-        "runtime_lock_sha256": "507b2d1d2f1241ab43d91666aca2b0ed6c3132cf61046ccb400f1f23b7e6a408",
+        "runtime_lock_sha256": "dda9bfebe81250247d25259d655589f8f3b95af7d8629d31b49c59a6af3150ee",
         "bootstrap_image": "registry.example/private-namespace-canary/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "reservation": {
             "policy": "STRICT",
@@ -74,6 +74,7 @@ def _install_robotwin_context(module, monkeypatch, tmp_path, **updates: object):
         MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV,
         validate_context_bytes,
     )
+
     monkeypatch.setattr(module, "require_runtime_lock_complete", lambda value: value)
     payload = _robotwin_context(**updates)
     for field, filename in (
@@ -115,9 +116,10 @@ def _install_robotwin_context(module, monkeypatch, tmp_path, **updates: object):
     receipt_context = dict(payload)
     if not isinstance(receipt_context.get("project"), str):
         receipt_context["project"] = "private-project-canary"
-    if not isinstance(receipt_context.get("reservation"), dict) or type(
-        receipt_context["reservation"].get("count")
-    ) is not int:
+    if (
+        not isinstance(receipt_context.get("reservation"), dict)
+        or type(receipt_context["reservation"].get("count")) is not int
+    ):
         receipt_context["reservation"] = {
             "policy": "STRICT",
             "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
@@ -235,7 +237,9 @@ def test_robotwin_equivalent_or_mutable_direct_script_refuses_before_side_effect
     if image:
         args.extend(("--image", image))
     assert module.main(args) == 1
-    assert "normal npa workbench workflow submit CPU launcher" in capsys.readouterr().out
+    assert (
+        "normal npa workbench workflow submit CPU launcher" in capsys.readouterr().out
+    )
 
 
 @pytest.mark.parametrize(
@@ -445,9 +449,7 @@ def test_robotwin_context_file_must_be_owner_only(
     assert capsys.readouterr().out == ""
 
 
-def test_robotwin_authorized_profile_is_environment_only(
-    monkeypatch, tmp_path
-) -> None:
+def test_robotwin_authorized_profile_is_environment_only(monkeypatch, tmp_path) -> None:
     module = _load_module()
     payload = _install_robotwin_context(module, monkeypatch, tmp_path)
     monkeypatch.setattr(
@@ -520,9 +522,7 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
             "NPA_NEBIUS_PROFILE": str(payload["nebius_profile"]),
             "NEBIUS_PROFILE": str(payload["nebius_profile"]),
             module.ROBOTWIN_CHILD_BUCKET_ENV: str(payload["bucket"]),
-            module.ROBOTWIN_CHILD_CONFIG_PATH_ENV: str(
-                payload["skypilot_config_path"]
-            ),
+            module.ROBOTWIN_CHILD_CONFIG_PATH_ENV: str(payload["skypilot_config_path"]),
             module.ROBOTWIN_CHILD_IMAGE_ENV: image,
             module.ROBOTWIN_CHILD_OUTPUT_PREFIX_ENV: (
                 f"{payload['output_root']}/{payload['run_id']}/"
@@ -561,9 +561,7 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
 
     monkeypatch.setattr(module, "_scan_robotwin_image", fake_scan)
     monkeypatch.setattr(module, "_authorized_live_env", fake_live_env)
-    monkeypatch.setattr(
-        module, "_run_robotwin_container_verify", fake_container_verify
-    )
+    monkeypatch.setattr(module, "_run_robotwin_container_verify", fake_container_verify)
     monkeypatch.setattr(module, "_run", fake_run)
 
     assert _run_authorized_robotwin(module, _robotwin_args(module)) == 0
@@ -687,7 +685,9 @@ def test_robotwin_image_scan_failure_precedes_live_runner(
 ) -> None:
     module = _load_module()
     _install_robotwin_context(module, monkeypatch, tmp_path)
-    monkeypatch.setattr(module, "validate_repository_url", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        module, "validate_repository_url", lambda *_args, **_kwargs: None
+    )
 
     def fake_run(cmd, **_kwargs):
         if cmd[:4] == ["docker", "buildx", "imagetools", "inspect"]:
@@ -721,14 +721,10 @@ def test_robotwin_rejects_unscannable_build_modes_before_commands(
         lambda *_args, **_kwargs: pytest.fail("command ran before refusal"),
     )
 
-    assert _run_authorized_robotwin(
-        module, _robotwin_args(module, "--skip-push")
-    ) == 1
+    assert _run_authorized_robotwin(module, _robotwin_args(module, "--skip-push")) == 1
     assert "invocation-smoke-contract-mismatch" in capsys.readouterr().out
 
-    assert _run_authorized_robotwin(
-        module, _robotwin_args(module, "--skip-build")
-    ) == 1
+    assert _run_authorized_robotwin(module, _robotwin_args(module, "--skip-build")) == 1
     assert "invocation-smoke-contract-mismatch" in capsys.readouterr().out
 
 
@@ -748,10 +744,13 @@ def test_robotwin_rejects_modified_public_smoke_contract_before_commands(
     assert _run_authorized_robotwin(module, args) == 1
     assert "invocation-repo_ref-mismatch" in capsys.readouterr().out
 
-    assert _run_authorized_robotwin(
-        module,
-        _robotwin_args(module, "--registry", "registry.example/public-argv"),
-    ) == 1
+    assert (
+        _run_authorized_robotwin(
+            module,
+            _robotwin_args(module, "--registry", "registry.example/public-argv"),
+        )
+        == 1
+    )
     assert "invocation-private-coordinate-override" in capsys.readouterr().out
 
 
@@ -803,6 +802,46 @@ def test_robotwin_run_boundary_discards_unsanitized_exception_graph(
     assert exc_info.value.__context__ is None
 
 
+def test_robotwin_derived_runtime_secret_is_redacted_from_complete_error_graph(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    private = "derived-runtime-secret-canary"
+    args = module._parse_args(_robotwin_args(module))
+    monkeypatch.setattr(module, "_required_postprocess_key", lambda *_a, **_k: None)
+    monkeypatch.setattr(module, "_scan_robotwin_image", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        module,
+        "_authorized_live_env",
+        lambda *_a, **_k: {"AWS_SECRET_ACCESS_KEY": private},
+    )
+    monkeypatch.setattr(
+        module,
+        "_run_robotwin_container_verify",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError(private)),
+    )
+
+    with pytest.raises(RuntimeError) as caught:
+        module._run_byof(
+            args,
+            authorization=SimpleNamespace(),
+            summary={},
+            source_secrets=None,
+            redactions=(),
+            docker_env={},
+            base_candidates=["unused"],
+            base_image="unused",
+            base_profile="prebuilt",
+            image="unused",
+            registry="unused",
+            skip_build=True,
+            skip_push=True,
+        )
+    assert str(caught.value) == "<redacted>"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
 def test_authorized_subprocess_environment_does_not_inherit_runtime_controls(
     monkeypatch,
 ) -> None:
@@ -831,14 +870,17 @@ def test_authorized_subprocess_environment_does_not_inherit_runtime_controls(
     )
 
     assert captured["AUTHORIZED_CANARY"] == "yes"
-    assert not any(name in captured for name in (
-        "NPA_BYOF_DIRECT_LAUNCH",
-        "NPA_BYOF_INFRA",
-        "NPA_SKYPILOT_INFRA",
-        "NPA_SKYPILOT_BIN",
-        "NPA_BYOF_S3_ENDPOINT",
-        "NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE",
-    ))
+    assert not any(
+        name in captured
+        for name in (
+            "NPA_BYOF_DIRECT_LAUNCH",
+            "NPA_BYOF_INFRA",
+            "NPA_SKYPILOT_INFRA",
+            "NPA_SKYPILOT_BIN",
+            "NPA_BYOF_S3_ENDPOINT",
+            "NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE",
+        )
+    )
 
 
 def test_openpi_terms_fail_before_registry_or_build(monkeypatch, capsys) -> None:
@@ -926,9 +968,7 @@ def test_run_redacts_private_source_values_from_command_and_captured_failure(
 
     monkeypatch.setattr(module.subprocess, "run", fake_subprocess_run)
     with pytest.raises(RuntimeError) as exc_info:
-        module._run(
-            ["tool", *private_values], capture=True, redactions=private_values
-        )
+        module._run(["tool", *private_values], capture=True, redactions=private_values)
 
     combined = str(exc_info.value) + capsys.readouterr().out
     for private_value in private_values:
@@ -1798,9 +1838,7 @@ def test_registered_wan_refuses_a_nonaccepted_base_digest(monkeypatch, capsys) -
 
 def test_registered_wan_allows_only_the_explicit_cli_acceptance_candidate() -> None:
     module = _load_module()
-    candidate = (
-        "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:" + "a" * 64
-    )
+    candidate = "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:" + "a" * 64
     args = module.argparse.Namespace(
         workload="solution-smoke",
         solution_name="wan2.2",
@@ -1822,9 +1860,7 @@ def test_registered_wan_ambient_live_environment_cannot_authorize_candidate(
     monkeypatch,
 ) -> None:
     module = _load_module()
-    candidate = (
-        "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:" + "a" * 64
-    )
+    candidate = "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:" + "a" * 64
     monkeypatch.setenv("NPA_INTEGRATION_E2E", "1")
     monkeypatch.setenv("NPA_BYOF_WAN22_LIVE_GPU", "1")
     monkeypatch.setenv("NPA_BYOF_WAN22_REUSE_IMAGE", candidate)
@@ -1841,6 +1877,7 @@ def test_registered_wan_ambient_live_environment_cannot_authorize_candidate(
         module._required_postprocess_key(
             args, base_image=candidate, base_profile="prebuilt"
         )
+
 
 def test_closed_postprocess_registry_ignores_unregistered_solution() -> None:
     from npa.workflows.byof.postprocess import (

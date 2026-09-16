@@ -346,7 +346,7 @@ def test_robotwin_live_gate_refuses_unsigned_customer_entitlement(
                 "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
                 "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
                 "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-                "runtime_lock_sha256": "507b2d1d2f1241ab43d91666aca2b0ed6c3132cf61046ccb400f1f23b7e6a408",
+                "runtime_lock_sha256": "dda9bfebe81250247d25259d655589f8f3b95af7d8629d31b49c59a6af3150ee",
                 "bootstrap_image": "registry.example/private/robotwin/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "reservation": {
                     "policy": "STRICT",
@@ -374,7 +374,7 @@ def test_robotwin_live_gate_refuses_unsigned_customer_entitlement(
                 "customer_scope_id": "private-customer",
                 "run_id": "robotwin-private-run",
                 "runtime_manifest_sha256": (
-                    "507b2d1d2f1241ab43d91666aca2b0ed6c3132cf61046ccb400f1f23b7e6a408"
+                    "dda9bfebe81250247d25259d655589f8f3b95af7d8629d31b49c59a6af3150ee"
                 ),
                 "expires_at": "2099-01-01T00:00:00Z",
                 "decision": "declined",

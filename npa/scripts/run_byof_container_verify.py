@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import secrets
 import shutil
 import subprocess
 import sys
@@ -43,7 +42,6 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
     CHILD_OUTPUT_PREFIX_ENV,
     CHILD_RUN_ID_ENV,
     CHILD_RUNTIME_AUTH_ENV,
-    CONTEXT_ENV_NAMES,
     RobotwinAuthorization,
     RobotwinSubmitContext,
     prepare_inner_submit,
@@ -199,9 +197,7 @@ def render_workflow(
         envs = doc.get("envs")
         if not isinstance(envs, dict):
             continue
-        envs["NPA_BYOF_RUN_ID"] = (
-            f"${{{CHILD_RUN_ID_ENV}}}" if robotwin else run_id
-        )
+        envs["NPA_BYOF_RUN_ID"] = f"${{{CHILD_RUN_ID_ENV}}}" if robotwin else run_id
         envs["BYOF_REPO_ROOT"] = repo_root
         envs["BYOF_SMOKE_COMMAND"] = smoke_command
         envs["BYOF_SOLUTION_NAME"] = solution_name
@@ -219,9 +215,7 @@ def render_workflow(
             source.get("NPA_S3_BUCKET", "")
         )
         if bucket:
-            envs["NPA_S3_BUCKET"] = (
-                f"${{{CHILD_BUCKET_ENV}}}" if robotwin else bucket
-            )
+            envs["NPA_S3_BUCKET"] = f"${{{CHILD_BUCKET_ENV}}}" if robotwin else bucket
         storage_env = {} if robotwin else _resolved_storage_env()
         explicit_endpoint = source.get("NPA_BYOF_S3_ENDPOINT", "").strip()
         for key in (
@@ -468,50 +462,11 @@ def run_authorized_robotwin(
 
     args = _parse_args(argv)
     context = _apply_robotwin_authorization(args, authorization, environment)
-    scrubbed_names = tuple(
-        dict.fromkeys(
-            (
-                *CONTEXT_ENV_NAMES,
-                *OPERATOR_RUNTIME_ENVS_BY_SOLUTION["robotwin"],
-                "KUBECONFIG",
-                "KUBECONTEXT",
-                "NPA_BYOF_K8S_CONTEXT",
-                "NPA_BYOF_PROJECT",
-                "NPA_NEBIUS_PROFILE",
-                "NEBIUS_PROFILE",
-                *DEFAULT_SECRET_ENVS,
-                "AWS_SECURITY_TOKEN",
-                "NPA_BYOF_DIRECT_LAUNCH",
-                "NPA_BYOF_INFRA",
-                "NPA_SKYPILOT_INFRA",
-                "NPA_SKYPILOT_BIN",
-                "NPA_SKYPILOT_ISOLATED_CONFIG_DIR",
-                "SKYPILOT_GLOBAL_CONFIG",
-                "NPA_BYOF_S3_ENDPOINT",
-                "NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE",
-                "NPA_BYOF_SKIP_SKY_CHECK",
-                "NPA_E2E_PROJECT",
-                "NPA_PROJECT",
-                "NPA_K8S_CONTEXT",
-            )
-        )
+    return _submit_and_wait(
+        args,
+        robotwin_submit_context=context,
+        authorized_env=dict(environment),
     )
-    previous = {name: os.environ.get(name) for name in scrubbed_names}
-    try:
-        for name in scrubbed_names:
-            os.environ.pop(name, None)
-        os.environ["KUBECONFIG"] = authorization.kubeconfig_source
-        return _submit_and_wait(
-            args,
-            robotwin_submit_context=context,
-            authorized_env=environment,
-        )
-    finally:
-        for name, value in previous.items():
-            if value is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = value
 
 
 def _wait_for_terminal(
@@ -522,6 +477,7 @@ def _wait_for_terminal(
     poll_interval: int,
     isolated_config_dir: Path | None = None,
     config_path: Path | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     """Poll with explicit immediate, bounded, or indefinite semantics."""
 
@@ -539,6 +495,7 @@ def _wait_for_terminal(
         sky_bin=sky_bin,
         isolated_config_dir=isolated_config_dir,
         config_path=config_path,
+        environment=environment,
     )
     statuses.append(final.status)
     polls = 1
@@ -553,6 +510,7 @@ def _wait_for_terminal(
             sky_bin=sky_bin,
             isolated_config_dir=isolated_config_dir,
             config_path=config_path,
+            environment=environment,
         )
         statuses.append(final.status)
         polls += 1
@@ -583,6 +541,10 @@ def _robotwin_submit_environment(
     """Limit the inner submit environment to values required at its boundary."""
 
     names = (
+        "HOME",
+        "PATH",
+        "LANG",
+        "LC_ALL",
         *DEFAULT_SECRET_ENVS,
         *OPERATOR_RUNTIME_ENVS_BY_SOLUTION["robotwin"],
     )
@@ -597,28 +559,69 @@ def _robotwin_submit_environment(
 
 def _robotwin_control_environment(
     context: RobotwinSubmitContext,
+    environment: Mapping[str, str],
 ) -> dict[str, str]:
     """Return the minimal environment for a non-launch Sky control command."""
 
     environment = {
-        name: os.environ[name]
+        name: environment[name]
         for name in ("HOME", "PATH", "LANG", "LC_ALL")
-        if os.environ.get(name)
+        if environment.get(name)
     }
     environment["KUBECONFIG"] = context.authorization.kubeconfig_source
     return environment
 
 
-def _bootstrap_robotwin_sky(runtime_directory: Path) -> str:
+def _bootstrap_robotwin_sky(
+    runtime_directory: Path, environment: Mapping[str, str]
+) -> str:
     """Install the pinned worker-local SkyPilot runtime after authorization."""
 
-    from npa.cli.skypilot import bootstrap_skypilot
-
-    result = bootstrap_skypilot(
-        venv_path=runtime_directory / "skypilot-venv",
-        python_bin=sys.executable,
+    code = (
+        "import sys; from pathlib import Path; "
+        "from npa.cli.skypilot import bootstrap_skypilot; "
+        "print(bootstrap_skypilot(venv_path=Path(sys.argv[1]), "
+        "python_bin=sys.executable).sky_bin)"
     )
-    return str(result.sky_bin)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            code,
+            str(runtime_directory / "skypilot-venv"),
+        ],
+        env=dict(environment),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if completed.returncode or not completed.stdout.strip():
+        raise SkyPilotConfigError("worker-local SkyPilot bootstrap failed")
+    return completed.stdout.strip().splitlines()[-1]
+
+
+class _RobotwinSignalTeardown(SignalTeardown):
+    """Signal teardown whose subprocesses use only one run's environment."""
+
+    def __init__(self, *, environment: Mapping[str, str], **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._environment = dict(environment)
+
+    def _run(
+        self, cmd: list[str], *, timeout: float
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            cmd,
+            env=sky_environment(
+                self.isolated_config_dir, environment=self._environment
+            ),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
 
 
 def _submit_and_wait(
@@ -629,7 +632,7 @@ def _submit_and_wait(
 ) -> int:
     run_id = args.run_id or _default_run_id()
     scheduler_run_id = (
-        "robotwin-inner-" + secrets.token_hex(8)
+        robotwin_submit_context.authorization.inner_launch_id
         if args.solution_name.strip().lower() == "robotwin"
         else run_id
     )
@@ -681,16 +684,35 @@ def _submit_and_wait(
         prefix=f"npa-byof-container-{scheduler_run_id}-"
     ) as tmp:
         tmp_path = Path(tmp)
-        previous_kubeconfig = os.environ.get("KUBECONFIG")
+        previous_kubeconfig = (
+            os.environ.get("KUBECONFIG")
+            if robotwin_submit_context is None
+            else None
+        )
+        robotwin_control_env = (
+            _robotwin_control_environment(
+                robotwin_submit_context, submit_environment or {}
+            )
+            if robotwin_submit_context is not None
+            else None
+        )
         sky_bin = (
-            _bootstrap_robotwin_sky(tmp_path)
+            _bootstrap_robotwin_sky(tmp_path, robotwin_control_env or {})
             if robotwin_submit_context is not None
             else str(
                 resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN"))
             )
         )
         try:
-            _normalize_kubeconfig_current_context(tmp_path)
+            if robotwin_submit_context is not None:
+                submit_environment = _normalize_kubeconfig_current_context(
+                    tmp_path, submit_environment or {}
+                )
+                robotwin_control_env = _robotwin_control_environment(
+                    robotwin_submit_context, submit_environment
+                )
+            else:
+                _normalize_kubeconfig_current_context(tmp_path)
             rendered_yaml = Path(tmp) / "byof-container.rendered.yaml"
             _write_yaml_documents(rendered_yaml, docs)
             infra = args.infra or _default_infra()
@@ -712,11 +734,18 @@ def _submit_and_wait(
                         args.secret_env, solution_name=args.solution_name
                     ),
                 )
-            teardown_guard = SignalTeardown(
-                run_id=scheduler_run_id,
-                isolated_config_dir=args.isolated_config_dir,
-                sky_bin=sky_bin,
-                poll_interval=max(float(args.poll_interval), 0.0),
+            teardown_kwargs = {
+                "run_id": scheduler_run_id,
+                "isolated_config_dir": args.isolated_config_dir,
+                "sky_bin": sky_bin,
+                "poll_interval": max(float(args.poll_interval), 0.0),
+            }
+            teardown_guard = (
+                _RobotwinSignalTeardown(
+                    environment=robotwin_control_env or {}, **teardown_kwargs
+                )
+                if robotwin_submit_context is not None
+                else SignalTeardown(**teardown_kwargs)
             )
             previous_handlers = install_teardown_signal_handlers(
                 teardown_guard.teardown
@@ -733,9 +762,7 @@ def _submit_and_wait(
                     isolated_config_dir=args.isolated_config_dir,
                     config_path=submit_config_path,
                     sky_bin=sky_bin,
-                    infra=(
-                        infra
-                    ),
+                    infra=(infra),
                     secret_envs=resolve_secret_envs(
                         args.secret_env,
                         solution_name=args.solution_name,
@@ -751,6 +778,9 @@ def _submit_and_wait(
                     execution_target=None,
                     execution_preflight_report=None,
                     robotwin_submit_context=robotwin_submit_context,
+                    logical_launch_id=(
+                        scheduler_run_id if robotwin_submit_context is not None else ""
+                    ),
                 )
                 submitted_config_path = (
                     Path(result.log_paths["config"])
@@ -774,12 +804,14 @@ def _submit_and_wait(
                     poll_interval=args.poll_interval,
                     isolated_config_dir=args.isolated_config_dir,
                     config_path=submit_config_path,
+                    environment=robotwin_control_env,
                 )
                 summary["final"] = final.__dict__
                 summary["wait"] = wait_diagnostics
                 return_code = 0 if final.status == "SUCCEEDED" else 1
                 if (
-                    os.environ.get("NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE") == "1"
+                    robotwin_submit_context is None
+                    and os.environ.get("NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE") == "1"
                     and final.status == "FAILED_PRECHECKS"
                 ):
                     return_code = 0
@@ -792,22 +824,23 @@ def _submit_and_wait(
             print(json.dumps(summary or {"run_id": run_id}, indent=2, sort_keys=True))
             return return_code
         finally:
-            # Restore KUBECONFIG and stop the Sky API so a temp kubeconfig path
-            # written under TemporaryDirectory cannot poison later sky launches.
-            if previous_kubeconfig is None:
-                os.environ.pop("KUBECONFIG", None)
-            else:
-                os.environ["KUBECONFIG"] = previous_kubeconfig
-            if robotwin_submit_context is not None or os.environ.get(
-                "NPA_BYOF_REFRESH_SKY_API", "1"
-            ) != "0":
+            if robotwin_submit_context is None:
+                if previous_kubeconfig is None:
+                    os.environ.pop("KUBECONFIG", None)
+                else:
+                    os.environ["KUBECONFIG"] = previous_kubeconfig
+            if (
+                robotwin_submit_context is not None
+                or os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") != "0"
+            ):
                 subprocess.run(
                     [sky_bin, "api", "stop"],
                     env=(
                         sky_environment(
                             None,
                             environment=_robotwin_control_environment(
-                                robotwin_submit_context
+                                robotwin_submit_context,
+                                robotwin_control_env or {},
                             ),
                         )
                         if robotwin_submit_context is not None
@@ -901,25 +934,31 @@ def _default_infra() -> str:
     return "kubernetes"
 
 
-def _normalize_kubeconfig_current_context(tmp_path: Path) -> None:
-    kubeconfig = os.environ.get("KUBECONFIG", "").strip()
+def _normalize_kubeconfig_current_context(
+    tmp_path: Path, environment: Mapping[str, str] | None = None
+) -> dict[str, str]:
+    effective = dict(os.environ if environment is None else environment)
+    kubeconfig = effective.get("KUBECONFIG", "").strip()
     context = (
-        os.environ.get("KUBECONTEXT", "")
-        or os.environ.get("NPA_BYOF_K8S_CONTEXT", "")
-        or os.environ.get("NPA_K8S_CONTEXT", "")
+        effective.get("KUBECONTEXT", "")
+        or effective.get("NPA_BYOF_K8S_CONTEXT", "")
+        or effective.get("NPA_K8S_CONTEXT", "")
     ).strip()
     if not kubeconfig or not context:
-        return
+        return effective
     path = Path(kubeconfig)
     if not path.is_file():
-        return
+        return effective
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
-        return
+        return effective
     data["current-context"] = context
     target = tmp_path / "kubeconfig"
     target.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-    os.environ["KUBECONFIG"] = str(target)
+    effective["KUBECONFIG"] = str(target)
+    if environment is None:
+        os.environ["KUBECONFIG"] = str(target)
+    return effective
 
 
 def _write_default_k8s_config(tmp_path: Path, infra: str) -> str:

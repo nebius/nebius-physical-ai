@@ -68,7 +68,9 @@ def _supply_source_byte_proof_only_inside_unit_tests(
     )
 
 
-def _config_files(tmp_path: Path, context_name: str = "robotwin-context") -> tuple[Path, Path]:
+def _config_files(
+    tmp_path: Path, context_name: str = "robotwin-context"
+) -> tuple[Path, Path]:
     kubeconfig = tmp_path / "kubeconfig.yaml"
     kubeconfig.write_text(
         "\n".join(
@@ -115,7 +117,7 @@ def _context_payload(tmp_path: Path, **updates: object) -> dict[str, object]:
         "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
         "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
         "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-        "runtime_lock_sha256": "507b2d1d2f1241ab43d91666aca2b0ed6c3132cf61046ccb400f1f23b7e6a408",
+        "runtime_lock_sha256": "dda9bfebe81250247d25259d655589f8f3b95af7d8629d31b49c59a6af3150ee",
         "bootstrap_image": "registry.example/robotwin-private/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "reservation": {
             "policy": "STRICT",
@@ -194,9 +196,7 @@ def _entitlement_file(
     bound_context = context or _context_payload(tmp_path)
     unsigned = vars(_entitlement_payload(bound_context, **updates))
     unsigned["provenance"] = "customer-issued"
-    raw = json.dumps(
-        unsigned, sort_keys=True
-    ).encode()
+    raw = json.dumps(unsigned, sort_keys=True).encode()
     path = tmp_path / "customer-entitlement.json"
     path.write_bytes(raw)
     path.chmod(0o600)
@@ -211,9 +211,7 @@ def _authorization_environment(
     context_path = tmp_path / "context.json"
     context_path.write_bytes(context_raw)
     context_path.chmod(0o600)
-    entitlement_path, entitlement_raw = _entitlement_file(
-        tmp_path, context=context
-    )
+    entitlement_path, entitlement_raw = _entitlement_file(tmp_path, context=context)
     return (
         {
             PUBLIC_CONTEXT_ENV: str(context_path),
@@ -257,13 +255,9 @@ def test_exact_contract_recognition_is_narrow_and_non_robotwin_is_inert() -> Non
     )
 
     with pytest.raises(RobotwinPreflightError, match="workflow-config-repo_ref"):
-        recognize_contract(
-            replace(spec, config={**spec.config, "repo_ref": "main"})
-        )
+        recognize_contract(replace(spec, config={**spec.config, "repo_ref": "main"}))
     with pytest.raises(RobotwinPreflightError, match="workflow-config-schema"):
-        recognize_contract(
-            replace(spec, config={**spec.config, "extra": "unreviewed"})
-        )
+        recognize_contract(replace(spec, config={**spec.config, "extra": "unreviewed"}))
 
 
 @pytest.mark.parametrize(
@@ -386,7 +380,9 @@ def test_owner_file_fifo_refuses_without_blocking(tmp_path: Path) -> None:
         read_owner_context({PUBLIC_CONTEXT_ENV: str(fifo)})
 
 
-def test_control_plane_source_is_explicit_immutable_and_separate(tmp_path: Path) -> None:
+def test_control_plane_source_is_explicit_immutable_and_separate(
+    tmp_path: Path,
+) -> None:
     authorization = _validate_context(tmp_path, _context_file(tmp_path)[1])
     fingerprint = "a" * 64
     source = f"s3://control-source-bucket/npa-src/npa/{fingerprint}/"
@@ -479,8 +475,14 @@ def test_phase_a_refuses_unproven_source_bytes() -> None:
             },
             "reservation-count-not-one",
         ),
-        ({"bootstrap_image": "docker.io/public/example:latest"}, "bootstrap-image-not-immutable"),
-        ({"bootstrap_image": "private-namespace/example"}, "bootstrap-image-not-immutable"),
+        (
+            {"bootstrap_image": "docker.io/public/example:latest"},
+            "bootstrap-image-not-immutable",
+        ),
+        (
+            {"bootstrap_image": "private-namespace/example"},
+            "bootstrap-image-not-immutable",
+        ),
         ({"output_root": "s3://other-bucket/output"}, "output-root-bucket"),
         ({"run_id": "unscoped-run"}, "run-id-invalid"),
     ],
@@ -531,8 +533,8 @@ def test_customer_entitlement_notice_names_terms_responsibility_and_resume() -> 
 
 
 def test_authenticated_boundary_is_exact_bound_and_replay_safe(tmp_path: Path) -> None:
-    environment, _path, raw, _unsigned_path, _unsigned_raw = (
-        _authorization_environment(tmp_path)
+    environment, _path, raw, _unsigned_path, _unsigned_raw = _authorization_environment(
+        tmp_path
     )
     assertion = _entitlement_payload(json.loads(raw))
     boundary = _AuthenticatedBoundary(assertion)
@@ -541,18 +543,17 @@ def test_authenticated_boundary_is_exact_bound_and_replay_safe(tmp_path: Path) -
         environment, customer_authorization_boundary=boundary
     )
 
-    assert authorization.customer_authorization_sha256 == hashlib.sha256(
-        authorization.raw_customer_authorization
-    ).hexdigest()
+    assert (
+        authorization.customer_authorization_sha256
+        == hashlib.sha256(authorization.raw_customer_authorization).hexdigest()
+    )
     assert len(boundary.requests) == 1
     request = boundary.requests[0]
     assert request.customer_scope_id == "customer-scope-canary"
     assert request.run_id == "robotwin-private-run-canary"
     assert request.runtime_manifest_sha256 == preflight_module.RUNTIME_LOCK_SHA256
     assert request.intended_activity == CUSTOMER_USE_SCOPE
-    assert request.terms == tuple(
-        (term["id"], term["url"]) for term in CUSTOMER_TERMS
-    )
+    assert request.terms == tuple((term["id"], term["url"]) for term in CUSTOMER_TERMS)
     with pytest.raises(RobotwinPreflightError, match="customer-authorization-replayed"):
         load_runtime_authorization(
             environment, customer_authorization_boundary=boundary
@@ -566,8 +567,8 @@ def test_authenticated_boundary_is_exact_bound_and_replay_safe(tmp_path: Path) -
 def test_authenticated_boundary_refusals_are_fixed_and_redacted(
     tmp_path: Path, category: str
 ) -> None:
-    environment, _path, raw, _unsigned_path, _unsigned_raw = (
-        _authorization_environment(tmp_path)
+    environment, _path, raw, _unsigned_path, _unsigned_raw = _authorization_environment(
+        tmp_path
     )
     private_assertion = _entitlement_payload(
         json.loads(raw), assertion_id="private-assertion-canary"
@@ -649,9 +650,9 @@ def test_portable_configs_reject_external_files_and_all_exec_plugins(
 
     payload = _context_payload(tmp_path)
     Path(str(payload["kubeconfig"])).write_text(
-        Path(str(payload["kubeconfig"])).read_text(encoding="utf-8").replace(
-            "token: portable-test-token", "tokenFile: relative-token"
-        ),
+        Path(str(payload["kubeconfig"]))
+        .read_text(encoding="utf-8")
+        .replace("token: portable-test-token", "tokenFile: relative-token"),
         encoding="utf-8",
     )
     with pytest.raises(RobotwinPreflightError, match="user-not-portable"):
@@ -659,7 +660,9 @@ def test_portable_configs_reject_external_files_and_all_exec_plugins(
 
     payload = _context_payload(tmp_path)
     Path(str(payload["kubeconfig"])).write_text(
-        Path(str(payload["kubeconfig"])).read_text(encoding="utf-8").replace(
+        Path(str(payload["kubeconfig"]))
+        .read_text(encoding="utf-8")
+        .replace(
             "token: portable-test-token",
             "token: portable-test-token\n      tokenFile: relative-token",
         ),
@@ -702,7 +705,11 @@ def test_transport_round_trip_is_digest_bound_and_repr_redacted(tmp_path: Path) 
     assert decoded.raw_context == raw
     assert decoded.context_sha256 == hashlib.sha256(raw).hexdigest()
     assert decoded.kubeconfig_bytes == authorization.kubeconfig_bytes
-    assert decoded.raw_customer_authorization == authorization.raw_customer_authorization
+    assert decoded.inner_launch_id == authorization.inner_launch_id
+    assert decoded.inner_launch_id.startswith("robotwin-inner-")
+    assert (
+        decoded.raw_customer_authorization == authorization.raw_customer_authorization
+    )
     assert entitlement_raw not in transport.encode()
     assert "robotwin-project-canary" not in repr(decoded)
     assert raw.decode() not in repr(decoded)
@@ -738,7 +745,7 @@ def test_worker_materialization_preserves_bytes_modes_and_paths(tmp_path: Path) 
     )
     authorization = _load_authorization(environment, raw)
     directory = tmp_path / "materialized"
-    directory.mkdir(mode=0o755)
+    directory.mkdir(mode=0o700)
 
     result = materialize_transport(encode_transport(authorization), directory)
 
@@ -749,10 +756,104 @@ def test_worker_materialization_preserves_bytes_modes_and_paths(tmp_path: Path) 
     )
     assert result.customer_authorization_path.read_bytes() != entitlement_raw
     assert result.kubeconfig_path.read_bytes() == authorization.kubeconfig_bytes
-    assert result.skypilot_config_path.read_bytes() == authorization.skypilot_config_bytes
+    assert (
+        result.skypilot_config_path.read_bytes() == authorization.skypilot_config_bytes
+    )
     for child in directory.iterdir():
         assert child.is_file() and not child.is_symlink()
         assert stat.S_IMODE(child.stat().st_mode) == 0o600
+
+
+def test_worker_materialization_rolls_back_partial_private_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    environment, _path, raw, _entitlement_path, _entitlement_raw = (
+        _authorization_environment(tmp_path)
+    )
+    authorization = _load_authorization(environment, raw)
+    directory = tmp_path / "materialized"
+    directory.mkdir(mode=0o700)
+    real_write = preflight_module.write_owner_file
+    calls = 0
+
+    def fail_second(path: Path, payload: bytes, *, directory_fd=None) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("injected write failure")
+        real_write(path, payload, directory_fd=directory_fd)
+
+    monkeypatch.setattr(preflight_module, "write_owner_file", fail_second)
+    with pytest.raises(OSError, match="injected write failure"):
+        materialize_transport(encode_transport(authorization), directory)
+    assert list(directory.iterdir()) == []
+
+
+def test_worker_materialization_removes_the_file_whose_fsync_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    environment, _path, raw, _entitlement_path, _entitlement_raw = (
+        _authorization_environment(tmp_path)
+    )
+    authorization = _load_authorization(environment, raw)
+    directory = tmp_path / "materialized"
+    directory.mkdir(mode=0o700)
+
+    def fail_fsync(_descriptor: int) -> None:
+        raise OSError("injected fsync failure")
+
+    monkeypatch.setattr(preflight_module.os, "fsync", fail_fsync)
+    with pytest.raises(OSError, match="injected fsync failure"):
+        materialize_transport(encode_transport(authorization), directory)
+    assert list(directory.iterdir()) == []
+
+
+@pytest.mark.parametrize("reference", ["~definitely-no-such-user/context", "bad\0path"])
+def test_owner_file_reference_failures_are_fixed_category(reference: str) -> None:
+    with pytest.raises(RobotwinPreflightError, match="context-unreadable") as caught:
+        read_owner_context({PUBLIC_CONTEXT_ENV: reference})
+    assert caught.value.__cause__ is None
+
+
+def test_malformed_kube_server_is_sanitized_and_does_not_consume(
+    tmp_path: Path,
+) -> None:
+    payload = _context_payload(tmp_path)
+    kubeconfig = Path(str(payload["kubeconfig"]))
+    kubeconfig.write_text(
+        kubeconfig.read_text(encoding="utf-8").replace(
+            "https://cluster.example.invalid", "https://[invalid-host"
+        ),
+        encoding="utf-8",
+    )
+    raw = json.dumps(payload, sort_keys=True).encode()
+    boundary = _AuthenticatedBoundary(_entitlement_payload(payload))
+
+    with pytest.raises(RobotwinPreflightError, match="kubeconfig-cluster-not-portable"):
+        validate_context_bytes(raw, customer_authorization_boundary=boundary)
+    assert boundary.consumed is False
+
+
+def test_invalid_config_does_not_consume_assertion_before_corrected_retry(
+    tmp_path: Path,
+) -> None:
+    payload = _context_payload(tmp_path)
+    raw = json.dumps(payload, sort_keys=True).encode()
+    boundary = _AuthenticatedBoundary(_entitlement_payload(payload))
+    kubeconfig = Path(str(payload["kubeconfig"]))
+    valid = kubeconfig.read_bytes()
+    kubeconfig.write_text("not: [valid", encoding="utf-8")
+
+    with pytest.raises(RobotwinPreflightError, match="kubeconfig-invalid"):
+        validate_context_bytes(raw, customer_authorization_boundary=boundary)
+    assert boundary.consumed is False
+
+    kubeconfig.write_bytes(valid)
+    authorization = validate_context_bytes(
+        raw, customer_authorization_boundary=boundary
+    )
+    assert boundary.consumed is True
+    assert authorization.run_id == payload["run_id"]
 
 
 def test_inner_submit_reuses_the_validated_authorization_without_a_consent_proxy(
@@ -779,9 +880,7 @@ def test_inner_submit_reuses_the_validated_authorization_without_a_consent_proxy
         CHILD_OUTPUT_ROOT_ENV: authorization.output_root,
         CHILD_RUN_ID_ENV: authorization.run_id,
         CHILD_RUNTIME_AUTH_ENV: encode_runtime_authorization(authorization),
-        "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256": (
-            authorization.context_sha256
-        ),
+        "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256": (authorization.context_sha256),
         "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256": "b" * 64,
         "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES": "2",
         "AWS_ENDPOINT_URL": "https://storage.eu-north1.nebius.cloud",
@@ -801,7 +900,8 @@ def test_inner_submit_reuses_the_validated_authorization_without_a_consent_proxy
 
 
 def test_live_submit_requires_public_secret_name_and_binds_coordinates(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.robotwin_preflight.RUNTIME_LOCK_STATUS",
@@ -814,7 +914,9 @@ def test_live_submit_requires_public_secret_name_and_binds_coordinates(
 
     with pytest.raises(RobotwinPreflightError, match="secret-not-requested"):
         prepare_live_submit(spec, requested_secret_envs=(), environ=environment)
-    with pytest.raises(RobotwinPreflightError, match="needs_customer_acceptance") as caught:
+    with pytest.raises(
+        RobotwinPreflightError, match="needs_customer_acceptance"
+    ) as caught:
         prepare_live_submit(
             spec,
             requested_secret_envs=(PUBLIC_CONTEXT_ENV,),
@@ -902,7 +1004,7 @@ def test_live_submit_rejects_every_internal_context_channel_before_loading(
     assert "private-internal-channel-canary" not in str(caught.value)
 
 
-def test_invalid_assertion_refuses_before_config_file_reads(tmp_path: Path) -> None:
+def test_invalid_config_refuses_before_assertion_is_consumed(tmp_path: Path) -> None:
     environment, _context_path, raw, _entitlement_path, _entitlement_raw = (
         _authorization_environment(tmp_path)
     )
@@ -910,15 +1012,15 @@ def test_invalid_assertion_refuses_before_config_file_reads(tmp_path: Path) -> N
     Path(str(context["kubeconfig"])).unlink()
     Path(str(context["skypilot_config_path"])).unlink()
 
-    with pytest.raises(RobotwinPreflightError, match="customer-authorization-stale"):
+    boundary = _AuthenticatedBoundary(
+        _entitlement_payload(context, expires_at="2020-01-01T00:00:00Z")
+    )
+    with pytest.raises(RobotwinPreflightError, match="kubeconfig-unreadable"):
         load_runtime_authorization(
             environment,
-            customer_authorization_boundary=_AuthenticatedBoundary(
-                _entitlement_payload(
-                    context, expires_at="2020-01-01T00:00:00Z"
-                )
-            ),
+            customer_authorization_boundary=boundary,
         )
+    assert boundary.consumed is False
 
 
 def test_live_submit_refuses_disabled_runtime_after_context_validation(

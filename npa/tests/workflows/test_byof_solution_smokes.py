@@ -349,6 +349,14 @@ def test_solution_capability_contracts_match_specs() -> None:
         smoke = str(config.get("smoke_command") or "")
         if solution == "robotwin":
             assert smoke == ROBOTWIN_PHASE_A_SMOKE
+            assert set(expected["must_exercise"]) == {
+                "sapien_vulkan_rt_renderer",
+                "pinned_official_runtime_assets",
+                "beat_block_hammer_successful_seed_search",
+                "beat_block_hammer_successful_seed_replay",
+                "robotwin_native_hdf5_collection",
+                "robotwin_rendered_mp4",
+            }
             continue
         assert expected["capability_name"] in smoke
         assert expected["smoke_artifact_name"] in smoke

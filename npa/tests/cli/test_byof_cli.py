@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 import typer
 import yaml
+from typer.main import get_command
 from typer.testing import CliRunner
 
 from npa.cli.main import app
@@ -58,14 +59,26 @@ def test_byof_registered_in_workbench_help() -> None:
 
 
 def test_byof_run_help() -> None:
-    result = runner.invoke(app, ["workbench", "byof", "run", "--help"])
+    result = runner.invoke(
+        app,
+        ["workbench", "byof", "run", "--help"],
+        terminal_width=200,
+    )
     assert result.exit_code == 0
     assert "--repo-url" in result.output
     assert "--workload" in result.output
     assert "--base-profile" in result.output
     assert "--repo-auth" in result.output
     assert "--repo-token-env" in result.output
-    assert "--runtime-contex" in result.output
+    byof = get_command(app).commands["workbench"].commands["byof"]
+    run_command = byof.commands["run"]
+    runtime_context_options = [
+        parameter
+        for parameter in run_command.params
+        if "--runtime-context-env" in getattr(parameter, "opts", ())
+    ]
+    assert len(runtime_context_options) == 1
+    assert runtime_context_options[0].name == "runtime_context_env"
 
 
 def test_byof_run_dry_run_json() -> None:
@@ -215,8 +228,7 @@ def test_robotwin_equivalent_or_mutable_direct_cli_refuses_before_loading_runner
 def _robotwin_transport_fixture(tmp_path: Path) -> tuple[list[str], str]:
     workflow = yaml.safe_load(
         (
-            Path(__file__).resolve().parents[3]
-            / "workflows/testing/byof-robotwin.yaml"
+            Path(__file__).resolve().parents[3] / "workflows/testing/byof-robotwin.yaml"
         ).read_text(encoding="utf-8")
     )
     config = workflow["config"]
@@ -328,16 +340,19 @@ def test_robotwin_worker_transport_materializes_owner_only_and_always_cleans_up(
 
     expectation = pytest.raises(failure) if failure is not None else nullcontext()
     with expectation:
-        with byof_cli._robotwin_runtime_materialization(
-            runner_module, argv
-        ) as authorization:
-            assert TRANSPORT_CONTEXT_ENV not in os.environ
-            context = Path(os.environ[PUBLIC_CONTEXT_ENV])
+        with byof_cli._robotwin_runtime_materialization(runner_module, argv) as (
+            authorization,
+            runtime_environment,
+        ):
+            assert runtime_environment is not None
+            assert os.environ[TRANSPORT_CONTEXT_ENV] == transport
+            assert PUBLIC_CONTEXT_ENV not in os.environ
+            context = Path(runtime_environment[PUBLIC_CONTEXT_ENV])
             authorization_receipt = Path(
-                os.environ[MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV]
+                runtime_environment[MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV]
             )
-            kubeconfig = Path(os.environ[MATERIALIZED_KUBECONFIG_ENV])
-            skypilot = Path(os.environ[MATERIALIZED_SKYPILOT_CONFIG_ENV])
+            kubeconfig = Path(runtime_environment[MATERIALIZED_KUBECONFIG_ENV])
+            skypilot = Path(runtime_environment[MATERIALIZED_SKYPILOT_CONFIG_ENV])
             materialized_paths.extend(
                 (context, authorization_receipt, kubeconfig, skypilot)
             )
@@ -345,7 +360,10 @@ def test_robotwin_worker_transport_materializes_owner_only_and_always_cleans_up(
             assert authorization.kubeconfig_source == str(kubeconfig)
             assert authorization.skypilot_config_source == str(skypilot)
             assert stat.S_IMODE(context.parent.stat().st_mode) == 0o700
-            assert all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in materialized_paths)
+            assert all(
+                stat.S_IMODE(path.stat().st_mode) == 0o600
+                for path in materialized_paths
+            )
             if failure is not None:
                 raise failure("fixed-test-failure")
 
@@ -353,6 +371,26 @@ def test_robotwin_worker_transport_materializes_owner_only_and_always_cleans_up(
     assert os.environ[TRANSPORT_CONTEXT_ENV] == transport
     assert PUBLIC_CONTEXT_ENV not in os.environ
     assert MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV not in os.environ
+
+
+def test_robotwin_worker_materialization_never_mutates_process_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner_module = byof_cli._load_runner()
+    argv, transport = _robotwin_transport_fixture(tmp_path)
+    monkeypatch.setenv(TRANSPORT_CONTEXT_ENV, transport)
+    before = dict(os.environ)
+
+    with byof_cli._robotwin_runtime_materialization(runner_module, argv) as (
+        authorization,
+        runtime_environment,
+    ):
+        assert authorization is not None
+        assert runtime_environment is not None
+        assert dict(os.environ) == before
+        assert runtime_environment is not os.environ
+
+    assert dict(os.environ) == before
 
 
 @pytest.mark.parametrize(
@@ -435,9 +473,7 @@ def test_robotwin_caller_supplied_transport_cannot_activate_internal_runner(
     argv, transport = _robotwin_transport_fixture(tmp_path)
     observed: dict[str, object] = {}
 
-    def run_authorized(
-        received: list[str], *, authorization: object
-    ) -> int:
+    def run_authorized(received: list[str], *, authorization: object) -> int:
         observed["argv"] = received
         observed["authorization"] = authorization
         return 0

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -57,7 +58,10 @@ def test_build_script_passes_the_dockerfile_source_sha_argument() -> None:
     build = (IMAGE_ROOT / "build.sh").read_text(encoding="utf-8")
     dockerfile = (IMAGE_ROOT / "Dockerfile").read_text(encoding="utf-8")
 
-    assert 'ARG NPA_SOURCE_SHA' in dockerfile
+    assert "ARG NPA_SOURCE_SHA" in dockerfile
+    assert (
+        "printf '%s\\n' \"${NPA_SOURCE_SHA}\" | grep -Eq '^[0-9a-f]{40}$'"
+    ) in dockerfile
     assert '--build-arg "NPA_SOURCE_SHA=$SOURCE_SHA"' in build
     assert '--build-arg "SOURCE_SHA=$SOURCE_SHA"' not in build
     assert 'git -C "$REPO_ROOT" archive "$SOURCE_SHA"' in build
@@ -115,17 +119,16 @@ def test_neutral_locks_are_complete_while_runtime_delivery_is_disabled() -> None
     assert lock["cache"]["tier"] == "node-local-ephemeral"
     assert lock["cache"]["owner_access"] == "single-customer-single-workload"
     assert lock["cache"]["contains_credentials"] is False
-    assert {asset["provider_access"] for asset in lock["assets"]} == {
-        "public-ungated"
-    }
+    assert {asset["provider_access"] for asset in lock["assets"]} == {"public-ungated"}
     assert {asset["license"] for asset in lock["assets"]} == {"MIT"}
     assert lock["outputs"]["generated_output_restriction"] == (
         "none-found-in-inspected-authoritative-terms"
     )
     assert "aggregate" not in lock["reason"].lower()
-    assert "customer authorization assertion or receipt" in " ".join(
-        lock["bootstrap"]["forbidden_payloads"]
-    ).lower()
+    assert (
+        "customer authorization assertion or receipt"
+        in " ".join(lock["bootstrap"]["forbidden_payloads"]).lower()
+    )
     apt_lines = (IMAGE_ROOT / "apt-packages.lock").read_text().splitlines()
     assert "INCOMPLETE" not in "\n".join(apt_lines)
     assert sum(line.startswith("binary\t") for line in apt_lines) == 75
@@ -136,10 +139,23 @@ def test_neutral_locks_are_complete_while_runtime_delivery_is_disabled() -> None
             assert line[12] == "gitleaks:allow=public-ubuntu-copyright-sha256"
         assert len(line[4]) == 64
         assert len(line[10]) == 64
-    requirements = (IMAGE_ROOT / "runtime-requirements.lock").read_text()
+    requirements_path = IMAGE_ROOT / "runtime-requirements.lock"
+    requirements = requirements_path.read_text()
     assert "status=complete-empty" in requirements
     assert "artifact-count=0" in requirements
     assert "https://" not in requirements
+    requirements_sha256 = hashlib.sha256(requirements_path.read_bytes()).hexdigest()
+    assert (
+        lock["bootstrap"]["python_runtime"]["requirements_lock_sha256"]
+        == requirements_sha256
+    )
+    dockerfile = (IMAGE_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    requirements_guard = next(
+        line
+        for line in dockerfile.splitlines()
+        if "runtime-requirements.lock" in line and "sha256sum" in line
+    )
+    assert f'= "{requirements_sha256}";' in requirements_guard
 
 
 def test_publication_workflow_refuses_robotwin_before_build_selection() -> None:
@@ -183,8 +199,7 @@ def test_build_refuses_unresolved_native_policy_before_docker(tmp_path: Path) ->
 def test_public_native_policy_is_intentionally_unusable_until_byte_review() -> None:
     policy = json.loads(
         (
-            ROOT
-            / "npa/scripts/image_byte_scan/public_policies/robotwin-bootstrap.json"
+            ROOT / "npa/scripts/image_byte_scan/public_policies/robotwin-bootstrap.json"
         ).read_text()
     )
     assert policy["schema_version"] == "npa.image-native-content-policy.v1"

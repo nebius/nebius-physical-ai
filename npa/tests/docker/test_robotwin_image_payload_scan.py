@@ -163,8 +163,7 @@ def test_cache_outputs_and_build_time_fetch_fail(tmp_path: Path) -> None:
         "history": [
             {
                 "created_by": (
-                    "RUN huggingface-cli download TianxingChen/RoboTwin2.0 "
-                    "objects.zip"
+                    "RUN huggingface-cli download TianxingChen/RoboTwin2.0 objects.zip"
                 )
             }
         ]
@@ -175,6 +174,35 @@ def test_cache_outputs_and_build_time_fetch_fail(tmp_path: Path) -> None:
         "robotwin_generated_output",
         "robotwin_asset_fetch_at_build",
     } <= kinds
+
+
+@pytest.mark.parametrize(
+    ("history", "kind"),
+    [
+        (
+            "RUN \\\n curl https://huggingface.co/TianxingChen/RoboTwin2.0/objects.zip",
+            "robotwin_asset_fetch_at_build",
+        ),
+        (
+            "RUN \\\n python -m pip install \\\n curobo",
+            "vendor_runtime_installed_at_build",
+        ),
+        (
+            "RUN \\\n git clone https://github.com/RoboTwin-Platform/RoboTwin",
+            "vendor_source_fetched_at_build",
+        ),
+        (
+            "RUN curl -o objects.zip https://huggingface.co/TianxingChen/"
+            "RoboTwin2.0/objects.zip && rm -f objects.zip",
+            "robotwin_asset_fetch_at_build",
+        ),
+    ],
+)
+def test_multiline_build_history_fetches_are_refused(
+    tmp_path: Path, history: str, kind: str
+) -> None:
+    rootfs = _tar(tmp_path / "rootfs.tar", {"neutral.txt": b"neutral"})
+    assert kind in _kinds(scanner.scan(rootfs, {"history": [{"created_by": history}]}))
 
 
 def test_phase_a_cli_refuses_before_any_candidate_can_pass(tmp_path: Path) -> None:
@@ -286,6 +314,216 @@ def _tar_bytes(members: dict[str, bytes]) -> bytes:
 
 def _digest(payload: bytes) -> str:
     return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def test_cross_origin_bearer_realm_never_receives_registry_basic_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        scanner,
+        "_docker_credentials",
+        lambda _registry: {"username": "operator", "secret": "private-secret"},
+    )
+    observed: list[object] = []
+
+    class FakeOpener:
+        def open(self, request, **_kwargs):
+            observed.append(request)
+            return _RegistryResponse(b'{"token":"scoped-token"}')
+
+    monkeypatch.setattr(scanner, "_URL_OPENER", FakeOpener())
+    client = scanner._RegistryClient("registry.example", "private/image")
+    token = client._bearer_authorization(
+        'Bearer realm="https://attacker.example/token",service="registry.example"'
+    )
+    assert token == "Bearer scoped-token"
+    assert observed
+    assert observed[0].get_header("Authorization") is None
+
+
+def test_registry_blob_limit_removes_partial_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    payload = b"x" * 9
+    digest = _digest(payload)
+    client = object.__new__(scanner._RegistryClient)
+    monkeypatch.setattr(scanner, "MAX_OCI_COMPRESSED_LAYER_BYTES", 8)
+    monkeypatch.setattr(
+        client, "open", lambda *_args, **_kwargs: _RegistryResponse(payload)
+    )
+    destination = tmp_path / "partial.blob"
+
+    with pytest.raises(RuntimeError, match="byte limit"):
+        client.blob(digest, destination, expected_size=8)
+    assert not destination.exists()
+
+
+def test_oci_descriptor_and_uncompressed_limits_refuse_before_flattening(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    with pytest.raises(RuntimeError, match="byte limit"):
+        scanner._descriptor(
+            {
+                "digest": "sha256:" + "a" * 64,
+                "size": 9,
+                "mediaType": "application/vnd.oci.image.layer.v1.tar",
+            },
+            "layer",
+            scanner.LAYER_MEDIA_TYPES,
+            max_size=8,
+        )
+    layer = _tar(tmp_path / "layer.tar", {"payload": b"123456789"})
+    monkeypatch.setattr(scanner, "MAX_OCI_UNCOMPRESSED_LAYER_BYTES", 8)
+    with pytest.raises(RuntimeError, match="uncompressed scanner byte limit"):
+        scanner._uncompressed_layer_digest(
+            layer, "application/vnd.oci.image.layer.v1.tar"
+        )
+
+
+def test_oci_layer_count_and_aggregate_quotas_are_enforced(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    layers = [
+        _tar_bytes({"one": b"1"}),
+        _tar_bytes({"two": b"2"}),
+    ]
+    layer_digests = [_digest(layer) for layer in layers]
+    config = json.dumps(
+        {
+            "architecture": "amd64",
+            "history": [],
+            "os": "linux",
+            "rootfs": {"type": "layers", "diff_ids": layer_digests},
+        },
+        separators=(",", ":"),
+    ).encode()
+    config_digest = _digest(config)
+    manifest = json.dumps(
+        {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "config": {
+                "digest": config_digest,
+                "size": len(config),
+                "mediaType": "application/vnd.oci.image.config.v1+json",
+            },
+            "layers": [
+                {
+                    "digest": digest,
+                    "size": len(layer),
+                    "mediaType": "application/vnd.oci.image.layer.v1.tar",
+                }
+                for digest, layer in zip(layer_digests, layers, strict=True)
+            ],
+        },
+        separators=(",", ":"),
+    ).encode()
+    payloads = {config_digest: config, **dict(zip(layer_digests, layers, strict=True))}
+
+    class FakeClient:
+        def __init__(self, *_args) -> None:
+            pass
+
+        def metadata(self, *_args, **_kwargs) -> bytes:
+            return manifest
+
+        def blob(self, digest, destination, *, expected_size) -> None:
+            payload = payloads[digest]
+            assert len(payload) == expected_size
+            destination.write_bytes(payload)
+
+    monkeypatch.setattr(scanner, "_RegistryClient", FakeClient)
+    image = "registry.example/private/image@" + _digest(manifest)
+
+    count = tmp_path / "count"
+    count.mkdir()
+    monkeypatch.setattr(scanner, "MAX_OCI_LAYER_COUNT", 1)
+    with pytest.raises(RuntimeError, match="layer-count"):
+        scanner._private_remote_material(image, count)
+
+    compressed = tmp_path / "compressed"
+    compressed.mkdir()
+    monkeypatch.setattr(scanner, "MAX_OCI_LAYER_COUNT", 2)
+    monkeypatch.setattr(
+        scanner, "MAX_OCI_COMPRESSED_TOTAL_BYTES", sum(map(len, layers)) - 1
+    )
+    with pytest.raises(RuntimeError, match="compressed aggregate"):
+        scanner._private_remote_material(image, compressed)
+
+    uncompressed = tmp_path / "uncompressed"
+    uncompressed.mkdir()
+    monkeypatch.setattr(scanner, "MAX_OCI_COMPRESSED_TOTAL_BYTES", sum(map(len, layers)))
+    monkeypatch.setattr(
+        scanner, "MAX_OCI_UNCOMPRESSED_TOTAL_BYTES", sum(map(len, layers)) - 1
+    )
+    with pytest.raises(RuntimeError, match="uncompressed aggregate"):
+        scanner._private_remote_material(image, uncompressed)
+
+
+def test_flattening_member_and_byte_quotas_are_enforced(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    layer = _tar(tmp_path / "layer.tar", {"one": b"1", "two": b"2"})
+    monkeypatch.setattr(scanner, "MAX_OCI_LAYER_MEMBERS", 1)
+    with pytest.raises(RuntimeError, match="member-count"):
+        scanner._write_flattened_rootfs([layer], tmp_path / "members.tar", tmp_path)
+
+    # The failed member-count attempt populated its private scratch directory;
+    # use a fresh owner directory for the independent byte quota mutation.
+    byte_root = tmp_path / "bytes"
+    byte_root.mkdir()
+    byte_layer = _tar(byte_root / "layer.tar", {"payload": b"12"})
+    monkeypatch.setattr(scanner, "MAX_OCI_LAYER_MEMBERS", 10)
+    monkeypatch.setattr(scanner, "MAX_OCI_FLATTENED_BYTES", 1)
+    with pytest.raises(RuntimeError, match="flattened byte limit"):
+        scanner._write_flattened_rootfs(
+            [byte_layer], byte_root / "rootfs.tar", byte_root
+        )
+
+
+@pytest.mark.parametrize("whiteout_first", [False, True])
+def test_same_layer_normal_whiteout_never_removes_same_layer_file(
+    tmp_path: Path, whiteout_first: bool
+) -> None:
+    lower = _tar(tmp_path / "lower.tar", {"tree/value": b"lower"})
+    upper = tmp_path / "upper.tar"
+    members = (
+        [("tree/.wh.value", b""), ("tree/value", b"upper")]
+        if whiteout_first
+        else [("tree/value", b"upper"), ("tree/.wh.value", b"")]
+    )
+    with tarfile.open(upper, "w") as archive:
+        for name, payload in members:
+            info = tarfile.TarInfo(name)
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+    flattened = tmp_path / "flattened.tar"
+    scanner._write_flattened_rootfs([lower, upper], flattened, tmp_path)
+    with tarfile.open(flattened) as archive:
+        assert archive.extractfile("tree/value").read() == b"upper"
+
+
+@pytest.mark.parametrize("whiteout_first", [False, True])
+def test_same_layer_opaque_whiteout_never_removes_same_layer_child(
+    tmp_path: Path, whiteout_first: bool
+) -> None:
+    lower = _tar(tmp_path / "lower.tar", {"tree/lower": b"lower"})
+    upper = tmp_path / "upper.tar"
+    members = (
+        [("tree/.wh..wh..opq", b""), ("tree/current", b"current")]
+        if whiteout_first
+        else [("tree/current", b"current"), ("tree/.wh..wh..opq", b"")]
+    )
+    with tarfile.open(upper, "w") as archive:
+        for name, payload in members:
+            info = tarfile.TarInfo(name)
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+    flattened = tmp_path / "flattened.tar"
+    scanner._write_flattened_rootfs([lower, upper], flattened, tmp_path)
+    with tarfile.open(flattened) as archive:
+        assert "tree/lower" not in archive.getnames()
+        assert archive.extractfile("tree/current").read() == b"current"
 
 
 def test_private_registry_transport_downloads_exact_oci_bytes_without_child_image_argv(

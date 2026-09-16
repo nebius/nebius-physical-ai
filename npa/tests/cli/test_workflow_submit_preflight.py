@@ -48,15 +48,11 @@ SIM2REAL_SPEC = (
 )
 SONIC_SPEC = (
     Path(__file__).resolve().parents[3]
-    / "workflows"
-    / "testing"
-    / "sonic-export-eval.yaml"
+    / "workflows" / "testing" / "sonic-export-eval.yaml"
 )
 ROBOTWIN_SPEC = (
     Path(__file__).resolve().parents[3]
-    / "workflows"
-    / "testing"
-    / "byof-robotwin.yaml"
+    / "workflows" / "testing" / "byof-robotwin.yaml"
 )
 
 
@@ -64,7 +60,9 @@ ROBOTWIN_SPEC = (
 def _no_ambient_src(monkeypatch: pytest.MonkeyPatch) -> None:
     # These tests isolate prerequisite/image/provisioning ordering. Exact
     # provider scope and prefix probes have independent CLI contract coverage.
-    monkeypatch.setattr(workflow_cli, "_execution_target_preflight", lambda *args, **kwargs: (None, {}))
+    monkeypatch.setattr(
+        workflow_cli, "_execution_target_preflight", lambda *args, **kwargs: (None, {})
+    )
     monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
     monkeypatch.delenv("NPA_E2E_NPA_SRC_S3_URI", raising=False)
     monkeypatch.delenv("NPA_SKYPILOT_BIN", raising=False)
@@ -255,9 +253,7 @@ def test_robotwin_submit_refuses_before_every_external_boundary_even_when_skippe
         context.chmod(0o600)
         monkeypatch.setenv(ROBOTWIN_CONTEXT_ENV, str(context))
     boundaries = [
-        mocker.patch(
-            "npa.orchestration.npa_workflow.first_run_state.prepare_run"
-        ),
+        mocker.patch("npa.orchestration.npa_workflow.first_run_state.prepare_run"),
         mocker.patch(
             "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials"
         ),
@@ -266,9 +262,7 @@ def test_robotwin_submit_refuses_before_every_external_boundary_even_when_skippe
         mocker.patch("npa.cli.workbench.workflow._execution_target_preflight"),
         mocker.patch("npa.cli.workbench.workflow._preflight_submit_gang_capacity"),
         mocker.patch("npa.cli.workbench.workflow._stage_npa_src_for_submit"),
-        mocker.patch(
-            "npa.orchestration.npa_workflow.deploy.ensure_infra_present"
-        ),
+        mocker.patch("npa.orchestration.npa_workflow.deploy.ensure_infra_present"),
         mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow"),
     ]
 
@@ -307,13 +301,16 @@ def test_robotwin_customer_entitlement_refuses_before_external_boundaries(
         monkeypatch.setenv(ROBOTWIN_ENTITLEMENT_ENV, str(unsigned))
         secret_args = ("--secret-env", ROBOTWIN_ENTITLEMENT_ENV)
     boundaries = [
+        mocker.patch("npa.orchestration.npa_workflow.first_run_state.prepare_run"),
         mocker.patch(
             "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials"
         ),
         mocker.patch("npa.cli.workbench.workflow._resolve_submit_registry"),
         mocker.patch("npa.cli.workbench.workflow._preflight_submit_images"),
         mocker.patch("npa.cli.workbench.workflow._execution_target_preflight"),
+        mocker.patch("npa.cli.workbench.workflow._preflight_submit_gang_capacity"),
         mocker.patch("npa.cli.workbench.workflow._stage_npa_src_for_submit"),
+        mocker.patch("npa.orchestration.npa_workflow.deploy.ensure_infra_present"),
         mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow"),
     ]
 
@@ -346,9 +343,7 @@ def test_relabelled_robotwin_workflow_refuses_before_external_boundaries(
     relabelled = tmp_path / "generic-workflow.yaml"
     relabelled.write_text(yaml.safe_dump(document), encoding="utf-8")
     boundaries = [
-        mocker.patch(
-            "npa.orchestration.npa_workflow.first_run_state.prepare_run"
-        ),
+        mocker.patch("npa.orchestration.npa_workflow.first_run_state.prepare_run"),
         mocker.patch(
             "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials"
         ),
@@ -357,9 +352,7 @@ def test_relabelled_robotwin_workflow_refuses_before_external_boundaries(
         mocker.patch("npa.cli.workbench.workflow._execution_target_preflight"),
         mocker.patch("npa.cli.workbench.workflow._preflight_submit_gang_capacity"),
         mocker.patch("npa.cli.workbench.workflow._stage_npa_src_for_submit"),
-        mocker.patch(
-            "npa.orchestration.npa_workflow.deploy.ensure_infra_present"
-        ),
+        mocker.patch("npa.orchestration.npa_workflow.deploy.ensure_infra_present"),
         mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow"),
     ]
 
@@ -411,15 +404,21 @@ def test_robotwin_plan_only_is_context_free_and_publicly_sanitized(
 
 def test_non_robotwin_live_submit_never_enters_robotwin_preflight(
     monkeypatch: pytest.MonkeyPatch,
+    mocker,
 ) -> None:
-    monkeypatch.setattr(
-        "npa.orchestration.npa_workflow.robotwin_preflight.prepare_live_submit",
-        lambda *_args, **_kwargs: pytest.fail("non-RoboTwin entered special preflight"),
+    special = mocker.patch(
+        "npa.orchestration.npa_workflow.robotwin_preflight.prepare_live_submit"
     )
 
     result = _submit("--skip-preflight")
 
     assert result.exit_code != 0
+    assert (
+        "HF_TOKEN is required to verify the exact gated Cosmos Transfer checkpoint "
+        "before provisioning or GPU work"
+        in result.output
+    )
+    special.assert_not_called()
 
 
 def test_robotwin_normal_submit_uses_only_internal_value_secret_and_bound_output(
@@ -437,9 +436,7 @@ def test_robotwin_normal_submit_uses_only_internal_value_secret_and_bound_output
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
     monkeypatch.setenv("NPA_CONFIG_DIR", str(tmp_path / "npa-config"))
-    summary_uri = (
-        f"{private['output_root']}/{private['run_id']}/npa_byof_summary.json"
-    )
+    summary_uri = f"{private['output_root']}/{private['run_id']}/npa_byof_summary.json"
     credentials = SimpleNamespace(
         endpoint_url="https://storage.eu-north1.nebius.cloud",
         secret_values={
@@ -467,12 +464,8 @@ def test_robotwin_normal_submit_uses_only_internal_value_secret_and_bound_output
         "npa.cli.workbench.workflow._local_source_fingerprint",
         return_value="a" * 64,
     )
-    mocker.patch(
-        "npa.cli.workbench.workflow._submit_prerequisites", return_value=[]
-    )
-    mocker.patch(
-        "npa.cli.workbench.workflow._preflight_submit_images", return_value={}
-    )
+    mocker.patch("npa.cli.workbench.workflow._submit_prerequisites", return_value=[])
+    mocker.patch("npa.cli.workbench.workflow._preflight_submit_images", return_value={})
     mocker.patch("npa.cli.workbench.workflow._verify_submit_controller_owner")
     mocker.patch("npa.execution_preflight.verify_execution_scope", return_value={})
     mocker.patch("npa.provisioning_journal.current_operation", return_value=None)
@@ -622,7 +615,9 @@ def test_robotwin_authorized_output_stays_runtime_only_not_in_submission_receipt
 
     from npa.orchestration.npa_workflow import build_plan, load_spec
 
-    actual = "s3://private-bucket-canary/output/robotwin-run-canary/npa_byof_summary.json"
+    actual = (
+        "s3://private-bucket-canary/output/robotwin-run-canary/npa_byof_summary.json"
+    )
     captured: dict[str, object] = {}
 
     def resolve_execution_target(**kwargs):
@@ -655,17 +650,13 @@ def test_robotwin_authorized_output_stays_runtime_only_not_in_submission_receipt
             steps=build_plan(spec, run_id="robotwin-public-launcher").steps
         ),
     )
-    receipt = workflow_cli._npa_submission_receipt(
-        prepared, "robotwin-public-launcher"
-    )
+    receipt = workflow_cli._npa_submission_receipt(prepared, "robotwin-public-launcher")
 
     assert target.output_uris == (actual,)
     assert captured["output_uris"] == [actual]
     assert "authorization" not in receipt
     receipt_outputs = [
-        output["uri"]
-        for step in receipt["steps"]
-        for output in step.get("outputs", [])
+        output["uri"] for step in receipt["steps"] for output in step.get("outputs", [])
     ]
     assert receipt_outputs == [
         "s3://example-bucket/oss-solutions/robotwin/"
@@ -723,9 +714,7 @@ def test_robotwin_source_staging_is_not_a_workload_output_destination(
     assert report["destination_count"] == 1
     assert resolved[0]["output_uris"] == [summary]
     assert resolved[1]["output_uris"] == [source + "/"]
-    assert resolved[1]["provenance"] == {
-        "outputs": "control-plane-source-staging"
-    }
+    assert resolved[1]["provenance"] == {"outputs": "control-plane-source-staging"}
     assert report["control_plane_source_staging"] == {
         "presence": "pass",
         "access": "pass",
@@ -1013,7 +1002,8 @@ def test_paidf_existing_target_orders_placement_exact_access_then_image(
     # The selected Transfer tool routes through cosmos2, so catalog expansion
     # must not broaden PAIDF's deliberately narrow submit-time access fence.
     assert {
-        item.repo for item in workflow_cli._workflow_access_requirements(load_spec(SPEC))
+        item.repo
+        for item in workflow_cli._workflow_access_requirements(load_spec(SPEC))
     } == {
         "nvidia/Cosmos-Transfer2.5-2B",
         "nvidia/Cosmos-Guardrail1",
@@ -1123,7 +1113,8 @@ def test_sim2real_submit_rejects_oversized_sealed_split_before_images_or_launch(
         return_value=[],
     )
     mocker.patch(
-        "npa.clients.huggingface.validate_hf_access", return_value=SimpleNamespace(ok=True)
+        "npa.clients.huggingface.validate_hf_access",
+        return_value=SimpleNamespace(ok=True),
     )
     mocker.patch(
         "npa.clients.token_factory.validate_model_access",
@@ -1164,7 +1155,11 @@ def test_sim2real_submit_rejects_oversized_sealed_split_before_images_or_launch(
             "--run-id",
             "sim2real-split-preflight",
             "--no-deploy-if-absent",
-            *[arg for key, value in config.items() for arg in ("--var", f"{key}={value}")],
+            *[
+                arg
+                for key, value in config.items()
+                for arg in ("--var", f"{key}={value}")
+            ],
             *[arg for name in secret_names for arg in ("--secret-env", name)],
         ],
     )
@@ -1222,18 +1217,11 @@ def test_sim2real_submit_propagates_explicit_kubernetes_target(
     assert result.exit_code == 1
     assert calls
     assert all(call[1]["context"] == "sim2real-review" for call in calls)
-    assert all(
-        call[1]["kubeconfig"] == "/tmp/sim2real-kubeconfig" for call in calls
-    )
-    namespaced_calls = [
-        call[0]
-        for call in calls
-        if call[0][:2] == ["get", "pvc"]
-    ]
+    assert all(call[1]["kubeconfig"] == "/tmp/sim2real-kubeconfig" for call in calls)
+    namespaced_calls = [call[0] for call in calls if call[0][:2] == ["get", "pvc"]]
     assert namespaced_calls
     assert all(
-        args[args.index("-n") + 1] == "sim2real-benchmark"
-        for args in namespaced_calls
+        args[args.index("-n") + 1] == "sim2real-benchmark" for args in namespaced_calls
     )
 
 
@@ -1549,8 +1537,11 @@ def test_submit_rechecks_execution_scope_before_persist_or_staging(
         encoding="utf-8",
     )
     selected = execution_preflight.ExecutionTarget(
-        project="unit", project_id="project-unit", tenant_id="tenant-unit",
-        region="eu-west1", context="unit-context",
+        project="unit",
+        project_id="project-unit",
+        tenant_id="tenant-unit",
+        region="eu-west1",
+        context="unit-context",
         output_uris=("s3://unit-output/results/",),
     )
     events = []
@@ -1569,9 +1560,13 @@ def test_submit_rechecks_execution_scope_before_persist_or_staging(
 
     monkeypatch.setattr(workflow_cli, "_execution_target_preflight", initial_preflight)
     monkeypatch.setattr(workflow_cli, "_preflight_submit_images", images)
-    monkeypatch.setattr(workflow_cli, "_available_kube_contexts", lambda: ["unit-context"])
+    monkeypatch.setattr(
+        workflow_cli, "_available_kube_contexts", lambda: ["unit-context"]
+    )
     monkeypatch.setattr(workflow_cli, "_adopt_npa_kubeconfig", lambda context: True)
-    monkeypatch.setattr(workflow_cli, "_verify_submit_controller_owner", lambda **kwargs: None)
+    monkeypatch.setattr(
+        workflow_cli, "_verify_submit_controller_owner", lambda **kwargs: None
+    )
     monkeypatch.setattr("npa.clients.nebius.get_project_identity", missing_project)
     scope = mocker.spy(execution_preflight, "verify_execution_scope")
     prepare = mocker.spy(first_run_state, "prepare_run")
@@ -1579,10 +1574,22 @@ def test_submit_rechecks_execution_scope_before_persist_or_staging(
     runtime = mocker.patch("npa.cli.workbench.workflow._run_npa_workflow_runtime")
     launch = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
     args = [
-        "workbench", "workflow", "submit", str(spec), "--project", "unit",
-        "--run-id", "scope-recheck", "--infra", "k8s/unit-context",
-        "--sky-bin", "/bin/true", "--image", "ghcr.io/example/unit:dev",
-        "--no-deploy-if-absent", "--no-stage-src",
+        "workbench",
+        "workflow",
+        "submit",
+        str(spec),
+        "--project",
+        "unit",
+        "--run-id",
+        "scope-recheck",
+        "--infra",
+        "k8s/unit-context",
+        "--sky-bin",
+        "/bin/true",
+        "--image",
+        "ghcr.io/example/unit:dev",
+        "--no-deploy-if-absent",
+        "--no-stage-src",
     ]
     if skip_preflight:
         args.append("--skip-preflight")
@@ -1733,13 +1740,22 @@ def test_preflight_images_adds_explicit_pull_secret_to_every_image(mocker) -> No
         return_value=[],
     )
     args = [
-        "workbench", "workflow", "preflight-images", str(SIM2REAL_SPEC),
-        "--assume-decision", "promote_checkpoint",
-        "--image-pull-secret", "operator-registry",
+        "workbench",
+        "workflow",
+        "preflight-images",
+        str(SIM2REAL_SPEC),
+        "--assume-decision",
+        "promote_checkpoint",
+        "--image-pull-secret",
+        "operator-registry",
     ]
     for name in (
-        "controller_image", "transfer_image", "envgen_image",
-        "reason_image", "isaac_image", "viewer_image",
+        "controller_image",
+        "transfer_image",
+        "envgen_image",
+        "reason_image",
+        "isaac_image",
+        "viewer_image",
     ):
         args.extend(["--var", f"{name}={digest_image}"])
 
@@ -1983,7 +1999,9 @@ def test_plan_only_skips_the_kube_context_check(monkeypatch, tmp_path) -> None:
 
 HARDENING_SPEC = (
     Path(__file__).resolve().parents[3]
-    / "workflows" / "testing" / "adversarial-scenario-hardening.yaml"
+    / "workflows"
+    / "testing"
+    / "adversarial-scenario-hardening.yaml"
 )
 
 

@@ -10,7 +10,7 @@ import tempfile
 from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterator, NoReturn
+from typing import Any, Iterator, Mapping, NoReturn
 
 import typer
 from rich.console import Console
@@ -95,7 +95,7 @@ def _raise_robotwin_worker_refusal() -> NoReturn:
 @contextmanager
 def _robotwin_runtime_materialization(
     runner: Any, argv: list[str]
-) -> Iterator[Any | None]:
+) -> Iterator[tuple[Any | None, Mapping[str, str] | None]]:
     """Materialize a validated worker transport for the internal workflow bridge."""
 
     from npa.orchestration.npa_workflow.robotwin_preflight import (
@@ -123,17 +123,17 @@ def _robotwin_runtime_materialization(
         capability_name=parsed.capability_name,
         yaml_path=parsed.yaml,
     ):
-        yield None
+        yield None, None
         return
     if not transport:
-        yield None
+        yield None, None
         return
     validate_invocation(parsed)
-    if os.environ.get(PUBLIC_CONTEXT_ENV, "").strip() or os.environ.get(
-        CUSTOMER_ENTITLEMENT_ENV, ""
-    ).strip():
+    if (
+        os.environ.get(PUBLIC_CONTEXT_ENV, "").strip()
+        or os.environ.get(CUSTOMER_ENTITLEMENT_ENV, "").strip()
+    ):
         raise ValueError("RoboTwin worker received conflicting context channels")
-    previous = {name: os.environ.get(name) for name in CONTEXT_ENV_NAMES}
     with tempfile.TemporaryDirectory(prefix="npa-robotwin-runtime-") as raw_dir:
         try:
             materialized = materialize_transport(transport, Path(raw_dir))
@@ -141,31 +141,26 @@ def _robotwin_runtime_materialization(
             raise
         except Exception:
             _raise_robotwin_worker_refusal()
+        runtime_environment = dict(os.environ)
+        for name in CONTEXT_ENV_NAMES:
+            runtime_environment.pop(name, None)
+        runtime_environment[PUBLIC_CONTEXT_ENV] = str(materialized.context_path)
+        runtime_environment[MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV] = str(
+            materialized.customer_authorization_path
+        )
+        runtime_environment[MATERIALIZED_KUBECONFIG_ENV] = str(
+            materialized.kubeconfig_path
+        )
+        runtime_environment[MATERIALIZED_SKYPILOT_CONFIG_ENV] = str(
+            materialized.skypilot_config_path
+        )
         try:
-            os.environ.pop(TRANSPORT_CONTEXT_ENV, None)
-            os.environ[PUBLIC_CONTEXT_ENV] = str(materialized.context_path)
-            os.environ[MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV] = str(
-                materialized.customer_authorization_path
-            )
-            os.environ[MATERIALIZED_KUBECONFIG_ENV] = str(
-                materialized.kubeconfig_path
-            )
-            os.environ[MATERIALIZED_SKYPILOT_CONFIG_ENV] = str(
-                materialized.skypilot_config_path
-            )
-            try:
-                authorization = load_runtime_authorization()
-            except (KeyboardInterrupt, SystemExit):
-                raise
-            except Exception:
-                _raise_robotwin_worker_refusal()
-            yield authorization
-        finally:
-            for name, value in previous.items():
-                if value is None:
-                    os.environ.pop(name, None)
-                else:
-                    os.environ[name] = value
+            authorization = load_runtime_authorization(runtime_environment)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception:
+            _raise_robotwin_worker_refusal()
+        yield authorization, runtime_environment
 
 
 def build_byof_argv(
@@ -453,9 +448,16 @@ def run_cmd(
         )
 
     runner = _load_runner()
-    with _robotwin_runtime_materialization(runner, argv) as authorization:
+    with _robotwin_runtime_materialization(runner, argv) as (
+        authorization,
+        runtime_environment,
+    ):
         code = int(
-            runner._run_authorized_robotwin(argv, authorization=authorization)
+            runner._run_authorized_robotwin(
+                argv,
+                authorization=authorization,
+                environment=runtime_environment,
+            )
             if authorization is not None
             else runner.main(argv)
         )

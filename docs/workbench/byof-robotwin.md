@@ -88,7 +88,7 @@ acceptance path. Normal local submit returns a structured
 `needs_customer_acceptance` notice. A future authenticated control-plane
 implementation must pass a typed assertion that binds verified issuer,
 customer scope, run ID, runtime-lock SHA-256
-`507b2d1d2f1241ab43d91666aca2b0ed6c3132cf61046ccb400f1f23b7e6a408`,
+`dda9bfebe81250247d25259d655589f8f3b95af7d8629d31b49c59a6af3150ee`,
 issuance, expiry, exact intended
 activity, exact terms, assertion identity, and replay-resistant nonce. Missing,
 declined, stale, replayed, unauthenticated, malformed, or wrongly bound

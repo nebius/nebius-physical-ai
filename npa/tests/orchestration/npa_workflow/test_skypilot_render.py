@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -111,7 +112,7 @@ def test_every_byof_spec_declares_its_outer_runtime_image() -> None:
             assert profile["image"] == "{{config.base_image}}", path.name
 
 
-def test_robotwin_outer_render_is_cpu_only_public_and_destination_free(
+def test_robotwin_outer_render_is_cpu_only_image_free_and_destination_free(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa/public")
@@ -130,7 +131,8 @@ def test_robotwin_outer_render_is_cpu_only_public_and_destination_free(
 
     assert task["resources"]["cloud"] == "kubernetes"
     assert "accelerators" not in task["resources"]
-    assert task["resources"].get("image_id") != str(spec.config["base_image"])
+    assert "image" not in task["resources"]
+    assert "image_id" not in task["resources"]
     assert task["envs"]["NPA_EXECUTION_OUTPUTS"] == "[]"
     assert task["envs"]["NPA_SRC_S3_URI"].startswith("s3://")
     assert skypilot_output_destinations([task]) == {}
@@ -140,6 +142,42 @@ def test_robotwin_outer_render_is_cpu_only_public_and_destination_free(
     assert secret_env_hints_for_plan(plan.steps) == (
         "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
     )
+
+
+def test_robotwin_source_uri_is_process_isolated_between_renders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli.workbench import workflow as workflow_cli
+
+    ambient = "s3://ambient-source/should-remain"
+    monkeypatch.setenv("NPA_SRC_S3_URI", ambient)
+    spec = load_spec(NPA_SPECS / "byof-robotwin.yaml")
+    observed: list[str] = []
+    for suffix in ("a" * 64, "b" * 64):
+        source_uri = f"s3://control-source/npa-src/npa/{suffix}"
+        prepared = workflow_cli._prepare_robotwin_submit_without_global_source(
+            spec=spec,
+            run_id=f"robotwin-{suffix[0]}",
+            assume_decision="",
+            render_options=SkypilotRenderOptions(materialize_registry_secrets=False),
+            source_uri=source_uri,
+        )
+        try:
+            task = [
+                document
+                for document in yaml.safe_load_all(
+                    prepared.skypilot_yaml_path.read_text(encoding="utf-8")
+                )
+                if document
+            ][-1]
+            observed.append(task["envs"]["NPA_SRC_S3_URI"])
+        finally:
+            prepared.temp_dir.cleanup()
+        assert os.environ["NPA_SRC_S3_URI"] == ambient
+    assert observed == [
+        "s3://control-source/npa-src/npa/" + "a" * 64,
+        "s3://control-source/npa-src/npa/" + "b" * 64,
+    ]
 
 
 def test_isaac_byof_config_routes_image_and_preserves_cli_opt_out() -> None:
@@ -384,16 +422,22 @@ def test_gpu_memory_override_targets_only_accelerator_profiles(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("NPA_WORKFLOW_GPU_MEMORY", "384Gi")
-    assert normalize_resources(
-        {
-            "cloud": "kubernetes",
-            "accelerators": "RTXPRO6000:4",
-            "memory": "128Gi",
-        }
-    )["memory"] == "384+"
-    assert normalize_resources(
-        {"cloud": "kubernetes", "cpus": 4, "memory": "16Gi"}
-    )["memory"] == "16+"
+    assert (
+        normalize_resources(
+            {
+                "cloud": "kubernetes",
+                "accelerators": "RTXPRO6000:4",
+                "memory": "128Gi",
+            }
+        )["memory"]
+        == "384+"
+    )
+    assert (
+        normalize_resources({"cloud": "kubernetes", "cpus": 4, "memory": "16Gi"})[
+            "memory"
+        ]
+        == "16+"
+    )
 
 
 def test_submit_time_accelerator_override_preserves_profile_gpu_count() -> None:
@@ -476,9 +520,7 @@ def test_render_public_image_ignores_unrelated_private_registry_credentials(
         spec,
         plan,
         run_id="demo",
-        options=SkypilotRenderOptions(
-            registry="ghcr.io/nebius/nebius-physical-ai"
-        ),
+        options=SkypilotRenderOptions(registry="ghcr.io/nebius/nebius-physical-ai"),
     )
 
     task = [doc for doc in yaml.safe_load_all(rendered) if doc is not None][1]
@@ -629,8 +671,7 @@ def test_render_transfer_forwards_explicit_runtime_tuning(
     monkeypatch.setenv("NPA_COSMOS_VALIDATION_DELAY_RANK", "1")
     monkeypatch.setenv("NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS", "1")
     spec = load_spec(
-        REPO_ROOT
-        / "workflows" / "testing" / "physical-ai-data-factory.yaml"
+        REPO_ROOT / "workflows" / "testing" / "physical-ai-data-factory.yaml"
     )
     rendered = render_skypilot_yaml(
         spec,
@@ -752,9 +793,7 @@ def test_paidf_refinement_iterations_use_append_only_artifact_prefixes() -> None
         "s3://example-bucket/physical-ai-data-factory/append-only-refinement/"
         "cosmos_augmented/iteration-2/manifest.json",
     ]
-    assert [
-        step.argv[step.argv.index("--output-uri") + 1] for step in evaluates
-    ] == [
+    assert [step.argv[step.argv.index("--output-uri") + 1] for step in evaluates] == [
         "s3://example-bucket/physical-ai-data-factory/append-only-refinement/"
         "grade/iteration-1/ranking/",
         "s3://example-bucket/physical-ai-data-factory/append-only-refinement/"
@@ -787,9 +826,11 @@ def test_paidf_bare_static_plan_previews_promoted_path_with_fail_closed_guard(
     states = [step.state for step in plan.steps]
 
     assert plan.assume_decision == "promote_checkpoint"
-    assert states.index("quality-disposition") < states.index(
-        "require-accepted-quality"
-    ) < states.index("annotate-augmented")
+    assert (
+        states.index("quality-disposition")
+        < states.index("require-accepted-quality")
+        < states.index("annotate-augmented")
+    )
     assert states[-2:] == ["visualize", "finalize"]
     assert "visualize-rejected" not in states
     assert "reject-quality" not in states
@@ -1184,7 +1225,10 @@ def test_prepare_requires_assume_decision_for_dynamic_specs() -> None:
 def test_workbench_workflow_submit_npa_workflow_renders_and_submits(mocker) -> None:
     # This test replaces the runtime; provider boundary coverage lives in
     # test_execution_preflight and must not be bypassed by --skip-preflight.
-    mocker.patch("npa.cli.workbench.workflow._execution_target_preflight", return_value=(None, {}))
+    mocker.patch(
+        "npa.cli.workbench.workflow._execution_target_preflight",
+        return_value=(None, {}),
+    )
     mocker.patch("npa.cli.workbench.workflow._preflight_submit_gang_capacity")
     captured: dict[str, object] = {}
 
@@ -1327,7 +1371,10 @@ def test_e2e_clear_workbench_images_env_is_not_global_cli_override(
 def test_workbench_workflow_submit_npa_var_merges_config(
     mocker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    mocker.patch("npa.cli.workbench.workflow._execution_target_preflight", return_value=(None, {}))
+    mocker.patch(
+        "npa.cli.workbench.workflow._execution_target_preflight",
+        return_value=(None, {}),
+    )
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
     captured: dict[str, object] = {}
 

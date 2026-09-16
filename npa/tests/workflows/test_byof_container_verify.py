@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import subprocess
@@ -208,7 +209,7 @@ def test_robotwin_inner_coordinates_use_only_secret_values_and_ignore_ambient_co
     assert module.main(["--solution-name", "robotwin"]) == 2
 
 
-def test_authorized_robotwin_scrubs_ambient_controls_for_inner_submit(
+def test_authorized_robotwin_uses_explicit_environment_without_global_mutation(
     monkeypatch,
 ) -> None:
     module = _load_module()
@@ -240,41 +241,110 @@ def test_authorized_robotwin_scrubs_ambient_controls_for_inner_submit(
 
     def submit(_args, *, robotwin_submit_context, authorized_env):
         assert robotwin_submit_context is context
-        assert authorized_env is supplied_environment
-        assert os.environ["KUBECONFIG"] == authorization.kubeconfig_source
-        assert all(name not in os.environ for name in hostile_names)
+        assert authorized_env == supplied_environment
+        assert all(
+            os.environ[name] == f"hostile-{name.lower()}" for name in hostile_names
+        )
         return 0
 
     monkeypatch.setattr(module, "_submit_and_wait", submit)
 
-    assert module.run_authorized_robotwin(
-        ["--solution-name", "robotwin"],
-        authorization=authorization,
-        environment=supplied_environment,
-    ) == 0
+    assert (
+        module.run_authorized_robotwin(
+            ["--solution-name", "robotwin"],
+            authorization=authorization,
+            environment=supplied_environment,
+        )
+        == 0
+    )
     assert all(os.environ[name] == f"hostile-{name.lower()}" for name in hostile_names)
+
+
+def test_two_authorized_robotwin_runs_cannot_exchange_environments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    barrier = __import__("threading").Barrier(2)
+    observed: list[tuple[object, dict[str, str]]] = []
+    ambient = dict(os.environ)
+
+    monkeypatch.setattr(
+        module,
+        "_apply_robotwin_authorization",
+        lambda _args, authorization, _environment: authorization,
+    )
+
+    def submit(_args, *, robotwin_submit_context, authorized_env):
+        barrier.wait(timeout=5)
+        observed.append((robotwin_submit_context, dict(authorized_env)))
+        return 0
+
+    monkeypatch.setattr(module, "_submit_and_wait", submit)
+    authorizations = (SimpleNamespace(name="one"), SimpleNamespace(name="two"))
+    environments = ({"RUN_SECRET": "one"}, {"RUN_SECRET": "two"})
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(
+            executor.map(
+                lambda item: module.run_authorized_robotwin(
+                    ["--solution-name", "robotwin"],
+                    authorization=item[0],
+                    environment=item[1],
+                ),
+                zip(authorizations, environments, strict=True),
+            )
+        )
+
+    assert results == [0, 0]
+    assert {(context.name, env["RUN_SECRET"]) for context, env in observed} == {
+        ("one", "one"),
+        ("two", "two"),
+    }
+    assert dict(os.environ) == ambient
+
+
+def test_authorized_robotwin_failure_leaves_process_environment_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    authorization = SimpleNamespace(name="failure")
+    monkeypatch.setattr(
+        module,
+        "_apply_robotwin_authorization",
+        lambda *_args, **_kwargs: authorization,
+    )
+    monkeypatch.setattr(
+        module,
+        "_submit_and_wait",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("failure")),
+    )
+    before = dict(os.environ)
+    with pytest.raises(RuntimeError, match="failure"):
+        module.run_authorized_robotwin(
+            ["--solution-name", "robotwin"],
+            authorization=authorization,
+            environment={"RUN_SECRET": "failure"},
+        )
+    assert dict(os.environ) == before
 
 
 def test_robotwin_sky_bootstrap_is_worker_local_and_pinned(
     monkeypatch, tmp_path: Path
 ) -> None:
     module = _load_module()
-    from npa.cli import skypilot as skypilot_cli
-
-    observed: dict[str, object] = {}
     sky_bin = tmp_path / "runtime" / "skypilot-venv" / "bin" / "sky"
+    observed: dict[str, object] = {}
 
-    def bootstrap_skypilot(**kwargs):
-        observed.update(kwargs)
-        return SimpleNamespace(sky_bin=sky_bin)
+    def run(argv, **kwargs):
+        observed.update(argv=argv, kwargs=kwargs)
+        return subprocess.CompletedProcess(argv, 0, stdout=f"{sky_bin}\n", stderr="")
 
-    monkeypatch.setattr(skypilot_cli, "bootstrap_skypilot", bootstrap_skypilot)
-
-    assert module._bootstrap_robotwin_sky(tmp_path / "runtime") == str(sky_bin)
-    assert observed == {
-        "venv_path": tmp_path / "runtime" / "skypilot-venv",
-        "python_bin": sys.executable,
-    }
+    monkeypatch.setattr(module.subprocess, "run", run)
+    environment = {"HOME": str(tmp_path), "PATH": "/bin"}
+    assert module._bootstrap_robotwin_sky(tmp_path / "runtime", environment) == str(
+        sky_bin
+    )
+    assert observed["kwargs"]["env"] == environment
+    assert observed["argv"][-1] == str(tmp_path / "runtime" / "skypilot-venv")
 
 
 def test_one_solutions_operator_answers_do_not_widen_anothers(monkeypatch) -> None:

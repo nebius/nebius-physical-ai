@@ -954,6 +954,7 @@ def _run_parsed(
     redactions: tuple[str, ...],
 ) -> int:
     private_source = args.repo_auth == "github"
+    effective_redactions = redactions
     try:
         validate_repository_url(args.repo_url, private=private_source)
     except RepositoryAuthenticationError as exc:
@@ -1053,10 +1054,10 @@ def _run_parsed(
                     "repository_sha256": source_secrets.repository_sha256,
                     "ref_sha256": source_secrets.ref_sha256,
                 }
-            redactions = tuple(
+            effective_redactions = tuple(
                 dict.fromkeys(
                     (
-                        *redactions,
+                        *effective_redactions,
                         *(
                             source_secrets.redaction_values
                             if source_secrets is not None
@@ -1070,7 +1071,7 @@ def _run_parsed(
                 authorization=authorization,
                 summary=summary,
                 source_secrets=source_secrets,
-                redactions=redactions,
+                redactions=effective_redactions,
                 docker_env=docker_env,
                 base_candidates=base_candidates,
                 base_image=base_image,
@@ -1081,7 +1082,7 @@ def _run_parsed(
                 skip_push=skip_push,
             )
     except Exception as exc:
-        message = _redact_text(str(exc), redactions)
+        message = _redact_text(str(exc), effective_redactions)
         summary["status"] = "failed"
         summary["error"] = message
         if isinstance(exc, RepositoryAuthenticationError):
@@ -1103,7 +1104,13 @@ def _run_parsed(
                 "Grant write access to the target repository, or use --skip-push "
                 "with an already-published image."
             )
-        print(json.dumps(_redact_payload(summary, redactions), indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                _redact_payload(summary, effective_redactions),
+                indent=2,
+                sort_keys=True,
+            )
+        )
         hint = str(summary.get("hint") or "").strip()
         if hint:
             print(f"HINT: {hint}", file=sys.stderr)
@@ -1174,6 +1181,7 @@ def _run_byof(
     skip_build: bool,
     skip_push: bool,
 ) -> int:
+    effective_redactions = redactions
     try:
         postprocess_key = _required_postprocess_key(
             args, base_image=base_image, base_profile=base_profile
@@ -1308,7 +1316,7 @@ def _run_byof(
 
         scan_evidence: dict[str, Any] = {}
         if authorization is not None:
-            scan_evidence = _scan_robotwin_image(image, redactions=redactions)
+            scan_evidence = _scan_robotwin_image(image, redactions=effective_redactions)
             summary["robotwin_image_scan"] = scan_evidence
 
         if not args.skip_run:
@@ -1385,12 +1393,17 @@ def _run_byof(
             live_env = _authorized_live_env(
                 authorization, scan_evidence, project=args.project, image=image
             )
-            runtime_redactions = (
+            effective_redactions = (
                 tuple(
-                    dict.fromkeys((*redactions, *_private_runtime_redactions(live_env)))
+                    dict.fromkeys(
+                        (
+                            *effective_redactions,
+                            *_private_runtime_redactions(live_env),
+                        )
+                    )
                 )
                 if authorization is not None
-                else redactions
+                else effective_redactions
             )
             run_kwargs = {
                 "capture": True,
@@ -1398,8 +1411,8 @@ def _run_byof(
             }
             if authorization is not None:
                 run_kwargs["inherit_env"] = False
-            if runtime_redactions:
-                run_kwargs["redactions"] = runtime_redactions
+            if effective_redactions:
+                run_kwargs["redactions"] = effective_redactions
             run_proc = (
                 _run_robotwin_container_verify(
                     cmd,
@@ -1409,19 +1422,25 @@ def _run_byof(
                 if authorization is not None
                 else _run(cmd, **run_kwargs)
             )
-            sys.stdout.write(_redact_text(run_proc.stdout, runtime_redactions))
+            sys.stdout.write(_redact_text(run_proc.stdout, effective_redactions))
             if run_proc.stderr:
-                sys.stderr.write(_redact_text(run_proc.stderr, runtime_redactions))
+                sys.stderr.write(_redact_text(run_proc.stderr, effective_redactions))
             parsed_run = _parse_last_json(run_proc.stdout) or {"status": "submitted"}
-            summary["run"] = _redact_payload(parsed_run, runtime_redactions)
+            summary["run"] = _redact_payload(parsed_run, effective_redactions)
             _postprocess_solution(args, postprocess_key, summary)
         else:
             summary["run"] = {"skipped": True}
         summary["status"] = "ok"
-        print(json.dumps(_redact_payload(summary, redactions), indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                _redact_payload(summary, effective_redactions),
+                indent=2,
+                sort_keys=True,
+            )
+        )
         return 0
     except Exception as exc:
-        _raise_sanitized_runtime_error(_redact_text(str(exc), redactions))
+        _raise_sanitized_runtime_error(_redact_text(str(exc), effective_redactions))
 
 
 def _raise_sanitized_runtime_error(message: str) -> None:

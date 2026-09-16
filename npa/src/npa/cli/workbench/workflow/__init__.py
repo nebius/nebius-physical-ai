@@ -9,6 +9,7 @@ from dataclasses import replace
 import hashlib
 import json
 import logging
+import multiprocessing
 import os
 import re
 import tempfile
@@ -45,6 +46,84 @@ MAX_LOG_OUTPUT_CHARS = 262_144
 _SUBMIT_PRIVATE_REDACTIONS: ContextVar[tuple[str, ...]] = ContextVar(
     "npa_submit_private_redactions", default=()
 )
+
+
+def _robotwin_render_process(
+    connection: Any,
+    spec: Any,
+    plan: Any,
+    run_id: str,
+    options: Any,
+    source_uri: str,
+) -> None:
+    """Render in an isolated process whose source URI cannot affect siblings."""
+
+    try:
+        os.environ["NPA_SRC_S3_URI"] = source_uri
+        os.environ.pop("NPA_E2E_NPA_SRC_S3_URI", None)
+        from npa.orchestration.npa_workflow.skypilot_render import (
+            assert_no_unresolved_placeholders,
+            render_skypilot_yaml,
+        )
+
+        rendered = render_skypilot_yaml(spec, plan, run_id=run_id, options=options)
+        assert_no_unresolved_placeholders(rendered)
+        connection.send((True, rendered))
+    except BaseException as exc:  # child boundary returns only a bounded category
+        connection.send((False, type(exc).__name__))
+    finally:
+        connection.close()
+
+
+def _prepare_robotwin_submit_without_global_source(
+    *,
+    spec: Any,
+    run_id: str,
+    assume_decision: str,
+    render_options: Any,
+    source_uri: str,
+) -> Any:
+    """Prepare the fixed outer task while keeping its private source run-local."""
+
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        secret_env_hints_for_plan,
+    )
+    from npa.orchestration.npa_workflow.submit import PreparedNpaWorkflowSubmit
+
+    plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
+    context = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    process = context.Process(
+        target=_robotwin_render_process,
+        args=(sender, spec, plan, run_id, render_options, source_uri),
+    )
+    process.start()
+    sender.close()
+    try:
+        if not receiver.poll(60):
+            process.terminate()
+            raise RuntimeError("RoboTwin isolated render timed out")
+        ok, payload = receiver.recv()
+    finally:
+        receiver.close()
+        process.join(timeout=5)
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=5)
+    if not ok or process.exitcode:
+        raise RuntimeError(f"RoboTwin isolated render failed: {payload}")
+    temp_dir = tempfile.TemporaryDirectory(prefix="npa-workflow-robotwin-")
+    path = Path(temp_dir.name) / f"{spec.name}.skypilot.yaml"
+    path.write_text(payload, encoding="utf-8")
+    path.chmod(0o600)
+    return PreparedNpaWorkflowSubmit(
+        skypilot_yaml_path=path,
+        spec=spec,
+        plan=plan,
+        secret_env_hints=secret_env_hints_for_plan(plan.steps),
+        temp_dir=temp_dir,
+    )
 
 
 class OutputFormat(str, Enum):
@@ -1464,7 +1543,7 @@ def submit_cmd(
                     )
                 )
             )
-        if existing_source_uri:
+        if existing_source_uri and robotwin_submit_context is None:
             # The renderer has a process/config resolver without a project
             # parameter. Pin the explicitly selected project's verified URI for
             # this invocation so a non-default project cannot inherit another
@@ -1983,7 +2062,8 @@ def submit_cmd(
             )
             if not staged_uri:
                 return
-            os.environ["NPA_SRC_S3_URI"] = staged_uri
+            if robotwin_submit_context is None:
+                os.environ["NPA_SRC_S3_URI"] = staged_uri
             source_action = "reused" if staged_uri == existing_source_uri else "staged"
         _warn_placeholder_bucket(spec_config, quiet=output_format == OutputFormat.json)
         image_overrides: dict[str, str] = {}
@@ -2152,13 +2232,23 @@ def submit_cmd(
             return
 
         try:
-            prepared_npa = prepare_npa_workflow_for_submit(
-                yaml_path,
-                run_id=resolved_run_id,
-                assume_decision=assume_decision,
-                config_overrides=substitutions,
-                render_options=npa_render_options,
-                allow_runtime_required=plan_only,
+            prepared_npa = (
+                _prepare_robotwin_submit_without_global_source(
+                    spec=merged_npa_spec,
+                    run_id=resolved_run_id,
+                    assume_decision=assume_decision,
+                    render_options=npa_render_options,
+                    source_uri=existing_source_uri,
+                )
+                if robotwin_submit_context is not None
+                else prepare_npa_workflow_for_submit(
+                    yaml_path,
+                    run_id=resolved_run_id,
+                    assume_decision=assume_decision,
+                    config_overrides=substitutions,
+                    render_options=npa_render_options,
+                    allow_runtime_required=plan_only,
+                )
             )
         except NpaWorkflowError as exc:
             _fail(str(exc))
