@@ -1176,13 +1176,19 @@ def test_idle_validation_scope_recovery_refuses_a_live_controller(tmp_path) -> N
     assert (scope / "home").is_dir()
 
 
-def test_validation_environment_recovers_stale_receipt_raised_before_api_ensure(
+@pytest.mark.parametrize("failure_message", [
+    "isolated SkyPilot API recovery requires the original executing identity and credential configuration",
+    "running isolated SkyPilot API has a different executing identity or changed credential configuration",
+])
+def test_validation_environment_recovers_stale_identity_raised_before_api_ensure(
+    failure_message: str,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A stopped receipt can fail while ``sky_environment`` establishes intent.
+    """A stale receipt can fail while ``sky_environment`` establishes intent.
 
     That failure happens before the explicit ``ensure_isolated_api`` call, so
-    the narrow controller-absence recovery must cover both operations.
+    the narrow controller-absence recovery must cover both operations and both
+    stopped and running stale daemon receipts.
     """
 
     kubeconfig = tmp_path / "kubeconfig"
@@ -1205,10 +1211,7 @@ def test_validation_environment_recovers_stale_receipt_raised_before_api_ensure(
             )
         )
         if calls.count("environment") == 1:
-            raise local_api.IsolatedApiError(
-                "isolated SkyPilot API recovery requires the original executing "
-                "identity and credential configuration"
-            )
+            raise local_api.IsolatedApiError(failure_message)
         return {**environment, "SKYPILOT_USER_ID": "npa-test-validation"}
 
     def fake_recover(scope: Path, **kwargs: object) -> bool:

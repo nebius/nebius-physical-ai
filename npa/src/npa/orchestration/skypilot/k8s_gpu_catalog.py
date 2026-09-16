@@ -278,16 +278,20 @@ def kubernetes_sky_environment(
         try:
             env = start_validation_api()
         except local_api.IsolatedApiError as exc:
-            # A stopped validation daemon can retain credential-bound SkyPilot
-            # state after the metadata/profile source changes.  It is safe to
-            # retire only this validation scope after Kubernetes proves that its
-            # exact controller pod does not exist; workflow controller state is
-            # never touched here.
-            stale_stopped_identity = (
-                "recovery requires the original executing identity and credential configuration"
-                in str(exc).lower()
+            # A stale running or stopped validation daemon can retain a
+            # credential-bound identity after its metadata/profile source
+            # changes. Retire only this validation scope after Kubernetes
+            # proves its exact controller pod does not exist; workflow
+            # controller state is never touched here.
+            identity_error = str(exc).lower()
+            stale_validation_identity = any(
+                marker in identity_error
+                for marker in (
+                    "recovery requires the original executing identity and credential configuration",
+                    "running isolated skypilot api has a different executing identity",
+                )
             )
-            if not stale_stopped_identity or not _recover_idle_validation_scope(
+            if not stale_validation_identity or not _recover_idle_validation_scope(
                 scope,
                 context=context,
                 kubeconfig_path=kubeconfig_path,
