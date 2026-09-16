@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 import time
+import traceback
 from datetime import datetime, timedelta, timezone
 from collections.abc import Callable
 from pathlib import Path
@@ -206,6 +207,22 @@ def _byof_runner_module():
     return module
 
 
+def _serialized_entitlement_refusal(error: BaseException) -> str:
+    """Render every ordinary exception diagnostic surface for marker checks."""
+
+    return json.dumps(
+        {
+            "type": type(error).__name__,
+            "args": [str(argument) for argument in error.args],
+            "cause": repr(error.__cause__),
+            "context": repr(error.__context__),
+            "notes": list(getattr(error, "__notes__", ())),
+            "traceback": "".join(traceback.format_exception(error)),
+        },
+        sort_keys=True,
+    )
+
+
 def _fake_robomimic_kubectl(
     *,
     create_failure: bool = False,
@@ -396,7 +413,7 @@ def test_robomimic_gate_refuses_missing_manager_context_in_default_suite(
         monkeypatch.setenv(variable, value)
     monkeypatch.delenv(missing_variable, raising=False)
 
-    with pytest.raises(AssertionError):
+    with pytest.raises(RuntimeError, match="context-invalid"):
         _live_e2e_module()._robomimic_live_selectors("manager-project")
 
 
@@ -450,7 +467,7 @@ def test_robomimic_live_harness_refuses_entitlement_before_any_side_effect(
         if path.is_file()
     }
 
-    with pytest.raises(RuntimeError, match="binding mismatch"):
+    with pytest.raises(RuntimeError, match="binding-mismatch"):
         module._invoke_robomimic_gate("manager-project")
 
     after = {
@@ -459,6 +476,112 @@ def test_robomimic_live_harness_refuses_entitlement_before_any_side_effect(
         if path.is_file()
     }
     assert after == before
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_category"),
+    (
+        ("invalid-json", "record-invalid"),
+        ("unsafe-private-record", "record-unsafe"),
+        ("missing-record-path", "record-unsafe"),
+        ("rejected-customer-identity", "binding-mismatch"),
+        ("rejected-run-identity", "binding-mismatch"),
+        ("malformed-timestamp", "time-invalid"),
+        ("expired-timestamp", "time-invalid"),
+        ("runtime-binding-mismatch", "binding-mismatch"),
+    ),
+)
+def test_robomimic_e2e_entitlement_refusals_are_value_free(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    case: str,
+    expected_category: str,
+) -> None:
+    module = _live_e2e_module()
+    marker = f"private-{case}-marker"
+    run_id = "diagnostic-redaction"
+    entitlement = _customer_entitlement(
+        tmp_path, project="manager-project", run_id=run_id
+    )
+    marker_path = tmp_path / f"{marker}.json"
+    entitlement.replace(marker_path)
+    entitlement = marker_path
+    selectors = {
+        "project": "manager-project",
+        "runtime_inventory_sha256": "a" * 64,
+        "runtime_entitlement_file": str(entitlement),
+    }
+    record = json.loads(entitlement.read_text(encoding="utf-8"))
+    if case == "invalid-json":
+        entitlement.write_text(f'{{"marker":"{marker}"', encoding="utf-8")
+    elif case == "unsafe-private-record":
+        entitlement.chmod(0o644)
+    elif case == "missing-record-path":
+        selectors["runtime_entitlement_file"] = str(tmp_path / marker / "missing")
+    elif case == "rejected-customer-identity":
+        record["customer_binding_sha256"] = marker
+    elif case == "rejected-run-identity":
+        record["run_id"] = marker
+    elif case == "malformed-timestamp":
+        record["accepted_at"] = marker
+    elif case == "expired-timestamp":
+        record["accepted_at"] = "2000-01-01T00:00:00Z"
+        record["expires_at"] = "2000-01-01T01:00:00Z"
+    elif case == "runtime-binding-mismatch":
+        record["runtime_manifest_sha256"] = marker
+    if case not in {"invalid-json", "unsafe-private-record", "missing-record-path"}:
+        entitlement.write_text(
+            json.dumps(record, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+    with pytest.raises(module._RobomimicEntitlementRefusal) as raised:
+        module._preflight_robomimic_runtime_entitlement(
+            selectors=selectors, run_id=run_id
+        )
+
+    error = raised.value
+    expected_message = f"robomimic customer entitlement refused: {expected_category}"
+    assert error.category == expected_category
+    assert error.args == (expected_message,)
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    assert not getattr(error, "__notes__", ())
+    captured = capsys.readouterr()
+    diagnostics = _serialized_entitlement_refusal(error) + captured.out + captured.err
+    assert marker not in diagnostics
+
+
+def test_robomimic_e2e_context_refusal_discards_sensitive_assertion(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    module = _live_e2e_module()
+    marker = "private-context-identity-marker"
+    monkeypatch.setattr(
+        module,
+        "_robomimic_live_selectors",
+        lambda *_args: (_ for _ in ()).throw(AssertionError(marker)),
+    )
+    monkeypatch.setattr(
+        module,
+        "_activate_nebius_profile",
+        lambda: pytest.fail("context refusal reached a live or local side effect"),
+    )
+
+    with pytest.raises(module._RobomimicEntitlementRefusal) as raised:
+        module._invoke_robomimic_gate(marker)
+
+    error = raised.value
+    assert error.category == "context-invalid"
+    assert error.args == (
+        "robomimic customer entitlement refused: context-invalid",
+    )
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    assert not getattr(error, "__notes__", ())
+    captured = capsys.readouterr()
+    diagnostics = _serialized_entitlement_refusal(error) + captured.out + captured.err
+    assert marker not in diagnostics
 
 
 def test_robomimic_live_preflight_matches_runner_entitlement_proof(
@@ -509,7 +632,7 @@ def test_robomimic_live_preflight_matches_runner_entitlement_proof(
 def test_robomimic_storage_endpoint_refuses_credential_exfiltration(
     endpoint: str,
 ) -> None:
-    with pytest.raises(AssertionError):
+    with pytest.raises(RuntimeError, match="context-invalid"):
         _live_e2e_module()._robomimic_storage_endpoint(endpoint)
 
 
@@ -947,7 +1070,7 @@ def test_robomimic_gate_rejects_known_public_registry_hosts(
     for variable, value in values.items():
         monkeypatch.setenv(variable, value)
 
-    with pytest.raises(AssertionError):
+    with pytest.raises(RuntimeError, match="context-invalid"):
         _live_e2e_module()._robomimic_live_selectors("manager-project")
 
 

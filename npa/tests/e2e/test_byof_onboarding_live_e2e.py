@@ -103,6 +103,38 @@ ROBOMIMIC_CAPABILITIES = {
     "lift_ph_lowdim_heldout_validate",
     "lift_ph_lowdim_checkpoint_reload_action",
 }
+_ROBOMIMIC_ENTITLEMENT_REFUSAL_CATEGORIES = frozenset(
+    {
+        "binding-mismatch",
+        "context-invalid",
+        "contract-invalid",
+        "fields-invalid",
+        "identity-invalid",
+        "record-invalid",
+        "record-unsafe",
+        "time-invalid",
+    }
+)
+
+
+class _RobomimicEntitlementRefusal(RuntimeError):
+    """Carry only an approved, value-free entitlement refusal category."""
+
+    def __init__(self, category: str) -> None:
+        safe_category = (
+            category
+            if category in _ROBOMIMIC_ENTITLEMENT_REFUSAL_CATEGORIES
+            else "record-invalid"
+        )
+        self.category = safe_category
+        super().__init__(f"robomimic customer entitlement refused: {safe_category}")
+
+
+def _require_robomimic_entitlement_context(condition: bool) -> None:
+    """Reject invalid live selectors without retaining their values."""
+
+    if not condition:
+        raise _RobomimicEntitlementRefusal("context-invalid")
 
 
 def _activate_nebius_profile() -> None:
@@ -365,26 +397,29 @@ def _robomimic_storage_endpoint(value: str) -> str:
     """Accept only a canonical Nebius Object Storage HTTPS origin."""
 
     candidate = value.strip()
+    malformed = False
     try:
         parsed = urlsplit(candidate)
         port = parsed.port
-    except ValueError as exc:
-        raise AssertionError("manager-issued S3 endpoint is malformed") from exc
+    except ValueError:
+        malformed = True
+    if malformed:
+        raise _RobomimicEntitlementRefusal("context-invalid")
     host = (parsed.hostname or "").lower()
-    assert parsed.scheme == "https", "manager-issued S3 endpoint must use HTTPS"
-    assert parsed.username is None and parsed.password is None, (
-        "manager-issued S3 endpoint must not contain userinfo"
+    _require_robomimic_entitlement_context(parsed.scheme == "https")
+    _require_robomimic_entitlement_context(
+        parsed.username is None and parsed.password is None
     )
-    assert port in {None, 443}, "manager-issued S3 endpoint must use HTTPS port 443"
-    assert parsed.path in {"", "/"} and not parsed.query and not parsed.fragment, (
-        "manager-issued S3 endpoint must be an origin without query or fragment"
+    _require_robomimic_entitlement_context(port in {None, 443})
+    _require_robomimic_entitlement_context(
+        parsed.path in {"", "/"} and not parsed.query and not parsed.fragment
     )
-    assert re.fullmatch(r"storage\.[a-z0-9-]+\.nebius\.cloud", host), (
-        "manager-issued S3 endpoint is outside the approved storage origin"
+    _require_robomimic_entitlement_context(
+        re.fullmatch(r"storage\.[a-z0-9-]+\.nebius\.cloud", host) is not None
     )
     canonical = f"https://{host}"
-    assert candidate.rstrip("/") == canonical, (
-        "manager-issued S3 endpoint must use canonical origin form"
+    _require_robomimic_entitlement_context(
+        candidate.rstrip("/") == canonical
     )
     return canonical
 
@@ -398,9 +433,7 @@ def _robomimic_live_selectors(e2e_project: str | None) -> dict[str, str]:
         )
         if value.strip()
     }
-    assert len(endpoint_candidates) == 1, (
-        "one consistent manager-issued S3 endpoint is required"
-    )
+    _require_robomimic_entitlement_context(len(endpoint_candidates) == 1)
     selectors = {
         "project": os.environ.get("NPA_E2E_PROJECT", "").strip(),
         "registry": os.environ.get("NPA_BYOF_ROBOMIMIC_REGISTRY", "").strip(),
@@ -420,28 +453,44 @@ def _robomimic_live_selectors(e2e_project: str | None) -> dict[str, str]:
         ).strip(),
         "storage_endpoint": _robomimic_storage_endpoint(endpoint_candidates.pop()),
     }
-    assert selectors["project"] and e2e_project == selectors["project"]
-    assert selectors["registry"], "a manager-issued private registry is required"
-    assert not is_public_registry(selectors["registry"])
-    assert selectors["registry_visibility"].lower() == "private"
-    assert selectors["kubeconfig"] and Path(selectors["kubeconfig"]).is_file()
-    assert selectors["context"], "a manager-issued Kubernetes context is required"
-    assert selectors["namespace"] and selectors["namespace"] != "default"
-    assert selectors["bucket"], "a manager-issued output bucket is required"
-    assert selectors["runtime_pvc"], (
-        "a manager-issued pre-populated runtime PVC is required"
+    _require_robomimic_entitlement_context(
+        bool(selectors["project"]) and e2e_project == selectors["project"]
     )
-    assert re.fullmatch(r"[0-9a-f]{64}", selectors["runtime_inventory_sha256"]), (
-        "an operator-selected exact runtime inventory digest is required"
+    _require_robomimic_entitlement_context(bool(selectors["registry"]))
+    _require_robomimic_entitlement_context(
+        not is_public_registry(selectors["registry"])
     )
-    assert selectors["runtime_entitlement_file"], (
-        "a customer-created runtime entitlement record is required"
+    _require_robomimic_entitlement_context(
+        selectors["registry_visibility"].lower() == "private"
     )
-    assert os.environ.get("NPA_E2E_MK8S_RESERVED_CAPACITY") == "1", (
-        "the manager's STRICT reserved-capacity gate is required"
+    _require_robomimic_entitlement_context(
+        bool(selectors["kubeconfig"])
+        and Path(selectors["kubeconfig"]).is_file()
     )
-    assert os.environ.get("NPA_BYOF_LIVE_GPU") == "1"
-    assert os.environ.get("NPA_BYOF_ROBOMIMIC_LIVE_B200") == "1"
+    _require_robomimic_entitlement_context(bool(selectors["context"]))
+    _require_robomimic_entitlement_context(
+        bool(selectors["namespace"]) and selectors["namespace"] != "default"
+    )
+    _require_robomimic_entitlement_context(bool(selectors["bucket"]))
+    _require_robomimic_entitlement_context(bool(selectors["runtime_pvc"]))
+    _require_robomimic_entitlement_context(
+        re.fullmatch(
+            r"[0-9a-f]{64}", selectors["runtime_inventory_sha256"]
+        )
+        is not None
+    )
+    _require_robomimic_entitlement_context(
+        bool(selectors["runtime_entitlement_file"])
+    )
+    _require_robomimic_entitlement_context(
+        os.environ.get("NPA_E2E_MK8S_RESERVED_CAPACITY") == "1"
+    )
+    _require_robomimic_entitlement_context(
+        os.environ.get("NPA_BYOF_LIVE_GPU") == "1"
+    )
+    _require_robomimic_entitlement_context(
+        os.environ.get("NPA_BYOF_ROBOMIMIC_LIVE_B200") == "1"
+    )
     return selectors
 
 
@@ -460,6 +509,7 @@ def _robomimic_private_record_bytes(path_value: str) -> bytes:
 
     def open_parent() -> int:
         descriptor = -1
+        open_failed = False
         try:
             descriptor = os.open(os.sep, directory_flags)
             for component in path.parent.parts[1:]:
@@ -468,23 +518,22 @@ def _robomimic_private_record_bytes(path_value: str) -> bytes:
                 )
                 os.close(descriptor)
                 descriptor = next_descriptor
-        except OSError as exc:
+        except OSError:
             if descriptor >= 0:
                 os.close(descriptor)
-            raise RuntimeError(
-                "robomimic customer entitlement parent is unavailable or unsafe"
-            ) from exc
+            open_failed = True
+        if open_failed:
+            raise _RobomimicEntitlementRefusal("record-unsafe")
         details = os.fstat(descriptor)
         if details.st_uid != os.geteuid() or details.st_mode & 0o077:
             os.close(descriptor)
-            raise RuntimeError(
-                "robomimic customer entitlement parent must be owner-only"
-            )
+            raise _RobomimicEntitlementRefusal("record-unsafe")
         return descriptor
 
     parent_descriptor = open_parent()
     parent_identity = os.fstat(parent_descriptor)
     descriptor = -1
+    read_failed = False
     try:
         descriptor = os.open(
             path.name,
@@ -502,9 +551,7 @@ def _robomimic_private_record_bytes(path_value: str) -> bytes:
             or opened.st_mode & 0o077
             or opened.st_size > ROBOMIMIC_ENTITLEMENT_MAX_BYTES
         ):
-            raise RuntimeError(
-                "robomimic customer entitlement must be an owner-only regular file"
-            )
+            raise _RobomimicEntitlementRefusal("record-unsafe")
         with os.fdopen(descriptor, "rb", closefd=False) as handle:
             raw = handle.read(ROBOMIMIC_ENTITLEMENT_MAX_BYTES + 1)
         closed = os.fstat(descriptor)
@@ -517,7 +564,7 @@ def _robomimic_private_record_bytes(path_value: str) -> bytes:
             or closed.st_uid != os.geteuid()
             or closed.st_mode & 0o077
         ):
-            raise RuntimeError("robomimic customer entitlement changed while read")
+            raise _RobomimicEntitlementRefusal("record-unsafe")
         current_parent = open_parent()
         try:
             current_identity = os.fstat(current_parent)
@@ -527,18 +574,17 @@ def _robomimic_private_record_bytes(path_value: str) -> bytes:
             parent_identity.st_dev,
             parent_identity.st_ino,
         ):
-            raise RuntimeError(
-                "robomimic customer entitlement parent changed while read"
-            )
+            raise _RobomimicEntitlementRefusal("record-unsafe")
         return raw
-    except OSError as exc:
-        raise RuntimeError(
-            "robomimic customer entitlement file is unavailable or unsafe"
-        ) from exc
+    except OSError:
+        read_failed = True
     finally:
         if descriptor >= 0:
             os.close(descriptor)
         os.close(parent_descriptor)
+    if read_failed:
+        raise _RobomimicEntitlementRefusal("record-unsafe")
+    raise _RobomimicEntitlementRefusal("record-invalid")
 
 
 def _preflight_robomimic_runtime_entitlement(
@@ -547,14 +593,17 @@ def _preflight_robomimic_runtime_entitlement(
     """Validate the complete customer/run/runtime binding before side effects."""
 
     raw = _robomimic_private_record_bytes(selectors["runtime_entitlement_file"])
+    record_invalid = False
     try:
         record = json.loads(raw)
         lock_raw = ROBOMIMIC_RUNTIME_LOCK.read_bytes()
         lock = json.loads(lock_raw)
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise RuntimeError("robomimic customer entitlement is invalid") from exc
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        record_invalid = True
+    if record_invalid:
+        raise _RobomimicEntitlementRefusal("record-invalid")
     if not isinstance(record, dict) or not isinstance(lock, dict):
-        raise RuntimeError("robomimic customer entitlement is invalid")
+        raise _RobomimicEntitlementRefusal("record-invalid")
     contract = lock.get("customer_entitlement")
     if not isinstance(contract, dict) or contract != {
         "schema": "npa.robomimic.customer-runtime-entitlement.v1",
@@ -569,7 +618,7 @@ def _preflight_robomimic_runtime_entitlement(
         ],
         "terms": ROBOMIMIC_ENTITLEMENT_TERMS,
     }:
-        raise RuntimeError("robomimic customer entitlement contract is invalid")
+        raise _RobomimicEntitlementRefusal("contract-invalid")
     lock_sha256 = hashlib.sha256(lock_raw).hexdigest()
     notice_identity = {
         "schema": contract.get("schema"),
@@ -601,9 +650,10 @@ def _preflight_robomimic_runtime_entitlement(
         ).hexdigest(),
     }
     if set(record) != set(expected) | {"accepted_at", "expires_at"}:
-        raise RuntimeError("robomimic customer entitlement fields are invalid")
+        raise _RobomimicEntitlementRefusal("fields-invalid")
     if any(record.get(key) != value for key, value in expected.items()):
-        raise RuntimeError("robomimic customer entitlement binding mismatch")
+        raise _RobomimicEntitlementRefusal("binding-mismatch")
+    time_invalid = False
     try:
         accepted_at = datetime.strptime(
             record["accepted_at"], "%Y-%m-%dT%H:%M:%SZ"
@@ -611,8 +661,10 @@ def _preflight_robomimic_runtime_entitlement(
         expires_at = datetime.strptime(
             record["expires_at"], "%Y-%m-%dT%H:%M:%SZ"
         ).replace(tzinfo=timezone.utc)
-    except (TypeError, ValueError) as exc:
-        raise RuntimeError("robomimic customer entitlement time is invalid") from exc
+    except (TypeError, ValueError):
+        time_invalid = True
+    if time_invalid:
+        raise _RobomimicEntitlementRefusal("time-invalid")
     observed_now = now or datetime.now(timezone.utc)
     validity_seconds = int((expires_at - accepted_at).total_seconds())
     maximum_validity = contract.get("maximum_validity_seconds")
@@ -623,7 +675,7 @@ def _preflight_robomimic_runtime_entitlement(
         or validity_seconds > maximum_validity
         or observed_now >= expires_at
     ):
-        raise RuntimeError("robomimic customer entitlement time is invalid")
+        raise _RobomimicEntitlementRefusal("time-invalid")
     return {
         "record_sha256": hashlib.sha256(raw).hexdigest(),
         "customer_binding_sha256": expected["customer_binding_sha256"],
@@ -1173,15 +1225,29 @@ def _robomimic_target_env(
 def _invoke_robomimic_gate(
     e2e_project: str | None,
 ) -> tuple[dict[str, object], str, str]:
-    selectors = _robomimic_live_selectors(e2e_project)
+    context_refused = False
+    try:
+        selectors = _robomimic_live_selectors(e2e_project)
+    except Exception:
+        context_refused = True
+    if context_refused:
+        raise _RobomimicEntitlementRefusal("context-invalid")
     run_id = os.environ.get("NPA_BYOF_ROBOMIMIC_RUN_ID") or (
         f"robomimic-live-{secrets.token_hex(8)}"
     )
     if re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", run_id) is None:
-        raise RuntimeError("robomimic run ID is not a safe output slug")
-    entitlement = _preflight_robomimic_runtime_entitlement(
-        selectors=selectors, run_id=run_id
-    )
+        raise _RobomimicEntitlementRefusal("identity-invalid")
+    refusal_category = ""
+    try:
+        entitlement = _preflight_robomimic_runtime_entitlement(
+            selectors=selectors, run_id=run_id
+        )
+    except _RobomimicEntitlementRefusal as exc:
+        refusal_category = exc.category
+    except Exception:
+        refusal_category = "record-invalid"
+    if refusal_category:
+        raise _RobomimicEntitlementRefusal(refusal_category)
     _activate_nebius_profile()
     config = load_spec(ROBOMIMIC_SPEC).config
     registry = resolve_container_registry(e2e_project)
