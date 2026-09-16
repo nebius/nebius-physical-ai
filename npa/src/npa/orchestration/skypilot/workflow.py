@@ -2059,6 +2059,40 @@ def _wait_for_healthy_jobs_controller(
                 + _controller_health_remedy(detail)
             )
         controllers = _jobs_controller_statuses(result.stdout)
+        # A read-only jobs-queue reconciliation can materialize SkyPilot's
+        # exact controller row as INIT before any controller pod exists.  It is
+        # not a provisioning controller yet: waiting for it to become UP
+        # deadlocks the very `sky jobs launch` that creates the first pod.  Let
+        # the launch proceed only when the isolated user selects exactly one
+        # INIT row and the exact Kubernetes context proves that it has no head
+        # pod.  A live/provisioning pod, an ambiguous controller set, or an
+        # unbound user identity remains a normal transient preflight block.
+        if execution_probe is not None and len(controllers) == 1:
+            init_name, init_status = controllers[0]
+            user_id = str(env.get("SKYPILOT_USER_ID") or "").strip()
+            expected_init_name = (
+                f"{JOBS_CONTROLLER_PREFIX}{user_id}"
+                if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", user_id)
+                else ""
+            )
+            if (
+                init_status.upper() == "INIT"
+                and expected_init_name
+                and init_name == expected_init_name
+            ):
+                init_probe = execution_probe(init_name)
+                if (
+                    not init_probe.healthy
+                    and init_probe.outcome == "head_pod_ambiguous"
+                    and init_probe.pod_count == 0
+                ):
+                    return ControllerHealthResult(
+                        ControllerState.ABSENT,
+                        init_name,
+                        ControllerExecutionProbe(
+                            True, "controller_absent", pod_count=0
+                        ),
+                    )
         if require_existing and not controllers:
             last_summary = "no jobs-controller found"
             unhealthy = []
