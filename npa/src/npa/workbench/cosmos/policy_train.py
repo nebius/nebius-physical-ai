@@ -75,12 +75,24 @@ def _collect_checkpoint(output: Path, artifacts: Path, settings: TrainSettings) 
             raise ValueError(f"incomplete native checkpoint component: {component}")
     # Keep the native .../checkpoints/iter_<step> layout required by its loader.
     relative = f"job/checkpoints/{checkpoint.name}"
-    shutil.copytree(checkpoint, artifacts / relative)
     config = checkpoint.parent.parent / "config.yaml"
     if not config.is_file():
         raise ValueError("native training omitted the resolved configuration")
+    # Both directories belong to this temporary workspace. Rename the completed
+    # checkpoint instead of duplicating hundreds of GB on the worker's disk.
+    target = artifacts / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint.rename(target)
     shutil.copyfile(config, artifacts / "job/config.yaml")
     return relative
+
+
+def _verify_processor_revision(model: Path) -> None:
+    # The pinned native converter resolves its processor through a registry
+    # entry using main. Refuse silent metadata drift from the pinned weights.
+    reference = model.parent.parent / "refs/main"
+    if not reference.is_file() or reference.read_text().strip() != MODEL_REVISION:
+        raise ValueError("native processor registry did not resolve the pinned model revision")
 
 
 def train_policy(*, input_path: str, output_path: str) -> dict[str, Any]:
@@ -108,6 +120,7 @@ def train_policy(*, input_path: str, output_path: str) -> dict[str, Any]:
         run_native([str(repo / ".venv/bin/python"), "-m", "cosmos_framework.scripts.convert_model_to_dcp",
                     "--checkpoint-path", str(model), "-o", env["BASE_CHECKPOINT_PATH"]],
                    cwd=repo, env=env, log=artifacts / "conversion.log")
+        _verify_processor_revision(model)
         elapsed = _run_training(repo, settings, env, artifacts)
         checkpoint = _collect_checkpoint(root / "output", artifacts, settings)
         shutil.copyfile(vae, artifacts / "Wan2.2_VAE.pth")
@@ -134,6 +147,7 @@ def _training_report(settings: TrainSettings, checkpoint: str, elapsed: float,
     return {"schema": TRAIN_SCHEMA, "status": "succeeded", "checkpoint": checkpoint,
             "framework_revision": FRAMEWORK_REVISION, "experiment": EXPERIMENT,
             "model_revision": MODEL_REVISION, "dataset_revision": DATASET_REVISION,
+            "processor_revision": MODEL_REVISION,
             "vae_revision": VAE_REVISION, "action_contract": ACTION_CONTRACT,
             "settings": settings.model_dump(), "training_seconds": elapsed,
             "training_gpu_seconds": settings.processes * elapsed,

@@ -63,7 +63,14 @@ The policy server binds to loopback within the evaluation worker. It serves the
 verified trained checkpoint, not the public generation base. Checkpoint handoffs
 verify every artifact's size and SHA-256. Missing checkpoint components, missing
 episodes, repeated episode IDs, invalid rates and incompatible action semantics
-fail the stage.
+fail the stage. Simulator or policy-server errors and episodes with no completed
+steps also fail validation; they cannot become policy-failure targets.
+
+The native converter resolves processor metadata through an upstream registry
+entry using `main`. The adapter verifies that this lookup resolved the same
+pinned revision as the model weights, failing before training if it drifted.
+Completed checkpoints move within the private worker workspace before upload,
+avoiding a second full disk copy of model and optimizer state.
 
 ## Runtime and access
 

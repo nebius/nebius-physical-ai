@@ -11,10 +11,10 @@ import pytest
 from pydantic import ValidationError
 
 from npa.workbench.cosmos.policy_artifacts import materialize_bundle, policy_workspace, publish_bundle
-from npa.workbench.cosmos.policy_contract import ACTION_CONTRACT, EvalSettings, TrainSettings, validate_summary
+from npa.workbench.cosmos.policy_contract import ACTION_CONTRACT, MODEL_REVISION, EvalSettings, TrainSettings, validate_summary
 from npa.workbench.cosmos.policy_eval import EVAL_SCHEMA, evaluation_argv, server_argv
 from npa.workbench.cosmos.policy_feedback import FEEDBACK_SCHEMA, generate_failure_candidates, policy_feedback
-from npa.workbench.cosmos.policy_train import _collect_checkpoint, _fetch_inputs, train_policy, training_argv
+from npa.workbench.cosmos.policy_train import _collect_checkpoint, _fetch_inputs, _verify_processor_revision, train_policy, training_argv
 
 
 def _summary(settings: EvalSettings, failures: int = 0) -> dict:
@@ -99,6 +99,22 @@ def test_perfect_functional_smoke_cannot_qualify_checkpoint(tmp_path, settings):
     assert result["improvement_proven"] is False
 
 
+@pytest.mark.parametrize("invalid_episode", [
+    {"error": "Empty action chunk from server"},
+    {"error": "Simulator initialization failed", "steps": 0},
+    {"steps": 0}, {"steps": None}, {"steps": True}, {"steps": 1.5},
+])
+def test_runtime_errors_cannot_become_policy_failure_feedback(tmp_path, invalid_episode):
+    manifest = _evaluation(tmp_path, EvalSettings(trials_per_task=1, task_ids=[0]), failures=1)
+    report = json.loads(manifest.read_text())
+    report["summary"]["task_results"][0]["episode_results"][0].update(invalid_episode)
+    manifest.write_text(json.dumps(report))
+    output = tmp_path / "feedback"
+    with pytest.raises(ValueError, match="evaluation"):
+        policy_feedback(input_path=str(manifest), output_path=str(output))
+    assert not (output / "feedback.json").exists()
+
+
 def test_full_benchmark_qualifies_without_claiming_relative_improvement(tmp_path):
     manifest = _evaluation(tmp_path, EvalSettings(), failures=2)
     result = policy_feedback(input_path=str(manifest), output_path=str(tmp_path / "feedback"))
@@ -152,6 +168,44 @@ def test_missing_optimizer_state_cannot_be_published_as_training(tmp_path):
     (checkpoint / "__0_0.distcp").write_bytes(b"weights")
     with pytest.raises(ValueError, match="optim"):
         _collect_checkpoint(tmp_path / "output", tmp_path / "artifacts", TrainSettings(iterations=5))
+
+
+@pytest.mark.parametrize("revision", [None, "different-revision", MODEL_REVISION])
+def test_native_processor_registry_cannot_drift_from_pinned_model(tmp_path, revision):
+    snapshot = tmp_path / "model/snapshots" / MODEL_REVISION
+    if revision is not None:
+        ref = tmp_path / "model/refs/main"
+        ref.parent.mkdir(parents=True)
+        ref.write_text(revision)
+    if revision == MODEL_REVISION:
+        _verify_processor_revision(snapshot)
+    else:
+        with pytest.raises(ValueError, match="processor registry"):
+            _verify_processor_revision(snapshot)
+
+
+@pytest.mark.parametrize("has_config", [True, False])
+def test_completed_checkpoint_handoff_preserves_bytes_without_disk_duplication(tmp_path, has_config):
+    job = tmp_path / "output/job"
+    checkpoint = job / "checkpoints/iter_000000005"
+    for component in ("model", "optim", "scheduler", "trainer"):
+        folder = checkpoint / component
+        folder.mkdir(parents=True)
+        (folder / ".metadata").write_bytes(b"metadata")
+        (folder / "__0_0.distcp").write_bytes(component.encode())
+    inode = (checkpoint / "model/__0_0.distcp").stat().st_ino
+    if not has_config:
+        with pytest.raises(ValueError, match="resolved configuration"):
+            _collect_checkpoint(tmp_path / "output", tmp_path / "artifacts", TrainSettings(iterations=5))
+        assert checkpoint.is_dir()
+        return
+    (job / "config.yaml").write_text("resolved: true\n")
+    relative = _collect_checkpoint(tmp_path / "output", tmp_path / "artifacts", TrainSettings(iterations=5))
+    staged = tmp_path / "artifacts" / relative
+    assert (staged / "model/__0_0.distcp").stat().st_ino == inode
+    assert (staged / "optim/__0_0.distcp").read_bytes() == b"optim"
+    assert (tmp_path / "artifacts/job/config.yaml").read_text() == "resolved: true\n"
+    assert not checkpoint.exists()
 
 
 def test_native_failure_retains_diagnostics_without_success_marker(tmp_path):

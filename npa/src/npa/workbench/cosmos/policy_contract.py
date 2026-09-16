@@ -101,6 +101,10 @@ def _validate_task(task: dict[str, Any], trials: int) -> None:
         raise ValueError("evaluation contains repeated or missing episode IDs")
     if any(type(result.get("success")) is not bool for result in results):
         raise ValueError("episode success must be a boolean")
+    if any(result.get("error") is not None for result in results):
+        raise ValueError("evaluation contains simulator or policy-server errors")
+    if any(type(result.get("steps")) is not int or result["steps"] <= 0 for result in results):
+        raise ValueError("evaluation requires completed simulator steps for every episode")
     successes = sum(result["success"] for result in results)
     if task.get("successes") != successes:
         raise ValueError("task success count disagrees with episode evidence")
