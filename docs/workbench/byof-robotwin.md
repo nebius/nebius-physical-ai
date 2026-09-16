@@ -81,7 +81,7 @@ runtime-lock hash, immutable bootstrap digest, one STRICT RTX reservation,
 resource coordinates, opaque customer scope, and one output root/run ID. It
 contains no legal-acceptance booleans. The customer-issued entitlement binds
 that customer scope and run ID to runtime-lock SHA-256
-`dc882049f7cbf4042ab804f3703c3f72e386a077ef54973d667cab9f3594a7b9`, a future
+`d198a02d46dc2adc0dfbe33ff1a27d06f2525b9d05911c6b5552da1eb74d5b60`, a future
 expiry, the exact intended activity, the exact three terms records, and an
 explicit `accepted` or `declined` decision. Missing, declined, stale,
 wrong-customer, wrong-run, wrong-manifest, wrong-scope, or changed-terms records

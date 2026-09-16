@@ -57,7 +57,7 @@ SOURCE_REVISION = "96c1feab536306b50c26af200044fcdf126e8904"
 CUROBO_REVISION = "d64c4b005459db10c5dd867d8b30a87d5bda9bdb"
 ASSET_REVISION = "785feb15aa4a4f532395ad2b1d2be5f28cb561ad"
 WORKFLOW_SHA256 = "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3"
-RUNTIME_LOCK_SHA256 = "dc882049f7cbf4042ab804f3703c3f72e386a077ef54973d667cab9f3594a7b9"
+RUNTIME_LOCK_SHA256 = "d198a02d46dc2adc0dfbe33ff1a27d06f2525b9d05911c6b5552da1eb74d5b60"
 RUNTIME_LOCK_STATUS = "bootstrap-complete-runtime-disabled"
 RUNTIME_AUTH_SCHEMA = "npa.byof.robotwin.runtime-authorization.v2"
 CUSTOMER_ENTITLEMENT_SCHEMA = "npa.byof.robotwin.customer-runtime-entitlement.v1"
@@ -963,6 +963,12 @@ def load_runtime_authorization(
         if entitlement_path
         else read_customer_entitlement(source)
     )
+    _parse_customer_entitlement(
+        entitlement_raw,
+        customer_scope_id=context_values["customer_scope_id"],
+        run_id=context_values["run_id"],
+        context=raw,
+    )
     kube_path = str(source.get(MATERIALIZED_KUBECONFIG_ENV) or "").strip()
     sky_path = str(source.get(MATERIALIZED_SKYPILOT_CONFIG_ENV) or "").strip()
     if bool(kube_path) != bool(sky_path):
@@ -1239,7 +1245,16 @@ def prepare_live_submit(
         raise _refusal("context-secret-not-requested")
     if CUSTOMER_ENTITLEMENT_ENV not in requested_secret_envs:
         raise _refusal("customer-entitlement-secret-not-requested")
-    authorization = require_runtime_lock_complete(load_runtime_authorization(environ))
+    source = os.environ if environ is None else environ
+    internal_channels = tuple(
+        name
+        for name in CONTEXT_ENV_NAMES
+        if name not in {PUBLIC_CONTEXT_ENV, CUSTOMER_ENTITLEMENT_ENV}
+        and str(source.get(name) or "").strip()
+    )
+    if internal_channels:
+        raise _refusal("internal-context-channel-forbidden")
+    authorization = require_runtime_lock_complete(load_runtime_authorization(source))
     return RobotwinSubmitContext(
         authorization.context_sha256,
         authorization,

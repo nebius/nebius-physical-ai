@@ -20,6 +20,7 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
     CHILD_OUTPUT_ROOT_ENV,
     CHILD_RUN_ID_ENV,
     CHILD_RUNTIME_AUTH_ENV,
+    CONTEXT_ENV_NAMES,
     CUSTOMER_ENTITLEMENT_ENV,
     CUSTOMER_ENTITLEMENT_NOTICE,
     CUSTOMER_ENTITLEMENT_SCHEMA,
@@ -113,7 +114,7 @@ def _context_payload(tmp_path: Path, **updates: object) -> dict[str, object]:
         "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
         "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
         "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-        "runtime_lock_sha256": "dc882049f7cbf4042ab804f3703c3f72e386a077ef54973d667cab9f3594a7b9",
+        "runtime_lock_sha256": "d198a02d46dc2adc0dfbe33ff1a27d06f2525b9d05911c6b5552da1eb74d5b60",
         "bootstrap_image": "registry.example/robotwin-private/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "reservation": {
             "policy": "STRICT",
@@ -749,6 +750,56 @@ def test_live_submit_requires_public_secret_name_and_binds_coordinates(
             outer_override_requested=False,
             runtime_requested=False,
         )
+
+
+@pytest.mark.parametrize(
+    "internal_name",
+    tuple(
+        name
+        for name in CONTEXT_ENV_NAMES
+        if name not in {PUBLIC_CONTEXT_ENV, CUSTOMER_ENTITLEMENT_ENV}
+    ),
+)
+def test_live_submit_rejects_every_internal_context_channel_before_loading(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, internal_name: str
+) -> None:
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.robotwin_preflight.RUNTIME_LOCK_STATUS",
+        "complete",
+    )
+    environment, _context_path, _raw, _entitlement_path, _entitlement_raw = (
+        _authorization_environment(tmp_path)
+    )
+    environment[internal_name] = "private-internal-channel-canary"
+
+    with pytest.raises(
+        RobotwinPreflightError, match="internal-context-channel-forbidden"
+    ) as caught:
+        prepare_live_submit(
+            load_spec(ROBOTWIN_SPEC),
+            requested_secret_envs=(PUBLIC_CONTEXT_ENV, CUSTOMER_ENTITLEMENT_ENV),
+            environ=environment,
+        )
+
+    assert "private-internal-channel-canary" not in str(caught.value)
+
+
+def test_invalid_entitlement_refuses_before_config_file_reads(tmp_path: Path) -> None:
+    environment, _context_path, raw, entitlement_path, _entitlement_raw = (
+        _authorization_environment(tmp_path)
+    )
+    context = json.loads(raw)
+    entitlement_path.write_bytes(
+        json.dumps(
+            _entitlement_payload(context, expires_at="2020-01-01T00:00:00Z"),
+            sort_keys=True,
+        ).encode()
+    )
+    Path(str(context["kubeconfig"])).unlink()
+    Path(str(context["skypilot_config_path"])).unlink()
+
+    with pytest.raises(RobotwinPreflightError, match="customer-entitlement-stale"):
+        load_runtime_authorization(environment)
 
 
 def test_live_submit_refuses_disabled_runtime_after_context_validation(

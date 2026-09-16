@@ -186,7 +186,7 @@
     },
     "python_runtime": {
       "purpose": "NPA standard-library refusal bootstrap only",
-      "requirements_lock_sha256": "cce5aad788880905cc7b6755c66d294577a68b3b8ea8eeb5b1eb96a997b041f2",
+      "requirements_lock_sha256": "728845a6914f7ea3a94c0e4be2eb306496327cff224340c38aa9aaef24be7e33",
       "application_artifact_count": 0
     },
     "forbidden_payloads": [
