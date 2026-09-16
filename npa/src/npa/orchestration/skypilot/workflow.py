@@ -863,6 +863,11 @@ def submit_workflow(
                     "SkyPilot global config kubernetes section must be a mapping"
                 )
             kubernetes["allowed_contexts"] = [controller_context]
+            # A k8s/<context> target is an exact execution boundary.  Make
+            # SkyPilot's capability cache use only that provider so a managed
+            # job submit cannot traverse optional cloud adaptors unrelated to
+            # the selected cluster.
+            global_config["allowed_clouds"] = ["kubernetes"]
         # ``sky.server.server --port`` owns a dynamically allocated loopback
         # endpoint for every NPA-isolated runtime.  SkyPilot's client reads the
         # endpoint from its YAML config (not merely the process environment),

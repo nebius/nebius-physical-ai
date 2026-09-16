@@ -1217,6 +1217,7 @@ def test_submit_workflow_secrets_can_come_from_extra_env(monkeypatch, tmp_path) 
         ).read_text(encoding="utf-8")
     )
     assert rendered["kubernetes"]["allowed_contexts"] == ["npa-rtxpro-mk8s"]
+    assert rendered["allowed_clouds"] == ["kubernetes"]
 
 
 def test_submit_workflow_replaces_stale_kubernetes_context_allowlist(
@@ -1257,6 +1258,7 @@ def test_submit_workflow_replaces_stale_kubernetes_context_allowlist(
 
     rendered = yaml.safe_load(Path(result.log_paths["config"]).read_text())
     assert rendered["kubernetes"]["allowed_contexts"] == ["run-owned-context"]
+    assert rendered["allowed_clouds"] == ["kubernetes"]
     assert rendered["kubernetes"]["pod_config"]["spec"]["imagePullSecrets"] == [
         {"name": "customer-registry-auth"}
     ]

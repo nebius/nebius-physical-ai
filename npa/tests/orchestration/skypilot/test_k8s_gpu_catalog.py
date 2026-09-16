@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 
 import pytest
+import yaml
 
 import npa.orchestration.skypilot.k8s_gpu_catalog as gpu_catalog
 from npa.orchestration.skypilot.k8s_gpu_catalog import (
@@ -1186,12 +1187,18 @@ def test_validation_environment_recovers_stale_receipt_raised_before_api_ensure(
     monkeypatch.delenv("SKYPILOT_USER_ID", raising=False)
     calls: list[str] = []
     recovered: list[dict[str, str]] = []
+    client_configs: list[dict] = []
 
     from npa.orchestration.skypilot import local_api
     from npa.orchestration.skypilot import cleanup
 
     def fake_sky_environment(scope: Path, *, environment: dict[str, str]) -> dict[str, str]:
         calls.append("environment")
+        client_configs.append(
+            yaml.safe_load(
+                Path(environment["SKYPILOT_GLOBAL_CONFIG"]).read_text(encoding="utf-8")
+            )
+        )
         if calls.count("environment") == 1:
             raise local_api.IsolatedApiError(
                 "isolated SkyPilot API recovery requires the original executing "
@@ -1219,6 +1226,7 @@ def test_validation_environment_recovers_stale_receipt_raised_before_api_ensure(
 
     assert calls == ["environment", "environment", "ensure"]
     assert env["SKYPILOT_USER_ID"] == "npa-test-validation"
+    assert all(config["allowed_clouds"] == ["kubernetes"] for config in client_configs)
     assert len(recovered) == 1
     expected_scope = isolated_root / "cluster-validation" / (
         hashlib.sha256(

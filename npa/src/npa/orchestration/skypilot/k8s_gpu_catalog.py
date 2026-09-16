@@ -214,6 +214,11 @@ def kubernetes_sky_environment(
         if not isinstance(kubernetes, dict):
             raise RuntimeError("SkyPilot Kubernetes configuration must be a mapping")
         kubernetes["allowed_contexts"] = [context]
+        # This validation scope is deliberately Kubernetes-only.  Without an
+        # explicit allowlist, SkyPilot refreshes every bundled provider while
+        # looking up cached cloud capability, including optional providers
+        # whose extras are not part of NPA's Kubernetes runtime.
+        config["allowed_clouds"] = ["kubernetes"]
         config_bytes = yaml.safe_dump(config, sort_keys=True).encode()
         config_path = scope / "client-config.yaml"
         try:
