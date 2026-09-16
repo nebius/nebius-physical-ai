@@ -174,6 +174,22 @@ def _recover_idle_validation_scope(
     return True
 
 
+def _is_stale_validation_api_error(error: Exception) -> bool:
+    """Return whether an idle validation API receipt may be safely retired."""
+
+    detail = str(error).lower()
+    markers = (
+        "recovery requires the original executing identity and credential configuration",
+        "recovery requires the original selected npa configuration",
+        "running isolated skypilot api has a different executing identity",
+        "running isolated skypilot api has a different verified configuration",
+        "credential configuration changed after verification",
+        "verified configuration changed on disk",
+        "process environment disagrees with its ownership record",
+    )
+    return any(marker in detail for marker in markers)
+
+
 def kubernetes_sky_environment(
     *, context: str, kubeconfig: Kubeconfig, sky_executable: str,
 ) -> dict[str, str]:
@@ -283,16 +299,7 @@ def kubernetes_sky_environment(
             # changes. Retire only this validation scope after Kubernetes
             # proves its exact controller pod does not exist; workflow
             # controller state is never touched here.
-            identity_error = str(exc).lower()
-            stale_validation_identity = any(
-                marker in identity_error
-                for marker in (
-                    "recovery requires the original executing identity and credential configuration",
-                    "running isolated skypilot api has a different executing identity",
-                    "credential configuration changed after verification",
-                )
-            )
-            if not stale_validation_identity or not _recover_idle_validation_scope(
+            if not _is_stale_validation_api_error(exc) or not _recover_idle_validation_scope(
                 scope,
                 context=context,
                 kubeconfig_path=kubeconfig_path,

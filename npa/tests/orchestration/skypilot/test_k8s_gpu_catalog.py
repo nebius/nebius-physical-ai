@@ -1176,10 +1176,27 @@ def test_idle_validation_scope_recovery_refuses_a_live_controller(tmp_path) -> N
     assert (scope / "home").is_dir()
 
 
+@pytest.mark.parametrize("message", [
+    "isolated SkyPilot API process lifetime disagrees with its ownership record",
+    "isolated SkyPilot API port is held by an unowned process",
+    "isolated SkyPilot API belongs to another network namespace",
+])
+def test_stale_validation_recovery_refuses_unproven_api_ownership(message: str) -> None:
+    from npa.orchestration.skypilot import local_api
+
+    assert not gpu_catalog._is_stale_validation_api_error(
+        local_api.IsolatedApiError(message)
+    )
+
+
 @pytest.mark.parametrize("failure_message", [
     "isolated SkyPilot API recovery requires the original executing identity and credential configuration",
     "running isolated SkyPilot API has a different executing identity or changed credential configuration",
     "isolated SkyPilot API credential configuration changed after verification",
+    "isolated SkyPilot API recovery requires the original selected NPA configuration",
+    "running isolated SkyPilot API has a different verified configuration; preserve its jobs before restarting",
+    "isolated SkyPilot API verified configuration changed on disk",
+    "isolated SkyPilot API process environment disagrees with its ownership record",
 ])
 def test_validation_environment_recovers_stale_identity_raised_before_api_ensure(
     failure_message: str,
