@@ -249,6 +249,8 @@ def test_train_eval_action_contract_and_loopback_binding_match():
     assert server[server.index("--checkpoint-path") + 1] == str(bundle / "checkpoint/model")
     assert server[server.index("--raw-action-dim") + 1] == evaluation[evaluation.index("--action_dim") + 1]
     assert server[server.index("--action-normalization") + 1] == "quantile_rot"
+    assert "dataloader_train.dataloader.datasets.libero.dataset.root=null" in server
+    assert "dataloader_train=null" not in server
     assert evaluation[evaluation.index("--camera") + 1] == "agentview,wrist"
     assert "--max_steps" not in evaluation
 
@@ -293,6 +295,24 @@ def test_evaluation_setup_failure_does_not_download_checkpoint(tmp_path, monkeyp
         evaluation.evaluate_policy(input_path=str(tmp_path / "training.json"),
                                    output_path=str(tmp_path / "result"), trials_per_task=1, task_ids="0")
     assert (tmp_path / "result/failure/failure.json").is_file()
+
+
+def test_native_config_failure_precedes_simulator_setup_and_checkpoint_download(tmp_path, monkeypatch):
+    import npa.workbench.cosmos.policy_eval as evaluation
+
+    monkeypatch.setattr(evaluation, "prepare_training_runtime", lambda root, **kwargs: (root, {}))
+    def fail_config(argv, **kwargs):
+        assert "dataloader_train.dataloader.datasets.libero.dataset.root=null" in argv
+        assert evaluation.EXPERIMENT in argv
+        raise RuntimeError("native config interpolation failed")
+    def unexpected(*args, **kwargs):
+        pytest.fail("native configuration must resolve before simulator setup or checkpoint download")
+    monkeypatch.setattr(evaluation, "run_native", fail_config)
+    monkeypatch.setattr(evaluation, "prepare_simulation_runtime", unexpected)
+    monkeypatch.setattr(evaluation, "materialize_bundle", unexpected)
+    with pytest.raises(RuntimeError, match="config interpolation"):
+        evaluation.evaluate_policy(input_path=str(tmp_path / "training.json"),
+                                   output_path=str(tmp_path / "result"), trials_per_task=1, task_ids="0")
 
 
 @pytest.mark.parametrize("tasks", [[], [1, 1], [-1], [10]])

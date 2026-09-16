@@ -24,6 +24,25 @@ from npa.workbench.cosmos.policy_train import TRAIN_SCHEMA
 EVAL_SCHEMA = "npa.cosmos3.policy-eval.v1"
 
 
+def _inference_overrides(bundle: Path) -> list[str]:
+    # The server introspects the dataloader's action/prompt settings but never
+    # instantiates it. Clear only its unused training-data root so native config
+    # resolution does not depend on LIBERO_ROOT from a previous worker.
+    return [f"model.config.tokenizer.vae_path={bundle / 'Wan2.2_VAE.pth'}",
+            "dataloader_train.dataloader.datasets.libero.dataset.root=null"]
+
+
+def _preflight_configuration(repo: Path, bundle: Path, env: dict[str, str], artifacts: Path) -> None:
+    code = ("import sys; from pathlib import Path; "
+            "from cosmos_framework.inference.common.config import load_config, save_config; "
+            "config = load_config('cosmos_framework/configs/base/config.py', sys.argv[1], "
+            "overrides=sys.argv[3:]); save_config(config, Path(sys.argv[2])); "
+            "print('Native inference configuration resolved')")
+    run_native([str(repo / ".venv/bin/python"), "-c", code, EXPERIMENT,
+                str(artifacts / "inference-config"), *_inference_overrides(bundle)],
+               cwd=repo, env=env, log=artifacts / "inference-configuration.log")
+
+
 def server_argv(repo: Path, bundle: Path, checkpoint: Path, port: int, seed: int) -> list[str]:
     """Bind the native policy server to loopback with matching training semantics.
 
@@ -40,7 +59,7 @@ def server_argv(repo: Path, bundle: Path, checkpoint: Path, port: int, seed: int
     """
     return [str(repo / ".venv/bin/python"), "-m", "cosmos_framework.scripts.action_policy_server_libero",
             "--experiment", EXPERIMENT, "--checkpoint-path", str(checkpoint / "model"),
-            "--experiment-overrides", f"model.config.tokenizer.vae_path={bundle / 'Wan2.2_VAE.pth'}",
+            "--experiment-overrides", *_inference_overrides(bundle),
             "--action-normalization", "quantile_rot", "--action-stats-path", str(bundle / "action_stats.json"),
             "--raw-action-dim", "10", "--fps", "20", "--host", "127.0.0.1",
             "--port", str(port), "--seed", str(seed)]
@@ -134,6 +153,7 @@ def evaluate_policy(*, input_path: str, output_path: str, trials_per_task: int =
         # Complete dependency checks before transferring a full distributed
         # checkpoint. Failed setup must not waste a large artifact readback.
         repo, env = prepare_training_runtime(root, guardrails=True)
+        _preflight_configuration(repo, root / "bundle", env, artifacts)
         python = prepare_simulation_runtime(root, repo, env)
         for log in root.glob("*.log"):
             shutil.copyfile(log, artifacts / log.name)
