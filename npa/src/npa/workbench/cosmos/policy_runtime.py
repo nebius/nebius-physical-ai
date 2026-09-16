@@ -43,11 +43,12 @@ def _checkout(url: str, revision: str, target: Path, log: Path) -> None:
         raise ValueError("native source revision mismatch")
 
 
-def prepare_training_runtime(root: Path) -> tuple[Path, dict[str, str]]:
+def prepare_training_runtime(root: Path, *, guardrails: bool = False) -> tuple[Path, dict[str, str]]:
     """Fetch an immutable framework and sync its real training dependencies.
 
     Args:
         root: Fresh, private runtime directory on a Linux CUDA worker.
+        guardrails: Include the native policy server's guardrail dependencies.
     Returns:
         Framework checkout and environment enabling native training.
     Raises:
@@ -60,13 +61,22 @@ def prepare_training_runtime(root: Path) -> tuple[Path, dict[str, str]]:
     env = dict(os.environ, COSMOS_TRAINING="1", PYTHONPATH=str(repo), WANDB_MODE="disabled")
     env.pop("VIRTUAL_ENV", None)
     env.pop("UV_PROJECT_ENVIRONMENT", None)
-    run_native(["uv", "sync", "--frozen", "--extra", "train", "--group", "cu130-train"],
+    sync = ["uv", "sync", "--frozen", "--extra", "train", "--group", "cu130-train"]
+    if guardrails:
+        sync.extend(["--extra", "guardrail"])
+    run_native(sync,
                cwd=repo, env=env, log=log)
     run_native([str(repo / ".venv/bin/python"), "-c",
                 "import torch, transformer_engine; "
                 "assert torch.__version__.startswith('2.10.0'); "
                 "assert torch.cuda.is_available(); print(torch.cuda.get_device_name())"],
                cwd=repo, env=env, log=log)
+    if guardrails:
+        run_native([str(repo / ".venv/bin/python"), "-c",
+                    "from cosmos_framework.auxiliary.guardrail.common import presets; "
+                    "from cosmos_framework.auxiliary.guardrail.face_blur_filter.face_blur_filter "
+                    "import RetinaFaceFilter; print('Native guardrail imports passed')"],
+                   cwd=repo, env=env, log=log)
     run_native(["uv", "pip", "freeze", "--python", str(repo / ".venv/bin/python")],
                cwd=repo, env=env, log=root / "training-environment.log")
     return repo, env

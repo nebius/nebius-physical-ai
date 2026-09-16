@@ -39,7 +39,7 @@ def server_argv(repo: Path, bundle: Path, checkpoint: Path, port: int, seed: int
         None.
     """
     return [str(repo / ".venv/bin/python"), "-m", "cosmos_framework.scripts.action_policy_server_libero",
-            "--experiment", EXPERIMENT, "--checkpoint-path", str(checkpoint),
+            "--experiment", EXPERIMENT, "--checkpoint-path", str(checkpoint / "model"),
             "--experiment-overrides", f"model.config.tokenizer.vae_path={bundle / 'Wan2.2_VAE.pth'}",
             "--action-normalization", "quantile_rot", "--action-stats-path", str(bundle / "action_stats.json"),
             "--raw-action-dim", "10", "--fps", "20", "--host", "127.0.0.1",
@@ -97,7 +97,7 @@ def _evaluate_native(repo: Path, bundle: Path, checkpoint: Path, python: Path,
         process = subprocess.Popen(argv, cwd=repo, env=env, stdout=log, stderr=log)
         try:
             info = _wait_ready(process, port)
-            if Path(info.get("checkpoint", "")).resolve() != checkpoint.resolve():
+            if Path(info.get("checkpoint", "")).resolve() != (checkpoint / "model").resolve():
                 raise ValueError("policy server loaded a different checkpoint")
             write_local_json(artifacts / "server-info.json", info)
             run_native(evaluation_argv(python, repo, artifacts / "rollouts", port, settings),
@@ -131,14 +131,16 @@ def evaluate_policy(*, input_path: str, output_path: str, trials_per_task: int =
     with policy_workspace(output_path, "eval") as root:
         artifacts = root / "artifacts"
         artifacts.mkdir()
-        report = materialize_bundle(input_path, root / "bundle", TRAIN_SCHEMA)
-        _verify_contract(report)
-        repo, env = prepare_training_runtime(root)
-        if file_digest(root / "bundle/action_stats.json") != report["stats_sha256"]:
-            raise ValueError("checkpoint normalization statistics mismatch")
+        # Complete dependency checks before transferring a full distributed
+        # checkpoint. Failed setup must not waste a large artifact readback.
+        repo, env = prepare_training_runtime(root, guardrails=True)
         python = prepare_simulation_runtime(root, repo, env)
         for log in root.glob("*.log"):
             shutil.copyfile(log, artifacts / log.name)
+        report = materialize_bundle(input_path, root / "bundle", TRAIN_SCHEMA)
+        _verify_contract(report)
+        if file_digest(root / "bundle/action_stats.json") != report["stats_sha256"]:
+            raise ValueError("checkpoint normalization statistics mismatch")
         checkpoint = safe_s3_download_target(root / "bundle", report["checkpoint"], "")
         _evaluate_native(repo, root / "bundle", checkpoint, python, env, artifacts, settings)
         summary = json.loads((artifacts / "rollouts/summary.json").read_text())

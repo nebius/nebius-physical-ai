@@ -6,13 +6,14 @@ import copy
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
 from npa.workbench.cosmos.policy_artifacts import materialize_bundle, policy_workspace, publish_bundle
 from npa.workbench.cosmos.policy_contract import ACTION_CONTRACT, MODEL_REVISION, EvalSettings, TrainSettings, validate_summary
-from npa.workbench.cosmos.policy_eval import EVAL_SCHEMA, evaluation_argv, server_argv
+from npa.workbench.cosmos.policy_eval import EVAL_SCHEMA, _evaluate_native, evaluation_argv, server_argv
 from npa.workbench.cosmos.policy_feedback import FEEDBACK_SCHEMA, generate_failure_candidates, policy_feedback
 from npa.workbench.cosmos.policy_train import _collect_checkpoint, _fetch_inputs, _verify_processor_revision, train_policy, training_argv
 
@@ -245,10 +246,53 @@ def test_train_eval_action_contract_and_loopback_binding_match():
     server = server_argv(repo, bundle, bundle / "checkpoint", 8123, 7)
     evaluation = evaluation_argv(Path("/sim/python"), repo, Path("/out"), 8123, EvalSettings(seed=7))
     assert server[server.index("--host") + 1] == "127.0.0.1"
+    assert server[server.index("--checkpoint-path") + 1] == str(bundle / "checkpoint/model")
     assert server[server.index("--raw-action-dim") + 1] == evaluation[evaluation.index("--action_dim") + 1]
     assert server[server.index("--action-normalization") + 1] == "quantile_rot"
     assert evaluation[evaluation.index("--camera") + 1] == "agentview,wrist"
     assert "--max_steps" not in evaluation
+
+
+@pytest.mark.parametrize("matching_checkpoint", [True, False])
+def test_native_resolved_model_directory_controls_rollout_identity(tmp_path, monkeypatch, matching_checkpoint):
+    import npa.workbench.cosmos.policy_eval as evaluation
+
+    checkpoint = tmp_path / "job/checkpoints/iter_000000005"
+    native_path = checkpoint / "model" if matching_checkpoint else tmp_path / "different/model"
+    process = SimpleNamespace(terminate=lambda: None, wait=lambda **kwargs: 0)
+    monkeypatch.setattr(evaluation.subprocess, "Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(evaluation, "_wait_ready", lambda *args: {"checkpoint": str(native_path)})
+    calls = []
+    monkeypatch.setattr(evaluation, "run_native", lambda *args, **kwargs: calls.append(args))
+    def invoke():
+        _evaluate_native(tmp_path, tmp_path, checkpoint, tmp_path / "python", {}, tmp_path,
+                         EvalSettings(trials_per_task=1, task_ids=[0]))
+    if matching_checkpoint:
+        invoke()
+        assert len(calls) == 1
+        assert json.loads((tmp_path / "server-info.json").read_text())["checkpoint"] == str(native_path)
+    else:
+        with pytest.raises(ValueError, match="different checkpoint"):
+            invoke()
+        assert not calls
+
+
+def test_evaluation_setup_failure_does_not_download_checkpoint(tmp_path, monkeypatch):
+    import npa.workbench.cosmos.policy_eval as evaluation
+
+    def fail_setup(root, *, guardrails):
+        assert guardrails is True
+        raise RuntimeError("native runtime dependency failed")
+
+    def unexpected_download(*args, **kwargs):
+        pytest.fail("checkpoint download preceded runtime preflight")
+
+    monkeypatch.setattr(evaluation, "prepare_training_runtime", fail_setup)
+    monkeypatch.setattr(evaluation, "materialize_bundle", unexpected_download)
+    with pytest.raises(RuntimeError, match="dependency failed"):
+        evaluation.evaluate_policy(input_path=str(tmp_path / "training.json"),
+                                   output_path=str(tmp_path / "result"), trials_per_task=1, task_ids="0")
+    assert (tmp_path / "result/failure/failure.json").is_file()
 
 
 @pytest.mark.parametrize("tasks", [[], [1, 1], [-1], [10]])

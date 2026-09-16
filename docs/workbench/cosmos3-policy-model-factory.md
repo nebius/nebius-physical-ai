@@ -80,6 +80,9 @@ worker fetches the pinned framework into a separate directory and runs
 `uv sync --frozen --extra train --group cu130-train` with `COSMOS_TRAINING=1`.
 This selects the native Torch 2.10 stack. The simulator uses a separate Python
 3.10 environment and CPU OSMesa rendering, while the policy model uses the GPU.
+Evaluation also selects the native `guardrail` extra and checks its imports.
+Runtime setup completes before the large checkpoint download. The server's
+identity check uses its resolved DCP `model` directory.
 
 Workers need network access, git, uv, sufficient local disk for model, dataset,
 environment and DCP staging, and a compatible CUDA driver. In disposable
