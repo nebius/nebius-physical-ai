@@ -230,14 +230,31 @@ def kubernetes_sky_environment(
                 os.fsync(handle.fileno())
         env["SKYPILOT_GLOBAL_CONFIG"] = str(config_path)
         base_environment = dict(env)
-        env = sky_environment(scope, environment=base_environment)
-        try:
+
+        # ``sky_environment`` persists the isolated API endpoint intent and
+        # can itself attempt to reconnect a stopped owned daemon.  Keep that
+        # call inside the recovery boundary below: a credential-bound stale
+        # receipt is detected there before ``ensure_isolated_api`` is reached.
+        # The identity is deterministic when the caller did not explicitly
+        # provide one, matching ``sky_environment``'s derivation.
+        validation_user_id = str(base_environment.get("SKYPILOT_USER_ID") or "").strip()
+        if not validation_user_id:
+            validation_user_id = "npa-" + hashlib.sha256(
+                str(scope.resolve()).encode()
+            ).hexdigest()[:12]
+
+        def start_validation_api() -> dict[str, str]:
+            validation_env = sky_environment(scope, environment=base_environment)
             ensure_isolated_api(
                 isolated_dir=scope,
                 sky_executable=sky_executable,
-                environment=env,
+                environment=validation_env,
                 cwd=str(kubeconfig_path.parent),
             )
+            return validation_env
+
+        try:
+            env = start_validation_api()
         except local_api.IsolatedApiError as exc:
             # A stopped validation daemon can retain credential-bound SkyPilot
             # state after the metadata/profile source changes.  It is safe to
@@ -252,16 +269,10 @@ def kubernetes_sky_environment(
                 scope,
                 context=context,
                 kubeconfig_path=kubeconfig_path,
-                user_id=str(env.get("SKYPILOT_USER_ID") or ""),
+                user_id=validation_user_id,
             ):
                 raise
-            env = sky_environment(scope, environment=base_environment)
-            ensure_isolated_api(
-                isolated_dir=scope,
-                sky_executable=sky_executable,
-                environment=env,
-                cwd=str(kubeconfig_path.parent),
-            )
+            env = start_validation_api()
     return env
 
 

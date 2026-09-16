@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import subprocess
 
 import pytest
 
+import npa.orchestration.skypilot.k8s_gpu_catalog as gpu_catalog
 from npa.orchestration.skypilot.k8s_gpu_catalog import (
     KubernetesGpuCatalog,
     KubernetesGpuCatalogError,
@@ -1166,3 +1168,66 @@ def test_idle_validation_scope_recovery_refuses_a_live_controller(tmp_path) -> N
     )
     assert stopped == []
     assert (scope / "home").is_dir()
+
+
+def test_validation_environment_recovers_stale_receipt_raised_before_api_ensure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A stopped receipt can fail while ``sky_environment`` establishes intent.
+
+    That failure happens before the explicit ``ensure_isolated_api`` call, so
+    the narrow controller-absence recovery must cover both operations.
+    """
+
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    isolated_root = tmp_path / "isolated"
+    monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(isolated_root))
+    monkeypatch.delenv("SKYPILOT_USER_ID", raising=False)
+    calls: list[str] = []
+    recovered: list[dict[str, str]] = []
+
+    from npa.orchestration.skypilot import local_api
+    from npa.orchestration.skypilot import cleanup
+
+    def fake_sky_environment(scope: Path, *, environment: dict[str, str]) -> dict[str, str]:
+        calls.append("environment")
+        if calls.count("environment") == 1:
+            raise local_api.IsolatedApiError(
+                "isolated SkyPilot API recovery requires the original executing "
+                "identity and credential configuration"
+            )
+        return {**environment, "SKYPILOT_USER_ID": "npa-test-validation"}
+
+    def fake_recover(scope: Path, **kwargs: object) -> bool:
+        recovered.append({"scope": str(scope), "user_id": str(kwargs["user_id"])})
+        return True
+
+    monkeypatch.setattr(cleanup, "sky_environment", fake_sky_environment)
+    monkeypatch.setattr(
+        local_api,
+        "ensure_isolated_api",
+        lambda **_kwargs: calls.append("ensure"),
+    )
+    monkeypatch.setattr(gpu_catalog, "_recover_idle_validation_scope", fake_recover)
+
+    env = gpu_catalog.kubernetes_sky_environment(
+        context="exact-context",
+        kubeconfig=kubeconfig,
+        sky_executable="/opt/sky/bin/sky",
+    )
+
+    assert calls == ["environment", "environment", "ensure"]
+    assert env["SKYPILOT_USER_ID"] == "npa-test-validation"
+    assert len(recovered) == 1
+    expected_scope = isolated_root / "cluster-validation" / (
+        hashlib.sha256(
+            f"{kubeconfig.resolve()}\0exact-context".encode()
+        ).hexdigest()[:24]
+    )
+    assert recovered == [{
+        "scope": str(expected_scope),
+        "user_id": "npa-" + hashlib.sha256(
+            str(expected_scope.resolve()).encode()
+        ).hexdigest()[:12],
+    }]
