@@ -518,13 +518,18 @@ def _agent_profile_rebind_allowed(
     if not project or record.get("project_alias") != project:
         return False
     configured = str(environment.get("NPA_CONFIG_DIR") or "")
-    if not configured:
+    home = str(environment.get("HOME") or "")
+    if not configured or not home:
+        return False
+    if environment.get("NPA_NEBIUS_CREDENTIAL_SOURCE") != _METADATA_CREDENTIAL_SOURCE:
         return False
     try:
         config_root = Path(configured).expanduser().resolve(strict=False)
+        metadata_cache = Path(home).expanduser().absolute() / ".nebius" / "credentials.yaml"
         allowed = {
             str(config_root / "config.yaml"),
             str(config_root / "credentials.yaml"),
+            str(metadata_cache),
         }
         changed = {
             path for path in set(recorded_files) | set(files)

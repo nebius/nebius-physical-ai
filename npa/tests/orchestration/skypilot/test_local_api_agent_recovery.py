@@ -11,6 +11,7 @@ def _record(tmp_path, *, project: str = "agent-project") -> dict:
     files = {
         str(root / "config.yaml"): "before",
         str(root / "credentials.yaml"): "before",
+        str(tmp_path / "agent-home" / ".nebius" / "credentials.yaml"): "before",
         "/mnt/cloud-metadata/token": "before",
     }
     return {
@@ -25,6 +26,8 @@ def _environment(tmp_path, *, project: str = "agent-project") -> dict[str, str]:
         "NPA_AGENT_ISOLATED_RECOVERY_REBIND": "v1",
         "NPA_CONFIG_DIR": str(tmp_path / "npa"),
         "NPA_SKYPILOT_PROJECT": project,
+        "NPA_NEBIUS_CREDENTIAL_SOURCE": "instance_metadata",
+        "HOME": str(tmp_path / "agent-home"),
     }
 
 
@@ -34,6 +37,7 @@ def test_agent_recovery_rebinds_only_staged_profile_and_metadata(tmp_path):
     current = {
         str(root / "config.yaml"): "after",
         str(root / "credentials.yaml"): "after",
+        str(tmp_path / "agent-home" / ".nebius" / "credentials.yaml"): "after",
         "/mnt/cloud-metadata/token": "after",
     }
 
