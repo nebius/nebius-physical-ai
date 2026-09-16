@@ -3227,6 +3227,107 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.timeout_seconds}}",
         ],
     ),
+    "workbench.openarm.mujoco_rollout": ToolEntry(
+        name="workbench.openarm.mujoco_rollout",
+        description=(
+            "Step the real OpenArm v2 bimanual MJCF under position control and "
+            "persist joint, command, energy, and rendered-video artifacts."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "openarm",
+            "run",
+            "--simulator",
+            "mujoco",
+            "--output-path",
+            "{{config.mujoco_output_uri}}",
+            "--steps",
+            "{{config.mujoco_steps}}",
+            "--seed",
+            "{{config.seed}}",
+            "--render",
+            "--output-format",
+            "json",
+        ],
+    ),
+    "workbench.openarm.isaac_rollout": ToolEntry(
+        name="workbench.openarm.isaac_rollout",
+        description=(
+            "Launch runtime-fetched Isaac Sim/Lab and step an upstream OpenArm "
+            "vectorized environment with real PhysX/CUDA state and reward artifacts."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "openarm",
+            "run",
+            "--simulator",
+            "isaac-lab",
+            "--isaac-mode",
+            "rollout",
+            "--task",
+            "{{config.isaac_task}}",
+            "--output-path",
+            "{{config.isaac_output_uri}}",
+            "--steps",
+            "{{config.isaac_steps}}",
+            "--num-envs",
+            "{{config.num_envs}}",
+            "--seed",
+            "{{config.seed}}",
+            "--output-format",
+            "json",
+        ],
+    ),
+    "workbench.openarm.isaac_train": ToolEntry(
+        name="workbench.openarm.isaac_train",
+        description=(
+            "Run the pinned upstream OpenArm RSL-RL trainer and retain its real "
+            "checkpoint, configs, simulator logs, and provenance."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "openarm",
+            "run",
+            "--simulator",
+            "isaac-lab",
+            "--isaac-mode",
+            "train",
+            "--task",
+            "{{config.isaac_task}}",
+            "--output-path",
+            "{{config.training_output_uri}}",
+            "--num-envs",
+            "{{config.num_envs}}",
+            "--max-iterations",
+            "{{config.max_iterations}}",
+            "--seed",
+            "{{config.seed}}",
+            "--output-format",
+            "json",
+        ],
+    ),
+    "workbench.openarm.qualify": ToolEntry(
+        name="workbench.openarm.qualify",
+        description=(
+            "Download and independently validate the MuJoCo trace/video, Isaac "
+            "rollout trace, and Isaac training checkpoint before finalization."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "openarm",
+            "qualify",
+            "--input-path",
+            "{{config.run_root_uri}}",
+            "--output-path",
+            "{{config.qualification_output_uri}}",
+            "--output-format",
+            "json",
+        ],
+    ),
 }
 
 

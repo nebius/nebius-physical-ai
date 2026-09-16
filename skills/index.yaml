@@ -497,6 +497,20 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/robocasa-smoke.yaml
+  - name: openarm
+    category: tools
+    when_to_use: "Package, run, validate, or troubleshoot Enactic OpenArm v2 workloads through the first-class MuJoCo and NVIDIA Isaac Sim/Isaac Lab surfaces."
+    path: skills/tools/openarm/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "openarm", "run", "--help"]
+        contains: "simulator"
+      - type: cli_help
+        args: ["workbench", "openarm", "deploy", "--help"]
+        contains: "gpu-type"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/openarm-simulators.yaml
   - name: foxglove
     category: tools
     when_to_use: "Embed, operate, or debug the Foxglove viewer in the NPA agent: the @foxglove/embed TypeScript SDK, MCAP recordings, the npa-foxglove-embed container, and /api/foxglove/* endpoints."

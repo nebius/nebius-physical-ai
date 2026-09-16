@@ -944,6 +944,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Production PandaOmron RoboCasa data->policy pipeline: multi-task trajectory export, LeRobotDataset materialization, real ACT training, disjoint RoboCasa exact-checkpoint evaluation, insights lineage.",
     ),
     SubmitLiveCase(
+        "openarm-simulators.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="openarm",
+        notes=(
+            "Real Enactic OpenArm v2 MuJoCo control/render rollout followed by "
+            "runtime-fetched Isaac Sim/Lab reach rollout and upstream RSL-RL training."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-openpi.yaml",
         "multi",
         secret_envs=("NPA_OPENPI_ACCEPT_GEMMA_TERMS",),
