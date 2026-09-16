@@ -86,7 +86,7 @@ inference latency. The runtime uses an independent local Ray instance with
 a 256 MiB object store for small measurement records; it never discovers
 SkyPilot's management Ray through an ambient address.
 
-Release `0.1.0-cu128-r2` contains the sweep command and Ray 2.58.0 in the NPA
+Release `0.1.0-cu128-r3` contains the sweep command and Ray 2.58.0 in the NPA
 interpreter, independently of the upstream model interpreter. Use `--stage-src`
 only when intentionally testing source newer than that release, and bind the
 staged source to its content hash.
@@ -187,7 +187,7 @@ credential is a release blocker.
 
 ```bash
 bash npa/docker/workbench/alpamayo2-super/build.sh
-npa/.venv/bin/python npa/scripts/scan_image_alpamayo2_payload.py npa-alpamayo2-super:0.1.0-cu128-r2
+npa/.venv/bin/python npa/scripts/scan_image_alpamayo2_payload.py npa-alpamayo2-super:0.1.0-cu128-r3
 ```
 
 Build and scan prove redistribution hygiene only. A release also requires real
@@ -197,11 +197,14 @@ checks as model validation.
 
 ## Accepted release evidence
 
-Release `0.1.0-cu128-r2` (OCI index digest
-`sha256:e62bd2a8538aad7a861ae2dff302c17d606581d7aacd404dde412f4abcdf9e7d`)
-was validated on 2026-09-15 in operator-owned resources:
+Release `0.1.0-cu128-r3` (OCI index digest
+`sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07`)
+was built from source commit `5b693476c113c833e9d9d4f8c7aa492492a27505`,
+which contains the `HTTPConnection` loopback healthcheck fix, and validated on
+2026-09-16 in operator-owned resources. Later acceptance metadata commits are
+not the image source.
 
-- The scanner inspected all 26 image layers and found no checkpoint, dataset,
+- The scanner inspected all 25 image layers and found no checkpoint, dataset,
   populated Hugging Face cache, credential, or token payload.
 - One B200 (`sm_100`) completed real upstream inference and wrote valid result
   JSON, trajectory JSON, and a decoded 2970×2340 calibrated-camera PNG. The

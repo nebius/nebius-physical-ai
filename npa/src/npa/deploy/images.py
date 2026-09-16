@@ -173,8 +173,8 @@ PUBLIC_RELEASE_TAG_OVERRIDES: dict[str, str] = {
 # A newly built dev tag must earn fresh evidence before this mapping changes.
 GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES: dict[str, dict[str, str]] = {
     "alpamayo2-super": {
-        "development_sha": "24b2ee18170824e6c1e53dd8810a48d55d74214f",
-        "oci_digest": "sha256:e62bd2a8538aad7a861ae2dff302c17d606581d7aacd404dde412f4abcdf9e7d",
+        "development_sha": "5b693476c113c833e9d9d4f8c7aa492492a27505",
+        "oci_digest": "sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07",
     },
     "cosmos3": {
         "development_sha": "1925834f29983dd9a16659eb3dd350a7f5d13d99",
@@ -262,7 +262,7 @@ SUPPORTED_TOOL_VERSIONS = {
     # LTX source and weights remain operator-entitled runtime fetches. This tag
     # resolves only to the zero-payload digest recorded in ltx2_image_manifest.json.
     "ltx2": "2.5-rtfetch-20260817",
-    "alpamayo2-super": "0.1.0-cu128-r2",
+    "alpamayo2-super": "0.1.0-cu128-r3",
     "curobo": "0.8.0-cuda13-b300-unbuilt",
     "content-agents": "0.5.2-npa2",
     # Source packaging inventory only; no accepted public NCore release exists.

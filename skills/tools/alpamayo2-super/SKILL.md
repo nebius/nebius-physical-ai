@@ -98,14 +98,17 @@ merely because a validation job finished.
 
 ## Accepted release baseline
 
-`0.1.0-cu128-r2` is the accepted runtime-fetch baseline. Its OCI index digest is
-`sha256:e62bd2a8538aad7a861ae2dff302c17d606581d7aacd404dde412f4abcdf9e7d`.
-On 2026-09-15 the exact digest completed the real upstream workflow on B200
-(`sm_100`) and, independently, RTX PRO 6000 (`sm_120`). The 26-layer payload
-scan and complete vulnerability/secret/license scan were clean. Both runs
+`0.1.0-cu128-r3` is the accepted runtime-fetch baseline. Its OCI index digest is
+`sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07`.
+It was built from source commit `5b693476c113c833e9d9d4f8c7aa492492a27505`,
+which includes the `HTTPConnection` loopback healthcheck fix. Later acceptance
+metadata commits are not the image source. On 2026-09-16 the exact digest
+completed the real upstream workflow on B200 (`sm_100`) and, independently,
+RTX PRO 6000 (`sm_120`). The 25-layer payload scan and complete
+vulnerability/secret/license scan were clean. Both runs
 produced all three required artifacts, projected shape `[1, 1, 1, 64, 3]`, and
 runtime-only model/data provenance. B200 measured ADE 1.503835 and FDE 4.357265;
-RTX measured ADE 1.501321 and FDE 4.351557. Neither r2 run recorded a trustworthy
+RTX measured ADE 1.501321 and FDE 4.351557. Neither r3 run recorded a trustworthy
 peak allocation, so retain NVIDIA's 72,115 MiB H100 measurement as the
 conservative documented reference rather than inventing a B200 or RTX number.
 
@@ -119,7 +122,7 @@ B200 result.
 For Ray scenario/seed/diffusion experiments, use
 `workflows/testing/alpamayo2-ray-sweep.yaml` and
 `workflows/testing/alpamayo2-ray-hardcases.yaml`, derived from the inference
-template. Accepted release `0.1.0-cu128-r2` contains
+template. Accepted release `0.1.0-cu128-r3` contains
 `npa workbench alpamayo2-super sweep` and Ray 2.58.0 in the NPA interpreter.
 Use `--stage-src` only to test intentionally newer source. GPU actors reuse
 downloaded snapshots while upstream subprocesses reload weights per case; do

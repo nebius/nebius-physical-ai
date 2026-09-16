@@ -37,9 +37,9 @@ probe formatting, and updated documentation/tests. The final artifact
 validator was run against all 20 downloaded real outputs; the GPU runs were
 not repeated for those later changes.
 
-The current `0.1.0-cu128-r2` release has separate exact-digest single-inference
+The current `0.1.0-cu128-r3` release has separate exact-digest single-inference
 qualification on B200 and RTX PRO 6000. This historical report does not claim
-that its multi-case Ray grid was rerun on r2.
+that its multi-case Ray grid was rerun on r3.
 
 Each of the three report hashes passed the independent live artifact verifier.
 All 20 case JSON/PNG artifacts decoded and matched their requested sample,

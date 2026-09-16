@@ -319,16 +319,16 @@
         "sm_100",
         "sm_120"
       ],
-      "published_tag": "0.1.0-cu128-r2",
-      "published_digest": "sha256:e62bd2a8538aad7a861ae2dff302c17d606581d7aacd404dde412f4abcdf9e7d",
+      "published_tag": "0.1.0-cu128-r3",
+      "published_digest": "sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07",
       "publication_model": "exact-digest-promoted",
       "published_registries": [
         "public-development",
         "public-release"
       ],
-      "development_sha": "24b2ee18170824e6c1e53dd8810a48d55d74214f",
-      "validated_tag": "0.1.0-cu128-r2",
-      "validated_digest": "sha256:e62bd2a8538aad7a861ae2dff302c17d606581d7aacd404dde412f4abcdf9e7d",
+      "development_sha": "5b693476c113c833e9d9d4f8c7aa492492a27505",
+      "validated_tag": "0.1.0-cu128-r3",
+      "validated_digest": "sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07",
       "validated_registry_scope": "public"
     },
     {
@@ -876,8 +876,8 @@
     },
     "npa-alpamayo2-super": {
       "built": true,
-      "payload_scan": "passed all 26 OCI layers; no model checkpoint, PhysicalAI-AV media, populated Hugging Face cache, token, or credential payload was found",
-      "hardware_run": "The exact public r2 release index completed real pinned upstream inference independently on physical B200 and RTX PRO 6000 on 2026-09-15. Both runs fetched the OpenMDW checkpoint and separately gated PhysicalAI-AV sample only at runtime, produced a projected trajectory of shape [1,1,1,64,3], and uploaded non-empty result JSON, trajectory JSON, and independently decoded calibrated-camera PNG artifacts. B200 measured ADE 1.503835 and FDE 4.357265; RTX measured ADE 1.501321 and FDE 4.351557. No r2 peak-memory value is claimed.",
+      "payload_scan": "passed all 25 OCI layers; no model checkpoint, PhysicalAI-AV media, populated Hugging Face cache, token, or credential payload was found",
+      "hardware_run": "The exact public r3 release index, built from source commit 5b693476c113c833e9d9d4f8c7aa492492a27505 with the HTTPConnection loopback healthcheck fix, completed real pinned upstream inference independently on physical B200 and RTX PRO 6000 on 2026-09-16. Both runs fetched the OpenMDW checkpoint and separately gated PhysicalAI-AV sample only at runtime, produced a projected trajectory of shape [1,1,1,64,3], and uploaded non-empty result JSON, trajectory JSON, and independently decoded calibrated-camera PNG artifacts. B200 measured ADE 1.503835 and FDE 4.357265; RTX measured ADE 1.501321 and FDE 4.351557. No r3 peak-memory value is claimed.",
       "validated_gpus": {
         "B200": {
           "platform": "gpu-b200-sxm",
@@ -890,9 +890,9 @@
           "result": "REAL_ALPAMAYO2_INFERENCE_PASSED"
         }
       },
-      "validated_tag": "0.1.0-cu128-r2",
-      "validated_digest": "sha256:e62bd2a8538aad7a861ae2dff302c17d606581d7aacd404dde412f4abcdf9e7d",
-      "development_sha": "24b2ee18170824e6c1e53dd8810a48d55d74214f",
+      "validated_tag": "0.1.0-cu128-r3",
+      "validated_digest": "sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07",
+      "development_sha": "5b693476c113c833e9d9d4f8c7aa492492a27505",
       "validated_registry_scope": "public"
     },
     "npa-base": {
