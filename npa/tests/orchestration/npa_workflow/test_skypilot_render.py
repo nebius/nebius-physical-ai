@@ -1338,6 +1338,23 @@ def test_default_npa_setup_has_optin_source_overlay() -> None:
     )
 
 
+def test_default_npa_setup_installs_the_image_local_runtime_source_first() -> None:
+    """Runtime-fetch images may carry /opt/npa without a PATH-visible CLI."""
+
+    from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
+
+    setup = default_npa_setup()
+    modern_guard = "[ -f /opt/npa/pyproject.toml ] && [ -d /opt/npa/src/npa ]"
+    assert modern_guard in setup
+    assert "npa_pip_install -e /opt/npa" in setup
+    # The image-local source must win before legacy / external paths, otherwise
+    # a runtime-fetch task can acquire a GPU and then fail solely because no
+    # NPA_SRC_S3_URI was supplied.
+    assert setup.index("npa_pip_install -e /opt/npa") < setup.index(
+        "npa_pip_install -e /opt/nebius-physical-ai/npa"
+    ) < setup.index("NPA_SRC_S3_URI")
+
+
 def test_openpi_full_droid_prepare_forces_cpu_jax_before_cli_import() -> None:
     spec = load_spec(NPA_SPECS / "openpi-pi05-full-droid-finetune.yaml")
     rendered = render_skypilot_yaml(

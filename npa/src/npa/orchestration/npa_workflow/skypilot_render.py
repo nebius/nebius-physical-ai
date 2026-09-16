@@ -1245,7 +1245,16 @@ def default_npa_setup() -> str:
         "  fi\n"
         "}\n"
         "if ! command -v npa >/dev/null 2>&1; then\n"
-        "  if [ -d /opt/nebius-physical-ai/npa ]; then\n"
+        # The active runtime-fetch images intentionally ship the installable
+        # project under /opt/npa but not a shell-visible `npa` launcher. Recording
+        # that tree alone is insufficient: the first task then skips the legacy
+        # branch, has no staged source URI, and exits before its GPU command runs.
+        # Install from the image-local source before falling back to the legacy
+        # layout or external source staging.
+        "  if [ -f /opt/npa/pyproject.toml ] && [ -d /opt/npa/src/npa ]; then\n"
+        "    npa_pip_install -e /opt/npa\n"
+        "    npa_record_src_root /opt/npa\n"
+        "  elif [ -d /opt/nebius-physical-ai/npa ]; then\n"
         "    npa_pip_install -e /opt/nebius-physical-ai/npa\n"
         "    npa_record_src_root /opt/nebius-physical-ai/npa\n"
         "  else\n"
