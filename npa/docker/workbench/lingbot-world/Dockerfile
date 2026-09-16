@@ -39,6 +39,9 @@ COPY --chmod=0444 docker/workbench/lingbot-world/REDISTRIBUTION.md /usr/share/do
 
 USER ubuntu
 WORKDIR /opt/byof
+# Read-only probe of the documented SkyPilot passwordless_root_exemption.
+# No installation or file mutation runs through sudo in this instruction.
+# trivy:ignore:AVD-DS-0010
 RUN model-runtime health \
     && test -w /workspace/.cache/npa/wan2-2/runtime \
     && sudo -n true \
