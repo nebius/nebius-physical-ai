@@ -42,6 +42,15 @@ class RunRegistry:
             for key in terminal[: -self._max_terminal]:
                 self._runs.pop(key, None)
 
+    def claim(self, value: OpenArmStatusResponse) -> tuple[OpenArmStatusResponse, bool]:
+        """Atomically claim a missing or failed run for one executor submission."""
+        with self._lock:
+            current = self._runs.get(value.run_id)
+            if current is not None and current.status != "failed":
+                return current, False
+            self._runs[value.run_id] = value
+            return value, True
+
     def get(self, key: str) -> OpenArmStatusResponse | None:
         with self._lock:
             return self._runs.get(key)
@@ -125,18 +134,17 @@ async def _start(
     await _require_auth(request, authorization)
     runs = _registry(request)
     identifier = run_id(body)
-    current = runs.get(identifier)
-    if current is None or current.status == "failed":
-        runs.put(
-            OpenArmStatusResponse(
-                run_id=identifier,
-                status="running",
-                simulator=body.simulator,
-                output_uri=body.output_uri,
-            )
+    current, claimed = runs.claim(
+        OpenArmStatusResponse(
+            run_id=identifier,
+            status="running",
+            simulator=body.simulator,
+            output_uri=body.output_uri,
         )
+    )
+    if claimed:
         EXECUTOR.submit(_execute, body, identifier, runs)
-    status = current.status if current and current.status == "completed" else "running"
+    status = current.status if current.status == "completed" else "running"
     return OpenArmRunResponse(
         run_id=identifier,
         status=status,

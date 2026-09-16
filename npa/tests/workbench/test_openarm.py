@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from types import ModuleType
 import zipfile
 from pathlib import Path
@@ -218,6 +219,22 @@ def test_service_auth_and_status(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert response.status_code == 200
     assert response.json()["result"] == {"ok": True}
+
+
+def test_service_registry_claims_one_concurrent_execution() -> None:
+    registry = RunRegistry()
+    pending = OpenArmStatusResponse(
+        run_id="same-run",
+        status="running",
+        simulator="mujoco",
+        output_uri="s3://bucket/result/",
+    )
+
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        claims = list(executor.map(lambda _index: registry.claim(pending)[1], range(64)))
+
+    assert claims.count(True) == 1
+    assert registry.get("same-run") == pending
 
 
 def test_workflow_and_toolrefs_are_real_and_routed() -> None:
