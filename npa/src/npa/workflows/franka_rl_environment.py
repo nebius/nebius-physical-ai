@@ -37,19 +37,27 @@ def environment_config(recipe: dict, *, training: bool, condition: str = "nomina
         config.sim.physics.gpu_total_aggregate_pairs_capacity = recipe["physics_capacity"]["gpu_total_aggregate_pairs_capacity"]
     config.commands.object_pose.resampling_time_range = (5.0, 5.0)
     remap_moved_franka_usd(config)
-    if "assets" in recipe:
-        from npa.workflows.franka_rl_assets import configure_assets
-
-        if asset_root is None:
-            raise ValueError("Franka asset bundle must be materialized before simulation")
-        configure_assets(config, recipe["assets"], asset_root)
+    _assets(config, recipe, asset_root)
     _physics_events(config, recipe, training, condition)
+    from npa.workflows.franka_rl_learning import configure_learning
+
+    configure_learning(config, recipe, training=training)
     if not training:
         config.observations.policy.enable_corruption = False
     if capture:
         config.scene.num_envs = 1
         _camera_config(config)
     return config
+
+
+def _assets(config, recipe: dict, asset_root: Path | None) -> None:
+    if "assets" not in recipe:
+        return
+    from npa.workflows.franka_rl_assets import configure_assets
+
+    if asset_root is None:
+        raise ValueError("Franka asset bundle must be materialized before simulation")
+    configure_assets(config, recipe["assets"], asset_root)
 
 
 def _physics_events(config, recipe: dict, training: bool, condition: str) -> None:
@@ -107,10 +115,13 @@ def build_runner(env, recipe: dict, output=None):
 
     env.unwrapped.npa_embodiment_evidence = embodiment_evidence(env, recipe)
     profile = env.unwrapped.npa_embodiment_evidence["profile"]
-    if "sensor_source_body" in profile:
+    if "sensor_source_body" in profile or "learning" in recipe:
         env.unwrapped.npa_tool_frame_check = _tool_frame_check(env.unwrapped, profile)
     config = load_cfg_from_registry(recipe["task"], "rsl_rl_cfg_entry_point")
     config = handle_deprecated_rsl_rl_cfg(config, version("rsl-rl-lib"))
+    from npa.workflows.franka_rl_learning import configure_learner
+
+    configure_learner(config, recipe)
     config.seed = recipe["seed"]
     config.num_steps_per_env = recipe["steps_per_env"]
     config.save_interval = recipe["checkpoint_interval"]
@@ -137,7 +148,7 @@ def _tool_frame_check(native, profile: dict) -> dict:
     if (not np.isfinite(errors).all() or not np.allclose(np.linalg.norm(quaternions, axis=1), 1, atol=1e-4)
             or float(errors.max()) > 1e-4):
         raise ValueError("Frame sensor world TCP differs from the articulation link pose and grasp offset")
-    return {"source_body": profile["sensor_source_body"], "tool_body": profile["tool_body"],
+    return {"source_body": profile.get("sensor_source_body", profile["base_body"]), "tool_body": profile["tool_body"],
             "environments_checked": len(errors), "maximum_error_m": float(errors.max()),
             "tolerance_m": 1e-4, "world_tcp_verified": True}
 
@@ -167,6 +178,8 @@ def physics_evidence(env) -> dict:
         "gpu_total_aggregate_pairs_capacity": unwrapped.cfg.sim.physics.gpu_total_aggregate_pairs_capacity}}
     if hasattr(unwrapped, "npa_tool_frame_check"):
         evidence["tool_frame_check"] = unwrapped.npa_tool_frame_check
+    if getattr(unwrapped, "npa_normalization_evidence", None):
+        evidence["frozen_observation_normalization"] = unwrapped.npa_normalization_evidence
     for name, value in values.items():
         if not torch.isfinite(value).all():
             raise RuntimeError("Applied Franka physics is nonfinite")

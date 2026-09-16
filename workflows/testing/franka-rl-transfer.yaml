@@ -22,6 +22,7 @@ config:
   minimum_success: "0.7"
   asset: spool
   embodiment: franka
+  learning_recipe: adaptive
   vlm_model: MiniMaxAI/MiniMax-M3
   prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/"
   training_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/"
@@ -49,7 +50,7 @@ states:
     description: Seal original USD parts and fixture, selected embodiment, physics, reset streams, and visual/physical criteria.
     resources: cpu
     run:
-      argv: [python3, -m, npa.workflows.franka_rl, prepare, --run-id, "{{run.id}}", --seed, "{{config.seed}}", --iterations, "{{config.iterations}}", --num-envs, "{{config.num_envs}}", --eval-episodes, "{{config.eval_episodes}}", --minimum-success, "{{config.minimum_success}}", --asset, "{{config.asset}}", --embodiment, "{{config.embodiment}}", --vlm-model, "{{config.vlm_model}}", --output-path, "{{config.prepared_uri}}"]
+      argv: [python3, -m, npa.workflows.franka_rl, prepare, --run-id, "{{run.id}}", --seed, "{{config.seed}}", --iterations, "{{config.iterations}}", --num-envs, "{{config.num_envs}}", --eval-episodes, "{{config.eval_episodes}}", --minimum-success, "{{config.minimum_success}}", --asset, "{{config.asset}}", --embodiment, "{{config.embodiment}}", --learning-recipe, "{{config.learning_recipe}}", --vlm-model, "{{config.vlm_model}}", --output-path, "{{config.prepared_uri}}"]
     outputs:
       - {uri: "{{config.prepared_uri}}recipe.json", schema: npa.franka-rl.recipe.v1}
     next: train

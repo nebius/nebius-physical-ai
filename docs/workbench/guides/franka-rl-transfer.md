@@ -8,6 +8,13 @@ through Token Factory. Franka Panda is the default; UR10e/Robotiq and Kinova
 JACO2 use explicit native embodiment bindings. It exports LeRobotDataset v3 and
 Rerun evidence.
 
+The workflow defaults to `learning_recipe=adaptive`: learned joint commands,
+physically bounded servo targets, richer observations, stable-goal rewards, and
+a training-only curriculum driven by completed episode outcomes. Use
+`--var learning_recipe=joint-baseline` to reproduce the historical recipe below.
+The module-level `prepare --learning-recipe` option defaults to `joint-baseline`
+for compatibility; the workflow passes its selected recipe explicitly.
+
 The five stages are **prepare → train → evaluate → visual-evaluate → report**.
 Training and rendering use one RTX GPU sequentially. The hosted VLM stage uses
 CPU resources and the operator's Token Factory credential.
@@ -71,14 +78,65 @@ specifies XYZW quaternions; the [sensor kernel](https://github.com/isaac-sim/Isa
 computes world TCP from the target body independently of the source frame.
 
 Object assets, PPO update count, success criteria, and physics shifts remain
-fixed, including an untuned 0.5-radian arm-action scale for each robot. This
-common control convention is a comparison baseline, not a claim of optimal
+fixed. Both recipes interpret raw arm actions as offsets from the native default
+joint positions with a 0.5-radian scale. The adaptive recipe then constrains the
+physical target and its slew; it does not clip raw actions to a small reachable
+neighborhood. The historical common control convention is a comparison baseline, not a claim of optimal
 embodiment-specific tuning. Initial/trained resets are paired within each embodiment. Different
 joint dimensions can change random-number consumption, so equal seeds do not
 establish identical object/goal resets across robots. This is a comparison of
 independently trained systems, not a controlled estimate of morphology alone.
 Each embodiment has its own live evidence below; historical Franka results are
 kept separate from the new Kinova and UR10e measurements.
+
+## Learning to hold without a scripted policy
+
+The baseline rewards a lift above 4 cm even though the part starts at 6 cm and
+falls onto the table. Its joint-velocity and action-change penalties increase
+1,000-fold after 10,000 environment steps. It rewards proximity to the goal but
+does not directly reward the low-speed hold required by evaluation. These are
+training incentives, not successful manipulation evidence.
+
+The `adaptive` recipe addresses those mechanisms with one common definition for
+all three embodiments:
+
+- **Bound physical targets.** The policy still chooses every arm and gripper
+  action. Arm targets stay within the native soft joint limits and move at most
+  `min(2 rad/s, native joint velocity limit) × control_dt` per command. This
+  constrains target slew, not a claim that actual joint velocity never overshoots.
+  Servo memory resets from measured joint positions and its target error is
+  observed by the policy. Native gravity, contacts, and actuators remain intact.
+- **Observe the relevant state.** Add object-to-tool and object-to-goal vectors,
+  object/tool orientations, object linear/angular velocity, servo tracking error,
+  and the current hold duration to the original proprioceptive observations.
+- **Reward the evaluated behavior.** Lifting uses the same 10 cm threshold as
+  evaluation. Dense reaching and goal rewards are supplemented by a continuous
+  low-speed hold reward; the hold counter uses the unchanged 5 cm, 3 cm/s,
+  20-consecutive-step predicate and excludes terminal reset steps. A small fixed,
+  bounded action-change penalty replaces the scheduled penalty jump. PPO uses
+  observation normalization (restored from checkpoints and fingerprinted before/after
+  inference), initial exploration standard deviation 0.5, and
+  discount 0.99, with the existing update count and rollout horizon.
+- **Advance from training outcomes.** Start with narrower object/goal XY ranges
+  and goal heights of 15.25–26 cm, interpolated toward the full 25–50 cm range.
+  Assess disjoint windows of at least
+  8,192 completed episodes at the current difficulty. A strict-success rate of
+  at least 70% expands difficulty by 0.15, from 0.25 to 1.0. Old easier episodes
+  cannot promote a newer level. At 1.0 the ranges exactly match the original
+  distribution. The log records every assessed window, including failed ones.
+
+There is no grasp trajectory, waypoint sequence, timed gripper closure, or
+success-conditioned action override. The curriculum changes only the training
+distribution. Validation, all four test conditions, checkpoint selection,
+Token Factory evaluation, and deployment qualification retain their original
+criteria. The visual judge never supplies training rewards.
+
+Adaptive captures additionally retain `telemetry.npz` with actual object, goal,
+and tool poses, object velocities, and the physical controller targets. Poses
+correspond to the captured frame before the recorded action; targets correspond
+to that action after servo constraints. Joint order and timing are declared in
+the capture metadata. Historical baseline artifacts remain separate, and their
+measurements do not establish that the adaptive recipe improves success.
 
 ## Relationship to the reference Sim2Real pipeline
 

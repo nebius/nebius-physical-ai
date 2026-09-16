@@ -9,6 +9,7 @@ import numpy as np
 
 from npa.workflows.franka_rl_environment import build_runner, environment_config, load_checkpoint, physics_evidence
 from npa.workflows.franka_rl_metrics import PlacementMetrics
+from npa.workflows.franka_rl_learning import normalization_evidence
 from npa.workflows.lerobot_transfer_data import file_sha256, write_json
 
 
@@ -37,7 +38,7 @@ def _capture_episode(wrapped, policy, output: Path, recipe: dict, *, condition: 
 
     from npa.workflows.franka_rl_eval import _initial_state_hashes, _observe
 
-    states, actions, frames, geometry = [], [], [], []
+    recording = {name: [] for name in ("state", "actions", "rgb", "object_metrics", "telemetry")}
     with torch.inference_mode():
         # Isaac can retain tensors created by the preceding inference rollout.
         wrapped.unwrapped.seed(recipe["capture_seed"] + episode_index)
@@ -52,30 +53,65 @@ def _capture_episode(wrapped, policy, output: Path, recipe: dict, *, condition: 
             if wrapped.clip_actions is not None:
                 action = action.clamp(-wrapped.clip_actions, wrapped.clip_actions)
             applied = previous if recipe["conditions"][condition]["action_delay"] else action
-            states.append(wrapped.unwrapped.scene["robot"].data.joint_pos.torch[0].cpu().numpy().copy())
-            actions.append(applied[0].cpu().numpy().copy())
-            frames.append(_frame(wrapped))
-            geometry.append([value[0] for value in _observe(wrapped)])
+            _record_frame(wrapped, applied, recording, recipe)
             obs, _, done, _ = wrapped.step(applied)
+            if recording["telemetry"]:
+                arm = wrapped.unwrapped.action_manager.get_term("arm_action")
+                recording["telemetry"][-1]["controller_target_rad"] = arm.latest_command_target[0].cpu().numpy().copy()
             metrics.update(*_observe(wrapped), done.cpu().numpy())
             previous = action.clone()
             if bool(done[0]):
                 break
-    return _save_episode(output, states, actions, frames, geometry, metrics, initial_hash)
+    return _save_episode(output, recording, metrics, initial_hash)
 
 
-def _save_episode(output, states, actions, frames, geometry, metrics, initial_hash) -> dict:
+def _record_frame(wrapped, applied, recording: dict, recipe: dict) -> None:
+    from npa.workflows.franka_rl_eval import _observe
+
+    recording["state"].append(wrapped.unwrapped.scene["robot"].data.joint_pos.torch[0].cpu().numpy().copy())
+    recording["actions"].append(applied[0].cpu().numpy().copy())
+    recording["rgb"].append(_frame(wrapped))
+    recording["object_metrics"].append([value[0] for value in _observe(wrapped)])
+    if "learning" in recipe:
+        recording["telemetry"].append(_pose_snapshot(wrapped.unwrapped))
+
+
+def _pose_snapshot(native) -> dict:
+    from isaaclab.utils.math import combine_frame_transforms
+
+    robot, obj = native.scene["robot"].data, native.scene["object"].data
+    frame = native.scene["ee_frame"].data
+    command = native.command_manager.get_command("object_pose")
+    goal, _ = combine_frame_transforms(robot.root_pos_w.torch, robot.root_quat_w.torch, command[:, :3])
+    origin = native.scene.env_origins
+    tensors = {"object_position_m": obj.root_pos_w.torch - origin,
+               "object_rotation_xyzw": obj.root_quat_w.torch,
+               "goal_position_m": goal - origin,
+               "tool_position_m": frame.target_pos_w.torch[:, 0] - origin,
+               "tool_rotation_xyzw": frame.target_quat_w.torch[:, 0],
+               "object_velocity_m_s": obj.root_lin_vel_w.torch,
+               "object_angular_velocity_rad_s": obj.root_ang_vel_w.torch}
+    return {name: value[0].cpu().numpy().copy() for name, value in tensors.items()}
+
+
+def _save_episode(output, recording, metrics, initial_hash) -> dict:
     output.mkdir(parents=True)
-    for name, values in (("state", states), ("actions", actions), ("rgb", frames), ("object_metrics", geometry)):
-        np.save(output / f"{name}.npy", np.stack(values))
-    rgb = np.stack(frames)
+    for name in ("state", "actions", "rgb", "object_metrics"):
+        np.save(output / f"{name}.npy", np.stack(recording[name]))
+    if recording["telemetry"]:
+        values = recording["telemetry"]
+        arrays = {key: np.stack([row[key] for row in values]) for key in values[0]}
+        if not all(np.isfinite(value).all() for value in arrays.values()):
+            raise ValueError("Nonfinite capture pose or controller telemetry")
+        np.savez(output / "telemetry.npz", **arrays)
+    rgb = np.stack(recording["rgb"])
     if np.mean(np.ptp(rgb.astype(np.int16), axis=(1, 2, 3)) >= 8) < 0.9:
         raise RuntimeError("Franka RTX camera produced blank frames")
-    if len(frames) > 1 and not np.any(np.diff(rgb.astype(np.int16), axis=0)):
+    if len(rgb) > 1 and not np.any(np.diff(rgb.astype(np.int16), axis=0)):
         raise RuntimeError("Franka RTX recording contains no temporal change")
-    return {"length": len(states), "success": bool(metrics.success[0]),
+    return {"length": len(rgb), "success": bool(metrics.success[0]),
             "lifted": bool(metrics.lifted[0]), "longest_stable_steps": int(metrics.longest[0]),
-            "closest_distance_m": float(metrics.closest[0]), "rgb_frame_count": len(frames),
+            "closest_distance_m": float(metrics.closest[0]), "rgb_frame_count": len(rgb),
             "initial_state_sha256": initial_hash}
 
 
@@ -106,9 +142,13 @@ def capture_policy(checkpoint: Path, output: Path, recipe: dict, *, arm: str = "
         wrapped, runner, _ = build_runner(env, recipe)
         load_checkpoint(runner, checkpoint)
         policy = runner.get_inference_policy(device="cuda:0")
+        normalization = normalization_evidence(runner, recipe)
         episodes = [_capture_episode(wrapped, policy, output / f"episode_{index:06d}", recipe,
                                      condition=condition, episode_index=index)
                     for index in range(recipe["capture_episodes"])]
+        if normalization != normalization_evidence(runner, recipe):
+            raise RuntimeError("Capture changed the checkpoint observation normalizer")
+        env.unwrapped.npa_normalization_evidence = normalization
         for index, row in enumerate(episodes):
             row.update(arm=arm, condition=condition, reset_seed=recipe["capture_seed"] + index,
                        capture_index=index, checkpoint_sha256=file_sha256(checkpoint))
@@ -131,6 +171,10 @@ def _write_metadata(env, checkpoint: Path, output: Path, recipe: dict, episodes:
         "task_description": "Lift the " + recipe.get("assets", {}).get("description", "cube") + " and hold it steady",
         "control_dt": step_dt, "source_joint_names": joint_names, "state_names": joint_names,
         "action_names": identity["action_names"], "action_semantics": identity["action_semantics"],
+        "learning_telemetry": {"file": "telemetry.npz", "pose_frame": "environment_world",
+            "quaternion_order": "xyzw", "state_timing": "before policy action",
+            "target_timing": "bounded target applied by the recorded action",
+            "target_joint_names": identity["profile"]["arm_joints"]} if "learning" in recipe else None,
         "num_episodes": len(episodes), "episode_lengths": [row["length"] for row in episodes],
         "total_frames": sum(row["length"] for row in episodes), "episode_results": episodes,
         "capture_seed": recipe["capture_seed"], "source_split": "capture",

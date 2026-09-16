@@ -144,13 +144,33 @@ def embodiment_evidence(env, recipe: dict) -> dict:
     if not required_bodies.issubset(robot.body_names):
         raise ValueError("Actual robot lacks the sealed base, sensor source, or tool body")
     controls = _control_evidence(native, profile, arm, gripper)
+    semantics = _learning_controls(native, recipe, arm, controls)
     _validate_asset(native.cfg.scene.robot, profile)
     return {"profile": profile, "robot_type": profile["name"], "state_names": list(robot.joint_names),
             "action_names": [name + "_normalized_target" for name in arm_names] + ["gripper_open_close"],
             "gripper_joint_names": gripper_names, "body_names": list(robot.body_names),
             "asset": _asset_evidence(native.cfg.scene.robot),
             "controls": controls,
-            "action_semantics": "Isaac joint position: default offset + 0.5 * arm action; negative closes gripper"}
+            "action_semantics": semantics}
+
+
+def _learning_controls(native, recipe: dict, arm, controls: dict) -> str:
+    from npa.workflows.franka_rl_learning import recipe_learning
+
+    semantics = "Isaac joint position: default offset + 0.5 * arm action; negative closes gripper"
+    learning = recipe_learning(recipe)
+    if learning is None:
+        return semantics
+    if type(arm).__name__ != "BoundedJointPositionAction" or native.cfg.npa_learning != learning:
+        raise ValueError("Actual learned servo differs from the sealed learning recipe")
+    controls["learning"] = learning
+    limits = arm._limits.detach().cpu()
+    steps = arm._step_limit.detach().cpu()
+    controls["joint_target_limits_rad"] = {"minimum": limits.amin(dim=0).tolist(),
+                                           "maximum": limits.amax(dim=0).tolist()}
+    controls["maximum_target_step_rad"] = {"minimum": steps.amin(dim=0).tolist(),
+                                            "maximum": steps.amax(dim=0).tolist()}
+    return semantics + "; arm targets constrained by physical joint limits and per-step target slew"
 
 
 def _validate_asset(config, profile: dict) -> None:
@@ -229,3 +249,7 @@ def validate_capture_embodiment(metadata: dict, recipe: dict) -> None:
     required_joints = set(profile["arm_joints"] + profile["gripper_joints"])
     if actual["action_names"] != expected_actions or not required_joints.issubset(actual["state_names"]):
         raise ValueError("Capture named joints or actions differ from the sealed embodiment")
+    from npa.workflows.franka_rl_learning import recipe_learning
+
+    if actual.get("controls", {}).get("learning") != recipe_learning(recipe):
+        raise ValueError("Capture learning controls differ from the sealed recipe")

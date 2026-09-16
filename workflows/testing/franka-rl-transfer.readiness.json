@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "f5377607715dc2c918b02954b82e91082f1039c213b7f9e5d52292618b0cd8f7",
+  "workflow_sha256": "aeb26dc6b8b7d7595fa0f86a049b9fb74019d8db9874b762b01fcd5375bed383",
   "planning": {
     "validation": {
       "status": "verified",
@@ -12,9 +12,9 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Native Franka, Kinova JACO2, and UR10e/Robotiq PPO use sealed USD parts, paired physics tests, per-episode hosted visual judgments, and actual LeRobot/Rerun exports.",
+      "reason": "The adaptive recipe configures bounded learned joint targets, motion-aware observations, stable-hold rewards, and a training-only outcome curriculum. Full held-out physics tests and hosted visual judgments remain separate.",
       "evidence": [
-        "npa/tests/workflows/test_franka_rl.py",
+        "npa/tests/workflows/test_franka_rl_learning.py",
         "docs/workbench/guides/franka-rl-transfer.md"
       ]
     }
@@ -28,10 +28,9 @@
       ]
     },
     "worker_input": {
-      "status": "verified",
-      "reason": "All prepared asset bundles passed checksum readback. Each native embodiment completed 1500 PPO updates across 4096 environments without recorded PhysX errors; recorded joints, actions, and tool frames match the selected robot.",
+      "status": "unverified",
+      "reason": "Historical joint-baseline runs are verified for three embodiments; the new adaptive default requires a fresh native run and artifact audit. Prior policy results do not validate this learning change.",
       "evidence": [
-        "docs/workbench/evidence/franka-parts-validation.json",
         "docs/workbench/evidence/embodiment-parts-validation.json"
       ]
     },
@@ -50,12 +49,9 @@
       ]
     },
     "target_runtime": {
-      "status": "verified",
-      "reason": "Franka baseline execution and both complete Kinova/UR10e workflows have verified native training, paired tests, hosted visual audits, and synchronized video/data/Rerun evidence. This verifies workflow execution; all measured policy qualification gates remain false. No physical robot was tested.",
+      "status": "unverified",
+      "reason": "Historical joint-baseline runs are verified for three embodiments; the new adaptive default requires a fresh native run and artifact audit. Prior policy results do not validate this learning change.",
       "evidence": [
-        "docs/workbench/evidence/franka-parts-validation.json",
-        "docs/workbench/evidence/kinova_jaco7-parts-rtx.json",
-        "docs/workbench/evidence/ur10e_robotiq85-parts-rtx.json",
         "docs/workbench/evidence/embodiment-parts-validation.json"
       ]
     }

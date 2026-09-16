@@ -52,7 +52,7 @@ def _train(args, recipe: dict, config) -> None:
         parameters_before = _policy_parameters(runner)
         applied = physics_evidence(env)
         started = time.monotonic()
-        runner.learn(num_learning_iterations=recipe["iterations"], init_at_random_ep_len=True)
+        runner.learn(num_learning_iterations=recipe["iterations"], init_at_random_ep_len="learning" not in recipe)
         final = output / "checkpoints" / f"model_{recipe['iterations']}.pt"
         runner.save(str(final))
         torch.cuda.synchronize()
@@ -70,9 +70,23 @@ def _train(args, recipe: dict, config) -> None:
             "transitions": recipe["iterations"] * recipe["num_envs"] * recipe["steps_per_env"],
             "checkpoints": {p.relative_to(output).as_posix(): file_sha256(p) for p in [initial, *checkpoints]},
             "policy_loaded": True, "physical_robot_tested": False,
+            **_learning_evidence(env),
         })
     finally:
         env.close()
+
+
+def _learning_evidence(env) -> dict:
+    reward = getattr(env.unwrapped, "npa_learning_reward", None)
+    if reward is None:
+        return {}
+    curriculum = reward.curriculum
+    return {"learning": {"settings": reward.settings, "completed_episodes": reward.completed_episodes,
+                         "strict_successes": reward.completed_successes,
+                         "difficulty": curriculum.fraction, "history": curriculum.history,
+                         "pending_window_episodes": curriculum.episodes,
+                         "pending_window_successes": curriculum.successes,
+                         "evaluation_used": False}}
 
 
 def _execute_stage(args, recipe: dict, config) -> None:
