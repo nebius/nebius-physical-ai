@@ -8560,15 +8560,16 @@
         return state === "succeeded" || ["succeeded", "success", "completed"].includes(status);
       }
       async function waitForWorkflowExecution(runId) {
-        const deadline = Date.now() + 15 * 60 * 1000;
         let latest = {};
-        while (Date.now() < deadline) {
+        // The durable runtime, not a browser deadline, owns a real workflow's
+        // lifetime. Keep polling until it reaches a terminal state so a long
+        // GPU run cannot be misreported as a client-side failure at 15 minutes.
+        while (true) {
           const data = await apiJson("/api/workflows/executions/" + encodeURIComponent(runId));
           latest = data && data.execution && typeof data.execution === "object" ? data.execution : {};
           if (!workflowExecutionIsActive(latest)) return latest;
           await new Promise((resolve) => window.setTimeout(resolve, 2000));
         }
-        throw new Error("Workflow execution is still running. Its durable run was accepted; check the stage timeline shortly.");
       }
       function showWorkflowExecutionConfirmation(pending) {
         const response = pending && pending.response ? pending.response : {};

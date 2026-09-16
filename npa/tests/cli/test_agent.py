@@ -2203,6 +2203,17 @@ def test_bootstrap_embeds_cameras_panel() -> None:
     assert "cameras-panel" not in source
     assert "cameraCards" not in source
     assert "Preview in Rerun" not in source
+
+
+def test_workflow_execution_polling_defers_to_the_durable_runtime() -> None:
+    source = _agent_ui_bundle()
+    poll = source.split("async function waitForWorkflowExecution", 1)[1].split(
+        "function showWorkflowExecutionConfirmation", 1
+    )[0]
+
+    assert "while (true)" in poll
+    assert "15 * 60 * 1000" not in poll
+    assert "Workflow execution is still running" not in poll
     assert '@app.get("/sim-assets/cameras")' in source
     assert '@app.post("/sim-viz/camera-preview")' in source
     assert "world/cameras/" in source
