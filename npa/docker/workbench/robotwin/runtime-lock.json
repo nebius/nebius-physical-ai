@@ -1,16 +1,16 @@
 {
   "schema_version": "npa.robotwin.runtime-lock.v1",
   "status": "bootstrap-complete-runtime-disabled",
-  "reason": "The public Ubuntu bootstrap inputs are complete and immutable. Runtime delivery remains disabled: CUDA/cuDNN delivery and use, CuRobo service/derivative/output boundaries beyond the recorded noncommercial evaluation scope, a complete runtime artifact lock, genuine manager authorization/access evidence, and aggregate RoboTwin asset/output treatment remain unresolved.",
+  "reason": "The public Ubuntu bootstrap inputs are complete and immutable. Customer-controlled run-scoped entitlement replaces manager acceptance for CUDA 12.8.1, cuDNN 9.8.0 and CuRobo v0.7.8 terms. Runtime delivery remains disabled because the complete artifact lock, exact upstream probes, aggregate RoboTwin member-asset/output provenance, native-content policy, built-image evidence and live gates remain unresolved.",
   "packaging_shape": "whole-source-sdk-runtime-fetch",
   "operator_scope": {
     "statement": "noncommercial",
     "intended_activity": "containerization-and-technical-workload-validation-and-evaluation",
-    "record": "owner-only-bounded-manager-run-record",
+    "record": "run-bounded-operator-use-statement",
     "lifetime": "expires-with-bounded-manager-run",
     "global_or_permanent": false,
     "curobo_compatibility": "noncommercial-research-or-evaluation-only",
-    "service_and_output_use": "human-decision-required"
+    "service_and_output_use": "no-broader-than-noncommercial-research-or-evaluation"
   },
   "target": {
     "os": "linux",
@@ -50,6 +50,9 @@
     {
       "repository": "TianxingChen/RoboTwin2.0",
       "revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
+      "origin": "https://huggingface.co/datasets/TianxingChen/RoboTwin2.0/tree/785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
+      "repository_card": "https://huggingface.co/datasets/TianxingChen/RoboTwin2.0/blob/785feb15aa4a4f532395ad2b1d2be5f28cb561ad/README.md",
+      "aggregate_terms_status": "member-provenance-and-output-treatment-unresolved",
       "name": "embodiments.zip",
       "size_bytes": 219859313,
       "sha256": "6b87d7d55e106d8ff25917e0538eb1e177fc549280e8a742a8cec3cb9f953fc6",
@@ -58,6 +61,9 @@
     {
       "repository": "TianxingChen/RoboTwin2.0",
       "revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
+      "origin": "https://huggingface.co/datasets/TianxingChen/RoboTwin2.0/tree/785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
+      "repository_card": "https://huggingface.co/datasets/TianxingChen/RoboTwin2.0/blob/785feb15aa4a4f532395ad2b1d2be5f28cb561ad/README.md",
+      "aggregate_terms_status": "member-provenance-and-output-treatment-unresolved",
       "name": "objects.zip",
       "size_bytes": 3737778549,
       "sha256": "6aa56b3cf1e1064f7c809308144da36b00815f8b137fef2d7e4de856f8becf27",
@@ -81,7 +87,33 @@
     "credential_owner": "customer",
     "credential_phase": "runtime-only-secret-value",
     "credential_persistence": false,
-    "token_is_terms_acceptance": false
+    "credential_as_entitlement_evidence": "only-when-the-upstream-vendor-gates-the-exact-artifact-after-customer-acceptance",
+    "terms_without_vendor_gate": [
+      {
+        "id": "nvidia-cuda-12.8.1-eula-2025-01-07",
+        "url": "https://docs.nvidia.com/cuda/archive/12.8.1/eula/index.html"
+      },
+      {
+        "id": "nvidia-cudnn-9.8.0-sla-2025-03-06",
+        "url": "https://docs.nvidia.com/deeplearning/cudnn/backend/v9.8.0/reference/eula.html"
+      },
+      {
+        "id": "nvidia-curobo-v0.7.8-license-d64c4b005459",
+        "url": "https://github.com/NVlabs/curobo/blob/d64c4b005459db10c5dd867d8b30a87d5bda9bdb/LICENSE"
+      }
+    ],
+    "customer_authorization": {
+      "schema_version": "npa.byof.robotwin.customer-runtime-entitlement.v1",
+      "control": "customer-issued-run-scoped-secret-value",
+      "bindings": [
+        "customer-scope-id",
+        "run-id",
+        "runtime-lock-sha256",
+        "expiry",
+        "exact-terms"
+      ],
+      "manager_or_npa_acceptance": false
+    }
   },
   "cache": {
     "status": "disabled-until-runtime-delivery-approved",
@@ -173,13 +205,15 @@
       "runtime caches",
       "credentials",
       "manager context",
+      "customer entitlement",
       "outputs"
     ]
   },
   "runtime_delivery": {
-    "status": "disabled-pending-human-decisions-and-complete-artifact-lock",
+    "status": "disabled-pending-aggregate-assets-artifact-lock-and-live-gates",
     "artifact_lock_status": "not-resolved",
-    "authorization_receipt_status": "not-implemented",
+    "customer_entitlement_contract_status": "implemented-not-exercised",
+    "aggregate_asset_output_status": "blocked-pending-member-provenance-and-output-treatment",
     "source_access_status": "not-probed",
     "asset_access_status": "not-probed",
     "network_side_effects_permitted": false

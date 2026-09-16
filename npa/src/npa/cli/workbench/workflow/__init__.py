@@ -985,7 +985,10 @@ def submit_cmd(
                         name
                         for name in secret_env
                         if name
-                        != "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT"
+                        not in {
+                            "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
+                            "NPA_BYOF_ROBOTWIN_CUSTOMER_ENTITLEMENT",
+                        }
                     ]
         except Exception as exc:
             _fail(str(exc))

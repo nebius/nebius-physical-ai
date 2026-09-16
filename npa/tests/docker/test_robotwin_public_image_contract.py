@@ -82,10 +82,25 @@ def test_neutral_locks_are_complete_while_runtime_delivery_is_disabled() -> None
     assert lock["access"]["timing"] == "before-provisioning"
     assert lock["access"]["credential_phase"] == "runtime-only-secret-value"
     assert lock["access"]["credential_persistence"] is False
+    assert lock["access"]["customer_authorization"] == {
+        "schema_version": "npa.byof.robotwin.customer-runtime-entitlement.v1",
+        "control": "customer-issued-run-scoped-secret-value",
+        "bindings": [
+            "customer-scope-id",
+            "run-id",
+            "runtime-lock-sha256",
+            "expiry",
+            "exact-terms",
+        ],
+        "manager_or_npa_acceptance": False,
+    }
     assert lock["cache"]["status"] == "disabled-until-runtime-delivery-approved"
     assert lock["cache"]["tier"] == "node-local-ephemeral"
     assert lock["cache"]["owner_access"] == "single-customer-single-workload"
     assert lock["cache"]["contains_credentials"] is False
+    assert "customer entitlement" in " ".join(
+        lock["bootstrap"]["forbidden_payloads"]
+    ).lower()
     apt_lines = (IMAGE_ROOT / "apt-packages.lock").read_text().splitlines()
     assert "INCOMPLETE" not in "\n".join(apt_lines)
     assert sum(line.startswith("binary\t") for line in apt_lines) == 75

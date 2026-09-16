@@ -155,7 +155,11 @@ FORBIDDEN_ELF_DEPENDENCY = re.compile(
 SECRET_CONTENT = (
     *walker.SECRET_CONTENT,
     re.compile(rb'(?i)"ownership_provenance"\s*:\s*"manager-issued"'),
-    re.compile(rb"npa\.byof\.robotwin\.runtime-(?:transport|authorization)\.v1"),
+    re.compile(
+        rb"npa\.byof\.robotwin\.runtime-(?:transport|authorization)\.v[0-9]+"
+    ),
+    re.compile(rb"npa\.byof\.robotwin\.customer-runtime-entitlement\.v[0-9]+"),
+    re.compile(rb'(?i)"provenance"\s*:\s*"customer-issued"'),
     # Source bytes must remain forbidden after arbitrary renaming or nesting.
     # These semantic signatures are absent from the neutral bootstrap but bind
     # the upstream task/base-task implementation independently of its path.

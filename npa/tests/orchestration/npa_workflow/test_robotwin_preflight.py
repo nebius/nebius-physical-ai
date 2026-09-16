@@ -20,7 +20,13 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
     CHILD_OUTPUT_ROOT_ENV,
     CHILD_RUN_ID_ENV,
     CHILD_RUNTIME_AUTH_ENV,
+    CUSTOMER_ENTITLEMENT_ENV,
+    CUSTOMER_ENTITLEMENT_NOTICE,
+    CUSTOMER_ENTITLEMENT_SCHEMA,
+    CUSTOMER_TERMS,
+    CUSTOMER_USE_SCOPE,
     MAX_CONTEXT_BYTES,
+    MAX_CUSTOMER_ENTITLEMENT_BYTES,
     MAX_TRANSPORT_BYTES,
     PUBLIC_CONTEXT_ENV,
     RobotwinPreflightError,
@@ -33,6 +39,7 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
     materialize_transport,
     prepare_inner_submit,
     prepare_live_submit,
+    read_customer_entitlement,
     read_owner_context,
     recognize_contract,
     validate_context_bytes,
@@ -43,19 +50,15 @@ from npa.orchestration.npa_workflow.spec import load_spec
 
 ROOT = Path(__file__).resolve().parents[4]
 ROBOTWIN_SPEC = ROOT / "workflows" / "testing" / "byof-robotwin.yaml"
-_REAL_RUNTIME_USE_RECEIPT_GATE = preflight_module._require_genuine_runtime_use_receipt
 _REAL_SOURCE_BYTE_GATE = preflight_module._require_verified_control_plane_source_bytes
 
 
 @pytest.fixture(autouse=True)
-def _supply_phase_b_proofs_only_inside_unit_tests(
+def _supply_source_byte_proof_only_inside_unit_tests(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Let structural tests reach post-proof checks without weakening production."""
+    """Let structural tests reach post-source-proof checks without weakening production."""
 
-    monkeypatch.setattr(
-        preflight_module, "_require_genuine_runtime_use_receipt", lambda _raw: None
-    )
     monkeypatch.setattr(
         preflight_module,
         "_require_verified_control_plane_source_bytes",
@@ -105,22 +108,17 @@ def _context_payload(tmp_path: Path, **updates: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "solution": "robotwin",
         "ownership_provenance": "manager-issued",
+        "customer_scope_id": "customer-scope-canary",
         "workflow_sha256": "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3",
         "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
         "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
         "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-        "runtime_lock_sha256": "87251f2ac8428b86d33591c909a2f0dacc86e9eee4f9a7bca2fdd93d5cc83815",
+        "runtime_lock_sha256": "dc882049f7cbf4042ab804f3703c3f72e386a077ef54973d667cab9f3594a7b9",
         "bootstrap_image": "registry.example/robotwin-private/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "reservation": {
             "policy": "STRICT",
             "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
             "count": 1,
-        },
-        "license_acceptance": {
-            "nvidia_cuda_eula": True,
-            "nvidia_cudnn_sla": True,
-            "curobo_noncommercial_research_or_evaluation": True,
-            "robotwin2_aggregate_asset_and_output_terms": True,
         },
         "project": "robotwin-project-canary",
         "nebius_profile": "robotwin-profile",
@@ -141,6 +139,77 @@ def _context_file(tmp_path: Path, **updates: object) -> tuple[Path, bytes]:
     path.write_bytes(raw)
     path.chmod(0o600)
     return path, raw
+
+
+def _entitlement_payload(
+    context: dict[str, object], **updates: object
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "schema_version": CUSTOMER_ENTITLEMENT_SCHEMA,
+        "provenance": "customer-issued",
+        "customer_scope_id": context["customer_scope_id"],
+        "run_id": context["run_id"],
+        "runtime_manifest_sha256": context["runtime_lock_sha256"],
+        "expires_at": "2099-01-01T00:00:00Z",
+        "decision": "accepted",
+        "intended_activity": CUSTOMER_USE_SCOPE,
+        "terms": list(CUSTOMER_TERMS),
+    }
+    payload.update(updates)
+    return payload
+
+
+def _entitlement_file(
+    tmp_path: Path,
+    *,
+    context: dict[str, object] | None = None,
+    **updates: object,
+) -> tuple[Path, bytes]:
+    bound_context = context or _context_payload(tmp_path)
+    raw = json.dumps(
+        _entitlement_payload(bound_context, **updates), sort_keys=True
+    ).encode()
+    path = tmp_path / "customer-entitlement.json"
+    path.write_bytes(raw)
+    path.chmod(0o600)
+    return path, raw
+
+
+def _authorization_environment(
+    tmp_path: Path, **context_updates: object
+) -> tuple[dict[str, str], Path, bytes, Path, bytes]:
+    context = _context_payload(tmp_path, **context_updates)
+    context_raw = json.dumps(context, sort_keys=True).encode()
+    context_path = tmp_path / "context.json"
+    context_path.write_bytes(context_raw)
+    context_path.chmod(0o600)
+    entitlement_path, entitlement_raw = _entitlement_file(
+        tmp_path, context=context
+    )
+    return (
+        {
+            PUBLIC_CONTEXT_ENV: str(context_path),
+            CUSTOMER_ENTITLEMENT_ENV: str(entitlement_path),
+        },
+        context_path,
+        context_raw,
+        entitlement_path,
+        entitlement_raw,
+    )
+
+
+def _validate_context(
+    tmp_path: Path,
+    raw: bytes,
+    *,
+    entitlement_updates: dict[str, object] | None = None,
+):
+    context = json.loads(raw)
+    entitlement = json.dumps(
+        _entitlement_payload(context, **(entitlement_updates or {})),
+        sort_keys=True,
+    ).encode()
+    return validate_context_bytes(raw, customer_entitlement_bytes=entitlement)
 
 
 def test_exact_contract_recognition_is_narrow_and_non_robotwin_is_inert() -> None:
@@ -257,8 +326,34 @@ def test_owner_context_read_is_byte_exact_bounded_owner_only_and_no_follow(
         read_owner_context({PUBLIC_CONTEXT_ENV: str(oversized)})
 
 
+def test_customer_entitlement_read_is_bounded_owner_only_and_no_follow(
+    tmp_path: Path,
+) -> None:
+    path, raw = _entitlement_file(tmp_path)
+    assert read_customer_entitlement({CUSTOMER_ENTITLEMENT_ENV: str(path)}) == raw
+
+    path.chmod(0o640)
+    with pytest.raises(
+        RobotwinPreflightError, match="customer-entitlement-not-owner-only"
+    ):
+        read_customer_entitlement({CUSTOMER_ENTITLEMENT_ENV: str(path)})
+    path.chmod(0o600)
+    link = tmp_path / "customer-entitlement-link.json"
+    link.symlink_to(path)
+    with pytest.raises(
+        RobotwinPreflightError, match="customer-entitlement-unreadable"
+    ):
+        read_customer_entitlement({CUSTOMER_ENTITLEMENT_ENV: str(link)})
+
+    oversized = tmp_path / "oversized-customer-entitlement.json"
+    oversized.write_bytes(b"x" * (MAX_CUSTOMER_ENTITLEMENT_BYTES + 1))
+    oversized.chmod(0o600)
+    with pytest.raises(RobotwinPreflightError, match="customer-entitlement-too-large"):
+        read_customer_entitlement({CUSTOMER_ENTITLEMENT_ENV: str(oversized)})
+
+
 def test_control_plane_source_is_explicit_immutable_and_separate(tmp_path: Path) -> None:
-    authorization = validate_context_bytes(_context_file(tmp_path)[1])
+    authorization = _validate_context(tmp_path, _context_file(tmp_path)[1])
     fingerprint = "a" * 64
     source = f"s3://control-source-bucket/npa-src/npa/{fingerprint}/"
 
@@ -305,12 +400,7 @@ def test_control_plane_source_is_explicit_immutable_and_separate(tmp_path: Path)
         )
 
 
-def test_phase_a_refuses_self_certified_decisions_and_unproven_source_bytes() -> None:
-    private_context = b'{"license_acceptance":{"self_certified":true}}'
-    with pytest.raises(
-        RobotwinPreflightError, match="manager-runtime-use-receipt-unavailable"
-    ):
-        _REAL_RUNTIME_USE_RECEIPT_GATE(private_context)
+def test_phase_a_refuses_unproven_source_bytes() -> None:
     with pytest.raises(
         RobotwinPreflightError, match="control-plane-source-byte-proof-unavailable"
     ):
@@ -366,23 +456,55 @@ def test_context_refuses_invalid_types_identity_and_destination(
 ) -> None:
     raw = json.dumps(_context_payload(tmp_path, **updates), sort_keys=True).encode()
     with pytest.raises(RobotwinPreflightError, match=category):
-        validate_context_bytes(raw)
+        _validate_context(tmp_path, raw)
 
 
-def test_each_runtime_use_decision_is_independently_required(tmp_path: Path) -> None:
-    for decision in (
-        "nvidia_cuda_eula",
-        "nvidia_cudnn_sla",
-        "curobo_noncommercial_research_or_evaluation",
-        "robotwin2_aggregate_asset_and_output_terms",
-    ):
-        decisions = dict(_context_payload(tmp_path)["license_acceptance"])
-        decisions[decision] = False
-        raw = json.dumps(
-            _context_payload(tmp_path, license_acceptance=decisions), sort_keys=True
-        ).encode()
-        with pytest.raises(RobotwinPreflightError, match=decision):
-            validate_context_bytes(raw)
+@pytest.mark.parametrize(
+    ("updates", "category"),
+    [
+        ({"provenance": "manager-issued"}, "provenance-invalid"),
+        ({"decision": "declined"}, "customer-entitlement-declined"),
+        ({"customer_scope_id": "another-customer"}, "wrong-customer"),
+        ({"run_id": "robotwin-another-run"}, "wrong-run"),
+        ({"runtime_manifest_sha256": "0" * 64}, "wrong-manifest"),
+        ({"expires_at": "not-a-date"}, "expiry-invalid"),
+        ({"expires_at": "2020-01-01T00:00:00Z"}, "customer-entitlement-stale"),
+        ({"intended_activity": "commercial-service"}, "use-scope-mismatch"),
+        ({"terms": []}, "terms-mismatch"),
+    ],
+)
+def test_customer_entitlement_is_exact_run_scoped_and_fail_closed(
+    tmp_path: Path, updates: dict[str, object], category: str
+) -> None:
+    raw = json.dumps(_context_payload(tmp_path), sort_keys=True).encode()
+    with pytest.raises(RobotwinPreflightError, match=category):
+        _validate_context(tmp_path, raw, entitlement_updates=updates)
+
+
+def test_customer_entitlement_notice_names_terms_responsibility_and_resume() -> None:
+    assert "CUDA 12.8.1" in CUSTOMER_ENTITLEMENT_NOTICE
+    assert "cuDNN 9.8.0" in CUSTOMER_ENTITLEMENT_NOTICE
+    assert "CuRobo v0.7.8" in CUSTOMER_ENTITLEMENT_NOTICE
+    assert "customer representative" in CUSTOMER_ENTITLEMENT_NOTICE
+    assert "Decline" in CUSTOMER_ENTITLEMENT_NOTICE
+    assert "accept and resume" in CUSTOMER_ENTITLEMENT_NOTICE
+    assert CUSTOMER_ENTITLEMENT_ENV in CUSTOMER_ENTITLEMENT_NOTICE
+
+
+def test_customer_entitlement_parse_failure_discards_private_exception_graph(
+    tmp_path: Path,
+) -> None:
+    raw = json.dumps(_context_payload(tmp_path), sort_keys=True).encode()
+    with pytest.raises(RobotwinPreflightError) as caught:
+        _validate_context(
+            tmp_path,
+            raw,
+            entitlement_updates={"expires_at": "private-expiry-canary"},
+        )
+
+    assert "private-expiry-canary" not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
 
 
 def test_portable_configs_reject_external_files_and_all_exec_plugins(
@@ -393,7 +515,7 @@ def test_portable_configs_reject_external_files_and_all_exec_plugins(
         "include: /private/other.yaml\n", encoding="utf-8"
     )
     with pytest.raises(RobotwinPreflightError, match="external-reference"):
-        validate_context_bytes(json.dumps(payload, sort_keys=True).encode())
+        _validate_context(tmp_path, json.dumps(payload, sort_keys=True).encode())
 
     payload = _context_payload(tmp_path)
     Path(str(payload["kubeconfig"])).write_text(
@@ -420,7 +542,7 @@ def test_portable_configs_reject_external_files_and_all_exec_plugins(
         encoding="utf-8",
     )
     with pytest.raises(RobotwinPreflightError, match="exec-plugin-refused"):
-        validate_context_bytes(json.dumps(payload, sort_keys=True).encode())
+        _validate_context(tmp_path, json.dumps(payload, sort_keys=True).encode())
 
     payload = _context_payload(tmp_path)
     Path(str(payload["skypilot_config_path"])).write_text(
@@ -428,7 +550,7 @@ def test_portable_configs_reject_external_files_and_all_exec_plugins(
         encoding="utf-8",
     )
     with pytest.raises(RobotwinPreflightError, match="context-mismatch"):
-        validate_context_bytes(json.dumps(payload, sort_keys=True).encode())
+        _validate_context(tmp_path, json.dumps(payload, sort_keys=True).encode())
 
     payload = _context_payload(tmp_path)
     Path(str(payload["kubeconfig"])).write_text(
@@ -438,7 +560,7 @@ def test_portable_configs_reject_external_files_and_all_exec_plugins(
         encoding="utf-8",
     )
     with pytest.raises(RobotwinPreflightError, match="user-not-portable"):
-        validate_context_bytes(json.dumps(payload, sort_keys=True).encode())
+        _validate_context(tmp_path, json.dumps(payload, sort_keys=True).encode())
 
     payload = _context_payload(tmp_path)
     Path(str(payload["kubeconfig"])).write_text(
@@ -449,7 +571,7 @@ def test_portable_configs_reject_external_files_and_all_exec_plugins(
         encoding="utf-8",
     )
     with pytest.raises(RobotwinPreflightError, match="user-not-portable"):
-        validate_context_bytes(json.dumps(payload, sort_keys=True).encode())
+        _validate_context(tmp_path, json.dumps(payload, sort_keys=True).encode())
 
 
 @pytest.mark.parametrize(
@@ -471,18 +593,21 @@ def test_skypilot_config_rejects_topology_and_provider_extensions(
     )
 
     with pytest.raises(RobotwinPreflightError, match="skypilot-config"):
-        validate_context_bytes(json.dumps(payload, sort_keys=True).encode())
+        _validate_context(tmp_path, json.dumps(payload, sort_keys=True).encode())
 
 
 def test_transport_round_trip_is_digest_bound_and_repr_redacted(tmp_path: Path) -> None:
-    path, raw = _context_file(tmp_path)
-    authorization = load_runtime_authorization({PUBLIC_CONTEXT_ENV: str(path)})
+    environment, _path, raw, _entitlement_path, entitlement_raw = (
+        _authorization_environment(tmp_path)
+    )
+    authorization = load_runtime_authorization(environment)
     transport = encode_transport(authorization)
     decoded = decode_transport(transport)
 
     assert decoded.raw_context == raw
     assert decoded.context_sha256 == hashlib.sha256(raw).hexdigest()
     assert decoded.kubeconfig_bytes == authorization.kubeconfig_bytes
+    assert decoded.raw_customer_entitlement == entitlement_raw
     assert "robotwin-project-canary" not in repr(decoded)
     assert raw.decode() not in repr(decoded)
     assert "portable-test-token" in decoded.redactions
@@ -505,8 +630,10 @@ def test_transport_round_trip_is_digest_bound_and_repr_redacted(tmp_path: Path) 
 
 
 def test_worker_materialization_preserves_bytes_modes_and_paths(tmp_path: Path) -> None:
-    path, raw = _context_file(tmp_path)
-    authorization = load_runtime_authorization({PUBLIC_CONTEXT_ENV: str(path)})
+    environment, _path, raw, _entitlement_path, entitlement_raw = (
+        _authorization_environment(tmp_path)
+    )
+    authorization = load_runtime_authorization(environment)
     directory = tmp_path / "materialized"
     directory.mkdir(mode=0o755)
 
@@ -514,6 +641,7 @@ def test_worker_materialization_preserves_bytes_modes_and_paths(tmp_path: Path) 
 
     assert stat.S_IMODE(directory.stat().st_mode) == 0o700
     assert result.context_path.read_bytes() == raw
+    assert result.customer_entitlement_path.read_bytes() == entitlement_raw
     assert result.kubeconfig_path.read_bytes() == authorization.kubeconfig_bytes
     assert result.skypilot_config_path.read_bytes() == authorization.skypilot_config_bytes
     for child in directory.iterdir():
@@ -524,8 +652,10 @@ def test_worker_materialization_preserves_bytes_modes_and_paths(tmp_path: Path) 
 def test_inner_submit_reuses_the_validated_authorization_without_a_consent_proxy(
     tmp_path: Path,
 ) -> None:
-    context_path, _ = _context_file(tmp_path)
-    authorization = load_runtime_authorization({PUBLIC_CONTEXT_ENV: str(context_path)})
+    environment, _context_path, _raw, _entitlement_path, _entitlement_raw = (
+        _authorization_environment(tmp_path)
+    )
+    authorization = load_runtime_authorization(environment)
     image = authorization.bootstrap_image
     environment = {
         "KUBECONFIG": authorization.kubeconfig_source,
@@ -571,15 +701,24 @@ def test_live_submit_requires_public_secret_name_and_binds_coordinates(
         "npa.orchestration.npa_workflow.robotwin_preflight.RUNTIME_LOCK_STATUS",
         "complete",
     )
-    context_path, _ = _context_file(tmp_path)
+    environment, _context_path, _raw, _entitlement_path, _entitlement_raw = (
+        _authorization_environment(tmp_path)
+    )
     spec = load_spec(ROBOTWIN_SPEC)
-    environment = {PUBLIC_CONTEXT_ENV: str(context_path)}
 
     with pytest.raises(RobotwinPreflightError, match="secret-not-requested"):
         prepare_live_submit(spec, requested_secret_envs=(), environ=environment)
+    with pytest.raises(
+        RobotwinPreflightError, match="customer-entitlement-secret-not-requested"
+    ):
+        prepare_live_submit(
+            spec,
+            requested_secret_envs=(PUBLIC_CONTEXT_ENV,),
+            environ=environment,
+        )
     context = prepare_live_submit(
         spec,
-        requested_secret_envs=(PUBLIC_CONTEXT_ENV,),
+        requested_secret_envs=(PUBLIC_CONTEXT_ENV, CUSTOMER_ENTITLEMENT_ENV),
         environ=environment,
     )
     assert context is not None
@@ -615,12 +754,14 @@ def test_live_submit_requires_public_secret_name_and_binds_coordinates(
 def test_live_submit_refuses_disabled_runtime_after_context_validation(
     tmp_path: Path,
 ) -> None:
-    context_path, _ = _context_file(tmp_path)
+    environment, _context_path, _raw, _entitlement_path, _entitlement_raw = (
+        _authorization_environment(tmp_path)
+    )
     with pytest.raises(RobotwinPreflightError, match="runtime-delivery-disabled"):
         prepare_live_submit(
             load_spec(ROBOTWIN_SPEC),
-            requested_secret_envs=(PUBLIC_CONTEXT_ENV,),
-            environ={PUBLIC_CONTEXT_ENV: str(context_path)},
+            requested_secret_envs=(PUBLIC_CONTEXT_ENV, CUSTOMER_ENTITLEMENT_ENV),
+            environ=environment,
         )
 
 
@@ -674,7 +815,7 @@ def test_all_confidential_parser_refusals_discard_private_exception_graphs(
         private_path.write_text(private_document, encoding="utf-8")
         raw = json.dumps(payload, sort_keys=True).encode()
         with pytest.raises(RobotwinPreflightError) as caught:
-            validate_context_bytes(raw)
+            _validate_context(tmp_path, raw)
         assert_clean(
             caught.value,
             str(private_path),
@@ -682,6 +823,14 @@ def test_all_confidential_parser_refusals_discard_private_exception_graphs(
             "robotwin-project-canary",
             "portable-test-token",
         )
+
+    environment, _context_path, _raw, entitlement_path, _entitlement_raw = (
+        _authorization_environment(tmp_path)
+    )
+    entitlement_path.chmod(0o640)
+    with pytest.raises(RobotwinPreflightError) as caught:
+        load_runtime_authorization(environment)
+    assert_clean(caught.value, str(entitlement_path), "customer-scope-canary")
 
     private_transport = "{private-transport-document-canary"
     with pytest.raises(RobotwinPreflightError) as caught:

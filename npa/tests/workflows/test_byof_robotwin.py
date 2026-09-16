@@ -13,6 +13,10 @@ import yaml
 
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.robotwin_preflight import (
+    CUSTOMER_ENTITLEMENT_ENV,
+    CUSTOMER_ENTITLEMENT_SCHEMA,
+    CUSTOMER_TERMS,
+    CUSTOMER_USE_SCOPE,
     RobotwinPreflightError,
 )
 
@@ -156,18 +160,27 @@ def test_robotwin_runtime_lock_records_exact_deferred_boundaries() -> None:
         "intended_activity": (
             "containerization-and-technical-workload-validation-and-evaluation"
         ),
-        "record": "owner-only-bounded-manager-run-record",
+        "record": "run-bounded-operator-use-statement",
         "lifetime": "expires-with-bounded-manager-run",
         "global_or_permanent": False,
         "curobo_compatibility": "noncommercial-research-or-evaluation-only",
-        "service_and_output_use": "human-decision-required",
+        "service_and_output_use": (
+            "no-broader-than-noncommercial-research-or-evaluation"
+        ),
     }
     assert lock["access"]["status"] == "not-probed"
     assert lock["access"]["timing"] == "before-provisioning"
     assert lock["access"]["credential_owner"] == "customer"
     assert lock["access"]["credential_phase"] == "runtime-only-secret-value"
     assert lock["access"]["credential_persistence"] is False
-    assert lock["access"]["token_is_terms_acceptance"] is False
+    assert lock["access"]["credential_as_entitlement_evidence"] == (
+        "only-when-the-upstream-vendor-gates-the-exact-artifact-after-"
+        "customer-acceptance"
+    )
+    assert lock["access"]["customer_authorization"]["control"] == (
+        "customer-issued-run-scoped-secret-value"
+    )
+    assert lock["access"]["customer_authorization"]["manager_or_npa_acceptance"] is False
     assert lock["cache"]["tier"] == "node-local-ephemeral"
     assert lock["cache"]["owner_access"] == "single-customer-single-workload"
     assert lock["cache"]["durable_reuse"] == (
@@ -230,14 +243,14 @@ def test_robotwin_has_exactly_one_accelerator_request_across_both_layers() -> No
     assert all("B200" not in request for request in accelerator_requests)
 
 
-def test_robotwin_live_gate_requires_manager_context_and_license_decisions() -> None:
+def test_robotwin_live_gate_requires_resource_context_and_customer_entitlement() -> None:
     live_test = LIVE_E2E.read_text(encoding="utf-8")
 
     assert inspect.signature(
         live_e2e.test_live_robotwin_build_push_run_and_artifacts
     ).parameters == {}
     for required in (
-        "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
+        "CUSTOMER_ENTITLEMENT_ENV",
         "load_runtime_authorization",
         '"workflow"',
         '"submit"',
@@ -299,7 +312,7 @@ def test_robotwin_live_gate_refuses_missing_owner_context_before_work(
         live_e2e.test_live_robotwin_build_push_run_and_artifacts()
 
 
-def test_robotwin_live_gate_refuses_incomplete_runtime_use_decision(
+def test_robotwin_live_gate_refuses_declined_customer_entitlement(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     repo = tmp_path / "repo"
@@ -320,22 +333,17 @@ def test_robotwin_live_gate_refuses_incomplete_runtime_use_decision(
             {
                 "solution": "robotwin",
                 "ownership_provenance": "manager-issued",
+                "customer_scope_id": "private-customer",
                 "workflow_sha256": "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3",
                 "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
                 "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
                 "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-                "runtime_lock_sha256": "87251f2ac8428b86d33591c909a2f0dacc86e9eee4f9a7bca2fdd93d5cc83815",
+                "runtime_lock_sha256": "dc882049f7cbf4042ab804f3703c3f72e386a077ef54973d667cab9f3594a7b9",
                 "bootstrap_image": "registry.example/private/robotwin/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "reservation": {
                     "policy": "STRICT",
                     "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
                     "count": 1,
-                },
-                "license_acceptance": {
-                    "nvidia_cuda_eula": True,
-                    "nvidia_cudnn_sla": True,
-                    "curobo_noncommercial_research_or_evaluation": True,
-                    "robotwin2_aggregate_asset_and_output_terms": False,
                 },
                 "project": "private-project",
                 "nebius_profile": "private-profile",
@@ -350,17 +358,39 @@ def test_robotwin_live_gate_refuses_incomplete_runtime_use_decision(
         encoding="utf-8",
     )
     context.chmod(0o600)
+    entitlement = tmp_path / "customer-entitlement.json"
+    entitlement.write_text(
+        json.dumps(
+            {
+                "schema_version": CUSTOMER_ENTITLEMENT_SCHEMA,
+                "provenance": "customer-issued",
+                "customer_scope_id": "private-customer",
+                "run_id": "robotwin-private-run",
+                "runtime_manifest_sha256": (
+                    "dc882049f7cbf4042ab804f3703c3f72e386a077ef54973d667cab9f3594a7b9"
+                ),
+                "expires_at": "2099-01-01T00:00:00Z",
+                "decision": "declined",
+                "intended_activity": CUSTOMER_USE_SCOPE,
+                "terms": list(CUSTOMER_TERMS),
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    entitlement.chmod(0o600)
     monkeypatch.setattr(live_e2e, "REPO_ROOT", repo)
     monkeypatch.setenv("NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT", str(context))
+    monkeypatch.setenv(CUSTOMER_ENTITLEMENT_ENV, str(entitlement))
     monkeypatch.setattr(
         live_e2e.subprocess,
         "run",
-        lambda *_: pytest.fail("license refusal occurred too late"),
+        lambda *_: pytest.fail("entitlement refusal occurred too late"),
     )
 
     with pytest.raises(
         RobotwinPreflightError,
-        match="license-decision-robotwin2_aggregate_asset_and_output_terms-missing",
+        match="customer-entitlement-declined",
     ):
         live_e2e.test_live_robotwin_build_push_run_and_artifacts()
 

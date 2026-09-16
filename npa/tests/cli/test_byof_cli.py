@@ -20,6 +20,11 @@ from npa.cli.workbench import byof as byof_cli
 from npa.cli.workbench.byof import build_byof_argv
 from npa.sdk.workbench import byof as byof_sdk
 from npa.orchestration.npa_workflow.robotwin_preflight import (
+    CUSTOMER_ENTITLEMENT_ENV,
+    CUSTOMER_ENTITLEMENT_SCHEMA,
+    CUSTOMER_TERMS,
+    CUSTOMER_USE_SCOPE,
+    MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV,
     MATERIALIZED_KUBECONFIG_ENV,
     MATERIALIZED_SKYPILOT_CONFIG_ENV,
     PUBLIC_CONTEXT_ENV,
@@ -30,15 +35,6 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
 from npa.orchestration.npa_workflow import robotwin_preflight
 
 runner = CliRunner()
-
-
-@pytest.fixture(autouse=True)
-def _supply_genuine_receipt_only_inside_unit_tests(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        robotwin_preflight, "_require_genuine_runtime_use_receipt", lambda _raw: None
-    )
 
 
 def test_byof_runner_resolves_from_staged_npa_source(
@@ -249,22 +245,17 @@ def _robotwin_transport_fixture(tmp_path: Path) -> tuple[list[str], str]:
             {
                 "solution": "robotwin",
                 "ownership_provenance": "manager-issued",
+                "customer_scope_id": "robotwin-customer-canary",
                 "workflow_sha256": "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3",
                 "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
                 "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
                 "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-                "runtime_lock_sha256": "87251f2ac8428b86d33591c909a2f0dacc86e9eee4f9a7bca2fdd93d5cc83815",
+                "runtime_lock_sha256": "dc882049f7cbf4042ab804f3703c3f72e386a077ef54973d667cab9f3594a7b9",
                 "bootstrap_image": "registry.example/robotwin-private/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "reservation": {
                     "policy": "STRICT",
                     "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
                     "count": 1,
-                },
-                "license_acceptance": {
-                    "nvidia_cuda_eula": True,
-                    "nvidia_cudnn_sla": True,
-                    "curobo_noncommercial_research_or_evaluation": True,
-                    "robotwin2_aggregate_asset_and_output_terms": True,
                 },
                 "project": "robotwin-project-canary",
                 "nebius_profile": "robotwin-profile",
@@ -279,7 +270,33 @@ def _robotwin_transport_fixture(tmp_path: Path) -> tuple[list[str], str]:
         encoding="utf-8",
     )
     context.chmod(0o600)
-    authorization = load_runtime_authorization({PUBLIC_CONTEXT_ENV: str(context)})
+    entitlement = tmp_path / "customer-entitlement.json"
+    entitlement.write_text(
+        json.dumps(
+            {
+                "schema_version": CUSTOMER_ENTITLEMENT_SCHEMA,
+                "provenance": "customer-issued",
+                "customer_scope_id": "robotwin-customer-canary",
+                "run_id": "robotwin-run-canary",
+                "runtime_manifest_sha256": (
+                    "dc882049f7cbf4042ab804f3703c3f72e386a077ef54973d667cab9f3594a7b9"
+                ),
+                "expires_at": "2099-01-01T00:00:00Z",
+                "decision": "accepted",
+                "intended_activity": CUSTOMER_USE_SCOPE,
+                "terms": list(CUSTOMER_TERMS),
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    entitlement.chmod(0o600)
+    authorization = load_runtime_authorization(
+        {
+            PUBLIC_CONTEXT_ENV: str(context),
+            CUSTOMER_ENTITLEMENT_ENV: str(entitlement),
+        }
+    )
     argv = build_byof_argv(
         repo_url=config["repo_url"],
         repo_ref=config["repo_ref"],
@@ -325,9 +342,10 @@ def test_robotwin_worker_transport_materializes_owner_only_and_always_cleans_up(
         ) as authorization:
             assert TRANSPORT_CONTEXT_ENV not in os.environ
             context = Path(os.environ[PUBLIC_CONTEXT_ENV])
+            entitlement = Path(os.environ[MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV])
             kubeconfig = Path(os.environ[MATERIALIZED_KUBECONFIG_ENV])
             skypilot = Path(os.environ[MATERIALIZED_SKYPILOT_CONFIG_ENV])
-            materialized_paths.extend((context, kubeconfig, skypilot))
+            materialized_paths.extend((context, entitlement, kubeconfig, skypilot))
             assert authorization is not None
             assert authorization.kubeconfig_source == str(kubeconfig)
             assert authorization.skypilot_config_source == str(skypilot)
@@ -339,6 +357,7 @@ def test_robotwin_worker_transport_materializes_owner_only_and_always_cleans_up(
     assert all(not path.exists() for path in materialized_paths)
     assert os.environ[TRANSPORT_CONTEXT_ENV] == transport
     assert PUBLIC_CONTEXT_ENV not in os.environ
+    assert MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV not in os.environ
 
 
 @pytest.mark.parametrize(

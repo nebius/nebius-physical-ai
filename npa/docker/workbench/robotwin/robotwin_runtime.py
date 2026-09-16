@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -17,26 +18,44 @@ from typing import Any, Mapping
 
 
 AUTH_ENV = "NPA_INTERNAL_BYOF_ROBOTWIN_RUNTIME_AUTH_V1"
-AUTH_SCHEMA = "npa.byof.robotwin.runtime-authorization.v1"
+AUTH_SCHEMA = "npa.byof.robotwin.runtime-authorization.v2"
+CUSTOMER_ENTITLEMENT_SCHEMA = "npa.byof.robotwin.customer-runtime-entitlement.v1"
 LOCK_PATH = Path("/opt/npa/robotwin/runtime-lock.json")
 SOURCE_REVISION = "96c1feab536306b50c26af200044fcdf126e8904"
 CUROBO_REVISION = "d64c4b005459db10c5dd867d8b30a87d5bda9bdb"
 ASSET_REVISION = "785feb15aa4a4f532395ad2b1d2be5f28cb561ad"
 WORKFLOW_SHA256 = "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3"
-RUNTIME_LOCK_SHA256 = "87251f2ac8428b86d33591c909a2f0dacc86e9eee4f9a7bca2fdd93d5cc83815"
+RUNTIME_LOCK_SHA256 = "dc882049f7cbf4042ab804f3703c3f72e386a077ef54973d667cab9f3594a7b9"
 ACCELERATOR = "RTXPRO-6000-BLACKWELL-SERVER-EDITION"
-REQUIRED_DECISIONS = frozenset(
+CUSTOMER_USE_SCOPE = (
+    "noncommercial-containerization-and-technical-workload-"
+    "validation-and-evaluation"
+)
+CUSTOMER_TERMS = (
     {
-        "nvidia_cuda_eula",
-        "nvidia_cudnn_sla",
-        "curobo_noncommercial_research_or_evaluation",
-        "robotwin2_aggregate_asset_and_output_terms",
-    }
+        "id": "nvidia-cuda-12.8.1-eula-2025-01-07",
+        "url": "https://docs.nvidia.com/cuda/archive/12.8.1/eula/index.html",
+    },
+    {
+        "id": "nvidia-cudnn-9.8.0-sla-2025-03-06",
+        "url": (
+            "https://docs.nvidia.com/deeplearning/cudnn/backend/"
+            "v9.8.0/reference/eula.html"
+        ),
+    },
+    {
+        "id": "nvidia-curobo-v0.7.8-license-d64c4b005459",
+        "url": (
+            "https://github.com/NVlabs/curobo/blob/"
+            f"{CUROBO_REVISION}/LICENSE"
+        ),
+    },
 )
 CONTEXT_FIELDS = frozenset(
     {
         "solution",
         "ownership_provenance",
+        "customer_scope_id",
         "workflow_sha256",
         "source_revision",
         "curobo_revision",
@@ -44,7 +63,6 @@ CONTEXT_FIELDS = frozenset(
         "runtime_lock_sha256",
         "bootstrap_image",
         "reservation",
-        "license_acceptance",
         "project",
         "nebius_profile",
         "kubeconfig",
@@ -53,6 +71,19 @@ CONTEXT_FIELDS = frozenset(
         "bucket",
         "output_root",
         "run_id",
+    }
+)
+CUSTOMER_ENTITLEMENT_FIELDS = frozenset(
+    {
+        "schema_version",
+        "provenance",
+        "customer_scope_id",
+        "run_id",
+        "runtime_manifest_sha256",
+        "expires_at",
+        "decision",
+        "intended_activity",
+        "terms",
     }
 )
 
@@ -72,7 +103,9 @@ def _text(payload: Mapping[str, Any], name: str) -> str:
     return value.strip()
 
 
-def _decode_authorization(environ: Mapping[str, str]) -> tuple[dict[str, Any], bytes]:
+def _decode_authorization(
+    environ: Mapping[str, str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
     encoded = str(environ.get(AUTH_ENV) or "")
     if not encoded:
         _refuse("authorization-missing")
@@ -84,6 +117,8 @@ def _decode_authorization(environ: Mapping[str, str]) -> tuple[dict[str, Any], b
         "schema_version",
         "context_base64",
         "context_sha256",
+        "customer_entitlement_base64",
+        "customer_entitlement_sha256",
     }:
         _refuse("authorization-envelope-invalid")
     if envelope.get("schema_version") != AUTH_SCHEMA:
@@ -102,11 +137,77 @@ def _decode_authorization(environ: Mapping[str, str]) -> tuple[dict[str, Any], b
         payload = None
     if not isinstance(payload, dict) or set(payload) != CONTEXT_FIELDS:
         _refuse("authorization-context-schema-mismatch")
-    return payload, raw
+    try:
+        entitlement_raw = base64.b64decode(
+            envelope.get("customer_entitlement_base64"), validate=True
+        )
+    except (TypeError, ValueError):
+        entitlement_raw = b""
+    if not entitlement_raw or len(entitlement_raw) > 16 * 1024:
+        _refuse("customer-entitlement-invalid")
+    if (
+        hashlib.sha256(entitlement_raw).hexdigest()
+        != envelope.get("customer_entitlement_sha256")
+    ):
+        _refuse("customer-entitlement-digest-mismatch")
+    try:
+        entitlement = json.loads(entitlement_raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        entitlement = None
+    if (
+        not isinstance(entitlement, dict)
+        or set(entitlement) != CUSTOMER_ENTITLEMENT_FIELDS
+    ):
+        _refuse("customer-entitlement-schema-mismatch")
+    return payload, entitlement
+
+
+def _validate_customer_entitlement(
+    payload: Mapping[str, Any], entitlement: Mapping[str, Any]
+) -> None:
+    """Revalidate customer/run/manifest/expiry binding inside the image."""
+
+    if entitlement.get("schema_version") != CUSTOMER_ENTITLEMENT_SCHEMA:
+        _refuse("customer-entitlement-version-mismatch")
+    if entitlement.get("provenance") != "customer-issued":
+        _refuse("customer-entitlement-provenance-invalid")
+    if entitlement.get("decision") != "accepted":
+        category = (
+            "customer-entitlement-declined"
+            if entitlement.get("decision") == "declined"
+            else "customer-entitlement-decision-invalid"
+        )
+        _refuse(category)
+    if entitlement.get("customer_scope_id") != _text(payload, "customer_scope_id"):
+        _refuse("customer-entitlement-wrong-customer")
+    if entitlement.get("run_id") != _text(payload, "run_id"):
+        _refuse("customer-entitlement-wrong-run")
+    if entitlement.get("runtime_manifest_sha256") != RUNTIME_LOCK_SHA256:
+        _refuse("customer-entitlement-wrong-manifest")
+    if entitlement.get("intended_activity") != CUSTOMER_USE_SCOPE:
+        _refuse("customer-entitlement-use-scope-mismatch")
+    if entitlement.get("terms") != list(CUSTOMER_TERMS):
+        _refuse("customer-entitlement-terms-mismatch")
+    expires_at = entitlement.get("expires_at")
+    if not isinstance(expires_at, str) or re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", expires_at
+    ) is None:
+        _refuse("customer-entitlement-expiry-invalid")
+    expiry: datetime | None = None
+    try:
+        expiry = datetime.strptime(expires_at, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        pass
+    if expiry is None:
+        _refuse("customer-entitlement-expiry-invalid")
+    if expiry <= datetime.now(timezone.utc):
+        _refuse("customer-entitlement-stale")
 
 
 def _validate_authorization(environ: Mapping[str, str]) -> dict[str, Any]:
-    payload, _ = _decode_authorization(environ)
+    payload, entitlement = _decode_authorization(environ)
     if payload.get("solution") != "robotwin":
         _refuse("wrong-solution")
     if payload.get("ownership_provenance") != "manager-issued":
@@ -130,11 +231,7 @@ def _validate_authorization(environ: Mapping[str, str]) -> dict[str, Any]:
     reservation = payload.get("reservation")
     if reservation != {"policy": "STRICT", "accelerator": ACCELERATOR, "count": 1}:
         _refuse("reservation-mismatch")
-    decisions = payload.get("license_acceptance")
-    if not isinstance(decisions, dict) or set(decisions) != REQUIRED_DECISIONS:
-        _refuse("license-decision-schema-mismatch")
-    if any(decisions[name] is not True for name in REQUIRED_DECISIONS):
-        _refuse("license-decision-missing")
+    _validate_customer_entitlement(payload, entitlement)
     for name in (
         "project",
         "nebius_profile",

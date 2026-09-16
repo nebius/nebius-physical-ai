@@ -122,7 +122,12 @@ def test_renamed_source_metadata_and_private_evidence_fail(tmp_path: Path) -> No
             ),
             "renamed/runtime-envelope.bin": (
                 b'{"context_base64":"eyJwcml2YXRlIjoiYnl0ZXMifQ==",'
-                b'"schema_version":"npa.byof.robotwin.runtime-authorization.v1"}'
+                b'"schema_version":"npa.byof.robotwin.runtime-authorization.v2"}'
+            ),
+            "renamed/customer-entitlement.bin": (
+                b'{"schema_version":"npa.byof.robotwin.'
+                b'customer-runtime-entitlement.v1",'
+                b'"provenance":"customer-issued","decision":"accepted"}'
             ),
         },
     )
@@ -139,6 +144,7 @@ def test_renamed_source_metadata_and_private_evidence_fail(tmp_path: Path) -> No
     assert credential_paths == {
         "opaque/source-payload.bin",
         "renamed/credential.bin",
+        "renamed/customer-entitlement.bin",
         "renamed/evidence.bin",
         "renamed/runtime-envelope.bin",
     }

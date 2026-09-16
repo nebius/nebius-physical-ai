@@ -100,6 +100,8 @@ def _robotwin_runtime_materialization(
 
     from npa.orchestration.npa_workflow.robotwin_preflight import (
         CONTEXT_ENV_NAMES,
+        CUSTOMER_ENTITLEMENT_ENV,
+        MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV,
         MATERIALIZED_KUBECONFIG_ENV,
         MATERIALIZED_SKYPILOT_CONFIG_ENV,
         PUBLIC_CONTEXT_ENV,
@@ -127,7 +129,9 @@ def _robotwin_runtime_materialization(
         yield None
         return
     validate_invocation(parsed)
-    if os.environ.get(PUBLIC_CONTEXT_ENV, "").strip():
+    if os.environ.get(PUBLIC_CONTEXT_ENV, "").strip() or os.environ.get(
+        CUSTOMER_ENTITLEMENT_ENV, ""
+    ).strip():
         raise ValueError("RoboTwin worker received conflicting context channels")
     previous = {name: os.environ.get(name) for name in CONTEXT_ENV_NAMES}
     with tempfile.TemporaryDirectory(prefix="npa-robotwin-runtime-") as raw_dir:
@@ -140,6 +144,9 @@ def _robotwin_runtime_materialization(
         try:
             os.environ.pop(TRANSPORT_CONTEXT_ENV, None)
             os.environ[PUBLIC_CONTEXT_ENV] = str(materialized.context_path)
+            os.environ[MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV] = str(
+                materialized.customer_entitlement_path
+            )
             os.environ[MATERIALIZED_KUBECONFIG_ENV] = str(
                 materialized.kubeconfig_path
             )

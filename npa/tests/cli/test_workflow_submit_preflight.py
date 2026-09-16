@@ -22,6 +22,10 @@ import yaml
 from npa.cli.main import app
 from npa.cli.workbench import workflow as workflow_cli
 from npa.orchestration.npa_workflow.robotwin_preflight import (
+    CUSTOMER_ENTITLEMENT_ENV as ROBOTWIN_ENTITLEMENT_ENV,
+    CUSTOMER_ENTITLEMENT_SCHEMA,
+    CUSTOMER_TERMS,
+    CUSTOMER_USE_SCOPE,
     PUBLIC_CONTEXT_ENV as ROBOTWIN_CONTEXT_ENV,
     TRANSPORT_CONTEXT_ENV as ROBOTWIN_TRANSPORT_ENV,
 )
@@ -118,7 +122,10 @@ def _submit_robotwin(*args: str):
 
 
 def _install_robotwin_submit_context(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    entitlement_decision: str = "accepted",
 ) -> tuple[dict[str, object], Path]:
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.robotwin_preflight.RUNTIME_LOCK_STATUS",
@@ -145,22 +152,17 @@ def _install_robotwin_submit_context(
     payload: dict[str, object] = {
         "solution": "robotwin",
         "ownership_provenance": "manager-issued",
+        "customer_scope_id": "robotwin-customer-canary",
         "workflow_sha256": "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3",
         "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
         "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
         "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-        "runtime_lock_sha256": "87251f2ac8428b86d33591c909a2f0dacc86e9eee4f9a7bca2fdd93d5cc83815",
+        "runtime_lock_sha256": "dc882049f7cbf4042ab804f3703c3f72e386a077ef54973d667cab9f3594a7b9",
         "bootstrap_image": "registry.example/robotwin-private/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "reservation": {
             "policy": "STRICT",
             "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
             "count": 1,
-        },
-        "license_acceptance": {
-            "nvidia_cuda_eula": True,
-            "nvidia_cudnn_sla": True,
-            "curobo_noncommercial_research_or_evaluation": True,
-            "robotwin2_aggregate_asset_and_output_terms": True,
         },
         "project": "robotwin-private-project-canary",
         "nebius_profile": "robotwin-private-profile-canary",
@@ -175,6 +177,26 @@ def _install_robotwin_submit_context(
     context.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
     context.chmod(0o600)
     monkeypatch.setenv(ROBOTWIN_CONTEXT_ENV, str(context))
+    entitlement = tmp_path / "customer-entitlement.json"
+    entitlement.write_text(
+        json.dumps(
+            {
+                "schema_version": CUSTOMER_ENTITLEMENT_SCHEMA,
+                "provenance": "customer-issued",
+                "customer_scope_id": payload["customer_scope_id"],
+                "run_id": payload["run_id"],
+                "runtime_manifest_sha256": payload["runtime_lock_sha256"],
+                "expires_at": "2099-01-01T00:00:00Z",
+                "decision": entitlement_decision,
+                "intended_activity": CUSTOMER_USE_SCOPE,
+                "terms": list(CUSTOMER_TERMS),
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    entitlement.chmod(0o600)
+    monkeypatch.setenv(ROBOTWIN_ENTITLEMENT_ENV, str(entitlement))
     return payload, context
 
 
@@ -186,7 +208,13 @@ def test_robotwin_submit_refuses_before_every_external_boundary_even_when_skippe
     malformed: bool,
 ) -> None:
     monkeypatch.delenv(ROBOTWIN_CONTEXT_ENV, raising=False)
-    args = ["--secret-env", ROBOTWIN_CONTEXT_ENV, "--skip-preflight"]
+    args = [
+        "--secret-env",
+        ROBOTWIN_CONTEXT_ENV,
+        "--secret-env",
+        ROBOTWIN_ENTITLEMENT_ENV,
+        "--skip-preflight",
+    ]
     if malformed:
         context = tmp_path / "robotwin-context.json"
         context.write_text("{", encoding="utf-8")
@@ -219,10 +247,25 @@ def test_robotwin_submit_refuses_before_every_external_boundary_even_when_skippe
         boundary.assert_not_called()
 
 
-def test_robotwin_self_certified_context_refuses_before_external_boundaries(
-    monkeypatch: pytest.MonkeyPatch, mocker, tmp_path: Path
+@pytest.mark.parametrize(
+    ("missing", "category"),
+    [
+        (True, "customer-entitlement-missing"),
+        (False, "customer-entitlement-declined"),
+    ],
+)
+def test_robotwin_customer_entitlement_refuses_before_external_boundaries(
+    monkeypatch: pytest.MonkeyPatch,
+    mocker,
+    tmp_path: Path,
+    missing: bool,
+    category: str,
 ) -> None:
-    _install_robotwin_submit_context(monkeypatch, tmp_path)
+    _install_robotwin_submit_context(
+        monkeypatch, tmp_path, entitlement_decision="declined"
+    )
+    if missing:
+        monkeypatch.delenv(ROBOTWIN_ENTITLEMENT_ENV)
     boundaries = [
         mocker.patch(
             "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials"
@@ -235,11 +278,16 @@ def test_robotwin_self_certified_context_refuses_before_external_boundaries(
     ]
 
     result = _submit_robotwin(
-        "--secret-env", ROBOTWIN_CONTEXT_ENV, "--skip-preflight"
+        "--secret-env",
+        ROBOTWIN_CONTEXT_ENV,
+        "--secret-env",
+        ROBOTWIN_ENTITLEMENT_ENV,
+        "--skip-preflight",
     )
 
     assert result.exit_code == 1
-    assert "manager-runtime-use-receipt-unavailable" in result.output
+    assert category in result.output
+    assert CUSTOMER_TERMS[0]["url"] in result.output
     for boundary in boundaries:
         boundary.assert_not_called()
 
@@ -300,9 +348,14 @@ def test_robotwin_plan_only_is_context_free_and_publicly_sanitized(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(ROBOTWIN_CONTEXT_ENV, "private-context-path-canary")
+    monkeypatch.setenv(ROBOTWIN_ENTITLEMENT_ENV, "private-entitlement-path-canary")
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.robotwin_preflight.read_owner_context",
         lambda *_args, **_kwargs: pytest.fail("plan-only read private context"),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.robotwin_preflight.read_customer_entitlement",
+        lambda *_args, **_kwargs: pytest.fail("plan-only read customer entitlement"),
     )
 
     result = _submit_robotwin("--plan-only", "--output-format", "json")
@@ -313,6 +366,7 @@ def test_robotwin_plan_only_is_context_free_and_publicly_sanitized(
     assert ROBOTWIN_CONTEXT_ENV in serialized
     assert ROBOTWIN_TRANSPORT_ENV not in serialized
     assert "private-context-path-canary" not in serialized
+    assert "private-entitlement-path-canary" not in serialized
     assert "example-bucket" in serialized
 
 
@@ -337,11 +391,6 @@ def test_robotwin_normal_submit_uses_only_internal_value_secret_and_bound_output
     from npa.orchestration.npa_workflow import robotwin_preflight
     from npa.orchestration.skypilot.workflow import WorkflowResult
 
-    monkeypatch.setattr(
-        robotwin_preflight,
-        "_require_genuine_runtime_use_receipt",
-        lambda _raw: None,
-    )
     monkeypatch.setattr(
         robotwin_preflight,
         "_require_verified_control_plane_source_bytes",
@@ -432,6 +481,8 @@ def test_robotwin_normal_submit_uses_only_internal_value_secret_and_bound_output
         "--secret-env",
         ROBOTWIN_CONTEXT_ENV,
         "--secret-env",
+        ROBOTWIN_ENTITLEMENT_ENV,
+        "--secret-env",
         "AWS_ACCESS_KEY_ID",
         "--secret-env",
         "AWS_SECRET_ACCESS_KEY",
@@ -446,6 +497,7 @@ def test_robotwin_normal_submit_uses_only_internal_value_secret_and_bound_output
     assert captured["authorized_output_uri"] == summary_uri
     submit_kwargs = captured["submit_kwargs"]
     assert ROBOTWIN_CONTEXT_ENV not in submit_kwargs["secret_envs"]
+    assert ROBOTWIN_ENTITLEMENT_ENV not in submit_kwargs["secret_envs"]
     assert ROBOTWIN_TRANSPORT_ENV in submit_kwargs["secret_envs"]
     assert ROBOTWIN_TRANSPORT_ENV in submit_kwargs["extra_env"]
     assert submit_kwargs["infra"] == "k8s/robotwin-context"
@@ -485,13 +537,6 @@ def test_robotwin_missing_control_plane_source_refuses_without_state_or_staging(
 ) -> None:
     from types import SimpleNamespace
 
-    from npa.orchestration.npa_workflow import robotwin_preflight
-
-    monkeypatch.setattr(
-        robotwin_preflight,
-        "_require_genuine_runtime_use_receipt",
-        lambda _raw: None,
-    )
     _install_robotwin_submit_context(monkeypatch, tmp_path)
     monkeypatch.setenv("NPA_CONFIG_DIR", str(tmp_path / "npa-config"))
     mocker.patch(
@@ -522,6 +567,8 @@ def test_robotwin_missing_control_plane_source_refuses_without_state_or_staging(
     result = _submit_robotwin(
         "--secret-env",
         ROBOTWIN_CONTEXT_ENV,
+        "--secret-env",
+        ROBOTWIN_ENTITLEMENT_ENV,
         "--skip-preflight",
         "--output-format",
         "json",

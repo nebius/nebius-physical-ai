@@ -37,8 +37,20 @@ Runtime-only identities (not included in image layers):
 
 - RoboTwin commit `96c1feab536306b50c26af200044fcdf126e8904`, MIT license.
 - CuRobo v0.7.8 commit `d64c4b005459db10c5dd867d8b30a87d5bda9bdb`, NVIDIA Source Code License for cuRobo, including its noncommercial research/evaluation restriction.
-- RoboTwin2.0 asset revision `785feb15aa4a4f532395ad2b1d2be5f28cb561ad`; aggregate component/output rights require human/legal approval.
+- RoboTwin2.0 asset revision `785feb15aa4a4f532395ad2b1d2be5f28cb561ad`; its immutable [repository card](https://huggingface.co/datasets/TianxingChen/RoboTwin2.0/blob/785feb15aa4a4f532395ad2b1d2be5f28cb561ad/README.md) labels the repository MIT, but does not establish member-by-member archive provenance or output treatment, which remain human/legal blockers.
 - CUDA and cuDNN runtime delivery and use require their exact applicable NVIDIA terms.
+
+Exact runtime terms presented before any governed fetch, install, or cache
+mutation:
+
+- CUDA 12.8.1 EULA: https://docs.nvidia.com/cuda/archive/12.8.1/eula/index.html
+- cuDNN 9.8.0 SLA: https://docs.nvidia.com/deeplearning/cudnn/backend/v9.8.0/reference/eula.html
+- CuRobo v0.7.8 license: https://github.com/NVlabs/curobo/blob/d64c4b005459db10c5dd867d8b30a87d5bda9bdb/LICENSE
+
+Only a customer representative authorized to bind the customer may issue the
+run-scoped entitlement for those exact records. NPA and the infrastructure
+manager do not accept them for the customer. The entitlement does not resolve
+the separately blocked aggregate RoboTwin member-asset and output treatment.
 
 These references document boundaries; they neither fetch bytes nor record
 acceptance. No RoboTwin/NVIDIA source, runtime, model, asset, cache, or output

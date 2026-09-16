@@ -23,10 +23,15 @@ run the runtime-fetched components.
 The operator's exact `noncommercial` statement is recorded once for this
 bounded manager run and is compatible only with CuRobo v0.7.8 noncommercial
 research/evaluation. It expires with the run and does not authorize hosted
-service or broader derivative/output use. Runtime use remains refused until a
-genuine manager receipt binds that scope plus CUDA and cuDNN delivery/use,
-CuRobo's remaining service/output boundary, aggregate RoboTwin asset/output
-treatment, and exact provider access evidence. Customer credentials, when an
+service or broader derivative/output use. Before any governed runtime fetch,
+install, or cache mutation, a customer representative authorized to bind that
+customer must issue an owner-only, run-scoped entitlement for the exact CUDA
+12.8.1, cuDNN 9.8.0, and CuRobo v0.7.8 terms. The record is bound to customer,
+run, runtime-lock SHA-256, intended activity, exact terms, and expiry; NPA and
+the infrastructure manager do not accept those terms for the customer.
+Aggregate RoboTwin member-asset provenance and output treatment remain a
+separate human/legal blocker. Customer credentials, when an
 artifact is gated, are runtime-only secret values and must pass the exact
 provider/artifact/revision/terms payload probe. A credential, private registry,
-runtime fetch, or writable destination is not permission.
+runtime fetch, or writable destination is not permission. Customer entitlement
+does not grant broader service, output, derivative, or redistribution rights.

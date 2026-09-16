@@ -31,7 +31,7 @@
     },
     "credentials": {
       "status": "unverified",
-      "reason": "No manager runtime context, upstream access probe, or credential was used. Public artifacts must use exact-revision payload-byte probes; any gated artifact requires a customer-controlled runtime-only credential and an exact provider/artifact/revision/terms probe before provisioning. Credentials and secret transport are mechanisms, never acceptance of runtime or output terms.",
+      "reason": "No manager resource context, customer entitlement, upstream access probe, or credential was used. The fail-closed submit path separately requires a customer-issued, run/manifest/expiry-bound entitlement for the exact CUDA 12.8.1, cuDNN 9.8.0, and CuRobo v0.7.8 terms. Public artifacts must use exact-revision payload-byte probes; any gated artifact requires a customer-controlled runtime-only credential and an exact provider/artifact/revision/terms probe before provisioning. A credential is entitlement evidence only when the upstream vendor gates the exact artifact after customer acceptance.",
       "evidence": []
     },
     "source_image": {
@@ -41,7 +41,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The run-level operator statement is exactly noncommercial for containerization and technical workload validation/evaluation and expires with this bounded run. CUDA/cuDNN delivery/use, CuRobo v0.7.8 service/output limits beyond that compatible field of use, aggregate asset/output treatment, exact access probes, image bytes, writable storage, and STRICT RTX context remain gates. B200 is invalid.",
+      "reason": "The run-level operator statement is exactly noncommercial for containerization and technical workload validation/evaluation and expires with this bounded run. A customer-issued entitlement can authorize the exact CUDA/cuDNN/CuRobo terms only for that bounded activity; it grants no broader service, derivative, output, or redistribution rights. Aggregate RoboTwin asset/output treatment, the complete runtime artifact lock, exact access probes, image bytes, writable storage, and STRICT RTX context remain gates. B200 is invalid.",
       "evidence": []
     }
   }

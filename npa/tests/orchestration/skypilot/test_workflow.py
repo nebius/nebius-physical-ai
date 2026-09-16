@@ -45,12 +45,14 @@ def _robotwin_bridge_fixture(
 ) -> tuple[Path, object, object, dict[str, object], dict[str, str]]:
     from npa.orchestration.npa_workflow import build_plan, load_spec
     from npa.orchestration.npa_workflow.robotwin_preflight import (
+        CUSTOMER_ENTITLEMENT_SCHEMA,
+        CUSTOMER_TERMS,
+        CUSTOMER_USE_SCOPE,
         RobotwinSubmitContext,
         TRANSPORT_CONTEXT_ENV,
         encode_transport,
         validate_context_bytes,
     )
-    from npa.orchestration.npa_workflow import robotwin_preflight
     from npa.orchestration.npa_workflow.skypilot_render import (
         SkypilotRenderOptions,
         render_skypilot_yaml,
@@ -66,22 +68,17 @@ def _robotwin_bridge_fixture(
     payload = {
         "solution": "robotwin",
         "ownership_provenance": "manager-issued",
+        "customer_scope_id": "robotwin-customer-canary",
         "workflow_sha256": "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3",
         "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
         "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
         "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-        "runtime_lock_sha256": "87251f2ac8428b86d33591c909a2f0dacc86e9eee4f9a7bca2fdd93d5cc83815",
+        "runtime_lock_sha256": "dc882049f7cbf4042ab804f3703c3f72e386a077ef54973d667cab9f3594a7b9",
         "bootstrap_image": "registry.example/robotwin-private/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "reservation": {
             "policy": "STRICT",
             "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
             "count": 1,
-        },
-        "license_acceptance": {
-            "nvidia_cuda_eula": True,
-            "nvidia_cudnn_sla": True,
-            "curobo_noncommercial_research_or_evaluation": True,
-            "robotwin2_aggregate_asset_and_output_terms": True,
         },
         "project": "robotwin-private-project-canary",
         "nebius_profile": "robotwin-private-profile-canary",
@@ -93,6 +90,20 @@ def _robotwin_bridge_fixture(
         "run_id": run_id,
     }
     raw = json.dumps(payload, sort_keys=True).encode()
+    entitlement = json.dumps(
+        {
+            "schema_version": CUSTOMER_ENTITLEMENT_SCHEMA,
+            "provenance": "customer-issued",
+            "customer_scope_id": payload["customer_scope_id"],
+            "run_id": run_id,
+            "runtime_manifest_sha256": payload["runtime_lock_sha256"],
+            "expires_at": "2099-01-01T00:00:00Z",
+            "decision": "accepted",
+            "intended_activity": CUSTOMER_USE_SCOPE,
+            "terms": list(CUSTOMER_TERMS),
+        },
+        sort_keys=True,
+    ).encode()
     kubeconfig = yaml.safe_dump(
         {
             "apiVersion": "v1",
@@ -125,13 +136,9 @@ def _robotwin_bridge_fixture(
     skypilot = (
         f"kubernetes:\n  allowed_contexts: [{context_name}]\n"
     ).encode()
-    monkeypatch.setattr(
-        robotwin_preflight,
-        "_require_genuine_runtime_use_receipt",
-        lambda _raw: None,
-    )
     authorization = validate_context_bytes(
         raw,
+        customer_entitlement_bytes=entitlement,
         config_bytes={
             "kubeconfig": kubeconfig,
             "skypilot_config_path": skypilot,
