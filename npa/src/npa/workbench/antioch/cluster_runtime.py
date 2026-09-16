@@ -21,7 +21,7 @@ import uuid
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Never
+from typing import Any, NoReturn
 
 from .live import (
     AntiochLiveError,
@@ -590,7 +590,7 @@ def _launch_vendor_successor(
     )
 
 
-def run_cluster(args: argparse.Namespace) -> Never:
+def run_cluster(args: argparse.Namespace) -> NoReturn:
     private_root = Path(args.private_root)
     bundle = private_root / "live-bundle"
     _validate_bundle(bundle)
