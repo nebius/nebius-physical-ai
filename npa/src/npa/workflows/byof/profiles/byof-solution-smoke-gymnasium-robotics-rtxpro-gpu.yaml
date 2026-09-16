@@ -43,8 +43,45 @@ setup: |
 run: |
   set -euo pipefail
   OUTPUT_DIR="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
-  mkdir -p "${OUTPUT_DIR}"
   export NPA_SMOKE_OUTPUT_DIR="${OUTPUT_DIR}"
+  /usr/bin/python3 -I -B - "${OUTPUT_DIR}" <<'PY'
+  import os
+  from pathlib import Path
+  import stat
+  import sys
+
+  output = Path(sys.argv[1])
+  if not output.is_absolute() or len(output.parts) < 2:
+      raise SystemExit("Gymnasium output path must be absolute")
+  flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+  descriptors = [os.open("/", flags)]
+  try:
+      for name in output.parts[1:]:
+          try:
+              child_fd = os.open(name, flags, dir_fd=descriptors[-1])
+          except FileNotFoundError:
+              os.mkdir(name, 0o700, dir_fd=descriptors[-1])
+              child_fd = os.open(name, flags, dir_fd=descriptors[-1])
+          descriptor_stat = os.fstat(child_fd)
+          path_stat = os.stat(
+              name, dir_fd=descriptors[-1], follow_symlinks=False
+          )
+          identity = (descriptor_stat.st_dev, descriptor_stat.st_ino)
+          if (
+              not stat.S_ISDIR(descriptor_stat.st_mode)
+              or not stat.S_ISDIR(path_stat.st_mode)
+              or identity != (path_stat.st_dev, path_stat.st_ino)
+              or descriptor_stat.st_uid not in {0, os.geteuid()}
+          ):
+              os.close(child_fd)
+              raise SystemExit("Gymnasium output path component is unsafe")
+          descriptors.append(child_fd)
+      if os.fstat(descriptors[-1]).st_uid != os.geteuid():
+          raise SystemExit("Gymnasium output root has an unexpected owner")
+  finally:
+      for descriptor in reversed(descriptors):
+          os.close(descriptor)
+  PY
   test -n "${BYOF_IMAGE}"
   if ! printf '%s\n' "${BYOF_IMAGE}" | grep -Eq '@sha256:[0-9a-f]{64}$'; then
     echo "BYOF_IMAGE must be an immutable sha256 reference" >&2
@@ -149,6 +186,7 @@ run: |
   # authority, and no privilege elevation; uploads begin only after the
   # descriptor-bound supervisor has proved the complete process tree absent.
   exec /usr/bin/python3 -I -B - <<'PY'
+  import contextlib
   import ctypes
   import hashlib
   import json
@@ -172,20 +210,78 @@ run: |
       )
 
 
+  def _directory_identity(directory_stat):
+      return (
+          directory_stat.st_dev,
+          directory_stat.st_ino,
+          directory_stat.st_mode,
+          directory_stat.st_uid,
+      )
+
+
+  def _require_bound_directory(parent_fd, child_fd, name, identity):
+      descriptor_stat = os.fstat(child_fd)
+      try:
+          path_stat = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+      except OSError as exc:
+          raise SystemExit("Gymnasium output directory chain changed") from exc
+      if (
+          not stat.S_ISDIR(descriptor_stat.st_mode)
+          or not stat.S_ISDIR(path_stat.st_mode)
+          or _directory_identity(descriptor_stat) != identity
+          or _directory_identity(path_stat) != identity
+          or descriptor_stat.st_uid not in {0, os.geteuid()}
+          or os.get_inheritable(child_fd)
+      ):
+          raise SystemExit("Gymnasium output directory chain changed")
+
+
   def _open_bound_output_root(path):
       flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+      if not path.is_absolute() or any(
+          part in {"", ".", ".."} for part in path.parts[1:]
+      ):
+          raise SystemExit("Gymnasium output path is unsafe")
+      descriptors = []
+      bindings = []
       try:
-          directory_fd = os.open(path, flags)
-      except OSError as exc:
-          raise SystemExit("cannot bind Gymnasium output directory safely") from exc
-      directory_stat = os.fstat(directory_fd)
-      if not stat.S_ISDIR(directory_stat.st_mode):
-          os.close(directory_fd)
-          raise SystemExit("Gymnasium output root is not a directory")
-      if directory_stat.st_uid != os.geteuid():
-          os.close(directory_fd)
+          descriptors.append(os.open("/", flags))
+          for index, name in enumerate(path.parts[1:]):
+              parent_fd = descriptors[-1]
+              try:
+                  child_fd = os.open(name, flags, dir_fd=parent_fd)
+              except FileNotFoundError:
+                  if index != len(path.parts[1:]) - 1:
+                      raise
+                  os.mkdir(name, 0o700, dir_fd=parent_fd)
+                  child_fd = os.open(name, flags, dir_fd=parent_fd)
+              descriptors.append(child_fd)
+              identity = _directory_identity(os.fstat(child_fd))
+              _require_bound_directory(parent_fd, child_fd, name, identity)
+              bindings.append((parent_fd, child_fd, name, identity))
+      except BaseException as exc:
+          _close_bound_output_chain(descriptors)
+          if isinstance(exc, OSError):
+              raise SystemExit(
+                  "cannot bind Gymnasium output directory safely"
+              ) from exc
+          raise
+      if os.fstat(descriptors[-1]).st_uid != os.geteuid():
+          for descriptor in reversed(descriptors):
+              os.close(descriptor)
           raise SystemExit("Gymnasium output root has an unexpected owner")
-      return directory_fd
+      return descriptors[-1], tuple(descriptors), tuple(bindings)
+
+
+  def _require_bound_output_chain(bindings):
+      for parent_fd, child_fd, name, identity in bindings:
+          _require_bound_directory(parent_fd, child_fd, name, identity)
+
+
+  def _close_bound_output_chain(descriptors):
+      for descriptor in reversed(descriptors):
+          with contextlib.suppress(OSError):
+              os.close(descriptor)
 
 
   def _require_owned_regular(file_fd, expected_uid, label):
@@ -324,7 +420,8 @@ run: |
 
   run_id = os.environ["NPA_BYOF_RUN_ID"]
   root = Path(f"/workspace/byof-runs/{run_id}")
-  root_fd = _open_bound_output_root(root)
+  root_fd, root_descriptors, root_bindings = _open_bound_output_root(root)
+  _require_bound_output_chain(root_bindings)
   expected_output_uid = os.geteuid()
   expected_command = "\n".join(
       (
@@ -372,6 +469,7 @@ run: |
           stderr=stderr_fd,
           check=False,
       )
+      _require_bound_output_chain(root_bindings)
       _verify_bound_log(
           root_fd,
           stdout_name,
@@ -448,6 +546,7 @@ run: |
   output = os.environ["S3_OUTPUT_PREFIX"].rstrip("/") + "/"
   parsed = urlparse(output)
   if parsed.scheme == "s3" and parsed.netloc:
+      _require_bound_output_chain(root_bindings)
       endpoint = (
           os.environ.get("AWS_ENDPOINT_URL")
           or os.environ.get("NEBIUS_S3_ENDPOINT")
@@ -499,5 +598,6 @@ run: |
       if observed_keys != expected_keys:
           raise SystemExit("qualification output prefix contains unexpected objects")
       print(f"uploaded_file_count={len(upload_payloads)}", flush=True)
-  os.close(root_fd)
+  _require_bound_output_chain(root_bindings)
+  _close_bound_output_chain(root_descriptors)
   PY

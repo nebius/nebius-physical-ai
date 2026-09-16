@@ -9,12 +9,15 @@ import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import stat
 import sys
 import tarfile
 import tempfile
-from typing import BinaryIO, Iterator
+from typing import Any, BinaryIO, Iterator
+from unittest import mock
 import urllib.error
+import urllib.request
 import zipfile
 
 import pytest
@@ -28,6 +31,7 @@ assert SPEC and SPEC.loader
 BOOTSTRAP = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = BOOTSTRAP
 SPEC.loader.exec_module(BOOTSTRAP)
+PUBLIC_ADDRESS = "8.8.8.8"
 
 
 def test_streaming_digest_is_bounded_without_file_digest(
@@ -73,6 +77,230 @@ class _Response(io.BytesIO):
 
     def geturl(self) -> str:
         return self._final_url
+
+
+@pytest.mark.parametrize(
+    "address",
+    (
+        "127.0.0.1",
+        "10.0.0.1",
+        "169.254.1.1",
+        "240.0.0.1",
+        "224.0.0.1",
+        "0.0.0.0",
+        "::1",
+        "fc00::1",
+        "fe80::1",
+        "ff02::1",
+        "::",
+    ),
+)
+def test_runtime_artifact_non_global_dns_answers_refuse(address: str) -> None:
+    family = socket.AF_INET6 if ":" in address else socket.AF_INET
+
+    def resolver(*_args: Any, **_kwargs: Any) -> list[tuple[Any, ...]]:
+        return [(family, socket.SOCK_STREAM, 6, "", (address, 443))]
+
+    with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="not globally routable"):
+        BOOTSTRAP._approved_addresses("github.com", resolver)
+
+
+@pytest.mark.parametrize(
+    ("answers", "message"),
+    (
+        ([], "resolution failed"),
+        ([(socket.AF_INET, socket.SOCK_STREAM, 6, "", ())], "malformed"),
+        (
+            [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", (PUBLIC_ADDRESS, 443))],
+            "malformed",
+        ),
+    ),
+)
+def test_runtime_artifact_empty_or_malformed_dns_answers_refuse(
+    answers: list[tuple[Any, ...]], message: str
+) -> None:
+    def resolver(*_args: Any, **_kwargs: Any) -> list[tuple[Any, ...]]:
+        return answers
+
+    with pytest.raises(BOOTSTRAP.BootstrapRefusal, match=message):
+        BOOTSTRAP._approved_addresses("github.com", resolver)
+
+
+def test_runtime_artifact_dns_failure_refuses() -> None:
+    def resolver(*_args: Any, **_kwargs: Any) -> list[tuple[Any, ...]]:
+        raise socket.gaierror("unavailable")
+
+    with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="resolution failed"):
+        BOOTSTRAP._approved_addresses("github.com", resolver)
+
+
+def test_pinned_runtime_https_connection_preserves_tls_hostname(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw_socket = mock.Mock()
+    wrapped_socket = mock.Mock()
+    context = mock.Mock()
+    context.wrap_socket.return_value = wrapped_socket
+    monkeypatch.setattr(BOOTSTRAP.socket, "socket", mock.Mock(return_value=raw_socket))
+    monkeypatch.setattr(
+        BOOTSTRAP.socket,
+        "create_connection",
+        mock.Mock(side_effect=AssertionError("unconstrained connector called")),
+    )
+    monkeypatch.setattr(
+        BOOTSTRAP.socket,
+        "getaddrinfo",
+        mock.Mock(side_effect=AssertionError("unconstrained resolver called")),
+    )
+    connection = BOOTSTRAP._PinnedHTTPSConnection(
+        "github.com",
+        approved_addresses=((socket.AF_INET, PUBLIC_ADDRESS),),
+        context=context,
+    )
+    connection.connect()
+    raw_socket.connect.assert_called_once_with((PUBLIC_ADDRESS, 443))
+    context.wrap_socket.assert_called_once_with(raw_socket, server_hostname="github.com")
+    assert connection.sock is wrapped_socket
+
+
+def test_pinned_runtime_https_connection_uses_only_approved_addresses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failed_socket = mock.Mock()
+    failed_socket.connect.side_effect = OSError("first failed")
+    accepted_socket = mock.Mock()
+    socket_factory = mock.Mock(side_effect=(failed_socket, accepted_socket))
+    context = mock.Mock()
+    context.wrap_socket.return_value = mock.Mock()
+    monkeypatch.setattr(BOOTSTRAP.socket, "socket", socket_factory)
+    connection = BOOTSTRAP._PinnedHTTPSConnection(
+        "github.com",
+        approved_addresses=(
+            (socket.AF_INET, PUBLIC_ADDRESS),
+            (socket.AF_INET6, "2606:4700:4700::1111"),
+        ),
+        context=context,
+    )
+    connection.connect()
+    assert socket_factory.call_args_list == [
+        mock.call(socket.AF_INET, socket.SOCK_STREAM),
+        mock.call(socket.AF_INET6, socket.SOCK_STREAM),
+    ]
+    failed_socket.close.assert_called_once_with()
+    accepted_socket.connect.assert_called_once_with(
+        ("2606:4700:4700::1111", 443, 0, 0)
+    )
+
+
+def test_pinned_runtime_https_connection_refuses_after_all_addresses_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_socket = mock.Mock()
+    second_socket = mock.Mock()
+    first_socket.connect.side_effect = OSError("first failed")
+    second_socket.connect.side_effect = OSError("second failed")
+    monkeypatch.setattr(
+        BOOTSTRAP.socket,
+        "socket",
+        mock.Mock(side_effect=(first_socket, second_socket)),
+    )
+    connection = BOOTSTRAP._PinnedHTTPSConnection(
+        "github.com",
+        approved_addresses=(
+            (socket.AF_INET, PUBLIC_ADDRESS),
+            (socket.AF_INET6, "2606:4700:4700::1111"),
+        ),
+        context=mock.Mock(),
+    )
+    with pytest.raises(OSError, match="all approved"):
+        connection.connect()
+    first_socket.close.assert_called_once_with()
+    second_socket.close.assert_called_once_with()
+    assert connection.sock is None
+
+
+def test_pinned_runtime_https_connection_closes_failed_tls_socket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw_socket = mock.Mock()
+    context = mock.Mock()
+    context.wrap_socket.side_effect = OSError("TLS failed")
+    monkeypatch.setattr(BOOTSTRAP.socket, "socket", mock.Mock(return_value=raw_socket))
+    connection = BOOTSTRAP._PinnedHTTPSConnection(
+        "github.com",
+        approved_addresses=((socket.AF_INET, PUBLIC_ADDRESS),),
+        context=context,
+    )
+    with pytest.raises(OSError, match="TLS failed"):
+        connection.connect()
+    raw_socket.close.assert_called_once_with()
+    assert connection.sock is None
+
+
+def test_runtime_https_handler_binds_each_redirect_hop_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolver_calls: list[str] = []
+    connections: list[object] = []
+
+    def resolver(hostname: str, *_args: Any, **_kwargs: Any) -> list[tuple[Any, ...]]:
+        resolver_calls.append(hostname)
+        address = PUBLIC_ADDRESS if len(resolver_calls) <= 2 else "127.0.0.1"
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 443))]
+
+    handler = BOOTSTRAP._PinnedHTTPSHandler(resolver)
+
+    def do_open(factory: Any, request: urllib.request.Request, **kwargs: Any) -> Any:
+        del kwargs
+        hostname = urllib.parse.urlsplit(request.full_url).hostname
+        connection = factory(str(hostname), context=mock.Mock())
+        connections.append(connection)
+        return _Response(b"", request.full_url)
+
+    monkeypatch.setattr(handler, "do_open", do_open)
+    handler.https_open(urllib.request.Request("https://github.com/source"))
+    handler.https_open(urllib.request.Request("https://codeload.github.com/source"))
+    assert resolver_calls == ["github.com", "codeload.github.com"]
+    assert [item._approved_addresses for item in connections] == [  # noqa: SLF001
+        ((socket.AF_INET, PUBLIC_ADDRESS),),
+        ((socket.AF_INET, PUBLIC_ADDRESS),),
+    ]
+
+
+def test_runtime_redirect_refuses_unapproved_destination() -> None:
+    handler = BOOTSTRAP._RestrictedRedirectHandler()
+    request = urllib.request.Request("https://github.com/source")
+    with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="credential-free immutable"):
+        handler.redirect_request(
+            request,
+            io.BytesIO(),
+            302,
+            "Found",
+            {},
+            "https://127.0.0.1/private",
+        )
+
+
+@pytest.mark.parametrize("change", ("host", "port", "tunnel"))
+def test_pinned_runtime_https_connection_refuses_destination_changes(
+    monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    socket_factory = mock.Mock()
+    monkeypatch.setattr(BOOTSTRAP.socket, "socket", socket_factory)
+    connection = BOOTSTRAP._PinnedHTTPSConnection(
+        "github.com",
+        approved_addresses=((socket.AF_INET, PUBLIC_ADDRESS),),
+        context=mock.Mock(),
+    )
+    if change == "host":
+        connection.host = "codeload.github.com"
+    elif change == "port":
+        connection.port = 444
+    else:
+        connection.set_tunnel("proxy.example.invalid")
+    with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="tunneling|changed"):
+        connection.connect()
+    socket_factory.assert_not_called()
 
 
 def _source_archive(

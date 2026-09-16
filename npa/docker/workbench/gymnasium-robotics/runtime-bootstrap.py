@@ -18,6 +18,8 @@ from dataclasses import dataclass
 import errno
 import fcntl
 import hashlib
+import http.client
+import ipaddress
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -25,11 +27,12 @@ import re
 import select
 import shutil
 import signal
+import socket
 import stat
 import sys
 import tarfile
 import tempfile
-from typing import BinaryIO, NoReturn
+from typing import Any, BinaryIO, NoReturn
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -101,6 +104,7 @@ RIGHTS_BOUNDARY = (
     "Runtime fetch changes delivery only; it does not grant or resolve use, "
     "derivative-work, output, or hosted-service rights."
 )
+_ApprovedAddress = tuple[int, str]
 
 
 class BootstrapRefusal(RuntimeError):
@@ -228,10 +232,15 @@ def _safe_url(value: object, *, field: str) -> str:
     if not isinstance(value, str):
         _refuse(f"{field} must be a string")
     parsed = urllib.parse.urlsplit(value)
+    try:
+        port = parsed.port
+    except ValueError:
+        _refuse(f"{field} has an invalid port")
     if (
         parsed.scheme != "https"
         or not parsed.hostname
         or parsed.hostname.lower() not in ALLOWED_HOSTS
+        or port not in {None, 443}
         or parsed.username is not None
         or parsed.password is not None
         or parsed.query
@@ -611,13 +620,168 @@ class _RestrictedRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+def _resolved_address(answer: Any) -> _ApprovedAddress:
+    try:
+        family = answer[0]
+        raw_address = answer[4][0]
+        address = ipaddress.ip_address(str(raw_address).split("%", 1)[0])
+    except (IndexError, KeyError, TypeError, ValueError) as error:
+        _refuse(f"runtime artifact hostname resolution is malformed: {error}")
+    expected = socket.AF_INET6 if address.version == 6 else socket.AF_INET
+    if family != expected:
+        _refuse("runtime artifact hostname resolution is malformed")
+    return int(family), str(address)
+
+
+def _globally_routable(address: str) -> bool:
+    parsed = ipaddress.ip_address(address)
+    return (
+        parsed.is_global
+        and not parsed.is_loopback
+        and not parsed.is_private
+        and not parsed.is_link_local
+        and not parsed.is_reserved
+        and not parsed.is_multicast
+        and not parsed.is_unspecified
+    )
+
+
+def _approved_addresses(
+    hostname: str,
+    resolver: Callable[..., list[tuple[Any, ...]]],
+) -> tuple[_ApprovedAddress, ...]:
+    try:
+        answers = resolver(hostname, 443, type=socket.SOCK_STREAM)
+    except OSError as error:
+        _refuse(f"runtime artifact hostname resolution failed: {error}")
+    if not answers:
+        _refuse("runtime artifact hostname resolution failed")
+    addresses = tuple(dict.fromkeys(_resolved_address(answer) for answer in answers))
+    if not all(_globally_routable(address) for _family, address in addresses):
+        _refuse("runtime artifact destination is not globally routable")
+    return addresses
+
+
+def _connect_approved_address(
+    approved_address: _ApprovedAddress,
+    port: int,
+    timeout: object,
+    source_address: tuple[str, int] | None,
+) -> socket.socket:
+    family, address = approved_address
+    connection = socket.socket(family, socket.SOCK_STREAM)
+    try:
+        if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:
+            connection.settimeout(timeout)  # type: ignore[arg-type]
+        if source_address:
+            connection.bind(source_address)
+        destination = (
+            (address, port, 0, 0)
+            if family == socket.AF_INET6
+            else (address, port)
+        )
+        connection.connect(destination)
+        return connection
+    except OSError:
+        connection.close()
+        raise
+
+
+def _connect_approved_addresses(
+    approved_addresses: tuple[_ApprovedAddress, ...],
+    port: int,
+    timeout: object,
+    source_address: tuple[str, int] | None,
+) -> socket.socket:
+    last_error: OSError | None = None
+    for approved_address in approved_addresses:
+        try:
+            return _connect_approved_address(
+                approved_address, port, timeout, source_address
+            )
+        except OSError as error:
+            last_error = error
+    raise OSError("all approved runtime artifact addresses failed") from last_error
+
+
+def _close_failed_connection(connection: socket.socket | None) -> None:
+    if connection is None:
+        return
+    with contextlib.suppress(OSError):
+        connection.close()
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(
+        self,
+        host: str,
+        *,
+        approved_addresses: tuple[_ApprovedAddress, ...],
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(host, **kwargs)
+        self._approved_addresses = approved_addresses
+        self._reviewed_destination = (self.host, self.port)
+        self._create_connection = self._connect_approved
+
+    def _connect_approved(
+        self,
+        address: tuple[str, int],
+        timeout: object = socket._GLOBAL_DEFAULT_TIMEOUT,
+        source_address: tuple[str, int] | None = None,
+    ) -> socket.socket:
+        if self._tunnel_host is not None:
+            _refuse("runtime artifact HTTPS tunneling is not allowed")
+        if (
+            address != self._reviewed_destination
+            or (self.host, self.port) != self._reviewed_destination
+        ):
+            _refuse("runtime artifact HTTPS destination changed")
+        return _connect_approved_addresses(
+            self._approved_addresses, self.port, timeout, source_address
+        )
+
+    def connect(self) -> None:
+        try:
+            super().connect()
+        except (BootstrapRefusal, OSError, ValueError):
+            failed_connection = self.sock
+            self.sock = None
+            _close_failed_connection(failed_connection)
+            raise
+
+
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, resolver: Callable[..., list[tuple[Any, ...]]]) -> None:
+        super().__init__()
+        self._resolver = resolver
+
+    def https_open(self, request: urllib.request.Request) -> BinaryIO:
+        url = _safe_url(request.full_url, field="runtime artifact request")
+        hostname = urllib.parse.urlsplit(url).hostname
+        assert hostname is not None
+        approved_addresses = _approved_addresses(hostname, self._resolver)
+
+        def connection(host: str, **kwargs: Any) -> _PinnedHTTPSConnection:
+            return _PinnedHTTPSConnection(
+                host, approved_addresses=approved_addresses, **kwargs
+            )
+
+        return self.do_open(connection, request, context=self._context)
+
+
 def _open_url(url: str) -> contextlib.AbstractContextManager[BinaryIO]:
+    _safe_url(url, field="runtime artifact URL")
     request = urllib.request.Request(
         url,
         headers={"User-Agent": "npa-gymnasium-robotics-bootstrap/1"},
         method="GET",
     )
-    opener = urllib.request.build_opener(_RestrictedRedirectHandler())
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _PinnedHTTPSHandler(socket.getaddrinfo),
+        _RestrictedRedirectHandler(),
+    )
     return opener.open(request, timeout=60)  # noqa: S310
 
 

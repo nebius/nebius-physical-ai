@@ -39,9 +39,13 @@ def _coordinator_source() -> str:
 def _coordinator_helpers(tmp_path: Path) -> dict[str, object]:
     syntax = ast.parse(_coordinator_source())
     helper_names = {
+        "_close_bound_output_chain",
         "_descriptor_identity",
+        "_directory_identity",
         "_open_bound_output_root",
         "_open_bound_log",
+        "_require_bound_directory",
+        "_require_bound_output_chain",
         "_require_owned_regular",
         "_require_bound_log_stat",
         "_read_bound_json",
@@ -68,6 +72,18 @@ def _coordinator_helpers(tmp_path: Path) -> dict[str, object]:
         encoding="utf-8",
     )
     return runpy.run_path(str(helper_path))
+
+
+def _bound_output_root(
+    helpers: dict[str, object], root: Path
+) -> tuple[int, tuple[int, ...], tuple[tuple[object, ...], ...]]:
+    return helpers["_open_bound_output_root"](root)
+
+
+def _close_output_root(
+    helpers: dict[str, object], descriptors: tuple[int, ...]
+) -> None:
+    helpers["_close_bound_output_chain"](descriptors)
 
 
 def test_neutral_bootstrap_uses_only_the_unbuilt_prebuilt_candidate() -> None:
@@ -204,7 +220,10 @@ def test_workflow_and_profile_never_route_to_b200() -> None:
     assert "env=runtime_environment" in profile
     assert "npa_pod_image_receipt.json" in profile
     assert 'IfNoneMatch="*"' in profile
-    assert "root_fd = _open_bound_output_root(root)" in profile
+    assert (
+        "root_fd, root_descriptors, root_bindings = _open_bound_output_root(root)"
+        in profile
+    )
     assert "artifact_payload = _read_bound_json(" in profile
     assert "summary_payload = _write_bound_summary(" in profile
     assert "upload_payloads = _output_uploads(" in profile
@@ -284,18 +303,86 @@ def test_coordinator_binds_output_root_nofollow_and_close_on_exec(
     ):
         helpers["_open_bound_output_root"](root_link)
 
-    root_fd = helpers["_open_bound_output_root"](root)
+    root_fd, descriptors, bindings = _bound_output_root(helpers, root)
     try:
         assert not os.get_inheritable(root_fd)
+        helpers["_require_bound_output_chain"](bindings)
     finally:
-        os.close(root_fd)
+        _close_output_root(helpers, descriptors)
+
+
+def test_coordinator_creates_final_output_below_bound_parent(tmp_path: Path) -> None:
+    helpers = _coordinator_helpers(tmp_path)
+    parent = tmp_path / "byof-runs"
+    parent.mkdir()
+    root = parent / "fresh-run"
+
+    root_fd, descriptors, bindings = _bound_output_root(helpers, root)
+    try:
+        assert root.is_dir()
+        assert os.fstat(root_fd).st_ino == root.stat().st_ino
+        helpers["_require_bound_output_chain"](bindings)
+    finally:
+        _close_output_root(helpers, descriptors)
+
+
+@pytest.mark.parametrize("attack", ["symlink", "regular"])
+def test_coordinator_refuses_unsafe_intermediate_output_component(
+    tmp_path: Path, attack: str
+) -> None:
+    helpers = _coordinator_helpers(tmp_path)
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    component = parent / "byof-runs"
+    if attack == "symlink":
+        target = tmp_path / "target"
+        target.mkdir()
+        component.symlink_to(target, target_is_directory=True)
+    else:
+        component.write_text("not a directory\n", encoding="utf-8")
+
+    with pytest.raises(
+        SystemExit, match="cannot bind Gymnasium output directory safely"
+    ):
+        helpers["_open_bound_output_root"](component / "run")
+
+
+def test_coordinator_refuses_same_uid_parent_replacement(tmp_path: Path) -> None:
+    helpers = _coordinator_helpers(tmp_path)
+    parent = tmp_path / "parent"
+    root = parent / "byof-runs" / "run"
+    root.mkdir(parents=True)
+    _root_fd, descriptors, bindings = _bound_output_root(helpers, root)
+    bound_parent = tmp_path / "bound-parent"
+    parent.rename(bound_parent)
+    root.mkdir(parents=True)
+    try:
+        with pytest.raises(SystemExit, match="directory chain changed"):
+            helpers["_require_bound_output_chain"](bindings)
+    finally:
+        _close_output_root(helpers, descriptors)
+
+
+def test_coordinator_refuses_final_output_substitution(tmp_path: Path) -> None:
+    helpers = _coordinator_helpers(tmp_path)
+    root = tmp_path / "output"
+    root.mkdir()
+    _root_fd, descriptors, bindings = _bound_output_root(helpers, root)
+    bound_root = tmp_path / "bound-output"
+    root.rename(bound_root)
+    root.mkdir()
+    try:
+        with pytest.raises(SystemExit, match="directory chain changed"):
+            helpers["_require_bound_output_chain"](bindings)
+    finally:
+        _close_output_root(helpers, descriptors)
 
 
 def test_coordinator_keeps_child_logs_on_verified_descriptors(tmp_path: Path) -> None:
     helpers = _coordinator_helpers(tmp_path)
     root = tmp_path / "output"
     root.mkdir()
-    root_fd = helpers["_open_bound_output_root"](root)
+    root_fd, descriptors, _bindings = _bound_output_root(helpers, root)
     stdout_fd, stdout_identity = helpers["_open_bound_log"](
         root_fd,
         "solution_smoke_stdout.log",
@@ -340,7 +427,7 @@ def test_coordinator_keeps_child_logs_on_verified_descriptors(tmp_path: Path) ->
     finally:
         os.close(stderr_fd)
         os.close(stdout_fd)
-        os.close(root_fd)
+        _close_output_root(helpers, descriptors)
 
     assert (root / "solution_smoke_stdout.log").read_text() == "stdout-bound\n"
     assert (root / "solution_smoke_stderr.log").read_text() == "stderr-bound\n"
@@ -363,7 +450,7 @@ def test_coordinator_refuses_preexisting_smoke_log(
     else:
         log.mkdir()
 
-    root_fd = helpers["_open_bound_output_root"](root)
+    root_fd, descriptors, _bindings = _bound_output_root(helpers, root)
     try:
         with pytest.raises(
             SystemExit, match="cannot create Gymnasium smoke stdout exclusively"
@@ -375,7 +462,7 @@ def test_coordinator_refuses_preexisting_smoke_log(
                 "Gymnasium smoke stdout",
             )
     finally:
-        os.close(root_fd)
+        _close_output_root(helpers, descriptors)
 
     assert target.read_text(encoding="utf-8") == "unchanged\n"
 
@@ -387,7 +474,7 @@ def test_coordinator_refuses_same_uid_smoke_log_path_substitution(
     helpers = _coordinator_helpers(tmp_path)
     root = tmp_path / "output"
     root.mkdir()
-    root_fd = helpers["_open_bound_output_root"](root)
+    root_fd, descriptors, _bindings = _bound_output_root(helpers, root)
     name = "solution_smoke_stdout.log"
     log_fd, identity = helpers["_open_bound_log"](
         root_fd, name, os.geteuid(), "Gymnasium smoke stdout"
@@ -415,7 +502,7 @@ def test_coordinator_refuses_same_uid_smoke_log_path_substitution(
             )
     finally:
         os.close(log_fd)
-        os.close(root_fd)
+        _close_output_root(helpers, descriptors)
 
     assert target.read_text(encoding="utf-8") == "unchanged\n"
 
@@ -427,7 +514,7 @@ def test_coordinator_refuses_smoke_log_metadata_drift(
     helpers = _coordinator_helpers(tmp_path)
     root = tmp_path / "output"
     root.mkdir()
-    root_fd = helpers["_open_bound_output_root"](root)
+    root_fd, descriptors, _bindings = _bound_output_root(helpers, root)
     name = "solution_smoke_stdout.log"
     log_fd, identity = helpers["_open_bound_log"](
         root_fd, name, os.geteuid(), "Gymnasium smoke stdout"
@@ -451,7 +538,7 @@ def test_coordinator_refuses_smoke_log_metadata_drift(
             )
     finally:
         os.close(log_fd)
-        os.close(root_fd)
+        _close_output_root(helpers, descriptors)
 
 
 @pytest.mark.parametrize("attack", ["symlink", "hardlink"])
@@ -471,7 +558,7 @@ def test_coordinator_refuses_linked_runtime_artifact(
         os.link(target, artifact)
         expected = "must have exactly one link"
 
-    root_fd = helpers["_open_bound_output_root"](root)
+    root_fd, descriptors, _bindings = _bound_output_root(helpers, root)
     try:
         with pytest.raises(SystemExit, match=expected):
             helpers["_read_bound_json"](
@@ -481,7 +568,7 @@ def test_coordinator_refuses_linked_runtime_artifact(
                 "Gymnasium qualification artifact",
             )
     finally:
-        os.close(root_fd)
+        _close_output_root(helpers, descriptors)
 
 
 @pytest.mark.parametrize("attack", ["symlink", "regular"])
@@ -497,7 +584,7 @@ def test_coordinator_refuses_precreated_summary(tmp_path: Path, attack: str) -> 
     else:
         summary.write_text("{}", encoding="utf-8")
 
-    root_fd = helpers["_open_bound_output_root"](root)
+    root_fd, descriptors, _bindings = _bound_output_root(helpers, root)
     try:
         with pytest.raises(
             SystemExit, match="cannot create Gymnasium summary exclusively"
@@ -506,53 +593,26 @@ def test_coordinator_refuses_precreated_summary(tmp_path: Path, attack: str) -> 
                 root_fd, summary.name, b"{}\n", os.geteuid()
             )
     finally:
-        os.close(root_fd)
+        _close_output_root(helpers, descriptors)
 
 
-def test_coordinator_uploads_descriptor_bound_bytes_after_path_substitution(
+def test_coordinator_refuses_upload_after_output_path_substitution(
     tmp_path: Path,
 ) -> None:
     helpers = _coordinator_helpers(tmp_path)
     root = tmp_path / "output"
     root.mkdir()
-    root_fd = helpers["_open_bound_output_root"](root)
+    root_fd, descriptors, _bindings = _bound_output_root(helpers, root)
     bound_root = tmp_path / "bound-output"
     root.rename(bound_root)
     root.mkdir()
-    artifact_name = "gymnasium-robotics-smoke.json"
-    bound_payload = b'{"source":"descriptor"}\n'
-    pathname_payload = b'{"source":"pathname"}\n'
-    (bound_root / artifact_name).write_bytes(bound_payload)
-    (root / artifact_name).write_bytes(pathname_payload)
-
     try:
-        artifact_payload = helpers["_read_bound_json"](
-            root_fd,
-            artifact_name,
-            os.geteuid(),
-            "Gymnasium qualification artifact",
-        )
-        summary_payload = helpers["_write_bound_summary"](
-            root_fd,
-            "npa_byof_summary.json",
-            b'{"status":"success"}\n',
-            os.geteuid(),
-        )
-        uploads = helpers["_output_uploads"](
-            artifact_name, artifact_payload, summary_payload
-        )
+        with pytest.raises(SystemExit, match="directory chain changed"):
+            helpers["_require_bound_output_chain"](_bindings)
     finally:
-        os.close(root_fd)
-
-    assert artifact_payload == bound_payload
-    assert artifact_payload != (root / artifact_name).read_bytes()
-    assert dict(uploads)[artifact_name] == bound_payload
-    assert hashlib.sha256(dict(uploads)[artifact_name]).hexdigest() == hashlib.sha256(
-        bound_payload
-    ).hexdigest()
-    assert dict(uploads)["npa_byof_summary.json"] == summary_payload
-    assert (bound_root / "npa_byof_summary.json").read_bytes() == summary_payload
-    assert not (root / "npa_byof_summary.json").exists()
+        _close_output_root(helpers, descriptors)
+    assert bound_root.is_dir()
+    assert root.is_dir()
 
 
 def test_readiness_is_bound_and_all_execution_evidence_is_blocked() -> None:
