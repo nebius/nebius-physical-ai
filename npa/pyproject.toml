@@ -208,7 +208,7 @@ lancedb = "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z"
 detection-training = "runtime-v1-20260905"
 wan2-2 = "2.2-ti2v5b-rtfetch-cu130-20260817"
 ltx2 = "2.5-rtfetch-20260817"
-alpamayo2-super = "0.1.0-cu128"
+alpamayo2-super = "0.1.0-cu128-r3"
 curobo = "0.8.0-cuda13-b300-unbuilt"
 content-agents = "0.5.2-npa2"
 # Source inventory only: use an explicit validated image until release acceptance.
