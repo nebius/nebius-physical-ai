@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,7 @@ from npa.workbench.cosmos.policy_artifacts import materialize_bundle, policy_wor
 from npa.workbench.cosmos.policy_contract import ACTION_CONTRACT, EvalSettings, TrainSettings, validate_summary
 from npa.workbench.cosmos.policy_eval import EVAL_SCHEMA, evaluation_argv, server_argv
 from npa.workbench.cosmos.policy_feedback import FEEDBACK_SCHEMA, generate_failure_candidates, policy_feedback
-from npa.workbench.cosmos.policy_train import _collect_checkpoint, train_policy, training_argv
+from npa.workbench.cosmos.policy_train import _collect_checkpoint, _fetch_inputs, train_policy, training_argv
 
 
 def _summary(settings: EvalSettings, failures: int = 0) -> dict:
@@ -31,6 +32,30 @@ def _summary(settings: EvalSettings, failures: int = 0) -> dict:
     return {**ACTION_CONTRACT, "task_results": tasks, "total_episodes": total,
             "total_successes": successes, "overall_success_rate": successes / total,
             "num_trials_per_task": settings.trials_per_task, "selected_task_ids": settings.task_ids}
+
+
+def test_input_fetch_does_not_require_hub_in_lightweight_npa_environment(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "huggingface_hub", None)
+    monkeypatch.setattr("npa.workbench.cosmos.generate.resolve_hf_token", lambda: "")
+    dataset = tmp_path / "dataset"
+    (dataset / "meta").mkdir(parents=True)
+    (dataset / "meta/info.json").write_text('{"fps": 20}')
+    (dataset / "data/chunk-000").mkdir(parents=True)
+    (dataset / "data/chunk-000/file-000.parquet").touch()
+    (tmp_path / "artifacts").mkdir()
+    repo = tmp_path / "native"
+
+    def native_fetch(argv, **kwargs):
+        assert argv[0] == str(repo / ".venv/bin/python")
+        assert Path(argv[1]).name == "policy_inputs.py"
+        assert kwargs["cwd"] == repo
+        Path(argv[argv.index("--output-path") + 1]).write_text(json.dumps(
+            {"dataset": str(dataset), "model": str(tmp_path / "model"), "vae": str(tmp_path / "vae")}))
+
+    monkeypatch.setattr("npa.workbench.cosmos.policy_train.run_native", native_fetch)
+    actual = _fetch_inputs(tmp_path, repo, {})
+    assert actual[0] == dataset
+    assert json.loads((tmp_path / "artifacts/dataset.json").read_text())["info_sha256"]
 
 
 def _evaluation(path: Path, settings: EvalSettings, failures: int = 0) -> Path:

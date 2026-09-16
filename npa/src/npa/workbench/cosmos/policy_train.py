@@ -44,20 +44,22 @@ def training_argv(repo: Path, settings: TrainSettings) -> list[str]:
             "model.config.parallelism.data_parallel_replicate_degree=1"]
 
 
-def _fetch_inputs(root: Path) -> tuple[Path, Path, Path]:
-    from huggingface_hub import hf_hub_download, snapshot_download
+def _fetch_inputs(root: Path, repo: Path, env: dict[str, str]) -> tuple[Path, Path, Path]:
     from npa.workbench.cosmos.generate import resolve_hf_token
 
-    token = resolve_hf_token() or None
-    dataset = Path(snapshot_download("nvidia/LIBERO_LeRobot_v3", repo_type="dataset",
-                   revision=DATASET_REVISION, allow_patterns=["libero_10/**"], token=token)) / "libero_10"
-    model = Path(snapshot_download("nvidia/Cosmos3-Nano", revision=MODEL_REVISION, token=token))
-    vae = Path(hf_hub_download("Wan-AI/Wan2.2-TI2V-5B", "Wan2.2_VAE.pth",
-                             revision=VAE_REVISION, token=token))
+    token = resolve_hf_token()
+    fetch_env = {**env, **({"HF_TOKEN": token} if token else {})}
+    paths_file = root / "input-paths.json"
+    run_native([str(repo / ".venv/bin/python"), str(Path(__file__).with_name("policy_inputs.py")),
+                "--dataset-revision", DATASET_REVISION, "--model-revision", MODEL_REVISION,
+                "--vae-revision", VAE_REVISION, "--output-path", str(paths_file)],
+               cwd=repo, env=fetch_env, log=root / "artifacts/input-fetch.log")
+    paths = json.loads(paths_file.read_text())
+    dataset, model, vae = (Path(paths[key]) for key in ("dataset", "model", "vae"))
     info = json.loads((dataset / "meta/info.json").read_text())
     if info.get("fps") != 20 or not list(dataset.glob("data/chunk-*/file-*.parquet")):
         raise ValueError("expected the native 20 Hz LIBERO-10 action dataset")
-    write_local_json(root / "dataset.json", {"repository": "nvidia/LIBERO_LeRobot_v3",
+    write_local_json(root / "artifacts/dataset.json", {"repository": "nvidia/LIBERO_LeRobot_v3",
                      "revision": DATASET_REVISION, "info_sha256": file_digest(dataset / "meta/info.json")})
     return dataset, model, vae
 
@@ -100,7 +102,7 @@ def train_policy(*, input_path: str, output_path: str) -> dict[str, Any]:
         repo, env = prepare_training_runtime(root)
         for log in root.glob("*.log"):
             shutil.copyfile(log, artifacts / log.name)
-        dataset, model, vae = _fetch_inputs(artifacts)
+        dataset, model, vae = _fetch_inputs(root, repo, env)
         env.update(LIBERO_ROOT=str(dataset), WAN_VAE_PATH=str(vae),
                    BASE_CHECKPOINT_PATH=str(root / "base-dcp"), IMAGINAIRE_OUTPUT_ROOT=str(root / "output"))
         run_native([str(repo / ".venv/bin/python"), "-m", "cosmos_framework.scripts.convert_model_to_dcp",
