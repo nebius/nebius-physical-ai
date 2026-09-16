@@ -440,6 +440,7 @@ def _robomimic_live_selectors(e2e_project: str | None) -> dict[str, str]:
         "registry_visibility": os.environ.get(
             "NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY", ""
         ).strip(),
+        "image": os.environ.get("NPA_BYOF_ROBOMIMIC_IMAGE", "").strip(),
         "kubeconfig": os.environ.get("NPA_BYOF_KUBECONFIG", "").strip(),
         "context": os.environ.get("NPA_BYOF_K8S_CONTEXT", "").strip(),
         "namespace": os.environ.get("NPA_BYOF_K8S_NAMESPACE", "").strip(),
@@ -462,6 +463,12 @@ def _robomimic_live_selectors(e2e_project: str | None) -> dict[str, str]:
     )
     _require_robomimic_entitlement_context(
         selectors["registry_visibility"].lower() == "private"
+    )
+    expected_image = re.escape(selectors["registry"].rstrip("/")) + (
+        r"/npa-robomimic@sha256:[0-9a-f]{64}"
+    )
+    _require_robomimic_entitlement_context(
+        re.fullmatch(expected_image, selectors["image"]) is not None
     )
     _require_robomimic_entitlement_context(
         bool(selectors["kubeconfig"])
@@ -1281,10 +1288,7 @@ def _invoke_robomimic_gate(
             run_id=run_id, selectors=selectors, env=env
         ) as observed_service_account:
             assert observed_service_account == service_account
-            accepted_image = os.environ.get("NPA_BYOF_ROBOMIMIC_IMAGE", "").strip()
-            assert accepted_image, (
-                "a manager-accepted exact private candidate is required"
-            )
+            accepted_image = selectors["image"]
             cmd.extend(["--image", accepted_image, "--skip-build"])
             proc = subprocess.run(
                 cmd,

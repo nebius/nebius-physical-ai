@@ -369,6 +369,7 @@ def _fake_robomimic_kubectl(
         "NPA_E2E_PROJECT",
         "NPA_BYOF_ROBOMIMIC_REGISTRY",
         "NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY",
+        "NPA_BYOF_ROBOMIMIC_IMAGE",
         "NPA_BYOF_KUBECONFIG",
         "NPA_BYOF_K8S_CONTEXT",
         "NPA_BYOF_K8S_NAMESPACE",
@@ -393,6 +394,9 @@ def test_robomimic_gate_refuses_missing_manager_context_in_default_suite(
         "NPA_E2E_PROJECT": "manager-project",
         "NPA_BYOF_ROBOMIMIC_REGISTRY": "private.invalid/robomimic",
         "NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY": "private",
+        "NPA_BYOF_ROBOMIMIC_IMAGE": (
+            "private.invalid/robomimic/npa-robomimic@sha256:" + "d" * 64
+        ),
         "NPA_BYOF_KUBECONFIG": str(kubeconfig),
         "NPA_BYOF_K8S_CONTEXT": "manager-context",
         "NPA_BYOF_K8S_NAMESPACE": "robomimic-validation",
@@ -435,6 +439,9 @@ def test_robomimic_live_harness_refuses_entitlement_before_any_side_effect(
         "NPA_E2E_PROJECT": "manager-project",
         "NPA_BYOF_ROBOMIMIC_REGISTRY": "private.invalid/robomimic",
         "NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY": "private",
+        "NPA_BYOF_ROBOMIMIC_IMAGE": (
+            "private.invalid/robomimic/npa-robomimic@sha256:" + "d" * 64
+        ),
         "NPA_BYOF_KUBECONFIG": str(kubeconfig),
         "NPA_BYOF_K8S_CONTEXT": "manager-context",
         "NPA_BYOF_K8S_NAMESPACE": "robomimic-validation",
@@ -476,6 +483,55 @@ def test_robomimic_live_harness_refuses_entitlement_before_any_side_effect(
         if path.is_file()
     }
     assert after == before
+
+
+@pytest.mark.parametrize(
+    "image",
+    (
+        "",
+        "private.invalid/robomimic/npa-robomimic:mutable",
+        "other.invalid/robomimic/npa-robomimic@sha256:" + "d" * 64,
+    ),
+)
+def test_robomimic_live_harness_freezes_exact_image_before_side_effects(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, image: str
+) -> None:
+    module = _live_e2e_module()
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    selectors = {
+        "NPA_E2E_PROJECT": "manager-project",
+        "NPA_BYOF_ROBOMIMIC_REGISTRY": "private.invalid/robomimic",
+        "NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY": "private",
+        "NPA_BYOF_ROBOMIMIC_IMAGE": image,
+        "NPA_BYOF_KUBECONFIG": str(kubeconfig),
+        "NPA_BYOF_K8S_CONTEXT": "manager-context",
+        "NPA_BYOF_K8S_NAMESPACE": "robomimic-validation",
+        "NPA_E2E_S3_BUCKET": "manager-bucket",
+        "NPA_E2E_MK8S_RESERVED_CAPACITY": "1",
+        "NPA_BYOF_LIVE_GPU": "1",
+        "NPA_BYOF_ROBOMIMIC_LIVE_B200": "1",
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_PVC": "robomimic-runtime-exact",
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256": "a" * 64,
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE": str(
+            tmp_path / "must-not-be-read.json"
+        ),
+        "NPA_BYOF_ROBOMIMIC_RUN_ID": "image-refusal",
+        "AWS_ENDPOINT_URL": "https://storage.test-region.nebius.cloud",
+    }
+    for variable, value in selectors.items():
+        monkeypatch.setenv(variable, value)
+
+    def unexpected_side_effect(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("invalid image selector reached a side effect")
+
+    monkeypatch.setattr(module, "_activate_nebius_profile", unexpected_side_effect)
+    monkeypatch.setattr(module, "_preflight_robomimic_runtime_entitlement", unexpected_side_effect)
+    monkeypatch.setattr(module, "_robomimic_observer_rbac", unexpected_side_effect)
+    monkeypatch.setattr(module.subprocess, "run", unexpected_side_effect)
+
+    with pytest.raises(module._RobomimicEntitlementRefusal, match="context-invalid"):
+        module._invoke_robomimic_gate("manager-project")
 
 
 @pytest.mark.parametrize(
@@ -2547,6 +2603,142 @@ def test_robomimic_profile_detects_output_growth_during_upload(
         module.upload_outputs(GrowingS3(), "bucket", "prefix/", root)
 
 
+@pytest.mark.parametrize("source_kind", ("reserved-json", "output"))
+def test_robomimic_profile_refuses_fifo_sources_without_blocking(
+    tmp_path: Path, source_kind: str
+) -> None:
+    module = _profile_upload_module(tmp_path)
+    root = tmp_path / "outputs"
+    root.mkdir()
+    fifo = root / ("reserved.json" if source_kind == "reserved-json" else "output.bin")
+    os.mkfifo(fifo)
+    started = time.monotonic()
+
+    if source_kind == "reserved-json":
+        with pytest.raises(RuntimeError, match="one regular file"):
+            module.read_reserved_json_object(fifo)
+    else:
+        with pytest.raises(RuntimeError, match="one regular unlinked file"):
+            module.upload_outputs(SimpleNamespace(), "bucket", "prefix/", root)
+
+    assert time.monotonic() - started < 1.0
+
+
+@pytest.mark.parametrize("source_kind", ("reserved-json", "output"))
+def test_robomimic_profile_refuses_regular_file_to_fifo_open_race(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, source_kind: str
+) -> None:
+    module = _profile_upload_module(tmp_path)
+    root = tmp_path / "outputs"
+    root.mkdir()
+    source = root / ("reserved.json" if source_kind == "reserved-json" else "output.bin")
+    source.write_text("{}\n", encoding="utf-8")
+    original_open = module.os.open
+    replaced = False
+
+    def replace_before_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
+        nonlocal replaced
+        if Path(path) == source and not replaced:
+            replaced = True
+            source.unlink()
+            os.mkfifo(source)
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(module.os, "open", replace_before_open)
+    started = time.monotonic()
+    if source_kind == "reserved-json":
+        with pytest.raises(RuntimeError, match="one regular file"):
+            module.read_reserved_json_object(source)
+    else:
+        with pytest.raises(RuntimeError, match="identity changed before upload"):
+            module.upload_outputs(SimpleNamespace(), "bucket", "prefix/", root)
+
+    assert replaced is True
+    assert time.monotonic() - started < 1.0
+
+
+@pytest.mark.parametrize("transport_kind", ("upload", "client", "verification"))
+def test_robomimic_profile_transport_refusals_are_value_free(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    transport_kind: str,
+) -> None:
+    module = _profile_upload_module(tmp_path)
+    marker = f"private-{transport_kind}-transport-marker"
+
+    class RefusingS3:
+        def put_object(self, **_kwargs: object) -> None:
+            raise RuntimeError(marker)
+
+        def head_object(self, **_kwargs: object) -> None:
+            raise RuntimeError(marker)
+
+    if transport_kind == "upload":
+        root = tmp_path / "outputs"
+        root.mkdir()
+        (root / "result.json").write_text("{}\n", encoding="utf-8")
+
+        def operation() -> object:
+            return module.upload_outputs(
+                RefusingS3(), "private-bucket", "private-prefix/", root
+            )
+
+    elif transport_kind == "client":
+        monkeypatch.setattr(
+            module.boto3,
+            "client",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(marker)),
+        )
+
+        def operation() -> object:
+            return module.create_output_client({"endpoint_url": marker})
+
+    else:
+        def operation() -> object:
+            return module.verify_uploaded_objects(
+                RefusingS3(), "private-bucket", ["private-key"]
+            )
+
+    with pytest.raises(RuntimeError) as raised:
+        operation()
+
+    error = raised.value
+    serialized = json.dumps(
+        {
+            "args": error.args,
+            "cause": repr(error.__cause__),
+            "context": repr(error.__context__),
+            "traceback": "".join(traceback.format_exception(error)),
+        }
+    )
+    assert marker not in serialized
+    assert error.__cause__ is None
+    assert error.__context__ is None
+
+
+def test_robomimic_profile_endpoint_refusal_is_value_free(tmp_path: Path) -> None:
+    module = _profile_upload_module(tmp_path)
+    marker = "private-uploader-port-marker"
+
+    with pytest.raises(RuntimeError, match="endpoint is malformed") as raised:
+        module.checked_storage_endpoint(
+            f"https://storage.test-region.nebius.cloud:{marker}"
+        )
+
+    error = raised.value
+    serialized = json.dumps(
+        {
+            "args": error.args,
+            "cause": repr(error.__cause__),
+            "context": repr(error.__context__),
+            "traceback": "".join(traceback.format_exception(error)),
+        }
+    )
+    assert marker not in serialized
+    assert error.__cause__ is None
+    assert error.__context__ is None
+
+
 def test_robomimic_profile_refuses_symlinked_smoke_artifact(
     tmp_path: Path,
 ) -> None:
@@ -2587,12 +2779,94 @@ def test_robomimic_download_refuses_a_malformed_allowed_host_port(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _smoke_module(monkeypatch)
-    with pytest.raises(RuntimeError, match="malformed approved HTTPS URL"):
+    marker = "private-invalid-port-marker"
+    with pytest.raises(RuntimeError, match="malformed approved HTTPS URL") as raised:
         module._open_allowed_https(
-            "https://huggingface.co:not-a-port/file",
+            f"https://huggingface.co:{marker}/file",
             headers={},
             allowed_hosts=("huggingface.co",),
         )
+
+    error = raised.value
+    serialized = json.dumps(
+        {
+            "args": error.args,
+            "cause": repr(error.__cause__),
+            "context": repr(error.__context__),
+            "traceback": "".join(traceback.format_exception(error)),
+        }
+    )
+    assert marker not in serialized
+    assert error.__cause__ is None
+    assert error.__context__ is None
+
+
+def test_robomimic_download_transport_refusal_is_value_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _smoke_module(monkeypatch)
+    marker = "private-download-transport-marker"
+
+    class RefusingConnection:
+        def request(self, *_args: object, **_kwargs: object) -> None:
+            raise OSError(marker)
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        module.http.client,
+        "HTTPSConnection",
+        lambda *_args, **_kwargs: RefusingConnection(),
+    )
+
+    with pytest.raises(RuntimeError, match="approved HTTPS transport failed") as raised:
+        module._open_allowed_https(
+            "https://huggingface.co/approved",
+            headers={},
+            allowed_hosts=("huggingface.co",),
+        )
+
+    error = raised.value
+    serialized = json.dumps(
+        {
+            "args": error.args,
+            "cause": repr(error.__cause__),
+            "context": repr(error.__context__),
+            "traceback": "".join(traceback.format_exception(error)),
+        }
+    )
+    assert marker not in serialized
+    assert error.__cause__ is None
+    assert error.__context__ is None
+
+
+def test_robomimic_smoke_entitlement_refusal_is_value_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _smoke_module(monkeypatch)
+    marker = "private-runtime-record-marker"
+    monkeypatch.setattr(
+        module,
+        "verify_customer_runtime_entitlement",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError(marker)),
+    )
+
+    with pytest.raises(RuntimeError, match="customer runtime entitlement refused") as raised:
+        module._value_free_customer_entitlement(record=marker)
+
+    error = raised.value
+    serialized = json.dumps(
+        {
+            "args": error.args,
+            "cause": repr(error.__cause__),
+            "context": repr(error.__context__),
+            "traceback": "".join(traceback.format_exception(error)),
+        }
+    )
+    assert marker not in serialized
+    assert error.__cause__ is None
+    assert error.__context__ is None
 
 
 def test_robomimic_readiness_binds_exact_workflow_bytes() -> None:

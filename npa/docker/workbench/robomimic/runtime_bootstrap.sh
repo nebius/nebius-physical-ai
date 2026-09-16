@@ -164,6 +164,9 @@ case "${1:-}" in
       exit "${child_status}"
     fi
     export NPA_ROBOMIMIC_ACTIVE_RUNTIME_ROOT="${snapshot_root}"
+    # Snapshot preparation may outlive a short customer authorization. Re-read
+    # the same byte-bound record before executing any imported runtime code.
+    verify_entitlement >/dev/null
     if run_child "${snapshot_root}/payload/bin/python" -c \
       'from robomimic.config import config_factory; from robomimic.algo import algo_factory; from robomimic.utils.file_utils import policy_from_checkpoint; from diffusers.schedulers.scheduling_ddim import DDIMScheduler; from diffusers.schedulers.scheduling_ddpm import DDPMScheduler; from diffusers.training_utils import EMAModel; assert all((config_factory, algo_factory, policy_from_checkpoint, DDIMScheduler, DDPMScheduler, EMAModel))'; then
       :
@@ -171,6 +174,9 @@ case "${1:-}" in
       child_status="$?"
       exit "${child_status}"
     fi
+    # The import gate can also cross expiry. Revalidate immediately before the
+    # customer payload gets control of the verified private snapshot.
+    verify_entitlement >/dev/null
     # Every child runs in its own process group. A successful payload remains
     # attached to this supervisor until it exits; only then is the private
     # snapshot removed. Exec failure follows the same cleanup path.
