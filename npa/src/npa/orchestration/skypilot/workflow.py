@@ -2148,6 +2148,21 @@ def _wait_for_healthy_jobs_controller(
                             "SKYPILOT_USER_ID selects one. Refusing to probe or launch."
                         )
                 probe_result = checked_execution_probe(state, expected_name)
+                if (
+                    state in {ControllerState.UP, ControllerState.STOPPED}
+                    and probe_result is not None
+                    and probe_result.outcome == "controller_absent"
+                ):
+                    # SkyPilot can retain a cached UP/STOPPED row after its
+                    # Kubernetes controller pod has been removed. The pod is
+                    # the execution authority, so this is an absent controller
+                    # for the first-launch transaction. Returning the cached
+                    # state would issue an initial queue query, which SkyPilot
+                    # turns into a no-pod INIT record and then rejects the
+                    # launch that should recreate it.
+                    return ControllerHealthResult(
+                        ControllerState.ABSENT, expected_name, probe_result
+                    )
                 if probe_result is None or probe_result.healthy:
                     return ControllerHealthResult(state, expected_name, probe_result)
                 last_summary = (

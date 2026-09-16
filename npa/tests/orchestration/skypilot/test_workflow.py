@@ -1778,7 +1778,7 @@ def test_controller_up_allows_recreation_when_cleaned_up_pod_is_absent(
         execution_probe=lambda _name: probe,
     )
 
-    assert result.state is workflow_module.ControllerState.UP
+    assert result.state is workflow_module.ControllerState.ABSENT
     assert result.execution_probe is not None
     assert result.execution_probe.outcome == "controller_absent"
     assert calls
@@ -1875,7 +1875,7 @@ def test_controller_stopped_allows_launch_when_controller_pod_is_absent(
         ),
     )
 
-    assert result.state is workflow_module.ControllerState.STOPPED
+    assert result.state is workflow_module.ControllerState.ABSENT
     assert result.execution_probe is not None
     assert result.execution_probe.healthy is True
     assert result.execution_probe.outcome == "controller_absent"
@@ -2896,3 +2896,86 @@ def test_submit_does_not_create_an_empty_init_controller_before_first_launch(
     assert launched is True
     assert result.status == "SUBMITTED"
     assert result.job_id == "701"
+
+
+def test_submit_treats_cached_controller_without_a_pod_as_absent(
+    monkeypatch, tmp_path
+) -> None:
+    """A stale UP record must not create an empty queue before first launch."""
+
+    from npa.orchestration.skypilot.launch_transaction import (
+        EvidenceState,
+        ProbeObservation,
+        StabilityPolicy,
+    )
+
+    monkeypatch.setattr(
+        workflow_module, "run_launch_transaction", _REAL_RUN_LAUNCH_TRANSACTION
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "_probe_kubernetes_controller_cwd",
+        lambda *_args, **_kwargs: workflow_module.ControllerExecutionProbe(
+            False,
+            "head_pod_ambiguous",
+            pod_count=0,
+            error="expected one controller head pod, found 0",
+        ),
+    )
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: demo\nresources:\n  cloud: kubernetes\n", encoding="utf-8"
+    )
+    sky_bin = _fake_sky(tmp_path)
+    launched = False
+
+    def ready_probe() -> ProbeObservation:
+        return ProbeObservation(EvidenceState.READY, observed_at="now", monotonic_at=0)
+
+    def fake_run(cmd, **_kwargs):
+        nonlocal launched
+        if _is_status_cmd(cmd):
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout=json.dumps(
+                    [{"name": "sky-jobs-controller-npa-test", "status": "UP"}]
+                ),
+                stderr="",
+            )
+        if cmd[1:3] == ["jobs", "queue"]:
+            assert launched, "initial reconciliation must not query a podless controller"
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout=json.dumps(
+                    [{"job_id": 702, "job_name": "stale-controller-run", "status": "PENDING"}]
+                ),
+                stderr="",
+            )
+        if cmd[1:3] == ["jobs", "launch"]:
+            launched = True
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="Job submitted, ID: 702\n", stderr=""
+            )
+        raise AssertionError(cmd)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = submit_workflow(
+        yaml_path,
+        "stale-controller-run",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+        infra="k8s/exact-context",
+        stream_output=False,
+        stability_probe=ready_probe,
+        stability_policy=StabilityPolicy(2, 0, 0, 1),
+        transaction_sleeper=lambda _seconds: None,
+        transaction_random=lambda: 0.5,
+        launch_lock_root=tmp_path / "locks",
+    )
+
+    assert launched is True
+    assert result.status == "SUBMITTED"
+    assert result.job_id == "702"
+    assert result.launch_transaction["controller"]["state"] == "absent"
