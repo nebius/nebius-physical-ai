@@ -4135,6 +4135,14 @@ def _execute_agent_workflow_yaml(
     # Preserve the generated backend's test seam while shipping the complex
     # durable execution mechanics as an importable backend module.
     command_env = _agent_workflow_context_env(kubernetes_context)
+    # The Agent always owns an isolated SkyPilot state when configured. That
+    # state derives a stable controller identity, so attempting to bind the
+    # unrelated shared-controller owner before submit can reject a valid Agent
+    # workflow with an ownership mismatch.
+    agent_env = _agent_command_env()
+    bind_shared_controller = not bool(
+        str(agent_env.get("NPA_SKYPILOT_ISOLATED_CONFIG_DIR") or "").strip()
+    )
 
     def run_npa_for_context(
         args: list[str], *, timeout_s: int | None = 300, expect_json: bool = True
@@ -4157,6 +4165,7 @@ def _execute_agent_workflow_yaml(
         run_npa_json=run_npa_for_context,
         requires_staged_source=_agent_workflow_requires_staged_source,
         secret_envs=_agent_workflow_secret_envs,
+        bind_shared_controller=bind_shared_controller,
     )
 
 

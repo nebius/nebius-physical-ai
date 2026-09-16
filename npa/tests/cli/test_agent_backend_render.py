@@ -1715,6 +1715,9 @@ def test_workflow_execution_requires_and_uses_action_bound_confirmation(
         "_agent_workflow_context_env",
         lambda context: {"KUBECONFIG": f"selected/{context}/kubeconfig"},
     )
+    # Exercise the legacy shared-controller path independently of any isolated
+    # SkyPilot environment inherited by the test process.
+    monkeypatch.setattr(module, "_agent_command_env", lambda: {})
 
     def run_npa(args, *, timeout_s=300, expect_json=True, extra_env=None):
         commands.append((list(args), timeout_s, expect_json))
@@ -1899,6 +1902,42 @@ def test_workflow_execution_requires_and_uses_action_bound_confirmation(
     assert status["ok"] is True
     assert status["execution"]["state"] == "succeeded"
     assert status["execution"]["status"] == "SUCCEEDED"
+
+
+def test_agent_execution_skips_shared_controller_binding_for_isolated_state(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch,
+        tmp_path,
+        module_name="npa_rendered_isolated_workflow_controller_backend",
+    )
+    observed: list[bool] = []
+
+    monkeypatch.setattr(
+        module,
+        "_agent_workflow_context_env",
+        lambda _context: {"KUBECONFIG": "selected-kubeconfig"},
+    )
+    monkeypatch.setattr(
+        module,
+        "_agent_command_env",
+        lambda: {"NPA_SKYPILOT_ISOLATED_CONFIG_DIR": "/owned/agent-sky"},
+    )
+    monkeypatch.setattr(
+        module,
+        "_execute_workflow_yaml",
+        lambda *_args, **kwargs: observed.append(kwargs["bind_shared_controller"]) or {},
+    )
+
+    module._execute_agent_workflow_yaml(
+        "apiVersion: npa.workflow/v0.0.1\n",
+        run_id="isolated-run",
+        project="demo",
+        kubernetes_context="selected-context",
+    )
+
+    assert observed == [False]
 
 
 def test_workflow_execution_failure_observability_is_safe_and_actionable(

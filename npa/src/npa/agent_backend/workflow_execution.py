@@ -95,6 +95,7 @@ def execute_workflow_yaml(
     run_npa_json: Callable[..., dict[str, Any]],
     requires_staged_source: Callable[..., bool] = workflow_requires_staged_source,
     secret_envs: Callable[..., tuple[str, ...]] = workflow_secret_envs,
+    bind_shared_controller: bool = True,
 ) -> dict[str, Any]:
     """Submit a confirmed workflow through NPA's durable SkyPilot runtime.
 
@@ -109,6 +110,9 @@ def execute_workflow_yaml(
         run_npa_json: Runtime callback that invokes NPA with agent credentials.
         requires_staged_source: Plan-aware callback for source staging.
         secret_envs: Plan-aware callback for required secret environment names.
+        bind_shared_controller: Whether this execution uses shared controller
+            ownership. Isolated SkyPilot state derives a controller identity and
+            must not bind a separate shared owner.
 
     Returns:
         The durable NPA workflow result.
@@ -149,21 +153,24 @@ def execute_workflow_yaml(
         run_npa_json(
             ["skypilot", "bootstrap", "--save"], timeout_s=600, expect_json=False
         )
-        if progress:
-            progress("binding workflow controller")
-        run_npa_json(
-            [
-                "skypilot",
-                "bind-controller",
-                "--project",
-                project,
-                "--context",
-                kubernetes_context,
-                "--json",
-            ],
-            timeout_s=300,
-            expect_json=False,
-        )
+        if bind_shared_controller:
+            if progress:
+                progress("binding shared workflow controller")
+            run_npa_json(
+                [
+                    "skypilot",
+                    "bind-controller",
+                    "--project",
+                    project,
+                    "--context",
+                    kubernetes_context,
+                    "--json",
+                ],
+                timeout_s=300,
+                expect_json=False,
+            )
+        elif progress:
+            progress("using isolated workflow controller")
         args = [
             "workbench",
             "workflow",
