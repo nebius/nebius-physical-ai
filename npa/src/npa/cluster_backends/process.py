@@ -407,8 +407,17 @@ def run_stream(
         raise BackendCommandError(f"Cancelled `{' '.join(args[:2])}`: {reason}")
     returncode = process.returncode or 0
     if returncode != 0:
+        # The cancellable path is used for Terraform applies watched by the
+        # provider node-group observer.  Its captured output has already been
+        # line-redacted, so retain the bounded tail just like the ordinary
+        # streaming path; otherwise a provider rejection degrades into a
+        # content-free exit code and cannot be classified or repaired.
+        detail = "\n".join(
+            part for part in ("".join(captured_stderr), "".join(captured_stdout)) if part
+        ).strip()
+        suffix = f": {detail[-3000:]}" if detail else ""
         raise BackendCommandError(
-            f"Command failed ({returncode}): {_command_text(args)}"
+            f"Command failed ({returncode}): {_command_text(args)}{suffix}"
         )
     return subprocess.CompletedProcess(
         args,
