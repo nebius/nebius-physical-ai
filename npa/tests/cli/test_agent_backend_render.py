@@ -4277,6 +4277,16 @@ def test_rendered_backend_uses_dedicated_agent_skypilot_state(
         sys.modules.pop(module_name, None)
 
 
+def test_rendered_backend_preserves_metadata_profile_home(monkeypatch, tmp_path) -> None:
+    module_name = "npa_rendered_metadata_profile_home"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    monkeypatch.setenv("NPA_NEBIUS_CONFIG", "/agent-home/.nebius/config.yaml")
+    try:
+        assert module._agent_command_env()["HOME"] == "/agent-home"
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_agent_bootstrap_exposes_authorized_key_to_cluster_lifecycle() -> None:
     from npa.cli import agent as agent_module
 

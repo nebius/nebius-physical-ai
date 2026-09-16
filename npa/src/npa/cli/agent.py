@@ -3276,6 +3276,13 @@ def _configured_healthy_agent_exists(alias: str, config: dict | None = None) -> 
 def _agent_command_env() -> dict:
     env = dict(os.environ)
     env["PATH"] = "/usr/local/bin:/usr/bin:/bin:" + env.get("PATH", "")
+    profile_config = Path(str(env.get("NPA_NEBIUS_CONFIG") or ""))
+    if (profile_config.is_absolute() and profile_config.name == "config.yaml"
+            and profile_config.parent.name == ".nebius"):
+        # The isolated SkyPilot HOME links this provider directory. Without the
+        # explicit profile home, a systemd service can fall back to an empty
+        # home and lose its mounted attached-identity profile during submit.
+        env["HOME"] = str(profile_config.parent.parent)
     env.setdefault("NPA_TERRAFORM_BIN", shutil.which("terraform") or "terraform")
     env.setdefault("NPA_KUBECTL_BIN", shutil.which("kubectl") or "kubectl")
     env.setdefault("NPA_NEBIUS_BIN", shutil.which("nebius") or "nebius")
