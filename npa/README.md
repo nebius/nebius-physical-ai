@@ -197,10 +197,11 @@ gate; some optional checks also use Node, tmux, or Docker.
 
 Pull requests split the full Python 3.12 coverage suite across four jobs and
 merge the results before enforcing the floor. Focused Python 3.10 and 3.14
-compatibility jobs still block the PR. Main pushes run the sharded full suite on
-all three supported versions. A focused compatibility check runs before the CPU
-tensor dependencies are installed, so async cancellation and isolated SkyPilot
-fixture regressions surface early. Run it locally with:
+compatibility steps in the browser job still block the PR. Main pushes run the
+sharded full suite on all three supported versions. A focused compatibility
+check runs before the CPU tensor dependencies are installed, so async
+cancellation and isolated SkyPilot fixture regressions surface early. Run it
+locally with:
 
 ```bash
 npa/.venv/bin/python -m pytest \

@@ -75,12 +75,13 @@ def test_pr_suite_is_sharded_and_main_keeps_full_compatibility() -> None:
     assert "if" not in job and "continue-on-error" not in job
     assert workflow["on"]["pull_request"] == ""
 
-    compatibility = workflow["jobs"]["compatibility"]
-    assert compatibility["if"] == "github.event_name == 'pull_request'"
-    assert compatibility["strategy"]["matrix"]["python-version"] == [
-        "3.10",
-        "3.14",
-    ]
+    browser_steps = workflow["jobs"]["browser-mocked"]["steps"]
+    browser_step_names = {step["name"] for step in browser_steps}
+    for version in ("3.10", "3.14"):
+        assert f"Set up Python {version} compatibility" in browser_step_names
+        install_step = f"Install Python {version} compatibility environment"
+        assert install_step in browser_step_names
+        assert f"Run Python {version} compatibility regressions" in browser_step_names
 
 
 def test_compatibility_regressions_run_before_heavy_dependencies() -> None:
@@ -110,7 +111,8 @@ def test_coverage_shards_are_parallel_and_merged_before_enforcement() -> None:
     pytest_step = _step("test.yml", "test", "pytest coverage shard")
     assert "-n auto" in pytest_step["run"]
     assert "--dist worksteal" in pytest_step["run"]
-    assert "--cov=npa" in pytest_step["run"]
+    assert "--cov=src/npa" in pytest_step["run"]
+    assert "--cov=npa" not in pytest_step["run"]
     assert "--cov-fail-under" not in pytest_step["run"]
     assert test_job["env"] == {
         "NPA_PROJECT_ID": "project-test-00000000",

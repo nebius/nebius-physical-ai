@@ -130,10 +130,13 @@ same collection across four deterministic shards and merges their coverage data:
 
 ```bash
 cd npa
-.venv/bin/python -m pytest tests/ -v --tb=short --cov=npa --cov-report=term-missing --cov-fail-under=60
+.venv/bin/python -m pytest tests/ -v --tb=short --cov=src/npa --cov-report=term-missing --cov-fail-under=60
 ```
 
-From the repository root, `--cov=npa` can select the enclosing directory and
+Keep the coverage source scoped to `src/npa`. Selecting the import name with
+`--cov=npa` can also trace temporary test modules that deliberately impersonate
+that package, and those files no longer exist when CI merges shard data. From the
+repository root, `--cov=npa` can additionally select the enclosing directory and
 include tests and scripts in the coverage total. That percentage does not prove
 package coverage. Check the report's file population, including package modules
 that no test executed. If correcting a report from retained traces, preserve the

@@ -492,7 +492,7 @@ pass while `test.yml` fails the 60% floor. Add coverage locally when a change mo
 a lot of untested code:
 
 ```bash
-make test PYTEST_ADDOPTS="--cov=npa --cov-fail-under=60"
+make test PYTEST_ADDOPTS="--cov=src/npa --cov-fail-under=60"
 ```
 
 The two also report different counts, so do not compare them directly: `make test`
@@ -503,9 +503,9 @@ stays true.
 
 `test.yml` shards the complete coverage suite across four Python 3.12 jobs on a
 pull request, then merges their coverage before enforcing the 60% floor. Fast
-compatibility jobs install and exercise regression surfaces on Python 3.10 and
-3.14. Pushes to `main` retain the complete four-shard suite on all three Python
-versions; `requires-python` is `>=3.10`.
+compatibility steps in the browser job install and exercise regression surfaces
+on Python 3.10 and 3.14. Pushes to `main` retain the complete four-shard suite on
+all three Python versions; `requires-python` is `>=3.10`.
 
 The internal sharder activates only when `NPA_CI_SHARD_INDEX` and
 `NPA_CI_TOTAL_SHARDS` are both set. The index is one-based and must not exceed
