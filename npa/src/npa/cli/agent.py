@@ -4325,6 +4325,54 @@ def _provision_agent_infra(
         return {{"ok": False, "status": "error", "error": str(exc), "dry_run": dry_run}}
 
 
+def _agent_discovered_cluster_for_name(infra: dict, cluster_name: str) -> dict:
+    # Return one ready cloud-discovered cluster with an exact requested name.
+    requested = str(cluster_name or "").strip()
+    if not requested:
+        return {{}}
+    raw_cloud_clusters = infra.get("cloud_clusters") if isinstance(infra, dict) else []
+    cloud_clusters = raw_cloud_clusters if isinstance(raw_cloud_clusters, list) else []
+    candidates = [
+        item for item in cloud_clusters
+        if isinstance(item, dict) and str(item.get("name") or "").strip() == requested
+    ]
+    if len(candidates) != 1:
+        return {{}}
+    candidate = candidates[0]
+    status = str(candidate.get("status") or "").strip().upper()
+    if status and status not in {{"RUNNING", "READY", "ACTIVE"}}:
+        return {{}}
+    return {{"name": requested}}
+
+
+def _adopt_agent_infra(project: str, cluster_name: str) -> dict:
+    # Persist credentials for an explicitly confirmed, discovered cluster.
+    try:
+        _run_agent_npa_json(
+            [
+                "cluster", "kubeconfig", "--project", project,
+                "--cluster-name", cluster_name,
+            ],
+            timeout_s=180,
+            expect_json=False,
+            extra_env=_agent_workflow_operation_env(project, ""),
+        )
+    except Exception:
+        # The raw CLI output may contain operator-private endpoint or storage
+        # references. Keep that evidence in the Agent's operator logs and give
+        # the browser a stable next action instead.
+        return {{
+            "ok": False,
+            "status": "error",
+            "error": "The discovered Kubernetes backend could not be adopted; check its readiness and Agent permissions.",
+        }}
+    return {{
+        "ok": True,
+        "status": "adopted",
+        "actions": ["k8s:adopted explicitly confirmed existing backend"],
+    }}
+
+
 def _write_soperator_temp_spec(spec_text: str) -> Path:
     tmp_dir = Path("/tmp/npa-agent-soperator")
     tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -9187,6 +9235,9 @@ def submit_npa_workflow(payload: dict):
     initial_target = resolve_workflow_infrastructure(infra_before)
     has_execution_context = bool(str(initial_target.get("context") or "").strip())
     cluster_name = requested_cluster_name or "npa-cluster"
+    discovered_cluster = _agent_discovered_cluster_for_name(
+        infra_before, cluster_name
+    )
     kubernetes_context = ""
     if not has_execution_context and not allow_provision:
         return _workflow_no_infra_response(validation=validation, plan=plan, run_id=run_id, infra=infra_before)
@@ -9201,7 +9252,9 @@ def submit_npa_workflow(payload: dict):
         # Real (non-dry-run) provision requires the confirm-token gate.
         if not dry_run and not has_execution_context:
             provision_action = {{
-                "action": "provision_infra",
+                "action": (
+                    "adopt_infra" if discovered_cluster else "provision_infra"
+                ),
                 "project": project,
                 "cluster_name": cluster_name,
                 "via": "workflows/submit",
@@ -9218,16 +9271,19 @@ def submit_npa_workflow(payload: dict):
             _consume_workflow_confirmation(
                 confirm_token=confirm_token, expected_action=provision_action
             )
-        provision = _provision_agent_infra(
-            project,
-            cluster_name,
-            dry_run=dry_run,
-            # provision-if-absent may validate a cached kubeconfig before its
-            # own dry-run branch; validation launches real CUDA smoke pods.
-            # Keep workflow dry-run strictly read-only.
-            validate=False if dry_run else validate_infra,
-            skip_s3=bool(body.get("skip_s3", True)),
-        )
+        if discovered_cluster and not dry_run:
+            provision = _adopt_agent_infra(project, cluster_name)
+        else:
+            provision = _provision_agent_infra(
+                project,
+                cluster_name,
+                dry_run=dry_run,
+                # provision-if-absent may validate a cached kubeconfig before its
+                # own dry-run branch; validation launches real CUDA smoke pods.
+                # Keep workflow dry-run strictly read-only.
+                validate=False if dry_run else validate_infra,
+                skip_s3=bool(body.get("skip_s3", True)),
+            )
         if not provision.get("ok"):
             infra_error = dict(infra_before)
             infra_error["provision_error"] = provision.get("error") or provision

@@ -8581,11 +8581,17 @@
         workflowExecutionPending = { yaml, runId, token, action };
         const host = document.getElementById("workflowExecutionConfirm");
         if (!host) return;
-        const provisioning = String(action.action || "") === "provision_infra";
-        const title = provisioning ? "Confirm infrastructure deployment" : "Confirm workflow execution";
-        const note = provisioning
+        const actionName = String(action.action || "");
+        const infrastructureAction = ["provision_infra", "adopt_infra"].includes(actionName);
+        const adopting = actionName === "adopt_infra";
+        const title = adopting
+          ? "Confirm infrastructure adoption"
+          : (infrastructureAction ? "Confirm infrastructure deployment" : "Confirm workflow execution");
+        const note = adopting
+          ? "NPA will fetch a credential-scoped kubeconfig for the discovered Kubernetes backend. It will then ask once more before submitting workload tasks."
+          : (infrastructureAction
           ? "NPA will create or validate the configured Kubernetes backend. It will then ask once more before submitting workload tasks."
-          : "NPA will submit this validated workflow through the durable Kubernetes runtime and wait for its terminal result.";
+          : "NPA will submit this validated workflow through the durable Kubernetes runtime and wait for its terminal result.");
         host.replaceChildren();
         const heading = document.createElement("strong");
         heading.textContent = title;
@@ -8594,7 +8600,7 @@
         const button = document.createElement("button");
         button.type = "button";
         button.className = "btn btn-primary";
-        button.textContent = provisioning ? "Confirm deployment" : "Confirm run";
+        button.textContent = adopting ? "Confirm adoption" : (infrastructureAction ? "Confirm deployment" : "Confirm run");
         button.addEventListener("click", () => {
           confirmWorkflowExecution(button).catch((err) => {
             showToast(String((err && err.message) || err), "error");
@@ -8612,8 +8618,10 @@
         const pending = workflowExecutionPending;
         if (!pending) throw new Error("No workflow execution is awaiting confirmation");
         if (button) button.disabled = true;
-        const provisioning = String((pending.action || {}).action || "") === "provision_infra";
-        const body = provisioning
+        const infrastructureAction = ["provision_infra", "adopt_infra"].includes(
+          String((pending.action || {}).action || ""),
+        );
+        const body = infrastructureAction
           ? {
             yaml: pending.yaml,
             run_id: pending.runId,
