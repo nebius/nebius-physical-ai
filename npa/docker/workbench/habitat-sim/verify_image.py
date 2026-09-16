@@ -44,6 +44,27 @@ NPA_SOURCE_PATHS = (
 )
 PROVENANCE_ROOT = "usr/share/doc/npa-habitat-sim/npa-source-provenance"
 PROVENANCE_SCHEMA = "npa.source-provenance.v1"
+EXECUTABLE_SOURCE_DESTINATIONS = {
+    "inputs/src/npa/__init__.py": ("/opt/npa-runtime/npa/__init__.py", 0o644),
+    "inputs/src/npa/workflows/__init__.py": (
+        "/opt/npa-runtime/npa/workflows/__init__.py",
+        0o644,
+    ),
+    "inputs/src/npa/workflows/habitat_sim_smoke.py": (
+        "/opt/npa-runtime/npa/workflows/habitat_sim_smoke.py",
+        0o644,
+    ),
+    "inputs/docker/workbench/habitat-sim/entrypoint.sh": (
+        "/usr/local/bin/npa-habitat-entrypoint",
+        0o755,
+    ),
+}
+SYSTEM_FILE_BYTES = {
+    "/etc/ssh/sshd_config.d/99-npa-worker.conf": (
+        b"PasswordAuthentication no\nPermitRootLogin no\n"
+    ),
+    "/etc/sudoers.d/90-npa-skypilot": b"ubuntu ALL=(ALL) NOPASSWD:ALL\n",
+}
 
 
 def _validate_source_contract(
@@ -118,8 +139,7 @@ def _source_manifest_from_git(revision: str) -> bytes:
 def _provenance_bytes(revision: str, manifest_sha256: str) -> bytes:
     return (
         '{"manifest_sha256":"%s","schema_version":"%s",'
-        '"source_revision":"%s"}\n'
-        % (manifest_sha256, PROVENANCE_SCHEMA, revision)
+        '"source_revision":"%s"}\n' % (manifest_sha256, PROVENANCE_SCHEMA, revision)
     ).encode()
 
 
@@ -153,9 +173,7 @@ def _bind_source_contract(
     labels = contract["required_labels"]
     labels["org.nebius.npa.source-manifest-sha256"] = manifest_sha256
     labels["org.nebius.npa.source-provenance-schema"] = PROVENANCE_SCHEMA
-    labels["org.nebius.npa.sudo-bootstrap-contract"] = (
-        "habitat-sim-skypilot-0.12.2-v1"
-    )
+    labels["org.nebius.npa.sudo-bootstrap-contract"] = "habitat-sim-skypilot-0.12.2-v1"
     files = contract["required_final_file_sha256"]
     paths = contract["required_final_paths"]
     manifest_path = f"/{PROVENANCE_ROOT}/npa-source-manifest.sha256"
@@ -169,6 +187,51 @@ def _bind_source_contract(
         image_path = f"/{PROVENANCE_ROOT}/{path}"
         paths.append(image_path)
         files[image_path] = digest
+    metadata = contract.setdefault("required_final_metadata", {})
+    bindings = contract.setdefault("executable_source_bindings", {})
+    for source, (destination, mode) in EXECUTABLE_SOURCE_DESTINATIONS.items():
+        W.require(source in expected, "executable_source_input_missing")
+        digest = expected[source]
+        if destination not in paths:
+            paths.append(destination)
+        files[destination] = digest
+        metadata[destination] = {
+            "kind": "file",
+            "uid": 0,
+            "gid": 0,
+            "mode": mode,
+        }
+        bindings[destination] = {**metadata[destination], "sha256": digest}
+    for destination, payload in SYSTEM_FILE_BYTES.items():
+        paths.append(destination)
+        files[destination] = hashlib.sha256(payload).hexdigest()
+    metadata.update(
+        {
+            "/etc/group": {"kind": "file", "uid": 0, "gid": 0, "mode": 0o644},
+            "/etc/passwd": {"kind": "file", "uid": 0, "gid": 0, "mode": 0o644},
+            "/etc/ssh/sshd_config.d/99-npa-worker.conf": {
+                "kind": "file",
+                "uid": 0,
+                "gid": 0,
+                "mode": 0o644,
+            },
+            "/etc/sudoers.d/90-npa-skypilot": {
+                "kind": "file",
+                "uid": 0,
+                "gid": 0,
+                "mode": 0o440,
+            },
+            "/home/ubuntu/.ssh": {
+                "kind": "directory",
+                "uid": 1000,
+                "gid": 1000,
+                "mode": 0o700,
+            },
+        }
+    )
+    for path in metadata:
+        if path not in paths:
+            paths.append(path)
     return contract, expected
 
 

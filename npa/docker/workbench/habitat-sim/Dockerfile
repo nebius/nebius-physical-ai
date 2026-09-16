@@ -213,8 +213,10 @@ RUN python3 prepare_source.py --manifest source-manifest.json --output /opt/habi
        /opt/rsync-source/rsync_3.2.7-0ubuntu0.22.04.7.debian.tar.xz \
        /opt/rsync-source/rsync_3.2.7-0ubuntu0.22.04.7.dsc \
        /opt/notices/ubuntu-sources/rsync/ && \
-    cp source-manifest.json source-projection.json licenses.json apt-build.lock apt-runtime.lock \
-       requirements-runtime.lock /opt/notices/
+    cp /opt/npa-build/source-manifest.json /opt/npa-build/source-projection.json \
+       /opt/npa-build/licenses.json /opt/npa-build/apt-build.lock \
+       /opt/npa-build/apt-runtime.lock /opt/npa-build/requirements-runtime.lock \
+       /opt/notices/
 
 FROM ${BASE_IMAGE} AS runtime
 ARG APT_SNAPSHOT
@@ -294,10 +296,28 @@ RUN printf '%s  %s\n' "${NPA_SOURCE_MANIFEST_SHA256}" \
     sha256sum -c npa-source-manifest.sha256 && \
     printf '{"manifest_sha256":"%s","schema_version":"npa.source-provenance.v1","source_revision":"%s"}\n' \
       "${NPA_SOURCE_MANIFEST_SHA256}" "${NPA_SOURCE_SHA}" | \
-      cmp - npa-source-provenance.json && \
+    cmp - npa-source-provenance.json && \
     chmod 0755 /usr/local/bin/npa-habitat-entrypoint && \
+    chmod 0644 /opt/npa-runtime/npa/__init__.py \
+      /opt/npa-runtime/npa/workflows/__init__.py \
+      /opt/npa-runtime/npa/workflows/habitat_sim_smoke.py && \
     chown -R root:root /opt/venv /opt/npa-runtime /usr/src/habitat-sim \
       /usr/share/doc/npa-habitat-sim && \
+    cmp /usr/share/doc/npa-habitat-sim/npa-source-provenance/inputs/src/npa/__init__.py \
+      /opt/npa-runtime/npa/__init__.py && \
+    cmp /usr/share/doc/npa-habitat-sim/npa-source-provenance/inputs/src/npa/workflows/__init__.py \
+      /opt/npa-runtime/npa/workflows/__init__.py && \
+    cmp /usr/share/doc/npa-habitat-sim/npa-source-provenance/inputs/src/npa/workflows/habitat_sim_smoke.py \
+      /opt/npa-runtime/npa/workflows/habitat_sim_smoke.py && \
+    cmp /usr/share/doc/npa-habitat-sim/npa-source-provenance/inputs/docker/workbench/habitat-sim/entrypoint.sh \
+      /usr/local/bin/npa-habitat-entrypoint && \
+    test "$(id -u ubuntu)" -eq 1000 && test "$(id -g ubuntu)" -eq 1000 && \
+    test "$(stat -c '%u:%g:%a' /home/ubuntu/.ssh)" = '1000:1000:700' && \
+    test "$(stat -c '%u:%g:%a' /etc/sudoers.d/90-npa-skypilot)" = '0:0:440' && \
+    test "$(cat /etc/sudoers.d/90-npa-skypilot)" = \
+      'ubuntu ALL=(ALL) NOPASSWD:ALL' && \
+    test "$(stat -c '%u:%g:%a' /etc/ssh/sshd_config.d/99-npa-worker.conf)" = \
+      '0:0:644' && \
     ! find / -xdev \( -name 'habitat-test-scenes.zip' -o -name 'skokloster-castle.glb' \
       -o -name 'skokloster-castle.navmesh' -o -name 'ca-certificates*.deb' \
       -o -name 'openssl*.deb' -o -name 'libssl3*.deb' \

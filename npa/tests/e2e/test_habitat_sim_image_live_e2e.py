@@ -15,6 +15,7 @@ import urllib.parse
 
 import boto3
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / "workflows/testing/habitat-sim-smoke.yaml"
@@ -39,6 +40,17 @@ PUBLIC_REGISTRY_HOSTS = {
     "quay.io",
     "registry-1.docker.io",
     "registry.k8s.io",
+}
+PLATFORM_LITERAL_ENV = {
+    "KUBERNETES_SERVICE_HOST",
+    "KUBERNETES_SERVICE_PORT",
+    "NVIDIA_DRIVER_CAPABILITIES",
+    "NVIDIA_VISIBLE_DEVICES",
+}
+PLATFORM_SECRET_ENV = {
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
 }
 MAX_PRIVATE_RECEIPT_BYTES = 1024 * 1024
 RFC3339_UTC = re.compile(
@@ -209,7 +221,7 @@ def _expected_plan_argv(
 
 def _rendered_plan(
     receipt: dict[str, object], provider: dict[str, object]
-) -> tuple[dict[str, object], str]:
+) -> tuple[dict[str, object], str, dict[str, object]]:
     reference = _exact_keys(receipt["rendered_plan"], {"path", "sha256"})
     plan, _path, payload = _private_json(reference["path"])
     plan_sha256 = hashlib.sha256(payload).hexdigest()
@@ -233,6 +245,10 @@ def _rendered_plan(
             "environment",
             "runtime_uid",
             "gpu",
+            "skypilot_sha256",
+            "setup_sha256",
+            "run_sha256",
+            "submission_id",
         },
     )
     assert plan["schema_version"] == "npa.habitat-sim.rendered-plan.v1"
@@ -242,12 +258,16 @@ def _rendered_plan(
         assert plan[key] == receipt[key]
     assert plan["node_name"] == provider["kubernetes_node"]["name"]
     assert plan["runtime_uid"] == 1000
-    assert plan["environment"] == {
+    core_environment = {
         "NPA_TASK_IMAGE": receipt["image"],
         "NPA_WORKFLOW_NAME": "habitat-sim-smoke",
         "NPA_WORKFLOW_RUN_ID": receipt["run_id"],
         "NPA_WORKFLOW_STATE": "render-traversal",
     }
+    assert isinstance(plan["environment"], dict)
+    assert all(
+        plan["environment"].get(key) == value for key, value in core_environment.items()
+    )
     assert plan["gpu"] == {
         "accelerator": "RTX PRO 6000 Blackwell",
         "count": 1,
@@ -258,7 +278,76 @@ def _rendered_plan(
     expected = _expected_plan_argv(plan, receipt, output_uri)
     assert plan["pod_command"] + plan["pod_args"] == expected
     assert sum(item == PLAN_PLACEHOLDER for item in expected) == 1
-    return plan, plan_sha256
+    task = _canonical_skypilot_task(receipt, plan)
+    submission = _submitted_task(receipt, plan, plan_sha256, task)
+    return plan, plan_sha256, submission
+
+
+def _canonical_skypilot_task(
+    receipt: dict[str, object], plan: dict[str, object]
+) -> dict[str, object]:
+    reference = _exact_keys(receipt["rendered_skypilot"], {"path", "sha256"})
+    payload, _path = _private_bytes(reference["path"])
+    digest = hashlib.sha256(payload).hexdigest()
+    assert SHA256.fullmatch(str(reference["sha256"]))
+    assert digest == reference["sha256"] == plan["skypilot_sha256"]
+    documents = list(yaml.safe_load_all(payload))
+    assert len(documents) == 2 and documents[0] == {
+        "name": "habitat-sim-smoke",
+        "execution": "serial",
+    }
+    task = _exact_keys(documents[1], {"name", "resources", "envs", "setup", "run"})
+    assert task["name"] == "render-traversal"
+    assert task["envs"] == plan["environment"]
+    assert task["resources"]["image_id"] == "docker:" + str(receipt["image"])
+    assert hashlib.sha256(task["setup"].encode()).hexdigest() == plan["setup_sha256"]
+    assert hashlib.sha256(task["run"].encode()).hexdigest() == plan["run_sha256"]
+    assert "Habitat-Sim refuses a Python source overlay" in task["setup"]
+    assert "/opt/venv/bin/python" in task["setup"]
+    assert (
+        " ".join(
+            str(item) for item in _expected_plan_argv(plan, receipt, plan["output_uri"])
+        )
+        in task["run"]
+    )
+    return task
+
+
+def _submitted_task(
+    receipt: dict[str, object],
+    plan: dict[str, object],
+    plan_sha256: str,
+    task: dict[str, object],
+) -> dict[str, object]:
+    reference = _exact_keys(receipt["submitted_task"], {"path", "sha256"})
+    submission, _path, payload = _private_json(reference["path"])
+    assert hashlib.sha256(payload).hexdigest() == reference["sha256"]
+    _exact_keys(
+        submission,
+        {
+            "schema_version",
+            "task_id",
+            "task_name",
+            "skypilot_sha256",
+            "setup_sha256",
+            "run_sha256",
+            "image",
+            "pod_command",
+            "pod_args",
+            "platform_environment",
+        },
+    )
+    assert submission["schema_version"] == "npa.habitat-sim.submitted-task.v1"
+    assert submission["task_id"] == plan["submission_id"]
+    assert submission["task_name"] == task["name"]
+    assert submission["image"] == receipt["image"]
+    for key in ("skypilot_sha256", "setup_sha256", "run_sha256"):
+        assert submission[key] == plan[key]
+    expected = _expected_plan_argv(plan, receipt, plan["output_uri"])
+    expected = [plan_sha256 if item == PLAN_PLACEHOLDER else item for item in expected]
+    assert submission["pod_command"] + submission["pod_args"] == expected
+    assert isinstance(submission["platform_environment"], list)
+    return submission
 
 
 def _termination_receipt(
@@ -268,9 +357,17 @@ def _termination_receipt(
     _exact_keys(
         termination,
         {
-            "schema_version", "workflow_name", "run_id", "rendered_plan_sha256",
-            "image_digest", "proof_sha256", "manifest_key", "manifest_sha256",
-            "ready_key", "ready_sha256", "exit_status",
+            "schema_version",
+            "workflow_name",
+            "run_id",
+            "rendered_plan_sha256",
+            "image_digest",
+            "proof_sha256",
+            "manifest_key",
+            "manifest_sha256",
+            "ready_key",
+            "ready_sha256",
+            "exit_status",
         },
     )
     expected = {
@@ -292,6 +389,7 @@ def _assert_pod_completion(
     receipt: dict[str, object],
     plan: dict[str, object],
     plan_sha256: str,
+    submission: dict[str, object],
 ) -> tuple[str, dict[str, object]]:
     image = str(receipt["image"])
     digest = image.rsplit("@", 1)[1]
@@ -299,21 +397,36 @@ def _assert_pod_completion(
     statuses = pod["status"].get("containerStatuses", [])
     assert pod["status"].get("phase") == "Succeeded"
     assert len(containers) == len(statuses) == 1
+    assert (
+        pod["metadata"].get("labels", {}).get("npa.nebius.com/task-name")
+        == submission["task_name"]
+    )
+    assert (
+        pod["metadata"].get("annotations", {}).get("npa.nebius.com/task-id")
+        == submission["task_id"]
+    )
     assert containers[0].get("image") == image
     assert containers[0].get("name") == statuses[0].get("name")
-    expanded_args = [
-        plan_sha256 if item == PLAN_PLACEHOLDER else item for item in plan["pod_args"]
-    ]
-    assert containers[0].get("command", []) == plan["pod_command"]
-    assert containers[0].get("args", []) == expanded_args
+    assert containers[0].get("command", []) == submission["pod_command"]
+    assert containers[0].get("args", []) == submission["pod_args"]
     environment = containers[0].get("env", [])
     assert len({row.get("name") for row in environment}) == len(environment)
-    observed_environment = {
-        row["name"]: row["value"]
-        for row in environment
-        if row.get("name") in plan["environment"]
-    }
-    assert observed_environment == plan["environment"]
+    assert not containers[0].get("envFrom")
+    declared = [
+        {"name": name, "value": value} for name, value in plan["environment"].items()
+    ]
+    allowed = declared + submission["platform_environment"]
+    assert environment == allowed
+    assert len({row["name"] for row in allowed}) == len(allowed)
+    for row in submission["platform_environment"]:
+        assert set(row) in ({"name", "value"}, {"name", "valueFrom"})
+        if "valueFrom" in row:
+            assert row["name"] in PLATFORM_SECRET_ENV
+            assert set(row["valueFrom"]) == {"secretKeyRef"}
+            assert set(row["valueFrom"]["secretKeyRef"]) <= {"name", "key", "optional"}
+            assert {"name", "key"} <= set(row["valueFrom"]["secretKeyRef"])
+        else:
+            assert row["name"] in PLATFORM_LITERAL_ENV
     security = containers[0].get("securityContext", {})
     assert security.get("runAsNonRoot") is True
     assert security.get("runAsUser") == plan["runtime_uid"]
@@ -449,8 +562,13 @@ def _ready_marker(
         },
     )
     assert ready["schema_version"] == "npa.habitat-sim.publication-ready.v1"
-    assert re.fullmatch(re.escape(prefix) + r"/\.staging/[0-9a-f]{32}", ready["stage_prefix"])
-    assert ready["manifest_key"] == ready["stage_prefix"] + "/habitat-sim-publication-manifest.json"
+    assert re.fullmatch(
+        re.escape(prefix) + r"/\.staging/[0-9a-f]{32}", ready["stage_prefix"]
+    )
+    assert (
+        ready["manifest_key"]
+        == ready["stage_prefix"] + "/habitat-sim-publication-manifest.json"
+    )
     for key in ("manifest_sha256", "inventory_sha256", "proof_sha256"):
         assert SHA256.fullmatch(str(ready[key]))
     for key in ("manifest_key", "manifest_sha256", "proof_sha256"):
@@ -461,9 +579,9 @@ def _ready_marker(
 def _publication_manifest(
     client: object, bucket: str, ready: dict[str, object]
 ) -> dict[str, object]:
-    manifest_payload = client.get_object(
-        Bucket=bucket, Key=ready["manifest_key"]
-    )["Body"].read()
+    manifest_payload = client.get_object(Bucket=bucket, Key=ready["manifest_key"])[
+        "Body"
+    ].read()
     assert hashlib.sha256(manifest_payload).hexdigest() == ready["manifest_sha256"]
     manifest = json.loads(manifest_payload)
     _exact_keys(
@@ -491,7 +609,9 @@ def _publication_manifest(
         assert SHA256.fullmatch(str(row["sha256"]))
     assert len({row["path"] for row in objects}) == len(objects)
     assert len({row["key"] for row in objects}) == len(objects)
-    canonical = (json.dumps(objects, separators=(",", ":"), sort_keys=True) + "\n").encode()
+    canonical = (
+        json.dumps(objects, separators=(",", ":"), sort_keys=True) + "\n"
+    ).encode()
     assert hashlib.sha256(canonical).hexdigest() == ready["inventory_sha256"]
     expected_keys = {row["key"] for row in objects} | {ready["manifest_key"]}
     assert _listed_keys(client, bucket, ready["stage_prefix"] + "/") == expected_keys
@@ -520,15 +640,18 @@ def _proof(
     client: object,
 ) -> tuple[dict[str, object], bytes]:
     storage = receipt["storage"]
-    payload = client.get_object(
-        Bucket=storage["bucket"], Key=ready["proof_key"]
-    )["Body"].read()
+    payload = client.get_object(Bucket=storage["bucket"], Key=ready["proof_key"])[
+        "Body"
+    ].read()
     assert hashlib.sha256(payload).hexdigest() == ready["proof_sha256"]
     return json.loads(payload), payload
 
 
 def _assert_observation_readback(
-    proof: dict[str, object], receipt: dict[str, object], manifest: dict[str, object], client: object
+    proof: dict[str, object],
+    receipt: dict[str, object],
+    manifest: dict[str, object],
+    client: object,
 ) -> None:
     storage = receipt["storage"]
     rows = {row["path"]: row for row in manifest["objects"]}
@@ -543,9 +666,9 @@ def _assert_observation_readback(
             assert row["bytes"] == frame[f"{kind}_bytes"]
             assert row["sha256"] == frame[f"{kind}_sha256"]
             assert row["media_type"] == frame[f"{kind}_media_type"]
-            payload = client.get_object(
-                Bucket=storage["bucket"], Key=row["key"]
-            )["Body"].read()
+            payload = client.get_object(Bucket=storage["bucket"], Key=row["key"])[
+                "Body"
+            ].read()
             assert len(payload) == frame[f"{kind}_bytes"]
             assert hashlib.sha256(payload).hexdigest() == frame[f"{kind}_sha256"]
     assert set(rows) == expected_paths
@@ -553,16 +676,37 @@ def _assert_observation_readback(
 
 def _assert_proof_root(proof: dict[str, object]) -> None:
     keys = {
-        "schema_version", "solution", "capability", "capabilities_exercised",
-        "execution_binding", "source_revision", "source", "scene_id",
-        "scene_sha256", "scene_license", "scene", "rendered_rgb_frame_count",
-        "rendered_depth_frame_count", "rendered_observations",
-        "finite_depth_statistics", "agent", "agent_start", "agent_end",
-        "agent_displacement", "bullet", "bullet_step_count", "measured_fps",
-        "renderer_egl_evidence", "observed_gpu", "observed_rtx_gpu_model",
-        "observed_rtx_gpu_architecture", "observed_rtx_gpu_count",
-        "pod_observed_immutable_image", "pod_observed_image_digest",
-        "image_observation_source", "exit_status",
+        "schema_version",
+        "solution",
+        "capability",
+        "capabilities_exercised",
+        "execution_binding",
+        "source_revision",
+        "source",
+        "scene_id",
+        "scene_sha256",
+        "scene_license",
+        "scene",
+        "rendered_rgb_frame_count",
+        "rendered_depth_frame_count",
+        "rendered_observations",
+        "finite_depth_statistics",
+        "agent",
+        "agent_start",
+        "agent_end",
+        "agent_displacement",
+        "bullet",
+        "bullet_step_count",
+        "measured_fps",
+        "renderer_egl_evidence",
+        "observed_gpu",
+        "observed_rtx_gpu_model",
+        "observed_rtx_gpu_architecture",
+        "observed_rtx_gpu_count",
+        "pod_observed_immutable_image",
+        "pod_observed_image_digest",
+        "image_observation_source",
+        "exit_status",
     }
     _exact_keys(proof, keys)
     assert proof["schema_version"] == "npa.habitat-sim.smoke.v1"
@@ -581,7 +725,13 @@ def _assert_execution_and_source(
 ) -> tuple[dict[str, object], dict[str, object]]:
     binding = _exact_keys(
         proof["execution_binding"],
-        {"workflow_name", "run_id", "rendered_plan_sha256", "runtime_uid", "runtime_gid"},
+        {
+            "workflow_name",
+            "run_id",
+            "rendered_plan_sha256",
+            "runtime_uid",
+            "runtime_gid",
+        },
     )
     assert binding["workflow_name"] == "habitat-sim-smoke"
     assert binding["run_id"] == receipt["run_id"]
@@ -590,13 +740,26 @@ def _assert_execution_and_source(
     assert proof["source_revision"] == SOURCE_REVISION
     source = _exact_keys(
         proof["source"],
-        {"repository", "requested_revision", "observed_revision", "license", "manifest_sha256"},
+        {
+            "repository",
+            "requested_revision",
+            "observed_revision",
+            "license",
+            "manifest_sha256",
+        },
     )
     assert source["repository"] == "https://github.com/facebookresearch/habitat-sim"
-    assert source["requested_revision"] == source["observed_revision"] == SOURCE_REVISION
+    assert (
+        source["requested_revision"] == source["observed_revision"] == SOURCE_REVISION
+    )
     assert source["license"] == "MIT"
-    expected_source_manifest = ROOT / "npa/docker/workbench/habitat-sim/source-manifest.json"
-    assert source["manifest_sha256"] == hashlib.sha256(expected_source_manifest.read_bytes()).hexdigest()
+    expected_source_manifest = (
+        ROOT / "npa/docker/workbench/habitat-sim/source-manifest.json"
+    )
+    assert (
+        source["manifest_sha256"]
+        == hashlib.sha256(expected_source_manifest.read_bytes()).hexdigest()
+    )
     return binding, source
 
 
@@ -626,17 +789,35 @@ def _assert_scene(proof: dict[str, object]) -> dict[str, object]:
     scene = _exact_keys(
         proof["scene"],
         {
-            "source", "archive", "id", "sha256", "bytes", "archive_member",
-            "license", "license_url", "attribution", "original_asset",
-            "modification_notice", "immutability_boundary", "navmesh_sha256",
-            "navmesh_bytes", "navmesh_archive_member",
+            "source",
+            "archive",
+            "id",
+            "sha256",
+            "bytes",
+            "archive_member",
+            "license",
+            "license_url",
+            "attribution",
+            "original_asset",
+            "modification_notice",
+            "immutability_boundary",
+            "navmesh_sha256",
+            "navmesh_bytes",
+            "navmesh_archive_member",
         },
     )
     _exact_keys(
         scene["archive"],
         {
-            "url", "url_role", "checked_at_utc", "response_metadata", "bytes",
-            "sha256", "url_is_mutable", "zip_integrity", "ephemeral_copy_removed",
+            "url",
+            "url_role",
+            "checked_at_utc",
+            "response_metadata",
+            "bytes",
+            "sha256",
+            "url_is_mutable",
+            "zip_integrity",
+            "ephemeral_copy_removed",
             "unrelated_members_extracted",
         },
     )
@@ -672,11 +853,23 @@ def _assert_scene(proof: dict[str, object]) -> dict[str, object]:
 
 def _assert_frame(frame: dict[str, object], index: int) -> None:
     keys = {
-        "index", "action", "rgb_shape", "rgb_raw_sha256", "rgb_png_path",
-        "rgb_png_media_type", "rgb_png_bytes", "rgb_png_sha256", "depth_shape",
-        "depth_raw_sha256", "depth_npy_path", "depth_npy_media_type",
-        "depth_npy_bytes", "depth_npy_sha256", "depth_preview_png_path",
-        "depth_preview_png_media_type", "depth_preview_png_bytes",
+        "index",
+        "action",
+        "rgb_shape",
+        "rgb_raw_sha256",
+        "rgb_png_path",
+        "rgb_png_media_type",
+        "rgb_png_bytes",
+        "rgb_png_sha256",
+        "depth_shape",
+        "depth_raw_sha256",
+        "depth_npy_path",
+        "depth_npy_media_type",
+        "depth_npy_bytes",
+        "depth_npy_sha256",
+        "depth_preview_png_path",
+        "depth_preview_png_media_type",
+        "depth_preview_png_bytes",
         "depth_preview_png_sha256",
     }
     _exact_keys(frame, keys)
@@ -684,8 +877,11 @@ def _assert_frame(frame: dict[str, object], index: int) -> None:
     assert frame["rgb_shape"] == [240, 320, 4]
     assert frame["depth_shape"] == [240, 320]
     hashes = (
-        "rgb_raw_sha256", "rgb_png_sha256", "depth_raw_sha256",
-        "depth_npy_sha256", "depth_preview_png_sha256",
+        "rgb_raw_sha256",
+        "rgb_png_sha256",
+        "depth_raw_sha256",
+        "depth_npy_sha256",
+        "depth_preview_png_sha256",
     )
     assert all(SHA256.fullmatch(frame[key]) for key in hashes)
     assert frame["rgb_png_media_type"] == "image/png"
@@ -734,8 +930,13 @@ def _assert_depth_and_dynamics(
     agent = _exact_keys(
         proof["agent"],
         {
-            "start", "end", "goal", "displacement", "planned_geodesic_distance",
-            "actions", "collision_count",
+            "start",
+            "end",
+            "goal",
+            "displacement",
+            "planned_geodesic_distance",
+            "actions",
+            "collision_count",
         },
     )
     assert proof["agent_start"] == agent["start"]
@@ -746,7 +947,13 @@ def _assert_depth_and_dynamics(
     assert proof["bullet_step_count"] > 0
     bullet = _exact_keys(
         proof["bullet"],
-        {"built_with_bullet", "enabled", "step_count", "world_time_start", "world_time_end"},
+        {
+            "built_with_bullet",
+            "enabled",
+            "step_count",
+            "world_time_start",
+            "world_time_end",
+        },
     )
     assert bullet["built_with_bullet"] is True
     assert bullet["enabled"] is True
@@ -781,7 +988,10 @@ def _assert_renderer_and_gpu(
     assert proof["exit_status"] == 0
     assert proof["pod_observed_immutable_image"] == receipt["image"]
     assert proof["pod_observed_image_digest"] == str(receipt["image"]).rsplit("@", 1)[1]
-    assert proof["image_observation_source"] == "NPA_TASK_IMAGE set from the submitted exact digest"
+    assert (
+        proof["image_observation_source"]
+        == "NPA_TASK_IMAGE set from the submitted exact digest"
+    )
 
 
 def _assert_manifest_provenance(
@@ -793,10 +1003,19 @@ def _assert_manifest_provenance(
     provenance = _exact_keys(
         manifest["provenance"],
         {
-            "source_revision", "source_license", "source_manifest_sha256",
-            "archive_url", "archive_sha256", "scene_id", "scene_sha256",
-            "navmesh_sha256", "asset_license", "asset_license_url", "attribution",
-            "original_asset", "modification_notice",
+            "source_revision",
+            "source_license",
+            "source_manifest_sha256",
+            "archive_url",
+            "archive_sha256",
+            "scene_id",
+            "scene_sha256",
+            "navmesh_sha256",
+            "asset_license",
+            "asset_license_url",
+            "attribution",
+            "original_asset",
+            "modification_notice",
         },
     )
     assert provenance["source_revision"] == SOURCE_REVISION
@@ -840,12 +1059,12 @@ def test_exact_habitat_sim_image_rgb_depth_bullet_egl_traversal() -> None:
 
     receipt = _private_receipt()
     provider = _assert_provider_binding(receipt)
-    plan, plan_sha256 = _rendered_plan(receipt, provider)
+    plan, plan_sha256, submission = _rendered_plan(receipt, provider)
     pod = _pod(receipt)
     node = _node(receipt, str(pod["spec"]["nodeName"]))
     _assert_pod_provider_node(pod, node, provider)
     image_id, termination = _assert_pod_completion(
-        pod, receipt, plan, plan_sha256
+        pod, receipt, plan, plan_sha256, submission
     )
     ready, manifest, client = _publication(receipt, termination)
     proof, payload = _proof(receipt, ready, client)

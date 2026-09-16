@@ -19,9 +19,7 @@ ROOT = Path(__file__).resolve().parents[3]
 PACKAGE = ROOT / "npa/docker/workbench/habitat-sim"
 DOCKERFILE = (PACKAGE / "Dockerfile").read_text(encoding="utf-8")
 PACKAGING = yaml.safe_load(
-    (ROOT / "npa/docker/workbench/packaging-contract.yaml").read_text(
-        encoding="utf-8"
-    )
+    (ROOT / "npa/docker/workbench/packaging-contract.yaml").read_text(encoding="utf-8")
 )
 EXPECTED_RUNTIME_IDENTITY_COMMANDS = (
     "groupadd --gid 1000 ubuntu",
@@ -92,19 +90,15 @@ def _runtime_identity_commands(dockerfile: str) -> list[str]:
     start = runtime.index("groupadd --gid 1000 ubuntu")
     end = runtime.index(" && \\\n    printf 'ubuntu ALL=", start)
     command = runtime[start:end].replace("\\\n", " ")
-    return [
-        " ".join(part.split()) for part in re.split(r"\s+&&\s+", command)
-    ]
+    return [" ".join(part.split()) for part in re.split(r"\s+&&\s+", command)]
 
 
 def _runtime_identity_contract(dockerfile: str) -> bool:
     runtime = _runtime_stage(dockerfile)
     runtime_users = re.findall(r"(?m)^USER\s+(\S+)\s*$", runtime)
-    return (
-        tuple(_runtime_identity_commands(dockerfile))
-        == EXPECTED_RUNTIME_IDENTITY_COMMANDS
-        and runtime_users[-1:] == ["ubuntu"]
-    )
+    return tuple(
+        _runtime_identity_commands(dockerfile)
+    ) == EXPECTED_RUNTIME_IDENTITY_COMMANDS and runtime_users[-1:] == ["ubuntu"]
 
 
 def _validate_habitat_root_exemption(
@@ -146,7 +140,15 @@ def _validate_habitat_root_exemption(
         "baked-credentials",
         "mutable-image-capability-claim",
     ]
-    assert dockerfile.count("ubuntu ALL=(ALL) NOPASSWD:ALL") == 1
+    sudoers_writer = (
+        "printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\\n' > /etc/sudoers.d/90-npa-skypilot"
+    )
+    sudoers_validator = (
+        'test "$(cat /etc/sudoers.d/90-npa-skypilot)" = \\\n'
+        "      'ubuntu ALL=(ALL) NOPASSWD:ALL'"
+    )
+    assert dockerfile.count(sudoers_writer) == 1
+    assert dockerfile.count(sudoers_validator) == 1
     assert "rm -f /etc/ssh/ssh_host_*" in dockerfile
     assert "PasswordAuthentication no" in dockerfile
     assert "PermitRootLogin no" in dockerfile
@@ -654,13 +656,24 @@ def test_final_notices_exclude_builder_and_verifier_control_inputs() -> None:
         "FROM ${BASE_IMAGE} AS runtime", 1
     )[0]
     notice_copy = re.search(
-        r"cp source-manifest\.json .*? /opt/notices/", build, re.DOTALL
+        r"cp /opt/npa-build/source-manifest\.json .*? /opt/notices/",
+        build,
+        re.DOTALL,
     )
 
     assert notice_copy is not None
     assert "requirements-runtime.lock" in notice_copy.group()
     assert "requirements-build.lock" not in notice_copy.group()
     assert "runtime-payload.json" not in notice_copy.group()
+    for name in (
+        "source-manifest.json",
+        "source-projection.json",
+        "licenses.json",
+        "apt-build.lock",
+        "apt-runtime.lock",
+        "requirements-runtime.lock",
+    ):
+        assert f"/opt/npa-build/{name}" in notice_copy.group()
     assert "-r requirements-build.lock" in build
     assert (
         "COPY --from=npa-source-provenance "
@@ -699,7 +712,7 @@ def test_final_stage_is_non_root_and_skypilot_bootstrap_capable() -> None:
     assert "PermitRootLogin no" in final
     assert "EXPOSE 22" not in final
     assert (
-        'org.nebius.npa.sudo-bootstrap-contract='
+        "org.nebius.npa.sudo-bootstrap-contract="
         '"habitat-sim-skypilot-0.12.2-v1"' in final
     )
     assert "safe.directory" not in DOCKERFILE
@@ -707,18 +720,14 @@ def test_final_stage_is_non_root_and_skypilot_bootstrap_capable() -> None:
 
 
 def test_skypilot_general_escalation_is_structured_and_mechanically_bounded() -> None:
-    docs = (ROOT / "docs/workbench/container-packaging.md").read_text(
-        encoding="utf-8"
-    )
+    docs = (ROOT / "docs/workbench/container-packaging.md").read_text(encoding="utf-8")
     skill = (ROOT / "skills/workflows/byof-onboard/SKILL.md").read_text(
         encoding="utf-8"
     )
     normalized_docs = " ".join(docs.split())
     normalized_skill = " ".join(skill.split())
     assert "root or verified passwordless sudo" in normalized_docs
-    assert (
-        "installs missing SSH, rsync, and service packages" in normalized_docs
-    )
+    assert "installs missing SSH, rsync, and service packages" in normalized_docs
     assert "passwordless `sudo`" in normalized_skill
     exemption = PACKAGING["images"]["habitat-sim"]["passwordless_root_exemption"]
     _validate_habitat_root_exemption(DOCKERFILE, exemption)
@@ -804,12 +813,12 @@ def test_local_builder_outputs_attested_oci_without_push_or_load() -> None:
     assert "type=oci,dest=$output" in script
     assert "--provenance=mode=max" in script and "--sbom=true" in script
     assert "--push" not in script and "--load" not in script
-    assert "git -C \"$repo_root\" rev-parse --verify HEAD^{commit}" in script
+    assert 'git -C "$repo_root" rev-parse --verify HEAD^{commit}' in script
     assert "^[0-9a-f]{40}$" in script
-    assert "git -C \"$repo_root\" diff --quiet" in script
-    assert "git -C \"$repo_root\" diff --cached --quiet" in script
-    assert "git -C \"$repo_root\" cat-file blob" in script
-    assert "--build-context \"npa-source-provenance=$projection\"" in script
+    assert 'git -C "$repo_root" diff --quiet' in script
+    assert 'git -C "$repo_root" diff --cached --quiet' in script
+    assert 'git -C "$repo_root" cat-file blob' in script
+    assert '--build-context "npa-source-provenance=$projection"' in script
     assert "NPA_SOURCE_MANIFEST_SHA256=$manifest_sha256" in script
 
 
@@ -826,8 +835,7 @@ def test_verifier_requires_reviewed_complete_runtime_closure_hashes() -> None:
 
 def test_dockerfile_recomputes_and_records_committed_npa_source_manifest() -> None:
     assert (
-        "COPY --from=npa-source-provenance / /opt/npa-source-provenance/"
-        in DOCKERFILE
+        "COPY --from=npa-source-provenance / /opt/npa-source-provenance/" in DOCKERFILE
     )
     assert DOCKERFILE.count("sha256sum -c npa-source-manifest.sha256") == 2
     assert "npa-source-expected-paths" in DOCKERFILE
@@ -852,3 +860,23 @@ def test_trusted_public_workflow_refuses_phase_a_candidate() -> None:
 def test_release_manifest_has_no_habitat_entry() -> None:
     release = ROOT / "npa/src/npa/deploy/public_release_manifest.json"
     assert "habitat-sim" not in release.read_text(encoding="utf-8")
+
+
+def test_habitat_golden_requires_real_operator_qualification_bindings() -> None:
+    manifest = yaml.safe_load(
+        (ROOT / "npa/src/npa/smoke/golden_evals.yaml").read_text(encoding="utf-8")
+    )
+    golden = manifest["containers"]["habitat-sim"]["golden_eval"]
+    command = golden["command"]
+    assert golden["status"] == "gpu-gated"
+    for variable in (
+        "NPA_WORKFLOW_RUN_ID",
+        "NPA_RENDERED_PLAN_SHA256",
+        "NPA_TASK_IMAGE",
+        "NPA_HABITAT_GOLDEN_OUTPUT_URI",
+    ):
+        assert f'test -n "${variable}"' in command
+    assert '--run-id "$NPA_WORKFLOW_RUN_ID"' in command
+    assert '--plan-sha256 "$NPA_RENDERED_PLAN_SHA256"' in command
+    assert '--output-uri "$NPA_HABITAT_GOLDEN_OUTPUT_URI"' in command
+    assert "example-bucket" not in command

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import csv
+from dataclasses import dataclass, field
 import hashlib
 import io
 import json
@@ -172,6 +173,15 @@ def _verify_diff_id(fd: int, row: dict[str, object]) -> None:
 def _track_bytes(path: str) -> bool:
     return (
         path == "var/lib/dpkg/status"
+        or path
+        in {
+            "etc/group",
+            "etc/passwd",
+            "etc/ssh/sshd_config.d/99-npa-worker.conf",
+            "etc/sudoers.d/90-npa-skypilot",
+            "usr/local/bin/npa-habitat-entrypoint",
+        }
+        or path.startswith("opt/npa-runtime/npa/")
         or (path.startswith("var/lib/dpkg/info/") and path.endswith(".list"))
         or path.startswith("usr/share/doc/npa-habitat-sim/")
         or (
@@ -894,6 +904,304 @@ def _native_findings(
     return findings, closure_sha256, closure
 
 
+@dataclass
+class _ScanState:
+    paths: dict[str, str] = field(default_factory=dict)
+    files: dict[str, dict[str, object]] = field(default_factory=dict)
+    links: dict[str, tuple[str, str]] = field(default_factory=dict)
+    metadata: dict[str, dict[str, object]] = field(default_factory=dict)
+    tracked: dict[str, bytes] = field(default_factory=dict)
+    elf: dict[str, bytes] = field(default_factory=dict)
+    events: list[dict[str, object]] = field(default_factory=list)
+    findings: list[dict[str, object]] = field(default_factory=list)
+    entries: int = 0
+    regular_files: int = 0
+    content_bytes: int = 0
+
+
+def _member_policy_findings(
+    path: str, kind: str, layer: int, entry: int, contract: dict[str, object]
+) -> list[dict[str, object]]:
+    forbidden = contract["forbidden_path_patterns"]
+    nondirectory = contract["forbidden_nondirectory_path_patterns"]
+    blocked = any(re.search(pattern, path, re.IGNORECASE) for pattern in forbidden)
+    blocked |= kind != "directory" and any(
+        re.search(pattern, path, re.IGNORECASE) for pattern in nondirectory
+    )
+    findings = []
+    if blocked:
+        findings.append({"code": "forbidden_path", "layer": layer, "entry": entry})
+    if kind == "unsupported":
+        findings.append({"code": "unsupported_member", "layer": layer, "entry": entry})
+    return findings
+
+
+def _read_member(
+    archive: tarfile.TarFile, member: tarfile.TarInfo, path: str
+) -> tuple[dict[str, object], bytes | None, bytes | None]:
+    body = archive.extractfile(member)
+    W.require(body is not None, "habitat_oci_regular_file_read")
+    if _track_bytes(path):
+        tracked = body.read()
+        digest, size, prefix = (
+            hashlib.sha256(tracked).hexdigest(),
+            len(tracked),
+            tracked[:4],
+        )
+        elf = tracked if prefix == b"\x7fELF" else None
+    else:
+        digest, size, prefix, elf = _regular_hash(body)
+        tracked = None
+    W.require(size == member.size, "habitat_oci_regular_file_size")
+    return {"sha256": digest, "size": size, "elf": prefix == b"\x7fELF"}, tracked, elf
+
+
+def _replace_path(state: _ScanState, path: str) -> None:
+    for mapping in (
+        state.paths,
+        state.files,
+        state.links,
+        state.metadata,
+        state.tracked,
+        state.elf,
+    ):
+        mapping.pop(path, None)
+
+
+def _record_member(
+    state: _ScanState,
+    archive: tarfile.TarFile,
+    member: tarfile.TarInfo,
+    path: str,
+    layer: int,
+    entry: int,
+    contract: dict[str, object],
+) -> None:
+    kind = _member_kind(member)
+    state.findings.extend(_member_policy_findings(path, kind, layer, entry, contract))
+    _replace_path(state, path)
+    state.paths[path] = kind
+    metadata = {
+        "kind": kind,
+        "uid": member.uid,
+        "gid": member.gid,
+        "mode": member.mode & 0o7777,
+    }
+    state.metadata[path] = metadata
+    event = {"path": path, "layer": layer, **metadata}
+    if member.issym() or member.islnk():
+        state.links[path] = (kind, member.linkname)
+    if member.isfile():
+        file_row, tracked, elf = _read_member(archive, member, path)
+        state.files[path] = file_row
+        event["sha256"] = file_row["sha256"]
+        state.regular_files += 1
+        state.content_bytes += int(file_row["size"])
+        if tracked is not None:
+            state.tracked[path] = tracked
+        if elf is not None:
+            state.elf[path] = elf
+        if file_row["sha256"] in contract["forbidden_content_sha256"]:
+            state.findings.append(
+                {"code": "forbidden_payload_hash", "layer": layer, "entry": entry}
+            )
+    state.events.append(event)
+
+
+def _scan_layer(
+    fd: int,
+    row: dict[str, object],
+    layer: int,
+    contract: dict[str, object],
+    state: _ScanState,
+) -> None:
+    _verify_diff_id(fd, row)
+    seen: set[str] = set()
+    with tarfile.open(fileobj=_decoded(fd, row), mode="r|") as archive:
+        for entry, member in enumerate(archive):
+            state.entries += 1
+            path = W.safe_name(member.name)
+            W.require(path not in seen, "habitat_oci_duplicate_layer_path")
+            seen.add(path)
+            state.events.append({"path": path, "layer": layer, "kind": "whiteout"})
+            if _apply_whiteout(
+                state.paths,
+                path,
+                member,
+                state.files,
+                state.links,
+                state.metadata,
+                state.tracked,
+                state.elf,
+            ):
+                continue
+            state.events.pop()
+            _record_member(state, archive, member, path, layer, entry, contract)
+
+
+def _required_path_findings(
+    paths: dict[str, str], required_paths: list[str]
+) -> list[dict[str, object]]:
+    findings: list[dict[str, object]] = []
+    for required in required_paths:
+        target = required.lstrip("/")
+        kind = paths.get(target)
+        if kind is not None and kind not in {"file", "directory"}:
+            findings.append(
+                {"code": "required_path_not_file_or_directory", "path": required}
+            )
+            continue
+        if kind is None and not any(
+            path.startswith(target.rstrip("/") + "/") for path in paths
+        ):
+            findings.append({"code": "required_path_missing", "path": required})
+            continue
+        for ancestor in PurePosixPath(target).parents:
+            name = str(ancestor)
+            if name not in {".", ""} and paths.get(name) not in {None, "directory"}:
+                findings.append(
+                    {"code": "required_path_ancestor_not_directory", "path": required}
+                )
+                break
+    return findings
+
+
+def _final_metadata_findings(
+    metadata: dict[str, dict[str, object]], contract: dict[str, object]
+) -> list[dict[str, object]]:
+    findings = []
+    for required, expected in contract.get("required_final_metadata", {}).items():
+        if metadata.get(required.lstrip("/")) != expected:
+            findings.append(
+                {"code": "required_final_metadata_mismatch", "path": required}
+            )
+    return findings
+
+
+def _account_boundary_findings(tracked: dict[str, bytes]) -> list[dict[str, object]]:
+    findings = []
+    try:
+        passwd = tracked["etc/passwd"].decode("utf-8", errors="strict").splitlines()
+        group = tracked["etc/group"].decode("utf-8", errors="strict").splitlines()
+    except (KeyError, UnicodeDecodeError):
+        return [{"code": "runtime_account_database_unreadable"}]
+    users = [row.split(":") for row in passwd if row.startswith("ubuntu:")]
+    groups = [row.split(":") for row in group if row.startswith("ubuntu:")]
+    if users != [["ubuntu", "x", "1000", "1000", "", "/home/ubuntu", "/bin/bash"]]:
+        findings.append({"code": "runtime_user_identity_mismatch"})
+    if len(groups) != 1 or len(groups[0]) != 4 or groups[0][1:3] != ["x", "1000"]:
+        findings.append({"code": "runtime_group_identity_mismatch"})
+    return findings
+
+
+def _whiteout_affects(path: str, target: str) -> bool:
+    posix = PurePosixPath(path)
+    if posix.name == ".wh..wh..opq":
+        parent = "" if str(posix.parent) == "." else str(posix.parent)
+        return target == parent or target.startswith(parent + "/")
+    if not posix.name.startswith(".wh."):
+        return False
+    removed = str(posix.parent / posix.name.removeprefix(".wh."))
+    return target == removed or target.startswith(removed + "/")
+
+
+def _executable_source_findings(
+    state: _ScanState, contract: dict[str, object]
+) -> list[dict[str, object]]:
+    bindings = contract.get("executable_source_bindings", {})
+    expected_paths = {path.lstrip("/") for path in bindings}
+    observed = {
+        path
+        for path in state.paths
+        if path.startswith("opt/npa-runtime/npa/") and state.paths[path] != "directory"
+    }
+    findings = []
+    if observed != {
+        path for path in expected_paths if path.startswith("opt/npa-runtime/npa/")
+    }:
+        findings.append({"code": "executable_source_path_set_mismatch"})
+    for destination, expected in bindings.items():
+        target = destination.lstrip("/")
+        layer_expected = {
+            key: expected[key] for key in ("kind", "uid", "gid", "sha256")
+        }
+        for event in state.events:
+            if event["kind"] == "whiteout" and _whiteout_affects(
+                str(event["path"]), target
+            ):
+                findings.append(
+                    {"code": "executable_source_layer_policy", "path": destination}
+                )
+            elif event["path"] == target and any(
+                event.get(key) != value for key, value in layer_expected.items()
+            ):
+                findings.append(
+                    {"code": "executable_source_layer_policy", "path": destination}
+                )
+    return findings
+
+
+def _runtime_closures(
+    state: _ScanState, contract: dict[str, object], expected: tuple[str, str, str]
+) -> dict[str, object]:
+    dpkg = _dpkg_findings(
+        state.paths, state.files, state.links, state.tracked, contract, expected[0]
+    )
+    state.findings.extend(dpkg[0])
+    python = _python_findings(
+        state.paths, state.files, state.links, state.tracked, contract, expected[1]
+    )
+    state.findings.extend(python[0])
+    native = _native_findings(
+        state.elf,
+        state.paths,
+        state.links,
+        state.files,
+        dpkg[2],
+        python[4],
+        expected[2],
+    )
+    state.findings.extend(native[0])
+    for package in contract["forbidden_packages"]:
+        if package in dpkg[1]:
+            state.findings.append(
+                {"code": "forbidden_runtime_package", "package": package}
+            )
+    return {"dpkg": dpkg, "python": python, "native": native}
+
+
+def _scan_report(
+    state: _ScanState,
+    closure: dict[str, object],
+    expected: tuple[str, str, str],
+    projection_count: int,
+) -> dict[str, object]:
+    dpkg, python, native = closure["dpkg"], closure["python"], closure["native"]
+    return {
+        "entries_read": state.entries,
+        "regular_files_read": state.regular_files,
+        "content_bytes_read": state.content_bytes,
+        "final_path_count": len(state.paths),
+        "installed_package_count": len(dpkg[1]),
+        "dpkg_inventory": dpkg[5],
+        "dpkg_inventory_sha256": dpkg[4],
+        "expected_dpkg_inventory_sha256": expected[0],
+        "locked_runtime_apt_package_count": dpkg[3],
+        "python_distribution_count": python[1],
+        "python_record_files_verified": python[2],
+        "allowed_missing_python_record_files": python[3],
+        "python_venv_inventory": python[5],
+        "python_venv_inventory_sha256": python[6],
+        "expected_python_venv_inventory_sha256": expected[1],
+        "projected_source_file_count": projection_count,
+        "native_elf_count": len(state.elf),
+        "native_elf_closure": native[2],
+        "native_elf_closure_sha256": native[1],
+        "expected_native_closure_sha256": expected[2],
+        "findings": state.findings,
+    }
+
+
 def _scan_layers(
     fd: int,
     layers: list[dict[str, object]],
@@ -902,214 +1210,28 @@ def _scan_layers(
     expected_python_venv_inventory_sha256: str,
     expected_native_closure_sha256: str,
 ) -> dict[str, object]:
-    forbidden = [
-        re.compile(pattern, re.IGNORECASE)
-        for pattern in contract["forbidden_path_patterns"]
-    ]
-    forbidden_nondirectory = [
-        re.compile(pattern, re.IGNORECASE)
-        for pattern in contract["forbidden_nondirectory_path_patterns"]
-    ]
-    forbidden_hashes = set(contract["forbidden_content_sha256"])
-    final_paths: dict[str, str] = {}
-    final_files: dict[str, dict[str, object]] = {}
-    final_links: dict[str, tuple[str, str]] = {}
-    tracked_files: dict[str, bytes] = {}
-    elf_payloads: dict[str, bytes] = {}
-    findings: list[dict[str, object]] = []
-    regular_files = content_bytes = entries = 0
-    for layer_index, row in enumerate(layers):
-        _verify_diff_id(fd, row)
-        current_paths: dict[str, str] = {}
-        current_files: dict[str, dict[str, object]] = {}
-        current_links: dict[str, tuple[str, str]] = {}
-        current_tracked: dict[str, bytes] = {}
-        current_elf: dict[str, bytes] = {}
-        seen: set[str] = set()
-        with tarfile.open(fileobj=_decoded(fd, row), mode="r|") as archive:
-            for entry_index, member in enumerate(archive):
-                entries += 1
-                path = W.safe_name(member.name)
-                W.require(path not in seen, "habitat_oci_duplicate_layer_path")
-                seen.add(path)
-                if _apply_whiteout(
-                    final_paths,
-                    path,
-                    member,
-                    final_files,
-                    final_links,
-                    tracked_files,
-                    elf_payloads,
-                ):
-                    continue
-                kind = _member_kind(member)
-                forbidden_path = any(pattern.search(path) for pattern in forbidden)
-                forbidden_nondirectory_path = kind != "directory" and any(
-                    pattern.search(path) for pattern in forbidden_nondirectory
-                )
-                if forbidden_path or forbidden_nondirectory_path:
-                    findings.append(
-                        {
-                            "code": "forbidden_path",
-                            "layer": layer_index,
-                            "entry": entry_index,
-                        }
-                    )
-                if kind == "unsupported":
-                    findings.append(
-                        {
-                            "code": "unsupported_member",
-                            "layer": layer_index,
-                            "entry": entry_index,
-                        }
-                    )
-                final_paths.pop(path, None)
-                final_files.pop(path, None)
-                final_links.pop(path, None)
-                tracked_files.pop(path, None)
-                elf_payloads.pop(path, None)
-                current_paths[path] = kind
-                if member.issym():
-                    current_links[path] = ("symlink", member.linkname)
-                elif member.islnk():
-                    current_links[path] = ("hardlink", member.linkname)
-                if not member.isfile():
-                    continue
-                body = archive.extractfile(member)
-                W.require(body is not None, "habitat_oci_regular_file_read")
-                if _track_bytes(path):
-                    payload = body.read()
-                    digest = hashlib.sha256(payload).hexdigest()
-                    size = len(payload)
-                    prefix = payload[:4]
-                    current_tracked[path] = payload
-                    elf_payload = payload if prefix == b"\x7fELF" else None
-                else:
-                    digest, size, prefix, elf_payload = _regular_hash(body)
-                W.require(size == member.size, "habitat_oci_regular_file_size")
-                current_files[path] = {
-                    "sha256": digest,
-                    "size": size,
-                    "elf": prefix == b"\x7fELF",
-                }
-                if elf_payload is not None:
-                    current_elf[path] = elf_payload
-                regular_files += 1
-                content_bytes += size
-                if digest in forbidden_hashes:
-                    findings.append(
-                        {
-                            "code": "forbidden_payload_hash",
-                            "layer": layer_index,
-                            "entry": entry_index,
-                        }
-                    )
-        final_paths.update(current_paths)
-        final_files.update(current_files)
-        final_links.update(current_links)
-        tracked_files.update(current_tracked)
-        elf_payloads.update(current_elf)
-    missing = []
-    for required in contract["required_final_paths"]:
-        target = required.lstrip("/")
-        if target in final_paths and final_paths[target] not in {"file", "directory"}:
-            findings.append(
-                {"code": "required_path_not_file_or_directory", "path": required}
-            )
-            continue
-        if target not in final_paths and not any(
-            path.startswith(target.rstrip("/") + "/") for path in final_paths
-        ):
-            missing.append(required)
-            continue
-        ancestors = PurePosixPath(target).parents
-        for ancestor in ancestors:
-            name = str(ancestor)
-            if name not in {".", ""} and final_paths.get(name) not in {
-                None,
-                "directory",
-            }:
-                findings.append(
-                    {"code": "required_path_ancestor_not_directory", "path": required}
-                )
-                break
-    findings.extend({"code": "required_path_missing", "path": path} for path in missing)
-    findings.extend(_required_file_findings(final_files, contract))
-    projection_findings, projection_count = _source_projection_findings(
-        final_paths, final_files, tracked_files, contract
+    state = _ScanState()
+    for layer, row in enumerate(layers):
+        _scan_layer(fd, row, layer, contract, state)
+    state.findings.extend(
+        _required_path_findings(state.paths, contract["required_final_paths"])
     )
-    findings.extend(projection_findings)
-    (
-        dpkg_findings,
-        installed,
-        dpkg_owners,
-        locked_apt_count,
-        dpkg_inventory_sha,
-        dpkg_inventory,
-    ) = _dpkg_findings(
-        final_paths,
-        final_files,
-        final_links,
-        tracked_files,
-        contract,
+    state.findings.extend(_required_file_findings(state.files, contract))
+    state.findings.extend(_final_metadata_findings(state.metadata, contract))
+    state.findings.extend(_executable_source_findings(state, contract))
+    if "/etc/passwd" in contract.get("required_final_metadata", {}):
+        state.findings.extend(_account_boundary_findings(state.tracked))
+    projection, count = _source_projection_findings(
+        state.paths, state.files, state.tracked, contract
+    )
+    state.findings.extend(projection)
+    expected = (
         expected_dpkg_inventory_sha256,
-    )
-    findings.extend(dpkg_findings)
-    (
-        python_findings,
-        python_count,
-        record_count,
-        allowed_missing_records,
-        covered,
-        python_venv_inventory,
-        python_venv_inventory_sha,
-    ) = _python_findings(
-        final_paths,
-        final_files,
-        final_links,
-        tracked_files,
-        contract,
         expected_python_venv_inventory_sha256,
-    )
-    findings.extend(python_findings)
-    native_findings, native_closure_sha, native_closure = _native_findings(
-        elf_payloads,
-        final_paths,
-        final_links,
-        final_files,
-        dpkg_owners,
-        covered,
         expected_native_closure_sha256,
     )
-    findings.extend(native_findings)
-    for package in contract["forbidden_packages"]:
-        if package in installed:
-            findings.append({"code": "forbidden_runtime_package", "package": package})
-    return {
-        "entries_read": entries,
-        "regular_files_read": regular_files,
-        "content_bytes_read": content_bytes,
-        "final_path_count": len(final_paths),
-        "installed_package_count": len(installed),
-        "dpkg_inventory": dpkg_inventory,
-        "dpkg_inventory_sha256": dpkg_inventory_sha,
-        "expected_dpkg_inventory_sha256": expected_dpkg_inventory_sha256,
-        "locked_runtime_apt_package_count": locked_apt_count,
-        "python_distribution_count": python_count,
-        "python_record_files_verified": record_count,
-        "allowed_missing_python_record_files": allowed_missing_records,
-        "python_venv_inventory": python_venv_inventory,
-        "python_venv_inventory_sha256": python_venv_inventory_sha,
-        "expected_python_venv_inventory_sha256": (
-            expected_python_venv_inventory_sha256
-        ),
-        "projected_source_file_count": projection_count,
-        "native_elf_count": len(elf_payloads),
-        "native_elf_closure": native_closure,
-        "native_elf_closure_sha256": native_closure_sha,
-        "expected_native_closure_sha256": expected_native_closure_sha256,
-        "findings": findings,
-    }
+    closure = _runtime_closures(state, contract, expected)
+    return _scan_report(state, closure, expected, count)
 
 
 def _config(fd: int, config_digest: str) -> dict[str, object]:
@@ -1133,6 +1255,15 @@ def _config_findings(
         findings.append({"code": "final_user_not_ubuntu"})
     if runtime.get("Entrypoint") != ["/usr/local/bin/npa-habitat-entrypoint"]:
         findings.append({"code": "unexpected_entrypoint"})
+    if runtime.get("Cmd") != [
+        "python3",
+        "-m",
+        "npa.workflows.habitat_sim_smoke",
+        "--help",
+    ]:
+        findings.append({"code": "unexpected_default_command"})
+    if runtime.get("ExposedPorts") not in (None, {}):
+        findings.append({"code": "unexpected_exposed_ports"})
     labels = runtime.get("Labels", {})
     for key, value in contract["required_labels"].items():
         if labels.get(key) != value:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -64,6 +65,13 @@ MEMBER_SPECS = {
 
 class SmokeFailure(RuntimeError):
     """The exact live capability contract was not satisfied."""
+
+
+@dataclass
+class _ObjectWriteLedger:
+    attempted: list[str] = field(default_factory=list)
+    owned: list[str] = field(default_factory=list)
+    unresolved: list[str] = field(default_factory=list)
 
 
 class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
@@ -670,8 +678,7 @@ def _proof(
 
 def _json_bytes(value: object) -> bytes:
     return (
-        json.dumps(value, allow_nan=False, separators=(",", ":"), sort_keys=True)
-        + "\n"
+        json.dumps(value, allow_nan=False, separators=(",", ":"), sort_keys=True) + "\n"
     ).encode("utf-8")
 
 
@@ -698,8 +705,11 @@ def _put_owned_object(
     payload: bytes,
     media_type: str,
     label: str,
-    owned_keys: list[str],
+    ledger: _ObjectWriteLedger,
+    *,
+    exclusive_key: bool,
 ) -> None:
+    ledger.attempted.append(key)
     try:
         client.put_object(
             Bucket=bucket,
@@ -710,12 +720,16 @@ def _put_owned_object(
         )
     except Exception:
         try:
-            if _readback_object(client, bucket, key) == payload:
-                owned_keys.append(key)
+            observed = _readback_object(client, bucket, key)
+            if observed == payload:
+                ledger.owned.append(key)
         except Exception:
-            pass
+            if exclusive_key:
+                ledger.owned.append(key)
+            else:
+                ledger.unresolved.append(key)
         raise
-    owned_keys.append(key)
+    ledger.owned.append(key)
     _verify_object(client, bucket, key, payload, label)
 
 
@@ -752,7 +766,8 @@ def _cleanup_exact_objects(client: object, bucket: str, keys: list[str]) -> None
             failures.append(key)
     if failures:
         raise SmokeFailure(
-            "exact staged-object cleanup failed for: " + ", ".join(sorted(set(failures)))
+            "exact staged-object cleanup failed for: "
+            + ", ".join(sorted(set(failures)))
         )
 
 
@@ -790,7 +805,7 @@ def _stage_output_files(
     bucket: str,
     stage_prefix: str,
     output_dir: Path,
-    owned_keys: list[str],
+    ledger: _ObjectWriteLedger,
 ) -> list[dict[str, object]]:
     media_types = {
         ".json": "application/json",
@@ -798,7 +813,9 @@ def _stage_output_files(
         ".png": "image/png",
     }
     inventory: list[dict[str, object]] = []
-    paths = sorted(candidate for candidate in output_dir.rglob("*") if candidate.is_file())
+    paths = sorted(
+        candidate for candidate in output_dir.rglob("*") if candidate.is_file()
+    )
     for path in paths:
         relative = path.relative_to(output_dir).as_posix()
         if path.suffix not in media_types:
@@ -812,7 +829,8 @@ def _stage_output_files(
             payload,
             media_types[path.suffix],
             relative,
-            owned_keys,
+            ledger,
+            exclusive_key=True,
         )
         inventory.append(
             {
@@ -832,7 +850,7 @@ def _stage_publication_manifest(
     manifest_key: str,
     proof: dict[str, object],
     inventory: list[dict[str, object]],
-    owned_keys: list[str],
+    ledger: _ObjectWriteLedger,
 ) -> bytes:
     manifest = {
         "schema_version": "npa.habitat-sim.publication-manifest.v1",
@@ -851,7 +869,8 @@ def _stage_publication_manifest(
         payload,
         "application/json",
         PUBLICATION_MANIFEST_NAME,
-        owned_keys,
+        ledger,
+        exclusive_key=True,
     )
     return payload
 
@@ -891,7 +910,7 @@ def _commit_ready_marker(
     bucket: str,
     ready_key: str,
     payload: bytes,
-    owned_keys: list[str],
+    ledger: _ObjectWriteLedger,
 ) -> None:
     _put_owned_object(
         client,
@@ -900,7 +919,8 @@ def _commit_ready_marker(
         payload,
         "application/json",
         READY_MARKER_NAME,
-        owned_keys,
+        ledger,
+        exclusive_key=False,
     )
 
 
@@ -918,7 +938,9 @@ def _upload_directory(
     if not output_uri.startswith("s3://") or not separator or not bucket or not prefix:
         raise SmokeFailure("output URI requires an s3:// bucket and run-owned prefix")
     if client is None:
-        client = boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL_S3") or None)
+        client = boto3.client(
+            "s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL_S3") or None
+        )
     token = stage_token or secrets.token_hex(16)
     if re.fullmatch(r"[0-9a-f]{32}", token) is None:
         raise SmokeFailure("staging token must be an exact 128-bit lowercase hex value")
@@ -931,24 +953,33 @@ def _upload_directory(
     if ready_key in _listed_exact_keys(client, bucket, ready_key):
         raise SmokeFailure("immutable publication ready marker already exists")
     proof = _load_named_proof(output_dir)
-    owned_keys: list[str] = []
+    ledger = _ObjectWriteLedger()
     try:
-        inventory = _stage_output_files(client, bucket, stage_prefix, output_dir, owned_keys)
+        inventory = _stage_output_files(
+            client, bucket, stage_prefix, output_dir, ledger
+        )
         manifest = _stage_publication_manifest(
-            client, bucket, manifest_key, proof, inventory, owned_keys
+            client, bucket, manifest_key, proof, inventory, ledger
         )
         expected = {row["key"] for row in inventory} | {manifest_key}
         if _listed_exact_keys(client, bucket, stage_prefix + "/") != expected:
-            raise SmokeFailure("staged artifact inventory is incomplete or contains extras")
+            raise SmokeFailure(
+                "staged artifact inventory is incomplete or contains extras"
+            )
         publication, ready_bytes = _publication_receipt(
             stage_prefix, manifest_key, manifest, ready_key, inventory
         )
         if before_commit is not None:
             before_commit(publication)
-        _commit_ready_marker(client, bucket, ready_key, ready_bytes, owned_keys)
+        _commit_ready_marker(client, bucket, ready_key, ready_bytes, ledger)
         return publication
-    except Exception:
-        _cleanup_exact_objects(client, bucket, owned_keys)
+    except Exception as error:
+        _cleanup_exact_objects(client, bucket, ledger.owned)
+        if ledger.unresolved:
+            raise SmokeFailure(
+                "unresolved object ownership after failed write: "
+                + ", ".join(ledger.unresolved)
+            ) from error
         raise
 
 
@@ -1101,19 +1132,19 @@ def main(argv: list[str] | None = None) -> int:
             encoding="utf-8",
         )
         os.chmod(proof_path, 0o600)
-        upload = _upload_directory(
+        _remove_runtime_cache(cache, cache_identity)
+        cache_identity = None
+        _upload_directory(
             output_dir,
             args.output_uri,
             before_commit=lambda publication: _write_termination_receipt(
                 publication, proof, Path("/dev/termination-log")
             ),
         )
-        print(
-            json.dumps({"proof": proof, "storage": upload}, sort_keys=True), flush=True
-        )
         return 0
     finally:
-        _remove_runtime_cache(cache, cache_identity)
+        if cache_identity is not None:
+            _remove_runtime_cache(cache, cache_identity)
 
 
 if __name__ == "__main__":

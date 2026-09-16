@@ -7,6 +7,7 @@ import copy
 import gzip
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -48,6 +49,32 @@ def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _layer_tar(entries: list[tuple]) -> bytes:
+    result = io.BytesIO()
+    with tarfile.open(fileobj=result, mode="w", format=tarfile.PAX_FORMAT) as archive:
+        for row in entries:
+            name, data, kind, link, pax, *metadata = row
+            item = tarfile.TarInfo(name)
+            item.type, item.linkname, item.pax_headers = kind, link, pax
+            item.size = len(data) if kind in {tarfile.REGTYPE, tarfile.AREGTYPE} else 0
+            if metadata:
+                item.mode, item.uid, item.gid = metadata
+            archive.addfile(item, io.BytesIO(data) if item.isfile() else None)
+    return result.getvalue()
+
+
+def _image_entry(
+    name: str,
+    data: bytes = b"",
+    *,
+    kind: bytes = tarfile.REGTYPE,
+    mode: int = 0o644,
+    uid: int = 0,
+    gid: int = 0,
+) -> tuple:
+    return name, data, kind, "", {}, mode, uid, gid
+
+
 def _oci(
     tmp_path: Path,
     layers: list[list[tuple]],
@@ -56,6 +83,8 @@ def _oci(
     diff_ids: list[str] | None = None,
     source_revision: str = SOURCE_REVISION,
     source_manifest_sha256: str | None = None,
+    command: list[str] | None = None,
+    exposed_ports: dict[str, object] | None = None,
 ) -> tuple[Path, str, list[str]]:
     blobs: dict[str, bytes] = {}
 
@@ -64,15 +93,13 @@ def _oci(
         blobs["blobs/sha256/" + digest.removeprefix("sha256:")] = data
         return {"mediaType": media, "digest": digest, "size": len(data)}
 
-    raw_layers = [tar_data(rows) for rows in layers]
+    raw_layers = [_layer_tar(rows) for rows in layers]
     packed_layers = [blob(gzip.compress(raw, mtime=0), LAYER) for raw in raw_layers]
     labels = copy.deepcopy(CONTRACT["required_labels"])
     labels["org.opencontainers.image.revision"] = source_revision
     if source_manifest_sha256 is not None:
         labels["org.nebius.npa.source-manifest-sha256"] = source_manifest_sha256
-        labels["org.nebius.npa.source-provenance-schema"] = (
-            VERIFIER.PROVENANCE_SCHEMA
-        )
+        labels["org.nebius.npa.source-provenance-schema"] = VERIFIER.PROVENANCE_SCHEMA
         labels["org.nebius.npa.sudo-bootstrap-contract"] = (
             "habitat-sim-skypilot-0.12.2-v1"
         )
@@ -90,6 +117,14 @@ def _oci(
                 "config": {
                     "User": user,
                     "Entrypoint": ["/usr/local/bin/npa-habitat-entrypoint"],
+                    "Cmd": command
+                    or [
+                        "python3",
+                        "-m",
+                        "npa.workflows.habitat_sim_smoke",
+                        "--help",
+                    ],
+                    "ExposedPorts": exposed_ports,
                     "Labels": labels,
                 },
             }
@@ -287,6 +322,16 @@ def _fixture() -> tuple[dict[str, object], list[tuple]]:
         for path, payload in controls.items()
         if not path.endswith("source-projection.json")
     }
+    smoke_module = "/opt/npa-runtime/npa/workflows/habitat_sim_smoke.py"
+    contract["executable_source_bindings"] = {
+        smoke_module: {
+            "kind": "file",
+            "uid": 0,
+            "gid": 0,
+            "mode": 0o644,
+            "sha256": _digest(controls[smoke_module.removeprefix("/")]),
+        }
+    }
     for path, payload in projected_pbr.items():
         contract["required_final_file_sha256"][f"/usr/src/habitat-sim/{path}"] = (
             _digest(payload)
@@ -420,13 +465,43 @@ def _cli_fixture(
         provenance_entries.append(
             file(f"{VERIFIER.PROVENANCE_ROOT}/inputs/{path}", payload)
         )
+    installed_entries = [
+        _image_entry(
+            destination.lstrip("/"),
+            source_inputs[source.removeprefix("inputs/")],
+            mode=mode,
+        )
+        for source, (
+            destination,
+            mode,
+        ) in VERIFIER.EXECUTABLE_SOURCE_DESTINATIONS.items()
+    ]
+    installed_paths = {row[0] for row in installed_entries}
+    entries = [row for row in entries if row[0] not in installed_paths]
+    installed_entries.extend(
+        [
+            _image_entry("etc/passwd", b"ubuntu:x:1000:1000::/home/ubuntu:/bin/bash\n"),
+            _image_entry("etc/group", b"ubuntu:x:1000:\n"),
+            _image_entry(
+                "home/ubuntu/.ssh", kind=tarfile.DIRTYPE, mode=0o700, uid=1000, gid=1000
+            ),
+            *[
+                _image_entry(
+                    path.lstrip("/"),
+                    payload,
+                    mode=0o440 if "sudoers" in path else 0o644,
+                )
+                for path, payload in VERIFIER.SYSTEM_FILE_BYTES.items()
+            ],
+        ]
+    )
     if mutation == "path-set":
         provenance_entries.append(
             file(f"{VERIFIER.PROVENANCE_ROOT}/inputs/undeclared.txt", b"hostile\n")
         )
     archive, expected, diff_ids = _oci(
         analysis,
-        [[*entries, *provenance_entries]],
+        [[*entries, *provenance_entries, *installed_entries]],
         source_revision=image_source_revision,
         source_manifest_sha256=label_manifest_sha256 or manifest_sha256,
     )
@@ -580,6 +655,83 @@ def test_valid_attested_oci_has_complete_graph_and_payload_receipt(tmp_path) -> 
     assert report["native_elf_closure"][0]["owners"] == ["python-wheel-record"]
     assert report["expected_source_revision"] == SOURCE_REVISION
     assert report["oci_graph"]["attestation_manifest_count"] == 1
+
+
+def test_executable_sources_reject_extra_replacement_mode_and_whiteout(
+    tmp_path,
+) -> None:
+    for name in ("valid", "extra", "replacement", "mode", "owner", "type", "whiteout"):
+        (tmp_path / name).mkdir()
+    contract, entries = _fixture()
+    destination = "opt/npa-runtime/npa/workflows/habitat_sim_smoke.py"
+    payload = b"smoke\n"
+    contract["required_final_metadata"] = {
+        "/" + destination: {"kind": "file", "uid": 0, "gid": 0, "mode": 0o644}
+    }
+    contract["executable_source_bindings"] = {
+        "/" + destination: {
+            "kind": "file",
+            "uid": 0,
+            "gid": 0,
+            "mode": 0o644,
+            "sha256": _digest(payload),
+        }
+    }
+    assert _verify(tmp_path / "valid", [entries], contract=contract)["valid"] is True
+
+    extra = [*entries, file("opt/npa-runtime/npa/hostile.py", b"hostile")]
+    assert "executable_source_path_set_mismatch" in _codes(
+        _verify(tmp_path / "extra", [extra], contract=contract)
+    )
+    replacement = [row for row in entries if row[0] != destination]
+    replacement.append(_image_entry(destination, b"hostile replacement\n"))
+    assert "executable_source_layer_policy" in _codes(
+        _verify(tmp_path / "replacement", [replacement], contract=contract)
+    )
+    wrong_mode = [row for row in entries if row[0] != destination]
+    wrong_mode.append(_image_entry(destination, payload, mode=0o777))
+    assert "required_final_metadata_mismatch" in _codes(
+        _verify(tmp_path / "mode", [wrong_mode], contract=contract)
+    )
+    wrong_owner = [row for row in entries if row[0] != destination]
+    wrong_owner.append(_image_entry(destination, payload, uid=1000, gid=1000))
+    assert "executable_source_layer_policy" in _codes(
+        _verify(tmp_path / "owner", [wrong_owner], contract=contract)
+    )
+    wrong_type = [row for row in entries if row[0] != destination]
+    wrong_type.append(file(destination, kind=tarfile.SYMTYPE, link="/" + "tmp/hostile"))
+    assert "required_final_metadata_mismatch" in _codes(
+        _verify(tmp_path / "type", [wrong_type], contract=contract)
+    )
+    whiteout = file("opt/npa-runtime/npa/workflows/.wh.habitat_sim_smoke.py")
+    report = _verify(tmp_path / "whiteout", [entries, [whiteout]], contract=contract)
+    assert "executable_source_layer_policy" in _codes(report)
+
+
+def test_config_and_account_boundary_fail_closed(tmp_path) -> None:
+    (tmp_path / "command").mkdir()
+    (tmp_path / "ports").mkdir()
+    wrong_command = _verify(
+        tmp_path / "command",
+        [_required_entries()],
+        command=["/usr/sbin/sshd", "-D"],
+    )
+    assert "unexpected_default_command" in _codes(wrong_command)
+    exposed = _verify(
+        tmp_path / "ports",
+        [_required_entries()],
+        exposed_ports={"22/tcp": {}},
+    )
+    assert "unexpected_exposed_ports" in _codes(exposed)
+    assert H._account_boundary_findings(
+        {
+            "etc/passwd": b"ubuntu:x:0:0::/root:/bin/bash\n",
+            "etc/group": b"ubuntu:x:0:\n",
+        }
+    ) == [
+        {"code": "runtime_user_identity_mismatch"},
+        {"code": "runtime_group_identity_mismatch"},
+    ]
 
 
 def test_host_verifier_cli_accepts_owner_only_synthetic_oci(tmp_path) -> None:
@@ -1216,8 +1368,6 @@ def test_lock_source_record_and_reviewed_revision_mismatches_fail(tmp_path) -> N
 def test_runtime_payload_hashes_bind_the_repository_lock_and_notice_bytes() -> None:
     expected = CONTRACT["required_final_file_sha256"]
     repository_mappings = {
-        "/opt/npa-runtime/npa/workflows/habitat_sim_smoke.py": ROOT
-        / "npa/src/npa/workflows/habitat_sim_smoke.py",
         "/usr/share/doc/npa-habitat-sim/source-manifest.json": PACKAGE
         / "source-manifest.json",
         "/usr/share/doc/npa-habitat-sim/licenses.json": PACKAGE / "licenses.json",
@@ -1245,7 +1395,10 @@ def test_runtime_payload_hashes_bind_the_repository_lock_and_notice_bytes() -> N
         ][0]["artifacts"]
     }
     assert set(expected) == (
-        set(repository_mappings) | set(projected_source) | set(source_artifacts)
+        set(repository_mappings)
+        | {"/opt/npa-runtime/npa/workflows/habitat_sim_smoke.py"}
+        | set(projected_source)
+        | set(source_artifacts)
     )
     for image_path, source_path in repository_mappings.items():
         assert expected[image_path] == _digest(source_path.read_bytes())
@@ -1253,6 +1406,37 @@ def test_runtime_payload_hashes_bind_the_repository_lock_and_notice_bytes() -> N
         assert expected[image_path] == digest
     for image_path, digest in projected_source.items():
         assert expected[image_path] == digest
+    inputs = {
+        f"inputs/{path}": (ROOT / "npa" / path).read_bytes()
+        for path in VERIFIER.NPA_SOURCE_PATHS
+    }
+    manifest = b"".join(
+        sorted(
+            (
+                f"{_digest(payload)}  {path}\n".encode()
+                for path, payload in inputs.items()
+            ),
+            key=lambda row: row.split(b"  ", 1)[1],
+        )
+    )
+    bound, _source_inputs = VERIFIER._bind_source_contract(
+        copy.deepcopy(CONTRACT), SOURCE_REVISION, manifest, _digest(manifest)
+    )
+    for source, (destination, _mode) in VERIFIER.EXECUTABLE_SOURCE_DESTINATIONS.items():
+        assert bound["required_final_file_sha256"][destination] == _digest(
+            inputs[source]
+        )
+        assert bound["executable_source_bindings"][destination]["sha256"] == _digest(
+            inputs[source]
+        )
+    for destination, payload in VERIFIER.SYSTEM_FILE_BYTES.items():
+        assert bound["required_final_file_sha256"][destination] == _digest(payload)
+    assert bound["required_final_metadata"]["/home/ubuntu/.ssh"] == {
+        "kind": "directory",
+        "uid": 1000,
+        "gid": 1000,
+        "mode": 0o700,
+    }
 
 
 def test_host_verifier_refuses_incomplete_or_wrong_pbr_byte_contract() -> None:

@@ -55,9 +55,15 @@ containers:
     golden_eval:
       kind: container-smoke
       command: >-
+        test -n "$NPA_WORKFLOW_RUN_ID" &&
+        test -n "$NPA_RENDERED_PLAN_SHA256" &&
+        test -n "$NPA_TASK_IMAGE" &&
+        test -n "$NPA_HABITAT_GOLDEN_OUTPUT_URI" &&
         python3 -m npa.workflows.habitat_sim_smoke
         --output-dir /tmp/npa-habitat-sim-golden
-        --output-uri s3://example-bucket/habitat-sim-golden/
+        --output-uri "$NPA_HABITAT_GOLDEN_OUTPUT_URI"
+        --run-id "$NPA_WORKFLOW_RUN_ID"
+        --plan-sha256 "$NPA_RENDERED_PLAN_SHA256"
       artifact: /tmp/npa-habitat-sim-golden/habitat-sim-smoke.json
       serverless_gpu: rtx6000
       gpu: required

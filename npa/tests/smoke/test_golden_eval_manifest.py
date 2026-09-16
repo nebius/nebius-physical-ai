@@ -155,6 +155,103 @@ def _copy_directives(dockerfile_text: str) -> tuple[list[str], list[str]]:
 # workflow-smoke (entrypoint comes from a base image), and entrypoint-smoke kinds
 # are provisioned differently and are not covered by this static contract.
 _IN_IMAGE_SMOKE_KINDS = {"container-smoke", "server-smoke"}
+_IN_IMAGE_SMOKE_PREFIXES = (
+    "python -m npa.",
+    "python3 -m npa.",
+    "python /",
+    "/isaac-sim/python.sh /",
+    "sh /",
+    "bash ",
+)
+_ENV_GUARD_PREFIX = re.compile(
+    r'[ \t]*test[ \t]+-n[ \t]+"(?P<reference>\$[A-Za-z_][A-Za-z0-9_]*)"'
+    r"[ \t]*&&[ \t]*"
+)
+_ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
+_SHELL_CONTROL = frozenset("();<>|&")
+
+
+def _shell_tokens(command: str) -> list[str]:
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lexer.commenters = ""
+    lexer.whitespace_split = True
+    try:
+        tokens = list(lexer)
+    except ValueError as error:
+        raise AssertionError("invalid golden-eval shell command") from error
+    if not tokens:
+        raise AssertionError("empty golden-eval shell command")
+    for token in tokens:
+        is_control = token != "&&" and set(token) <= _SHELL_CONTROL
+        if is_control or "$(" in token or "`" in token:
+            raise AssertionError("unsafe golden-eval shell command")
+        if _ENV_ASSIGNMENT.fullmatch(token):
+            raise AssertionError("golden-eval shell assignments are forbidden")
+    return tokens
+
+
+def _guarded_in_image_smoke_tail(command: str) -> str:
+    segments: list[list[str]] = [[]]
+    for token in _shell_tokens(command):
+        if token == "&&":
+            if not segments[-1]:
+                raise AssertionError("empty golden-eval guard")
+            segments.append([])
+        else:
+            segments[-1].append(token)
+    if not segments[-1]:
+        raise AssertionError("missing golden-eval smoke command")
+
+    offset = 0
+    for guard in segments[:-1]:
+        match = _ENV_GUARD_PREFIX.match(command, offset)
+        if match is None or guard != ["test", "-n", match.group("reference")]:
+            raise AssertionError("invalid golden-eval environment guard")
+        offset = match.end()
+    tail = shlex.join(segments[-1])
+    if not tail.startswith(_IN_IMAGE_SMOKE_PREFIXES):
+        raise AssertionError("missing supported in-image smoke command")
+    return tail
+
+
+def test_guarded_in_image_smoke_tail_accepts_safe_environment_guards() -> None:
+    command = (
+        'test -n "$NPA_RUN_ID" && test -n "$NPA_OUTPUT_URI" && '
+        'python3 -m npa.smoke.fixture --output "$NPA_OUTPUT_URI"'
+    )
+    tail = _guarded_in_image_smoke_tail(command)
+    assert shlex.split(tail) == [
+        "python3",
+        "-m",
+        "npa.smoke.fixture",
+        "--output",
+        "$NPA_OUTPUT_URI",
+    ]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "",
+        "&& python -m npa.smoke.fixture",
+        'test -n "$NPA_RUN_ID" &&',
+        'test -n "$NPA_RUN_ID"',
+        'test -n "$NPA_RUN_ID" || python -m npa.smoke.fixture',
+        'test -n "$NPA_RUN_ID"; python -m npa.smoke.fixture',
+        'test -n "$NPA_RUN_ID" > /tmp/guard && python -m npa.smoke.fixture',
+        'test -n "$(id)" && python -m npa.smoke.fixture',
+        'test -n "$NPA_RUN_ID" | cat && python -m npa.smoke.fixture',
+        "NPA_RUN_ID=fixture && python -m npa.smoke.fixture",
+        "echo ready && python -m npa.smoke.fixture",
+        "test -n $NPA_RUN_ID && python -m npa.smoke.fixture",
+        'test -n "${NPA_RUN_ID}" && python -m npa.smoke.fixture',
+        'test -e "$NPA_RUN_ID" && python -m npa.smoke.fixture',
+        'test -n "$NPA_RUN_ID" && golden-smoke',
+    ],
+)
+def test_guarded_in_image_smoke_tail_rejects_unsafe_commands(command: str) -> None:
+    with pytest.raises(AssertionError):
+        _guarded_in_image_smoke_tail(command)
 
 
 @pytest.mark.parametrize(
@@ -177,6 +274,8 @@ def test_dockerfile_provides_golden_eval_entrypoint(name: str) -> None:
     text = (REPO_ROOT / spec.dockerfile).read_text(encoding="utf-8")
     sources, dests = _copy_directives(text)
     command = spec.golden_eval.command
+    if name != "leisaac":
+        command = _guarded_in_image_smoke_tail(command)
 
     if command.startswith(("python -m npa.", "python3 -m npa.")):
         module = command.split(" -m ", 1)[1].split()[0]

@@ -154,6 +154,38 @@ def test_renderer_preserves_the_exact_one_rtx_habitat_placement() -> None:
     assert "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1" in rendered
 
 
+def test_renderer_uses_only_the_baked_habitat_runtime(monkeypatch) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://fixture/source-overlay")
+    monkeypatch.setenv("NPA_SRC_OVERLAY", "1")
+    spec = load_spec(WORKFLOW)
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="habitat-baked-runtime"),
+        run_id="habitat-baked-runtime",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    task = list(yaml.safe_load_all(rendered))[1]
+    assert task["envs"].get("NPA_SRC_S3_URI") is None
+    assert task["envs"].get("NPA_SRC_OVERLAY") is None
+    assert "/opt/venv/bin/python" in task["setup"]
+    assert "sha256sum -c npa-source-manifest.sha256" in task["setup"]
+    assert "pip install" not in task["setup"]
+    assert "/" + "tmp/npa-src-overlay" in task["setup"]
+
+
+@pytest.mark.parametrize("field", ["pip_extra", "source_overlay"])
+def test_renderer_refuses_habitat_dependency_or_source_overlays(field) -> None:
+    spec = load_spec(WORKFLOW)
+    spec.config[field] = "hostile"
+    with pytest.raises(NpaWorkflowRenderError, match="forbids dependency and source"):
+        render_skypilot_yaml(
+            spec,
+            build_plan(spec, run_id="habitat-overlay-refusal"),
+            run_id="habitat-overlay-refusal",
+            options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        )
+
+
 @pytest.mark.parametrize(
     "override",
     [
@@ -242,7 +274,9 @@ def test_official_archive_extracts_only_exact_members_and_removes_bundle(
     assert {path.name for path in root.iterdir()} == {H.NAVMESH_NAME, H.SCENE_NAME}
 
 
-def test_archive_redirect_is_refused_before_target_contact(tmp_path, monkeypatch) -> None:
+def test_archive_redirect_is_refused_before_target_contact(
+    tmp_path, monkeypatch
+) -> None:
     events: list[str] = []
 
     class Opener:
@@ -536,12 +570,72 @@ def _bound_live_fixture(tmp_path: Path):
             "count": 1,
             "compute_capability": "12.0",
         },
+        "submission_id": "skypilot-task-fixture",
+    }
+    setup = (
+        "set -euo pipefail\n"
+        "echo 'Habitat-Sim refuses a Python source overlay' >/dev/null\n"
+        "test -x /opt/venv/bin/python\n"
+    )
+    run = (
+        "set -euo pipefail\n"
+        + " ".join(
+            str(item)
+            for item in LIVE._expected_plan_argv(plan, receipt, plan["output_uri"])
+        )
+        + "\n"
+    )
+    task = {
+        "name": "render-traversal",
+        "resources": {"image_id": "docker:" + image},
+        "envs": plan["environment"],
+        "setup": setup,
+        "run": run,
+    }
+    skypilot_payload = yaml.safe_dump_all(
+        [{"name": "habitat-sim-smoke", "execution": "serial"}, task],
+        explicit_start=False,
+        sort_keys=False,
+    ).encode()
+    skypilot_path = owner / "rendered-skypilot.yaml"
+    skypilot_path.write_bytes(skypilot_payload)
+    skypilot_path.chmod(0o600)
+    plan.update(
+        skypilot_sha256=hashlib.sha256(skypilot_payload).hexdigest(),
+        setup_sha256=hashlib.sha256(setup.encode()).hexdigest(),
+        run_sha256=hashlib.sha256(run.encode()).hexdigest(),
+    )
+    receipt["rendered_skypilot"] = {
+        "path": str(skypilot_path),
+        "sha256": plan["skypilot_sha256"],
     }
     plan_path = owner / "rendered-plan.json"
     plan_path.write_text(json.dumps(plan, sort_keys=True), encoding="utf-8")
     plan_path.chmod(0o600)
     plan_sha256 = hashlib.sha256(plan_path.read_bytes()).hexdigest()
     receipt["rendered_plan"] = {"path": str(plan_path), "sha256": plan_sha256}
+    submission = {
+        "schema_version": "npa.habitat-sim.submitted-task.v1",
+        "task_id": plan["submission_id"],
+        "task_name": task["name"],
+        "skypilot_sha256": plan["skypilot_sha256"],
+        "setup_sha256": plan["setup_sha256"],
+        "run_sha256": plan["run_sha256"],
+        "image": image,
+        "pod_command": plan["pod_command"],
+        "pod_args": [
+            plan_sha256 if item == LIVE.PLAN_PLACEHOLDER else item
+            for item in plan["pod_args"]
+        ],
+        "platform_environment": [],
+    }
+    submission_path = owner / "submitted-task.json"
+    submission_path.write_text(json.dumps(submission, sort_keys=True), encoding="utf-8")
+    submission_path.chmod(0o600)
+    receipt["submitted_task"] = {
+        "path": str(submission_path),
+        "sha256": hashlib.sha256(submission_path.read_bytes()).hexdigest(),
+    }
 
     outputs = tmp_path / "outputs"
     observations = outputs / "habitat-sim-observations"
@@ -682,18 +776,19 @@ def _bound_live_fixture(tmp_path: Path):
     H._write_termination_receipt(publication, proof, termination_path)
     termination = json.loads(termination_path.read_text(encoding="utf-8"))
     pod = {
-        "metadata": {"uid": receipt["pod_uid"]},
+        "metadata": {
+            "uid": receipt["pod_uid"],
+            "labels": {"npa.nebius.com/task-name": submission["task_name"]},
+            "annotations": {"npa.nebius.com/task-id": submission["task_id"]},
+        },
         "spec": {
             "nodeName": "worker-fixture",
             "containers": [
                 {
                     "name": "smoke",
                     "image": image,
-                    "command": plan["pod_command"],
-                    "args": [
-                        plan_sha256 if item == LIVE.PLAN_PLACEHOLDER else item
-                        for item in plan["pod_args"]
-                    ],
+                    "command": submission["pod_command"],
+                    "args": submission["pod_args"],
                     "env": [
                         {"name": name, "value": value}
                         for name, value in plan["environment"].items()
@@ -877,15 +972,15 @@ def test_live_selector_binds_pod_node_to_provider_receipt(tmp_path) -> None:
 
 
 def _validate_bound_fixture(tmp_path: Path, monkeypatch):
-    receipt, _plan, _plan_hash, pod, node, storage, _publication = (
-        _bound_live_fixture(tmp_path)
+    receipt, _plan, _plan_hash, pod, node, storage, _publication = _bound_live_fixture(
+        tmp_path
     )
     monkeypatch.setattr(LIVE, "_storage_client", lambda _receipt: storage)
     provider = LIVE._assert_provider_binding(receipt)
-    plan, plan_hash = LIVE._rendered_plan(receipt, provider)
+    plan, plan_hash, submission = LIVE._rendered_plan(receipt, provider)
     LIVE._assert_pod_provider_node(pod, node, provider)
     image_id, termination = LIVE._assert_pod_completion(
-        pod, receipt, plan, plan_hash
+        pod, receipt, plan, plan_hash, submission
     )
     ready, manifest, client = LIVE._publication(receipt, termination)
     proof, payload = LIVE._proof(receipt, ready, client)
@@ -895,6 +990,7 @@ def _validate_bound_fixture(tmp_path: Path, monkeypatch):
         "receipt": receipt,
         "provider": provider,
         "plan": plan,
+        "submission": submission,
         "plan_hash": plan_hash,
         "pod": pod,
         "node": node,
@@ -918,8 +1014,11 @@ def test_live_selector_accepts_only_fully_bound_mock_evidence(
 
 @pytest.mark.parametrize("field", ["command", "args", "image", "uid", "plan"])
 def test_live_selector_rejects_unbound_pod_execution(tmp_path, field) -> None:
-    receipt, plan, plan_hash, pod, _node, _storage, _publication = (
-        _bound_live_fixture(tmp_path)
+    receipt, plan, plan_hash, pod, _node, _storage, _publication = _bound_live_fixture(
+        tmp_path
+    )
+    _bound_plan, _bound_hash, submission = LIVE._rendered_plan(
+        receipt, LIVE._assert_provider_binding(receipt)
     )
     if field == "command":
         pod["spec"]["containers"][0]["command"] = ["python3", "--help"]
@@ -937,20 +1036,75 @@ def test_live_selector_rejects_unbound_pod_execution(tmp_path, field) -> None:
         message["rendered_plan_sha256"] = "b" * 64
         terminated["message"] = json.dumps(message)
     with pytest.raises(AssertionError):
-        LIVE._assert_pod_completion(pod, receipt, plan, plan_hash)
+        LIVE._assert_pod_completion(pod, receipt, plan, plan_hash, submission)
+
+
+def test_live_selector_rejects_unbound_render_submit_and_environment(tmp_path) -> None:
+    receipt, plan, plan_hash, pod, _node, _storage, _publication = _bound_live_fixture(
+        tmp_path
+    )
+    provider = LIVE._assert_provider_binding(receipt)
+    skypilot_path = Path(receipt["rendered_skypilot"]["path"])
+    original = skypilot_path.read_bytes()
+    skypilot_path.write_bytes(original + b"# hostile\n")
+    with pytest.raises(AssertionError):
+        LIVE._rendered_plan(receipt, provider)
+    skypilot_path.write_bytes(original)
+
+    bound_plan, bound_hash, submission = LIVE._rendered_plan(receipt, provider)
+    pod["metadata"]["annotations"]["npa.nebius.com/task-id"] = "other-task"
+    with pytest.raises(AssertionError):
+        LIVE._assert_pod_completion(pod, receipt, bound_plan, bound_hash, submission)
+    pod["metadata"]["annotations"]["npa.nebius.com/task-id"] = submission["task_id"]
+
+    pod["spec"]["containers"][0]["env"].append(
+        {"name": "PYTHONPATH", "value": "/" + "tmp/overlay"}
+    )
+    with pytest.raises(AssertionError):
+        LIVE._assert_pod_completion(pod, receipt, bound_plan, bound_hash, submission)
+    pod["spec"]["containers"][0]["env"].pop()
+    pod["spec"]["containers"][0]["envFrom"] = [{"secretRef": {"name": "undeclared"}}]
+    with pytest.raises(AssertionError):
+        LIVE._assert_pod_completion(pod, receipt, bound_plan, bound_hash, submission)
+
+
+def test_live_selector_allows_only_declared_secret_reference_without_value(
+    tmp_path,
+) -> None:
+    receipt, _plan, _plan_hash, pod, _node, _storage, _publication = (
+        _bound_live_fixture(tmp_path)
+    )
+    submission_path = Path(receipt["submitted_task"]["path"])
+    submission = json.loads(submission_path.read_text(encoding="utf-8"))
+    secret = {
+        "name": "AWS_ACCESS_KEY_ID",
+        "valueFrom": {
+            "secretKeyRef": {"name": "run-owned-storage", "key": "access-key"}
+        },
+    }
+    submission["platform_environment"] = [secret]
+    submission_path.write_text(json.dumps(submission, sort_keys=True), encoding="utf-8")
+    receipt["submitted_task"]["sha256"] = hashlib.sha256(
+        submission_path.read_bytes()
+    ).hexdigest()
+    pod["spec"]["containers"][0]["env"].append(secret)
+    plan, plan_hash, bound_submission = LIVE._rendered_plan(
+        receipt, LIVE._assert_provider_binding(receipt)
+    )
+    LIVE._assert_pod_completion(pod, receipt, plan, plan_hash, bound_submission)
 
 
 def test_live_selector_rejects_wrong_node_gpu_workflow_and_extra_proof(
     tmp_path, monkeypatch
 ) -> None:
-    receipt, _plan, _plan_hash, pod, node, storage, _publication = (
-        _bound_live_fixture(tmp_path)
+    receipt, _plan, _plan_hash, pod, node, storage, _publication = _bound_live_fixture(
+        tmp_path
     )
     monkeypatch.setattr(LIVE, "_storage_client", lambda _receipt: storage)
     provider = LIVE._assert_provider_binding(receipt)
-    plan, plan_hash = LIVE._rendered_plan(receipt, provider)
+    plan, plan_hash, submission = LIVE._rendered_plan(receipt, provider)
     _image_id, termination = LIVE._assert_pod_completion(
-        pod, receipt, plan, plan_hash
+        pod, receipt, plan, plan_hash, submission
     )
     ready, manifest, client = LIVE._publication(receipt, termination)
     proof, _payload = LIVE._proof(receipt, ready, client)
@@ -977,12 +1131,15 @@ def test_live_selector_rejects_wrong_node_gpu_workflow_and_extra_proof(
 def test_live_selector_rejects_fabricated_proof_and_incomplete_inventory(
     tmp_path, monkeypatch
 ) -> None:
-    receipt, plan, plan_hash, pod, _node, storage, publication = (
-        _bound_live_fixture(tmp_path)
+    receipt, plan, plan_hash, pod, _node, storage, publication = _bound_live_fixture(
+        tmp_path
     )
     monkeypatch.setattr(LIVE, "_storage_client", lambda _receipt: storage)
+    _bound_plan, _bound_hash, submission = LIVE._rendered_plan(
+        receipt, LIVE._assert_provider_binding(receipt)
+    )
     _image_id, termination = LIVE._assert_pod_completion(
-        pod, receipt, plan, plan_hash
+        pod, receipt, plan, plan_hash, submission
     )
     ready, _manifest, client = LIVE._publication(receipt, termination)
     proof_key = (receipt["storage"]["bucket"], ready["proof_key"])
@@ -999,13 +1156,18 @@ def test_live_selector_rejects_fabricated_proof_and_incomplete_inventory(
         LIVE._publication(receipt, termination)
 
 
-def test_live_selector_ignores_stage_without_ready_marker(tmp_path, monkeypatch) -> None:
-    receipt, plan, plan_hash, pod, _node, storage, publication = (
-        _bound_live_fixture(tmp_path)
+def test_live_selector_ignores_stage_without_ready_marker(
+    tmp_path, monkeypatch
+) -> None:
+    receipt, plan, plan_hash, pod, _node, storage, publication = _bound_live_fixture(
+        tmp_path
     )
     monkeypatch.setattr(LIVE, "_storage_client", lambda _receipt: storage)
+    _bound_plan, _bound_hash, submission = LIVE._rendered_plan(
+        receipt, LIVE._assert_provider_binding(receipt)
+    )
     _image_id, termination = LIVE._assert_pod_completion(
-        pod, receipt, plan, plan_hash
+        pod, receipt, plan, plan_hash, submission
     )
     storage.objects.pop((receipt["storage"]["bucket"], publication["ready_key"]))
     with pytest.raises(KeyError):
@@ -1117,21 +1279,26 @@ def test_interrupted_storage_publication_deletes_only_exact_staged_keys(
 ) -> None:
     _bound_live_fixture(tmp_path)
     storage = Storage(fail_after=8)
-    with pytest.raises(OSError, match="interrupted upload"):
+    ready_key = "run-owned/interrupted/habitat-sim-publication-ready.json"
+    with pytest.raises(
+        H.SmokeFailure,
+        match=f"unresolved object ownership after failed write: {ready_key}",
+    ) as raised:
         H._upload_directory(
             tmp_path / "outputs",
             "s3://fixture-bucket/run-owned/interrupted/",
             client=storage,
             stage_token="2" * 32,
         )
+    assert isinstance(raised.value.__cause__, OSError)
+    assert str(raised.value.__cause__) == "fixture interrupted upload"
     assert storage.objects == {}
-    assert storage.deleted
-    allowed_ready = "run-owned/interrupted/habitat-sim-publication-ready.json"
+    assert len(storage.deleted) == 8
     assert all(
-        key == allowed_ready
-        or key.startswith("run-owned/interrupted/.staging/" + "2" * 32 + "/")
+        key.startswith("run-owned/interrupted/.staging/" + "2" * 32 + "/")
         for _bucket, key in storage.deleted
     )
+    assert ("fixture-bucket", ready_key) not in storage.deleted
 
 
 def test_transactional_publication_records_verified_media_and_commits_last(
@@ -1174,7 +1341,95 @@ def test_ready_marker_race_preserves_the_unowned_object(tmp_path) -> None:
             client=storage,
             stage_token="3" * 32,
         )
-    assert storage.objects == {
-        ("fixture-bucket", ready_key): b"foreign-ready-marker\n"
-    }
+    assert storage.objects == {("fixture-bucket", ready_key): b"foreign-ready-marker\n"}
     assert ("fixture-bucket", ready_key) not in storage.deleted
+
+
+def test_ambiguous_ready_write_is_reported_without_deleting_shared_marker(
+    tmp_path,
+) -> None:
+    _bound_live_fixture(tmp_path)
+
+    class AmbiguousReady(Storage):
+        def put_object(self, *, Bucket, Key, Body, ContentType, IfNoneMatch):
+            if Key.endswith("/" + H.READY_MARKER_NAME):
+                self.objects[(Bucket, Key)] = bytes(Body)
+                raise OSError("fixture lost acknowledgement")
+            return super().put_object(
+                Bucket=Bucket,
+                Key=Key,
+                Body=Body,
+                ContentType=ContentType,
+                IfNoneMatch=IfNoneMatch,
+            )
+
+        def get_object(self, *, Bucket, Key):
+            if Key.endswith("/" + H.READY_MARKER_NAME):
+                raise OSError("fixture readback unavailable")
+            return super().get_object(Bucket=Bucket, Key=Key)
+
+    storage = AmbiguousReady()
+    ready_key = "run-owned/ambiguous/habitat-sim-publication-ready.json"
+    with pytest.raises(H.SmokeFailure, match="unresolved object ownership"):
+        H._upload_directory(
+            tmp_path / "outputs",
+            "s3://fixture-bucket/run-owned/ambiguous/",
+            client=storage,
+            stage_token="4" * 32,
+        )
+    assert ("fixture-bucket", ready_key) in storage.objects
+    assert ("fixture-bucket", ready_key) not in storage.deleted
+
+
+def test_main_removes_run_cache_before_publication_commit(
+    tmp_path, monkeypatch
+) -> None:
+    output = tmp_path / "output"
+    cache = tmp_path / ".output-scene-cache"
+    scene = cache / H.SCENE_NAME
+    navmesh = cache / H.NAVMESH_NAME
+    monkeypatch.setenv("NPA_SMOKE_OUTPUT_DIR", str(output))
+    monkeypatch.setattr(
+        H, "_execution_identity", lambda *_args: ("fixture-run", "a" * 64)
+    )
+    monkeypatch.setattr(H, "_source_provenance", lambda: {})
+    monkeypatch.setattr(
+        H,
+        "_immutable_image",
+        lambda: ("image@sha256:" + "b" * 64, "sha256:" + "b" * 64),
+    )
+    monkeypatch.setattr(H, "query_gpu", lambda: {})
+
+    def fetch(root, *, create_root):
+        assert root == cache and create_root is False
+        scene.write_bytes(b"scene")
+        navmesh.write_bytes(b"navmesh")
+        return scene, navmesh, {}, {}
+
+    monkeypatch.setattr(H, "fetch_scene_assets", fetch)
+    monkeypatch.setattr(H, "_run_traversal", lambda *_args: {})
+    monkeypatch.setattr(
+        H, "_proof", lambda *_args: {"schema_version": "npa.habitat-sim.smoke.v1"}
+    )
+
+    def upload(*_args, **_kwargs):
+        assert not cache.exists()
+        return {}
+
+    monkeypatch.setattr(H, "_upload_directory", upload)
+    assert (
+        H.main(
+            [
+                "--output-dir",
+                str(output),
+                "--output-uri",
+                "s3://fixture/run/",
+                "--run-id",
+                "fixture-run",
+                "--plan-sha256",
+                "a" * 64,
+            ]
+        )
+        == 0
+    )
+    assert not cache.exists()
