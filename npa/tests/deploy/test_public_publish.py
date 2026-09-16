@@ -96,9 +96,7 @@ def _avoid_registry_attestation_reads_in_unrelated_publish_tests(monkeypatch) ->
     )
 
 
-@pytest.mark.parametrize(
-    "tool", ["alpamayo2-super", "cosmos3-serving", "detection-training"]
-)
+@pytest.mark.parametrize("tool", ["cosmos3-serving", "detection-training"])
 def test_gpu_accepted_publication_gate_binds_exact_digest(monkeypatch, tool) -> None:
     from npa.deploy import publish_public
 
@@ -303,8 +301,13 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
     assert RESTRICTED_DERIVED_IMAGES == frozenset()
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
-    assert UNVALIDATED_PUBLICATION_TOOLS == frozenset({"openpi", "curobo", "ncore"})
+    assert UNVALIDATED_PUBLICATION_TOOLS == frozenset(
+        {"openpi", "curobo", "ncore"}
+    )
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
+        "diffusers",
+        "lingbot-world",
+        "sam2",
         "alpamayo2-super",
         "cosmos3",
         "cosmos3-ray-serve",
@@ -429,12 +432,15 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
             "cosmos3-ray-serve",
             "sonic-mujoco",
             "detection-training",
+            "diffusers",
+            "lingbot-world",
+            "sam2",
             "alpamayo2-super",
         )
     }
-    # The five Sim2Real roles deliberately share one coherent source. The eight
-    # other accepted sources, including Cosmos3 and the detector, remain distinct.
-    assert len(set(accepted_shas.values())) == 9
+    # The five Sim2Real roles share one source, and the three Studio runtimes
+    # share another. The eight other accepted sources remain distinct.
+    assert len(set(accepted_shas.values())) == 10
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
         target_image = item.target_ref.rsplit("/", 1)[-1]
@@ -460,6 +466,9 @@ def test_accepted_images_use_distinct_exact_development_sources_and_digests() ->
         "cosmos3-ray-serve",
         "sonic-mujoco",
         "detection-training",
+        "diffusers",
+        "lingbot-world",
+        "sam2",
         "alpamayo2-super",
     ):
         entry = manifest[tool]

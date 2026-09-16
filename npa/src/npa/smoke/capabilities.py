@@ -9,6 +9,24 @@ from __future__ import annotations
 
 # Each value is an ordered list of concrete checks the golden eval runs.
 GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
+    "diffusers": [
+        "hash-locked CUDA runtime and pinned CogVideoX-2B checkpoint load",
+        "native GPU text-to-video pipeline generates and fully decodes an MP4",
+        "output hashes and runtime provenance accompany the capability artifact",
+        "separate workflow qualification covers Mochi, Wan and relative depth",
+    ],
+    "lingbot-world": [
+        "pinned upstream model and operator-supplied source image load",
+        "native camera-conditioned generation runs on four CUDA ranks",
+        "each rank records positive attention and all-to-all execution",
+        "generated MP4 fully decodes with camera and checkpoint provenance",
+    ],
+    "sam2": [
+        "pinned SAM 2.1 Small checkpoint loads on CUDA",
+        "native video predictor propagates a first-frame box through the input",
+        "raw predicted masks and a fully decoded overlay MP4 are retained",
+        "unchanged source pixels are checked after video encoding",
+    ],
     "ncore": [
         "pinned official NCore V4 reader imports in the NPA interpreter on CPU",
         "native COLMAP converter CLI schema loads with patched trueprice/pycolmap",

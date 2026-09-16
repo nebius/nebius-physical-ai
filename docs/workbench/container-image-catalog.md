@@ -46,12 +46,10 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory, including the pending NCore integration, has
-**37 packaging entries** (35 redistribution-eligible and two restricted) and
-**38 mapped tools**: 32 public-release members, two restricted tools, and four
-quarantined tools (`curobo`, `ncore`, `openpi`, and `robocasa`). These counts come
-from `packaging-contract.yaml` and `npa.deploy.images`; they do not constitute
-a new registry audit or acceptance of the quarantined images.
+The current source inventory has **40 packaging entries** (38 redistribution-eligible
+and two restricted) and **41 mapped tools**: 35 public-release members, two
+restricted tools, and four quarantined tools (`curobo`, `ncore`, `openpi` and
+`robocasa`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`.
 
 LeRobot 0.6.0 is selectable package support with an accepted optional public
 image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact
@@ -62,7 +60,17 @@ publication gates plus the checked-in Blackwell validator and real
 0.5.1 as the current default or add a second `lerobot` row to the default public
 release plan.
 
-## Pending NCore conversion image
+## Native model publication and pending NCore conversion
+
+The `npa-diffusers`, `npa-lingbot-world` and `npa-sam2` source-only runtimes
+were built from `d54eec137d3b2d86ff1acef736e36967b1fad7d3`, passed mandatory
+public-image gates, and completed six native B200 capability checks on their
+exact public development digests. On 2026-09-16, the repository publisher promoted
+those same bytes to the supported release tags below. Independent anonymous
+full image pulls and digest parity passed for all three. Weights and CUDA
+packages remain runtime fetches. B300 remains unvalidated for these images.
+See the [native workflow guide](video-generation-byof.md) and
+[capability evidence](validation/studio-public-models-20260916.json).
 
 `npa-ncore` is an additional development validation candidate for the
 [COLMAP ingestion workflow](guides/nurec-colmap-reconstruct.md). It packages
@@ -240,6 +248,9 @@ and populated caches remain absent from the public image.
 | Rerun 0.31.4 | `npa-rerun-viewer` | `0.31.4-sim2real-coherent-20260904` | 2026-09-04 | Published non-root `ubuntu` SkyPilot worker and Rerun viewer/server on ports 9876/9090 for `.rrd` robotics traces. It includes the attested bootstrap contract and exact-source Sim2Real Stage 14 runtime, and bakes no models, datasets, credentials, or runtime caches. The coherent release converted an actual three-sample robot joint trace, reopened its RRD entity through the CLI, and served/read the artifact over HTTP. |
 | Sim2Real Controller 0.1.2 | `npa-sim2real-control` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Non-root CPU controller containing the canonical 14-stage orchestration capability. The coherent release expanded and validated both the checkpoint-promotion and loop-back decision branches; it contains no model weights, datasets, credentials, or runtime caches. |
 | Sim2Real EnvGen 0.1.2 | `npa-envgen` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Generates randomized Sim2Real environments and scenes on the Genesis base. The coherent exact-source release bakes the snapshot-pinned non-root SkyPilot Kubernetes bootstrap closure (`sudo`, SSH, and rsync) and was validated through real environment generation plus a Genesis CUDA physics step. It is built from `sim2real-envgen/Dockerfile`. |
+| Diffusers native generation and depth | `npa-diffusers` | `0.38.0-rtfetch-20260916` | 2026-09-16 | Pinned OSS runtime for Mochi 1, CogVideoX-2B, Wan 2.1 14B and Depth Anything V2 Small. All four native capabilities qualified on B200 at the exact public digest; CUDA and checkpoints fetched at runtime. |
+| LingBot World v1 | `npa-lingbot-world` | `a43bec7-rtfetch-20260916` | 2026-09-16 | Camera-conditioned video generation, qualified on four B200s with positive attention/all-to-all execution on every rank and 161 decoded frames. Authored camera poses; no robot-action or calibrated-geometry claim. |
+| SAM 2.1 Small | `npa-sam2` | `2.1-rtfetch-20260916` | 2026-09-16 | Native CUDA video-mask propagation from a first-frame box; raw arrays and color-preserving visualization qualified on B200. Predicted masks are not ground truth. |
 
 ## Candidates outside the supported public release plan
 
@@ -296,12 +307,12 @@ digests on 2026-09-11. Nineteen resolve directly to an image manifest and 13 to
 an OCI index; the runtime variants in both forms are `linux/amd64`. The chart
 groups the current publishing plan three ways:
 
-- **17 GPU images have no known blocked platform**: `npa-alpamayo2-super`,
+- **20 GPU images have no known blocked platform**: `npa-alpamayo2-super`,
   `npa-cosmos3`, `npa-cosmos3-ray-serve`, `npa-cosmos3-reason`,
   `npa-detection-training`, `npa-envgen`, `npa-genesis`, `npa-groot`,
   `npa-lancedb`, `npa-lerobot`, `npa-lerobot-policy`, `npa-lerobot-vlm-rl`,
   `npa-loop-eval`, `npa-ltx2`, `npa-reference-policy`, `npa-sonic-mujoco`, and
-  `npa-wan2-2`. This band does not mean every cell has a current-release run:
+  `npa-wan2-2`, `npa-diffusers`, `npa-lingbot-world`, and `npa-sam2`. This band does not mean every cell has a current-release run:
   the matrix distinguishes verified, historical, supported, and unverified
   cells.
 - **7 public images are blocked on at least one platform**:

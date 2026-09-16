@@ -954,6 +954,10 @@ def submit_cmd(
             "--adopt-absent-in-flight-outputs requires an explicit --resume-run ID"
         )
         return
+    if not project:
+        from npa.clients.config import default_project_name
+
+        project = default_project_name()
     workflow_identity = ""
     if is_npa_spec:
         assert merged_npa_spec is not None
@@ -1773,6 +1777,7 @@ def submit_cmd(
                 project=project,
                 run_id=resolved_run_id,
                 force=stage_src is True,
+                persist=not runtime,
             )
             if not staged_uri:
                 return
@@ -1811,7 +1816,11 @@ def submit_cmd(
             # Never mint/print live registry tokens for --plan-only.
             materialize_registry_secrets=not plan_only,
             accept_eula=accept_eula,
-            gpu_accelerator_overrides=_resolve_submit_accelerators(
+        )
+        # The first discovery starts the isolated API. Bind it to the same
+        # resolved principal and storage settings that every runtime wave uses.
+        with _temporary_runtime_environment(runtime_environment):
+            accelerator_overrides = _resolve_submit_accelerators(
                 yaml_path,
                 spec=merged_npa_spec,
                 infra=infra,
@@ -1823,7 +1832,9 @@ def submit_cmd(
                 isolated_config_dir=isolated_config_dir,
                 readiness_timeout=gpu_readiness_timeout,
                 readiness_poll_interval=gpu_readiness_poll_interval,
-            ),
+            )
+        npa_render_options = replace(
+            npa_render_options, gpu_accelerator_overrides=accelerator_overrides
         )
         # Runtime submits one rendered wave at a time through the mandatory SDK
         # execution preflight. Checking every state here would block CPU-only
@@ -2534,8 +2545,8 @@ def _runtime_submit_environment(
     for key in ("bucket", "prefix"):
         if key in resolved_config:
             environment[f"NPA_S3_{key.upper()}"] = str(resolved_config[key] or "")
-    if endpoint:
-        environment.update(dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, endpoint))
+    if endpoint.strip():
+        environment.update(dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, endpoint.strip()))
     return environment
 
 
@@ -3691,8 +3702,13 @@ def _stage_npa_src_for_submit(
     project: str = "",
     run_id: str = "workflow",
     force: bool = False,
+    persist: bool = True,
 ) -> str:
-    """Upload once, then durably record the exact ``NPA_SRC_S3_URI``."""
+    """Upload source, optionally updating the project-level source setting.
+
+    Runtime submissions bind the returned URI into their durable run record.
+    They must not rewrite the configuration used to identify an active daemon.
+    """
     from npa.clients.config import ConfigError, persist_workflow_src_s3_uri
     from npa.orchestration.npa_workflow.src_staging import (
         SrcStagingError,
@@ -3717,10 +3733,11 @@ def _stage_npa_src_for_submit(
             on_status=lambda message: typer.echo(f"  {message}", err=True),
             force=force,
         )
-        # This project-level cache is content-addressed and safe to update before
-        # the run exists.  Do not create a run submission ledger here: upload
-        # failure must leave no evidence that a managed job was reserved.
-        persist_workflow_src_s3_uri(uri, project or None)
+        # The isolated daemon verifies configuration bytes as part of its
+        # credential identity. Runtime source refreshes are run-scoped; changing
+        # this setting would invalidate an otherwise healthy owned controller.
+        if persist:
+            persist_workflow_src_s3_uri(uri, project or None)
         return uri
     except (ConfigError, SrcStagingError) as exc:
         _fail(str(exc))

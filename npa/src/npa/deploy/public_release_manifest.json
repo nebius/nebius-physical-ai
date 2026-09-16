@@ -33,7 +33,10 @@
     "sim2real-control": {"tag": "0.1.2-sim2real-coherent-20260904", "published_digest": "sha256:87fe8530710eea43364a21ad76dbe4b4c2d60e4b49705824fcdb62dc7d185af7", "development_sha": "c164fd3480f8a9ea8f9df9ccb9509502fd527996"},
     "wan2-2": {"tag": "2.2-ti2v5b-rtfetch-cu130-20260817", "published_digest": "sha256:5780959ca6c6e7eb77ee7ea7d005fcf0f56db50783ce798dddee2809185eb837", "development_sha": "bc18684d35fa171f7912cb84ef1ae16d4fc116e6"},
     "alpamayo2-super": {"tag": "0.1.0-cu128-r3", "published_digest": "sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07", "development_sha": "5b693476c113c833e9d9d4f8c7aa492492a27505"},
-    "content-agents": {"tag": "0.5.2-npa2", "published_digest": "sha256:c64aaf6201bdaa013f9d16e8497290cf166907932f036297d7abaa430cbad7db"}
+    "content-agents": {"tag": "0.5.2-npa2", "published_digest": "sha256:c64aaf6201bdaa013f9d16e8497290cf166907932f036297d7abaa430cbad7db"},
+    "diffusers": {"tag": "0.38.0-rtfetch-20260916", "published_digest": "sha256:6422a062a00c9816a945623b0c83a78977fa5d5cec1777a0e6d44d1d746fc42e", "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3"},
+    "lingbot-world": {"tag": "a43bec7-rtfetch-20260916", "published_digest": "sha256:5e2a3998bf7d54987d0916f7c249b4963ef87f489e9e893ec8d94da196286277", "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3"},
+    "sam2": {"tag": "2.1-rtfetch-20260916", "published_digest": "sha256:fbe20454e97452e447e00f79260a267b552deef5538e3bbbc8c3567a3c576f16", "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3"}
   },
   "publication_pending": {}
 }
