@@ -66,6 +66,7 @@ def test_dockerfile_pins_source_base_and_nonroot() -> None:
     assert "rm -rf /opt/nvidia/nsight-compute/2025.1.0" in text
     assert "security-dependencies.patch" in text
     assert "hf-snapshot-config.patch" in text
+    assert "MODELSCOPE_DOWNLOAD_PARALLELS=16" in text
 
     inference = (
         Path(__file__).resolve().parents[2]

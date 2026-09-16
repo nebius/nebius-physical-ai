@@ -60,6 +60,10 @@ The cache may be run-owned and persistent across retries. Never place it in the
 image build context or upload it as evidence. The checkpoint is public and the
 token is not an access acceptance; forward an operator read token through this
 secret-only channel to avoid anonymous rate limits during its multi-shard fetch.
+The image defaults `MODELSCOPE_DOWNLOAD_PARALLELS=16`, the SDK's supported
+maximum, because the converted UMT5 asset is one roughly 11 GB object. Retain
+that default for normal cold starts; an operator may lower it for a constrained
+network.
 
 ## Artifacts and acceptance
 

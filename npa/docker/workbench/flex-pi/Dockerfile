@@ -31,6 +31,7 @@ LABEL npa.tool="flex-pi" \
 ENV DEBIAN_FRONTEND=noninteractive \
     HF_HOME=/workspace/.cache/huggingface \
     MODELSCOPE_CACHE=/workspace/.cache/modelscope \
+    MODELSCOPE_DOWNLOAD_PARALLELS=16 \
     DIFFSYNTH_MODEL_BASE_PATH=/workspace/.cache/flex-pi/diffsynth \
     IMAGEIO_FFMPEG_EXE=/opt/conda/bin/ffmpeg \
     PYTHONUNBUFFERED=1 \

@@ -132,6 +132,12 @@ def _runtime_env(request: FlexPiRequest) -> dict[str, str]:
             "DIFFSYNTH_MODEL_BASE_PATH", "/workspace/.cache/flex-pi/diffsynth"
         ),
         "MODELSCOPE_CACHE": env.get("MODELSCOPE_CACHE", "/workspace/.cache/modelscope"),
+        # ModelScope otherwise fetches one range at a time. Its supported
+        # maximum keeps the roughly 11 GB converted UMT5 shard practical on a
+        # cold worker while preserving an explicit operator override.
+        "MODELSCOPE_DOWNLOAD_PARALLELS": env.get(
+            "MODELSCOPE_DOWNLOAD_PARALLELS", "16"
+        ),
         "PYTORCH_CUDA_ALLOC_CONF": env.get(
             "PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True"
         ),

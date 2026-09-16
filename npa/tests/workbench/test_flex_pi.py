@@ -14,6 +14,7 @@ from npa.workbench.flex_pi.runtime import (
     DEFAULT_CHECKPOINT_REVISION,
     FlexPiError,
     FlexPiRequest,
+    _runtime_env,
     run_inference,
 )
 from npa.workbench.flex_pi.service import create_app
@@ -50,6 +51,16 @@ def test_real_contract_executes_and_publishes(tmp_path: Path) -> None:
     assert result["checkpoint"]["revision"] == DEFAULT_CHECKPOINT_REVISION
     assert set(result["artifacts"]) == {"actions.json", "input.json", "result.json"}
     assert len(json.loads((output / "actions.json").read_text())["actions"]) == 32
+
+
+def test_runtime_parallelizes_large_modelscope_fetches(monkeypatch) -> None:
+    monkeypatch.delenv("MODELSCOPE_DOWNLOAD_PARALLELS", raising=False)
+    request = FlexPiRequest(input_path="input.json", output_path="output")
+
+    assert _runtime_env(request)["MODELSCOPE_DOWNLOAD_PARALLELS"] == "16"
+
+    monkeypatch.setenv("MODELSCOPE_DOWNLOAD_PARALLELS", "4")
+    assert _runtime_env(request)["MODELSCOPE_DOWNLOAD_PARALLELS"] == "4"
 
 
 def test_invalid_action_shape_is_not_published(tmp_path: Path) -> None:

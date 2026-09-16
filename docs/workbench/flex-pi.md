@@ -43,6 +43,9 @@ construction. ModelScope exposes only its `master` branch to the SDK for this
 repository, so NPA first requires that branch to resolve to the pinned Git
 commit and then verifies both selected files by SHA-256. See the image's
 `REDISTRIBUTION.md` and `THIRD_PARTY_NOTICES.md` for the maintained boundary.
+Cold workers use ModelScope's supported 16-way range downloader for the roughly
+11 GB converted UMT5 object. Set `MODELSCOPE_DOWNLOAD_PARALLELS` explicitly to
+reduce that concurrency when an operator-controlled network requires it.
 
 ## CLI and SDK
 
