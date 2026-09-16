@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the neutral robomimic image with serialized tag assignment and durable owner receipts.
+# Build the neutral robomimic image with daemon-serialized tags and durable receipts.
 set -euo pipefail
 umask 077
 
@@ -12,6 +12,10 @@ tag_assignment_completed=0
 transaction_complete=0
 failure_receipt_published=0
 failure_receipt=""
+tag_lock_acquisition_attempted=0
+tag_lock_held=0
+tag_lock_id=""
+tag_lock_name=""
 receipt_tmp=""
 receipt_tmp_name=""
 receipt_tmp_identity=""
@@ -152,11 +156,13 @@ clear_receipt_staging() {
   receipt_tmp_identity=""
 }
 
-fd_relative_link_receipt() {
-  local target_name="$1" inherited_directory_fd=9
-  python3 - receipt-link "${inherited_directory_fd}" "${receipt_tmp_name}" \
-    "${target_name}" "${receipt_tmp_identity}" "${receipt_dir_identity}" \
-    9<&"${receipt_dir_fd}" <<'PY'
+forget_receipt_staging() {
+  receipt_tmp=""
+  receipt_tmp_name=""
+  receipt_tmp_identity=""
+}
+
+receipt_link_program="$(cat <<'PY'
 import os
 import stat
 import sys
@@ -164,52 +170,61 @@ _, directory_fd, source_name, target_name, source_identity, directory_identity =
 directory_fd = int(directory_fd)
 
 def identity(value: os.stat_result, kind: str) -> str:
-    mode = stat.S_IMODE(value.st_mode)
-    return f"{value.st_dev}:{value.st_ino}:{value.st_uid}:{mode:o}:{kind}"
+    return f"{value.st_dev}:{value.st_ino}:{value.st_uid}:{stat.S_IMODE(value.st_mode):o}:{kind}"
 
 def matches_source(value: os.stat_result, links: int) -> bool:
-    return (
-        stat.S_ISREG(value.st_mode) and identity(value, "regular file") == source_identity
-        and value.st_nlink == links
-    )
+    return (stat.S_ISREG(value.st_mode)
+            and identity(value, "regular file") == source_identity
+            and value.st_nlink == links)
 
 if any(not name or os.path.basename(name) != name for name in (source_name, target_name)):
     raise SystemExit(1)
 if identity(os.fstat(directory_fd), "directory") != directory_identity:
     raise SystemExit(1)
-source = os.stat(source_name, dir_fd=directory_fd, follow_symlinks=False)
-if not matches_source(source, 1):
-    raise SystemExit(1)
+source_fd = os.open(source_name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
 try:
+    if not matches_source(os.fstat(source_fd), 1):
+        raise SystemExit(1)
+    os.fsync(source_fd)
     os.link(source_name, target_name, src_dir_fd=directory_fd,
             dst_dir_fd=directory_fd, follow_symlinks=False)
-except OSError:
-    raise SystemExit(1) from None
-source = os.stat(source_name, dir_fd=directory_fd, follow_symlinks=False)
-target = os.stat(target_name, dir_fd=directory_fd, follow_symlinks=False)
-if not matches_source(source, 2) or not matches_source(target, 2):
+finally:
+    os.close(source_fd)
+if not all(matches_source(os.stat(name, dir_fd=directory_fd, follow_symlinks=False), 2)
+           for name in (source_name, target_name)):
+    raise SystemExit(1)
+os.unlink(source_name, dir_fd=directory_fd)
+if not matches_source(os.stat(target_name, dir_fd=directory_fd, follow_symlinks=False), 1):
+    raise SystemExit(1)
+os.fsync(directory_fd)
+if identity(os.fstat(directory_fd), "directory") != directory_identity:
+    raise SystemExit(1)
+if not matches_source(os.stat(target_name, dir_fd=directory_fd, follow_symlinks=False), 1):
     raise SystemExit(1)
 PY
+)"
+
+fd_relative_link_receipt() {
+  local target_name="$1" inherited_directory_fd=9
+  python3 - receipt-link "${inherited_directory_fd}" "${receipt_tmp_name}" \
+    "${target_name}" "${receipt_tmp_identity}" "${receipt_dir_identity}" \
+    9<&"${receipt_dir_fd}" <<< "${receipt_link_program}"
 }
 
 link_receipt_target() {
   local target_name="$1"
   local target_anchor="${receipt_anchor}/${target_name}"
+  local target_identity="${receipt_tmp_identity}"
   receipt_staging_matches || return 1
   [[ ! -e "${target_anchor}" && ! -L "${target_anchor}" ]] || return 1
   fd_relative_link_receipt "${target_name}" || return 1
+  forget_receipt_staging
   directory_binding_matches \
     "${receipt_dir_fd}" "${receipt_dir}" "${receipt_dir_identity}" \
     || return 1
-  receipt_staging_matches || return 1
   [[ -f "${target_anchor}" && ! -L "${target_anchor}" ]] || return 1
-  [[ "$(file_identity "${target_anchor}" 2>/dev/null)" == "${receipt_tmp_identity}" ]] \
+  [[ "$(file_identity "${target_anchor}" 2>/dev/null)" == "${target_identity}" ]] \
     || return 1
-  [[ "$(stat -c '%u:%a:%h' -- "${receipt_anchor}/${receipt_tmp_name}" 2>/dev/null)" \
-    == "$(id -u):600:2" ]] || return 1
-  [[ "$(stat -c '%u:%a:%h' -- "${target_anchor}" 2>/dev/null)" \
-    == "$(id -u):600:2" ]] || return 1
-  clear_receipt_staging || return 2
   [[ "$(stat -c '%u:%a:%h' -- "${target_anchor}" 2>/dev/null)" \
     == "$(id -u):600:1" ]]
 }
@@ -324,9 +339,43 @@ print(json.dumps({
     "intended_full_sha_tag": intended_tag,
     "shared_tag_disposition": "serialized-and-verified",
     "tag_compare_and_set": cas_outcome,
-    "transaction_evidence_disposition": "removed-after-receipt-publication",
+    "transaction_evidence_disposition": "cleanup-pending-terminal-result",
 }, sort_keys=True, separators=(",", ":")))
 PY
+}
+
+write_cleanup_receipt() {
+  local destination="$1" status="$2" disposition="$3"
+  python3 - "${revision}" "${transaction_id}" "${image_id}" "${status}" \
+    "${disposition}" > "${destination}" <<'PY'
+import json
+import sys
+
+revision, transaction_id, image_id, status, disposition = sys.argv[1:]
+print(json.dumps({
+    "schema": "npa.robomimic.neutral-build-cleanup.v1",
+    "revision": revision,
+    "transaction_id": transaction_id,
+    "immutable_image_id": image_id,
+    "status": status,
+    "transaction_evidence_disposition": disposition,
+}, sort_keys=True, separators=(",", ":")))
+PY
+}
+
+publish_cleanup_receipt() {
+  local status="$1" disposition="$2"
+  local target_name="${transaction_id}.cleanup.json"
+  directory_binding_matches \
+    "${receipt_dir_fd}" "${receipt_dir}" "${receipt_dir_identity}" || return 1
+  [[ -z "${receipt_tmp_name}" ]] || return 1
+  start_receipt_staging "cleanup" || return 1
+  write_cleanup_receipt \
+    "${receipt_anchor}/${receipt_tmp_name}" "${status}" "${disposition}" || return 1
+  receipt_staging_matches || return 1
+  link_receipt_target "${target_name}" || return 1
+  [[ "$(stat -c '%u:%a:%h' -- "${receipt_anchor}/${target_name}" 2>/dev/null)" \
+    == "$(id -u):600:1" ]]
 }
 
 publish_success_receipt() {
@@ -363,7 +412,7 @@ publish_failure_receipt() {
   [[ "${image_id}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
   [[ "${failure_reason}" =~ ^[A-Za-z0-9][A-Za-z0-9\ .:_/-]*$ ]] \
     || failure_reason="unclassified-post-build-failure"
-  clear_receipt_staging || return 1
+  [[ -z "${receipt_tmp_name}" ]] || return 1
   disposition="$(shared_tag_disposition)" || return 1
   start_receipt_staging "failure" || return 1
   write_failure_receipt \
@@ -402,6 +451,60 @@ recover_created_image() {
   fi
 }
 
+inspect_tag_lock() {
+  local reference="$1" output_path="$2" error_path="$3"
+  local -a lines=()
+  docker container inspect --format \
+    '{{.Id}}|{{index .Config.Labels "org.nebius.npa.robomimic.lock.transaction"}}|{{.Image}}' \
+    "${reference}" > "${output_path}" 2> "${error_path}" || return 1
+  mapfile -t lines < "${output_path}"
+  [[ "${#lines[@]}" -eq 1 \
+    && "${lines[0]}" == "${tag_lock_id}|${transaction_id}|${image_id}" ]]
+}
+
+acquire_tag_lock() {
+  local created_id=""
+  tag_lock_name="npa-robomimic-tag-lock-$(printf '%s' "${image}" | sha256sum | cut -d ' ' -f 1)"
+  tag_lock_acquisition_attempted=1
+  created_id="$(docker container create --name "${tag_lock_name}" \
+    --label "org.nebius.npa.robomimic.lock.transaction=${transaction_id}" \
+    --entrypoint /bin/true "${image_id}")" || return 1
+  [[ "${created_id}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  tag_lock_id="${created_id}"
+  inspect_tag_lock "${tag_lock_id}" "${context_anchor}/inspect-lock.out" \
+    "${context_anchor}/inspect-lock.err" || return 1
+  tag_lock_held=1
+}
+
+recover_tag_lock() {
+  local -a lines=()
+  [[ "${tag_lock_acquisition_attempted}" -eq 1 && "${tag_lock_held}" -eq 0 ]] \
+    || return 0
+  docker container inspect --format \
+    '{{.Id}}|{{index .Config.Labels "org.nebius.npa.robomimic.lock.transaction"}}|{{.Image}}' \
+    "${tag_lock_name}" > "${context_anchor}/recover-lock.out" \
+    2> "${context_anchor}/recover-lock.err" || return 0
+  mapfile -t lines < "${context_anchor}/recover-lock.out" || return 1
+  [[ "${#lines[@]}" -eq 1 ]] || return 1
+  IFS='|' read -r tag_lock_id observed_transaction observed_image <<< "${lines[0]}"
+  [[ "${tag_lock_id}" =~ ^[0-9a-f]{64}$ \
+    && "${observed_transaction}" == "${transaction_id}" \
+    && "${observed_image}" == "${image_id}" ]] || return 0
+  tag_lock_held=1
+}
+
+release_tag_lock() {
+  [[ "${tag_lock_held}" -eq 1 ]] || return 0
+  inspect_tag_lock "${tag_lock_id}" "${context_anchor}/release-lock.out" \
+    "${context_anchor}/release-lock.err" || return 1
+  docker container rm "${tag_lock_id}" \
+    > "${context_anchor}/release-lock-rm.out" \
+    2> "${context_anchor}/release-lock-rm.err" || return 1
+  tag_lock_acquisition_attempted=0
+  tag_lock_held=0
+  tag_lock_id=""
+}
+
 remove_transaction_context() {
   local -a entries=()
   context_bindings_match || return 1
@@ -436,10 +539,13 @@ discard_preimage_context() {
 }
 
 discard_success_context() {
-  remove_transaction_context && return 0
-  failure_reason="transaction-context-cleanup-unresolved"
-  publish_failure_receipt "cleanup-unresolved-after-success-receipt" || true
-  return 1
+  if remove_transaction_context; then
+    publish_cleanup_receipt "completed" "removed" && return 0
+  else
+    publish_cleanup_receipt "unresolved" \
+      "retained-owner-private-for-reconciliation" || true
+    return 1
+  fi
 }
 
 cleanup() {
@@ -448,6 +554,8 @@ cleanup() {
   trap - EXIT HUP INT TERM
   set +e
   recover_created_image
+  recover_tag_lock || cleanup_failed=1
+  release_tag_lock || cleanup_failed=1
   if [[ "${original_status}" -ne 0 && "${image_created}" -eq 1 ]]; then
     retain_failed_image || cleanup_failed=1
   elif [[ "${original_status}" -ne 0 ]]; then
@@ -542,33 +650,8 @@ require_transaction_bindings
 [[ "${observed_id}" == "${image_id}" ]] \
   || fail "built immutable image ID changed during inspection"
 
-owner_runtime_dir="/run/user/$(id -u)"
-require_owner_private_directory "${owner_runtime_dir}"
-lock_dir="${owner_runtime_dir}/npa-robomimic-build-locks"
-mkdir -p -m 700 -- "${lock_dir}" \
-  || fail "canonical shared-tag lock directory could not be created"
-require_owner_private_directory "${lock_dir}"
-tag_lock_name="$(printf '%s' "${image}" | sha256sum | cut -d ' ' -f 1)"
-lock_path="${lock_dir}/${tag_lock_name}.lock"
-if [[ ! -e "${lock_path}" && ! -L "${lock_path}" ]]; then
-  ( set -o noclobber; : > "${lock_path}" ) 2>/dev/null || true
-fi
-[[ -f "${lock_path}" && ! -L "${lock_path}" ]] \
-  || fail "shared-tag lock is unsafe"
-[[ "$(stat -c '%u:%a:%h' -- "${lock_path}")" == "$(id -u):600:1" ]] \
-  || fail "shared-tag lock ownership is unsafe"
-exec {tag_lock_fd}<> "${lock_path}" \
-  || fail "shared-tag lock could not be opened"
-lock_fd_identity="$(stat -Lc '%d:%i:%u:%a:%h' -- "/proc/$$/fd/${tag_lock_fd}")" \
-  || fail "shared-tag lock descriptor could not be verified"
-lock_path_identity="$(stat -c '%d:%i:%u:%a:%h' -- "${lock_path}")" \
-  || fail "shared-tag lock path could not be verified"
-[[ "${lock_fd_identity}" == "${lock_path_identity}" ]] \
-  || fail "shared-tag lock changed while opening"
-flock -x "${tag_lock_fd}" \
-  || fail "exclusive shared-tag coordination could not be established"
-[[ "$(stat -c '%d:%i:%u:%a:%h' -- "${lock_path}")" == "${lock_fd_identity}" ]] \
-  || fail "shared-tag lock changed during coordination"
+acquire_tag_lock \
+  || fail "daemon-wide shared-tag coordination could not be established"
 
 cas_outcome=""
 require_transaction_bindings
@@ -611,6 +694,8 @@ require_transaction_bindings
   && "${final_built_id}" == "${image_id}" \
   && "${final_tagged_id}" == "${image_id}" ]] \
   || fail "image identity changed before receipt publication"
+release_tag_lock \
+  || fail "daemon-wide shared-tag coordination could not be released"
 
 publish_success_receipt
 
