@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -110,7 +111,36 @@ def _runtime_environment(args: argparse.Namespace) -> dict[str, str]:
         raise ValueError(
             "Evaluator interpreter does not resolve the pinned OmniGibson source"
         )
+    _verify_graphics(args.evaluator_python, environment)
     return environment
+
+
+def _verify_graphics(python: str, environment: dict[str, str]) -> None:
+    # CUDA compute can work while the container lacks the RTX graphics mounts.
+    # Check the actual loader and device before claiming an evaluation attempt.
+    probe = (
+        "import ctypes, os; "
+        "ctypes.CDLL('libGLX_nvidia.so.0'); "
+        "ctypes.CDLL('libEGL_nvidia.so.0'); os._exit(0)"
+    )
+    try:
+        subprocess.check_output(
+            [python, "-c", probe], env=environment, stderr=subprocess.STDOUT
+        )
+        output = subprocess.check_output(
+            ["vulkaninfo", "--summary"],
+            env=environment,
+            text=True,
+            stderr=subprocess.STDOUT,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError(
+            "BEHAVIOR requires NVIDIA GLX/EGL libraries and working Vulkan; "
+            "use a graphics-qualified runtime and cluster"
+        ) from exc
+    if not re.search(r"vendorID\s*=\s*0x10de\b", output, re.IGNORECASE):
+        raise RuntimeError("Vulkan did not enumerate an NVIDIA physical device")
+    print("NVIDIA GLX, EGL, and Vulkan preflight passed.", flush=True)
 
 
 def _write_instructions(output: Path, plan: dict, commands: list[list[str]]) -> None:

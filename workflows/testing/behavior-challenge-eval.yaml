@@ -30,6 +30,7 @@ resources:
     kubernetes:
       pod_config:
         spec:
+          runtimeClassName: nvidia
           volumes:
             - name: behavior-assets
               persistentVolumeClaim:
@@ -40,6 +41,9 @@ resources:
                 sizeLimit: 8Gi
           containers:
             - name: ray-node
+              env:
+                - name: NVIDIA_DRIVER_CAPABILITIES
+                  value: all
               volumeMounts:
                 - name: behavior-assets
                   mountPath: /data/behavior

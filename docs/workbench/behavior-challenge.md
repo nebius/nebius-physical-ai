@@ -15,10 +15,17 @@ asset volume, and policy endpoint are required operator inputs. This integration
 does not add a published BEHAVIOR container to the Workbench image catalog.
 
 A private development run has authorized inputs, verified storage access, and a
-scheduled RTX PRO 6000 worker. The official radio checkpoint archive has SHA-256
+verified radio policy server on an RTX PRO 6000 worker. The official radio checkpoint archive has SHA-256
 `169c5d8c6dfc6aa463bfc162da983ea26e4cf82eca1d63de3719d3157a61f3be`.
 The simulator runtime is Isaac Sim 5.1.0.0 from the pinned upstream installer.
-These preparation checks do not yet establish a working rollout or policy score.
+CUDA passed in both policy and simulator environments. The first development
+attempt stopped during simulator startup because its compute-only cluster lacked
+NVIDIA graphics libraries. Its original logs and incomplete summary are retained;
+no rollout score or video was produced. The runner now checks dynamic GLX/EGL
+loading and NVIDIA Vulkan enumeration before claiming an evaluation attempt.
+An existing replacement rendering cluster passed Workbench's stability, CUDA,
+GLX/EGL loading, and NVIDIA Vulkan device checks on both GPU nodes. Official
+rollout validation on that target remains pending.
 
 ## Rules and pinned source
 
@@ -59,6 +66,13 @@ a remote policy uses its declared checkpoint or complies with every rule.
    such as L40S; H100, H200, B200, and B300 are unsuitable for OmniGibson rendering.
    The checked-in simulator profile requests 16 CPU and 128 GiB host RAM. The
    policy service has its own compute allocation.
+   The Kubernetes target must also provide the `nvidia` runtime class and mount
+   NVIDIA graphics libraries. For RTX PRO 6000, use Workbench's
+   [`rtx-rendering` profile](mk8s-gpu-driver-strategy.md#rtx-rendering-workload-profile)
+   and its CUDA plus GLX/EGL/Vulkan readiness gates. A passing CUDA test alone
+   does not establish rendering readiness. The reference pod requests that runtime
+   class and `NVIDIA_DRIVER_CAPABILITIES=all`; the evaluator also requires
+   `vulkaninfo` in its prepared runtime.
 2. Check the upstream [asset license and installation prompts](https://github.com/StanfordVL/BEHAVIOR-1K/blob/v3.9.2/setup.sh).
    BEHAVIOR's Data Bundle explicitly limits use to non-commercial academic
    research and prohibits redistribution of its data and key. Resolve eligibility

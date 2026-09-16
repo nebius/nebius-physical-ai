@@ -428,6 +428,38 @@ def test_missing_licensed_assets_fail_before_simulator_import(tmp_path, monkeypa
         execution._runtime_environment(args)
 
 
+@pytest.mark.parametrize(
+    "vulkan_output,accepted",
+    [
+        ("GPU0:\n vendorID = 0x10de\n deviceName = NVIDIA RTX\n", True),
+        ("GPU0:\n vendorID = 0x10005\n deviceName = llvmpipe\n", False),
+        ("NVIDIA loader available, but no physical devices found\n", False),
+    ],
+)
+def test_graphics_requires_an_enumerated_nvidia_device(
+    monkeypatch, vulkan_output, accepted
+):
+    def check(argv, **kwargs):
+        assert kwargs["env"] == {"PATH": "/runtime/bin"}
+        return vulkan_output if argv[0] == "vulkaninfo" else b""
+
+    monkeypatch.setattr(execution.subprocess, "check_output", check)
+    if accepted:
+        execution._verify_graphics("/runtime/python", {"PATH": "/runtime/bin"})
+    else:
+        with pytest.raises(RuntimeError, match="NVIDIA physical device"):
+            execution._verify_graphics("/runtime/python", {"PATH": "/runtime/bin"})
+
+
+def test_missing_graphics_libraries_fail_even_when_cuda_is_available(monkeypatch):
+    def check(argv, **kwargs):
+        raise subprocess.CalledProcessError(1, argv, output=b"libGLX_nvidia missing")
+
+    monkeypatch.setattr(execution.subprocess, "check_output", check)
+    with pytest.raises(RuntimeError, match="graphics-qualified"):
+        execution._verify_graphics("/runtime/python", {})
+
+
 def test_render_preserves_operator_image_and_readonly_asset_mount():
     import yaml
 
@@ -451,6 +483,10 @@ def test_render_preserves_operator_image_and_readonly_asset_mount():
     assert task["resources"]["accelerators"] == "L40S:1"
     assert task["resources"]["image_id"] == "docker:" + spec.config["runtime_image"]
     pod = task["config"]["kubernetes"]["pod_config"]["spec"]
+    assert pod["runtimeClassName"] == "nvidia"
+    assert {"name": "NVIDIA_DRIVER_CAPABILITIES", "value": "all"} in pod["containers"][
+        0
+    ]["env"]
     assert pod["volumes"][0]["persistentVolumeClaim"]["claimName"] == "behavior-assets"
     mount = pod["containers"][0]["volumeMounts"][0]
     assert mount["readOnly"] and mount["mountPath"] == "/data/behavior"

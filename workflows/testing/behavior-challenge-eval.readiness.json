@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "261e06841f3d3ea150b402ad2dd6ad0e752b2540c8438ed2ce639a945e988d1a",
+  "workflow_sha256": "cb277c302c16112dab6ee824157b04e03e242eccdeb745ec2ddf853b97f77ca2",
   "planning": {
     "validation": {
       "status": "verified",
@@ -51,7 +51,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "A development worker was scheduled on an RTX PRO 6000 GPU and detected driver 580.173.02. Policy startup, rendering, and official rollouts remain unverified.",
+      "reason": "The official radio policy loaded its verified checkpoint and passed HTTP readiness on RTX PRO 6000. The first simulator startup failed on a compute-only target without graphics mounts; its evidence was retained. A replacement rendering target passed stability, CUDA, GLX/EGL loading, and NVIDIA Vulkan enumeration on both GPU nodes. Official rollouts remain unverified.",
       "evidence": [
         "docs/workbench/behavior-challenge.md"
       ]
