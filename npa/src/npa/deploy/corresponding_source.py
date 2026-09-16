@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import ipaddress
 import json
 import os
@@ -35,6 +36,24 @@ SOURCE_LOCK = (
     Path(__file__).resolve().parents[3]
     / "docker/workbench/gymnasium-robotics/corresponding-source.lock.json"
 )
+_ApprovedAddress = tuple[int, str]
+_ACCEPTED_RECORD_FIELDS = {
+    "format",
+    "status",
+    "tool",
+    "source_revision",
+    "image",
+    "corresponding_source",
+}
+_SOURCE_ARTIFACT_FIELDS = {
+    "reference",
+    "sha256",
+    "size_bytes",
+    "media_type",
+    "anonymous",
+    "immutable",
+    "contents_manifest_sha256",
+}
 
 
 class CorrespondingSourceError(RuntimeError):
@@ -147,10 +166,40 @@ def _validate_lock(lock: dict[str, Any]) -> dict[str, Any]:
     return delivery
 
 
+def _resolved_address(answer: Any) -> _ApprovedAddress:
+    try:
+        family = answer[0]
+        raw_address = answer[4][0]
+        address = ipaddress.ip_address(str(raw_address).split("%", 1)[0])
+    except (IndexError, KeyError, TypeError, ValueError) as exc:
+        raise CorrespondingSourceError(
+            "source artifact hostname resolution is malformed"
+        ) from exc
+    expected_family = socket.AF_INET6 if address.version == 6 else socket.AF_INET
+    _require(
+        family == expected_family,
+        "source artifact hostname resolution is malformed",
+    )
+    return int(family), str(address)
+
+
+def _globally_routable(address: str) -> bool:
+    parsed = ipaddress.ip_address(address)
+    return (
+        parsed.is_global
+        and not parsed.is_loopback
+        and not parsed.is_private
+        and not parsed.is_link_local
+        and not parsed.is_reserved
+        and not parsed.is_multicast
+        and not parsed.is_unspecified
+    )
+
+
 def _public_addresses(
     hostname: str,
     resolver: Callable[..., list[tuple[Any, ...]]],
-) -> None:
+) -> tuple[_ApprovedAddress, ...]:
     try:
         literal = ipaddress.ip_address(hostname)
     except ValueError:
@@ -161,32 +210,15 @@ def _public_addresses(
                 "source artifact hostname resolution failed"
             ) from exc
         _require(bool(answers), "source artifact hostname resolution failed")
-        addresses: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
-        try:
-            for answer in answers:
-                sockaddr = answer[4]
-                addresses.append(
-                    ipaddress.ip_address(str(sockaddr[0]).split("%", 1)[0])
-                )
-        except (IndexError, TypeError, ValueError) as exc:
-            raise CorrespondingSourceError(
-                "source artifact hostname resolution is malformed"
-            ) from exc
+        addresses = [_resolved_address(answer) for answer in answers]
     else:
-        addresses = [literal]
+        family = socket.AF_INET6 if literal.version == 6 else socket.AF_INET
+        addresses = [(int(family), str(literal))]
     _require(
-        all(
-            address.is_global
-            and not address.is_loopback
-            and not address.is_private
-            and not address.is_link_local
-            and not address.is_reserved
-            and not address.is_multicast
-            and not address.is_unspecified
-            for address in addresses
-        ),
+        all(_globally_routable(address) for _, address in addresses),
         "source artifact destination is not globally routable",
     )
+    return tuple(dict.fromkeys(addresses))
 
 
 def _validate_reference(
@@ -195,7 +227,7 @@ def _validate_reference(
     *,
     reviewed_origins: frozenset[str],
     resolver: Callable[..., list[tuple[Any, ...]]],
-) -> str:
+) -> tuple[_ApprovedAddress, ...]:
     _require(isinstance(reference, str), "source artifact reference must be a string")
     parsed = urllib.parse.urlsplit(reference)
     _require(parsed.scheme == "https", "source artifact reference must use HTTPS")
@@ -222,35 +254,20 @@ def _validate_reference(
         origin in reviewed_origins,
         "source artifact origin is not in the reviewed public delivery contract",
     )
-    _public_addresses(hostname, resolver)
+    approved_addresses = _public_addresses(hostname, resolver)
     _require(
         artifact_sha256 in parsed.path.lower(),
         "source artifact reference is not digest-addressed",
     )
-    return reference
+    return approved_addresses
 
 
-def _validate_record(
+def _validated_record_source(
     record: dict[str, Any],
-    lock: dict[str, Any],
     lock_bytes: bytes,
     subject: dict[str, str],
-    *,
-    reviewed_origins: frozenset[str],
-    resolver: Callable[..., list[tuple[Any, ...]]],
 ) -> dict[str, Any]:
-    _exact_fields(
-        record,
-        {
-            "format",
-            "status",
-            "tool",
-            "source_revision",
-            "image",
-            "corresponding_source",
-        },
-        "accepted record",
-    )
+    _exact_fields(record, _ACCEPTED_RECORD_FIELDS, "accepted record")
     _require(
         record["format"] == "npa_gymnasium_robotics_accepted_image_manifest_v1",
         "accepted record format is unsupported",
@@ -276,19 +293,32 @@ def _validate_record(
         source["lock_sha256"] == hashlib.sha256(lock_bytes).hexdigest(),
         "corresponding-source lock digest does not match",
     )
+    return source
+
+
+def _validate_record(
+    record: dict[str, Any],
+    lock: dict[str, Any],
+    lock_bytes: bytes,
+    subject: dict[str, str],
+    *,
+    reviewed_origins: frozenset[str],
+    resolver: Callable[..., list[tuple[Any, ...]]],
+) -> tuple[dict[str, Any], tuple[_ApprovedAddress, ...]]:
+    source = _validated_record_source(record, lock_bytes, subject)
     delivery = _validate_lock(lock)
     _require(
         source["delivery"] == delivery,
         "corresponding-source delivery does not match the lock",
     )
     artifact = _mapping(source["artifact"], "source artifact")
-    _validate_artifact(
+    approved_addresses = _validate_artifact(
         artifact,
         delivery,
         reviewed_origins=reviewed_origins,
         resolver=resolver,
     )
-    return artifact
+    return artifact, approved_addresses
 
 
 def _validate_image(image: dict[str, Any], subject: dict[str, str]) -> None:
@@ -314,22 +344,10 @@ def _validate_artifact(
     *,
     reviewed_origins: frozenset[str],
     resolver: Callable[..., list[tuple[Any, ...]]],
-) -> None:
-    _exact_fields(
-        artifact,
-        {
-            "reference",
-            "sha256",
-            "size_bytes",
-            "media_type",
-            "anonymous",
-            "immutable",
-            "contents_manifest_sha256",
-        },
-        "source artifact",
-    )
+) -> tuple[_ApprovedAddress, ...]:
+    _exact_fields(artifact, _SOURCE_ARTIFACT_FIELDS, "source artifact")
     artifact_sha256 = _sha256_hex(artifact["sha256"], "source artifact")
-    _validate_reference(
+    approved_addresses = _validate_reference(
         artifact["reference"],
         artifact_sha256,
         reviewed_origins=reviewed_origins,
@@ -350,6 +368,7 @@ def _validate_artifact(
         artifact["contents_manifest_sha256"] == delivery["source_manifest_sha256"],
         "source artifact contents manifest does not match the lock",
     )
+    return approved_addresses
 
 
 class _RejectRedirects(urllib.request.HTTPRedirectHandler):
@@ -365,9 +384,122 @@ class _RejectRedirects(urllib.request.HTTPRedirectHandler):
         raise CorrespondingSourceError("source artifact redirected")
 
 
-def _open_anonymous(request: urllib.request.Request, timeout: float) -> BinaryIO:
+def _connect_approved_address(
+    approved_address: _ApprovedAddress,
+    port: int,
+    timeout: object,
+    source_address: tuple[str, int] | None,
+) -> socket.socket:
+    family, address = approved_address
+    connection = socket.socket(family, socket.SOCK_STREAM)
+    try:
+        if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:
+            connection.settimeout(timeout)  # type: ignore[arg-type]
+        if source_address:
+            connection.bind(source_address)
+        destination = (
+            (address, port, 0, 0)
+            if family == socket.AF_INET6
+            else (address, port)
+        )
+        connection.connect(destination)
+        return connection
+    except OSError:
+        connection.close()
+        raise
+
+
+def _connect_approved_addresses(
+    approved_addresses: tuple[_ApprovedAddress, ...],
+    port: int,
+    timeout: object,
+    source_address: tuple[str, int] | None,
+) -> socket.socket:
+    last_error: OSError | None = None
+    for approved_address in approved_addresses:
+        try:
+            return _connect_approved_address(
+                approved_address, port, timeout, source_address
+            )
+        except OSError as exc:
+            last_error = exc
+    raise OSError("all approved source artifact addresses failed") from last_error
+
+
+def _close_failed_connection(connection: socket.socket | None) -> None:
+    if connection is None:
+        return
+    try:
+        connection.close()
+    except OSError:
+        # Cleanup must not replace the connection or TLS failure being reported.
+        return
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(
+        self,
+        host: str,
+        *,
+        approved_addresses: tuple[_ApprovedAddress, ...],
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(host, **kwargs)
+        self._approved_addresses = approved_addresses
+        self._reviewed_destination = (self.host, self.port)
+        self._create_connection = self._connect_approved
+
+    def _connect_approved(
+        self,
+        address: tuple[str, int],
+        timeout: object = socket._GLOBAL_DEFAULT_TIMEOUT,
+        source_address: tuple[str, int] | None = None,
+    ) -> socket.socket:
+        _require(self._tunnel_host is None, "HTTPS tunneling is not allowed")
+        _require(
+            address == self._reviewed_destination
+            and (self.host, self.port) == self._reviewed_destination,
+            "HTTPS destination changed",
+        )
+        return _connect_approved_addresses(
+            self._approved_addresses, self.port, timeout, source_address
+        )
+
+    def connect(self) -> None:
+        try:
+            super().connect()
+        except (CorrespondingSourceError, OSError, ValueError):
+            failed_connection = self.sock
+            self.sock = None
+            _close_failed_connection(failed_connection)
+            raise
+
+
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, approved_addresses: tuple[_ApprovedAddress, ...]) -> None:
+        super().__init__()
+        self._approved_addresses = approved_addresses
+
+    def https_open(self, request: urllib.request.Request) -> BinaryIO:
+        def connection(host: str, **kwargs: Any) -> _PinnedHTTPSConnection:
+            return _PinnedHTTPSConnection(
+                host,
+                approved_addresses=self._approved_addresses,
+                **kwargs,
+            )
+
+        return self.do_open(connection, request, context=self._context)
+
+
+def _open_anonymous(
+    request: urllib.request.Request,
+    timeout: float,
+    *,
+    approved_addresses: tuple[_ApprovedAddress, ...],
+) -> BinaryIO:
     opener = urllib.request.build_opener(
         urllib.request.ProxyHandler({}),
+        _PinnedHTTPSHandler(approved_addresses),
         _RejectRedirects(),
     )
     return opener.open(request, timeout=timeout)  # noqa: S310
@@ -597,48 +729,111 @@ def _verify_source_archive(archive: BinaryIO, expected_manifest_sha256: str) -> 
     )
 
 
-def _verify_download(
+def _read_and_verify_download(
+    response: BinaryIO,
+    archive: BinaryIO,
     artifact: dict[str, Any],
     expected_manifest_sha256: str,
-    opener: Callable[..., BinaryIO],
 ) -> None:
-    request = urllib.request.Request(
-        artifact["reference"], headers={"Accept": "application/octet-stream"}
+    _require(
+        getattr(response, "status", 200) == 200,
+        "anonymous source retrieval failed",
     )
+    _require(response.geturl() == artifact["reference"], "source artifact redirected")
     expected_size = artifact["size_bytes"]
     digest = hashlib.sha256()
     total = 0
+    while chunk := response.read(READ_CHUNK_BYTES):
+        total += len(chunk)
+        _require(total <= expected_size, "source artifact exceeds accepted size")
+        digest.update(chunk)
+        archive.write(chunk)
+    archive.flush()
+    archive.seek(0)
+    _require(total == expected_size, "source artifact size does not match")
+    _require(
+        digest.hexdigest() == artifact["sha256"],
+        "source artifact digest does not match",
+    )
+    _verify_source_archive(archive, expected_manifest_sha256)
+
+
+def _verify_download(
+    artifact: dict[str, Any],
+    expected_manifest_sha256: str,
+    approved_addresses: tuple[_ApprovedAddress, ...],
+    opener: Callable[..., BinaryIO],
+) -> None:
+    host = urllib.parse.urlsplit(artifact["reference"]).netloc
+    request = urllib.request.Request(
+        artifact["reference"],
+        headers={"Accept": "application/octet-stream", "Host": host},
+    )
     try:
         with (
             tempfile.TemporaryFile() as archive,
-            opener(request, timeout=60) as response,
+            opener(
+                request,
+                timeout=60,
+                approved_addresses=approved_addresses,
+            ) as response,
         ):
-            _require(
-                getattr(response, "status", 200) == 200,
-                "anonymous source retrieval failed",
+            _read_and_verify_download(
+                response,
+                archive,
+                artifact,
+                expected_manifest_sha256,
             )
-            _require(
-                response.geturl() == artifact["reference"], "source artifact redirected"
-            )
-            while chunk := response.read(READ_CHUNK_BYTES):
-                total += len(chunk)
-                _require(
-                    total <= expected_size, "source artifact exceeds accepted size"
-                )
-                digest.update(chunk)
-                archive.write(chunk)
-            archive.flush()
-            archive.seek(0)
-            _require(total == expected_size, "source artifact size does not match")
-            _require(
-                digest.hexdigest() == artifact["sha256"],
-                "source artifact digest does not match",
-            )
-            _verify_source_archive(archive, expected_manifest_sha256)
     except CorrespondingSourceError:
         raise
     except (OSError, urllib.error.URLError) as exc:
         raise CorrespondingSourceError("anonymous source retrieval failed") from exc
+
+
+def _image_subject(
+    source_revision: str,
+    image_digest: str,
+    platform_manifest_digest: str,
+    config_digest: str,
+) -> dict[str, str]:
+    _require(
+        bool(re.fullmatch(r"[0-9a-f]{40}", source_revision)),
+        "source revision is invalid",
+    )
+    return {
+        "source_revision": source_revision,
+        "digest": _digest(image_digest, "image digest"),
+        "platform_manifest_digest": _digest(
+            platform_manifest_digest, "platform manifest"
+        ),
+        "config_digest": _digest(config_digest, "image config"),
+    }
+
+
+def _verified_record(
+    record_path: Path,
+    lock_path: Path,
+    subject: dict[str, str],
+    opener: Callable[..., BinaryIO],
+) -> dict[str, Any]:
+    record, _ = _load_json(record_path, "accepted publication record")
+    lock, lock_bytes = _load_json(lock_path, "corresponding-source lock")
+    artifact, approved_addresses = _validate_record(
+        record,
+        lock,
+        lock_bytes,
+        subject,
+        reviewed_origins=REVIEWED_PUBLIC_DELIVERY_ORIGINS,
+        resolver=socket.getaddrinfo,
+    )
+    delivery = _validate_lock(lock)
+    _verify_download(
+        artifact,
+        delivery["source_manifest_sha256"],
+        approved_addresses,
+        opener,
+    )
+    return record
 
 
 def verify_corresponding_source_delivery(
@@ -654,13 +849,13 @@ def verify_corresponding_source_delivery(
     """Validate and anonymously retrieve one accepted corresponding-source delivery.
 
     Args:
-        record_path: Accepted Gymnasium image/publication record.
-        lock_path: Exact corresponding-source lock used by the image build.
-        source_revision: Full source Git revision represented by the image.
-        image_digest: Immutable top-level development image digest.
-        platform_manifest_digest: Immutable linux/amd64 manifest digest.
-        config_digest: Immutable image configuration digest.
-        opener: Anonymous HTTPS opener, injectable for hermetic tests.
+        record_path: Accepted publication record.
+        lock_path: Exact source lock used by the build.
+        source_revision: Full represented Git revision.
+        image_digest: Immutable image digest.
+        platform_manifest_digest: Immutable platform digest.
+        config_digest: Immutable configuration digest.
+        opener: Address-bound anonymous HTTPS opener, injectable for hermetic tests.
 
     Returns:
         The validated accepted publication record.
@@ -668,31 +863,10 @@ def verify_corresponding_source_delivery(
     Raises:
         CorrespondingSourceError: Any record, binding, or retrieval is invalid.
     """
-    _require(
-        bool(re.fullmatch(r"[0-9a-f]{40}", source_revision)),
-        "source revision is invalid",
+    subject = _image_subject(
+        source_revision, image_digest, platform_manifest_digest, config_digest
     )
-    subject = {
-        "source_revision": source_revision,
-        "digest": _digest(image_digest, "image digest"),
-        "platform_manifest_digest": _digest(
-            platform_manifest_digest, "platform manifest"
-        ),
-        "config_digest": _digest(config_digest, "image config"),
-    }
-    record, _ = _load_json(record_path, "accepted publication record")
-    lock, lock_bytes = _load_json(lock_path, "corresponding-source lock")
-    artifact = _validate_record(
-        record,
-        lock,
-        lock_bytes,
-        subject,
-        reviewed_origins=REVIEWED_PUBLIC_DELIVERY_ORIGINS,
-        resolver=socket.getaddrinfo,
-    )
-    delivery = _validate_lock(lock)
-    _verify_download(artifact, delivery["source_manifest_sha256"], opener)
-    return record
+    return _verified_record(record_path, lock_path, subject, opener)
 
 
 def _parser() -> argparse.ArgumentParser:

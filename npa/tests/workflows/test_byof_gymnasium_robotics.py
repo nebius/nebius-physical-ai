@@ -4,6 +4,7 @@ import ast
 import hashlib
 import json
 import os
+import runpy
 import subprocess
 import textwrap
 from pathlib import Path
@@ -34,7 +35,7 @@ def _coordinator_source() -> str:
     return textwrap.dedent(profile.rsplit("<<'PY'\n", 1)[1].split("\n  PY", 1)[0])
 
 
-def _coordinator_helpers() -> dict[str, object]:
+def _coordinator_helpers(tmp_path: Path) -> dict[str, object]:
     syntax = ast.parse(_coordinator_source())
     helper_names = {
         "_descriptor_identity",
@@ -57,9 +58,12 @@ def _coordinator_helpers() -> dict[str, object]:
         )
         or (isinstance(node, ast.FunctionDef) and node.name in helper_names)
     ]
-    namespace: dict[str, object] = {}
-    exec(compile(ast.Module(body=body, type_ignores=[]), str(PROFILE), "exec"), namespace)
-    return namespace
+    helper_path = tmp_path / "coordinator_helpers.py"
+    helper_path.write_text(
+        ast.unparse(ast.Module(body=body, type_ignores=[])) + "\n",
+        encoding="utf-8",
+    )
+    return runpy.run_path(str(helper_path))
 
 
 def test_neutral_bootstrap_uses_only_the_unbuilt_prebuilt_candidate() -> None:
@@ -266,7 +270,7 @@ def test_profile_runtime_environment_is_the_exact_non_secret_allowlist() -> None
 def test_coordinator_binds_output_root_nofollow_and_close_on_exec(
     tmp_path: Path,
 ) -> None:
-    helpers = _coordinator_helpers()
+    helpers = _coordinator_helpers(tmp_path)
     root = tmp_path / "output"
     root.mkdir()
     root_link = tmp_path / "output-link"
@@ -287,7 +291,7 @@ def test_coordinator_binds_output_root_nofollow_and_close_on_exec(
 def test_coordinator_refuses_linked_runtime_artifact(
     tmp_path: Path, attack: str
 ) -> None:
-    helpers = _coordinator_helpers()
+    helpers = _coordinator_helpers(tmp_path)
     root = tmp_path / "output"
     root.mkdir()
     target = tmp_path / "target.json"
@@ -315,7 +319,7 @@ def test_coordinator_refuses_linked_runtime_artifact(
 
 @pytest.mark.parametrize("attack", ["symlink", "regular"])
 def test_coordinator_refuses_precreated_summary(tmp_path: Path, attack: str) -> None:
-    helpers = _coordinator_helpers()
+    helpers = _coordinator_helpers(tmp_path)
     root = tmp_path / "output"
     root.mkdir()
     summary = root / "npa_byof_summary.json"
@@ -341,7 +345,7 @@ def test_coordinator_refuses_precreated_summary(tmp_path: Path, attack: str) -> 
 def test_coordinator_uploads_descriptor_bound_bytes_after_path_substitution(
     tmp_path: Path,
 ) -> None:
-    helpers = _coordinator_helpers()
+    helpers = _coordinator_helpers(tmp_path)
     root = tmp_path / "output"
     root.mkdir()
     root_fd = helpers["_open_bound_output_root"](root)

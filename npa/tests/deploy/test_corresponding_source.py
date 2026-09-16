@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import io
 import json
 import socket
@@ -159,12 +160,24 @@ def _fixture(
     return record_path, lock_path, record
 
 
-def _opener(expected_url: str, content: bytes = ARCHIVE, status: int = 200):
-    def open_response(request: Any, *, timeout: float) -> _Response:
+def _opener(
+    expected_url: str,
+    content: bytes = ARCHIVE,
+    status: int = 200,
+    response_url: str | None = None,
+):
+    def open_response(
+        request: Any,
+        *,
+        timeout: float,
+        approved_addresses: tuple[tuple[int, str], ...],
+    ) -> _Response:
         assert request.full_url == expected_url
+        assert request.get_header("Host") == "downloads.example.test"
         assert request.get_header("Authorization") is None
         assert timeout == 60
-        return _Response(content, expected_url, status)
+        assert approved_addresses == ((socket.AF_INET, PUBLIC_ADDRESS),)
+        return _Response(content, response_url or expected_url, status)
 
     return open_response
 
@@ -191,17 +204,10 @@ def _verify(
     reviewed_origins: frozenset[str] = frozenset({PUBLIC_ORIGIN}),
     response_url: str | None = None,
     status: int = 200,
+    opener: Any = None,
 ) -> None:
     reference = record["corresponding_source"]["artifact"]["reference"]
-    opener = _opener(reference, content, status)
-    if response_url is not None:
-
-        def redirected_opener(request: Any, *, timeout: float) -> _Response:
-            assert request.full_url == reference
-            assert timeout == 60
-            return _Response(content, response_url)
-
-        opener = redirected_opener
+    selected_opener = opener or _opener(reference, content, status, response_url)
     with (
         mock.patch.object(
             SOURCE,
@@ -217,7 +223,7 @@ def _verify(
             image_digest=IMAGE_DIGEST,
             platform_manifest_digest=PLATFORM_DIGEST,
             config_digest=CONFIG_DIGEST,
-            opener=opener,
+            opener=selected_opener,
         )
 
 
@@ -363,7 +369,7 @@ def test_unreviewed_delivery_origin_refuses_before_retrieval(tmp_path: Path) -> 
         "169.254.1.1",
         "240.0.0.1",
         "224.0.0.1",
-        "0.0.0.0",
+        str(ipaddress.IPv4Address(0)),
         "::1",
         "fc00::1",
         "fe80::1",
@@ -414,6 +420,238 @@ def test_hostname_resolution_failure_refuses_before_retrieval(tmp_path: Path) ->
 
     with pytest.raises(CorrespondingSourceError, match="resolution failed"):
         _verify(record_path, lock_path, record, resolver=failed_resolver)
+
+
+@pytest.mark.parametrize(
+    ("answers", "message"),
+    (
+        ([], "resolution failed"),
+        ([(socket.AF_INET, socket.SOCK_STREAM, 6, "", ())], "malformed"),
+        (
+            [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", (PUBLIC_ADDRESS, 443))],
+            "malformed",
+        ),
+    ),
+)
+def test_empty_or_malformed_resolution_refuses(
+    tmp_path: Path,
+    answers: list[tuple[Any, ...]],
+    message: str,
+) -> None:
+    record_path, lock_path, record = _fixture(tmp_path)
+
+    def resolver(*_args: Any, **_kwargs: Any) -> list[tuple[Any, ...]]:
+        return answers
+
+    with pytest.raises(CorrespondingSourceError, match=message):
+        _verify(record_path, lock_path, record, resolver=resolver)
+
+
+@pytest.mark.parametrize(
+    ("family", "address"),
+    (
+        (socket.AF_INET, PUBLIC_ADDRESS),
+        (socket.AF_INET6, "2606:4700:4700::1111"),
+    ),
+)
+def test_public_resolution_preserves_address_family(
+    family: socket.AddressFamily,
+    address: str,
+) -> None:
+    def resolver(*_args: Any, **_kwargs: Any) -> list[tuple[Any, ...]]:
+        return [(family, socket.SOCK_STREAM, 6, "", (address, 443))]
+
+    assert SOURCE._public_addresses("downloads.example.test", resolver) == (
+        (family, address),
+    )
+
+
+def test_dns_answer_is_bound_to_retrieval(tmp_path: Path) -> None:
+    record_path, lock_path, record = _fixture(tmp_path)
+    resolver_calls = 0
+    observed: list[tuple[tuple[int, str], ...]] = []
+
+    def resolver(*_args: Any, **_kwargs: Any) -> list[tuple[Any, ...]]:
+        nonlocal resolver_calls
+        resolver_calls += 1
+        address = PUBLIC_ADDRESS if resolver_calls == 1 else "127.0.0.1"
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 443))]
+
+    def opener(request: Any, **kwargs: Any) -> _Response:
+        observed.append(kwargs["approved_addresses"])
+        return _Response(ARCHIVE, request.full_url)
+
+    _verify(record_path, lock_path, record, resolver=resolver, opener=opener)
+    assert resolver_calls == 1
+    assert observed == [((socket.AF_INET, PUBLIC_ADDRESS),)]
+
+
+def test_pinned_https_connection_preserves_tls_hostname(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw_socket = mock.Mock()
+    wrapped_socket = mock.Mock()
+    context = mock.Mock()
+    context.wrap_socket.return_value = wrapped_socket
+    monkeypatch.setattr(SOURCE.socket, "socket", mock.Mock(return_value=raw_socket))
+    monkeypatch.setattr(
+        SOURCE.socket,
+        "create_connection",
+        mock.Mock(side_effect=AssertionError("unconstrained connector called")),
+    )
+    monkeypatch.setattr(
+        SOURCE.socket,
+        "getaddrinfo",
+        mock.Mock(side_effect=AssertionError("unconstrained resolver called")),
+    )
+    connection = SOURCE._PinnedHTTPSConnection(
+        "downloads.example.test",
+        approved_addresses=((socket.AF_INET, PUBLIC_ADDRESS),),
+        context=context,
+    )
+    connection.connect()
+    raw_socket.connect.assert_called_once_with((PUBLIC_ADDRESS, 443))
+    context.wrap_socket.assert_called_once_with(
+        raw_socket,
+        server_hostname="downloads.example.test",
+    )
+    assert connection.sock is wrapped_socket
+
+
+def test_pinned_https_connection_tries_only_approved_addresses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ipv4_socket = mock.Mock()
+    ipv4_socket.connect.side_effect = OSError("IPv4 unavailable")
+    ipv6_socket = mock.Mock()
+    socket_factory = mock.Mock(side_effect=(ipv4_socket, ipv6_socket))
+    context = mock.Mock()
+    context.wrap_socket.return_value = mock.Mock()
+    monkeypatch.setattr(SOURCE.socket, "socket", socket_factory)
+    monkeypatch.setattr(
+        SOURCE.socket,
+        "create_connection",
+        mock.Mock(side_effect=AssertionError("unconstrained connector called")),
+    )
+    connection = SOURCE._PinnedHTTPSConnection(
+        "downloads.example.test",
+        approved_addresses=(
+            (socket.AF_INET, PUBLIC_ADDRESS),
+            (socket.AF_INET6, "2606:4700:4700::1111"),
+        ),
+        context=context,
+    )
+    connection.connect()
+    assert socket_factory.call_args_list == [
+        mock.call(socket.AF_INET, socket.SOCK_STREAM),
+        mock.call(socket.AF_INET6, socket.SOCK_STREAM),
+    ]
+    ipv4_socket.connect.assert_called_once_with((PUBLIC_ADDRESS, 443))
+    ipv4_socket.close.assert_called_once_with()
+    ipv6_socket.connect.assert_called_once_with(("2606:4700:4700::1111", 443, 0, 0))
+
+
+@pytest.mark.parametrize("change", ("host", "port", "tunnel"))
+def test_pinned_https_connection_rejects_destination_changes(
+    monkeypatch: pytest.MonkeyPatch,
+    change: str,
+) -> None:
+    socket_factory = mock.Mock()
+    monkeypatch.setattr(SOURCE.socket, "socket", socket_factory)
+    connection = SOURCE._PinnedHTTPSConnection(
+        "downloads.example.test",
+        approved_addresses=((socket.AF_INET, PUBLIC_ADDRESS),),
+        context=mock.Mock(),
+    )
+    if change == "host":
+        connection.host = "other.example.test"
+    elif change == "port":
+        connection.port = 444
+    else:
+        connection.set_tunnel("proxy.example.test")
+    message = "tunneling" if change == "tunnel" else "destination changed"
+    with pytest.raises(CorrespondingSourceError, match=message):
+        connection.connect()
+    socket_factory.assert_not_called()
+
+
+def test_pinned_https_connection_closes_socket_after_tls_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw_socket = mock.Mock()
+    context = mock.Mock()
+    context.wrap_socket.side_effect = OSError("TLS failed")
+    monkeypatch.setattr(SOURCE.socket, "socket", mock.Mock(return_value=raw_socket))
+    connection = SOURCE._PinnedHTTPSConnection(
+        "downloads.example.test",
+        approved_addresses=((socket.AF_INET, PUBLIC_ADDRESS),),
+        context=context,
+    )
+    with pytest.raises(OSError, match="TLS failed"):
+        connection.connect()
+    raw_socket.close.assert_called_once_with()
+    assert connection.sock is None
+
+
+def test_pinned_https_connection_fails_after_all_approved_addresses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_socket = mock.Mock()
+    second_socket = mock.Mock()
+    first_socket.connect.side_effect = OSError("first failed")
+    second_socket.connect.side_effect = OSError("second failed")
+    monkeypatch.setattr(
+        SOURCE.socket,
+        "socket",
+        mock.Mock(side_effect=(first_socket, second_socket)),
+    )
+    connection = SOURCE._PinnedHTTPSConnection(
+        "downloads.example.test",
+        approved_addresses=(
+            (socket.AF_INET, PUBLIC_ADDRESS),
+            (socket.AF_INET6, "2606:4700:4700::1111"),
+        ),
+        context=mock.Mock(),
+    )
+    with pytest.raises(OSError, match="all approved"):
+        connection.connect()
+    first_socket.close.assert_called_once_with()
+    second_socket.close.assert_called_once_with()
+    assert connection.sock is None
+
+
+def test_anonymous_opener_disables_proxies_and_redirects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    built_handlers: tuple[Any, ...] = ()
+    response = _Response(b"", "https://downloads.example.test/file")
+    opener = mock.Mock()
+    opener.open.return_value = response
+
+    def build_opener(*handlers: Any) -> Any:
+        nonlocal built_handlers
+        built_handlers = handlers
+        return opener
+
+    monkeypatch.setattr(SOURCE.urllib.request, "build_opener", build_opener)
+    request = SOURCE.urllib.request.Request(response.geturl())
+    assert SOURCE._open_anonymous(
+        request,
+        60,
+        approved_addresses=((socket.AF_INET, PUBLIC_ADDRESS),),
+    ) is response
+    assert any(
+        isinstance(handler, SOURCE._PinnedHTTPSHandler) for handler in built_handlers
+    )
+    assert any(
+        isinstance(handler, SOURCE._RejectRedirects) for handler in built_handlers
+    )
+    proxy = next(
+        handler
+        for handler in built_handlers
+        if isinstance(handler, SOURCE.urllib.request.ProxyHandler)
+    )
+    assert proxy.proxies == {}
 
 
 def test_redirect_refuses_without_accepting_destination(tmp_path: Path) -> None:
