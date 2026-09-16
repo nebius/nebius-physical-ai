@@ -79,7 +79,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     ),
     SubmitLiveCase(
         "flex-pi-rtxpro-inference.yaml", "gpu",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         image_tool="flex-pi",
         notes=(
             "Real single-RTX PRO 6000 flex-pi action-only inference on a pinned "

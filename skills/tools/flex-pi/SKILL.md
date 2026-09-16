@@ -52,11 +52,14 @@ bucket and exact immutable image:
 npa workbench workflow validate-spec workflows/testing/flex-pi-rtxpro-inference.yaml
 npa workbench workflow plan-spec workflows/testing/flex-pi-rtxpro-inference.yaml
 npa workbench workflow submit workflows/testing/flex-pi-rtxpro-inference.yaml \
-  --infra "$CONFIGURED_TARGET" --var "bucket=$OPERATOR_BUCKET"
+  --infra "$CONFIGURED_TARGET" --var "bucket=$OPERATOR_BUCKET" \
+  --secret-env HF_TOKEN
 ```
 
 The cache may be run-owned and persistent across retries. Never place it in the
-image build context or upload it as evidence.
+image build context or upload it as evidence. The checkpoint is public and the
+token is not an access acceptance; forward an operator read token through this
+secret-only channel to avoid anonymous rate limits during its multi-shard fetch.
 
 ## Artifacts and acceptance
 

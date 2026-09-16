@@ -22,6 +22,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     plan_image_pull_secrets,
     render_skypilot_yaml,
     resolve_task_image,
+    secret_env_hints_for_plan,
     tool_image_key,
 )
 from npa.orchestration.npa_workflow.spec import load_spec
@@ -49,6 +50,13 @@ def test_is_npa_workflow_spec_false_for_skypilot() -> None:
     path = SKYPILOT_FIXTURES / "sonic-train-standalone.yaml"
     assert not is_npa_workflow_spec(path)
     assert detect_submit_format(path) == "skypilot"
+
+
+def test_flex_pi_recommends_hub_token_without_rendering_its_value() -> None:
+    spec = load_spec(NPA_SPECS / "flex-pi-rtxpro-inference.yaml")
+    plan = build_plan(spec, run_id="flex-pi-secret-hint")
+
+    assert secret_env_hints_for_plan(plan.steps) == ("HF_TOKEN",)
 
 
 @pytest.mark.parametrize(

@@ -76,12 +76,16 @@ Validate, plan, and submit the reference workflow:
 npa workbench workflow validate-spec workflows/testing/flex-pi-rtxpro-inference.yaml
 npa workbench workflow plan-spec workflows/testing/flex-pi-rtxpro-inference.yaml
 npa workbench workflow submit workflows/testing/flex-pi-rtxpro-inference.yaml \
-  --infra "$CONFIGURED_TARGET" --var "bucket=$OPERATOR_BUCKET"
+  --infra "$CONFIGURED_TARGET" --var "bucket=$OPERATOR_BUCKET" \
+  --secret-env HF_TOKEN
 ```
 
 The spec requests exactly one RTX PRO 6000 and routes
 `workbench.flex_pi.infer` to the flex-pi image. It publishes only verified
-artifacts to operator-owned object storage.
+artifacts to operator-owned object storage. The released checkpoint is public,
+so `HF_TOKEN` is not an access gate; forwarding an operator read token through
+the secret channel avoids anonymous multi-shard download throttling. Never put
+the token in the workflow YAML or an artifact.
 
 ## Artifacts and acceptance
 
