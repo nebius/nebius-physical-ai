@@ -37,6 +37,7 @@ NCORE_IMAGE_MANIFEST_RESOURCE = "ncore_image_manifest.json"
 PUBLIC_RELEASE_MANIFEST_RESOURCE = "public_release_manifest.json"
 
 CONTAINER_IMAGE_NAMES = {
+    "antioch": "npa-antioch",
     "openpi": "npa-openpi",
     "lerobot": "npa-lerobot",
     "sim2real-control": "npa-sim2real-control",
@@ -134,8 +135,10 @@ RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 OMNIVERSE_RESTRICTED_TOOLS = RESTRICTED_PUBLICATION_TOOLS
 OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 
-# Tools that are licence-eligible for public redistribution but have no accepted
-# built/GPU-validated artifact yet.
+# Tools that are licence-eligible for public redistribution but have not earned
+# every publication claim yet. Antioch is CPU-only and has a built-image payload
+# scan and local capability
+# smoke, but has not been published or anonymously pulled from the public mirror.
 #
 # This is a different question from `RESTRICTED_PUBLICATION_TOOLS`, and conflating
 # them would be wrong in both directions: these are not restricted (the licensing
@@ -147,7 +150,7 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi", "curobo", "ncore"})
-VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa"})
+VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"antioch", "robocasa"})
 # Compatibility view used by publication callers and public imports. Derive it
 # from the two canonical validation-state inventories; never maintain it
 # independently.
@@ -214,6 +217,7 @@ PUBLIC_REGISTRY_HOSTS = frozenset(
 )
 
 SUPPORTED_TOOL_VERSIONS = {
+    "antioch": "0.1.0-cli0.4.188",
     "openpi": "pi05-full-droid-rlds-cu128-unbuilt",
     # Default LeRobot image release. Selectable package versions and their
     # image tags live in lerobot_version_manifest.json.
@@ -336,7 +340,9 @@ def content_agents_accepted_image_manifest() -> dict[str, Any]:
         .read_text(encoding="utf-8")
     )
     if not isinstance(payload, dict):
-        raise RuntimeError("Content Agents accepted image manifest must be a JSON object")
+        raise RuntimeError(
+            "Content Agents accepted image manifest must be a JSON object"
+        )
     if payload.get("format") != "npa_content_agents_accepted_image_manifest_v1":
         raise RuntimeError("Unsupported Content Agents accepted image manifest format")
     if payload.get("tag") != SUPPORTED_TOOL_VERSIONS["content-agents"]:
@@ -538,24 +544,43 @@ def public_release_manifest() -> dict[str, Any]:
     if payload.get("format") != "npa_public_release_manifest_v1":
         raise RuntimeError("Unsupported public release manifest format")
     if payload.get("registry") != DEFAULT_PUBLIC_CONTAINER_REGISTRY:
-        raise RuntimeError("Public release manifest registry drifted from official GHCR")
+        raise RuntimeError(
+            "Public release manifest registry drifted from official GHCR"
+        )
     releases = payload.get("releases")
     pending = payload.get("publication_pending")
     if not isinstance(releases, dict) or not isinstance(pending, dict):
         raise RuntimeError("Public release manifest inventories must be objects")
-    if set(releases) | set(pending) != set(publicly_publishable_tools()):
+    redistribution_eligible = {
+        tool for tool in CONTAINER_IMAGE_NAMES if is_publicly_redistributable(tool)
+    }
+    expected_releases = redistribution_eligible - PUBLICATION_QUARANTINE_TOOLS
+    if set(releases) != expected_releases:
         raise RuntimeError(
-            "Public release manifest must partition every publishable tool into "
-            "published or publication-pending"
+            "Public release manifest releases must match every currently publishable tool"
+        )
+    pending_tools = set(pending)
+    if (
+        pending_tools & set(releases)
+        or not pending_tools <= redistribution_eligible & PUBLICATION_QUARANTINE_TOOLS
+    ):
+        raise RuntimeError(
+            "Public release manifest pending tools must be distinct, "
+            "redistribution-eligible publication candidates"
         )
     for tool, entry in releases.items():
         if not isinstance(entry, dict):
-            raise RuntimeError(f"Public release manifest entry {tool!r} must be an object")
+            raise RuntimeError(
+                f"Public release manifest entry {tool!r} must be an object"
+            )
         if entry.get("tag") != public_release_tag_for_tool(tool):
             raise RuntimeError(f"Public release tag drifted for {tool!r}")
-        if re.fullmatch(
-            r"sha256:[0-9a-f]{64}", str(entry.get("published_digest") or "")
-        ) is None:
+        if (
+            re.fullmatch(
+                r"sha256:[0-9a-f]{64}", str(entry.get("published_digest") or "")
+            )
+            is None
+        ):
             raise RuntimeError(f"Public release digest is invalid for {tool!r}")
         development_sha = entry.get("development_sha")
         if development_sha is not None:
@@ -682,7 +707,10 @@ def sonic_image_variant_for_gpu(
             token = _normalize_gpu_target(str(match))
             # The family name also occurs in datacenter GPU labels. Those must
             # reach their model-specific rule, never the workstation default.
-            if token == "blackwell" and classify_gpu_target(normalized) == DATACENTER_HEADLESS:
+            if (
+                token == "blackwell"
+                and classify_gpu_target(normalized) == DATACENTER_HEADLESS
+            ):
                 continue
             if token in normalized:
                 if not requested:

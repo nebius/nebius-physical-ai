@@ -73,6 +73,7 @@ jobs:
         run: |
           python -m pytest \
             npa/tests/docker/test_image_payload_scan.py \
+            npa/tests/docker/test_antioch_image_payload_scan.py \
             npa/tests/docker/test_packaging_contract.py \
             npa/tests/docker/test_isaac_bootstrap.py \
             -q
