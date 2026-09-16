@@ -32,6 +32,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HF_HOME=/workspace/.cache/huggingface \
     MODELSCOPE_CACHE=/workspace/.cache/modelscope \
     DIFFSYNTH_MODEL_BASE_PATH=/workspace/.cache/flex-pi/diffsynth \
+    IMAGEIO_FFMPEG_EXE=/opt/conda/bin/ffmpeg \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PATH=/opt/npa-venv/bin:/opt/conda/bin:${PATH}
@@ -60,6 +61,8 @@ RUN patch --directory=/opt/flex-pi --strip=1 --input=/tmp/dino-checkpoint.patch 
     && rm /tmp/dino-checkpoint.patch \
     && pip install -e /opt/flex-pi --extra-index-url https://download.pytorch.org/whl/cu128 \
     && pip install --force-reinstall --no-deps --index-url https://pypi.org/simple torchcodec==0.5 \
+    && rm -f /opt/conda/lib/python3.11/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2 \
+    && python -c 'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/opt/conda/bin/ffmpeg"' \
     && pip check \
     && test -z "$(find /opt/flex-pi -type f \( -iname '*.safetensors' -o -iname '*.ckpt' -o -iname '*.pt' -o -iname '*.mp4' -o -iname '*.parquet' \) -print -quit)" \
     && python - <<'PY'
