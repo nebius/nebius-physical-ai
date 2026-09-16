@@ -4844,6 +4844,22 @@ def test_rendered_backend_preserves_agent_config_when_metadata_home_changes(
         sys.modules.pop(module_name, None)
 
 
+def test_rendered_backend_normalizes_relative_agent_config_dir(
+    monkeypatch, tmp_path
+) -> None:
+    module_name = "npa_rendered_relative_agent_config"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    agent_home = tmp_path / "agent-home"
+    config_root = agent_home / ".npa"
+    config_root.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(agent_home))
+    monkeypatch.setenv("NPA_CONFIG_DIR", "~/.npa")
+    try:
+        assert module._agent_command_env()["NPA_CONFIG_DIR"] == str(config_root)
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_agent_bootstrap_exposes_authorized_key_to_cluster_lifecycle() -> None:
     from npa.cli import agent as agent_module
 

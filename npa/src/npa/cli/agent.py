@@ -3283,6 +3283,18 @@ def _configured_healthy_agent_exists(alias: str, config: dict | None = None) -> 
 def _agent_command_env() -> dict:
     env = dict(os.environ)
     env["PATH"] = "/usr/local/bin:/usr/bin:/bin:" + env.get("PATH", "")
+    configured_npa_dir = str(env.get("NPA_CONFIG_DIR") or "").strip()
+    if configured_npa_dir:
+        candidate = Path(configured_npa_dir)
+        if configured_npa_dir.startswith("~/"):
+            candidate = Path(env.get("HOME") or Path.home()) / configured_npa_dir[2:]
+        elif not candidate.is_absolute():
+            candidate = Path(env.get("HOME") or Path.home()) / candidate
+        # The isolated SkyPilot runtime binds the selected NPA configuration
+        # into its durable identity. Normalize an inherited `~/.npa` or
+        # relative spelling before launching any child process so a service
+        # restart cannot reject the same configuration as a different one.
+        env["NPA_CONFIG_DIR"] = str(candidate.expanduser().resolve(strict=False))
     profile_config = Path(str(env.get("NPA_NEBIUS_CONFIG") or ""))
     if (profile_config.is_absolute() and profile_config.name == "config.yaml"
             and profile_config.parent.name == ".nebius"):
