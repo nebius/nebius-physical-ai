@@ -8,6 +8,9 @@ ARG ISAAC_LAB_VERSION=2.3.2.post1
 ARG ISAAC_SIM_VERSION=5.1.0.0
 ARG NPA_SOURCE_SHA
 ARG NPA_RUNTIME_USER=ubuntu
+ARG OPENARM_GNUPG_VERSION=2.2.27-3ubuntu2.5
+ARG OPENARM_OPENSSL_VERSION=3.0.2-0ubuntu1.26
+ARG OPENARM_LINUX_LIBC_DEV_VERSION=5.15.0-190.200
 
 LABEL npa.tool="openarm" \
       npa.version="2.2.0-isaac0.1.0-rtfetch" \
@@ -67,7 +70,22 @@ RUN find /opt/npa/docker/workbench/common -type d -exec chmod 0755 {} + \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && NPA_RUNTIME_USER="${NPA_RUNTIME_USER}" \
        NPA_ISAAC_VENV=/opt/npa/sim/venv \
-       /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh
+       NPA_LINUX_LIBC_DEV_VERSION="${OPENARM_LINUX_LIBC_DEV_VERSION}" \
+       /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh \
+    && apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+       "gnupg=${OPENARM_GNUPG_VERSION}" \
+       "gnupg2=${OPENARM_GNUPG_VERSION}" \
+       "libssl3=${OPENARM_OPENSSL_VERSION}" \
+       "openssl=${OPENARM_OPENSSL_VERSION}" \
+    && test "$(dpkg-query -W -f='${Version}' gnupg)" = "${OPENARM_GNUPG_VERSION}" \
+    && test "$(dpkg-query -W -f='${Version}' gnupg2)" = "${OPENARM_GNUPG_VERSION}" \
+    && test "$(dpkg-query -W -f='${Version}' libssl3)" = "${OPENARM_OPENSSL_VERSION}" \
+    && test "$(dpkg-query -W -f='${Version}' openssl)" = "${OPENARM_OPENSSL_VERSION}" \
+    && test "$(dpkg-query -W -f='${Version}' linux-libc-dev)" = "${OPENARM_LINUX_LIBC_DEV_VERSION}" \
+    && rm -f /etc/ssh/ssh_host_* \
+    && test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit)" \
+    && rm -rf /var/lib/apt/lists/*
 
 # The reviewed hash lock is additive to the exact shared Isaac prerequisite closure.
 RUN /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir --require-hashes \
@@ -97,6 +115,8 @@ RUN /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir --require-hashes 
 
 RUN /opt/npa/sim/venv/bin/python -c 'import mujoco, openarm_mujoco.v2 as o; m=mujoco.MjModel.from_xml_path(o.openarm_demo_xml()); assert m.nu == 17' \
     && /opt/npa/sim/venv/bin/python -c 'import importlib.metadata as m; assert m.version("GitPython") == "3.1.62"' \
+    && /opt/npa/sim/venv/bin/python -c 'import importlib.metadata as m; assert m.version("fastapi") == "0.136.1"' \
+    && /opt/npa/sim/venv/bin/python -c 'import importlib.metadata as m; assert m.version("starlette") == "1.6.0"' \
     && /opt/npa/sim/venv/bin/python -c 'import importlib.util; assert importlib.util.find_spec("isaacsim") is None; assert importlib.util.find_spec("isaaclab") is None' \
     && /opt/npa/sim/venv/bin/python /opt/npa/openarm/emit_license_inventory.py
 
@@ -111,5 +131,5 @@ WORKDIR /workspace/isaaclab
 EXPOSE 8792
 USER ubuntu
 ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]
-CMD ["npa", "workbench", "openarm", "serve"]
+CMD ["npa", "workbench", "openarm", "serve", "--host", "0.0.0.0"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD ["/opt/npa/sim/venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8792/health', timeout=3).read()"]

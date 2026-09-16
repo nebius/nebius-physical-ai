@@ -15,6 +15,7 @@ import platform
 import subprocess
 import tempfile
 import zipfile
+from collections.abc import Mapping, Sequence
 from importlib import metadata
 from pathlib import Path
 from typing import Any
@@ -350,23 +351,26 @@ def _validate_checkpoint(path: Path) -> None:
 
 
 def _validate_video(path: Path) -> None:
-    completed = subprocess.run(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=codec_name,width,height",
-            "-of",
-            "json",
-            str(path),
-        ],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_name,width,height",
+                "-of",
+                "json",
+                str(path),
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise OpenArmError(f"cannot probe MuJoCo video: {exc}") from exc
     try:
         streams = json.loads(completed.stdout).get("streams", [])
     except json.JSONDecodeError as exc:
@@ -450,6 +454,29 @@ def qualify(request: OpenArmQualificationRequest) -> OpenArmQualificationRespons
     return response
 
 
+def _all_finite(value: Any) -> bool:
+    """Recursively reject non-finite numbers in result-shaped values."""
+    import numpy as np
+
+    if isinstance(value, Mapping):
+        return all(_all_finite(item) for item in value.values())
+    if isinstance(value, np.ndarray):
+        try:
+            return bool(np.isfinite(value).all())
+        except TypeError:
+            return _all_finite(value.tolist())
+    if isinstance(value, np.generic):
+        try:
+            return bool(np.isfinite(value))
+        except TypeError:
+            return True
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return all(_all_finite(item) for item in value)
+    if isinstance(value, float):
+        return math.isfinite(value)
+    return True
+
+
 def run(
     request: OpenArmRunRequest, *, output_dir: Path | None = None
 ) -> dict[str, Any]:
@@ -464,10 +491,7 @@ def run(
         result = _run_isaac(request, output_dir)
     result["request_sha256"] = manifest_sha256(request)
     result["output_uri"] = request.output_uri
-    result["finite_metrics"] = all(
-        not isinstance(value, float) or math.isfinite(value)
-        for value in result.values()
-    )
+    result["finite_metrics"] = _all_finite(result)
     _write_json(output_dir / "result.json", result)
     _upload(output_dir, request.output_uri)
     return result

@@ -1,7 +1,7 @@
 {
   "schema": "npa.openarm.packaging-components.v1",
   "redistribution": "public",
-  "reviewed_at": "2026-09-14",
+  "reviewed_at": "2026-09-15",
   "components": [
     {
       "name": "enactic/openarm_mujoco",
@@ -30,6 +30,14 @@
       "license": "Apache-2.0",
       "baked": true,
       "payload": "Hash-locked PyPI wheel and declared dependencies"
+    },
+    {
+      "name": "OpenArm HTTP service stack",
+      "version": "FastAPI 0.136.1 / Starlette 1.6.0 / Uvicorn 0.53.0",
+      "source": "https://pypi.org/",
+      "license": "MIT",
+      "baked": true,
+      "payload": "Hash-locked PyPI wheels and declared dependencies"
     },
     {
       "name": "NVIDIA CUDA base image",

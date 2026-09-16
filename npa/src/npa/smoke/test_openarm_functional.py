@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-import shutil
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -13,9 +13,11 @@ from npa.workbench.openarm.schemas import OpenArmRunRequest
 
 
 def main() -> int:
-    output = Path("/tmp/npa-openarm-golden")
-    shutil.rmtree(output, ignore_errors=True)
-    output.mkdir(parents=True)
+    output = Path(tempfile.gettempdir()) / "npa-openarm-golden"
+    # The stable artifact path is part of the golden-eval manifest. Create its
+    # final directory atomically and fail closed if another process or symlink
+    # already owns it instead of deleting or following a predictable path.
+    output.mkdir(mode=0o700)
     request = OpenArmRunRequest(
         simulator="mujoco", output_uri="s3://golden-eval/openarm/", steps=500
     )

@@ -21,8 +21,11 @@ from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
 from npa.orchestration.npa_workflow.catalog import argv_for_tool
 from npa.sdk.workbench import openarm as sdk
 from npa.workbench.openarm.runtime import (
+    OpenArmError,
+    _all_finite,
     _render_video,
     _step_mujoco,
+    _validate_video,
     _validate_qualification_tree,
 )
 from npa.workbench.openarm.schemas import OpenArmRunRequest, OpenArmStatusResponse
@@ -70,7 +73,7 @@ main()
 
 def test_request_rejects_non_s3_output() -> None:
     with pytest.raises(ValueError, match="S3"):
-        OpenArmRunRequest(simulator="mujoco", output_uri="/tmp/output")
+        OpenArmRunRequest(simulator="mujoco", output_uri="file:///local/output")
 
 
 def test_mujoco_rollout_commands_only_bimanual_actuators(
@@ -303,6 +306,90 @@ def test_qualification_validates_real_artifact_tree(tmp_path: Path) -> None:
     assert all(len(row["sha256"]) == 64 for row in artifacts)
 
 
+def test_qualification_rejects_nonfinite_npz_despite_result_claim(
+    tmp_path: Path,
+) -> None:
+    stage = tmp_path / "mujoco"
+    stage.mkdir()
+    np.savez(
+        stage / "trace.npz",
+        joint_position=np.asarray([[np.nan]]),
+        command=np.ones((1, 16)),
+        velocity_energy=np.ones(1),
+    )
+    (stage / "result.json").write_text(
+        json.dumps(
+            {
+                "schema": "npa.openarm.mujoco_rollout.v1",
+                "status": "completed",
+                "finite_metrics": True,
+                "artifact": {"path": "trace.npz"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OpenArmError, match="invalid joint_position values"):
+        _validate_qualification_tree(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"nested": {"metric": float("nan")}},
+        {"nested": [1.0, (2.0, float("inf"))]},
+        np.asarray([[1.0, -np.inf]]),
+        np.asarray([{"metric": np.float32("nan")}], dtype=object),
+    ],
+)
+def test_finite_metrics_rejects_nested_nonfinite_values(value: object) -> None:
+    assert _all_finite(value) is False
+
+
+def test_missing_ffprobe_is_clean_validation_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    failure = FileNotFoundError("ffprobe executable is unavailable")
+    monkeypatch.setattr(
+        "npa.workbench.openarm.runtime.subprocess.run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(failure),
+    )
+
+    with pytest.raises(OpenArmError, match="cannot probe MuJoCo video") as caught:
+        _validate_video(tmp_path / "rollout.mp4")
+
+    assert caught.value.__cause__ is failure
+
+
+def test_qualify_cli_reports_missing_ffprobe_without_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_qualification(**_kwargs: object) -> None:
+        try:
+            raise FileNotFoundError("ffprobe executable is unavailable")
+        except OSError as exc:
+            raise OpenArmError("cannot probe MuJoCo video") from exc
+
+    monkeypatch.setattr(sdk, "qualify", fail_qualification)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "openarm",
+            "qualify",
+            "--input-path",
+            "s3://input/root/",
+            "--output-path",
+            "s3://output/root/",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert result.output.strip() == "cannot probe MuJoCo video"
+    assert "Traceback" not in result.output
+
+
 def test_packaging_pins_and_excludes_isaac_payload() -> None:
     dockerfile = (ROOT / "npa/docker/workbench/openarm/Dockerfile").read_text(
         encoding="utf-8"
@@ -314,6 +401,19 @@ def test_packaging_pins_and_excludes_isaac_payload() -> None:
     assert "nvcr.io/nvidia/isaac" not in dockerfile
     assert "--require-hashes" in dockerfile
     assert 'm.version("GitPython") == "3.1.62"' in dockerfile
+    assert 'm.version("fastapi") == "0.136.1"' in dockerfile
+    assert 'm.version("starlette") == "1.6.0"' in dockerfile
+    assert '"serve", "--host", "0.0.0.0"' in dockerfile
+    assert "OPENARM_GNUPG_VERSION=2.2.27-3ubuntu2.5" in dockerfile
+    assert "OPENARM_OPENSSL_VERSION=3.0.2-0ubuntu1.26" in dockerfile
+    assert "OPENARM_LINUX_LIBC_DEV_VERSION=5.15.0-190.200" in dockerfile
+    assert '"gnupg2=${OPENARM_GNUPG_VERSION}"' in dockerfile
+    assert "rm -f /etc/ssh/ssh_host_*" in dockerfile
+    service_lock = (
+        ROOT / "npa/docker/workbench/openarm/mujoco-requirements.txt"
+    ).read_text(encoding="utf-8")
+    assert "starlette==1.6.0" in service_lock
+    assert "starlette==0.45.3" not in service_lock
     security_lock = (
         ROOT / "npa/docker/workbench/openarm/security-requirements.txt"
     ).read_text(encoding="utf-8")
@@ -334,9 +434,28 @@ def test_packaging_pins_and_excludes_isaac_payload() -> None:
     sources = {row["name"]: row for row in components["components"]}
     assert len(sources["enactic/openarm_mujoco"]["license_sha256"]) == 64
     assert len(sources["enactic/openarm_isaac_lab"]["license_sha256"]) == 64
+    assert sources["OpenArm HTTP service stack"]["version"] == (
+        "FastAPI 0.136.1 / Starlette 1.6.0 / Uvicorn 0.53.0"
+    )
     assert "docker/workbench/openarm/security-requirements.txt" in components[
         "transitive_inventory"
     ]["python_lock"]
+
+
+def test_serve_defaults_to_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        "uvicorn.run", lambda app, **kwargs: observed.update(app=app, **kwargs)
+    )
+
+    result = CliRunner().invoke(app, ["workbench", "openarm", "serve"])
+
+    assert result.exit_code == 0, result.output
+    assert observed == {
+        "app": "npa.workbench.openarm.service:app",
+        "host": "127.0.0.1",
+        "port": 8792,
+    }
 
 
 def test_deploy_dry_run_redacts_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -357,6 +476,7 @@ def test_deploy_dry_run_redacts_secrets(monkeypatch: pytest.MonkeyPatch) -> None
     payload = json.loads(result.output)
     assert payload["items"][0]["data"]["OPENARM_TOKEN"] == "<redacted>"
     pod_spec = payload["items"][1]["spec"]["template"]["spec"]
+    assert "args" not in pod_spec["containers"][0]
     assert pod_spec["nodeSelector"] == {
         "node.kubernetes.io/instance-type": "gpu-rtx6000"
     }

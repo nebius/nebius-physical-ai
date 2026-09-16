@@ -243,7 +243,7 @@ def system_info_cmd(
 @app.command("serve")
 @intent_boundary(OperationIntent.ENSURE_PRESENT)
 def serve_cmd(
-    host: str = typer.Option("0.0.0.0", "--host"),
+    host: str = typer.Option("127.0.0.1", "--host"),
     port: int = typer.Option(DEFAULT_PORT, "--port"),
 ) -> None:
     """Start the OpenArm service in the current container."""
@@ -276,7 +276,6 @@ def _service_container(image: str, secret_name: str) -> dict[str, Any]:
     return {
         "name": "service",
         "image": image,
-        "args": ["npa", "workbench", "openarm", "serve"],
         "envFrom": [{"secretRef": {"name": secret_name}}],
         "ports": [{"name": "http", "containerPort": DEFAULT_PORT}],
         "volumeMounts": [{"name": "isaac-cache", "mountPath": "/opt/isaac-cache"}],
