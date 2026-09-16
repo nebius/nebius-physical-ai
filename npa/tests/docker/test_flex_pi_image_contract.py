@@ -62,3 +62,13 @@ def test_dockerfile_pins_source_base_and_nonroot() -> None:
     assert "NPA_SOURCE_COMMIT" in text
     assert "IMAGEIO_FFMPEG_EXE=/opt/conda/bin/ffmpeg" in text
     assert "rm -f /opt/conda/lib/python3.11/site-packages/imageio_ffmpeg/binaries/" in text
+    assert "apt-get install -y --only-upgrade linux-libc-dev" in text
+    assert "rm -rf /opt/nvidia/nsight-compute/2025.1.0" in text
+    assert "security-dependencies.patch" in text
+
+    dependency_patch = (
+        Path(__file__).resolve().parents[2]
+        / "docker/workbench/flex-pi/pins/security-dependencies.patch"
+    ).read_text()
+    assert '"gitpython==3.1.62"' in dependency_patch
+    assert '"wandb==0.30.0"' in dependency_patch
