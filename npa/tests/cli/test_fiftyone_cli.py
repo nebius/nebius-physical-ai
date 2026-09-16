@@ -106,7 +106,7 @@ def test_fiftyone_load_dataset_help_includes_format_flag() -> None:
     assert "lerobot" in output
 
 
-def test_fiftyone_export_lerobot_subtasks_requires_s3_output() -> None:
+def test_fiftyone_export_lerobot_subtasks_requires_s3_output(tmp_path: Path) -> None:
     result = runner.invoke(
         app,
         [
@@ -116,7 +116,7 @@ def test_fiftyone_export_lerobot_subtasks_requires_s3_output() -> None:
             "--dataset-name",
             "review",
             "--output-path",
-            "/tmp/derived",
+            str(tmp_path / "derived"),
         ],
     )
 
