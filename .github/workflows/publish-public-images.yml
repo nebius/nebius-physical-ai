@@ -79,6 +79,31 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Keep LIBERO public disclosure quarantined
+        env:
+          REQUESTED_TOOLS: ${{ inputs.tool }}
+          BUILD_TOOLS: ${{ inputs.build_development_tools }}
+          CLEANUP_TOOLS: ${{ inputs.cleanup_development_tools }}
+        run: |
+          set -euo pipefail
+          set -f
+          contains_libero() {
+            local value="${1//,/ }"
+            local tool
+            for tool in $value; do
+              if [ "$tool" = libero ]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+          if contains_libero "$REQUESTED_TOOLS" || \
+            contains_libero "$BUILD_TOOLS" || \
+            contains_libero "$CLEANUP_TOOLS"; then
+            echo "::error::LIBERO public disclosure remains blocked until a separate exact-digest live-B200 authorization is implemented and accepted."
+            exit 1
+          fi
+
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11"
@@ -724,14 +749,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install the LIBERO OCI archive importer
-        if: matrix.tool == 'libero'
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y skopeo
-          skopeo --version
-
       - name: Verify exact qualified private LIBERO candidate lineage
         if: matrix.tool == 'libero'
         run: |
@@ -873,11 +890,8 @@ jobs:
               --verify-build-oci "$RUNNER_TEMP/libero-build.oci.tar" \
               --build-metadata "$RUNNER_TEMP/libero-build-metadata.json" \
               --output "$RUNNER_TEMP/libero-build-attestations.json"
-            skopeo copy --override-os linux --override-arch amd64 \
-              "oci-archive:$RUNNER_TEMP/libero-build.oci.tar" \
-              "docker-daemon:$IMAGE" >/dev/null
-            test "$(docker image inspect --format '{{.Id}}' "$IMAGE")" = \
-              "$(jq -er '.["containerimage.config.digest"]' "$RUNNER_TEMP/libero-build-metadata.json")"
+            echo "::error::LIBERO archive import remains disabled while public disclosure is quarantined."
+            exit 1
           fi
 
       - name: Enforce runtime, revision, bootstrap, config, and history contracts
@@ -1617,6 +1631,10 @@ jobs:
         include: ${{ fromJSON(needs.resolve.outputs.build_matrix) }}
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+
       - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
 
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -1814,7 +1832,7 @@ jobs:
             exit 1
           }
           classified="$(mktemp)"
-          npa/.venv/bin/python - "$repository" "$digest" "$version_id" \
+          python - "$repository" "$digest" "$version_id" \
             "$tag" "$current_versions" "$classified" <<'PY'
           import json
           import re

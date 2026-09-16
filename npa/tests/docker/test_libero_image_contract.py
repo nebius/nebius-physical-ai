@@ -492,6 +492,41 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     None
 ):
     text = PUBLICATION_WORKFLOW.read_text(encoding="utf-8")
+    workflow = yaml.safe_load(text)
+    resolve_steps = workflow["jobs"]["resolve"]["steps"]
+    quarantine_index = next(
+        index
+        for index, step in enumerate(resolve_steps)
+        if step.get("name") == "Keep LIBERO public disclosure quarantined"
+    )
+    quarantine_step = resolve_steps[quarantine_index]
+
+    assert quarantine_index == 1
+    assert quarantine_step["env"] == {
+        "REQUESTED_TOOLS": "${{ inputs.tool }}",
+        "BUILD_TOOLS": "${{ inputs.build_development_tools }}",
+        "CLEANUP_TOOLS": "${{ inputs.cleanup_development_tools }}",
+    }
+    empty_selectors = {
+        "REQUESTED_TOOLS": "",
+        "BUILD_TOOLS": "",
+        "CLEANUP_TOOLS": "",
+    }
+    quarantine_error = (
+        "LIBERO public disclosure remains blocked until a separate "
+        "exact-digest live-B200 authorization is implemented and accepted."
+    )
+    for selector in empty_selectors:
+        selector_environment = {**empty_selectors, selector: "libero"}
+        result = subprocess.run(
+            ["bash", "-c", quarantine_step["run"]],
+            check=False,
+            capture_output=True,
+            env=selector_environment,
+            text=True,
+        )
+        assert result.returncode == 1
+        assert quarantine_error in result.stdout
 
     assert "matrix.tool == 'libero'" in text
     assert "libero-base-provenance.intoto.json" in text
@@ -518,8 +553,27 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert "--provenance=mode=max" in text
     assert "--sbom=true" in text
     assert "type=oci,dest=$RUNNER_TEMP/libero-build.oci.tar" in text
-    assert '"oci-archive:$RUNNER_TEMP/libero-build.oci.tar"' in text
-    assert '"docker-daemon:$IMAGE"' in text
+    archive_verification = (
+        '--verify-build-oci "$RUNNER_TEMP/libero-build.oci.tar"'
+    )
+    archive_refusal = (
+        "LIBERO archive import remains disabled while public disclosure is "
+        "quarantined."
+    )
+    assert text.index("type=oci,dest=$RUNNER_TEMP/libero-build.oci.tar") < text.index(
+        archive_verification
+    ) < text.index(archive_refusal)
+    assert "docker-daemon:" not in text
+    assert archive_refusal in text
+    assert "Install the LIBERO OCI archive importer" not in text
+    skopeo_steps = [
+        step
+        for job in workflow["jobs"].values()
+        for step in job.get("steps", [])
+        if "skopeo" in step.get("run", "")
+    ]
+    assert len(skopeo_steps) == 1
+    assert skopeo_steps[0]["if"] == "matrix.tool == 'ncore'"
     assert '[[ "$TOOL" == curobo || "$TOOL" == libero ]]' in text
     assert "libero_qualified_image_manifest" in text
     assert "checked-in qualification development SHA does not match" in text
