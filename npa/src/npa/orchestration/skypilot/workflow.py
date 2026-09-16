@@ -2024,6 +2024,33 @@ def _wait_for_healthy_jobs_controller(
     deadline = time.monotonic() + max(timeout, 0)
     last_summary = "no jobs-controller found" if require_existing else ""
     unhealthy: list[tuple[str, str]] = []
+    # The exact Kubernetes controller pod is the execution authority. Probe it
+    # before asking SkyPilot for cached status: on SkyPilot 0.12 an otherwise
+    # empty runtime can materialize a no-pod controller row merely by reading
+    # status, and then reject the first launch that should create the pod.
+    # With a stable isolated user identity the expected controller name is
+    # deterministic, so an exact zero-pod result is stronger than that cache.
+    if execution_probe is not None and not require_existing:
+        user_id = str(env.get("SKYPILOT_USER_ID") or "").strip()
+        expected_name = (
+            f"{JOBS_CONTROLLER_PREFIX}{user_id}"
+            if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", user_id)
+            else ""
+        )
+        if expected_name:
+            initial_probe = execution_probe(expected_name)
+            if (
+                not initial_probe.healthy
+                and initial_probe.outcome == "head_pod_ambiguous"
+                and initial_probe.pod_count == 0
+            ):
+                return ControllerHealthResult(
+                    ControllerState.ABSENT,
+                    expected_name,
+                    ControllerExecutionProbe(
+                        True, "controller_absent", pod_count=0
+                    ),
+                )
     while True:
         # Kubernetes has a stronger source of truth below: the exact controller
         # pod is selected and its readiness/cwd are probed directly.  Avoid a

@@ -1781,8 +1781,7 @@ def test_controller_up_allows_recreation_when_cleaned_up_pod_is_absent(
     assert result.state is workflow_module.ControllerState.ABSENT
     assert result.execution_probe is not None
     assert result.execution_probe.outcome == "controller_absent"
-    assert calls
-    assert all("--refresh" not in cmd for cmd in calls)
+    assert calls == []
 
 
 def test_controller_status_refresh_is_retained_without_execution_probe(
@@ -2935,14 +2934,7 @@ def test_submit_treats_cached_controller_without_a_pod_as_absent(
     def fake_run(cmd, **_kwargs):
         nonlocal launched
         if _is_status_cmd(cmd):
-            return subprocess.CompletedProcess(
-                cmd,
-                0,
-                stdout=json.dumps(
-                    [{"name": "sky-jobs-controller-npa-test", "status": "UP"}]
-                ),
-                stderr="",
-            )
+            raise AssertionError("podless controller preflight must not read SkyPilot status")
         if cmd[1:3] == ["jobs", "queue"]:
             assert launched, "initial reconciliation must not query a podless controller"
             return subprocess.CompletedProcess(
