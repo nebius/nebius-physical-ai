@@ -6,6 +6,8 @@ from pathlib import Path
 
 from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG, argv_for_tool
+from npa.orchestration.npa_workflow.interpreter import PlanStep
+from npa.orchestration.npa_workflow.skypilot_render import secret_env_hints_for_plan
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / "workflows" / "testing" / "robocasa-smoke.yaml"
@@ -53,6 +55,8 @@ def test_robocasa_toolrefs_render() -> None:
         assert "--output-path" in argv
         assert "--service" in argv
         assert "--endpoint" in argv
+        assert "--token-env" in argv
+        assert "{{config.robocasa_token_env}}" in argv
 
 
 def test_random_rollout_toolref_includes_iterations() -> None:
@@ -105,6 +109,31 @@ def test_data_policy_trajectory_export_toolref_renders() -> None:
     assert "--capability" in argv
     assert "kitchen_trajectory_export" in argv
     assert "--num-envs" in argv
+    assert "--token-env" in argv
+    assert "{{config.robocasa_token_env}}" in argv
+
+
+def test_robocasa_workflows_forward_the_service_token() -> None:
+    for workflow in (WORKFLOW, DATA_POLICY):
+        plan = build_plan(load_spec(workflow), run_id="test")
+        assert secret_env_hints_for_plan(plan.steps) == ("ROBOCASA_TOKEN",)
+
+
+def test_robocasa_service_token_hint_uses_the_resolved_token_env() -> None:
+    step = PlanStep(
+        state="demo",
+        tool_ref="workbench.robocasa.random_rollout",
+        argv=[
+            "npa",
+            "workbench",
+            "robocasa",
+            "run",
+            "--token-env",
+            "DEMO_ROBOCASA_TOKEN",
+        ],
+    )
+
+    assert secret_env_hints_for_plan([step]) == ("DEMO_ROBOCASA_TOKEN",)
 
 
 def test_data_policy_uses_panda_omron_and_disjoint_robocasa_eval() -> None:
