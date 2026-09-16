@@ -182,7 +182,7 @@ def test_build_helper_defaults_local_and_uses_only_committed_context() -> None:
     assert "NPA_PUBLIC_REGISTRY" not in text
     assert "NPA_BYOF_ROBOMIMIC_LOCK_DIR" not in text
     assert 'archive "${revision}:npa/docker/workbench/robomimic"' in text
-    assert '"${context}/verify_image.py" prepare-build-inputs' in text
+    assert '"${context_anchor}/verify_image.py" prepare-build-inputs' in text
     assert "docker build --platform linux/amd64 --pull=false --iidfile" in text
     assert 'docker image tag "${image_id}" "${image}"' in text
     assert (
@@ -191,6 +191,8 @@ def test_build_helper_defaults_local_and_uses_only_committed_context() -> None:
     assert "docker image rm" not in text
     assert 'owner_runtime_dir="/run/user/$(id -u)"' in text
     assert 'flock -x "${tag_lock_fd}"' in text
+    assert 'local target_name="$1" inherited_directory_fd=9' in text
+    assert '9<&"${receipt_dir_fd}"' in text
     assert "npa.robomimic.neutral-build-failure.v1" in text
     assert '"consumer_image_ref": image_id' in text
     assert '--tag "${image}"' not in text
@@ -210,6 +212,16 @@ def _fake_build_environment(tmp_path: Path) -> tuple[dict[str, str], Path, Path,
         """#!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-}" == */verify_image.py && "${2:-}" == "prepare-build-inputs" ]]; then
+  context_path="$(readlink -f -- "${1%/verify_image.py}")"
+  if [[ "${FAKE_PREBUILD_REPLACEMENT:-}" == "scratch-parent" ]]; then
+    /usr/bin/mv -- "${TMPDIR}" "${TMPDIR}.retained"
+    /usr/bin/mkdir -m 700 -- "${TMPDIR}"
+    printf 'replacement\n' > "${TMPDIR}/replacement-marker"
+  elif [[ "${FAKE_PREBUILD_REPLACEMENT:-}" == "context" ]]; then
+    /usr/bin/mv -- "${context_path}" "${context_path}.retained"
+    /usr/bin/mkdir -m 700 -- "${context_path}"
+    printf 'replacement\n' > "${context_path}/replacement-marker"
+  fi
   while [[ "$#" -gt 0 ]]; do
     if [[ "$1" == "--output-root" ]]; then
       mkdir -p -- "$2"
@@ -219,7 +231,54 @@ if [[ "${1:-}" == */verify_image.py && "${2:-}" == "prepare-build-inputs" ]]; th
   done
   exit 91
 fi
-if [[ "${FAKE_RECEIPT_FAILURE:-0}" == "1" && "${1:-}" == "-" ]]; then
+if [[ "${1:-}" == "-" && "${2:-}" == "receipt-link" ]]; then
+  [[ "${3}" == "9" ]] || exit 78
+  if [[ "${FAKE_RECEIPT_LINK_FAILURE:-0}" == "1" \
+    && ! -e "${FAKE_RECEIPT_LINK_FAILURE_MARKER}" ]]; then
+    : > "${FAKE_RECEIPT_LINK_FAILURE_MARKER}"
+    exit 77
+  fi
+  status=0
+        """
+        + shlex.quote(sys.executable)
+        + """ "$@" 9<&9 || status=$?
+  [[ "${status}" -eq 0 ]] || exit "${status}"
+  if [[ "${FAKE_REPLACE_FINAL_RECEIPT_TARGET:-0}" == "1" \
+    && "${5}" == *.json \
+    && "${5}" != *.failure.json \
+    && "${5}" != *.failure-recovery.json \
+    && ! -e "${FAKE_FINAL_TARGET_REPLACEMENT_MARKER}" ]]; then
+        """
+        + shlex.quote(sys.executable)
+        + """ - "${3}" "${5}" "${FAKE_FINAL_TARGET_REPLACEMENT_MARKER}" 9<&9 <<'PY'
+import os
+import sys
+
+directory_fd = int(sys.argv[1])
+target_name = sys.argv[2]
+marker = sys.argv[3]
+os.rename(
+    target_name,
+    f"{target_name}.retained",
+    src_dir_fd=directory_fd,
+    dst_dir_fd=directory_fd,
+)
+replacement_fd = os.open(
+    target_name,
+    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+    0o600,
+    dir_fd=directory_fd,
+)
+with os.fdopen(replacement_fd, "wb") as replacement:
+    replacement.write(b'{"replacement":true}\\n')
+marker_fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+os.close(marker_fd)
+PY
+  fi
+  exit 0
+fi
+if [[ "${FAKE_RECEIPT_FAILURE:-0}" == "1" \
+  && "${1:-}" == "-" && "${2:-}" != "receipt-link" ]]; then
   exit 97
 fi
 exec """
@@ -233,6 +292,15 @@ exec """
     docker.write_text(
         """#!/usr/bin/env bash
 set -euo pipefail
+replace_receipt_directory() {
+  [[ ! -e "${FAKE_DIRECTORY_REPLACEMENT_MARKER}" ]] || return 0
+  /usr/bin/mv -- "${NPA_BYOF_ROBOMIMIC_RECEIPT_DIR}" \
+    "${NPA_BYOF_ROBOMIMIC_RECEIPT_DIR}.retained"
+  /usr/bin/mkdir -m 700 -- "${NPA_BYOF_ROBOMIMIC_RECEIPT_DIR}"
+  printf 'replacement\n' \
+    > "${NPA_BYOF_ROBOMIMIC_RECEIPT_DIR}/replacement-marker"
+  : > "${FAKE_DIRECTORY_REPLACEMENT_MARKER}"
+}
 action="$1"
 shift
 case "${action}" in
@@ -274,6 +342,9 @@ case "${action}" in
       inspect)
         reference="${!#}"
         if [[ "${reference}" == sha256:* ]]; then
+          if [[ "${FAKE_DOCKER_MODE:-}" == "replace-receipt-directory" ]]; then
+            replace_receipt_directory
+          fi
           if [[ -f "${FAKE_DOCKER_TAG_STATE}" \
             && "${FAKE_DOCKER_MODE:-}" == "post-assignment-built-inspect-failure" ]]; then
             exit 74
@@ -339,22 +410,6 @@ esac
     )
     docker.chmod(0o700)
 
-    ln_wrapper = bin_dir / "ln"
-    ln_wrapper.write_text(
-        """#!/usr/bin/env bash
-set -euo pipefail
-target="${!#}"
-if [[ "${FAKE_RECEIPT_LINK_FAILURE:-0}" == "1" \
-  && ! -e "${FAKE_RECEIPT_LINK_FAILURE_MARKER}" ]]; then
-  : > "${FAKE_RECEIPT_LINK_FAILURE_MARKER}"
-  exit 77
-fi
-exec /usr/bin/ln "$@"
-""",
-        encoding="utf-8",
-    )
-    ln_wrapper.chmod(0o700)
-
     rm_wrapper = bin_dir / "rm"
     rm_wrapper.write_text(
         """#!/usr/bin/env bash
@@ -370,11 +425,11 @@ if [[ "${FAKE_RM_RECEIPT_TEMP_FAILURE:-0}" == "1" \
 fi
 if [[ "${FAKE_RM_CONTEXT_FAILURE:-0}" == "1" \
   && ! -e "${FAKE_RM_CONTEXT_FAILURE_MARKER}" ]]; then
+  recorded_context="$(cat "${FAKE_DOCKER_CONTEXT_RECORD}" 2>/dev/null || true)"
   for candidate in "$@"; do
     if [[ "$1" == "-rf" \
-      && "${candidate%/*}" == "${TMPDIR:-/tmp}" \
-      && "${candidate##*/}" == npa-robomimic-context.* \
-      && -d "${candidate}" ]]; then
+      && -n "${recorded_context}" \
+      && "${candidate}" == "${recorded_context}/"* ]]; then
       : > "${FAKE_RM_CONTEXT_FAILURE_MARKER}"
       exit 79
     fi
@@ -399,6 +454,12 @@ exec /usr/bin/rm "$@"
         "FAKE_RM_FAILURE_MARKER": str(tmp_path / "rm-failure-marker"),
         "FAKE_RM_CONTEXT_FAILURE_MARKER": str(tmp_path / "rm-context-marker"),
         "FAKE_RECEIPT_LINK_FAILURE_MARKER": str(tmp_path / "link-failure-marker"),
+        "FAKE_DIRECTORY_REPLACEMENT_MARKER": str(
+            tmp_path / "directory-replacement-marker"
+        ),
+        "FAKE_FINAL_TARGET_REPLACEMENT_MARKER": str(
+            tmp_path / "final-target-replacement-marker"
+        ),
     }
     return environment, temp_root, receipt_dir, tmp_path / "tag-state"
 
@@ -768,6 +829,100 @@ def test_build_helper_records_unresolved_context_cleanup(tmp_path: Path) -> None
     )
     assert len(list(temp_root.glob("npa-robomimic-context.*"))) == 1
     assert _docker_actions(tmp_path) == ["tag"]
+
+
+@pytest.mark.parametrize("replacement", ("scratch-parent", "context"))
+def test_build_helper_refuses_replaced_prebuild_directory(
+    tmp_path: Path, replacement: str
+) -> None:
+    environment, temp_root, receipt_dir, _ = _fake_build_environment(tmp_path)
+    environment["FAKE_DOCKER_IMAGE_ID"] = "sha256:" + "1" * 64
+    environment["FAKE_PREBUILD_REPLACEMENT"] = replacement
+
+    result = _run_fake_build(environment)
+
+    if replacement == "scratch-parent":
+        replacement_path = temp_root
+        retained = Path(f"{temp_root}.retained")
+    else:
+        replacement_path = next(
+            path
+            for path in temp_root.glob("npa-robomimic-context.*")
+            if (path / "replacement-marker").is_file()
+        )
+        retained = Path(f"{replacement_path}.retained")
+    assert result.returncode != 0
+    assert "directory identity changed" in result.stderr
+    assert (replacement_path / "replacement-marker").read_text() == "replacement\n"
+    assert retained.is_dir()
+    assert list(receipt_dir.glob("*.json")) == []
+    assert not (tmp_path / "docker-actions").exists()
+    assert not (tmp_path / "iid-path").exists()
+
+
+def test_build_helper_refuses_replaced_receipt_directory(tmp_path: Path) -> None:
+    environment, temp_root, receipt_dir, _ = _fake_build_environment(tmp_path)
+    environment["FAKE_DOCKER_IMAGE_ID"] = "sha256:" + "2" * 64
+    environment["FAKE_DOCKER_MODE"] = "replace-receipt-directory"
+
+    result = _run_fake_build(environment)
+
+    retained = Path(f"{receipt_dir}.retained")
+    assert result.returncode != 0
+    assert "directory identity changed" in result.stderr
+    assert (receipt_dir / "replacement-marker").read_text() == "replacement\n"
+    assert retained.is_dir()
+    assert list(receipt_dir.glob("*.json")) == []
+    assert list(retained.glob("*.json")) == []
+    assert _docker_actions(tmp_path) == []
+    assert len(list(temp_root.glob("npa-robomimic-context.*"))) == 1
+
+
+def test_build_helper_refuses_replaced_final_receipt_target(tmp_path: Path) -> None:
+    environment, temp_root, receipt_dir, tag_state = _fake_build_environment(tmp_path)
+    image_id = "sha256:" + "3" * 64
+    environment["FAKE_DOCKER_IMAGE_ID"] = image_id
+    environment["FAKE_REPLACE_FINAL_RECEIPT_TARGET"] = "1"
+
+    result = _run_fake_build(environment)
+
+    replacement = next(
+        path
+        for path in receipt_dir.glob("*.json")
+        if json.loads(path.read_text(encoding="utf-8")) == {"replacement": True}
+    )
+    assert result.returncode != 0
+    assert "receipt publication refused" in result.stderr
+    assert replacement.read_text(encoding="utf-8") == '{"replacement":true}\n'
+    retained = Path(f"{replacement}.retained")
+    assert retained.is_file()
+    retained_record = json.loads(retained.read_text(encoding="utf-8"))
+    assert retained_record["consumer_image_ref"] == image_id
+    assert retained.stat().st_ino != replacement.stat().st_ino
+    _assert_failure_receipt(
+        receipt_dir, image_id, reason="transaction receipt publication refused"
+    )
+    assert tag_state.read_text(encoding="utf-8").strip() == image_id
+    assert len(list(temp_root.glob("npa-robomimic-context.*"))) == 1
+    assert _docker_actions(tmp_path) == ["tag"]
+
+
+def test_build_helper_shell_functions_remain_reviewable() -> None:
+    lines = BUILD_SCRIPT.read_text(encoding="utf-8").splitlines()
+    function_lengths: dict[str, int] = {}
+    function_name: str | None = None
+    function_start = 0
+    for line_number, line in enumerate(lines, start=1):
+        match = re.fullmatch(r"([a-z][a-z0-9_]*)\(\) \{", line)
+        if match:
+            function_name = match.group(1)
+            function_start = line_number
+        elif line == "}" and function_name is not None:
+            function_lengths[function_name] = line_number - function_start + 1
+            function_name = None
+    assert function_name is None
+    assert function_lengths
+    assert max(function_lengths.values()) < 40, function_lengths
 
 
 def test_dataset_notice_binds_exact_official_license_metadata() -> None:
