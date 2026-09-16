@@ -115,7 +115,7 @@ def _context_payload(tmp_path: Path, **updates: object) -> dict[str, object]:
         "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
         "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
         "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-        "runtime_lock_sha256": "d198a02d46dc2adc0dfbe33ff1a27d06f2525b9d05911c6b5552da1eb74d5b60",
+        "runtime_lock_sha256": "f20a0bc5f8a9200df976fd0eb417c7b81000bf4841d2f12208e5982e9d667e91",
         "bootstrap_image": "registry.example/robotwin-private/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "reservation": {
             "policy": "STRICT",
@@ -499,6 +499,8 @@ def test_customer_entitlement_notice_names_terms_responsibility_and_resume() -> 
     assert "Decline" in CUSTOMER_ENTITLEMENT_NOTICE
     assert "accept and resume" in CUSTOMER_ENTITLEMENT_NOTICE
     assert CUSTOMER_ENTITLEMENT_ENV in CUSTOMER_ENTITLEMENT_NOTICE
+    assert "technical artifact-lock" in CUSTOMER_ENTITLEMENT_NOTICE
+    assert "aggregate" not in CUSTOMER_ENTITLEMENT_NOTICE
 
 
 def test_customer_entitlement_parse_failure_discards_private_exception_graph(
@@ -817,7 +819,10 @@ def test_live_submit_refuses_disabled_runtime_after_context_validation(
     environment, _context_path, _raw, _entitlement_path, _entitlement_raw = (
         _authorization_environment(tmp_path)
     )
-    with pytest.raises(RobotwinPreflightError, match="runtime-delivery-disabled"):
+    with pytest.raises(
+        RobotwinPreflightError,
+        match="runtime-delivery-technical-gates-incomplete",
+    ):
         prepare_live_submit(
             load_spec(ROBOTWIN_SPEC),
             requested_secret_envs=(PUBLIC_CONTEXT_ENV, CUSTOMER_ENTITLEMENT_ENV),

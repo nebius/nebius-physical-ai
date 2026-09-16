@@ -23,15 +23,23 @@ run the runtime-fetched components.
 The operator's exact `noncommercial` statement is recorded once for this
 bounded manager run and is compatible only with CuRobo v0.7.8 noncommercial
 research/evaluation. It expires with the run and does not authorize hosted
-service or broader derivative/output use. Before any governed runtime fetch,
-install, or cache mutation, a customer representative authorized to bind that
-customer must issue an owner-only, run-scoped entitlement for the exact CUDA
-12.8.1, cuDNN 9.8.0, and CuRobo v0.7.8 terms. The record is bound to customer,
-run, runtime-lock SHA-256, intended activity, exact terms, and expiry; NPA and
-the infrastructure manager do not accept those terms for the customer.
-Aggregate RoboTwin member-asset provenance and output treatment remain a
-separate human/legal blocker. Customer credentials, when an
-artifact is gated, are runtime-only secret values and must pass the exact
-provider/artifact/revision/terms payload probe. A credential, private registry,
-runtime fetch, or writable destination is not permission. Customer entitlement
-does not grant broader service, output, derivative, or redistribution rights.
+service or broader derivative/output use. Before any governed CUDA, cuDNN, or
+CuRobo runtime fetch, install, or cache mutation, a customer representative
+authorized to bind that customer must issue an owner-only, run-scoped
+entitlement for the exact CUDA 12.8.1, cuDNN 9.8.0, and CuRobo v0.7.8 terms.
+The record is bound to customer, run, runtime-lock SHA-256, intended activity,
+exact terms, and expiry; NPA and the infrastructure manager do not accept or
+sign those terms for the customer.
+
+The exact public, ungated RoboTwin2.0 revision declares MIT for both locked
+archive members. It requires an anonymous exact-revision payload-byte probe,
+not a credential or local acceptance flag. If later artifacts are token-gated,
+only the customer's vendor-side entitlement and exact payload probe may gate
+their runtime delivery. The inspected authoritative terms impose no generated-
+output restriction on the declared HDF5, MP4, frame, or JSON evidence; CuRobo's
+underlying execution remains limited to noncommercial research/evaluation.
+A credential, private registry, runtime fetch, or writable destination is not
+permission. Customer entitlement does not grant broader service, output,
+derivative, or redistribution rights, and none of the still-missing technical
+artifact-lock, probe, native-content, built-image, storage/context, or live
+evidence gates is waived.

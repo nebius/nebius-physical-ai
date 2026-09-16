@@ -3,9 +3,9 @@
 RoboTwin is represented by a public-eligible, zero-vendor-payload bootstrap
 candidate and a separately gated live workflow. The candidate version is
 `2.0-curobo-v0.7.8-rtfetch-unbuilt`; it is deliberately unbuilt and excluded
-from publication. Its neutral base/apt inputs are now immutable, but its native
-byte policy, built-byte scans, runtime delivery, aggregate asset/output review,
-and live evidence are not complete.
+from publication. Its neutral base/apt inputs and asset/output classifications
+are complete, but its native byte policy, built-byte scans, runtime delivery,
+storage/context, and live evidence are not.
 
 The eventual hard gate remains narrow and unchanged: the official
 `beat_block_hammer` task with `demo_clean` must find and replay a successful
@@ -25,9 +25,9 @@ with deferred prerequisites in its
 | Source | `RoboTwin-Platform/RoboTwin@96c1feab536306b50c26af200044fcdf126e8904` and `NVlabs/curobo@d64c4b005459db10c5dd867d8b30a87d5bda9bdb` (v0.7.8) are identities only. Neither source nor git metadata is baked or currently fetched; a future authorized runtime must fetch the exact revisions directly from their official providers and verify payload bytes before provisioning. |
 | Baked runtime | The recipe pins official Ubuntu 22.04 linux/amd64 manifest `sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986` and Ubuntu snapshot `20260912T000000Z`. Its signed `main` closure is 75 exact binary packages and 57 source packages; all 75 installed copyright files are hash-bound. The public Python application lock is complete-empty. CUDA, cuDNN, PyTorch CUDA, SAPIEN, MPLib, Warp, and every Python application package remain absent. The trusted build still refuses before Docker because no reviewed native-content policy or built-byte evidence exists. |
 | Weights | Empty. This data-collection gate uses no model or checkpoint. |
-| Data/assets | [`TianxingChen/RoboTwin2.0@785feb15aa4a4f532395ad2b1d2be5f28cb561ad`](https://huggingface.co/datasets/TianxingChen/RoboTwin2.0/tree/785feb15aa4a4f532395ad2b1d2be5f28cb561ad) is recorded only as an identity. No archive or extracted asset is currently fetched or baked. The revision's repository card labels the repository MIT, but it does not provide the member-by-member provenance or output treatment needed for the two multi-gigabyte archives; that is the narrow retained human/legal blocker. A future authorized runtime must also probe and fetch the exact revision-bound archives from the official provider and verify their recorded sizes and SHA-256 values. |
+| Data/assets | [`TianxingChen/RoboTwin2.0@785feb15aa4a4f532395ad2b1d2be5f28cb561ad`](https://huggingface.co/datasets/TianxingChen/RoboTwin2.0/tree/785feb15aa4a4f532395ad2b1d2be5f28cb561ad) is public and ungated, and its repository card declares MIT for the two exact locked members: `embodiments.zip` (219,859,313 bytes, SHA-256 `6b87d7d55e106d8ff25917e0538eb1e177fc549280e8a742a8cec3cb9f953fc6`) and `objects.zip` (3,737,778,549 bytes, SHA-256 `6aa56b3cf1e1064f7c809308144da36b00815f8b137fef2d7e4de856f8becf27`). No archive or extracted asset is fetched or baked. A future authorized runtime must anonymously probe and fetch the exact revision-bound bytes from the official provider and verify both locked sizes and hashes before provisioning. |
 | Runtime cache | Empty and disabled while runtime delivery is unapproved and has no complete artifact lock. The planned default is single-customer, single-workload node-local ephemeral storage keyed by provider, artifact, immutable revision/digest, and format. Population uses owner-only staging, verification, and receipt-last atomic rename. Durable reuse remains disabled until its rights and tenant isolation are approved. |
-| Outputs | No outputs exist. A future run may write only the destination derived from the manager-authorized root and run ID; source staging is a separate control-plane input, never a second output destination. |
+| Outputs | No outputs exist. No inspected authoritative term imposes a generated-output restriction on the declared native HDF5 action/state data, decoded MP4, rendered frames, smoke JSON, or summary JSON; CuRobo execution remains noncommercial research/evaluation. A future run may write only the destination derived from the manager-authorized root and run ID; source staging is a separate control-plane input, never a second output destination. |
 
 The operator has recorded the exact statement `noncommercial` once for this
 bounded manager run; its separate intended activity is containerization plus
@@ -38,9 +38,10 @@ a hosted service, broaden derivative/output rights, or silently upgrade CuRobo.
 Before any CUDA 12.8.1, cuDNN 9.8.0, or CuRobo v0.7.8 fetch, install, or cache
 mutation, an authorized customer representative must issue the run-scoped
 entitlement described below. NPA and the infrastructure manager do not accept
-those terms for the customer. Aggregate RoboTwin member-asset provenance and
-output treatment remain a separate human/legal blocker that customer assent
-cannot cure.
+or sign those terms for the customer. The exact public asset revision needs no
+token or local acceptance flag. If a later artifact is token-gated, only the
+customer's vendor-side entitlement and exact payload probe may gate its runtime
+delivery.
 Runtime fetch, a credential, a private registry, successful scanning, or
 writable storage is not permission.
 
@@ -61,10 +62,10 @@ entitlement evidence. Phase A accepts no upstream credential and performs no
 probe or fetch.
 
 The runtime lock separates the complete public bootstrap from the disabled
-workload delivery. Source and asset identities are recorded, but runtime
-artifacts, exact access evidence, and aggregate asset/output approval remain absent,
-so the guarded path refuses before network or provisioning. The eventual
-implementation must download into a
+workload delivery. The exact asset members and declared outputs are classified,
+but the runtime artifact lock and exact payload probes remain absent, so the
+guarded path refuses before network or provisioning. The eventual implementation
+must download into a
 unique owner-only temporary path, verify the exact expected file set, sizes,
 hashes, source identity, and notices, and publish an atomic ready marker only
 after verification. A restart may reuse only the same verified identity within
@@ -81,7 +82,7 @@ runtime-lock hash, immutable bootstrap digest, one STRICT RTX reservation,
 resource coordinates, opaque customer scope, and one output root/run ID. It
 contains no legal-acceptance booleans. The customer-issued entitlement binds
 that customer scope and run ID to runtime-lock SHA-256
-`d198a02d46dc2adc0dfbe33ff1a27d06f2525b9d05911c6b5552da1eb74d5b60`, a future
+`f20a0bc5f8a9200df976fd0eb417c7b81000bf4841d2f12208e5982e9d667e91`, a future
 expiry, the exact intended activity, the exact three terms records, and an
 explicit `accepted` or `declined` decision. Missing, declined, stale,
 wrong-customer, wrong-run, wrong-manifest, wrong-scope, or changed-terms records
@@ -97,7 +98,8 @@ Declining or leaving the second secret unset performs no runtime work. An
 authorized customer representative may resume by creating the documented
 closed-schema, owner-only entitlement and passing both variable names with
 `--secret-env`; neither file value belongs in argv, plans, logs, Git, or PR
-text. This does not resolve the aggregate asset/output blocker.
+text. This entitlement does not satisfy the separate technical artifact-lock,
+payload-probe, native-content, built-image, storage/context, or live gates.
 
 Only validated bytes cross the existing secret-value transport. The CPU worker
 materializes temporary context/entitlement/config files below a 0700 directory as exclusive
@@ -131,8 +133,8 @@ BYOF behavior is unchanged.
 
 The image bootstrap independently validates the transported context and
 run/image/output bindings. It then exits 78 with
-`ROBOTWIN_RUNTIME_REFUSED:runtime-delivery-disabled` before it can create source,
-asset, cache, or output paths or access the network. Its CPU golden eval runs
+`ROBOTWIN_RUNTIME_REFUSED:runtime-delivery-technical-gates-incomplete` before it
+can create source, asset, cache, or output paths or access the network. Its CPU golden eval runs
 `robotwin-runtime assert-refusal`; this is packaging/refusal evidence only.
 
 The RoboTwin byte scanner is likewise unavailable before the first reviewed

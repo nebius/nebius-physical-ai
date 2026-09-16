@@ -267,9 +267,14 @@ def test_runtime_expiry_refusal_discards_private_exception_graph(
     assert caught.value.__context__ is None
 
 
-def test_valid_context_reaches_only_the_disabled_delivery_refusal(tmp_path: Path) -> None:
+def test_valid_context_reaches_only_the_technical_delivery_refusal(
+    tmp_path: Path,
+) -> None:
     watched = [tmp_path / name for name in ("source", "assets", "cache", "output")]
-    with pytest.raises(runtime.Refusal, match="runtime-delivery-disabled"):
+    with pytest.raises(
+        runtime.Refusal,
+        match="runtime-delivery-technical-gates-incomplete",
+    ):
         runtime.run(lock_path=LOCK, environ=_environment())
     assert not any(path.exists() for path in watched)
 

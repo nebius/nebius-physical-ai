@@ -142,6 +142,9 @@ def test_robotwin_runtime_lock_records_exact_deferred_boundaries() -> None:
     assert lock["bootstrap"]["apt"]["binary_package_count"] == 75
     assert lock["bootstrap"]["python_runtime"]["application_artifact_count"] == 0
     assert lock["runtime_delivery"]["status"].startswith("disabled-")
+    assert lock["runtime_delivery"]["asset_output_classification_status"] == (
+        "complete-no-signature-hold"
+    )
     assert lock["runtime_delivery"]["network_side_effects_permitted"] is False
     assert lock["weights"] == []
     assert lock["runtime_artifacts"] == []
@@ -154,6 +157,10 @@ def test_robotwin_runtime_lock_records_exact_deferred_boundaries() -> None:
     assert curobo["use_restriction"] == "noncommercial-research-or-evaluation"
     assert {item["revision"] for item in lock["assets"]} == {ASSET_REVISION}
     assert all(item["sha256"] and item["size_bytes"] > 0 for item in lock["assets"])
+    assert {item["provider_access"] for item in lock["assets"]} == {
+        "public-ungated"
+    }
+    assert {item["license"] for item in lock["assets"]} == {"MIT"}
     assert lock["packaging_shape"] == "whole-source-sdk-runtime-fetch"
     assert lock["operator_scope"] == {
         "statement": "noncommercial",
@@ -174,8 +181,8 @@ def test_robotwin_runtime_lock_records_exact_deferred_boundaries() -> None:
     assert lock["access"]["credential_phase"] == "runtime-only-secret-value"
     assert lock["access"]["credential_persistence"] is False
     assert lock["access"]["credential_as_entitlement_evidence"] == (
-        "only-when-the-upstream-vendor-gates-the-exact-artifact-after-"
-        "customer-acceptance"
+        "only-when-the-upstream-vendor-gates-the-exact-artifact-under-"
+        "customer-vendor-side-entitlement"
     )
     assert lock["access"]["customer_authorization"]["control"] == (
         "customer-issued-run-scoped-secret-value"
@@ -187,6 +194,9 @@ def test_robotwin_runtime_lock_records_exact_deferred_boundaries() -> None:
         "disabled-until-rights-and-isolation-approved"
     )
     assert lock["cache"]["contains_credentials"] is False
+    assert lock["outputs"]["generated_output_restriction"] == (
+        "none-found-in-inspected-authoritative-terms"
+    )
 
 
 def test_robotwin_profile_requests_one_rtx_and_runs_authorized_bootstrap() -> None:
@@ -338,7 +348,7 @@ def test_robotwin_live_gate_refuses_declined_customer_entitlement(
                 "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
                 "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
                 "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-                "runtime_lock_sha256": "d198a02d46dc2adc0dfbe33ff1a27d06f2525b9d05911c6b5552da1eb74d5b60",
+                "runtime_lock_sha256": "f20a0bc5f8a9200df976fd0eb417c7b81000bf4841d2f12208e5982e9d667e91",
                 "bootstrap_image": "registry.example/private/robotwin/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "reservation": {
                     "policy": "STRICT",
@@ -367,7 +377,7 @@ def test_robotwin_live_gate_refuses_declined_customer_entitlement(
                 "customer_scope_id": "private-customer",
                 "run_id": "robotwin-private-run",
                 "runtime_manifest_sha256": (
-                    "d198a02d46dc2adc0dfbe33ff1a27d06f2525b9d05911c6b5552da1eb74d5b60"
+                    "f20a0bc5f8a9200df976fd0eb417c7b81000bf4841d2f12208e5982e9d667e91"
                 ),
                 "expires_at": "2099-01-01T00:00:00Z",
                 "decision": "declined",

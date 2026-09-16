@@ -1,7 +1,7 @@
 {
   "schema_version": "npa.robotwin.runtime-lock.v1",
   "status": "bootstrap-complete-runtime-disabled",
-  "reason": "The public Ubuntu bootstrap inputs are complete and immutable. Customer-controlled run-scoped entitlement replaces manager acceptance for CUDA 12.8.1, cuDNN 9.8.0 and CuRobo v0.7.8 terms. Runtime delivery remains disabled because the complete artifact lock, exact upstream probes, aggregate RoboTwin member-asset/output provenance, native-content policy, built-image evidence and live gates remain unresolved.",
+  "reason": "The public Ubuntu bootstrap inputs are complete and immutable. Customer-issued, run-scoped entitlement governs the exact CUDA 12.8.1, cuDNN 9.8.0 and CuRobo v0.7.8 non-token terms; neither the manager nor NPA accepts or signs them for the customer. The exact public Hugging Face asset revision is ungated and its two locked archives are classified under the repository's MIT declaration. Runtime delivery remains disabled because the complete technical artifact lock and exact upstream payload probes, native-content policy, built-image evidence, storage and manager runtime context, and live gates remain incomplete.",
   "packaging_shape": "whole-source-sdk-runtime-fetch",
   "operator_scope": {
     "statement": "noncommercial",
@@ -52,7 +52,11 @@
       "revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
       "origin": "https://huggingface.co/datasets/TianxingChen/RoboTwin2.0/tree/785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
       "repository_card": "https://huggingface.co/datasets/TianxingChen/RoboTwin2.0/blob/785feb15aa4a4f532395ad2b1d2be5f28cb561ad/README.md",
-      "aggregate_terms_status": "member-provenance-and-output-treatment-unresolved",
+      "license": "MIT",
+      "license_source": "repository-card",
+      "license_classification": "repository-mit-applies-to-locked-member",
+      "provider_access": "public-ungated",
+      "required_probe": "anonymous-exact-revision-payload-byte",
       "name": "embodiments.zip",
       "size_bytes": 219859313,
       "sha256": "6b87d7d55e106d8ff25917e0538eb1e177fc549280e8a742a8cec3cb9f953fc6",
@@ -63,7 +67,11 @@
       "revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
       "origin": "https://huggingface.co/datasets/TianxingChen/RoboTwin2.0/tree/785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
       "repository_card": "https://huggingface.co/datasets/TianxingChen/RoboTwin2.0/blob/785feb15aa4a4f532395ad2b1d2be5f28cb561ad/README.md",
-      "aggregate_terms_status": "member-provenance-and-output-treatment-unresolved",
+      "license": "MIT",
+      "license_source": "repository-card",
+      "license_classification": "repository-mit-applies-to-locked-member",
+      "provider_access": "public-ungated",
+      "required_probe": "anonymous-exact-revision-payload-byte",
       "name": "objects.zip",
       "size_bytes": 3737778549,
       "sha256": "6aa56b3cf1e1064f7c809308144da36b00815f8b137fef2d7e4de856f8becf27",
@@ -83,11 +91,11 @@
       "terms-revision"
     ],
     "anonymous_artifacts": "exact-revision-payload-byte-probe",
-    "gated_artifacts": "customer-credential-exact-revision-payload-byte-probe",
+    "gated_artifacts": "customer-vendor-side-entitlement-and-exact-revision-payload-byte-probe",
     "credential_owner": "customer",
     "credential_phase": "runtime-only-secret-value",
     "credential_persistence": false,
-    "credential_as_entitlement_evidence": "only-when-the-upstream-vendor-gates-the-exact-artifact-after-customer-acceptance",
+    "credential_as_entitlement_evidence": "only-when-the-upstream-vendor-gates-the-exact-artifact-under-customer-vendor-side-entitlement",
     "terms_without_vendor_gate": [
       {
         "id": "nvidia-cuda-12.8.1-eula-2025-01-07",
@@ -132,7 +140,17 @@
   },
   "outputs": {
     "inside_runtime_cache": false,
-    "authorized_destination_only": true
+    "authorized_destination_only": true,
+    "declared_classes": [
+      "native-hdf5-action-state-data",
+      "decoded-mp4",
+      "rendered-frames",
+      "robotwin-smoke-json",
+      "npa-byof-summary-json"
+    ],
+    "generated_output_restriction": "none-found-in-inspected-authoritative-terms",
+    "field_of_use": "underlying-curobo-execution-remains-noncommercial-research-or-evaluation",
+    "cuda_output_boundary": "declared-evidence-does-not-reverse-engineer-sdk-output-to-target-a-non-nvidia-platform"
   },
   "bootstrap": {
     "status": "complete",
@@ -210,10 +228,10 @@
     ]
   },
   "runtime_delivery": {
-    "status": "disabled-pending-aggregate-assets-artifact-lock-and-live-gates",
+    "status": "disabled-pending-artifact-lock-and-live-gates",
     "artifact_lock_status": "not-resolved",
     "customer_entitlement_contract_status": "implemented-not-exercised",
-    "aggregate_asset_output_status": "blocked-pending-member-provenance-and-output-treatment",
+    "asset_output_classification_status": "complete-no-signature-hold",
     "source_access_status": "not-probed",
     "asset_access_status": "not-probed",
     "network_side_effects_permitted": false

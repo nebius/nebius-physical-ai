@@ -47,7 +47,7 @@ def _robotwin_context(**updates: object) -> dict[str, object]:
         "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
         "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
         "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-        "runtime_lock_sha256": "d198a02d46dc2adc0dfbe33ff1a27d06f2525b9d05911c6b5552da1eb74d5b60",
+        "runtime_lock_sha256": "f20a0bc5f8a9200df976fd0eb417c7b81000bf4841d2f12208e5982e9d667e91",
         "bootstrap_image": "registry.example/private-namespace-canary/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "reservation": {
             "policy": "STRICT",
@@ -304,7 +304,10 @@ def test_robotwin_disabled_runtime_delivery_refuses_before_any_side_effect(
         ),
     )
 
-    with pytest.raises(ValueError, match="runtime-delivery-disabled"):
+    with pytest.raises(
+        ValueError,
+        match="runtime-delivery-technical-gates-incomplete",
+    ):
         _load_robotwin_authorization(module, _robotwin_args(module))
     assert capsys.readouterr().out == ""
 

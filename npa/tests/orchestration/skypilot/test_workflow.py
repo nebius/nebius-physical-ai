@@ -73,7 +73,7 @@ def _robotwin_bridge_fixture(
         "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
         "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
         "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-        "runtime_lock_sha256": "d198a02d46dc2adc0dfbe33ff1a27d06f2525b9d05911c6b5552da1eb74d5b60",
+        "runtime_lock_sha256": "f20a0bc5f8a9200df976fd0eb417c7b81000bf4841d2f12208e5982e9d667e91",
         "bootstrap_image": "registry.example/robotwin-private/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "reservation": {
             "policy": "STRICT",

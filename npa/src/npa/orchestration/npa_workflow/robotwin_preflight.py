@@ -57,7 +57,7 @@ SOURCE_REVISION = "96c1feab536306b50c26af200044fcdf126e8904"
 CUROBO_REVISION = "d64c4b005459db10c5dd867d8b30a87d5bda9bdb"
 ASSET_REVISION = "785feb15aa4a4f532395ad2b1d2be5f28cb561ad"
 WORKFLOW_SHA256 = "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3"
-RUNTIME_LOCK_SHA256 = "d198a02d46dc2adc0dfbe33ff1a27d06f2525b9d05911c6b5552da1eb74d5b60"
+RUNTIME_LOCK_SHA256 = "f20a0bc5f8a9200df976fd0eb417c7b81000bf4841d2f12208e5982e9d667e91"
 RUNTIME_LOCK_STATUS = "bootstrap-complete-runtime-disabled"
 RUNTIME_AUTH_SCHEMA = "npa.byof.robotwin.runtime-authorization.v2"
 CUSTOMER_ENTITLEMENT_SCHEMA = "npa.byof.robotwin.customer-runtime-entitlement.v1"
@@ -102,8 +102,8 @@ CUSTOMER_ENTITLEMENT_NOTICE = " ".join(
         f"using schema {CUSTOMER_ENTITLEMENT_SCHEMA}, bind it to the customer "
         "scope, run id, exact runtime-lock SHA-256, and a future expiry, then "
         f"rerun submit with --secret-env {CUSTOMER_ENTITLEMENT_ENV}.",
-        "This authorization does not resolve the separately blocked aggregate "
-        "RoboTwin asset and output provenance boundary.",
+        "This authorization does not satisfy the separate technical artifact-lock, "
+        "payload-probe, native-content, built-image, storage/context, or live gates.",
     )
 )
 RTX_ACCELERATOR = "RTXPRO-6000-BLACKWELL-SERVER-EDITION"
@@ -1008,7 +1008,10 @@ def require_runtime_lock_complete(
     """Stop before image, network, scheduler, or GPU work until delivery is ready."""
 
     if RUNTIME_LOCK_STATUS != "complete":
-        raise _refusal("runtime-delivery-disabled", authorization.raw_context)
+        raise _refusal(
+            "runtime-delivery-technical-gates-incomplete",
+            authorization.raw_context,
+        )
     return authorization
 
 

@@ -41,7 +41,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The run-level operator statement is exactly noncommercial for containerization and technical workload validation/evaluation and expires with this bounded run. A customer-issued entitlement can authorize the exact CUDA/cuDNN/CuRobo terms only for that bounded activity; it grants no broader service, derivative, output, or redistribution rights. Aggregate RoboTwin asset/output treatment, the complete runtime artifact lock, exact access probes, image bytes, writable storage, and STRICT RTX context remain gates. B200 is invalid.",
+      "reason": "The run-level operator statement is exactly noncommercial for containerization and technical workload validation/evaluation and expires with this bounded run. A customer-issued entitlement can authorize the exact CUDA/cuDNN/CuRobo terms only for that bounded activity; it grants no broader service, derivative, output, or redistribution rights. The exact public ungated RoboTwin asset revision and declared outputs are classified with no signature hold. The complete runtime artifact lock, exact payload probes, native-content policy, image bytes, writable storage, manager runtime context, and STRICT RTX evidence remain technical gates. B200 is invalid.",
       "evidence": []
     }
   }

@@ -75,6 +75,9 @@ def test_neutral_locks_are_complete_while_runtime_delivery_is_disabled() -> None
     assert lock["bootstrap"]["apt"]["source_package_count"] == 57
     assert lock["bootstrap"]["python_runtime"]["application_artifact_count"] == 0
     assert lock["runtime_delivery"]["status"].startswith("disabled-")
+    assert lock["runtime_delivery"]["asset_output_classification_status"] == (
+        "complete-no-signature-hold"
+    )
     assert lock["runtime_delivery"]["network_side_effects_permitted"] is False
     assert lock["runtime_artifacts"] == []
     assert lock["weights"] == []
@@ -82,6 +85,12 @@ def test_neutral_locks_are_complete_while_runtime_delivery_is_disabled() -> None
     assert lock["access"]["timing"] == "before-provisioning"
     assert lock["access"]["credential_phase"] == "runtime-only-secret-value"
     assert lock["access"]["credential_persistence"] is False
+    assert lock["access"]["anonymous_artifacts"] == (
+        "exact-revision-payload-byte-probe"
+    )
+    assert lock["access"]["gated_artifacts"] == (
+        "customer-vendor-side-entitlement-and-exact-revision-payload-byte-probe"
+    )
     assert lock["access"]["customer_authorization"] == {
         "schema_version": "npa.byof.robotwin.customer-runtime-entitlement.v1",
         "control": "customer-issued-run-scoped-secret-value",
@@ -98,6 +107,14 @@ def test_neutral_locks_are_complete_while_runtime_delivery_is_disabled() -> None
     assert lock["cache"]["tier"] == "node-local-ephemeral"
     assert lock["cache"]["owner_access"] == "single-customer-single-workload"
     assert lock["cache"]["contains_credentials"] is False
+    assert {asset["provider_access"] for asset in lock["assets"]} == {
+        "public-ungated"
+    }
+    assert {asset["license"] for asset in lock["assets"]} == {"MIT"}
+    assert lock["outputs"]["generated_output_restriction"] == (
+        "none-found-in-inspected-authoritative-terms"
+    )
+    assert "aggregate" not in lock["reason"].lower()
     assert "customer entitlement" in " ".join(
         lock["bootstrap"]["forbidden_payloads"]
     ).lower()

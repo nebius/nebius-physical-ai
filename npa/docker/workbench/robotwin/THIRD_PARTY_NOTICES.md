@@ -37,7 +37,7 @@ Runtime-only identities (not included in image layers):
 
 - RoboTwin commit `96c1feab536306b50c26af200044fcdf126e8904`, MIT license.
 - CuRobo v0.7.8 commit `d64c4b005459db10c5dd867d8b30a87d5bda9bdb`, NVIDIA Source Code License for cuRobo, including its noncommercial research/evaluation restriction.
-- RoboTwin2.0 asset revision `785feb15aa4a4f532395ad2b1d2be5f28cb561ad`; its immutable [repository card](https://huggingface.co/datasets/TianxingChen/RoboTwin2.0/blob/785feb15aa4a4f532395ad2b1d2be5f28cb561ad/README.md) labels the repository MIT, but does not establish member-by-member archive provenance or output treatment, which remain human/legal blockers.
+- RoboTwin2.0 asset revision `785feb15aa4a4f532395ad2b1d2be5f28cb561ad`; its immutable [repository card](https://huggingface.co/datasets/TianxingChen/RoboTwin2.0/blob/785feb15aa4a4f532395ad2b1d2be5f28cb561ad/README.md) labels the public, ungated repository MIT. That declaration classifies the two exact locked archive members. A future runtime must still perform an anonymous exact-revision payload-byte probe and verify their locked sizes and SHA-256 values.
 - CUDA and cuDNN runtime delivery and use require their exact applicable NVIDIA terms.
 
 Exact runtime terms presented before any governed fetch, install, or cache
@@ -49,8 +49,12 @@ mutation:
 
 Only a customer representative authorized to bind the customer may issue the
 run-scoped entitlement for those exact records. NPA and the infrastructure
-manager do not accept them for the customer. The entitlement does not resolve
-the separately blocked aggregate RoboTwin member-asset and output treatment.
+manager do not accept or sign them for the customer. The exact asset revision
+needs no token or local acceptance flag. If a later artifact is token-gated,
+only the customer's vendor-side entitlement and exact payload probe may gate
+its runtime delivery. No generated-output restriction was found for the
+declared HDF5, MP4, frame, or JSON evidence; underlying CuRobo execution remains
+limited to noncommercial research/evaluation.
 
 These references document boundaries; they neither fetch bytes nor record
 acceptance. No RoboTwin/NVIDIA source, runtime, model, asset, cache, or output
