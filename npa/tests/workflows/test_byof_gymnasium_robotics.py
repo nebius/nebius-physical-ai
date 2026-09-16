@@ -6,6 +6,7 @@ import json
 import os
 import runpy
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -40,8 +41,11 @@ def _coordinator_helpers(tmp_path: Path) -> dict[str, object]:
     helper_names = {
         "_descriptor_identity",
         "_open_bound_output_root",
+        "_open_bound_log",
         "_require_owned_regular",
+        "_require_bound_log_stat",
         "_read_bound_json",
+        "_verify_bound_log",
         "_write_bound_summary",
         "_output_uploads",
     }
@@ -284,6 +288,169 @@ def test_coordinator_binds_output_root_nofollow_and_close_on_exec(
     try:
         assert not os.get_inheritable(root_fd)
     finally:
+        os.close(root_fd)
+
+
+def test_coordinator_keeps_child_logs_on_verified_descriptors(tmp_path: Path) -> None:
+    helpers = _coordinator_helpers(tmp_path)
+    root = tmp_path / "output"
+    root.mkdir()
+    root_fd = helpers["_open_bound_output_root"](root)
+    stdout_fd, stdout_identity = helpers["_open_bound_log"](
+        root_fd,
+        "solution_smoke_stdout.log",
+        os.geteuid(),
+        "Gymnasium smoke stdout",
+    )
+    stderr_fd, stderr_identity = helpers["_open_bound_log"](
+        root_fd,
+        "solution_smoke_stderr.log",
+        os.geteuid(),
+        "Gymnasium smoke stderr",
+    )
+    try:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; print('stdout-bound'); print('stderr-bound', file=sys.stderr)",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=stdout_fd,
+            stderr=stderr_fd,
+            check=False,
+        )
+        assert completed.returncode == 0
+        helpers["_verify_bound_log"](
+            root_fd,
+            "solution_smoke_stdout.log",
+            stdout_fd,
+            os.geteuid(),
+            stdout_identity,
+            "Gymnasium smoke stdout",
+        )
+        helpers["_verify_bound_log"](
+            root_fd,
+            "solution_smoke_stderr.log",
+            stderr_fd,
+            os.geteuid(),
+            stderr_identity,
+            "Gymnasium smoke stderr",
+        )
+    finally:
+        os.close(stderr_fd)
+        os.close(stdout_fd)
+        os.close(root_fd)
+
+    assert (root / "solution_smoke_stdout.log").read_text() == "stdout-bound\n"
+    assert (root / "solution_smoke_stderr.log").read_text() == "stderr-bound\n"
+
+
+@pytest.mark.parametrize("attack", ["regular", "symlink", "directory"])
+def test_coordinator_refuses_preexisting_smoke_log(
+    tmp_path: Path, attack: str
+) -> None:
+    helpers = _coordinator_helpers(tmp_path)
+    root = tmp_path / "output"
+    root.mkdir()
+    target = tmp_path / "target.log"
+    target.write_text("unchanged\n", encoding="utf-8")
+    log = root / "solution_smoke_stdout.log"
+    if attack == "regular":
+        log.write_text("preexisting\n", encoding="utf-8")
+    elif attack == "symlink":
+        log.symlink_to(target)
+    else:
+        log.mkdir()
+
+    root_fd = helpers["_open_bound_output_root"](root)
+    try:
+        with pytest.raises(
+            SystemExit, match="cannot create Gymnasium smoke stdout exclusively"
+        ):
+            helpers["_open_bound_log"](
+                root_fd,
+                log.name,
+                os.geteuid(),
+                "Gymnasium smoke stdout",
+            )
+    finally:
+        os.close(root_fd)
+
+    assert target.read_text(encoding="utf-8") == "unchanged\n"
+
+
+@pytest.mark.parametrize("replacement", ["regular", "symlink"])
+def test_coordinator_refuses_same_uid_smoke_log_path_substitution(
+    tmp_path: Path, replacement: str
+) -> None:
+    helpers = _coordinator_helpers(tmp_path)
+    root = tmp_path / "output"
+    root.mkdir()
+    root_fd = helpers["_open_bound_output_root"](root)
+    name = "solution_smoke_stdout.log"
+    log_fd, identity = helpers["_open_bound_log"](
+        root_fd, name, os.geteuid(), "Gymnasium smoke stdout"
+    )
+    bound_log = tmp_path / "bound.log"
+    (root / name).rename(bound_log)
+    target = tmp_path / "target.log"
+    target.write_text("unchanged\n", encoding="utf-8")
+    if replacement == "regular":
+        (root / name).write_text("replacement\n", encoding="utf-8")
+        expected = "path identity changed"
+    else:
+        (root / name).symlink_to(target)
+        expected = "is not a regular file"
+
+    try:
+        with pytest.raises(SystemExit, match=expected):
+            helpers["_verify_bound_log"](
+                root_fd,
+                name,
+                log_fd,
+                os.geteuid(),
+                identity,
+                "Gymnasium smoke stdout",
+            )
+    finally:
+        os.close(log_fd)
+        os.close(root_fd)
+
+    assert target.read_text(encoding="utf-8") == "unchanged\n"
+
+
+@pytest.mark.parametrize("mutation", ["mode", "hardlink"])
+def test_coordinator_refuses_smoke_log_metadata_drift(
+    tmp_path: Path, mutation: str
+) -> None:
+    helpers = _coordinator_helpers(tmp_path)
+    root = tmp_path / "output"
+    root.mkdir()
+    root_fd = helpers["_open_bound_output_root"](root)
+    name = "solution_smoke_stdout.log"
+    log_fd, identity = helpers["_open_bound_log"](
+        root_fd, name, os.geteuid(), "Gymnasium smoke stdout"
+    )
+    if mutation == "mode":
+        os.chmod(root / name, 0o640)
+        expected = "unexpected mode"
+    else:
+        os.link(root / name, root / "extra-link.log")
+        expected = "must have exactly one link"
+
+    try:
+        with pytest.raises(SystemExit, match=expected):
+            helpers["_verify_bound_log"](
+                root_fd,
+                name,
+                log_fd,
+                os.geteuid(),
+                identity,
+                "Gymnasium smoke stdout",
+            )
+    finally:
+        os.close(log_fd)
         os.close(root_fd)
 
 

@@ -199,6 +199,59 @@ run: |
       return file_stat
 
 
+  def _require_bound_log_stat(file_stat, expected_uid, label):
+      if not stat.S_ISREG(file_stat.st_mode):
+          raise SystemExit(f"{label} is not a regular file")
+      if file_stat.st_nlink != 1:
+          raise SystemExit(f"{label} must have exactly one link")
+      if file_stat.st_uid != expected_uid:
+          raise SystemExit(f"{label} has an unexpected owner")
+      if stat.S_IMODE(file_stat.st_mode) != 0o600:
+          raise SystemExit(f"{label} has an unexpected mode")
+      return file_stat
+
+
+  def _open_bound_log(directory_fd, name, expected_uid, label):
+      flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+      try:
+          file_fd = os.open(name, flags, 0o600, dir_fd=directory_fd)
+      except OSError as exc:
+          raise SystemExit(f"cannot create {label} exclusively") from exc
+      keep_open = False
+      try:
+          descriptor_stat = _require_bound_log_stat(
+              os.fstat(file_fd), expected_uid, label
+          )
+          try:
+              path_stat = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+          except OSError as exc:
+              raise SystemExit(f"cannot verify {label} path") from exc
+          _require_bound_log_stat(path_stat, expected_uid, label)
+          if _descriptor_identity(descriptor_stat) != _descriptor_identity(path_stat):
+              raise SystemExit(f"{label} path and descriptor differ")
+          if os.get_inheritable(file_fd):
+              raise SystemExit(f"{label} descriptor is inheritable")
+          keep_open = True
+          return file_fd, _descriptor_identity(descriptor_stat)
+      finally:
+          if not keep_open:
+              os.close(file_fd)
+
+
+  def _verify_bound_log(directory_fd, name, file_fd, expected_uid, identity, label):
+      os.fsync(file_fd)
+      descriptor_stat = _require_bound_log_stat(os.fstat(file_fd), expected_uid, label)
+      if _descriptor_identity(descriptor_stat) != identity:
+          raise SystemExit(f"{label} descriptor identity changed")
+      try:
+          path_stat = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+      except OSError as exc:
+          raise SystemExit(f"cannot verify {label} path") from exc
+      _require_bound_log_stat(path_stat, expected_uid, label)
+      if _descriptor_identity(path_stat) != identity:
+          raise SystemExit(f"{label} path identity changed")
+
+
   def _read_bound_json(directory_fd, name, expected_uid, label):
       flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
       try:
@@ -300,18 +353,45 @@ run: |
   runtime_environment["PATH"] = (
       "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
   )
-  with (root / "solution_smoke_stdout.log").open("wb") as stdout, (
-      root / "solution_smoke_stderr.log"
-  ).open("wb") as stderr:
+  stdout_name = "solution_smoke_stdout.log"
+  stderr_name = "solution_smoke_stderr.log"
+  stdout_fd, stdout_identity = _open_bound_log(
+      root_fd, stdout_name, expected_output_uid, "Gymnasium smoke stdout"
+  )
+  stderr_fd = None
+  try:
+      stderr_fd, stderr_identity = _open_bound_log(
+          root_fd, stderr_name, expected_output_uid, "Gymnasium smoke stderr"
+      )
       completed = subprocess.run(
           ["/usr/local/bin/npa-gymnasium-entrypoint", "run-smoke"],
           cwd="/",
           env=runtime_environment,
           stdin=subprocess.DEVNULL,
-          stdout=stdout,
-          stderr=stderr,
+          stdout=stdout_fd,
+          stderr=stderr_fd,
           check=False,
       )
+      _verify_bound_log(
+          root_fd,
+          stdout_name,
+          stdout_fd,
+          expected_output_uid,
+          stdout_identity,
+          "Gymnasium smoke stdout",
+      )
+      _verify_bound_log(
+          root_fd,
+          stderr_name,
+          stderr_fd,
+          expected_output_uid,
+          stderr_identity,
+          "Gymnasium smoke stderr",
+      )
+  finally:
+      if stderr_fd is not None:
+          os.close(stderr_fd)
+      os.close(stdout_fd)
   smoke_exit_code = completed.returncode
   artifact_name = os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", "")
   if artifact_name != "gymnasium-robotics-smoke.json":
