@@ -41,6 +41,13 @@ def _download(
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme != "https" or parsed.hostname != "codeload.github.com":
         raise SourceError("source archive must use official GitHub codeload HTTPS")
+    expected_bytes = item.get("archive_bytes")
+    if (
+        isinstance(expected_bytes, bool)
+        or not isinstance(expected_bytes, int)
+        or expected_bytes <= 0
+    ):
+        raise SourceError("source archive byte count must be a positive integer")
     target = directory / f"{item.get('name', 'habitat-sim')}.tar.gz"
     request = urllib.request.Request(
         url, headers={"User-Agent": "npa-source-preparer/1"}
@@ -48,21 +55,43 @@ def _download(
     open_request = opener or urllib.request.build_opener(_RefuseRedirect()).open
     digest = hashlib.sha256()
     size = 0
+    created_target = False
     try:
-        with (
-            open_request(request, timeout=120) as response,
-            target.open("xb") as stream,
-        ):
+        with open_request(request, timeout=120) as response:
             if response.geturl() != url:
                 raise SourceError("source archive redirected away from pinned locator")
-            for chunk in iter(lambda: response.read(1024 * 1024), b""):
-                digest.update(chunk)
-                stream.write(chunk)
-                size += len(chunk)
+            headers = getattr(response, "headers", None)
+            declared_length = (
+                headers.get("Content-Length") if headers is not None else None
+            )
+            if declared_length is not None:
+                try:
+                    declared_bytes = int(declared_length)
+                except (TypeError, ValueError) as error:
+                    raise SourceError(
+                        "source archive Content-Length is invalid"
+                    ) from error
+                if declared_bytes < 0 or declared_bytes != expected_bytes:
+                    raise SourceError(
+                        "source archive Content-Length does not match pinned size"
+                    )
+            with target.open("xb") as stream:
+                created_target = True
+                while True:
+                    remaining = expected_bytes - size
+                    chunk = response.read(min(1024 * 1024, remaining + 1))
+                    if not chunk:
+                        break
+                    if len(chunk) > remaining:
+                        raise SourceError("source archive exceeds pinned byte count")
+                    digest.update(chunk)
+                    stream.write(chunk)
+                    size += len(chunk)
     except Exception:
-        target.unlink(missing_ok=True)
+        if created_target:
+            target.unlink(missing_ok=True)
         raise
-    if size != item["archive_bytes"] or digest.hexdigest() != item["archive_sha256"]:
+    if size != expected_bytes or digest.hexdigest() != item["archive_sha256"]:
         target.unlink(missing_ok=True)
         raise SourceError("source archive size or SHA-256 mismatch")
     return target
@@ -164,8 +193,7 @@ def _apply_metadata_patches(root: Path, patches: list[dict[str, object]]) -> Non
         original = path.read_bytes()
         if (
             len(original) != patch["upstream_file_bytes"]
-            or hashlib.sha256(original).hexdigest()
-            != patch["upstream_file_sha256"]
+            or hashlib.sha256(original).hexdigest() != patch["upstream_file_sha256"]
         ):
             raise SourceError(f"source metadata patch input changed: {relative}")
         preimage = str(patch["preimage_utf8"]).encode("utf-8")
@@ -181,8 +209,7 @@ def _apply_metadata_patches(root: Path, patches: list[dict[str, object]]) -> Non
         patched = original.replace(preimage, postimage)
         if (
             len(patched) != patch["patched_file_bytes"]
-            or hashlib.sha256(patched).hexdigest()
-            != patch["patched_file_sha256"]
+            or hashlib.sha256(patched).hexdigest() != patch["patched_file_sha256"]
         ):
             raise SourceError(f"source metadata patch result changed: {relative}")
         path.write_bytes(patched)

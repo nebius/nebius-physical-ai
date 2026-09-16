@@ -108,6 +108,29 @@ def _archive(path: Path, entries: list[tuple[str, bytes, bytes, str]]) -> None:
             bundle.addfile(member, io.BytesIO(payload) if member.isfile() else None)
 
 
+class _Response(io.BytesIO):
+    def __init__(
+        self,
+        payload: bytes,
+        url: str,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        super().__init__(payload)
+        self._url = url
+        self.headers = headers or {}
+        self.read_calls = 0
+        self.bytes_read = 0
+
+    def geturl(self) -> str:
+        return self._url
+
+    def read(self, size: int = -1) -> bytes:
+        self.read_calls += 1
+        chunk = super().read(size)
+        self.bytes_read += len(chunk)
+        return chunk
+
+
 def test_source_manifest_pins_every_official_archive_and_projection() -> None:
     source = MANIFEST["source"]
     assert source["repository"] == "https://github.com/facebookresearch/habitat-sim"
@@ -374,6 +397,98 @@ def test_source_preparer_refuses_redirect_and_removes_partial(
     with pytest.raises(PREPARER.SourceError, match="redirected"):
         PREPARER._download(item, tmp_path, opener=lambda *_a, **_k: Response(payload))
     assert list(tmp_path.iterdir()) == []
+
+
+def _download_item(payload: bytes) -> dict[str, object]:
+    return {
+        "name": "fixture",
+        "archive_url": (
+            "https://codeload.github.com/example/project/tar.gz/" + "a" * 40
+        ),
+        "archive_bytes": len(payload),
+        "archive_sha256": hashlib.sha256(payload).hexdigest(),
+    }
+
+
+@pytest.mark.parametrize("declared_length", ["invalid", "-1", "23"])
+def test_source_download_refuses_declared_length_before_body_consumption(
+    tmp_path: Path, declared_length: str
+) -> None:
+    payload = b"immutable source bytes"
+    item = _download_item(payload)
+    response = _Response(
+        payload,
+        str(item["archive_url"]),
+        {"Content-Length": declared_length},
+    )
+
+    with pytest.raises(PREPARER.SourceError, match="Content-Length"):
+        PREPARER._download(item, tmp_path, opener=lambda *_a, **_k: response)
+
+    assert response.read_calls == 0
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("expected_bytes", [None, -1, True, "22"])
+def test_source_download_refuses_invalid_pin_before_opening(
+    tmp_path: Path, expected_bytes: object
+) -> None:
+    item = _download_item(b"immutable source bytes")
+    item["archive_bytes"] = expected_bytes
+    opened = False
+
+    def opener(*_args, **_kwargs):
+        nonlocal opened
+        opened = True
+        raise AssertionError("invalid pin must be rejected before opening")
+
+    with pytest.raises(PREPARER.SourceError, match="positive integer"):
+        PREPARER._download(item, tmp_path, opener=opener)
+
+    assert opened is False
+
+
+def test_source_download_supports_absent_declared_length(tmp_path: Path) -> None:
+    payload = b"immutable source bytes"
+    item = _download_item(payload)
+    response = _Response(payload, str(item["archive_url"]))
+
+    target = PREPARER._download(item, tmp_path, opener=lambda *_a, **_k: response)
+
+    assert target.read_bytes() == payload
+
+
+def test_source_download_stops_oversized_stream_before_exceeding_pin(
+    tmp_path: Path,
+) -> None:
+    expected = b"pin"
+    response = _Response(
+        expected + b"extra", str(_download_item(expected)["archive_url"])
+    )
+
+    with pytest.raises(PREPARER.SourceError, match="exceeds pinned byte count"):
+        PREPARER._download(
+            _download_item(expected),
+            tmp_path,
+            opener=lambda *_a, **_k: response,
+        )
+
+    assert response.bytes_read == len(expected) + 1
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_source_download_accepts_exact_declared_bytes_and_hash(tmp_path: Path) -> None:
+    payload = b"immutable source bytes"
+    item = _download_item(payload)
+    response = _Response(
+        payload,
+        str(item["archive_url"]),
+        {"Content-Length": str(len(payload))},
+    )
+
+    target = PREPARER._download(item, tmp_path, opener=lambda *_a, **_k: response)
+
+    assert target.read_bytes() == payload
 
 
 def test_source_download_refuses_non_https_before_opening(tmp_path) -> None:

@@ -36,11 +36,14 @@ SOURCE_PATHS = (
 
 
 def _run(
-    *args: object, env: dict[str, str] | None = None, script: Path = SCRIPT
+    *args: object,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+    script: Path = SCRIPT,
 ) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(script), *(str(arg) for arg in args)],
-        cwd=script.parents[4],
+        cwd=cwd or script.parents[4],
         env=env,
         check=False,
         capture_output=True,
@@ -120,11 +123,53 @@ def test_builder_requires_one_new_owner_selected_oci_path(tmp_path: Path) -> Non
     assert "refusing to overwrite" in existing.stderr
     assert output.read_bytes() == b"owner data"
 
+    missing_parent = _run(tmp_path / "missing" / "candidate.oci.tar")
+    assert missing_parent.returncode == 2
+    assert "parent directory does not exist" in missing_parent.stderr
+
+
+def test_builder_refuses_existing_relative_output_from_original_cwd(
+    tmp_path: Path,
+) -> None:
+    repository, script = _committed_fixture(tmp_path)
+    env, log, _capture = _stubbed_environment(tmp_path)
+    caller = tmp_path / "outside"
+    caller.mkdir()
+    output = repository / "existing.oci.tar"
+    output.write_bytes(b"owner data")
+    relative_output = os.path.relpath(output, caller)
+
+    result = _run(relative_output, cwd=caller, env=env, script=script)
+
+    assert result.returncode == 2
+    assert "refusing to overwrite" in result.stderr
+    assert output.read_bytes() == b"owner data"
+    assert not log.exists()
+
+
+def test_builder_keeps_relative_output_bound_to_original_cwd(tmp_path: Path) -> None:
+    repository, script = _committed_fixture(tmp_path)
+    env, log, _capture = _stubbed_environment(tmp_path)
+    caller = tmp_path / "outside"
+    caller.mkdir()
+    repository_output = repository / "candidate.oci.tar"
+    repository_output.write_bytes(b"repository owner data")
+    (repository / ".git/info/exclude").write_text(
+        "candidate.oci.tar\n", encoding="utf-8"
+    )
+    caller_output = caller / "candidate.oci.tar"
+
+    result = _run("candidate.oci.tar", cwd=caller, env=env, script=script)
+
+    assert result.returncode == 0, result.stderr
+    assert (
+        f"type=oci,dest={caller_output}" in log.read_text(encoding="utf-8").splitlines()
+    )
+    assert repository_output.read_bytes() == b"repository owner data"
+
 
 def test_builder_and_verifier_share_the_exact_source_input_path_set() -> None:
-    tree = ast.parse(
-        (SCRIPT.parent / "verify_image.py").read_text(encoding="utf-8")
-    )
+    tree = ast.parse((SCRIPT.parent / "verify_image.py").read_text(encoding="utf-8"))
     assignment = next(
         node
         for node in tree.body

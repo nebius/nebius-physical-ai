@@ -5,7 +5,19 @@ if [[ $# -ne 1 || "$1" == -* ]]; then
   echo "usage: build.sh OWNER_ONLY_OUTPUT.oci.tar" >&2
   exit 2
 fi
-output="$1"
+caller_cwd="$(pwd -P)"
+case "$1" in
+  /*) output_candidate="$1" ;;
+  *) output_candidate="$caller_cwd/$1" ;;
+esac
+output_parent_candidate="$(dirname -- "$output_candidate")"
+output_name="$(basename -- "$output_candidate")"
+if [[ ! -d "$output_parent_candidate" ]]; then
+  echo "OCI output parent directory does not exist" >&2
+  exit 2
+fi
+output_parent="$(cd "$output_parent_candidate" && pwd -P)"
+output="$output_parent/$output_name"
 if [[ -e "$output" ]]; then
   echo "refusing to overwrite OCI output" >&2
   exit 2
@@ -91,6 +103,10 @@ if [[ ! "$manifest_sha256" =~ ^[0-9a-f]{64}$ ]]; then
 fi
 
 cd "$repo_root"
+if [[ -e "$output" ]]; then
+  echo "refusing to overwrite OCI output" >&2
+  exit 2
+fi
 docker buildx build \
   --build-arg "NPA_SOURCE_SHA=$source_sha" \
   --build-arg "NPA_SOURCE_MANIFEST_SHA256=$manifest_sha256" \
