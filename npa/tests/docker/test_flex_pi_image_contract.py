@@ -60,3 +60,5 @@ def test_dockerfile_pins_source_base_and_nonroot() -> None:
     assert "USER ubuntu" in text
     assert "'sm_120' in flags" in text
     assert "NPA_SOURCE_COMMIT" in text
+    assert "IMAGEIO_FFMPEG_EXE=/opt/conda/bin/ffmpeg" in text
+    assert "rm -f /opt/conda/lib/python3.11/site-packages/imageio_ffmpeg/binaries/" in text
