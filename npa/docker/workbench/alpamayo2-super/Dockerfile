@@ -7,7 +7,7 @@ ARG ALPAMAYO2_SOURCE_REF=beb2977d9a7e9d66837d4a3ad5144ff59de37519
 ARG NPA_SOURCE_COMMIT=unknown
 
 LABEL npa.tool="alpamayo2-super" \
-      npa.version="0.1.0-cu128-r2" \
+      npa.version="0.1.0-cu128-r3" \
       npa.source.repo="${ALPAMAYO2_SOURCE_URL}" \
       npa.source.ref="${ALPAMAYO2_SOURCE_REF}" \
       npa.weights="operator-runtime-fetch" \
