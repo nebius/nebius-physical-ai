@@ -1,6 +1,7 @@
 """Verify checkpoint identity and lifecycle of the managed BEHAVIOR policy."""
 
 import argparse
+from dataclasses import asdict, dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import subprocess
@@ -10,7 +11,76 @@ import zipfile
 
 import pytest
 
-from npa.workflows.behavior_challenge import policy, protocol
+from npa.workflows.behavior_challenge import policy, policy_server, protocol
+
+
+@dataclass
+class _Camera:
+    obs_key: str
+    dataset_key: str
+    resolution: tuple = (240, 240)
+
+
+@dataclass
+class _Robot:
+    name: str
+    robot_type: str
+    observations: dict
+    action: tuple = ("unchanged action indices",)
+    proprio: tuple = ("unchanged proprioception indices",)
+
+
+@pytest.fixture
+def baseline_robot():
+    links = ("zed_link", "left_realsense_link", "right_realsense_link")
+    cameras = {
+        f"image_{index}": _Camera(
+            f"robot::robot:{link}:Camera:0::rgb", f"observation.rgb.{link}_camera_0"
+        )
+        for index, link in enumerate(links)
+    }
+    return _Robot("robot", "R1Pro", cameras)
+
+
+def test_policy_adapter_reads_official_observations_without_changing_values(
+    baseline_robot,
+):
+    original = asdict(baseline_robot)
+    adapted = policy_server._evaluator_robot(baseline_robot)
+    observation = {
+        "robot_r1::proprio": object(),
+        "robot_r1::robot_r1:zed_link:Camera:0::rgb": object(),
+        "robot_r1::robot_r1:left_realsense_link:Camera:0::rgb": object(),
+        "robot_r1::robot_r1:right_realsense_link:Camera:0::rgb": object(),
+    }
+    assert observation[f"{adapted.name}::proprio"] is observation["robot_r1::proprio"]
+    for camera, link in zip(
+        adapted.observations.values(),
+        ("zed_link", "left_realsense_link", "right_realsense_link"),
+        strict=True,
+    ):
+        assert (
+            observation[camera.obs_key]
+            is observation[f"robot_r1::robot_r1:{link}:Camera:0::rgb"]
+        )
+    assert adapted.action == baseline_robot.action
+    assert adapted.proprio == baseline_robot.proprio
+    assert asdict(baseline_robot) == original
+    for key, camera in adapted.observations.items():
+        assert camera.dataset_key == baseline_robot.observations[key].dataset_key
+        assert camera.resolution == baseline_robot.observations[key].resolution
+
+
+@pytest.mark.parametrize("field", ["name", "robot_type", "cameras", "key"])
+def test_policy_adapter_refuses_unexpected_upstream_contract(baseline_robot, field):
+    if field in {"name", "robot_type"}:
+        setattr(baseline_robot, field, "unexpected")
+    elif field == "cameras":
+        baseline_robot.observations.pop("image_2")
+    else:
+        baseline_robot.observations["image_0"].obs_key = "privileged::state"
+    with pytest.raises(ValueError, match="Unexpected baseline"):
+        policy_server._evaluator_robot(baseline_robot)
 
 
 @pytest.mark.parametrize("status", [200, 302, 503])
@@ -164,6 +234,10 @@ def test_policy_stops_after_evaluator_failure_and_records_loaded_identity(
         == plan["recipe"]["policy_checkpoint_sha256"]
     )
     assert evidence["memory_compliance"] == "unverified"
+    assert evidence["observation_name_adapter"]["sha256"] == protocol.file_digest(
+        output / "policy-server.py"
+    )
+    assert command[1].endswith("/policy_server.py")
     assert "PYTHONPATH" not in factory.call_args.kwargs["env"]
 
 

@@ -164,6 +164,11 @@ def build_submission(output: Path, plan: dict, records: list[dict]) -> Path:
     paths += sorted((output / "evaluator").rglob("*.py"))
     paths += [output / "evaluator/r1pro.yaml", output / "evaluator/LICENSE"]
     paths += [
+        output / name
+        for name in ("policy-server.py", "policy-provenance.json")
+        if (output / name).is_file()
+    ]
+    paths += [
         output / relative
         for record in records
         for relative in record["files"]

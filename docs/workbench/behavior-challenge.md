@@ -23,9 +23,12 @@ attempt stopped during simulator startup because its compute-only cluster lacked
 NVIDIA graphics libraries. Its original logs and incomplete summary are retained;
 no rollout score or video was produced. The runner now checks dynamic GLX/EGL
 loading and NVIDIA Vulkan enumeration before claiming an evaluation attempt.
-An existing replacement rendering cluster passed Workbench's stability, CUDA,
-GLX/EGL loading, and NVIDIA Vulkan device checks on both GPU nodes. Official
-rollout validation on that target remains pending.
+The replacement rendering worker passed Workbench's stability, CUDA,
+GLX/EGL loading, and NVIDIA Vulkan device checks. It loaded the official scene
+and connected to the policy, then failed on its first observation: the evaluator
+uses `robot_r1` while the pinned baseline expects `robot`. That failed attempt's
+original evidence is retained. The managed policy now adapts those lookup names;
+completed rollout validation remains pending.
 
 ## Rules and pinned source
 
@@ -133,6 +136,14 @@ files and an occupied policy endpoint, then starts the official server. It uses
 `--repo-id turning_on_radio`: the provided archive stores normalization under
 `assets/turning_on_radio`, rather than the demonstration repository name in the
 generic training example. No checkpoint or normalization data is rewritten.
+
+The pinned baseline expects `robot::proprio` and camera keys starting with
+`robot::robot:`. The official v3.9.2 R1Pro evaluator emits `robot_r1` in both
+positions. A small NPA launcher changes only the policy registry's robot name
+and three camera lookup keys before running the unchanged upstream serving
+script. Camera ordering, images, proprioception, action indices, checkpoint,
+and the official evaluator remain unchanged. The launcher source is saved as
+`policy-server.py`, with its hash and mapping in `policy-provenance.json`.
 
 This option supports only `turning_on_radio`. It records `policy-provenance.json`
 and `policy.log`, waits for the real health endpoint, and stops its own server

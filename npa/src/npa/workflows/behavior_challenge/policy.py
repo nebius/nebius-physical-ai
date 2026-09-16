@@ -8,6 +8,7 @@ from http.client import HTTPConnection, HTTPException
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import time
 import zipfile
@@ -69,7 +70,7 @@ def _verify_checkpoint(archive: Path, checkpoint: Path, expected: str) -> dict:
 def _policy_command(args: argparse.Namespace) -> list[str]:
     return [
         str(args.policy_python),
-        "scripts/b1k/serve_b1k.py",
+        str(Path(__file__).with_name("policy_server.py")),
         "--robot",
         "b1k/R1Pro",
         "--task",
@@ -140,6 +141,13 @@ def _prepare_policy(args: argparse.Namespace, plan: dict, output: Path) -> list[
             "Policy port is already serving; refusing an unrelated endpoint"
         )
     command = _policy_command(args)
+    _record_policy(args, plan, output, command, files)
+    return command
+
+
+def _record_policy(args, plan, output, command, files):
+    adapter = output / "policy-server.py"
+    shutil.copyfile(Path(__file__).with_name("policy_server.py"), adapter)
     evidence = {
         "schema": "npa.behavior.policy.v1",
         "source_commit": OPENPI_COMMIT,
@@ -147,12 +155,17 @@ def _prepare_policy(args: argparse.Namespace, plan: dict, output: Path) -> list[
         "checkpoint_files": files,
         "command": command,
         "normalization_asset": "turning_on_radio",
+        "observation_name_adapter": {
+            "file": adapter.name,
+            "sha256": file_digest(adapter),
+            "baseline_robot": "robot",
+            "evaluator_robot": "robot_r1",
+        },
         "memory_compliance": "unverified",
     }
     (output / "policy-provenance.json").write_text(
         json.dumps(evidence, indent=2) + "\n"
     )
-    return command
 
 
 @contextmanager
