@@ -76,7 +76,8 @@ complete non-overlapping `subtask:<label>` temporal tags, and run
 the episode task instruction and adds per-frame `subtask_index`,
 `meta/subtasks.parquet`, and resumable annotation metadata. FiftyOne is the
 review UI; LeRobot remains the durable training format. The source dataset is
-immutable.
+immutable. Run `workflows/testing/lerobot-subtask-proof.yaml` after export when
+the result needs a reproducible coverage gate and a row-level LeRobot proof.
 
 Output is a policy checkpoint on S3.
 

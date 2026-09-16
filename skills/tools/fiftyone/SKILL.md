@@ -113,4 +113,10 @@ unknown samples, and nonempty output prefixes. The original LeRobot dataset is
 not modified. Existing LeRobot subtask indexes are seeded back into FiftyOne
 temporal tags when the dataset is loaded.
 
+After review, use `workflows/testing/lerobot-subtask-proof.yaml` as the
+repeatable gate. It reads the derived LeRobot Parquet, requires complete catalog
+resolution, and publishes a concrete frame/subtask proof bound to the source
+Parquet digest. YAML verifies the reviewed result; it does not replace the human
+timeline edit.
+
 Open the selected BDD100K demo dataset through the same authenticated local route.
