@@ -287,6 +287,19 @@ images:
       vulnerability/secret/license scan, and both independent real-inference
       gates on 2026-09-16; the accepted OCI index digest is
       sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07.
+  flex-pi:
+    dockerfile: flex-pi/Dockerfile
+    tier: service
+    ports: [8080]
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; the final runtime user is non-root, no sshd service is enabled by default, and no credentials are baked into the image."
+    redistribution: public
+    notes: >-
+      Bakes immutable MIT flex-pi source and its CUDA/PyTorch inference runtime.
+      The checkpoint, Wan/T5/DINOv3 assets, public RoboTwin observation bytes,
+      operator credentials, and populated caches are absent and fetched only at
+      runtime. The RoboTwin dataset card declares no license, so sample bytes
+      are never redistributed. Publication remains quarantined until complete
+      built-layer scanning and real RTX PRO 6000 inference pass on the exact digest.
   sonic:
     dockerfile: sonic/Dockerfile
     isaac_runtime_fetch: true

@@ -751,6 +751,19 @@ skills:
           - workflows/testing/alpamayo2-ray-hardcases.yaml
       - type: file_exists
         path: npa/docker/workbench/alpamayo2-super/REDISTRIBUTION.md
+  - name: flex-pi
+    category: tools
+    when_to_use: "Run, package, validate, or troubleshoot flex-pi world-action policy inference, its runtime-fetched assets, RTX PRO 6000 workflow, and action artifacts."
+    path: skills/tools/flex-pi/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "flex-pi", "infer", "--help"]
+        contains: "output-path"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/flex-pi-rtxpro-inference.yaml
+      - type: file_exists
+        path: npa/docker/workbench/flex-pi/REDISTRIBUTION.md
   - name: retargeting
     category: tools
     when_to_use: "Motion retargeting, SONIC retargeted motion artifacts, SkyPilot retargeting YAMLs, or CLI behavior."

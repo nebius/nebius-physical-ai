@@ -48,6 +48,12 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "real ego-trajectory inference produces projected trajectory JSON",
         "calibrated-camera trajectory PNG and immutable result provenance are written",
     ],
+    "flex-pi": [
+        "pinned upstream 6B flex-pi checkpoint and required encoders load on CUDA",
+        "three-camera public RoboTwin observation and 14D state are hash-verified",
+        "real four-step action-only inference produces a finite 32x14 action chunk",
+        "latency, peak GPU memory, model/input hashes, and RTX PRO 6000 identity are recorded",
+    ],
     "lerobot": [
         "LeRobot package version pin",
         "50-step PushT training run",

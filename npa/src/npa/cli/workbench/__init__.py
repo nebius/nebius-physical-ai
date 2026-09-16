@@ -60,6 +60,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.dataset import app as dataset_app
     from npa.cli.workbench.detection_training import app as detection_training_app
     from npa.cli.workbench.foxglove import app as foxglove_app
+    from npa.cli.workbench.flex_pi import app as flex_pi_app
     from npa.cli.workbench.golden_eval import app as golden_eval_app
     from npa.cli.workbench.health import app as health_app
     from npa.cli.workbench.insights import app as insights_app
@@ -101,6 +102,7 @@ def _full_app() -> typer.Typer:
     full.add_typer(cosmos_evaluator_app, name="cosmos-evaluator")
     full.add_typer(fiftyone_app, name="fiftyone")
     full.add_typer(foxglove_app, name="foxglove")
+    full.add_typer(flex_pi_app, name="flex-pi")
     full.add_typer(genesis_app, name="genesis")
     full.add_typer(groot_app, name="groot")
     full.add_typer(isaac_lab_app, name="isaac-lab")
