@@ -17,13 +17,13 @@ FROM pytorch/pytorch:2.7.1-cuda12.8-cudnn9-devel@sha256:3d614dfd422b7e43647491cb
 
 ARG FLEX_PI_SOURCE_URL=https://github.com/geyan21/flex-pi.git
 ARG FLEX_PI_SOURCE_REF=20c1b2b71ea35a415d5d47c39b04443cfadad7a1
-ARG NPA_SOURCE_COMMIT=unknown
+ARG NPA_SOURCE_SHA=unknown
 
 LABEL npa.tool="flex-pi" \
       npa.version="0.1.0-cu128" \
       npa.source.repo="${FLEX_PI_SOURCE_URL}" \
       npa.source.ref="${FLEX_PI_SOURCE_REF}" \
-      npa.source.commit="${NPA_SOURCE_COMMIT}" \
+      npa.source.commit="${NPA_SOURCE_SHA}" \
       npa.weights="operator-runtime-fetch" \
       npa.dataset="operator-runtime-fetch" \
       org.opencontainers.image.licenses="MIT"

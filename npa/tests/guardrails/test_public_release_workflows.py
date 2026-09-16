@@ -114,6 +114,7 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
         "scan_image_ltx_payload.py",
         "scan_image_wan_payload.py",
         "scan_image_cosmos3_ray_serve_payload.py",
+        "scan_image_flex_pi_payload.py",
         "test_ltx_runtime_bootstrap.py",
         "test_cosmos3_ray_serve_image_contract.py",
         "--scanners vuln,secret,license",
