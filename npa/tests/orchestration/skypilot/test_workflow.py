@@ -162,6 +162,11 @@ def test_submit_workflow_loads_yaml_applies_controller_and_calls_subprocess(
         "memory": 8,
         "autostop": False,
     }
+    # A task-owned API has a dynamic endpoint.  SkyPilot reads that endpoint
+    # from the submitted config, not only SKYPILOT_API_SERVER_ENDPOINT.
+    assert config["api_server"]["endpoint"] == kwargs["env"][
+        "SKYPILOT_API_SERVER_ENDPOINT"
+    ]
 
 
 def test_submit_workflow_strips_name_from_global_config(monkeypatch, tmp_path) -> None:

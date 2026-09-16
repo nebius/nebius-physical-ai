@@ -863,12 +863,25 @@ def submit_workflow(
                     "SkyPilot global config kubernetes section must be a mapping"
                 )
             kubernetes["allowed_contexts"] = [controller_context]
+        # ``sky.server.server --port`` owns a dynamically allocated loopback
+        # endpoint for every NPA-isolated runtime.  SkyPilot's client reads the
+        # endpoint from its YAML config (not merely the process environment),
+        # so preserve the same owned endpoint in the per-submit config before
+        # launching.  Without this binding a client silently falls back to
+        # SkyPilot's default shared port and can report connection-refused even
+        # though NPA's verified isolated API is healthy.
+        env = sky_environment(runtime_config.isolated_config_dir)
+        isolated_endpoint = str(env.get("SKYPILOT_API_SERVER_ENDPOINT") or "").strip()
+        if env.get("NPA_SKYPILOT_ISOLATED_API_DIR") and isolated_endpoint:
+            api_server = global_config.setdefault("api_server", {})
+            if not isinstance(api_server, dict):
+                raise ValueError("SkyPilot global config api_server section must be a mapping")
+            api_server["endpoint"] = isolated_endpoint
         generated_config_path = submission_dir / "skypilot-config.yaml"
         generated_config_path.write_text(
             yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8"
         )
         _chmod_owner_only(generated_config_path)
-        env = sky_environment(runtime_config.isolated_config_dir)
         for key, value in (extra_env or {}).items():
             if value or key in {"NPA_S3_BUCKET", "NPA_S3_PREFIX"}:
                 env[key] = value
