@@ -218,6 +218,8 @@ OUTPUT_SIZE_LIMITS = {
     "solution_smoke_stdout.log": 16 * 1024 * 1024,
 }
 MAX_OUTPUT_BYTES = 320 * 1024 * 1024
+OUTPUT_RECEIPT_NAME = "npa_upload_receipt.json"
+OUTPUT_RECEIPT_SCHEMA = "npa.libero.s3-upload-readback.v1"
 
 
 class BootstrapRefusal(RuntimeError):
@@ -2546,7 +2548,8 @@ def _sigv4_request(
     *,
     payload: bytes = b"",
     extra_headers: dict[str, str] | None = None,
-) -> tuple[dict[str, str], bytes]:
+    expected_statuses: frozenset[int] = frozenset({200}),
+) -> tuple[int, dict[str, str], bytes]:
     access_key = os.environ["AWS_ACCESS_KEY_ID"]
     secret_key = os.environ["AWS_SECRET_ACCESS_KEY"]
     session_token = os.environ["AWS_SESSION_TOKEN"]
@@ -2629,10 +2632,11 @@ def _sigv4_request(
         )
         response = connection.getresponse()
         try:
-            if response.status != 200:
+            if response.status not in expected_statuses:
                 raise BootstrapRefusal(
                     f"output storage {method} refused with HTTP {response.status}"
                 )
+            status_code = response.status
             body = response.read(MAX_OUTPUT_BYTES + 1)
             response_headers = {
                 key.lower(): value for key, value in response.getheaders()
@@ -2645,7 +2649,7 @@ def _sigv4_request(
         connection.close()
     if len(body) > MAX_OUTPUT_BYTES:
         raise BootstrapRefusal("output storage response exceeds the aggregate size budget")
-    return response_headers, body
+    return status_code, response_headers, body
 
 
 def _s3_object_url(endpoint: str, bucket: str, object_key: str) -> str:
@@ -2665,6 +2669,107 @@ def _s3_object_url(endpoint: str, bucket: str, object_key: str) -> str:
         for segment in (bucket, *segments)
     )
     return f"{endpoint}/{path}"
+
+
+def _immutable_output_bytes(
+    directory_fd: int, name: str, limit: int
+) -> tuple[bytes, str]:
+    info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > limit:
+        raise BootstrapRefusal("output violates its type, link, or size boundary")
+    file_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
+    with os.fdopen(file_fd, "rb") as stream:
+        opened_before = os.fstat(stream.fileno())
+        payload = stream.read(limit + 1)
+        opened_after = os.fstat(stream.fileno())
+    stable_identity = (
+        opened_after.st_dev,
+        opened_after.st_ino,
+        opened_after.st_size,
+        opened_after.st_mtime_ns,
+    ) == (
+        opened_before.st_dev,
+        opened_before.st_ino,
+        len(payload),
+        opened_before.st_mtime_ns,
+    )
+    if len(payload) > limit or not stable_identity:
+        raise BootstrapRefusal("output changed or exceeded its budget during snapshot")
+    return payload, hashlib.sha256(payload).hexdigest()
+
+
+def _verified_output_put(
+    *,
+    endpoint: str,
+    bucket: str,
+    object_key: str,
+    name: str,
+    payload: bytes,
+    digest: str,
+    attempted: dict[str, tuple[int, str]],
+) -> dict[str, Any]:
+    checksum = base64.b64encode(bytes.fromhex(digest)).decode()
+    url = _s3_object_url(endpoint, bucket, object_key)
+    attempted[object_key] = (len(payload), checksum)
+    _sigv4_request(
+        "PUT",
+        url,
+        payload=payload,
+        extra_headers={"if-none-match": "*", "x-amz-checksum-sha256": checksum},
+    )
+    _, headers, observed = _sigv4_request(
+        "GET", url, extra_headers={"x-amz-checksum-mode": "ENABLED"}
+    )
+    if (
+        observed != payload
+        or hashlib.sha256(observed).hexdigest() != digest
+        or headers.get("x-amz-checksum-sha256") != checksum
+    ):
+        raise BootstrapRefusal("output storage checksum/readback differs")
+    return {
+        "name": name,
+        "object_key": object_key,
+        "size_bytes": len(payload),
+        "sha256": digest,
+    }
+
+
+def _cleanup_output_attempts(
+    *, endpoint: str, bucket: str, attempted: dict[str, tuple[int, str]]
+) -> None:
+    failures: list[str] = []
+    for object_key, (size_bytes, checksum) in reversed(attempted.items()):
+        url = _s3_object_url(endpoint, bucket, object_key)
+        try:
+            status_code, headers, _ = _sigv4_request(
+                "HEAD",
+                url,
+                extra_headers={"x-amz-checksum-mode": "ENABLED"},
+                expected_statuses=frozenset({200, 404}),
+            )
+            if status_code == 404:
+                continue
+            if (
+                headers.get("x-amz-checksum-sha256") != checksum
+                or int(headers.get("content-length", "-1")) != size_bytes
+            ):
+                failures.append(hashlib.sha256(object_key.encode()).hexdigest())
+                continue
+            _sigv4_request(
+                "DELETE", url, expected_statuses=frozenset({200, 204})
+            )
+            status_code, _, _ = _sigv4_request(
+                "HEAD", url, expected_statuses=frozenset({200, 404})
+            )
+            if status_code != 404:
+                failures.append(hashlib.sha256(object_key.encode()).hexdigest())
+        except (BootstrapRefusal, OSError, ValueError):
+            failures.append(hashlib.sha256(object_key.encode()).hexdigest())
+    if failures:
+        raise BootstrapRefusal(
+            "output transaction cleanup is incomplete for exact key hashes: "
+            + ",".join(sorted(set(failures)))
+        )
 
 
 def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
@@ -2719,64 +2824,8 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
     with os.fdopen(summary_fd, "wb") as stream:
         stream.write(summary_payload)
 
-    def immutable_bytes(directory_fd: int, name: str, limit: int) -> tuple[bytes, str]:
-        info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > limit:
-            raise BootstrapRefusal("output violates its type, link, or size boundary")
-        file_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
-        with os.fdopen(file_fd, "rb") as stream:
-            opened_before = os.fstat(stream.fileno())
-            payload = stream.read(limit + 1)
-            opened_after = os.fstat(stream.fileno())
-        if len(payload) > limit or (
-            opened_after.st_dev,
-            opened_after.st_ino,
-            opened_after.st_size,
-            opened_after.st_mtime_ns,
-        ) != (
-            opened_before.st_dev,
-            opened_before.st_ino,
-            len(payload),
-            opened_before.st_mtime_ns,
-        ):
-            raise BootstrapRefusal("output changed or exceeded its budget during snapshot")
-        return payload, hashlib.sha256(payload).hexdigest()
-
     prefix = parsed.path.lstrip("/")
-
     transaction_id = uuid4().hex
-    staging_prefix = f"{prefix}.npa-staging/{run_id}/{transaction_id}/"
-
-    def upload_and_read_back(
-        object_key: str, name: str, payload: bytes, digest: str
-    ) -> dict[str, Any]:
-        current_authorization = _storage_authorization(output_prefix, run_id, endpoint)
-        if current_authorization["capability_id"] != storage_authorization["capability_id"]:
-            raise BootstrapRefusal("output storage authorization changed during upload")
-        checksum = base64.b64encode(bytes.fromhex(digest)).decode()
-        url = _s3_object_url(endpoint, parsed.netloc, object_key)
-        _sigv4_request(
-            "PUT",
-            url,
-            payload=payload,
-            extra_headers={"if-none-match": "*", "x-amz-checksum-sha256": checksum},
-        )
-        headers, observed = _sigv4_request(
-            "GET", url, extra_headers={"x-amz-checksum-mode": "ENABLED"}
-        )
-        if (
-            observed != payload
-            or hashlib.sha256(observed).hexdigest() != digest
-            or headers.get("x-amz-checksum-sha256") != checksum
-        ):
-            raise BootstrapRefusal("output storage checksum/readback differs")
-        return {
-            "name": name,
-            "object_key": object_key,
-            "size_bytes": len(payload),
-            "sha256": digest,
-        }
-
     if set(os.listdir(root_fd)) != set(OUTPUT_SIZE_LIMITS):
         raise BootstrapRefusal("output differs from the exact artifact allowlist")
     observed_total = sum(
@@ -2787,53 +2836,98 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
         raise BootstrapRefusal("output exceeds the aggregate size budget")
     snapshots = []
     for name, limit in sorted(OUTPUT_SIZE_LIMITS.items()):
-        payload, digest = immutable_bytes(root_fd, name, limit)
+        payload, digest = _immutable_output_bytes(root_fd, name, limit)
         snapshots.append((name, payload, digest))
-    receipts = [
-        upload_and_read_back(staging_prefix + name, name, payload, digest)
-        for name, payload, digest in snapshots
-    ]
-    receipt_payload = (
-        json.dumps(
-            {
-                "schema": "npa.libero.output-commit.v1",
-                "run_id": run_id,
-                "customer_identity_sha256": os.environ.get(
-                    "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256", ""
-                ),
-                "candidate_image": os.environ.get("BYOF_IMAGE", ""),
-                "output_storage_capability_id": storage_authorization[
-                    "capability_id"
-                ],
-                "output_storage_authorization_sha256": os.environ.get(
-                    "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_AUTHORIZATION_SHA256", ""
-                ),
-                "transaction_id": transaction_id,
-                "status": "committed",
-                "artifacts": receipts,
-            },
-            indent=2,
-            sort_keys=True,
+    attempted: dict[str, tuple[int, str]] = {}
+    receipts: list[dict[str, Any]] = []
+    committed = False
+    try:
+        for name, payload, digest in snapshots:
+            current_authorization = _storage_authorization(
+                output_prefix, run_id, endpoint
+            )
+            if (
+                current_authorization["capability_id"]
+                != storage_authorization["capability_id"]
+            ):
+                raise BootstrapRefusal(
+                    "output storage authorization changed during upload"
+                )
+            receipts.append(
+                _verified_output_put(
+                    endpoint=endpoint,
+                    bucket=parsed.netloc,
+                    object_key=prefix + name,
+                    name=name,
+                    payload=payload,
+                    digest=digest,
+                    attempted=attempted,
+                )
+            )
+        receipt_payload = (
+            json.dumps(
+                {
+                    "schema": OUTPUT_RECEIPT_SCHEMA,
+                    "run_id": run_id,
+                    "customer_identity_sha256": os.environ.get(
+                        "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256", ""
+                    ),
+                    "candidate_image": os.environ.get("BYOF_IMAGE", ""),
+                    "output_storage_capability_id": storage_authorization[
+                        "capability_id"
+                    ],
+                    "output_storage_authorization_sha256": os.environ.get(
+                        "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_AUTHORIZATION_SHA256",
+                        "",
+                    ),
+                    "transaction_id": transaction_id,
+                    "status": "verified",
+                    "commit_marker": OUTPUT_RECEIPT_NAME,
+                    "artifacts": receipts,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode()
+        receipt_sha256 = hashlib.sha256(receipt_payload).hexdigest()
+        receipt_fd = os.open(
+            OUTPUT_RECEIPT_NAME,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            stat.S_IRUSR | stat.S_IWUSR,
+            dir_fd=root_fd,
         )
-        + "\n"
-    ).encode()
-    receipt_sha256 = hashlib.sha256(receipt_payload).hexdigest()
-    upload_and_read_back(
-        prefix + "npa_output_commit.json",
-        "npa_output_commit.json",
-        receipt_payload,
-        receipt_sha256,
-    )
-    receipt_name = "npa_upload_receipt.json"
-    receipt_fd = os.open(
-        receipt_name,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-        stat.S_IRUSR | stat.S_IWUSR,
-        dir_fd=root_fd,
-    )
-    with os.fdopen(receipt_fd, "wb") as stream:
-        stream.write(receipt_payload)
-    immutable_bytes(root_fd, receipt_name, 8 * 1024 * 1024)
+        with os.fdopen(receipt_fd, "wb") as stream:
+            stream.write(receipt_payload)
+        _immutable_output_bytes(root_fd, OUTPUT_RECEIPT_NAME, 8 * 1024 * 1024)
+        current_authorization = _storage_authorization(output_prefix, run_id, endpoint)
+        if (
+            current_authorization["capability_id"]
+            != storage_authorization["capability_id"]
+        ):
+            raise BootstrapRefusal("output storage authorization changed before commit")
+        _verified_output_put(
+            endpoint=endpoint,
+            bucket=parsed.netloc,
+            object_key=prefix + OUTPUT_RECEIPT_NAME,
+            name=OUTPUT_RECEIPT_NAME,
+            payload=receipt_payload,
+            digest=receipt_sha256,
+            attempted=attempted,
+        )
+        committed = True
+    except Exception:
+        if not committed:
+            try:
+                _cleanup_output_attempts(
+                    endpoint=endpoint, bucket=parsed.netloc, attempted=attempted
+                )
+            except BootstrapRefusal as cleanup_exc:
+                raise BootstrapRefusal(
+                    "output transaction failed and exact-object cleanup is incomplete; "
+                    "retry the same run to reconcile uncommitted outputs"
+                ) from cleanup_exc
+        raise
     return {
         "schema": "npa.libero.output-upload.v2",
         "status": "verified",

@@ -469,12 +469,13 @@ def test_sigv4_storage_request_uses_a_direct_tls_connection(
     assert object_url.endswith(
         "/fixture-bucket/byof/libero-owned-run-0001/libero%20smoke.json"
     )
-    headers, body = module._sigv4_request(
+    status_code, headers, body = module._sigv4_request(
         "GET",
         object_url,
         extra_headers={"x-amz-checksum-mode": "ENABLED"},
     )
 
+    assert status_code == 200
     assert body == b"read-back"
     assert headers == {"x-amz-checksum-sha256": "fixture-checksum"}
     assert observed["hostname"] == "storage.example"
@@ -2147,9 +2148,12 @@ def test_execute_and_upload_holds_descriptor_and_cache_lock_through_readback(
     assert not protected_authorization.exists()
 
 
-@pytest.mark.parametrize("fail_put", [None, 2])
-def test_output_upload_commits_only_after_unique_staging_readback(
-    monkeypatch, tmp_path, fail_put
+@pytest.mark.parametrize(
+    "failure",
+    [None, "artifact-put", "receipt-put", "delete", "absence"],
+)
+def test_output_upload_is_commit_last_and_cleans_exact_failed_transaction(
+    monkeypatch, tmp_path, failure
 ) -> None:
     module, _args, fixture = _fixture(tmp_path)
     output = tmp_path / "output"
@@ -2168,41 +2172,87 @@ def test_output_upload_commits_only_after_unique_staging_readback(
         validation_calls += 1
         return capability
 
-    objects: dict[str, bytes] = {}
+    objects: dict[str, tuple[bytes, str]] = {}
     puts: list[str] = []
+    deletes: list[str] = []
+    injected = False
 
-    def request(method, url, *, payload=b"", extra_headers=None):
+    def request(
+        method,
+        url,
+        *,
+        payload=b"",
+        extra_headers=None,
+        expected_statuses=frozenset({200}),
+    ):
+        nonlocal injected
         if method == "PUT":
             puts.append(url)
-            if fail_put is not None and len(puts) == fail_put:
+            if failure in {"artifact-put", "delete", "absence"} and len(puts) == 2:
                 raise module.BootstrapRefusal("injected staging upload failure")
-            objects[url] = payload
-            return {}, b""
-        observed = objects[url]
-        return {
-            "x-amz-checksum-sha256": module.base64.b64encode(
-                bytes.fromhex(hashlib.sha256(observed).hexdigest())
-            ).decode()
-        }, observed
+            checksum = extra_headers["x-amz-checksum-sha256"]
+            objects[url] = (payload, checksum)
+            if failure == "receipt-put" and url.endswith("/npa_upload_receipt.json"):
+                raise module.BootstrapRefusal("injected receipt upload failure")
+            return 200, {}, b""
+        if method == "GET":
+            observed, checksum = objects[url]
+            return 200, {"x-amz-checksum-sha256": checksum}, observed
+        if method == "HEAD":
+            if url not in objects:
+                return 404, {}, b""
+            observed, checksum = objects[url]
+            return 200, {
+                "content-length": str(len(observed)),
+                "x-amz-checksum-sha256": checksum,
+            }, b""
+        assert method == "DELETE"
+        deletes.append(url)
+        if failure == "delete" and not injected:
+            injected = True
+            raise module.BootstrapRefusal("injected delete failure")
+        if failure != "absence" or injected:
+            objects.pop(url, None)
+        else:
+            injected = True
+        return 204, {}, b""
 
     monkeypatch.setattr(module, "_storage_authorization", validate_storage)
     monkeypatch.setattr(module, "_sigv4_request", request)
     root_fd = os.open(output, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        if fail_put is not None:
-            with pytest.raises(module.BootstrapRefusal, match="injected staging"):
+        if failure is not None:
+            expected = (
+                "cleanup is incomplete"
+                if failure in {"delete", "absence"}
+                else "injected"
+            )
+            with pytest.raises(module.BootstrapRefusal, match=expected):
                 module.upload_outputs(0, root_fd=root_fd)
             assert not any(url.endswith("/npa_output_commit.json") for url in puts)
+            if failure in {"artifact-put", "receipt-put"}:
+                assert objects == {}
+            else:
+                assert objects
             return
         result = module.upload_outputs(0, root_fd=root_fd)
     finally:
         os.close(root_fd)
 
     assert result["status"] == "verified"
-    assert puts[-1].endswith("/npa_output_commit.json")
+    assert puts[-1].endswith("/npa_upload_receipt.json")
+    assert not any("/.npa-staging/" in url for url in puts)
+    assert not deletes
+    receipt = json.loads(objects[puts[-1]][0])
+    assert receipt["schema"] == "npa.libero.s3-upload-readback.v1"
+    assert receipt["status"] == "verified"
+    assert receipt["commit_marker"] == "npa_upload_receipt.json"
+    assert {item["name"] for item in receipt["artifacts"]} == set(
+        module.OUTPUT_SIZE_LIMITS
+    )
     assert all(
-        f"/.npa-staging/{run_id}/{result['transaction_id']}/" in url
-        for url in puts[:-1]
+        item["object_key"].endswith("/" + item["name"])
+        for item in receipt["artifacts"]
     )
     assert validation_calls == len(puts) + 1
 

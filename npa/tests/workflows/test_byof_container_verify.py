@@ -2729,6 +2729,146 @@ def test_libero_output_preflight_first_call_uses_exact_authorized_triplet(
     )
 
 
+def test_libero_output_preflight_reconciles_only_exact_uncommitted_objects(
+    monkeypatch,
+) -> None:
+    import boto3
+
+    module = _load_module()
+    run_id = "libero-authorized-probe"
+    prefix = f"accepted-prefix/{run_id}/"
+    transaction_id = "a" * 32
+    objects = {
+        prefix + "libero-smoke.json",
+        prefix
+        + f".npa-staging/{run_id}/{transaction_id}/solution_smoke_stdout.log",
+    }
+    deletes: list[str] = []
+
+    class FakeS3:
+        def list_objects_v2(self, *, Bucket, Prefix, MaxKeys):
+            assert Bucket == "manager-bucket"
+            assert Prefix == prefix
+            return {"Contents": [{"Key": key} for key in sorted(objects)[:MaxKeys]]}
+
+        def delete_object(self, *, Bucket, Key):
+            assert Bucket == "manager-bucket"
+            deletes.append(Key)
+            objects.discard(Key)
+
+        def put_object(self, *, Bucket, Key, **_kwargs):
+            assert Bucket == "manager-bucket"
+            objects.add(Key)
+
+        def head_object(self, *, Bucket, Key):
+            assert Bucket == "manager-bucket"
+            assert Key in objects
+            return {"ContentLength": 24}
+
+    monkeypatch.setattr(boto3, "client", lambda *_args, **_kwargs: FakeS3())
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "manager-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "manager-secret")
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "manager-session")
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")
+
+    module.preflight_output_storage(
+        output_root="s3://manager-bucket/accepted-prefix",
+        run_id=run_id,
+        libero=True,
+    )
+
+    assert set(deletes[:2]) == {
+        prefix + "libero-smoke.json",
+        prefix
+        + f".npa-staging/{run_id}/{transaction_id}/solution_smoke_stdout.log",
+    }
+    assert deletes[-1] == prefix + ".npa-write-preflight"
+    assert objects == set()
+
+
+def test_libero_output_reconciliation_failure_is_explicit_and_retryable(
+    monkeypatch,
+) -> None:
+    import boto3
+
+    module = _load_module()
+    run_id = "libero-authorized-probe"
+    prefix = f"accepted-prefix/{run_id}/"
+    partial_key = prefix + "npa_runtime_metadata.json"
+    objects = {partial_key}
+    fail_delete = True
+
+    class FakeS3:
+        def list_objects_v2(self, *, Bucket, Prefix, MaxKeys):
+            return {"Contents": [{"Key": key} for key in sorted(objects)[:MaxKeys]]}
+
+        def delete_object(self, *, Bucket, Key):
+            nonlocal fail_delete
+            if Key == partial_key and fail_delete:
+                fail_delete = False
+                raise OSError("injected exact-object delete failure")
+            objects.discard(Key)
+
+        def put_object(self, *, Bucket, Key, **_kwargs):
+            objects.add(Key)
+
+        def head_object(self, *, Bucket, Key):
+            return {"ContentLength": 24}
+
+    monkeypatch.setattr(boto3, "client", lambda *_args, **_kwargs: FakeS3())
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "manager-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "manager-secret")
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "manager-session")
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")
+
+    with pytest.raises(RuntimeError, match="output storage preflight failed"):
+        module.preflight_output_storage(
+            output_root="s3://manager-bucket/accepted-prefix",
+            run_id=run_id,
+            libero=True,
+        )
+    assert objects == {partial_key}
+
+    module.preflight_output_storage(
+        output_root="s3://manager-bucket/accepted-prefix",
+        run_id=run_id,
+        libero=True,
+    )
+    assert objects == set()
+
+
+@pytest.mark.parametrize("suffix", ["npa_upload_receipt.json", "foreign.json"])
+def test_libero_output_preflight_never_reconciles_committed_or_unknown_objects(
+    monkeypatch, suffix
+) -> None:
+    import boto3
+
+    module = _load_module()
+    deleted = False
+
+    class FakeS3:
+        def list_objects_v2(self, *, Bucket, Prefix, MaxKeys):
+            return {"Contents": [{"Key": Prefix + suffix}]}
+
+        def delete_object(self, **_kwargs):
+            nonlocal deleted
+            deleted = True
+
+    monkeypatch.setattr(boto3, "client", lambda *_args, **_kwargs: FakeS3())
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "manager-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "manager-secret")
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "manager-session")
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")
+
+    with pytest.raises(RuntimeError, match="output storage preflight failed"):
+        module.preflight_output_storage(
+            output_root="s3://manager-bucket/accepted-prefix",
+            run_id="libero-authorized-probe",
+            libero=True,
+        )
+    assert deleted is False
+
+
 @pytest.mark.parametrize(
     "missing", ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"]
 )

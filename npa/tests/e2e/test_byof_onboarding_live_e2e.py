@@ -739,6 +739,7 @@ def test_libero_b200_qualification_report(e2e_project: str | None) -> None:
     assert upload_receipt["schema"] == "npa.libero.s3-upload-readback.v1"
     assert upload_receipt["run_id"] == run_id
     assert upload_receipt["status"] == "verified"
+    assert upload_receipt["commit_marker"] == "npa_upload_receipt.json"
     expected_names = {
         "libero-bc-rnn-smoke.pth",
         "libero-smoke.json",
@@ -754,6 +755,7 @@ def test_libero_b200_qualification_report(e2e_project: str | None) -> None:
     assert set(receipt_items) == expected_names
     retrieved: dict[str, bytes] = {}
     for name, item in receipt_items.items():
+        assert item["object_key"] == prefix + name
         payload, response = read_back(name)
         digest = hashlib.sha256(payload).hexdigest()
         assert len(payload) == item["size_bytes"]

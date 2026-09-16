@@ -261,7 +261,8 @@ def test_libero_profile_binds_payload_identity_customer_authorization_and_headle
     assert '"if-none-match": "*"' in bootstrap
     assert '"x-amz-checksum-mode": "ENABLED"' in bootstrap
     assert "headers.get(\"x-amz-checksum-sha256\") != checksum" in bootstrap
-    assert '"schema": "npa.libero.output-commit.v1"' in bootstrap
+    assert 'OUTPUT_RECEIPT_SCHEMA = "npa.libero.s3-upload-readback.v1"' in bootstrap
+    assert 'OUTPUT_RECEIPT_NAME = "npa_upload_receipt.json"' in bootstrap
     assert "current_authorization = _storage_authorization" in bootstrap
     assert "set(os.listdir(root_fd)) != set(OUTPUT_SIZE_LIMITS)" in bootstrap
     assert "MAX_OUTPUT_BYTES" in bootstrap
