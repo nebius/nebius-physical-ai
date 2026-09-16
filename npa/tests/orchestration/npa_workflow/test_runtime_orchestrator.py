@@ -2470,8 +2470,9 @@ def test_explicit_resume_adopts_output_complete_lost_wave_after_driver_interrupt
     )
 
 
+@pytest.mark.parametrize("default_resumes", [0, 1, 2])
 def test_explicit_resume_relaunches_typed_pre_id_transport_failure(
-    tmp_path: Path,
+    tmp_path: Path, default_resumes: int,
 ) -> None:
     from npa.orchestration.skypilot.workflow import ManagedJobEvidence
 
@@ -2516,6 +2517,20 @@ def test_explicit_resume_relaunches_typed_pre_id_transport_failure(
         }
     )
     store.write_runtime_state(state)
+    submitter = FakeSubmitter()
+    for _ in range(default_resumes):
+        safe_options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
+        safe_executor = _executor(
+            spec, run_id="rt-pre-id-transport", submitter=submitter,
+            options=safe_options, store=store,
+            output_checker=lambda uri: uri.endswith("/shared.json"),
+            reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence("absent"),
+        )
+        blocked = run_workflow_runtime(
+            spec, run_id="rt-pre-id-transport", executor=safe_executor, options=safe_options,
+        )
+        assert blocked.status == "failed"
+        assert submitter.calls == []
     options = RuntimeOptions(
         poll_seconds=0,
         max_wait_seconds=60,

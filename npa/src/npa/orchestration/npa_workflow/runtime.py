@@ -1090,6 +1090,9 @@ class SkyPilotWaveExecutor:
                 and attempt.recovery_decision
                 in {
                     "block_indeterminate",
+                    # A prior default resume records absence without authorizing
+                    # retry; it must not erase the typed transport failure.
+                    "resume_block_terminal_or_legacy_absence",
                     "resume_block_output_present",
                     "resume_block_output_indeterminate",
                 }
