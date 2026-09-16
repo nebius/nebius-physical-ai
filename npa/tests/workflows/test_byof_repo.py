@@ -136,6 +136,7 @@ def _libero_contract_args(
         "authorization_sha256": authorization_sha256,
         "caller_bytes": caller_bytes,
         "caller_sha256": caller_sha256,
+        "customer_signer_public_key_sha256": "7" * 64,
     }
 
 
@@ -147,7 +148,10 @@ def _mock_libero_caller(module, monkeypatch, contract) -> None:
             {
                 "customer_identity_sha256": contract["authorization"][
                     "customer_identity_sha256"
-                ]
+                ],
+                "customer_signer_public_key_sha256": contract[
+                    "customer_signer_public_key_sha256"
+                ],
             },
             contract["caller_sha256"],
         ),
@@ -247,6 +251,39 @@ def test_libero_requires_independently_authenticated_caller_before_authorization
     notification = json.loads(capsys.readouterr().out)
     assert notification["status"] == "needs_customer_acceptance"
     assert notification["reason"] == "authenticated_customer_identity_required"
+
+
+def test_libero_binds_customer_authorization_to_authenticated_caller_signer(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    arguments, contract = _libero_contract_args(tmp_path)
+    args = module._parse_args(["--run-id", "libero-managed-route", *arguments])
+    _mock_libero_caller(module, monkeypatch, contract)
+    observed: dict[str, object] = {}
+
+    def validate_authorization(payload, **kwargs):
+        observed["payload"] = payload
+        observed["kwargs"] = kwargs
+        return contract["authorization"], contract["authorization_sha256"]
+
+    monkeypatch.setattr(
+        module, "validate_libero_customer_runtime_authorization", validate_authorization
+    )
+
+    result = module._libero_customer_authorization(args, contract["image_manifest"])
+
+    assert result[4] == contract["customer_signer_public_key_sha256"]
+    assert observed["kwargs"] == {
+        "image_manifest": contract["image_manifest"],
+        "run_id": "libero-managed-route",
+        "customer_identity_sha256": contract["authorization"][
+            "customer_identity_sha256"
+        ],
+        "customer_signer_public_key_sha256": contract[
+            "customer_signer_public_key_sha256"
+        ],
+    }
 
 
 def test_libero_signed_denial_notifies_only_after_validation(

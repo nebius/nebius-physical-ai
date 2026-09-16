@@ -758,7 +758,6 @@ def libero_publication_lineage_values(
         "base_provenance_sha256",
         "publication_bundle_sha256",
         "package_writer_repository",
-        "customer_authorization_public_key_sha256",
         "output_storage_authorization_public_key_sha256",
     )
     return {field: qualification[field] for field in fields}
@@ -955,7 +954,6 @@ def validate_libero_qualified_image_manifest(payload: Any) -> dict[str, Any]:
         "publication_bundle_sha256",
         "build_input_bundle_sha256",
         "publication_enforcement_bundle_sha256",
-        "customer_authorization_public_key_sha256",
         "output_storage_authorization_public_key_sha256",
         "runtime_manifest_sha256",
     ):
@@ -964,6 +962,10 @@ def validate_libero_qualified_image_manifest(payload: Any) -> dict[str, Any]:
             is not None,
             field,
         )
+    require(
+        qualification.get("customer_authorization_public_key_sha256") == "",
+        "customer signer remains runtime-only",
+    )
     require(
         re.fullmatch(
             r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+",
@@ -1044,9 +1046,7 @@ def validate_libero_qualified_image_manifest(payload: Any) -> dict[str, Any]:
             "publication_enforcement_bundle_sha256"
         ),
         "package_writer_repository": qualification.get("package_writer_repository"),
-        "customer_authorization_public_key_sha256": qualification.get(
-            "customer_authorization_public_key_sha256"
-        ),
+        "customer_authorization_public_key_sha256": "",
         "output_storage_authorization_public_key_sha256": qualification.get(
             "output_storage_authorization_public_key_sha256"
         ),
@@ -1536,17 +1536,27 @@ def validate_libero_output_storage_authorization(
             LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE_ENV, ""
         ).strip()
     )
-    customer_key = _libero_trust_root_bytes(
+    transported_customer_key = _libero_trust_root_bytes(
         customer_key_path, label="customer-authorization"
     )
     storage_key = _libero_trust_root_bytes(
         storage_key_path, label="output-storage-authorization"
     )
-    customer_fingerprint = hashlib.sha256(customer_key).hexdigest()
+    try:
+        authorization_customer_key = base64.b64decode(
+            str(customer_authorization.get("customer_signer_public_key_b64") or ""),
+            validate=True,
+        )
+    except (ValueError, binascii.Error) as exc:
+        raise RuntimeError("LIBERO customer signer identity is invalid") from exc
+    customer_signature = customer_authorization.get("signature")
+    customer_fingerprint = hashlib.sha256(authorization_customer_key).hexdigest()
     storage_fingerprint = hashlib.sha256(storage_key).hexdigest()
     if (
-        customer_fingerprint
-        != qualification["customer_authorization_public_key_sha256"]
+        len(authorization_customer_key) != 32
+        or not hmac.compare_digest(transported_customer_key, authorization_customer_key)
+        or not isinstance(customer_signature, dict)
+        or customer_signature.get("public_key_sha256") != customer_fingerprint
         or storage_fingerprint
         != qualification["output_storage_authorization_public_key_sha256"]
         or hmac.compare_digest(customer_fingerprint, storage_fingerprint)

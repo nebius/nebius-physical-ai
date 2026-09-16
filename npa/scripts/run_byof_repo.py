@@ -163,7 +163,7 @@ def _libero_qualified_candidate(value: str, qualification: dict[str, Any]) -> st
 
 def _libero_customer_authorization(
     args: argparse.Namespace, image_manifest: dict[str, Any]
-) -> tuple[Path, bytes, str, str, bytes, str]:
+) -> tuple[Path, bytes, str, str, str, bytes, str]:
     caller_path_value = str(
         args.libero_authenticated_caller_identity_file or ""
     ).strip()
@@ -183,6 +183,7 @@ def _libero_customer_authorization(
     except RuntimeError as exc:
         raise ValueError(str(exc)) from exc
     customer_identity_sha256 = str(caller["customer_identity_sha256"])
+    customer_signer_public_key_sha256 = str(caller["customer_signer_public_key_sha256"])
     path_value = str(args.libero_customer_runtime_authorization_file or "").strip()
     if not path_value:
         raise LiberoCustomerAcceptanceRequired(
@@ -198,6 +199,7 @@ def _libero_customer_authorization(
             image_manifest=image_manifest,
             run_id=args.run_id,
             customer_identity_sha256=customer_identity_sha256,
+            customer_signer_public_key_sha256=(customer_signer_public_key_sha256),
         )
     except LiberoCustomerAuthorizationDenied as exc:
         raise LiberoCustomerAcceptanceRequired(
@@ -229,6 +231,7 @@ def _libero_customer_authorization(
         authorization_bytes,
         observed,
         customer_identity_sha256,
+        customer_signer_public_key_sha256,
         caller_bytes,
         caller_sha256,
     )
@@ -344,12 +347,14 @@ def _validate_libero_identity(args: argparse.Namespace) -> None:
         authorization_bytes,
         authorization_sha256,
         customer_identity_sha256,
+        customer_signer_public_key_sha256,
         caller_bytes,
         caller_sha256,
     ) = _libero_customer_authorization(args, image_manifest)
     args._libero_customer_authorization_bytes = authorization_bytes
     args._libero_customer_authorization_sha256 = authorization_sha256
     args._libero_customer_identity_sha256 = customer_identity_sha256
+    args._libero_customer_signer_public_key_sha256 = customer_signer_public_key_sha256
     args._libero_authenticated_caller_bytes = caller_bytes
     args._libero_authenticated_caller_sha256 = caller_sha256
 

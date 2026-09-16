@@ -27,7 +27,8 @@ owner-private transported copy of the customer public key must equal the key in
 the signed evidence; symlinks, non-owner files, group/world permissions, and
 mismatched keys fail closed. Private signing material, customer identity,
 credentials, acceptance records, terms payloads, and runtime payloads are never
-baked into the neutral image.
+baked into the neutral image. Image qualification carries no customer signer
+fingerprint; signer trust is supplied owner-private and checked only at runtime.
 
 The authenticated control plane supplies these inputs; they are not customer
 acceptance switches and must not be synthesized locally:

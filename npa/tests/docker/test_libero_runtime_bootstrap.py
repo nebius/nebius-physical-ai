@@ -220,11 +220,6 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
     authorization["customer_signer_public_key_b64"] = module.base64.b64encode(
         customer_public_key
     ).decode("ascii")
-    trust_root = tmp_path / "customer-authorization-public-key.b64"
-    trust_root.write_bytes(module.base64.b64encode(customer_public_key))
-    trust_root.chmod(0o444)
-    module.CUSTOMER_AUTHORIZATION_PUBLIC_KEY = trust_root
-    module.CUSTOMER_AUTHORIZATION_PUBLIC_KEY_OWNER_UID = os.getuid()
     storage_signer = Ed25519PrivateKey.generate()
     storage_public_key = storage_signer.public_key().public_bytes(
         serialization.Encoding.Raw, serialization.PublicFormat.Raw
@@ -689,14 +684,24 @@ def test_locally_invented_customer_authorization_refuses_before_network_or_cache
     assert not Path(args.cache_root).exists()
 
 
-def test_customer_authorization_payload_cannot_select_its_trust_root(tmp_path) -> None:
+def test_customer_authorization_payload_cannot_substitute_authenticated_signer(
+    tmp_path,
+) -> None:
     module, args, _fixture_values = _fixture(tmp_path)
-    authoritative_key = module._trusted_customer_authorization_public_key()
     payload = json.loads(Path(args.authorization).read_text(encoding="utf-8"))
-    payload["signature"]["public_key_sha256"] = "0" * 64
+    attacker = Ed25519PrivateKey.generate()
+    attacker_public = attacker.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    payload["customer_signer_public_key_b64"] = module.base64.b64encode(
+        attacker_public
+    ).decode("ascii")
+    payload["signature"]["public_key_sha256"] = _sha(attacker_public)
+    payload["signature"]["signature_b64"] = module.base64.b64encode(
+        attacker.sign(module._customer_authorization_signature_payload(payload))
+    ).decode("ascii")
     args.authorization_sha256 = _write_json(Path(args.authorization), payload)
 
-    assert module._trusted_customer_authorization_public_key() == authoritative_key
     with pytest.raises(
         module.CustomerAcceptanceRequired, match="authorization signature invalid"
     ):
@@ -762,28 +767,32 @@ def test_private_input_reader_names_the_supplied_input(tmp_path: Path) -> None:
         os.close(descriptor)
 
 
-def test_customer_trust_root_rejects_descriptor_metadata_race(
-    monkeypatch, tmp_path
+@pytest.mark.parametrize("caller_fingerprint", [None, "0" * 64])
+def test_absent_or_stale_authenticated_signer_refuses_before_network_or_cache(
+    monkeypatch, tmp_path, caller_fingerprint
 ) -> None:
-    module, _args, _fixture_values = _fixture(tmp_path)
-    original_fstat = module.os.fstat
-    touched = False
+    module, args, _fixture_values = _fixture(tmp_path)
+    if caller_fingerprint is None:
+        monkeypatch.delenv(
+            "NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256", raising=False
+        )
+    else:
+        monkeypatch.setenv(
+            "NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256",
+            caller_fingerprint,
+        )
+    monkeypatch.setattr(
+        module,
+        "_verify_governing_terms",
+        lambda *_args: pytest.fail("network began without a current caller signer"),
+    )
 
-    def racing_fstat(descriptor):
-        nonlocal touched
-        metadata = original_fstat(descriptor)
-        if not touched:
-            touched = True
-            os.utime(
-                module.CUSTOMER_AUTHORIZATION_PUBLIC_KEY,
-                ns=(metadata.st_atime_ns, metadata.st_mtime_ns + 1_000_000_000),
-            )
-        return metadata
+    with pytest.raises(
+        module.CustomerAcceptanceRequired, match="authorization signature invalid"
+    ):
+        module.ensure(args)
 
-    monkeypatch.setattr(module.os, "fstat", racing_fstat)
-
-    with pytest.raises(module.BootstrapRefusal, match="mutable or invalid"):
-        module._trusted_customer_authorization_public_key()
+    assert not Path(args.cache_root).exists()
 
 
 @pytest.mark.parametrize("field", ["size_bytes", "license_expression"])

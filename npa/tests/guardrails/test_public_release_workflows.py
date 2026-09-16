@@ -361,7 +361,6 @@ def test_failed_development_cleanup_is_exact_and_refuses_shared_digest() -> None
     assert "metadata.container.tags" in text
     assert "Refusing cleanup: digest also carries tags" in text
     assert "versions/${version_id}" in text
-    assert "Refusing cleanup: exact run-owned version identity changed" in text
     assert "Deletion does not revoke downloads" in text
     assert "Requested development tag is already absent" in text
     failed_cleanup = _spec(PUBLISH)["jobs"]["cleanup-failed-build"]
@@ -372,7 +371,6 @@ def test_failed_development_cleanup_is_exact_and_refuses_shared_digest() -> None
     )
     assert 'gh api --method DELETE "$package_api"' in script
     assert 'gh api --method PATCH "$package_api" -f visibility=private' in script
-    assert "unpublished candidate graph contains unrelated versions" in script
     assert "candidate package absence is unverified" in script
     package_delete = script.index('gh api --method DELETE "$package_api"')
     private_recheck = script.rindex(
@@ -384,9 +382,68 @@ def test_failed_development_cleanup_is_exact_and_refuses_shared_digest() -> None
     assert 'gh api -i "$package_api"' in script
     assert "grep -q '^HTTP/.* 404 '" in script
     assert "Failed-build package absence is unverified" in script
-    assert "A subject relationship is not proof" in script
-    assert 'if row["id"] == root_id:' in script
+    assert "subject relationship alone is not proof" in script
+    assert "NPA_FAILED_PUBLICATION_PRE_GRAPH" in script
+    assert 'before_ids="$(jq -c' in script
+    assert "Run-created attestation version is not bound" in script
+    assert "require_complete_graph" in script
+    assert 'cmp -s "$before_versions" "$post_versions"' in script
     assert "subprocess.check_output" not in script
+
+
+def test_failed_publication_cleanup_seals_failure_cancellation_and_concurrency_state() -> (
+    None
+):
+    spec = _spec(PUBLISH)
+    build_steps = spec["jobs"]["build-development"]["steps"]
+    names = [str(step.get("name") or "") for step in build_steps]
+    snapshot = names.index("Seal adjacent pre-publication package graph")
+    upload = names.index("Persist adjacent pre-publication package graph")
+    push = names.index("Push only after every pre-publication gate passes")
+    provenance = names.index("Attest exact pushed digest provenance")
+    assert snapshot < upload < push < provenance
+    assert build_steps[upload]["uses"] == (
+        "actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4"
+    )
+    assert "github.run_id" in build_steps[upload]["with"]["name"]
+    assert "github.run_attempt" in build_steps[upload]["with"]["name"]
+
+    cleanup = spec["jobs"]["cleanup-failed-build"]
+    condition = str(cleanup["if"])
+    assert 'fromJSON(\'["failure","cancelled"]\')' in condition
+    assert spec["concurrency"] == {
+        "group": "public-image-registry-mutation",
+        "cancel-in-progress": False,
+    }
+    recover = next(
+        step
+        for step in cleanup["steps"]
+        if step.get("name")
+        == "Recover the sealed adjacent pre-publication package graph"
+    )
+    assert "/actions/runs/${GITHUB_RUN_ID}/artifacts" in recover["run"]
+    assert ".total_count == 1" in recover["run"]
+
+
+def test_failed_publication_cleanup_deletes_adjacent_referrers_before_root() -> None:
+    cleanup = _spec(PUBLISH)["jobs"]["cleanup-failed-build"]
+    script = next(
+        step["run"]
+        for step in cleanup["steps"]
+        if str(step.get("name") or "").startswith("Remove an exact run-owned")
+    )
+    delta = script.index("before_ids=")
+    subject = script.index("Run-created attestation version is not bound")
+    referrer_delete = script.index(
+        'gh api --method DELETE "${package_api}/versions/${referrer_id}"'
+    )
+    root_delete = script.index(
+        'gh api --method DELETE "${package_api}/versions/${root_id}"'
+    )
+    assert delta < subject < referrer_delete < root_delete
+    assert script.count("require_complete_graph") >= 4
+    assert "Unrelated package graph changed during cleanup" in script
+    assert "the sealed unrelated graph is unchanged" in script
 
 
 def test_public_health_is_anonymous_and_read_only() -> None:

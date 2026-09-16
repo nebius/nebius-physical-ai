@@ -54,6 +54,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   packages: write
   attestations: write
   id-token: write
@@ -114,23 +115,16 @@ jobs:
           npa/.venv/bin/pip install -c npa/requirements-lock.txt -e "npa[dev]"
           npa/.venv/bin/python -c 'import cryptography; assert cryptography.__version__ == "50.0.0"'
 
-      - name: Materialize owner-private LIBERO control-plane trust roots
+      - name: Materialize the LIBERO output-storage trust root
         if: ${{ inputs.tool == 'libero' || contains(inputs.build_development_tools, 'libero') || contains(inputs.cleanup_development_tools, 'libero') }}
         env:
-          NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64: ${{ secrets.NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64 }}
           NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64: ${{ secrets.NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64 }}
         run: |
           set -euo pipefail
           umask 077
-          key_file="$RUNNER_TEMP/libero-customer-authorization-public-key.b64"
-          printf '%s' "$NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64" > "$key_file"
-          test "$(base64 -d "$key_file" | wc -c)" = 32
-          chmod 0600 "$key_file"
-          echo "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE=$key_file" >> "$GITHUB_ENV"
           storage_key_file="$RUNNER_TEMP/libero-output-storage-authorization-public-key.b64"
           printf '%s' "$NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64" > "$storage_key_file"
           test "$(base64 -d "$storage_key_file" | wc -c)" = 32
-          test "$(cat "$key_file")" != "$(cat "$storage_key_file")"
           chmod 0600 "$storage_key_file"
           echo "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE=$storage_key_file" >> "$GITHUB_ENV"
 
@@ -181,21 +175,9 @@ jobs:
               if target != "ghcr.io/nebius/nebius-physical-ai":
                   raise SystemExit("libero: publication target must be the official GHCR namespace")
               libero_qualification = libero_qualified_image_manifest()
-              key_bytes = base64.b64decode(
-                  Path(
-                      os.environ["NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE"]
-                  ).read_bytes(),
-                  validate=True,
-              )
-              if (
-                  len(key_bytes) != 32
-                  or hashlib.sha256(key_bytes).hexdigest()
-                  != libero_qualification[
-                      "customer_authorization_public_key_sha256"
-                  ]
-              ):
+              if libero_qualification["customer_authorization_public_key_sha256"]:
                   raise SystemExit(
-                      "libero: customer-authorization trust root differs from qualification"
+                      "libero: customer signer must remain runtime-only"
                   )
               storage_key_bytes = base64.b64decode(
                   Path(
@@ -211,10 +193,9 @@ jobs:
                   != libero_qualification[
                       "output_storage_authorization_public_key_sha256"
                   ]
-                  or storage_key_bytes == key_bytes
               ):
                   raise SystemExit(
-                      "libero: output-storage trust root differs or is not independent"
+                      "libero: output-storage trust root differs from qualification"
                   )
               if libero_qualification["development_sha"] != sha:
                   raise SystemExit(
@@ -337,13 +318,6 @@ jobs:
                       if tool == "libero" and libero_qualification is not None
                       else ""
                   ),
-                  "libero_qualified_customer_authorization_public_key_sha256": (
-                      libero_qualification[
-                          "customer_authorization_public_key_sha256"
-                      ]
-                      if tool == "libero" and libero_qualification is not None
-                      else ""
-                  ),
                   "libero_qualified_output_storage_authorization_public_key_sha256": (
                       libero_qualification[
                           "output_storage_authorization_public_key_sha256"
@@ -434,7 +408,6 @@ jobs:
       LIBERO_QUALIFIED_CANONICAL_BUILD_METADATA_SHA256: ${{ matrix.libero_qualified_canonical_build_metadata_sha256 }}
       LIBERO_QUALIFIED_BASE_PROVENANCE_SHA256: ${{ matrix.libero_qualified_base_provenance_sha256 }}
       LIBERO_QUALIFIED_PUBLICATION_BUNDLE_SHA256: ${{ matrix.libero_qualified_publication_bundle_sha256 }}
-      LIBERO_QUALIFIED_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_SHA256: ${{ matrix.libero_qualified_customer_authorization_public_key_sha256 }}
       LIBERO_QUALIFIED_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_SHA256: ${{ matrix.libero_qualified_output_storage_authorization_public_key_sha256 }}
       # Updated only after independent review of the exact public content proofs.
       CUROBO_PUBLIC_NATIVE_POLICY_SHA256: 1b4d078637ae99cbc3191244c8338d006ac7df0ca9d0436693f4bca6485030ab
@@ -454,27 +427,18 @@ jobs:
           npa/.venv/bin/pip install -c npa/requirements-lock.txt -e "npa[dev]"
           npa/.venv/bin/python -c 'import cryptography; assert cryptography.__version__ == "50.0.0"'
 
-      - name: Materialize owner-private LIBERO control-plane trust roots
+      - name: Materialize the LIBERO output-storage trust root
         if: matrix.tool == 'libero'
         env:
-          NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64: ${{ secrets.NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64 }}
           NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64: ${{ secrets.NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64 }}
         run: |
           set -euo pipefail
           umask 077
-          key_file="$RUNNER_TEMP/libero-customer-authorization-public-key.b64"
-          printf '%s' "$NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64" > "$key_file"
-          test "$(base64 -d "$key_file" | wc -c)" = 32
-          test "$(base64 -d "$key_file" | sha256sum | cut -d' ' -f1)" = \
-            "$LIBERO_QUALIFIED_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_SHA256"
-          chmod 0600 "$key_file"
-          echo "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE=$key_file" >> "$GITHUB_ENV"
           storage_key_file="$RUNNER_TEMP/libero-output-storage-authorization-public-key.b64"
           printf '%s' "$NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64" > "$storage_key_file"
           test "$(base64 -d "$storage_key_file" | wc -c)" = 32
           test "$(base64 -d "$storage_key_file" | sha256sum | cut -d' ' -f1)" = \
             "$LIBERO_QUALIFIED_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_SHA256"
-          test "$(cat "$key_file")" != "$(cat "$storage_key_file")"
           chmod 0600 "$storage_key_file"
           echo "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE=$storage_key_file" >> "$GITHUB_ENV"
 
@@ -715,6 +679,78 @@ jobs:
             exit 1
           fi
 
+      - name: Seal adjacent pre-publication package graph
+        if: matrix.tool != 'ncore' && matrix.tool != 'libero'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          umask 077
+          path="${IMAGE#ghcr.io/}"
+          owner="${path%%/*}"
+          package_and_tag="${path#*/}"
+          package="${package_and_tag%:*}"
+          tag="${package_and_tag##*:}"
+          encoded="${package//\//%2F}"
+          package_api="/orgs/${owner}/packages/container/${encoded}"
+          evidence_dir="$RUNNER_TEMP/failed-publication-ownership/${TOOL}"
+          mkdir -p "$evidence_dir"
+          snapshot="$evidence_dir/pre-publication-package-graph.json"
+          response="$(mktemp)"
+          if gh api --silent --include "$package_api" >"$response" 2>/dev/null; then
+            repository_full_name="$(gh api "$package_api" --jq '.repository.full_name // ""')"
+            test "$repository_full_name" = "$GITHUB_REPOSITORY"
+            visibility="$(gh api "$package_api" --jq .visibility)"
+            versions="$(mktemp)"
+            gh api --paginate --slurp "${package_api}/versions?per_page=100" |
+              jq 'add' > "$versions"
+            jq -e --arg tag "$tag" '
+              all(.[]; ((.metadata.container.tags // []) | index($tag) | not))
+            ' "$versions" >/dev/null
+            jq -S -n --arg repository "${IMAGE%:*}" --arg package_api "$package_api" \
+              --arg tag "$tag" --arg run_id "$GITHUB_RUN_ID" \
+              --arg run_attempt "$GITHUB_RUN_ATTEMPT" --arg visibility "$visibility" \
+              --arg repository_full_name "$repository_full_name" \
+              --slurpfile versions "$versions" '{
+                schema:"npa.publication.pre-package-graph.v1",
+                repository:$repository,
+                package_api:$package_api,
+                tag:$tag,
+                run_id:$run_id,
+                run_attempt:$run_attempt,
+                package:{state:"present",visibility:$visibility,
+                  repository_full_name:$repository_full_name},
+                versions:($versions[0] | sort_by(.id | tostring))
+              }' > "$snapshot"
+          elif grep -q '^HTTP/.* 404 ' "$response"; then
+            jq -S -n --arg repository "${IMAGE%:*}" --arg package_api "$package_api" \
+              --arg tag "$tag" --arg run_id "$GITHUB_RUN_ID" \
+              --arg run_attempt "$GITHUB_RUN_ATTEMPT" '{
+                schema:"npa.publication.pre-package-graph.v1",
+                repository:$repository,
+                package_api:$package_api,
+                tag:$tag,
+                run_id:$run_id,
+                run_attempt:$run_attempt,
+                package:{state:"absent",visibility:null,repository_full_name:null},
+                versions:[]
+              }' > "$snapshot"
+          else
+            echo "::error::Could not seal the adjacent pre-publication package graph"
+            exit 1
+          fi
+          chmod 0600 "$snapshot"
+
+      - name: Persist adjacent pre-publication package graph
+        if: matrix.tool != 'ncore' && matrix.tool != 'libero'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: failed-publication-ownership-${{ matrix.tool }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/failed-publication-ownership/${{ matrix.tool }}/pre-publication-package-graph.json
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 1
+
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
@@ -852,13 +888,9 @@ jobs:
           export_args=(--load)
           secret_args=()
           if [[ "$TOOL" == libero ]]; then
-            NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64="$(tr -d '\r\n' < "$NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE")"
             NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64="$(tr -d '\r\n' < "$NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE")"
-            export NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64
             export NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64
-            test "$(printf '%s' "$NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64" | base64 -d | wc -c)" = 32
             test "$(printf '%s' "$NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64" | base64 -d | wc -c)" = 32
-            test "$NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64" != "$NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64"
             metadata_args+=(
               --metadata-file "$RUNNER_TEMP/libero-build-metadata.json"
               --provenance=mode=max
@@ -868,7 +900,6 @@ jobs:
               --output "type=oci,dest=$RUNNER_TEMP/libero-build.oci.tar,tar=true,rewrite-timestamp=true"
             )
             secret_args+=(
-              --secret id=npa_libero_customer_authorization_public_key_b64,env=NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64
               --secret id=npa_libero_output_storage_authorization_public_key_b64,env=NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64
             )
             export BUILDX_METADATA_PROVENANCE=max
@@ -1646,6 +1677,35 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Recover the sealed adjacent pre-publication package graph
+        if: matrix.tool != 'ncore' && matrix.tool != 'libero'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARTIFACT_NAME: failed-publication-ownership-${{ matrix.tool }}-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          umask 077
+          containment="$(mktemp -d)"
+          metadata="$containment/artifacts.json"
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?name=${ARTIFACT_NAME}&per_page=100" \
+            > "$metadata"
+          jq -e --arg name "$ARTIFACT_NAME" '
+            .total_count == 1 and (.artifacts | length) == 1 and
+            .artifacts[0].name == $name and .artifacts[0].expired == false and
+            (.artifacts[0].id | tostring | test("^[1-9][0-9]*$"))
+          ' "$metadata" >/dev/null
+          artifact_id="$(jq -r '.artifacts[0].id' "$metadata")"
+          archive="$containment/evidence.zip"
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" \
+            > "$archive"
+          mkdir "$containment/unpacked"
+          unzip -qq "$archive" -d "$containment/unpacked"
+          test "$(find "$containment/unpacked" -type f -printf '%P\n')" = \
+            "pre-publication-package-graph.json"
+          snapshot="$containment/unpacked/pre-publication-package-graph.json"
+          chmod 0600 "$snapshot"
+          echo "NPA_FAILED_PUBLICATION_PRE_GRAPH=$snapshot" >> "$GITHUB_ENV"
+
       - name: Remove an exact run-owned dev tag after a failed build batch
         if: matrix.tool != 'ncore'
         env:
@@ -1672,6 +1732,16 @@ jobs:
               echo "::error::Failed-build package exists but its versions could not be verified"
               exit 1
             elif grep -q '^HTTP/.* 404 ' "$response"; then
+              if [ "$TOOL" != libero ]; then
+                test -f "$NPA_FAILED_PUBLICATION_PRE_GRAPH"
+                jq -e '
+                  .schema == "npa.publication.pre-package-graph.v1" and
+                  .package.state == "absent" and .versions == []
+                ' "$NPA_FAILED_PUBLICATION_PRE_GRAPH" >/dev/null || {
+                  echo "::error::Failed-build cleanup lost a pre-existing package graph"
+                  exit 1
+                }
+              fi
               echo "No package exists for failed-build cleanup." >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
@@ -1800,98 +1870,130 @@ jobs:
             echo "Deletion does not revoke downloads made while the package was public." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          matches="$(jq --arg tag "$tag" '[.[] | select((.metadata.container.tags // []) | index($tag))]' "$versions")"
-          count="$(jq length <<<"$matches")"
-          if [ "$count" = 0 ]; then
-            echo "No pushed run-owned dev tag exists for cleanup." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          test "$count" = 1
-          tags="$(jq -c '.[0].metadata.container.tags // []' <<<"$matches")"
-          test "$tags" = "[\"$tag\"]" || {
-            echo "::error::Refusing cleanup: digest also carries tags $tags"
-            exit 1
-          }
-          version_id="$(jq -r '.[0].id' <<<"$matches")"
-          digest="$(jq -r '.[0].name' <<<"$matches")"
-          test "$digest" = "$(crane digest "$IMAGE")"
+          test -f "$NPA_FAILED_PUBLICATION_PRE_GRAPH"
+          jq -e --arg repository "$repository" --arg package_api "$package_api" \
+            --arg tag "$tag" --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_attempt "$GITHUB_RUN_ATTEMPT" --arg repo "$GITHUB_REPOSITORY" '
+            .schema == "npa.publication.pre-package-graph.v1" and
+            .repository == $repository and .package_api == $package_api and
+            .tag == $tag and .run_id == $run_id and .run_attempt == $run_attempt and
+            (.package.state == "absent" or
+              (.package.state == "present" and
+               .package.repository_full_name == $repo and
+               (.package.visibility == "private" or .package.visibility == "public"))) and
+            (.versions | type == "array") and
+            (if .package.state == "absent" then .versions == [] else true end)
+          ' "$NPA_FAILED_PUBLICATION_PRE_GRAPH" >/dev/null
+          test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
+            "$GITHUB_REPOSITORY"
           visibility="$(gh api "$package_api" --jq .visibility)"
           if [ "$visibility" != private ] && [ "$visibility" != public ]; then
             echo "::error::Unsupported failed-build package visibility: $visibility"
             exit 1
           fi
-          test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
-            "$GITHUB_REPOSITORY"
+          before_versions="$(mktemp)"
           current_versions="$(mktemp)"
-          gh api --paginate --slurp "${package_api}/versions?per_page=100" |
-            jq 'add' > "$current_versions"
-          jq -e --arg id "$version_id" --arg digest "$digest" --arg tag "$tag" '
-            [.[] | select(
-              (.id | tostring) == $id and .name == $digest and
-              (.metadata.container.tags // []) == [$tag]
-            )] | length == 1
-          ' "$current_versions" >/dev/null || {
-            echo "::error::Refusing cleanup: exact run-owned version identity changed"
+          jq -S '.versions | sort_by(.id | tostring)' \
+            "$NPA_FAILED_PUBLICATION_PRE_GRAPH" > "$before_versions"
+          jq -S 'sort_by(.id | tostring)' "$versions" > "$current_versions"
+          jq -e '
+            (map(.id | tostring) | length == (unique | length)) and
+            all(.[];
+              (.id | tostring | test("^[1-9][0-9]*$")) and
+              (.name | type == "string") and
+              ((.metadata.container.tags // []) | type == "array"))
+          ' "$current_versions" >/dev/null
+          jq -e --slurpfile current "$current_versions" '
+            all(.[]; . as $before | any($current[0][]; . == $before))
+          ' "$before_versions" >/dev/null || {
+            echo "::error::Unrelated package identity changed after the sealed pre-publication graph"
             exit 1
           }
-          classified="$(mktemp)"
-          python - "$repository" "$digest" "$version_id" \
-            "$tag" "$current_versions" "$classified" <<'PY'
-          import json
-          import re
-          import subprocess
-          import sys
-
-          repository, root, root_id, tag, versions_path, output_path = sys.argv[1:]
-          versions = json.load(open(versions_path, encoding="utf-8"))
-          if not isinstance(versions, list) or not versions:
-              raise SystemExit("failed-build package version graph is malformed")
-          identities = [str(item.get("id") or "") for item in versions if isinstance(item, dict)]
-          if len(identities) != len(versions) or len(set(identities)) != len(versions) or any(re.fullmatch(r"[1-9][0-9]*", item) is None for item in identities):
-              raise SystemExit("failed-build package version identities are ambiguous")
-          owned = []
-          unrelated = []
-          for item in versions:
-              row = {
-                  "id": str(item["id"]),
-                  "name": str(item.get("name") or ""),
-                  "tags": item.get("metadata", {}).get("container", {}).get("tags") or [],
-              }
-              if re.fullmatch(r"sha256:[0-9a-f]{64}", row["name"]) is None or not isinstance(row["tags"], list):
-                  raise SystemExit("failed-build package version record is malformed")
-              if row["id"] == root_id:
-                  if row["name"] != root or row["tags"] != [tag]:
-                      raise SystemExit("failed-build root candidate identity changed")
-                  owned.append(row)
-                  continue
-              # A subject relationship is not proof that this run created a
-              # version. Preserve every identity except the exact root id,
-              # digest, and singleton tag captured from this run's push.
-              unrelated.append(row)
-          owned.sort(key=lambda row: (row["name"] == root, row["id"]))
-          unrelated.sort(key=lambda row: row["id"])
-          with open(output_path, "w", encoding="utf-8") as stream:
-              json.dump({"owned": owned, "unrelated": unrelated}, stream, sort_keys=True)
-              stream.write("\n")
-          PY
-          if jq -e '.unrelated | length == 0' "$classified" >/dev/null; then
-            # Revoke public reachability first, then re-read the complete closed
-            # graph and package identity immediately before final-version cleanup.
+          before_ids="$(jq -c '[.[].id | tostring]' "$before_versions")"
+          owned="$(mktemp)"
+          jq -S --argjson before_ids "$before_ids" --arg tag "$tag" '
+            [.[] | select((.id | tostring) as $id | $before_ids | index($id) | not)] |
+            if length < 1 or length > 3 or
+               ([.[] | select((.metadata.container.tags // []) == [$tag])] | length) != 1 or
+               any(.[];
+                 (.id | tostring | test("^[1-9][0-9]*$")) | not or
+                 (.name | test("^sha256:[0-9a-f]{64}$")) | not or
+                 (((.metadata.container.tags // []) == [$tag] or
+                   (.metadata.container.tags // []) == []) | not))
+            then error("failed-publication current-run delta is malformed")
+            else {
+              root:(.[] | select((.metadata.container.tags // []) == [$tag]) |
+                {id:(.id | tostring),name,tags:(.metadata.container.tags // [])}),
+              referrers:[.[] | select((.metadata.container.tags // []) == []) |
+                {id:(.id | tostring),name,tags:(.metadata.container.tags // [])}] |
+                sort_by(.id)
+            }
+            end
+          ' "$current_versions" > "$owned"
+          root_id="$(jq -r '.root.id' "$owned")"
+          root_digest="$(jq -r '.root.name' "$owned")"
+          test "$root_digest" = "$(crane digest "$IMAGE")"
+          while IFS=$'\t' read -r referrer_id referrer_digest; do
+            manifest="$(mktemp)"
+            crane manifest "$repository@$referrer_digest" > "$manifest"
+            # The adjacent graph delta establishes run ownership.
+            # A subject relationship alone is not proof; it is the second required bind.
+            jq -e --arg root "$root_digest" '
+              .schemaVersion == 2 and
+              .mediaType == "application/vnd.oci.image.manifest.v1+json" and
+              (.layers | type == "array" and length > 0) and
+              (((.subject // {}).digest == $root) or
+               ((.annotations // {})["vnd.docker.reference.digest"] == $root))
+            ' "$manifest" >/dev/null || {
+              echo "::error::Run-created attestation version is not bound to the exact candidate root"
+              exit 1
+            }
+          done < <(jq -r '.referrers[] | [.id,.name] | @tsv' "$owned")
+          expected_graph="$(mktemp)"
+          cp "$current_versions" "$expected_graph"
+          require_complete_graph() {
+            local observed
+            observed="$(mktemp)"
+            gh api --paginate --slurp "${package_api}/versions?per_page=100" |
+              jq -S 'add | sort_by(.id | tostring)' > "$observed"
+            cmp -s "$expected_graph" "$observed" || {
+              echo "::error::Refusing cleanup: complete package graph changed"
+              exit 1
+            }
+          }
+          forget_owned_version() {
+            local deleted_id="$1"
+            local next
+            next="$(mktemp)"
+            jq -S --arg id "$deleted_id" \
+              'map(select((.id | tostring) != $id))' "$expected_graph" > "$next"
+            mv "$next" "$expected_graph"
+          }
+          while IFS=$'\t' read -r referrer_id referrer_digest; do
+            require_complete_graph
+            jq -e --arg id "$referrer_id" --arg digest "$referrer_digest" '
+              [.[] | select((.id | tostring) == $id and .name == $digest and
+                (.metadata.container.tags // []) == [])] | length == 1
+            ' "$expected_graph" >/dev/null
+            gh api --method DELETE "${package_api}/versions/${referrer_id}"
+            forget_owned_version "$referrer_id"
+          done < <(jq -r '.referrers[] | [.id,.name] | @tsv' "$owned")
+          require_complete_graph
+          jq -e --arg id "$root_id" --arg digest "$root_digest" --arg tag "$tag" '
+            [.[] | select((.id | tostring) == $id and .name == $digest and
+              (.metadata.container.tags // []) == [$tag])] | length == 1
+          ' "$expected_graph" >/dev/null
+          referrer_count="$(jq '.referrers | length' "$owned")"
+          if jq -e '.package.state == "absent"' \
+            "$NPA_FAILED_PUBLICATION_PRE_GRAPH" >/dev/null; then
+            test "$(jq length "$expected_graph")" = 1
             if [ "$visibility" = public ]; then
               gh api --method PATCH "$package_api" -f visibility=private >/dev/null
             fi
             test "$(gh api "$package_api" --jq .visibility)" = private
             test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
               "$GITHUB_REPOSITORY"
-            final_versions="$(mktemp)"
-            gh api --paginate --slurp "${package_api}/versions?per_page=100" |
-              jq 'add' > "$final_versions"
-            jq -e --slurpfile classified "$classified" '
-              ([.[] | {id:(.id | tostring), name,
-                tags:(.metadata.container.tags // [])}] |
-                sort_by([.name == $classified[0].owned[-1].name, .id])) ==
-              $classified[0].owned
-            ' "$final_versions" >/dev/null
+            require_complete_graph
             gh api --method DELETE "$package_api"
             response="$(mktemp)"
             if gh api -i "$package_api" >"$response" 2>&1; then
@@ -1901,36 +2003,18 @@ jobs:
               echo "::error::Failed-build candidate package absence is unverified"
               exit 1
             fi
-            echo "Deleted the complete exact failed candidate/referrer graph after restoring private visibility." >> "$GITHUB_STEP_SUMMARY"
-            echo "Deletion does not revoke downloads made while the package was public." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          if [ "$visibility" = private ]; then
-            echo "::error::Refusing package fallback: unpublished candidate graph contains unrelated versions"
-            exit 1
-          fi
-          unrelated_before="$(mktemp)"
-          jq '.unrelated' "$classified" > "$unrelated_before"
-          while IFS=$'\t' read -r owned_id owned_digest owned_tags; do
-            latest="$(mktemp)"
+          else
+            gh api --method DELETE "${package_api}/versions/${root_id}"
+            forget_owned_version "$root_id"
+            post_versions="$(mktemp)"
             gh api --paginate --slurp "${package_api}/versions?per_page=100" |
-              jq 'add' > "$latest"
-            jq -e --arg id "$owned_id" --arg digest "$owned_digest" \
-              --argjson tags "$owned_tags" '
-              [.[] | select((.id | tostring) == $id and .name == $digest and
-                (.metadata.container.tags // []) == $tags)] | length == 1
-            ' "$latest" >/dev/null
-            gh api --method DELETE "${package_api}/versions/${owned_id}"
-          done < <(jq -r '.owned[] | [.id, .name, (.tags | tojson)] | @tsv' "$classified")
-          post_versions="$(mktemp)"
-          gh api --paginate --slurp "${package_api}/versions?per_page=100" |
-            jq 'add' > "$post_versions"
-          jq -e --slurpfile classified "$classified" --slurpfile before "$unrelated_before" '
-            all(.[]; (.name as $name | [$classified[0].owned[].name] | index($name) | not)) and
-            ([.[] | {id:(.id | tostring), name,
-              tags:(.metadata.container.tags // [])}] | sort_by(.id)) == $before[0]
-          ' "$post_versions" >/dev/null
-          echo "Deleted the exact failed candidate and bound referrers while preserving unrelated versions." >> "$GITHUB_STEP_SUMMARY"
+              jq -S 'add | sort_by(.id | tostring)' > "$post_versions"
+            cmp -s "$before_versions" "$post_versions" || {
+              echo "::error::Unrelated package graph changed during cleanup"
+              exit 1
+            }
+          fi
+          echo "Deleted ${referrer_count} exact run-created attestation version(s), then the exact candidate root; the sealed unrelated graph is unchanged." >> "$GITHUB_STEP_SUMMARY"
           echo "Deletion does not revoke downloads made while the public tag existed." >> "$GITHUB_STEP_SUMMARY"
 
   promote:

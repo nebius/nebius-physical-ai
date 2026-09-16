@@ -109,31 +109,14 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
     assert "base|dependency|direct)" in text
     assert "pip install" not in text
     assert "runtime-bootstrap.py ensure" not in text
-    assert (
-        "--mount=type=secret,id=npa_libero_customer_authorization_public_key_b64,required=true"
-        in text
-    )
-    assert "customer-authorization-public-key.b64" in text
+    assert "npa_libero_customer_authorization_public_key_b64" not in text
+    assert "customer-authorization-public-key.b64" not in text
     assert (
         "--mount=type=secret,id=npa_libero_output_storage_authorization_public_key_b64,required=true"
         in text
     )
     assert "output-storage-authorization-public-key.b64" in text
-    assert (
-        'customer-authorization-public-key.b64)" != \\\n'
-        '      "$(cat /opt/npa/libero/output-storage-authorization-public-key.b64)"'
-        in text
-    )
-    assert (
-        "base64 -d /opt/npa/libero/customer-authorization-public-key.b64"
-        " \\\n      > /tmp/npa-libero-customer-authorization-public-key.raw" in text
-    )
-    assert "wc -c < /tmp/npa-libero-customer-authorization-public-key.raw" in text
-    assert "base64 -w 0 < /tmp/npa-libero-customer-authorization-public-key.raw" in text
-    assert (
-        "base64 -d /opt/npa/libero/customer-authorization-public-key.b64 |" not in text
-    )
-    assert "chmod 0444 /opt/npa/libero/customer-authorization-public-key.b64" in text
+    assert "NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256" in text
     for forbidden in (
         "nvidia/cuda:",
         "pytorch/pytorch:",
@@ -145,11 +128,11 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
         assert forbidden not in text
 
 
-def test_customer_authorization_trust_root_decode_rejects_trailing_garbage(
+def test_output_storage_trust_root_decode_rejects_trailing_garbage(
     tmp_path: Path,
 ) -> None:
-    encoded = tmp_path / "customer-authorization-public-key.b64"
-    decoded = tmp_path / "customer-authorization-public-key.raw"
+    encoded = tmp_path / "output-storage-authorization-public-key.b64"
+    decoded = tmp_path / "output-storage-authorization-public-key.raw"
     canonical = base64.b64encode(bytes(range(32)))
     script = """
 set -eu
@@ -634,15 +617,12 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert "Deleted the complete exact failed public LIBERO OCI graph" in text
     assert "Failed-build candidate package absence is unverified" in text
     assert 'gh api --method DELETE "${package_api}/versions/${version_id}"' in text
-    assert "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64" in text
-    assert "LIBERO_QUALIFIED_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_SHA256" in text
+    assert "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64" not in text
+    assert "LIBERO_QUALIFIED_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_SHA256" not in text
     assert "LIBERO_QUALIFIED_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_SHA256" in text
-    assert "customer_authorization_public_key_sha256" in text
-    assert "base64 -d \"$key_file\" | sha256sum | cut -d' ' -f1" in text
-    assert (
-        "--secret id=npa_libero_customer_authorization_public_key_b64,"
-        "env=NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64"
-    ) in text
+    assert 'libero_qualification["customer_authorization_public_key_sha256"]' in text
+    assert "base64 -d \"$storage_key_file\" | sha256sum | cut -d' ' -f1" in text
+    assert "npa_libero_customer_authorization_public_key_b64" not in text
     assert (
         "--secret id=npa_libero_output_storage_authorization_public_key_b64,"
         "env=NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64"

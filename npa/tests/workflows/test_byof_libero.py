@@ -438,9 +438,7 @@ def test_libero_qualification_and_customer_authorization_are_separate(
                 libero_publication_enforcement_bundle_sha256(ROOT)
             ),
             "package_writer_repository": "nebius/nebius-physical-ai",
-            "customer_authorization_public_key_sha256": hashlib.sha256(
-                public_key
-            ).hexdigest(),
+            "customer_authorization_public_key_sha256": "",
             "output_storage_authorization_public_key_sha256": hashlib.sha256(
                 storage_public_key
             ).hexdigest(),
@@ -628,7 +626,7 @@ def test_libero_qualification_and_customer_authorization_are_separate(
         secret_access_key=secret_key,
         session_token=session_token,
         expected_policy_sha256=policy_sha256,
-        customer_public_key_file=str(key_file),
+        customer_public_key_file=str(customer_key_file),
         storage_public_key_file=str(storage_key_file),
         now=now,
     )
@@ -651,7 +649,7 @@ def test_libero_qualification_and_customer_authorization_are_separate(
             secret_access_key=secret_key,
             session_token=session_token,
             expected_policy_sha256=policy_sha256,
-            customer_public_key_file=str(key_file),
+            customer_public_key_file=str(customer_key_file),
             storage_public_key_file=str(storage_key_file),
             now=now,
         )

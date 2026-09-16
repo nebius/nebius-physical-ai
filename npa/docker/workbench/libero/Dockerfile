@@ -66,29 +66,18 @@ RUN set -eux; \
       'Cmnd_Alias NPA_SKYPILOT_SSH = /usr/local/bin/ssh-keygen -A, /usr/sbin/service ssh start, /usr/sbin/service ssh restart' \
       'Cmnd_Alias NPA_LIBERO_EXEC = /opt/npa/libero/runtime-bootstrap.py execute' \
       'Defaults!NPA_LIBERO_EXEC closefrom_override' \
-      'Defaults!NPA_LIBERO_EXEC env_keep += "NPA_BYOF_RUN_ID NPA_SMOKE_OUTPUT_DIR NPA_LIBERO_BOOTSTRAP_RECEIPT NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256 NPA_LIBERO_CUSTOMER_IDENTITY_SHA256 NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256 NPA_LIBERO_EXPECTED_PUBLICATION_BUNDLE_SHA256 NPA_LIBERO_EXPECTED_INFRASTRUCTURE_BUNDLE_SHA256 NPA_LIBERO_EXPECTED_ALLOWED_NODE_SHA256 NPA_LIBERO_EXPECTED_CLUSTER_IDENTITY_SHA256 NPA_LIBERO_EXPECTED_NAMESPACE_SHA256 NPA_LIBERO_EXPECTED_NAMESPACE_UID_SHA256 NPA_LIBERO_EXPECTED_NAMESPACE_INVENTORY_SHA256 NPA_LIBERO_EXPECTED_EXTERNAL_RBAC_INVENTORY_SHA256 NPA_LIBERO_EXPECTED_RBAC_SPEC_SHA256 NPA_LIBERO_EXPECTED_ROLE_BINDING_UID_SHA256 NPA_LIBERO_EXPECTED_ROLE_UID_SHA256 NPA_LIBERO_EXPECTED_SERVICE_ACCOUNT_UID_SHA256 NPA_LIBERO_EXPECTED_PAYLOAD_KUBECONFIG_SHA256 NPA_LIBERO_EXPECTED_EXECUTION_KUBECONFIG_SHA256 NPA_LIBERO_EXPECTED_SKYPILOT_CONFIG_SHA256 BYOF_REPO_ROOT BYOF_SMOKE_COMMAND BYOF_SOLUTION_NAME BYOF_CAPABILITY_NAME BYOF_SMOKE_ARTIFACT_NAME BYOF_IMAGE LIBERO_RUNTIME_ROOT NVIDIA_DRIVER_CAPABILITIES NVIDIA_VISIBLE_DEVICES CUDA_VISIBLE_DEVICES HOSTNAME KUBERNETES_SERVICE_HOST KUBERNETES_SERVICE_PORT"' \
+      'Defaults!NPA_LIBERO_EXEC env_keep += "NPA_BYOF_RUN_ID NPA_SMOKE_OUTPUT_DIR NPA_LIBERO_BOOTSTRAP_RECEIPT NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256 NPA_LIBERO_CUSTOMER_IDENTITY_SHA256 NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256 NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256 NPA_LIBERO_EXPECTED_PUBLICATION_BUNDLE_SHA256 NPA_LIBERO_EXPECTED_INFRASTRUCTURE_BUNDLE_SHA256 NPA_LIBERO_EXPECTED_ALLOWED_NODE_SHA256 NPA_LIBERO_EXPECTED_CLUSTER_IDENTITY_SHA256 NPA_LIBERO_EXPECTED_NAMESPACE_SHA256 NPA_LIBERO_EXPECTED_NAMESPACE_UID_SHA256 NPA_LIBERO_EXPECTED_NAMESPACE_INVENTORY_SHA256 NPA_LIBERO_EXPECTED_EXTERNAL_RBAC_INVENTORY_SHA256 NPA_LIBERO_EXPECTED_RBAC_SPEC_SHA256 NPA_LIBERO_EXPECTED_ROLE_BINDING_UID_SHA256 NPA_LIBERO_EXPECTED_ROLE_UID_SHA256 NPA_LIBERO_EXPECTED_SERVICE_ACCOUNT_UID_SHA256 NPA_LIBERO_EXPECTED_PAYLOAD_KUBECONFIG_SHA256 NPA_LIBERO_EXPECTED_EXECUTION_KUBECONFIG_SHA256 NPA_LIBERO_EXPECTED_SKYPILOT_CONFIG_SHA256 BYOF_REPO_ROOT BYOF_SMOKE_COMMAND BYOF_SOLUTION_NAME BYOF_CAPABILITY_NAME BYOF_SMOKE_ARTIFACT_NAME BYOF_IMAGE LIBERO_RUNTIME_ROOT NVIDIA_DRIVER_CAPABILITIES NVIDIA_VISIBLE_DEVICES CUDA_VISIBLE_DEVICES HOSTNAME KUBERNETES_SERVICE_HOST KUBERNETES_SERVICE_PORT"' \
       'ubuntu ALL=(root) NOPASSWD: NPA_SKYPILOT_SSH' \
       'ubuntu ALL=(npa-libero-exec) NOPASSWD: NPA_LIBERO_EXEC' \
       > /etc/sudoers.d/npa-skypilot-ssh; \
     chmod 0440 /etc/sudoers.d/npa-skypilot-ssh; \
     visudo -cf /etc/sudoers.d/npa-skypilot-ssh
 
-# The customer and storage control planes use distinct public verification
-# material. BuildKit secrets prevent build arguments from substituting either.
-RUN --mount=type=secret,id=npa_libero_customer_authorization_public_key_b64,required=true \
-    --mount=type=secret,id=npa_libero_output_storage_authorization_public_key_b64,required=true \
+# The storage control plane uses a fixed public verification key. Customer
+# signer material remains owner-private and runtime-only; no customer key is
+# accepted by this build or written into an image layer.
+RUN --mount=type=secret,id=npa_libero_output_storage_authorization_public_key_b64,required=true \
     set -eux; \
-    tr -d '\r\n' \
-      < /run/secrets/npa_libero_customer_authorization_public_key_b64 \
-      > /opt/npa/libero/customer-authorization-public-key.b64; \
-    base64 -d /opt/npa/libero/customer-authorization-public-key.b64 \
-      > /tmp/npa-libero-customer-authorization-public-key.raw; \
-    test "$(wc -c < /tmp/npa-libero-customer-authorization-public-key.raw)" = 32; \
-    test "$(base64 -w 0 < /tmp/npa-libero-customer-authorization-public-key.raw)" = \
-      "$(cat /opt/npa/libero/customer-authorization-public-key.b64)"; \
-    rm -f /tmp/npa-libero-customer-authorization-public-key.raw; \
-    chown root:root /opt/npa/libero/customer-authorization-public-key.b64; \
-    chmod 0444 /opt/npa/libero/customer-authorization-public-key.b64; \
     tr -d '\r\n' \
       < /run/secrets/npa_libero_output_storage_authorization_public_key_b64 \
       > /opt/npa/libero/output-storage-authorization-public-key.b64; \
@@ -96,8 +85,6 @@ RUN --mount=type=secret,id=npa_libero_customer_authorization_public_key_b64,requ
       > /tmp/npa-libero-output-storage-authorization-public-key.raw; \
     test "$(wc -c < /tmp/npa-libero-output-storage-authorization-public-key.raw)" = 32; \
     test "$(base64 -w 0 < /tmp/npa-libero-output-storage-authorization-public-key.raw)" = \
-      "$(cat /opt/npa/libero/output-storage-authorization-public-key.b64)"; \
-    test "$(cat /opt/npa/libero/customer-authorization-public-key.b64)" != \
       "$(cat /opt/npa/libero/output-storage-authorization-public-key.b64)"; \
     rm -f /tmp/npa-libero-output-storage-authorization-public-key.raw; \
     chown root:root /opt/npa/libero/output-storage-authorization-public-key.b64; \

@@ -86,13 +86,9 @@ EXPECTED_RUNTIME_REQUIREMENTS_SHA256 = (
 DEFAULT_MANIFEST = Path("/opt/npa/libero/runtime-manifest.json")
 DEFAULT_REQUIREMENTS = Path("/opt/npa/libero/runtime-requirements.txt")
 DEFAULT_CACHE = Path("/workspace/.cache/npa/libero")
-CUSTOMER_AUTHORIZATION_PUBLIC_KEY = Path(
-    "/opt/npa/libero/customer-authorization-public-key.b64"
-)
 OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY = Path(
     "/opt/npa/libero/output-storage-authorization-public-key.b64"
 )
-CUSTOMER_AUTHORIZATION_PUBLIC_KEY_OWNER_UID = 0
 OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_OWNER_UID = 0
 CUSTOMER_AUTHORIZATION_NAMESPACE = b"npa.libero.customer-authorization"
 OUTPUT_STORAGE_AUTHORIZATION_NAMESPACE = b"npa.libero.output-storage-authorization"
@@ -1205,22 +1201,18 @@ def _trusted_public_key(path: Path, *, owner_uid: int, label: str) -> bytes:
     return public_key
 
 
-def _trusted_customer_authorization_public_key() -> bytes:
-    return _trusted_public_key(
-        CUSTOMER_AUTHORIZATION_PUBLIC_KEY,
-        owner_uid=CUSTOMER_AUTHORIZATION_PUBLIC_KEY_OWNER_UID,
-        label="customer-authorization",
-    )
-
-
 def _trusted_output_storage_authorization_public_key() -> bytes:
-    customer_key = _trusted_customer_authorization_public_key()
     storage_key = _trusted_public_key(
         OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY,
         owner_uid=OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_OWNER_UID,
         label="output-storage-authorization",
     )
-    if hmac.compare_digest(customer_key, storage_key):
+    customer_fingerprint = os.environ.get(
+        "NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256", ""
+    )
+    if not _is_hex(customer_fingerprint, 64) or hmac.compare_digest(
+        customer_fingerprint, hashlib.sha256(storage_key).hexdigest()
+    ):
         raise BootstrapRefusal("output-storage trust root is not independent")
     return storage_key
 
