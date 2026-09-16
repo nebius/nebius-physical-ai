@@ -173,16 +173,25 @@ def test_no_unbound_boolean_consent_proxy_exists() -> None:
 
 def test_build_helper_defaults_local_and_uses_only_committed_context() -> None:
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
+    assert text.startswith(
+        "#!/usr/bin/env bash\n"
+        "# Build the neutral robomimic image with serialized tag assignment and "
+        "durable owner receipts.\n"
+    )
     assert 'registry="${NPA_BYOF_ROBOMIMIC_REGISTRY:-local.invalid}"' in text
     assert "NPA_PUBLIC_REGISTRY" not in text
+    assert "NPA_BYOF_ROBOMIMIC_LOCK_DIR" not in text
     assert 'archive "${revision}:npa/docker/workbench/robomimic"' in text
     assert '"${context}/verify_image.py" prepare-build-inputs' in text
-    assert 'docker build --platform linux/amd64 --pull=false --iidfile' in text
+    assert "docker build --platform linux/amd64 --pull=false --iidfile" in text
     assert 'docker image tag "${image_id}" "${image}"' in text
-    assert 'docker image ls --quiet --no-trunc --filter "reference=${reference}"' in text
-    assert 'docker image rm "${image}"' in text
+    assert (
+        'docker image ls --quiet --no-trunc --filter "reference=${reference}"' in text
+    )
+    assert "docker image rm" not in text
+    assert 'owner_runtime_dir="/run/user/$(id -u)"' in text
     assert 'flock -x "${tag_lock_fd}"' in text
-    assert "npa.robomimic.neutral-build-unresolved.v1" in text
+    assert "npa.robomimic.neutral-build-failure.v1" in text
     assert '"consumer_image_ref": image_id' in text
     assert '--tag "${image}"' not in text
     assert '"${repo_root}/npa/docker/workbench/robomimic"' not in text
@@ -253,6 +262,10 @@ case "${action}" in
       printf '%s\n' "${FAKE_DOCKER_IMAGE_ID}" > "${iidfile}"
     fi
     chmod 600 -- "${iidfile}"
+    if [[ "${FAKE_DOCKER_MODE:-}" == "signal-after-build-id" ]]; then
+      kill -TERM "$PPID"
+      exit 143
+    fi
     ;;
   image)
     subaction="$1"
@@ -263,10 +276,6 @@ case "${action}" in
         if [[ "${reference}" == sha256:* ]]; then
           if [[ -f "${FAKE_DOCKER_TAG_STATE}" \
             && "${FAKE_DOCKER_MODE:-}" == "post-assignment-built-inspect-failure" ]]; then
-            exit 74
-          elif [[ -f "${FAKE_DOCKER_TAG_STATE}" \
-            && "${FAKE_DOCKER_MODE:-}" == "replace-before-rollback" ]]; then
-            printf 'sha256:%064d\n' 7 > "${FAKE_DOCKER_TAG_STATE}"
             exit 74
           fi
           if [[ "${FAKE_DOCKER_MODE:-}" == "malformed-inspect" ]]; then
@@ -285,8 +294,17 @@ case "${action}" in
           exit 74
         fi
         [[ -f "${FAKE_DOCKER_TAG_STATE}" ]] || exit 1
-        if [[ "${FAKE_DOCKER_MODE:-}" == "changed-tag-inspect" ]]; then
+        if [[ "${FAKE_DOCKER_MODE:-}" == "replace-after-tag" \
+          && -f "${FAKE_DOCKER_ACTION_RECORD}" ]]; then
+          printf 'sha256:%064d\n' 7 > "${FAKE_DOCKER_TAG_STATE}"
+        elif [[ "${FAKE_DOCKER_MODE:-}" == "remove-after-tag" \
+          && -f "${FAKE_DOCKER_ACTION_RECORD}" ]]; then
+          /usr/bin/rm -f -- "${FAKE_DOCKER_TAG_STATE}"
+          exit 1
+        elif [[ "${FAKE_DOCKER_MODE:-}" == "changed-tag-inspect" ]]; then
           printf 'sha256:%064d\n' 7
+        elif [[ "${FAKE_DOCKER_MODE:-}" == "malformed-tag-inspect" ]]; then
+          printf 'malformed\n'
         else
           cat "${FAKE_DOCKER_TAG_STATE}"
         fi
@@ -327,7 +345,8 @@ esac
 set -euo pipefail
 target="${!#}"
 if [[ "${FAKE_RECEIPT_LINK_FAILURE:-0}" == "1" \
-  && "${target}" != *.unresolved.json ]]; then
+  && ! -e "${FAKE_RECEIPT_LINK_FAILURE_MARKER}" ]]; then
+  : > "${FAKE_RECEIPT_LINK_FAILURE_MARKER}"
   exit 77
 fi
 exec /usr/bin/ln "$@"
@@ -349,6 +368,18 @@ if [[ "${FAKE_RM_RECEIPT_TEMP_FAILURE:-0}" == "1" \
     fi
   done
 fi
+if [[ "${FAKE_RM_CONTEXT_FAILURE:-0}" == "1" \
+  && ! -e "${FAKE_RM_CONTEXT_FAILURE_MARKER}" ]]; then
+  for candidate in "$@"; do
+    if [[ "$1" == "-rf" \
+      && "${candidate%/*}" == "${TMPDIR:-/tmp}" \
+      && "${candidate##*/}" == npa-robomimic-context.* \
+      && -d "${candidate}" ]]; then
+      : > "${FAKE_RM_CONTEXT_FAILURE_MARKER}"
+      exit 79
+    fi
+  done
+fi
 exec /usr/bin/rm "$@"
 """,
         encoding="utf-8",
@@ -366,6 +397,8 @@ exec /usr/bin/rm "$@"
         "FAKE_DOCKER_CONTEXT_RECORD": str(tmp_path / "context-path"),
         "FAKE_DOCKER_ACTION_RECORD": str(tmp_path / "docker-actions"),
         "FAKE_RM_FAILURE_MARKER": str(tmp_path / "rm-failure-marker"),
+        "FAKE_RM_CONTEXT_FAILURE_MARKER": str(tmp_path / "rm-context-marker"),
+        "FAKE_RECEIPT_LINK_FAILURE_MARKER": str(tmp_path / "link-failure-marker"),
     }
     return environment, temp_root, receipt_dir, tmp_path / "tag-state"
 
@@ -381,7 +414,58 @@ def _run_fake_build(environment: dict[str, str]) -> subprocess.CompletedProcess[
     )
 
 
-def test_build_helper_records_immutable_id_in_owner_only_receipt(tmp_path: Path) -> None:
+def _receipt_records(receipt_dir: Path) -> list[tuple[Path, dict[str, object]]]:
+    return [
+        (path, json.loads(path.read_text(encoding="utf-8")))
+        for path in sorted(receipt_dir.glob("*.json"))
+    ]
+
+
+def _assert_failure_receipt(
+    receipt_dir: Path,
+    image_id: str,
+    *,
+    reason: str | None = None,
+    context_disposition: str = "retained-owner-private-for-reconciliation",
+) -> dict[str, object]:
+    failures = [
+        (path, record)
+        for path, record in _receipt_records(receipt_dir)
+        if record.get("schema") == "npa.robomimic.neutral-build-failure.v1"
+    ]
+    assert len(failures) == 1
+    path, record = failures[0]
+    assert record["status"] == "failure"
+    assert record["immutable_image_id"] == image_id
+    assert record["immutable_image_disposition"] == (
+        "retained-no-exclusive-ownership-proof"
+    )
+    assert record["context_evidence_disposition"] == context_disposition
+    assert (
+        record["revision"]
+        == subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+        ).strip()
+    )
+    assert str(record["intended_full_sha_tag"]).endswith(
+        ":dev-" + str(record["revision"])
+    )
+    assert str(record["transaction_id"]).startswith("npa-robomimic-context.")
+    if reason is not None:
+        assert record["failure_reason"] == reason
+    assert path.stat().st_size < 2048
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    return record
+
+
+def _docker_actions(tmp_path: Path) -> list[str]:
+    path = tmp_path / "docker-actions"
+    return path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+
+
+def test_build_helper_records_immutable_id_in_owner_only_receipt(
+    tmp_path: Path,
+) -> None:
     environment, temp_root, receipt_dir, tag_state = _fake_build_environment(tmp_path)
     image_id = "sha256:" + "1" * 64
     environment["FAKE_DOCKER_IMAGE_ID"] = image_id
@@ -394,36 +478,51 @@ def test_build_helper_records_immutable_id_in_owner_only_receipt(tmp_path: Path)
     receipt = json.loads(receipts[0].read_text(encoding="utf-8"))
     assert receipt["immutable_image_id"] == image_id
     assert receipt["consumer_image_ref"] == image_id
-    assert receipt["revision"] == subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
-    ).strip()
+    assert (
+        receipt["revision"]
+        == subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+        ).strip()
+    )
     assert receipt["tag_compare_and_set"] == "assigned"
+    assert receipt["immutable_image_disposition"] == "retained-consumer-reference"
+    assert receipt["transaction_evidence_disposition"] == (
+        "removed-after-receipt-publication"
+    )
     assert stat.S_IMODE(receipts[0].stat().st_mode) == 0o600
     assert tag_state.read_text(encoding="utf-8").strip() == image_id
     assert list(temp_root.glob("npa-robomimic-context.*")) == []
 
 
-def test_build_helper_refuses_stale_shared_tag_without_retagging(tmp_path: Path) -> None:
-    environment, _, receipt_dir, tag_state = _fake_build_environment(tmp_path)
+def test_build_helper_refuses_stale_shared_tag_without_retagging(
+    tmp_path: Path,
+) -> None:
+    environment, temp_root, receipt_dir, tag_state = _fake_build_environment(tmp_path)
     stale_id = "sha256:" + "2" * 64
     tag_state.write_text(stale_id + "\n", encoding="utf-8")
-    environment["FAKE_DOCKER_IMAGE_ID"] = "sha256:" + "3" * 64
+    image_id = "sha256:" + "3" * 64
+    environment["FAKE_DOCKER_IMAGE_ID"] = image_id
 
     result = _run_fake_build(environment)
 
     assert result.returncode != 0
     assert "already names different bytes" in result.stderr
     assert tag_state.read_text(encoding="utf-8").strip() == stale_id
-    assert list(receipt_dir.glob("*.json")) == []
+    assert _docker_actions(tmp_path) == []
+    _assert_failure_receipt(
+        receipt_dir, image_id, reason="full-SHA tag already names different bytes"
+    )
+    assert len(list(temp_root.glob("npa-robomimic-context.*"))) == 1
 
 
 def test_build_helper_refuses_ambiguous_inspection_without_retagging(
     tmp_path: Path,
 ) -> None:
-    environment, _, receipt_dir, tag_state = _fake_build_environment(tmp_path)
+    environment, temp_root, receipt_dir, tag_state = _fake_build_environment(tmp_path)
     stale_id = "sha256:" + "2" * 64
     tag_state.write_text(stale_id + "\n", encoding="utf-8")
-    environment["FAKE_DOCKER_IMAGE_ID"] = "sha256:" + "3" * 64
+    image_id = "sha256:" + "3" * 64
+    environment["FAKE_DOCKER_IMAGE_ID"] = image_id
     environment["FAKE_DOCKER_MODE"] = "tag-inspect-error"
 
     result = _run_fake_build(environment)
@@ -431,8 +530,13 @@ def test_build_helper_refuses_ambiguous_inspection_without_retagging(
     assert result.returncode != 0
     assert "tag absence could not be proven" in result.stderr
     assert tag_state.read_text(encoding="utf-8").strip() == stale_id
-    assert not (tmp_path / "docker-actions").exists()
-    assert list(receipt_dir.glob("*.json")) == []
+    assert _docker_actions(tmp_path) == []
+    _assert_failure_receipt(
+        receipt_dir,
+        image_id,
+        reason="existing full-SHA tag absence could not be proven",
+    )
+    assert len(list(temp_root.glob("npa-robomimic-context.*"))) == 1
 
 
 def test_build_helper_accepts_identical_shared_tag_idempotently(tmp_path: Path) -> None:
@@ -447,6 +551,7 @@ def test_build_helper_accepts_identical_shared_tag_idempotently(tmp_path: Path) 
     receipt = json.loads(next(receipt_dir.glob("*.json")).read_text(encoding="utf-8"))
     assert receipt["tag_compare_and_set"] == "existing-identical"
     assert tag_state.read_text(encoding="utf-8").strip() == image_id
+    assert _docker_actions(tmp_path) == []
 
 
 def test_build_helper_serializes_concurrent_differing_ids(tmp_path: Path) -> None:
@@ -454,6 +559,12 @@ def test_build_helper_serializes_concurrent_differing_ids(tmp_path: Path) -> Non
     processes = []
     for index, digit in enumerate(("4", "5")):
         candidate = dict(environment)
+        candidate_tmp = tmp_path / f"tmp-{index}"
+        candidate_tmp.mkdir(mode=0o700)
+        candidate["TMPDIR"] = str(candidate_tmp)
+        candidate["NPA_BYOF_ROBOMIMIC_LOCK_DIR"] = str(
+            tmp_path / f"attempted-lock-root-{index}"
+        )
         candidate["FAKE_DOCKER_IMAGE_ID"] = "sha256:" + digit * 64
         candidate["FAKE_DOCKER_IID_RECORD"] = str(tmp_path / f"iid-path-{index}")
         candidate["FAKE_DOCKER_CONTEXT_RECORD"] = str(tmp_path / f"context-{index}")
@@ -473,48 +584,69 @@ def test_build_helper_serializes_concurrent_differing_ids(tmp_path: Path) -> Non
     assert sorted(codes) == [0, 1]
     winner = tag_state.read_text(encoding="utf-8").strip()
     assert winner in {"sha256:" + "4" * 64, "sha256:" + "5" * 64}
-    assert len(list(receipt_dir.glob("*.json"))) == 1
+    records = _receipt_records(receipt_dir)
+    assert len(records) == 2
+    assert sorted(record["status"] for _, record in records if "status" in record) == [
+        "failure"
+    ]
+    assert sum("consumer_image_ref" in record for _, record in records) == 1
     assert any("already names different bytes" in stderr for _, stderr in outcomes)
+    assert _docker_actions(tmp_path) == ["tag"]
+    assert not (tmp_path / "attempted-lock-root-0").exists()
+    assert not (tmp_path / "attempted-lock-root-1").exists()
 
 
 @pytest.mark.parametrize(
-    "mode",
+    ("mode", "has_trusted_id"),
     (
-        "missing-iid",
-        "malformed-iid",
-        "malformed-inspect",
-        "changed-inspect",
-        "changed-iid",
-        "changed-tag-inspect",
+        ("missing-iid", False),
+        ("malformed-iid", False),
+        ("malformed-inspect", True),
+        ("changed-inspect", True),
+        ("changed-iid", True),
+        ("changed-tag-inspect", True),
+        ("malformed-tag-inspect", True),
     ),
 )
 def test_build_helper_refuses_malformed_or_changed_identity(
-    tmp_path: Path, mode: str
+    tmp_path: Path, mode: str, has_trusted_id: bool
 ) -> None:
-    environment, _, receipt_dir, _ = _fake_build_environment(tmp_path)
-    environment["FAKE_DOCKER_IMAGE_ID"] = "sha256:" + "6" * 64
+    environment, temp_root, receipt_dir, _ = _fake_build_environment(tmp_path)
+    image_id = "sha256:" + "6" * 64
+    environment["FAKE_DOCKER_IMAGE_ID"] = image_id
     environment["FAKE_DOCKER_MODE"] = mode
 
     result = _run_fake_build(environment)
 
     assert result.returncode != 0
-    assert list(receipt_dir.glob("*.json")) == []
+    if has_trusted_id:
+        _assert_failure_receipt(receipt_dir, image_id)
+        assert len(list(temp_root.glob("npa-robomimic-context.*"))) == 1
+    else:
+        assert list(receipt_dir.glob("*.json")) == []
+        assert list(temp_root.glob("npa-robomimic-context.*")) == []
+    assert "rm" not in _docker_actions(tmp_path)
 
 
-def test_build_helper_cleans_transaction_context_on_signal(tmp_path: Path) -> None:
+@pytest.mark.parametrize("mode", ("signal-tag", "signal-after-build-id"))
+def test_build_helper_records_id_and_retains_context_on_signal(
+    tmp_path: Path, mode: str
+) -> None:
     environment, temp_root, receipt_dir, tag_state = _fake_build_environment(tmp_path)
-    environment["FAKE_DOCKER_IMAGE_ID"] = "sha256:" + "6" * 64
-    environment["FAKE_DOCKER_MODE"] = "signal-tag"
+    image_id = "sha256:" + "6" * 64
+    environment["FAKE_DOCKER_IMAGE_ID"] = image_id
+    environment["FAKE_DOCKER_MODE"] = mode
 
     result = _run_fake_build(environment)
 
-    assert result.returncode != 0
-    assert list(temp_root.glob("npa-robomimic-context.*")) == []
-    assert list(receipt_dir.glob("*.json")) == []
+    assert result.returncode == 143
+    assert len(list(temp_root.glob("npa-robomimic-context.*"))) == 1
+    _assert_failure_receipt(receipt_dir, image_id, reason="signal-TERM")
     assert not tag_state.exists()
+    assert "rm" not in _docker_actions(tmp_path)
 
 
-def test_build_helper_receipt_failure_is_fail_closed_and_cleans_temp(
+def test_build_helper_receipt_generation_failure_publishes_terminal_receipt(
     tmp_path: Path,
 ) -> None:
     environment, temp_root, receipt_dir, tag_state = _fake_build_environment(tmp_path)
@@ -524,106 +656,118 @@ def test_build_helper_receipt_failure_is_fail_closed_and_cleans_temp(
 
     result = _run_fake_build(environment)
 
-    assert result.returncode != 0
-    assert not tag_state.exists()
-    assert list(receipt_dir.iterdir()) == []
-    assert list(temp_root.glob("npa-robomimic-context.*")) == []
+    assert result.returncode == 97
+    assert tag_state.read_text(encoding="utf-8").strip() == image_id
+    _assert_failure_receipt(receipt_dir, image_id)
+    assert len(list(temp_root.glob("npa-robomimic-context.*"))) == 1
+    assert _docker_actions(tmp_path) == ["tag"]
 
 
-def test_build_helper_post_assignment_failure_rolls_back_owned_tag(
+def test_build_helper_post_assignment_failure_retains_tag_and_receipt(
     tmp_path: Path,
 ) -> None:
     environment, temp_root, receipt_dir, tag_state = _fake_build_environment(tmp_path)
-    environment["FAKE_DOCKER_IMAGE_ID"] = "sha256:" + "b" * 64
+    image_id = "sha256:" + "b" * 64
+    environment["FAKE_DOCKER_IMAGE_ID"] = image_id
     environment["FAKE_DOCKER_MODE"] = "post-assignment-built-inspect-failure"
 
     result = _run_fake_build(environment)
 
     assert result.returncode != 0
-    assert not tag_state.exists()
-    assert (tmp_path / "docker-actions").read_text(encoding="utf-8").splitlines() == [
-        "tag",
-        "rm",
-    ]
-    assert list(receipt_dir.iterdir()) == []
-    assert list(temp_root.glob("npa-robomimic-context.*")) == []
+    assert tag_state.read_text(encoding="utf-8").strip() == image_id
+    assert _docker_actions(tmp_path) == ["tag"]
+    _assert_failure_receipt(
+        receipt_dir, image_id, reason="built immutable image ID could not be reverified"
+    )
+    assert len(list(temp_root.glob("npa-robomimic-context.*"))) == 1
 
 
-def test_build_helper_does_not_remove_replaced_tag_during_rollback(
-    tmp_path: Path,
+@pytest.mark.parametrize("mode", ("replace-after-tag", "remove-after-tag"))
+def test_build_helper_never_removes_competing_shared_tag(
+    tmp_path: Path, mode: str
 ) -> None:
-    environment, _, receipt_dir, tag_state = _fake_build_environment(tmp_path)
-    environment["FAKE_DOCKER_IMAGE_ID"] = "sha256:" + "c" * 64
-    environment["FAKE_DOCKER_MODE"] = "replace-before-rollback"
+    environment, temp_root, receipt_dir, tag_state = _fake_build_environment(tmp_path)
+    image_id = "sha256:" + "c" * 64
+    environment["FAKE_DOCKER_IMAGE_ID"] = image_id
+    environment["FAKE_DOCKER_MODE"] = mode
 
     result = _run_fake_build(environment)
 
     assert result.returncode != 0
-    assert tag_state.read_text(encoding="utf-8").strip() == "sha256:" + f"{7:064d}"
-    assert (tmp_path / "docker-actions").read_text(encoding="utf-8").splitlines() == [
-        "tag"
-    ]
-    assert "rollback skipped: shared tag identity changed" in result.stderr
-    assert list(receipt_dir.iterdir()) == []
+    if mode == "replace-after-tag":
+        assert tag_state.read_text(encoding="utf-8").strip() == (
+            "sha256:" + f"{7:064d}"
+        )
+    else:
+        assert not tag_state.exists()
+    assert _docker_actions(tmp_path) == ["tag"]
+    _assert_failure_receipt(receipt_dir, image_id)
+    assert len(list(temp_root.glob("npa-robomimic-context.*"))) == 1
 
 
-def test_build_helper_records_bounded_unresolved_rollback_failure(
-    tmp_path: Path,
-) -> None:
-    environment, _, receipt_dir, tag_state = _fake_build_environment(tmp_path)
-    image_id = "sha256:" + "d" * 64
-    environment["FAKE_DOCKER_IMAGE_ID"] = image_id
-    environment["FAKE_DOCKER_MODE"] = "rollback-remove-failure"
-    environment["FAKE_RECEIPT_FAILURE"] = "1"
-
-    result = _run_fake_build(environment)
-
-    unresolved = list(receipt_dir.glob("*.unresolved.json"))
-    assert result.returncode == 97
-    assert tag_state.read_text(encoding="utf-8").strip() == image_id
-    assert len(unresolved) == 1
-    record = json.loads(unresolved[0].read_text(encoding="utf-8"))
-    assert record["schema"] == "npa.robomimic.neutral-build-unresolved.v1"
-    assert record["reason"] == "rollback-remove-failed"
-    assert record["immutable_image_id"] == image_id
-    assert record["intended_full_sha_tag"].endswith(
-        ":dev-" + subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
-        ).strip()
-    )
-    assert unresolved[0].stat().st_size < 1024
-    assert stat.S_IMODE(unresolved[0].stat().st_mode) == 0o600
-    assert "cleanup was incomplete" in result.stderr
-
-
-def test_build_helper_receipt_temp_cleanup_failure_still_cleans_context(
+def test_build_helper_receipt_temp_cleanup_failure_is_durably_recorded(
     tmp_path: Path,
 ) -> None:
     environment, temp_root, receipt_dir, tag_state = _fake_build_environment(tmp_path)
-    environment["FAKE_DOCKER_IMAGE_ID"] = "sha256:" + "e" * 64
+    image_id = "sha256:" + "e" * 64
+    environment["FAKE_DOCKER_IMAGE_ID"] = image_id
     environment["FAKE_RM_RECEIPT_TEMP_FAILURE"] = "1"
 
     result = _run_fake_build(environment)
 
-    assert result.returncode == 78
+    assert result.returncode != 0
     assert (tmp_path / "rm-failure-marker").is_file()
-    assert not tag_state.exists()
-    assert list(receipt_dir.iterdir()) == []
-    assert list(temp_root.glob("npa-robomimic-context.*")) == []
+    assert tag_state.read_text(encoding="utf-8").strip() == image_id
+    records = _receipt_records(receipt_dir)
+    assert sum("consumer_image_ref" in record for _, record in records) == 1
+    _assert_failure_receipt(
+        receipt_dir, image_id, reason="transaction receipt staging cleanup failed"
+    )
+    assert len(list(temp_root.glob("npa-robomimic-context.*"))) == 1
+    assert _docker_actions(tmp_path) == ["tag"]
 
 
-def test_build_helper_receipt_link_failure_rolls_back_owned_tag(
+def test_build_helper_receipt_link_failure_uses_terminal_receipt(
     tmp_path: Path,
 ) -> None:
-    environment, _, receipt_dir, tag_state = _fake_build_environment(tmp_path)
-    environment["FAKE_DOCKER_IMAGE_ID"] = "sha256:" + "f" * 64
+    environment, temp_root, receipt_dir, tag_state = _fake_build_environment(tmp_path)
+    image_id = "sha256:" + "f" * 64
+    environment["FAKE_DOCKER_IMAGE_ID"] = image_id
     environment["FAKE_RECEIPT_LINK_FAILURE"] = "1"
 
     result = _run_fake_build(environment)
 
     assert result.returncode != 0
-    assert not tag_state.exists()
-    assert list(receipt_dir.iterdir()) == []
+    assert (tmp_path / "link-failure-marker").is_file()
+    assert tag_state.read_text(encoding="utf-8").strip() == image_id
+    _assert_failure_receipt(
+        receipt_dir, image_id, reason="transaction receipt publication refused"
+    )
+    assert len(list(temp_root.glob("npa-robomimic-context.*"))) == 1
+    assert _docker_actions(tmp_path) == ["tag"]
+
+
+def test_build_helper_records_unresolved_context_cleanup(tmp_path: Path) -> None:
+    environment, temp_root, receipt_dir, tag_state = _fake_build_environment(tmp_path)
+    image_id = "sha256:" + "9" * 64
+    environment["FAKE_DOCKER_IMAGE_ID"] = image_id
+    environment["FAKE_RM_CONTEXT_FAILURE"] = "1"
+
+    result = _run_fake_build(environment)
+
+    assert result.returncode != 0
+    assert (tmp_path / "rm-context-marker").is_file()
+    assert tag_state.read_text(encoding="utf-8").strip() == image_id
+    records = _receipt_records(receipt_dir)
+    assert sum("consumer_image_ref" in record for _, record in records) == 1
+    _assert_failure_receipt(
+        receipt_dir,
+        image_id,
+        reason="transaction-context-cleanup-unresolved",
+        context_disposition="cleanup-unresolved-after-success-receipt",
+    )
+    assert len(list(temp_root.glob("npa-robomimic-context.*"))) == 1
+    assert _docker_actions(tmp_path) == ["tag"]
 
 
 def test_dataset_notice_binds_exact_official_license_metadata() -> None:
