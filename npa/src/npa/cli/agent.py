@@ -3279,6 +3279,15 @@ def _agent_command_env() -> dict:
     profile_config = Path(str(env.get("NPA_NEBIUS_CONFIG") or ""))
     if (profile_config.is_absolute() and profile_config.name == "config.yaml"
             and profile_config.parent.name == ".nebius"):
+        # Credential metadata can live under a different home from the Agent's
+        # durable NPA configuration. Pin the original config root before
+        # switching HOME for the provider profile, or workflow subprocesses
+        # silently lose their configured project aliases.
+        agent_config_dir = Path(
+            str(env.get("NPA_CONFIG_DIR") or Path(env.get("HOME") or "") / ".npa")
+        )
+        if "NPA_CONFIG_DIR" not in env and (agent_config_dir / "config.yaml").is_file():
+            env["NPA_CONFIG_DIR"] = str(agent_config_dir)
         # The isolated SkyPilot HOME links this provider directory. Without the
         # explicit profile home, a systemd service can fall back to an empty
         # home and lose its mounted attached-identity profile during submit.

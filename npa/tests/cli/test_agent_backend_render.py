@@ -4399,6 +4399,29 @@ def test_rendered_backend_preserves_metadata_profile_home(monkeypatch, tmp_path)
         sys.modules.pop(module_name, None)
 
 
+def test_rendered_backend_preserves_agent_config_when_metadata_home_changes(
+    monkeypatch, tmp_path
+) -> None:
+    module_name = "npa_rendered_metadata_profile_config"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    agent_home = tmp_path / "agent-home"
+    config_root = agent_home / ".npa"
+    config_root.mkdir(parents=True)
+    (config_root / "config.yaml").write_text("default_project: configured\n")
+    metadata_home = tmp_path / "metadata-home"
+    monkeypatch.setenv("HOME", str(agent_home))
+    monkeypatch.delenv("NPA_CONFIG_DIR", raising=False)
+    monkeypatch.setenv(
+        "NPA_NEBIUS_CONFIG", str(metadata_home / ".nebius" / "config.yaml")
+    )
+    try:
+        env = module._agent_command_env()
+        assert env["HOME"] == str(metadata_home)
+        assert env["NPA_CONFIG_DIR"] == str(config_root)
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_agent_bootstrap_exposes_authorized_key_to_cluster_lifecycle() -> None:
     from npa.cli import agent as agent_module
 
