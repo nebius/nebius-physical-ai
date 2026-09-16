@@ -1,0 +1,255 @@
+{
+  "title": "Intelligence, tested.",
+  "duration": 120,
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "footer": "INFERENCE, TESTED IN SIMULATION",
+  "brief": {
+    "prompt": "Create a two-minute Physical AI inference film centered on a fresh simulation experiment. Use more Nebius Token Factory and other model families. Remove NVIDIA branding and model usage, and do not reuse footage from the executive film.",
+    "audience": "C-suite and technical leaders evaluating Physical AI inference",
+    "goal": "Show how model-generated plans, physical simulation, measured outcomes, and visual evaluation form an inspectable development loop.",
+    "tone": "Cinematic, clear, technical claims grounded in the recorded experiment.",
+    "duration_seconds": 120,
+    "call_to_action": "github.com/nebius/nebius-physical-ai"
+  },
+  "scenes": [
+    {
+      "id": "01-intelligence-tested",
+      "duration": 8,
+      "layout": "cinematic",
+      "eyebrow": "NEBIUS / PHYSICAL AI",
+      "title": [
+        "Intelligence,",
+        "tested."
+      ],
+      "subtitle": "Inference meets the physical world.",
+      "assets": [
+        "nominal_overview"
+      ],
+      "labels": [
+        "FRESH MUJOCO SIMULATION"
+      ],
+      "narration": "Physical A I turns decisions into motion. Simulation lets us test what those decisions actually do."
+    },
+    {
+      "id": "02-start-with-a-goal",
+      "duration": 8,
+      "layout": "feature",
+      "eyebrow": "A NEW ROBOT MANIPULATION EXPERIMENT",
+      "title": [
+        "Start with",
+        "a goal."
+      ],
+      "subtitle": "Orange cube. Cyan target. A plan to connect them.",
+      "assets": [
+        "nominal_initial"
+      ],
+      "labels": [
+        "CUSTOM CARTESIAN WORKCELL / MUJOCO"
+      ],
+      "narration": "Start with a goal: move the orange cube into the cyan target."
+    },
+    {
+      "id": "03-qwen-plan",
+      "duration": 10,
+      "layout": "screen",
+      "eyebrow": "NEBIUS TOKEN FACTORY / PLANNING",
+      "title": [
+        "Qwen proposes a route."
+      ],
+      "subtitle": "A structured task becomes model-generated waypoints.",
+      "assets": [
+        "qwen_plan"
+      ],
+      "labels": [
+        "QWEN3 235B / RECORDED MODEL OUTPUT"
+      ],
+      "narration": "Through Nebius Token Factory, Qwen proposes a straight route. Its returned waypoints become the controller’s input."
+    },
+    {
+      "id": "04-test-in-physics",
+      "duration": 8,
+      "layout": "screen",
+      "eyebrow": "EXECUTE THE MODEL-GENERATED PLAN",
+      "title": [
+        "Run the plan in physics."
+      ],
+      "subtitle": "A scripted controller executes the returned waypoints.",
+      "assets": [
+        "nominal_run"
+      ],
+      "labels": [
+        "MUJOCO / 1.2× PLAYBACK / FINAL FRAME HELD"
+      ],
+      "narration": "The controller executes that plan in MuJoCo. In the clear scene, the cube reaches the target."
+    },
+    {
+      "id": "05-new-obstacle",
+      "duration": 10,
+      "layout": "comparison",
+      "eyebrow": "CHANGE ONE CONDITION",
+      "title": [
+        "Same plan.",
+        "New obstacle."
+      ],
+      "subtitle": "Replay the original waypoints with an obstacle in the path.",
+      "assets": [
+        "nominal_top",
+        "blocked_top"
+      ],
+      "labels": [
+        "CLEAR SCENE / GOAL REACHED",
+        "OBSTACLE ADDED / GOAL MISSED"
+      ],
+      "narration": "Add an obstacle and replay the same plan. The task fails. A changed world needs a new decision."
+    },
+    {
+      "id": "06-verify-the-verdict",
+      "duration": 10,
+      "layout": "reason",
+      "eyebrow": "TOKEN FACTORY / MINICPM-V 4.5",
+      "title": [
+        "Verify the",
+        "verdict."
+      ],
+      "subtitle": "This visual assessment incorrectly reports success.",
+      "assets": [
+        "blocked_final"
+      ],
+      "labels": [
+        "ORIGINAL FINAL FRAME / CUBE OUTSIDE THE TARGET"
+      ],
+      "narration": "Vision models also need evaluation. In this case, Mini C P M reports success, but the simulation disagrees.",
+      "quote_heading": "RECORDED MODEL RESPONSE",
+      "quote": "“No change needed.”",
+      "source_notes": [
+        "MiniCPM-V 4.5 / response from this experiment",
+        "An observed false positive; checked against recorded state."
+      ]
+    },
+    {
+      "id": "07-ground-the-request",
+      "duration": 10,
+      "layout": "screen",
+      "eyebrow": "SIMULATION PROVIDES MEASURED EVIDENCE",
+      "title": [
+        "Ground the next request."
+      ],
+      "subtitle": "Images, measured state, and geometry inform the revision.",
+      "assets": [
+        "measured_state"
+      ],
+      "labels": [
+        "ACTUAL SIMULATOR MEASUREMENT / DISTANCE TO GOAL CENTER"
+      ],
+      "narration": "MuJoCo measures the failed outcome. Send that state, the images, and obstacle geometry into the next inference."
+    },
+    {
+      "id": "08-minimax-revise",
+      "duration": 10,
+      "layout": "screen",
+      "eyebrow": "NEBIUS TOKEN FACTORY / REPLANNING",
+      "title": [
+        "MiniMax proposes a detour."
+      ],
+      "subtitle": "The model returns a new route for the same controller.",
+      "assets": [
+        "minimax_route"
+      ],
+      "labels": [
+        "MINIMAX-M3 / RECORDED MODEL OUTPUT"
+      ],
+      "narration": "Using images and simulator evidence, MiniMax proposes a new route around the obstacle."
+    },
+    {
+      "id": "09-test-revised-decision",
+      "duration": 12,
+      "layout": "cinematic",
+      "eyebrow": "TEST THE NEW MODEL-GENERATED WAYPOINTS",
+      "title": [
+        "Test the",
+        "revised decision."
+      ],
+      "subtitle": "Same task. Same obstacle. A new route.",
+      "assets": [
+        "revised_run"
+      ],
+      "labels": [
+        "MUJOCO / 2× PLAYBACK / FINAL FRAME HELD"
+      ],
+      "narration": "Execute the revised waypoints in the same simulation. The robot takes the detour and reaches the original target."
+    },
+    {
+      "id": "10-measure-the-outcome",
+      "duration": 8,
+      "layout": "comparison",
+      "eyebrow": "RECORDED SIMULATION OUTCOMES",
+      "title": [
+        "Measure",
+        "what changed."
+      ],
+      "subtitle": "Distance from cube center to goal center, in this experiment.",
+      "assets": [
+        "blocked_final",
+        "revised_final"
+      ],
+      "labels": [
+        "ORIGINAL PLAN / 70.3 CM FROM GOAL",
+        "REVISED PLAN / 0.4 CM FROM GOAL"
+      ],
+      "narration": "Compare outcomes using recorded state. The task, obstacle, and success criteria stay the same."
+    },
+    {
+      "id": "11-evaluate-the-evidence",
+      "duration": 8,
+      "layout": "screen",
+      "eyebrow": "NEBIUS TOKEN FACTORY / VISUAL EVALUATION",
+      "title": [
+        "Evaluate the evidence."
+      ],
+      "subtitle": "Separate model judgments, checked against simulation state.",
+      "assets": [
+        "visual_assessments"
+      ],
+      "labels": [
+        "MINIMAX-M3 / TWO RECORDED VISUAL CHECKS"
+      ],
+      "narration": "MiniMax evaluates both outcomes. Check those judgments against measured state, and preserve the evidence."
+    },
+    {
+      "id": "12-choose-models",
+      "duration": 8,
+      "layout": "screen",
+      "eyebrow": "THREE MODEL FAMILIES / ONE DEVELOPMENT LOOP",
+      "title": [
+        "Choose models for the job."
+      ],
+      "subtitle": "Planning, visual feedback, revision, and evaluation.",
+      "assets": [
+        "model_roles"
+      ],
+      "labels": [
+        "FIVE NEW INFERENCE CALLS THROUGH NEBIUS TOKEN FACTORY"
+      ],
+      "narration": "Connect models through Token Factory. Test decisions in simulation. Keep the evidence together."
+    },
+    {
+      "id": "13-build-the-loop",
+      "duration": 10,
+      "layout": "screen",
+      "eyebrow": "BUILD WITH NEBIUS TOKEN FACTORY",
+      "title": [
+        "Build an inference loop."
+      ],
+      "subtitle": "Open the project. Change the task. Test the next decision.",
+      "assets": [
+        "closing"
+      ],
+      "labels": [
+        "github.com/nebius/nebius-physical-ai"
+      ],
+      "narration": "Build an inference loop with Nebius Token Factory. Plan. Simulate. Evaluate. Revise. Keep improving."
+    }
+  ]
+}

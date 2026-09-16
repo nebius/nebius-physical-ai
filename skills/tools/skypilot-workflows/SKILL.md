@@ -43,6 +43,14 @@ Preserve a failed submission intent and inspect the exact run state before
 recovering from a preflight failure; do not delete the intent or assume a failed
 CLI exit means no launch occurred.
 
+Runtime submission binds the resolved project storage credentials, endpoint
+aliases, bucket and run prefix before its first accelerator discovery. The
+initial isolated API and every runtime wave therefore use the same identity;
+operator-side credential exports are unnecessary when the selected project
+already resolves them. The CLI restores the caller's environment afterward.
+An isolated API still rejects any later credential or configuration change;
+finish source staging before starting that API.
+
 ## Known SkyPilot 0.12.2 Limits
 
 - Raw SkyPilot `envs` does not support self-referencing variable interpolation.

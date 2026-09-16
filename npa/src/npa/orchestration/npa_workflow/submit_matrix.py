@@ -72,6 +72,42 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "byof-mochi-1.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires an operator-built immutable BYOF image and, where applicable, an attributed input",
+        notes="Native capability workflow; exact private image and GPU evidence are recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-cogvideox-2b.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires an operator-built immutable BYOF image and, where applicable, an attributed input",
+        notes="Native capability workflow; exact private image and GPU evidence are recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-wan2.1-14b.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires an operator-built immutable BYOF image and, where applicable, an attributed input",
+        notes="Native capability workflow; exact private image and GPU evidence are recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-lingbot-world.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires an operator-built immutable BYOF image and, where applicable, an attributed input",
+        notes="Native capability workflow; exact private image and GPU evidence are recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-depth-anything-v2.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires an operator-built immutable BYOF image and, where applicable, an attributed input",
+        notes="Native capability workflow; exact private image and GPU evidence are recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-sam2.1.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires an operator-built immutable BYOF image and, where applicable, an attributed input",
+        notes="Native capability workflow; exact private image and GPU evidence are recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
         "curobo-benchmark.yaml", "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         image_tool="curobo",

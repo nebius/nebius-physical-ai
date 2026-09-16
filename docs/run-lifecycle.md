@@ -124,6 +124,15 @@ must use `--resume-run <id>`.
 A run's committed source is immutable: retries repair or reuse derived
 artifacts, but never replace a user-supplied source with a default.
 
+For an attempt whose exact scheduler record is absent, use
+`--retry-absent-in-flight` with the same explicit resume command after repairing
+the reported dependency. Recovery rechecks both the exact job identity and every
+wave-unique output URI, including structured output declarations with schemas.
+A prior storage-read block remains retryable when the ledger retains verified
+launch absence; a new lookup must still prove absence. Existing outputs,
+unreadable storage, missing output declarations, or uncertain scheduler status
+continue to block a new launch. Prior attempts remain in the run history.
+
 ## Reading status
 
 ```bash
