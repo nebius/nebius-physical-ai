@@ -10127,6 +10127,10 @@ Description=NPA agent backend
 After=network.target
 [Service]
 Type=simple
+# The backend owns the agent's durable workflow state as root.  Pin this
+# directory rather than relying on systemd's implicit HOME so SkyPilot sees
+# the same configuration identity after a service restart or bootstrap.
+Environment=NPA_CONFIG_DIR=/root/.npa
 EnvironmentFile=-/opt/npa-agent/llm.env
 EnvironmentFile=-/opt/npa-agent/nebius.env
 EnvironmentFile=-/opt/npa-agent/s3.env

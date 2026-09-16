@@ -1521,6 +1521,16 @@ def test_bootstrap_installs_auth_with_protected_stdin(monkeypatch) -> None:
     assert 'sudo mv -f "$stage/auth" /etc/nginx/.npa-agent-htpasswd' in setup
 
 
+def test_bootstrap_pins_backend_durable_config_identity(monkeypatch) -> None:
+    setup = _capture_setup_script(monkeypatch)
+    unit = setup.split(
+        "cat <<'UNIT' | sudo tee /etc/systemd/system/npa-agent-backend.service >/dev/null\n",
+        1,
+    )[1].split("\nUNIT", 1)[0]
+
+    assert "Environment=NPA_CONFIG_DIR=/root/.npa" in unit
+
+
 def test_bootstrap_stages_explicit_official_foxglove_backend(monkeypatch) -> None:
     setup_script = _capture_setup_script(
         monkeypatch,
