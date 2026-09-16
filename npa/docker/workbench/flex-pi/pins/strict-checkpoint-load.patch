@@ -16,7 +16,7 @@ diff --git a/src/flexpi/models/backbone.py b/src/flexpi/models/backbone.py
          elif "dit" in payload:
              logger.warning("Loading legacy `dit` checkpoint into video expert only.")
              self.video_expert.load_state_dict(payload["dit"], strict=False)
-@@ -1511,7 +1513,9 @@ class WanModelWrapper(torch.nn.Module):
+@@ -1511,6 +1513,8 @@ class WanModelWrapper(torch.nn.Module):
                  )
                  self.proprio_encoder.load_state_dict(filtered, strict=False)
              else:
@@ -26,7 +26,6 @@ diff --git a/src/flexpi/models/backbone.py b/src/flexpi/models/backbone.py
 +                )
          elif "proprio_encoder" in payload:
              logger.warning("Checkpoint contains `proprio_encoder` weights but current model has `proprio_dim=None`; ignoring.")
- 
 diff --git a/src/flexpi/models/flexpi.py b/src/flexpi/models/flexpi.py
 --- a/src/flexpi/models/flexpi.py
 +++ b/src/flexpi/models/flexpi.py
