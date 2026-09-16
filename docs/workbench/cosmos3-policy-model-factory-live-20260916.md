@@ -22,6 +22,33 @@ native initial state. This small execution cannot qualify the policy against
 the workflow's full ten-task, 500-episode benchmark, or prove improvement.
 The default eight-B200, 2,000-iteration recipe remains unqualified.
 
+## Testing-workflow registration
+
+The executable spec is
+[`workflows/testing/cosmos3-policy-model-factory.yaml`](../../workflows/testing/cosmos3-policy-model-factory.yaml).
+It remains an experimental testing workflow, listed in the
+[workflow catalog](../../workflows/README.md) and registered in
+[`SUBMIT_LIVE_MATRIX`](../../npa/src/npa/orchestration/npa_workflow/submit_matrix.py)
+with tier `gpu` and `plan_only: false`. No existing main-workflow graph changes.
+Its adjacent [readiness record](../../workflows/testing/cosmos3-policy-model-factory.readiness.json)
+distinguishes execution evidence from the unqualified default training recipe.
+
+On 2026-09-16, `validate-spec` and `plan-spec` both passed again, and all 42
+submit-matrix tests passed. These were local checks of registration and planning;
+the live results below come from the retained training and continuation runs.
+
+## Proof fingerprints
+
+The retained workflow and MP4 bytes were hashed again when recording this proof.
+The video hashes identify the fully decoded artifacts described below; they do
+not establish policy success or candidate task quality.
+
+| Artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| Testing workflow YAML | — | `48c9ef1df693503acb42128256fab7efb37c85ae71dbb94b2573403b9d778893` |
+| Policy rollout MP4 | 524,162 | `c25993879f4f9d90e23e81d9b17c195ed42d389e1a19bbb5940191ef9d9c1629` |
+| Generated candidate MP4 | 55,991,236 | `4c429947e4b8534aa9a9a022d37c3e03a11805c2c0a466983b3a35e6e7e44b61` |
+
 ## Training evidence
 
 The native framework checkout, training dependency sync, pinned dataset/model
