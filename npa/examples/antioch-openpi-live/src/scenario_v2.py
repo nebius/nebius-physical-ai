@@ -33,7 +33,11 @@ TASK_ENTITY = "task/label"
 def _resolved_telemetry_entity(relative_entity: str) -> str:
     """Resolve an Antioch Logger-relative entity to its Rerun catalog path."""
 
-    if not relative_entity or relative_entity.startswith("/") or relative_entity.endswith("/"):
+    if (
+        not relative_entity
+        or relative_entity.startswith("/")
+        or relative_entity.endswith("/")
+    ):
         raise ValueError(f"invalid telemetry entity: {relative_entity!r}")
     return f"{TELEMETRY_ROOT}/{relative_entity}"
 
@@ -244,9 +248,7 @@ class CameraReadinessMonitor:
                 status = "ready"
                 reason = ""
             else:
-                status = (
-                    "runtime_outage" if self._ever_ready else "waiting_for_camera"
-                )
+                status = "runtime_outage" if self._ever_ready else "waiting_for_camera"
                 reason = "confirming_advancement"
         else:
             self._consecutive_ready = 0
@@ -388,7 +390,9 @@ class LiveTelemetryPublisher:
         self._logger.scalar("telemetry/initialized", 1.0)
         self._worker = LatestOnlyWorker("logger", self._publish)
 
-    def publish_camera_pair(self, pair: CameraPair, render_sequence: int) -> tuple[str, ...]:
+    def publish_camera_pair(
+        self, pair: CameraPair, render_sequence: int
+    ) -> tuple[str, ...]:
         """Copy and enqueue only the newest valid RGB payload for each camera."""
 
         import numpy as np
@@ -518,8 +522,7 @@ class LiveTelemetryPublisher:
         for path, value in publication.values:
             self._logger.value(path, value)
         print(
-            "NPA_OPENPI_DISPLAY_LOG_OK "
-            f"render_sequence={publication.render_sequence}",
+            f"NPA_OPENPI_DISPLAY_LOG_OK render_sequence={publication.render_sequence}",
             flush=True,
         )
 
@@ -671,9 +674,9 @@ def _world_position(stage, path: str):
     import numpy as np
     from pxr import Usd, UsdGeom
 
-    transform = UsdGeom.Xformable(stage.GetPrimAtPath(path)).ComputeLocalToWorldTransform(
-        Usd.TimeCode.Default()
-    )
+    transform = UsdGeom.Xformable(
+        stage.GetPrimAtPath(path)
+    ).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
     return np.asarray(transform.ExtractTranslation(), dtype=np.float64)
 
 
@@ -756,7 +759,9 @@ def _aim_wrist_camera(stage, mount):
     return pose
 
 
-def _point_in_camera_frame(point, pose, optical_config, *, margin: float = 0.92) -> bool:
+def _point_in_camera_frame(
+    point, pose, optical_config, *, margin: float = 0.92
+) -> bool:
     """Geometrically prove a known scene point lies inside a camera frustum."""
 
     import numpy as np
@@ -772,7 +777,9 @@ def _point_in_camera_frame(point, pose, optical_config, *, margin: float = 0.92)
     if depth <= 0.0:
         return False
     focal = float(optical_config["focal_length"])
-    half_horizontal = math.atan(float(optical_config["horizontal_aperture"]) / (2 * focal))
+    half_horizontal = math.atan(
+        float(optical_config["horizontal_aperture"]) / (2 * focal)
+    )
     half_vertical = math.atan(float(optical_config["vertical_aperture"]) / (2 * focal))
     horizontal = abs(float(np.dot(relative, right)) / depth)
     vertical = abs(float(np.dot(relative, up)) / depth)
@@ -919,9 +926,7 @@ def _camera_frame_from_buffer(buffer, *, view: str) -> CameraFrame:
         upper = float(rgb_source.max())
         if upper <= 1.0:
             rgb_source = rgb_source * 255.0
-    rgb = np.ascontiguousarray(
-        np.clip(rgb_source, 0, 255).astype(np.uint8, copy=False)
-    )
+    rgb = np.ascontiguousarray(np.clip(rgb_source, 0, 255).astype(np.uint8, copy=False))
     luminance = np.mean(rgb, axis=2)
     luminance_mean = float(luminance.mean())
     luminance_variance = float(luminance.var())
@@ -1049,9 +1054,7 @@ def _reference_time_marker(annotator) -> tuple[int, int] | None:
     return numerator, denominator
 
 
-def _reference_time_advanced(
-    current: tuple[int, int], prior: tuple[int, int]
-) -> bool:
+def _reference_time_advanced(current: tuple[int, int], prior: tuple[int, int]) -> bool:
     """Compare exact reference-time fractions without float precision loss."""
 
     return current[0] * prior[1] > prior[0] * current[1]
@@ -1180,9 +1183,13 @@ def _validate_camera_pair(
     if render_sequence <= last_accepted_render_sequence:
         return CameraPair(False, exterior_frame, wrist_frame, "pair", "stale")
     if not exterior_cube_in_frame:
-        return CameraPair(False, exterior_frame, wrist_frame, "exterior", "cube_out_of_frame")
+        return CameraPair(
+            False, exterior_frame, wrist_frame, "exterior", "cube_out_of_frame"
+        )
     if not wrist_cube_in_frame:
-        return CameraPair(False, exterior_frame, wrist_frame, "wrist", "cube_out_of_frame")
+        return CameraPair(
+            False, exterior_frame, wrist_frame, "wrist", "cube_out_of_frame"
+        )
     if difference < MIN_CAMERA_PAIR_DIFFERENCE:
         return CameraPair(
             False,
@@ -1284,7 +1291,9 @@ def _log_camera_pair_for_rerun(logger, pair: CameraPair) -> tuple[str, ...]:
             )
         logged.append(view)
     if logged:
-        logger.scalar(f"{CAMERA_METRICS_ENTITY}/pair_mean_difference", pair.mean_difference)
+        logger.scalar(
+            f"{CAMERA_METRICS_ENTITY}/pair_mean_difference", pair.mean_difference
+        )
         logger.scalar(
             f"{CAMERA_METRICS_ENTITY}/policy_quality_accepted", int(pair.accepted)
         )
@@ -1675,7 +1684,9 @@ def openpi_franka_mk8s_live_v2(
                         response_camera_pair_id != pending_camera_pair_id
                         or response_render_sequence != request_render_sequence
                     ):
-                        raise RuntimeError("policy response camera-pair identity mismatch")
+                        raise RuntimeError(
+                            "policy response camera-pair identity mismatch"
+                        )
                     if last_latency > MAX_RESPONSE_AGE_SECONDS:
                         raise TimeoutError("policy response was stale")
                     chunk, action_evidence = _validated_actions(
@@ -1877,9 +1888,9 @@ def openpi_franka_mk8s_live_v2(
                     rejection_reason = pair.reason or readiness.reason
                     camera_rejections[f"{rejection_view}_{rejection_reason}"] += 1
                     safe_holds += 1
-                    overlay[2].text = (
-                        f"SAFE HOLD / {rejection_view} camera {rejection_reason}"
-                    )
+                    overlay[
+                        2
+                    ].text = f"SAFE HOLD / {rejection_view} camera {rejection_reason}"
                     if chunk is not None:
                         chunk = None
                         chunk_index = 0
@@ -2110,7 +2121,10 @@ def openpi_franka_mk8s_live_v2(
                                         "raw_joint_limit_mismatches",
                                         raw_joint_limit_mismatches,
                                     ),
-                                    ("joint_limit_projections", joint_limit_projections),
+                                    (
+                                        "joint_limit_projections",
+                                        joint_limit_projections,
+                                    ),
                                     ("joint_step_projections", joint_step_projections),
                                     (
                                         "applied_target_rate_hz",
@@ -2126,8 +2140,7 @@ def openpi_franka_mk8s_live_v2(
                                         "end_effector_cube_approach_m",
                                         max(
                                             0.0,
-                                            initial_ee_distance
-                                            - minimum_ee_distance,
+                                            initial_ee_distance - minimum_ee_distance,
                                         ),
                                     ),
                                     ("gripper_contact_force_n", contact_force),

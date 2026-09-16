@@ -146,7 +146,8 @@ class AntiochCli:
 
     def submit_suite(self, cwd: Path, suite: str) -> dict[str, Any]:
         payload = self._run(
-            ["suite", "run", suite, "--detach", "--json"], cwd=cwd,
+            ["suite", "run", suite, "--detach", "--json"],
+            cwd=cwd,
             timeout_seconds=None,
         ).payload
         if (
@@ -382,9 +383,7 @@ class AntiochCli:
             ).payload
         )
 
-    def service_copy(
-        self, cwd: Path, source: Path, destination: str
-    ) -> dict[str, Any]:
+    def service_copy(self, cwd: Path, source: Path, destination: str) -> dict[str, Any]:
         payload = self._run(
             ["service", "cp", str(source), destination, "--json"],
             cwd=cwd,

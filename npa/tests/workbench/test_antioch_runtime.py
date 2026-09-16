@@ -92,7 +92,9 @@ def test_ensure_runtime_downloads_pinned_wheel_and_verifies_sha256(
     executable = runtime.ensure_runtime()
     assert executable.is_file()
     assert runtime_harness == {"downloads": 1, "installs": 1}
-    assert executable.parents[2].joinpath(".complete").read_text().strip() == WHEEL_SHA256
+    assert (
+        executable.parents[2].joinpath(".complete").read_text().strip() == WHEEL_SHA256
+    )
 
 
 def test_ensure_runtime_rejects_checksum_mismatch(

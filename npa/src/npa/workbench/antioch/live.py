@@ -261,7 +261,9 @@ def _private_bundle_matches(
             cli,
             runtime=runtime,
             remote_path=f"{REMOTE_CLIENT_ROOT}/{name}",
-            expected_sha256=hashlib.sha256((client_bundle / name).read_bytes()).hexdigest(),
+            expected_sha256=hashlib.sha256(
+                (client_bundle / name).read_bytes()
+            ).hexdigest(),
         )
         for name in REQUIRED_BUNDLE_FILES
     )
@@ -315,9 +317,7 @@ def _stage_private_bundle(
                         local_upload / name,
                         f"sim:{upload}/{name}",
                     )
-                for source, destination in zip(
-                    upload_files, remote_files, strict=True
-                ):
+                for source, destination in zip(upload_files, remote_files, strict=True):
                     cli.service_exec(
                         runtime,
                         "sim",
@@ -559,9 +559,7 @@ def _write_supervisor(
         ]
     )
     # Current service copy accepts project-root paths only.
-    source_staging = (
-        f"{REMOTE_SOURCE_UPLOAD_PREFIX}{uuid.uuid4().hex}"
-    )
+    source_staging = f"{REMOTE_SOURCE_UPLOAD_PREFIX}{uuid.uuid4().hex}"
     source_stage_commands = [
         shlex.join(
             [
@@ -764,11 +762,7 @@ def _write_supervisor(
             str(active_state_path),
             "--scenario",
             scenario_name,
-            *(
-                ["--owner-identity", owner_identity]
-                if owner_identity
-                else []
-            ),
+            *(["--owner-identity", owner_identity] if owner_identity else []),
             *(["--session-id", session_id] if session_id else []),
         ]
     )

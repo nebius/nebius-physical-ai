@@ -171,7 +171,9 @@ def _collection_heartbeat(states: StateStore, record: OperationRecord, owner: st
                 errors.append(exc)
                 stop.set()
 
-    worker = threading.Thread(target=renew, name="antioch-collection-lease", daemon=True)
+    worker = threading.Thread(
+        target=renew, name="antioch-collection-lease", daemon=True
+    )
     worker.start()
     try:
         yield

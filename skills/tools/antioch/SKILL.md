@@ -99,7 +99,9 @@ endpoints, print identity/config/environment data, or inspect unrelated runs.
 
 ## Cleanup and evidence
 
-Cancel the exact test run before releasing its exact project session. A requested
+Cancel the exact test run before releasing its exact project session. Prove the
+current structured session identity still matches the controller-owned session
+before invoking project-scoped release; fail closed on replacement. A requested
 retained live demo is the exception: leave its exact session and policy
 Deployment running, and provide exact supported stop commands privately. Record only
 run ids, states, check names, schemas, checksums, artifact basenames, and sanitized

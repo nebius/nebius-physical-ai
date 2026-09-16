@@ -193,9 +193,8 @@ def test_redaction_covers_nested_credentials_and_signed_urls() -> None:
     )
     assert "a" * 32 not in redact_text(f"scenario run {'a' * 32} was not found")
     assert "b" * 64 not in redact_text(f"container {'b' * 64} is stopping")
-    assert (
-        "01234567-89ab-cdef-0123-456789abcdef"
-        not in redact_text("run 01234567-89ab-cdef-0123-456789abcdef")
+    assert "01234567-89ab-cdef-0123-456789abcdef" not in redact_text(
+        "run 01234567-89ab-cdef-0123-456789abcdef"
     )
 
 
@@ -239,7 +238,10 @@ def test_cli_rejects_malformed_success(monkeypatch: pytest.MonkeyPatch) -> None:
     [
         (lambda cli: cli.submit_suite(Path("."), "suite"), []),
         (lambda cli: cli.submit_scenario(Path("."), "scenario"), {}),
-        (lambda cli: cli.download(Path("."), scenario_run_id="r", output=Path(".")), {"files": {}}),
+        (
+            lambda cli: cli.download(Path("."), scenario_run_id="r", output=Path(".")),
+            {"files": {}},
+        ),
         (lambda cli: cli.logs(Path("."), scenario_run_id="r"), []),
         (lambda cli: cli.project_build(Path(".")), []),
         (lambda cli: cli.session_new(Path(".")), []),
@@ -464,9 +466,7 @@ def test_project_staging_rejects_duplicate_archive_paths(tmp_path: Path) -> None
             bundle.addfile(info, io.BytesIO(content))
     archive = archive_path.read_bytes()
     manifest = ProjectManifest(
-        archive=ProjectArchive(
-            size_bytes=len(archive), sha256=sha256_bytes(archive)
-        ),
+        archive=ProjectArchive(size_bytes=len(archive), sha256=sha256_bytes(archive)),
         source_name="synthetic-cartpole",
         source_revision="1",
         source_license="CC0-1.0",
@@ -1014,9 +1014,7 @@ def test_collect_excludes_active_owner_and_executes_after_expiry(
     def recovered_body(*_args, **_kwargs):  # noqa: ANN202
         raise RuntimeError("entered recovered collection body")
 
-    monkeypatch.setattr(
-        "npa.workbench.antioch.manager.stage_project", recovered_body
-    )
+    monkeypatch.setattr("npa.workbench.antioch.manager.stage_project", recovered_body)
     with pytest.raises(RuntimeError, match="entered recovered collection body"):
         manager.collect(request)
     durable = manager._record_for(request)
@@ -1307,7 +1305,9 @@ def test_collect_real_body_recovers_every_persistence_boundary(
                 return fail_once(*args, **kwargs)
             return original(*args, **kwargs)
 
-        monkeypatch.setattr("npa.workbench.antioch.manager._validate_downloaded_artifact", checksum)
+        monkeypatch.setattr(
+            "npa.workbench.antioch.manager._validate_downloaded_artifact", checksum
+        )
     elif boundary == "conversion":
         original = convert
 
@@ -1316,8 +1316,11 @@ def test_collect_real_body_recovers_every_persistence_boundary(
                 return fail_once(*args, **kwargs)
             return original(*args, **kwargs)
 
-        monkeypatch.setattr("npa.workbench.antioch.manager.convert_episodes", conversion)
+        monkeypatch.setattr(
+            "npa.workbench.antioch.manager.convert_episodes", conversion
+        )
     elif boundary == "upload":
+
         def upload_boundary(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
             if not failed:
                 return fail_once(*args, **kwargs)

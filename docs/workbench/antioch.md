@@ -254,6 +254,9 @@ duplicated.
 exact scenario is terminal or stably absent and the project session is released,
 then scales the Deployment to zero. Missing/malformed evidence, `cleanup_failed`, timeout,
 or forced/SIGKILL termination remains unproven and is never reported as stopped.
+Before release, the controller requires supported `session status` to match both
+its exact project and the session identity it created; a replacement session is
+never released as cleanup for the old controller.
 
 ```bash
 npa workbench antioch live-k8s-deploy \

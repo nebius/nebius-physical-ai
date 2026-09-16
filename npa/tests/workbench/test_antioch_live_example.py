@@ -186,12 +186,9 @@ def test_live_franka_proxy_is_volumetric_oriented_and_asset_free(
     assert geometry["base"]["sizes"] == [[0.20, 0.20, 0.11]]
     assert len(geometry["links"]["centers"]) == 3
     assert geometry["links"]["sizes"][0] == pytest.approx([0.105, 0.105, 0.3])
-    assert geometry["links"]["quaternions"][0] == pytest.approx(
-        [0.0, 0.0, 0.0, 1.0]
-    )
+    assert geometry["links"]["quaternions"][0] == pytest.approx([0.0, 0.0, 0.0, 1.0])
     assert all(
-        sum(component * component for component in quaternion)
-        == pytest.approx(1.0)
+        sum(component * component for component in quaternion) == pytest.approx(1.0)
         for quaternion in geometry["links"]["quaternions"]
     )
     assert geometry["joints"]["centers"][-1] == [0.35, 0.1, 0.65]
@@ -229,9 +226,12 @@ def test_live_camera_rejects_black_or_flat_annotator_warmup(
         ).reason
         == "wrong_shape"
     )
-    assert scenario._camera_frame(
-        Camera(np.full((224, 224, 4), 64, dtype=np.uint8)), view="wrist"
-    ).reason == "flat"
+    assert (
+        scenario._camera_frame(
+            Camera(np.full((224, 224, 4), 64, dtype=np.uint8)), view="wrist"
+        ).reason
+        == "flat"
+    )
     black = scenario._camera_frame(
         Camera(np.zeros((224, 224, 4), dtype=np.uint8)), view="wrist"
     )
@@ -428,9 +428,7 @@ def test_live_telemetry_is_latest_only_and_control_does_not_wait_for_slow_images
         pytest.fail("camera entities did not advance to the newest queued frame")
 
     assert publisher.close() == {"exterior": True, "wrist": True, "display": True}
-    assert all(
-        not state["alive"] for state in publisher.snapshot().values()
-    )
+    assert all(not state["alive"] for state in publisher.snapshot().values())
 
 
 def test_rtx_camera_construction_wires_public_rgb_render_product(
@@ -671,14 +669,14 @@ def test_live_capture_fails_closed_and_tears_down_invalid_rtx_product(
             world, (("exterior", exterior), ("wrist", wrist)), Logger()
         )
     assert exterior.closed and wrist.closed
+
+
 def test_camera_readiness_waits_hundreds_of_frames_before_policy_eligibility(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     scenario = _load_live_scenario(monkeypatch, "antioch_camera_none_test")
     missing = scenario.CameraFrame(None, "missing")
-    missing_pair = scenario.CameraPair(
-        False, missing, missing, "exterior", "missing"
-    )
+    missing_pair = scenario.CameraPair(False, missing, missing, "exterior", "missing")
     monitor = scenario.CameraReadinessMonitor(status_interval_frames=100)
     decisions = [monitor.observe(missing_pair) for _ in range(400)]
 
@@ -697,9 +695,7 @@ def test_delayed_valid_pair_requires_advancement_then_enables_policy(
 ) -> None:
     scenario = _load_live_scenario(monkeypatch, "antioch_camera_delayed_test")
     missing = scenario.CameraFrame(None, "missing")
-    missing_pair = scenario.CameraPair(
-        False, missing, missing, "exterior", "missing"
-    )
+    missing_pair = scenario.CameraPair(False, missing, missing, "exterior", "missing")
     exterior = scenario.CameraFrame(object(), "", 50.0, 100.0, 80.0, 25)
     wrist = scenario.CameraFrame(object(), "", 55.0, 110.0, 85.0, 0)
     valid_pair = scenario.CameraPair(True, exterior, wrist, mean_difference=12.0)
@@ -1120,12 +1116,57 @@ def test_live_camera_pair_classifies_each_view_freshness_semantics_and_distinctn
 
     cases = (
         (Camera(None), Camera(wrist), 5, 4, True, True, "exterior", "missing"),
-        (Camera(no_cube), Camera(wrist), 5, 4, True, True, "exterior", "cube_not_visible"),
-        (Camera(exterior), Camera(np.zeros_like(wrist)), 5, 4, True, True, "wrist", "blank"),
+        (
+            Camera(no_cube),
+            Camera(wrist),
+            5,
+            4,
+            True,
+            True,
+            "exterior",
+            "cube_not_visible",
+        ),
+        (
+            Camera(exterior),
+            Camera(np.zeros_like(wrist)),
+            5,
+            4,
+            True,
+            True,
+            "wrist",
+            "blank",
+        ),
         (Camera(exterior), Camera(wrist), 4, 4, True, True, "pair", "stale"),
-        (Camera(exterior), Camera(wrist), 5, 4, False, True, "exterior", "cube_out_of_frame"),
-        (Camera(exterior), Camera(wrist), 5, 4, True, False, "wrist", "cube_out_of_frame"),
-        (Camera(exterior), Camera(exterior.copy()), 5, 4, True, True, "pair", "not_distinct"),
+        (
+            Camera(exterior),
+            Camera(wrist),
+            5,
+            4,
+            False,
+            True,
+            "exterior",
+            "cube_out_of_frame",
+        ),
+        (
+            Camera(exterior),
+            Camera(wrist),
+            5,
+            4,
+            True,
+            False,
+            "wrist",
+            "cube_out_of_frame",
+        ),
+        (
+            Camera(exterior),
+            Camera(exterior.copy()),
+            5,
+            4,
+            True,
+            True,
+            "pair",
+            "not_distinct",
+        ),
     )
     for ext, wr, sequence, last, ext_cube, wrist_cube, view, reason in cases:
         rejected = scenario._validate_camera_pair(
@@ -1200,9 +1241,10 @@ def test_live_observation_mapping_and_telemetry_blueprint_are_exact(
         scenario._resolved_telemetry_entity(scenario.CAMERA_METRICS_ENTITY),
         scenario._resolved_telemetry_entity(scenario.POLICY_ERROR_ENTITY),
     ]
-    assert all(origin.startswith(f"{scenario.TELEMETRY_ROOT}/") for origin in (
-        view["origin"] for view in views
-    ))
+    assert all(
+        origin.startswith(f"{scenario.TELEMETRY_ROOT}/")
+        for origin in (view["origin"] for view in views)
+    )
     assert cameras["column_shares"] == [1.0, 1.0]
     assert lower["column_shares"] == [1.0, 1.0]
     assert vertical["row_shares"] == [1.0, 1.0]
@@ -1268,9 +1310,7 @@ def test_live_droid_jointpos_and_gripper_mapping_matches_pinned_contract(
     actions[:, 7] = np.asarray(
         [-0.2, -0.1, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2]
     )
-    targets, evidence = scenario._validated_actions(
-        {"actions": actions}, open_state
-    )
+    targets, evidence = scenario._validated_actions({"actions": actions}, open_state)
     np.testing.assert_allclose(targets[:, :7], actions[:, :7])
     assert set(np.unique(targets[:, 7])) <= {0.0, 1.0}
     assert evidence["raw_gripper_range_mismatches"] == 4
@@ -1281,7 +1321,7 @@ def test_live_droid_jointpos_and_gripper_mapping_matches_pinned_contract(
 
 def test_live_scene_is_tabletop_lit_and_droid_reset_aligned() -> None:
     source = (EXAMPLE / "src/scenario_v2.py").read_text(encoding="utf-8")
-    assert 'world.scene.add_ground_plane(z_position=-0.75)' in source
+    assert "world.scene.add_ground_plane(z_position=-0.75)" in source
     assert 'prim_path="/World/Tabletop"' in source
     assert 'prim_path="/World/Cube"' in source
     assert "position=np.array(CUBE_INITIAL_POSITION)" in source
@@ -1325,13 +1365,11 @@ def test_live_sim_image_contains_only_protocol_dependencies() -> None:
     )
     assert (
         "/usr/local/lib/python3.12/dist-packages/isaacsim/kit/data/documents/Kit/"
-        "apps/Isaac-Sim Python/scripts"
-        in dockerfile
+        "apps/Isaac-Sim Python/scripts" in dockerfile
     )
     assert (
         "/usr/local/lib/python3.12/dist-packages/isaacsim/kit/data/documents/Kit/"
-        "shared"
-        in dockerfile
+        "shared" in dockerfile
     )
     assert "ENV HOME=/tmp/npa-home" in dockerfile
     assert "COPY --chown=1000:1000 src/ /workspace/project/src/" in dockerfile
@@ -1419,7 +1457,9 @@ def test_supervisor_has_finite_run_boundary_but_no_total_limit(tmp_path: Path) -
     upload_dirs = list(tmp_path.glob(".bundle-upload-*"))
     assert len(upload_dirs) == 1
     assert upload_dirs[0].stat().st_mode & 0o777 == 0o700
-    assert all(path.stat().st_mode & 0o777 == 0o644 for path in upload_dirs[0].iterdir())
+    assert all(
+        path.stat().st_mode & 0o777 == 0o644 for path in upload_dirs[0].iterdir()
+    )
     assert "mv -Tf" in source
     assert "sleep 15" in source
     assert "timeout 14400s" not in source
@@ -1596,14 +1636,10 @@ def test_runtime_source_is_staged_through_supported_service_copy(
     assert calls[0][0] == "exec"
     copies = [call for call in calls if call[0] == "copy"]
     assert copies[0][1][0] == "scenario_v2.py"
-    assert copies[0][1][1].startswith(
-        "sim:/workspace/project/.npa-live-source-upload-"
-    )
+    assert copies[0][1][1].startswith("sim:/workspace/project/.npa-live-source-upload-")
     assert copies[0][1][1].endswith("/scenario_v2.py")
     assert copies[1][1][0] == "openpi_protocol.py"
-    assert copies[1][1][1].startswith(
-        "sim:/workspace/project/.npa-live-source-upload-"
-    )
+    assert copies[1][1][1].startswith("sim:/workspace/project/.npa-live-source-upload-")
     assert copies[1][1][1].endswith("/openpi_protocol.py")
     assert copies[2][1][0] == "relay_bridge.py"
     assert copies[2][1][1].endswith("/relay_bridge.py")

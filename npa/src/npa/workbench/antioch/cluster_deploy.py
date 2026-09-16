@@ -844,9 +844,7 @@ def _matching_policy_deployments(
     ]
 
 
-def _recover_unready_adapter(
-    apps: Any, core: Any, config: ClusterLiveConfig
-) -> str:
+def _recover_unready_adapter(apps: Any, core: Any, config: ClusterLiveConfig) -> str:
     """Roll only an exact owned, reconciled adapter whose replica is unhealthy."""
 
     deployment = apps.read_namespaced_deployment(
@@ -961,9 +959,7 @@ def _policy_placement_status(
             line.strip() for line in str(raw).splitlines() if line.strip()
         )
     unique_capabilities = sorted(set(capabilities))
-    cuda_capability = (
-        unique_capabilities[0] if len(unique_capabilities) == 1 else ""
-    )
+    cuda_capability = unique_capabilities[0] if len(unique_capabilities) == 1 else ""
     cuda_sm = ""
     match = re.fullmatch(r"(\d+)\.(\d+)", cuda_capability)
     if match:

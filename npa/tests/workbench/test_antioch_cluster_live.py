@@ -311,13 +311,7 @@ def test_public_manifests_keep_vm_out_and_policy_cluster_local(tmp_path: Path) -
     ]
     assert adapter_policy["policyTypes"] == ["Ingress", "Egress"]
     assert adapter_policy["egress"][-1] == {
-        "to": [
-            {
-                "ipBlock": {
-                    "cidr": cluster_deploy.UNRESTRICTED_VENDOR_EGRESS_CIDR
-                }
-            }
-        ],
+        "to": [{"ipBlock": {"cidr": cluster_deploy.UNRESTRICTED_VENDOR_EGRESS_CIDR}}],
         "ports": [
             {"protocol": "TCP", "port": 443},
         ],
@@ -480,9 +474,7 @@ def test_recovery_heartbeat_keeps_liveness_fresh_but_readiness_revoked(
     cluster_runtime._write_state(state, **recovery)
     first_publication = cluster_runtime._read_state(state)["published_unix"]
 
-    with cluster_runtime._recovery_heartbeat(
-        state, interval_seconds=0.01, **recovery
-    ):
+    with cluster_runtime._recovery_heartbeat(state, interval_seconds=0.01, **recovery):
         time.sleep(0.04)
         refreshed = cluster_runtime._read_state(state)
         assert refreshed["published_unix"] > first_publication
@@ -531,7 +523,9 @@ def test_supervisor_recovery_requires_converged_loss(
         "startup_age_seconds": 0.0,
         "max_age_seconds": 30.0,
     }
-    assert cluster_runtime._supervisor_recovery_reason(**(defaults | values)) == expected
+    assert (
+        cluster_runtime._supervisor_recovery_reason(**(defaults | values)) == expected
+    )
 
 
 def test_vendor_stream_process_observes_real_child_exit_and_drains_output(
@@ -594,10 +588,13 @@ def test_vendor_stream_process_emits_sanitized_camera_rejection_before_child_exi
         "render_sequence=9 exterior_red_cube_pixels=42 pair_difference=18.250\n"
     )
     assert "private vendor prefix" not in rendered
-    assert cluster_runtime._sanitized_metric_line(
-        b"NPA_OPENPI_CAMERA_REJECT view=wrist reason=secret "
-        b"render_sequence=9 exterior_red_cube_pixels=42 pair_difference=18.250"
-    ) == ""
+    assert (
+        cluster_runtime._sanitized_metric_line(
+            b"NPA_OPENPI_CAMERA_REJECT view=wrist reason=secret "
+            b"render_sequence=9 exterior_red_cube_pixels=42 pair_difference=18.250"
+        )
+        == ""
+    )
 
 
 def test_vendor_stream_process_outlives_an_unrelated_operator_process(
@@ -666,13 +663,13 @@ def test_service_start_builds_revision_and_replaces_only_idle_project_session(
         calls.append("cancel")
 
     monkeypatch.setattr(cluster_runtime, "_cancel_remote_live_runs", cancel)
-    recovered = cluster_runtime._start_cluster_service(
+    session_id = cluster_runtime._start_cluster_service(
         Cli(),  # type: ignore[arg-type]
         runtime=tmp_path,
         project_id="assigned-project-for-test",
         scenario="openpi_franka_mk8s_live",
     )
-    assert recovered is True
+    assert session_id == "new-session"
     assert calls == ["cancel", "build", "new:revision-for-test"]
 
 
@@ -712,13 +709,13 @@ def test_retryable_service_start_failure_recovers_with_capped_backoff(
         "sleep",
         lambda seconds: calls.append(f"sleep:{seconds}"),
     )
-    recovered = cluster_runtime._start_cluster_service(
+    session_id = cluster_runtime._start_cluster_service(
         Cli(),  # type: ignore[arg-type]
         runtime=tmp_path,
         project_id="assigned-project-for-test",
         scenario="openpi_franka_mk8s_live",
     )
-    assert recovered is False
+    assert session_id == "new-session"
     assert calls == [
         "cancel",
         "build",
@@ -728,6 +725,53 @@ def test_retryable_service_start_failure_recovers_with_capped_backoff(
         "build",
         "new:revision-for-test",
     ]
+
+
+def test_release_owned_session_fences_project_and_session_identity(
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+
+    class Cli:
+        def session_status(self, _runtime):  # noqa: ANN001, ANN202
+            calls.append("status")
+            return {
+                "project_id": "assigned-project-for-test",
+                "session_id": "owned-session",
+            }
+
+        def session_release(self, _runtime):  # noqa: ANN001, ANN202
+            calls.append("release")
+            return {"session_id": "owned-session", "state": "stopping"}
+
+    released = cluster_runtime._release_owned_session(
+        Cli(),  # type: ignore[arg-type]
+        runtime=tmp_path,
+        project_id="assigned-project-for-test",
+        session_id="owned-session",
+    )
+    assert released["state"] == "stopping"
+    assert calls == ["status", "release"]
+
+
+def test_release_owned_session_refuses_replacement_session(tmp_path: Path) -> None:
+    class Cli:
+        def session_status(self, _runtime):  # noqa: ANN001, ANN202
+            return {
+                "project_id": "assigned-project-for-test",
+                "session_id": "replacement-session",
+            }
+
+        def session_release(self, _runtime):  # noqa: ANN001, ANN202
+            raise AssertionError("replacement session must not be released")
+
+    with pytest.raises(cluster_runtime.AntiochLiveError, match="ownership"):
+        cluster_runtime._release_owned_session(
+            Cli(),  # type: ignore[arg-type]
+            runtime=tmp_path,
+            project_id="assigned-project-for-test",
+            session_id="owned-session",
+        )
 
 
 def test_fatal_service_start_failure_remains_fatal_without_releasing_assignment(
@@ -777,9 +821,7 @@ def test_remote_state_read_recovers_transient_exec_fragment(
     replies = iter(
         (
             "not-base64",
-            base64.b64encode(
-                b'{"schema_version":2,"status":"connected"}'
-            ).decode(),
+            base64.b64encode(b'{"schema_version":2,"status":"connected"}').decode(),
         )
     )
     commands: list[list[str]] = []
@@ -899,9 +941,7 @@ def test_apply_cluster_guards_ownership_and_dependencies_beyond_selector(
         read_namespaced_secret=lambda **_kwargs: auth,
     )
     apps = SimpleNamespace(
-        list_namespaced_deployment=lambda **_kwargs: SimpleNamespace(
-            items=[deployment]
-        )
+        list_namespaced_deployment=lambda **_kwargs: SimpleNamespace(items=[deployment])
     )
     monkeypatch.setattr("kubernetes.config.load_kube_config", lambda **_kwargs: None)
     monkeypatch.setattr(client, "CoreV1Api", lambda: core)
@@ -970,14 +1010,11 @@ def test_reconcile_rolls_only_an_unready_owned_adapter(
     )
 
     assert (
-        cluster_deploy._recover_unready_adapter(apps, core, config)
-        == expected_status
+        cluster_deploy._recover_unready_adapter(apps, core, config) == expected_status
     )
     assert len(patches) == expected_patches
     if patches:
-        annotations = patches[0]["body"]["spec"]["template"]["metadata"][
-            "annotations"
-        ]
+        annotations = patches[0]["body"]["spec"]["template"]["metadata"]["annotations"]
         assert set(annotations) == {"npa.nebius.ai/owned-recovery-generation"}
 
 
@@ -994,9 +1031,7 @@ def test_policy_placement_status_reports_sanitized_live_gpu_evidence(
         spec=SimpleNamespace(
             replicas=1,
             selector=SimpleNamespace(match_labels=config.policy_selector),
-            template=SimpleNamespace(
-                spec=SimpleNamespace(containers=[container])
-            ),
+            template=SimpleNamespace(spec=SimpleNamespace(containers=[container])),
         )
     )
     pod = SimpleNamespace(
@@ -1054,9 +1089,7 @@ def test_cluster_status_reports_sanitized_probe_exception_classes(
                         SimpleNamespace(
                             name="policy",
                             image="ghcr.io/example/openpi@sha256:" + "a" * 64,
-                            resources=SimpleNamespace(
-                                requests={"nvidia.com/gpu": "1"}
-                            ),
+                            resources=SimpleNamespace(requests={"nvidia.com/gpu": "1"}),
                         )
                     ]
                 )
@@ -1086,9 +1119,7 @@ def test_cluster_status_reports_sanitized_probe_exception_classes(
             else [policy_pod]
         ),
         read_node=lambda **_kwargs: SimpleNamespace(
-            metadata=SimpleNamespace(
-                labels={"nvidia.com/gpu.product": "NVIDIA-B200"}
-            )
+            metadata=SimpleNamespace(labels={"nvidia.com/gpu.product": "NVIDIA-B200"})
         ),
         read_namespaced_persistent_volume_claim=lambda **_kwargs: SimpleNamespace(
             status=SimpleNamespace(phase="Bound")
@@ -1151,7 +1182,9 @@ def test_cluster_status_reports_sanitized_probe_exception_classes(
     assert "private DNS" not in rendered
 
 
-@pytest.mark.parametrize("cleanup_status,stops", [("stopped", True), ("cleanup_failed", False)])
+@pytest.mark.parametrize(
+    "cleanup_status,stops", [("stopped", True), ("cleanup_failed", False)]
+)
 def test_stop_cluster_requires_supported_remote_cleanup_evidence(
     cleanup_status: str,
     stops: bool,
@@ -1167,7 +1200,9 @@ def test_stop_cluster_requires_supported_remote_cleanup_evidence(
     scales: list[dict[str, object]] = []
     apps = SimpleNamespace(
         read_namespaced_deployment=lambda *_args, **_kwargs: deployment,
-        patch_namespaced_deployment_scale=lambda *_args, **kwargs: scales.append(kwargs),
+        patch_namespaced_deployment_scale=lambda *_args, **kwargs: scales.append(
+            kwargs
+        ),
     )
     pod = SimpleNamespace(metadata=SimpleNamespace(name="adapter-pod"))
     core = SimpleNamespace(
@@ -1183,12 +1218,12 @@ def test_stop_cluster_requires_supported_remote_cleanup_evidence(
             "",
             "not-base64",
             base64.b64encode(b"[]").decode(),
-            base64.b64encode(
-                json.dumps({"status": cleanup_status}).encode()
-            ).decode(),
+            base64.b64encode(json.dumps({"status": cleanup_status}).encode()).decode(),
         )
     )
-    monkeypatch.setattr("kubernetes.stream.stream", lambda *_args, **_kwargs: next(replies))
+    monkeypatch.setattr(
+        "kubernetes.stream.stream", lambda *_args, **_kwargs: next(replies)
+    )
     if stops:
         result = cluster_deploy.stop_cluster(config, timeout_seconds=10)
         assert result["remote_terminal_evidence"] == "supported-controller-cleanup"

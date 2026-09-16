@@ -393,9 +393,7 @@ def _state_ready(
             and int(state.get("route_parent_pid") or 0) == 1
             and int(state.get("route_pid") or 0) > 1
             and state.get("route_process_group_isolated") is True
-            and -5.0
-            <= observed_now - float(session_observed)
-            <= max_age_seconds
+            and -5.0 <= observed_now - float(session_observed) <= max_age_seconds
         )
 
     if component == "controller-liveness":
@@ -473,7 +471,10 @@ def _supervisor_recovery_reason(
         and age_seconds > max_age_seconds
     ):
         return "session_owner_absent"
-    if not last_owned_heartbeat and startup_age_seconds >= SESSION_STARTUP_GRACE_SECONDS:
+    if (
+        not last_owned_heartbeat
+        and startup_age_seconds >= SESSION_STARTUP_GRACE_SECONDS
+    ):
         return "session_owner_startup_timeout"
     if consecutive_errors >= SESSION_ERROR_THRESHOLD and age_seconds > max_age_seconds:
         return "session_state_unreadable"
@@ -495,7 +496,7 @@ def _start_cluster_service(
     runtime: Path,
     project_id: str,
     scenario: str,
-) -> bool:
+) -> str:
     """Build one revision and start its project session fail-closed.
 
     The current platform owns compute through a project-scoped session.  First
@@ -527,7 +528,7 @@ def _start_cluster_service(
                     "Antioch session startup did not return a session",
                     error_type="malformed_cli_output",
                 )
-            return bool(session.get("replaced_session_id"))
+            return str(session["session_id"])
         except AntiochCliError as exc:
             if not exc.retryable:
                 raise
@@ -536,6 +537,31 @@ def _start_cluster_service(
             ]
             retryable_failures += 1
             time.sleep(delay)
+
+
+def _release_owned_session(
+    cli: AntiochCli,
+    *,
+    runtime: Path,
+    project_id: str,
+    session_id: str,
+) -> dict[str, Any]:
+    """Release only the exact interactive session created by this controller."""
+
+    current = cli.session_status(runtime)
+    if (
+        current.get("project_id") != project_id
+        or str(current.get("session_id") or "") != session_id
+    ):
+        raise AntiochLiveError(
+            "current Antioch session no longer matches controller ownership"
+        )
+    released = cli.session_release(runtime)
+    if str(released.get("session_id") or "") != session_id:
+        raise AntiochLiveError(
+            "Antioch released a session that did not match controller ownership"
+        )
+    return released
 
 
 def _launch_vendor_successor(
@@ -592,6 +618,7 @@ def run_cluster(args: argparse.Namespace) -> int:
     cli = AntiochCli(cli_path, config_dir=str(private_root / "antioch-config"))
     vendor: VendorStreamProcess | None = None
     port_bridge: VendorPortProcess | None = None
+    antioch_session_id = ""
     stopping = False
     cleanup_complete = False
     failed = False
@@ -655,7 +682,7 @@ def run_cluster(args: argparse.Namespace) -> int:
             "heartbeat_unix": 0.0,
         }
         with _recovery_heartbeat(state_path, **startup_state):
-            _start_cluster_service(
+            antioch_session_id = _start_cluster_service(
                 cli,
                 runtime=runtime,
                 project_id=project_id,
@@ -748,6 +775,10 @@ def run_cluster(args: argparse.Namespace) -> int:
                             route_process_status=port_bridge.exit_snapshot()[0],
                         )
                     else:
+                        if str(active["session_id"]) != antioch_session_id:
+                            raise AntiochLiveReconcileError(
+                                "active scenario does not belong to the controller session"
+                            )
                         consecutive_absence = 0
                         last_owned_heartbeat = time.time()
                         last_run_id = str(active["scenario_run_id"])
@@ -787,9 +818,7 @@ def run_cluster(args: argparse.Namespace) -> int:
                                 active["session_access_phase"]
                             ),
                             sim_service_state=str(active["service_state"]),
-                            sim_process_healthy=bool(
-                                active["service_process_healthy"]
-                            ),
+                            sim_process_healthy=bool(active["service_process_healthy"]),
                             antioch_session_ready=bool(active["session_ready"]),
                             session_observed_at=float(active["session_observed_at"]),
                             transport="same-pod-antioch-named-route-double-wss",
@@ -860,7 +889,7 @@ def run_cluster(args: argparse.Namespace) -> int:
                     try:
                         cli.service_exec(runtime, "sim", ["/bin/true"])
                     except AntiochCliError:
-                        _start_cluster_service(
+                        antioch_session_id = _start_cluster_service(
                             cli,
                             runtime=runtime,
                             project_id=project_id,
@@ -904,7 +933,7 @@ def run_cluster(args: argparse.Namespace) -> int:
                     )
                 except AntiochCliError:
                     port_bridge.terminate()
-                    _start_cluster_service(
+                    antioch_session_id = _start_cluster_service(
                         cli,
                         runtime=runtime,
                         project_id=project_id,
@@ -954,7 +983,12 @@ def run_cluster(args: argparse.Namespace) -> int:
                     scenario=args.scenario,
                     attempts=5,
                 )
-                cli.session_release(runtime)
+                _release_owned_session(
+                    cli,
+                    runtime=runtime,
+                    project_id=project_id,
+                    session_id=antioch_session_id,
+                )
             except (AntiochCliError, AntiochLiveError) as exc:
                 cleanup_error = exc
                 _write_state(

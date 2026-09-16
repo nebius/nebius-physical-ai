@@ -48,7 +48,7 @@ def _write_relocatable_cli(environment: Path) -> Path:
         'bin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\n'
         'exec "$bin_dir/python" -c '
         "'import sys; from antioch.cli.main import cli; "
-        "sys.argv[0]=\"antioch\"; cli()' \"$@\"\n",
+        'sys.argv[0]="antioch"; cli()\' "$@"\n',
         encoding="utf-8",
     )
     executable.chmod(0o755)
