@@ -3762,7 +3762,7 @@ def test_bootstrap_emitted_ui_script_is_valid_javascript(monkeypatch) -> None:
     agent_module._bootstrap_agent_stack(
         host="203.0.113.50",
         ssh_user="ubuntu",
-        ssh_key_path="/tmp/key",
+        ssh_key_path=str(Path.cwd() / "unit-test-ssh-key"),
         project_alias="smoke",
         project_id="project-id",
         tenant_id="tenant-id",

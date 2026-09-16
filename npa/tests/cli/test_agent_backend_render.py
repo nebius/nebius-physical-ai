@@ -1605,7 +1605,7 @@ def test_workflow_dry_run_plans_provision_even_with_existing_infra(
                 {
                     "cluster_name": "existing-cluster",
                     "context": "existing-context",
-                    "kubeconfig": "/tmp/kubeconfig",
+                    "kubeconfig": str(tmp_path / "kubeconfig"),
                 }
             ],
         },
@@ -1670,6 +1670,7 @@ def test_workflow_execution_requires_and_uses_action_bound_confirmation(
     yaml_path = tmp_path / "workflow.yaml"
     yaml_path.write_text("apiVersion: npa.workflow/v0.0.1\n", encoding="utf-8")
     commands: list[tuple[list[str], object, bool]] = []
+    command_envs: list[tuple[list[str], dict[str, str]]] = []
     issued: list[tuple[dict, str]] = []
     consumed: list[tuple[str, dict]] = []
     monkeypatch.setattr(module, "_resolve_workflow_yaml", lambda _body: "workflow")
@@ -1694,7 +1695,7 @@ def test_workflow_execution_requires_and_uses_action_bound_confirmation(
                 {
                     "cluster_name": "existing-cluster",
                     "context": "existing-context",
-                    "kubeconfig": "/tmp/kubeconfig",
+                    "kubeconfig": str(tmp_path / "kubeconfig"),
                 }
             ],
         },
@@ -1709,8 +1710,15 @@ def test_workflow_execution_requires_and_uses_action_bound_confirmation(
         lambda *_args, **_kwargs: ("NEBIUS_TOKEN_FACTORY_KEY",),
     )
 
-    def run_npa(args, *, timeout_s=300, expect_json=True):
+    monkeypatch.setattr(
+        module,
+        "_agent_workflow_context_env",
+        lambda context: {"KUBECONFIG": f"selected/{context}/kubeconfig"},
+    )
+
+    def run_npa(args, *, timeout_s=300, expect_json=True, extra_env=None):
         commands.append((list(args), timeout_s, expect_json))
+        command_envs.append((list(args), dict(extra_env or {})))
         if "run-spec" in args:
             return {"ok": True, "steps": [{"state": "generate"}]}
         if args[:3] == ["workbench", "workflow", "stage-src"]:
@@ -1853,6 +1861,17 @@ def test_workflow_execution_requires_and_uses_action_bound_confirmation(
         300,
         False,
     ) in commands
+    context_bound_commands = [
+        env
+        for command, env in command_envs
+        if command[:2] in (["skypilot", "bootstrap"], ["skypilot", "bind-controller"])
+        or command[:3] in (["workbench", "workflow", "stage-src"], ["workbench", "workflow", "submit"])
+    ]
+    assert context_bound_commands
+    assert all(
+        env == {"KUBECONFIG": "selected/existing-context/kubeconfig"}
+        for env in context_bound_commands
+    )
     assert completed["submit_mode"] == "agent-live-infra-executing"
     assert completed["execution"] == {
         "run_id": "confirmed-run",

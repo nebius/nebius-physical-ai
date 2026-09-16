@@ -3333,6 +3333,21 @@ def _agent_exact_kubeconfig() -> str:
         return ""
 
 
+def _agent_workflow_context_env(kubernetes_context: str) -> dict[str, str]:
+    # Bind every subcommand to the UI-selected pre-existing target. Controller
+    # binding happens before workflow submit can adopt the target kubeconfig.
+    context = str(kubernetes_context or "").strip()
+    if not context:
+        return {{}}
+    try:
+        from npa.cluster.state import existing_kubeconfig
+
+        path = existing_kubeconfig(context)
+    except (OSError, ValueError):
+        return {{}}
+    return dict(KUBECONFIG=str(path)) if path is not None else {{}}
+
+
 def _agent_cloud_mk8s_clusters(project: str = "") -> list[dict]:
     config = _load_agent_config_yaml()
     projects = config.get("projects")
@@ -3401,16 +3416,20 @@ def _tenant_resource_inventory(*, force_refresh: bool = False) -> dict:
 
 
 def _run_agent_npa_json(
-    args: list[str], *, timeout_s: int | None = 300, expect_json: bool = True
+    args: list[str], *, timeout_s: int | None = 300, expect_json: bool = True,
+    extra_env: dict[str, str] | None = None,
 ) -> dict:
     ready, reason = _agent_npa_ready()
     if not ready:
         raise HTTPException(status_code=409, detail=reason)
     try:
+        command_env = _agent_command_env()
+        if extra_env:
+            command_env.update({{str(key): str(value) for key, value in extra_env.items()}})
         proc = subprocess.run(
             [str(NPA_CLI), *args],
             cwd=str(NPA_SOURCE_ROOT),
-            env=_agent_command_env(),
+            env=command_env,
             text=True,
             capture_output=True,
             timeout=timeout_s if timeout_s and timeout_s > 0 else None,
@@ -4038,6 +4057,18 @@ def _execute_agent_workflow_yaml(
 ) -> dict:
     # Preserve the generated backend's test seam while shipping the complex
     # durable execution mechanics as an importable backend module.
+    command_env = _agent_workflow_context_env(kubernetes_context)
+
+    def run_npa_for_context(
+        args: list[str], *, timeout_s: int | None = 300, expect_json: bool = True
+    ) -> dict:
+        return _run_agent_npa_json(
+            args,
+            timeout_s=timeout_s,
+            expect_json=expect_json,
+            extra_env=command_env,
+        )
+
     return _execute_workflow_yaml(
         yaml_text,
         run_id=run_id,
@@ -4046,7 +4077,7 @@ def _execute_agent_workflow_yaml(
         assume_decision=assume_decision,
         progress=progress,
         write_temp_yaml=_write_workflow_temp_yaml,
-        run_npa_json=_run_agent_npa_json,
+        run_npa_json=run_npa_for_context,
         requires_staged_source=_agent_workflow_requires_staged_source,
         secret_envs=_agent_workflow_secret_envs,
     )

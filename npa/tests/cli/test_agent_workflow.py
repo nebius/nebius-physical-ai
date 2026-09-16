@@ -1307,7 +1307,7 @@ def test_cpu_workflow_draft_binds_the_discovered_kubernetes_context() -> None:
                 {
                     "cluster_name": "unit-cluster",
                     "context": "unit-context",
-                    "kubeconfig": "/tmp/unit-kubeconfig",
+                    "kubeconfig": str(Path.cwd() / "unit-kubeconfig"),
                 }
             ],
         },
