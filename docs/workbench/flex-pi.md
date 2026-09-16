@@ -27,7 +27,11 @@ ample memory above upstream's 16–26 GB inference range.
 `npa-flex-pi:0.1.0-cu128` contains pinned MIT flex-pi source, configs, the
 RoboTwin policy adapter, and its CUDA/Python runtime. It contains no checkpoint,
 Wan/T5/DINOv3 weights, observation media, credentials, actions, or populated
-cache.
+cache. A narrow maintained patch makes upstream inspect the lexical Hugging Face
+snapshot path before resolving checkpoint symlinks into the blob store; this
+ensures the released checkpoint's adjacent `config.yaml` defines the model
+architecture. The upstream follow-up is intentionally kept in this integration
+branch rather than a second pull request.
 
 The checkpoint repository is MIT-labelled. The selected public RoboTwin dataset
 card declares no license; NPA does not infer one from the simulator's MIT source,

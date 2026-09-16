@@ -65,6 +65,7 @@ def test_dockerfile_pins_source_base_and_nonroot() -> None:
     assert "apt-get install -y --only-upgrade linux-libc-dev" in text
     assert "rm -rf /opt/nvidia/nsight-compute/2025.1.0" in text
     assert "security-dependencies.patch" in text
+    assert "hf-snapshot-config.patch" in text
 
     inference = (
         Path(__file__).resolve().parents[2]
@@ -81,3 +82,13 @@ def test_dockerfile_pins_source_base_and_nonroot() -> None:
     ).read_text()
     assert '"gitpython==3.1.62"' in dependency_patch
     assert '"wandb==0.30.0"' in dependency_patch
+
+    snapshot_patch = (
+        Path(__file__).resolve().parents[2]
+        / "docker/workbench/flex-pi/pins/hf-snapshot-config.patch"
+    ).read_text()
+    assert "lexical_parents" in snapshot_patch
+    assert "resolved_parents" in snapshot_patch
+    assert snapshot_patch.index("lexical_parents") < snapshot_patch.index(
+        "resolved_parents"
+    )
