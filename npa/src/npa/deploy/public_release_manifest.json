@@ -32,7 +32,7 @@
     "sonic-mujoco": {"tag": "0.2.0-runtime", "published_digest": "sha256:2388d9e97269afaa414966e83a27f676a3f44d4271e9828c57bc13fbdce80f57", "development_sha": "5b5b5e69e9e686f8d5f305fd735a02f402f6da4b"},
     "sim2real-control": {"tag": "0.1.2-sim2real-coherent-20260904", "published_digest": "sha256:87fe8530710eea43364a21ad76dbe4b4c2d60e4b49705824fcdb62dc7d185af7", "development_sha": "c164fd3480f8a9ea8f9df9ccb9509502fd527996"},
     "wan2-2": {"tag": "2.2-ti2v5b-rtfetch-cu130-20260817", "published_digest": "sha256:5780959ca6c6e7eb77ee7ea7d005fcf0f56db50783ce798dddee2809185eb837", "development_sha": "bc18684d35fa171f7912cb84ef1ae16d4fc116e6"},
-    "alpamayo2-super": {"tag": "0.1.0-cu128", "published_digest": "sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5"},
+    "alpamayo2-super": {"tag": "0.1.0-cu128-r3", "published_digest": "sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07", "development_sha": "5b693476c113c833e9d9d4f8c7aa492492a27505"},
     "content-agents": {"tag": "0.5.2-npa2", "published_digest": "sha256:c64aaf6201bdaa013f9d16e8497290cf166907932f036297d7abaa430cbad7db"}
   },
   "publication_pending": {}

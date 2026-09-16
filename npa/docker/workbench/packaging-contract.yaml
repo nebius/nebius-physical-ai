@@ -260,9 +260,12 @@ images:
       PhysicalAI-AV dataset, operator credentials, and populated caches are
       absent and fetched only at runtime. Built-image byte/layer scanning and
       real B200 plus RTX PRO 6000 inference are publication gates. Release
-      0.1.0-cu128 passed the complete 26-layer payload scan and both independent
-      real-inference gates on 2026-08-18; the accepted OCI index digest is
-      sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5.
+      0.1.0-cu128-r3, built from source commit
+      5b693476c113c833e9d9d4f8c7aa492492a27505 with the HTTPConnection
+      loopback healthcheck fix, passed the complete 25-layer payload scan, the full
+      vulnerability/secret/license scan, and both independent real-inference
+      gates on 2026-09-16; the accepted OCI index digest is
+      sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07.
   sonic:
     dockerfile: sonic/Dockerfile
     isaac_runtime_fetch: true
