@@ -61,6 +61,14 @@ frame-view initialization unexpectedly includes the Robotiq gripper's nested
 The lift reward consumes that target's world position, while object goals and
 held-out metrics use the articulation root independently. No shoulder-relative
 position is used as a policy observation, reward, or success measurement.
+The legacy receipt key `controls.base_frame` names the **sensor reference**;
+`profile.base_body` and `asset.root_position_m` describe the robot base.
+At each native environment's initialization, an independent check compares the
+sensor's world TCP with the articulation link pose and rotated grasp offset,
+rejecting nonfinite values or error above 0.1 mm. This is a startup check, not
+continuous monitoring. The pinned [link-pose API](https://github.com/isaac-sim/IsaacLab/blob/ffff603eafc6b74264a5261cc0183d6a65390d78/source/isaaclab_physx/isaaclab_physx/assets/articulation/articulation_data.py)
+specifies XYZW quaternions; the [sensor kernel](https://github.com/isaac-sim/IsaacLab/blob/ffff603eafc6b74264a5261cc0183d6a65390d78/source/isaaclab_physx/isaaclab_physx/sensors/frame_transformer/kernels.py)
+computes world TCP from the target body independently of the source frame.
 
 Object assets, PPO update count, success criteria, and physics shifts remain
 fixed, including an untuned 0.5-radian arm-action scale for each robot. This
@@ -69,15 +77,15 @@ embodiment-specific tuning. Initial/trained resets are paired within each embodi
 joint dimensions can change random-number consumption, so equal seeds do not
 establish identical object/goal resets across robots. This is a comparison of
 independently trained systems, not a controlled estimate of morphology alone.
-The additional embodiments require their own live evidence; historical Franka
-results below do not validate them.
+Each embodiment has its own live evidence below; historical Franka results are
+kept separate from the new Kinova and UR10e measurements.
 
 ## Relationship to the reference Sim2Real pipeline
 
 The reference is [`workflows/main/sim2real.yaml`](../../../workflows/main/sim2real.yaml).
 This compact workflow retains its relevant experimental contracts:
 
-| Reference responsibility | Franka RL implementation |
+| Reference responsibility | Embodied RL implementation |
 | --- | --- |
 | Task and embodiment contract | Pin the upstream lift task, selected robot and joint control, geometric success criteria, and reset streams before training |
 | Stage 9: genuine PPO | Use the upstream Franka PPO configuration, randomized object mass/friction, native optimizer updates, initial weights, and periodic checkpoints |
@@ -328,7 +336,106 @@ LeRobot MP4s before treating an artifact reference as visual evidence. When the
 run is complete, cancel its jobs before removing its dedicated cluster and
 workflow identity; retain the artifact storage for reproduction.
 
-## Parts and hosted judge validation
+## Measured embodiment comparison
+
+All three robots have native PPO, paired physics, and visual evidence. The new
+Kinova and UR10e runs completed all five workflow stages. Franka is the retained
+earlier baseline, including its documented visual-audit recovery.
+
+| Embodiment | Trained lifts | Trained strict successes | Selected iteration | Learning + final export |
+| --- | ---: | ---: | ---: | ---: |
+| Franka Panda | 508/512 | 2/512 | 1499 | 24.8 min |
+| Kinova JACO2 | 0/512 | 0/512 | 500 | 22.5 min |
+| UR10e + Robotiq | 0/512 | 0/512 | 1499 | 28.7 min |
+
+Each trained-policy denominator covers 128 episodes in each of four physics
+conditions. Every initial policy recorded zero lifts and strict successes in
+its 512 tests. Each robot trained for 1,500 updates and 147,456,000 transitions;
+reported training time excludes package installation and simulator startup.
+
+The shared, untuned joint-space PPO baseline does not solve this task on the
+additional embodiments. Franka learns to lift frequently but rarely meets the
+strict goal-and-stability criterion. None of these results establishes hardware
+transfer or qualifies a policy for deployment. The different native actuators,
+grippers, control dimensions, and reset distributions prevent attributing the
+outcome to morphology alone.
+
+The [comparison validation record](../evidence/embodiment-parts-validation.json)
+records exact source commits, tests, native TCP checks, and cleanup. Both new
+runs preserve all first Token Factory responses, including invalid judgments.
+
+## UR10e parts result
+
+The UR10e/Robotiq replacement run completed 1,500 PPO updates across 4,096
+environments in 28.7 minutes. Its independent CPU checkpoint audit verified
+finite actor weights, parameter change, and 30,000 optimizer steps per parameter.
+All five checkpoints scored zero strict successes on validation; the sealed
+selection rule chose iteration 1499 using goal distance and then iteration order.
+The selected policy recorded 0/512 lifts and
+0/512 strict successes across the held-out conditions.
+
+The actual articulation exports 12 named joint states and 7 policy actions.
+Its 32 paired capture episodes contain 8,000 synchronized frames. The
+Token Factory audit retains 6 invalid first responses; sensitivity against the
+sampled-height proxy is not established, specificity is 78.12%, and
+balanced accuracy is not established. These are visual-audit measurements,
+not evidence of physical transfer or human-calibrated grasp recognition.
+
+The audit records 25 negative judgments, six invalid responses, and one positive
+judgment against a negative height reference. In that disagreement (trained
+delayed-action capture 1, episode 17), the model calls the spool lifted and held,
+but its centre is about 2.3 cm high at the cited 4.9-second frame, below the
+sealed 10 cm threshold. The synchronized frame and telemetry remain available;
+the model judgment cannot override the failed physics gate.
+
+![UR10e frame cited by the positive VLM judgment](../evidence/ur10e_robotiq85-parts-rtx-vlm-disagreement-017.png)
+
+The first attempt failed in native sensor initialization before any PPO update.
+The replacement uses the source-body correction and startup world-TCP check
+described above. The failed attempt remains in private execution evidence and
+is summarized in the comparison validation record; it is not counted as a
+successful training run.
+
+![Actual selected UR10e policy capture](../evidence/ur10e_robotiq85-parts-rtx-preview.png)
+
+See [measured UR10e evidence](../evidence/ur10e_robotiq85-parts-rtx.json) and
+[all held-out trials](../evidence/ur10e_robotiq85-parts-rtx-trials.csv).
+
+## Kinova parts result
+
+The JACO2 N7S300 completed all five stages with the same spool, distractors,
+physics shifts, and untuned PPO recipe. Its 1,500 updates produced 147,456,000
+transitions in **22.5 minutes** of learning and checkpoint export. Independent
+CPU checkpoint decoding verified nine finite actor tensors, an L2 parameter
+change of 32.6395, and 30,000 optimizer steps per parameter.
+
+Validation selected update **500** from five checkpoints using 640 validation
+episodes. Both initial and selected policies recorded **zero lifts and zero
+strict successes in 512 held-out trials each**. This establishes a failed
+policy under the common recipe, not an absence of training.
+
+All 32 independent capture episodes contain 250 frames. Token Factory returned
+29 valid no-lift judgments and three invalid responses, retained without
+replacement. Every supplied-frame height reference is negative, so lift
+sensitivity and balanced accuracy remain unestablished. Specificity including
+the invalid responses is 29/32. Physics qualification and both visual gates are
+false; no hardware evaluation was performed.
+
+The downloaded evidence passed complete file checksums, source verification in
+all four execution workers, every LeRobot state/action value and feature name,
+all 32 MP4 decodes, sampled RGB/JPEG comparisons, and all 704 dynamic Rerun
+entities including scalar values, embedded videos, timestamps, and references.
+The export has **8,000 frames, 13 joint states, and eight policy actions**.
+VLM coverage, prompts, frame bindings, outcomes, and gates were independently
+recomputed. The paired demo uses the first capture reset of every condition,
+with initial/trained policies shown at real speed.
+
+![Actual selected Kinova policy capture](../evidence/kinova_jaco7-parts-rtx-preview.png)
+
+See [measured Kinova evidence](../evidence/kinova_jaco7-parts-rtx.json) and
+[all held-out trials](../evidence/kinova_jaco7-parts-rtx-trials.csv).
+
+## Franka parts and hosted judge validation
 
 The spool experiment completed **1,500 PPO updates and 147,456,000 transitions**
 on one RTX PRO 6000. Learning and final checkpoint export took **24.8 minutes**,

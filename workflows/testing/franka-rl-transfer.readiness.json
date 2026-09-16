@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Native Franka PPO uses sealed USD parts, paired physics tests, per-episode hosted visual judgments, and LeRobot/Rerun exports.",
+      "reason": "Native Franka, Kinova JACO2, and UR10e/Robotiq PPO use sealed USD parts, paired physics tests, per-episode hosted visual judgments, and actual LeRobot/Rerun exports.",
       "evidence": [
         "npa/tests/workflows/test_franka_rl.py",
         "docs/workbench/guides/franka-rl-transfer.md"
@@ -29,9 +29,10 @@
     },
     "worker_input": {
       "status": "verified",
-      "reason": "All five prepared files passed S3 checksum readback. The actual four-asset scene completed 1500 native PPO updates across 4096 environments without recorded PhysX errors.",
+      "reason": "All prepared asset bundles passed checksum readback. Each native embodiment completed 1500 PPO updates across 4096 environments without recorded PhysX errors; recorded joints, actions, and tool frames match the selected robot.",
       "evidence": [
-        "docs/workbench/evidence/franka-parts-validation.json"
+        "docs/workbench/evidence/franka-parts-validation.json",
+        "docs/workbench/evidence/embodiment-parts-validation.json"
       ]
     },
     "credentials": {
@@ -49,10 +50,13 @@
       ]
     },
     "target_runtime": {
-      "status": "unverified",
-      "reason": "Historical Franka execution is verified. Newly selected UR10e/Robotiq and Kinova JACO2 require their own native training, paired tests, visual audits, and embodiment metadata verification.",
+      "status": "verified",
+      "reason": "Franka baseline execution and both complete Kinova/UR10e workflows have verified native training, paired tests, hosted visual audits, and synchronized video/data/Rerun evidence. This verifies workflow execution; all measured policy qualification gates remain false. No physical robot was tested.",
       "evidence": [
-        "docs/workbench/evidence/franka-parts-validation.json"
+        "docs/workbench/evidence/franka-parts-validation.json",
+        "docs/workbench/evidence/kinova_jaco7-parts-rtx.json",
+        "docs/workbench/evidence/ur10e_robotiq85-parts-rtx.json",
+        "docs/workbench/evidence/embodiment-parts-validation.json"
       ]
     }
   }
