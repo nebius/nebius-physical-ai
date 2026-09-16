@@ -3921,6 +3921,8 @@ def _workflow_execution_status_payload(run_id: str) -> dict:
         "started_at",
         "finished_at",
         "error",
+        "failure_category",
+        "recovery_decision",
     }}
     return {{key: record[key] for key in allowed if key in record}}
 
@@ -3946,6 +3948,32 @@ def _workflow_execution_failure_summary(error: Exception) -> str:
         f"NPA execution failed during {{category}}; inspect the workflow stage timeline "
         "and logs for the durable diagnostic."
     )
+
+
+def _workflow_execution_failure_observability(error: Exception) -> dict[str, str]:
+    # Return stable, browser-safe failure evidence without subprocess detail.
+
+    detail = str(getattr(error, "detail", "") or error).lower()
+    categories = (
+        ("sky_api_transport", ("connection refused", "api server", "api endpoint")),
+        ("sky_controller", ("jobs controller", "sky controller", "controller pod")),
+        ("kubernetes_transport", ("kubeconfig", "kubernetes api", "kubectl")),
+        ("image_access", ("imagepull", "image pull", "registry")),
+        ("capacity", ("unschedulable", "capacity", "quota")),
+        ("credentials", ("unauthenticated", "authentication", "forbidden", "permission denied")),
+        ("workflow_configuration", ("toolref", "validation", "argument", "option")),
+        ("source_staging", ("stage-src", "source stage", "source cache")),
+        ("skypilot_runtime", ("skypilot", "sky launch", "sky status")),
+    )
+    category = next(
+        (name for name, markers in categories if any(marker in detail for marker in markers)),
+        "runtime",
+    )
+    transaction = getattr(error, "transaction", None)
+    decision = str(getattr(transaction, "recovery_decision", "") or "")
+    if not re.fullmatch(r"[a-z0-9_]{1,96}", decision):
+        decision = ""
+    return {{"failure_category": category, "recovery_decision": decision}}
 
 
 def _agent_workflow_requires_staged_source(
@@ -4039,6 +4067,7 @@ def _start_agent_workflow_execution(
                     "state": "failed",
                     "finished_at": _now_iso(),
                     "error": _workflow_execution_failure_summary(exc),
+                    **_workflow_execution_failure_observability(exc),
                 }},
             )
 

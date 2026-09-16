@@ -2214,6 +2214,7 @@ def test_workflow_execution_polling_defers_to_the_durable_runtime() -> None:
     assert "while (true)" in poll
     assert "15 * 60 * 1000" not in poll
     assert "Workflow execution is still running" not in poll
+    assert "safe runtime category" in source
     assert '@app.get("/sim-assets/cameras")' in source
     assert '@app.post("/sim-viz/camera-preview")' in source
     assert "world/cameras/" in source

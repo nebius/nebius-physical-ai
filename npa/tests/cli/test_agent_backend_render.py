@@ -1901,6 +1901,23 @@ def test_workflow_execution_requires_and_uses_action_bound_confirmation(
     assert status["execution"]["status"] == "SUCCEEDED"
 
 
+def test_workflow_execution_failure_observability_is_safe_and_actionable(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_failure_observability_backend"
+    )
+
+    observed = module._workflow_execution_failure_observability(
+        RuntimeError("SkyPilot API connection refused while launching")
+    )
+
+    assert observed == {
+        "failure_category": "sky_api_transport",
+        "recovery_decision": "",
+    }
+
+
 @pytest.mark.parametrize(
     ("module", "marker"),
     [

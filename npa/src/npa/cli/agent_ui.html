@@ -8654,7 +8654,12 @@
         }
         if (!workflowExecutionSucceeded(execution)) {
           const failure = String(execution.error || "Workflow execution did not complete successfully.");
-          appendChat("error", "Workflow execution failed: " + failure);
+          const category = String(execution.failure_category || "").trim();
+          const recovery = String(execution.recovery_decision || "").trim();
+          const evidence = category
+            ? " [safe runtime category: " + category + (recovery ? "; " + recovery : "") + "]"
+            : "";
+          appendChat("error", "Workflow execution failed: " + failure + evidence);
           throw new Error(failure);
         }
         appendChat(
