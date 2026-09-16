@@ -14,22 +14,27 @@ from rlc_observations import policy_observation
 
 
 def _policy_source(root: Path, overlay: Path) -> None:
+    ignored = shutil.ignore_patterns("__pycache__", "*.pyc")
     shutil.copytree(
         root / "src/b1k",
         overlay / "b1k",
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        ignore=ignored,
     )
+    shutil.copytree(root / "openpi/src/openpi", overlay / "openpi", ignore=ignored)
     old = "from omnigibson.learning.utils.eval_utils import PROPRIOCEPTION_INDICES"
     new = "from rlc_observations import PROPRIOCEPTION_INDICES"
-    for name in ("policies/b1k_policy.py", "shared/eval_b1k_wrapper.py"):
-        path = overlay / "b1k" / name
+    for name in (
+        "b1k/policies/b1k_policy.py",
+        "b1k/shared/eval_b1k_wrapper.py",
+        "openpi/policies/b1k_policy.py",
+    ):
+        path = overlay / name
         source = path.read_text()
         if source.count(old) != 1:
             raise ValueError("Unexpected pinned RLC proprioception import")
         path.write_text(source.replace(old, new))
     sys.path[:0] = [
         str(overlay),
-        str(root / "openpi/src"),
         str(root / "openpi/packages/openpi-client/src"),
     ]
 

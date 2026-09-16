@@ -87,7 +87,7 @@ Hugging Face revision `89545bc1b7aa7f2e687bc0032d091f132d715d4e` of
 Source and weights remain runtime inputs; Workbench does not redistribute them.
 Retain upstream attribution and satisfy the existing OpenPI/Gemma use terms.
 
-The launcher creates a temporary policy-source copy with exactly two import
+The launcher creates a temporary policy-source copy with exactly three import
 changes to use the 2026 proprioception layout. It accepts only the three onboard
 RGB images and the 61-element proprioception vector. The task is configured from
 the public registry; incoming task/instance metadata cannot override it.

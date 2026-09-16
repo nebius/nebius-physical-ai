@@ -82,16 +82,21 @@ def server(monkeypatch):
 
 def test_source_adapter_preserves_original_checkout(tmp_path, server, monkeypatch):
     old = "from omnigibson.learning.utils.eval_utils import PROPRIOCEPTION_INDICES"
-    relative = ("policies/b1k_policy.py", "shared/eval_b1k_wrapper.py")
+    relative = (
+        "src/b1k/policies/b1k_policy.py",
+        "src/b1k/shared/eval_b1k_wrapper.py",
+        "openpi/src/openpi/policies/b1k_policy.py",
+    )
     for name in relative:
-        path = tmp_path / "src/b1k" / name
+        path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(old + "\n# frozen model code\n")
     monkeypatch.setattr(sys, "path", sys.path.copy())
     server._policy_source(tmp_path, tmp_path / "overlay")
     for name in relative:
-        assert (tmp_path / "src/b1k" / name).read_text().startswith(old)
-        patched = (tmp_path / "overlay/b1k" / name).read_text()
+        assert (tmp_path / name).read_text().startswith(old)
+        module = name.removeprefix("openpi/").removeprefix("src/")
+        patched = (tmp_path / "overlay" / module).read_text()
         assert "from rlc_observations import PROPRIOCEPTION_INDICES" in patched
         assert patched.endswith("# frozen model code\n")
 
