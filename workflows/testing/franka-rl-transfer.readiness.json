@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "aeb26dc6b8b7d7595fa0f86a049b9fb74019d8db9874b762b01fcd5375bed383",
+  "workflow_sha256": "8e86992946b4dd61e9723851efb558097a01b1b6289fcf52bb8cd328b92f993e",
   "planning": {
     "validation": {
       "status": "verified",
@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "The adaptive recipe configures bounded learned joint targets, motion-aware observations, stable-hold rewards, and a training-only outcome curriculum. Full held-out physics tests and hosted visual judgments remain separate.",
+      "reason": "The adaptive-exploration recipe configures bounded learned targets, motion-aware observations, partial goal-progress rewards, stable-hold rewards, and a training-only outcome curriculum. Full held-out physics tests and hosted visual judgments remain separate.",
       "evidence": [
         "npa/tests/workflows/test_franka_rl_learning.py",
         "docs/workbench/guides/franka-rl-transfer.md"

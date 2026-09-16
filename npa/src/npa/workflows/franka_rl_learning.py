@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-LEARNING_RECIPES = ("joint-baseline", "adaptive")
+LEARNING_RECIPES = ("joint-baseline", "adaptive", "adaptive-exploration")
 _ADAPTIVE = {
     "schema": "npa.manipulation-learning.v1", "name": "adaptive",
     "control": "bounded_joint_target", "target_velocity_rad_s": 2.0,
@@ -31,7 +31,14 @@ def learning_profile(name: str) -> dict | None:
     """
     if name not in LEARNING_RECIPES:
         raise ValueError(f"Unsupported learning recipe: {name}")
-    return deepcopy(_ADAPTIVE) if name == "adaptive" else None
+    if name == "joint-baseline":
+        return None
+    settings = deepcopy(_ADAPTIVE)
+    if name == "adaptive-exploration":
+        settings["name"] = name
+        settings["reward"].update(lift_weight=15.0, goal_requires_lift=False)
+        settings["ppo"].update(initial_std=1.0, entropy_coef=0.02)
+    return settings
 
 
 def recipe_learning(recipe: dict) -> dict | None:
@@ -102,6 +109,8 @@ def configure_learner(config, recipe: dict) -> None:
     config.critic.obs_normalization = settings["ppo"]["observation_normalization"]
     config.actor.distribution_cfg.init_std = settings["ppo"]["initial_std"]
     config.algorithm.gamma = settings["ppo"]["gamma"]
+    if "entropy_coef" in settings["ppo"]:
+        config.algorithm.entropy_coef = settings["ppo"]["entropy_coef"]
 
 
 def normalization_evidence(runner, recipe: dict) -> dict:

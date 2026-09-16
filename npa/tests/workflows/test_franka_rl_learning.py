@@ -183,6 +183,40 @@ def test_initial_settling_never_receives_a_lift_or_hold_bonus(reward):
     assert not instance.succeeded.item()
 
 
+def test_partial_goal_progress_does_not_grant_lift_hold_or_success(reward):
+    instance, env, recipe, values, torch, _ = reward
+    recipe["learning"] = learning_profile("adaptive-exploration")
+    instance.settings = recipe["learning"]
+    # Both positions remain below the unchanged lift threshold. Only distance
+    # improves; no scripted action, closed-gripper condition, or success bonus.
+    values[:] = [0.14, 0.0, 0.03, 0.01]
+    low = instance(env, recipe, True).item()
+    values[:] = [0.09, 0.0, 0.08, 0.01]
+    for _ in range(25):
+        progress = instance(env, recipe, True).item()
+    assert progress > low
+    settings = recipe["learning"]["reward"]
+    expected = (settings["reach_weight"] * (1 - torch.tanh(torch.tensor(0.01 / 0.15)))
+                + settings["goal_weight"] * (1 - torch.tanh(torch.tensor(0.09 / 0.1))))
+    assert progress == pytest.approx(expected.item())
+    assert instance.streak.item() == 0 and not instance.succeeded.item()
+    assert instance.hold_fraction.item() == 0
+
+
+def test_exploration_recipe_preserves_original_native_settings():
+    from npa.workflows.franka_rl_learning import configure_learner, recipe_learning
+
+    for name, std, entropy in (("adaptive", 0.5, 0.006), ("adaptive-exploration", 1.0, 0.02)):
+        config = SimpleNamespace(actor=SimpleNamespace(distribution_cfg=SimpleNamespace()),
+                                 critic=SimpleNamespace(), algorithm=SimpleNamespace(entropy_coef=0.006))
+        recipe = {"learning": learning_profile(name)}
+        assert recipe_learning(recipe) == recipe["learning"]
+        configure_learner(config, recipe)
+        assert config.actor.distribution_cfg.init_std == std
+        assert config.algorithm.entropy_coef == entropy
+    assert "goal_requires_lift" not in learning_profile("adaptive")["reward"]
+
+
 def test_curriculum_ignores_initial_resets_and_stale_difficulty_episodes(reward):
     instance, env, recipe, values, torch, module = reward
     reset = env.cfg.events.reset_object_position

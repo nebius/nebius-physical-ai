@@ -75,7 +75,7 @@ retains invalid hosted visual judgments as failed audit evidence. Its
 `npa.workflows.franka_rl visual-evaluate --prior-judgments-path` option accepts
 a verified interrupted audit so saved responses are revalidated and only missing
 episodes make new requests; omit the option for a fresh audit.
-The workflow's `learning_recipe=adaptive` selects bounded learned joint targets,
+The workflow's `learning_recipe=adaptive-exploration` selects bounded learned joint targets,
 hold-aligned rewards, richer observations, and a training-outcome curriculum.
 Use `learning_recipe=joint-baseline` for the historical comparison. The module's
 `prepare --learning-recipe` option seals this choice; evaluation criteria stay fixed.

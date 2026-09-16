@@ -107,8 +107,10 @@ class StableManipulationReward(ManagerTermBase):
         settings = self.settings["reward"]
         reaching = 1 - torch.tanh(reach / settings["reach_width_m"])
         lifted = (height > recipe["minimum_object_height_m"]).float()
-        goal = lifted * (1 - torch.tanh(distance / settings["goal_width_m"]))
-        holding = goal * torch.exp(-(speed / recipe["maximum_object_speed_m_s"]).square())
+        goal = 1 - torch.tanh(distance / settings["goal_width_m"])
+        if settings.get("goal_requires_lift", True):
+            goal *= lifted
+        holding = lifted * goal * torch.exp(-(speed / recipe["maximum_object_speed_m_s"]).square())
         holding *= 1 + self.hold_fraction
         rate = torch.tanh(env.action_manager.action - self.previous_action).square().mean(dim=-1)
         self.previous_action.copy_(env.action_manager.action)

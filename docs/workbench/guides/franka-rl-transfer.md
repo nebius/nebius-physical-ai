@@ -8,7 +8,7 @@ through Token Factory. Franka Panda is the default; UR10e/Robotiq and Kinova
 JACO2 use explicit native embodiment bindings. It exports LeRobotDataset v3 and
 Rerun evidence.
 
-The workflow defaults to `learning_recipe=adaptive`: learned joint commands,
+The workflow defaults to `learning_recipe=adaptive-exploration`: learned joint commands,
 physically bounded servo targets, richer observations, stable-goal rewards, and
 a training-only curriculum driven by completed episode outcomes. Use
 `--var learning_recipe=joint-baseline` to reproduce the historical recipe below.
@@ -98,7 +98,7 @@ falls onto the table. Its joint-velocity and action-change penalties increase
 does not directly reward the low-speed hold required by evaluation. These are
 training incentives, not successful manipulation evidence.
 
-The `adaptive` recipe addresses those mechanisms with one common definition for
+The `adaptive-exploration` recipe addresses those mechanisms with one common definition for
 all three embodiments:
 
 - **Bound physical targets.** The policy still chooses every arm and gripper
@@ -112,12 +112,13 @@ all three embodiments:
   and the current hold duration to the original proprioceptive observations.
 - **Reward the evaluated behavior.** Lifting uses the same 10 cm threshold as
   evaluation. Dense reaching and goal rewards are supplemented by a continuous
-  low-speed hold reward; the hold counter uses the unchanged 5 cm, 3 cm/s,
+  low-speed hold reward; partial progress toward the goal earns distance reward
+  before the full lift threshold, while lift and hold bonuses still require it; the hold counter uses the unchanged 5 cm, 3 cm/s,
   20-consecutive-step predicate and excludes terminal reset steps. A small fixed,
   bounded action-change penalty replaces the scheduled penalty jump. PPO uses
   observation normalization (restored from checkpoints and fingerprinted before/after
-  inference), initial exploration standard deviation 0.5, and
-  discount 0.99, with the existing update count and rollout horizon.
+  inference), initial exploration standard deviation 1.0, entropy coefficient
+  0.02, and discount 0.99, with the existing update count and rollout horizon.
 - **Advance from training outcomes.** Start with narrower object/goal XY ranges
   and goal heights of 15.25–26 cm, interpolated toward the full 25–50 cm range.
   Assess disjoint windows of at least
@@ -128,6 +129,17 @@ all three embodiments:
   Adaptive training disables the baseline's randomized initial episode lengths
   so the first curriculum outcomes cover complete episodes. This also synchronizes
   timeout resets across the parallel environments and can increase sample correlation.
+
+The earlier `learning_recipe=adaptive` remains reproducible with its original
+gated goal reward, lift weight 5, exploration standard deviation 0.5, and
+native entropy coefficient 0.006. Training checkpoint diagnostics exposed
+an open-gripper, table-level local optimum with narrowing exploration. The
+`adaptive-exploration` recipe restores lift weight 15, starts exploration at
+1.0, increases entropy regularization to 0.02, and gives partial goal-distance
+credit. Entropy regularization encourages exploration; it does not guarantee
+a minimum action variance or command a grasp. Distance reward can be positive
+below the lift threshold and is never treated as task success. These choices
+come from training diagnostics, independently of held-out policy selection.
 
 There is no grasp trajectory, waypoint sequence, timed gripper closure, or
 success-conditioned action override. The curriculum changes only the training
