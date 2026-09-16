@@ -83,7 +83,8 @@ This selects the native Torch 2.10 stack. The simulator uses a separate Python
 
 Workers need network access, git, uv, sufficient local disk for model, dataset,
 environment and DCP staging, and a compatible CUDA driver. In disposable
-containers, evaluation installs missing OSMesa system libraries. Public model,
+containers, evaluation installs missing OSMesa libraries and the CMake/C++ build
+tools required by LIBERO's native dependencies. Public model,
 VAE and dataset payloads are runtime-fetched into the operator's scope. Enabled
 video guardrails require the operator's existing Hugging Face entitlement.
 No new public container or vendor payload is published by this change.

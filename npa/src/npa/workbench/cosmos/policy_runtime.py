@@ -7,6 +7,7 @@ upstream environment; the image's inference environment is never modified.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -87,11 +88,14 @@ def prepare_simulation_runtime(root: Path, repo: Path, env: dict[str, str]) -> P
     libero = root / "LIBERO"
     log = root / "simulation-bootstrap.log"
     _checkout("https://github.com/Lifelong-Robot-Learning/LIBERO.git", LIBERO_REVISION, libero, log)
-    _install_mesa(root, env, log)
+    _install_simulation_dependencies(root, env, log)
     python = root / "libenv/bin/python"
     run_native(["uv", "venv", "--python", "3.10", str(python.parent.parent)], cwd=root, env=env, log=log)
-    install = ["uv", "pip", "install", "--python", str(python)]
-    run_native([*install, "torch==2.5.1", "--index-url", "https://download.pytorch.org/whl/cpu"],
+    constraints = root / "simulation-constraints.txt"
+    constraints.write_text("torch==2.5.1\ntorchvision==0.20.1\n")
+    install = ["uv", "pip", "install", "--python", str(python), "--constraint", str(constraints)]
+    run_native([*install, "torch==2.5.1", "torchvision==0.20.1",
+                "--index-url", "https://download.pytorch.org/whl/cpu"],
                cwd=root, env=env, log=log)
     run_native([*install, "-e", str(libero), "-r", str(libero / "requirements.txt")],
                cwd=root, env=env, log=log)
@@ -104,17 +108,26 @@ def prepare_simulation_runtime(root: Path, repo: Path, env: dict[str, str]) -> P
                PYOPENGL_PLATFORM="osmesa", PYTHONPATH=f"{repo}{os.pathsep}{libero}")
     run_native([str(python), "-c", "from libero.libero import set_libero_default_path; "
                 "set_libero_default_path()"], cwd=root, env=env, log=log)
+    run_native([str(python), "-c", "import torch, torchvision; "
+                "assert torch.__version__.split('+')[0] == '2.5.1'; "
+                "assert torchvision.__version__.split('+')[0] == '0.20.1'; "
+                "assert torch.version.cuda is None; "
+                "print('Verified CPU-only simulator Torch/torchvision runtime')"],
+               cwd=root, env=env, log=log)
+    run_native(["uv", "pip", "freeze", "--python", str(python)],
+               cwd=root, env=env, log=root / "simulation-environment.log")
     return python
 
 
-def _install_mesa(root: Path, env: dict[str, str], log: Path) -> None:
+def _install_simulation_dependencies(root: Path, env: dict[str, str], log: Path) -> None:
     from ctypes.util import find_library
 
-    if find_library("OSMesa"):
+    if find_library("OSMesa") and all(shutil.which(tool) for tool in ("cmake", "c++", "make")):
         return
     if not Path("/.dockerenv").exists() and not env.get("KUBERNETES_SERVICE_HOST"):
-        raise RuntimeError("Install libosmesa6 in the worker image before policy evaluation")
+        raise RuntimeError("Install libosmesa6, cmake and build-essential in the worker image before policy evaluation")
     prefix = [] if os.geteuid() == 0 else ["sudo", "-n"]
     run_native([*prefix, "apt-get", "update"], cwd=root, env=env, log=log)
-    run_native([*prefix, "apt-get", "install", "-y", "libosmesa6", "libgl1", "libglib2.0-0"],
+    run_native([*prefix, "apt-get", "install", "-y", "libosmesa6", "libgl1", "libglib2.0-0",
+                "cmake", "build-essential"],
                cwd=root, env=env, log=log)
