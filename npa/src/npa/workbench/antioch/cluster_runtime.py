@@ -21,7 +21,7 @@ import uuid
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Never
 
 from .live import (
     AntiochLiveError,
@@ -590,7 +590,7 @@ def _launch_vendor_successor(
     )
 
 
-def run_cluster(args: argparse.Namespace) -> int:
+def run_cluster(args: argparse.Namespace) -> Never:
     private_root = Path(args.private_root)
     bundle = private_root / "live-bundle"
     _validate_bundle(bundle)
@@ -1039,6 +1039,7 @@ def run_cluster(args: argparse.Namespace) -> int:
                     scenario=args.scenario,
                     heartbeat_unix=time.time(),
                 )
+    raise AssertionError("Antioch controller reached an impossible exit path")
 
 
 def probe(
