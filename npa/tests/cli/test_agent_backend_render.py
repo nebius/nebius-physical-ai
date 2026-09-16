@@ -4216,6 +4216,20 @@ def test_rendered_backend_exports_hcl_ssh_key_path_for_cluster_provisioning(
         sys.modules.pop(module_name, None)
 
 
+def test_rendered_backend_uses_dedicated_agent_skypilot_state(
+    monkeypatch, tmp_path
+) -> None:
+    module_name = "npa_rendered_isolated_skypilot_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    monkeypatch.delenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", raising=False)
+    try:
+        assert module._agent_command_env()["NPA_SKYPILOT_ISOLATED_CONFIG_DIR"] == (
+            "/opt/npa-agent/skypilot-state"
+        )
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_agent_bootstrap_exposes_authorized_key_to_cluster_lifecycle() -> None:
     from npa.cli import agent as agent_module
 
