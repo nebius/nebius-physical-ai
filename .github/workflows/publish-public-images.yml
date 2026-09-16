@@ -475,6 +475,10 @@ jobs:
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
               --output "$RUNNER_TEMP/${TOOL}-wan-payload.json"
           fi
+          if [ "$TOOL" = alpamayo2-super ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_alpamayo2_payload.py \
+              --tarball "$RUNNER_TEMP/${TOOL}.tar"
+          fi
           if [ "$TOOL" = cosmos3-serving ]; then
             npa/.venv/bin/python npa/scripts/scan_image_cosmos3_serving_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}.tar" \
@@ -695,6 +699,10 @@ jobs:
             npa/.venv/bin/python npa/scripts/scan_image_wan_payload.py \
               --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
               --output "$RUNNER_TEMP/${TOOL}-pushed-wan-payload.json"
+          fi
+          if [ "$TOOL" = alpamayo2-super ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_alpamayo2_payload.py \
+              --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar"
           fi
           if [ "$TOOL" = cosmos3-serving ]; then
             npa/.venv/bin/python npa/scripts/scan_image_cosmos3_serving_payload.py \
