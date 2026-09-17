@@ -43,6 +43,7 @@ def _train(args, recipe: dict, config) -> None:
 
     from npa.workflows.franka_rl_environment import build_runner, physics_evidence
     from npa.workflows.franka_rl_learning import distribution_evidence
+    from npa.workflows.franka_rl_validity import validity_evidence
 
     output = Path(args.output_path)
     env = gym.make(recipe["task"], cfg=config)
@@ -58,12 +59,8 @@ def _train(args, recipe: dict, config) -> None:
         final = output / "checkpoints" / f"model_{recipe['iterations']}.pt"
         runner.save(str(final))
         torch.cuda.synchronize()
-        parameter_delta = torch.linalg.vector_norm(_policy_parameters(runner) - parameters_before).item()
-        if not 0 < parameter_delta < float("inf"):
-            raise RuntimeError("Franka PPO policy parameters did not change finitely")
-        checkpoints = sorted((output / "checkpoints").glob("model_*.pt"))
-        if not checkpoints or file_sha256(initial) == file_sha256(final):
-            raise RuntimeError("PPO did not produce a changed checkpoint")
+        checkpoints, parameter_delta = _verify_training_checkpoints(runner, parameters_before, initial, final)
+        applied["simulation_validity"] = validity_evidence(env.unwrapped)
         write_json(output / "training.json", {
             "schema": "npa.franka-rl.training.v1", "recipe": recipe,
             "agent": agent, "runtime": _runtime_versions(), "physics": applied,
@@ -78,6 +75,18 @@ def _train(args, recipe: dict, config) -> None:
         })
     finally:
         env.close()
+
+
+def _verify_training_checkpoints(runner, before, initial, final):
+    import torch
+
+    delta = torch.linalg.vector_norm(_policy_parameters(runner) - before).item()
+    if not 0 < delta < float("inf"):
+        raise RuntimeError("Franka PPO policy parameters did not change finitely")
+    checkpoints = sorted(final.parent.glob("model_*.pt"))
+    if not checkpoints or file_sha256(initial) == file_sha256(final):
+        raise RuntimeError("PPO did not produce a changed checkpoint")
+    return checkpoints, delta
 
 
 def _learning_evidence(env) -> dict:
@@ -120,19 +129,13 @@ def main(argv: list[str] | None = None) -> int:
         RuntimeError: Runtime, training, checkpoint loading, or rendering fails.
         ValueError: The experiment configuration is invalid.
     """
-    from isaaclab_tasks.utils import add_launcher_args, launch_simulation
+    from isaaclab_tasks.utils import launch_simulation
     from isaaclab.utils.seed import configure_seed
 
     from npa.workflows.franka_rl_environment import environment_config
+    from npa.workflows.franka_rl_validity import SimulationValidityError
 
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stage", choices=("train", "validate", "test", "capture"))
-    parser.add_argument("--input-path", type=Path, required=True)
-    parser.add_argument("--output-path", type=Path, required=True)
-    parser.add_argument("--capture-arm", choices=("initial", "trained"), default="trained")
-    parser.add_argument("--condition", default="nominal")
-    add_launcher_args(parser)
-    args = parser.parse_args(argv)
+    args = _arguments(argv)
     recipe = json.loads((args.input_path / "recipe.json").read_text())
     seed_key = {"train": "seed", "validate": "validation_seed", "test": "test_seed", "capture": "capture_seed"}
     configure_seed(recipe[seed_key[args.stage]])
@@ -145,9 +148,26 @@ def main(argv: list[str] | None = None) -> int:
     shutil.copy2(args.input_path / "recipe.json", args.output_path / "recipe.json")
     if "assets" in recipe:
         shutil.copytree(args.input_path / "assets", args.output_path / "assets", dirs_exist_ok=True)
-    with launch_simulation(config, args):
-        _execute_stage(args, recipe, config)
+    try:
+        with launch_simulation(config, args):
+            _execute_stage(args, recipe, config)
+    except SimulationValidityError as error:
+        write_json(args.output_path / "simulation-validity-failure.json", error.evidence)
+        raise
     return 0
+
+
+def _arguments(argv):
+    from isaaclab_tasks.utils import add_launcher_args
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("stage", choices=("train", "validate", "test", "capture"))
+    parser.add_argument("--input-path", type=Path, required=True)
+    parser.add_argument("--output-path", type=Path, required=True)
+    parser.add_argument("--capture-arm", choices=("initial", "trained"), default="trained")
+    parser.add_argument("--condition", default="nominal")
+    add_launcher_args(parser)
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":

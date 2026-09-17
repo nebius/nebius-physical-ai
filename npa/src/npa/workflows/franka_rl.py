@@ -14,6 +14,8 @@ import uuid
 from npa.workflows.lerobot_transfer_data import materialize, publish, write_json
 from npa.workflows.franka_rl_embodiments import EMBODIMENTS, embodiment_profile
 from npa.workflows.franka_rl_learning import LEARNING_RECIPES, learning_profile
+from npa.workflows.franka_rl_validity import validity_contract
+from npa.workflows.franka_rl_physics import stability_profile
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -52,6 +54,9 @@ def _recipe(args: argparse.Namespace) -> dict:
     return {
         "schema": "npa.franka-rl.recipe.v1", "task": "Isaac-Lift-Cube-Franka-v0", "run_id": args.run_id,
         "embodiment": embodiment_profile(getattr(args, "embodiment", "franka")),
+        "simulation_validity": validity_contract(),
+        **({"stability": stability_profile("ur10e-mimic-asset-v1")}
+           if getattr(args, "embodiment", "franka") == "ur10e_robotiq85" else {}),
         **_learning_settings(args),
         "seed": args.seed, "iterations": args.iterations, "num_envs": args.num_envs,
         "eval_episodes": args.eval_episodes, "minimum_success": args.minimum_success,

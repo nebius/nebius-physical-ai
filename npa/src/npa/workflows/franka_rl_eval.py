@@ -12,6 +12,7 @@ import numpy as np
 from npa.workflows.franka_rl_environment import build_runner, environment_config, load_checkpoint, physics_evidence
 from npa.workflows.franka_rl_metrics import PlacementMetrics, rank_checkpoint
 from npa.workflows.franka_rl_learning import distribution_evidence, normalization_evidence
+from npa.workflows.franka_rl_validity import task_domain_exits
 from npa.workflows.lerobot_transfer_data import file_sha256, write_json
 
 
@@ -37,6 +38,7 @@ def _rows(metrics: PlacementMetrics, *, split: str, condition: str, checkpoint: 
              "iteration": iteration, "reset_seed": seed, "env_index": index,
              "initial_state_sha256": initial_hashes[index],
              "success": bool(metrics.success[index]), "lifted": bool(metrics.lifted[index]),
+             "task_domain_exit": bool(metrics.domain_exit[index]),
              "closest_distance_m": float(metrics.closest[index]),
              "longest_stable_steps": int(metrics.longest[index]), "steps": int(metrics.steps[index])}
             for index in range(len(metrics.success))]
@@ -79,7 +81,7 @@ def _rollout(checkpoint: Path, recipe: dict, *, split: str, condition: str,
                 action = policy(obs)
                 applied = previous if recipe["conditions"][condition]["action_delay"] else action
                 obs, _, done, _ = wrapped.step(applied)
-                metrics.update(*_observe(env), done.cpu().numpy())
+                metrics.update(*_observe(env), done.cpu().numpy(), task_domain_exits(env.unwrapped).cpu().numpy())
                 previous = action.clone()
         if normalization != normalization_evidence(runner, recipe):
             raise RuntimeError("Evaluation changed the checkpoint observation normalizer")
@@ -89,7 +91,10 @@ def _rollout(checkpoint: Path, recipe: dict, *, split: str, condition: str,
         env.unwrapped.npa_distribution_evidence = distribution
         rows = _rows(metrics, split=split, condition=condition, checkpoint=checkpoint,
                      seed=seed, iteration=iteration, initial_hashes=initial_hashes)
-        return rows, physics_evidence(env)
+        physics = physics_evidence(env)
+        for row in rows:
+            row["simulation_validity"] = physics["simulation_validity"]
+        return rows, physics
     finally:
         env.close()
 

@@ -28,8 +28,9 @@ class PlacementMetrics:
         self.closest = np.full(count, np.inf)
         self.success = np.zeros(count, dtype=bool)
         self.steps = np.zeros(count, dtype=np.int64)
+        self.domain_exit = np.zeros(count, dtype=bool)
 
-    def update(self, distance, speed, height, done) -> None:
+    def update(self, distance, speed, height, done, domain_exit=None) -> None:
         """Count only physical observations before an automatic reset.
 
         Args:
@@ -37,6 +38,7 @@ class PlacementMetrics:
             speed: Object speed in metres/second per environment.
             height: Object height above the environment origin in metres.
             done: Automatic-reset flags for this step.
+            domain_exit: Optional pre-reset task-domain departure flags.
         Returns:
             None.
         Raises:
@@ -50,6 +52,7 @@ class PlacementMetrics:
         done = np.asarray(done, dtype=bool)
         if done.shape != self.active.shape:
             raise ValueError("Reset flags must match the environment batch")
+        self._domain_failures(domain_exit)
         self.active &= ~done
         stable = ((distance < self.recipe["success_distance_m"])
                   & (speed < self.recipe["maximum_object_speed_m_s"])
@@ -60,6 +63,17 @@ class PlacementMetrics:
         self.lifted |= self.active & (height > self.recipe["minimum_object_height_m"])
         self.success |= self.active & (self.streak >= self.recipe["stable_steps"])
         self.steps += self.active
+
+    def _domain_failures(self, flags) -> None:
+        if flags is None:
+            return
+        flags = np.asarray(flags, dtype=bool)
+        if flags.shape != self.active.shape:
+            raise ValueError("Task-domain flags must match the environment batch")
+        self.domain_exit |= self.active & flags
+        self.active &= ~self.domain_exit
+        self.success &= ~self.domain_exit
+        self.lifted &= ~self.domain_exit
 
 
 def rank_checkpoint(rows: list[dict]) -> tuple[float, float, int]:

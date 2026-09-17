@@ -21,32 +21,40 @@ def environment_config(recipe: dict, *, training: bool, condition: str = "nomina
         ImportError: Isaac runtime is unavailable.
         ValueError: An unknown condition is requested.
     """
-    import isaaclab_tasks  # noqa: F401
-    from isaaclab_tasks.utils import load_cfg_from_registry
-
-    from npa.workflows.sim2real.isaac_assets_compat import remap_moved_franka_usd
-
-    config = load_cfg_from_registry(recipe["task"], "env_cfg_entry_point")
-    from npa.workflows.franka_rl_embodiments import configure_embodiment
-
-    configure_embodiment(config, recipe)
+    config = _base_task_config(recipe)
     config.scene.num_envs = recipe["num_envs"] if training else recipe["eval_episodes"]
     config.seed = recipe["seed"] if training else recipe["validation_seed"]
     config.sim.device = "cuda:0"
     if "physics_capacity" in recipe:
         config.sim.physics.gpu_total_aggregate_pairs_capacity = recipe["physics_capacity"]["gpu_total_aggregate_pairs_capacity"]
     config.commands.object_pose.resampling_time_range = (5.0, 5.0)
-    remap_moved_franka_usd(config)
     _assets(config, recipe, asset_root)
     _physics_events(config, recipe, training, condition)
     from npa.workflows.franka_rl_learning import configure_learning
 
     configure_learning(config, recipe, training=training)
+    from npa.workflows.franka_rl_validity import configure_validity
+
+    configure_validity(config, recipe)
     if not training:
         config.observations.policy.enable_corruption = False
     if capture:
         config.scene.num_envs = 1
         _camera_config(config)
+    return config
+
+
+def _base_task_config(recipe):
+    import isaaclab_tasks  # noqa: F401
+    from isaaclab_tasks.utils import load_cfg_from_registry
+    from npa.workflows.franka_rl_embodiments import configure_embodiment
+    from npa.workflows.franka_rl_physics import configure_stability
+    from npa.workflows.sim2real.isaac_assets_compat import remap_moved_franka_usd
+
+    config = load_cfg_from_registry(recipe["task"], "env_cfg_entry_point")
+    configure_embodiment(config, recipe)
+    configure_stability(config, recipe)
+    remap_moved_franka_usd(config)
     return config
 
 
@@ -106,30 +114,39 @@ def build_runner(env, recipe: dict, output=None):
         ImportError: Required native training libraries are unavailable.
         RuntimeError: Native runner creation fails.
     """
-    from importlib.metadata import version
-
-    from isaaclab_tasks.utils import load_cfg_from_registry
-    from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg
     from rsl_rl.runners import OnPolicyRunner
     from npa.workflows.franka_rl_embodiments import embodiment_evidence
 
     env.unwrapped.npa_embodiment_evidence = embodiment_evidence(env, recipe)
+    from npa.workflows.franka_rl_physics import stability_evidence
+
+    env.unwrapped.npa_stability_evidence = stability_evidence(env.unwrapped, recipe)
     profile = env.unwrapped.npa_embodiment_evidence["profile"]
     if "sensor_source_body" in profile or "learning" in recipe:
         env.unwrapped.npa_tool_frame_check = _tool_frame_check(env.unwrapped, profile)
-    config = load_cfg_from_registry(recipe["task"], "rsl_rl_cfg_entry_point")
-    config = handle_deprecated_rsl_rl_cfg(config, version("rsl-rl-lib"))
+    config = _learner_config(recipe)
+    settings = config.to_dict()
+    from npa.workflows.franka_rl_validity import build_validated_wrapper
+
+    wrapped = build_validated_wrapper(env, clip_actions=config.clip_actions)
+    runner = OnPolicyRunner(wrapped, settings, log_dir=str(output) if output else None, device="cuda:0")
+    return wrapped, runner, settings
+
+
+def _learner_config(recipe):
+    from importlib.metadata import version
+    from isaaclab_tasks.utils import load_cfg_from_registry
+    from isaaclab_rl.rsl_rl import handle_deprecated_rsl_rl_cfg
     from npa.workflows.franka_rl_learning import configure_learner
 
+    config = load_cfg_from_registry(recipe["task"], "rsl_rl_cfg_entry_point")
+    config = handle_deprecated_rsl_rl_cfg(config, version("rsl-rl-lib"))
     configure_learner(config, recipe)
     config.seed = recipe["seed"]
     config.num_steps_per_env = recipe["steps_per_env"]
     config.save_interval = recipe["checkpoint_interval"]
     config.max_iterations = recipe["iterations"]
-    settings = config.to_dict()
-    wrapped = RslRlVecEnvWrapper(env, clip_actions=config.clip_actions)
-    runner = OnPolicyRunner(wrapped, settings, log_dir=str(output) if output else None, device="cuda:0")
-    return wrapped, runner, settings
+    return config
 
 
 def _tool_frame_check(native, profile: dict) -> dict:
@@ -176,16 +193,27 @@ def physics_evidence(env) -> dict:
               "dynamic_friction": material[..., 1], "restitution": material[..., 2]}
     evidence = {"startup_terms": list(terms), "embodiment": unwrapped.npa_embodiment_evidence, "physics_capacity": {
         "gpu_total_aggregate_pairs_capacity": unwrapped.cfg.sim.physics.gpu_total_aggregate_pairs_capacity}}
-    if hasattr(unwrapped, "npa_tool_frame_check"):
-        evidence["tool_frame_check"] = unwrapped.npa_tool_frame_check
-    if getattr(unwrapped, "npa_normalization_evidence", None):
-        evidence["frozen_observation_normalization"] = unwrapped.npa_normalization_evidence
-    if getattr(unwrapped, "npa_distribution_evidence", None):
-        evidence["frozen_action_distribution"] = unwrapped.npa_distribution_evidence
+    evidence.update(_integrity_evidence(unwrapped))
     for name, value in values.items():
         if not torch.isfinite(value).all():
             raise RuntimeError("Applied Franka physics is nonfinite")
         evidence[name] = {"min": float(value.min()), "max": float(value.max())}
+    return evidence
+
+
+def _integrity_evidence(native):
+    from npa.workflows.franka_rl_validity import validity_evidence
+
+    evidence = {"simulation_validity": validity_evidence(native)}
+    for field, attribute in {"stability": "npa_stability_evidence", "tool_frame_check": "npa_tool_frame_check",
+            "frozen_observation_normalization": "npa_normalization_evidence",
+            "frozen_action_distribution": "npa_distribution_evidence"}.items():
+        if getattr(native, attribute, None):
+            evidence[field] = getattr(native, attribute)
+    if hasattr(native.cfg, "npa_simulation_validity"):
+        from npa.workflows.franka_rl_assets import asset_physics_evidence
+
+        evidence["object_solver_properties"] = asset_physics_evidence(native)
     return evidence
 
 

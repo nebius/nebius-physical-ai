@@ -10,6 +10,7 @@ import numpy as np
 from npa.workflows.franka_rl_environment import build_runner, environment_config, load_checkpoint, physics_evidence
 from npa.workflows.franka_rl_metrics import PlacementMetrics
 from npa.workflows.franka_rl_learning import distribution_evidence, normalization_evidence
+from npa.workflows.franka_rl_validity import task_domain_exits
 from npa.workflows.lerobot_transfer_data import file_sha256, write_json
 
 
@@ -58,7 +59,8 @@ def _capture_episode(wrapped, policy, output: Path, recipe: dict, *, condition: 
             if recording["telemetry"]:
                 arm = wrapped.unwrapped.action_manager.get_term("arm_action")
                 recording["telemetry"][-1]["controller_target_rad"] = arm.latest_command_target[0].cpu().numpy().copy()
-            metrics.update(*_observe(wrapped), done.cpu().numpy())
+            exits = task_domain_exits(wrapped.unwrapped).cpu().numpy() if "simulation_validity" in recipe else None
+            metrics.update(*_observe(wrapped), done.cpu().numpy(), exits)
             previous = action.clone()
             if bool(done[0]):
                 break
@@ -110,6 +112,7 @@ def _save_episode(output, recording, metrics, initial_hash) -> dict:
     if len(rgb) > 1 and not np.any(np.diff(rgb.astype(np.int16), axis=0)):
         raise RuntimeError("Franka RTX recording contains no temporal change")
     return {"length": len(rgb), "success": bool(metrics.success[0]),
+            "task_domain_exit": bool(metrics.domain_exit[0]),
             "lifted": bool(metrics.lifted[0]), "longest_stable_steps": int(metrics.longest[0]),
             "closest_distance_m": float(metrics.closest[0]), "rgb_frame_count": len(rgb),
             "initial_state_sha256": initial_hash}

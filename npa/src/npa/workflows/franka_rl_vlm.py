@@ -49,6 +49,11 @@ def _capture_contract(evaluated: Path) -> tuple[dict, dict, dict]:
 
 
 def _check_physics(row: dict, recipe: dict) -> None:
+    if "simulation_validity" in recipe:
+        actual = row["applied_physics"].get("simulation_validity", {})
+        if (actual.get("verified") is not True or actual.get("contract") != recipe["simulation_validity"]
+                or actual.get("checked_batches", 0) <= 0):
+            raise ValueError("Capture lacks required measured simulation validity evidence")
     if "embodiment" in recipe and row["applied_physics"].get("embodiment", {}).get("profile") != recipe["embodiment"]:
         raise ValueError("Capture physics belongs to a different robot embodiment")
     if "physics_capacity" in recipe and row["applied_physics"].get("physics_capacity") != recipe["physics_capacity"]:
@@ -78,6 +83,8 @@ def _judge_episode(evaluated: Path, output: Path, index: int, metadata: dict, re
     sampled = [frame["index"] for frame in result["frames"]]
     high = geometry[sampled, 2] > recipe["minimum_object_height_m"]
     return {"episode_index": index, **row, "visual": result,
+            "reference_valid": ("simulation_validity" in recipe and
+                row.get("applied_physics", {}).get("simulation_validity", {}).get("verified") is True),
             "reference_lifted": bool(np.count_nonzero(high) >= 2),
             "reference_sample_indices": sampled,
             "rgb_sha256": file_sha256(trajectory / "rgb.npy"),
@@ -98,24 +105,22 @@ def summarize_visual(rows: list[dict], recipe: dict) -> dict:
     if not rows:
         raise ValueError("Cannot summarize an empty Franka visual audit")
     _validate_judgment_grid(rows, recipe)
-    confusion = Counter()
-    for row in rows:
-        verdict = row["visual"]["verdict"]
-        prediction = verdict["lifted"]["verdict"] if verdict is not None else "invalid"
-        reference = "positive" if row["reference_lifted"] else "negative"
-        confusion[f"{reference}_{prediction}"] += 1
-    positive = sum(row["reference_lifted"] for row in rows)
-    negative = len(rows) - positive
+    reference_valid = [row for row in rows if row.get("reference_valid", False)]
+    confusion = _reference_confusion(reference_valid)
+    positive = sum(row["reference_lifted"] for row in reference_valid)
+    negative = len(reference_valid) - positive
     sensitivity = confusion["positive_yes"] / positive if positive else None
     specificity = confusion["negative_no"] / negative if negative else None
     balanced = (sensitivity + specificity) / 2 if positive and negative else None
     rates = _visual_rates(rows, recipe)
     invalid = sum(row["visual"]["verdict"] is None for row in rows)
-    audit_passed = not invalid and balanced is not None and balanced >= recipe["visual_eval"]["minimum_lift_agreement"]
-    visual_passed = all(row["held_at_end_rate"] >= recipe["minimum_success"]
+    valid_physics = len(reference_valid) == len(rows)
+    audit_passed = valid_physics and not invalid and balanced is not None and balanced >= recipe["visual_eval"]["minimum_lift_agreement"]
+    visual_passed = valid_physics and all(row["held_at_end_rate"] >= recipe["minimum_success"]
                         and row["scene_disturbed_count"] == 0 and row["scene_uncertain_count"] == 0 and row["invalid_count"] == 0
                         for row in rates["trained"].values())
     return {"episodes": len(rows), "invalid_responses": invalid, "lift_confusion": dict(confusion), "lift_sensitivity": sensitivity,
+            "reference_valid_episodes": len(reference_valid), "invalid_or_unverified_physics_episodes": len(rows) - len(reference_valid),
             "lift_specificity": specificity, "lift_balanced_accuracy": balanced,
             "outcomes": rates, "visual_audit_passed": audit_passed, "visual_task_passed": visual_passed,
             "quality_role": "Additional gate; cannot override failed simulator success",
@@ -125,6 +130,16 @@ def summarize_visual(rows: list[dict], recipe: dict) -> dict:
                             "Capture episodes are independent of held-out test episodes; their denominators differ."]}
 
 
+def _reference_confusion(rows):
+    confusion = Counter()
+    for row in rows:
+        verdict = row["visual"]["verdict"]
+        prediction = verdict["lifted"]["verdict"] if verdict is not None else "invalid"
+        reference = "positive" if row["reference_lifted"] else "negative"
+        confusion[f"{reference}_{prediction}"] += 1
+    return confusion
+
+
 def _validate_judgment_grid(rows: list[dict], recipe: dict) -> None:
     expected = {(arm, condition, index) for arm in recipe["visual_eval"]["arms"]
                 for condition in recipe["conditions"] for index in range(recipe["capture_episodes"])}
@@ -132,6 +147,8 @@ def _validate_judgment_grid(rows: list[dict], recipe: dict) -> None:
     if actual != expected or len(actual) != len(rows):
         raise ValueError("Franka visual judgments have missing, extra, or duplicate episode coverage")
     for row in rows:
+        if "reference_valid" in row and type(row["reference_valid"]) is not bool:
+            raise ValueError("Capture physical reference validity must be boolean")
         visual = row["visual"]
         status = visual.get("status", "valid")
         if (status not in {"valid", "invalid_response"}

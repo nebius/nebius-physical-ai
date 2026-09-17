@@ -8,10 +8,12 @@ through Token Factory. Franka Panda is the default; UR10e/Robotiq and Kinova
 JACO2 use explicit native embodiment bindings. It exports LeRobotDataset v3 and
 Rerun evidence.
 
-The workflow defaults to `learning_recipe=adaptive-exploration`: learned joint commands,
+The workflow defaults to `learning_recipe=adaptive-bounded-exploration`: learned joint commands,
 physically bounded servo targets, richer observations, stable-goal rewards, and
 a training-only curriculum driven by completed episode outcomes. Use
-`--var learning_recipe=joint-baseline` to reproduce the historical recipe below.
+`--var learning_recipe=joint-baseline` to select the historical learning objective.
+Newly prepared runs always include measured-state validity checks; exact historical
+reproduction also requires the original source commit and sealed recipe.
 The module-level `prepare --learning-recipe` option defaults to `joint-baseline`
 for compatibility; the workflow passes its selected recipe explicitly.
 
@@ -142,7 +144,7 @@ a minimum action variance or command a grasp. Distance reward can be positive
 below the lift threshold and is never treated as task success. These choices
 come from training diagnostics, independently of held-out policy selection.
 
-The opt-in `learning_recipe=adaptive-bounded-exploration` keeps those rewards
+The default `learning_recipe=adaptive-bounded-exploration` keeps those rewards
 and entropy settings but parameterizes each learned action standard deviation
 as `0.05 + 1.45 * sigmoid(raw_std)`, initialized at 1.0. In training-only
 diagnostics, the unbounded recipe's standard deviations grew above 21 on Franka
@@ -155,6 +157,58 @@ Sampling, probability ratios, entropy, and KL all use the same transformed
 standard deviation. Checkpoints preserve both the learned raw parameters and
 the bounds, and evaluation verifies that neither changes during inference.
 This mechanism requires a new measured comparison before claiming improvement.
+
+### Simulation integrity before learning
+
+Finite numbers and bounded commands do not establish valid contact dynamics.
+An earlier UR10e capture reached an object height of 6,544 m after its gripper
+joint diverged; later Kinova and Franka captures also exceeded native finger
+position limits. Raw height events from those runs are not evidence of valid
+lifting. Their original artifacts remain unchanged and unqualified. The
+[counterexample evidence](../evidence/manipulation-physics-counterexamples.json)
+binds measured values to the exact raw-array and source hashes; it does not
+retroactively classify every held-out trial from a small capture sample.
+
+Every newly prepared recipe seals a separate measured-state contract. A native
+termination term checks all arm, gripper, passive, and mimic joint positions and
+velocities, robot/object finite state, and unit quaternions after each control
+step and before reward or reset. Initial and reset states are checked before
+reaching the learner. A breach aborts the stage and publishes
+`simulation-validity-failure.json` with the measured joint, native bounds,
+allowances, step, and command. It does not clamp observations or rewrite actions.
+These checks sample control steps, not every physics substep, and do not prove
+complete simulator correctness.
+
+Position allowance is one native-velocity-limited physics tick plus floating-point
+rounding. Velocity allowance is four dtype epsilons scaled by the native bound;
+there is no fitted speed multiplier. A violation means the declared contract
+was exceeded, not necessarily that the solver exploded. Continuous joint angles
+retain their native unbounded domain. Numerical tolerances apply in each joint's
+native units: metres for Franka fingers, radians for revolute joints.
+
+Object departure beyond half the native scene spacing on any environment-local
+XYZ axis is a separate ordinary task failure. The Z extent is a task envelope,
+not a planar neighbor-cell boundary. Departure gives zero terminal reward and
+revokes earlier episode success while preserving its measured hold trace.
+Every trial stays in the denominator. Reports require successful training,
+validation, test, and capture validity evidence; the VLM cannot use invalid or
+unverified simulator heights as positive calibration references.
+
+New UR10e recipes additionally seal `ur10e-mimic-asset-v1`. The pinned USD uses
+five mimic followers, whereas the inherited Isaac configuration supplies
+loop-style follower drives and restrictive follower velocity limits. The adapter
+now inherits the composed gripper USD's gains, limits, and armature, and uses its
+standalone gripper's 64/1 solver iterations. Startup verifies the actual variant,
+mimic references/gearing, composed solver properties, and initialized actuator
+buffers. This follows the mechanism discussed in NVIDIA's
+[Robotiq tuning guide](https://docs.omniverse.nvidia.com/kit/docs/omni_physics/110.0/dev_guide/guides/gripper_tuning_example.html).
+The learned arm/gripper command mapping stays the same. Native conformance and
+motion validation are required before claiming that the compatibility change
+resolves the observed instability.
+
+Replacing the cube with a procedural part now preserves the task's rigid-body
+solver and depenetration properties, without inheriting the cube's geometry scale.
+Evidence distinguishes composed USD values from direct simulator-state tensors.
 
 Continuous joints retain their native angle and speed domains. When Isaac's
 float32 soft-limit calculation overflows on continuous-joint sentinel bounds,
@@ -181,12 +235,18 @@ successes** on the held-out tests. Its curriculum stayed at the initial
 difficulty. The independent visual audit also failed: five invalid responses
 and two positive lift judgments against negative synchronized height references
 among 32 captures. This is a retained negative result, not an improvement over
-the historical baseline. The `adaptive-exploration` follow-up requires its own
-measured result; higher training reward alone does not establish better control.
+the historical baseline. Higher training reward alone does not establish better control.
 The [failure evidence](../evidence/franka-initial-adaptive-parts-rtx.json),
 [individual trials](../evidence/franka-initial-adaptive-parts-rtx-trials.csv), and
 [training curve](../evidence/franka-initial-adaptive-parts-rtx-training.png)
 retain this result separately from the follow-up.
+
+The unbounded `adaptive-exploration` Franka follow-up also completed all five
+stages but achieved **0/512 lifts and 0/512 strict successes**. Its visual audit
+retained four invalid responses and three positive lift judgments against
+negative synchronized height references. Its [complete evidence](../evidence/franka-exploration-parts-rtx.json)
+and [individual trials](../evidence/franka-exploration-parts-rtx-trials.csv) remain
+separate from both the initial adaptive run and the bounded follow-up.
 
 Reporting streams RGB frames into the video encoder and accumulates image
 statistics in a fixed-size per-channel histogram. It preserves LeRobot pixel
@@ -197,6 +257,10 @@ maximum resident memory, reproduced all 32 MP4 files byte-for-byte, and differed
 from the prior image statistics by less than `9e-15`. This
 [report replay](../evidence/isaac-lerobot-streaming-report.json) measures the
 conversion fix independently; it does not repeat policy training or evaluation.
+The subsequent native exploration workflow also completed reporting and its full
+artifact audit. An intermediate observation of the entire report worker recorded
+zero cgroup OOM events; its memory includes runtime setup and file cache and is
+not a final measurement of the converter alone.
 
 ## Relationship to the reference Sim2Real pipeline
 
@@ -296,7 +360,7 @@ procedure.
 | `minimum_success` | 0.7 | Required success rate in every test condition |
 | `asset` | `spool` | Target part: `spool`, `hex_nut`, or `bottle`; changing it requires a new training run |
 | `embodiment` | `franka` | Native robot: `franka`, `ur10e_robotiq85`, or `kinova_jaco7`; each trains independently |
-| `learning_recipe` | `adaptive-exploration` | Select a learning profile; `adaptive-bounded-exploration` bounds learned action variance, and `joint-baseline` / `adaptive` reproduce earlier recipes |
+| `learning_recipe` | `adaptive-bounded-exploration` | Bound learned action variance; `adaptive-exploration`, `adaptive`, and `joint-baseline` retain earlier learning objectives, with validity checks on newly prepared runs |
 | `vlm_model` | `MiniMaxAI/MiniMax-M3` | Exact Token Factory vision model, checked against the account's model list |
 | `bucket`, `prefix` | Project binding and run-specific prefix | Durable stage artifacts |
 

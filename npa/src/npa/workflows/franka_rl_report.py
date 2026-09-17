@@ -41,15 +41,31 @@ def summarize(evaluation: dict) -> dict:
     rates = {arm: {condition: float(np.mean([indexed[arm, condition, i]["success"]
              for i in range(recipe["eval_episodes"])])) for condition in recipe["conditions"]}
              for arm in ("initial", "trained")}
+    valid = _validity_verified(evaluation)
     return {"schema": "npa.franka-rl.report.v1", "success_rates": rates,
             "paired_delta_95ci": _interval(indexed, recipe),
-            "simulation_qualified": all(rate >= recipe["minimum_success"] for rate in rates["trained"].values()),
+            "simulation_validity_verified": valid,
+            "simulation_qualified": valid and all(rate >= recipe["minimum_success"] for rate in rates["trained"].values()),
             "physical_robot_tested": False, "ready_for_robot_deployment": False,
             "selected_checkpoint_sha256": selected, "selection": evaluation["selection"],
             "test_episodes": len(rows), "validation_episodes": len(evaluation["validation"]),
             "limitations": ["Privileged simulator-state policy; physical perception and control remain unvalidated.",
                             "One training seed; uncertainty covers reset variability only.",
                             "Task is lift and hold at a commanded goal, not released placement."]}
+
+
+def _validity_verified(evaluation: dict) -> bool:
+    contract = evaluation["recipe"].get("simulation_validity")
+    if contract is None:
+        return False
+    from npa.workflows.franka_rl_validity import validity_contract
+
+    records = [row.get("simulation_validity", {}) for row in evaluation["trials"] + evaluation["validation"]]
+    records.append(evaluation.get("training", {}).get("physics", {}).get("simulation_validity", {}))
+    if contract != validity_contract() or any(record.get("verified") is not True
+            or record.get("contract") != contract or record.get("checked_batches", 0) <= 0 for record in records):
+        raise ValueError("Required training, validation, or test simulation validity evidence is missing or invalid")
+    return True
 
 
 def _validate_pairing(indexed: dict, recipe: dict) -> None:
@@ -59,7 +75,8 @@ def _validate_pairing(indexed: dict, recipe: dict) -> None:
         if len(states) != 1:
             raise ValueError("Franka test arms or conditions began from different physical resets")
     for row in indexed.values():
-        if row["success"] != (row["longest_stable_steps"] >= recipe["stable_steps"]):
+        expected = row["longest_stable_steps"] >= recipe["stable_steps"] and not row.get("task_domain_exit", False)
+        if row["success"] != expected:
             raise ValueError("Franka success disagrees with the sustained physical event")
 
 

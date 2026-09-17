@@ -27,7 +27,8 @@ def visual_case():
                            for name in ("lifted", "held_at_end")}
                 verdict.update(scene_disturbed={"verdict": "no"}, failure_modes=["none"])
                 rows.append({"arm": arm, "condition": condition, "capture_index": index,
-                    "reference_lifted": positive, "visual": {"backend": "token_factory", "verdict": verdict,
+                    "reference_lifted": positive, "reference_valid": True,
+                    "visual": {"backend": "token_factory", "verdict": verdict,
                     "model": recipe["visual_eval"]["model"], "rubric_sha256": recipe["visual_eval"]["rubric_sha256"]}})
     return recipe, rows
 
@@ -95,6 +96,22 @@ def test_audit_without_both_reference_classes_is_unqualified(visual_case):
     summary = summarize_visual(rows, recipe)
     assert summary["lift_balanced_accuracy"] is None
     assert not summary["visual_audit_passed"]
+
+
+@pytest.mark.parametrize("validity", [False, None])
+def test_invalid_or_unverified_physics_never_calibrates_visual_judge(visual_case, validity):
+    recipe, rows = visual_case
+    for row in rows:
+        if validity is None:
+            row.pop("reference_valid")
+        else:
+            row["reference_valid"] = validity
+    summary = summarize_visual(rows, recipe)
+    assert summary["invalid_or_unverified_physics_episodes"] == 32
+    assert summary["reference_valid_episodes"] == 0
+    assert summary["lift_confusion"] == {}
+    assert summary["lift_balanced_accuracy"] is None
+    assert not summary["visual_audit_passed"] and not summary["visual_task_passed"]
 
 
 @pytest.mark.parametrize("elevated,expected", [([3, 4], False), ([35], False), ([0, 35], True)])

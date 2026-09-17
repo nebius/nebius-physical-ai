@@ -8,5 +8,13 @@
   "existing_report_request_gib": 16,
   "identical_video_bytes": 32,
   "statistics_max_absolute_difference": 8.548717289613705e-15,
-  "identical_trials_and_qualification": true
+  "identical_trials_and_qualification": true,
+  "native_workflow_validation": {
+    "all_five_stages_completed": true,
+    "artifact_audit_sha256": "39a42b3d51e3e6c9f9b84f8e6eff2e2d30e54d0cf3651799f23208ffea60db13",
+    "all_source_modules_verified": true,
+    "intermediate_worker_cgroup_peak_bytes": 13245546496,
+    "observed_cgroup_oom_events": 0,
+    "scope": "Whole report-worker cgroup, including installation and file cache; one intermediate observation, not final converter-only peak RSS. Workflow completed and full artifacts independently audited afterward."
+  }
 }

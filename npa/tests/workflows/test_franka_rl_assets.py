@@ -46,6 +46,31 @@ def test_asset_mutation_refuses_simulation_instead_of_falling_back(tmp_path, mon
         configure_assets(SimpleNamespace(), manifest, tmp_path)
 
 
+def test_replacing_geometry_preserves_task_solver_without_cube_scale(tmp_path, monkeypatch):
+    import sys
+
+    class Asset(SimpleNamespace):
+        InitialStateCfg = SimpleNamespace
+
+    sim = SimpleNamespace(UsdFileCfg=SimpleNamespace, RigidBodyPropertiesCfg=SimpleNamespace,
+                          MassPropertiesCfg=SimpleNamespace)
+    monkeypatch.setitem(sys.modules, "isaaclab", SimpleNamespace(sim=sim))
+    monkeypatch.setitem(sys.modules, "isaaclab.sim", sim)
+    monkeypatch.setitem(sys.modules, "isaaclab.assets", SimpleNamespace(AssetBaseCfg=Asset))
+    rigid = SimpleNamespace(solver_position_iteration_count=16, solver_velocity_iteration_count=1,
+                            max_depenetration_velocity=5, max_linear_velocity=1000)
+    original = SimpleNamespace(rigid_props=rigid, scale=(0.8, 0.8, 0.8))
+    obj = SimpleNamespace(spawn=original, init_state=SimpleNamespace())
+    config = SimpleNamespace(scene=SimpleNamespace(object=obj))
+    manifest = write_assets(tmp_path, "spool")
+    configure_assets(config, manifest, tmp_path)
+    assert obj.spawn.rigid_props == rigid and obj.spawn.rigid_props is not rigid
+    assert not hasattr(obj.spawn, "scale")
+    assert obj.spawn.mass_props.mass == manifest["nominal_mass_kg"]
+    obj.spawn.rigid_props.solver_position_iteration_count = 64
+    assert original.rigid_props.solver_position_iteration_count == 16
+
+
 @pytest.mark.parametrize("target", ASSET_NAMES)
 def test_sealed_distractors_rest_on_authored_tray_surface(tmp_path, target):
     usd = pytest.importorskip("pxr.Usd")

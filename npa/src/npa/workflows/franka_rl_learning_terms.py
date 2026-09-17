@@ -9,6 +9,7 @@ from isaaclab.managers import ManagerTermBase
 from isaaclab.utils.math import combine_frame_transforms, quat_apply_inverse, quat_inv, quat_mul
 
 from npa.workflows.franka_rl_curriculum import TrainingCurriculum, training_ranges
+from npa.workflows.franka_rl_validity import task_domain_exits
 
 
 def _geometry(env):
@@ -103,6 +104,8 @@ class StableManipulationReward(ManagerTermBase):
                  & (height > recipe["minimum_object_height_m"]) & ~env.reset_buf)
         self.streak = torch.where(valid, self.streak + 1, 0)
         self.succeeded |= self.streak >= recipe["stable_steps"]
+        if hasattr(env.cfg, "npa_simulation_validity"):
+            self.succeeded &= ~task_domain_exits(env)
         self.hold_fraction = (self.streak / recipe["stable_steps"]).clamp(max=1)
         settings = self.settings["reward"]
         reaching = 1 - torch.tanh(reach / settings["reach_width_m"])

@@ -52,6 +52,22 @@ def test_automatic_reset_cannot_complete_or_restart_stability(recipe):
     assert metrics.longest[0] == 19
 
 
+def test_domain_departure_revokes_prior_success_without_erasing_hold_trace(recipe):
+    metrics = PlacementMetrics(2, recipe)
+    for _ in range(recipe["stable_steps"]):
+        metrics.update([0.01, 0.01], [0, 0], [0.2, 0.2], [False, False])
+    assert metrics.success.tolist() == [True, True]
+    metrics.update([1000, 0.01], [1000, 0], [1000, 0.2], [True, False], [True, False])
+    assert metrics.success.tolist() == [False, True]
+    assert metrics.lifted.tolist() == [False, True]
+    assert metrics.domain_exit.tolist() == [True, False]
+    assert metrics.longest[0] == recipe["stable_steps"]
+    assert metrics.steps[0] == recipe["stable_steps"]
+    for _ in range(25):
+        metrics.update([0.01, 0.01], [0, 0], [0.2, 0.2], [False, False], [False, False])
+    assert not metrics.success[0]
+
+
 @pytest.mark.parametrize("distance,speed,height,done", [([np.nan], [0], [1], [False]),
     ([-1], [0], [1], [False]), ([0], [-1], [1], [False]), ([0, 0], [0], [1], [False]),
     ([0], [0], [1], [False, True])])
@@ -83,6 +99,7 @@ def test_selection_rejects_test_data_mixed_weights_duplicates_and_nonfinite(rows
 
 @pytest.fixture
 def evaluation(recipe):
+    validity = {"verified": True, "contract": recipe["simulation_validity"], "checked_batches": 251}
     rows = [{"split": "test", "condition": condition, "env_index": index,
              "reset_seed": recipe["test_seed"], "arm": arm, "success": arm == "trained",
              "checkpoint_sha256": "a" * 64 if arm == "trained" else "b" * 64,
@@ -90,7 +107,9 @@ def evaluation(recipe):
             for arm in ("initial", "trained") for condition in recipe["conditions"] for index in range(2)]
     for row in rows:
         row["initial_state_sha256"] = f"{row['env_index']:064x}"
-    return {"recipe": recipe, "trials": rows, "validation": [_validation_row()],
+        row["simulation_validity"] = validity
+    return {"recipe": recipe, "trials": rows, "validation": [dict(_validation_row(), simulation_validity=validity)],
+            "training": {"physics": {"simulation_validity": validity}},
             "selection": {"selected_checkpoint_sha256": "a" * 64}}
 
 
@@ -100,6 +119,25 @@ def test_complete_simulation_success_never_claims_physical_transfer(evaluation):
     assert report["paired_delta_95ci"] == [1.0, 1.0]
     assert not report["ready_for_robot_deployment"]
     assert not report["physical_robot_tested"]
+
+
+@pytest.mark.parametrize("source", ["training", "validation", "test"])
+def test_missing_measured_validity_rejects_successful_report(evaluation, source):
+    if source == "training":
+        evaluation["training"]["physics"].pop("simulation_validity")
+    else:
+        rows = evaluation["trials" if source == "test" else "validation"]
+        rows[0].pop("simulation_validity")
+    with pytest.raises(ValueError, match="simulation validity evidence"):
+        summarize(evaluation)
+
+
+def test_historical_geometry_alone_cannot_qualify_a_new_report(evaluation):
+    evaluation["recipe"].pop("simulation_validity")
+    report = summarize(evaluation)
+    assert report["success_rates"]["trained"]["nominal"] == 1
+    assert not report["simulation_validity_verified"]
+    assert not report["simulation_qualified"]
 
 
 @pytest.mark.parametrize("robot_type", ["ur10e_robotiq85", "kinova_jaco7"])
@@ -195,6 +233,8 @@ def test_scene_restores_sealed_physx_pair_capacity(tmp_path, monkeypatch, recipe
     monkeypatch.setitem(sys.modules, "isaaclab_tasks.utils", SimpleNamespace(load_cfg_from_registry=lambda *args: config))
     monkeypatch.setattr(isaac_assets_compat, "remap_moved_franka_usd", lambda *args: None)
     monkeypatch.setattr(franka_rl_environment, "_physics_events", lambda *args: None)
+    monkeypatch.setitem(sys.modules, "isaaclab.managers", SimpleNamespace(TerminationTermCfg=SimpleNamespace))
+    config.terminations = SimpleNamespace()
     actual = franka_rl_environment.environment_config(recipe, training=True)
     assert actual.sim.physics.gpu_total_aggregate_pairs_capacity == 2**21
     assert actual.sim.physics.gpu_total_aggregate_pairs_capacity == recipe["physics_capacity"]["gpu_total_aggregate_pairs_capacity"]
@@ -354,6 +394,7 @@ def test_capture_can_reset_tensors_retained_from_preceding_inference_episode(tmp
     wrapped.reset, wrapped.step = reset, step
     monkeypatch.setattr(franka_rl_capture, "_orient_camera", lambda env: None)
     monkeypatch.setattr(franka_rl_capture, "_frame", frame)
+    monkeypatch.setattr(franka_rl_capture, "task_domain_exits", lambda env: torch.tensor([False]))
     monkeypatch.setattr(franka_rl_eval, "_observe", lambda env: (np.array([0.2]), np.array([0.0]), np.array([0.0])))
     monkeypatch.setattr(franka_rl_eval, "_initial_state_hashes", lambda env: ["a" * 64])
     recipe = dict(recipe, episode_steps=2)

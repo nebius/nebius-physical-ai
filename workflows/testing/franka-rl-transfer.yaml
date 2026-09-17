@@ -22,7 +22,7 @@ config:
   minimum_success: "0.7"
   asset: spool
   embodiment: franka
-  learning_recipe: adaptive-exploration
+  learning_recipe: adaptive-bounded-exploration
   vlm_model: MiniMaxAI/MiniMax-M3
   prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/"
   training_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/"

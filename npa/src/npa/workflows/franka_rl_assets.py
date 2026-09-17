@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import math
 from pathlib import Path
 
@@ -138,8 +139,10 @@ def configure_assets(config, manifest: dict, root: Path) -> None:
         if file_sha256(root / relative) != digest:
             raise ValueError("Franka simulation asset bytes changed after preparation")
     target = manifest["target"]
+    # Asset geometry must not discard the task's contact solver configuration.
+    rigid_props = deepcopy(config.scene.object.spawn.rigid_props)
     config.scene.object.spawn = sim.UsdFileCfg(usd_path=str(root / f"assets/{target}.usda"),
-        rigid_props=sim.RigidBodyPropertiesCfg(), mass_props=sim.MassPropertiesCfg(mass=0.08))
+        rigid_props=rigid_props, mass_props=sim.MassPropertiesCfg(mass=manifest["nominal_mass_kg"]))
     config.scene.object.init_state.pos = (0.5, 0.0, 0.06)
     config.scene.npa_fixture = AssetBaseCfg(prim_path="{ENV_REGEX_NS}/Fixture",
         spawn=sim.UsdFileCfg(usd_path=str(root / "assets/fixture.usda")),
@@ -150,3 +153,34 @@ def configure_assets(config, manifest: dict, root: Path) -> None:
             spawn=sim.UsdFileCfg(usd_path=str(root / f"assets/{name}.usda"),
                 rigid_props=sim.RigidBodyPropertiesCfg(kinematic_enabled=True)),
             init_state=AssetBaseCfg.InitialStateCfg(pos=tuple(position))))
+
+
+def asset_physics_evidence(native) -> dict:
+    """Verify object solver properties on the composed simulation prim.
+
+    Args:
+        native: Initialized Isaac environment after object spawning.
+    Returns:
+        Composed USD properties and requested task settings; not solver-internal readback.
+    Raises:
+        ValueError: The object has no unique rigid body or its properties differ.
+    """
+    from isaaclab.sim.utils.queries import find_first_matching_prim
+    from pxr import Usd, UsdPhysics
+
+    config = native.scene["object"].cfg.spawn.rigid_props
+    root = find_first_matching_prim(native.scene["object"].cfg.prim_path)
+    bodies = [prim for prim in Usd.PrimRange(root) if prim.HasAPI(UsdPhysics.RigidBodyAPI)] if root else []
+    if len(bodies) != 1:
+        raise ValueError("Manipuland must contain exactly one composed rigid body")
+    fields = {"solver_position_iteration_count": "solverPositionIterationCount",
+              "solver_velocity_iteration_count": "solverVelocityIterationCount",
+              "max_depenetration_velocity": "maxDepenetrationVelocity",
+              "max_linear_velocity": "maxLinearVelocity", "max_angular_velocity": "maxAngularVelocity"}
+    values = {name: bodies[0].GetAttribute("physxRigidBody:" + attribute).Get() for name, attribute in fields.items()}
+    requested = {name: getattr(config, name) for name in fields}
+    if any(value is not None and (values[name] is None or not math.isclose(values[name], value, rel_tol=1e-6))
+           for name, value in requested.items()):
+        raise ValueError("Composed manipuland solver properties differ from the preserved task settings")
+    return {"source": "composed USD schema attributes", "solver_internal_readback": False,
+            "requested": requested, "composed": values}
