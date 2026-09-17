@@ -473,16 +473,19 @@ Committed examples should use placeholders such as:
 Secrets belong in the user credentials file described by
 `docs/credentials.yaml.example`, not in source, docs, tests, or workflow YAMLs.
 
-These workflows block a pull request:
+One automatic PR workflow, `.github/workflows/security-regression.yml`, owns the
+required candidate gate. It calls the following reusable workflows and runs the
+security jobs in the same candidate-level concurrency group, so a new commit
+cancels the complete superseded gate instead of six independent fragments:
 
 | Workflow | What it runs | Reproduce locally |
 | --- | --- | --- |
-| `.github/workflows/test.yml` | `pytest tests/` with `--cov-fail-under=60`, plus `tests/integration/test_cli_install.sh` | `make test` |
+| `.github/workflows/test.yml` | PR smoke feedback; merge-queue browser/compatibility plus `pytest tests/` with `--cov-fail-under=60`; main compatibility audit | `make test` |
 | `.github/workflows/lint.yml` | `ruff check .`, and `scripts/build_docs.sh --check` for `docs/cli/` drift | `make lint`, `make docs-check` |
 | `.github/workflows/harness-guardrails.yml` | `pytest npa/tests/guardrails` | `make test-guardrails` |
 | `.github/workflows/confidentiality-scan.yml` | `npa.guardrails.confidentiality` over the diff and tree | needs the denylist secrets; see `skills/atomic/protect-nebius-infra-details/SKILL.md` |
 | `.github/workflows/gitleaks.yml` | the custom Nebius-pattern rules in `.gitleaks.toml` | `gitleaks detect` |
-| `.github/workflows/image-security-scan.yml` | Trivy against built images | `npa/tests/docker/` for the contract checks |
+| `.github/workflows/image-security-scan.yml` | Always reports scope; runs Trivy and complete-byte checks for image-affecting candidates and every main/scheduled audit | `npa/tests/docker/` for the contract checks |
 
 `make check` runs the reproducible subset in one command: `lint`, `docs-check`,
 `test`. It is not a full stand-in for `test.yml`, which additionally enforces
@@ -492,7 +495,7 @@ pass while `test.yml` fails the 60% floor. Add coverage locally when a change mo
 a lot of untested code:
 
 ```bash
-make test PYTEST_ADDOPTS="--cov=npa --cov-fail-under=60"
+make test PYTEST_ADDOPTS="--cov=src/npa --cov-fail-under=60"
 ```
 
 The two also report different counts, so do not compare them directly: `make test`
@@ -501,8 +504,19 @@ tree and lets those tests self-skip. Both numbers rise as tests land; the shape 
 the difference, several hundred more collected and skipped in CI, is the part that
 stays true.
 
-`test.yml` runs a Python matrix of 3.10, 3.12, and 3.14 on `main` and 3.12 alone on
-a pull request; `requires-python` is `>=3.10`.
+Ordinary pull requests run smoke feedback alongside the security and repository
+gates. The merge queue tests the exact candidate against the latest `main`: the
+browser and focused Python 3.10/3.14 compatibility checks run alongside four
+Python 3.12 shards of the complete suite, which merge coverage before enforcing
+the 60% floor. Pushes to `main` retain that four-shard suite on all three supported
+Python versions; `requires-python` is `>=3.10`.
+
+The internal sharder activates only when `NPA_CI_SHARD_INDEX` and
+`NPA_CI_TOTAL_SHARDS` are both set. The index is one-based and must not exceed
+the total; ordinary local test runs leave both variables unset. It greedily
+balances measured module durations from `npa/tests/ci_test_durations.json`, then
+uses a deterministic default for new tests. Successful Python 3.12 main shards
+publish a merged timing profile that can refresh the reviewed manifest.
 
 ## Testing Requirements
 
@@ -555,8 +569,9 @@ make test-e2e         # opt-in: real Nebius infrastructure, NPA_INTEGRATION_E2E=
 or help string.
 
 The suite is xdist-safe; `make test PYTEST_ADDOPTS=-nauto` cuts the serial run to
-a few minutes with an identical pass count. CI still runs serially with coverage,
-so treat a parallel pass as the fast signal rather than the gate.
+a few minutes with an identical pass count. CI also uses xdist inside four
+coverage shards, then merges their data before enforcing the floor. A local
+parallel pass remains a strong signal, but it does not reproduce that merge.
 
 `make test` deselects the live/GPU/e2e markers (`gpu`, `multi_gpu`, `e2e`,
 `e2e_serverless`, `e2e_skypilot`, `e2e_pipeline`, `byovm_live`, `ngc_e2e`) by
