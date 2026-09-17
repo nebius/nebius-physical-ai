@@ -262,12 +262,12 @@ for aug_frame in aug_frames:
     src = src_frame.reformat(width=width, height=height, format="rgb24").to_ndarray()
     aug = aug_frame.reformat(width=width, height=height, format="rgb24").to_ndarray()
     srcf, augf = src.astype(np.float32), aug.astype(np.float32)
-    src_cb = 128.0 - 0.168736 * srcf[..., 0] - 0.331264 * srcf[..., 1] + 0.5 * srcf[..., 2]
-    src_cr = 128.0 + 0.5 * srcf[..., 0] - 0.418688 * srcf[..., 1] - 0.081312 * srcf[..., 2]
-    src_y = 0.299 * srcf[..., 0] + 0.587 * srcf[..., 1] + 0.114 * srcf[..., 2]
-    y = 0.299 * augf[..., 0] + 0.587 * augf[..., 1] + 0.114 * augf[..., 2]
-    aug_cb = 128.0 - 0.168736 * augf[..., 0] - 0.331264 * augf[..., 1] + 0.5 * augf[..., 2]
-    aug_cr = 128.0 + 0.5 * augf[..., 0] - 0.418688 * augf[..., 1] - 0.081312 * augf[..., 2]
+    src_cb = 128.0 - 0.114572 * srcf[..., 0] - 0.385428 * srcf[..., 1] + 0.5 * srcf[..., 2]
+    src_cr = 128.0 + 0.5 * srcf[..., 0] - 0.454153 * srcf[..., 1] - 0.045847 * srcf[..., 2]
+    src_y = 0.2126 * srcf[..., 0] + 0.7152 * srcf[..., 1] + 0.0722 * srcf[..., 2]
+    y = 0.2126 * augf[..., 0] + 0.7152 * augf[..., 1] + 0.0722 * augf[..., 2]
+    aug_cb = 128.0 - 0.114572 * augf[..., 0] - 0.385428 * augf[..., 1] + 0.5 * augf[..., 2]
+    aug_cr = 128.0 + 0.5 * augf[..., 0] - 0.454153 * augf[..., 1] - 0.045847 * augf[..., 2]
     if masks_dir is not None:
         from PIL import Image, ImageFilter
         mask_path = masks_dir / f"mask-{count:06d}.png"
@@ -292,9 +292,9 @@ for aug_frame in aug_frames:
     cb = aug_cb * (1.0 - alpha) + src_cb * alpha
     cr = aug_cr * (1.0 - alpha) + src_cr * alpha
     rgb = np.stack((
-        y + 1.402 * (cr - 128.0),
-        y - 0.344136 * (cb - 128.0) - 0.714136 * (cr - 128.0),
-        y + 1.772 * (cb - 128.0),
+        y + 1.5748 * (cr - 128.0),
+        y - 0.187324 * (cb - 128.0) - 0.468124 * (cr - 128.0),
+        y + 1.8556 * (cb - 128.0),
     ), axis=-1)
     frame = av.VideoFrame.from_ndarray(np.clip(rgb, 0, 255).astype(np.uint8), format="rgb24")
     frame.to_image().save(frames_dir / f"frame-{count:06d}.png")
@@ -359,6 +359,14 @@ print(json.dumps({"frames": count, "fps": float(rate)}))
                     "libx264",
                     "-pix_fmt",
                     "yuv420p",
+                    "-color_range",
+                    "tv",
+                    "-colorspace",
+                    "bt709",
+                    "-color_primaries",
+                    "bt709",
+                    "-color_trc",
+                    "bt709",
                     "-crf",
                     "18",
                     "-movflags",
@@ -392,6 +400,12 @@ print(json.dumps({"frames": count, "fps": float(rate)}))
         "feather_pixels": feather_pixels,
         "luma_max_delta": luma_max_delta,
         "frame_count": frame_count,
+        "output_color": {
+            "range": "tv",
+            "space": "bt709",
+            "primaries": "bt709",
+            "transfer": "bt709",
+        },
     }
     if mask_root is not None:
         result["protected_chroma"]["segmentation"] = segmentation or {

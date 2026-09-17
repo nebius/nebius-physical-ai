@@ -24,7 +24,12 @@ SAM2_ENGINE = "meta-sam2-upstream"
 SAM2_SOURCE_REVISION = "2b90b9f5ceec907a1c18123530e92e794ad901a4"
 SAM2_DISTRIBUTION = "SAM-2"
 SAM2_DISTRIBUTION_VERSION = "1.0"
-SAM2_SELECTION_POLICY = "compact-foreground-nms-v2"
+SAM2_SELECTION_POLICY = "compact-motion-foreground-v3"
+SAM2_MOTION_ENGINE = "temporal-rgb-range-v1"
+SAM2_MOTION_SAMPLE_COUNT = 9
+SAM2_MOTION_THRESHOLD = 24
+SAM2_MOTION_DILATION = 11
+SAM2_MAX_MOTION_COVERAGE = 0.35
 DEFAULT_SAM2_MODEL = "facebook/sam2.1-hiera-tiny"
 DEFAULT_SAM2_REVISION = "de431c4043854a71d8101e17995dfe596bf101a5"
 SAM2_LICENSE = "Apache-2.0"
@@ -171,6 +176,8 @@ def load_published_sam2_masks(
         ]
         runtime_seconds = float(manifest["runtime"]["seconds"])
         frames_per_second = float(manifest["runtime"]["frames_per_second"])
+        motion = manifest["motion_support"]
+        motion_coverage = float(motion["coverage"])
     except (KeyError, TypeError, ValueError) as exc:
         raise Sam2MaskError("published SAM2 manifest has invalid evidence") from exc
     if (
@@ -183,6 +190,14 @@ def load_published_sam2_masks(
         or runtime_seconds < 0.0
         or not math.isfinite(frames_per_second)
         or frames_per_second <= 0.0
+        or motion.get("engine") != SAM2_MOTION_ENGINE
+        or motion.get("sample_count") != min(
+            frame_count, SAM2_MOTION_SAMPLE_COUNT
+        )
+        or motion.get("threshold") != SAM2_MOTION_THRESHOLD
+        or motion.get("dilation_pixels") != SAM2_MOTION_DILATION
+        or not math.isfinite(motion_coverage)
+        or not 0.0 <= motion_coverage <= SAM2_MAX_MOTION_COVERAGE
         or manifest["runtime"].get("device") != "cuda"
         or manifest.get("lineage")
         != {
@@ -328,6 +343,9 @@ def generate_sam2_video_masks(
         output_mode="binary_mask",
     )
     first = np.asarray(Image.open(frame_paths[0]).convert("RGB"))
+    motion_support, motion_evidence = _temporal_motion_support(
+        frame_paths, width=width, height=height
+    )
     with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
         proposals = generator.generate(first)
     boxes = _select_automatic_boxes(
@@ -369,7 +387,7 @@ def generate_sam2_video_masks(
             inference_state
         ):
             combined = (logits > 0.0).any(dim=0).squeeze().cpu().numpy()
-            frame_masks[int(frame_index)] = combined.astype(bool)
+            frame_masks[int(frame_index)] = combined.astype(bool) | motion_support
 
     if set(frame_masks) != set(range(len(frame_paths))):
         raise Sam2MaskError(
@@ -413,6 +431,7 @@ def generate_sam2_video_masks(
             "min": min(coverage),
             "max": max(coverage),
         },
+        "motion_support": motion_evidence,
         "runtime": {
             "device": "cuda",
             "seconds": elapsed,
@@ -535,6 +554,89 @@ def _select_automatic_boxes(
         if len(selected) == limit:
             break
     return selected
+
+
+def _temporal_motion_support(
+    frame_paths: list[Path], *, width: int, height: int
+) -> tuple[Any, dict[str, Any]]:
+    """Return a bounded union of pixels whose source RGB changes over time.
+
+    First-frame automatic proposals cannot represent a gripper that enters later
+    or a task object that leaves its initial position. A sparse temporal-range
+    mask complements the tracked static objects without turning the whole frame
+    into protected content. Camera-wide motion fails closed because it would make
+    backdrop augmentation meaningless.
+    """
+
+    try:
+        import numpy as np
+        from PIL import Image, ImageFilter
+    except ImportError as exc:
+        raise Sam2MaskError(
+            "NumPy and Pillow are required for temporal motion support"
+        ) from exc
+    if not frame_paths:
+        raise Sam2MaskError("temporal motion support requires decoded frames")
+    samples = _load_motion_samples(
+        frame_paths, width=width, height=height, image_module=Image
+    )
+    sample_count = len(samples)
+    stack = np.stack(samples, axis=0)
+    temporal_range = stack.max(axis=0).astype(np.int16) - stack.min(
+        axis=0
+    ).astype(np.int16)
+    mask = temporal_range.max(axis=2) >= SAM2_MOTION_THRESHOLD
+    if mask.any() and SAM2_MOTION_DILATION > 1:
+        mask_image = Image.fromarray(mask.astype(np.uint8) * 255)
+        mask = (
+            np.asarray(
+                mask_image.filter(
+                    ImageFilter.MaxFilter(size=SAM2_MOTION_DILATION)
+                )
+            )
+            > 127
+        )
+    coverage = float(mask.mean())
+    if coverage > SAM2_MAX_MOTION_COVERAGE:
+        raise Sam2MaskError(
+            "temporal motion support covers too much of the frame; "
+            "camera-wide motion cannot define protected foreground"
+        )
+    return mask, {
+        "engine": SAM2_MOTION_ENGINE,
+        "sample_count": sample_count,
+        "threshold": SAM2_MOTION_THRESHOLD,
+        "dilation_pixels": SAM2_MOTION_DILATION,
+        "coverage": coverage,
+    }
+
+
+def _load_motion_samples(
+    frame_paths: list[Path], *, width: int, height: int, image_module: Any
+) -> list[Any]:
+    """Load evenly spaced RGB frames for deterministic temporal differencing."""
+
+    import numpy as np
+
+    sample_count = min(len(frame_paths), SAM2_MOTION_SAMPLE_COUNT)
+    indices = (
+        [0]
+        if sample_count == 1
+        else [
+            round(index * (len(frame_paths) - 1) / (sample_count - 1))
+            for index in range(sample_count)
+        ]
+    )
+    samples = []
+    for index in indices:
+        with image_module.open(frame_paths[index]) as opened:
+            image = opened.convert("RGB")
+            if image.size != (width, height):
+                image = image.resize(
+                    (width, height), image_module.Resampling.BILINEAR
+                )
+            samples.append(np.asarray(image, dtype=np.uint8))
+    return samples
 
 
 def _box_iou(

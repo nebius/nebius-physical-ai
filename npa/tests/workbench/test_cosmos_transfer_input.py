@@ -363,6 +363,12 @@ def test_preserve_source_chroma_records_effective_provenance(
         "feather_pixels": 12,
         "luma_max_delta": 32,
         "frame_count": 7,
+        "output_color": {
+            "range": "tv",
+            "space": "bt709",
+            "primaries": "bt709",
+            "transfer": "bt709",
+        },
     }
 
 
@@ -456,9 +462,9 @@ def test_preserve_source_chroma_decodes_encoded_video_and_keeps_generated_luma(
 
     def ycbcr_means(frame: np.ndarray) -> tuple[float, float, float]:
         red, green, blue = frame[..., 0], frame[..., 1], frame[..., 2]
-        y = 0.299 * red + 0.587 * green + 0.114 * blue
-        cb = 128.0 - 0.168736 * red - 0.331264 * green + 0.5 * blue
-        cr = 128.0 + 0.5 * red - 0.418688 * green - 0.081312 * blue
+        y = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+        cb = 128.0 - 0.114572 * red - 0.385428 * green + 0.5 * blue
+        cr = 128.0 + 0.5 * red - 0.454153 * green - 0.045847 * blue
         return float(y.mean()), float(cb.mean()), float(cr.mean())
 
     source_y, source_cb, source_cr = ycbcr_means(first_rgb(source))
@@ -472,6 +478,30 @@ def test_preserve_source_chroma_decodes_encoded_video_and_keeps_generated_luma(
     assert abs(restored_cr - source_cr) < 5
     assert abs(restored_y - generated_y) > 40
     assert 20 < abs(restored_y - source_y) < 37
+    probe = subprocess.run(
+        [
+            ffmpeg.replace("ffmpeg", "ffprobe"),
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=color_range,color_space,color_transfer,color_primaries",
+            "-of",
+            "json",
+            str(result["video_path"]),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    color = json.loads(probe.stdout)["streams"][0]
+    assert color == {
+        "color_range": "tv",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+    }
 
 
 def test_frame_aligned_masks_protect_only_the_selected_pixels(
