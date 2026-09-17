@@ -5175,7 +5175,9 @@ def test_live_evidence_chat_loads_exact_artifact_without_exposing_source(
         "_agent_k8s_backends",
         lambda: {"cloud_clusters": [{"status": "RUNNING"}, {"status": "RUNNING"}]},
     )
-    monkeypatch.setattr(module, "_visual_evidence_selection", lambda _state: exact_selection)
+    monkeypatch.setattr(
+        module, "_visual_evidence_selection", lambda _state, **_: exact_selection
+    )
     calls = []
 
     def load_artifact(payload):
@@ -5235,6 +5237,73 @@ def test_live_evidence_prefers_a_verified_active_visual_artifact(monkeypatch, tm
         "resolved_prefix": "workflows/visual",
         "source_selected": True,
     }
+
+
+def test_live_evidence_chat_can_select_a_real_video_from_active_source(monkeypatch, tmp_path):
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="live_evidence_video_backend"
+    )
+    state = {
+        "sim_viz": {
+            "run_id": "artifact-run",
+            "artifact_run_ref": "npa1_exact_source_ref",
+            "artifact_key": "workflows/visual/output.rrd",
+            "artifact_render": "rerun",
+            "bucket": "example-bucket",
+            "project_id": "example-project",
+            "resolved_prefix": "workflows/visual",
+        }
+    }
+    monkeypatch.setattr(module, "_load_state", lambda: copy.deepcopy(state))
+    monkeypatch.setattr(module, "_agent_k8s_backends", lambda: {"cloud_clusters": []})
+    exact_calls = []
+
+    def list_active_source(run_ref, **scope):
+        exact_calls.append((run_ref, scope))
+        return {
+            "artifacts": [
+                {"key": "workflows/visual/output.rrd", "render": "rerun"},
+                {"key": "workflows/visual/rollout.mp4", "render": "video"},
+            ]
+        }
+
+    monkeypatch.setattr(module, "artifacts_for_run", list_active_source)
+    loaded = []
+
+    def load_video(payload):
+        loaded.append(payload)
+        return {"sim_viz": {"artifact_render": "video", "artifact_preview_url": "/api/artifacts/file/video"}}
+
+    monkeypatch.setattr(module, "sim_viz_load_artifact", load_video)
+    monkeypatch.setattr(
+        module,
+        "sim_viz_status",
+        lambda: {"artifact_render": "video", "artifact_preview_url": "/api/artifacts/file/video"},
+    )
+
+    response = module._agent_chat_with_tools(
+        raw_messages=[
+            {"role": "user", "content": "Show live cloud evidence and a real MP4 artifact."}
+        ],
+        model="unused",
+    )
+
+    assert exact_calls == [
+        (
+            "npa1_exact_source_ref",
+            {
+                "resource_bucket": "example-bucket",
+                "project_id": "example-project",
+                "resolved_prefix": "workflows/visual",
+                "source_selected": True,
+            },
+        )
+    ]
+    assert loaded and loaded[0]["key"] == "workflows/visual/rollout.mp4"
+    assert response["live_evidence"]["artifact_render"] == "video"
+    assert "real `video` artifact loaded in **View**" in response["reply"]
+    assert "example-bucket" not in response["reply"]
+    assert "workflows/visual" not in response["reply"]
 
 
 def test_live_evidence_retries_a_warming_artifact_inventory(monkeypatch, tmp_path):

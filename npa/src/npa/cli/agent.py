@@ -4982,10 +4982,55 @@ def _active_visual_evidence_selection(state: dict) -> dict:
     return {{}}
 
 
-def _visual_evidence_selection(state: dict | None = None) -> dict:
+def _active_visual_evidence_for_render(state: dict, preferred_render: str = "") -> dict:
+    # Use the active exact source to switch between real visual siblings.
+    active_selection = _active_visual_evidence_selection(state)
+    preferred = str(preferred_render or "").strip().lower()
+    if preferred not in {{"rerun", "video"}}:
+        return active_selection
+    sim_viz = state.get("sim_viz") if isinstance(state.get("sim_viz"), dict) else {{}}
+    active_render = str(sim_viz.get("artifact_render") or "").lower()
+    if active_render == preferred:
+        return active_selection
+    if not active_selection:
+        return {{}}
+    try:
+        inventory = _chat_payload(
+            artifacts_for_run(
+                str(active_selection["run_ref"]),
+                resource_bucket=str(active_selection["resource_bucket"]),
+                project_id=str(active_selection["project_id"]),
+                resolved_prefix=str(active_selection["resolved_prefix"]),
+                source_selected=True,
+            )
+        )
+        artifacts = inventory.get("artifacts") if isinstance(inventory, dict) else []
+        match = next(
+            (
+                item
+                for item in artifacts
+                if isinstance(item, dict)
+                and str(item.get("render") or "").lower() == preferred
+                and str(item.get("key") or "")
+            ),
+            None,
+        )
+        if isinstance(match, dict):
+            return {{**active_selection, "key": str(match["key"])}}
+    except Exception:
+        pass
+    return active_selection
+
+
+def _visual_evidence_selection(
+    state: dict | None = None, *, preferred_render: str = ""
+) -> dict:
+    preferred = str(preferred_render or "").strip().lower()
+    if preferred not in {{"rerun", "video"}}:
+        preferred = ""
     active_selection = _active_visual_evidence_selection(state or {{}})
     if active_selection:
-        return active_selection
+        return _active_visual_evidence_for_render(state or {{}}, preferred)
     try:
         # Storage discovery warms its bounded index asynchronously on a fresh
         # Agent.  Give that one safe retry window here so a user asking chat to
@@ -5015,7 +5060,7 @@ def _visual_evidence_selection(state: dict | None = None) -> dict:
                     continue
                 artifact = sorted(
                     visuals,
-                    key=lambda item: str(item.get("render") or "") != "rerun",
+                    key=lambda item: str(item.get("render") or "") != (preferred or "rerun"),
                 )[0]
                 key = str(artifact.get("key") or "")
                 if key:
@@ -5034,7 +5079,7 @@ def _visual_evidence_selection(state: dict | None = None) -> dict:
     return {{}}
 
 
-def _live_runtime_evidence(state: dict) -> dict:
+def _live_runtime_evidence(state: dict, *, preferred_render: str = "") -> dict:
     try:
         infra = _agent_k8s_backends()
     except Exception:
@@ -5053,7 +5098,11 @@ def _live_runtime_evidence(state: dict) -> dict:
     workflow_status = str(execution.get("status") or execution.get("state") or "unavailable").lower()
     if workflow_status not in {{"queued", "preparing", "running", "succeeded", "failed", "cancelled", "unavailable"}}:
         workflow_status = "unavailable"
-    selection = _visual_evidence_selection(state)
+    selection = (
+        _visual_evidence_selection(state, preferred_render=preferred_render)
+        if preferred_render
+        else _visual_evidence_selection(state)
+    )
     try:
         loaded = _chat_payload(sim_viz_load_artifact(selection)) if selection else {{}}
         live_viz = _chat_payload(sim_viz_status()) if selection else {{}}
@@ -5209,7 +5258,14 @@ def _maybe_toolground_chat_reply(
         )
         return result["reply"], suggested_apis, [], None, result, intent
     if intent == "live_runtime_evidence":
-        evidence = _live_runtime_evidence(state)
+        visual_preference = (
+            "video"
+            if re.search(r"\\b(?:video|mp4|movie)\\b", str(user_text or ""), re.IGNORECASE)
+            else "rerun"
+            if re.search(r"\\b(?:rerun|rrd)\\b", str(user_text or ""), re.IGNORECASE)
+            else ""
+        )
+        evidence = _live_runtime_evidence(state, preferred_render=visual_preference)
         status_counts = evidence.get("cloud_status_counts")
         cloud_summary = ", ".join(
             f"{{int(count)}} {{status}}"
