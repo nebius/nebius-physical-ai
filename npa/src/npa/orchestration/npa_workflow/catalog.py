@@ -2269,6 +2269,46 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "json",
         ],
     ),
+    "workbench.lerobot.transfer_prepare": ToolEntry(
+        name="workbench.lerobot.transfer_prepare",
+        description="Seal pinned PushT data, training-only statistics, and paired evaluation settings.",
+        argv_template=[
+            "python3", "-m", "npa.workflows.lerobot_transfer", "prepare",
+            "--output-path", "{{config.prepared_uri}}", "--seed", "{{config.seed}}",
+            "--train-steps", "{{config.train_steps}}", "--batch-size", "{{config.batch_size}}",
+            "--validation-episodes", "{{config.validation_episodes}}",
+            "--test-episodes", "{{config.test_episodes}}",
+            "--eval-batch-size", "{{config.eval_batch_size}}",
+            "--minimum-success", "{{config.minimum_success}}",
+        ],
+    ),
+    "workbench.lerobot.transfer_train": ToolEntry(
+        name="workbench.lerobot.transfer_train",
+        description="Train a native ACT baseline or photometrically augmented candidate from the same sealed recipe.",
+        argv_template=[
+            "python3", "-m", "npa.workflows.lerobot_transfer", "train",
+            "--input-path", "{{config.prepared_uri}}", "--output-path", "{{config.training_uri}}",
+            "--arm", "{{config.arm}}",
+        ],
+    ),
+    "workbench.lerobot.transfer_evaluate": ToolEntry(
+        name="workbench.lerobot.transfer_evaluate",
+        description="Evaluate exact ACT checkpoints on paired native PushT resets and transfer shifts.",
+        argv_template=[
+            "python3", "-m", "npa.workflows.lerobot_transfer", "evaluate",
+            "--input-path", "{{config.prepared_uri}}", "--output-path", "{{config.evaluation_uri}}",
+            "--baseline-path", "{{config.baseline_uri}}", "--robust-path", "{{config.robust_uri}}",
+        ],
+    ),
+    "workbench.lerobot.transfer_report": ToolEntry(
+        name="workbench.lerobot.transfer_report",
+        description="Compare paired success with uncertainty and emit a validation-only next-demo queue and RRD.",
+        argv_template=[
+            "python3", "-m", "npa.workflows.lerobot_transfer", "report",
+            "--input-path", "{{config.evaluation_uri}}", "--output-path", "{{config.report_uri}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
     "workbench.lerobot.policy_train": ToolEntry(
         name="workbench.lerobot.policy_train",
         description=(

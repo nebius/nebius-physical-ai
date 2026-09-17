@@ -122,10 +122,11 @@ has a license boundary that the contract encodes in a `redistribution` field per
 image (`public` | `restricted`), enforced by
 `npa/tests/docker/test_packaging_contract.py`.
 
-- **`public`** — OSS-redistributable. Code is under OSI-approved licenses
-  (Apache-2.0 / BSD-3 / MIT / MPL-2.0), the exact CUDA/PyTorch base and wheel
-  payloads have applicable redistribution grants,
-  and model weights are pulled at runtime. Public GR00T N1.7, GEAR-SONIC,
+- **`public`** — Every shipped component has reviewed permission for public
+  redistribution, and the image must satisfy the applicable license conditions,
+  including notices and corresponding-source delivery. This classification does
+  not mean every component has an OSI-approved license. Check exact base and wheel
+  payloads individually; model weights are pulled at runtime. Public GR00T N1.7, GEAR-SONIC,
   Cosmos Reason1, and Cosmos3 Nano assets work anonymously; gated Cosmos assets require a token at
   **runtime** by the operator, never baked into the image. These may be published
   to a public/anonymous registry.
@@ -139,6 +140,24 @@ image (`public` | `restricted`), enforced by
   in a later layer leaves them distributed in an ancestor; select a suitable
   base and filter any non-distributable install payload before that layer is
   committed. Keep the applicable licenses and verify the final image's layers.
+
+  FiftyOne bundles MongoDB Community Server under SSPL v1, which is
+  [not OSI-approved](https://www.mongodb.com/legal/licensing/server-side-public-license/faq).
+  The supported FiftyOne 1.21 image contains verified matching source,
+  provenance and delivery directions alongside the retained notices. Repeat
+  the exact-image checks for each replacement digest. See the
+  [FiftyOne release requirements](../../npa/docker/workbench/fiftyone/RELEASE.md).
+  Before any public push, run `npa/.venv/bin/python
+  npa/docker/workbench/fiftyone/validate_image.py` from the repository root with
+  `--image-id` set to the exact loaded local image ID, `--revision` set to its
+  full committed source revision, `--source-root` set to that checkout and
+  `--output-path` set to a new child of a private directory. The release guide
+  supplies the complete command and its bootstrap, source-delivery and functional
+  coverage. Keep raw receipts private; the trusted CI workflow publishes only
+  the validator's allowlisted `public-summary.json`.
+  Review the [SSPL's distribution and service provisions](https://www.mongodb.com/legal/licensing/server-side-public-license)
+  separately; an image's redistribution classification does not decide whether
+  an operator's service use meets its obligations.
 - **`restricted`** — bakes a runtime we are not licensed to redistribute. Such an
   image may be built and run by the operator who owns the registry (internal R&D,
   build-your-own), but hosting it **prebuilt on a public/anonymous registry** would
