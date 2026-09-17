@@ -195,10 +195,14 @@ The CPU wheel exercises real checkpoint loading without a GPU. See
 [the CI environment](../.github/workflows/test.yml) for the complete coverage
 gate; some optional checks also use Node, tmux, or Docker.
 
-Pull requests and main pushes run the full coverage suite on Python 3.10, 3.12,
-and 3.14. A focused compatibility check runs before the CPU tensor dependencies
+Pull requests receive fast smoke and security feedback. The merge queue runs the
+exact latest-main candidate through browser and focused Python 3.10/3.14 checks
+alongside four duration-balanced Python 3.12 coverage shards, then enforces the
+merged floor. Main pushes run the sharded full suite on all three supported
+versions and publish the measured module-duration profile used to rebalance later
+shards. The focused compatibility check runs before the CPU tensor dependencies
 are installed, so async cancellation and isolated SkyPilot fixture regressions
-surface early. Run it locally with:
+surface before merge. Run it locally with:
 
 ```bash
 npa/.venv/bin/python -m pytest \
@@ -208,13 +212,19 @@ npa/.venv/bin/python -m pytest \
   npa/tests/workbench/test_cosmos3_nano_video_server.py -q
 ```
 
-The required [security check](../docs/security/merge-security-gate.md) calls the
-image security workflow once on every PR, merge queue candidate, and main push.
-It waits for successful image scans before running the runtime security tests.
+The required [security check](../docs/security/merge-security-gate.md) is the
+single automatic candidate workflow. It runs secrets, confidentiality, source,
+runtime, lint, guardrail, and test gates, and calls an always-reporting image
+security workflow. Image-affecting candidates receive the deep image checks;
+unrelated candidates take a verified fast path. Main and weekly audits always
+scan the full image inventory.
 The image security workflow scans the pinned Python base after the same OS
 update and upgrade used by FiftyOne's Dockerfile. It rebuilds this local scan
 target without cache so newly published security fixes are included, then fails
-on fixable CRITICAL OS findings. This baseline check does not replace the
+on fixable CRITICAL OS findings. All seven bases run inside one job with two
+bounded local workers. One Trivy database download is hard-linked into isolated
+worker caches, rather than using seven queued runners or a lock-contended shared
+cache. This baseline check does not replace the
 complete image scans required before publication.
 
 Use an **absolute** interpreter path: the recipes change into `npa/` before

@@ -1,106 +1,84 @@
-"""Keep CI's scanned base aligned with the image's OS security preparation."""
+"""Keep bounded base-image scans aligned with production image preparation."""
 
-import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 
 import pytest
-import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-WORKFLOW = ROOT / ".github/workflows/image-security-scan.yml"
+sys.path.insert(0, str(ROOT / "npa/scripts"))
+import scan_base_images as scanner  # noqa: E402
 
 
-def _scan_job():
-    return yaml.safe_load(WORKFLOW.read_text())["jobs"]["base-image-cve-scan"]
+INVENTORY = ROOT / "npa/docker/workbench/base-image-security.json"
 
 
-def _prepare_step():
-    return next(
-        step for step in _scan_job()["steps"] if step.get("id") == "scan-target"
-    )
+def _entries() -> list[dict[str, object]]:
+    return scanner.load_inventory(INVENTORY)
 
 
-def _run_preparation(tmp_path, entry, *, build_status=0):
-    executable = tmp_path / "docker"
-    executable.write_text(
-        f"#!{sys.executable}\nimport json, pathlib, sys\n"
-        "pathlib.Path('build.json').write_text(json.dumps(sys.argv[1:]))\n"
-        "pathlib.Path('Dockerfile').write_text(sys.stdin.read())\n"
-        f"raise SystemExit({build_status})\n"
-    )
-    executable.chmod(0o700)
-    environment = {
-        **os.environ,
-        "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
-        "BASE_IMAGE": entry["image"],
-        "SCAN_NAME": entry["name"],
-        "PURGE_LINUX_LIBC_DEV": str(entry["purge_linux_libc_dev"]).lower(),
-        "UPGRADE_OS": str(entry.get("upgrade_os", False)).lower(),
-        "GITHUB_OUTPUT": str(tmp_path / "outputs"),
-    }
-    return subprocess.run(
-        ["bash", "-c", _prepare_step()["run"]],
-        cwd=tmp_path,
-        env=environment,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+@pytest.mark.parametrize("entry", _entries(), ids=lambda entry: entry["name"])
+def test_scan_target_applies_only_declared_preparation(
+    monkeypatch: pytest.MonkeyPatch, entry: dict[str, object]
+) -> None:
+    """Prepare only inventory entries whose production image does so.
 
+    Args:
+        monkeypatch: Isolated subprocess replacement.
+        entry: Base-image inventory entry.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Preparation or direct-scan routing changes.
+    """
 
-@pytest.mark.parametrize(
-    "entry",
-    _scan_job()["strategy"]["matrix"]["include"],
-    ids=lambda entry: entry["name"],
-)
-def test_scan_target_applies_only_the_declared_preparation(tmp_path, entry):
-    result = _run_preparation(tmp_path, entry)
-    assert result.returncode == 0, result.stderr
-    purge = str(entry["purge_linux_libc_dev"]).lower()
-    upgrade = str(entry.get("upgrade_os", False)).lower()
-    if purge == "false" and upgrade == "false":
-        assert (tmp_path / "outputs").read_text() == f"image={entry['image']}\n"
-        assert not (tmp_path / "build.json").exists()
+    calls = []
+
+    def record(command, **arguments):
+        calls.append((command, arguments))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(scanner.subprocess, "run", record)
+    target = scanner.prepare_target(entry)
+    command = scanner.preparation_command(entry)
+    if command is None:
+        assert target == entry["image"] and calls == []
         return
-    arguments = json.loads((tmp_path / "build.json").read_text())
-    assert arguments == [
-        "build",
-        "--pull",
-        "--no-cache",
-        "--build-arg",
-        f"BASE_IMAGE={entry['image']}",
-        "--build-arg",
-        f"PURGE_LINUX_LIBC_DEV={purge}",
-        "--build-arg",
-        f"UPGRADE_OS={upgrade}",
-        "-t",
-        f"npa-base-scan:{entry['name']}",
-        "-f",
-        "-",
-        ".",
+    assert target == f"npa-base-scan:{entry['name']}"
+    assert calls == [
+        (command, {"input": scanner._PATCH_DOCKERFILE, "text": True, "check": True})
     ]
-    assert (
-        tmp_path / "outputs"
-    ).read_text() == f"image=npa-base-scan:{entry['name']}\n"
-    assert "FROM ${BASE_IMAGE}" in (tmp_path / "Dockerfile").read_text()
+    assert "FROM ${BASE_IMAGE}" in scanner._PATCH_DOCKERFILE
 
 
-def test_failed_preparation_never_emits_a_scan_target(tmp_path):
-    entry = next(
-        entry
-        for entry in _scan_job()["strategy"]["matrix"]["include"]
-        if entry.get("upgrade_os") is True
-    )
-    result = _run_preparation(tmp_path, entry, build_status=17)
-    assert result.returncode == 17
-    assert not (tmp_path / "outputs").exists()
+def test_failed_preparation_never_returns_a_scan_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail before scanning when Docker cannot construct the patched base.
+
+    Args:
+        monkeypatch: Isolated subprocess failure.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A failed preparation is treated as scannable.
+    """
+
+    entry = next(item for item in _entries() if item["upgrade_os"] is True)
+
+    def fail(command, **arguments):
+        raise subprocess.CalledProcessError(17, command)
+
+    monkeypatch.setattr(scanner.subprocess, "run", fail)
+    with pytest.raises(subprocess.CalledProcessError) as error:
+        scanner.prepare_target(entry)
+    assert error.value.returncode == 17
 
 
-def _record_package_commands(tmp_path, failed_command):
+def _record_package_commands(tmp_path: Path, failed_command: str) -> None:
     for name in ("apt-get", "dpkg", "rm"):
         executable = tmp_path / name
         executable.write_text(
@@ -113,16 +91,21 @@ def _record_package_commands(tmp_path, failed_command):
 
 
 @pytest.mark.parametrize("failed_command", ["update", "upgrade", "purge"])
-def test_os_preparation_stops_after_a_package_manager_failure(tmp_path, failed_command):
-    entry = {
-        "image": "synthetic-base",
-        "name": "fixture",
-        "upgrade_os": True,
-        "purge_linux_libc_dev": True,
-    }
-    assert _run_preparation(tmp_path, entry).returncode == 0
-    dockerfile = (tmp_path / "Dockerfile").read_text()
-    command = dockerfile.split("RUN ", 1)[1].replace("\\\n", "")
+def test_os_preparation_stops_after_package_manager_failure(
+    tmp_path: Path, failed_command: str
+) -> None:
+    """Keep chained OS remediation fail closed.
+
+    Args:
+        tmp_path: Isolated executable directory.
+        failed_command: Synthetic command that exits unsuccessfully.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A later remediation runs after an earlier failure.
+    """
+
+    command = scanner._PATCH_DOCKERFILE.split("RUN ", 1)[1].replace("\\\n", "")
     _record_package_commands(tmp_path, failed_command)
     result = subprocess.run(
         ["/bin/sh", "-c", command],
@@ -144,54 +127,93 @@ def test_os_preparation_stops_after_a_package_manager_failure(tmp_path, failed_c
         "apt-get upgrade -y --no-install-recommends",
         "dpkg --purge --force-depends linux-libc-dev",
     ]
-    assert (
-        commands == expected[: ["update", "upgrade", "purge"].index(failed_command) + 1]
-    )
+    end = ["update", "upgrade", "purge"].index(failed_command) + 1
+    assert commands == expected[:end]
 
 
-def test_python_scan_matches_fiftyones_pinned_and_upgraded_base():
+def test_python_scan_matches_fiftyones_pinned_and_upgraded_base() -> None:
+    """Track the exact base and OS upgrade used by FiftyOne.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Base-image preparation drifts from the Dockerfile.
+    """
+
     dockerfile = (ROOT / "npa/docker/workbench/fiftyone/Dockerfile").read_text()
     base = next(
         line.removeprefix("FROM ")
         for line in dockerfile.splitlines()
         if line.startswith("FROM ")
     )
-    entry = next(
-        entry
-        for entry in _scan_job()["strategy"]["matrix"]["include"]
-        if entry["name"] == "python-3-11-slim-trixie"
-    )
+    entry = next(item for item in _entries() if item["name"] == "python-3-11-slim-trixie")
     assert entry["image"] == base and "@sha256:" in base
     assert entry["upgrade_os"] is True
-    assert entry["purge_linux_libc_dev"] is False
-    recipe = _prepare_step()["run"]
-    for command in (
-        "apt-get update",
-        "apt-get upgrade -y --no-install-recommends",
-        "rm -rf /var/lib/apt/lists/*",
-    ):
-        assert command in dockerfile and command in recipe
-    assert recipe.index("apt-get update") < recipe.index("apt-get upgrade")
-    assert _prepare_step()["env"] == {
-        "BASE_IMAGE": "${{ matrix.image }}",
-        "SCAN_NAME": "${{ matrix.name }}",
-        "PURGE_LINUX_LIBC_DEV": "${{ matrix.purge_linux_libc_dev }}",
-        "UPGRADE_OS": "${{ matrix.upgrade_os || false }}",
-    }
+    for command in ("apt-get update", "apt-get upgrade", "rm -rf /var/lib/apt/lists/*"):
+        assert command in dockerfile and command in scanner._PATCH_DOCKERFILE
 
 
-def test_base_cve_gate_remains_blocking_and_scans_the_prepared_target():
-    job = _scan_job()
-    assert "if" not in job and "continue-on-error" not in job
-    gate = next(step for step in job["steps"] if step.get("name") == "Trivy image scan")
-    assert "if" not in gate and "continue-on-error" not in gate
-    assert gate["with"]["exit-code"] == "1"
-    assert gate["with"]["severity"] == "CRITICAL"
-    assert gate["with"]["vuln-type"] == "os"
-    scans = [step for step in job["steps"] if "trivy-action@" in step.get("uses", "")]
-    assert len(scans) == 2
-    assert all(
-        step["with"]["image-ref"] == "${{ steps.scan-target.outputs.image }}"
-        for step in scans
-    )
-    # PR invocation coverage lives in test_image_security_gate.
+def test_base_cve_gate_is_blocking_and_os_scoped() -> None:
+    """Retain fixed-CRITICAL OS vulnerability enforcement.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: The Trivy command becomes advisory or changes scope.
+    """
+
+    command = scanner._trivy_command("synthetic@sha256:digest", Path("cache"), sarif=None)
+    assert command[command.index("--exit-code") + 1] == "1"
+    assert command[command.index("--severity") + 1] == "CRITICAL"
+    assert command[command.index("--vuln-type") + 1] == "os"
+    assert "--ignore-unfixed" in command
+
+
+def test_parallel_scans_use_worker_private_trivy_caches(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Share the downloaded database without sharing Trivy's mutable cache.
+
+    Args:
+        monkeypatch: Isolated subprocess replacement.
+        tmp_path: Temporary Trivy cache root.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Parallel scans share mutable cache state.
+    """
+
+    cache = tmp_path / "trivy"
+    scan_caches: list[Path] = []
+
+    def record(command, **arguments):
+        if "--download-db-only" in command:
+            database = cache / "db"
+            database.mkdir()
+            (database / "trivy.db").write_text("verified database")
+        else:
+            worker_cache = Path(command[command.index("--cache-dir") + 1])
+            database = worker_cache / "db/trivy.db"
+            assert database.read_text() == "verified database"
+            scan_caches.append(worker_cache)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(scanner.subprocess, "run", record)
+    entries = [
+        {
+            "name": f"base-{index}",
+            "image": f"example.invalid/base@sha256:{index}",
+            "purge_linux_libc_dev": False,
+            "upgrade_os": False,
+        }
+        for index in range(3)
+    ]
+    scanner.scan_inventory(entries, cache, workers=2, sarif_directory=None)
+
+    assert len(scan_caches) == 3
+    assert cache not in scan_caches
+    assert len(set(scan_caches)) == 2

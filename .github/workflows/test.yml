@@ -1,21 +1,23 @@
 name: Test
 
 on:
+  workflow_call:
   push:
     branches: [main]
-  pull_request:
 
 permissions:
   contents: read
 
 concurrency:
-  # An open PR already receives pull_request runs, so feature-branch pushes do
-  # not need a second copy. Cancel older tests when that PR advances.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # The parent PR gate cancels a superseded candidate atomically. Direct main
+  # runs also supersede older validation because the newest commit contains it.
+  group: test-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 jobs:
   browser-mocked:
+    name: browser-and-compatibility
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -32,6 +34,8 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: npa/pyproject.toml
       - name: Install the production UI renderer
         run: |
           python -m venv npa/.venv
@@ -39,18 +43,112 @@ jobs:
       - name: Run mocked agent Cypress coverage
         run: npm run --prefix npa/tests/browser cy:mock
 
+      - name: Set up Python 3.10 compatibility
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: npa/pyproject.toml
+
+      - name: Install Python 3.10 compatibility environment
+        run: |
+          python -m venv npa/.venv-3.10
+          npa/.venv-3.10/bin/python -m pip install -e "npa[dev,adapter]"
+
+      - name: Run Python 3.10 compatibility regressions
+        run: |
+          npa/.venv-3.10/bin/python -m pytest \
+            npa/tests/guardrails/test_ci_workflows.py \
+            npa/tests/docker/test_base_image_scan.py \
+            npa/tests/orchestration/skypilot/test_workflow_logs.py \
+            npa/tests/workbench/test_cosmos3_nano_video_server.py \
+            -q
+
+      - name: Set up Python 3.14 compatibility
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: npa/pyproject.toml
+
+      - name: Install Python 3.14 compatibility environment
+        run: |
+          python -m venv npa/.venv-3.14
+          npa/.venv-3.14/bin/python -m pip install -e "npa[dev,adapter]"
+
+      - name: Run Python 3.14 compatibility regressions
+        run: |
+          npa/.venv-3.14/bin/python -m pytest \
+            npa/tests/guardrails/test_ci_workflows.py \
+            npa/tests/docker/test_base_image_scan.py \
+            npa/tests/orchestration/skypilot/test_workflow_logs.py \
+            npa/tests/workbench/test_cosmos3_nano_video_server.py \
+            -q
+
+  pr-smoke:
+    name: pr-smoke
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      NPA_PROJECT_ID: project-test-00000000
+      NPA_S3_BUCKET: test-bucket-00000000
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: npa/pyproject.toml
+
+      - name: Install the fast validation environment
+        run: |
+          python -m venv npa/.venv
+          npa/.venv/bin/python -m pip install -e "npa[dev,adapter]"
+          echo "${GITHUB_WORKSPACE}/npa/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Run smoke and CI contract regressions
+        run: |
+          npa/.venv/bin/python -m pytest \
+            npa/tests/smoke \
+            npa/tests/test_ci_sharding.py \
+            npa/tests/guardrails/test_ci_workflows.py \
+            npa/tests/docker/test_base_image_scan.py \
+            npa/tests/orchestration/skypilot/test_workflow_logs.py \
+            npa/tests/workbench/test_cosmos3_nano_video_server.py \
+            -q
+
+      - name: Run CLI install test
+        run: cd npa && bash tests/integration/test_cli_install.sh
+
+      - name: Warn on source drift
+        if: always()
+        run: ./scripts/check-source-drift.sh
+
   test:
+    name: pytest-${{ matrix.python-version }}-shard-${{ matrix.shard }}
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false
+      # A merge candidate releases the remaining runners after a hard failure.
+      # Main keeps every compatibility result for diagnosis and audit coverage.
+      fail-fast: ${{ github.event_name != 'push' }}
       matrix:
-        # Compatibility failures must be caught before merging, on every PR.
-        python-version: ["3.10", "3.12", "3.14"]
+        # Merge queue candidates run the complete suite on the primary
+        # interpreter. Main keeps all supported Python versions.
+        python-version: ${{ fromJSON(github.event_name == 'push' && '["3.10", "3.12", "3.14"]' || '["3.12"]') }}
+        shard: [1, 2, 3, 4]
     env:
       NPA_PROJECT_ID: project-test-00000000
       NPA_S3_BUCKET: test-bucket-00000000
       NPA_E2E_PROJECT_ID: project-test-00000000
       NPA_E2E_GROOT_BUCKET: test-bucket-00000000
+      NPA_CI_SHARD_INDEX: ${{ matrix.shard }}
+      NPA_CI_TOTAL_SHARDS: 4
+      COVERAGE_FILE: .coverage.${{ matrix.python-version }}.${{ matrix.shard }}
+      NPA_CI_TIMING_OUTPUT: ci-timings-${{ matrix.python-version }}-${{ matrix.shard }}.json
       # The LTX-2.5 output validator decides whether a GPU run produced anything
       # worth keeping, and its tests skip themselves when ffmpeg is absent. On a
       # runner without ffmpeg that decision would go untested while the suite
@@ -79,6 +177,8 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: npa/pyproject.toml
 
       - name: Install npa
         run: |
@@ -87,6 +187,10 @@ jobs:
           echo "${GITHUB_WORKSPACE}/npa/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Run Python compatibility and image scan regressions
+        if: matrix.shard == 1
+        env:
+          NPA_CI_SHARD_INDEX: 1
+          NPA_CI_TOTAL_SHARDS: 1
         run: |
           npa/.venv/bin/python -m pytest \
             npa/tests/guardrails/test_ci_workflows.py \
@@ -100,11 +204,12 @@ jobs:
         # Lance dataloaders. Installing torch also activates SONIC ONNX export
         # tests, so install their supported extra after selecting CPU wheels.
         run: |
-          pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
-          pip install -e "npa[sonic]"
-          python -c "import torch, onnx, onnxscript, onnxruntime; assert torch.version.cuda is None"
+          npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
+          npa/.venv/bin/python -m pip install -e "npa[sonic]"
+          npa/.venv/bin/python -c "import torch, onnx, onnxscript, onnxruntime; assert torch.version.cuda is None"
 
       - name: Verify checked-out CLI flags
+        if: matrix.python-version == '3.12' && matrix.shard == 1
         run: |
           cd npa
           git rev-parse HEAD
@@ -141,15 +246,32 @@ jobs:
                   )
           PY
 
-      - name: Run pytest with coverage
-        # The floor sits below the current ~66% so version-dependent skips
-        # don't flake the gate; raise it as coverage grows, never lower it.
-        run: cd npa && .venv/bin/python -m pytest tests/ -v --tb=short --cov=npa --cov-report=term-missing --cov-fail-under=60
+      - name: Run pytest coverage shard
+        run: |
+          cd npa
+          .venv/bin/python -m pytest tests/ -n auto --dist worksteal \
+            --cov=src/npa --cov-report=
+
+      - name: Upload coverage shard
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: coverage-${{ matrix.python-version }}-${{ matrix.shard }}
+          path: npa/.coverage.${{ matrix.python-version }}.${{ matrix.shard }}
+          include-hidden-files: true
+
+      - name: Upload trusted main timing shard
+        if: github.event_name == 'push' && matrix.python-version == '3.12'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: ci-timings-${{ matrix.shard }}
+          path: npa/ci-timings-${{ matrix.python-version }}-${{ matrix.shard }}.json
 
       - name: Run CLI install test
+        if: matrix.python-version == '3.12' && matrix.shard == 1
         run: cd npa && bash tests/integration/test_cli_install.sh
 
       - name: Check e2e shell scripts
+        if: matrix.python-version == '3.12' && matrix.shard == 1
         run: |
           cd npa
           bash -n tests/e2e/test_lerobot_e2e.sh
@@ -158,5 +280,68 @@ jobs:
           bash -n tests/e2e/test_groot_composition_e2e.sh
 
       - name: Warn on source drift
-        if: always()
+        if: always() && matrix.python-version == '3.12' && matrix.shard == 1
         run: ./scripts/check-source-drift.sh
+
+  coverage:
+    name: coverage
+    needs: test
+    if: ${{ always() && github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful pytest shards
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+        run: test "$TEST_RESULT" = success
+
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: npa/pyproject.toml
+
+      - name: Install coverage reporter
+        run: |
+          python -m venv npa/.venv
+          npa/.venv/bin/python -m pip install "coverage[toml]==7.16.0"
+
+      - name: Download coverage shards
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          pattern: coverage-*
+          path: npa/coverage-data
+          merge-multiple: true
+
+      - name: Enforce merged coverage floor
+        # The floor sits below the current ~66% so version-dependent skips
+        # don't flake the gate; raise it as coverage grows, never lower it.
+        run: |
+          cd npa
+          .venv/bin/python -m coverage combine coverage-data
+          .venv/bin/python -m coverage report --show-missing --fail-under=60
+
+      - name: Download trusted main timing shards
+        if: github.event_name == 'push'
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          pattern: ci-timings-*
+          path: npa/ci-timing-data
+          merge-multiple: true
+
+      - name: Merge trusted main duration profile
+        if: github.event_name == 'push'
+        run: |
+          npa/.venv/bin/python npa/scripts/merge_ci_test_timings.py \
+            --input-directory npa/ci-timing-data \
+            --output npa/ci-test-durations.json
+
+      - name: Upload trusted main duration profile
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: ci-test-durations-${{ github.sha }}
+          path: npa/ci-test-durations.json

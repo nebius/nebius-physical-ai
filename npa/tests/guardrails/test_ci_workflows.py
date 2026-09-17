@@ -18,12 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 MAKEFILE = REPO_ROOT / "Makefile"
 AUTOMATIC_PR_WORKFLOWS = (
-    "confidentiality-scan.yml",
-    "gitleaks.yml",
-    "harness-guardrails.yml",
-    "lint.yml",
     "security-regression.yml",
-    "test.yml",
 )
 
 
@@ -35,12 +30,6 @@ def _load_workflow(name: str) -> dict:
 
 
 def test_automatic_pr_workflows_cancel_superseded_commits() -> None:
-    expected_group = (
-        "${{ github.workflow }}-"
-        "${{ github.event.pull_request.number || github.run_id }}"
-    )
-    expected_cancel = "${{ github.event_name == 'pull_request' }}"
-
     discovered = {
         path.name
         for path in WORKFLOW_DIR.glob("*.y*ml")
@@ -52,24 +41,85 @@ def test_automatic_pr_workflows_cancel_superseded_commits() -> None:
         workflow = _load_workflow(name)
         assert "pull_request" in workflow["on"], name
         assert workflow["concurrency"] == {
-            "group": expected_group,
-            "cancel-in-progress": expected_cancel,
+            "group": "pr-gate-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}",
+            "cancel-in-progress": "${{ github.event_name == 'pull_request' || github.event_name == 'push' }}",
         }, name
 
 
+def test_one_pr_workflow_owns_every_merge_gate() -> None:
+    """Keep PR updates atomic instead of spawning six independent workflows."""
+
+    workflow = _load_workflow("security-regression.yml")
+    assert set(workflow["on"]) == {"pull_request", "merge_group", "push"}
+    jobs = workflow["jobs"]
+    assert jobs["test-gate"]["uses"] == "./.github/workflows/test.yml"
+    assert jobs["lint-gate"]["uses"] == "./.github/workflows/lint.yml"
+    assert jobs["guardrails-gate"]["uses"] == (
+        "./.github/workflows/harness-guardrails.yml"
+    )
+    assert jobs["gitleaks"]["name"] == "gitleaks"
+    assert jobs["scan"]["name"] == "scan"
+    required = set(jobs["security-regression"]["needs"])
+    assert required == set(jobs) - {"security-regression"}
+
+
 def test_test_and_lint_do_not_duplicate_feature_branch_pushes() -> None:
-    for name in ("test.yml", "lint.yml"):
+    for name in (
+        "confidentiality-scan.yml",
+        "gitleaks.yml",
+        "harness-guardrails.yml",
+        "lint.yml",
+        "test.yml",
+    ):
         workflow = _load_workflow(name)
         assert workflow["on"]["push"] == {"branches": ["main"]}, name
+        assert "pull_request" not in workflow["on"], name
 
 
-def test_pr_and_main_test_the_full_python_compatibility_matrix() -> None:
+def test_main_validation_cancels_superseded_commits() -> None:
+    for name in (
+        "confidentiality-scan.yml",
+        "gitleaks.yml",
+        "harness-guardrails.yml",
+        "lint.yml",
+        "test.yml",
+    ):
+        cancellation = _load_workflow(name)["concurrency"]["cancel-in-progress"]
+        assert cancellation in (
+            "true",
+            "${{ github.event_name == 'pull_request' || github.event_name == 'push' }}",
+        ), name
+
+
+def test_merge_queue_suite_is_sharded_and_main_keeps_full_compatibility() -> None:
     workflow = _load_workflow("test.yml")
     job = workflow["jobs"]["test"]
-    assert job["strategy"]["matrix"]["python-version"] == ["3.10", "3.12", "3.14"]
-    assert job["strategy"]["fail-fast"] == "false"
-    assert "if" not in job and "continue-on-error" not in job
-    assert workflow["on"]["pull_request"] == ""
+    python_matrix = job["strategy"]["matrix"]["python-version"]
+    assert "github.event_name == 'push'" in python_matrix
+    assert '["3.12"]' in python_matrix
+    assert '["3.10", "3.12", "3.14"]' in python_matrix
+    assert job["strategy"]["matrix"]["shard"] == ["1", "2", "3", "4"]
+    assert job["strategy"]["fail-fast"] == "${{ github.event_name != 'push' }}"
+    assert job["if"] == "github.event_name != 'pull_request'"
+    assert "continue-on-error" not in job
+    assert workflow["on"]["workflow_call"] == ""
+
+    smoke = workflow["jobs"]["pr-smoke"]
+    assert smoke["if"] == "github.event_name == 'pull_request'"
+    commands = "\n".join(step.get("run", "") for step in smoke["steps"])
+    assert "npa/tests/smoke" in commands
+    assert "test_ci_workflows.py" in commands
+
+    assert workflow["jobs"]["browser-mocked"]["if"] == (
+        "github.event_name != 'pull_request'"
+    )
+    browser_steps = workflow["jobs"]["browser-mocked"]["steps"]
+    browser_step_names = {step["name"] for step in browser_steps}
+    for version in ("3.10", "3.14"):
+        assert f"Set up Python {version} compatibility" in browser_step_names
+        install_step = f"Install Python {version} compatibility environment"
+        assert install_step in browser_step_names
+        assert f"Run Python {version} compatibility regressions" in browser_step_names
 
 
 def test_compatibility_regressions_run_before_heavy_dependencies() -> None:
@@ -78,7 +128,12 @@ def test_compatibility_regressions_run_before_heavy_dependencies() -> None:
     regression = _step("test.yml", "test", "compatibility and image scan")
     install = _step("test.yml", "test", "CPU checkpoint")
     assert steps.index(regression) < steps.index(install)
-    assert "if" not in regression and "continue-on-error" not in regression
+    assert regression["if"] == "matrix.shard == 1"
+    assert regression["env"] == {
+        "NPA_CI_SHARD_INDEX": "1",
+        "NPA_CI_TOTAL_SHARDS": "1",
+    }
+    assert "continue-on-error" not in regression
     for path in (
         "npa/tests/guardrails/test_ci_workflows.py",
         "npa/tests/docker/test_base_image_scan.py",
@@ -86,6 +141,39 @@ def test_compatibility_regressions_run_before_heavy_dependencies() -> None:
         "npa/tests/workbench/test_cosmos3_nano_video_server.py",
     ):
         assert path in regression["run"]
+
+
+def test_coverage_shards_are_parallel_and_merged_before_enforcement() -> None:
+    workflow = _load_workflow("test.yml")
+    test_job = workflow["jobs"]["test"]
+    pytest_step = _step("test.yml", "test", "pytest coverage shard")
+    assert "-n auto" in pytest_step["run"]
+    assert "--dist worksteal" in pytest_step["run"]
+    assert "--cov=src/npa" in pytest_step["run"]
+    assert "--cov=npa" not in pytest_step["run"]
+    assert "--cov-fail-under" not in pytest_step["run"]
+    assert test_job["env"] == {
+        "NPA_PROJECT_ID": "project-test-00000000",
+        "NPA_S3_BUCKET": "test-bucket-00000000",
+        "NPA_E2E_PROJECT_ID": "project-test-00000000",
+        "NPA_E2E_GROOT_BUCKET": "test-bucket-00000000",
+        "NPA_CI_SHARD_INDEX": "${{ matrix.shard }}",
+        "NPA_CI_TOTAL_SHARDS": "4",
+        "COVERAGE_FILE": ".coverage.${{ matrix.python-version }}.${{ matrix.shard }}",
+        "NPA_CI_TIMING_OUTPUT": "ci-timings-${{ matrix.python-version }}-${{ matrix.shard }}.json",
+        "NPA_REQUIRE_FFMPEG": "1",
+    }
+
+    coverage = workflow["jobs"]["coverage"]
+    assert coverage["needs"] == "test"
+    assert coverage["if"] == (
+        "${{ always() && github.event_name != 'pull_request' }}"
+    )
+    report = _step("test.yml", "coverage", "merged coverage floor")["run"]
+    assert "coverage combine" in report
+    assert "--fail-under=60" in report
+    profile = _step("test.yml", "coverage", "Merge trusted main duration")["run"]
+    assert "merge_ci_test_timings.py" in profile
 
 
 def _make_recipe(target: str) -> list[str]:
@@ -240,8 +328,8 @@ def test_check_target_does_not_claim_the_coverage_floor() -> None:
     rather than presenting `make check` as the whole gate.
     """
 
-    ci_pytest = _step("test.yml", "test", "pytest")["run"]
-    floor = re.search(r"--cov-fail-under=(\d+)", ci_pytest)
+    coverage_report = _step("test.yml", "coverage", "merged coverage floor")["run"]
+    floor = re.search(r"--fail-under=(\d+)", coverage_report)
     assert floor, "test.yml no longer enforces a coverage floor; update CONTRIBUTING"
 
     # `check` is prerequisites only, so the recipes that matter are its children's.

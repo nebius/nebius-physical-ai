@@ -5,14 +5,18 @@ description: Use before pushing an npa change to pick which gates apply and run 
 
 # Pre-PR Validation
 
-Every pull request runs lint and docs drift, unit and browser tests, security
-regressions, harness guardrails, secret scanning, and confidentiality scanning.
-`Security regression / security-regression` requires the scanner comparison,
-reusable image-security workflow, and hostile-input runtime tests on every PR,
-merge queue candidate, and main push.
-Its workflow has no path filters. Verify actual required contexts in branch
-protection before claiming merge enforcement. `image-security-scan` is called by
-that required check without path filters; it retains scheduled and manual scans.
+Every pull request has one automatic candidate workflow. It runs lint, docs
+drift, guardrails, smoke feedback, security regressions, secret scanning, and
+confidentiality scanning. The merge queue additionally runs browser and focused
+compatibility checks alongside the complete four-shard Python 3.12 coverage suite
+against the latest `main`; main audits all supported Python versions.
+`Security regression / security-regression` requires
+every candidate component and the reusable image-security workflow.
+The required workflows have no top-level path filters. Image scope is classified
+inside always-reporting jobs: image, packaging, workflow, or security-policy
+changes run the deep checks; unrelated source changes take the fast path. Main,
+scheduled, and manual image audits always run deeply. Verify actual required
+contexts in branch protection before claiming merge enforcement.
 
 All of them are reproducible locally. Run them in cost order so the cheap ones
 catch the common mistakes before you spend minutes on the full suite.
@@ -114,9 +118,10 @@ npa/.venv/bin/python -m pytest \
 ```
 
 Run this gate before pushing, in addition to the full suite and applicable live
-workload validation. Workflow registration belongs in
-`AUTOMATIC_PR_WORKFLOWS` in `npa/tests/guardrails/test_ci_workflows.py` for direct
-PR triggers. The reusable image workflow is covered by `test_image_security_gate`;
+workload validation. Only the unified parent belongs in
+`AUTOMATIC_PR_WORKFLOWS` in `npa/tests/guardrails/test_ci_workflows.py`; component
+workflows are reusable and main-only. The image workflow is covered by
+`test_image_security_gate`;
 preserve its distinct concurrency group, minimal caller permissions, and the
 existing PR concurrency controls. Image findings must not produce a passing
 `security-regression` result.
@@ -125,14 +130,19 @@ existing PR concurrency controls. Image findings must not produce a passing
 sets a 180s timeout; CI runs with coverage and enforces `--cov-fail-under=60`.
 A local pass is a strong signal, not proof of the CI result.
 
-Run the coverage gate from the package directory, matching CI:
+Run the equivalent coverage floor from the package directory. Merge-queue and
+main CI partition the same collection across four deterministic,
+duration-balanced shards and merge their coverage data:
 
 ```bash
 cd npa
-.venv/bin/python -m pytest tests/ -v --tb=short --cov=npa --cov-report=term-missing --cov-fail-under=60
+.venv/bin/python -m pytest tests/ -v --tb=short --cov=src/npa --cov-report=term-missing --cov-fail-under=60
 ```
 
-From the repository root, `--cov=npa` can select the enclosing directory and
+Keep the coverage source scoped to `src/npa`. Selecting the import name with
+`--cov=npa` can also trace temporary test modules that deliberately impersonate
+that package, and those files no longer exist when CI merges shard data. From the
+repository root, `--cov=npa` can additionally select the enclosing directory and
 include tests and scripts in the coverage total. That percentage does not prove
 package coverage. Check the report's file population, including package modules
 that no test executed. If correcting a report from retained traces, preserve the

@@ -1,11 +1,11 @@
 name: Image Security Scan
 
 on:
-  # The required security-regression check calls this on every PR, merge queue
-  # candidate and main push. Keep one execution per event, without path filters.
+  # The required parent gate invokes this for PRs, merge candidates, and main.
+  # Scope is decided inside its always-reporting jobs so a required workflow is
+  # never left pending by a top-level path filter.
   workflow_call:
   schedule:
-    # Weekly scan catches newly-disclosed CVEs in existing pinned bases.
     - cron: "0 3 * * 1"
   workflow_dispatch:
     inputs:
@@ -23,81 +23,64 @@ permissions:
   security-events: write
 
 concurrency:
-  # Keep workflows independent, but let a newer commit supersede older work for
-  # the same PR. Scheduled and manual scans use run_id so they run to completion.
-  group: image-security-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # The caller owns candidate/main cancellation. Direct scheduled and manual
+  # audits use unique run IDs and cannot cancel their required parent workflow.
+  group: image-security-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
-  tag-strategy-check:
-    name: Two-tag strategy consistency
+  image-policy:
+    name: Image policy and complete-byte security
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Check out full history
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: "3.11"
-
-      - name: Install PyYAML
-        run: python -m pip install PyYAML
-
-      - name: Run tag consistency check
-        run: python npa/docker/workbench/check_tag_consistency.py
-
-  # The four Isaac images are publicly redistributable only because they contain no
-  # NVIDIA Omniverse Kit payload. That claim is about bytes in layers, so the classifier
-  # is unit-tested on every PR (below) and the live scan can be dispatched against a
-  # pushed image, which needs registry credentials and multi-GB pulls.
-  omniverse-payload-classifier:
-    name: Omniverse payload classifier (offline)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: "3.11"
-
-      # npa/tests/conftest.py imports httpx and several npa modules, so the
-      # package itself has to be installed -- pytest + PyYAML alone abort
-      # collection. Mirrors the install in test.yml.
-      - name: Install npa with test deps
-        run: cd npa && pip install -e ".[dev]"
-
-      - name: Payload-scanner classifier and packaging-guard mutation tests
-        run: |
-          python -m pytest \
-            npa/tests/docker/test_image_payload_scan.py \
-            npa/tests/docker/test_packaging_contract.py \
-            npa/tests/docker/test_isaac_bootstrap.py \
-            -q
-
-  complete-byte-native-integration:
-    name: Complete-byte scanner (native integration)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Python 3.12
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: npa/pyproject.toml
 
-      - name: Install NPA validation environment
+      - name: Create validation environment
+        run: python -m venv npa/.venv
+
+      - name: Classify image-security scope
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          python -m venv npa/.venv
-          npa/.venv/bin/pip install -e "npa[dev]"
+          set -euo pipefail
+          deep=true
+          if [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = merge_group ]; then
+            deep="$(npa/.venv/bin/python scripts/ci_image_security_scope.py \
+              --repo-root . --base "$BASE_SHA" --head "$GITHUB_SHA")"
+          fi
+          test "$deep" = true || test "$deep" = false
+          echo "deep=$deep" >> "$GITHUB_OUTPUT"
+          echo "deep image security: $deep"
 
-      # These checks use synthetic archives and policies with the actual pinned
-      # Go detector and native literal engine. Missing native tools are failures.
-      # Ordinary pytest remains offline and does not bootstrap these dependencies.
-      - name: Build and exercise the exact native scanner dependencies
+      - name: Install image-policy test dependencies
+        if: steps.scope.outputs.deep == 'true'
+        run: npa/.venv/bin/python -m pip install -e "npa[dev]"
+
+      - name: Check tag strategy and offline packaging policies
+        if: steps.scope.outputs.deep == 'true'
+        run: |
+          npa/.venv/bin/python npa/docker/workbench/check_tag_consistency.py
+          npa/.venv/bin/python -m pytest \
+            npa/tests/docker/test_image_payload_scan.py \
+            npa/tests/docker/test_packaging_contract.py \
+            npa/tests/docker/test_isaac_bootstrap.py \
+            -q
+
+      - name: Exercise exact native complete-byte scanner dependencies
+        if: steps.scope.outputs.deep == 'true'
         run: |
           set -euo pipefail
           umask 077
@@ -114,12 +97,168 @@ jobs:
             --native-receipt "$scan_root/native/dependencies.json" \
             --output-dir "$scan_root/integration-checks"
 
+      - name: Trivy configuration scan
+        if: steps.scope.outputs.deep == 'true'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: "."
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+          format: table
+
+      - name: Trivy configuration scan (SARIF)
+        if: >-
+          always() && steps.scope.outputs.deep == 'true' &&
+          (github.event_name == 'push' || github.event_name == 'schedule' ||
+          github.event_name == 'workflow_dispatch')
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: "."
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          limit-severities-for-sarif: true
+          format: sarif
+          output: trivy-config.sarif
+
+      - name: Upload configuration SARIF
+        if: >-
+          always() && steps.scope.outputs.deep == 'true' &&
+          (github.event_name == 'push' || github.event_name == 'schedule' ||
+          github.event_name == 'workflow_dispatch')
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        env:
+          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:dockerfile-static-scan
+        with:
+          sarif_file: trivy-config.sarif
+          category: trivy-config
+
+  base-image-cve-scan:
+    name: Base image CVE inventory
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Create validation environment
+        run: python -m venv npa/.venv
+
+      - name: Classify image-security scope
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          deep=true
+          if [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = merge_group ]; then
+            deep="$(npa/.venv/bin/python scripts/ci_image_security_scope.py \
+              --repo-root . --base "$BASE_SHA" --head "$GITHUB_SHA")"
+          fi
+          test "$deep" = true || test "$deep" = false
+          echo "deep=$deep" >> "$GITHUB_OUTPUT"
+          echo "deep base-image security: $deep"
+
+      - name: Install checksum-verified Trivy
+        if: steps.scope.outputs.deep == 'true'
+        run: |
+          bash scripts/security_install.sh "$RUNNER_TEMP/security-tools"
+          echo "$RUNNER_TEMP/security-tools" >> "$GITHUB_PATH"
+
+      - name: Scan all pinned bases with two local workers
+        if: steps.scope.outputs.deep == 'true'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          report_args=()
+          if [ "$EVENT_NAME" = push ] || [ "$EVENT_NAME" = schedule ] || [ "$EVENT_NAME" = workflow_dispatch ]; then
+            report_args=(--sarif-directory "$RUNNER_TEMP/base-image-sarif")
+          fi
+          npa/.venv/bin/python npa/scripts/scan_base_images.py \
+            --inventory npa/docker/workbench/base-image-security.json \
+            --cache-dir "$RUNNER_TEMP/trivy-cache" --workers 2 \
+            "${report_args[@]}"
+
+      - name: Upload CUDA 12.4 SARIF
+        if: always() && steps.scope.outputs.deep == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        env:
+          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
+        with:
+          sarif_file: ${{ runner.temp }}/base-image-sarif/trivy-nvidia-cuda-12-4-1-devel-ubuntu22-04.sarif
+          category: trivy-image-nvidia-cuda-12-4-1-devel-ubuntu22-04
+
+      - name: Upload CUDA 12.6 SARIF
+        if: always() && steps.scope.outputs.deep == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        env:
+          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
+        with:
+          sarif_file: ${{ runner.temp }}/base-image-sarif/trivy-nvidia-cuda-12-6-3-devel-ubuntu22-04.sarif
+          category: trivy-image-nvidia-cuda-12-6-3-devel-ubuntu22-04
+
+      - name: Upload CUDA 12.8 Ubuntu 22.04 SARIF
+        if: always() && steps.scope.outputs.deep == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        env:
+          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
+        with:
+          sarif_file: ${{ runner.temp }}/base-image-sarif/trivy-nvidia-cuda-12-8-1-cudnn-devel-ubuntu22-04.sarif
+          category: trivy-image-nvidia-cuda-12-8-1-cudnn-devel-ubuntu22-04
+
+      - name: Upload CUDA 12.8 Ubuntu 24.04 SARIF
+        if: always() && steps.scope.outputs.deep == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        env:
+          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
+        with:
+          sarif_file: ${{ runner.temp }}/base-image-sarif/trivy-nvidia-cuda-12-8-1-cudnn-devel-ubuntu24-04.sarif
+          category: trivy-image-nvidia-cuda-12-8-1-cudnn-devel-ubuntu24-04
+
+      - name: Upload CUDA 13 cuDNN SARIF
+        if: always() && steps.scope.outputs.deep == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        env:
+          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
+        with:
+          sarif_file: ${{ runner.temp }}/base-image-sarif/trivy-nvidia-cuda-13-0-2-cudnn-devel-ubuntu24-04.sarif
+          category: trivy-image-nvidia-cuda-13-0-2-cudnn-devel-ubuntu24-04
+
+      - name: Upload CUDA 13 base SARIF
+        if: always() && steps.scope.outputs.deep == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        env:
+          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
+        with:
+          sarif_file: ${{ runner.temp }}/base-image-sarif/trivy-nvidia-cuda-13-0-2-base-ubuntu24-04.sarif
+          category: trivy-image-nvidia-cuda-13-0-2-base-ubuntu24-04
+
+      - name: Upload Python base SARIF
+        if: always() && steps.scope.outputs.deep == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        env:
+          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
+        with:
+          sarif_file: ${{ runner.temp }}/base-image-sarif/trivy-python-3-11-slim-trixie.sarif
+          category: trivy-image-python-3-11-slim-trixie
+
   omniverse-payload-scan:
     name: Omniverse payload scan (built image)
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && inputs.omniverse_payload_scan_image != ''
     steps:
-      - name: Checkout
+      - name: Check out repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Set up Python 3.11
@@ -144,145 +283,3 @@ jobs:
         with:
           name: omniverse-payload-report
           path: omniverse-payload-report.json
-
-  dockerfile-static-scan:
-    name: Static Dockerfile scan (Trivy config)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-
-      - name: Trivy config scan
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: config
-          scan-ref: "."
-          severity: HIGH,CRITICAL
-          exit-code: "1"
-          ignore-unfixed: true
-          format: table
-
-      - name: Trivy config scan (SARIF)
-        if: always()
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: config
-          scan-ref: "."
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          limit-severities-for-sarif: true
-          format: sarif
-          output: trivy-config.sarif
-
-      - name: Upload config SARIF
-        if: always() && github.event_name != 'pull_request'
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
-        env:
-          # Preserve the existing alert configuration across reusable invocation.
-          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:dockerfile-static-scan
-        with:
-          sarif_file: trivy-config.sarif
-          category: trivy-config
-
-  base-image-cve-scan:
-    name: Base image CVE scan
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: nvidia-cuda-12-4-1-devel-ubuntu22-04
-            image: nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:da6791294b0b04d7e65d87b7451d6f2390b4d36225ab0701ee7dfec5769829f5
-            purge_linux_libc_dev: true
-          - name: nvidia-cuda-12-6-3-devel-ubuntu22-04
-            image: nvidia/cuda:12.6.3-devel-ubuntu22.04@sha256:d49bb8a4ff97fb5fe477947a3f02aa8c0a53eae77e11f00ec28618a0bcaa2ad1
-            purge_linux_libc_dev: true
-          - name: nvidia-cuda-12-8-1-cudnn-devel-ubuntu22-04
-            image: nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@sha256:ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3fe2a85
-            purge_linux_libc_dev: true
-          - name: nvidia-cuda-12-8-1-cudnn-devel-ubuntu24-04
-            image: nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04@sha256:24c8e3581ea6330038b0d374920721983312627f8adbfcf390bdb4b399d280ed
-            purge_linux_libc_dev: true
-          - name: nvidia-cuda-13-0-2-cudnn-devel-ubuntu24-04
-            image: nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04@sha256:e071e85c52ad91fc9ea24158ff5330876b2d1a5c4ac83ccc6066976835873c01
-            purge_linux_libc_dev: true
-          - name: nvidia-cuda-13-0-2-base-ubuntu24-04
-            image: nvidia/cuda:13.0.2-base-ubuntu24.04@sha256:2ab6381d970b211fb93853796dc6707eb8a72575a375c422b17cf4d8b2641701
-            purge_linux_libc_dev: false
-          - name: python-3-11-slim-trixie
-            image: python:3.11.16-slim-trixie@sha256:9534e5a8e315485d4061ed659af0fd78a284c015f9b73661b41d6bab25604534
-            purge_linux_libc_dev: false
-            # FiftyOne applies these OS security updates before installing its
-            # runtime. Scan that baseline while the upstream digest is stale.
-            upgrade_os: true
-    steps:
-      - name: Resolve scan target
-        id: scan-target
-        shell: bash
-        env:
-          BASE_IMAGE: ${{ matrix.image }}
-          SCAN_NAME: ${{ matrix.name }}
-          PURGE_LINUX_LIBC_DEV: ${{ matrix.purge_linux_libc_dev }}
-          UPGRADE_OS: ${{ matrix.upgrade_os || false }}
-        run: |
-          set -euo pipefail
-          if [ "$PURGE_LINUX_LIBC_DEV" = "true" ] || [ "$UPGRADE_OS" = "true" ]; then
-            patched_image="npa-base-scan:${SCAN_NAME}"
-            docker build --pull --no-cache \
-              --build-arg BASE_IMAGE="$BASE_IMAGE" \
-              --build-arg PURGE_LINUX_LIBC_DEV="$PURGE_LINUX_LIBC_DEV" \
-              --build-arg UPGRADE_OS="$UPGRADE_OS" \
-              -t "${patched_image}" \
-              -f - . <<'DOCKERFILE'
-          ARG BASE_IMAGE
-          FROM ${BASE_IMAGE}
-          USER root
-          ARG PURGE_LINUX_LIBC_DEV=false
-          ARG UPGRADE_OS=false
-          RUN if [ "$UPGRADE_OS" = "true" ]; then \
-                apt-get update \
-                && apt-get upgrade -y --no-install-recommends; \
-              fi \
-              && if [ "$PURGE_LINUX_LIBC_DEV" = "true" ]; then \
-                dpkg --purge --force-depends linux-libc-dev; \
-              fi \
-              && rm -rf /var/lib/apt/lists/*
-          DOCKERFILE
-            echo "image=${patched_image}" >> "${GITHUB_OUTPUT}"
-          else
-            echo "image=${BASE_IMAGE}" >> "${GITHUB_OUTPUT}"
-          fi
-
-      - name: Trivy image scan
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ${{ steps.scan-target.outputs.image }}
-          severity: CRITICAL
-          exit-code: "1"
-          ignore-unfixed: true
-          vuln-type: os
-          timeout: 2562047h47m16s
-          format: table
-
-      - name: Trivy image scan (SARIF)
-        if: always()
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ${{ steps.scan-target.outputs.image }}
-          severity: CRITICAL
-          ignore-unfixed: true
-          vuln-type: os
-          timeout: 2562047h47m16s
-          limit-severities-for-sarif: true
-          format: sarif
-          output: trivy-${{ matrix.name }}.sarif
-
-      - name: Upload image SARIF
-        if: always() && github.event_name != 'pull_request'
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
-        env:
-          # Preserve the existing alert configuration across reusable invocation.
-          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
-        with:
-          sarif_file: trivy-${{ matrix.name }}.sarif
-          category: trivy-image-${{ matrix.name }}
