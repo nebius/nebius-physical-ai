@@ -166,13 +166,16 @@ skills:
         contains: "output-path"
   - name: find-artifacts
     category: atomic
-    when_to_use: "Discover, classify, and load artifacts in npa agent using artifact-first browse/pick/view flow."
+    when_to_use: "Search selected or accessible S3 buckets with npa studio, or discover, classify, and load run artifacts in the npa agent."
     path: skills/atomic/find-artifacts/SKILL.md
     smoke:
       - type: file_exists
         path: npa/src/npa/workflows/artifacts.py
       - type: file_exists
         path: skills/atomic/find-artifacts/SKILL.md
+      - type: cli_help
+        args: ["studio", "search", "--help"]
+        contains: "--bucket"
   - name: agent-visual-feedback
     category: atomic
     when_to_use: "Describe or critique the NPA agent viewer (Rerun, video, image, data) via Describe this / multimodal visual feedback."

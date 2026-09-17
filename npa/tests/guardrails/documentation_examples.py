@@ -201,6 +201,8 @@ def _option_parameters(command) -> dict:
 
 
 def _command_error(root, argv: list[str]) -> str:
+    if argv[1:2] == ["studio"]:
+        return _studio_error(argv[2:])
     command = root
     names = ["npa"]
     index = 1
@@ -227,6 +229,65 @@ def _command_error(root, argv: list[str]) -> str:
             command = child
             names.append(argument)
         index += 1
+    return ""
+
+
+def _studio_parser(command: str):
+    from npa.studio import _init_parser
+    from npa.studio_artifacts import _parser as search_parser
+    from npa.studio_project import _parser as create_parser
+
+    parsers = {"init": _init_parser, "search": search_parser, "create": create_parser}
+    if command in parsers:
+        return parsers[command]()
+    import importlib
+    import sys
+
+    renderer = Path(__file__).resolve().parents[2] / "src/npa/studio_renderer"
+    sys.path.insert(0, str(renderer))
+    try:
+        module = {"draft": "film_draft", "watch": "film_watch"}.get(command, "edit")
+        return importlib.import_module(module)._parser()
+    finally:
+        sys.path.remove(str(renderer))
+
+
+def _studio_error(arguments: list[str]) -> str:
+    if arguments[:1] == ["--registry"]:
+        arguments = arguments[2:]
+    elif arguments and arguments[0].startswith("--registry="):
+        arguments = arguments[1:]
+    if not arguments or arguments[0] in {"--help", "-h"}:
+        return ""
+    command = arguments[0]
+    if command == "list":
+        return "" if len(arguments) == 1 else "npa studio list takes no options"
+    if command in {"init", "search", "create"}:
+        options = arguments[1:]
+    else:
+        command = arguments[1] if len(arguments) > 1 else ""
+        options = arguments[2:]
+        if command not in {"brief", "scenes", "narrate", "draft", "watch", "preview", "final"}:
+            return f"npa studio: unknown film command {command}"
+    return _argparse_option_error(_studio_parser(command), options, f"npa studio {command}")
+
+
+def _argparse_option_error(parser, arguments: list[str], command: str) -> str:
+    """Validate the import-light command against its actual argparse options."""
+    actions = parser._option_string_actions
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument in _SHELL_BOUNDARIES or argument == "--" or argument.startswith("..."):
+            break
+        if not argument.startswith("-"):
+            index += 1
+            continue
+        option = argument.split("=", 1)[0]
+        action = actions.get(option)
+        if action is None:
+            return f"{command}: unknown option {option}"
+        index += 1 if action.nargs == 0 or "=" in argument else 2
     return ""
 
 

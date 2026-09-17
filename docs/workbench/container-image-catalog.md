@@ -20,7 +20,7 @@ images. It and existing saved `container_registry` values do not repoint these
 repository-owned runtime defaults; select custom bytes with a complete image
 reference or an explicit workflow `--registry`.
 
-The accepted-release manifest contains **34 current release tags**, all matched
+The accepted-release manifest contains **37 current release tags**, all matched
 anonymously against their recorded digests on **2026-09-17**. Flex-pi r2 was
 independently built, scanned, and run on both required GPU targets on **2026-09-17**.
 All recorded runtime variants are `linux/amd64`. Capability
@@ -43,13 +43,11 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory, including flex-pi and the pending NCore
-integration, has **39 packaging entries** (37 redistribution-eligible and two
-restricted) and **40 mapped tools**: 34 public-release members, two restricted
-tools, and four quarantined tools (`curobo`, `ncore`, `openpi`, and `robocasa`).
-These counts come
-from `packaging-contract.yaml` and `npa.deploy.images`; they do not constitute
-a new registry audit or acceptance of the quarantined images.
+The current source inventory has **42 packaging entries** (40 redistribution-eligible
+and two restricted) and **43 mapped tools**: 37 public-release members, two
+restricted tools, and four quarantined tools (`curobo`, `ncore`, `openpi` and
+`robocasa`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
+they do not constitute acceptance of the quarantined images.
 
 LeRobot 0.6.0 is selectable package support with an accepted optional public
 image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact
@@ -105,6 +103,18 @@ or moving either tag, the maintained workflow toolRef enabled the image's
 existing `--torch-compile` path. Five paired warm samples measured 2.645× median
 speedup on RTX PRO 6000 and 2.278× on B200, with finite 32×14 actions inside the
 documented BF16 tolerance and five durable read-back objects per final target.
+
+## Native model publication
+
+The `npa-diffusers`, `npa-lingbot-world` and `npa-sam2` source-only runtimes
+were built from `d54eec137d3b2d86ff1acef736e36967b1fad7d3`, passed mandatory
+public-image gates, and completed six native B200 capability checks on their
+exact public development digests. On 2026-09-16, the repository publisher promoted
+those same bytes to the supported release tags below. Independent anonymous
+full image pulls and digest parity passed for all three. Weights and CUDA
+packages remain runtime fetches. B300 remains unvalidated for these images.
+See the [native workflow guide](video-generation-byof.md) and
+[capability evidence](validation/studio-public-models-20260916.json).
 
 ## Pending NCore conversion image
 
@@ -304,6 +314,9 @@ and populated caches remain absent from the public image.
 | Rerun 0.31.4 | `npa-rerun-viewer` | `0.31.4-sim2real-coherent-20260904` | 2026-09-04 | Published non-root `ubuntu` SkyPilot worker and Rerun viewer/server on ports 9876/9090 for `.rrd` robotics traces. It includes the attested bootstrap contract and exact-source Sim2Real Stage 14 runtime, and bakes no models, datasets, credentials, or runtime caches. The coherent release converted an actual three-sample robot joint trace, reopened its RRD entity through the CLI, and served/read the artifact over HTTP. |
 | Sim2Real Controller 0.1.2 | `npa-sim2real-control` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Non-root CPU controller containing the canonical 14-stage orchestration capability. The coherent release expanded and validated both the checkpoint-promotion and loop-back decision branches; it contains no model weights, datasets, credentials, or runtime caches. |
 | Sim2Real EnvGen 0.1.2 | `npa-envgen` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Generates randomized Sim2Real environments and scenes on the Genesis base. The coherent exact-source release bakes the snapshot-pinned non-root SkyPilot Kubernetes bootstrap closure (`sudo`, SSH, and rsync) and was validated through real environment generation plus a Genesis CUDA physics step. It is built from `sim2real-envgen/Dockerfile`. |
+| Diffusers native generation and depth | `npa-diffusers` | `0.38.0-rtfetch-20260916` | 2026-09-16 | Pinned OSS runtime for Mochi 1, CogVideoX-2B, Wan 2.1 14B and Depth Anything V2 Small. All four native capabilities qualified on B200 at the exact public digest; CUDA and checkpoints fetched at runtime. |
+| LingBot World v1 | `npa-lingbot-world` | `a43bec7-rtfetch-20260916` | 2026-09-16 | Camera-conditioned video generation, qualified on four B200s with positive attention/all-to-all execution on every rank and 161 decoded frames. Authored camera poses; no robot-action or calibrated-geometry claim. |
+| SAM 2.1 Small | `npa-sam2` | `2.1-rtfetch-20260916` | 2026-09-16 | Native CUDA video-mask propagation from a first-frame box; raw arrays and color-preserving visualization qualified on B200. Predicted masks are not ground truth. |
 | Enactic OpenArm | `npa-openarm` | `2.2.0-isaac0.1.0-rtfetch` | 2026-09-15 | OpenArm v2 bimanual MuJoCo simulation plus upstream OpenArm Isaac Lab reach rollout and RSL-RL training. Apache-2.0 OpenArm source and simulator assets are baked; Isaac Sim/Lab are exact runtime fetches after the operator's EULA decision. The exact release digest passed byte/supply-chain gates and a complete RTX PRO 6000 dual-simulator workflow with independently checked traces, rendered video, checkpoint, and qualification report. See [OpenArm](openarm.md). |
 
 The supported FiftyOne release uses loopback access through verified SSH or
@@ -350,15 +363,15 @@ this chart is generated from that table and the publishing plan:
 
 ![Published GHCR images against every Nebius GPU platform](../assets/image-gpu-coverage.svg)
 
-All 34 accepted release references resolved anonymously to their recorded
+All 37 accepted release references resolved anonymously to their recorded
 digests on 2026-09-17. The chart groups the current publishing plan three ways:
 
-- **18 GPU images have no known blocked platform**: `npa-alpamayo2-super`,
+- **21 GPU images have no known blocked platform**: `npa-alpamayo2-super`,
   `npa-cosmos3`, `npa-cosmos3-ray-serve`, `npa-cosmos3-reason`,
   `npa-detection-training`, `npa-envgen`, `npa-genesis`, `npa-groot`,
   `npa-flex-pi`, `npa-lancedb`, `npa-lerobot`, `npa-lerobot-policy`, `npa-lerobot-vlm-rl`,
   `npa-loop-eval`, `npa-ltx2`, `npa-reference-policy`, `npa-sonic-mujoco`, and
-  `npa-wan2-2`. This band does not mean every cell has a current-release run:
+  `npa-wan2-2`, `npa-diffusers`, `npa-lingbot-world`, and `npa-sam2`. This band does not mean every cell has a current-release run:
   the matrix distinguishes verified, historical, supported, and unverified
   cells.
 - **8 public images are blocked on at least one platform**:
@@ -409,11 +422,11 @@ table. The independently rebuilt `sonic-mujoco:0.2.0-runtime` and zero-payload
 
 ## Verification scope
 
-The registry verification confirms exact tag spelling, anonymous manifest and
+The earlier catalog inspections checked tag spelling, anonymous manifest and
 config access, content hashes, platform metadata, selected OCI labels, exposed
-ports, entrypoints, and build timestamps. It is not a new packaging-policy or
-functional-validation pass. The current accepted SONIC Kubernetes pin declares
-OCI user `root`; the other 32 current releases declare non-root users. SONIC's
+ports, entrypoints, and build timestamps. The 2026-09-17 check above verifies
+accepted release digests; it is not a new packaging-policy or functional-validation
+pass. The accepted SONIC Kubernetes pin retains its documented OCI user `root`. SONIC's
 legacy runtime-user limitation remains documented in the
 [security review](../security/container-golden-evals.md); a current non-root
 Dockerfile does not retroactively change those accepted bytes. Source contracts

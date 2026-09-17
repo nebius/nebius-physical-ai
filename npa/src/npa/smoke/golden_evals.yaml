@@ -896,6 +896,74 @@ containers:
       timeout_seconds: 300
       status: ready
 
+  diffusers:
+    image: npa-diffusers
+    dockerfile: npa/docker/workbench/diffusers/Dockerfile
+    physical_ai:
+      useful: true
+      role: Mochi 1, CogVideoX-2B and Wan 2.1 video generation; relative-depth perception.
+    safety:
+      runs_as: ubuntu
+      base_image: npa-wan2-2 (accepted public digest pinned)
+      network: runtime-only CUDA and operator-authorized Hugging Face checkpoints
+      external_fetch: [pytorch-cu130-after-operator-acceptance, huggingface]
+      notes: >-
+        Source-only public job runtime. Health is a packaging check; the golden
+        command runs a real GPU capability and decodes the output. Camera and
+        segmentation require operator-supplied input mounts. Separate model
+        workflow runs qualify every advertised capability.
+    golden_eval:
+      kind: container-smoke
+      command: bash /usr/local/bin/model-runtime golden --model cogvideox-2b --output-path /tmp/npa-golden
+      gpu: required
+      timeout_seconds: unlimited
+      status: gpu-gated
+
+  lingbot-world:
+    image: npa-lingbot-world
+    dockerfile: npa/docker/workbench/lingbot-world/Dockerfile
+    physical_ai:
+      useful: true
+      role: Native camera-conditioned continuation with four-rank FSDP and Ulysses.
+    safety:
+      runs_as: ubuntu
+      base_image: npa-wan2-2 (accepted public digest pinned)
+      network: runtime-only CUDA and operator-authorized Hugging Face checkpoints
+      external_fetch: [pytorch-cu130-after-operator-acceptance, huggingface]
+      notes: >-
+        Source-only public job runtime. Health is a packaging check; the golden
+        command runs a real GPU capability and decodes the output. Camera and
+        segmentation require operator-supplied input mounts. Separate model
+        workflow runs qualify every advertised capability.
+    golden_eval:
+      kind: container-smoke
+      command: bash /usr/local/bin/model-runtime golden --model lingbot-world --input-path /inputs/image.png --output-path /tmp/npa-golden
+      gpu: required
+      timeout_seconds: unlimited
+      status: gpu-gated
+
+  sam2:
+    image: npa-sam2
+    dockerfile: npa/docker/workbench/sam2/Dockerfile
+    physical_ai:
+      useful: true
+      role: Native prompted mask propagation through a source video.
+    safety:
+      runs_as: ubuntu
+      base_image: npa-wan2-2 (accepted public digest pinned)
+      network: runtime-only CUDA and operator-authorized Hugging Face checkpoints
+      external_fetch: [pytorch-cu130-after-operator-acceptance, huggingface]
+      notes: >-
+        Source-only public job runtime. Health is a packaging check; the golden
+        command runs a real GPU capability and decodes the output. Camera and
+        segmentation require operator-supplied input mounts. Separate model
+        workflow runs qualify every advertised capability.
+    golden_eval:
+      kind: container-smoke
+      command: bash /usr/local/bin/model-runtime golden --model sam2.1 --input-path /inputs/video.mp4 --box 240 100 700 500 --output-path /tmp/npa-golden
+      gpu: required
+      timeout_seconds: unlimited
+      status: gpu-gated
   openarm:
     image: npa-openarm
     dockerfile: npa/docker/workbench/openarm/Dockerfile

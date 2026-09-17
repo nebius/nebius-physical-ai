@@ -51,7 +51,8 @@ Python and HTTP access follow each tool's documented contract.
 | --- | --- |
 | Curation, vector search, and detection training | [BDD100K pipeline](cookbooks/bdd100k-pipeline.md) · [LanceDB search](cookbooks/lancedb-vector-search.md) · [LanceDB deployment](cookbooks/lancedb-deploy-runbook.md) |
 | Hosted captioning, generation, and reasoning | [Token Factory](token-factory.md) · [cloud composition](composing-cloud-and-token-factory.md) |
-| Evaluate rollouts with a VLM | [VLM evaluation loop](cookbooks/vlm-eval-loop-runbook.md) |
+| Evaluate rollouts and verify VLM model provenance | [VLM evaluation loop and live endpoint check](cookbooks/vlm-eval-loop-runbook.md) |
+| Find artifacts across selected or accessible buckets | [Artifact discovery guide](cookbooks/find-artifacts.md) |
 | View and share artifacts | [Rerun](rerun-sharing.md) · [Foxglove / MCAP](foxglove-export.md) · [browser workbench](../agent.md) |
 | Autonomous-driving inference | [Alpamayo 2 Super](alpamayo2-super.md) |
 | Native Ray jobs, training, and serving | [Ray](ray.md) |

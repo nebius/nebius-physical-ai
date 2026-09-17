@@ -84,6 +84,42 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Pinned PushT data, matched real ACT training, paired closed-loop shifts, next-demo queue and RRD.",
     ),
     SubmitLiveCase(
+        "byof-mochi-1.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-cogvideox-2b.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-wan2.1-14b.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-lingbot-world.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-depth-anything-v2.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-sam2.1.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
         "cosmos3-policy-model-factory.yaml", "gpu",
         secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         image_tool="cosmos3",
