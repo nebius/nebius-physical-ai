@@ -14,7 +14,6 @@ from npa.cluster.config import (
     SUPPORTED_NODE_PRESETS,
 )
 
-SKYPILOT_VERSION = "0.12.2"
 DEFAULT_BACKEND = "nebius"
 DEFAULT_AUTOSTOP_IDLE_MINUTES = 5
 
