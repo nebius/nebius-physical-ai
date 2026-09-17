@@ -17,8 +17,8 @@ cosmos3  Cosmos3 omni-model generation and reasoning workflow contracts.
 cosmos-curate  NVIDIA Cosmos Curator: split, transcode, motion-score, and catalog video clips.
 cosmos-evaluator  Cosmos Evaluator checks plus NPA source-relative temporal and protected-appearance diagnostics.
 fiftyone  Voxel51 FiftyOne dataset curation and visualization workbench.
-foxglove  Foxglove embedded viewer: MCAP conversion, inspection, and SDK assets.
 flex-pi  Flex-pi multi-stream world-action policy inference.
+foxglove  Foxglove embedded viewer: MCAP conversion, inspection, and SDK assets.
 genesis  Genesis simulation: teacher training, demo generation, evaluation.
 groot  NVIDIA Isaac GR00T humanoid foundation-model workbench.
 isaac-lab  Isaac Lab simulation workbench deployment, training, and evaluation.
@@ -64,8 +64,8 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `cosmos-curate` | NVIDIA Cosmos Curator: split, transcode, motion-score, and catalog video clips. |
 | `cosmos-evaluator` | Cosmos Evaluator checks plus NPA source-relative temporal and protected-appearance diagnostics. |
 | `fiftyone` | Voxel51 FiftyOne dataset curation and visualization workbench. |
-| `foxglove` | Foxglove embedded viewer: MCAP conversion, inspection, and SDK assets. |
 | `flex-pi` | Flex-pi multi-stream world-action policy inference. |
+| `foxglove` | Foxglove embedded viewer: MCAP conversion, inspection, and SDK assets. |
 | `genesis` | Genesis simulation: teacher training, demo generation, evaluation. |
 | `groot` | NVIDIA Isaac GR00T humanoid foundation-model workbench. |
 | `isaac-lab` | Isaac Lab simulation workbench deployment, training, and evaluation. |
