@@ -157,6 +157,10 @@ that actions ran. Replay supports one episode in one environment. Apply its
 recorded initial state with Isaac Lab `reset_to(is_relative=True)` and execute
 the exact source prefix through the requested native episode terminal. Record
 any unexecuted suffix explicitly and keep it outside the scored/captured episode.
+Match the scene to the recording: the microwave tutorial has no optional extra
+object, so its shipped workflow uses `config.object: ""`. Upstream's `--object`
+adds another physical asset and needs its recorded initial state. Preserve an
+explicit matching selector; do not fill missing state from simulator defaults.
 Do not invent an early stop, synthetically pad/repeat actions, or append a held
 action to manufacture a completed episode. A naturally stable source tail remains
 subject to the registered adapter limit. A source recording that cannot complete the task is an

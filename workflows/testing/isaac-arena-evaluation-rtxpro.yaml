@@ -36,7 +36,9 @@ config:
   num_envs: "1"
   seed: "42"
   embodiment: gr1_pink
-  object: tomato_soup_can
+  # The tutorial recording contains the robot and microwave only. An optional
+  # extra object changes the scene and requires its own recorded initial state.
+  object: ""
 
 resources:
   gpu:

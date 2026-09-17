@@ -11,9 +11,12 @@ from unittest.mock import Mock
 import h5py
 import numpy as np
 import pytest
+from typer.testing import CliRunner
 
+from npa.cli.main import app
 from npa.orchestration.npa_workflow.interpreter import build_plan
 from npa.orchestration.npa_workflow.spec import load_spec
+from npa.workbench.isaac_arena.runtime import build_evaluation_argv
 
 
 class _Storage:
@@ -143,3 +146,34 @@ def test_arena_live_seed_rejects_invalid_prefix_before_io(live_inputs, monkeypat
     factory.assert_not_called()
     download.assert_not_called()
     assert storage.objects == {}
+
+
+@pytest.mark.parametrize("extra_object", ["", "tomato_soup_can"])
+def test_replay_workflow_preserves_optional_scene_selection_through_cli(
+    monkeypatch, tmp_path, extra_object
+):
+    path = Path(__file__).resolve().parents[4] / "workflows/testing/isaac-arena-evaluation-rtxpro.yaml"
+    spec = load_spec(path)
+    assert spec.config["object"] == ""
+    spec.config["object"] = extra_object
+    planned = build_plan(spec, run_id="unit-scene-binding").steps[0].argv
+    replay = tmp_path / "recording.hdf5"
+    with h5py.File(replay, "w") as dataset:
+        dataset.create_group("data/demo_0")
+    native = []
+
+    def execute(request):
+        native.extend(build_evaluation_argv(
+            request, output_dir=tmp_path, local_input=replay
+        ))
+        return {"status": "test-only-argv"}
+
+    monkeypatch.setattr("npa.cli.workbench.isaac_arena.evaluate", execute)
+    result = CliRunner().invoke(app, planned[1:])
+    assert result.exit_code == 0, result.output
+    assert native[native.index("--device") + 1] == "cpu"
+    assert "--record_viewport_video" in native
+    if extra_object:
+        assert native[native.index("--object") + 1] == extra_object
+    else:
+        assert "--object" not in native

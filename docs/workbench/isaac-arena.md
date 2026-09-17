@@ -115,6 +115,13 @@ The evaluator supports the three local policy adapters registered by upstream:
 - `rsl_rl`: `--input-path` resolves to `model*.pt` or a directory containing
   exactly one such checkpoint with sibling `params/agent.yaml`.
 
+The replay scene must match the recording. The shipped microwave workflow leaves
+`config.object` empty because the tutorial episode records the robot and microwave
+only. Upstream's optional `--object` adds another physical asset; selecting it
+requires a recording containing that asset's initial state. NPA preserves explicit
+object choices and omits an empty selector from the native invocation. It does not
+fill missing recorded state from simulator defaults.
+
 Replay follows Isaac Lab's dataset format metadata: absent or integer `0` means
 legacy WXYZ quaternions; integer `1` means XYZW. Unknown or malformed versions
 are rejected. The pinned Lab loader converts legacy root poses but does not
