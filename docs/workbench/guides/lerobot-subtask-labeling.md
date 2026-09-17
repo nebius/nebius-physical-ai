@@ -107,6 +107,13 @@ requested label fail the workflow before it publishes a proof.
 
 ## Reproducible test evidence
 
+Start with the [real labeled LeRobot MP4](../evidence/lerobot-video-subtasks/lerobot-labeled.mp4):
+two synchronized SO-100 cameras, eight changing subtask labels, and a phase
+timeline. Its [evidence and reproduction guide](../evidence/lerobot-video-subtasks/README.md)
+includes the actual 454-frame input/derived episode, executable YAML report,
+and an RRD containing the video and every labeled row. These are visually checked
+demonstration annotations, not labels supplied by the original dataset.
+
 Open the [recorded proof bundle](../evidence/lerobot-subtasks/README.md) for the
 actual input and derived Parquet files, a scrub-able Rerun recording, every
 before/after row, the executed YAML report, and hash-bound verification. The
