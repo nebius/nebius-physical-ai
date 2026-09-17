@@ -71,6 +71,36 @@ def _doc() -> dict:
     return yaml.safe_load(SPEC.read_text(encoding="utf-8"))
 
 
+def test_custom_appearance_profiles_reach_the_real_sampler(tmp_path):
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+    from npa.workflows.data_factory_stages import generate_configs
+
+    profile = {"lighting": "soft warm room lighting", "background": "gray work surface",
+               "color_grade": "neutral balanced color palette",
+               "surface_finish": "matte low-gloss work surface"}
+    document = _doc()
+    document["config"]["appearance_profiles_json"] = json.dumps([profile])
+    document["config"]["configs_uri"] = str(tmp_path / "configs")
+    document["config"]["images_uri"] = str(tmp_path / "input")
+    path = tmp_path / "workflow.yaml"
+    path.write_text(yaml.safe_dump(document))
+    plan = build_plan(load_spec(path), run_id="custom-profiles",
+                      assume_decision="promote_checkpoint")
+    stage = next(step for step in plan.steps if step.state == "generate-configs")
+    manifest = generate_configs(*stage.argv[3:])
+    assert manifest["appearance_profiles"] == [profile]
+    assert all(item["lighting"] == profile["lighting"] for item in manifest["augmentations"])
+
+
+def test_invalid_appearance_profile_override_fails_during_planning():
+    result = runner.invoke(app, ["workbench", "workflow", "plan-spec", str(SPEC),
+                                "--run-id", "invalid-profiles", "--var",
+                                'appearance_profiles_json=[{"lighting":"warm"}]', "--json"])
+    assert result.exit_code != 0
+    assert "appearance profile" in result.output
+
+
 def test_paidf_cosmos3_schema_and_real_component_contract() -> None:
     doc = _doc()
     assert doc["apiVersion"] == "npa.workflow/v0.0.1"
@@ -157,7 +187,7 @@ def test_configuration_surface_and_privacy_defaults() -> None:
     assert float(config["attribute_threshold"]) == 0.25
     assert config["augmentation_seed"] == "30"
     assert (
-        doc["states"]["generate-configs"]["run"]["argv"][-1]
+        doc["states"]["generate-configs"]["run"]["argv"][-3]
         == "{{config.augmentation_seed}}"
     )
     assert config["bucket"] == "example-bucket"

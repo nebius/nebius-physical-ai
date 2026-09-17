@@ -444,10 +444,22 @@ def validate_spec(spec: NpaWorkflowSpec) -> None:
     _validate_resource_profiles(spec)
     _validate_executable_resource_contracts(spec)
     _validate_optional_sam2_config(spec)
+    _validate_appearance_profiles(spec)
     _assert_acyclic_needs(spec)
     _assert_terminal_exists(spec)
     _assert_bounded_control_flow_cycles(spec)
     _validate_resolvable(spec)
+
+
+def _validate_appearance_profiles(spec: NpaWorkflowSpec) -> None:
+    if "appearance_profiles_json" not in spec.config:
+        return
+    from npa.workflows.data_factory_appearance import parse_appearance_profiles
+
+    try:
+        parse_appearance_profiles(spec.config["appearance_profiles_json"])
+    except ValueError as exc:
+        raise NpaWorkflowError(str(exc)) from exc
 
 
 def _validate_optional_sam2_config(spec: NpaWorkflowSpec) -> None:

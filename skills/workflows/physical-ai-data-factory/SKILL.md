@@ -37,6 +37,23 @@ The independent `paidf-cosmos3.yaml` variant is documented at
 Cosmos 3 `video2video` generation and does not replace or silently change this
 skill's Cosmos Transfer 2.5 blueprint.
 
+For realistic manipulation augmentation, use
+`docs/workbench/guides/paidf-realistic-augmentation.md`. Cosmos3 accepts
+`config.appearance_profiles_json` (empty by default) to replace the starter
+profiles with coherent task/camera-specific edits. Each profile must contain
+exactly `lighting`, `background`, `color_grade` and `surface_finish`; validation
+runs before planning and sampling. The config manifest records custom profiles
+and supplies their values to evaluator questions. Profile cycles repeat when
+variant count exceeds profile count; do not report that as appearance diversity.
+Custom profiles and a quality anchor are mutually exclusive. Generation uses
+source observations spanning the complete episode and separates observations
+from edit instructions. Keep task identity, small contact features, geometry,
+camera motion and timing explicit. The battery sampling example is unqualified
+until actual GPU outputs pass temporal/contact review; do not promote its
+settings to universal defaults or describe input-only checks as augmentation
+validation. Retain rejected attempts and validate other episodes/cameras before
+claiming generality.
+
 For operator setup, verify `command -v nebius` and `nebius version` after selecting
 `PATH` and after any environment activation. Health preflight proves profile
 authentication, while configure also enforces NPA's supported CLI version.

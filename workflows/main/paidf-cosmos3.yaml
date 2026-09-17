@@ -42,6 +42,9 @@ config:
   variant_parallelism: "1"
   # Stable starter profiles across run IDs; change for appearance experiments.
   augmentation_seed: "30"
+  # Optional JSON array of coherent task-specific appearance profiles; empty
+  # retains the starter sampler. See the guide for manipulation tuning.
+  appearance_profiles_json: ""
   parallelism_preset: latency
   refinement_iterations: "2"
   retry_seed_stride: "1000"
@@ -164,6 +167,8 @@ states:
         - "false"
         - "{{config.augment_subject}}"
         - "{{config.augmentation_seed}}"
+        - ""  # Optional quality anchor, unused by this recipe.
+        - "{{config.appearance_profiles_json}}"
     outputs:
       - uri: "{{config.configs_uri}}manifest.json"
         schema: npa.data_factory.configs.v1

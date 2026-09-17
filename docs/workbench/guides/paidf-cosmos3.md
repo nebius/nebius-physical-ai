@@ -139,6 +139,17 @@ native structural controls across the complete prepared video. Inspect visual
 identity, motion and contacts independently of successful timeline validation;
 lowering a quality threshold changes acceptance criteria without improving pixels.
 
+### Task-specific appearance profiles
+
+`appearance_profiles_json` defaults to an empty string (the starter profiles).
+Supply a JSON array with `lighting`, `background`, `color_grade`, and
+`surface_finish` in every profile to select plausible edits for the chosen
+camera and task. The manifest retains those profiles and evaluator choices.
+Source captions sampled across the episode are separated from the requested
+appearance edit in the effective prompt. See the
+[realistic manipulation guide](paidf-realistic-augmentation.md) for battery
+insertion, controlled sampling experiments and review criteria.
+
 ## Artifact contract
 
 Every successful generation pass preserves the downstream layout:

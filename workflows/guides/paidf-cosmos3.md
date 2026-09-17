@@ -988,6 +988,23 @@ as shown in the R3a audit, then require **one passed test**, not a skip:
 )
 ```
 
+### R3c. Tune realistic manipulation augmentation
+
+For `lerobot/aloha_static_battery` or another manipulation task, follow the
+[realistic augmentation guide](../../docs/workbench/guides/paidf-realistic-augmentation.md).
+It provides a pinned battery input, configurable coherent appearance profiles,
+strict evaluation settings, controlled comparisons and contact-level review.
+The proposed sampling controls are an unqualified experiment; input preparation
+and unit tests do not establish generated-data quality.
+
+Set `appearance_profiles_json` through `--var` or a YAML multiline string to
+replace the starter appearance sampler for a run. Leave it empty to retain the
+starter profiles. Each JSON profile requires `lighting`, `background`,
+`color_grade` and `surface_finish`; validation rejects malformed or duplicate
+profiles. The config manifest records the exact profiles and evaluator options.
+Keep the same overrides in plan and submit, and reserve a fresh run ID for each
+experiment. Use R7 for owned cleanup after each run.
+
 ### R4. Monitor and recover
 
 In another terminal, restore the same project, run ID, and other R1 variables,
@@ -1104,6 +1121,7 @@ Use a fresh run ID after changing inputs or settings.
 | `prompt`, `negative_prompt`, `augment_subject` | See YAML | Generation intent and appearance sampling. Each effective prompt also includes source captions and the sampled appearance profile. |
 | `seed`, `guidance`, `steps` | `17`, `5.0`, `24` | Generation sampling. |
 | `variant_count`, `variant_parallelism` | `2`, `1` | Number of variants and concurrent generation workers, limited by visible GPUs. |
+| `appearance_profiles_json` | Empty | Optional JSON array of coherent task-specific profiles; see R3c. |
 | `augmentation_seed` | `30` | Fixed appearance profiles across fresh run IDs; change it for new appearance experiments. An empty value restores run-ID sampling. |
 | `refinement_iterations` | `2` | Maximum total generation/evaluation passes, including the initial pass. |
 | `retry_seed_stride`, `retry_guidance_delta`, `retry_steps_delta` | `1000`, `-0.5`, `4` | Changes per retry. The second pass starts at seed `1017`, guidance `4.5`, and `28` steps. |

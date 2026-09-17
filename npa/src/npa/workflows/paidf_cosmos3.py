@@ -745,7 +745,11 @@ def _caption_text(payload: Any) -> str:
     captions = [item for item in captions if item]
     if not captions:
         raise PaidfCosmos3Error("original caption report contains no captions")
-    return " ".join(captions[:4])
+    # Include the end of the action as well as its setup when captioning sampled
+    # more frames than the generation prompt needs.
+    count = min(4, len(captions))
+    indices = [round(index * (len(captions) - 1) / max(1, count - 1)) for index in range(count)]
+    return " ".join(captions[index] for index in indices)
 
 
 def _variant_metadata(
@@ -943,13 +947,15 @@ def generate_variants(
         materialize_vision_input,
     )
 
+    from npa.workflows.data_factory_appearance import generation_prompt
+
     run_generate = generator or generate_and_publish
     local_input = materialize_vision_input(input_video_uri)
     work_root = Path(tempfile.mkdtemp(prefix="npa-paidf-c3-generate-"))
 
     def run_one(index: int) -> tuple[int, dict[str, Any], dict[str, Any], str]:
         combo = dict(combos[index])
-        variant_prompt = f"{str(prompt).strip()} Source understanding: {caption}. {str(combo.get('prompt') or '').strip()}"
+        variant_prompt = generation_prompt(prompt, caption, str(combo.get("prompt") or ""))
         variant_seed = base_seed + attempt * seed_stride + index
         env = dict(environ if environ is not None else os.environ)
         env["CUDA_VISIBLE_DEVICES"] = gpu_ids[index % concurrency]
