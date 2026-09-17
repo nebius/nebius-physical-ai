@@ -13,7 +13,7 @@
     },
     "task_fidelity": {
       "status": "unverified",
-      "reason": "The pinned battery high and left-wrist episode-zero inputs passed full normalization (12 seconds, 288 frames at 24 fps). Task-aware captions were exercised on eight source frames. Real GPU high-camera candidates passed decoded alignment but were visually rejected for harsh contrast and distorted task details. Completed B200 pairs with medium and low edge presets also failed the real evaluator. No battery recipe is yet quality-qualified; runtime execution and earlier starter evidence do not establish task fidelity.",
+      "reason": "The pinned battery high and left-wrist episode-zero inputs passed full normalization (12 seconds, 288 frames at 24 fps). Fresh caption frames cover the complete episode. Thirteen real high-camera GPU outputs passed decoded alignment; all six completed paired evaluator batches rejected both candidates. Gentler sampling, explicit identity colors and native RGB conditioning improved source detail but did not qualify fine task geometry or the appearance edit. No battery recipe is quality-qualified; runtime execution and earlier starter evidence do not establish task fidelity.",
       "evidence": [
         "docs/workbench/guides/paidf-realistic-augmentation.md#validation-status",
         "npa/tests/workflows/test_data_factory_appearance.py",

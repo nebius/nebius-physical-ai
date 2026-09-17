@@ -106,6 +106,7 @@ QUALITY_ARGS=(
   --var 'negative_prompt=red battery, orange battery, recolored battery terminals, changed object colors, extra or missing objects, warped grippers, altered battery or slot, floating objects, interpenetration, motion retiming, flicker, ghosting, unsafe content'
   --var augmentation_seed=30 --var seed=17
   --var transfer_edge_threshold=low
+  --var transfer_rgb_weight=0.5
   --var control_guidance=1.0 --var guidance=3.0 --var steps=35
   --var grade_threshold=0.75 --var attribute_threshold=1.0
   --var temporal_consistency_mode=required
@@ -128,7 +129,9 @@ npa workbench workflow submit "$SPEC" --run-id "$RUN_ID" \
 ```
 
 These gentler sampling settings reduced excessive contrast in the battery
-experiment; they remain an **unqualified starting experiment**, not a
+experiment. Adding RGB conditioning improved the measured source-relative
+temporal score, but both candidates still failed the unchanged quality gates.
+These settings remain an **unqualified starting experiment**, not a
 training-quality recommendation. Before the explicit identity-color wording shown
 here, the cool candidate still recolored the battery and the warm candidate's
 intended appearance change was difficult to verify.
@@ -314,3 +317,25 @@ outputs still changed fine gripper details; the evaluator rejected both with
 aggregate score 0.150257, temporal scores 0.147766 and 0.152749, and attribute
 scores 2/4 and 1/4. Complete caption coverage fixes missing observations; it
 does not establish faithful generation.
+
+A seventh pair added only `transfer_rgb_weight=0.5` to the sixth trial's
+generation controls, reusing its prepared source, complete-clip captions,
+profiles, prompts and seeds. The resolved model revision was unchanged. Both
+native-loader receipts verified all 288 lossless RGB control frames, alongside
+the same low-threshold edge pixels. Text and video guardrails remained enabled;
+no source pixels were blended into the generated outputs. Both complete outputs
+again had zero timestamp error, and the workflow reached its terminal rejection
+disposition. The aggregate score improved from 0.150257 to 0.178542, with
+temporal scores 0.177784 and 0.179300 and attribute scores 3/4 and 1/4. Both
+still failed the unchanged aggregate threshold of 0.75, required temporal
+threshold of 0.8, and requirement for all four attributes to match. Gold battery
+ends remained visible in reviewed frames, but fine gripper geometry still
+differed and the intended appearance edits were weak. RGB conditioning is a
+verified general-purpose control, not a qualified battery augmentation recipe.
+
+These temporal scores come from NPA's source-relative motion-residual check,
+which accompanies the upstream Cosmos Evaluator result. They do not certify
+contact physics. Across all seven trials, thirteen complete generated clips
+were reviewed; the six completed two-variant evaluator batches accepted none.
+Generation covered episode zero's high camera only. The separately prepared
+wrist input and the remaining episodes have not been generation-validated.
