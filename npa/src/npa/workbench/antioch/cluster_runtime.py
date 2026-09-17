@@ -416,7 +416,7 @@ def _state_ready(
             return False
         if state.get("status") == "running":
             return vendor_session_ready()
-        return state.get("status") in {"starting", "recovering", "stopped"}
+        return state.get("status") in {"starting", "recovering", "completed", "stopped"}
     heartbeat = state.get("heartbeat_unix")
     if not isinstance(heartbeat, (int, float)) or isinstance(heartbeat, bool):
         return False
@@ -688,6 +688,13 @@ def _launch_vendor_successor(
 
 
 def run_cluster(args: argparse.Namespace) -> NoReturn:
+    stop_file = Path(args.stop_file)
+    # emptyDir survives container restarts. Clearing a predecessor's stop
+    # marker can replay a completed proof or undo an operator's shutdown.
+    if stop_file.exists() or stop_file.is_symlink():
+        raise AntiochLiveError(
+            "persisted stop marker forbids restart; use a fresh adapter identity"
+        )
     private_root = Path(args.private_root)
     bundle = private_root / "live-bundle"
     _validate_bundle(bundle)
@@ -706,10 +713,6 @@ def run_cluster(args: argparse.Namespace) -> NoReturn:
     os.chmod(root, 0o700)
     runtime = root / f"runtime-{uuid.uuid4().hex}"
     _stage_project(Path(args.source).resolve(), runtime, project_id)
-    stop_file = Path(args.stop_file)
-    # A container restart keeps the pod's emptyDir. A prior SIGTERM path may
-    # have left its stop marker behind; the new owner session must not inherit it.
-    stop_file.unlink(missing_ok=True)
     session_id = uuid.uuid4().hex
     cli_path = ensure_runtime()
     cli = AntiochCli(cli_path, config_dir=str(private_root / "antioch-config"))

@@ -583,6 +583,51 @@ def test_completed_poc_evidence_accepts_only_durable_measured_pass() -> None:
     }
 
 
+@pytest.mark.parametrize("marker_kind", ["file", "directory", "dangling_symlink"])
+def test_controller_restart_preserves_stop_before_runtime_or_remote_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, marker_kind: str
+) -> None:
+    marker = tmp_path / "stop"
+    if marker_kind == "directory":
+        marker.mkdir()
+    elif marker_kind == "dangling_symlink":
+        marker.symlink_to(tmp_path / "missing")
+    else:
+        marker.touch()
+    state = tmp_path / "controller.json"
+    previous = json.dumps({"status": "stopped", "communication_verified": True})
+    state.write_text(previous, encoding="utf-8")
+
+    def unexpected_work(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("a stopped controller must not initialize or dispatch work")
+
+    for name in ("_validate_bundle", "_stage_project", "ensure_runtime"):
+        monkeypatch.setattr(cluster_runtime, name, unexpected_work)
+    args = SimpleNamespace(
+        stop_file=str(marker), private_root=str(tmp_path), state_path=str(state)
+    )
+    with pytest.raises(cluster_runtime.AntiochLiveError, match="persisted stop marker"):
+        cluster_runtime.run_cluster(args)
+    assert marker.exists() or marker.is_symlink()
+    assert state.read_text(encoding="utf-8") == previous
+
+
+def test_completed_controller_stays_live_while_retiring_without_becoming_ready(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "controller.json"
+    cluster_runtime._write_state(
+        state,
+        owner_identity="owner",
+        status="completed",
+        session_status="retiring",
+        heartbeat_unix=time.time(),
+    )
+    kwargs = {"expected_owner_identity": "owner", "max_age_seconds": 180.0}
+    assert cluster_runtime.probe(state, component="controller-liveness", **kwargs) == 0
+    assert cluster_runtime.probe(state, component="controller", **kwargs) == 1
+
+
 @pytest.mark.parametrize(
     "path,value",
     [

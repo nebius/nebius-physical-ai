@@ -81,6 +81,16 @@ pairs and both responses were validated as finite `[15,8]` pi0.5 action arrays.
 Those measurements and named checks remain on the completed Antioch record after
 the controller retires the session and the adapter is scaled down. A clean child
 exit without that exact persisted passed record fails closed and is not renewed.
+The controller preserves its stop marker across container restarts so shutdown
+cannot silently dispatch another proof. A fresh attempt needs a fresh adapter identity.
+
+For read-only verification of a saved proof, set
+`NPA_ANTIOCH_COMPLETED_SCENARIO_ID` to its run identifier and
+`NPA_ANTIOCH_MK8S_RUNTIME_CONFIG` to the owner-only runtime configuration.
+Run only `test_completed_poc_checks_persist_after_session_release` from
+`npa/tests/e2e/test_antioch_mk8s_live_e2e.py` with the documented live-test gates;
+the identifier has no default and this test never deploys another scenario.
+
 The supervisor verifies every private bundle file and atomically swaps one complete
 generation into place after session replacement. The pod controller directly owns
 both `antioch service ports --bind sim.policy-relay=127.0.0.1:18444 --serve sim`

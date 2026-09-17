@@ -1,7 +1,7 @@
-"""Sustained live qualification for the MK8s-native Antioch/OpenPI path.
+"""Live qualification and saved-record verification for Antioch/OpenPI.
 
-This test intentionally retains the accepted Antioch simulator, adapter pod,
-and policy Deployment. Cleanup is an explicit operator action after viewing.
+The deployment test retains accepted resources for operator inspection. The
+saved-record test only reads existing evidence and never dispatches a scenario.
 """
 
 from __future__ import annotations
@@ -13,7 +13,10 @@ from pathlib import Path
 import pytest
 
 from npa.sdk.workbench.antioch import live_k8s_deploy, live_k8s_status
-from npa.workbench.antioch.cluster_deploy import qualify_live_metrics
+from npa.workbench.antioch.cluster_deploy import load_private_config, qualify_live_metrics
+from npa.workbench.antioch.cluster_runtime import _completed_poc_evidence
+from npa.workbench.antioch.runtime import ensure_runtime
+from npa.workbench.antioch.vendor_cli import AntiochCli
 
 pytestmark = pytest.mark.e2e_pipeline
 
@@ -66,3 +69,31 @@ def test_real_franka_camera_policy_loop_sustains_cluster_native_acceptance() -> 
             assert status["dev_vm_in_data_path"] is False
             return
         time.sleep(5)
+
+
+def test_completed_poc_checks_persist_after_session_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Read the operator-selected saved proof without dispatching another run."""
+    run_id = os.environ.get("NPA_ANTIOCH_COMPLETED_SCENARIO_ID", "").strip()
+    if not run_id:
+        pytest.skip("set NPA_ANTIOCH_COMPLETED_SCENARIO_ID for saved-run verification")
+    config = load_private_config(RUNTIME_CONFIG)
+    monkeypatch.setenv("ANTIOCH_ENV", config.antioch_deployment_profile)
+    cli = AntiochCli(ensure_runtime(), config_dir=config.antioch_config_dir)
+    record = cli.show(tmp_path, kind="scenario", remote_id=run_id)
+    assert record["project_id"] == Path(config.antioch_project_id_file).read_text().strip()
+    evidence = _completed_poc_evidence(
+        record, scenario="openpi_franka_mk8s_live_v2", scenario_run_id=run_id
+    )
+    assert evidence["communication_verified"] is True
+    results = record["results"]
+    for view in ("exterior", "wrist"):
+        assert results[f"{view}_luminance_mean_min"] > 5
+        assert results[f"{view}_luminance_variance_min"] > 25
+    assert results["latency_max_ms"] < 90_000
+    assert record["artifacts"]["telemetry"]["size_bytes"] > 0
+    reread = cli.show(tmp_path, kind="scenario", remote_id=run_id)
+    assert reread["phase"] == "completed"
+    assert reread["outcome"] == "passed"
+    assert reread["results"]["checks"] == results["checks"]

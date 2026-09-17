@@ -287,6 +287,19 @@ durably `completed/passed` and all three named checks and structured measurement
 are present; it then releases the session. Timeout is a failed proof, never an
 expected renewal boundary.
 
+A completed controller remains live while retiring its session. Once shutdown
+writes the pod's stop marker, a container restart refuses to initialize another
+runtime or dispatch another scenario. The marker and prior evidence survive in
+the pod's state volume; a new authorized attempt requires a fresh adapter identity.
+
+To verify an existing record without another dispatch, set the owner-only runtime
+configuration through `NPA_ANTIOCH_MK8S_RUNTIME_CONFIG` and the saved run identifier
+through `NPA_ANTIOCH_COMPLETED_SCENARIO_ID`, then select
+`test_completed_poc_checks_persist_after_session_release` in
+`npa/tests/e2e/test_antioch_mk8s_live_e2e.py`. The existing live-test terms and
+`NPA_INTEGRATION_E2E=1` gates still apply. This test independently reads the saved
+checks twice; it does not deploy or start a scenario.
+
 The supervisor atomically rechecks and re-stages the private client bundle after
 session replacement. It builds an immutable project revision and starts that exact
 revision through `session new`; an existing idle project session may be replaced,
