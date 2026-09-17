@@ -186,6 +186,19 @@ set and its individual capabilities; the complete 14-stage run remains open
 because the required hosted Cosmos3 model returned an upstream stopped-model
 response before any workflow task launched.
 
+### OpenArm dual-simulator release (2026-09-15)
+
+The exact `npa-openarm:2.2.0-isaac0.1.0-rtfetch` release digest passed the
+complete public-image byte, vulnerability, secret, license, SBOM, provenance,
+and anonymous-pull gates. The image's ordinary golden evaluation executed a
+real 500-step OpenArm v2 MuJoCo rollout; the release qualification additionally
+ran the upstream Isaac Lab reach environment and upstream RSL-RL trainer on RTX
+PRO 6000, producing finite traces, a fully decoded simulator-rendered video,
+and a serialized checkpoint. The final workflow stage and a separate
+read-after-run validation agreed on all artifact hashes. Isaac Sim/Lab remained
+an operator-authorized runtime fetch and no vendor runtime or cache bytes were
+published.
+
 ### Bugs the golden evals surfaced (now fixed)
 
 1. **genesis** — `npa.smoke._versions` did `import tomllib`/`tomli`; the genesis
