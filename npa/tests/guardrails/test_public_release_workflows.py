@@ -187,18 +187,15 @@ def test_large_image_scan_reclaims_build_cache_and_reuses_large_volume() -> None
 
 
 def test_base_image_scans_do_not_inherit_trivys_five_minute_timeout() -> None:
-    spec = _spec(SECURITY_SCAN)
-    steps = spec["jobs"]["base-image-cve-scan"]["steps"]
-    scans = [
-        step
-        for step in steps
-        if isinstance(step.get("uses"), str)
-        and _PINNED_ACTION.fullmatch(step["uses"])
-        and step["uses"].startswith("aquasecurity/trivy-action@")
-    ]
-
-    assert len(scans) == 2
-    assert all(step["with"]["timeout"] == "2562047h47m16s" for step in scans)
+    script = (ROOT / "npa/scripts/scan_base_images.py").read_text()
+    assert '"--timeout", "2562047h47m16s"' in script
+    job = _spec(SECURITY_SCAN)["jobs"]["base-image-cve-scan"]
+    command = next(
+        step["run"]
+        for step in job["steps"]
+        if step.get("name") == "Scan all pinned bases with two local workers"
+    )
+    assert "scan_base_images.py" in command
 
 
 def test_post_push_and_promotion_gates_are_digest_bound() -> None:

@@ -550,7 +550,17 @@ def test_npm_lock_rejects_changed_exact_resolution(security_modules, tmp_path, s
 
 @pytest.mark.parametrize("result", ["success", "failure", "cancelled", "skipped", ""])
 @pytest.mark.parametrize(
-    "prerequisite", ["SCANNER_RESULT", "IMAGE_RESULT", "RUNTIME_RESULT"]
+    "prerequisite",
+    [
+        "TEST_RESULT",
+        "LINT_RESULT",
+        "GUARDRAIL_RESULT",
+        "GITLEAKS_RESULT",
+        "CONFIDENTIALITY_RESULT",
+        "SCANNER_RESULT",
+        "IMAGE_RESULT",
+        "RUNTIME_RESULT",
+    ],
 )
 def test_required_security_check_propagates_failure(
     monkeypatch, result, prerequisite
@@ -560,7 +570,7 @@ def test_required_security_check_propagates_failure(
     Args:
         monkeypatch: Supplies a GitHub job-result observation to the shell step.
         result: Completed scanner status, including missing and skipped work.
-        prerequisite: Source, image, or runtime result being exercised.
+        prerequisite: Candidate component result being exercised.
     Returns:
         None.
     Raises:
@@ -570,6 +580,11 @@ def test_required_security_check_propagates_failure(
     workflow = yaml.safe_load(workflow_path.read_text())
     job = workflow["jobs"]["security-regression"]
     assert job["needs"] == [
+        "test-gate",
+        "lint-gate",
+        "guardrails-gate",
+        "gitleaks",
+        "scan",
         "security-scanners",
         "image-security",
         "security-runtime",
@@ -578,14 +593,21 @@ def test_required_security_check_propagates_failure(
     assert "continue-on-error" not in job
     required_step = job["steps"][0]
     assert required_step["env"] == {
+        "EVENT_NAME": "${{ github.event_name }}",
+        "TEST_RESULT": "${{ needs.test-gate.result }}",
+        "LINT_RESULT": "${{ needs.lint-gate.result }}",
+        "GUARDRAIL_RESULT": "${{ needs.guardrails-gate.result }}",
+        "GITLEAKS_RESULT": "${{ needs.gitleaks.result }}",
+        "CONFIDENTIALITY_RESULT": "${{ needs.scan.result }}",
         "SCANNER_RESULT": "${{ needs.security-scanners.result }}",
         "IMAGE_RESULT": "${{ needs.image-security.result }}",
         "RUNTIME_RESULT": "${{ needs.security-runtime.result }}",
     }
     assert "if" not in required_step and "continue-on-error" not in required_step
-    monkeypatch.setenv("SCANNER_RESULT", "success")
-    monkeypatch.setenv("IMAGE_RESULT", "success")
-    monkeypatch.setenv("RUNTIME_RESULT", "success")
+    monkeypatch.setenv("EVENT_NAME", "pull_request")
+    for name in required_step["env"]:
+        if name != "EVENT_NAME":
+            monkeypatch.setenv(name, "success")
     monkeypatch.setenv(prerequisite, result)
     completed = subprocess.run(["bash", "-e", "-c", required_step["run"]], check=False)
     assert (completed.returncode == 0) == (result == "success")

@@ -1,10 +1,16 @@
 """Validate deterministic CI partitioning for the full pytest suite."""
 
+import json
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 import conftest as suite_conftest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import merge_ci_test_timings as timing_merge  # noqa: E402
 
 
 def test_ci_shard_coordinates_are_optional(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -43,6 +49,59 @@ def test_ci_shards_cover_every_item_once() -> None:
     assert sorted(assigned) == sorted(item.nodeid for item in items)
     assert len(assigned) == len(set(assigned))
     assert max(map(len, shards)) - min(map(len, shards)) <= 1
+
+
+def test_ci_shards_balance_recorded_duration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Spread slow modules using measured work rather than test count.
+
+    Args:
+        monkeypatch: Replaces the committed timing manifest.
+        tmp_path: Holds a public synthetic timing manifest.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Greedy partitioning concentrates measured slow work.
+    """
+
+    manifest = tmp_path / "durations.json"
+    manifest.write_text(json.dumps({"tests/slow.py": 40.0, "tests/fast.py": 1.0}))
+    monkeypatch.setattr(suite_conftest, "_CI_TIMING_MANIFEST", manifest)
+    items = [
+        *(SimpleNamespace(nodeid=f"tests/slow.py::test_{index}") for index in range(8)),
+        *(SimpleNamespace(nodeid=f"tests/fast.py::test_{index}") for index in range(8)),
+    ]
+    shards = [
+        suite_conftest._items_for_ci_shard(items, shard_index, 4)
+        for shard_index in range(4)
+    ]
+    slow_counts = [
+        sum(item.nodeid.startswith("tests/slow.py") for item in shard)
+        for shard in shards
+    ]
+    assert slow_counts == [2, 2, 2, 2]
+
+
+def test_ci_timing_artifacts_merge_by_module(tmp_path: Path) -> None:
+    """Combine non-overlapping shard measurements into the next profile.
+
+    Args:
+        tmp_path: Holds synthetic trusted-main artifacts.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Duplicate module measurements are not summed.
+    """
+
+    first = tmp_path / "first.json"
+    second = tmp_path / "second.json"
+    first.write_text(json.dumps({"tests/a.py": 1.25, "tests/b.py": 2.0}))
+    second.write_text(json.dumps({"tests/a.py": 0.75}))
+    assert timing_merge.merge_timings([first, second]) == {
+        "tests/a.py": 2.0,
+        "tests/b.py": 2.0,
+    }
 
 
 @pytest.mark.parametrize(

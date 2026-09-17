@@ -1,4 +1,7 @@
+import json
 import os
+from collections import defaultdict
+from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
@@ -136,6 +139,9 @@ _AMBIENT_INFRA_TARGET_ENV_VARS = (
     "NEBIUS_PROFILE",
 )
 
+_CI_TIMING_MANIFEST = Path(__file__).with_name("ci_test_durations.json")
+_CI_RECORDED_DURATIONS: dict[str, float] = defaultdict(float)
+
 
 def _ci_shard_coordinates() -> tuple[int, int] | None:
     """Return the zero-based CI shard index and total.
@@ -167,10 +173,31 @@ def _ci_shard_coordinates() -> tuple[int, int] | None:
     return index - 1, total
 
 
+def _ci_timing_weights() -> dict[str, float]:
+    """Load positive module-duration weights for CI partitioning.
+
+    Args:
+        None.
+    Returns:
+        Duration in seconds by test module.
+    Raises:
+        pytest.UsageError: The committed timing manifest is invalid.
+    """
+
+    try:
+        raw_weights = json.loads(_CI_TIMING_MANIFEST.read_text(encoding="utf-8"))
+        weights = {path: float(seconds) for path, seconds in raw_weights.items()}
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+        raise pytest.UsageError("CI timing manifest is unreadable") from error
+    if any(seconds <= 0 for seconds in weights.values()):
+        raise pytest.UsageError("CI timing weights must be positive")
+    return weights
+
+
 def _items_for_ci_shard(
     items: list[pytest.Item], shard_index: int, shard_total: int
 ) -> list[pytest.Item]:
-    """Select an evenly sized, deterministic slice of collected tests.
+    """Select a deterministic shard balanced by recorded module durations.
 
     Args:
         items: Collected pytest items.
@@ -182,8 +209,27 @@ def _items_for_ci_shard(
         None.
     """
 
-    ordered_items = sorted(items, key=lambda item: item.nodeid)
-    return ordered_items[shard_index::shard_total]
+    weights = _ci_timing_weights()
+    module_counts: dict[str, int] = defaultdict(int)
+    for item in items:
+        module_counts[item.nodeid.split("::", 1)[0]] += 1
+    ranked_items = sorted(
+        items,
+        key=lambda item: (
+            -weights.get(item.nodeid.split("::", 1)[0], 1.0)
+            / module_counts[item.nodeid.split("::", 1)[0]],
+            item.nodeid,
+        ),
+    )
+    shards: list[list[pytest.Item]] = [[] for _ in range(shard_total)]
+    totals = [0.0] * shard_total
+    for item in ranked_items:
+        module = item.nodeid.split("::", 1)[0]
+        item_weight = weights.get(module, 1.0) / module_counts[module]
+        destination = min(range(shard_total), key=lambda index: (totals[index], index))
+        shards[destination].append(item)
+        totals[destination] += item_weight
+    return sorted(shards[shard_index], key=lambda item: item.nodeid)
 
 
 def pytest_collection_modifyitems(
@@ -212,6 +258,44 @@ def pytest_collection_modifyitems(
 
 def pytest_collection_finish(session: pytest.Session) -> None:
     assert_nonzero_collection(len(session.items))
+
+
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    """Accumulate module timings for a trusted main-run artifact.
+
+    Args:
+        report: One setup, call, or teardown timing report.
+    Returns:
+        None.
+    Raises:
+        None.
+    """
+
+    if os.environ.get("NPA_CI_TIMING_OUTPUT"):
+        module = report.nodeid.split("::", 1)[0]
+        _CI_RECORDED_DURATIONS[module] += report.duration
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Write measured module durations from the xdist controller.
+
+    Args:
+        session: Completed pytest session.
+        exitstatus: Pytest process status, retained for the hook contract.
+    Returns:
+        None.
+    Raises:
+        OSError: The requested CI timing artifact cannot be written.
+    """
+
+    del exitstatus
+    output = os.environ.get("NPA_CI_TIMING_OUTPUT")
+    if not output or hasattr(session.config, "workerinput"):
+        return
+    Path(output).write_text(
+        json.dumps(dict(sorted(_CI_RECORDED_DURATIONS.items())), indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 @pytest.fixture(autouse=True)

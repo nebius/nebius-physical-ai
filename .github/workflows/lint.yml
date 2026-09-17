@@ -4,15 +4,13 @@ permissions:
   contents: read
 
 on:
+  workflow_call:
   push:
     branches: [main]
-  pull_request:
 
 concurrency:
-  # An open PR already receives pull_request runs, so feature-branch pushes do
-  # not need a second copy. Cancel older lint work when that PR advances.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: lint-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 jobs:
   ruff:
@@ -25,6 +23,8 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: npa/pyproject.toml
 
       - name: Install ruff
         run: pip install "ruff>=0.4.0"
@@ -46,6 +46,8 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: npa/pyproject.toml
 
       - name: Install npa
         run: cd npa && pip install -e .
