@@ -23,6 +23,9 @@ def _successful_storage_probe(monkeypatch):
     resolved_binaries: list[str] = []
     from npa.clients import storage_validation
     from npa.clients.storage_validation import StorageProbeResult
+    from npa.orchestration.skypilot import local_api
+
+    monkeypatch.setattr(local_api, "_require_linux_host", lambda: None)
 
     monkeypatch.setattr(
         storage_validation,

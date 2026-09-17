@@ -1,8 +1,6 @@
 name: confidentiality scan
 
 on:
-  pull_request:
-  merge_group:
   push:
     branches: [main]
 
@@ -10,10 +8,8 @@ permissions:
   contents: read
 
 concurrency:
-  # Keep workflows independent, but let a newer commit supersede older work for
-  # the same PR. Non-PR runs use run_id and are never cancelled by this policy.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: confidentiality-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   scan:
@@ -31,6 +27,8 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: npa/pyproject.toml
 
       - name: Install npa guardrail module
         run: |

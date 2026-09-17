@@ -123,11 +123,13 @@ redistribution:
   classes:
     public:
       description: >
-        OSS-redistributable. Code is under OSI-approved licenses (Apache-2.0 /
-        BSD-3 / MIT / MPL-2.0); the CUDA/PyTorch base images (docker.io
-        nvidia/cuda, pytorch/pytorch) are freely redistributable; any gated model
-        weights are downloaded at runtime by the operator (never baked in). May
-        be published to a public registry.
+        Eligible for public redistribution under the verified terms of every
+        shipped component, including required notices and source delivery.
+        OSI approval alone does not classify a complete image; FiftyOne's SSPL
+        MongoDB component has separate source-delivery and service-use terms.
+        CUDA/PyTorch payloads require applicable component-specific grants.
+        Gated model weights are downloaded at runtime by the operator, never
+        baked in. Publication still requires the exact-artifact validation gates.
     restricted:
       description: >
         Bakes a runtime we may not redistribute — for NVIDIA Omniverse Kit (Isaac
@@ -543,6 +545,13 @@ images:
       Command-passthrough entrypoint supports SkyPilot Kubernetes setup as the
       non-root ubuntu user (openssh-server, rsync, sudo, passwordless service
       restart). The service deploy path supplies the FiftyOne App command.
+      MongoDB Community Server uses SSPL v1, not an OSI-approved license.
+      Public redistribution requires the applicable notices and matching
+      corresponding-source delivery; service-use obligations need separate
+      review. The supported FiftyOne 1.21 release includes a verified source
+      annex and passes initial NPA installation, dependency and functional checks.
+      Verify these contracts for each replacement digest before any public push;
+      see fiftyone/RELEASE.md.
     passwordless_root_exemption: >-
       SkyPilot's Kubernetes bootstrap installs and starts its in-pod SSH runtime
       as the non-root ubuntu user. The image deletes all build-time SSH host keys,
