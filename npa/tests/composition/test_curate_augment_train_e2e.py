@@ -18,6 +18,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from npa.clients.serverless import EndpointNotFoundError, ServerlessClient
+from npa.deploy.images import container_image_for_tool
 from npa.serverless_common import resolve_subnet
 
 
@@ -25,7 +26,7 @@ PROJECT_ALIAS = "eu-north1"
 PROJECT_ID = "project-test-00000000000"
 BUCKET = "your-bucket-name"
 ENDPOINT_URL = "https://storage.eu-north1.nebius.cloud"
-FIFTYONE_IMAGE = "ghcr.io/nebius/nebius-physical-ai/npa-fiftyone:1.15.0.post1"
+FIFTYONE_IMAGE = container_image_for_tool("fiftyone")
 COSMOS_IMAGE = (
     "ghcr.io/nebius/nebius-physical-ai/"
     "npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z"
