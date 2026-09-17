@@ -107,6 +107,13 @@ requested label fail the workflow before it publishes a proof.
 
 ## Reproducible test evidence
 
+Open the [recorded proof bundle](../evidence/lerobot-subtasks/README.md) for the
+actual input and derived Parquet files, a scrub-able Rerun recording, every
+before/after row, the executed YAML report, and hash-bound verification. The
+recording uses synthetic numeric data and programmatic tags; it does not claim
+to show a robot capture or FiftyOne UI interaction. The linked instructions
+regenerate the whole bundle into a new local directory.
+
 The local test executes the YAML through the workflow interpreter against a
 synthetic LeRobot Parquet fixture after applying the actual subtask exporter:
 
