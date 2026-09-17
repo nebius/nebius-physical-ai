@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import re
+
 import pytest
 import yaml
 
@@ -200,13 +202,20 @@ def test_required_policy_precedes_build_and_secret_environment_is_scoped():
 def test_native_check_is_an_executed_gate_with_separate_private_dependencies():
     publish = yaml.safe_load(PUBLISH.read_text())
     build_steps = publish["jobs"]["build-development"]["steps"]
-    setup = next(step for step in build_steps if step.get("uses") == "actions/setup-python@v6")
+    setup = next(
+        step
+        for step in build_steps
+        if isinstance(step.get("uses"), str)
+        and re.fullmatch(r"actions/setup-python@[0-9a-f]{40}", step["uses"])
+    )
     assert setup["with"]["python-version"] == "${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore') && '3.12' || '3.11' }}"
     for name, job in publish["jobs"].items():
         if name == "build-development":
             continue
         for step in job.get("steps", []):
-            if step.get("uses") == "actions/setup-python@v6":
+            if isinstance(step.get("uses"), str) and re.fullmatch(
+                r"actions/setup-python@[0-9a-f]{40}", step["uses"]
+            ):
                 assert step["with"]["python-version"] == "3.11"
     security = yaml.safe_load(SECURITY.read_text())
     job = security["jobs"]["complete-byte-native-integration"]
