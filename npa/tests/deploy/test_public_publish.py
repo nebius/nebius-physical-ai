@@ -436,10 +436,10 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
             "flex-pi",
         )
     }
-    # The five Sim2Real roles deliberately share one coherent source. The nine
+    # The five Sim2Real roles deliberately share one coherent source. The ten
     # other accepted sources, including Cosmos3, the detector, OpenArm,
     # Alpamayo 2 Super, and flex-pi, remain distinct.
-    assert len(set(accepted_shas.values())) == 10
+    assert len(set(accepted_shas.values())) == 11
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
         target_image = item.target_ref.rsplit("/", 1)[-1]
