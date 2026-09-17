@@ -176,6 +176,18 @@ This is model conditioning, not source/output pixel blending. Compare it on the
 same source, captions, profiles and seeds, checking both fine task details and
 the intended appearance change: stronger source conditioning may suppress edits.
 
+The source's **first RGB frame is a separate appearance anchor**. Earlier adapter
+versions always supplied it to the first native generation window, even with
+`transfer_rgb_weight=0`. Set `transfer_first_chunk_conditional_frames=0` to release
+that anchor when testing material or color changes from the beginning of the
+clip. The compatibility default is 1; only 0 and 1 are supported by this adapter.
+The pinned native framework's transfer default is 0. Full-video edge conditioning
+remains active, and later windows still use five generated overlap frames for
+continuity. This is a model input setting, not output blending. Releasing the
+anchor may also change foreground identity, so compare matched sources, profiles
+and seeds and inspect task details. The native transfer receipt records both the
+first-window conditioning count and subsequent overlap count.
+
 | Observed failure | Next controlled experiment |
 | --- | --- |
 | Small battery, gripper or slot geometry drifts | Reject the output. Check whether source edges resolve the feature and whether captions misidentify it. Simplify the appearance edit, then compare one control-guidance change at a time; larger values can still distort details. |
@@ -231,6 +243,7 @@ not generation-qualified recipes.
 | `appearance_profiles_json` | Define visibly distinct, coherent profiles. Change one appearance axis during diagnosis, then combine qualified edits. A neutral color grade can counteract a requested warm/cool look; keep the four fields consistent. |
 | `prompt`, `negative_prompt` | State task invariants and the allowed appearance changes separately. Remove a blanket “only subtle lighting” restriction when testing a more visible edit. Preserve object identity without demanding unchanged illumination on every surface. |
 | `transfer_rgb_weight` | Compare 0, 0.25 and 0.5 as illustrative experiment points while holding source, captions, profiles and seeds fixed. Smaller values reduce RGB conditioning; inspect whether edit strength improves and whether task details deteriorate. These values are not qualified defaults. |
+| `transfer_first_chunk_conditional_frames` | Compare 1 with 0 to test whether the original first-frame appearance suppresses the requested edit. This is independent of `transfer_rgb_weight`; zero RGB hint weight alone does not release the first frame. Keep structural controls and later generated overlap unchanged. |
 | `guidance` | With the RGB setting fixed, compare text-guidance values around the current recipe. Stronger guidance may increase the edit or introduce artifacts; inspect both. |
 | `control_guidance`, `transfer_edge_threshold` | Tune source structure independently of text guidance. Inspect edge controls when small or dark features disappear. Higher control guidance did not reliably preserve the battery task. |
 | `steps`, `transfer_chunk_frames` | Use these for sampling quality or visible temporal discontinuities after the edit is specified. More steps or longer windows do not establish greater appearance diversity. |

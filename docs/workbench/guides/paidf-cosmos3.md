@@ -113,6 +113,12 @@ color and surface cues that edges omit. Zero (the default) disables it; a
 positive weight is relative to edge weight 1. This uses the framework's `blur`
 hint with its `none` preset and verified lossless RGB controls. It changes model
 conditioning, never output-pixel blending, and can suppress the requested edit.
+`transfer_first_chunk_conditional_frames` separately controls whether the original
+RGB first frame anchors generation. Its compatibility default is 1; set 0 with
+edge transfer to test a changed appearance from the first frame. Complete source
+edges remain active, and later windows retain five generated overlap frames.
+Releasing the first-frame anchor may reduce object-identity preservation; review
+paired clips before adopting it. Native receipts record both conditioning counts.
 `conditioning_fps`
 defaults to 24; preparation letterboxes to 832×480 and preserves duration within
 one prepared frame. `transfer_chunk_frames` defaults to 93 and `control_guidance`

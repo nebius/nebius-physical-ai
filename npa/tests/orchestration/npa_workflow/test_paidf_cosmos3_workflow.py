@@ -109,6 +109,7 @@ def test_edge_preset_reaches_generation_cli_and_settings(tmp_path, monkeypatch):
     document = _doc()
     document["config"]["transfer_edge_threshold"] = "very_low"
     document["config"]["transfer_rgb_weight"] = 0.5
+    document["config"]["transfer_first_chunk_conditional_frames"] = "0"
     path = tmp_path / "workflow.yaml"
     path.write_text(yaml.safe_dump(document))
     plan = build_plan(load_spec(path), run_id="edge-detail", assume_decision="promote_checkpoint")
@@ -119,6 +120,7 @@ def test_edge_preset_reaches_generation_cli_and_settings(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert calls[0]["transfer_edge_threshold"] == "very_low"
     assert calls[0]["transfer_rgb_weight"] == 0.5
+    assert calls[0]["transfer_first_chunk_conditional_frames"] == 0
 
 
 def test_invalid_edge_preset_fails_during_planning():
@@ -135,6 +137,7 @@ def test_legacy_generation_config_uses_default_rgb_weight(tmp_path, monkeypatch)
 
     document = _doc()
     document["config"].pop("transfer_rgb_weight")
+    document["config"].pop("transfer_first_chunk_conditional_frames")
     path = tmp_path / "workflow.yaml"
     path.write_text(yaml.safe_dump(document))
     plan = build_plan(load_spec(path), run_id="legacy-rgb", assume_decision="promote_checkpoint")
@@ -145,6 +148,26 @@ def test_legacy_generation_config_uses_default_rgb_weight(tmp_path, monkeypatch)
     assert result.exit_code == 0, result.output
     assert "--transfer-rgb-weight" not in stage.argv
     assert calls[0]["transfer_rgb_weight"] == 0.0
+    assert "--transfer-first-chunk-conditional-frames" not in stage.argv
+    assert calls[0]["transfer_first_chunk_conditional_frames"] == 1
+
+
+@pytest.mark.parametrize("value", ["-1", "2", "0.5", "true", "invalid"])
+def test_invalid_first_chunk_conditioning_fails_during_planning(value):
+    result = runner.invoke(app, ["workbench", "workflow", "plan-spec", str(SPEC),
+                                "--run-id", "invalid-first-frame", "--var",
+                                f"transfer_first_chunk_conditional_frames={value}", "--json"])
+    assert result.exit_code != 0
+    assert "transfer_first_chunk_conditional_frames" in result.output
+
+
+def test_first_chunk_conditioning_requires_edge_transfer():
+    result = runner.invoke(app, ["workbench", "workflow", "plan-spec", str(SPEC),
+                                "--run-id", "first-frame-without-edge", "--var",
+                                "transfer_first_chunk_conditional_frames=0",
+                                "--var", "structural_control=none", "--json"])
+    assert result.exit_code != 0
+    assert "transfer_first_chunk_conditional_frames requires structural_control=edge" in result.output
 
 
 @pytest.mark.parametrize("value", ["-0.1", "nan", "inf", "true", "invalid"])

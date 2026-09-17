@@ -446,6 +446,7 @@ def validate_spec(spec: NpaWorkflowSpec) -> None:
     _validate_optional_sam2_config(spec)
     _validate_appearance_profiles(spec)
     _validate_transfer_rgb_weight(spec)
+    _validate_transfer_first_chunk_frames(spec)
     if "transfer_edge_threshold" in spec.config:
         from npa.workbench.cosmos.structural_transfer import edge_thresholds
 
@@ -457,6 +458,17 @@ def validate_spec(spec: NpaWorkflowSpec) -> None:
     _assert_terminal_exists(spec)
     _assert_bounded_control_flow_cycles(spec)
     _validate_resolvable(spec)
+
+
+def _validate_transfer_first_chunk_frames(spec: NpaWorkflowSpec) -> None:
+    key = "transfer_first_chunk_conditional_frames"
+    if key not in spec.config:
+        return
+    value = spec.config[key]
+    if type(value) not in (int, str) or str(value) not in ("0", "1"):
+        raise NpaWorkflowError(f"{key} must be 0 or 1")
+    if str(value) == "0" and spec.config.get("structural_control") != "edge":
+        raise NpaWorkflowError(f"{key} requires structural_control=edge")
 
 
 def _validate_transfer_rgb_weight(spec: NpaWorkflowSpec) -> None:

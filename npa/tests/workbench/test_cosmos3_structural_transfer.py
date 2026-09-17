@@ -102,15 +102,19 @@ def test_invalid_media_refused_before_generation(tmp_path, content):
 
 @pytest.mark.parametrize("preset", ["very_low", "low", "medium", "high", "very_high"])
 @pytest.mark.parametrize("rgb_weight", [0.0, 0.5])
-def test_native_sample_uses_all_source_controls_and_explicit_seed(prepared, tmp_path, preset, rgb_weight):
+@pytest.mark.parametrize("first_frames", [0, 1])
+def test_native_sample_uses_all_source_controls_and_explicit_seed(prepared, tmp_path, preset, rgb_weight, first_frames):
     _, source, _ = prepared
     sample = transfer.transfer_sample({"name": "sample", "model_mode": "video2video",
-                                       "vision_path": str(source)}, transfer.TransferSettings(edge_threshold=preset, rgb_weight=rgb_weight), tmp_path, 17)
+                                       "vision_path": str(source)}, transfer.TransferSettings(edge_threshold=preset, rgb_weight=rgb_weight,
+                                                                                             first_chunk_conditional_frames=first_frames), tmp_path, 17)
     assert sample["max_frames"] == 81
     assert sample["seed"] == 17
     assert sample["fps"] == 24
     assert sample["num_video_frames_per_chunk"] == 93
     assert sample["edge"]["preset_edge_threshold"] == preset
+    assert sample["num_first_chunk_conditional_frames"] == first_frames
+    assert sample["num_conditional_frames"] == 5
     assert sample["show_input"] is sample["show_control_condition"] is False
     if rgb_weight:
         assert sample["blur"] == {"control_path": str(tmp_path / "controls/sample-rgb.mkv"),
@@ -125,7 +129,10 @@ def test_native_sample_uses_all_source_controls_and_explicit_seed(prepared, tmp_
                                     {"edge_threshold": "auto"}, {"edge_threshold": None},
                                     {"edge_threshold": []}, {"rgb_weight": -0.1},
                                     {"rgb_weight": float("nan")}, {"rgb_weight": float("inf")},
-                                    {"rgb_weight": True}, {"rgb_weight": "0.5"}])
+                                    {"rgb_weight": True}, {"rgb_weight": "0.5"},
+                                    {"first_chunk_conditional_frames": -1}, {"first_chunk_conditional_frames": 2},
+                                    {"first_chunk_conditional_frames": True}, {"first_chunk_conditional_frames": 0.0},
+                                    {"first_chunk_conditional_frames": "0"}])
 def test_unsupported_native_controls_are_rejected(values):
     with pytest.raises(ValueError):
         transfer.TransferSettings(**values).validate()
@@ -262,6 +269,7 @@ def test_saved_output_is_guardrail_postprocessed_tensor(monkeypatch, tmp_path):
     processed = np.zeros((3, 6, 480, 832), dtype=np.float32)
     pipe = SimpleNamespace(guardrails=object(), _run_video_guardrail=lambda *a: processed)
     sample = SimpleNamespace(name="sample", fps=24, output_dir=tmp_path, video_save_quality=5,
+                             num_first_chunk_conditional_frames=0, num_conditional_frames=5,
                              model_dump=lambda **kw: {})
     generated = SimpleNamespace(output_video=np.ones((1, 3, 6, 480, 832), dtype=np.float32).view(_Video), fps=24)
     native._save_guarded_output(pipe, sample, generated, ["checked"], {"source_frames": 6})
@@ -270,6 +278,8 @@ def test_saved_output_is_guardrail_postprocessed_tensor(monkeypatch, tmp_path):
     assert evidence["guardrail_postprocessing_applied"] is True
     assert evidence["native_chunks"] == 1
     assert evidence["native_torch_compile"] is False
+    assert evidence["first_chunk_conditional_frames"] == 0
+    assert evidence["overlap_conditional_frames"] == 5
 
 
 @pytest.mark.parametrize("include_rgb", [False, True])

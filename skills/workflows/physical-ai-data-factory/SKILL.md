@@ -76,6 +76,14 @@ lossless-control and native-loader hashes, and distinguish this model input
 from output-pixel blending. Check both task preservation and visible appearance
 change: more source conditioning can suppress the requested edit.
 
+`transfer_first_chunk_conditional_frames` independently controls the original RGB
+frame anchoring the first native window. The compatibility default is 1; 0
+releases that appearance anchor while retaining full-source edges and five
+generated overlap frames in later windows. Zero RGB hint weight does not disable
+this first-frame anchor. Compare 0 and 1 on matched inputs and inspect both edit
+strength and foreground identity; retain the actual conditioning counts in the
+native transfer receipt. This setting requires edge transfer when changed to 0.
+
 For tuning and fan-out, follow the guide's “Tune visible changes before fan-out”
 and “Fan out a reviewed recipe” sections. Keep task-specific values in run
 configuration. Distinguish profile diversity, variant count, generation seeds,

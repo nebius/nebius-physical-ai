@@ -164,6 +164,8 @@ def _save_guarded_output(pipe: Any, sample: Any, generated: Any, prompts: list[s
                 "text_guardrail_passed": True, "video_guardrail_passed": True,
                 "guardrail_postprocessing_applied": True, "effective_prompts": prompts,
                 "native_chunks": len(prompts), "output_fps": generated.fps,
+                "first_chunk_conditional_frames": sample.num_first_chunk_conditional_frames,
+                "overlap_conditional_frames": sample.num_conditional_frames,
                 "native_torch_compile": False}
     (sample.output_dir / "transfer_evidence.json").write_text(json.dumps(evidence, indent=2))
     result = SampleOutputs(args=sample.model_dump(mode="json"),

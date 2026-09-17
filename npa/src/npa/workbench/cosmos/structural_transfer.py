@@ -42,6 +42,8 @@ class TransferSettings:
         control_guidance: Native structural guidance, greater than 0 and at most 10.
         edge_threshold: Native Canny preset; lower thresholds retain weaker edges.
         rgb_weight: Native RGB hint weight relative to edge weight 1; zero disables it.
+        first_chunk_conditional_frames: Zero releases the source RGB first frame;
+            one retains the existing appearance anchor. Later chunks use generated overlap.
     Returns:
         Immutable settings; call validate before model work.
     Raises:
@@ -53,6 +55,7 @@ class TransferSettings:
     control_guidance: float = 1.5
     edge_threshold: str = "medium"
     rgb_weight: float = 0.0
+    first_chunk_conditional_frames: int = 1
 
     def validate(self) -> None:
         """Validate controls before any model work.
@@ -75,6 +78,8 @@ class TransferSettings:
         if (type(self.rgb_weight) not in {int, float}
                 or not math.isfinite(self.rgb_weight) or self.rgb_weight < 0):
             raise ValueError("transfer_rgb_weight must be finite and nonnegative")
+        if type(self.first_chunk_conditional_frames) is not int or self.first_chunk_conditional_frames not in (0, 1):
+            raise ValueError("transfer_first_chunk_conditional_frames must be 0 or 1")
 
 
 def transfer_sample(base: dict[str, Any], settings: TransferSettings, output: Path, seed: int) -> dict[str, Any]:
@@ -103,7 +108,8 @@ def transfer_sample(base: dict[str, Any], settings: TransferSettings, output: Pa
                      "preset_edge_threshold": settings.edge_threshold},
             "control_guidance": settings.control_guidance,
             "num_video_frames_per_chunk": settings.chunk_frames,
-            "num_conditional_frames": 5, "num_first_chunk_conditional_frames": 1,
+            "num_conditional_frames": 5,
+            "num_first_chunk_conditional_frames": settings.first_chunk_conditional_frames,
             "max_frames": timeline["decoded_frames"], "share_vision_temporal_positions": True,
             "show_input": False, "show_control_condition": False}
     if settings.rgb_weight:
