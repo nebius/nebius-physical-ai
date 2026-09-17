@@ -505,9 +505,12 @@ def test_load_stage_docs_covers_all_pipeline_stages(tmp_path: Path) -> None:
     )
 
     docs = _load_stage_docs(run)
+    displayed_curator = json.loads(
+        docs["pipeline/4_cosmos_curator"].split("```json\n", 1)[1].split("```", 1)[0]
+    )
+    assert {key: displayed_curator[key] for key in curator} == curator
     assert (
-        json.dumps(curator, indent=2, sort_keys=True)
-        in docs["pipeline/4_cosmos_curator"]
+        displayed_curator["source_report"]["artifact"] == "curation/cosmos_curator.json"
     )
     assert "Cosmos Transfer 2.5" not in docs["pipeline/2_augment"]
     assert set(docs) == {
@@ -718,9 +721,7 @@ def test_source_fidelity_media_evidence_probes_exact_synchronized_bytes(
                 },
             }
         },
-        variant_records=[
-            {"candidate_id": "candidate-a", "video": candidate}
-        ],
+        variant_records=[{"candidate_id": "candidate-a", "video": candidate}],
     )
 
     assert evidence["schema"] == "npa.paidf.vda.media-evidence.v1"
@@ -729,9 +730,7 @@ def test_source_fidelity_media_evidence_probes_exact_synchronized_bytes(
     assert evidence["source"]["sha256"] == _sha256_path(source)
     assert evidence["conditioning_policy"] == policy
     assert evidence["source"]["byte_size"] == source.stat().st_size
-    assert evidence["conditioning"]["frame_count"] == evidence["source"][
-        "frame_count"
-    ]
+    assert evidence["conditioning"]["frame_count"] == evidence["source"]["frame_count"]
     assert len(evidence["controls"]) == 1
     assert evidence["controls"][0]["candidate_id"] == "candidate-a"
     assert evidence["controls"][0]["signal"] == "candidate-a/control_edge.mp4"
@@ -795,9 +794,7 @@ def test_source_fidelity_media_evidence_rejects_missing_committed_control(
         _source_fidelity_media_evidence(
             run,
             input_provenance={"derivation": {"policy": "source-fidelity-v3"}},
-            variant_records=[
-                {"candidate_id": "candidate-a", "video": candidate}
-            ],
+            variant_records=[{"candidate_id": "candidate-a", "video": candidate}],
         )
 
 

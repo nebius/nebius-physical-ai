@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 import hashlib
 from itertools import product
@@ -1383,7 +1383,13 @@ def _call_openai_compatible(
             if served_model != model:
                 raise VlmEvalError("Hosted VLM response model does not match the requested model")
         return _parse_api_structured_response(message, served_model=served_model)
-    return parse_structured_response(str(message))
+    result = parse_structured_response(str(message))
+    served_model = data.get("model")
+    if served_model is not None:
+        if not isinstance(served_model, str) or not served_model.strip():
+            raise VlmEvalError("Self-hosted VLM response model must be a nonempty string")
+        result = replace(result, served_model=served_model)
+    return result
 
 
 def _post_with_readiness_retry(

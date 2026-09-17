@@ -251,3 +251,16 @@ independently reopen the sequence, parsed NRE metrics, USDZ and RRD, decode the
 novel-view images, and visually inspect the results. Record numeric outcomes
 without publishing live infrastructure identifiers. Those GPU and image
 acceptance results remain pending.
+
+## Clean up
+
+Idle GPU clusters keep billing after the run finishes. When you are done,
+tear them down:
+
+```bash
+npa destroy --project "<alias>" --all
+```
+
+The plan previews read-only until you pass `--yes`, and the Nebius project
+itself is retained by default. See [teardown](../../teardown.md) for what
+`npa destroy` removes (cloud spend) versus what it keeps.

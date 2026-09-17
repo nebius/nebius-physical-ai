@@ -70,8 +70,9 @@ npa --version
 npa workbench --help
 ```
 
-Prefer [`uv`](https://docs.astral.sh/uv/)? From the clone root, use these commands
-instead of the venv creation and installation commands above:
+Prefer [`uv`](https://docs.astral.sh/uv/)? The commands below are equivalent to
+the venv creation and installation commands above — pick whichever tool you
+prefer; the quickstarts standardize on `venv`/`pip`. From the clone root:
 
 ```bash
 uv venv .venv
@@ -147,9 +148,14 @@ details.
 Install the tools your workload uses:
 
 - **Terraform 1.x** is required for managed VM/cluster provisioning and agent
-  deployment. The Python package does not install it. Check `terraform version`;
-  agent bootstrap installs the tested 1.13.3 baseline only if Terraform is absent.
+  deployment; the managed cluster recipe requires **1.12.0 or newer**. The Python
+  package does not install it. Check `terraform version`; `NPA_TERRAFORM_BIN` can
+  select a compatible binary outside `PATH`.
+  Agent bootstrap installs the tested 1.13.3 baseline only if Terraform is absent.
 - **kubectl** is required for Kubernetes operations.
+- **AWS CLI v2** is used by direct S3 artifact upload/download examples. Use the
+  [bundled installer](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
+  and confirm that the selected `aws --version` begins with `aws-cli/2.`.
 - **socat** is required by SkyPilot Kubernetes on Debian/Ubuntu:
   `sudo apt-get install -y socat`.
 - **Docker** is needed for local container runs and image builds. Supported NPA

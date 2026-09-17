@@ -848,3 +848,25 @@ def test_every_contract_names_a_real_file(contract: CapabilityContract) -> None:
     target = contract.spec_path or contract.yaml_path
     assert target is not None
     assert (REPO_ROOT / target).is_file(), target
+
+
+def test_sim2real_sdk_run_exposes_all_byo_seams() -> None:
+    # The SDK is the seam surface #513 fixed: every config field in
+    # SIM2REAL_SEAMS must be an explicit keyword parameter on
+    # npa.sdk.workbench.sim2real.run so SDK callers get a stable,
+    # discoverable signature instead of **overrides. The sync is
+    # directional — the signature must cover the seams; extra
+    # parameters (run_id, output_dir, upload_artifacts, **overrides)
+    # are fine.
+    import inspect
+
+    from npa.sdk.workbench.sim2real import run as sim2real_sdk_run
+    from npa.workflows.sim2real_health import SIM2REAL_SEAMS
+
+    signature_params = set(inspect.signature(sim2real_sdk_run).parameters)
+    seam_fields = {seam.config_field for seam in SIM2REAL_SEAMS}
+    missing = seam_fields - signature_params
+    assert not missing, (
+        f"npa.sdk.workbench.sim2real.run is missing explicit parameters "
+        f"for BYO seams: {sorted(missing)}"
+    )

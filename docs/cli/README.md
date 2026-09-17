@@ -53,6 +53,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa workbench sonic](sonic.md)
 - [npa soperator](soperator.md)
 - [npa storage](storage.md)
+- [npa studio](studio.md)
 - [npa workbench token-factory](token-factory.md)
 - [npa workbench workflow trigger](trigger.md)
 - [npa uninstall](uninstall.md)

@@ -68,6 +68,10 @@ def main() -> None:
     if _is_bare_version_request(sys.argv[1:]):
         _print_version()
         return
+    if sys.argv[1:2] == ["studio"]:
+        from npa.studio import run
+
+        raise SystemExit(run(sys.argv[2:]))
     if _is_cosmos2_request(sys.argv[1:]):
         # Do not initialize the full platform/workbench command tree here. The
         # Cosmos image deliberately carries only its inference stack and the

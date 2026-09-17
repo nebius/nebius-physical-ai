@@ -1,0 +1,5796 @@
+{
+  "artifact_audit": {
+    "all_checks_passed": true,
+    "completed_ppo_updates": 1500,
+    "cross_recipe_reset_pairing_asserted": false,
+    "curriculum_audit": {
+      "completed_episodes": 590196,
+      "current_level_episodes_accounted": 590196,
+      "evaluation_used": false,
+      "final_difficulty": 0.25,
+      "history_windows": 72,
+      "strict_successes": 0
+    },
+    "decoded_videos": [
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 35.14744226966848,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-000.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "5b7fde5b3931888eefd8dd4a6ec5cdb1d38a952eb2354b9598c0aed945e72a3c",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.961762379431214,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-001.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "de1d2b30f11a9860b847f3244639c65bb9774f916972c444a8cb4548326159ff",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.876821029743816,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-002.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "02a95b9660a741ba19c0cdd6ccfa0eaae56eeb45ceab7b2c534d37af4b1e1a4d",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.84141423867189,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-003.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "94390fb54e44076a8f7f04626d65e134fb1fb903fa93353eae0dc6040466d7a3",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 35.17754889145276,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-004.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "6669f333ba37c444e0e7e9ed97a891411f66a653ede69dbaa0f8edff3edd0f1f",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.92716492046061,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-005.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "a26b059b612bd3ab44ed245d6d7563e50fa5cb0cdeb8bee0ad335df682a6de28",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.87486832609306,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-006.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "c00be079892636907e3c4bed4891ae0c1320689662c449557df990dab8c3226b",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.87907131877891,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-007.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "ae44c76eedb2f6ce285682cfc0dec89cf0e7f89d4a6467cd09a831ffb5eb4847",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 35.16215035066852,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-008.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "34c7f52e767b299fa837c6e0498b79b80911843f9dd4ae56f45195f30351cd4b",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.91558301756995,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-009.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "050c3f2f201d72e478482da48b36b8a58eb572560ab4e9988cd3efce5873f510",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.85370593797668,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-010.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "00f0ffa29abefd7932094c4219ffa6ae250f78c70dcbebceca85e3a7d53a53fe",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.84629599554892,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-011.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "3cd85801eaa87b8633f234864b4e881c2284b9eb81e750098bebd6b3eb97a290",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 35.164248573076684,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-012.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "32f76d2262f59c53b194a5d45419d03644f5f1dfda20111fc1208692be2807f5",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.99221382606504,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-013.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "58d8953cb88ac1eccbf5c88339956f3d0891572f36fe50f8623da42dc670a146",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.88152240525328,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-014.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "b678d8b9d6e611b7cfa8fffdc6183df38b675950834a83b3aae5524c01d94afe",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.952854976962584,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-015.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "93da564d86e53c4bafd5c8317cbba90fb5370cbf5430b4f471db78468390c0a7",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 35.16182802143307,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-016.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "eb5bb715b10c98c317dc022bafe66c229b0bde68de17e043751a04107fe6a259",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.88494128969733,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-017.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "3232c43346f820fe2e2cac9798c2a231d9a76fb54df1cda1897f216e582fc8b8",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.92314424215398,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-018.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "d162ceeeb62daa1dc1a23c0d1f855fd3a1f9f9096591b43f85db61e07a060938",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.66999065778869,
+        "nb_read_frames": "161",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-019.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "ee8a92227a7c2f0784932719c4c3b115876f596e5fda59172aa1244d9929ce4c",
+        "source_rgb_checked_indices": [
+          0,
+          80,
+          160
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 35.11622807922866,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-020.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "328996df097041de01f65aeceffc0263f98bdc818d9c7a7802e186c478dc59c0",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.96141251641324,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-021.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "9ddfe7d736f9a897cf8ba18c00213f007dfab5b27fd15c0170ad80bf85211fb1",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.780504757448966,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-022.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "8d91ff505fc5fac91f9102bba9b0602cc4b2baf3f45fd2599d194c99a2d211f0",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.907634662932324,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-023.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "e5131b8451f50667f5503aa37e563bbe93ec420555ee279281bf668457d925c5",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 35.13924565215691,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-024.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "6e354ab013cd7110a72e67182aed264abe3ee66c7dd9b075d1ed1f3c0549e886",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.867629334494616,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-025.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "c253af39d2c0d1b01931213317f35d6e6352ac131e28aaaa4466766c0c7738ab",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.818430120578384,
+        "nb_read_frames": "116",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-026.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "636ccdea169962539e38c5f148d014579019de1b8fe6574b31736e35a757f797",
+        "source_rgb_checked_indices": [
+          0,
+          58,
+          115
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.88803643078043,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-027.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "ca71c68ad635c07654e6e8eeb1d1e0eed868f2467acdb49a082d3d8d1a022229",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 34.70646241924286,
+        "nb_read_frames": "188",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-028.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "39ade1ac42f6659c9b86dcc8e1dcebe0c2a1e8d52927677388d597bd7b37f2d4",
+        "source_rgb_checked_indices": [
+          0,
+          94,
+          187
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.8140682349481,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-029.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "4c61dc47470e1510cc5de4cfcec07343d1430c5232bff11f2de7fceb8d176d82",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.78628624205965,
+        "nb_read_frames": "139",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-030.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "9b9cf7f81e77f3f11fd9650bb1152fbe46297c2eefa1e8852432ae7885255fcc",
+        "source_rgb_checked_indices": [
+          0,
+          69,
+          138
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.82891413989928,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-031.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "eb3775a786d68a563212c6d6c19e8aff9aeaee219c667b0d36acc6dbd29cb8d6",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      }
+    ],
+    "frozen_normalization_audit": {
+      "all_receipts_match_checkpoint_bytes": true,
+      "checkpoint_bound_frozen_receipts": 45
+    },
+    "independent_checkpoint_audit": {
+      "actor_normalization": {
+        "buffers": {
+          "_mean": {
+            "dtype": "torch.float32",
+            "sha256": "ee67bfb29778a408da6c3390dee7307cb304bd960ae662584c28713338b9067e",
+            "shape": [
+              1,
+              64
+            ]
+          },
+          "_std": {
+            "dtype": "torch.float32",
+            "sha256": "dbef577d743f04153f5c6bf27c18c569c558d61b77e0ab4ef891835eaa4c6b58",
+            "shape": [
+              1,
+              64
+            ]
+          },
+          "_var": {
+            "dtype": "torch.float32",
+            "sha256": "f5de931487e270153a496c076fbd445aa4f1af5029b587a8fc1c2111386e3b58",
+            "shape": [
+              1,
+              64
+            ]
+          },
+          "count": {
+            "dtype": "torch.int64",
+            "sha256": "5d63834ea8c44f858fd27950e029c4be5bd8f6e5d6849e8d0b33c16fbebc370f",
+            "shape": []
+          }
+        },
+        "sample_count": 147456000
+      },
+      "actor_parameter_delta_l2": 106.00975036621094,
+      "actor_parameter_names": [
+        "distribution.std_param",
+        "mlp.0.weight",
+        "mlp.0.bias",
+        "mlp.2.weight",
+        "mlp.2.bias",
+        "mlp.4.weight",
+        "mlp.4.bias",
+        "mlp.6.weight",
+        "mlp.6.bias"
+      ],
+      "actor_tensors": 13,
+      "all_checks_passed": true,
+      "checkpoints_by_sha256": {
+        "0ef220fe26c904b1b82f31e277cd7fcbddd3cd6c1ee978e6fc7ee3f56570d955": {
+          "actor_normalization": {
+            "buffers": {
+              "_mean": {
+                "dtype": "torch.float32",
+                "sha256": "ee67bfb29778a408da6c3390dee7307cb304bd960ae662584c28713338b9067e",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_std": {
+                "dtype": "torch.float32",
+                "sha256": "dbef577d743f04153f5c6bf27c18c569c558d61b77e0ab4ef891835eaa4c6b58",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_var": {
+                "dtype": "torch.float32",
+                "sha256": "f5de931487e270153a496c076fbd445aa4f1af5029b587a8fc1c2111386e3b58",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "count": {
+                "dtype": "torch.int64",
+                "sha256": "5d63834ea8c44f858fd27950e029c4be5bd8f6e5d6849e8d0b33c16fbebc370f",
+                "shape": []
+              }
+            },
+            "sample_count": 147456000
+          },
+          "completed_ppo_updates": 1500,
+          "critic_normalization": {
+            "buffers": {
+              "_mean": {
+                "dtype": "torch.float32",
+                "sha256": "ee67bfb29778a408da6c3390dee7307cb304bd960ae662584c28713338b9067e",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_std": {
+                "dtype": "torch.float32",
+                "sha256": "dbef577d743f04153f5c6bf27c18c569c558d61b77e0ab4ef891835eaa4c6b58",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_var": {
+                "dtype": "torch.float32",
+                "sha256": "f5de931487e270153a496c076fbd445aa4f1af5029b587a8fc1c2111386e3b58",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "count": {
+                "dtype": "torch.int64",
+                "sha256": "5d63834ea8c44f858fd27950e029c4be5bd8f6e5d6849e8d0b33c16fbebc370f",
+                "shape": []
+              }
+            },
+            "sample_count": 147456000
+          },
+          "native_iteration_counter": 1499,
+          "optimizer_steps_per_parameter": [
+            30000
+          ]
+        },
+        "660b0b444c603669f423951a5ecd625bd02633c50af5f75fd709d01c13005e4d": {
+          "actor_normalization": {
+            "buffers": {
+              "_mean": {
+                "dtype": "torch.float32",
+                "sha256": "010019cb5c10cb22ee012fa63444e3650eeef3e3d8c03bb0dd2fa973b51ec902",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_std": {
+                "dtype": "torch.float32",
+                "sha256": "6af4a2675dbd1e71715d1d8cf0825987d5da63127012d31f2aab8a69b5c13783",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_var": {
+                "dtype": "torch.float32",
+                "sha256": "5d35c6e0cfbf4aa5db3deae73cee933c99c31d348d55f5bc618772dcc42a333d",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "count": {
+                "dtype": "torch.int64",
+                "sha256": "cf3fe9a3ee9a673db8db87fa20711cca637137bd492fd2062554ac8a6aca52bb",
+                "shape": []
+              }
+            },
+            "sample_count": 98304
+          },
+          "completed_ppo_updates": 1,
+          "critic_normalization": {
+            "buffers": {
+              "_mean": {
+                "dtype": "torch.float32",
+                "sha256": "010019cb5c10cb22ee012fa63444e3650eeef3e3d8c03bb0dd2fa973b51ec902",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_std": {
+                "dtype": "torch.float32",
+                "sha256": "6af4a2675dbd1e71715d1d8cf0825987d5da63127012d31f2aab8a69b5c13783",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_var": {
+                "dtype": "torch.float32",
+                "sha256": "5d35c6e0cfbf4aa5db3deae73cee933c99c31d348d55f5bc618772dcc42a333d",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "count": {
+                "dtype": "torch.int64",
+                "sha256": "cf3fe9a3ee9a673db8db87fa20711cca637137bd492fd2062554ac8a6aca52bb",
+                "shape": []
+              }
+            },
+            "sample_count": 98304
+          },
+          "native_iteration_counter": 0,
+          "optimizer_steps_per_parameter": [
+            20
+          ]
+        },
+        "8f649986b919513176eedf19c0950a4607808dd65e6f692bb6c2373d1891b183": {
+          "actor_normalization": {
+            "buffers": {
+              "_mean": {
+                "dtype": "torch.float32",
+                "sha256": "93867064f4cf0154449c039c3fe7a518f7aa37b27ad52cdd95d88872f6813517",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_std": {
+                "dtype": "torch.float32",
+                "sha256": "14bb3786c5a7c4e82d8349978bbd6bef14f4a16e7d8ae8471582bc21759a5884",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_var": {
+                "dtype": "torch.float32",
+                "sha256": "8f429616b78a0fe23d9f1d05e06510fc0a2d34a68879f8c12cbacdd16dc424f3",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "count": {
+                "dtype": "torch.int64",
+                "sha256": "0db6b426f387d3aa6c31a49873d93643bc0ec18e5d093253f69c4ec0e9e82049",
+                "shape": []
+              }
+            },
+            "sample_count": 49250304
+          },
+          "completed_ppo_updates": 501,
+          "critic_normalization": {
+            "buffers": {
+              "_mean": {
+                "dtype": "torch.float32",
+                "sha256": "93867064f4cf0154449c039c3fe7a518f7aa37b27ad52cdd95d88872f6813517",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_std": {
+                "dtype": "torch.float32",
+                "sha256": "14bb3786c5a7c4e82d8349978bbd6bef14f4a16e7d8ae8471582bc21759a5884",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_var": {
+                "dtype": "torch.float32",
+                "sha256": "8f429616b78a0fe23d9f1d05e06510fc0a2d34a68879f8c12cbacdd16dc424f3",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "count": {
+                "dtype": "torch.int64",
+                "sha256": "0db6b426f387d3aa6c31a49873d93643bc0ec18e5d093253f69c4ec0e9e82049",
+                "shape": []
+              }
+            },
+            "sample_count": 49250304
+          },
+          "native_iteration_counter": 500,
+          "optimizer_steps_per_parameter": [
+            10020
+          ]
+        },
+        "91cd7e7f32276b5dd56d59c9a113e07e9da5d9b8191629cec0d3bfa7901dac08": {
+          "actor_normalization": {
+            "buffers": {
+              "_mean": {
+                "dtype": "torch.float32",
+                "sha256": "ee67bfb29778a408da6c3390dee7307cb304bd960ae662584c28713338b9067e",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_std": {
+                "dtype": "torch.float32",
+                "sha256": "dbef577d743f04153f5c6bf27c18c569c558d61b77e0ab4ef891835eaa4c6b58",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_var": {
+                "dtype": "torch.float32",
+                "sha256": "f5de931487e270153a496c076fbd445aa4f1af5029b587a8fc1c2111386e3b58",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "count": {
+                "dtype": "torch.int64",
+                "sha256": "5d63834ea8c44f858fd27950e029c4be5bd8f6e5d6849e8d0b33c16fbebc370f",
+                "shape": []
+              }
+            },
+            "sample_count": 147456000
+          },
+          "completed_ppo_updates": 1500,
+          "critic_normalization": {
+            "buffers": {
+              "_mean": {
+                "dtype": "torch.float32",
+                "sha256": "ee67bfb29778a408da6c3390dee7307cb304bd960ae662584c28713338b9067e",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_std": {
+                "dtype": "torch.float32",
+                "sha256": "dbef577d743f04153f5c6bf27c18c569c558d61b77e0ab4ef891835eaa4c6b58",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_var": {
+                "dtype": "torch.float32",
+                "sha256": "f5de931487e270153a496c076fbd445aa4f1af5029b587a8fc1c2111386e3b58",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "count": {
+                "dtype": "torch.int64",
+                "sha256": "5d63834ea8c44f858fd27950e029c4be5bd8f6e5d6849e8d0b33c16fbebc370f",
+                "shape": []
+              }
+            },
+            "sample_count": 147456000
+          },
+          "native_iteration_counter": 1499,
+          "optimizer_steps_per_parameter": [
+            30000
+          ]
+        },
+        "934b5575f01f438b5091d639b1871f24c8d5566bfb9ec7d7338671a56959202b": {
+          "actor_normalization": {
+            "buffers": {
+              "_mean": {
+                "dtype": "torch.float32",
+                "sha256": "5341e6b2646979a70e57653007a1f310169421ec9bdd9f1a5648f75ade005af1",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_std": {
+                "dtype": "torch.float32",
+                "sha256": "2f20cd03c9cd392a406c56232b0ff93a15f6d6d7da79086bfa14f55d4a4031b0",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_var": {
+                "dtype": "torch.float32",
+                "sha256": "2f20cd03c9cd392a406c56232b0ff93a15f6d6d7da79086bfa14f55d4a4031b0",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "count": {
+                "dtype": "torch.int64",
+                "sha256": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+                "shape": []
+              }
+            },
+            "sample_count": 0
+          },
+          "completed_ppo_updates": 0,
+          "critic_normalization": {
+            "buffers": {
+              "_mean": {
+                "dtype": "torch.float32",
+                "sha256": "5341e6b2646979a70e57653007a1f310169421ec9bdd9f1a5648f75ade005af1",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_std": {
+                "dtype": "torch.float32",
+                "sha256": "2f20cd03c9cd392a406c56232b0ff93a15f6d6d7da79086bfa14f55d4a4031b0",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_var": {
+                "dtype": "torch.float32",
+                "sha256": "2f20cd03c9cd392a406c56232b0ff93a15f6d6d7da79086bfa14f55d4a4031b0",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "count": {
+                "dtype": "torch.int64",
+                "sha256": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+                "shape": []
+              }
+            },
+            "sample_count": 0
+          },
+          "native_iteration_counter": 0,
+          "optimizer_steps_per_parameter": []
+        },
+        "acc85eba6d5ddee80e094c3e16cf79b39017edbb8f129d9f487a669f5a78a851": {
+          "actor_normalization": {
+            "buffers": {
+              "_mean": {
+                "dtype": "torch.float32",
+                "sha256": "6adedc3e3ad9e66b64e21428e6210ae32840259ecdc6b933820523bf8dda3fb3",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_std": {
+                "dtype": "torch.float32",
+                "sha256": "9dda5f54abd6855db0698f8329e57d60b04b378db58c77106b02d25c7cc00afd",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_var": {
+                "dtype": "torch.float32",
+                "sha256": "374bcdfc7619e4fbfe46c41abace7606f7af964f8819a110921bfb88210c7c66",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "count": {
+                "dtype": "torch.int64",
+                "sha256": "73d56b68d5fae10d6ca44ead7bd508d1ac78edd0b6d36e2404883a993e841b1a",
+                "shape": []
+              }
+            },
+            "sample_count": 98402304
+          },
+          "completed_ppo_updates": 1001,
+          "critic_normalization": {
+            "buffers": {
+              "_mean": {
+                "dtype": "torch.float32",
+                "sha256": "6adedc3e3ad9e66b64e21428e6210ae32840259ecdc6b933820523bf8dda3fb3",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_std": {
+                "dtype": "torch.float32",
+                "sha256": "9dda5f54abd6855db0698f8329e57d60b04b378db58c77106b02d25c7cc00afd",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "_var": {
+                "dtype": "torch.float32",
+                "sha256": "374bcdfc7619e4fbfe46c41abace7606f7af964f8819a110921bfb88210c7c66",
+                "shape": [
+                  1,
+                  64
+                ]
+              },
+              "count": {
+                "dtype": "torch.int64",
+                "sha256": "73d56b68d5fae10d6ca44ead7bd508d1ac78edd0b6d36e2404883a993e841b1a",
+                "shape": []
+              }
+            },
+            "sample_count": 98402304
+          },
+          "native_iteration_counter": 1000,
+          "optimizer_steps_per_parameter": [
+            20020
+          ]
+        }
+      },
+      "completed_ppo_updates": 1500,
+      "critic_normalization": {
+        "buffers": {
+          "_mean": {
+            "dtype": "torch.float32",
+            "sha256": "ee67bfb29778a408da6c3390dee7307cb304bd960ae662584c28713338b9067e",
+            "shape": [
+              1,
+              64
+            ]
+          },
+          "_std": {
+            "dtype": "torch.float32",
+            "sha256": "dbef577d743f04153f5c6bf27c18c569c558d61b77e0ab4ef891835eaa4c6b58",
+            "shape": [
+              1,
+              64
+            ]
+          },
+          "_var": {
+            "dtype": "torch.float32",
+            "sha256": "f5de931487e270153a496c076fbd445aa4f1af5029b587a8fc1c2111386e3b58",
+            "shape": [
+              1,
+              64
+            ]
+          },
+          "count": {
+            "dtype": "torch.int64",
+            "sha256": "5d63834ea8c44f858fd27950e029c4be5bd8f6e5d6849e8d0b33c16fbebc370f",
+            "shape": []
+          }
+        },
+        "sample_count": 147456000
+      },
+      "final_sha256": "0ef220fe26c904b1b82f31e277cd7fcbddd3cd6c1ee978e6fc7ee3f56570d955",
+      "initial_gaussian_std_tensor_verified": true,
+      "initial_sha256": "934b5575f01f438b5091d639b1871f24c8d5566bfb9ec7d7338671a56959202b",
+      "learning_profile": "adaptive-exploration",
+      "native_iteration_counter": 1499,
+      "normalizer_buffers_excluded_from_parameter_delta": true,
+      "optimizer_steps_per_parameter": [
+        30000
+      ],
+      "robot": "franka",
+      "sealed_learner_settings": {
+        "entropy_coef": 0.02,
+        "entropy_source": "sealed_recipe",
+        "initial_std": 1.0
+      },
+      "source": "Independent CPU weights_only decoding; RSL-RL 5.0.1 native parameter names and buffer layout",
+      "training_sha256": "c51c9f5b41530c2f7f3ac47187ae5fc841b09d24215e070f07b4d61daed63850"
+    },
+    "invalid_visual_responses": 4,
+    "lerobot_feature_names_verified": true,
+    "lerobot_rows": 7604,
+    "native_logs_without_physics_errors": 11,
+    "paired_comparison_scope": "initial versus trained within this recipe/run",
+    "paired_test_trials": 1024,
+    "physical_robot_tested": false,
+    "physics_capacity_verified": {
+      "gpu_total_aggregate_pairs_capacity": 2097152
+    },
+    "physics_receipts_checked": 46,
+    "replayed_first_responses": 0,
+    "rerun_dynamic_entities": 576,
+    "rerun_embedded_video_bytes_and_references_verified": true,
+    "rerun_recording_id_matches_run": true,
+    "rerun_scalar_values_verified": true,
+    "rerun_timelines_match_frame_and_time": true,
+    "robot": "franka",
+    "sealed_asset_hashes_verified": true,
+    "selected_checkpoint_sha256": "91cd7e7f32276b5dd56d59c9a113e07e9da5d9b8191629cec0d3bfa7901dac08",
+    "source_commit": "4c1babdfd3e5b9ef92ce9f4b794ef6fb6b5c3a61",
+    "source_fingerprint": "18de71edffe9b77a9c44e6108c414238bb884d1e2b95c8f8015737273e314413",
+    "source_modules_verified": 20,
+    "source_worker_stages_verified": [
+      "train",
+      "evaluate",
+      "visual-evaluate",
+      "report"
+    ],
+    "telemetry_audit": {
+      "episodes": [
+        {
+          "episode_index": 0,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.025836169719696045,
+            0.01369166374206543,
+            0.03999999910593033,
+            0.02312636375427246,
+            0.03999999910593033,
+            0.020134449005126953,
+            0.04000002145767212
+          ],
+          "sha256": "9f64cc29a8c14b9c720c6fc503d9887955669af883ed53a60de0016b09e8a1b5"
+        },
+        {
+          "episode_index": 1,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.02766399085521698,
+            0.014151692390441895,
+            0.03999999910593033,
+            0.02359485626220703,
+            0.03999999910593033,
+            0.02033090591430664,
+            0.04000002145767212
+          ],
+          "sha256": "d3348e3b8109b184a0846c4e72ac35280f54d74a8572d7202de38f75a0e4d4e8"
+        },
+        {
+          "episode_index": 2,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.025848383083939552,
+            0.013767719268798828,
+            0.03999999910593033,
+            0.021267175674438477,
+            0.03999999910593033,
+            0.01973891258239746,
+            0.04000002145767212
+          ],
+          "sha256": "33ecf95202e0a7b759913e32a48aee463ce34f66d8d60731e2d17461920e68fd"
+        },
+        {
+          "episode_index": 3,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.026355750858783722,
+            0.014479100704193115,
+            0.03999999910593033,
+            0.024584531784057617,
+            0.03999999910593033,
+            0.0205686092376709,
+            0.04000002145767212
+          ],
+          "sha256": "0dbfb90c89afba3c7ac3b3b8e584443f18b8e2712aa7f0594dcaed21a01ce22c"
+        },
+        {
+          "episode_index": 4,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.015338243916630745,
+            0.030535101890563965,
+            0.012891478836536407,
+            0.014723777770996094,
+            0.016618430614471436,
+            0.018067359924316406,
+            0.0323336124420166
+          ],
+          "sha256": "3ffc974bf09281d1f8c490246d7334cf23f3854cc9034b697aa7d55107476bc5"
+        },
+        {
+          "episode_index": 5,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.015361018478870392,
+            0.02859318256378174,
+            0.013758644461631775,
+            0.014069795608520508,
+            0.015069328248500824,
+            0.01774287223815918,
+            0.030908167362213135
+          ],
+          "sha256": "330f2b6db4c28d4b2ca40bbf94f7fab0ab2e1ffc21367a267bd1336bad0e26f6"
+        },
+        {
+          "episode_index": 6,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.01310897246003151,
+            0.02413487434387207,
+            0.006935134530067444,
+            0.012381315231323242,
+            0.015791110694408417,
+            0.019274473190307617,
+            0.03513622283935547
+          ],
+          "sha256": "929f9429823420604721fadd69109f454b57bf7ef5ae4ea926605486cbd04384"
+        },
+        {
+          "episode_index": 7,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.01501975767314434,
+            0.02382725477218628,
+            0.014115076512098312,
+            0.012874841690063477,
+            0.016354739665985107,
+            0.016922950744628906,
+            0.033888936042785645
+          ],
+          "sha256": "fec3fd07aa0b7f72146162918b235b1d4e611ac7a8728649759ac74d06b606c4"
+        },
+        {
+          "episode_index": 8,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.015340868383646011,
+            0.03053504228591919,
+            0.012894053012132645,
+            0.014720916748046875,
+            0.016618430614471436,
+            0.018070697784423828,
+            0.0323336124420166
+          ],
+          "sha256": "db3763bea2529a195552393b40cc7c1b5f560aaa478afcbd34ba597cbda126c1"
+        },
+        {
+          "episode_index": 9,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.015361657366156578,
+            0.028591573238372803,
+            0.013760954141616821,
+            0.014068365097045898,
+            0.015069328248500824,
+            0.01774430274963379,
+            0.030908167362213135
+          ],
+          "sha256": "bce9e8b83e9251f29b78a35c95ba327644636c05959ffec0f4ad5de0cfa9bc5c"
+        },
+        {
+          "episode_index": 10,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.013108938932418823,
+            0.024134457111358643,
+            0.006935089826583862,
+            0.01238107681274414,
+            0.015791110694408417,
+            0.019274473190307617,
+            0.03513622283935547
+          ],
+          "sha256": "b2487cb6b6ce90625eba4291e7b42bf1446b5d0d94f2224716d1b7bf8405db6b"
+        },
+        {
+          "episode_index": 11,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.015022043138742447,
+            0.02382761240005493,
+            0.014115866273641586,
+            0.012873172760009766,
+            0.016354739665985107,
+            0.016923904418945312,
+            0.033888936042785645
+          ],
+          "sha256": "c5321e9ec71a07fd56b36657e6445546eb7183a52e11b8310a84ff20237adeff"
+        },
+        {
+          "episode_index": 12,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.015340868383646011,
+            0.03053504228591919,
+            0.012894053012132645,
+            0.014720916748046875,
+            0.016618430614471436,
+            0.018070697784423828,
+            0.0323336124420166
+          ],
+          "sha256": "db3763bea2529a195552393b40cc7c1b5f560aaa478afcbd34ba597cbda126c1"
+        },
+        {
+          "episode_index": 13,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.015361657366156578,
+            0.028591573238372803,
+            0.013760954141616821,
+            0.014068365097045898,
+            0.015069328248500824,
+            0.01774430274963379,
+            0.030908167362213135
+          ],
+          "sha256": "bce9e8b83e9251f29b78a35c95ba327644636c05959ffec0f4ad5de0cfa9bc5c"
+        },
+        {
+          "episode_index": 14,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.013108938932418823,
+            0.024134457111358643,
+            0.006935089826583862,
+            0.01238107681274414,
+            0.015791110694408417,
+            0.019274473190307617,
+            0.03513622283935547
+          ],
+          "sha256": "b2487cb6b6ce90625eba4291e7b42bf1446b5d0d94f2224716d1b7bf8405db6b"
+        },
+        {
+          "episode_index": 15,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.015022043138742447,
+            0.02382761240005493,
+            0.014115866273641586,
+            0.012873172760009766,
+            0.016354739665985107,
+            0.016923904418945312,
+            0.033888936042785645
+          ],
+          "sha256": "c5321e9ec71a07fd56b36657e6445546eb7183a52e11b8310a84ff20237adeff"
+        },
+        {
+          "episode_index": 16,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.04000002145767212,
+            0.04000002145767212,
+            0.04000002145767212,
+            0.039999961853027344,
+            0.040000081062316895,
+            0.039999961853027344,
+            0.04000002145767212
+          ],
+          "sha256": "2be10f7dd9eee3dab3b5b2bc41899c3056c1825644e399cd752f264b44957827"
+        },
+        {
+          "episode_index": 17,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.04000002145767212,
+            0.04000002145767212,
+            0.04000002145767212,
+            0.039999961853027344,
+            0.04000002145767212,
+            0.039999961853027344,
+            0.04000002145767212
+          ],
+          "sha256": "816858ba7d9723e532323f9c0a9f864b35bd9684438d72e71c497a1dfeb81a66"
+        },
+        {
+          "episode_index": 18,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.04000002145767212,
+            0.04000002145767212,
+            0.04000002145767212,
+            0.039999961853027344,
+            0.040000081062316895,
+            0.039999961853027344,
+            0.04000002145767212
+          ],
+          "sha256": "6415d59c8bdb583d31479271391303c04d2d23d92f307a4f7f6471fb75ebf0b6"
+        },
+        {
+          "episode_index": 19,
+          "frames": 161,
+          "maximum_target_step_rad": [
+            0.04000002145767212,
+            0.04000002145767212,
+            0.04000002145767212,
+            0.040000081062316895,
+            0.040000081062316895,
+            0.039999961853027344,
+            0.04000002145767212
+          ],
+          "sha256": "16a2f6428c576af1945e87c698d76f1d40ef2b6656a3a9495d16859b347885fb"
+        },
+        {
+          "episode_index": 20,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.03999999910593033,
+            0.04000002145767212,
+            0.04000002145767212,
+            0.039999961853027344,
+            0.04000002145767212,
+            0.039999961853027344,
+            0.04000002145767212
+          ],
+          "sha256": "1a63ed3a319909c5004f1c4b254cf09f7b7d3dbb963163a85b8a33b8abcd49c1"
+        },
+        {
+          "episode_index": 21,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.04000002145767212,
+            0.04000002145767212,
+            0.04000002145767212,
+            0.039999961853027344,
+            0.04000002145767212,
+            0.039999961853027344,
+            0.04000002145767212
+          ],
+          "sha256": "c1fe8520dec07f4373760539323d862753a28bde10ceacc4a87d15288a774208"
+        },
+        {
+          "episode_index": 22,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.04000002145767212,
+            0.040000006556510925,
+            0.04000002145767212,
+            0.039999961853027344,
+            0.04000002145767212,
+            0.039999961853027344,
+            0.04000002145767212
+          ],
+          "sha256": "f30a515f39a41048d6794197afbbd21c189344d28a241599de36d3d3d421cd5b"
+        },
+        {
+          "episode_index": 23,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.03999999910593033,
+            0.04000002145767212,
+            0.03999999910593033,
+            0.039999961853027344,
+            0.04000002145767212,
+            0.039999961853027344,
+            0.04000002145767212
+          ],
+          "sha256": "4f26469834ec67cd742b42aa93d55de4302e78815c0842401e6eefb3ff5a08e7"
+        },
+        {
+          "episode_index": 24,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.03999999910593033,
+            0.04000002145767212,
+            0.04000002145767212,
+            0.039999961853027344,
+            0.04000002145767212,
+            0.039999961853027344,
+            0.04000002145767212
+          ],
+          "sha256": "8ce0e09759dead8c87011d07548c6b486b7ab9ecb89a56a26ccc8f5cf98871b0"
+        },
+        {
+          "episode_index": 25,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.04000002145767212,
+            0.04000002145767212,
+            0.04000002145767212,
+            0.039999961853027344,
+            0.04000002145767212,
+            0.039999961853027344,
+            0.04000002145767212
+          ],
+          "sha256": "83312721fc578bcec60cf8cf3e4b28b875abac6ff456f48ce23705b1e34a6d04"
+        },
+        {
+          "episode_index": 26,
+          "frames": 116,
+          "maximum_target_step_rad": [
+            0.04000002145767212,
+            0.04000002145767212,
+            0.04000002145767212,
+            0.039999961853027344,
+            0.04000002145767212,
+            0.039999961853027344,
+            0.04000002145767212
+          ],
+          "sha256": "978894ca9524694eb491f566c6b8d416d652f610ad601e85a7f9d796ecce0e7a"
+        },
+        {
+          "episode_index": 27,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.03999999910593033,
+            0.04000002145767212,
+            0.03999999910593033,
+            0.039999961853027344,
+            0.04000002145767212,
+            0.039999961853027344,
+            0.04000002145767212
+          ],
+          "sha256": "003ea4f799044df3a5e11ed54018b07767cd48a3b8ee62540c51e34423a58a42"
+        },
+        {
+          "episode_index": 28,
+          "frames": 188,
+          "maximum_target_step_rad": [
+            0.040000006556510925,
+            0.04000002145767212,
+            0.04000002145767212,
+            0.039999961853027344,
+            0.040000081062316895,
+            0.039999961853027344,
+            0.04000002145767212
+          ],
+          "sha256": "bc72b05c3c5861af1075cba29446e8f56ca53bbbc8bd6f2ff98da7ef0c443054"
+        },
+        {
+          "episode_index": 29,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.04000002145767212,
+            0.04000002145767212,
+            0.04000002145767212,
+            0.039999961853027344,
+            0.04000002145767212,
+            0.039999961853027344,
+            0.04000002145767212
+          ],
+          "sha256": "6741252f5f296b217c60284e82f2656e6bd50dc68ca4d2f3f47d56e6cc7ad624"
+        },
+        {
+          "episode_index": 30,
+          "frames": 139,
+          "maximum_target_step_rad": [
+            0.04000002145767212,
+            0.04000002145767212,
+            0.04000002145767212,
+            0.039999961853027344,
+            0.040000081062316895,
+            0.039999961853027344,
+            0.04000002145767212
+          ],
+          "sha256": "4dcb0f2ebd95b81f6a63457fbd73d09e1efd270d97126585237f2ccedfdb721b"
+        },
+        {
+          "episode_index": 31,
+          "frames": 250,
+          "maximum_target_step_rad": [
+            0.03999999910593033,
+            0.04000002145767212,
+            0.03999999910593033,
+            0.039999961853027344,
+            0.04000002145767212,
+            0.039999961853027344,
+            0.04000002145767212
+          ],
+          "sha256": "299fee031176034cf67caf70334478b80768f732848460696997f8fe9b773d1e"
+        }
+      ],
+      "geometry_recomputed": true,
+      "initial_target_difference_excluded": true,
+      "target_limits_verified": true,
+      "target_slew_verified": true,
+      "timing_metadata_verified": true
+    },
+    "verified_stage_files": {
+      "evaluation": 242,
+      "prepared": 5,
+      "reports": 44,
+      "training": 14,
+      "visual": 578
+    },
+    "visual_judgments_verified": 32,
+    "visual_lift_confusion_recomputed": {
+      "negative_invalid": 4,
+      "negative_no": 25,
+      "negative_yes": 3
+    },
+    "vlm_sampled_pixels_and_complete_grid_verified": true
+  },
+  "artifact_sha256": {
+    "demo.mp4": "75c4124dec4bee59a6625ba691770e3d92f9bb9607b1716d458dd6129721687b",
+    "evaluation/evaluation.json": "03e1c639446f2665ecfee2c40e36fd470b80200ef0123401f2b8ce6a3c0b07bf",
+    "reports/franka.rrd": "47fb943b36e23dc15a66f028c7caef82af53e6d2b4a816e5632f9bb189deb50b",
+    "reports/report.json": "f6357d8f13cb5512c1963ae4d36f962d9f409af720972dfbd88ee2dac6b4b070",
+    "training/training.json": "c51c9f5b41530c2f7f3ac47187ae5fc841b09d24215e070f07b4d61daed63850",
+    "visual/visual-evaluation.json": "a42242bdb4f4482c241eee1298bf783e26a571e8216745788f996830fc0d88cb"
+  },
+  "capture": {
+    "action_names": [
+      "panda_joint1_normalized_target",
+      "panda_joint2_normalized_target",
+      "panda_joint3_normalized_target",
+      "panda_joint4_normalized_target",
+      "panda_joint5_normalized_target",
+      "panda_joint6_normalized_target",
+      "panda_joint7_normalized_target",
+      "gripper_open_close"
+    ],
+    "action_semantics": "Isaac joint position: default offset + 0.5 * arm action; negative closes gripper; arm targets constrained by physical joint limits and per-step target slew",
+    "episode_lengths": [
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      161,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      116,
+      250,
+      188,
+      250,
+      139,
+      250
+    ],
+    "fps": 50.0,
+    "learning_telemetry": {
+      "file": "telemetry.npz",
+      "pose_frame": "environment_world",
+      "quaternion_order": "xyzw",
+      "state_timing": "before policy action",
+      "target_joint_names": [
+        "panda_joint1",
+        "panda_joint2",
+        "panda_joint3",
+        "panda_joint4",
+        "panda_joint5",
+        "panda_joint6",
+        "panda_joint7"
+      ],
+      "target_timing": "bounded target applied by the recorded action"
+    },
+    "num_episodes": 32,
+    "state_names": [
+      "panda_joint1",
+      "panda_joint2",
+      "panda_joint3",
+      "panda_joint4",
+      "panda_joint5",
+      "panda_joint6",
+      "panda_joint7",
+      "panda_finger_joint1",
+      "panda_finger_joint2"
+    ],
+    "total_frames": 7604
+  },
+  "exploration": null,
+  "lift_counts": {
+    "initial": {
+      "delay": 0,
+      "heavy": 0,
+      "nominal": 0,
+      "slippery": 0
+    },
+    "trained": {
+      "delay": 0,
+      "heavy": 0,
+      "nominal": 0,
+      "slippery": 0
+    }
+  },
+  "limitations": [
+    "Privileged simulator-state policy; physical perception and control remain unvalidated.",
+    "One training seed; uncertainty covers reset variability only.",
+    "Task is lift and hold at a commanded goal, not released placement."
+  ],
+  "paired_delta_95ci": [
+    0.0,
+    0.0
+  ],
+  "physical_robot_tested": false,
+  "physics_qualified": false,
+  "preview": {
+    "arm": "trained",
+    "capture_index": 0,
+    "condition": "nominal",
+    "episode_index": 24,
+    "frame_index": 100,
+    "image": "franka-exploration-parts-rtx-preview.png",
+    "image_sha256": "f5739413947d644935f13aa648e233746f1ebcff3e879c0af90816ee29768a65",
+    "source_video_sha256": "6e354ab013cd7110a72e67182aed264abe3ee66c7dd9b075d1ed1f3c0549e886",
+    "timestamp_seconds": 2.0
+  },
+  "ready_for_robot_deployment": false,
+  "recipe": {
+    "assets": {
+      "description": "orange spool with two wide flanges and a narrow waist",
+      "distractor_positions_m": {
+        "bottle": [
+          0.7549999999999999,
+          0.38,
+          0.05
+        ],
+        "hex_nut": [
+          0.69,
+          0.38,
+          0.03
+        ]
+      },
+      "files": {
+        "assets/bottle.usda": "7caf59359b3ecae0da92efd0a63f652641fe6595968c7531af9d7230d38f8adf",
+        "assets/fixture.usda": "d2f5257ac924440d6af4ddca6c7726b560c4a7cf5cb5c9376190bf03745b6f74",
+        "assets/hex_nut.usda": "a11cc5f3e3a713acbcbd66e7c5c3eabc6e9a69efe4cb722f6ddddaf5b87405b1",
+        "assets/spool.usda": "2c3b300466cffcb044754400431728e1b165885accdc2bcb18cfca8baffbb67d"
+      },
+      "fixture_position_m": [
+        0.72,
+        0.34,
+        0.0
+      ],
+      "license": "Apache-2.0",
+      "nominal_mass_kg": 0.08,
+      "schema": "npa.franka-rl.assets.v1",
+      "source": "npa_original_procedural_usd",
+      "target": "spool",
+      "units": "metres"
+    },
+    "capture_episodes": 4,
+    "capture_seed": 300000,
+    "checkpoint_interval": 500,
+    "conditions": {
+      "delay": {
+        "action_delay": 1,
+        "friction": 1.0,
+        "mass_scale": 1.0
+      },
+      "heavy": {
+        "action_delay": 0,
+        "friction": 1.0,
+        "mass_scale": 2.0
+      },
+      "nominal": {
+        "action_delay": 0,
+        "friction": 1.0,
+        "mass_scale": 1.0
+      },
+      "slippery": {
+        "action_delay": 0,
+        "friction": 0.25,
+        "mass_scale": 1.0
+      }
+    },
+    "embodiment": {
+      "arm_action_scale": 0.5,
+      "arm_joints": [
+        "panda_joint1",
+        "panda_joint2",
+        "panda_joint3",
+        "panda_joint4",
+        "panda_joint5",
+        "panda_joint6",
+        "panda_joint7"
+      ],
+      "base_body": "panda_link0",
+      "closed_position": 0.0,
+      "configuration": "FRANKA_PANDA_CFG",
+      "gripper_joints": [
+        "panda_finger_joint1",
+        "panda_finger_joint2"
+      ],
+      "module": "franka",
+      "name": "franka",
+      "open_position": 0.04,
+      "root_rotation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "schema": "npa.manipulation-embodiment.v1",
+      "tool_body": "panda_hand",
+      "tool_offset_m": [
+        0.0,
+        0.0,
+        0.1034
+      ]
+    },
+    "episode_steps": 250,
+    "eval_episodes": 128,
+    "iterations": 1500,
+    "learning": {
+      "control": "bounded_joint_target",
+      "curriculum": {
+        "easy_goal_height_m": [
+          0.12,
+          0.18
+        ],
+        "increment": 0.15,
+        "initial_fraction": 0.25,
+        "minimum_episodes": 8192,
+        "success_threshold": 0.7
+      },
+      "name": "adaptive-exploration",
+      "observations": "object-tool-goal-pose-velocity-and-servo-target",
+      "ppo": {
+        "entropy_coef": 0.02,
+        "gamma": 0.99,
+        "initial_std": 1.0,
+        "observation_normalization": true
+      },
+      "reward": {
+        "action_rate_weight": -0.01,
+        "goal_requires_lift": false,
+        "goal_weight": 16.0,
+        "goal_width_m": 0.1,
+        "hold_weight": 25.0,
+        "lift_weight": 15.0,
+        "reach_weight": 2.0,
+        "reach_width_m": 0.15
+      },
+      "schema": "npa.manipulation-learning.v1",
+      "target_velocity_rad_s": 2.0
+    },
+    "maximum_object_speed_m_s": 0.03,
+    "minimum_object_height_m": 0.1,
+    "minimum_success": 0.7,
+    "num_envs": 4096,
+    "physical_robot_tested": false,
+    "physics_capacity": {
+      "gpu_total_aggregate_pairs_capacity": 2097152
+    },
+    "reference_workflow": "workflows/main/sim2real.yaml",
+    "schema": "npa.franka-rl.recipe.v1",
+    "seed": 42,
+    "stable_steps": 20,
+    "steps_per_env": 24,
+    "success_distance_m": 0.05,
+    "task": "Isaac-Lift-Cube-Franka-v0",
+    "test_seed": 200000,
+    "train_friction_range": [
+      0.5,
+      1.5
+    ],
+    "train_mass_range": [
+      0.7,
+      1.3
+    ],
+    "validation_seed": 100000,
+    "visual_eval": {
+      "arms": [
+        "initial",
+        "trained"
+      ],
+      "conditions": [
+        "nominal",
+        "heavy",
+        "slippery",
+        "delay"
+      ],
+      "frame_count": 16,
+      "minimum_lift_agreement": 0.8,
+      "model": "MiniMaxAI/MiniMax-M3",
+      "role": "independent_capture_audit",
+      "rubric_sha256": "1a1f951084d2e7b35d81e8c5c4198e729aa03108b537bce7ba07e332a6710bcc",
+      "rubric_version": "manipulation-visible-events-v2"
+    }
+  },
+  "robot": "franka",
+  "runtime": {
+    "compute_capability": [
+      12,
+      0
+    ],
+    "cuda": "12.8",
+    "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "isaaclab": "3.0.0b2.post1",
+    "rsl_rl": "5.0.1",
+    "torch": "2.11.0+cu128"
+  },
+  "schema": "npa.embodied-rl.parts-evidence.v1",
+  "selection": {
+    "iteration": 1499,
+    "selected_checkpoint_sha256": "91cd7e7f32276b5dd56d59c9a113e07e9da5d9b8191629cec0d3bfa7901dac08",
+    "selection_rule": "validation success, then closest distance, then earlier iteration",
+    "test_data_used": false
+  },
+  "simulation_qualified": false,
+  "source_verification": {
+    "evaluate": {
+      "commit": "4c1babdfd3e5b9ef92ce9f4b794ef6fb6b5c3a61",
+      "module_sha256": {
+        "src/npa/adapter/isaac_lab_lerobot.py": "07cee911e072a4aa1d199b39bbf86575f46718c11da981042d631e530cdcfc26",
+        "src/npa/viz/adapters/lerobot_to_rerun.py": "41fbf06502f7db8253371516729d0e18bd7bb8350bb51da107427b7be8712a5d",
+        "src/npa/workbench/vlm_eval/temporal.py": "002c907a023c43bb4f216c10eefb95e35638111829d195f4cd557a873aeac02f",
+        "src/npa/workflows/franka_rl.py": "3a10d479685060dabeceec426f36f4bae276cc1e170e0dd569e001b200ecd855",
+        "src/npa/workflows/franka_rl_assets.py": "c981d8132b7a5d0aa7516d392a0a2be2362180e48a7faae225b19ed47bb46fd5",
+        "src/npa/workflows/franka_rl_capture.py": "694811e26189a7fa13c54bad9001effbc49468d8023f1a2cdae4312370c88c85",
+        "src/npa/workflows/franka_rl_capture_merge.py": "9847cdcbde1b34622ade7bcfb54bf6b5620a40ae24e47869f3731617079f2e31",
+        "src/npa/workflows/franka_rl_curriculum.py": "4977671b175bcfc75abb412dd2c63bbd5ab55ac6ece4c00cb746c3ef42de2178",
+        "src/npa/workflows/franka_rl_embodiments.py": "c27dcfc5a9b1fe7b9073036ed7f66689eeef6938514449f27851dacd36c8c505",
+        "src/npa/workflows/franka_rl_environment.py": "b2cdd8437158469d990df24e5e9e5682c0154fe9e1a3589167fc4c73989a84a3",
+        "src/npa/workflows/franka_rl_eval.py": "aa73d66b25f0fd4226f982050485d9f6b3e1bcf4dd9bdf221bc9db0d3cb3e5a6",
+        "src/npa/workflows/franka_rl_learning.py": "2537bdc3f71d91d030a38b00a0b07f1317c46fe689214a6c5580ab63cd55282d",
+        "src/npa/workflows/franka_rl_learning_terms.py": "2e197177a36a930900fd2438e5d5f47cb60ec91ab0e6368bae5d6e27e4295113",
+        "src/npa/workflows/franka_rl_metrics.py": "4571d1fe503e93fd95c29692b57bf4d746ee8632b29c32c35eb2b9f4126da13f",
+        "src/npa/workflows/franka_rl_recording.py": "682cb73e3f070f1e105623c69fd67288e5b04dbb3e3473588e49eefbce2e7934",
+        "src/npa/workflows/franka_rl_report.py": "99d7369f728abaab7d1d4a9b35c9e3b35bc484636ee2b75bbdca2db0b261c120",
+        "src/npa/workflows/franka_rl_runtime.py": "889064d5abf997216a3ac2c83df5831e1355ddc4fcf5855b6ccd6f4ccba0159a",
+        "src/npa/workflows/franka_rl_servo.py": "3d39705c225fa8e4813e6c36be73368a3660703d567945fb312fedd13e39ea20",
+        "src/npa/workflows/franka_rl_vlm.py": "de12ce8662ef0d9963f1c47614b1c7080d068fcac5964ac6019f6c1c5651fa02",
+        "src/npa/workflows/lerobot_transfer_data.py": "9ac3d701b7bf2112872cacd37da853d16439e68fdd28bcc110d99b62790c998c"
+      },
+      "robot": "franka",
+      "source_fingerprint": "18de71edffe9b77a9c44e6108c414238bb884d1e2b95c8f8015737273e314413",
+      "stage": "evaluate",
+      "staged_and_worker_modules_match_checkout": true
+    },
+    "report": {
+      "commit": "4c1babdfd3e5b9ef92ce9f4b794ef6fb6b5c3a61",
+      "module_sha256": {
+        "src/npa/adapter/isaac_lab_lerobot.py": "07cee911e072a4aa1d199b39bbf86575f46718c11da981042d631e530cdcfc26",
+        "src/npa/viz/adapters/lerobot_to_rerun.py": "41fbf06502f7db8253371516729d0e18bd7bb8350bb51da107427b7be8712a5d",
+        "src/npa/workbench/vlm_eval/temporal.py": "002c907a023c43bb4f216c10eefb95e35638111829d195f4cd557a873aeac02f",
+        "src/npa/workflows/franka_rl.py": "3a10d479685060dabeceec426f36f4bae276cc1e170e0dd569e001b200ecd855",
+        "src/npa/workflows/franka_rl_assets.py": "c981d8132b7a5d0aa7516d392a0a2be2362180e48a7faae225b19ed47bb46fd5",
+        "src/npa/workflows/franka_rl_capture.py": "694811e26189a7fa13c54bad9001effbc49468d8023f1a2cdae4312370c88c85",
+        "src/npa/workflows/franka_rl_capture_merge.py": "9847cdcbde1b34622ade7bcfb54bf6b5620a40ae24e47869f3731617079f2e31",
+        "src/npa/workflows/franka_rl_curriculum.py": "4977671b175bcfc75abb412dd2c63bbd5ab55ac6ece4c00cb746c3ef42de2178",
+        "src/npa/workflows/franka_rl_embodiments.py": "c27dcfc5a9b1fe7b9073036ed7f66689eeef6938514449f27851dacd36c8c505",
+        "src/npa/workflows/franka_rl_environment.py": "b2cdd8437158469d990df24e5e9e5682c0154fe9e1a3589167fc4c73989a84a3",
+        "src/npa/workflows/franka_rl_eval.py": "aa73d66b25f0fd4226f982050485d9f6b3e1bcf4dd9bdf221bc9db0d3cb3e5a6",
+        "src/npa/workflows/franka_rl_learning.py": "2537bdc3f71d91d030a38b00a0b07f1317c46fe689214a6c5580ab63cd55282d",
+        "src/npa/workflows/franka_rl_learning_terms.py": "2e197177a36a930900fd2438e5d5f47cb60ec91ab0e6368bae5d6e27e4295113",
+        "src/npa/workflows/franka_rl_metrics.py": "4571d1fe503e93fd95c29692b57bf4d746ee8632b29c32c35eb2b9f4126da13f",
+        "src/npa/workflows/franka_rl_recording.py": "682cb73e3f070f1e105623c69fd67288e5b04dbb3e3473588e49eefbce2e7934",
+        "src/npa/workflows/franka_rl_report.py": "99d7369f728abaab7d1d4a9b35c9e3b35bc484636ee2b75bbdca2db0b261c120",
+        "src/npa/workflows/franka_rl_runtime.py": "889064d5abf997216a3ac2c83df5831e1355ddc4fcf5855b6ccd6f4ccba0159a",
+        "src/npa/workflows/franka_rl_servo.py": "3d39705c225fa8e4813e6c36be73368a3660703d567945fb312fedd13e39ea20",
+        "src/npa/workflows/franka_rl_vlm.py": "de12ce8662ef0d9963f1c47614b1c7080d068fcac5964ac6019f6c1c5651fa02",
+        "src/npa/workflows/lerobot_transfer_data.py": "9ac3d701b7bf2112872cacd37da853d16439e68fdd28bcc110d99b62790c998c"
+      },
+      "robot": "franka",
+      "source_fingerprint": "18de71edffe9b77a9c44e6108c414238bb884d1e2b95c8f8015737273e314413",
+      "stage": "report",
+      "staged_and_worker_modules_match_checkout": true
+    },
+    "train": {
+      "commit": "4c1babdfd3e5b9ef92ce9f4b794ef6fb6b5c3a61",
+      "module_sha256": {
+        "src/npa/adapter/isaac_lab_lerobot.py": "07cee911e072a4aa1d199b39bbf86575f46718c11da981042d631e530cdcfc26",
+        "src/npa/viz/adapters/lerobot_to_rerun.py": "41fbf06502f7db8253371516729d0e18bd7bb8350bb51da107427b7be8712a5d",
+        "src/npa/workbench/vlm_eval/temporal.py": "002c907a023c43bb4f216c10eefb95e35638111829d195f4cd557a873aeac02f",
+        "src/npa/workflows/franka_rl.py": "3a10d479685060dabeceec426f36f4bae276cc1e170e0dd569e001b200ecd855",
+        "src/npa/workflows/franka_rl_assets.py": "c981d8132b7a5d0aa7516d392a0a2be2362180e48a7faae225b19ed47bb46fd5",
+        "src/npa/workflows/franka_rl_capture.py": "694811e26189a7fa13c54bad9001effbc49468d8023f1a2cdae4312370c88c85",
+        "src/npa/workflows/franka_rl_capture_merge.py": "9847cdcbde1b34622ade7bcfb54bf6b5620a40ae24e47869f3731617079f2e31",
+        "src/npa/workflows/franka_rl_curriculum.py": "4977671b175bcfc75abb412dd2c63bbd5ab55ac6ece4c00cb746c3ef42de2178",
+        "src/npa/workflows/franka_rl_embodiments.py": "c27dcfc5a9b1fe7b9073036ed7f66689eeef6938514449f27851dacd36c8c505",
+        "src/npa/workflows/franka_rl_environment.py": "b2cdd8437158469d990df24e5e9e5682c0154fe9e1a3589167fc4c73989a84a3",
+        "src/npa/workflows/franka_rl_eval.py": "aa73d66b25f0fd4226f982050485d9f6b3e1bcf4dd9bdf221bc9db0d3cb3e5a6",
+        "src/npa/workflows/franka_rl_learning.py": "2537bdc3f71d91d030a38b00a0b07f1317c46fe689214a6c5580ab63cd55282d",
+        "src/npa/workflows/franka_rl_learning_terms.py": "2e197177a36a930900fd2438e5d5f47cb60ec91ab0e6368bae5d6e27e4295113",
+        "src/npa/workflows/franka_rl_metrics.py": "4571d1fe503e93fd95c29692b57bf4d746ee8632b29c32c35eb2b9f4126da13f",
+        "src/npa/workflows/franka_rl_recording.py": "682cb73e3f070f1e105623c69fd67288e5b04dbb3e3473588e49eefbce2e7934",
+        "src/npa/workflows/franka_rl_report.py": "99d7369f728abaab7d1d4a9b35c9e3b35bc484636ee2b75bbdca2db0b261c120",
+        "src/npa/workflows/franka_rl_runtime.py": "889064d5abf997216a3ac2c83df5831e1355ddc4fcf5855b6ccd6f4ccba0159a",
+        "src/npa/workflows/franka_rl_servo.py": "3d39705c225fa8e4813e6c36be73368a3660703d567945fb312fedd13e39ea20",
+        "src/npa/workflows/franka_rl_vlm.py": "de12ce8662ef0d9963f1c47614b1c7080d068fcac5964ac6019f6c1c5651fa02",
+        "src/npa/workflows/lerobot_transfer_data.py": "9ac3d701b7bf2112872cacd37da853d16439e68fdd28bcc110d99b62790c998c"
+      },
+      "robot": "franka",
+      "source_fingerprint": "18de71edffe9b77a9c44e6108c414238bb884d1e2b95c8f8015737273e314413",
+      "stage": "train",
+      "staged_and_worker_modules_match_checkout": true
+    },
+    "visual-evaluate": {
+      "commit": "4c1babdfd3e5b9ef92ce9f4b794ef6fb6b5c3a61",
+      "module_sha256": {
+        "src/npa/adapter/isaac_lab_lerobot.py": "07cee911e072a4aa1d199b39bbf86575f46718c11da981042d631e530cdcfc26",
+        "src/npa/viz/adapters/lerobot_to_rerun.py": "41fbf06502f7db8253371516729d0e18bd7bb8350bb51da107427b7be8712a5d",
+        "src/npa/workbench/vlm_eval/temporal.py": "002c907a023c43bb4f216c10eefb95e35638111829d195f4cd557a873aeac02f",
+        "src/npa/workflows/franka_rl.py": "3a10d479685060dabeceec426f36f4bae276cc1e170e0dd569e001b200ecd855",
+        "src/npa/workflows/franka_rl_assets.py": "c981d8132b7a5d0aa7516d392a0a2be2362180e48a7faae225b19ed47bb46fd5",
+        "src/npa/workflows/franka_rl_capture.py": "694811e26189a7fa13c54bad9001effbc49468d8023f1a2cdae4312370c88c85",
+        "src/npa/workflows/franka_rl_capture_merge.py": "9847cdcbde1b34622ade7bcfb54bf6b5620a40ae24e47869f3731617079f2e31",
+        "src/npa/workflows/franka_rl_curriculum.py": "4977671b175bcfc75abb412dd2c63bbd5ab55ac6ece4c00cb746c3ef42de2178",
+        "src/npa/workflows/franka_rl_embodiments.py": "c27dcfc5a9b1fe7b9073036ed7f66689eeef6938514449f27851dacd36c8c505",
+        "src/npa/workflows/franka_rl_environment.py": "b2cdd8437158469d990df24e5e9e5682c0154fe9e1a3589167fc4c73989a84a3",
+        "src/npa/workflows/franka_rl_eval.py": "aa73d66b25f0fd4226f982050485d9f6b3e1bcf4dd9bdf221bc9db0d3cb3e5a6",
+        "src/npa/workflows/franka_rl_learning.py": "2537bdc3f71d91d030a38b00a0b07f1317c46fe689214a6c5580ab63cd55282d",
+        "src/npa/workflows/franka_rl_learning_terms.py": "2e197177a36a930900fd2438e5d5f47cb60ec91ab0e6368bae5d6e27e4295113",
+        "src/npa/workflows/franka_rl_metrics.py": "4571d1fe503e93fd95c29692b57bf4d746ee8632b29c32c35eb2b9f4126da13f",
+        "src/npa/workflows/franka_rl_recording.py": "682cb73e3f070f1e105623c69fd67288e5b04dbb3e3473588e49eefbce2e7934",
+        "src/npa/workflows/franka_rl_report.py": "99d7369f728abaab7d1d4a9b35c9e3b35bc484636ee2b75bbdca2db0b261c120",
+        "src/npa/workflows/franka_rl_runtime.py": "889064d5abf997216a3ac2c83df5831e1355ddc4fcf5855b6ccd6f4ccba0159a",
+        "src/npa/workflows/franka_rl_servo.py": "3d39705c225fa8e4813e6c36be73368a3660703d567945fb312fedd13e39ea20",
+        "src/npa/workflows/franka_rl_vlm.py": "de12ce8662ef0d9963f1c47614b1c7080d068fcac5964ac6019f6c1c5651fa02",
+        "src/npa/workflows/lerobot_transfer_data.py": "9ac3d701b7bf2112872cacd37da853d16439e68fdd28bcc110d99b62790c998c"
+      },
+      "robot": "franka",
+      "source_fingerprint": "18de71edffe9b77a9c44e6108c414238bb884d1e2b95c8f8015737273e314413",
+      "stage": "visual-evaluate",
+      "staged_and_worker_modules_match_checkout": true
+    }
+  },
+  "success_counts": {
+    "initial": {
+      "delay": 0,
+      "heavy": 0,
+      "nominal": 0,
+      "slippery": 0
+    },
+    "trained": {
+      "delay": 0,
+      "heavy": 0,
+      "nominal": 0,
+      "slippery": 0
+    }
+  },
+  "success_rates": {
+    "initial": {
+      "delay": 0.0,
+      "heavy": 0.0,
+      "nominal": 0.0,
+      "slippery": 0.0
+    },
+    "trained": {
+      "delay": 0.0,
+      "heavy": 0.0,
+      "nominal": 0.0,
+      "slippery": 0.0
+    }
+  },
+  "test_episodes": 1024,
+  "training": {
+    "checkpoints": {
+      "checkpoints/model_0.pt": "660b0b444c603669f423951a5ecd625bd02633c50af5f75fd709d01c13005e4d",
+      "checkpoints/model_1000.pt": "acc85eba6d5ddee80e094c3e16cf79b39017edbb8f129d9f487a669f5a78a851",
+      "checkpoints/model_1499.pt": "91cd7e7f32276b5dd56d59c9a113e07e9da5d9b8191629cec0d3bfa7901dac08",
+      "checkpoints/model_1500.pt": "0ef220fe26c904b1b82f31e277cd7fcbddd3cd6c1ee978e6fc7ee3f56570d955",
+      "checkpoints/model_500.pt": "8f649986b919513176eedf19c0950a4607808dd65e6f692bb6c2373d1891b183",
+      "initial.pt": "934b5575f01f438b5091d639b1871f24c8d5566bfb9ec7d7338671a56959202b"
+    },
+    "duration_seconds": 1433.0807214799997,
+    "learning": {
+      "completed_episodes": 590196,
+      "difficulty": 0.25,
+      "evaluation_used": false,
+      "history": [
+        {
+          "episodes": 8192,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 8192
+        },
+        {
+          "episodes": 8212,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 16404
+        },
+        {
+          "episodes": 8201,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 24605
+        },
+        {
+          "episodes": 8199,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 32804
+        },
+        {
+          "episodes": 8199,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 41003
+        },
+        {
+          "episodes": 8194,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 49197
+        },
+        {
+          "episodes": 8192,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 57389
+        },
+        {
+          "episodes": 8194,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 65583
+        },
+        {
+          "episodes": 8201,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 73784
+        },
+        {
+          "episodes": 8193,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 81977
+        },
+        {
+          "episodes": 8192,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 90169
+        },
+        {
+          "episodes": 8195,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 98364
+        },
+        {
+          "episodes": 8194,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 106558
+        },
+        {
+          "episodes": 8195,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 114753
+        },
+        {
+          "episodes": 8197,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 122950
+        },
+        {
+          "episodes": 8195,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 131145
+        },
+        {
+          "episodes": 8194,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 139339
+        },
+        {
+          "episodes": 8194,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 147533
+        },
+        {
+          "episodes": 8196,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 155729
+        },
+        {
+          "episodes": 8193,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 163922
+        },
+        {
+          "episodes": 8199,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 172121
+        },
+        {
+          "episodes": 8197,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 180318
+        },
+        {
+          "episodes": 8195,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 188513
+        },
+        {
+          "episodes": 8194,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 196707
+        },
+        {
+          "episodes": 8202,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 204909
+        },
+        {
+          "episodes": 8197,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 213106
+        },
+        {
+          "episodes": 8196,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 221302
+        },
+        {
+          "episodes": 8198,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 229500
+        },
+        {
+          "episodes": 8194,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 237694
+        },
+        {
+          "episodes": 8194,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 245888
+        },
+        {
+          "episodes": 8197,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 254085
+        },
+        {
+          "episodes": 8196,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 262281
+        },
+        {
+          "episodes": 8195,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 270476
+        },
+        {
+          "episodes": 8195,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 278671
+        },
+        {
+          "episodes": 8197,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 286868
+        },
+        {
+          "episodes": 8197,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 295065
+        },
+        {
+          "episodes": 8200,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 303265
+        },
+        {
+          "episodes": 8195,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 311460
+        },
+        {
+          "episodes": 8198,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 319658
+        },
+        {
+          "episodes": 8195,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 327853
+        },
+        {
+          "episodes": 8200,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 336053
+        },
+        {
+          "episodes": 8198,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 344251
+        },
+        {
+          "episodes": 8195,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 352446
+        },
+        {
+          "episodes": 8194,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 360640
+        },
+        {
+          "episodes": 8197,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 368837
+        },
+        {
+          "episodes": 8202,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 377039
+        },
+        {
+          "episodes": 8198,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 385237
+        },
+        {
+          "episodes": 8198,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 393435
+        },
+        {
+          "episodes": 8198,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 401633
+        },
+        {
+          "episodes": 8197,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 409830
+        },
+        {
+          "episodes": 8198,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 418028
+        },
+        {
+          "episodes": 8199,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 426227
+        },
+        {
+          "episodes": 8195,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 434422
+        },
+        {
+          "episodes": 8198,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 442620
+        },
+        {
+          "episodes": 8199,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 450819
+        },
+        {
+          "episodes": 8203,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 459022
+        },
+        {
+          "episodes": 8197,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 467219
+        },
+        {
+          "episodes": 8200,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 475419
+        },
+        {
+          "episodes": 8200,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 483619
+        },
+        {
+          "episodes": 8201,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 491820
+        },
+        {
+          "episodes": 8196,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 500016
+        },
+        {
+          "episodes": 8201,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 508217
+        },
+        {
+          "episodes": 8198,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 516415
+        },
+        {
+          "episodes": 8199,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 524614
+        },
+        {
+          "episodes": 8203,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 532817
+        },
+        {
+          "episodes": 8198,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 541015
+        },
+        {
+          "episodes": 8198,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 549213
+        },
+        {
+          "episodes": 8199,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 557412
+        },
+        {
+          "episodes": 8195,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 565607
+        },
+        {
+          "episodes": 8196,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 573803
+        },
+        {
+          "episodes": 8194,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 581997
+        },
+        {
+          "episodes": 8199,
+          "fraction": 0.25,
+          "next_fraction": 0.25,
+          "success_rate": 0.0,
+          "successes": 0,
+          "total_episodes": 590196
+        }
+      ],
+      "pending_window_episodes": 0,
+      "pending_window_successes": 0,
+      "settings": {
+        "control": "bounded_joint_target",
+        "curriculum": {
+          "easy_goal_height_m": [
+            0.12,
+            0.18
+          ],
+          "increment": 0.15,
+          "initial_fraction": 0.25,
+          "minimum_episodes": 8192,
+          "success_threshold": 0.7
+        },
+        "name": "adaptive-exploration",
+        "observations": "object-tool-goal-pose-velocity-and-servo-target",
+        "ppo": {
+          "entropy_coef": 0.02,
+          "gamma": 0.99,
+          "initial_std": 1.0,
+          "observation_normalization": true
+        },
+        "reward": {
+          "action_rate_weight": -0.01,
+          "goal_requires_lift": false,
+          "goal_weight": 16.0,
+          "goal_width_m": 0.1,
+          "hold_weight": 25.0,
+          "lift_weight": 15.0,
+          "reach_weight": 2.0,
+          "reach_width_m": 0.15
+        },
+        "schema": "npa.manipulation-learning.v1",
+        "target_velocity_rad_s": 2.0
+      },
+      "strict_successes": 0
+    },
+    "physics": {
+      "dynamic_friction": {
+        "max": 1.455479621887207,
+        "min": 0.55937260389328
+      },
+      "embodiment": {
+        "action_names": [
+          "panda_joint1_normalized_target",
+          "panda_joint2_normalized_target",
+          "panda_joint3_normalized_target",
+          "panda_joint4_normalized_target",
+          "panda_joint5_normalized_target",
+          "panda_joint6_normalized_target",
+          "panda_joint7_normalized_target",
+          "gripper_open_close"
+        ],
+        "action_semantics": "Isaac joint position: default offset + 0.5 * arm action; negative closes gripper; arm targets constrained by physical joint limits and per-step target slew",
+        "asset": {
+          "actuators": {
+            "panda_forearm": {
+              "damping": 4.0,
+              "effort_limit_sim": 12.0,
+              "joint_names_expr": [
+                "panda_joint[5-7]"
+              ],
+              "stiffness": 80.0,
+              "velocity_limit_sim": null
+            },
+            "panda_hand": {
+              "damping": 100.0,
+              "effort_limit_sim": 200.0,
+              "joint_names_expr": [
+                "panda_finger_joint.*"
+              ],
+              "stiffness": 2000.0,
+              "velocity_limit_sim": null
+            },
+            "panda_shoulder": {
+              "damping": 4.0,
+              "effort_limit_sim": 87.0,
+              "joint_names_expr": [
+                "panda_joint[1-4]"
+              ],
+              "stiffness": 80.0,
+              "velocity_limit_sim": null
+            }
+          },
+          "disable_gravity": false,
+          "initial_joint_positions": {
+            "panda_finger_joint.*": 0.04,
+            "panda_joint1": 0.0,
+            "panda_joint2": -0.569,
+            "panda_joint3": 0.0,
+            "panda_joint4": -2.81,
+            "panda_joint5": 0.0,
+            "panda_joint6": 3.037,
+            "panda_joint7": 0.741
+          },
+          "root_position_m": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "root_rotation_xyzw": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "self_collisions": true,
+          "usd_path": "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/6.0/Isaac/IsaacLab/Robots/FrankaEmika/Legacy/panda_instanceable.usd",
+          "variants": null
+        },
+        "body_names": [
+          "panda_link0",
+          "panda_link1",
+          "panda_link2",
+          "panda_link3",
+          "panda_link4",
+          "panda_link5",
+          "panda_link6",
+          "panda_link7",
+          "panda_hand",
+          "panda_leftfinger",
+          "panda_rightfinger"
+        ],
+        "controls": {
+          "arm_action_scale": 0.5,
+          "base_frame": "/World/envs/env_.*/Robot/panda_link0",
+          "closed_positions": [
+            0.0,
+            0.0
+          ],
+          "command_body": "panda_hand",
+          "joint_target_limits_rad": {
+            "maximum": [
+              [
+                -2.8973000049591064,
+                2.8973000049591064
+              ],
+              [
+                -1.7627999782562256,
+                1.7627999782562256
+              ],
+              [
+                -2.8973000049591064,
+                2.8973000049591064
+              ],
+              [
+                -3.0717999935150146,
+                -0.06979990005493164
+              ],
+              [
+                -2.8973000049591064,
+                2.8973000049591064
+              ],
+              [
+                -0.017499923706054688,
+                3.752500057220459
+              ],
+              [
+                -2.8973000049591064,
+                2.8973000049591064
+              ]
+            ],
+            "minimum": [
+              [
+                -2.8973000049591064,
+                2.8973000049591064
+              ],
+              [
+                -1.7627999782562256,
+                1.7627999782562256
+              ],
+              [
+                -2.8973000049591064,
+                2.8973000049591064
+              ],
+              [
+                -3.0717999935150146,
+                -0.06979990005493164
+              ],
+              [
+                -2.8973000049591064,
+                2.8973000049591064
+              ],
+              [
+                -0.017499923706054688,
+                3.752500057220459
+              ],
+              [
+                -2.8973000049591064,
+                2.8973000049591064
+              ]
+            ]
+          },
+          "learning": {
+            "control": "bounded_joint_target",
+            "curriculum": {
+              "easy_goal_height_m": [
+                0.12,
+                0.18
+              ],
+              "increment": 0.15,
+              "initial_fraction": 0.25,
+              "minimum_episodes": 8192,
+              "success_threshold": 0.7
+            },
+            "name": "adaptive-exploration",
+            "observations": "object-tool-goal-pose-velocity-and-servo-target",
+            "ppo": {
+              "entropy_coef": 0.02,
+              "gamma": 0.99,
+              "initial_std": 1.0,
+              "observation_normalization": true
+            },
+            "reward": {
+              "action_rate_weight": -0.01,
+              "goal_requires_lift": false,
+              "goal_weight": 16.0,
+              "goal_width_m": 0.1,
+              "hold_weight": 25.0,
+              "lift_weight": 15.0,
+              "reach_weight": 2.0,
+              "reach_width_m": 0.15
+            },
+            "schema": "npa.manipulation-learning.v1",
+            "target_velocity_rad_s": 2.0
+          },
+          "maximum_target_step_rad": {
+            "maximum": [
+              0.03999999910593033,
+              0.03999999910593033,
+              0.03999999910593033,
+              0.03999999910593033,
+              0.03999999910593033,
+              0.03999999910593033,
+              0.03999999910593033
+            ],
+            "minimum": [
+              0.03999999910593033,
+              0.03999999910593033,
+              0.03999999910593033,
+              0.03999999910593033,
+              0.03999999910593033,
+              0.03999999910593033,
+              0.03999999910593033
+            ]
+          },
+          "open_positions": [
+            0.04,
+            0.04
+          ],
+          "tool_frame": "/World/envs/env_.*/Robot/panda_hand",
+          "tool_offset_m": [
+            0.0,
+            0.0,
+            0.1034
+          ],
+          "use_default_offset": true
+        },
+        "gripper_joint_names": [
+          "panda_finger_joint1",
+          "panda_finger_joint2"
+        ],
+        "profile": {
+          "arm_action_scale": 0.5,
+          "arm_joints": [
+            "panda_joint1",
+            "panda_joint2",
+            "panda_joint3",
+            "panda_joint4",
+            "panda_joint5",
+            "panda_joint6",
+            "panda_joint7"
+          ],
+          "base_body": "panda_link0",
+          "closed_position": 0.0,
+          "configuration": "FRANKA_PANDA_CFG",
+          "gripper_joints": [
+            "panda_finger_joint1",
+            "panda_finger_joint2"
+          ],
+          "module": "franka",
+          "name": "franka",
+          "open_position": 0.04,
+          "root_rotation_xyzw": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "schema": "npa.manipulation-embodiment.v1",
+          "tool_body": "panda_hand",
+          "tool_offset_m": [
+            0.0,
+            0.0,
+            0.1034
+          ]
+        },
+        "robot_type": "franka",
+        "state_names": [
+          "panda_joint1",
+          "panda_joint2",
+          "panda_joint3",
+          "panda_joint4",
+          "panda_joint5",
+          "panda_joint6",
+          "panda_joint7",
+          "panda_finger_joint1",
+          "panda_finger_joint2"
+        ]
+      },
+      "mass_kg": {
+        "max": 0.10398687422275543,
+        "min": 0.05601782351732254
+      },
+      "physics_capacity": {
+        "gpu_total_aggregate_pairs_capacity": 2097152
+      },
+      "restitution": {
+        "max": 0.0,
+        "min": 0.0
+      },
+      "startup_terms": [
+        "npa_object_mass",
+        "npa_object_material"
+      ],
+      "static_friction": {
+        "max": 1.4811253547668457,
+        "min": 0.5162026882171631
+      },
+      "tool_frame_check": {
+        "environments_checked": 4096,
+        "maximum_error_m": 7.68899917602539e-06,
+        "source_body": "panda_link0",
+        "tolerance_m": 0.0001,
+        "tool_body": "panda_hand",
+        "world_tcp_verified": true
+      }
+    },
+    "policy_parameter_delta_l2": 106.00975036621094,
+    "transitions": 147456000
+  },
+  "training_duration_scope": "PPO learning and final checkpoint export; excludes installation and renderer startup.",
+  "training_reward_trace": {
+    "first_reward_update": 10,
+    "missing_initial_points": 10,
+    "observed_points": 1490,
+    "scope": "Native completed-episode reward; no fabricated values before the first completed episode."
+  },
+  "validation_episodes": 640,
+  "viewer_audit": {
+    "episodes_verified": 32,
+    "local_links_verified": 18,
+    "page_errors": []
+  },
+  "visual": {
+    "disagreement_examples": [
+      {
+        "arm": "trained",
+        "capture_index": 1,
+        "condition": "heavy",
+        "episode_index": 21,
+        "frame_index": 245,
+        "image": "franka-exploration-parts-rtx-vlm-disagreement-021.png",
+        "image_sha256": "a9af069a3a57cb4b3c5633337f160610353406a98f641913f17d9f04e85cbd60",
+        "minimum_object_height_m": 0.1,
+        "object_centre_height_m": 0.023000970482826233,
+        "sampled_height_reference": false,
+        "scope": "Model-positive judgment against a negative synchronized height proxy; not an independent human label.",
+        "source_rgb_sha256": "9e0b08ea66f6eb22869cf2d16d217a3c9a45001b464e2e30054d7cfc57d53e05",
+        "timestamp_seconds": 4.9,
+        "visual_lift_verdict": "yes"
+      },
+      {
+        "arm": "trained",
+        "capture_index": 0,
+        "condition": "slippery",
+        "episode_index": 28,
+        "frame_index": 160,
+        "image": "franka-exploration-parts-rtx-vlm-disagreement-028.png",
+        "image_sha256": "52ed20271dd98e7997a42ca900dee64da7b069bb345a3f3bd01a567df864189c",
+        "minimum_object_height_m": 0.1,
+        "object_centre_height_m": 0.02487114444375038,
+        "sampled_height_reference": false,
+        "scope": "Model-positive judgment against a negative synchronized height proxy; not an independent human label.",
+        "source_rgb_sha256": "8ac14724d3e6e04249d0fd50618798ae3bb3eeefdb47b4e2172de024e97be8fe",
+        "timestamp_seconds": 3.2,
+        "visual_lift_verdict": "yes"
+      },
+      {
+        "arm": "trained",
+        "capture_index": 1,
+        "condition": "slippery",
+        "episode_index": 29,
+        "frame_index": 245,
+        "image": "franka-exploration-parts-rtx-vlm-disagreement-029.png",
+        "image_sha256": "598e39c1b3ea519ef22efbcaea4cbfda4ab28cb88627770f30a978108f8b3293",
+        "minimum_object_height_m": 0.1,
+        "object_centre_height_m": 0.023000366985797882,
+        "sampled_height_reference": false,
+        "scope": "Model-positive judgment against a negative synchronized height proxy; not an independent human label.",
+        "source_rgb_sha256": "9fe8ede0e2e2b4312ac1851ed55f23832d97760587e8e0cfa90227aca8354382",
+        "timestamp_seconds": 4.9,
+        "visual_lift_verdict": "yes"
+      }
+    ],
+    "episode_outcomes": [
+      {
+        "arm": "initial",
+        "capture_index": 0,
+        "checkpoint_sha256": "934b5575f01f438b5091d639b1871f24c8d5566bfb9ec7d7338671a56959202b",
+        "condition": "delay",
+        "episode_index": 0,
+        "geometry_sha256": "be619641efb7132efbcdb953ab6ef0c25d658da53cc8c95c9ebf6897e28116fd",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "8225b074560673ee0b25ffc1d320eed93329c090a22ae33a1f28503b86266c7d",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames, the orange spool is still sitting on the table and is not grasped by the gripper. The gripper is positioned away from the spool.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains resting on the table surface in the same position across all supplied frames. It is never visibly elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves but never approaches or grasps the orange spool. The spool remains on the table throughout all frames, so the lift, grasp, and hold criteria all fail.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects remain in their original positions throughout the episode. No unintended contact or disturbance is observed.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 1,
+        "checkpoint_sha256": "934b5575f01f438b5091d639b1871f24c8d5566bfb9ec7d7338671a56959202b",
+        "condition": "delay",
+        "episode_index": 1,
+        "geometry_sha256": "ab45f624851ab666f47ca21e858ed8d0398894b646f59b3b5a854a76b913b46c",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "eb1e3d3bebe980f1b62b43a6a9766b9d0d41e684bee8e347e94d65a8eaee1c4f",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames, the orange spool is still resting on the table and is not grasped by the gripper.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface in every supplied frame. The gripper never descends to grasp it, and the spool is never elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves slightly but never approaches or attempts to grasp the orange spool. The spool stays on the table for the entire episode, so neither lift nor hold is achieved. No scene disturbance occurs.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects remain in their original positions throughout the episode. No unintended contact or disturbance is visible.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 2,
+        "checkpoint_sha256": "934b5575f01f438b5091d639b1871f24c8d5566bfb9ec7d7338671a56959202b",
+        "condition": "delay",
+        "episode_index": 2,
+        "geometry_sha256": "2db3d5c2026b191782db689bb9510ae9b8f0afd9174c3e27c5ea29dae1d4b849",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "091a7952d8b6fef78cacd3c322f7ae1fadb1f8d74bf87161bcd9cf47f3534d9b",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "The orange spool is not grasped by the gripper in the last two frames; it remains resting on the table while the gripper hovers above it.",
+            "frames": [
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface in the same position across all supplied frames. It is never elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves toward the orange spool but never makes contact or grasps it. The spool stays on the table surface for the entire episode, so neither lifting nor holding occurs. The tray and other parts are left undisturbed.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects remain in their original positions throughout the episode. No unintended contact or disturbance is observed.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 3,
+        "checkpoint_sha256": "934b5575f01f438b5091d639b1871f24c8d5566bfb9ec7d7338671a56959202b",
+        "condition": "delay",
+        "episode_index": 3,
+        "geometry_sha256": "d749da64e43f3ef1d788b1c39bea8e12bfd7dfaa09123385a6c8595d6a4d9ccf",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "144b349237558a45b9a7a61156d45bfdf6bd3ec633855d85f71761781ed5d477",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp",
+            "wrong_object"
+          ],
+          "held_at_end": {
+            "explanation": "The orange spool is not grasped by the gripper in the final frames; it remains resting on the table surface, untouched.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface in the same position across all supplied frames. The robot arm moves slightly but never approaches or contacts the spool, and the spool is never elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot never moves toward or attempts to grasp the orange spool. The spool remains stationary on the table throughout the entire episode, so neither lifting nor holding occurs. The scene is undisturbed, but the task itself was not performed.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and all other objects remain in their original positions throughout the episode. No unintended contact or disturbance is observed.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 0,
+        "checkpoint_sha256": "934b5575f01f438b5091d639b1871f24c8d5566bfb9ec7d7338671a56959202b",
+        "condition": "heavy",
+        "episode_index": 4,
+        "geometry_sha256": "ef2c1363969242f8a564c15177ed08efe29eede887fed0e66b408775e3a4f03f",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "2c29b769ad66444c0197a6e313dd92c99065bb37dc5894340ac2585099535f8a",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two supplied frames (245, 249), the orange spool is still resting on the table and is not grasped by the gripper.",
+            "frames": [
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface in the same position across all supplied frames. The robot arm moves but never descends to grasp the spool, and the spool is never elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves toward the workspace but never reaches or grasps the orange spool. The spool stays on the table for the entire episode, so the lift and hold criteria are not met. No scene disturbance occurred.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects remain in their original positions throughout the episode. No unintended contact or disturbance is visible.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 1,
+        "checkpoint_sha256": "934b5575f01f438b5091d639b1871f24c8d5566bfb9ec7d7338671a56959202b",
+        "condition": "heavy",
+        "episode_index": 5,
+        "geometry_sha256": "cc26f4e0f74c18ef28d554229cd619319915e770e5cf7c150538980ce137f193",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "42dcf6b49756387c9b87214bd93c2d512525c7a3e38e572edd80669901d6bec6",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames (245, 249), the orange spool is still resting on the table and is not grasped by the gripper. The gripper is empty and positioned away from the spool.",
+            "frames": [
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface in the same position across all supplied frames. It is never elevated above its initial support. The gripper moves slightly but never descends to grasp or lift the spool.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot never approached or grasped the orange spool. The gripper remained in a raised position throughout the episode, and the spool stayed on the table surface without being lifted or held. This constitutes a complete failure to engage with the target object.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects (blue tray with bottles, black fixture) remain in their original positions throughout all frames. No unintended contact or disturbance is observed.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 2,
+        "checkpoint_sha256": "934b5575f01f438b5091d639b1871f24c8d5566bfb9ec7d7338671a56959202b",
+        "condition": "heavy",
+        "episode_index": 6,
+        "geometry_sha256": "7983cdd578f5f939d911081bf3abc5c2189206af14a4969755bebc4cd443b4d7",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "643605ebbe9cab1efecb428053a8fffada42f72942405cb94f95e58688b890ab",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames the orange spool is still sitting on the table and is not grasped by the gripper.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains resting on the table surface in every supplied frame. The gripper never descends to the spool, never makes contact, and the spool is never elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm does not move toward or contact the orange spool at any point in the supplied frames. The spool is never lifted or held, so the task fails due to a missed grasp.",
+          "scene_disturbed": {
+            "explanation": "The tray, the blue/yellow objects in the tray, and the orange spool all remain in their initial positions throughout the episode. No unintended contact or disturbance is visible.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 3,
+        "checkpoint_sha256": "934b5575f01f438b5091d639b1871f24c8d5566bfb9ec7d7338671a56959202b",
+        "condition": "heavy",
+        "episode_index": 7,
+        "geometry_sha256": "e258e4922b488973da0bbc21a99ea6ebd661ebc461da66fc3de70584df420b86",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "87b9a0b123b8f259843b4d3e061e54f8d8988fb88b4581d34292014a5687deb1",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames, the orange spool is still resting on the table and is not grasped by the gripper.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface in the same position across all supplied frames. It is never visibly elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves slightly but never approaches or grasps the orange spool. The spool stays on the table for the entire episode, so the lift, hold, and grasp all fail.",
+          "scene_disturbed": {
+            "explanation": "The tray, other objects, and the spool remain in their initial positions throughout the episode. No unintended contact or disturbance is observed.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 0,
+        "checkpoint_sha256": "934b5575f01f438b5091d639b1871f24c8d5566bfb9ec7d7338671a56959202b",
+        "condition": "nominal",
+        "episode_index": 8,
+        "geometry_sha256": "be619641efb7132efbcdb953ab6ef0c25d658da53cc8c95c9ebf6897e28116fd",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "d380318ba8f9fbd0c87ed562ca2245fa9be1f99146e20ebe83dc3246d766c34f",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames, the orange spool is still resting on the table and is not grasped by the gripper.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface in the same position across all supplied frames. It is never visibly elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves but never descends to or contacts the orange spool. The spool remains stationary on the table for the entire episode, so no lift, grasp, or hold occurs.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects remain in their original positions throughout the episode. No unintended contact or disturbance is visible.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 1,
+        "checkpoint_sha256": "934b5575f01f438b5091d639b1871f24c8d5566bfb9ec7d7338671a56959202b",
+        "condition": "nominal",
+        "episode_index": 9,
+        "geometry_sha256": "ab45f624851ab666f47ca21e858ed8d0398894b646f59b3b5a854a76b913b46c",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "96d1e213fa006e23e1a95c1da314e82016d47a71deccdf3d837f9d1578ad1640",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames the orange spool is still sitting on the table, not grasped by the gripper. No hold is established.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains resting on the table surface in every supplied frame. The gripper never descends to grasp it, and the spool is never elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves slightly but never approaches or grasps the orange spool. The spool stays on the table for the entire episode, so the lift and hold criteria are not met. The scene is otherwise undisturbed.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects remain in their original positions throughout the episode. No unintended contact or disturbance is visible.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 2,
+        "checkpoint_sha256": "934b5575f01f438b5091d639b1871f24c8d5566bfb9ec7d7338671a56959202b",
+        "condition": "nominal",
+        "episode_index": 10,
+        "geometry_sha256": "2db3d5c2026b191782db689bb9510ae9b8f0afd9174c3e27c5ea29dae1d4b849",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "a7045140174dd564699fcab83c48508f67a5d76f1aa6e223bb2abebf8e5b8463",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames the orange spool is still resting on the table, not grasped by the gripper.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface in every supplied frame. The gripper never descends to grasp it, and the spool is never elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves slightly but never approaches or grasps the orange spool. The spool stays on the table for the entire episode, so the lift and hold criteria are not met.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects remain in their original positions throughout the episode; no unintended contact or disturbance is visible.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 3,
+        "checkpoint_sha256": "934b5575f01f438b5091d639b1871f24c8d5566bfb9ec7d7338671a56959202b",
+        "condition": "nominal",
+        "episode_index": 11,
+        "geometry_sha256": "d749da64e43f3ef1d788b1c39bea8e12bfd7dfaa09123385a6c8595d6a4d9ccf",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "6a6848ddefda20bd0652d0a7d18ee768ad62547bf31434f957062ea325dc8342",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp",
+            "wrong_object"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames, the orange spool is still resting on the table and is not grasped by the gripper. The target is not held at the end of the episode.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool with two wide flanges and a narrow waist remains on the table surface in every supplied frame. It is never visibly elevated above its initial support. The gripper moves slightly but never makes contact with or lifts the target.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot never approaches or contacts the orange spool target. The gripper remains idle above the table while the spool stays on the surface, resulting in a complete failure to grasp and lift the requested object.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects on the table remain in their original positions throughout all frames. No unintended contact or disturbance is observed.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 0,
+        "checkpoint_sha256": "934b5575f01f438b5091d639b1871f24c8d5566bfb9ec7d7338671a56959202b",
+        "condition": "slippery",
+        "episode_index": 12,
+        "geometry_sha256": "be619641efb7132efbcdb953ab6ef0c25d658da53cc8c95c9ebf6897e28116fd",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "70683e49558c67366acaea3faca8565eb6eb2597c7699a6ef7b495a6bccc74f9",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames, the orange spool is still resting on the table and is not grasped by the gripper. No hold is established.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface in the same position across all supplied frames. It is never elevated above its initial support. The gripper moves but never descends to grasp or lift the spool.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves but the gripper never reaches or grasps the orange spool. The spool stays on the table for the entire episode, so neither lift nor hold is achieved. The scene is otherwise undisturbed.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects remain in their original positions throughout the episode. No unintended contact or disturbance is visible.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 1,
+        "checkpoint_sha256": "934b5575f01f438b5091d639b1871f24c8d5566bfb9ec7d7338671a56959202b",
+        "condition": "slippery",
+        "episode_index": 13,
+        "geometry_sha256": "ab45f624851ab666f47ca21e858ed8d0398894b646f59b3b5a854a76b913b46c",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "f4fc0ee62f6c2294709d1cb62480b4ce9290b41f1494d47e78f5a3f441f8c4d1",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames, the orange spool is still resting on the table and is not grasped by the gripper.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface in the same position across all supplied frames. It is never visibly elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves slightly but never descends to grasp the orange spool. The spool remains stationary on the table throughout all frames, so the lift, grasp, and hold all fail.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects remain in their original positions throughout the episode. No unintended contact or disturbance is observed.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 2,
+        "checkpoint_sha256": "934b5575f01f438b5091d639b1871f24c8d5566bfb9ec7d7338671a56959202b",
+        "condition": "slippery",
+        "episode_index": 14,
+        "geometry_sha256": "2db3d5c2026b191782db689bb9510ae9b8f0afd9174c3e27c5ea29dae1d4b849",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "3579b480c5b2ec8ace3dd8c2def13a167de220eee3232e9db4d4bcd6c3adbdad",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "The orange spool is not grasped by the gripper in the last two frames; it remains resting on the table.",
+            "frames": [
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface in the same position across all supplied frames. It is never elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm does not move toward or attempt to grasp the orange spool. The spool remains on the table in all frames, so the lift and hold criteria are not met.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects remain undisturbed throughout the episode.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 3,
+        "checkpoint_sha256": "934b5575f01f438b5091d639b1871f24c8d5566bfb9ec7d7338671a56959202b",
+        "condition": "slippery",
+        "episode_index": 15,
+        "geometry_sha256": "d749da64e43f3ef1d788b1c39bea8e12bfd7dfaa09123385a6c8595d6a4d9ccf",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "5d6e1d40fbe049f3101e813773f5b2a4567dfb8a75be8eff98e2ae3557e9c38f",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "The orange spool is not grasped by the gripper in the last two supplied frames; it remains resting on the table.",
+            "frames": [
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface in the same position across all supplied frames. It is never elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm does not move toward or attempt to grasp the orange spool during the episode. The spool remains on the table, never lifted or held, indicating a missed grasp failure.",
+          "scene_disturbed": {
+            "explanation": "The tray, other objects, and the orange spool remain in their initial positions throughout the episode. No unintended contact or disturbance is visible.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 0,
+        "checkpoint_sha256": "91cd7e7f32276b5dd56d59c9a113e07e9da5d9b8191629cec0d3bfa7901dac08",
+        "condition": "delay",
+        "episode_index": 16,
+        "geometry_sha256": "7021e80e481da68e6c77cbdd33df1e19eb3a678950efb6193f983bafcdfd8b5e",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "f619063e6edf846588a6f9286e2e29a5ea5eb86ba04d8e40736ea908773c7888",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp",
+            "unstable_hold"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames the gripper is closed around the orange spool, but the spool is still resting on the table surface, not lifted or held steady in the air. The object is not visibly elevated or steady in a held position.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains resting on the table surface throughout all supplied frames. In frame 0 it sits on the table; in subsequent frames the gripper approaches and appears to grasp it, but the spool never shows clear elevation above its initial support. The gripper fingers close around the spool but the object stays in contact with the table.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot approached and closed its gripper on the orange spool but failed to lift it off the table. The spool remains in contact with the table surface in all frames, including the final frames. The gripper appears to have grasped the object but did not successfully elevate it, indicating a missed lift despite apparent grasp contact.",
+          "scene_disturbed": {
+            "explanation": "The tray with its contents (blue and yellow objects) and the black fixture remain undisturbed throughout all frames. No unintended contact with the tray or fixture is visible.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 1,
+        "checkpoint_sha256": "91cd7e7f32276b5dd56d59c9a113e07e9da5d9b8191629cec0d3bfa7901dac08",
+        "condition": "delay",
+        "episode_index": 17,
+        "geometry_sha256": "833a5d7d8ebbe0f9c18dc121f68d3a6cbad6ef0ad17badb51221bcf78ac1ad41",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "ff10fe9440ed18d15613b43384fc6f45f4330cab268137cec5c255916eb09fc8",
+        "status": "invalid_response",
+        "success": false,
+        "validation_error": {
+          "message": "Temporal VLM returned contradictory failure tags",
+          "type": "evidence_contract"
+        },
+        "verdict": null
+      },
+      {
+        "arm": "trained",
+        "capture_index": 2,
+        "checkpoint_sha256": "91cd7e7f32276b5dd56d59c9a113e07e9da5d9b8191629cec0d3bfa7901dac08",
+        "condition": "delay",
+        "episode_index": 18,
+        "geometry_sha256": "9a24b1f7377f4ee3df00737f6e93c438e651c31d7dae93fb6565344bc25eee78",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "0ba1069eb69dadff7d7301b2e8e724190fa081320332a162076899316c93ad2c",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp",
+            "slip_or_drop",
+            "wrong_object",
+            "fixture_contact"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames (245, 249), the robot arm is folded down on the table and the orange spool is not visible in the gripper. The target is not grasped or held steady at the end of the episode.",
+            "frames": [
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool is visible on the table in frame 0 and frame 71 (near the gripper). By frame 106, the spool is no longer visible on the table surface, but the robot arm has folded down onto the table and the spool is not seen elevated above its initial support in any frame. The spool appears to have been knocked over or displaced rather than lifted and held.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot failed to grasp and lift the orange spool. The arm appears to have made contact with the spool (knocking it away) and then folded down onto the table, ending in an unintended resting position. The spool is not held at the end, and the scene is disturbed by the arm's collapse onto the table surface.",
+          "scene_disturbed": {
+            "explanation": "The robot arm has collapsed/folded down onto the table surface starting around frame 142 and remains in contact with the table through the end of the episode. This represents unintended contact with the workspace. The orange spool is also no longer visible in its original position, indicating it was disturbed.",
+            "frames": [
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "yes"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 3,
+        "checkpoint_sha256": "91cd7e7f32276b5dd56d59c9a113e07e9da5d9b8191629cec0d3bfa7901dac08",
+        "condition": "delay",
+        "episode_index": 19,
+        "geometry_sha256": "5c0ae4bd43cab4d53bdda7664c1fe60f0b27795da654296a7c7646e6556574f7",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          22,
+          45,
+          68,
+          91,
+          114,
+          135,
+          137,
+          138,
+          142,
+          145,
+          149,
+          152,
+          156,
+          160
+        ],
+        "response_source": "live",
+        "rgb_sha256": "02ade9ae550e86ed49b138d7673724eae09c3be4a035e1eff5aac6b59ac8ef8f",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp",
+            "wrong_object"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames, the gripper is empty and the orange spool is resting on the table near the tray. The target is not grasped or held.",
+            "frames": [
+              156,
+              160
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface throughout all supplied frames. It is never visibly elevated above its initial support. The gripper approaches but does not grasp or lift the spool.",
+            "frames": [
+              0,
+              22,
+              45,
+              68,
+              91,
+              114,
+              135,
+              137,
+              138,
+              142,
+              145,
+              149,
+              152,
+              156,
+              160
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves toward the orange spool but fails to grasp it. The spool is never lifted and is not held at the end of the episode. The gripper ends up empty near the tray area.",
+          "scene_disturbed": {
+            "explanation": "The tray and other objects (blue/yellow items in tray, red/green cones) remain in their original positions. No unintended contact with the tray or fixture is observed.",
+            "frames": [
+              0,
+              22,
+              45,
+              68,
+              91,
+              114,
+              135,
+              137,
+              138,
+              142,
+              145,
+              149,
+              152,
+              156,
+              160
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 0,
+        "checkpoint_sha256": "91cd7e7f32276b5dd56d59c9a113e07e9da5d9b8191629cec0d3bfa7901dac08",
+        "condition": "heavy",
+        "episode_index": 20,
+        "geometry_sha256": "6d27e97d907a624a7c723582d120a1d85e34b78e55a2da9673018ba1a28dae67",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "7aa34929317bc945ae3a59fb98e3139db434a18d436e8212114627e4169f2942",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last frames, the gripper is in contact with the spool but the spool remains on the table surface. It is not grasped and held in the air, nor is it steady in a lifted position.",
+            "frames": [
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains resting on the table surface in every supplied frame. The gripper descends to the spool (frames 35-71), makes contact, but the spool is never visibly elevated above its initial support. No lift occurs.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm approaches and contacts the orange spool but fails to lift it off the table. The spool remains on the surface in all frames, indicating a failed grasp/lift attempt. The tray and other objects are undisturbed.",
+          "scene_disturbed": {
+            "explanation": "The tray with blue and yellow objects remains stationary throughout. No unintended contact with the tray or fixture is observed, and no other distractors are moved.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 1,
+        "checkpoint_sha256": "91cd7e7f32276b5dd56d59c9a113e07e9da5d9b8191629cec0d3bfa7901dac08",
+        "condition": "heavy",
+        "episode_index": 21,
+        "geometry_sha256": "3f8c69b8a950f14d368c407067369e3fa51fa9dc2c66bf3a905f4ada9c59762c",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "9e0b08ea66f6eb22869cf2d16d217a3c9a45001b464e2e30054d7cfc57d53e05",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "none"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two supplied frames (245 and 249) the orange spool remains visibly grasped by the gripper and is approximately steady in position, held above the table.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "lifted": {
+            "explanation": "In frame 0 the orange spool rests on the table. From frame 35 onward the spool is visibly held in the gripper and clearly elevated above the table surface, with no contact with the table in any subsequent frame.",
+            "frames": [
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "rationale": "The robot successfully grasped the orange spool, lifted it clearly above the table, and held it steady at the end of the episode. The tray and other objects were not disturbed.",
+          "scene_disturbed": {
+            "explanation": "The tray with the blue and yellow objects and the black fixture remain in their original positions throughout all frames. No unintended contact with the tray/fixture or movement of distractors is observed.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 2,
+        "checkpoint_sha256": "91cd7e7f32276b5dd56d59c9a113e07e9da5d9b8191629cec0d3bfa7901dac08",
+        "condition": "heavy",
+        "episode_index": 22,
+        "geometry_sha256": "cdd6d2dd7f977bb55ad163113bc3733cdd11bc3040797cc6e07a18152c54f2e1",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "3bd1e63d1184f34d9e61b1873555aad305b145a8a64a03c4d4f9cbf9dd1c7c8c",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp",
+            "wrong_object"
+          ],
+          "held_at_end": {
+            "explanation": "In the last frames (241, 245, 249), the spool is still resting on the table surface, not held in the gripper above the table. The gripper is in contact with the spool but the spool is not elevated or held steady in the air.",
+            "frames": [
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface throughout all frames. In frame 0 it sits on the table; in frames 71-249 the gripper is positioned around/above it but the spool is never clearly elevated above its initial support. The gripper appears to grasp the spool but does not lift it off the table.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot approaches and appears to grasp the orange spool, but fails to lift it off the table surface. The spool remains on the table in all frames including the final frames, so neither the lift nor the hold-at-end criteria are met. The tray and other objects are left undisturbed.",
+          "scene_disturbed": {
+            "explanation": "The tray with blue and yellow objects remains undisturbed throughout all frames. No unintended contact with the tray or fixture is observed, and no distractor objects move.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 3,
+        "checkpoint_sha256": "91cd7e7f32276b5dd56d59c9a113e07e9da5d9b8191629cec0d3bfa7901dac08",
+        "condition": "heavy",
+        "episode_index": 23,
+        "geometry_sha256": "e8d5e73e060f19e7e3cebd9c0bbc17178bdedae94bdad9ba2368e3adc0985c11",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "1e8f712d18b95b336740cf757c347f73d3ba8b6a456e3b2f5652b68b1583e821",
+        "status": "invalid_response",
+        "success": false,
+        "validation_error": {
+          "message": "Temporal VLM returned contradictory failure tags",
+          "type": "evidence_contract"
+        },
+        "verdict": null
+      },
+      {
+        "arm": "trained",
+        "capture_index": 0,
+        "checkpoint_sha256": "91cd7e7f32276b5dd56d59c9a113e07e9da5d9b8191629cec0d3bfa7901dac08",
+        "condition": "nominal",
+        "episode_index": 24,
+        "geometry_sha256": "7b04405c9c19d5c3a8ee47870cc8ce05e51efdfd8c793d718c09b2dbc824efb8",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "060b7b507749dec1314940b04c73ec48860f5e186f016a5048ce0e73590f3df7",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp",
+            "wrong_object"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames (245, 249), the orange spool is still sitting on the table surface, not grasped and held by the gripper. The gripper is in contact with the spool but has not lifted or retained it.",
+            "frames": [
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains resting on the table surface in every supplied frame. The gripper descends to the spool (frames 35-71), makes contact, but the spool is never visibly elevated above the table in any frame. The gripper appears to push or nudge the spool slightly but no lift occurs.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot failed to grasp and lift the orange spool. The gripper made contact with the spool but never elevated it above the table surface. The spool remains on the table in all frames including the final ones, indicating a missed grasp attempt. The tray and other objects were left undisturbed.",
+          "scene_disturbed": {
+            "explanation": "The tray with blue and yellow objects remains stationary throughout all frames. No unintended contact with the tray or fixture is observed, and no distractor objects are moved.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 1,
+        "checkpoint_sha256": "91cd7e7f32276b5dd56d59c9a113e07e9da5d9b8191629cec0d3bfa7901dac08",
+        "condition": "nominal",
+        "episode_index": 25,
+        "geometry_sha256": "fdb07e40cc1848e03234f66497ddcdec72f65ddbecfa294fff42b696dbab6058",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "b25dc4fd3bbb34c46c1961442cb38bb4b17d0f6fe670fc5a65d5310b13b66c75",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames (245, 249), the orange spool is still sitting on the table surface, not grasped and held by the gripper. The gripper is positioned near the spool but the spool is not elevated or held steady in the air.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains resting on the table surface in every supplied frame. The gripper descends to the spool (frames 35-71) and appears to make contact, but the spool is never visibly elevated above its initial support. No frame shows the spool lifted off the table.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm approaches and contacts the orange spool but fails to lift it off the table. The spool remains on the table surface in all frames, indicating a failed grasp attempt. The gripper does not successfully elevate the target object, so neither the lift nor the hold criteria are met.",
+          "scene_disturbed": {
+            "explanation": "The tray with blue and yellow objects remains stationary throughout all frames. No unintended contact with the tray or fixture is observed, and no distractor objects are moved.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 2,
+        "checkpoint_sha256": "91cd7e7f32276b5dd56d59c9a113e07e9da5d9b8191629cec0d3bfa7901dac08",
+        "condition": "nominal",
+        "episode_index": 26,
+        "geometry_sha256": "5a91d58ae20c5db6c82835a26051dda0bf56101a24f4ba6c56cd5ee1b7d5cfdc",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          16,
+          32,
+          49,
+          65,
+          82,
+          90,
+          93,
+          97,
+          98,
+          100,
+          104,
+          107,
+          111,
+          115
+        ],
+        "response_source": "live",
+        "rgb_sha256": "3dc4d615c39eb8d720dd68a366de4dace3b1005bc43f4e3d47f26c5137280a09",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp",
+            "slip_or_drop",
+            "wrong_object"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames (111 and 115), the orange spool is resting on the table surface, not grasped by the gripper. The gripper is open and positioned near the spool but is not holding it.",
+            "frames": [
+              111,
+              115
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface throughout all supplied frames. In frames 0-16 it sits on the table. In frames 32-65 the gripper descends and contacts the spool but does not raise it. In frames 82-115 the spool is pushed/slid across the table surface but is never clearly elevated above its initial support. No frame shows the spool lifted off the table.",
+            "frames": [
+              0,
+              16,
+              32,
+              49,
+              65,
+              82,
+              90,
+              93,
+              97,
+              98,
+              100,
+              104,
+              107,
+              111,
+              115
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot failed to grasp the orange spool. The gripper descended and made contact with the spool (frames 32-65) but did not secure a grasp. Instead, the spool was pushed/slid across the table surface (frames 82-115) without being lifted. The spool ends up resting on the table near the tray, not held by the gripper. The tray and other objects appear undisturbed, but the target object itself was displaced from its initial position.",
+          "scene_disturbed": {
+            "explanation": "The orange spool is displaced from its initial position on the table. It is pushed/slid across the table surface by the gripper, moving from its original location toward the tray area. This constitutes unintended movement of the target object.",
+            "frames": [
+              82,
+              90,
+              93,
+              97,
+              98,
+              100,
+              104,
+              107,
+              111,
+              115
+            ],
+            "verdict": "yes"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 3,
+        "checkpoint_sha256": "91cd7e7f32276b5dd56d59c9a113e07e9da5d9b8191629cec0d3bfa7901dac08",
+        "condition": "nominal",
+        "episode_index": 27,
+        "geometry_sha256": "39b723432bca35e7e1e640eba17870cc5819886973b62f2784313894c7aa32b8",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "39a3def6fc49e42eacf64d43f21310b988e979994bd6ec1710fe8dfeec0edf12",
+        "status": "invalid_response",
+        "success": false,
+        "validation_error": {
+          "message": "Temporal VLM returned contradictory failure tags",
+          "type": "evidence_contract"
+        },
+        "verdict": null
+      },
+      {
+        "arm": "trained",
+        "capture_index": 0,
+        "checkpoint_sha256": "91cd7e7f32276b5dd56d59c9a113e07e9da5d9b8191629cec0d3bfa7901dac08",
+        "condition": "slippery",
+        "episode_index": 28,
+        "geometry_sha256": "6baf59d079ff6b199459940ac373590bc623354ae91a5a4b2bfeaeb6b496e4ee",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          26,
+          53,
+          80,
+          106,
+          133,
+          160,
+          162,
+          165,
+          169,
+          172,
+          176,
+          179,
+          183,
+          187
+        ],
+        "response_source": "live",
+        "rgb_sha256": "8ac14724d3e6e04249d0fd50618798ae3bb3eeefdb47b4e2172de024e97be8fe",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "slip_or_drop",
+            "unstable_hold"
+          ],
+          "held_at_end": {
+            "explanation": "In frame 183, the spool appears to be slipping or falling from the gripper. In frame 187, the spool is clearly no longer grasped by the gripper and is falling/dropped below the gripper, not held steady.",
+            "frames": [
+              183,
+              187
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool is clearly elevated above the table surface in multiple frames. In frame 160, the spool is lifted off the table by the gripper. It remains elevated in frames 162, 165, 169, 172, 176, 179, and 183, with visible gap between the spool and the table surface.",
+            "frames": [
+              160,
+              162,
+              165,
+              169,
+              172,
+              176,
+              179,
+              183
+            ],
+            "verdict": "yes"
+          },
+          "rationale": "The robot successfully lifted the orange spool off the table (visible in frames 160-183), but failed to maintain a steady hold. By frame 187, the spool has slipped from the gripper and is falling. The tray and other objects were not disturbed.",
+          "scene_disturbed": {
+            "explanation": "The tray with blue and yellow objects remains stationary throughout all frames. No unintended contact with the tray or fixture is observed, and no distractors are moved.",
+            "frames": [
+              0,
+              26,
+              53,
+              80,
+              106,
+              133,
+              160,
+              162,
+              165,
+              169,
+              172,
+              176,
+              179,
+              183,
+              187
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 1,
+        "checkpoint_sha256": "91cd7e7f32276b5dd56d59c9a113e07e9da5d9b8191629cec0d3bfa7901dac08",
+        "condition": "slippery",
+        "episode_index": 29,
+        "geometry_sha256": "cabcc1e106dbb1494242bb0cf8d44b4da20830cb29960de29d0b3c65a929b262",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "9fe8ede0e2e2b4312ac1851ed55f23832d97760587e8e0cfa90227aca8354382",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "none"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames (245 and 249), the orange spool remains visibly grasped by the gripper and is approximately steady in position, held above the table.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "lifted": {
+            "explanation": "In frame 0, the orange spool rests on the table surface. From frame 35 onward, the spool is visibly grasped by the gripper and held above the table surface, clearly elevated above its initial support in all subsequent frames.",
+            "frames": [
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "rationale": "The robot successfully grasped the orange spool with two wide flanges and a narrow waist, lifted it above the table surface, and held it steady through the end of the episode. The tray and other objects were left undisturbed.",
+          "scene_disturbed": {
+            "explanation": "The tray with blue and yellow objects remains stationary throughout all frames. No unintended contact with the tray or fixture is observed, and no distractors are moved.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 2,
+        "checkpoint_sha256": "91cd7e7f32276b5dd56d59c9a113e07e9da5d9b8191629cec0d3bfa7901dac08",
+        "condition": "slippery",
+        "episode_index": 30,
+        "geometry_sha256": "e358b89d8742f24c55203168fbabb7ed6e7aacb7de077dec25d94a63bd602c3e",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          19,
+          39,
+          59,
+          78,
+          98,
+          113,
+          116,
+          118,
+          120,
+          123,
+          127,
+          130,
+          134,
+          138
+        ],
+        "response_source": "live",
+        "rgb_sha256": "aae255067375b1d3d7fc3de6551ccb397a084d73e82a0ac10a9445580f3a9b21",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp",
+            "slip_or_drop"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two supplied frames (134 and 138), the orange spool is resting on the table surface, not grasped by the gripper. The gripper is positioned near the spool but is not holding it.",
+            "frames": [
+              134,
+              138
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface throughout all supplied frames. In frames 0-19 it sits on the table. In frames 39-98 the gripper approaches and contacts the spool but the spool stays on the table. In frames 113-138 the spool is clearly resting on the table surface, never visibly elevated above its initial support in any frame.",
+            "frames": [
+              0,
+              19,
+              39,
+              59,
+              78,
+              98,
+              113,
+              116,
+              118,
+              120,
+              123,
+              127,
+              130,
+              134,
+              138
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot failed to grasp and lift the orange spool. The gripper made contact with the spool (visible in frames 78-98) but did not successfully grasp it. The spool remained on the table surface throughout the entire episode, and in the final frames (134, 138) the spool is clearly resting on the table with the gripper nearby but not holding it. The tray and other objects were not disturbed.",
+          "scene_disturbed": {
+            "explanation": "The tray with blue and yellow objects remains stationary throughout all frames. No unintended contact with the tray or fixture is observed, and no other distractors are moved.",
+            "frames": [
+              0,
+              19,
+              39,
+              59,
+              78,
+              98,
+              113,
+              116,
+              118,
+              120,
+              123,
+              127,
+              130,
+              134,
+              138
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 3,
+        "checkpoint_sha256": "91cd7e7f32276b5dd56d59c9a113e07e9da5d9b8191629cec0d3bfa7901dac08",
+        "condition": "slippery",
+        "episode_index": 31,
+        "geometry_sha256": "8312aa2b57cc7a3f41722c9f333c67aaa50ac6312fce65ad2fd42a451d6d4b0f",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "141affc6bb7e113fb026156aea49a7bbd6630b576da66b9702c107ea826c9763",
+        "status": "invalid_response",
+        "success": false,
+        "validation_error": {
+          "message": "Temporal VLM returned contradictory failure tags",
+          "type": "evidence_contract"
+        },
+        "verdict": null
+      }
+    ],
+    "latency_seconds": {
+      "available_requests": 32,
+      "max": 4.737761,
+      "median": 4.2548905,
+      "min": 3.83148,
+      "sum": 134.742276,
+      "unavailable_requests": 0
+    },
+    "model": "MiniMaxAI/MiniMax-M3",
+    "provider_cost_reported_for_all_requests": false,
+    "rubric_version": "manipulation-visible-events-v2",
+    "summary": {
+      "calibrated_on_independent_human_labels": false,
+      "episodes": 32,
+      "invalid_responses": 4,
+      "lift_balanced_accuracy": null,
+      "lift_confusion": {
+        "negative_invalid": 4,
+        "negative_no": 25,
+        "negative_yes": 3
+      },
+      "lift_sensitivity": null,
+      "lift_specificity": 0.78125,
+      "limitations": [
+        "Sampled monocular frames cannot verify exact speed, force, goal distance, or continuous stability.",
+        "Agreement uses object height in the same supplied frames as an elevation proxy; it does not verify grasp or strict lift-and-hold success.",
+        "Capture episodes are independent of held-out test episodes; their denominators differ."
+      ],
+      "outcomes": {
+        "initial": {
+          "delay": {
+            "episodes": 4,
+            "failure_modes": {
+              "missed_grasp": 4,
+              "wrong_object": 1
+            },
+            "held_at_end_rate": 0.0,
+            "invalid_count": 0,
+            "lifted_rate": 0.0,
+            "scene_disturbed_count": 0,
+            "scene_uncertain_count": 0,
+            "uncertain_count": 0
+          },
+          "heavy": {
+            "episodes": 4,
+            "failure_modes": {
+              "missed_grasp": 4
+            },
+            "held_at_end_rate": 0.0,
+            "invalid_count": 0,
+            "lifted_rate": 0.0,
+            "scene_disturbed_count": 0,
+            "scene_uncertain_count": 0,
+            "uncertain_count": 0
+          },
+          "nominal": {
+            "episodes": 4,
+            "failure_modes": {
+              "missed_grasp": 4,
+              "wrong_object": 1
+            },
+            "held_at_end_rate": 0.0,
+            "invalid_count": 0,
+            "lifted_rate": 0.0,
+            "scene_disturbed_count": 0,
+            "scene_uncertain_count": 0,
+            "uncertain_count": 0
+          },
+          "slippery": {
+            "episodes": 4,
+            "failure_modes": {
+              "missed_grasp": 4
+            },
+            "held_at_end_rate": 0.0,
+            "invalid_count": 0,
+            "lifted_rate": 0.0,
+            "scene_disturbed_count": 0,
+            "scene_uncertain_count": 0,
+            "uncertain_count": 0
+          }
+        },
+        "trained": {
+          "delay": {
+            "episodes": 4,
+            "failure_modes": {
+              "fixture_contact": 1,
+              "missed_grasp": 3,
+              "slip_or_drop": 1,
+              "unstable_hold": 1,
+              "wrong_object": 2
+            },
+            "held_at_end_rate": 0.0,
+            "invalid_count": 1,
+            "lifted_rate": 0.0,
+            "scene_disturbed_count": 1,
+            "scene_uncertain_count": 0,
+            "uncertain_count": 0
+          },
+          "heavy": {
+            "episodes": 4,
+            "failure_modes": {
+              "missed_grasp": 2,
+              "none": 1,
+              "wrong_object": 1
+            },
+            "held_at_end_rate": 0.25,
+            "invalid_count": 1,
+            "lifted_rate": 0.25,
+            "scene_disturbed_count": 0,
+            "scene_uncertain_count": 0,
+            "uncertain_count": 0
+          },
+          "nominal": {
+            "episodes": 4,
+            "failure_modes": {
+              "missed_grasp": 3,
+              "slip_or_drop": 1,
+              "wrong_object": 2
+            },
+            "held_at_end_rate": 0.0,
+            "invalid_count": 1,
+            "lifted_rate": 0.0,
+            "scene_disturbed_count": 1,
+            "scene_uncertain_count": 0,
+            "uncertain_count": 0
+          },
+          "slippery": {
+            "episodes": 4,
+            "failure_modes": {
+              "missed_grasp": 1,
+              "none": 1,
+              "slip_or_drop": 2,
+              "unstable_hold": 1
+            },
+            "held_at_end_rate": 0.25,
+            "invalid_count": 1,
+            "lifted_rate": 0.5,
+            "scene_disturbed_count": 0,
+            "scene_uncertain_count": 0,
+            "uncertain_count": 0
+          }
+        }
+      },
+      "quality_role": "Additional gate; cannot override failed simulator success",
+      "visual_audit_passed": false,
+      "visual_task_passed": false
+    },
+    "usage_receipts": {
+      "available": 32,
+      "missing": 0
+    },
+    "usage_totals": {
+      "completion_tokens": 10916,
+      "prompt_tokens": 220352,
+      "total_tokens": 231268
+    }
+  },
+  "workflow": "workflows/testing/franka-rl-transfer.yaml"
+}

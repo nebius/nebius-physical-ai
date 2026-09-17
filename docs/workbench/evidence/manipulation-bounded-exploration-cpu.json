@@ -1,0 +1,31 @@
+{
+  "schema": "npa.manipulation-learning.cpu-validation.v1",
+  "recipe": "adaptive-bounded-exploration",
+  "passed": 48,
+  "skipped": 0,
+  "runtime": {
+    "rsl_rl": "5.0.1",
+    "torch": "2.13.0+cpu"
+  },
+  "tested_source_sha256": {
+    "franka_rl_distribution.py": "b7f348c87ce999fe880218fe52c3ad7c14d5dd42c9cb5c99489fe3620f641b1c",
+    "franka_rl_learning.py": "9227241584e04f27cb3f74ecc791eb0be2fd84e2ae35310279b65b5eb8494e0a",
+    "franka_rl_servo.py": "2184f61e0f4d884b745649da461cd39bbfa63ef5df7c5e9a834f0d688147b382",
+    "test_franka_rl_distribution.py": "bb5a318d681fb85fd002f319cf9acda616f367de73d1f488765181526741266c",
+    "test_franka_rl_learning.py": "19abd804c7bd2c6bd1a02cc2bbbe09b85c4407a65cfa33c89c9f070fa0e55bc9"
+  },
+  "checks": [
+    "native PPO construction and optimizer update",
+    "Normal sampling, log probability, entropy and KL against independent formulas",
+    "bounded scale under optimization",
+    "checkpoint bounds and parameters retained",
+    "deterministic TorchScript artifact reload",
+    "ONNX Runtime artifact parity",
+    "native continuous-joint domain recovery and speed limits"
+  ],
+  "limits": [
+    "CPU validation does not establish manipulation success",
+    "Exact next-update serialization parity uses fixed learning rate: upstream PPO does not restore its separate adaptive learning_rate scalar"
+  ],
+  "physical_robot_tested": false
+}

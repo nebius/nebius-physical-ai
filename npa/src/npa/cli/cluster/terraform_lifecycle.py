@@ -67,6 +67,11 @@ from npa.provisioning_journal import (
     operation_context,
 )
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
+from npa.orchestration.skypilot.cluster_validation import (
+    cluster_validation_session,
+    current_validation_session,
+    validation_session,
+)
 
 _DEFAULT_TERRAFORM_SUBDIR = Path("deploy") / "cluster"
 _DEFAULT_SKYPILOT_BIN = Path.home() / ".npa" / "skypilot-venv" / "bin" / "sky"
@@ -778,19 +783,7 @@ def up_cmd(
                     "Terraform apply and identity persistence still completed."
                 )
             if sky_smoke and mig_desired is None:
-                from npa.orchestration.skypilot.k8s_gpu_catalog import (
-                    wait_for_kubernetes_accelerators,
-                )
-
-                wait_for_kubernetes_accelerators(
-                    [sky_gpus] if sky_gpus.strip() else [],
-                    context=context,
-                    kubeconfig=kubeconfig_path,
-                    sky_bin=sky_bin or None,
-                    label_known_gpus=True,
-                    on_status=lambda message: typer.echo(message, err=True),
-                )
-                _run_skypilot_smoke(
+                _validate_skypilot_readiness(
                     kubeconfig_path,
                     context,
                     backend_desired.name,
@@ -1058,30 +1051,12 @@ def up_cmd(
                 f"default StorageClass {validation['default_storage_class']}"
             )
         if sky_smoke and mig_desired is None:
-            from npa.orchestration.skypilot.k8s_gpu_catalog import (
-                wait_for_kubernetes_accelerators,
-            )
-
-            _check_skypilot_kubernetes(
-                kubeconfig_path,
-                context,
-                sky_bin=sky_bin,
-            )
-            wait_for_kubernetes_accelerators(
-                [sky_gpus] if sky_gpus.strip() else [],
-                context=context,
-                kubeconfig=kubeconfig_path,
-                sky_bin=sky_bin or None,
-                label_known_gpus=True,
-                on_status=lambda message: typer.echo(message, err=True),
-            )
-            _run_skypilot_smoke(
+            _validate_skypilot_readiness(
                 kubeconfig_path,
                 context,
                 cluster_name,
                 sky_gpus,
                 sky_bin=sky_bin,
-                credentials_checked=True,
             )
         elif sky_smoke and mig_desired is not None:
             typer.echo(
@@ -4000,6 +3975,23 @@ def _gpus_per_node(preset: str) -> int:
     return int(match.group(1)) if match else 0
 
 
+def _validate_skypilot_readiness(kubeconfig_path, context, cluster_name, sky_gpus, *, sky_bin=""):
+    from npa.orchestration.skypilot.k8s_gpu_catalog import wait_for_kubernetes_accelerators
+
+    with cluster_validation_session(kubeconfig_path, context):
+        _check_skypilot_kubernetes(kubeconfig_path, context, sky_bin=sky_bin)
+        _recover_skypilot_smoke(kubeconfig_path, context, cluster_name, sky_bin=sky_bin)
+        wait_for_kubernetes_accelerators(
+            [sky_gpus] if sky_gpus.strip() else [], context=context,
+            kubeconfig=kubeconfig_path, sky_bin=sky_bin or None, label_known_gpus=True,
+            on_status=lambda message: typer.echo(message, err=True),
+        )
+        _run_skypilot_smoke(
+            kubeconfig_path, context, cluster_name, sky_gpus,
+            sky_bin=sky_bin, credentials_checked=True,
+        )
+
+
 def _skypilot_context(
     kubeconfig_path: Path,
     context: str,
@@ -4010,8 +4002,6 @@ def _skypilot_context(
         sky_bin or os.environ.get("NPA_SKYPILOT_BIN") or str(_DEFAULT_SKYPILOT_BIN)
     )
     sky = _require_bin(executable)
-    env = os.environ.copy()
-    env["KUBECONFIG"] = str(kubeconfig_path)
     from npa.orchestration.skypilot.k8s_gpu_catalog import (
         exact_kubernetes_context_config,
     )
@@ -4025,21 +4015,19 @@ def _skypilot_context(
     return sky, env, config_override
 
 
+@validation_session
 def _check_skypilot_kubernetes(
     kubeconfig_path: Path,
     context: str,
     *,
     sky_bin: str = "",
 ) -> tuple[str, dict[str, str], str]:
-    """Enable and verify SkyPilot against the exact Kubernetes context."""
+    """Verify the exact context; a direct call closes its no-launch API session."""
 
     sky, env, config_override = _skypilot_context(
         kubeconfig_path, context, sky_bin=sky_bin
     )
-    # SkyPilot auto-starts a long-lived local API server and that daemon inherits
-    # the CLI process's cwd.  Keep it on the durable cluster state directory: a
-    # deleted Terraform/temp cwd later makes every rsync fail with getcwd(2).
-    sky_cwd = kubeconfig_path.parent
+    sky_cwd = Path(env["NPA_SKYPILOT_ISOLATED_API_DIR"])
     check_result = _run_stream(
         [
             sky,
@@ -4062,10 +4050,12 @@ def _check_skypilot_kubernetes(
         raise RuntimeError(
             "SkyPilot returned success without enabling the exact Kubernetes context"
         )
+    current_validation_session().credentials_checked = True
     typer.echo(f"SkyPilot Kubernetes credentials verified for context {context!r}.")
     return sky, env, config_override
 
 
+@validation_session
 def _run_skypilot_smoke(
     kubeconfig_path: Path,
     context: str,
@@ -4075,7 +4065,7 @@ def _run_skypilot_smoke(
     sky_bin: str = "",
     credentials_checked: bool = False,
 ) -> None:
-    if credentials_checked:
+    if credentials_checked and current_validation_session().credentials_checked:
         sky, env, config_override = _skypilot_context(
             kubeconfig_path, context, sky_bin=sky_bin
         )
@@ -4084,46 +4074,63 @@ def _run_skypilot_smoke(
             kubeconfig_path, context, sky_bin=sky_bin
         )
     infra = f"k8s/{context}"
-    sky_cwd = kubeconfig_path.parent
+    sky_cwd = Path(env["NPA_SKYPILOT_ISOLATED_API_DIR"])
+    session = current_validation_session()
+    smoke_name = _sky_cluster_name(cluster_name)
+    _recover_skypilot_smoke(kubeconfig_path, context, cluster_name, sky_bin=sky_bin)
     accelerator = sky_gpus.strip() or _detect_skypilot_gpu(
         sky, infra, env, config_override=config_override, cwd=sky_cwd
     )
-    smoke_name = _sky_cluster_name(cluster_name)
-    try:
-        _run_stream(
-            [
-                sky,
-                "launch",
-                "--config",
-                config_override,
-                "-c",
-                smoke_name,
-                "--infra",
-                infra,
-                "--gpus",
-                accelerator,
-                "-y",
-                "nvidia-smi",
-            ],
-            cwd=sky_cwd,
-            env=env,
-            timeout=1800,
-        )
-    finally:
-        _run_stream(
-            [sky, "down", "--config", config_override, "--yes", smoke_name],
-            cwd=sky_cwd,
-            env=env,
-            timeout=600,
-        )
-        _wait_for_sky_down(
-            sky,
-            smoke_name,
-            env,
-            config_override=config_override,
-            cwd=sky_cwd,
-        )
+    session.begin_smoke(smoke_name)
+    _skypilot_smoke_attempt(sky, smoke_name, infra, accelerator, env, config_override, sky_cwd)
     typer.echo(f"SkyPilot smoke passed and {smoke_name} was removed.")
+
+
+@validation_session
+def _recover_skypilot_smoke(kubeconfig_path, context, cluster_name, *, sky_bin=""):
+    session = current_validation_session()
+    if not session.pending_smoke:
+        return
+    name = _sky_cluster_name(cluster_name)
+    if session.pending_smoke != name:
+        raise RuntimeError("Recover the recorded validation smoke with its original cluster command first")
+    sky, env, override = _skypilot_context(kubeconfig_path, context, sky_bin=sky_bin)
+    _remove_skypilot_smoke(sky, name, env, override, Path(env["NPA_SKYPILOT_ISOLATED_API_DIR"]))
+
+
+def _launch_skypilot_smoke(sky, name, infra, accelerator, env, config_override, cwd):
+    _run_stream(
+        [sky, "launch", "--config", config_override, "-c", name,
+         "--infra", infra, "--gpus", accelerator, "-y", "nvidia-smi"],
+        cwd=cwd, env=env, timeout=1800,
+    )
+
+
+def _skypilot_smoke_attempt(sky, name, infra, accelerator, env, config_override, cwd):
+    try:
+        _launch_skypilot_smoke(sky, name, infra, accelerator, env, config_override, cwd)
+    except BaseException as primary:
+        try:
+            _remove_skypilot_smoke(sky, name, env, config_override, cwd)
+        except Exception:
+            note = "Owned smoke cleanup also failed; preserve the validation session for recovery."
+            add_note = getattr(primary, "add_note", None)
+            if callable(add_note):
+                add_note(note)
+            else:
+                typer.echo(note, err=True)
+        raise
+    else:
+        _remove_skypilot_smoke(sky, name, env, config_override, cwd)
+
+
+def _remove_skypilot_smoke(sky, name, env, config_override, cwd):
+    _run_stream(
+        [sky, "down", "--config", config_override, "--yes", name],
+        cwd=cwd, env=env, timeout=600,
+    )
+    _wait_for_sky_down(sky, name, env, config_override=config_override, cwd=cwd)
+    current_validation_session().smoke_removed()
 
 
 def _detect_skypilot_gpu(

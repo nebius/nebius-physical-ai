@@ -352,7 +352,15 @@ class TestTheProofItselfIsMutationTested:
         assert 'args+=(-u "$name")' in text
         script.write_text(text.replace('args+=(-u "$name")', "args+=()", 1), "utf-8")
 
-        result = run(image, "assert-refusal", env=ENTITLED | {NVIDIA_ACCEPT_ENV: "YES"})
+        # The mutation can reach fetch; keep that failure independent of the network.
+        result = run(
+            image,
+            "assert-refusal",
+            env=ENTITLED | {
+                NVIDIA_ACCEPT_ENV: "YES",
+                "NPA_LTX_SOURCE_REPO": str(image.parent / "no-such-repo"),
+            },
+        )
 
         assert result.returncode == EX_SOFTWARE
         assert MARKER not in result.stdout

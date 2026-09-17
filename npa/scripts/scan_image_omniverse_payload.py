@@ -12,6 +12,10 @@ image's filesystem and its layer history.
     docker save npa-isaac-lab:rc1 -o /tmp/img.tar
     npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py --tarball /tmp/img.tar
 
+Saved Docker and OCI archives must contain their complete manifest, config and
+layer graph. A successful export command alone does not establish completeness.
+The reader keeps metadata in memory and streams layer contents without extraction.
+
 Why it keys on payload signatures rather than the string "isaac"
 ---------------------------------------------------------------
 The re-architected images deliberately keep a ``/isaac-sim/python.sh`` shim, because ~30
@@ -294,28 +298,130 @@ def _iter_crane_export(image: str, *, max_attempts: int = 4):
         time.sleep(min(2 ** (attempt - 1), 30))
 
 
+class _LayerProbe:
+    """Retain only the opening bytes needed to distinguish a layer from JSON."""
+
+    def __init__(self, handle):
+        self.handle = handle
+        self.prefix: bytearray | None = bytearray()
+
+    def read(self, size=-1):
+        chunk = self.handle.read(size)
+        if self.prefix is not None:
+            self.prefix.extend(chunk)
+        return chunk
+
+
+def _iter_saved_member(handle, name, documents, scanned_layers):
+    probe = _LayerProbe(handle)
+    try:
+        layer = tarfile.open(fileobj=probe, mode="r|*")
+    except tarfile.TarError:
+        # Docker's content-addressed store gives JSON and layer blobs the same
+        # names. Preserve the small failed header probe without seeking the pipe.
+        prefix = bytes(probe.prefix)
+        if prefix.lstrip().startswith((b"{", b"[")):
+            documents[name] = json.loads(prefix + handle.read())
+        yield name
+        return
+    probe.prefix = None
+    with layer:
+        for entry in layer:
+            yield entry.name + ("/" if entry.isdir() else "")
+    scanned_layers.add(name)
+
+
+def _require_saved_config(name, documents):
+    if not isinstance(documents.get(name), dict):
+        raise RuntimeError(f"Incomplete image archive: missing or invalid config {name}")
+
+
+def _require_saved_layer(name, scanned_layers):
+    if name not in scanned_layers:
+        raise RuntimeError(f"Incomplete image archive: missing or unreadable layer {name}")
+
+
+def _check_docker_manifest(manifest, documents, scanned_layers):
+    if not isinstance(manifest, list) or not manifest:
+        raise RuntimeError("Invalid Docker image archive manifest.json")
+    for image in manifest:
+        if not isinstance(image, dict) or not isinstance(image.get("Config"), str):
+            raise RuntimeError("Invalid Docker image archive config reference")
+        _require_saved_config(image["Config"], documents)
+        layers = image.get("Layers")
+        if not isinstance(layers, list) or not all(isinstance(item, str) for item in layers):
+            raise RuntimeError("Invalid Docker image archive layer references")
+        for name in layers:
+            _require_saved_layer(name, scanned_layers)
+
+
+def _saved_descriptor_path(descriptor, sizes):
+    if not isinstance(descriptor, dict):
+        raise RuntimeError("Invalid OCI image archive descriptor")
+    digest = descriptor.get("digest", "")
+    if not isinstance(digest, str) or re.fullmatch(r"[a-z0-9]+:[a-f0-9]+", digest) is None:
+        raise RuntimeError("Invalid OCI image archive descriptor digest")
+    name = "blobs/" + digest.replace(":", "/", 1)
+    if name not in sizes:
+        raise RuntimeError(f"Incomplete image archive: missing referenced member {name}")
+    if descriptor.get("size") != sizes[name]:
+        raise RuntimeError(f"Incomplete image archive: referenced size mismatch {name}")
+    return name
+
+
+def _check_oci_manifest(name, documents, scanned_layers, sizes, ancestors=()):
+    if name in ancestors:
+        raise RuntimeError("Invalid OCI image archive: cyclic index reference")
+    document = documents.get(name)
+    if not isinstance(document, dict) or document.get("schemaVersion") != 2:
+        raise RuntimeError(f"Incomplete image archive: missing or invalid manifest {name}")
+    if "manifests" in document:
+        children = document["manifests"]
+        if not isinstance(children, list) or not children:
+            raise RuntimeError(f"Invalid OCI image archive: empty index {name}")
+        for descriptor in children:
+            child = _saved_descriptor_path(descriptor, sizes)
+            _check_oci_manifest(child, documents, scanned_layers, sizes, (*ancestors, name))
+        return
+    config = _saved_descriptor_path(document.get("config"), sizes)
+    _require_saved_config(config, documents)
+    layers = document.get("layers")
+    if not isinstance(layers, list):
+        raise RuntimeError(f"Invalid OCI image archive: missing layer list {name}")
+    for descriptor in layers:
+        layer = _saved_descriptor_path(descriptor, sizes)
+        _require_saved_layer(layer, scanned_layers)
+
+
+def _check_saved_image(documents, scanned_layers, sizes):
+    if "manifest.json" not in documents and "index.json" not in documents:
+        raise RuntimeError("Incomplete image archive: no Docker or OCI manifest")
+    if "manifest.json" in documents:
+        _check_docker_manifest(documents["manifest.json"], documents, scanned_layers)
+    if "index.json" in documents:
+        layout = documents.get("oci-layout")
+        if not isinstance(layout, dict) or layout.get("imageLayoutVersion") != "1.0.0":
+            raise RuntimeError("Incomplete image archive: missing or invalid oci-layout")
+        _check_oci_manifest("index.json", documents, scanned_layers, sizes)
+
+
 def _iter_saved_image(fileobj, *, mode: str):
-    """Yield every outer and nested-layer path from a Docker/OCI image archive."""
+    """Stream layer paths and require complete Docker/OCI references before success."""
+    documents, scanned_layers, sizes = {}, set(), {}
     with tarfile.open(fileobj=fileobj, mode=mode) as archive:
         for member in archive:
-            name = member.name
-            if not (
-                name.endswith(("/layer.tar", ".tar"))
-                or name.startswith("blobs/")
-                or "/blobs/" in name
-            ):
+            name = member.name.removeprefix("./")
+            if not member.isfile():
                 yield name + ("/" if member.isdir() else "")
                 continue
+            if name in sizes:
+                raise RuntimeError(f"Invalid image archive: duplicate member {name}")
+            sizes[name] = member.size
             handle = archive.extractfile(member)
-            if handle is None:
-                continue
-            try:
-                with tarfile.open(fileobj=handle, mode="r|*") as layer:
-                    for entry in layer:
-                        yield entry.name + ("/" if entry.isdir() else "")
-            except tarfile.TarError:
-                # Not a tar (config JSON, manifest); the outer name was already yielded.
-                yield name
+            assert handle is not None
+            with handle:
+                yield from _iter_saved_member(handle, name, documents, scanned_layers)
+    _check_saved_image(documents, scanned_layers, sizes)
 
 
 def _iter_tarball(tarball: Path):

@@ -145,6 +145,15 @@ DECLARATIVE_PIP_EXTRAS = frozenset({"viz"})
 #: `huggingface_hub`, and the interpreter running npa in a vendor image is not the vendor's own
 #: venv, so the library is not necessarily importable there (live job 244).
 TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "workbench.lerobot.transfer_prepare": (
+        ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
+        ("python:pyarrow", "pyarrow>=15,<22"),
+    ),
+    "workbench.lerobot.transfer_report": (
+        ("python:av", "av>=12,<17"),
+        ("python:matplotlib", "matplotlib>=3.8,<4"),
+        ("python:rerun", "rerun-sdk>=0.29,<0.32"),
+    ),
     "workbench.alpamayo2_super.sweep": (
         ('python:ray;assert(ray.__version__=="2.58.0")', "ray[default]==2.58.0"),
     ),
@@ -2315,6 +2324,20 @@ def render_skypilot_steps_yaml(
     )
 
 
+def _record_parallel_name(task_name: str, seen: set[str], workflow: str) -> None:
+    if re.fullmatch(r"[A-Za-z0-9_-]+", task_name) is None:
+        raise NpaWorkflowRenderError(
+            f"SkyPilot parallel task name {task_name!r} in workflow {workflow!r} "
+            "must contain only ASCII letters, digits, hyphens, and underscores"
+        )
+    if task_name in seen:
+        raise NpaWorkflowRenderError(
+            f"duplicate SkyPilot task name {task_name!r} in parallel group "
+            f"of workflow {workflow!r}"
+        )
+    seen.add(task_name)
+
+
 def _render_docs(
     spec: NpaWorkflowSpec,
     steps: Sequence[PlanStep],
@@ -2337,12 +2360,7 @@ def _render_docs(
         # body re-runs the same state), so only JobGroups — whose tasks run at the
         # same time on distinct clusters — require unique names.
         if execution == "parallel":
-            if task_name in seen:
-                raise NpaWorkflowRenderError(
-                    f"duplicate SkyPilot task name {task_name!r} in parallel group "
-                    f"of workflow {spec.name!r}"
-                )
-            seen.add(task_name)
+            _record_parallel_name(task_name, seen, spec.name)
         docs.append(doc)
 
     chunks: list[str] = []

@@ -51,7 +51,8 @@ Python and HTTP access follow each tool's documented contract.
 | --- | --- |
 | Curation, vector search, and detection training | [BDD100K pipeline](cookbooks/bdd100k-pipeline.md) · [LanceDB search](cookbooks/lancedb-vector-search.md) · [LanceDB deployment](cookbooks/lancedb-deploy-runbook.md) |
 | Hosted captioning, generation, and reasoning | [Token Factory](token-factory.md) · [cloud composition](composing-cloud-and-token-factory.md) |
-| Evaluate rollouts with a VLM | [VLM evaluation loop](cookbooks/vlm-eval-loop-runbook.md) |
+| Evaluate rollouts and verify VLM model provenance | [VLM evaluation loop and live endpoint check](cookbooks/vlm-eval-loop-runbook.md) |
+| Find artifacts across selected or accessible buckets | [Artifact discovery guide](cookbooks/find-artifacts.md) |
 | View and share artifacts | [Rerun](rerun-sharing.md) · [Foxglove / MCAP](foxglove-export.md) · [browser workbench](../agent.md) |
 | Autonomous-driving inference | [Alpamayo 2 Super](alpamayo2-super.md) |
 | Native Ray jobs, training, and serving | [Ray](ray.md) |
@@ -65,7 +66,7 @@ Python and HTTP access follow each tool's documented contract.
 | Use Blackwell | [B200 / B300](blackwell-datacenter-image-compatibility.md) · [RTX PRO 6000](sm120-image-catalog.md) |
 | Configure nodes and caches | [GPU driver strategy](mk8s-gpu-driver-strategy.md) · [model-weight cache](model-weight-cache.md) · [preemptible VMs](preemptible-vms.md) |
 | Reproduce benchmarks and demos | [Cookbooks](cookbooks/README.md) · [validation scope](solutions-validation.md) |
-| Add or package a solution | [Contributing](../../CONTRIBUTING.md) · [containerized solutions](contributing-a-containerized-solution.md) · [OSS catalog](oss-solution-catalog.md) · [packaging contract](container-packaging.md) |
+| Add or package a solution | [Contributing](../../CONTRIBUTING.md) · [containerized solutions](contributing-a-containerized-solution.md) · [OSS catalog](oss-solution-catalog.md) · [packaging contract](container-packaging.md) · [FiftyOne image validation](../../npa/docker/workbench/fiftyone/RELEASE.md#validate-a-local-candidate) |
 
 Inspect the selected guide's actual output artifacts after the run reaches a
 terminal state. A plan, successful status response, or historical benchmark

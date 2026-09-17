@@ -29,6 +29,18 @@ class NebiusError(Exception):
     pass
 
 
+class NebiusCliCompatibilityError(NebiusError):
+    """The selected CLI cannot satisfy NPA's version compatibility check.
+
+    Args:
+        message: Generated compatibility diagnostic without provider output.
+    Returns:
+        None.
+    Raises:
+        None.
+    """
+
+
 @dataclass(frozen=True)
 class ServiceAccountIdentity:
     """Allowlisted provider identity used by guarded IAM reconciliation."""
@@ -134,12 +146,7 @@ def _parse_cli_version(output: str) -> str | None:
     return match.group(1)
 
 
-def _warn_if_nebius_version_mismatch(nebius_path: str) -> None:
-    global _NEBIUS_VERSION_CHECKED
-
-    if _NEBIUS_VERSION_CHECKED:
-        return
-
+def _checked_nebius_cli_version(nebius_path: str) -> tuple[str, str]:
     try:
         expected = supported_tool_version("nebius-cli", __file__)
         result = subprocess.run(
@@ -150,14 +157,14 @@ def _warn_if_nebius_version_mismatch(nebius_path: str) -> None:
             check=False,
         )
     except Exception as exc:
-        raise NebiusError(
+        raise NebiusCliCompatibilityError(
             "Could not check the Nebius CLI version. Reinstall the tested version: "
             f"`{_nebius_cli_install_remedy(supported_tool_version('nebius-cli', __file__))}`"
         ) from exc
 
     output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
     if result.returncode != 0:
-        raise NebiusError(
+        raise NebiusCliCompatibilityError(
             f"Could not check the Nebius CLI version (exit {result.returncode}). "
             "Reinstall the tested version: "
             f"`{_nebius_cli_install_remedy(expected)}`"
@@ -165,16 +172,25 @@ def _warn_if_nebius_version_mismatch(nebius_path: str) -> None:
 
     actual = _parse_cli_version(output)
     if actual is None:
-        raise NebiusError(
+        raise NebiusCliCompatibilityError(
             "Could not parse the Nebius CLI version. Reinstall the tested version: "
             f"`{_nebius_cli_install_remedy(expected)}`"
         )
+    return actual, expected
 
+
+def _warn_if_nebius_version_mismatch(nebius_path: str) -> None:
+    global _NEBIUS_VERSION_CHECKED
+
+    if _NEBIUS_VERSION_CHECKED:
+        return
+
+    actual, expected = _checked_nebius_cli_version(nebius_path)
     tested = set(_TESTED_NEBIUS_CLI_VERSIONS)
     tested.add(expected)
     if actual not in tested:
         supported = ", ".join(sorted(tested))
-        raise NebiusError(
+        raise NebiusCliCompatibilityError(
             f"Unsupported Nebius CLI {actual}; NPA has tested {supported}. "
             f"Install {expected}: `{_nebius_cli_install_remedy(expected)}`"
         )
@@ -428,13 +444,21 @@ def _metadata_iam_token(timeout_s: float = 2.0) -> str:
 
 
 def get_iam_token() -> str:
-    """Resolve an IAM token from CLI profile, env/file overrides, or VM metadata."""
-    cli_error: str = ""
+    """Resolve an IAM token from CLI profile, env/file overrides, or VM metadata.
+
+    Args:
+        None.
+    Returns:
+        The resolved IAM token.
+    Raises:
+        NebiusError: No source resolves a token; retains CLI compatibility subtype.
+    """
+    cli_error: NebiusError | None = None
     try:
         token = _run(["iam", "get-access-token"])
     except NebiusError as exc:
         token = ""
-        cli_error = str(exc)
+        cli_error = exc
     if token:
         return token
 
@@ -451,6 +475,8 @@ def get_iam_token() -> str:
     if metadata_token:
         return metadata_token
 
+    if isinstance(cli_error, NebiusCliCompatibilityError):
+        raise cli_error
     detail = f" Last CLI error: {cli_error}" if cli_error else ""
     raise NebiusError(
         "Unable to resolve IAM token from Nebius CLI profile, environment, token files, "

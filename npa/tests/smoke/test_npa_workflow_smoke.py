@@ -31,6 +31,7 @@ def _spec(name: str) -> Path:
         "paidf-defect-image-generation.yaml",
         "paidf-image-attribute-augmentation.yaml",
         "paidf-event-video-generation.yaml",
+        "lerobot-transfer.yaml",
     ],
 )
 def test_cli_validate_spec(name: str) -> None:
