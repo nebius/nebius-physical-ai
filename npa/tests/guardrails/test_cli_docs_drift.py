@@ -47,9 +47,6 @@ ALLOWLIST: dict[tuple[str, ...], str] = {
     ("workbench", "golden-eval", "run-all", "lerobot", "groot"): "positional tool-name args",
     ("rerun", "host", "recording"): "positional file arg (recording.rrd)",
     ("rerun", "share", "recording"): "positional file arg (recording.rrd)",
-    # `npa workbench health access sim2real` reads as a subcommand but `access`
-    # takes no positional; the doc likely means `npa workbench health sim2real`.
-    ("workbench", "health", "access", "sim2real"): "suspect doc; access takes no positional arg",
     # Prose fragments the extractor over-matched, not command invocations.
     ("workbench", "health", "preflight", "for", "the", "selected"): "prose: 'for the selected services'",
     ("workbench", "health", "preflight", "for", "the", "selected", "project"): "prose: 'for the selected project'",
@@ -61,7 +58,6 @@ ALLOWLIST: dict[tuple[str, ...], str] = {
     # Known-stale references tracked by their own issues; remove the entry
     # when the referenced issue lands.
     ("workbench", "retargeting", "workflow"): "stale command; #520 tracks fixing the docs",
-    ("workbench", "trigger"): "not a real command; stale mention in sim-to-real/SKILL.md",
 }
 
 
