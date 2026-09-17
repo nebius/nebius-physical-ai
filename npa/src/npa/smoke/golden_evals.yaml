@@ -689,7 +689,7 @@ containers:
       command: python /opt/npa/docker/workbench/cosmos-evaluator/smoke_functional.py
       serverless_gpu: h100
       gpu: none
-      timeout_seconds: 600
+      timeout_seconds: unlimited
       status: ready
 
   sonic:
@@ -894,6 +894,36 @@ containers:
       serverless_gpu: h100
       gpu: optional
       timeout_seconds: 300
+      status: ready
+
+  openarm:
+    image: npa-openarm
+    dockerfile: npa/docker/workbench/openarm/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Enactic OpenArm v2 bimanual MuJoCo simulation and OpenArm reinforcement
+        learning environments in NVIDIA Isaac Sim/Isaac Lab.
+    safety:
+      runs_as: ubuntu
+      base_image: nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04 (digest pinned)
+      network: FastAPI service on :8792; operator S3; first-use Isaac runtime fetch
+      external_fetch: [pypi-nvidia-isaac-runtime, github-isaaclab-source, s3]
+      notes: >-
+        Bakes exact Apache-2.0 OpenArm MuJoCo and Isaac sources/assets plus a
+        hash-locked OSS closure. No Isaac Sim, Isaac Lab, Omniverse Kit,
+        credentials, accepted terms, caches, or operator data are baked. The
+        golden eval performs a real 500-step OpenArm v2 bimanual MuJoCo control
+        rollout and validates its trajectory; exact-digest RTX qualification
+        additionally runs the upstream OpenArm Isaac reach rollout and trainer.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_openarm_functional
+      command: python -m npa.smoke.test_openarm_functional
+      artifact: /tmp/npa-openarm-golden/golden_eval.json
+      serverless_gpu: rtx6000
+      gpu: optional
+      timeout_seconds: 600
       status: ready
 
   wan2-2:
