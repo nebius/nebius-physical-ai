@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import runpy
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -114,10 +115,12 @@ def test_export_to_s3_uses_retry_configured_shared_storage(native_dataset, s3):
     assert factory.call_args.kwargs["config"].retries == {"max_attempts": 3, "mode": "adaptive"}
 
 
-def test_remote_bundle_executes_shared_storage_without_installed_npa(native_dataset, s3, monkeypatch, capsys):
+def test_remote_bundle_executes_shared_storage_without_installed_npa(native_dataset, s3, monkeypatch, capsys, tmp_path):
     import builtins
 
-    script = _subtask_export_python_script("review", "s3://bucket/derived/")
+    # Execute the trusted generated entrypoint with normal __main__ script semantics.
+    script_path = tmp_path / "remote_export.py"
+    script_path.write_text(_subtask_export_python_script("review", "s3://bucket/derived/"), encoding="utf-8")
     original_import = builtins.__import__
 
     def without_npa(name, *args, **kwargs):
@@ -126,7 +129,7 @@ def test_remote_bundle_executes_shared_storage_without_installed_npa(native_data
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", without_npa)
-    exec(compile(script, "<remote-export>", "exec"), {})
+    runpy.run_path(str(script_path), run_name="__main__")
     report = json.loads(capsys.readouterr().out)
     assert report["episode_count"] == 2
     assert report["uploaded_files"] == 4
