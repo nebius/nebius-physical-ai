@@ -1,0 +1,24 @@
+{
+  "version": "7.0.40",
+  "license": "SSPL-1.0",
+  "binary": {
+    "url": "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-7.0.40.tgz",
+    "archive_sha256": "e4b3d7a11818f983d897ec9fcbf25779a6e122f0e7b7e25fa4ab8ac5d78a5a89",
+    "file_sha256": "3c9271a5dbcaa2adf7cebd7de65d524a780b463e5a9085106adcd140930fc696",
+    "file_bytes": 186171944,
+    "git_revision": "37741b538c02da076d1e34d66113ac0230d4523a",
+    "platform": "ubuntu2204",
+    "architecture": "x86_64"
+  },
+  "source": {
+    "url": "https://codeload.github.com/mongodb/mongo/tar.gz/d18b92bf3d150c32f129aba9317efb627d3f5ab1",
+    "archive_sha256": "d72a84c08995de253c817868a7fa85aa595cc2ec192bf22b20a69ab803163ce9",
+    "archive_bytes": 91639459,
+    "git_revision": "d18b92bf3d150c32f129aba9317efb627d3f5ab1",
+    "git_origin_revision": "37741b538c02da076d1e34d66113ac0230d4523a",
+    "mapping_url": "https://github.com/mongodb/mongo/commit/d18b92bf3d150c32f129aba9317efb627d3f5ab1",
+    "mapping_field": "GitOrigin-RevId",
+    "tree_revision": "4d4b7dacf1167ad829ed251dadd543c0e6555e65",
+    "build_instructions": "docs/building.md"
+  }
+}

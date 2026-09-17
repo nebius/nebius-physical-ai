@@ -40,6 +40,18 @@ class KubernetesGpuCatalogError(RuntimeError):
     """Raised when the live Kubernetes GPU catalog cannot be discovered."""
 
 
+class PendingGpuPlacementError(KubernetesGpuCatalogError):
+    """Active unbound GPU demand makes shared placement indeterminate.
+
+    Args:
+        *args: Internal diagnostic details retained by RuntimeError.
+    Returns:
+        An exception identifying pending GPU placement.
+    Raises:
+        None.
+    """
+
+
 class UnsatisfiableAcceleratorError(ValueError):
     """Raised when a requested accelerator cannot be scheduled on the cluster."""
 
@@ -72,65 +84,84 @@ def _kubeconfig_env(kubeconfig: Kubeconfig) -> dict[str, str] | None:
 def kubernetes_sky_environment(
     *, context: str, kubeconfig: Kubeconfig, sky_executable: str,
 ) -> dict[str, str]:
-    """Bind cluster checks and discovery to one exact owned API when isolated."""
-    env = _kubeconfig_env(kubeconfig) or os.environ.copy()
+    """Bind cluster checks and discovery to their current owned API session.
+
+    Args:
+        context: Exact Kubernetes context being checked.
+        kubeconfig: Configuration file containing that context.
+        sky_executable: Selected SkyPilot executable and adjacent interpreter.
+    Returns:
+        The isolated session environment, or the unchanged discovery environment.
+    Raises:
+        KubernetesGpuCatalogError: An isolated target is incomplete.
+        IsolatedApiError: API ownership or executing identity cannot be verified.
+    """
     from npa.orchestration.skypilot._bin import resolve_isolated_config_dir
+    from npa.orchestration.skypilot.cluster_validation import current_validation_session
 
+    env = _kubeconfig_env(kubeconfig) or os.environ.copy()
+    session = current_validation_session()
     isolated_root = resolve_isolated_config_dir()
-    if isolated_root is not None:
-        selected = str(kubeconfig or env.get("KUBECONFIG") or "").strip()
-        if not selected or not str(context).strip():
-            raise KubernetesGpuCatalogError(
-                "Isolated SkyPilot discovery requires an exact kubeconfig and context"
-            )
-        kubeconfig_path = Path(selected).expanduser().resolve(strict=True)
-        env["KUBECONFIG"] = str(kubeconfig_path)
-        # Cluster validation may launch a GPU task. It must never fall through
-        # to the operator's shared API, even before workflow submission exists.
-        from npa.orchestration.skypilot.cleanup import sky_environment
-        from npa.orchestration.skypilot.local_api import ensure_isolated_api
-        import yaml
+    if session is None and isolated_root is None:
+        return env
+    selected = str(kubeconfig or env.get("KUBECONFIG") or "").strip()
+    if not selected or not context.strip():
+        raise KubernetesGpuCatalogError("Isolated SkyPilot discovery requires an exact kubeconfig and context")
+    kubeconfig_path = Path(selected).expanduser().resolve(strict=True)
+    env["KUBECONFIG"] = str(kubeconfig_path)
+    if session is not None:
+        session.require_target(kubeconfig_path, context)
+        # Validation owns cloud smoke names independently of any ambient
+        # workflow user ID; recovering the same child keeps its exact identity.
+        env["SKYPILOT_USER_ID"] = "npa-" + hashlib.sha256(str(session.scope.resolve()).encode()).hexdigest()[:12]
+        if session.record.get("project_alias"):
+            env["NPA_SKYPILOT_PROJECT"] = session.record["project_alias"]
+    identity = hashlib.sha256(f"{kubeconfig_path}\0{context}".encode()).hexdigest()[:24]
+    scope = session.scope if session is not None else isolated_root / "cluster-validation" / identity
+    return _owned_validation_environment(scope, context, sky_executable, env)
 
-        identity = hashlib.sha256(
-            f"{kubeconfig_path.resolve()}\0{context}".encode()
-        ).hexdigest()[:24]
-        scope = isolated_root / "cluster-validation" / identity
-        scope.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if scope.is_symlink():
-            raise RuntimeError("Cluster validation state must not be a symlink")
-        config: dict = {}
-        inherited = str(env.get("SKYPILOT_GLOBAL_CONFIG") or "")
-        if inherited:
-            config = yaml.safe_load(Path(inherited).read_text(encoding="utf-8")) or {}
-            if not isinstance(config, dict):
-                raise RuntimeError("SkyPilot configuration must be a mapping")
-        kubernetes = config.setdefault("kubernetes", {})
-        if not isinstance(kubernetes, dict):
-            raise RuntimeError("SkyPilot Kubernetes configuration must be a mapping")
-        kubernetes["allowed_contexts"] = [context]
-        config_bytes = yaml.safe_dump(config, sort_keys=True).encode()
-        config_path = scope / "client-config.yaml"
-        try:
-            fd = os.open(config_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError:
-            if config_path.is_symlink() or config_path.read_bytes() != config_bytes:
-                raise RuntimeError(
-                    "Cluster validation configuration changed; reconcile its owned API first"
-                ) from None
-        else:
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(config_bytes)
-                handle.flush()
-                os.fsync(handle.fileno())
-        env["SKYPILOT_GLOBAL_CONFIG"] = str(config_path)
-        env = sky_environment(scope, environment=env)
-        ensure_isolated_api(
-            isolated_dir=scope,
-            sky_executable=sky_executable,
-            environment=env,
-            cwd=str(kubeconfig_path.parent),
-        )
+
+def _owned_validation_environment(scope, context, sky_executable, environment):
+    from npa.orchestration.skypilot.cleanup import sky_environment
+    from npa.orchestration.skypilot.local_api import ensure_isolated_api
+
+    if scope.is_symlink():
+        raise RuntimeError("Cluster validation state must not be a symlink")
+    scope.mkdir(mode=0o700, parents=True, exist_ok=True)
+    env = dict(environment)
+    env["SKYPILOT_GLOBAL_CONFIG"] = str(_validation_client_config(scope, context, env))
+    env = sky_environment(scope, environment=env)
+    ensure_isolated_api(isolated_dir=scope, sky_executable=sky_executable,
+                        environment=env, cwd=str(scope))
     return env
+
+
+def _validation_client_config(scope: Path, context: str, env: Mapping[str, str]) -> Path:
+    import yaml
+
+    config: dict = {}
+    inherited = str(env.get("SKYPILOT_GLOBAL_CONFIG") or "")
+    if inherited:
+        config = yaml.safe_load(Path(inherited).read_text(encoding="utf-8")) or {}
+        if not isinstance(config, dict):
+            raise RuntimeError("SkyPilot configuration must be a mapping")
+    kubernetes = config.setdefault("kubernetes", {})
+    if not isinstance(kubernetes, dict):
+        raise RuntimeError("SkyPilot Kubernetes configuration must be a mapping")
+    kubernetes["allowed_contexts"] = [context]
+    config_bytes = yaml.safe_dump(config, sort_keys=True).encode()
+    config_path = scope / "client-config.yaml"
+    try:
+        fd = os.open(config_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        if config_path.is_symlink() or config_path.read_bytes() != config_bytes:
+            raise RuntimeError("Cluster validation configuration changed; reconcile its owned API first") from None
+    else:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(config_bytes)
+            handle.flush()
+            os.fsync(handle.fileno())
+    return config_path
 
 
 def _kubectl_failure(*, action: str, returncode: int, output: str) -> str:
@@ -755,7 +786,7 @@ def preflight_kubernetes_gpu_gang(
     if inventory.error:
         raise KubernetesGpuCatalogError(inventory.error)
     if inventory.unbound_pending_gpu_pods:
-        raise KubernetesGpuCatalogError(
+        raise PendingGpuPlacementError(
             "free shared GPU capacity is indeterminate: Kubernetes has "
             f"{inventory.unbound_pending_gpu_pods} active unbound GPU pod(s) "
             f"requesting {inventory.unbound_pending_gpu_requests} GPU(s); wait for "
@@ -912,81 +943,81 @@ def parse_kubernetes_gpu_catalog(
 
 
 def discover_kubernetes_gpu_catalog(
-    *,
-    context: str = "",
-    kubeconfig: Kubeconfig = None,
-    sky_bin: SkyBin = None,
+    *, context: str = "", kubeconfig: Kubeconfig = None, sky_bin: SkyBin = None,
     timeout: int = DEFAULT_DISCOVERY_TIMEOUT_SECONDS,
     runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> KubernetesGpuCatalog:
-    """Ask SkyPilot which accelerators the target Kubernetes cluster advertises."""
+    """Read accelerator offerings in the current validation session when selected.
 
-    sky_executable = str(resolve_sky_bin(sky_bin))
-    infra = f"k8s/{context}" if context else "k8s"
-    cmd = [sky_executable, "show-gpus", "--infra", infra]
-    config_override = exact_kubernetes_context_config(context)
-    if config_override:
-        cmd[2:2] = ["--config", config_override]
-    execute = runner or subprocess.run
-    environment = kubernetes_sky_environment(
-        context=context, kubeconfig=kubeconfig, sky_executable=sky_executable
-    )
+    Args:
+        context: Exact Kubernetes context to inspect.
+        kubeconfig: Selected Kubernetes configuration file.
+        sky_bin: Explicit SkyPilot executable, or configured default.
+        timeout: Existing per-command discovery timeout in seconds.
+        runner: Optional subprocess implementation for hermetic callers.
+    Returns:
+        The parsed accelerator catalog for the selected context.
+    Raises:
+        KubernetesGpuCatalogError: Discovery or context enablement fails.
+        IsolatedApiError: Selected validation ownership cannot be verified.
+    """
+    from contextlib import nullcontext
+    from npa.orchestration.skypilot._bin import resolve_isolated_config_dir
+    from npa.orchestration.skypilot.cluster_validation import cluster_validation_session, current_validation_session
+
+    active = current_validation_session()
+    selected = kubeconfig or os.environ.get("KUBECONFIG")
+    if active is not None:
+        selected = selected or active.record["kubeconfig"]
+    boundary = nullcontext()
+    if active is not None or resolve_isolated_config_dir() is not None:
+        if not selected or not context.strip():
+            raise KubernetesGpuCatalogError("Isolated SkyPilot discovery requires an exact kubeconfig and context")
+        boundary = cluster_validation_session(Path(selected), context)
+    with boundary:
+        return _discover_sky_catalog(context, selected, sky_bin, timeout, runner or subprocess.run)
+
+
+def _catalog_command(execute, cmd, environment, timeout):
+    cwd = environment.get("NPA_SKYPILOT_ISOLATED_API_DIR")
     try:
-        result = execute(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout,
-            check=False,
-            env=environment,
-        )
+        return execute(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                       timeout=timeout, check=False, env=environment, cwd=cwd)
     except (OSError, subprocess.SubprocessError) as exc:
+        raise KubernetesGpuCatalogError(f"Unable to run `{' '.join(cmd)}`: {exc}") from exc
+
+
+def _enable_catalog_context(execute, sky, override, environment, timeout):
+    command = [sky, "check"]
+    if override:
+        command.extend(["--config", override])
+    command.append("kubernetes")
+    result = _catalog_command(execute, command, environment, timeout)
+    output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+    if result.returncode != 0 or "kubernetes: disabled" in output.casefold():
+        detail = (result.stderr or result.stdout or f"exit {result.returncode}").strip()
         raise KubernetesGpuCatalogError(
-            f"Unable to run `{' '.join(cmd)}`: {exc}"
-        ) from exc
+            "SkyPilot Kubernetes discovery was disabled after API-server "
+            f"restart and `sky check kubernetes` failed: {detail}"
+        )
+
+
+def _discover_sky_catalog(context, kubeconfig, sky_bin, timeout, execute):
+    sky = str(resolve_sky_bin(sky_bin))
+    command = [sky, "show-gpus", "--infra", f"k8s/{context}" if context else "k8s"]
+    override = exact_kubernetes_context_config(context)
+    if override:
+        command[2:2] = ["--config", override]
+    environment = kubernetes_sky_environment(context=context, kubeconfig=kubeconfig, sky_executable=sky)
+    result = _catalog_command(execute, command, environment, timeout)
     output = "\n".join(part for part in (result.stdout, result.stderr) if part)
     if result.returncode == 0 and "kubernetes is not enabled" in output.casefold():
-        check_cmd = [sky_executable, "check"]
-        if config_override:
-            check_cmd.extend(["--config", config_override])
-        check_cmd.append("kubernetes")
-        checked = execute(
-            check_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout,
-            check=False,
-            env=environment,
-        )
-        checked_output = "\n".join(
-            part for part in (checked.stdout, checked.stderr) if part
-        )
-        if (
-            checked.returncode != 0
-            or "kubernetes: disabled" in checked_output.casefold()
-        ):
-            detail = (
-                checked.stderr or checked.stdout or f"exit {checked.returncode}"
-            ).strip()
-            raise KubernetesGpuCatalogError(
-                "SkyPilot Kubernetes discovery was disabled after API-server "
-                f"restart and `sky check kubernetes` failed: {detail}"
-            )
-        result = execute(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout,
-            check=False,
-            env=environment,
-        )
+        _enable_catalog_context(execute, sky, override, environment, timeout)
+        result = _catalog_command(execute, command, environment, timeout)
         output = "\n".join(part for part in (result.stdout, result.stderr) if part)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or f"exit {result.returncode}").strip()
-        raise KubernetesGpuCatalogError(f"`{' '.join(cmd)}` failed: {detail}")
+        raise KubernetesGpuCatalogError(f"`{' '.join(command)}` failed: {detail}")
     return parse_kubernetes_gpu_catalog(output, context=context)
 
 
