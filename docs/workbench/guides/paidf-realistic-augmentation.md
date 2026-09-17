@@ -38,6 +38,14 @@ those observations. The source video remains authoritative for motion and
 geometry. These instructions improve the specification; they do not enforce
 physical correctness in the model output.
 
+The frame extractor samples evenly spaced decoded frame indices across the
+complete video, including its first and last frame. It produces up to eight
+distinct frames by default, including for short clips, and uses the same method
+for source and generated-video captions. Earlier extraction sampled one frame
+per second and stopped after eight frames, omitting the ending of longer clips.
+Re-extract and re-caption older inputs before testing this change; reusing their
+existing frame directory retains that earlier coverage limitation.
+
 Source captioning receives `augment_subject` as task context through
 `caption_instruction`. Its default asks the captioner to distinguish visible
 evidence from uncertain identities and avoid claiming motion or completion from
@@ -97,7 +105,8 @@ QUALITY_ARGS=(
   --var "prompt=$TASK_PROMPT"
   --var 'negative_prompt=extra or missing objects, warped grippers, altered battery or slot, floating objects, interpenetration, motion retiming, flicker, ghosting, unsafe content'
   --var augmentation_seed=30 --var seed=17
-  --var control_guidance=1.5 --var guidance=5.0 --var steps=24
+  --var transfer_edge_threshold=low
+  --var control_guidance=1.0 --var guidance=3.0 --var steps=35
   --var grade_threshold=0.75 --var attribute_threshold=1.0
   --var temporal_consistency_mode=required
   --var temporal_consistency_threshold=0.8
@@ -118,8 +127,11 @@ npa workbench workflow submit "$SPEC" --run-id "$RUN_ID" \
   --runtime --durable-s3
 ```
 
-These settings retain the starter sampling controls; they are an **unqualified
-starting experiment**, not a training-quality recommendation. A real trial with
+These gentler sampling settings reduced excessive contrast in the battery
+experiment; they remain an **unqualified starting experiment**, not a
+training-quality recommendation. The cool candidate still recolored the battery,
+and the warm candidate's intended appearance change was difficult to verify.
+A real trial with
 `control_guidance=3.0`, `guidance=3.5`, and `steps=32` produced harsh contrast and
 distorted gripper/battery details and was rejected. Higher control guidance did
 not establish task preservation. Compare changes on the same episode, appearance
@@ -151,6 +163,7 @@ this observation alone does not qualify a lower preset's generated output.
 | --- | --- |
 | Small battery, gripper or slot geometry drifts | Reject the output. Check whether source edges resolve the feature and whether captions misidentify it. Simplify the appearance edit, then compare one control-guidance change at a time; larger values can still distort details. |
 | Appearance hardly changes | Confirm the selected profile is present in `metadata.json`'s effective prompt. Check the raw output against the source. Try one more visible but plausible lighting change; stronger structural control can suppress edits. |
+| Lighting changes but object identity colors change too | Name the visible base colors and markings in the task specification, keeping them separate from the requested illumination. Re-caption the source with that context and retain uncertainty about unreadable markings. Review actual pixels; more detailed wording is not an enforcement mechanism. |
 | Flicker or discontinuity near generation joins | Inspect `transfer.json` for actual native chunk count and review frames around each join. Compare a larger supported `transfer_chunk_frames` value with the same seeds; it must be `4k+1`, between 9 and 297. Larger windows need more memory and are not guaranteed to improve quality. |
 | Evaluation accepts a visibly incorrect insertion | Reject that candidate in the review record. Increase task-specific inspection coverage; attribute checks and image motion diagnostics cannot certify physics. |
 | Global appearance-fidelity check rejects intended relighting | Keep it advisory for the relit scene. Require fidelity only for declared invariant regions, with tolerances established against reviewed positive and negative examples. |
@@ -245,3 +258,25 @@ The real evaluator completed with zero accepted clips and an aggregate score
 of 0.071303 against 0.75. Both failed required temporal checks (scores 0.071894
 and 0.070713 against 0.8) and strict attribute checks (2/4 and 1/4 correct).
 An advisory appearance-fidelity pass did not establish correct task geometry.
+
+A third trial changed only the edge preset from `medium` to `low`, retaining
+the second trial's source, captions, profiles, seeds and sampling controls.
+Both variants completed on B200. The native loader verified the actual
+50/100 Canny controls, and both 288-frame outputs again had zero timestamp
+error. More internal gripper detail survived, but excessive contrast and altered
+battery/gripper features remained. Visual review rejected both; the evaluator
+also accepted zero clips, with aggregate score 0.073388, temporal scores
+0.074397 and 0.072379, and 2/4 attributes correct for each candidate. This
+qualifies execution of the lower preset, not its output for training.
+
+A fourth B200 pair retained low edges, profiles, source captions and seeds, but
+used control guidance 1.0, text guidance 3.0 and 35 steps. This is a complete
+sampling-recipe comparison, not an isolated test of one parameter. Both outputs
+retained the 288-frame timeline with zero timestamp error. Contrast and gripper
+appearance improved visibly. The cool candidate still turned the battery's
+gold end red; the warm candidate retained its gold coloring in reviewed frames
+but changed fine gripper details. An advisory paired-frame VLM review rejected
+the cool recoloring and found insufficient evidence of the warm appearance
+edit. It does not replace human inspection or establish continuous dynamics.
+The unchanged evaluator rejected both: aggregate score 0.146111, temporal scores
+0.142263 and 0.149958, and 2/4 attributes correct for each candidate.

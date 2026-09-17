@@ -58,6 +58,32 @@ def test_normalization_preserves_complete_duration_and_provenance(prepared):
     assert evidence["visual_quality_evaluated"] is False
 
 
+@pytest.mark.parametrize("frames,count,indices", [
+    (288, 8, [0, 41, 82, 123, 164, 205, 246, 287]),
+    (3, 8, [0, 1, 2]),
+    (24, 1, [0]),
+])
+def test_caption_frames_cover_complete_video_without_repetition(tmp_path, frames, count, indices):
+    from PIL import Image
+    from npa.workflows.paidf_cosmos3 import _extract_frames
+
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("real frame extraction requires ffmpeg and ffprobe")
+    source = tmp_path / "frame-coded.mkv"
+    colors = np.array([[index % 256, index // 256, 127] for index in range(frames)], dtype=np.uint8)
+    pixels = np.broadcast_to(colors[:, None, None, :], (frames, 48, 64, 3)).tobytes()
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
+                    "-s", "64x48", "-r", "24", "-i", "pipe:0", "-c:v", "ffv1",
+                    "-pix_fmt", "bgr0", str(source)], input=pixels, check=True)
+    extracted = _extract_frames(source, tmp_path / "captions", count=count)
+    assert len(extracted) == len(indices)
+    for path, index in zip(extracted, indices, strict=True):
+        with Image.open(path) as image:
+            actual = np.asarray(image.convert("RGB"))
+        assert actual.shape == (48, 64, 3)
+        assert np.all(actual == colors[index])
+
+
 @pytest.mark.parametrize("fps,frames,size", [(24, 80, "832x480"), (25, 81, "832x480"), (24, 81, "640x480")])
 def test_mismatched_output_never_passes_alignment(prepared, tmp_path, fps, frames, size):
     _, source, _ = prepared
@@ -290,7 +316,7 @@ def test_captions_use_fresh_frames_from_verified_video(prepared, tmp_path):
         return SimpleNamespace(status="completed", captions=[CaptionItem(frame.name, "robot frame") for frame in frames])
 
     record, captions = _caption_variant(variant, str(tmp_path / "output"), "model", 8, 512, None, captioner)
-    assert record["image_count"] == len(captions) == 3
+    assert record["image_count"] == len(captions) == 8
     assert all(item["image"].startswith("variant/") for item in captions)
 
 

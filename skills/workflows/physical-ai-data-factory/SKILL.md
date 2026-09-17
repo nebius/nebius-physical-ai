@@ -49,7 +49,9 @@ Custom profiles and a quality anchor are mutually exclusive. Cosmos3 source
 captioning uses `caption_instruction` with `augment_subject` as context, while
 requiring uncertainty about unclear features; inspect the real captions before
 tuning this instruction. Other caption workflows retain the existing instruction
-when they omit the optional key. Generation uses
+when they omit the optional key. Source and generated-video caption extraction
+samples evenly spaced decoded frame indices, including the first and last frame;
+clips with fewer frames than requested do not repeat samples. Generation uses
 source observations spanning the complete episode and separates observations
 from edit instructions. Keep task identity, small contact features, geometry,
 camera motion and timing explicit. The battery sampling example is unqualified

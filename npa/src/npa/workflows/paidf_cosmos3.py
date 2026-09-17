@@ -525,11 +525,17 @@ def _normalize_video(
 
 
 def _extract_frames(video: Path, destination: Path, count: int = 8) -> list[Path]:
+    from npa.workflows.paidf_cosmos3_media import probe_video
+
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise PaidfCosmos3Error(
             "ffmpeg is required to extract caption/evaluator frames"
         )
+    total = probe_video(video)["decoded_frames"]
+    samples = min(total, max(1, count))
+    indices = [round(index * (total - 1) / max(1, samples - 1)) for index in range(samples)]
+    selection = "+".join(f"eq(n,{index})" for index in indices)
     destination.mkdir(parents=True, exist_ok=True)
     argv = [
         ffmpeg,
@@ -539,14 +545,16 @@ def _extract_frames(video: Path, destination: Path, count: int = 8) -> list[Path
         "-i",
         str(video),
         "-vf",
-        "fps=1,scale='min(1280,iw)':-2",
+        f"select='{selection}',scale='min(1280,iw)':-2",
+        "-vsync",
+        "0",
         "-frames:v",
-        str(max(1, count)),
+        str(samples),
         str(destination / "frame-%05d.png"),
     ]
     completed = subprocess.run(argv, capture_output=True, text=True, check=False)
     frames = sorted(destination.glob("frame-*.png"))
-    if completed.returncode or not frames:
+    if completed.returncode or len(frames) != samples:
         raise PaidfCosmos3Error(
             "selected video did not produce caption/evaluator frames"
         )

@@ -13,7 +13,7 @@
     },
     "task_fidelity": {
       "status": "unverified",
-      "reason": "The pinned battery high and left-wrist episode-zero inputs passed full normalization (12 seconds, 288 frames at 24 fps). A real GPU cool-lighting candidate with high control guidance passed decoded alignment but was visually rejected for harsh contrast and distorted task details. Its sibling was cancelled. Task-aware captions were exercised on eight source frames. No battery recipe or full augmented batch is yet quality-qualified; earlier starter evidence does not establish task fidelity.",
+      "reason": "The pinned battery high and left-wrist episode-zero inputs passed full normalization (12 seconds, 288 frames at 24 fps). Task-aware captions were exercised on eight source frames. Real GPU high-camera candidates passed decoded alignment but were visually rejected for harsh contrast and distorted task details. Completed B200 pairs with medium and low edge presets also failed the real evaluator. No battery recipe is yet quality-qualified; runtime execution and earlier starter evidence do not establish task fidelity.",
       "evidence": [
         "docs/workbench/guides/paidf-realistic-augmentation.md#validation-status",
         "npa/tests/workflows/test_data_factory_appearance.py",
@@ -31,7 +31,7 @@
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "The live check proved the pinned H.264 starter input. Each future video or LeRobot selection still requires independent staging and integrity validation.",
+      "reason": "Live checks proved the pinned H.264 starter and battery high/left-wrist episode-zero preparation. Each future video or LeRobot selection still requires independent staging and integrity validation.",
       "evidence": [
         "docs/workbench/guides/paidf-cosmos3.md#inputs-and-configuration"
       ]
@@ -52,7 +52,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The manipulation recipe executed on an RTX PRO 6000 Blackwell, but its reviewed candidate was rejected. Every future target must independently prove project access, Kubernetes readiness, supported GPU discovery, image pullability and sufficient per-node resources; runtime execution alone does not qualify generated data.",
+      "reason": "The manipulation recipes executed on RTX PRO 6000 Blackwell and B200, but their reviewed candidates were rejected. Every future target must independently prove project access, Kubernetes readiness, supported GPU discovery, image pullability and sufficient per-node resources; runtime execution alone does not qualify generated data.",
       "evidence": [
         "workflows/guides/paidf-cosmos3.md#validation"
       ]
