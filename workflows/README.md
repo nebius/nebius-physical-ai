@@ -16,6 +16,7 @@ artifacts. Start with a runbook that matches the result you want.
 | Compose the 14-stage robot loop | [Sim2Real](../docs/workbench/guides/sim2real-workflow.md) |
 | Train a GR00T policy | [GR00T N1.7](../docs/workbench/cookbooks/groot-1-7-training.md) |
 | Run the Antioch-authored warehouse | [Warehouse batch](../docs/workbench/antioch-warehouse.md) — contact conveyor, six-carton stacking, measured evidence and readback |
+| Post-train on Antioch warehouse data | [Warehouse vision post-training](../docs/workbench/antioch-posttrain.md) — real recorded frames, pretrained ResNet-18, held-out carton-cycle evaluation |
 | Package your own repository | [BYOF](../docs/workbench/cookbooks/byof-isaac-lab/README.md) |
 
 A catalog entry describes a contract, not a guarantee that every configuration

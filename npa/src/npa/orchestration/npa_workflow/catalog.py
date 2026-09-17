@@ -1054,6 +1054,34 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--output-path", "{{config.simulation_uri}}", "--run-id", "{{run.id}}",
         ],
     ),
+    "workflow.antioch_posttrain.prepare": ToolEntry(
+        name="workflow.antioch_posttrain.prepare",
+        description="Decode recorded warehouse frames and seal disjoint carton-cycle data splits.",
+        argv_template=[
+            "python3", "-m", "npa.workflows.antioch_posttrain", "prepare",
+            "--input-path", "{{config.source_uri}}", "--output-path", "{{config.dataset_uri}}",
+            "--frame-stride", "{{config.frame_stride}}",
+        ],
+    ),
+    "workflow.antioch_posttrain.train": ToolEntry(
+        name="workflow.antioch_posttrain.train",
+        description="Fine-tune official TorchVision ResNet-18 weights on warehouse operation frames.",
+        argv_template=[
+            "python3", "-m", "npa.workflows.antioch_posttrain", "train",
+            "--input-path", "{{config.dataset_uri}}", "--output-path", "{{config.checkpoint_uri}}",
+            "--epochs", "{{config.epochs}}", "--batch-size", "{{config.batch_size}}",
+            "--seed", "{{config.seed}}",
+        ],
+    ),
+    "workflow.antioch_posttrain.evaluate": ToolEntry(
+        name="workflow.antioch_posttrain.evaluate",
+        description="Compare pretrained and fine-tuned checkpoints on a held-out complete carton cycle.",
+        argv_template=[
+            "python3", "-m", "npa.workflows.antioch_posttrain", "evaluate",
+            "--input-path", "{{config.dataset_uri}}", "--checkpoint-path", "{{config.checkpoint_uri}}",
+            "--output-path", "{{config.reports_uri}}",
+        ],
+    ),
     "workflow.antioch_warehouse.verify": ToolEntry(
         name="workflow.antioch_warehouse.verify",
         description="Read back warehouse measurements and images and enforce acceptance checks.",

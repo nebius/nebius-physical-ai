@@ -1159,6 +1159,7 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/antioch-warehouse.yaml
+          - workflows/testing/antioch-posttrain.yaml
           - workflows/testing/bdd100k-pipeline.yaml
           - workflows/testing/cosmos3-text-to-image.yaml
           - workflows/main/sim2real.yaml

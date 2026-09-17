@@ -78,6 +78,12 @@ npa/.venv/bin/python -m npa.workflows.antioch_warehouse verify \
 These module paths are worker/developer interfaces. The workflow is the public
 composition surface and uses S3 for its cross-stage handoff.
 
+For a recorded batch, the [Antioch post-training workflow](antioch-posttrain.md)
+consumes native video plus frame-aligned simulation labels from Nebius S3,
+fine-tunes ResNet-18 on a Nebius GPU, and publishes a checkpoint and held-out
+evaluation. That source requires the complete recording and measured labels;
+the three final warehouse PNGs alone are not its training dataset.
+
 ## Fidelity and provenance
 
 The conveyor uses contact surface velocity at 0.45 m/s in world space. Six
