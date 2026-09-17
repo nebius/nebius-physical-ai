@@ -6,8 +6,9 @@ The current RLC controller already uses a π0.5-derived model. The
 [September 17 experiment](behavior-experiment-results-2026-09-17.md) completed
 80 development rollouts and three 6,000-update fine-tunes. The evaluated
 fine-tune and shorter action execution showed no improvement over the campaign's
-stock controls. Two trained candidates and a newer public 100-task checkpoint
-remain unevaluated. No competitive full-challenge score is established.
+stock controls. At that window's close, two trained candidates and a newer public
+100-task checkpoint had no rollout evaluation. Follow-up measurements are in
+progress. No competitive full-challenge score is established.
 
 The earlier September 16 radio comparison remains recorded at RLC Q=0.20 versus
 the official baseline's Q=0.10. The EGR objective described below has no trained
@@ -116,12 +117,30 @@ checks MP4 presentation timestamps with the decoder's float32 conversion; it
 does not establish image-content alignment by itself. No samples are dropped.
 
 All 200 downloaded raw recordings have actions identical to their corresponding
-released LeRobot episodes. Only **9/200** skill annotation durations equal their
-episode lengths. This mismatch does not prove the annotations are incorrect, but
-it means a direct frame-index join is unverified. Do not stretch timestamps,
-silently truncate labels, or train a semantic transition predictor on that join.
-Replay-derived camera evidence must instead pass frame count, source-action and
-observation alignment checks.
+released LeRobot episodes. The first audit found that only **9/200** annotation
+`task_duration` values equaled stored episode lengths. At that point the fields'
+meaning and a direct annotation-to-frame join were unverified, so the training
+recipe did not use those annotations.
+
+A later training-only audit resolved that warning for the frozen 180-episode
+radio training split. All 180 annotation files matched their expected hashes,
+and all 180 raw action sequences were byte-identical to the released LeRobot
+episodes. In every training episode, `task_duration` equals the annotated
+`valid_duration` length; stored episodes may also contain leading or trailing
+frames. The earlier 9/200 count compared those different quantities and was not
+itself evidence of a timebase error. This later audit did not recheck all 200
+episodes.
+
+Across all 180 training episodes, skill sequences are ordered, nonoverlapping,
+and inside `valid_duration`; every `press` interval is inside that same interval
+on the released frame/action timebase. A decoded review checked 54 frames and 27 action
+rows from episodes 0, 5, 10, and 164 in two released RGB views. Its maximum video
+timestamp error was 2.73e-11 frames, and all four intervals covered radio
+manipulation in the expected task phase. The intervals are broad: they contain
+86–1,075 frames, with a median of 267 at 30 Hz, and reviewed examples include
+positioning or withdrawal. They support the description **semantic press-phase
+oversampling**, not physical-contact labels or an exact press instant. No
+holdout, development, or reporting episode was inspected in this audit.
 
 Direct robot-camera segmentation replay encountered the upstream failure in
 [BEHAVIOR issue #2312](https://github.com/StanfordVL/BEHAVIOR-1K/issues/2312).
@@ -131,6 +150,42 @@ path produced verified labels. EGR training is blocked on obtaining camera
 evidence that passes source-action, observation and image alignment checks;
 no EGR checkpoint has been trained or evaluated. Failed-run logs are retained,
 and the failed experiment's compute is retired through Workbench cleanup.
+
+## Later audit of the completed fine-tuning recipe
+
+The three September 17 fine-tunes used the pinned native RLC trainer. The
+balanced task-panel run applied 6,000 updates at batch size 16: 96,000 samples,
+with exactly 32,000 samples from each of tasks 0, 1, and 22. These starting-frame
+counts equal 8.29%, 3.35%, and 2.29% of the available training positions,
+respectively. Each sample also contains a 30-action target window, so these
+ratios do not measure distinct action-target coverage. Its learning rate warms from
+approximately 1e-8 to 1e-5 over 1,000 updates and then cosine-decays to 1e-6.
+
+The native filter trains 477,001,399 of 3,405,453,735 parameters: the action
+expert and non-frozen action, KV, task, and stage modules. It freezes the vision
+backbone, base language expert, and FAST modules. Training and serving use the
+same 30-action horizon, state/action transforms, per-timestep normalization,
+and published normalization bytes. The audit found no concrete freeze, adapter,
+or normalization defect.
+
+It did find a train/serve mismatch in stage conditioning. Training divides each
+stored episode into equal-duration bins and supplies the resulting stage to the
+action path. Serving supplies the wrapper's stateful predicted stage. These bins
+are elapsed-time supervision, not semantic skill annotations. The model's
+attention mask excludes the supplied stage labels from the classifier features.
+Training used one flow draw per example, compared with 15 in the native base
+recipe, and retained only the final checkpoint without measuring the reserved
+holdout loss. These are
+plausible generalization and variance risks; they do not establish why the
+uniform radio fine-tune failed to improve its matched control.
+
+A prospective fine-tune should retain intermediate checkpoints and select them
+with a deterministic loss pass over the reserved training-distribution holdout.
+Matched, predeclared ablations should then test a narrower trainable parameter
+set, more flow draws, a larger effective batch through gradient accumulation,
+and reduced reliance on teacher-forced stages. Keep the released split,
+normalization, evaluator, and matched stock control fixed. This rationale proposes measurements; it makes
+no claim that any adjustment will improve rollout performance.
 
 ## Next candidate: give π0.5 recent observation history
 

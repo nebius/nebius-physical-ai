@@ -86,7 +86,7 @@ negative results more concrete:
 These are descriptive comparisons from one attempt per policy and case. They
 do not estimate significance, simulator variance, or performance on other tasks.
 
-The next experiment should prioritize measuring preserved candidates:
+At the close of the first campaign, the next experiment was defined as:
 
 1. Verify renewable authentication and independent deadline cleanup before
    provisioning another campaign. The previous cleanup overrun is unresolved
@@ -100,10 +100,10 @@ The next experiment should prioritize measuring preserved candidates:
    labels to interpret that candidate. Add held-out loss measurement before
    another training campaign, alongside rollout-based model selection.
 
-This ordering has no new measured performance result. It scores existing
-training investments before expanding training or controller experiments.
-Further GPU execution requires a new operator time allowance because the
-original 12-hour window has ended.
+This ordering had no new measured performance result. It preserved the state at
+the first campaign deadline rather than retrospectively rewriting its plan. A
+later training-only audit completed the annotation-alignment work in item 4; it
+did not evaluate the contact candidate or establish a rollout gain.
 
 ## Completed training artifacts
 
@@ -128,11 +128,51 @@ The published parent checkpoint archive was
 Held-out loss is unmeasured because the pinned native trainer has no validation
 loop. The held-out episodes remained excluded from training.
 
-The contact curriculum tests annotation-driven press-interval oversampling.
-Checks verified annotation bytes, bounds, indexing and deterministic sampling;
-semantic alignment of those intervals to RGB/action frames was not independently
-verified. The earlier annotation-duration discrepancy remains unresolved. This
-candidate supplies no verified contact labels and does not reproduce RLT.
+### Later training-recipe audit
+
+The balanced candidate applied 6,000 updates at batch size 16, or 96,000 samples
+split exactly 32,000 per task. These starting-frame counts equal 8.29% of task 0
+training positions, 3.35% of task 1, and 2.29% of task 22. The samples' 30-action
+target windows can overlap; these ratios do not measure distinct action-target
+coverage. Its cosine schedule warmed from about
+1e-8 to 1e-5 over 1,000 updates and decayed to 1e-6. The native freeze filter
+left 477,001,399 of 3,405,453,735 parameters trainable and correctly froze the
+vision backbone, base language expert, and FAST modules. Training and serving
+used the same state/action adapter, 30-action horizon, per-timestep
+normalization, and published normalization bytes.
+
+The audit found one material train/serve mismatch: action training uses
+teacher-forced equal-duration stage bins, while serving conditions actions on a
+stateful predicted stage. The attention mask excludes supplied stage-label
+tokens from the classifier features. The run also used one flow draw per example
+rather than the native base recipe's 15 and had no held-out checkpoint selection.
+These
+facts motivate prospective ablations, but they do not prove a cause for the
+uniform radio result or predict improvement. A next fine-tune should retain
+intermediate checkpoints, predeclare deterministic reserved-holdout selection,
+and compare narrower parameter adaptation, more flow draws, a larger effective
+batch through gradient accumulation, and reduced stage teacher forcing under
+the same data split and matched stock control.
+
+### Later press-annotation alignment audit
+
+The contact curriculum tests annotation-driven press-interval oversampling. A
+later audit verified all 180 training annotation hashes and byte-identical raw
+actions, and placed all 180 `press` intervals inside the released episode
+frame/action timebase. `meta_data.task_duration` is the length of
+`valid_duration`, not the complete stored episode; leading or trailing stored
+frames explain the earlier duration discrepancy. The direct decoded review used
+episodes 0, 5, 10, and 164, 54 frames, 27 action rows, and two released RGB views.
+All four intervals covered radio manipulation in the expected phase, with a
+maximum timestamp error of 2.73e-11 frames.
+
+The intervals remain broad semantic phases: 86–1,075 frames, median 267 at
+30 Hz, sometimes including positioning or withdrawal. The candidate is
+accurately described as **semantic press-phase oversampling**, not contact-frame
+supervision, physical-contact detection, or exact press-instant supervision.
+The audit inspected only the 180 training episodes and measured alignment rather
+than policy quality. The first campaign did not evaluate this checkpoint, so no
+rollout gain was measured and the method does not reproduce RLT.
 
 The first contact-curriculum launch failed before a training batch or model was
 produced. Its RGB-only data view had retained three
@@ -175,8 +215,8 @@ outcomes.
 - The evaluated evidence covers three of 100 tasks and only the development
   split. It says nothing about the full 1,000-case challenge score.
 - Neither the 6,000-update uniform radio fine-tune nor 16-action execution
-  improved its matched observed control. The panel and contact fine-tunes remain
-  unevaluated.
+  improved its matched observed control. At the first campaign deadline, the
+  panel and contact fine-tunes were unevaluated.
 - Success count and mean Q capture different behavior: task 22 stock execution
   had one full success but Q=0.55 from partial predicate completion across the
   ten cases.
@@ -184,9 +224,10 @@ outcomes.
   checkpoint and prescribed cases. Both must remain visible; a larger frozen
   evaluation is needed before attributing a change to a controller or training
   recipe.
-- Next measurements should cover the frozen panel fine-tune and the Meta100
-  checkpoint, after its GPU serving check. The contact candidate also needs an
-  annotation-alignment audit before interpreting it as a press-focused method.
+- At the first campaign deadline, the panel and contact checkpoints had no
+  rollout result. A later training-only audit supports calling the contact
+  recipe semantic press-phase oversampling, while a rollout evaluation remains
+  necessary before making a performance claim.
 
 The fixed resource-retirement deadline passed while the operator session was
 paused and the run's static cloud token no longer authenticated. No new training
@@ -208,6 +249,9 @@ storage access, and default network were retained to preserve the results.
 - Six newly collected cells and workflow status receipts: `17302b8f306e738f6ad6a6df854be864ac84120341904a6e278573f9faff4fe8`
 - Task-22 supervisor authentication-failure audit: `c36e6eb9ca76e2338f910a72a91a13d1c16c94bfeadd0d8e4b46ac7bb67179b8`
 - Final independent cleanup audit: `54ed5907bb9e11107b637607bfcc7639bec55028eae4bf5859cd2900ef3b993f`
+- Later training-only annotation audit: `77a542772f529b581c0778439a53cbcd9bb3c84c7da183e3b485701531bda1d6`
+- Later balanced-training recipe audit: `8d9c26147c498aa32873a196637b9c5c48fb1d2b5b376fae55668ee33557098b`
+- Stage-classifier source and attention audit: `c8eed6c170314caf360a26714f63470c3a1279da6dee296efcd247732a7eb39b`
 - Workbench experiment source: `d430e4157db5dddec6ece2ccdf3478e9bd543524`
 - Official evaluator source: `b1979916ec1549b10a4e65e630bc6504a9af1b00`
 - Training sources: RLC `ca556f74a455cef7987a2be4537b5ac85cc56dd7`, OpenPI
