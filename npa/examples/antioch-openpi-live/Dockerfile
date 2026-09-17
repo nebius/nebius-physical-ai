@@ -15,6 +15,7 @@ RUN install -d -o 1000 -g 1000 \
     /tmp/npa-home \
     /tmp/npa-home/.cache \
     /tmp/npa-home/.cache/ov \
+    /antioch/renderer-cache/tmp \
     /usr/local/lib/python3.12/dist-packages/isaacsim/kit/cache/DerivedDataCache \
     "/usr/local/lib/python3.12/dist-packages/isaacsim/kit/data/documents/Kit/apps/Isaac-Sim Python/scripts" \
     /usr/local/lib/python3.12/dist-packages/isaacsim/kit/data/documents/Kit/shared

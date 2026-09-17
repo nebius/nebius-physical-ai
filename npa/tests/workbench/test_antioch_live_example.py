@@ -1359,6 +1359,7 @@ def test_live_sim_image_contains_only_protocol_dependencies() -> None:
     scratch_home = str(PurePosixPath("/") / "tmp" / "npa-home")
     assert f"{scratch_home}/.cache \\" in dockerfile
     assert f"{scratch_home}/.cache/ov" in dockerfile
+    assert "/antioch/renderer-cache/tmp" in dockerfile
     assert (
         "/usr/local/lib/python3.12/dist-packages/isaacsim/kit/cache/DerivedDataCache"
         in dockerfile
