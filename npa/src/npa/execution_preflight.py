@@ -146,6 +146,35 @@ def verify_execution_scope(target: ExecutionTarget, *, verify_cluster: bool = Tr
             "cluster_owner": "pass" if target.context and verify_cluster else "not-checked"}
 
 
+def _run_gpu_check(gpu_check: Callable[[], Any]) -> None:
+    """Preserve actionable failure categories without publishing provider text."""
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        PendingGpuPlacementError, UnsatisfiableAcceleratorError,
+    )
+
+    try:
+        gpu_check()
+    except ExecutionPreflightError:
+        raise
+    except PendingGpuPlacementError as exc:
+        raise ExecutionPreflightError(
+            "gpu", "shared GPU capacity is indeterminate because active GPU pods await placement; "
+            "wait for scheduling or cancel only pending workloads you own, then recheck capacity",
+            status="unknown",
+        ) from exc
+    except UnsatisfiableAcceleratorError as exc:
+        raise ExecutionPreflightError(
+            "gpu", "requested GPU task has no compatible free placement; recheck GPU product/count, "
+            "CPU/memory, placement rules, and active workloads",
+            status="unknown",
+        ) from exc
+    except Exception as exc:
+        raise ExecutionPreflightError(
+            "gpu", "requested product/shape/capacity is unsupported or could not be verified",
+            status="unknown",
+        ) from exc
+
+
 def verify_execution_target(
     target: ExecutionTarget, *, gpu_check: Callable[[], Any] | None = None,
     verify_cluster: bool = True,
@@ -155,12 +184,7 @@ def verify_execution_target(
 
     checks = verify_execution_scope(target, verify_cluster=verify_cluster)
     if gpu_check is not None:
-        try:
-            gpu_check()
-        except ExecutionPreflightError:
-            raise
-        except Exception as exc:
-            raise ExecutionPreflightError("gpu", "requested product/shape/capacity is unsupported or could not be verified", status="unknown") from exc
+        _run_gpu_check(gpu_check)
         checks["gpu"] = "pass"
     else:
         checks["gpu"] = "not-checked"

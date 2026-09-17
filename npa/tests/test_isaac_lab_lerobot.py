@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
+import tracemalloc
+import weakref
 from pathlib import Path
 
 import numpy as np
 import pyarrow.parquet as pq
 import pytest
 
+from npa.adapter import isaac_lab_lerobot as adapter
 from npa.adapter.isaac_lab_lerobot import (
     G1_STATE_DIM,
     G1_STATE_NAMES_43,
@@ -214,3 +219,180 @@ def test_convert_rejects_partial_or_unsynchronized_rgb(tmp_path) -> None:
     np.save(raw / "episode_000001" / "rgb.npy", np.zeros((2, 8, 8, 3), dtype=np.uint8))
     with pytest.raises(IsaacLabLeRobotError, match="RGB/state length mismatch"):
         convert(raw, tmp_path / "unsynchronized", spec=spec)
+
+
+def test_rgb_stats_match_pixel_reference_for_unequal_episodes() -> None:
+    generator = np.random.default_rng(281)
+    episodes = [generator.integers(0, 256, (length, 6, 8, 3), dtype=np.uint8)
+                for length in (1, 7, 2)]
+    episodes[0][:] = 0
+    episodes[1][:] = 255
+    reference = np.concatenate(episodes).astype(np.float64) / 255.0
+    accumulator = adapter._RgbStats()
+    for frames in episodes:
+        accumulator.update(frames)
+
+    actual = accumulator.as_dict()
+
+    assert actual["count"] == [10]
+    for name in ("min", "max", "mean", "std"):
+        expected = getattr(reference, name)(axis=(0, 1, 2)).reshape(3, 1, 1)
+        np.testing.assert_allclose(actual[name], expected, rtol=1e-13, atol=1e-15)
+
+
+def test_rgb_stats_constant_channels_have_exactly_zero_variance() -> None:
+    accumulator = adapter._RgbStats()
+    colors = np.array([0, 128, 255], dtype=np.uint8)
+    for length in (3, 11):
+        accumulator.update(np.broadcast_to(colors, (length, 4, 6, 3)))
+
+    actual = accumulator.as_dict()
+
+    assert actual["count"] == [14]
+    assert actual["std"] == [[[0.0]], [[0.0]], [[0.0]]]
+    for name in ("min", "max", "mean"):
+        np.testing.assert_array_equal(actual[name], (colors / 255.0).reshape(3, 1, 1))
+
+
+def test_rgb_stats_preserve_rare_intensity_variation() -> None:
+    frames = np.full((3, 32, 48, 3), 255, dtype=np.uint8)
+    frames[0, 0, 0] = [254, 253, 252]
+    expected = (frames.astype(np.float64) / 255.0).std(axis=(0, 1, 2))
+
+    actual = adapter._compute_feature_stats([frames], is_video=True)
+
+    np.testing.assert_allclose(np.asarray(actual["std"]).reshape(3), expected, rtol=1e-12)
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.int16])
+def test_rgb_stats_reject_non_uint8_pixels(dtype) -> None:
+    with pytest.raises(IsaacLabLeRobotError, match="uint8"):
+        adapter._RgbStats().update(np.zeros((2, 4, 6, 3), dtype=dtype))
+
+
+def test_rgb_stats_memory_is_bounded_by_frame_size() -> None:
+    frame = np.arange(128 * 128 * 3, dtype=np.uint8).reshape(128, 128, 3)
+    accumulator = adapter._RgbStats()
+    # This view represents 12 MiB of pixels without allocating the repeated frames.
+    frames = np.broadcast_to(frame, (256, *frame.shape))
+    reference = weakref.ref(frames)
+    tracemalloc.start()
+    try:
+        accumulator.update(frames)
+        accumulator.as_dict()
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    del frames
+
+    assert reference() is None
+    assert peak < 1024 * 1024
+    assert accumulator.as_dict()["count"] == [256]
+
+
+@pytest.mark.parametrize("channels", [3, 4])
+def test_rgb_loading_is_readonly_mapped_and_preserves_rgb(tmp_path, channels) -> None:
+    pixels = np.arange(3 * 6 * 8 * channels, dtype=np.uint8).reshape(3, 6, 8, channels)
+    np.save(tmp_path / "rgb.npy", pixels)
+
+    frames = adapter._load_rgb_frames(tmp_path, expected_frames=3)
+
+    assert isinstance(frames, np.memmap)
+    assert frames.mode == "r"
+    assert not frames.flags.writeable
+    np.testing.assert_array_equal(frames, pixels[..., :3])
+
+
+def test_convert_releases_rgb_between_episodes_and_writes_exact_stats(tmp_path, monkeypatch) -> None:
+    raw = tmp_path / "raw"
+    references = []
+    original_load = adapter._load_rgb_frames
+
+    def load_episode(*args, **kwargs):
+        assert all(reference() is None for reference in references)
+        frames = original_load(*args, **kwargs)
+        references.append(weakref.ref(frames))
+        return frames
+
+    def encode_episode(frames, path, *, fps):
+        assert isinstance(frames, np.memmap)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"video-placeholder-for-stats-test")
+
+    for index, length in enumerate((2, 5, 3)):
+        _write_episode(raw, index, frames=length)
+        np.save(raw / f"episode_{index:06d}" / "rgb.npy",
+                np.full((length, 6, 8, 4), index * 100, dtype=np.uint8))
+    monkeypatch.setattr(adapter, "_load_rgb_frames", load_episode)
+    monkeypatch.setattr(adapter, "_encode_video", encode_episode)
+
+    output = convert(raw, tmp_path / "lerobot")
+
+    assert len(references) == 3 and all(reference() is None for reference in references)
+    actual = json.loads((output / "meta" / "stats.json").read_text())[WORKSPACE_VIEW_KEY]
+    reference = np.repeat([0, 100, 200], [2, 5, 3]).astype(np.float64) / 255.0
+    assert actual["count"] == [10]
+    for name in ("min", "max", "mean", "std"):
+        np.testing.assert_allclose(actual[name], np.full((3, 1, 1), getattr(reference, name)()))
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_streaming_encoder_preserves_noncontiguous_rgb_timeline(tmp_path) -> None:
+    rgba = np.zeros((3, 12, 16, 4), dtype=np.uint8)
+    colors = np.array([[255, 0, 0], [0, 255, 0], [0, 0, 255]], dtype=np.uint8)
+    rgba[..., :3] = colors[:, None, None, :]
+    frames = rgba[..., :3]
+    assert not frames.flags.c_contiguous
+    output = tmp_path / "output.mp4"
+
+    adapter._encode_video(frames, output, fps=20)
+
+    decoded = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(output), "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:"],
+        capture_output=True, check=True, timeout=10,
+    )
+    pixels = np.frombuffer(decoded.stdout, dtype=np.uint8).reshape(frames.shape)
+    np.testing.assert_allclose(pixels.mean(axis=(1, 2)), colors, atol=8)
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_streaming_encoder_reports_real_ffmpeg_failure_and_broken_pipe(tmp_path, monkeypatch) -> None:
+    frames = np.broadcast_to(np.zeros((64, 64, 3), dtype=np.uint8), (1000, 64, 64, 3))
+    write_errors = []
+    original_write = adapter._write_video_frames
+
+    def record_write_errors(stream, frames, errors):
+        original_write(stream, frames, errors)
+        write_errors.extend(errors)
+
+    monkeypatch.setattr(adapter, "_write_video_frames", record_write_errors)
+    command = ["ffmpeg", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
+               "-s", "64x64", "-i", "pipe:", "-c:v", "npa_missing_codec", str(tmp_path / "bad.mp4")]
+
+    with pytest.raises(IsaacLabLeRobotError, match="ffmpeg failed.*npa_missing_codec"):
+        adapter._run_video_encoder(command, frames, timeout=10)
+
+    assert any(isinstance(error, BrokenPipeError) for error in write_errors)
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_streaming_encoder_timeout_reaps_child_and_closes_blocked_writer(monkeypatch) -> None:
+    frames = np.broadcast_to(np.zeros((64, 64, 3), dtype=np.uint8), (1000, 64, 64, 3))
+    processes = []
+    original_popen = subprocess.Popen
+
+    def start_process(*args, **kwargs):
+        process = original_popen(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(adapter.subprocess, "Popen", start_process)
+    # An infinite generated stream leaves stdin unread, so the RGB writer also blocks.
+    command = ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=size=16x16", "-f", "null", "-"]
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        adapter._run_video_encoder(command, frames, timeout=1)
+
+    assert len(processes) == 1
+    assert processes[0].poll() is not None
+    assert processes[0].stdin.closed

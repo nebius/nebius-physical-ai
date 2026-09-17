@@ -32,6 +32,18 @@ there is no reason to skip it. `cleanup-controller` refuses while managed jobs
 are in progress and retries that specific refusal after the queue drains; treat
 the refusal as correct, not as something to force.
 
+For a unique per-run workflow API, controller cleanup does not finish local
+shutdown: only its temporary transaction API is stopped automatically. Wait for
+the submit driver and all other clients of that API to exit, preserve exact-run
+cancellation and fully verified controller-cleanup receipts, then stop the
+original API with the existing `stop_isolated_api(Path(owned_run_directory))`
+helper. Follow `docs/teardown.md#owned-local-workflow-api` and the receipt-checked
+R7 example in `workflows/guides/paidf-cosmos3.md`. Keep the final local stop
+independently recoverable from its successful receipts; do not repeat cloud
+deletion solely because the API is still alive. Verify the retained daemon
+record is stopped with null PID/start ticks, retain run data, and never substitute
+`sky api stop` or stop a shared API because one workflow finished.
+
 Deleting the project itself is separately opt-in and stays retained by default:
 
 ```bash

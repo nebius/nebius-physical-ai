@@ -718,6 +718,27 @@ def test_full_protocol_fixture_preserves_empty_and_all_zero_records(tmp_path):
     assert any(row.get("kind") == "verified_zero_content" for row in rows)
 
 
+def _paused_ledger_wrapper(marker):
+    """Publish a complete helper identity before advertising fixture readiness."""
+    return f'''import json,os,signal,sys
+from pathlib import Path
+sys.path.insert(0,{str(SCRIPTS)!r})
+from image_byte_scan import core as W
+original=W.Ledger
+class PausedLedger(original):
+ def __init__(self,*args,**kwargs):
+  super().__init__(*args,**kwargs)
+  pid=self.detector.process.pid
+  marker=Path({str(marker)!r})
+  pending=marker.with_suffix(".pending")
+  pending.write_text(json.dumps({{"pid":pid,"session":os.getsid(pid)}}))
+  pending.replace(marker)
+  signal.pause()
+W.Ledger=PausedLedger
+raise SystemExit(W.main())
+'''
+
+
 def test_cli_sigterm_receipt_and_helper_join_preserve_unrelated_sibling(tmp_path):
     import signal
     import subprocess
@@ -728,20 +749,7 @@ def test_cli_sigterm_receipt_and_helper_join_preserve_unrelated_sibling(tmp_path
     marker = tmp_path / "helper.json"
     output = tmp_path / "cancelled"
     wrapper = tmp_path / "wrapper.py"
-    write(wrapper, f'''import json,os,signal,sys
-from pathlib import Path
-sys.path.insert(0,{str(SCRIPTS)!r})
-from image_byte_scan import core as W
-original=W.Ledger
-class PausedLedger(original):
- def __init__(self,*args,**kwargs):
-  super().__init__(*args,**kwargs)
-  pid=self.detector.process.pid
-  Path({str(marker)!r}).write_text(json.dumps({{"pid":pid,"session":os.getsid(pid)}}))
-  signal.pause()
-W.Ledger=PausedLedger
-raise SystemExit(W.main())
-'''.encode())
+    write(wrapper, _paused_ledger_wrapper(marker).encode())
     sibling = subprocess.Popen([sys.executable, "-c", "import signal; signal.pause()"], start_new_session=True)
     child = subprocess.Popen([sys.executable, str(wrapper), "--analysis-root", str(tmp_path), "--trusted-root", str(CHECKOUT),
                               "--authorization", str(auth), "--output-dir", str(output)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
