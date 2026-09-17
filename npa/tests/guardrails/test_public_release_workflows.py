@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import re
+
 import yaml
 
 
@@ -16,6 +18,19 @@ SECURITY_SCAN = WORKFLOWS / "image-security-scan.yml"
 
 def _spec(path: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+_PINNED_ACTION = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+@[0-9a-f]{40}$")
+
+
+def _assert_pinned(uses: object, action: str) -> None:
+    """Third-party actions must be digest-pinned; the `# vN` tag comment is
+    stripped by YAML parsing, so only the 40-hex SHA remains to assert on."""
+    assert isinstance(uses, str) and _PINNED_ACTION.fullmatch(uses), (
+        f"expected digest-pinned {action}, got {uses!r}"
+    )
+    assert uses.startswith(action + "@")
+
 
 
 def _runs(path: Path) -> str:
@@ -135,7 +150,7 @@ def test_public_base_pull_authentication_precedes_local_build() -> None:
     auth = names.index("Authenticate immutable public base pulls")
     build = names.index("Build immutable development image locally")
     push = names.index("Push only after every pre-publication gate passes")
-    assert steps[auth]["uses"] == "docker/login-action@v3"
+    _assert_pinned(steps[auth]["uses"], "docker/login-action")
     assert auth < build < push
 
 
@@ -177,7 +192,9 @@ def test_base_image_scans_do_not_inherit_trivys_five_minute_timeout() -> None:
     scans = [
         step
         for step in steps
-        if step.get("uses") == "aquasecurity/trivy-action@v0.36.0"
+        if isinstance(step.get("uses"), str)
+        and _PINNED_ACTION.fullmatch(step["uses"])
+        and step["uses"].startswith("aquasecurity/trivy-action@")
     ]
 
     assert len(scans) == 2
@@ -187,8 +204,8 @@ def test_base_image_scans_do_not_inherit_trivys_five_minute_timeout() -> None:
 def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     text = PUBLISH.read_text(encoding="utf-8")
     for required in (
-        "attest-build-provenance@v3",
-        "attest-sbom@v3",
+        "attest-build-provenance@",
+        "attest-sbom@",
         "subject-name: ${{ steps.push.outputs.repository }}",
         "Require both digest-bound attestation results",
         "crane digest",
@@ -199,6 +216,10 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
         "Retained immutable dev tags as release provenance",
     ):
         assert required in text
+    for action in ("actions/attest-build-provenance", "actions/attest-sbom"):
+        assert re.search(rf"{re.escape(action)}@[0-9a-f]{{40}}", text), (
+            f"{action} must be digest-pinned"
+        )
     visibility = text.index('gh api --method PATCH "$package_api" -f visibility=public')
     anonymous = text.index('DOCKER_CONFIG="$anonymous_config" crane manifest')
     pushed_scan = text.index(
