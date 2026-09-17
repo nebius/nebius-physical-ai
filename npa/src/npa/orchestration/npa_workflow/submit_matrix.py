@@ -72,6 +72,54 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "franka-rl-transfer.yaml", "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "NEBIUS_TOKEN_FACTORY_KEY"),
+        runtime=True, requires_token_factory=True,
+        notes="Real Franka PPO with USD parts, paired physics tests, blinded Token Factory audit, and LeRobot/RRD capture.",
+    ),
+    SubmitLiveCase(
+        "lerobot-transfer.yaml", "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True, expected_parallel_tasks=2, image_tool="lerobot",
+        notes="Pinned PushT data, matched real ACT training, paired closed-loop shifts, next-demo queue and RRD.",
+    ),
+    SubmitLiveCase(
+        "byof-mochi-1.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-cogvideox-2b.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-wan2.1-14b.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-lingbot-world.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-depth-anything-v2.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-sam2.1.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
         "cosmos3-policy-model-factory.yaml", "gpu",
         secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         image_tool="cosmos3",

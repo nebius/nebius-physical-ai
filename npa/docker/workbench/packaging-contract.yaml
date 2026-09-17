@@ -123,11 +123,13 @@ redistribution:
   classes:
     public:
       description: >
-        OSS-redistributable. Code is under OSI-approved licenses (Apache-2.0 /
-        BSD-3 / MIT / MPL-2.0); the CUDA/PyTorch base images (docker.io
-        nvidia/cuda, pytorch/pytorch) are freely redistributable; any gated model
-        weights are downloaded at runtime by the operator (never baked in). May
-        be published to a public registry.
+        Eligible for public redistribution under the verified terms of every
+        shipped component, including required notices and source delivery.
+        OSI approval alone does not classify a complete image; FiftyOne's SSPL
+        MongoDB component has separate source-delivery and service-use terms.
+        CUDA/PyTorch payloads require applicable component-specific grants.
+        Gated model weights are downloaded at runtime by the operator, never
+        baked in. Publication still requires the exact-artifact validation gates.
     restricted:
       description: >
         Bakes a runtime we may not redistribute — for NVIDIA Omniverse Kit (Isaac
@@ -232,6 +234,34 @@ images:
       writable runtime volume under their upstream package terms; model and
       tokenizer payloads are also runtime-only. Built-image byte/layer scanning
       is mandatory before publication.
+  diffusers:
+    dockerfile: diffusers/Dockerfile
+    tier: job
+    redistribution: public
+    passwordless_root_exemption: "Inherited SkyPilot bootstrap only; non-root ubuntu, no default sshd, no baked credentials."
+    notes: >-
+      Pinned Apache-2.0 Diffusers source with OSS CPU dependencies, NPA native
+      video/perception adapters, and the accepted public Wan runtime-fetch base.
+      CUDA and all checkpoints remain runtime-only. No bundled examples or media.
+      Exact-digest GPU capabilities and byte scans gate supported publication.
+  lingbot-world:
+    dockerfile: lingbot-world/Dockerfile
+    tier: job
+    redistribution: public
+    passwordless_root_exemption: "Inherited SkyPilot bootstrap only; non-root ubuntu, no default sshd, no baked credentials."
+    notes: >-
+      Pinned Apache-2.0 LingBot source, retained upstream license, OSS CPU
+      dependencies and native camera adapter. Runtime-only CUDA and checkpoints.
+      Four-rank attention/all-to-all and decoded video gate supported publication.
+  sam2:
+    dockerfile: sam2/Dockerfile
+    tier: job
+    redistribution: public
+    passwordless_root_exemption: "Inherited SkyPilot bootstrap only; non-root ubuntu, no default sshd, no baked credentials."
+    notes: >-
+      Pinned Apache-2.0 SAM2 source, retained upstream licenses, OSS CPU
+      dependencies and native prompted-video adapter. Runtime-only CUDA and
+      checkpoints. Nonempty propagated masks and decoded video gate publication.
   ltx2:
     dockerfile: ltx2/Dockerfile
     tier: job
@@ -580,6 +610,13 @@ images:
       Command-passthrough entrypoint supports SkyPilot Kubernetes setup as the
       non-root ubuntu user (openssh-server, rsync, sudo, passwordless service
       restart). The service deploy path supplies the FiftyOne App command.
+      MongoDB Community Server uses SSPL v1, not an OSI-approved license.
+      Public redistribution requires the applicable notices and matching
+      corresponding-source delivery; service-use obligations need separate
+      review. The supported FiftyOne 1.21 release includes a verified source
+      annex and passes initial NPA installation, dependency and functional checks.
+      Verify these contracts for each replacement digest before any public push;
+      see fiftyone/RELEASE.md.
     passwordless_root_exemption: >-
       SkyPilot's Kubernetes bootstrap installs and starts its in-pod SSH runtime
       as the non-root ubuntu user. The image deletes all build-time SSH host keys,

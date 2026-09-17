@@ -36,6 +36,13 @@ your Python environment; remote workloads use their container dependencies.
 See [installation](../docs/install.md) for supported platforms, virtual
 environments, and the separate SkyPilot environment.
 
+The cluster GPU smoke manages an owned SkyPilot API session through workload
+cleanup; see [SkyPilot setup](../docs/orchestration/skypilot-setup.md#verify).
+The [PAIDF starter guide](../workflows/guides/paidf-cosmos3.md#audit-a-completed-default-starter-run)
+also provides a read-only live audit using the selected run URI, project, and
+saved pre-submission UTC timestamp. Its test settings are scoped to the audit
+shell and do not submit work.
+
 Extra tools required by specific commands:
 
 - `ray[default]==2.58.0` in the NPA application environment for
@@ -69,6 +76,18 @@ chosen specification, prepare its data and resources, submit it, then inspect
 `npa workbench workflow status`, `logs`, and `artifacts`. The
 [recovery guide](../docs/workbench/troubleshooting/known-footguns.md) covers
 setup and runtime failures.
+
+The [Franka transfer workflow](../docs/workbench/guides/franka-rl-transfer.md)
+retains invalid hosted visual judgments as failed audit evidence. Its
+`npa.workflows.franka_rl visual-evaluate --prior-judgments-path` option accepts
+a verified interrupted audit so saved responses are revalidated and only missing
+episodes make new requests; omit the option for a fresh audit.
+The workflow's `learning_recipe=adaptive-bounded-exploration` selects bounded learned joint targets and exploration,
+hold-aligned rewards, richer observations, and a training-outcome curriculum.
+Use `learning_recipe=joint-baseline` for the historical comparison. The module's
+`prepare --learning-recipe` option seals this choice. Lift/hold thresholds stay fixed;
+new runs additionally enforce measured simulation limits and a task-domain envelope.
+UR10e's new sealed physics profile preserves its USD mimic-joint mechanics.
 
 ## Workbench Runtimes
 
@@ -195,10 +214,14 @@ The CPU wheel exercises real checkpoint loading without a GPU. See
 [the CI environment](../.github/workflows/test.yml) for the complete coverage
 gate; some optional checks also use Node, tmux, or Docker.
 
-Pull requests and main pushes run the full coverage suite on Python 3.10, 3.12,
-and 3.14. A focused compatibility check runs before the CPU tensor dependencies
+Pull requests receive fast smoke and security feedback. The merge queue runs the
+exact latest-main candidate through browser and focused Python 3.10/3.14 checks
+alongside four duration-balanced Python 3.12 coverage shards, then enforces the
+merged floor. Main pushes run the sharded full suite on all three supported
+versions and publish the measured module-duration profile used to rebalance later
+shards. The focused compatibility check runs before the CPU tensor dependencies
 are installed, so async cancellation and isolated SkyPilot fixture regressions
-surface early. Run it locally with:
+surface before merge. Run it locally with:
 
 ```bash
 npa/.venv/bin/python -m pytest \
@@ -208,13 +231,19 @@ npa/.venv/bin/python -m pytest \
   npa/tests/workbench/test_cosmos3_nano_video_server.py -q
 ```
 
-The required [security check](../docs/security/merge-security-gate.md) calls the
-image security workflow once on every PR, merge queue candidate, and main push.
-It waits for successful image scans before running the runtime security tests.
+The required [security check](../docs/security/merge-security-gate.md) is the
+single automatic candidate workflow. It runs secrets, confidentiality, source,
+runtime, lint, guardrail, and test gates, and calls an always-reporting image
+security workflow. Image-affecting candidates receive the deep image checks;
+unrelated candidates take a verified fast path. Main and weekly audits always
+scan the full image inventory.
 The image security workflow scans the pinned Python base after the same OS
 update and upgrade used by FiftyOne's Dockerfile. It rebuilds this local scan
 target without cache so newly published security fixes are included, then fails
-on fixable CRITICAL OS findings. This baseline check does not replace the
+on fixable CRITICAL OS findings. All seven bases run inside one job with two
+bounded local workers. One Trivy database download is hard-linked into isolated
+worker caches, rather than using seven queued runners or a lock-contended shared
+cache. This baseline check does not replace the
 complete image scans required before publication.
 
 Use an **absolute** interpreter path: the recipes change into `npa/` before
@@ -230,3 +259,12 @@ for the remaining environment variables and the exact test command.
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full test layout and PR
 conventions (branch → PR → squash, one approval, never self-approve).
+
+## Workbench Studio
+
+`npa studio init --directory ./my-studio` creates a portable local film editor
+using the installed renderer. Create a project from your own media with
+`npa studio create`, author its storyboard, then draft, narrate and render it.
+Install `npa[studio]` for optional speech generation and FFmpeg separately.
+See the [Studio developer flow](../docs/demos/workbench-studio/README.md) for
+configuration, offline narration, artifact search and privacy boundaries.

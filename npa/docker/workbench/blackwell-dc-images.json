@@ -737,12 +737,22 @@
         "guardrail_state": {
           "requested": true,
           "discovered": {
-            "prompt_input": ["Blocklist", "Qwen3Guard"],
-            "generated_media": ["VideoContentSafetyFilter"]
+            "prompt_input": [
+              "Blocklist",
+              "Qwen3Guard"
+            ],
+            "generated_media": [
+              "VideoContentSafetyFilter"
+            ]
           },
           "evaluated": {
-            "prompt_input": ["Blocklist", "Qwen3Guard"],
-            "generated_media": ["VideoContentSafetyFilter"]
+            "prompt_input": [
+              "Blocklist",
+              "Qwen3Guard"
+            ],
+            "generated_media": [
+              "VideoContentSafetyFilter"
+            ]
           },
           "media_attempted_inputs": 1,
           "media_successful_inputs": 1,
@@ -912,6 +922,45 @@
       ],
       "smoke": "npa.smoke.test_curobo_functional: actual Franka pose solve, validated joint/FK artifacts and decoded RRD",
       "notes": "The 0.8.0-cuda13-b300-unbuilt candidate has no built-image or GPU evidence. The tag family is a build target, not an observed B300 compatibility claim. Complete MotionBenchMaker/MPiNets kinematic and dynamics benchmarks are a separate workload gate."
+    },
+    {
+      "name": "npa-diffusers",
+      "dockerfile": "diffusers/Dockerfile",
+      "verdict": "ready",
+      "validation": "validated",
+      "runtime": "Torch 2.13.0 and CUDA 13.0, fetched at runtime",
+      "notes": "The exact public image passed native B200 inference, complete artifact hashes and full MP4 decode on 2026-09-16. See docs/workbench/validation/studio-public-models-20260916.json. CUDA packages and checkpoints remain runtime fetches. B300 remains unvalidated.",
+      "smoke": "model-runtime golden: native generation or perception, raw evidence and fully decoded MP4; individual workflow validation for each advertised model",
+      "measured_torch": "2.13.0+cu130",
+      "validated_tag": "0.38.0-rtfetch-20260916",
+      "validated_digest": "sha256:6422a062a00c9816a945623b0c83a78977fa5d5cec1777a0e6d44d1d746fc42e",
+      "validated_registry_scope": "public"
+    },
+    {
+      "name": "npa-lingbot-world",
+      "dockerfile": "lingbot-world/Dockerfile",
+      "verdict": "ready",
+      "validation": "validated",
+      "runtime": "Torch 2.13.0 and CUDA 13.0, fetched at runtime",
+      "notes": "The exact public image passed native B200 inference, complete artifact hashes and full MP4 decode on 2026-09-16. See docs/workbench/validation/studio-public-models-20260916.json. CUDA packages and checkpoints remain runtime fetches. B300 remains unvalidated.",
+      "smoke": "model-runtime golden: native generation or perception, raw evidence and fully decoded MP4; individual workflow validation for each advertised model",
+      "measured_torch": "2.13.0+cu130",
+      "validated_tag": "a43bec7-rtfetch-20260916",
+      "validated_digest": "sha256:5e2a3998bf7d54987d0916f7c249b4963ef87f489e9e893ec8d94da196286277",
+      "validated_registry_scope": "public"
+    },
+    {
+      "name": "npa-sam2",
+      "dockerfile": "sam2/Dockerfile",
+      "verdict": "ready",
+      "validation": "validated",
+      "runtime": "Torch 2.13.0 and CUDA 13.0, fetched at runtime",
+      "notes": "The exact public image passed native B200 inference, complete artifact hashes and full MP4 decode on 2026-09-16. See docs/workbench/validation/studio-public-models-20260916.json. CUDA packages and checkpoints remain runtime fetches. B300 remains unvalidated.",
+      "smoke": "model-runtime golden: native generation or perception, raw evidence and fully decoded MP4; individual workflow validation for each advertised model",
+      "measured_torch": "2.13.0+cu130",
+      "validated_tag": "2.1-rtfetch-20260916",
+      "validated_digest": "sha256:fbe20454e97452e447e00f79260a267b552deef5538e3bbbc8c3567a3c576f16",
+      "validated_registry_scope": "public"
     }
   ],
   "validation_evidence": {
@@ -1371,6 +1420,57 @@
       "payload_scan": "All 45 OCI layers assessed; extension adds no weights, task/customer media, credentials or acceptance state. Inherited public vendor fixtures remain present.",
       "security_scan": "Zero fixable CRITICAL findings and zero detected secrets; 218 HIGH and six unfixed CRITICAL findings retained and disclosed. Baseline NIXL metadata conflict adds no new dependency conflict.",
       "measurement_reference": "npa/deploy/cosmos3-nano-video/README.md"
+    },
+    "npa-diffusers": {
+      "built": true,
+      "validated_digest": "sha256:6422a062a00c9816a945623b0c83a78977fa5d5cec1777a0e6d44d1d746fc42e",
+      "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3",
+      "payload_scan": "Passed mandatory public development build, payload, vulnerability, secret, licensing, SBOM and provenance gates; anonymous full image pulls verified.",
+      "hardware_run": "Native model capability inference on the exact image; successful worker summary and every output hash checked. Complete MP4 decoded independently.",
+      "validated_gpus": {
+        "B200": {
+          "capability": "10.0",
+          "result": "NATIVE_CAPABILITY_PASSED"
+        }
+      },
+      "capability_evidence": "docs/workbench/validation/studio-public-models-20260916.json",
+      "not_validated": [
+        "B300"
+      ]
+    },
+    "npa-lingbot-world": {
+      "built": true,
+      "validated_digest": "sha256:5e2a3998bf7d54987d0916f7c249b4963ef87f489e9e893ec8d94da196286277",
+      "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3",
+      "payload_scan": "Passed mandatory public development build, payload, vulnerability, secret, licensing, SBOM and provenance gates; anonymous full image pulls verified.",
+      "hardware_run": "Native model capability inference on the exact image; successful worker summary and every output hash checked. Complete MP4 decoded independently.",
+      "validated_gpus": {
+        "B200": {
+          "capability": "10.0",
+          "result": "NATIVE_CAPABILITY_PASSED"
+        }
+      },
+      "capability_evidence": "docs/workbench/validation/studio-public-models-20260916.json",
+      "not_validated": [
+        "B300"
+      ]
+    },
+    "npa-sam2": {
+      "built": true,
+      "validated_digest": "sha256:fbe20454e97452e447e00f79260a267b552deef5538e3bbbc8c3567a3c576f16",
+      "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3",
+      "payload_scan": "Passed mandatory public development build, payload, vulnerability, secret, licensing, SBOM and provenance gates; anonymous full image pulls verified.",
+      "hardware_run": "Native model capability inference on the exact image; successful worker summary and every output hash checked. Complete MP4 decoded independently.",
+      "validated_gpus": {
+        "B200": {
+          "capability": "10.0",
+          "result": "NATIVE_CAPABILITY_PASSED"
+        }
+      },
+      "capability_evidence": "docs/workbench/validation/studio-public-models-20260916.json",
+      "not_validated": [
+        "B300"
+      ]
     }
   },
   "known_gaps": {

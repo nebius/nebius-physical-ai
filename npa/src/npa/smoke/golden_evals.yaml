@@ -835,18 +835,18 @@ containers:
     safety:
       runs_as: ubuntu
       base_image: python:3.11-slim-trixie
-      network: FiftyOne app on :5151
+      network: FiftyOne app on 127.0.0.1:5151; authenticated SSH or Kubernetes port-forward
       external_fetch: [pypi, huggingface, s3]
       notes: >-
-        CPU-only; app should be exposed via controlled public-access path, not
-        bound to 0.0.0.0 without auth. The image ships standalone smoke scripts
-        (it does not install the npa package). The golden eval is the env smoke
-        (import + version + CLI + app config); the functional smoke is a heavier
-        integration test that needs a working MongoDB, which the slim base does
-        not provision.
+        CPU-only; keep App access private through loopback and an authenticated
+        SSH or Kubernetes port-forward. The image ships standalone smoke scripts
+        and bundled MongoDB, without installing the npa package. The functional
+        golden eval checks version, dataset creation and query, real Brain
+        curation, and App launch. Source installation and publication security
+        gates require separate exact-image evidence.
     golden_eval:
       kind: container-smoke
-      command: python /opt/npa/docker/workbench/fiftyone/smoke_env.py
+      command: python /opt/npa/docker/workbench/fiftyone/smoke_functional.py
       serverless_gpu: h100
       gpu: none
       timeout_seconds: 300
@@ -937,6 +937,74 @@ containers:
       timeout_seconds: 300
       status: ready
 
+  diffusers:
+    image: npa-diffusers
+    dockerfile: npa/docker/workbench/diffusers/Dockerfile
+    physical_ai:
+      useful: true
+      role: Mochi 1, CogVideoX-2B and Wan 2.1 video generation; relative-depth perception.
+    safety:
+      runs_as: ubuntu
+      base_image: npa-wan2-2 (accepted public digest pinned)
+      network: runtime-only CUDA and operator-authorized Hugging Face checkpoints
+      external_fetch: [pytorch-cu130-after-operator-acceptance, huggingface]
+      notes: >-
+        Source-only public job runtime. Health is a packaging check; the golden
+        command runs a real GPU capability and decodes the output. Camera and
+        segmentation require operator-supplied input mounts. Separate model
+        workflow runs qualify every advertised capability.
+    golden_eval:
+      kind: container-smoke
+      command: bash /usr/local/bin/model-runtime golden --model cogvideox-2b --output-path /tmp/npa-golden
+      gpu: required
+      timeout_seconds: unlimited
+      status: gpu-gated
+
+  lingbot-world:
+    image: npa-lingbot-world
+    dockerfile: npa/docker/workbench/lingbot-world/Dockerfile
+    physical_ai:
+      useful: true
+      role: Native camera-conditioned continuation with four-rank FSDP and Ulysses.
+    safety:
+      runs_as: ubuntu
+      base_image: npa-wan2-2 (accepted public digest pinned)
+      network: runtime-only CUDA and operator-authorized Hugging Face checkpoints
+      external_fetch: [pytorch-cu130-after-operator-acceptance, huggingface]
+      notes: >-
+        Source-only public job runtime. Health is a packaging check; the golden
+        command runs a real GPU capability and decodes the output. Camera and
+        segmentation require operator-supplied input mounts. Separate model
+        workflow runs qualify every advertised capability.
+    golden_eval:
+      kind: container-smoke
+      command: bash /usr/local/bin/model-runtime golden --model lingbot-world --input-path /inputs/image.png --output-path /tmp/npa-golden
+      gpu: required
+      timeout_seconds: unlimited
+      status: gpu-gated
+
+  sam2:
+    image: npa-sam2
+    dockerfile: npa/docker/workbench/sam2/Dockerfile
+    physical_ai:
+      useful: true
+      role: Native prompted mask propagation through a source video.
+    safety:
+      runs_as: ubuntu
+      base_image: npa-wan2-2 (accepted public digest pinned)
+      network: runtime-only CUDA and operator-authorized Hugging Face checkpoints
+      external_fetch: [pytorch-cu130-after-operator-acceptance, huggingface]
+      notes: >-
+        Source-only public job runtime. Health is a packaging check; the golden
+        command runs a real GPU capability and decodes the output. Camera and
+        segmentation require operator-supplied input mounts. Separate model
+        workflow runs qualify every advertised capability.
+    golden_eval:
+      kind: container-smoke
+      command: bash /usr/local/bin/model-runtime golden --model sam2.1 --input-path /inputs/video.mp4 --box 240 100 700 500 --output-path /tmp/npa-golden
+      gpu: required
+      timeout_seconds: unlimited
+      status: gpu-gated
   openarm:
     image: npa-openarm
     dockerfile: npa/docker/workbench/openarm/Dockerfile

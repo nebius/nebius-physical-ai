@@ -227,6 +227,24 @@ def test_skypilot_bootstrap_can_install_local_tiny_package(
     assert '"extras": [\n    "test"\n  ]' in result.marker_path.read_text(encoding="utf-8")
 
 
+@pytest.fixture
+def owned_verification(tmp_path, monkeypatch):
+    from npa.orchestration.skypilot import _bin, local_api
+
+    monkeypatch.setattr(_bin, "CONFIG_PATH", tmp_path / "npa/config.yaml")
+    monkeypatch.setattr(local_api, "_require_linux_host", lambda: None)
+    monkeypatch.setattr(local_api, "ensure_isolated_api", lambda **_kwargs: None)
+    monkeypatch.setattr(local_api, "stop_isolated_api", lambda _scope: None)
+
+
+def _verification_kubeconfig(path, context="selected-context"):
+    path.write_text(
+        f"apiVersion: v1\ncurrent-context: {context}\n"
+        f"contexts:\n- name: {context}\n  context: {{cluster: selected}}\n"
+        "clusters:\n- name: selected\n  cluster: {server: 'https://kubernetes.invalid'}\n"
+    )
+
+
 def _intercept_sky_check(monkeypatch: pytest.MonkeyPatch, captured: dict[str, object]):
     """Capture only the `sky check` invocation; delegate other calls.
 
@@ -236,7 +254,7 @@ def _intercept_sky_check(monkeypatch: pytest.MonkeyPatch, captured: dict[str, ob
 
     original = skypilot_cli._run_no_raise
 
-    def fake_run(cmd, *, env=None):  # noqa: ANN001 - test stub
+    def fake_run(cmd, *, env=None, cwd=None):  # noqa: ANN001 - test stub
         if "check" in cmd:
             captured["cmd"] = cmd
             captured["env"] = env
@@ -246,17 +264,17 @@ def _intercept_sky_check(monkeypatch: pytest.MonkeyPatch, captured: dict[str, ob
                 stdout="Kubernetes: enabled [compute]\nchecks passed",
                 stderr="",
             )
-        return original(cmd, env=env)
+        return original(cmd, env=env, cwd=cwd)
 
     monkeypatch.setattr(skypilot_cli, "_run_no_raise", fake_run)
 
 
 def test_verify_pins_kubeconfig_from_flag(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, owned_verification
 ) -> None:
     venv = _fake_installed_venv(tmp_path / "sky-venv")
     kubeconfig = tmp_path / "kube.yaml"
-    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    _verification_kubeconfig(kubeconfig)
     captured: dict[str, object] = {}
     _intercept_sky_check(monkeypatch, captured)
 
@@ -266,18 +284,16 @@ def test_verify_pins_kubeconfig_from_flag(
     )
 
     assert result.exit_code == 0, result.output
-    assert captured["cmd"][-1] == "check"
+    assert captured["cmd"][-1] == "kubernetes"
     assert captured["env"]["KUBECONFIG"] == str(kubeconfig)
 
 
 def test_verify_scopes_existing_kubeconfig_to_its_current_context(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, owned_verification
 ) -> None:
     venv = _fake_installed_venv(tmp_path / "sky-venv")
     kubeconfig = tmp_path / "kube.yaml"
-    kubeconfig.write_text(
-        "apiVersion: v1\ncurrent-context: fleet-exact\n", encoding="utf-8"
-    )
+    _verification_kubeconfig(kubeconfig, "fleet-exact")
     captured: dict[str, object] = {}
     _intercept_sky_check(monkeypatch, captured)
 
@@ -301,12 +317,12 @@ def test_verify_rejects_zero_exit_when_kubernetes_is_disabled(
     venv = _fake_installed_venv(tmp_path / "sky-venv")
     original = skypilot_cli._run_no_raise
 
-    def fake_run(cmd, *, env=None):  # noqa: ANN001
+    def fake_run(cmd, *, env=None, cwd=None):  # noqa: ANN001
         if cmd[-1] == "check":
             return subprocess.CompletedProcess(
                 cmd, 0, stdout="Kubernetes: disabled\nNo infra to check/enabled.", stderr=""
             )
-        return original(cmd, env=env)
+        return original(cmd, env=env, cwd=cwd)
 
     monkeypatch.setattr(skypilot_cli, "_run_no_raise", fake_run)
     result = runner.invoke(
@@ -335,12 +351,12 @@ def test_bare_verify_keeps_legacy_runtime_semantics_without_kubernetes(
     venv = _fake_installed_venv(tmp_path / "sky-venv")
     original = skypilot_cli._run_no_raise
 
-    def fake_run(cmd, *, env=None):  # noqa: ANN001
+    def fake_run(cmd, *, env=None, cwd=None):  # noqa: ANN001
         if cmd[-1] == "check":
             return subprocess.CompletedProcess(
                 cmd, 0, stdout="Kubernetes: disabled\nchecks passed", stderr=""
             )
-        return original(cmd, env=env)
+        return original(cmd, env=env, cwd=cwd)
 
     monkeypatch.setattr(skypilot_cli, "_run_no_raise", fake_run)
     result = runner.invoke(
@@ -356,21 +372,19 @@ def test_bare_verify_keeps_legacy_runtime_semantics_without_kubernetes(
 
 
 def test_verify_with_kubeconfig_requires_kubernetes_without_backend_flag(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, owned_verification
 ) -> None:
     venv = _fake_installed_venv(tmp_path / "sky-venv")
     kubeconfig = tmp_path / "kube.yaml"
-    kubeconfig.write_text(
-        "apiVersion: v1\ncurrent-context: fleet-exact\n", encoding="utf-8"
-    )
+    _verification_kubeconfig(kubeconfig, "fleet-exact")
     original = skypilot_cli._run_no_raise
 
-    def fake_run(cmd, *, env=None):  # noqa: ANN001
+    def fake_run(cmd, *, env=None, cwd=None):  # noqa: ANN001
         if "check" in cmd:
             return subprocess.CompletedProcess(
                 cmd, 0, stdout="Kubernetes: disabled\nchecks passed", stderr=""
             )
-        return original(cmd, env=env)
+        return original(cmd, env=env, cwd=cwd)
 
     monkeypatch.setattr(skypilot_cli, "_run_no_raise", fake_run)
     result = runner.invoke(
@@ -412,7 +426,7 @@ def test_verify_kubernetes_mode_marks_nebius_profile_optional(
     venv = _fake_installed_venv(tmp_path / "sky-venv")
     original = skypilot_cli._run_no_raise
 
-    def fake_run(cmd, *, env=None):  # noqa: ANN001
+    def fake_run(cmd, *, env=None, cwd=None):  # noqa: ANN001
         if cmd[-1] == "check":
             return subprocess.CompletedProcess(
                 cmd,
@@ -423,7 +437,7 @@ def test_verify_kubernetes_mode_marks_nebius_profile_optional(
                 ),
                 stderr="",
             )
-        return original(cmd, env=env)
+        return original(cmd, env=env, cwd=cwd)
 
     monkeypatch.setattr(skypilot_cli, "_run_no_raise", fake_run)
     result = runner.invoke(
@@ -453,7 +467,7 @@ def test_verify_nebius_mode_fails_required_profile_without_success_message(
     venv = _fake_installed_venv(tmp_path / "sky-venv")
     original = skypilot_cli._run_no_raise
 
-    def fake_run(cmd, *, env=None):  # noqa: ANN001
+    def fake_run(cmd, *, env=None, cwd=None):  # noqa: ANN001
         if cmd[-1] == "check":
             return subprocess.CompletedProcess(
                 cmd,
@@ -461,7 +475,7 @@ def test_verify_nebius_mode_fails_required_profile_without_success_message(
                 stdout="Unable to create Nebius profile\nSetup completed\n",
                 stderr="",
             )
-        return original(cmd, env=env)
+        return original(cmd, env=env, cwd=cwd)
 
     monkeypatch.setattr(skypilot_cli, "_run_no_raise", fake_run)
     result = runner.invoke(
@@ -490,10 +504,10 @@ def test_verify_fails_clearly_on_missing_kubeconfig(
 
     original = skypilot_cli._run_no_raise
 
-    def fake_run(cmd, *, env=None):  # noqa: ANN001 - test stub
+    def fake_run(cmd, *, env=None, cwd=None):  # noqa: ANN001 - test stub
         if cmd[-1] == "check":
             raise AssertionError("sky check must not run when kubeconfig is missing")
-        return original(cmd, env=env)
+        return original(cmd, env=env, cwd=cwd)
 
     monkeypatch.setattr(skypilot_cli, "_run_no_raise", fake_run)
 
@@ -824,11 +838,11 @@ def test_skypilot_bootstrap_leaves_a_good_client_alone(
     installs: list[list[str]] = []
     original = skypilot_cli._run_no_raise
 
-    def fake_run(cmd, *, env=None):  # noqa: ANN001 - test stub
+    def fake_run(cmd, *, env=None, cwd=None):  # noqa: ANN001 - test stub
         if cmd[1:4] == ["-m", "pip", "install"]:
             installs.append(list(cmd))
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-        return original(cmd, env=env)
+        return original(cmd, env=env, cwd=cwd)
 
     monkeypatch.setattr(skypilot_cli, "_run_no_raise", fake_run)
 

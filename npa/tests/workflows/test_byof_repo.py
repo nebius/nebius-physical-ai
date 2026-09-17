@@ -1169,6 +1169,10 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     module = _load_module()
     text = module._dockerfile_text()
     assert "BYOF_BASE_IMAGE" in text
+    assert text.index("WORKDIR /workspace") < text.index("git_with_auth clone")
+    assert 'npa.tool="byof"' in text
+    assert 'npa.source.repo="${BYOF_SOURCE_LABEL_REPO}"' in text
+    assert 'npa.source.ref="${BYOF_SOURCE_LABEL_REF}"' in text
     assert "BYOF_BUILD_COMMAND" in text
     assert "npa.byof.build.v1" in text
     assert "build_command_executed" in text

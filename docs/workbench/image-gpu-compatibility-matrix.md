@@ -39,6 +39,12 @@ Two compatibility rules govern every cell:
 
 ## Measured torch stack per image
 
+The new `npa-diffusers`, `npa-lingbot-world`, and `npa-sam2` public packaging
+candidates are pending their own builds and exact-digest GPU qualification.
+Earlier private BYOF B200 runs do not establish these new images' compatibility.
+They inherit a hash-locked runtime-fetch mechanism; no CUDA wheel is baked, and
+no B300 capability is claimed from the planned runtime or a B200 result.
+
 `arch_list` is `torch._C._cuda_getArchFlags()` read out of the published image. It is fixed when the wheel is built — `TORCH_CUDA_ARCH_LIST` cannot change it — so it decides which GPUs the image can execute on. Reproduce any row with `npa/scripts/validate_blackwell_image.sh <image> --target b200`.
 
 | Image | Tag measured | Torch / CUDA | Measured SASS set | Covers `sm_100`? |
@@ -105,6 +111,9 @@ likewise predates its current coherent release.
 | `npa-cosmos3-ray-serve` | supported | supported | **verified** [66] | **verified** [65] | supported (same-major `sm_100` coverage; not measured) |
 | `npa-content-agents` | supported (RT cores) | blocked (no RT cores) | **verified** [64] | blocked (no RT cores) | blocked (no RT cores) |
 | `npa-wan2-2` | supported | supported | **verified** [accepted records](#accepted-release-evidence) | **historical evidence** [61]; current distributed path unqualified | supported |
+| `npa-diffusers` | unverified | unverified | unverified | **verified** [native capability evidence](validation/studio-public-models-20260916.json) | unverified |
+| `npa-lingbot-world` | unverified | unverified | unverified | **verified** [native capability evidence](validation/studio-public-models-20260916.json) | unverified |
+| `npa-sam2` | unverified | unverified | unverified | **verified** [native capability evidence](validation/studio-public-models-20260916.json) | unverified |
 | `npa-ltx2` | unverified runtime | unverified runtime | **verified** [accepted records](#accepted-release-evidence) | unverified runtime | unverified runtime |
 | `npa-openpi` | blocked (RTX-only runtime contract) | blocked (RTX-only runtime contract) | pending exact-digest full-DROID qualification | blocked (`sm_120`-only probe/runtime contract) | blocked (`sm_120`-only probe/runtime contract) |
 | `npa-curobo` | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |

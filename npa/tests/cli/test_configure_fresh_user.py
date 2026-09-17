@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+import subprocess
 from unittest.mock import Mock
 
 import pytest
@@ -213,6 +214,70 @@ def test_known_project_provision_is_explicit_and_summarized(
     assert "Intent: provision object storage explicitly" in result.output
     assert "Summary:" in result.output
     assert "storage=created" in result.output
+
+
+@pytest.mark.parametrize(
+    ("version_result", "expected_error"),
+    [
+        (subprocess.CompletedProcess([], 0, "0.12.211\nprivate-sentinel", ""),
+         "Unsupported Nebius CLI 0.12.211"),
+        (subprocess.CompletedProcess([], 0, "private-sentinel", ""),
+         "Could not parse the Nebius CLI version"),
+        (subprocess.CompletedProcess([], 1, "", "private-sentinel"),
+         "Could not check the Nebius CLI version (exit 1)"),
+        (OSError("private-sentinel"), "Could not check the Nebius CLI version"),
+    ],
+)
+def test_known_project_configure_preserves_safe_cli_compatibility_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, version_result, expected_error: str
+) -> None:
+    config, credentials = _point_configure_at_tmp(monkeypatch, tmp_path)
+    monkeypatch.setattr(nebius, "_NEBIUS_VERSION_CHECKED", False)
+    monkeypatch.setattr(nebius.shutil, "which", lambda _name: "/synthetic/nebius")
+    version_probe = Mock(return_value=version_result)
+    if isinstance(version_result, Exception):
+        version_probe.side_effect = version_result
+    monkeypatch.setattr(nebius.subprocess, "run", version_probe)
+    monkeypatch.setattr(nebius, "_env_iam_token", lambda: "")
+    monkeypatch.setattr(nebius, "_candidate_iam_token_files", lambda: [])
+    monkeypatch.setattr(nebius, "_metadata_iam_token", lambda: "")
+    provision = Mock()
+    monkeypatch.setattr(cli_main, "_provision_object_storage", provision)
+
+    result = runner.invoke(app, _known_project_args(provision=True))
+
+    assert result.exit_code == 2, result.output
+    output = " ".join(result.output.split())
+    assert expected_error in output
+    assert "NEBIUS_CLI_VERSION=0.12.254 bash" in output
+    assert "private-sentinel" not in output
+    assert "profile cannot authenticate" not in output
+    assert version_probe.call_args.args[0] == ["/synthetic/nebius", "version"]
+    version_probe.assert_called_once()
+    provision.assert_not_called()
+    assert not config.exists() and not credentials.exists()
+
+
+def test_known_project_configure_authentication_error_keeps_provider_output_private(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config, credentials = _point_configure_at_tmp(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        nebius, "get_iam_token",
+        Mock(side_effect=nebius.NebiusError("token=private-sentinel")),
+    )
+    provision = Mock()
+    monkeypatch.setattr(cli_main, "_provision_object_storage", provision)
+
+    result = runner.invoke(app, _known_project_args(provision=True))
+
+    assert result.exit_code == 2, result.output
+    output = " ".join(result.output.split())
+    assert "profile cannot authenticate non-interactively" in output
+    assert "Activate or refresh it, then retry" in output
+    assert "private-sentinel" not in output
+    provision.assert_not_called()
+    assert not config.exists() and not credentials.exists()
 
 
 @pytest.mark.parametrize("failure_phase", ["authentication", "storage-probe"])
