@@ -120,9 +120,12 @@ observation alignment checks.
 
 Direct robot-camera segmentation replay encountered the upstream failure in
 [BEHAVIOR issue #2312](https://github.com/StanfordVL/BEHAVIOR-1K/issues/2312).
-A training-only viewer-camera replay is being checked against the recorded
-camera poses, intrinsics and released observations. Its labels must pass those
-checks before use; no EGR checkpoint has been trained or evaluated.
+The training-only viewer-camera workaround also crashed in the simulator's
+instance-segmentation renderer after a camera-argument type correction. Neither
+path produced verified labels. EGR training is blocked on obtaining camera
+evidence that passes source-action, observation and image alignment checks;
+no EGR checkpoint has been trained or evaluated. Failed-run logs are retained,
+and the failed experiment's compute is retired through Workbench cleanup.
 
 ## Next candidate: give π0.5 recent observation history
 
