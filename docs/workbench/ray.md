@@ -22,6 +22,25 @@ checked-in `npa.workflow` spec (`workflows/testing/cosmos3-ray-batch.yaml`), and
 its persistent service must already be ready. KubeRay is infrastructure policy,
 not a workflow runtime or Jobs controller.
 
+## Ray version matrix
+
+Two Ray versions are in play. Ray requires the client and server versions to
+match; pointing a 2.58.0 client at the nano-video service (or vice versa)
+fails in confusing ways. Use exactly the client version pinned for the path
+you are driving:
+
+| Path | Server / cluster version | Client pin | Pinned in |
+| --- | --- | --- | --- |
+| Cosmos3-Nano video (RayService) | 2.56.0 | `ray[serve]==2.56.0` | `npa/docker/workbench/cosmos3-nano-video/requirements.txt`, `npa/deploy/cosmos3-nano-video/rayservice.yaml` |
+| Cosmos3 Ray Serve | 2.58.0 | `ray==2.58.0` (client from this checkout) | `npa/docker/workbench/cosmos3-ray-serve/Dockerfile` (`COSMOS3_RAY_VERSION`) |
+| CLIP development (SkyPilot-hosted Ray Jobs) | 2.58.0 | `ray[default]==2.58.0` | `docs/testing/fast-source-iteration.md` |
+| Ray Train synthetic reference | 2.58.0 | `ray[default,train]==2.58.0` | `npa/workflows/workbench/ray-train-synthetic/cluster/requirements.txt` |
+| Fleet KubeRay RayCluster | 2.58.0 | `ray[default]==2.58.0` | `npa/src/npa/cluster_backends/kuberay.py`, `docs/fleet-kuberay.md` |
+| Alpamayo2 super sweep | 2.58.0 | `ray[default]==2.58.0` (asserted at submit) | `npa/src/npa/orchestration/npa_workflow/skypilot_render.py` |
+
+The nano-video path is the only 2.56.0 holdout (its router subclasses Ray
+Serve internals pinned to that version). Everything else is 2.58.0.
+
 ## Common native Jobs lifecycle
 
 The detailed guides create the cluster and a loopback tunnel differently, but
