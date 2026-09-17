@@ -199,6 +199,27 @@ images:
       terms are baked. Built-image byte/layer scanning is mandatory before
       publication. Workflow toolRefs are service clients and therefore run in
       the standard task image; this service image grants no passwordless sudo.
+  openarm:
+    dockerfile: openarm/Dockerfile
+    isaac_runtime_fetch: true
+    tier: service
+    ports: [8792]
+    passwordless_root_exemption: >-
+      SkyPilot Kubernetes bootstrap only; the final runtime user is non-root,
+      no sshd service starts by default, and no credentials are baked.
+    redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    notes: >-
+      Bakes only the immutable Apache-2.0 Enactic openarm_mujoco 2.2.0 and
+      openarm_isaac_lab 0.1.0 source/model assets, a digest-pinned CUDA base,
+      the reviewed open-source closure, and NVIDIA redistributable CUDA/cuDNN
+      runtime components required by the pinned PyTorch wheels. Separately
+      packaged vendor SDK headers/static archives are removed and license files
+      retained. NVIDIA Isaac Sim, Isaac Lab,
+      Omniverse Kit, acceptance, caches, credentials, and operator data are
+      absent and remain operator-fetched/runtime-owned. Full filesystem and
+      layer scans plus real MuJoCo and RTX Isaac Lab execution are mandatory
+      before release promotion.
   wan2-2:
     dockerfile: wan2-2/Dockerfile
     tier: job
@@ -260,9 +281,12 @@ images:
       PhysicalAI-AV dataset, operator credentials, and populated caches are
       absent and fetched only at runtime. Built-image byte/layer scanning and
       real B200 plus RTX PRO 6000 inference are publication gates. Release
-      0.1.0-cu128 passed the complete 26-layer payload scan and both independent
-      real-inference gates on 2026-08-18; the accepted OCI index digest is
-      sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5.
+      0.1.0-cu128-r3, built from source commit
+      5b693476c113c833e9d9d4f8c7aa492492a27505 with the HTTPConnection
+      loopback healthcheck fix, passed the complete 25-layer payload scan, the full
+      vulnerability/secret/license scan, and both independent real-inference
+      gates on 2026-09-16; the accepted OCI index digest is
+      sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07.
   sonic:
     dockerfile: sonic/Dockerfile
     isaac_runtime_fetch: true
