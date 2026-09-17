@@ -309,7 +309,16 @@ def _stage_private_bundle(
                 cli.service_exec(
                     runtime,
                     "sim",
-                    ["install", "-d", "-m", "0700", upload, staging],
+                    # The supported service-copy transport writes as its
+                    # dedicated transfer user, not as the uid-1000 service.
+                    # This unpredictable dropbox is write/execute-only; the
+                    # service immediately installs owner-only verified copies.
+                    ["install", "-d", "-m", "0733", upload],
+                )
+                cli.service_exec(
+                    runtime,
+                    "sim",
+                    ["install", "-d", "-m", "0700", staging],
                 )
                 for name in REQUIRED_BUNDLE_FILES:
                     cli.service_copy(
@@ -317,6 +326,7 @@ def _stage_private_bundle(
                         local_upload / name,
                         f"sim:{upload}/{name}",
                     )
+                cli.service_exec(runtime, "sim", ["chmod", "0700", upload])
                 for source, destination in zip(upload_files, remote_files, strict=True):
                     cli.service_exec(
                         runtime,
@@ -379,7 +389,12 @@ def _stage_runtime_source(
             cli.service_exec(
                 runtime,
                 "sim",
-                ["install", "-d", "-m", "0700", staging, "/workspace/project/src"],
+                ["install", "-d", "-m", "0733", staging],
+            )
+            cli.service_exec(
+                runtime,
+                "sim",
+                ["install", "-d", "-m", "0755", "/workspace/project/src"],
             )
             for name in RUNTIME_SOURCE_FILES:
                 cli.service_copy(
@@ -387,6 +402,7 @@ def _stage_runtime_source(
                     source / name,
                     f"sim:{staging}/{name}",
                 )
+            cli.service_exec(runtime, "sim", ["chmod", "0700", staging])
             for name in RUNTIME_SOURCE_FILES:
                 staged = f"{staging}/{name}"
                 destination = f"/workspace/project/src/{name}"

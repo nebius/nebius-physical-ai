@@ -1584,7 +1584,7 @@ def test_initial_bundle_staging_recovers_from_service_recreation(
 
         def service_exec(self, _runtime, _service, command):  # noqa: ANN001, ANN202
             calls.append("exec:" + str(command[0]))
-            if command[:2] == ["install", "-d"]:
+            if command[:4] == ["install", "-d", "-m", "0733"]:
                 self.directory_attempts += 1
             if command[0] == "sha256sum":
                 return hashlib.sha256(b"private").hexdigest()
@@ -1634,6 +1634,7 @@ def test_runtime_source_is_staged_through_supported_service_copy(
     live._stage_runtime_source(Cli(), runtime=tmp_path)  # type: ignore[arg-type]
 
     assert calls[0][0] == "exec"
+    assert calls[0][1][2:4] == ["-m", "0733"]
     copies = [call for call in calls if call[0] == "copy"]
     assert copies[0][1][0] == "scenario_v2.py"
     assert copies[0][1][1].startswith("sim:/workspace/project/.npa-live-source-upload-")
@@ -1659,7 +1660,7 @@ def test_runtime_source_staging_recovers_from_service_recreation(
         attempts = 0
 
         def service_exec(self, _runtime, _service, command):  # noqa: ANN001, ANN202
-            if command[:2] == ["install", "-d"]:
+            if command[:4] == ["install", "-d", "-m", "0733"]:
                 self.attempts += 1
             if command[0] == "sha256sum":
                 return hashlib.sha256(b"# reviewed public source\n").hexdigest()
