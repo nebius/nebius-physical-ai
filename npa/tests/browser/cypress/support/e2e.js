@@ -1441,5 +1441,6 @@ export {
   resolveLiveAgentConfig,
   SIM_VIZ,
   STATIC_BUTTON_IDS,
+  WORKFLOW_VALIDATION,
   WORKFLOW_YAML,
 };

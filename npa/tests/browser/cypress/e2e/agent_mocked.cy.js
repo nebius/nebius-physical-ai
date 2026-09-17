@@ -9,6 +9,7 @@ import {
   NON_STOCK_RUN_ID,
   SIM_VIZ,
   STATIC_BUTTON_IDS,
+  WORKFLOW_VALIDATION,
   WORKFLOW_YAML,
 } from "../support/e2e";
 
