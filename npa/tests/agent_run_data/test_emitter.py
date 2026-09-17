@@ -8,6 +8,7 @@ import json
 import os
 import stat
 import threading
+import uuid
 from pathlib import Path
 
 import pytest
@@ -789,6 +790,59 @@ def test_outbox_rejects_symlink_components_before_creating_files(
     with pytest.raises(AgentRunDataError, match="symlink"):
         _emit(FakeStorage(s3))
     assert list(target.iterdir()) == []
+
+
+@pytest.mark.parametrize("uuid_text", [
+    "01234567-89ab-4cde-8fab-0123456789ab",
+    "e0012345-6789-4abc-8def-0123456789ab",
+])
+def test_generated_episode_uuid_retains_verified_delivery(dataset_env, monkeypatch, uuid_text):
+    from npa.agent_backend import trajectory as emitter
+
+    identifier = uuid.UUID(uuid_text)
+    monkeypatch.setattr(emitter.uuid, "uuid4", lambda: identifier)
+    s3 = FakeS3()
+    observed = []
+
+    @goal_episode_boundary(
+        storage_factory=lambda: s3,
+        active_tenant_id=lambda: "tenant-test", active_bucket=lambda: "test-bucket",
+    )
+    def endpoint(payload):
+        observed.append(emitter.current_episode_id())
+        return {"ok": True}
+
+    private_id = "e00" + "a" * 17
+    assert endpoint({"messages": [{"role": "user", "content": f"inspect {private_id}"}]}) == {"ok": True}
+    bodies = [body for key, body in s3.objects.items() if "/episodes/" in key]
+    assert len(bodies) == 1
+    row = json.loads(bodies[0])
+    assert row["episode_id"] == f"episode-{uuid_text}" == observed[0]
+    assert row["request"]["content"] == "inspect <infra-ref>"
+    assert row["outcome"]["verified"] is False
+    receipts = [json.loads(body) for key, body in s3.objects.items() if "/receipts/" in key]
+    assert receipts == [{
+        "schema_version": "npa.agent.trajectory-receipt.v1", "episode_id": row["episode_id"],
+        "content_sha256": row["collection"]["content_sha256"],
+        "payload_sha256": hashlib.sha256(bodies[0]).hexdigest(), "status": "collected",
+    }]
+    assert private_id not in b"".join(s3.objects.values()).decode()
+
+
+@pytest.mark.parametrize("field", ["episode_id", "session_id"])
+def test_caller_native_identifiers_remain_rejected(dataset_env, tmp_path, field):
+    s3 = FakeS3()
+    identity = {"episode_id": "episode-test", "session_id": "session-test"}
+    identity[field] = "e00" + "a" * 17
+    with pytest.raises(AgentRunDataError, match="safe stable identifiers"):
+        emit_trajectory(
+            **identity, request_content="inspect", intent="inspect", trajectory=_trajectory(),
+            outcome=_outcome(), routing={}, versions={}, storage=s3,
+            active_tenant_id="tenant-test", active_bucket="test-bucket",
+        )
+    assert not s3.objects
+    assert s3.put_count == 0
+    assert not (tmp_path / "outbox").exists()
 
 
 @pytest.mark.parametrize("ok", [False, True])

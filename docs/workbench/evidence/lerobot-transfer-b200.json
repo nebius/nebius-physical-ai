@@ -1,0 +1,330 @@
+{
+  "dataset": {
+    "dataset_repo": "lerobot/pusht",
+    "dataset_revision": "7628202a2180972f291ba1bc6723834921e72c19",
+    "total_frames": 25650,
+    "train_frames": 20598,
+    "video_backend": "torchcodec"
+  },
+  "evaluation_counts": {
+    "test": {
+      "baseline": {
+        "clean": {
+          "episodes": 64,
+          "successes": 18
+        },
+        "delay": {
+          "episodes": 64,
+          "successes": 16
+        },
+        "dim": {
+          "episodes": 64,
+          "successes": 0
+        },
+        "warm": {
+          "episodes": 64,
+          "successes": 1
+        }
+      },
+      "robust": {
+        "clean": {
+          "episodes": 64,
+          "successes": 25
+        },
+        "delay": {
+          "episodes": 64,
+          "successes": 15
+        },
+        "dim": {
+          "episodes": 64,
+          "successes": 13
+        },
+        "warm": {
+          "episodes": 64,
+          "successes": 10
+        }
+      }
+    },
+    "validation": {
+      "baseline": {
+        "clean": {
+          "episodes": 32,
+          "successes": 4
+        },
+        "delay": {
+          "episodes": 32,
+          "successes": 6
+        },
+        "dim": {
+          "episodes": 32,
+          "successes": 1
+        },
+        "warm": {
+          "episodes": 32,
+          "successes": 2
+        }
+      },
+      "robust": {
+        "clean": {
+          "episodes": 32,
+          "successes": 5
+        },
+        "delay": {
+          "episodes": 32,
+          "successes": 4
+        },
+        "dim": {
+          "episodes": 32,
+          "successes": 6
+        },
+        "warm": {
+          "episodes": 32,
+          "successes": 5
+        }
+      }
+    }
+  },
+  "executed_module_sha256": {
+    "npa/src/npa/orchestration/npa_workflow/catalog.py": "55202d0fdda02c29d88d6beb49519eb4bf064ecd5c0ba86ab26b6bd247f1da2a",
+    "npa/src/npa/orchestration/npa_workflow/skypilot_render.py": "709da6c7f7f494513e4a727794d00f129b8acfd098c23ea8aec20999f20e2422",
+    "npa/src/npa/workbench/lerobot/policy_container.py": "8bc5237fb9bd08f57ca4e8822bcc8763a16f5e1bd45b10f2fe7b0b3f70890616",
+    "npa/src/npa/workflows/lerobot_transfer.py": "f995132832f844d918aad8ffabf6be883c98c2b37df1eb49bf2e560866ff4217",
+    "npa/src/npa/workflows/lerobot_transfer_data.py": "9ac3d701b7bf2112872cacd37da853d16439e68fdd28bcc110d99b62790c998c",
+    "npa/src/npa/workflows/lerobot_transfer_eval.py": "702afa6d580ca008744cb443427bb2adebb6e4437586e301b50a2d664aeef787",
+    "npa/src/npa/workflows/lerobot_transfer_report.py": "06bd255fe19234ec579d769ba984069e72047d00a21aace769dff8f8e5c77cd7",
+    "npa/src/npa/workflows/lerobot_transfer_training.py": "3c7741f8f2a3ecc58a3aad82e99d0b3d7fbc34ca06135f142c412ae5fd8deca5"
+  },
+  "execution_date_utc": "2026-09-13",
+  "expert_demonstration_requests": 108,
+  "image_digest": "sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643",
+  "next_demonstrations_sha256": "c01b086d81d17cb01fb9e6f4ef1bce83df80c34d274877f02f9688d411fd69c6",
+  "protocol": {
+    "batch_size": 64,
+    "conditions": [
+      "clean",
+      "dim",
+      "warm",
+      "delay"
+    ],
+    "eval_batch_size": 8,
+    "minimum_success": 0.7,
+    "seed": 42,
+    "test_episodes": 64,
+    "test_seed": 100032,
+    "train_steps": 20000,
+    "validation_episodes": 32,
+    "validation_seed": 100000
+  },
+  "recipe_sha256": "f9fb3b8fbaddfc579f0718540ae5e0219afcd334e706832cbfdbe641b4ad24f8",
+  "reference_workflow": "workflows/testing/lerobot-transfer.yaml",
+  "reference_workflow_sha256": "9c8908f20cdb1c87df44bb5a041a4c80469a362ccafc9f7b82ff18d6c331c24a",
+  "report": {
+    "checkpoint_hashes": {
+      "baseline": {
+        "config.json": "6fbfb35afc308717df0c388952bfd2094189fbea4ec59bbf80cc321e45582f37",
+        "model.safetensors": "2ca39513393f63ee6dda63e9b6fd3ede6df547a1ec8381111d4e41295355d956",
+        "policy_postprocessor.json": "9ca3b5a1986e8b6d4f41238446eb7b3637776853102ae7f9e8ba29700e6a2e66",
+        "policy_postprocessor_step_0_unnormalizer_processor.safetensors": "dadb92f04a2e72eed52ad2910c5e96e82149cc8210daf05db3e3b526e58a50af",
+        "policy_preprocessor.json": "39af97ab0d52b54f441fce4925a27b97fd2c20c67f17099d0c63c4746d5169f5",
+        "policy_preprocessor_step_3_normalizer_processor.safetensors": "16fd0e361c739aae923acb7c42cb1665225091a03b6304f1f88ab553cb91f13f",
+        "train_config.json": "b7cf8ee15cb2cf6eb4a710e7fde1a3da8a800e56bf166d79a65a5a3f7b0b4a91"
+      },
+      "robust": {
+        "config.json": "6fbfb35afc308717df0c388952bfd2094189fbea4ec59bbf80cc321e45582f37",
+        "model.safetensors": "9967dd1e5788c1232a8774c364483bc5c56c54f535a140c6341bae70cd9fa75a",
+        "policy_postprocessor.json": "9ca3b5a1986e8b6d4f41238446eb7b3637776853102ae7f9e8ba29700e6a2e66",
+        "policy_postprocessor_step_0_unnormalizer_processor.safetensors": "dadb92f04a2e72eed52ad2910c5e96e82149cc8210daf05db3e3b526e58a50af",
+        "policy_preprocessor.json": "39af97ab0d52b54f441fce4925a27b97fd2c20c67f17099d0c63c4746d5169f5",
+        "policy_preprocessor_step_3_normalizer_processor.safetensors": "16fd0e361c739aae923acb7c42cb1665225091a03b6304f1f88ab553cb91f13f",
+        "train_config.json": "41b18df2439d113fd806352c49047ffacaa61dd7a3664c6a3af7ec5b840a908d"
+      }
+    },
+    "evaluation_sha256": "60ebdfea6c652aa91a118157addce9b063d99abd0f000463255e43a461278d2c",
+    "improvement_demonstrated": false,
+    "limitations": [
+      "PushT simulation robustness is not evidence of physical robot transfer.",
+      "One training seed per arm; intervals describe reset variability, not training variability.",
+      "Reserved demonstration episodes are excluded from training and normalization, not scored here.",
+      "Only validation failures drive data collection; keep test resets sealed in later iterations."
+    ],
+    "physical_robot_tested": false,
+    "ready_for_robot_deployment": false,
+    "recipe_sha256": "f9fb3b8fbaddfc579f0718540ae5e0219afcd334e706832cbfdbe641b4ad24f8",
+    "recording_sha256": "a715437d10f66ed3c28dfea30c60634ab07b3d9175567d3b30038b12f6b63828",
+    "schema": "npa.lerobot-transfer.report.v1",
+    "selected_arm": "robust",
+    "selection_rule": "highest worst-condition validation success; baseline wins ties",
+    "success_rates": {
+      "test": {
+        "baseline": {
+          "clean": 0.28125,
+          "delay": 0.25,
+          "dim": 0.0,
+          "warm": 0.015625
+        },
+        "robust": {
+          "clean": 0.390625,
+          "delay": 0.234375,
+          "dim": 0.203125,
+          "warm": 0.15625
+        }
+      },
+      "validation": {
+        "baseline": {
+          "clean": 0.125,
+          "delay": 0.1875,
+          "dim": 0.03125,
+          "warm": 0.0625
+        },
+        "robust": {
+          "clean": 0.15625,
+          "delay": 0.125,
+          "dim": 0.1875,
+          "warm": 0.15625
+        }
+      }
+    },
+    "test_clean_delta_95ci": [
+      -0.046875,
+      0.265625
+    ],
+    "test_paired_delta_95ci": [
+      0.046875,
+      0.171875
+    ],
+    "uncertainty": "10000 paired bootstrap resamples clustered by reset seed across conditions",
+    "videos": {
+      "baseline/test/clean/videos/episode.mp4": {
+        "frames": 300,
+        "sha256": "ad2366a3def644944c337eac771fd12dc8e3348328c0dcad5538bf1da13ee115"
+      },
+      "baseline/test/delay/videos/episode.mp4": {
+        "frames": 242,
+        "sha256": "775134bbc523d05b7ead556b72afc3a43df1befa8c7a8681736da9d5f95894d0"
+      },
+      "baseline/test/dim/videos/episode.mp4": {
+        "frames": 300,
+        "sha256": "782ca259fb0673f1cdedcc1e951315b21285adca1521debfbea021ddb13e709a"
+      },
+      "baseline/test/warm/videos/episode.mp4": {
+        "frames": 300,
+        "sha256": "40050061704aedec84965ecf7767f9707a2ece39395a1985950f733e346832fb"
+      },
+      "baseline/validation/clean/videos/episode.mp4": {
+        "frames": 300,
+        "sha256": "00d76d3a721662d6fa847cc4d0c1cc9e44092a31c1e311a82328e261d7a5dbf9"
+      },
+      "baseline/validation/delay/videos/episode.mp4": {
+        "frames": 300,
+        "sha256": "6d122502387f5ba3cdfd6663b3583daf2c21f369b604f71aa619df877fbd6b48"
+      },
+      "baseline/validation/dim/videos/episode.mp4": {
+        "frames": 300,
+        "sha256": "d06c8f6af8c3a8bc5d21046a6fecb1057c669d8cea867094e411741da3479d75"
+      },
+      "baseline/validation/warm/videos/episode.mp4": {
+        "frames": 300,
+        "sha256": "44e852a5076bfd76f5cd5a39f882132a72454148630ae7378b7a6913d36dc630"
+      },
+      "robust/test/clean/videos/episode.mp4": {
+        "frames": 300,
+        "sha256": "863206e840798ac4735ec72022020778f896844aef0840845209872185d8091b"
+      },
+      "robust/test/delay/videos/episode.mp4": {
+        "frames": 256,
+        "sha256": "e5c01bfbaf17950b1a2ec8d8ccbc78da1d7d7ee48b4cc7244b55bc0ad91ffa09"
+      },
+      "robust/test/dim/videos/episode.mp4": {
+        "frames": 300,
+        "sha256": "547b9c8dd182274dd08708eac62322363cef5e1a61c59ba3b6cb2cc85c47de2d"
+      },
+      "robust/test/warm/videos/episode.mp4": {
+        "frames": 300,
+        "sha256": "4be3ab2d0470e81d3d2f82fcb4fc01e614bbde043cb7fcb40a339e4f039df324"
+      },
+      "robust/validation/clean/videos/episode.mp4": {
+        "frames": 300,
+        "sha256": "970d4e52c0505e7ca4f755b4c9fa0467f45c78643d9c7d420941e28c633cc602"
+      },
+      "robust/validation/delay/videos/episode.mp4": {
+        "frames": 300,
+        "sha256": "bc2804dc6f0d7c5afd223dc219fb7a8e4f40e29eb702f07ecaf003a68882832d"
+      },
+      "robust/validation/dim/videos/episode.mp4": {
+        "frames": 300,
+        "sha256": "c65a3034dd12f6e3bb1d4a4f3777b20ec3c782c4a207623b72b9efe3f0fb36e5"
+      },
+      "robust/validation/warm/videos/episode.mp4": {
+        "frames": 300,
+        "sha256": "2aefe4b312888072628917d11a338c606abc803829bc7d9a266ef80a870244dd"
+      }
+    }
+  },
+  "reserved_episodes": 41,
+  "schema": "npa.lerobot-transfer.live-evidence.v1",
+  "source_fingerprint": "da5003bdb8aebd6aa6e9e7b10910ffca02ccd268428277f607e404824932f6ab",
+  "train_episodes": 165,
+  "training": {
+    "baseline": {
+      "batch_size": 64,
+      "checkpoint_sha256": {
+        "config.json": "6fbfb35afc308717df0c388952bfd2094189fbea4ec59bbf80cc321e45582f37",
+        "model.safetensors": "2ca39513393f63ee6dda63e9b6fd3ede6df547a1ec8381111d4e41295355d956",
+        "policy_postprocessor.json": "9ca3b5a1986e8b6d4f41238446eb7b3637776853102ae7f9e8ba29700e6a2e66",
+        "policy_postprocessor_step_0_unnormalizer_processor.safetensors": "dadb92f04a2e72eed52ad2910c5e96e82149cc8210daf05db3e3b526e58a50af",
+        "policy_preprocessor.json": "39af97ab0d52b54f441fce4925a27b97fd2c20c67f17099d0c63c4746d5169f5",
+        "policy_preprocessor_step_3_normalizer_processor.safetensors": "16fd0e361c739aae923acb7c42cb1665225091a03b6304f1f88ab553cb91f13f",
+        "train_config.json": "b7cf8ee15cb2cf6eb4a710e7fde1a3da8a800e56bf166d79a65a5a3f7b0b4a91"
+      },
+      "duration_seconds": 585.7225060499986,
+      "final_logged_loss": 0.057,
+      "finite_loss_reports": 200,
+      "optimizer_updates": 20000,
+      "runtime": {
+        "compute_capability": [
+          10,
+          0
+        ],
+        "cuda": "13.0",
+        "gpu": "NVIDIA B200",
+        "lerobot": "0.6.0",
+        "torch": "2.11.0+cu130"
+      }
+    },
+    "robust": {
+      "batch_size": 64,
+      "checkpoint_sha256": {
+        "config.json": "6fbfb35afc308717df0c388952bfd2094189fbea4ec59bbf80cc321e45582f37",
+        "model.safetensors": "9967dd1e5788c1232a8774c364483bc5c56c54f535a140c6341bae70cd9fa75a",
+        "policy_postprocessor.json": "9ca3b5a1986e8b6d4f41238446eb7b3637776853102ae7f9e8ba29700e6a2e66",
+        "policy_postprocessor_step_0_unnormalizer_processor.safetensors": "dadb92f04a2e72eed52ad2910c5e96e82149cc8210daf05db3e3b526e58a50af",
+        "policy_preprocessor.json": "39af97ab0d52b54f441fce4925a27b97fd2c20c67f17099d0c63c4746d5169f5",
+        "policy_preprocessor_step_3_normalizer_processor.safetensors": "16fd0e361c739aae923acb7c42cb1665225091a03b6304f1f88ab553cb91f13f",
+        "train_config.json": "41b18df2439d113fd806352c49047ffacaa61dd7a3664c6a3af7ec5b840a908d"
+      },
+      "duration_seconds": 892.6742021530008,
+      "final_logged_loss": 0.065,
+      "finite_loss_reports": 200,
+      "optimizer_updates": 20000,
+      "runtime": {
+        "compute_capability": [
+          10,
+          0
+        ],
+        "cuda": "13.0",
+        "gpu": "NVIDIA B200",
+        "lerobot": "0.6.0",
+        "torch": "2.11.0+cu130"
+      }
+    }
+  },
+  "training_seed": 42,
+  "trial_csv_sha256": "c49dd6a9a3fc21420572eef03dfe3440e7071883bfd5c277f2538ed2fd877a50",
+  "verification": {
+    "all_five_stage_manifests": true,
+    "decoded_mp4_files": 16,
+    "native_and_exported_checkpoints_identical": true,
+    "paired_statistics_independently_recomputed": true,
+    "rrd_verified_and_decoded": true
+  }
+}
