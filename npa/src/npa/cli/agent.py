@@ -4960,7 +4960,32 @@ def _chat_payload(response: object) -> dict:
     return response if isinstance(response, dict) else {{}}
 
 
-def _visual_evidence_selection() -> dict:
+def _active_visual_evidence_selection(state: dict) -> dict:
+    # Return the server-verified active visual artifact, if one is selected.
+    sim_viz = state.get("sim_viz") if isinstance(state.get("sim_viz"), dict) else {{}}
+    render = str(sim_viz.get("artifact_render") or "")
+    selection = {{
+        "run_id": str(sim_viz.get("run_id") or ""),
+        "run_ref": str(sim_viz.get("artifact_run_ref") or ""),
+        "key": str(sim_viz.get("artifact_key") or ""),
+        "resource_bucket": str(sim_viz.get("bucket") or ""),
+        "project_id": str(sim_viz.get("project_id") or ""),
+        "resolved_prefix": str(sim_viz.get("resolved_prefix") or ""),
+        "source_selected": True,
+    }}
+    if (
+        render in {{"rerun", "video"}}
+        and selection["run_ref"].startswith("npa1_")
+        and all(selection[key] for key in ("run_id", "key", "resource_bucket", "project_id"))
+    ):
+        return selection
+    return {{}}
+
+
+def _visual_evidence_selection(state: dict | None = None) -> dict:
+    active_selection = _active_visual_evidence_selection(state or {{}})
+    if active_selection:
+        return active_selection
     try:
         # Storage discovery warms its bounded index asynchronously on a fresh
         # Agent.  Give that one safe retry window here so a user asking chat to
@@ -5028,7 +5053,7 @@ def _live_runtime_evidence(state: dict) -> dict:
     workflow_status = str(execution.get("status") or execution.get("state") or "unavailable").lower()
     if workflow_status not in {{"queued", "preparing", "running", "succeeded", "failed", "cancelled", "unavailable"}}:
         workflow_status = "unavailable"
-    selection = _visual_evidence_selection()
+    selection = _visual_evidence_selection(state)
     try:
         loaded = _chat_payload(sim_viz_load_artifact(selection)) if selection else {{}}
         live_viz = _chat_payload(sim_viz_status()) if selection else {{}}

@@ -5175,7 +5175,7 @@ def test_live_evidence_chat_loads_exact_artifact_without_exposing_source(
         "_agent_k8s_backends",
         lambda: {"cloud_clusters": [{"status": "RUNNING"}, {"status": "RUNNING"}]},
     )
-    monkeypatch.setattr(module, "_visual_evidence_selection", lambda: exact_selection)
+    monkeypatch.setattr(module, "_visual_evidence_selection", lambda _state: exact_selection)
     calls = []
 
     def load_artifact(payload):
@@ -5207,6 +5207,34 @@ def test_live_evidence_chat_loads_exact_artifact_without_exposing_source(
     assert "2 running" in response["reply"]
     assert "private-bucket" not in response["reply"]
     assert "private/prefix" not in response["reply"]
+
+
+def test_live_evidence_prefers_a_verified_active_visual_artifact(monkeypatch, tmp_path):
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="live_evidence_active_artifact_backend"
+    )
+    state = {
+        "sim_viz": {
+            "run_id": "artifact-run",
+            "artifact_run_ref": "npa1_exact_source_ref",
+            "artifact_key": "workflows/visual/output.rrd",
+            "artifact_render": "rerun",
+            "bucket": "example-bucket",
+            "project_id": "example-project",
+            "resolved_prefix": "workflows/visual",
+        }
+    }
+    monkeypatch.setattr(module, "artifacts_runs", lambda **_: pytest.fail("active evidence widened to discovery"))
+
+    assert module._visual_evidence_selection(state) == {
+        "run_id": "artifact-run",
+        "run_ref": "npa1_exact_source_ref",
+        "key": "workflows/visual/output.rrd",
+        "resource_bucket": "example-bucket",
+        "project_id": "example-project",
+        "resolved_prefix": "workflows/visual",
+        "source_selected": True,
+    }
 
 
 def test_live_evidence_retries_a_warming_artifact_inventory(monkeypatch, tmp_path):
