@@ -15,14 +15,15 @@ RUN install -d -o 1000 -g 1000 \
     /tmp/npa-home \
     /tmp/npa-home/.cache \
     /tmp/npa-home/.cache/ov \
-    /antioch/renderer-cache/tmp \
+    /tmp/npa-home/tmp \
     /usr/local/lib/python3.12/dist-packages/isaacsim/kit/cache/DerivedDataCache \
     "/usr/local/lib/python3.12/dist-packages/isaacsim/kit/data/documents/Kit/apps/Isaac-Sim Python/scripts" \
     /usr/local/lib/python3.12/dist-packages/isaacsim/kit/data/documents/Kit/shared
 COPY --chown=1000:1000 src/ /workspace/project/src/
 
 ENV HOME=/tmp/npa-home \
-    XDG_CACHE_HOME=/tmp/npa-home/.cache
+    XDG_CACHE_HOME=/tmp/npa-home/.cache \
+    TMPDIR=/tmp/npa-home/tmp
 
 USER 1000:1000
 

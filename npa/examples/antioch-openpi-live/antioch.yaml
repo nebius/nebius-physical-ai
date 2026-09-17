@@ -9,6 +9,10 @@ services:
     build:
       context: "."
       dockerfile: "Dockerfile"
+    environment:
+      # Antioch's livestream lease chmods its tempfile root to 0700. The
+      # platform renderer-cache mount is group-writable but platform-owned.
+      TMPDIR: "/tmp/npa-home/tmp"
     ports:
       # The cluster controller owns `antioch service ports --serve` in the same
       # pod and binds this named route only on localhost. The persistent sim
