@@ -23,6 +23,7 @@ else:
 
     from . import (
         alpamayo2_super,
+        antioch,
         byof,
         cosmos,
         cosmos2,
@@ -51,6 +52,7 @@ else:
 
     __all__ = [
         "alpamayo2_super",
+        "antioch",
         "byof",
         "cosmos",
         "cosmos2",
