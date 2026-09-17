@@ -102,7 +102,13 @@ The composition requires
 `video2video`: selecting a text-to-video or image-to-video mode fails before GPU
 inference rather than producing a misleading source-conditioned claim.
 
-The canonical workflow enables `structural_control: edge`. `conditioning_fps`
+The canonical workflow enables `structural_control: edge`. The optional
+`transfer_edge_threshold` selects a native Canny preset from `very_low`, `low`,
+`medium` (default), `high`, and `very_high`; the native control receipt records
+the actual preset and verified pixel hash. Lower thresholds retain weaker
+edges, which can help expose small or dark features, but also admit noise.
+Inspect the controls and qualify the generated output independently.
+`conditioning_fps`
 defaults to 24; preparation letterboxes to 832×480 and preserves duration within
 one prepared frame. `transfer_chunk_frames` defaults to 93 and `control_guidance`
 to 1.5. Native chunks cover every prepared source frame, including a final

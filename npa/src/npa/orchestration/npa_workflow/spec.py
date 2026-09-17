@@ -445,6 +445,13 @@ def validate_spec(spec: NpaWorkflowSpec) -> None:
     _validate_executable_resource_contracts(spec)
     _validate_optional_sam2_config(spec)
     _validate_appearance_profiles(spec)
+    if "transfer_edge_threshold" in spec.config:
+        from npa.workbench.cosmos.structural_transfer import edge_thresholds
+
+        try:
+            edge_thresholds(spec.config["transfer_edge_threshold"])
+        except ValueError as exc:
+            raise NpaWorkflowError(str(exc)) from exc
     _assert_acyclic_needs(spec)
     _assert_terminal_exists(spec)
     _assert_bounded_control_flow_cycles(spec)

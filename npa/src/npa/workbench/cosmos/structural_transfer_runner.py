@@ -1,7 +1,7 @@
 """Run pinned native Cosmos 3 transfer with explicit text and video guardrails.
 
 Uses NVIDIA cosmos-framework's OpenMDW-1.1 transfer implementation. The Canny
-preprocessor follows its AddControlInputEdge medium preset without importing
+preprocessor follows its AddControlInputEdge presets without importing
 unrelated training preprocessors. See skills/NOTICE-NVIDIA-COSMOS3.
 """
 
@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from npa.workflows.paidf_cosmos3_media import HEIGHT, WIDTH, video_sha256
+from npa.workbench.cosmos.structural_transfer import edge_thresholds
 
 
 class _GuardedTransferModel:
@@ -37,9 +38,10 @@ class _GuardedTransferModel:
         return self._model.generate_samples_from_batch(batch, **kwargs)
 
 
-def _write_edges(source: Path, destination: Path, fps: int) -> tuple[int, str]:
+def _write_edges(source: Path, destination: Path, fps: int, preset: str = "medium") -> tuple[int, str]:
     import cv2
 
+    lower, upper = edge_thresholds(preset)
     destination.parent.mkdir(parents=True, exist_ok=True)
     capture = cv2.VideoCapture(str(source))
     digest, count = hashlib.sha256(), 0
@@ -55,7 +57,7 @@ def _write_edges(source: Path, destination: Path, fps: int) -> tuple[int, str]:
                     break
                 if frame.shape[:2] != (HEIGHT, WIDTH):
                     raise ValueError("Source dimensions changed during edge extraction")
-                edge = cv2.Canny(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), 100, 200).tobytes()
+                edge = cv2.Canny(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), lower, upper).tobytes()
                 encoder.stdin.write(edge)
                 digest.update(edge)
                 count += 1
@@ -73,6 +75,7 @@ def _verify_control(sample: Any, count: int, digest: str) -> dict[str, Any]:
     from cosmos_framework.inference.transfer import load_transfer_control_frames
 
     control = sample.transfer_hints[TransferHintKey.EDGE]
+    lower, upper = edge_thresholds(control.preset_edge_threshold)
     frames = load_transfer_control_frames(hint_key=TransferHintKey.EDGE, transfer=control,
         resolution=sample.resolution, aspect_ratio=sample.aspect_ratio, max_frames=sample.max_frames)
     if frames.dtype != torch.uint8 or tuple(frames.shape) != (3, count, HEIGHT, WIDTH):
@@ -84,7 +87,8 @@ def _verify_control(sample: Any, count: int, digest: str) -> dict[str, Any]:
         raise ValueError("Native transfer loader changed source-control pixels or coverage")
     return {"control_path": str(control.control_path), "control_sha256": video_sha256(Path(control.control_path)),
             "control_pixels_sha256": digest, "source_frames": count,
-            "control_loader_verified": True, "edge_algorithm": "opencv-canny-100-200"}
+            "control_loader_verified": True, "edge_algorithm": f"opencv-canny-{lower}-{upper}",
+            "edge_threshold": str(control.preset_edge_threshold)}
 
 
 def _save_guarded_output(pipe: Any, sample: Any, generated: Any, prompts: list[str], control: dict[str, Any]) -> None:
@@ -119,10 +123,12 @@ def _prepare_controls(input_files: list[Path]) -> dict[str, tuple[int, str]]:
     for path in input_files:
         fields = json.loads(Path(path).read_text())
         control = fields.get("edge") or {}
-        if not control.get("control_path") or control.get("preset_edge_threshold") != "medium":
-            raise ValueError("Only explicit medium Canny source controls are supported")
+        if not control.get("control_path"):
+            raise ValueError("An explicit Canny control path is required")
+        preset = control.get("preset_edge_threshold")
+        edge_thresholds(preset)
         controls[fields["name"]] = _write_edges(
-            Path(fields["vision_path"]), Path(control["control_path"]), int(fields["fps"])
+            Path(fields["vision_path"]), Path(control["control_path"]), int(fields["fps"]), preset
         )
     return controls
 

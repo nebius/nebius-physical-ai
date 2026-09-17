@@ -97,7 +97,7 @@ QUALITY_ARGS=(
   --var "prompt=$TASK_PROMPT"
   --var 'negative_prompt=extra or missing objects, warped grippers, altered battery or slot, floating objects, interpenetration, motion retiming, flicker, ghosting, unsafe content'
   --var augmentation_seed=30 --var seed=17
-  --var control_guidance=3.0 --var guidance=3.5 --var steps=32
+  --var control_guidance=1.5 --var guidance=5.0 --var steps=24
   --var grade_threshold=0.75 --var attribute_threshold=1.0
   --var temporal_consistency_mode=required
   --var temporal_consistency_threshold=0.8
@@ -118,13 +118,15 @@ npa workbench workflow submit "$SPEC" --run-id "$RUN_ID" \
   --runtime --durable-s3
 ```
 
-These settings are an **unqualified starting experiment**, not a measured quality
-recommendation. Compare the same episode, appearance profiles and seeds using
-the starter sampling controls (`control_guidance=1.5`, `guidance=5.0`, `steps=24`)
-and the proposed controls above in separate fresh run IDs. Use the same strict
-evaluation settings for both. Do not compare a strict candidate against a
-baseline admitted only by exploratory thresholds. Adjust one generation control
-at a time after observing the failure; lowering thresholds does not improve pixels.
+These settings retain the starter sampling controls; they are an **unqualified
+starting experiment**, not a training-quality recommendation. A real trial with
+`control_guidance=3.0`, `guidance=3.5`, and `steps=32` produced harsh contrast and
+distorted gripper/battery details and was rejected. Higher control guidance did
+not establish task preservation. Compare changes on the same episode, appearance
+profiles and seeds in separate fresh run IDs, with a separate SkyPilot API
+directory per run. Use the same strict evaluation settings for each. Adjust one
+generation control at a time after observing the failure; lowering thresholds
+does not improve pixels.
 
 ## Review and tune the actual outputs
 
@@ -133,9 +135,21 @@ and `source_motion_weight=0.0`. The source is normalized to 832×480 at 24 fps
 without changing duration. This example becomes 288 frames over 12 seconds.
 Frame alignment proves coverage and timing, not correct grasp geometry.
 
+Inspect the source control images as well as RGB frames. Set
+`transfer_edge_threshold` to a native Canny preset: `very_low` (20/50), `low`
+(50/100), `medium` (100/200, unchanged default), `high` (200/300), or `very_high`
+(300/400). Lower thresholds retain weaker edges, including dark mechanism and
+small-object details; they can also admit noise. The setting reaches the actual
+control preprocessor, and `transfer.json` records the preset, algorithm and
+decoded-control hash verified by the native loader. It requires
+`structural_control=edge`; invalid presets fail before planning or model work.
+Compare a lower preset with all other settings fixed before adopting it. On the
+battery source, the medium preset omits substantial internal gripper detail;
+this observation alone does not qualify a lower preset's generated output.
+
 | Observed failure | Next controlled experiment |
 | --- | --- |
-| Small battery, gripper or slot geometry drifts | Increase `control_guidance` relative to the baseline, reduce conflicting prompt guidance, and simplify the appearance change. Recheck whether the source edges actually resolve the small feature. |
+| Small battery, gripper or slot geometry drifts | Reject the output. Check whether source edges resolve the feature and whether captions misidentify it. Simplify the appearance edit, then compare one control-guidance change at a time; larger values can still distort details. |
 | Appearance hardly changes | Confirm the selected profile is present in `metadata.json`'s effective prompt. Check the raw output against the source. Try one more visible but plausible lighting change; stronger structural control can suppress edits. |
 | Flicker or discontinuity near generation joins | Inspect `transfer.json` for actual native chunk count and review frames around each join. Compare a larger supported `transfer_chunk_frames` value with the same seeds; it must be `4k+1`, between 9 and 297. Larger windows need more memory and are not guaranteed to improve quality. |
 | Evaluation accepts a visibly incorrect insertion | Reject that candidate in the review record. Increase task-specific inspection coverage; attribute checks and image motion diagnostics cannot certify physics. |
@@ -205,6 +219,29 @@ the real local LeRobot v3 selector and full-video normalization: each retained
 12 seconds and decoded to 288 frames at 832×480 and 24 fps. This validates input
 selection and preparation. Custom-profile forwarding, evaluator options and
 episode-spanning caption selection have automated regression coverage.
-The proposed sampling controls have not yet been qualified by GPU generation
-or visual review of augmented battery data. Earlier starter live evidence does
-not validate these new prompts or this dataset's augmentation quality.
+On September 17, 2026, real Cosmos 3 generation on an RTX PRO 6000 Blackwell
+produced a complete episode-zero high-camera cool-lighting candidate with the
+high-control settings described above. Its four native windows produced 288
+frames; the synchronized source/output comparison had zero timestamp error.
+Native text checks and configured video postprocessing completed. Visual review
+rejected the candidate for harsh contrast and distorted gripper/battery details.
+The warm sibling was cancelled before completion, so this is not a completed
+two-variant batch or a full accepted PAIDF run. The source, native output,
+receipts and comparison remain in private run evidence.
+
+Task-aware captioning was separately exercised against eight original frames.
+It removed the initial false lighting descriptions but retained uncertainty and
+some object/contact errors. Caption context is useful input, not task validation.
+Earlier starter live evidence does not establish this dataset's augmentation
+quality. No recipe is yet qualified for training or multi-view consistency.
+
+A second real GPU trial generated both warm and cool variants on B200 using
+task-aware captions and the starter sampling controls (1.5 control guidance,
+5.0 text guidance, 24 steps). Both fully decode to the same 288-frame timeline
+with zero timestamp error. Contact crops still show distorted, excessively
+contrasted grippers, so both were visually rejected. The changed captions and
+sampling controls make this a recipe comparison, not an isolated causal test.
+The real evaluator completed with zero accepted clips and an aggregate score
+of 0.071303 against 0.75. Both failed required temporal checks (scores 0.071894
+and 0.070713 against 0.8) and strict attribute checks (2/4 and 1/4 correct).
+An advisory appearance-fidelity pass did not establish correct task geometry.

@@ -33,6 +33,7 @@ config:
   conditioning_fps: "24"
   transfer_chunk_frames: "93"
   control_guidance: "1.5"
+  transfer_edge_threshold: medium
   prompt: "Preserve the source robot motion and scene structure while creating a physically plausible appearance variant."
   negative_prompt: "distorted robot geometry, impossible motion, unsafe content"
   seed: "17"

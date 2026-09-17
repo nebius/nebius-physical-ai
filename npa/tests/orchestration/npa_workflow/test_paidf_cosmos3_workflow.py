@@ -101,6 +101,31 @@ def test_invalid_appearance_profile_override_fails_during_planning():
     assert "appearance profile" in result.output
 
 
+def test_edge_preset_reaches_generation_cli_and_settings(tmp_path, monkeypatch):
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+    from npa.workflows import paidf_cosmos3
+
+    document = _doc()
+    document["config"]["transfer_edge_threshold"] = "very_low"
+    path = tmp_path / "workflow.yaml"
+    path.write_text(yaml.safe_dump(document))
+    plan = build_plan(load_spec(path), run_id="edge-detail", assume_decision="promote_checkpoint")
+    stage = next(step for step in plan.steps if step.state == "generate-variants")
+    calls = []
+    monkeypatch.setattr(paidf_cosmos3, "generate_variants", lambda *args, **kwargs: calls.append(kwargs) or {})
+    result = runner.invoke(app, list(stage.argv[1:]))
+    assert result.exit_code == 0, result.output
+    assert calls[0]["transfer_edge_threshold"] == "very_low"
+
+
+def test_invalid_edge_preset_fails_during_planning():
+    result = runner.invoke(app, ["workbench", "workflow", "plan-spec", str(SPEC),
+                                "--run-id", "invalid-edge", "--var", "transfer_edge_threshold=auto", "--json"])
+    assert result.exit_code != 0
+    assert "transfer_edge_threshold" in result.output
+
+
 def test_source_caption_instruction_uses_task_context(tmp_path):
     from npa.orchestration.npa_workflow.interpreter import build_plan
     from npa.orchestration.npa_workflow.spec import load_spec

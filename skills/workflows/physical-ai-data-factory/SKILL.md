@@ -58,6 +58,15 @@ settings to universal defaults or describe input-only checks as augmentation
 validation. Retain rejected attempts and validate other episodes/cameras before
 claiming generality.
 
+Cosmos3 `transfer_edge_threshold` selects native Canny thresholds independently
+of control guidance; `medium` preserves the existing behavior. Inspect actual
+source controls when dark gripper or small-object detail is missing. The lower
+presets preserve weaker edges but can retain noise. Validate presets before
+planning, retain native loader hashes and preset evidence, and qualify actual
+GPU outputs before recommending a setting. Neither the reviewed high-control
+battery candidate nor the standard-control warm/cool pair preserved acceptable
+gripper detail; keep those rejected trials in the guide's validation record.
+
 For operator setup, verify `command -v nebius` and `nebius version` after selecting
 `PATH` and after any environment activation. Health preflight proves profile
 authentication, while configure also enforces NPA's supported CLI version.

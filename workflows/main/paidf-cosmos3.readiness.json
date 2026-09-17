@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "060bf18d69e44aee4173677c20d8c96010ae7c26f96c7c2fbed2f7c25829c12e",
+  "workflow_sha256": "072ab07c3d56f9f40eb4b190b00cdeabd9a8fefd545cc65fa61863f379d985fa",
   "planning": {
     "validation": {
       "status": "verified",
@@ -13,7 +13,7 @@
     },
     "task_fidelity": {
       "status": "unverified",
-      "reason": "The pinned battery high and left-wrist episode-zero inputs passed the real local LeRobot selector and full normalization (12 seconds, 288 frames at 24 fps). CPU regressions verify profile selection, evaluator options and effective prompt delivery. GPU generation and visual review with the changed prompts and proposed battery settings remain unperformed; earlier starter execution evidence does not establish this revision's augmented-data quality.",
+      "reason": "The pinned battery high and left-wrist episode-zero inputs passed full normalization (12 seconds, 288 frames at 24 fps). A real GPU cool-lighting candidate with high control guidance passed decoded alignment but was visually rejected for harsh contrast and distorted task details. Its sibling was cancelled. Task-aware captions were exercised on eight source frames. No battery recipe or full augmented batch is yet quality-qualified; earlier starter evidence does not establish task fidelity.",
       "evidence": [
         "docs/workbench/guides/paidf-realistic-augmentation.md#validation-status",
         "npa/tests/workflows/test_data_factory_appearance.py",
@@ -52,7 +52,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The new manipulation recipe has not been executed on a GPU. Every target must independently prove project access, Kubernetes readiness, supported GPU discovery, image pullability and sufficient per-node resources.",
+      "reason": "The manipulation recipe executed on an RTX PRO 6000 Blackwell, but its reviewed candidate was rejected. Every future target must independently prove project access, Kubernetes readiness, supported GPU discovery, image pullability and sufficient per-node resources; runtime execution alone does not qualify generated data.",
       "evidence": [
         "workflows/guides/paidf-cosmos3.md#validation"
       ]

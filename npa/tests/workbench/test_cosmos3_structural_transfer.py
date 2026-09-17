@@ -1,5 +1,6 @@
 """Exercise real media correspondence and fail-closed native transfer integration."""
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -73,24 +74,56 @@ def test_invalid_media_refused_before_generation(tmp_path, content):
         media.probe_video(path)
 
 
-def test_native_sample_uses_all_source_controls_and_explicit_seed(prepared, tmp_path):
+@pytest.mark.parametrize("preset", ["very_low", "low", "medium", "high", "very_high"])
+def test_native_sample_uses_all_source_controls_and_explicit_seed(prepared, tmp_path, preset):
     _, source, _ = prepared
     sample = transfer.transfer_sample({"name": "sample", "model_mode": "video2video",
-                                       "vision_path": str(source)}, transfer.TransferSettings(), tmp_path, 17)
+                                       "vision_path": str(source)}, transfer.TransferSettings(edge_threshold=preset), tmp_path, 17)
     assert sample["max_frames"] == 81
     assert sample["seed"] == 17
     assert sample["fps"] == 24
     assert sample["num_video_frames_per_chunk"] == 93
-    assert sample["edge"]["preset_edge_threshold"] == "medium"
+    assert sample["edge"]["preset_edge_threshold"] == preset
     assert sample["show_input"] is sample["show_control_condition"] is False
 
 
 @pytest.mark.parametrize("values", [{"fps": 50}, {"fps": True}, {"chunk_frames": 94},
                                     {"control_guidance": float("nan")}, {"control_guidance": 10.1},
-                                    {"control_guidance": "1.5"}, {"control_guidance": False}])
+                                    {"control_guidance": "1.5"}, {"control_guidance": False},
+                                    {"edge_threshold": "auto"}, {"edge_threshold": None},
+                                    {"edge_threshold": []}])
 def test_unsupported_native_controls_are_rejected(values):
     with pytest.raises(ValueError):
         transfer.TransferSettings(**values).validate()
+
+
+@pytest.mark.parametrize("preset,thresholds", [("very_low", (20, 50)), ("low", (50, 100)),
+                                             ("medium", (100, 200)), ("high", (200, 300)),
+                                             ("very_high", (300, 400))])
+def test_real_edge_video_retains_exact_preset_pixels(prepared, tmp_path, preset, thresholds):
+    cv2 = pytest.importorskip("cv2")
+    _, source, _ = prepared
+    destination = tmp_path / "control.mkv"
+    count, digest = native._write_edges(source, destination, 24, preset)
+    original, control = cv2.VideoCapture(str(source)), cv2.VideoCapture(str(destination))
+    expected_hash = hashlib.sha256()
+    decoded = 0
+    try:
+        while True:
+            ok, frame = original.read()
+            read, actual = control.read()
+            assert ok == read
+            if not ok:
+                break
+            expected = cv2.Canny(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), *thresholds)
+            assert np.array_equal(actual, np.repeat(expected[:, :, None], 3, axis=2))
+            expected_hash.update(expected.tobytes())
+            decoded += 1
+    finally:
+        original.release()
+        control.release()
+    assert decoded == count == 81
+    assert digest == expected_hash.hexdigest()
 
 
 def test_effective_prompt_is_checked_before_each_native_chunk():
@@ -163,9 +196,10 @@ def test_native_parser_sees_real_control_created_first(monkeypatch, tmp_path):
     input_file = tmp_path / "sample.json"
     control = tmp_path / "edges.mkv"
     input_file.write_text(json.dumps({"name": "sample", "vision_path": "source.mp4", "fps": 24,
-                                     "edge": {"control_path": str(control), "preset_edge_threshold": "medium"}}))
+                                     "edge": {"control_path": str(control), "preset_edge_threshold": "low"}}))
 
-    def edges(source, destination, fps):
+    def edges(source, destination, fps, preset):
+        assert preset == "low"
         destination.write_bytes(b"real-control-seam")
         return 81, "digest"
 
