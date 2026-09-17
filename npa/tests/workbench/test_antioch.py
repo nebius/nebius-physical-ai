@@ -353,7 +353,7 @@ def test_health_verifies_registry_access_not_only_local_token_decode(
     def run(args, **_kwargs):  # noqa: ANN001, ANN202
         calls.append(list(args))
         if args[-1] == "--version":
-            return subprocess.CompletedProcess(args, 0, "antioch 0.4.188\n", "")
+            return subprocess.CompletedProcess(args, 0, "antioch 0.4.236\n", "")
         if args[1:3] == ["auth", "whoami"]:
             payload: object = {"environment": "deployment-for-test"}
         else:
@@ -363,7 +363,7 @@ def test_health_verifies_registry_access_not_only_local_token_decode(
     monkeypatch.setattr(subprocess, "run", run)
     assert AntiochCli("antioch").health() == {
         "authenticated": True,
-        "cli_version": "0.4.188",
+        "cli_version": "0.4.236",
     }
     assert calls[-1] == ["antioch", "project", "list", "--json"]
 
@@ -510,7 +510,7 @@ def _episode(path: Path, **replacements: Any) -> None:
         seed=7,
         parameters={"mass": 1.0},
         engine_version="1",
-        sdk_version="0.4.188",
+        sdk_version="0.4.236",
         source_sha256="a" * 64,
         assets_sha256={"cart": "b" * 64},
         observation_schema=["position", "velocity"],
@@ -572,7 +572,7 @@ def test_episode_contract_rejects_single_channel_act_data(tmp_path: Path) -> Non
         seed=7,
         parameters={},
         engine_version="1",
-        sdk_version="0.4.188",
+        sdk_version="0.4.236",
         source_sha256="a" * 64,
         assets_sha256={"cart": "b" * 64},
         observation_schema=["position", "velocity"],

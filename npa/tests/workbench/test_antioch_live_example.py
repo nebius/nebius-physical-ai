@@ -1350,7 +1350,7 @@ def test_live_protocol_codec_round_trips_arrays_and_rejects_objects() -> None:
 
 def test_live_sim_image_contains_only_protocol_dependencies() -> None:
     dockerfile = (EXAMPLE / "Dockerfile").read_text(encoding="utf-8")
-    assert dockerfile.startswith("FROM antioch-engine/isaac-sim-6.0.1:0.4.188\n")
+    assert dockerfile.startswith("FROM antioch-engine/isaac-sim-6.0.1:0.4.236\n")
     assert 'npa.antioch.live-transport="declared-port-double-wss-v1"' in dockerfile
     assert '"msgpack==1.1.1"' in dockerfile
     assert '"websockets==15.0.1"' in dockerfile

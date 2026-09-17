@@ -19,7 +19,7 @@ npa workbench antioch health --output json
 
 `NPA_ANTIOCH_ACCEPT_TERMS=YES` is an exact, explicit attestation that the
 operator reviewed the [Antioch Terms of Service](https://antioch.com/terms)
-(version dated 2026-02-28) for the scoped use of `antioch-sim==0.4.188` and the
+(version dated 2026-02-28) for the scoped use of `antioch-sim==0.4.236` and the
 Antioch Service. Any customer MSA or order form remains controlling. Other
 spellings fail closed. The adapter records only the agreement name, public URL,
 version, scope, and accepted boolean in durable operation state; it never stores
@@ -39,7 +39,7 @@ modules. The optional secret uses
 the ordinary `AWS_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and
 optional `AWS_SESSION_TOKEN` keys.
 
-The public adapter pins `antioch-sim==0.4.188` and its reviewed SHA-256. On first
+The public adapter pins `antioch-sim==0.4.236` and its reviewed SHA-256. On first
 use it fetches the wheel directly from the vendor's PyPI delivery into
 `NPA_ANTIOCH_RUNTIME_CACHE`, verifies it, and installs it in that writable volume.
 `NPA_ANTIOCH_RUNTIME_OFFLINE=1` fails closed when the cache is cold. Neither the
@@ -168,8 +168,8 @@ and advancing; viewer state and control-loop iterations are not producer clocks.
 
 | Surface | Reviewed contract | Upgrade treatment |
 | --- | --- | --- |
-| Antioch SDK/CLI | `antioch-sim==0.4.188`; public scenario surface exposes `scenario`, `ScenarioRun`, `Logger`, `world`, and `engine` | Exact runtime check; any other version is unsupported until reviewed. |
-| Antioch engine | `antioch-engine/isaac-sim-6.0.1:0.4.188` / engine identity `isaac-sim-6.0.1` | Exact runtime check; do not substitute a newer engine under the old scenario. |
+| Antioch SDK/CLI | `antioch-sim==0.4.236`; public scenario surface exposes `scenario`, `ScenarioRun`, `Logger`, `world`, and `engine` | Exact runtime check; any other version is unsupported until reviewed. |
+| Antioch engine | `antioch-engine/isaac-sim-6.0.1:0.4.236` / engine identity `isaac-sim-6.0.1` | Exact runtime check; do not substitute a newer engine under the old scenario. |
 | Isaac camera | `isaacsim.sensors.experimental.rtx.RtxCamera` + `CameraSensor`, documented uint8 RGB CPU output, immediate scenario-owned copy, nonzero sensor tick | Capability is exercised through public Isaac Sim 6 APIs. |
 | Render advancement | synchronous `omni.replicator.core.orchestrator.step` with `wait_for_render=True` | Missing or incompatible signatures fail clearly; no implicit autoplay fallback. |
 | Antioch control plane | Project revisions, project sessions, singular `service` operations, and named session routes | Re-discover the supported profile and project through structured CLI commands; never persist a service endpoint or console hostname. |

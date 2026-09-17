@@ -1,4 +1,4 @@
-FROM antioch-engine/isaac-sim-6.0.1:0.4.188
+FROM antioch-engine/isaac-sim-6.0.1:0.4.236
 
 LABEL npa.antioch.live-transport="declared-port-double-wss-v1"
 

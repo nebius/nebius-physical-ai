@@ -113,7 +113,7 @@ def cartpole_offline_policy_episode(
         "seed": seed,
         "parameters": {"seed": seed, "physics_steps": 120},
         "engine_version": "isaac-lab-3.0",
-        "sdk_version": "0.4.188",
+        "sdk_version": "0.4.236",
         "source_sha256": SOURCE_CONTRACT_SHA256,
         "assets_sha256": {},
         "observation_schema": [
