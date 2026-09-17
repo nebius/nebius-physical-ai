@@ -220,8 +220,18 @@ def _recorded_fsync(descriptor: int) -> None:
     kind = "regular" if stat.S_ISREG(value.st_mode) else "directory"
     record_path = os.environ.get("FAKE_FSYNC_RECORD")
     failure_kind = os.environ.get("FAKE_FSYNC_FAILURE_KIND")
+    failure_ordinal = int(os.environ.get("FAKE_FSYNC_FAILURE_ORDINAL", "1"))
     marker = os.environ.get("FAKE_FSYNC_FAILURE_MARKER")
-    should_fail = bool(failure_kind == kind and marker and not os.path.exists(marker))
+    kind_count = 1
+    if record_path and os.path.exists(record_path):
+        with open(record_path, encoding="utf-8") as record:
+            kind_count += sum(line.startswith(f"{kind}:") for line in record)
+    should_fail = bool(
+        failure_kind == kind
+        and kind_count == failure_ordinal
+        and marker
+        and not os.path.exists(marker)
+    )
     if record_path:
         with open(record_path, "a", encoding="utf-8") as record:
             record.write(f"{kind}:{'failed' if should_fail else 'ok'}\\n")
@@ -268,11 +278,44 @@ if [[ "${1:-}" == "-" && "${2:-}" == "receipt-link" ]]; then
     : > "${FAKE_RECEIPT_LINK_FAILURE_MARKER}"
     exit 77
   fi
+  if [[ "${FAKE_TERMINAL_RECEIPT_LINK_FAILURE:-0}" == "1" \
+    && "${5}" == *.cleanup.json ]]; then
+    exit 77
+  fi
   status=0
         """
         + shlex.quote(sys.executable)
         + """ "$@" 9<&9 || status=$?
   [[ "${status}" -eq 0 ]] || exit "${status}"
+  if [[ "${FAKE_TERMINAL_RECEIPT_IDENTITY_FAILURE:-0}" == "1" \
+    && "${5}" == *.cleanup.json ]]; then
+        """
+        + shlex.quote(sys.executable)
+        + """ - "${3}" "${5}" 9<&9 <<'PY'
+import os
+import sys
+
+directory_fd = int(sys.argv[1])
+target_name = sys.argv[2]
+os.rename(
+    target_name,
+    f"{target_name}.retained",
+    src_dir_fd=directory_fd,
+    dst_dir_fd=directory_fd,
+)
+replacement_fd = os.open(
+    target_name,
+    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+    0o600,
+    dir_fd=directory_fd,
+)
+with os.fdopen(replacement_fd, "wb") as replacement:
+    replacement.write(b'{"replacement":true}\\n')
+PY
+  fi
+  if [[ -n "${FAKE_LIFECYCLE_RECORD:-}" ]]; then
+    printf 'published:%s\n' "${5}" >> "${FAKE_LIFECYCLE_RECORD}"
+  fi
   if [[ "${FAKE_REPLACE_FINAL_RECEIPT_TARGET:-0}" == "1" \
     && "${5}" == *.json \
     && "${5}" != *.failure.json \
@@ -306,6 +349,11 @@ os.close(marker_fd)
 PY
   fi
   exit 0
+fi
+if [[ "${FAKE_TERMINAL_RECEIPT_FAILURE:-0}" == "1" \
+  && "${1:-}" == "-" && "${#}" -eq 7 \
+  && "${7}" == *.cleanup-journal.json ]]; then
+  exit 97
 fi
 if [[ "${FAKE_RECEIPT_FAILURE:-0}" == "1" \
   && "${1:-}" == "-" && "${2:-}" != "receipt-link" ]]; then
@@ -459,7 +507,8 @@ case "${action}" in
           mkdir -- "${FAKE_DOCKER_LOCK_STATE}" 2>/dev/null || lock_refused=1
         fi
         if [[ "${lock_refused}" -eq 1 ]]; then
-          printf '%s:create-refused\n' "${caller}" >> "${FAKE_DOCKER_LOCK_RECORD}"
+          printf '%s:%s:create-refused\n' \
+            "${caller}" "${lock_name}" >> "${FAKE_DOCKER_LOCK_RECORD}"
           exit 80
         fi
         lock_id="$(printf '%s' "${transaction}|${image_id}" | sha256sum | cut -d ' ' -f 1)"
@@ -467,7 +516,8 @@ case "${action}" in
         printf '%s\n' "${lock_name}" > "${FAKE_DOCKER_LOCK_STATE}/name"
         printf '%s\n' "${transaction}" > "${FAKE_DOCKER_LOCK_STATE}/transaction"
         printf '%s\n' "${image_id}" > "${FAKE_DOCKER_LOCK_STATE}/image"
-        printf '%s:create-acquired\n' "${caller}" >> "${FAKE_DOCKER_LOCK_RECORD}"
+        printf '%s:%s:create-acquired\n' \
+          "${caller}" "${lock_name}" >> "${FAKE_DOCKER_LOCK_RECORD}"
         printf '%s\n' "${lock_id}"
         ;;
       inspect)
@@ -524,6 +574,15 @@ if [[ "${FAKE_RM_CONTEXT_FAILURE:-0}" == "1" \
     fi
   done
 fi
+recorded_context="$(cat "${FAKE_DOCKER_CONTEXT_RECORD}" 2>/dev/null || true)"
+if [[ -n "${FAKE_LIFECYCLE_RECORD:-}" && "$1" == "-rf" ]]; then
+  for candidate in "$@"; do
+    if [[ -n "${recorded_context}" && "${candidate}" == "${recorded_context}/"* ]]; then
+      printf 'context-delete\n' >> "${FAKE_LIFECYCLE_RECORD}"
+      break
+    fi
+  done
+fi
 exec /usr/bin/rm "$@"
 """,
         encoding="utf-8",
@@ -554,6 +613,7 @@ exec /usr/bin/rm "$@"
         "FAKE_FINAL_TARGET_REPLACEMENT_MARKER": str(
             tmp_path / "final-target-replacement-marker"
         ),
+        "FAKE_LIFECYCLE_RECORD": str(tmp_path / "lifecycle-actions"),
     }
     return environment, temp_root, receipt_dir, tmp_path / "tag-state"
 
@@ -636,14 +696,31 @@ def _assert_cleanup_receipt(
     )
     assert len(cleanups) == 1
     path, record = cleanups[0]
-    builds = _records_with_schema(
-        receipt_dir, "npa.robomimic.neutral-build-receipt.v1"
-    )
+    builds = _records_with_schema(receipt_dir, "npa.robomimic.neutral-build-receipt.v1")
     assert len(builds) == 1
     assert record["transaction_id"] == builds[0][1]["transaction_id"]
     assert record["immutable_image_id"] == image_id
     assert record["status"] == status
     assert record["transaction_evidence_disposition"] == disposition
+    assert (
+        record["cleanup_journal"] == f"{record['transaction_id']}.cleanup-journal.json"
+    )
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    return record
+
+
+def _assert_cleanup_journal(receipt_dir: Path, image_id: str) -> dict[str, object]:
+    journals = _records_with_schema(
+        receipt_dir, "npa.robomimic.neutral-build-cleanup-journal.v1"
+    )
+    assert len(journals) == 1
+    path, record = journals[0]
+    assert record["immutable_image_id"] == image_id
+    assert record["cleanup_intent"] == "remove-transaction-context"
+    assert record["intent_state"] == "durably-recorded-before-context-deletion"
+    assert record["terminal_outcome_record"] == (
+        f"{record['transaction_id']}.cleanup.json"
+    )
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     return record
 
@@ -658,9 +735,7 @@ def test_build_helper_records_immutable_id_in_owner_only_receipt(
     result = _run_fake_build(environment)
 
     assert result.returncode == 0, result.stderr
-    builds = _records_with_schema(
-        receipt_dir, "npa.robomimic.neutral-build-receipt.v1"
-    )
+    builds = _records_with_schema(receipt_dir, "npa.robomimic.neutral-build-receipt.v1")
     assert len(builds) == 1
     receipt_path, receipt = builds[0]
     assert receipt["immutable_image_id"] == image_id
@@ -679,12 +754,21 @@ def test_build_helper_records_immutable_id_in_owner_only_receipt(
     _assert_cleanup_receipt(
         receipt_dir, image_id, status="completed", disposition="removed"
     )
+    journal = _assert_cleanup_journal(receipt_dir, image_id)
     assert stat.S_IMODE(receipt_path.stat().st_mode) == 0o600
     assert (tmp_path / "fsync-actions").read_text().splitlines() == [
         "regular:ok",
         "directory:ok",
         "regular:ok",
         "directory:ok",
+        "regular:ok",
+        "directory:ok",
+    ]
+    assert (tmp_path / "lifecycle-actions").read_text().splitlines() == [
+        f"published:{receipt['transaction_id']}.json",
+        f"published:{journal['transaction_id']}.cleanup-journal.json",
+        "context-delete",
+        f"published:{receipt['transaction_id']}.cleanup.json",
     ]
     assert tag_state.read_text(encoding="utf-8").strip() == image_id
     assert list(temp_root.glob("npa-robomimic-context.*")) == []
@@ -786,7 +870,7 @@ def test_build_helper_serializes_distinct_uid_namespaces_in_one_daemon(
     winner = tag_state.read_text(encoding="utf-8").strip()
     assert winner in {"sha256:" + "4" * 64, "sha256:" + "5" * 64}
     records = _receipt_records(receipt_dir)
-    assert len(records) == 3
+    assert len(records) == 4
     assert sorted(record["status"] for _, record in records if "status" in record) == [
         "completed",
         "failure",
@@ -805,6 +889,59 @@ def test_build_helper_serializes_distinct_uid_namespaces_in_one_daemon(
     assert not (tmp_path / "daemon-lock").exists()
     assert not (tmp_path / "attempted-lock-root-0").exists()
     assert not (tmp_path / "attempted-lock-root-1").exists()
+
+
+def test_build_helper_serializes_equivalent_registry_references(
+    tmp_path: Path,
+) -> None:
+    environment, _, _, tag_state = _fake_build_environment(tmp_path)
+    processes = []
+    for index, (registry, digit) in enumerate(
+        (("example/team", "4"), ("docker.io/example/team", "5"))
+    ):
+        candidate = dict(environment)
+        candidate_tmp = tmp_path / f"alias-tmp-{index}"
+        candidate_tmp.mkdir(mode=0o700)
+        candidate["TMPDIR"] = str(candidate_tmp)
+        candidate["NPA_BYOF_ROBOMIMIC_REGISTRY"] = registry
+        candidate["FAKE_CALLER_UID"] = f"alias-{index}"
+        candidate["FAKE_DOCKER_IMAGE_ID"] = "sha256:" + digit * 64
+        candidate["FAKE_DOCKER_IID_RECORD"] = str(tmp_path / f"alias-iid-{index}")
+        candidate["FAKE_DOCKER_CONTEXT_RECORD"] = str(
+            tmp_path / f"alias-context-{index}"
+        )
+        processes.append(
+            subprocess.Popen(
+                ["bash", str(BUILD_SCRIPT)],
+                cwd=ROOT,
+                env=candidate,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        )
+
+    outcomes = [process.communicate(timeout=30) for process in processes]
+    assert sorted(process.returncode for process in processes) == [0, 1]
+    lock_actions = (tmp_path / "daemon-lock-actions").read_text().splitlines()
+    lock_names = set()
+    for line in lock_actions:
+        fields = line.split(":")
+        if len(fields) == 3 and fields[2] in {"create-acquired", "create-refused"}:
+            lock_names.add(fields[1])
+    assert len(lock_names) == 1
+    assert sum(line.endswith(":create-acquired") for line in lock_actions) == 1
+    assert sum(line.endswith(":create-refused") for line in lock_actions) == 1
+    assert _docker_actions(tmp_path) == ["tag"]
+    assert tag_state.read_text(encoding="utf-8").strip() in {
+        "sha256:" + "4" * 64,
+        "sha256:" + "5" * 64,
+    }
+    assert any(
+        "already names different bytes" in stderr
+        or "daemon-wide shared-tag coordination" in stderr
+        for _, stderr in outcomes
+    )
 
 
 def test_build_helper_refuses_shared_tag_without_daemon_lock(tmp_path: Path) -> None:
@@ -952,11 +1089,14 @@ def test_build_helper_refuses_receipt_fsync_failure_without_deleting_evidence(
     assert (tmp_path / "fsync-failure-marker").is_file()
     assert tag_state.read_text(encoding="utf-8").strip() == image_id
     records = _receipt_records(receipt_dir)
-    assert _records_with_schema(
-        receipt_dir, "npa.robomimic.neutral-build-failure.v1"
-    ) == []
+    assert (
+        _records_with_schema(receipt_dir, "npa.robomimic.neutral-build-failure.v1")
+        == []
+    )
     expected_builds = 1 if failure_kind == "directory" else 0
-    assert sum("consumer_image_ref" in record for _, record in records) == expected_builds
+    assert (
+        sum("consumer_image_ref" in record for _, record in records) == expected_builds
+    )
     fsync_actions = (tmp_path / "fsync-actions").read_text().splitlines()
     expected_fsync = ["regular:ok"] if failure_kind == "directory" else []
     expected_fsync.append(f"{failure_kind}:failed")
@@ -1004,11 +1144,71 @@ def test_build_helper_records_unresolved_context_cleanup(tmp_path: Path) -> None
         status="unresolved",
         disposition="retained-owner-private-for-reconciliation",
     )
-    assert _records_with_schema(
-        receipt_dir, "npa.robomimic.neutral-build-failure.v1"
-    ) == []
+    _assert_cleanup_journal(receipt_dir, image_id)
+    assert (
+        _records_with_schema(receipt_dir, "npa.robomimic.neutral-build-failure.v1")
+        == []
+    )
     assert len(list(temp_root.glob("npa-robomimic-context.*"))) == 1
     assert _docker_actions(tmp_path) == ["tag"]
+
+
+@pytest.mark.parametrize(
+    ("failure", "failure_kind"),
+    (
+        ("creation", None),
+        ("identity", None),
+        ("link", None),
+        ("file-fsync", "regular"),
+        ("directory-fsync", "directory"),
+    ),
+)
+def test_build_helper_preserves_cleanup_journal_on_terminal_publication_failure(
+    tmp_path: Path, failure: str, failure_kind: str | None
+) -> None:
+    environment, temp_root, receipt_dir, tag_state = _fake_build_environment(tmp_path)
+    image_id = "sha256:" + "8" * 64
+    environment["FAKE_DOCKER_IMAGE_ID"] = image_id
+    if failure == "creation":
+        environment["FAKE_TERMINAL_RECEIPT_FAILURE"] = "1"
+    elif failure == "identity":
+        environment["FAKE_TERMINAL_RECEIPT_IDENTITY_FAILURE"] = "1"
+    elif failure == "link":
+        environment["FAKE_TERMINAL_RECEIPT_LINK_FAILURE"] = "1"
+    else:
+        assert failure_kind is not None
+        environment["FAKE_FSYNC_FAILURE_KIND"] = failure_kind
+        environment["FAKE_FSYNC_FAILURE_ORDINAL"] = "3"
+
+    result = _run_fake_build(environment)
+
+    assert result.returncode != 0
+    journal = _assert_cleanup_journal(receipt_dir, image_id)
+    assert journal["terminal_outcome_record"].endswith(".cleanup.json")
+    terminal_records = _records_with_schema(
+        receipt_dir, "npa.robomimic.neutral-build-cleanup.v1"
+    )
+    terminal_path = receipt_dir / str(journal["terminal_outcome_record"])
+    if failure == "identity":
+        assert terminal_records == []
+        assert json.loads(terminal_path.read_text(encoding="utf-8")) == {
+            "replacement": True
+        }
+        retained = Path(f"{terminal_path}.retained")
+        assert json.loads(retained.read_text(encoding="utf-8"))["status"] == (
+            "completed"
+        )
+    elif failure == "directory-fsync":
+        assert len(terminal_records) == 1
+        assert terminal_records[0][0] == terminal_path
+        assert "cleanup or failure-receipt publication was incomplete" in result.stderr
+    else:
+        assert terminal_records == []
+    assert tag_state.read_text(encoding="utf-8").strip() == image_id
+    assert list(temp_root.glob("npa-robomimic-context.*")) == []
+    lifecycle = (tmp_path / "lifecycle-actions").read_text().splitlines()
+    journal_event = f"published:{journal['transaction_id']}.cleanup-journal.json"
+    assert lifecycle.index(journal_event) < lifecycle.index("context-delete")
 
 
 @pytest.mark.parametrize("replacement", ("scratch-parent", "context"))
