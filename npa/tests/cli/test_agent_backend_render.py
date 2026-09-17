@@ -5208,6 +5208,42 @@ def test_live_evidence_chat_loads_exact_artifact_without_exposing_source(
     assert "private-bucket" not in response["reply"]
     assert "private/prefix" not in response["reply"]
 
+
+def test_live_evidence_retries_a_warming_artifact_inventory(monkeypatch, tmp_path):
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="live_evidence_warming_inventory_backend"
+    )
+    row = {
+        "run_id": "artifact-run",
+        "run_ref": "npa1_exact_source_ref",
+        "bucket": "example-bucket",
+        "project_id": "example-project",
+        "resolved_prefix": "workflows/visual",
+    }
+    pages = iter([{"runs": []}, {"runs": [row]}])
+    monkeypatch.setattr(module, "artifacts_runs", lambda **_: next(pages))
+    monkeypatch.setattr(module.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(
+        module,
+        "artifacts_for_run",
+        lambda *_args, **_kwargs: {
+            "run_id": "artifact-run",
+            "run_ref": "npa1_exact_source_ref",
+            "artifacts": [{"key": "workflows/visual/output.rrd", "render": "rerun"}],
+        },
+    )
+
+    assert module._visual_evidence_selection() == {
+        "run_id": "artifact-run",
+        "run_ref": "npa1_exact_source_ref",
+        "key": "workflows/visual/output.rrd",
+        "resource_bucket": "example-bucket",
+        "project_id": "example-project",
+        "resolved_prefix": "workflows/visual",
+        "source_selected": True,
+    }
+
+
 def test_rendered_action_catalog_returns_every_registered_tool_ref(
     monkeypatch, tmp_path
 ):

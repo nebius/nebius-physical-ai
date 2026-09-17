@@ -4962,40 +4962,46 @@ def _chat_payload(response: object) -> dict:
 
 def _visual_evidence_selection() -> dict:
     try:
-        page = _chat_payload(artifacts_runs(limit=12))
-        rows = page.get("runs") if isinstance(page.get("runs"), list) else []
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            run_ref = str(row.get("run_ref") or "")
-            scope = {{
-                "resource_bucket": str(row.get("bucket") or ""),
-                "project_id": str(row.get("project_id") or ""),
-                "resolved_prefix": str(row.get("resolved_prefix") or ""),
-                "source_selected": True,
-            }}
-            if not run_ref.startswith("npa1_") or not scope["resource_bucket"] or not scope["project_id"]:
-                continue
-            inventory = _chat_payload(artifacts_for_run(run_ref, **scope))
-            artifacts = inventory.get("artifacts") if isinstance(inventory.get("artifacts"), list) else []
-            visuals = [
-                item for item in artifacts
-                if isinstance(item, dict) and str(item.get("render") or "") in {{"rerun", "video"}}
-            ]
-            if not visuals:
-                continue
-            artifact = sorted(
-                visuals,
-                key=lambda item: str(item.get("render") or "") != "rerun",
-            )[0]
-            key = str(artifact.get("key") or "")
-            if key:
-                return {{
-                    "run_id": str(inventory.get("run_id") or row.get("run_id") or ""),
-                    "run_ref": str(inventory.get("run_ref") or run_ref),
-                    "key": key,
-                    **scope,
+        # Storage discovery warms its bounded index asynchronously on a fresh
+        # Agent.  Give that one safe retry window here so a user asking chat to
+        # show proof gets the real first artifact, not an empty status panel.
+        for attempt in range(4):
+            page = _chat_payload(artifacts_runs(limit=12))
+            rows = page.get("runs") if isinstance(page.get("runs"), list) else []
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                run_ref = str(row.get("run_ref") or "")
+                scope = {{
+                    "resource_bucket": str(row.get("bucket") or ""),
+                    "project_id": str(row.get("project_id") or ""),
+                    "resolved_prefix": str(row.get("resolved_prefix") or ""),
+                    "source_selected": True,
                 }}
+                if not run_ref.startswith("npa1_") or not scope["resource_bucket"] or not scope["project_id"]:
+                    continue
+                inventory = _chat_payload(artifacts_for_run(run_ref, **scope))
+                artifacts = inventory.get("artifacts") if isinstance(inventory.get("artifacts"), list) else []
+                visuals = [
+                    item for item in artifacts
+                    if isinstance(item, dict) and str(item.get("render") or "") in {{"rerun", "video"}}
+                ]
+                if not visuals:
+                    continue
+                artifact = sorted(
+                    visuals,
+                    key=lambda item: str(item.get("render") or "") != "rerun",
+                )[0]
+                key = str(artifact.get("key") or "")
+                if key:
+                    return {{
+                        "run_id": str(inventory.get("run_id") or row.get("run_id") or ""),
+                        "run_ref": str(inventory.get("run_ref") or run_ref),
+                        "key": key,
+                        **scope,
+                    }}
+            if attempt < 3 and not rows:
+                time.sleep(2)
     except Exception:
         # Evidence discovery is optional to the status report. Do not turn an
         # inaccessible artifact source into a provider-detail leak in chat.
