@@ -794,18 +794,18 @@ containers:
     safety:
       runs_as: ubuntu
       base_image: python:3.11-slim-trixie
-      network: FiftyOne app on :5151
+      network: FiftyOne app on 127.0.0.1:5151; authenticated SSH or Kubernetes port-forward
       external_fetch: [pypi, huggingface, s3]
       notes: >-
-        CPU-only; app should be exposed via controlled public-access path, not
-        bound to 0.0.0.0 without auth. The image ships standalone smoke scripts
-        (it does not install the npa package). The golden eval is the env smoke
-        (import + version + CLI + app config); the functional smoke is a heavier
-        integration test that needs a working MongoDB, which the slim base does
-        not provision.
+        CPU-only; keep App access private through loopback and an authenticated
+        SSH or Kubernetes port-forward. The image ships standalone smoke scripts
+        and bundled MongoDB, without installing the npa package. The functional
+        golden eval checks version, dataset creation and query, real Brain
+        curation, and App launch. Source installation and publication security
+        gates require separate exact-image evidence.
     golden_eval:
       kind: container-smoke
-      command: python /opt/npa/docker/workbench/fiftyone/smoke_env.py
+      command: python /opt/npa/docker/workbench/fiftyone/smoke_functional.py
       serverless_gpu: h100
       gpu: none
       timeout_seconds: 300

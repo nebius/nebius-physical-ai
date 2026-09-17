@@ -926,7 +926,8 @@ def goal_episode_boundary(
         @functools.wraps(function)
         def wrapped(payload: dict[str, Any], *args: Any, **kwargs: Any) -> Any:
             safe_payload = payload if isinstance(payload, dict) else {}
-            episode_id = f"episode-{uuid.uuid4().hex}"
+            # UUID separators prevent random prefixes from resembling provider IDs.
+            episode_id = f"episode-{uuid.uuid4()}"
             session_id = str(safe_payload.get("session_id") or "default")
             started_at = datetime.now(timezone.utc).isoformat()
             try:

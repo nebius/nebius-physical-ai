@@ -1258,8 +1258,19 @@ def test_resume_replays_completed_waves_instead_of_resubmitting(tmp_path: Path) 
     assert [wave["replayed"] for wave in second_report.waves] == [True, True, True]
 
 
+@pytest.mark.parametrize("cancelled_record,outcome,status,observable,outputs_valid,adopt", [
+    (False, "found", "SUCCEEDED", True, True, True),
+    (True, "found", "SUCCEEDED", True, True, True),
+    (True, "found", "SUCCEEDED", True, False, False),
+    (True, "found", "SUCCEEDED", False, True, False),
+    (True, "found", "CANCELLED", True, True, False),
+    (True, "found", "FAILED", True, True, False),
+    (True, "found", "RUNNING", True, True, False),
+    (True, "absent", "", False, True, False),
+    (True, "unknown", "UNKNOWN", False, True, False),
+])
 def test_resume_adopts_terminal_success_after_output_check_driver_failure(
-    tmp_path: Path,
+    tmp_path: Path, cancelled_record, outcome, status, observable, outputs_valid, adopt,
 ) -> None:
     spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
     store = MemoryStore()
@@ -1289,6 +1300,17 @@ def test_resume_adopts_terminal_success_after_output_check_driver_failure(
     failed_gate = first_report.waves[-1]
     assert failed_gate["status"] == "failed"
     assert failed_gate["sky_status"] == "SUCCEEDED"
+    if cancelled_record:
+        persisted = store.read_runtime_state()
+        persisted.record_wave({
+            **failed_gate, "sky_status": "CANCELLED",
+            "cancellation": {"state": "verified", "error": ""},
+        })
+        store.write_runtime_state(persisted)
+
+    def reconcile(name, *, job_id=""):
+        assert name == failed_gate["job_name"] and job_id == failed_gate["job_id"]
+        return SimpleNamespace(outcome=outcome, status=status, workload_observable=observable)
 
     resumed_submitter = FakeSubmitter()
     options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
@@ -1298,7 +1320,8 @@ def test_resume_adopts_terminal_success_after_output_check_driver_failure(
         submitter=resumed_submitter,
         options=options,
         store=store,
-        output_checker=lambda uri: uri.endswith("/gate/decision.json"),
+        output_checker=lambda uri: outputs_valid and uri.endswith("/gate/decision.json"),
+        reconcile_fn=reconcile,
     )
     report = run_workflow_runtime(
         spec,
@@ -1308,11 +1331,18 @@ def test_resume_adopts_terminal_success_after_output_check_driver_failure(
         decision_reader=_decision_reader(["promote_checkpoint"]),
     )
 
+    if not adopt:
+        assert report.status == "failed"
+        assert resumed_submitter.calls == []
+        assert report.waves[-1]["sky_status"] == "CANCELLED"
+        return
     assert report.status == "succeeded"
     assert [call["tasks"] for call in resumed_submitter.calls] == [["publish"]]
     adopted_gate = next(wave for wave in report.waves if wave["states"] == ["gate"])
     assert adopted_gate["job_id"] == failed_gate["job_id"]
     assert adopted_gate["status"] == "succeeded"
+    assert adopted_gate["sky_status"] == "SUCCEEDED"
+    assert adopted_gate["reconciliation"][-1]["declared_outputs_valid"] is True
     assert adopted_gate["adopted"] is True
     assert adopted_gate["replayed"] is True
     assert (

@@ -137,6 +137,15 @@ DECLARATIVE_PIP_EXTRAS = frozenset({"viz"})
 #: `huggingface_hub`, and the interpreter running npa in a vendor image is not the vendor's own
 #: venv, so the library is not necessarily importable there (live job 244).
 TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "workbench.lerobot.transfer_prepare": (
+        ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
+        ("python:pyarrow", "pyarrow>=15,<22"),
+    ),
+    "workbench.lerobot.transfer_report": (
+        ("python:av", "av>=12,<17"),
+        ("python:matplotlib", "matplotlib>=3.8,<4"),
+        ("python:rerun", "rerun-sdk>=0.29,<0.32"),
+    ),
     "workbench.alpamayo2_super.sweep": (
         ('python:ray;assert(ray.__version__=="2.58.0")', "ray[default]==2.58.0"),
     ),

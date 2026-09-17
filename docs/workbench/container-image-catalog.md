@@ -61,7 +61,12 @@ publication gates plus the checked-in Blackwell validator and real
 0.5.1 as the current default or add a second `lerobot` row to the default public
 release plan.
 
-## Native model publication and pending NCore conversion
+The four-wave [LeRobot transfer experiment](guides/lerobot-transfer.md) selects
+that optional 0.6.0 image by digest and stages its adapters from the checkout.
+It uses the image's non-root runtime user and baked SkyPilot prerequisites;
+no new image publication is required for the experiment.
+
+## Native model publication
 
 The `npa-diffusers`, `npa-lingbot-world` and `npa-sam2` source-only runtimes
 were built from `d54eec137d3b2d86ff1acef736e36967b1fad7d3`, passed mandatory
@@ -72,6 +77,8 @@ full image pulls and digest parity passed for all three. Weights and CUDA
 packages remain runtime fetches. B300 remains unvalidated for these images.
 See the [native workflow guide](video-generation-byof.md) and
 [capability evidence](validation/studio-public-models-20260916.json).
+
+## Pending NCore conversion image
 
 `npa-ncore` is an additional development validation candidate for the
 [COLMAP ingestion workflow](guides/nurec-colmap-reconstruct.md). It packages
@@ -252,7 +259,7 @@ and populated caches remain absent from the public image.
 | SONIC (GR00T-WholeBodyControl) | `npa-sonic` | `cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | Whole-body humanoid locomotion training and evaluation using `gear_sonic` (Apache-2.0 at a pinned commit). The public active image runtime-fetches Isaac and requires GPU Operator driver mounts. The old L40S and combined H100/H200 MuJoCo images are restricted and rejected; compute-only serverless use requires a separately validated custom image. |
 | Lichtblick 1.26.0 | `npa-lichtblick` | `1.26.0` | 2026-08-07 | Fully open-source (MPL-2.0), Foxglove-compatible MCAP/ROS log viewer served by Caddy on port 8080. No account or proprietary component is required. |
 | Cosmos Curator 0.1.2 | `npa-cosmos-curate` | `0.1.2-skypilot-v1-20260813T164700Z` | 2026-08-13 | Runs real `cosmos-curate` stages in process: download, fixed-stride extraction, clip transcode, motion-vector decode, motion filtering, and clip writing. GPU-stage models are fetched at runtime with the operator's Hugging Face token. |
-| FiftyOne 1.15.0.post1 (Voxel51) | `npa-fiftyone` | `1.15.0.post1` | 2026-08-13 | Dataset curation and visualization UI on port 5151, including uniqueness, similarity, and embedding visualization. Bundles a `mongod` binary so FiftyOne can launch its own metadata database. |
+| FiftyOne 1.21.0 (Voxel51) | `npa-fiftyone` | `1.21.0-skypilot-v1-20260915` | 2026-09-15 | CPU dataset curation and loopback visualization on port 5151, including real Brain uniqueness, similarity, and embedding visualization. The non-root SkyPilot worker includes MongoDB 7.0.40 with matching source and notices, and supports the current NPA dependency environment. |
 | Cosmos3-Super serving | `npa-cosmos3-serving` | `0.2.0-oss` | 2026-08-17 | Zero-payload non-root bootstrap on a digest-pinned public Python base. The serving closure, models, and guardrails are operator runtime fetches after terms and entitlement checks; the exact accepted digest passed guarded multi-GPU service boot and real inference. |
 | LTX-2.5 2.5 | `npa-ltx2` | `2.5-rtfetch-20260817` | 2026-08-17 | Lightricks LTX-2.5 text-to-video, shipped with zero Lightricks bytes: source and gated weights are operator-entitled runtime fetches. The accepted digest passed the exact-layer payload scan, entitlement refusal, and real GPU text-to-video plus decoded-MP4 validation. |
 | SONIC MuJoCo | `npa-sonic-mujoco` | `0.2.0-runtime` | 2026-08-17 | Independently rebuilt from pinned Apache-2.0 SONIC source on a digest-pinned public Python base with a hash-locked PyTorch/MuJoCo closure. The exact accepted digest passed the real B200 Unitree G1 rollout and payload gates. |
@@ -273,6 +280,12 @@ and populated caches remain absent from the public image.
 | SAM 2.1 Small | `npa-sam2` | `2.1-rtfetch-20260916` | 2026-09-16 | Native CUDA video-mask propagation from a first-frame box; raw arrays and color-preserving visualization qualified on B200. Predicted masks are not ground truth. |
 | Enactic OpenArm | `npa-openarm` | `2.2.0-isaac0.1.0-rtfetch` | 2026-09-15 | OpenArm v2 bimanual MuJoCo simulation plus upstream OpenArm Isaac Lab reach rollout and RSL-RL training. Apache-2.0 OpenArm source and simulator assets are baked; Isaac Sim/Lab are exact runtime fetches after the operator's EULA decision. The exact release digest passed byte/supply-chain gates and a complete RTX PRO 6000 dual-simulator workflow with independently checked traces, rendered video, checkpoint, and qualification report. See [OpenArm](openarm.md). |
 
+The supported FiftyOne release uses loopback access through verified SSH or
+Kubernetes port-forwarding. Redeploy older versions to replace public listeners
+and use the current dependency environment. Existing tags retain their original
+bytes. See the [FiftyOne access guidance](../../skills/tools/fiftyone/SKILL.md)
+and [exact-image validation](../../npa/docker/workbench/fiftyone/RELEASE.md).
+
 ## Candidates outside the supported public release plan
 
 `npa-openpi` is a zero-weight, zero-dataset public-image candidate for the
@@ -291,20 +304,8 @@ closure with the maintained Google Cloud Storage SDK and verifies object
 generations, checksums and destination paths during dataset preparation.
 This source change does not qualify or republish an existing image digest.
 
-The FiftyOne candidate now requires loopback access through verified SSH or
-Kubernetes port-forwarding. Published tags retain their original bytes until a
-validated replacement is promoted; redeploy existing public listeners using the
-updated deployment path. See the [FiftyOne access guidance](../../skills/tools/fiftyone/SKILL.md).
-
-FiftyOne is the remaining public-release tag override for an unpromoted worker
-candidate: public execution selects the verified `1.15.0.post1`, while an
-explicit custom registry can select the newer supported worker pin. Cosmos
-Transfer and Rerun now select their published coherent Sim2Real releases.
-Private availability and redistribution eligibility do not establish public
-release membership.
-
-The source security candidates update FiftyOne to 1.21.0 with MongoDB 7.0.40,
-and update the SONIC MuJoCo evaluator to the hash-locked Torch 2.13 closure
+The source security candidates update the SONIC MuJoCo evaluator to the
+hash-locked Torch 2.13 closure
 on a patched Python base. The Cosmos3 native Ray candidate selects the pinned
 framework's supported Torch 2.13 CUDA 13 group, including its matching NATTEN
 extension, and removes inherited attention binaries from the older Torch ABI.

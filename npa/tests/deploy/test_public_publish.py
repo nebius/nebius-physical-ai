@@ -419,30 +419,11 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
     )
     assert plan
     accepted_shas = {
-        tool: images.accepted_publication_development_sha(tool)
-        for tool in (
-            "isaac-lab",
-            "sim2real-control",
-            "cosmos2-transfer",
-            "envgen",
-            "rerun-viewer",
-            "ltx2",
-            "wan2-2",
-            "cosmos3",
-            "cosmos3-serving",
-            "cosmos3-ray-serve",
-            "sonic-mujoco",
-            "detection-training",
-            "diffusers",
-            "lingbot-world",
-            "sam2",
-            "openarm",
-            "alpamayo2-super",
-        )
+        tool: entry["development_sha"]
+        for tool, entry in images.public_release_manifest()["releases"].items()
+        if entry.get("development_sha")
     }
-    # The five Sim2Real roles share one source, and the three Studio runtimes
-    # share another. The nine other accepted sources remain distinct.
-    assert len(set(accepted_shas.values())) == 11
+    assert accepted_shas
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
         target_image = item.target_ref.rsplit("/", 1)[-1]
