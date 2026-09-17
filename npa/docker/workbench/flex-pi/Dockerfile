@@ -20,7 +20,7 @@ ARG FLEX_PI_SOURCE_REF=20c1b2b71ea35a415d5d47c39b04443cfadad7a1
 ARG NPA_SOURCE_SHA=unknown
 
 LABEL npa.tool="flex-pi" \
-      npa.version="0.1.0-cu128" \
+      npa.version="0.1.0-cu128-r2" \
       npa.source.repo="${FLEX_PI_SOURCE_URL}" \
       npa.source.ref="${FLEX_PI_SOURCE_REF}" \
       npa.source.commit="${NPA_SOURCE_SHA}" \

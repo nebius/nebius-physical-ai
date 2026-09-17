@@ -7,6 +7,10 @@ from pathlib import Path
 import sys
 import tarfile
 
+import pytest
+import yaml
+
+from npa.deploy.images import GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES, publicly_publishable_tools
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "scan_image_flex_pi_payload.py"
 SPEC = importlib.util.spec_from_file_location("scan_image_flex_pi_payload", SCRIPT)
@@ -50,6 +54,57 @@ def test_runtime_weights_media_and_secrets_fail(tmp_path: Path) -> None:
     }))
     assert {item.kind for item in findings} == {
         "model_weight", "populated_model_cache", "robotwin_payload", "credential_content",
+    }
+
+
+@pytest.mark.parametrize("name", [
+    "checkpoint.pt", "checkpoint.pth", "policy.pt", "encoder.pth",
+    "epoch_10.pt", "last.ckpt", "weights.bin", "checkpoint-10.bin",
+    "pytorch_model-00001-of-00002.bin", "model.safetensors", "MODEL.PT",
+])
+def test_layer_model_weight_mutations_fail(tmp_path: Path, name: str) -> None:
+    findings, _ = scanner.scan_saved_image(_image(tmp_path, {f"opt/assets/{name}": b"x"}))
+    assert any(item.kind == "model_weight" for item in findings)
+
+
+@pytest.mark.parametrize("name", [
+    "opt/conda/lib/python3.11/site-packages/distutils-precedence.pth",
+    "opt/flex-pi/.venv/lib/python3.11/site-packages/distutils-precedence.pth",
+    "usr/share/locale/pt/messages.mo", "opt/assets/checkpoint.py",
+    "opt/assets/model.bin.json", "usr/share/firmware/device.bin",
+])
+def test_nonweight_layer_mutations_pass(tmp_path: Path, name: str) -> None:
+    findings, _ = scanner.scan_saved_image(_image(tmp_path, {name: b"import site\n"}))
+    assert findings == []
+
+
+@pytest.mark.parametrize("payload,kind", [
+    (b"PK\x03\x04checkpoint", "model_weight"),
+    (b"import site # hf_abcdefghijklmnopqrstuvwxyz\n", "credential_content"),
+])
+def test_python_hook_exception_preserves_payload_and_secret_checks(tmp_path, payload, kind):
+    name = "opt/flex-pi/.venv/lib/python3.11/site-packages/checkpoint.pth"
+    findings, _ = scanner.scan_saved_image(_image(tmp_path, {name: payload}))
+    assert any(item.kind == kind for item in findings)
+
+
+def test_python_path_configuration_is_not_a_checkpoint(tmp_path):
+    name = "opt/conda/lib/python3.11/site-packages/local-library.pth"
+    findings, _ = scanner.scan_saved_image(_image(tmp_path, {name: b"/opt/local-library\n"}))
+    assert findings == []
+
+
+def test_packaging_acceptance_matches_publication_inventories():
+    root = Path(__file__).resolve().parents[2]
+    contract = yaml.safe_load((root / "docker/workbench/packaging-contract.yaml").read_text())
+    entry = contract["images"]["flex-pi"]
+    manifest = json.loads((root / "src/npa/deploy/public_release_manifest.json").read_text())
+    release = manifest["releases"]["flex-pi"]
+    assert entry["redistribution"] == "public"
+    assert "flex-pi" in publicly_publishable_tools()
+    assert release["published_digest"] in entry["notes"]
+    assert GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES["flex-pi"] == {
+        "development_sha": release["development_sha"], "oci_digest": release["published_digest"],
     }
 
 

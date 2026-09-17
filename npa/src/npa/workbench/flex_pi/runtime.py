@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -168,9 +169,6 @@ def _execute(argv: list[str], request: FlexPiRequest, runner: Callable[..., Any]
         )
     if REAL_INFERENCE_MARKER not in str(completed.stdout or ""):
         raise FlexPiError("upstream flex-pi inference did not emit its success marker")
-    # Keep the durable job log useful without forwarding verbose library output,
-    # download URLs, or credentials captured from the subprocess.
-    print(REAL_INFERENCE_MARKER, flush=True)
 
 
 def _validate_action_artifact(path: Path, request: FlexPiRequest) -> dict[str, Any]:
@@ -266,4 +264,7 @@ def run_inference(
             encoding="utf-8",
         )
         artifacts = _publish(root, request.output_path)
+        # Emit success only after artifact validation and publication; keep
+        # subprocess URLs and credentials out of both CLI output streams.
+        print(REAL_INFERENCE_MARKER, file=sys.stderr, flush=True)
         return {**result, "artifacts": artifacts}

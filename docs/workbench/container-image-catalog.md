@@ -20,10 +20,10 @@ images. It and existing saved `container_registry` values do not repoint these
 repository-owned runtime defaults; select custom bytes with a complete image
 reference or an explicit workflow `--registry`.
 
-The accepted-release manifest contains **33 current release tags**. The 32
-pre-existing references were last reconciled anonymously on **2026-09-11**;
-flex-pi was independently built, scanned, run, and anonymously resolved on
-**2026-09-16**. All recorded runtime variants are `linux/amd64`. Capability
+The accepted-release manifest contains **34 current release tags**, all matched
+anonymously against their recorded digests on **2026-09-17**. Flex-pi was
+independently built, scanned, and run on **2026-09-16**.
+All recorded runtime variants are `linux/amd64`. Capability
 claims below retain the exact image and hardware identity that earned them.
 
 **Built** is the UTC build date of the newest listed variant, read from OCI
@@ -44,8 +44,8 @@ image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
 The current source inventory, including flex-pi and the pending NCore
-integration, has **38 packaging entries** (36 redistribution-eligible and two
-restricted) and **39 mapped tools**: 33 public-release members, two restricted
+integration, has **39 packaging entries** (37 redistribution-eligible and two
+restricted) and **40 mapped tools**: 34 public-release members, two restricted
 tools, and four quarantined tools (`curobo`, `ncore`, `openpi`, and `robocasa`).
 These counts come
 from `packaging-contract.yaml` and `npa.deploy.images`; they do not constitute
@@ -338,10 +338,8 @@ this chart is generated from that table and the publishing plan:
 
 ![Published GHCR images against every Nebius GPU platform](../assets/image-gpu-coverage.svg)
 
-All 33 accepted release references resolved anonymously to their recorded
-digests on 2026-09-16. Twenty resolve directly to an image manifest and 13 to
-an OCI index; the runtime variants in both forms are `linux/amd64`. The chart
-groups the current publishing plan three ways:
+All 34 accepted release references resolved anonymously to their recorded
+digests on 2026-09-17. The chart groups the current publishing plan three ways:
 
 - **18 GPU images have no known blocked platform**: `npa-alpamayo2-super`,
   `npa-cosmos3`, `npa-cosmos3-ray-serve`, `npa-cosmos3-reason`,

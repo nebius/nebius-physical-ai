@@ -23,8 +23,11 @@ class Finding:
 
 
 FORBIDDEN_PATHS = (
-    ("model_weight", re.compile(r"\.(?:safetensors|ckpt|gguf)$", re.I)),
-    ("model_weight", re.compile(r"(?:^|/)(?:pytorch_model|step_\d+|model)-?\d*.*\.(?:bin|pt|pth)$", re.I)),
+    ("model_weight", re.compile(r"\.(?:safetensors|ckpt|gguf|pt|pth)$", re.I)),
+    ("model_weight", re.compile(
+        r"(?:^|/)(?:pytorch_model|step_\d+|model|checkpoint|weights?|policy|encoder|decoder|adapter)"
+        r"(?:[_.-].*|\d*)?\.bin$", re.I,
+    )),
     ("populated_model_cache", re.compile(
         r"^(?:workspace|root|home/[^/]+)/\.cache/(?:huggingface|modelscope|flex-pi)/.+[^/]$",
         re.I,
@@ -44,18 +47,40 @@ def _application_content(name: str) -> bool:
     return name.startswith("opt/npa-src/") or name.startswith("opt/flex-pi/")
 
 
+def _python_path_configuration(name: str, payload: bytes | None) -> bool:
+    # Python packaging uses .pth for import hooks and module search paths.
+    if not re.search(r"/(?:site|dist)-packages/[^/]+\.pth$", name):
+        return False
+    if payload is None or len(payload) > 64 * 1024:
+        return False
+    try:
+        lines = payload.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
+        return False
+    return bool(lines) and all(
+        not line.strip() or line.startswith(("#", "import ", "import\t"))
+        or re.fullmatch(r"[\w./-]+", line, flags=re.ASCII) is not None
+        for line in lines
+    )
+
+
 def _scan_archive(archive: tarfile.TarFile, *, layer: str) -> list[Finding]:
     findings = []
     for member in archive:
         name = member.name.lstrip("./")
         if member.isdir():
             continue
+        payload = None
+        if member.isfile() and member.size <= 16 * 1024**2:
+            if _application_content(name) or name.endswith(".pth"):
+                stream = archive.extractfile(member)
+                payload = stream.read() if stream is not None else None
         for kind, pattern in FORBIDDEN_PATHS:
             if pattern.search(name):
+                if kind == "model_weight" and _python_path_configuration(name, payload):
+                    continue
                 findings.append(Finding(kind, layer, name))
-        if member.isfile() and _application_content(name) and member.size <= 16 * 1024**2:
-            stream = archive.extractfile(member)
-            payload = stream.read() if stream is not None else b""
+        if payload is not None and _application_content(name):
             if any(pattern.search(payload) for pattern in SECRET_CONTENT):
                 findings.append(Finding("credential_content", layer, name))
     return findings

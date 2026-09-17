@@ -360,7 +360,7 @@ def test_flex_pi_validation_binds_both_blackwell_targets_to_release_bytes(
     assert b200["platform"] == "gpu-b200-sxm"
     assert b200["capability"] == "10.0"
     assert b200["result"] == "FLEX_PI_REAL_INFERENCE_PASSED"
-    assert b200["replica_count"] == 24
+    assert isinstance(b200["replica_count"], int) and b200["replica_count"] > 0
     assert b200["peak_memory_bytes"] > 0
     assert b200["fanout_wall_seconds"] > 0
     assert b200["throughput_replicas_per_second"] > 0

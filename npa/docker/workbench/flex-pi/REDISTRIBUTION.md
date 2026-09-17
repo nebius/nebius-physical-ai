@@ -21,4 +21,5 @@ present in image layers.
 
 Publication requires a complete built-layer scan, dependency/security review,
 anonymous digest resolution, and real action inference on the exact image digest
-using an RTX PRO 6000. A model import or dry run is not capability evidence.
+independently on B200 and RTX PRO 6000. Replacement bytes require new acceptance
+on both targets. A model import or dry run is not capability evidence.

@@ -7,6 +7,7 @@ import json
 import typer
 
 from npa.cli.path_contract import validate_read_path, validate_write_path
+from npa.lifecycle_intent import json_stdout_contract
 from npa.workbench.flex_pi.runtime import (
     DEFAULT_CHECKPOINT_ID,
     DEFAULT_CHECKPOINT_REVISION,
@@ -23,6 +24,7 @@ app = typer.Typer(
 
 
 @app.command("infer")
+@json_stdout_contract
 def infer_cmd(
     input_path: str = typer.Option(DEFAULT_INPUT_MANIFEST, "--input-path"),
     output_path: str = typer.Option(..., "--output-path"),
@@ -35,12 +37,13 @@ def infer_cmd(
     run_id: str = typer.Option("", "--run-id"),
     runtime_image: str = typer.Option("", "--runtime-image"),
     dry_run: bool = typer.Option(False, "--dry-run"),
+    output_format: str = typer.Option("json", "--output-format", help="Result format; must be json."),
 ) -> None:
     """Run genuine action-only inference and publish verified artifacts.
 
     Args:
         input_path: Local or S3 public-observation manifest.
-        output_path: Local directory or S3 artifact prefix.
+        output_path: Authorized S3 artifact prefix.
         checkpoint_id: Hugging Face checkpoint repository.
         checkpoint_revision: Immutable checkpoint commit.
         num_inference_steps: Flow-matching denoising steps.
@@ -50,16 +53,26 @@ def infer_cmd(
         run_id: Workflow provenance identifier.
         runtime_image: Runtime image provenance override.
         dry_run: Resolve the plan without model execution.
+        output_format: Machine-readable JSON result format.
     Returns:
         None; prints one JSON result.
     Raises:
         typer.Exit: Validation or inference fails.
     """
     try:
+        if output_format != "json":
+            raise ValueError("output-format must be json")
         if input_path != DEFAULT_INPUT_MANIFEST:
             validate_read_path(input_path, tool="flex-pi")
         validate_write_path(output_path, tool="flex-pi")
-        result = run_inference(FlexPiRequest(**locals()))
+        request = FlexPiRequest(
+            input_path=input_path, output_path=output_path,
+            checkpoint_id=checkpoint_id, checkpoint_revision=checkpoint_revision,
+            num_inference_steps=num_inference_steps, seed=seed,
+            torch_compile=torch_compile, expected_gpu=expected_gpu,
+            run_id=run_id, runtime_image=runtime_image, dry_run=dry_run,
+        )
+        result = run_inference(request)
     except (FlexPiError, ValueError) as exc:
         typer.echo(f"flex-pi inference failed: {exc}", err=True)
         raise typer.Exit(1) from exc

@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 
 from fastapi.testclient import TestClient
+import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
@@ -14,6 +15,7 @@ from npa.workbench.flex_pi.runtime import (
     DEFAULT_CHECKPOINT_REVISION,
     FlexPiError,
     FlexPiRequest,
+    build_inference_argv,
     _runtime_env,
     REAL_INFERENCE_MARKER,
     run_inference,
@@ -41,7 +43,7 @@ def _runner(argv, **kwargs):  # type: ignore[no-untyped-def]
     return subprocess.CompletedProcess(argv, 0, stdout=REAL_INFERENCE_MARKER)
 
 
-def test_real_contract_executes_and_publishes(tmp_path: Path) -> None:
+def test_mocked_runtime_validates_and_publishes_actions(tmp_path: Path) -> None:
     manifest = _manifest(tmp_path / "input.json")
     output = tmp_path / "output"
     result = run_inference(FlexPiRequest(
@@ -54,6 +56,17 @@ def test_real_contract_executes_and_publishes(tmp_path: Path) -> None:
     assert len(json.loads((output / "actions.json").read_text())["actions"]) == 32
 
 
+@pytest.mark.parametrize("compile_enabled", [False, True])
+def test_compile_option_reaches_runtime_argv(compile_enabled: bool) -> None:
+    request = FlexPiRequest(
+        input_path="input.json", output_path="output", torch_compile=compile_enabled,
+    )
+    argv = build_inference_argv(
+        request, input_path=Path("input.json"), output_path=Path("actions.json"),
+    )
+    assert argv.count("--torch-compile") == int(compile_enabled)
+
+
 def test_runtime_parallelizes_large_modelscope_fetches(monkeypatch) -> None:
     monkeypatch.delenv("MODELSCOPE_DOWNLOAD_PARALLELS", raising=False)
     request = FlexPiRequest(input_path="input.json", output_path="output")
@@ -64,7 +77,7 @@ def test_runtime_parallelizes_large_modelscope_fetches(monkeypatch) -> None:
     assert _runtime_env(request)["MODELSCOPE_DOWNLOAD_PARALLELS"] == "4"
 
 
-def test_invalid_action_shape_is_not_published(tmp_path: Path) -> None:
+def test_invalid_action_shape_is_not_published(tmp_path: Path, capsys) -> None:
     manifest = _manifest(tmp_path / "input.json")
     def broken(argv, **kwargs):  # type: ignore[no-untyped-def]
         Path(argv[argv.index("--output-json") + 1]).write_text(json.dumps({
@@ -81,6 +94,8 @@ def test_invalid_action_shape_is_not_published(tmp_path: Path) -> None:
     else:
         raise AssertionError("invalid action tensor was accepted")
     assert not output.exists()
+    captured = capsys.readouterr()
+    assert REAL_INFERENCE_MARKER not in captured.out + captured.err
 
 
 def test_failed_upstream_output_is_bounded_and_redacted(tmp_path: Path) -> None:

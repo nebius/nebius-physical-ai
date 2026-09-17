@@ -60,6 +60,14 @@ reduce that concurrency when an operator-controlled network requires it.
 
 ## CLI and SDK
 
+Inference emits exactly one JSON document on stdout, including real execution.
+`--output-format json` is the default and the only supported format. Runtime
+diagnostics and the success marker go to stderr; domain failures exit with code 1.
+
+The runtime prepares and verifies the pinned DINO checkpoint before setting
+`FLEX_PI_DINO_CHECKPOINT`. Direct encoder construction without that value fails
+before model loading; it never falls back to an unpinned pretrained download.
+
 Plan locally without downloading model assets:
 
 ```bash
@@ -69,7 +77,7 @@ npa workbench flex-pi infer \
   --dry-run
 ```
 
-Run inside the GPU image with a local directory or S3 prefix:
+Run inside the GPU image with an authorized S3 output prefix:
 
 ```bash
 npa workbench flex-pi infer \
@@ -86,7 +94,8 @@ warmup is accounted as model setup; it does not change the checkpoint, public
 observation, four Euler steps, seed, or 32×14 action contract.
 
 The SDK exposes the same implementation as
-`npa.sdk.workbench.flex_pi.infer(...)`. For serving, set an owner-controlled
+`npa.sdk.workbench.flex_pi.infer(...)` and also supports local output directories.
+For serving, set an owner-controlled
 `NPA_FLEX_PI_TOKEN`, configure `NPA_FLEX_PI_OUTPUT_ROOT` to an authorized S3
 prefix or local mode-0700 directory, and keep transport private or terminate
 TLS. `/health`, `/status`, `/system-info`, `/list`, and `/run` all require bearer

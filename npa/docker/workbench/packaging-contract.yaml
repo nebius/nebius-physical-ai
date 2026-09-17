@@ -298,8 +298,13 @@ images:
       The checkpoint, Wan/T5/DINOv3 assets, public RoboTwin observation bytes,
       operator credentials, and populated caches are absent and fetched only at
       runtime. The RoboTwin dataset card declares no license, so sample bytes
-      are never redistributed. Publication remains quarantined until complete
-      built-layer scanning and real RTX PRO 6000 inference pass on the exact digest.
+      are never redistributed. The supported 0.1.0-cu128 release passed built-layer,
+      vulnerability/secret/license, SBOM/provenance, anonymous-pull, and independent
+      B200 and RTX PRO 6000 inference gates. Its accepted digest is
+      sha256:88359258470d9622d9fb5274d8ad39627a57a5682cb8630c7ac85a3f303c7b91,
+      recorded in the publication inventories. Replacement development bytes must
+      pass every publication gate and both GPU targets before release acceptance;
+      the existing release evidence does not validate changed source or patches.
   sonic:
     dockerfile: sonic/Dockerfile
     isaac_runtime_fetch: true
