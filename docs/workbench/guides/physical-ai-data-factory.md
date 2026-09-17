@@ -468,6 +468,20 @@ frames at 16 fps, and extracts eight caption frames. The catalog always invokes
 for hallucination scoring. Missing or invalid input therefore cannot turn into a
 decorative staged object or a fixed control example.
 
+The separately named NVIDIA VDA workflow uses the `source-fidelity-v2`
+normalizer: it maps the complete source frame span to those 93 frames exactly
+once instead of repeating a short action, includes both endpoints in the eight
+caption frames, preserves aspect ratio with letterboxing rather than cropping,
+and emits limited-range BT.709 range/matrix/transfer/primaries metadata. Its
+provenance records the intended source index and timestamp for every conditioning
+frame, so source/control alignment is independently checkable.
+The resulting VDA RRD opens with source, conditioning-control, and generated
+videos together on the decoded `video_time` timeline. Its evidence panel also
+records the probed codec, frame cadence/count, pixel format, range, matrix,
+transfer, primaries, byte size, and SHA-256 for those exact embedded bytes;
+unknown generated tags remain `unknown` rather than being silently inferred or
+rewritten.
+
 Edge, visibility-blur, and segmentation controls are derived from the staged clip.
 Depth is precomputed-only and must be supplied as `augment_control_asset_uri`:
 `--var augment_control=seg` conditions on a GroundingDINO+SAM2 segmentation
@@ -640,6 +654,15 @@ not an unauditable replay of identical inference settings.
 The planner validates Cosmos Transfer's native constraints before reserving a GPU:
 edge-control weights stay within `0..1`, and guidance remains a non-negative
 integer.
+
+The NVIDIA VDA workflow also selects `prompt_policy: source-fidelity-v2`.
+Appearance palettes and surface finishes apply only to the replaceable backdrop;
+foreground color, material identity, geometry, contact relationships, action
+order, and camera framing remain explicit invariants. Each generated config
+includes Cosmos Transfer 2.5's native `negative_prompt` for measured failure
+modes such as cyan cast, clipped highlights, object warping/duplication, broken
+contact, repeated action, temporal jumps, and flicker. The exact positive and
+negative prompts remain in the per-candidate manifest and metadata.
 
 This baseline is a compatibility choice, not a claim that stronger structural
 conditioning always improves evaluator score. Prior live refinement evidence was

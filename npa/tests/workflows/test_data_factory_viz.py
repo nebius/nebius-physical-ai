@@ -14,6 +14,7 @@ from npa.workflows.data_factory_viz import (
     _build_data_factory_blueprint,
     _committed_variant_dirs,
     _frame_index,
+    _sha256_path,
     build_run_rrd,
 )
 
@@ -264,6 +265,31 @@ def test_vda_blueprint_foregrounds_per_candidate_disposition() -> None:
     assert blueprint.time_panel.timeline == "video_time"
 
 
+def test_source_fidelity_blueprint_foregrounds_synchronized_control_video() -> None:
+    rrb = pytest.importorskip("rerun.blueprint")
+    blueprint = _build_data_factory_blueprint(
+        rrb,
+        source_entities=["source/original", "conditioning/derived"],
+        candidate_entities=["augmented/iteration-1/candidate-a"],
+        has_controls=True,
+        has_captions=False,
+        has_pipeline_evidence=True,
+        default_timeline="video_time",
+        foreground_controls=True,
+    )
+
+    comparison = blueprint.root_container.contents[0]
+    assert comparison.name == "Original versus generated"
+    assert [view.name for view in comparison.contents] == [
+        "Original source",
+        "Conditioning controls",
+        "candidate-a",
+    ]
+    assert comparison.contents[1].origin == "control"
+    assert comparison.contents[1].contents == "control/**"
+    assert blueprint.time_panel.timeline == "video_time"
+
+
 def test_vda_recording_rejects_generated_only_comparison(tmp_path: Path) -> None:
     pytest.importorskip("rerun")
     run = tmp_path / "generated-only"
@@ -501,6 +527,10 @@ def test_control_maps_are_logged_beside_the_variants_they_conditioned(
     _write_png(control / "control_seg" / "frame-00000.png", (0, 255, 0))
     _write_png(control / "control_seg" / "frame-00001.png", (0, 200, 0))
     _write_png(control / "mask_seg" / "frame-00000.png", (255, 255, 255))
+    _write_mp4_from_png(
+        control / "control_seg" / "frame-00000.png",
+        control / "control_seg.mp4",
+    )
 
     import rerun as rr
 
@@ -515,9 +545,151 @@ def test_control_maps_are_logged_beside_the_variants_they_conditioned(
     result = build_run_rrd(str(run), str(tmp_path / "reports" / "sim2real.rrd"))
 
     assert "control/aug-0/control_seg" in logged_entities
+    assert "control/aug-0/control_seg/video" in logged_entities
     assert "control/aug-0/mask_seg" in logged_entities
     # The three control frames count as logged frames alongside the variant's one.
     assert result["frames_logged"] == 4
+
+
+def test_source_fidelity_media_evidence_probes_exact_synchronized_bytes(
+    tmp_path: Path,
+) -> None:
+    from npa.workflows.data_factory_viz import _source_fidelity_media_evidence
+
+    run = tmp_path / "run"
+    frame = run / "fixture.png"
+    _write_png(frame, (220, 80, 20))
+    source = run / "input" / "source.mp4"
+    conditioning = run / "input" / "conditioning.mp4"
+    candidate = run / "cosmos_augmented" / "candidate-a" / "augmented_video.mp4"
+    control = run / "cosmos_control" / "candidate-a" / "control_edge.mp4"
+    stale_control = (
+        run
+        / "cosmos_control"
+        / "_attempts"
+        / "stale"
+        / "candidate-a"
+        / "control_edge.mp4"
+    )
+    for video in (source, conditioning, candidate, control, stale_control):
+        video.parent.mkdir(parents=True, exist_ok=True)
+        _write_mp4_from_png(frame, video)
+    (candidate.parents[1] / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "npa.cosmos2.transfer.v1",
+                "mode": "cosmos_transfer2.5_gpu",
+                "status": "executed",
+                "node_count": 1,
+                "variant_count": 1,
+                "variants": [
+                    {
+                        "clip": "candidate-a",
+                        "variant_index": 0,
+                        "augmented_video_uri": (
+                            "s3://test/run/cosmos_augmented/candidate-a/"
+                            "augmented_video.mp4"
+                        ),
+                        "control_uris": {
+                            "control_edge": (
+                                "s3://test/run/cosmos_control/candidate-a/"
+                                "control_edge.mp4"
+                            )
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    evidence = _source_fidelity_media_evidence(
+        run,
+        input_provenance={
+            "derivation": {
+                "policy": "source-fidelity-v2",
+                "temporal_alignment": {"loop_count": 0},
+            }
+        },
+        variant_records=[
+            {"candidate_id": "candidate-a", "video": candidate}
+        ],
+    )
+
+    assert evidence["schema"] == "npa.paidf.vda.media-evidence.v1"
+    assert evidence["synchronization_timeline"] == "video_time"
+    assert evidence["source"]["codec"] == "h264"
+    assert evidence["source"]["sha256"] == _sha256_path(source)
+    assert evidence["source"]["byte_size"] == source.stat().st_size
+    assert evidence["conditioning"]["frame_count"] == evidence["source"][
+        "frame_count"
+    ]
+    assert len(evidence["controls"]) == 1
+    assert evidence["controls"][0]["signal"] == "candidate-a/control_edge.mp4"
+    assert evidence["controls"][0]["media"]["sha256"] == _sha256_path(control)
+    assert evidence["generated_candidates"][0]["candidate_id"] == "candidate-a"
+    assert evidence["generated_candidates"][0]["media"]["sha256"] == _sha256_path(
+        candidate
+    )
+    assert evidence["temporal_alignment"]["loop_count"] == 0
+
+
+def test_source_fidelity_media_evidence_rejects_missing_committed_control(
+    tmp_path: Path,
+) -> None:
+    from npa.workflows.data_factory_viz import (
+        DataFactoryVizError,
+        _source_fidelity_media_evidence,
+    )
+
+    run = tmp_path / "run"
+    frame = run / "fixture.png"
+    _write_png(frame, (220, 80, 20))
+    source = run / "input" / "source.mp4"
+    conditioning = run / "input" / "conditioning.mp4"
+    candidate = run / "cosmos_augmented" / "candidate-a" / "augmented_video.mp4"
+    for video in (source, conditioning, candidate):
+        video.parent.mkdir(parents=True, exist_ok=True)
+        _write_mp4_from_png(frame, video)
+    (candidate.parents[1] / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "npa.cosmos2.transfer.v1",
+                "mode": "cosmos_transfer2.5_gpu",
+                "status": "executed",
+                "node_count": 1,
+                "variant_count": 1,
+                "variants": [
+                    {
+                        "clip": "candidate-a",
+                        "variant_index": 0,
+                        "augmented_video_uri": (
+                            "s3://test/run/cosmos_augmented/candidate-a/"
+                            "augmented_video.mp4"
+                        ),
+                        "control_uris": {
+                            "control_edge": (
+                                "s3://test/run/cosmos_control/candidate-a/"
+                                "control_edge.mp4"
+                            )
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        DataFactoryVizError,
+        match="missing a manifest-referenced control video",
+    ):
+        _source_fidelity_media_evidence(
+            run,
+            input_provenance={"derivation": {"policy": "source-fidelity-v2"}},
+            variant_records=[
+                {"candidate_id": "candidate-a", "video": candidate}
+            ],
+        )
 
 
 def test_the_stage_log_names_what_conditioned_the_augment(tmp_path: Path) -> None:

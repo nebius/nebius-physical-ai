@@ -54,8 +54,9 @@ kind: Workflow
 # ─────────────────────────────────────────────────────────────────────────────
 # The operator-side submit command prepares input/ before image preflight or
 # provisioning. With no selector it fetches the pinned RoboPro physical capture;
-# --input-video and --input-uri replace it. The verified source is normalized to
-# a 93-frame H.264 conditioning clip and eight captionable frames under:
+# --input-video and --input-uri replace it. The verified source is normalized once
+# across its complete timeline to a 93-frame H.264/BT.709 conditioning clip and
+# eight endpoint-inclusive captionable frames under:
 #
 #     s3://{{config.bucket}}/nvidia-paidf-vda-cosmos-transfer25/<run-id>/input/
 #
@@ -103,7 +104,11 @@ config:
   seed_fixture: "false"
   seed_default_input: "false"
   n_augmentations: "2"            # augmented variants sampled per source video
-  augment_subject: "the input robot clips"  # included in sampled Cosmos prompts
+  augment_subject: "the input robot manipulation scene"  # sampled Cosmos prompts
+  # This NVIDIA VDA-only policy keeps palette/finish changes on the replaceable
+  # backdrop, treats source foreground colors and contact geometry as invariants,
+  # and supplies Transfer's native negative_prompt with measured failure modes.
+  prompt_policy: "source-fidelity-v2"
   # Nodes in the augment block. The variants are independent diffusions, so they
   # shard across a gang-scheduled block: each node renders its stride of the
   # sampled combos on its own GPUs. Every managed attempt publishes clips below a
@@ -396,6 +401,7 @@ states:
         - "{{config.augment_subject}}"
         - "{{config.augmentation_seed}}"
         - "{{config.quality_anchor_uri}}"
+        - "{{config.prompt_policy}}"
     outputs:
       - uri: "{{config.configs_uri}}manifest.json"
         schema: npa.data_factory.configs.v1

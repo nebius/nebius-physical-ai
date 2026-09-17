@@ -36,6 +36,7 @@ PROVENANCE_SCHEMA = "npa.paidf.input-provenance.v1"
 CONDITIONING_FRAMES = 8
 CONDITIONING_FRAME_COUNT = 93
 CONDITIONING_FPS = 16
+SOURCE_FIDELITY_CONDITIONING_POLICY = "source-fidelity-v2"
 SUPPORTED_CODECS = frozenset({"h264"})
 MAX_LEROBOT_INFO_BYTES = 1_000_000
 MAX_LEROBOT_EPISODE_METADATA_BYTES = 64_000_000
@@ -183,9 +184,11 @@ def plan_paidf_input(
     require_explicit_lerobot_selection: bool = False,
     lerobot_episode_was_explicit: bool = False,
     seed_fixture: bool = False,
+    conditioning_policy: str = "",
 ) -> PreparedPaidfInput:
     """Describe selection for ``--plan-only`` without filesystem, S3, or network I/O."""
 
+    normalized_conditioning_policy = _conditioning_policy(conditioning_policy)
     selection = select_paidf_input(
         input_video=input_video,
         input_uri=input_uri,
@@ -220,6 +223,7 @@ def plan_paidf_input(
             },
             derivation={
                 "kind": "normalized_conditioning_clip",
+                "policy": normalized_conditioning_policy,
                 "staged_uri": f"{base_uri}conditioning.mp4" if base_uri else "",
             },
         )
@@ -248,6 +252,7 @@ def plan_paidf_input(
             source=source,
             derivation={
                 "kind": "normalized_conditioning_clip",
+                "policy": normalized_conditioning_policy,
                 "staged_uri": f"{base_uri}conditioning.mp4" if base_uri else "",
             },
         )
@@ -274,6 +279,7 @@ def prepare_paidf_input(
     offline: bool | None = None,
     storage_client: Any | None = None,
     reporter: Callable[[str], None] | None = None,
+    conditioning_policy: str = "",
 ) -> PreparedPaidfInput:
     """Verify, normalize, and stage the selected input under the canonical prefix.
 
@@ -283,6 +289,7 @@ def prepare_paidf_input(
     source once a run is committed.
     """
 
+    normalized_conditioning_policy = _conditioning_policy(conditioning_policy)
     selection = select_paidf_input(
         input_video=input_video,
         input_uri=input_uri,
@@ -477,22 +484,50 @@ def prepare_paidf_input(
         conditioning = tmp / "conditioning.mp4"
         frames_dir = tmp / "frames"
         frames_dir.mkdir()
-        ffmpeg_contract = _derive_conditioning(requested_source, conditioning) or {
+        source_fidelity = (
+            normalized_conditioning_policy == SOURCE_FIDELITY_CONDITIONING_POLICY
+        )
+        if source_fidelity:
+            ffmpeg_contract = _derive_source_fidelity_conditioning(
+                requested_source, conditioning, media
+            )
+        else:
+            ffmpeg_contract = _derive_conditioning(requested_source, conditioning)
+        ffmpeg_contract = ffmpeg_contract or {
             "name": "ffmpeg",
             "version": "unreported",
-            "arguments": _conditioning_arguments(),
+            "arguments": (
+                _source_fidelity_conditioning_arguments(media)
+                if source_fidelity
+                else _conditioning_arguments()
+            ),
         }
         conditioning_media = probe_video(conditioning)
-        frames = _extract_conditioning_frames(conditioning, frames_dir)
+        frames = (
+            _extract_aligned_conditioning_frames(conditioning, frames_dir)
+            if source_fidelity
+            else _extract_conditioning_frames(conditioning, frames_dir)
+        )
+        operations = [
+            "repeat source as needed to exactly 93 frames",
+            "sample at 16 fps",
+            "preserve aspect ratio and letterbox to 1280x720",
+            "encode H.264/yuv420p without audio",
+        ]
+        temporal_alignment = None
+        if source_fidelity:
+            operations = [
+                "time-normalize the source once to exactly 93 frames without looping",
+                "sample the complete source timeline at 16 fps with aligned endpoints",
+                "preserve aspect ratio and letterbox to 1280x720 without cropping",
+                "convert explicitly to limited-range BT.709 H.264/yuv420p without audio",
+            ]
+            temporal_alignment = _source_fidelity_alignment(media)
         derivation = {
             "kind": "normalized_conditioning_clip",
+            "policy": normalized_conditioning_policy,
             "derived_from_sha256": source_sha,
-            "operations": [
-                "repeat source as needed to exactly 93 frames",
-                "sample at 16 fps",
-                "preserve aspect ratio and letterbox to 1280x720",
-                "encode H.264/yuv420p without audio",
-            ],
+            "operations": operations,
             "sha256": _sha256(conditioning),
             "byte_size": conditioning.stat().st_size,
             "media": conditioning_media,
@@ -505,13 +540,19 @@ def prepare_paidf_input(
                 "tool": {
                     "name": "ffmpeg",
                     "version": str(ffmpeg_contract.get("version") or "unreported"),
-                    "arguments": _frame_extraction_arguments(),
+                    "arguments": (
+                        _aligned_frame_extraction_arguments()
+                        if source_fidelity
+                        else _frame_extraction_arguments()
+                    ),
                 },
                 "items": [
                     {"name": frame.name, "sha256": _sha256(frame)} for frame in frames
                 ],
             },
         }
+        if temporal_alignment is not None:
+            derivation["temporal_alignment"] = temporal_alignment
         provenance = _build_provenance(
             run_id=clean_run_id,
             base_uri=base_uri,
@@ -586,7 +627,9 @@ def probe_video(path: Path) -> dict[str, Any]:
         "-select_streams",
         "v:0",
         "-show_entries",
-        "stream=codec_name,profile,width,height,pix_fmt,avg_frame_rate,nb_frames:format=format_name,duration,size",
+        "stream=codec_name,profile,width,height,pix_fmt,avg_frame_rate,nb_frames,"
+        "color_range,color_space,color_transfer,color_primaries:"
+        "format=format_name,duration,size",
         "-of",
         "json",
         str(path),
@@ -650,6 +693,172 @@ def probe_video(path: Path) -> dict[str, Any]:
         "frame_rate": frame_rate_raw,
         "frame_count": frame_count,
         "pixel_format": str(stream.get("pix_fmt") or ""),
+        "color_range": str(stream.get("color_range") or "unknown"),
+        "color_space": str(stream.get("color_space") or "unknown"),
+        "color_transfer": str(stream.get("color_transfer") or "unknown"),
+        "color_primaries": str(stream.get("color_primaries") or "unknown"),
+    }
+
+
+def _conditioning_policy(value: str) -> str:
+    """Normalize the opt-in VDA conditioning policy without changing legacy runs."""
+
+    normalized = str(value or "").strip()
+    if not normalized:
+        return "legacy-loop-v1"
+    if normalized != SOURCE_FIDELITY_CONDITIONING_POLICY:
+        raise PaidfInputError(
+            "unsupported PAIDF conditioning policy; expected source-fidelity-v2"
+        )
+    return normalized
+
+
+def _source_fidelity_time_scale(media: dict[str, Any]) -> float:
+    """Map the complete source frame span onto the fixed Transfer frame span."""
+
+    frame_count = int(media.get("frame_count") or 0)
+    frame_rate = _ffprobe_frame_rate(str(media.get("frame_rate") or ""), Path("source.mp4"))
+    if frame_count < 2:
+        raise PaidfInputError(
+            "source-fidelity conditioning requires at least two source video frames"
+        )
+    source_span = (frame_count - 1) / frame_rate
+    target_span = (CONDITIONING_FRAME_COUNT - 1) / CONDITIONING_FPS
+    scale = target_span / source_span
+    if not math.isfinite(scale) or scale <= 0:
+        raise PaidfInputError("source-fidelity conditioning produced an invalid time scale")
+    return scale
+
+
+def _source_color_filter(media: dict[str, Any]) -> str:
+    """Return explicit, metadata-driven scale options for a BT.709 output."""
+
+    color_range = str(media.get("color_range") or "").strip().lower()
+    color_space = str(media.get("color_space") or "").strip().lower()
+    options = ["in_range=pc" if color_range in {"pc", "jpeg"} else "in_range=tv"]
+    if color_range not in {"pc", "jpeg", "tv", "mpeg"}:
+        options = []
+    if color_space in {
+        "bt709",
+        "bt470bg",
+        "smpte170m",
+        "smpte240m",
+        "bt2020nc",
+        "bt2020c",
+    }:
+        options.append(f"in_color_matrix={color_space}")
+    options.extend(("out_range=tv", "out_color_matrix=bt709"))
+    return ":".join(options)
+
+
+def _source_fidelity_filter(media: dict[str, Any]) -> str:
+    scale = _source_fidelity_time_scale(media)
+    color = _source_color_filter(media)
+    return (
+        f"setpts=(PTS-STARTPTS)*{scale:.15g},"
+        f"fps={CONDITIONING_FPS}:round=near:start_time=0,"
+        "scale=1280:720:force_original_aspect_ratio=decrease:"
+        f"{color},"
+        "pad=1280:720:(ow-iw)/2:(oh-ih)/2:black"
+    )
+
+
+def _derive_source_fidelity_conditioning(
+    source: Path, output: Path, media: dict[str, Any]
+) -> dict[str, Any]:
+    """Encode one endpoint-aligned source traversal with explicit color metadata."""
+
+    command = [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-i",
+        str(source),
+        "-vf",
+        _source_fidelity_filter(media),
+        "-frames:v",
+        str(CONDITIONING_FRAME_COUNT),
+        "-an",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-color_range",
+        "tv",
+        "-colorspace",
+        "bt709",
+        "-color_primaries",
+        "bt709",
+        "-color_trc",
+        "bt709",
+        "-movflags",
+        "+faststart",
+        str(output),
+    ]
+    _run_ffmpeg(command, "derive the source-fidelity PAIDF conditioning clip")
+    return {
+        "name": "ffmpeg",
+        "version": _ffmpeg_version(),
+        "arguments": _source_fidelity_conditioning_arguments(media),
+    }
+
+
+def _source_fidelity_conditioning_arguments(media: dict[str, Any]) -> list[str]:
+    """Stable path-free arguments for the VDA source-fidelity derivation."""
+
+    return [
+        "-i",
+        "<source-by-sha256>",
+        "-vf",
+        _source_fidelity_filter(media),
+        "-frames:v",
+        str(CONDITIONING_FRAME_COUNT),
+        "-an",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-color_range",
+        "tv",
+        "-colorspace",
+        "bt709",
+        "-color_primaries",
+        "bt709",
+        "-color_trc",
+        "bt709",
+        "-movflags",
+        "+faststart",
+        "<conditioning-by-sha256>",
+    ]
+
+
+def _source_fidelity_alignment(media: dict[str, Any]) -> dict[str, Any]:
+    """Record the intended source index/timestamp for every Transfer frame."""
+
+    source_count = int(media["frame_count"])
+    source_rate = _ffprobe_frame_rate(str(media["frame_rate"]), Path("source.mp4"))
+    frame_map = []
+    for output_index in range(CONDITIONING_FRAME_COUNT):
+        source_index = round(
+            output_index * (source_count - 1) / (CONDITIONING_FRAME_COUNT - 1)
+        )
+        frame_map.append(
+            {
+                "output_index": output_index,
+                "output_timestamp_seconds": round(output_index / CONDITIONING_FPS, 9),
+                "source_index": source_index,
+                "source_timestamp_seconds": round(source_index / source_rate, 9),
+            }
+        )
+    return {
+        "method": "single-pass-endpoint-aligned-nearest-frame",
+        "source_frame_count": source_count,
+        "source_frame_rate": str(media["frame_rate"]),
+        "output_frame_count": CONDITIONING_FRAME_COUNT,
+        "output_frame_rate": f"{CONDITIONING_FPS}/1",
+        "loop_count": 0,
+        "frame_map": frame_map,
     }
 
 
@@ -808,6 +1017,64 @@ def _frame_extraction_arguments() -> list[str]:
         "<conditioning-by-sha256>",
         "-vf",
         f"select=not(mod(n\\,{interval}))",
+        "-vsync",
+        "vfr",
+        "-frames:v",
+        str(CONDITIONING_FRAMES),
+        "<frame-pattern>",
+    ]
+
+
+def _aligned_conditioning_frame_indices() -> list[int]:
+    """Eight deterministic caption indices including both timeline endpoints."""
+
+    return [
+        round(index * (CONDITIONING_FRAME_COUNT - 1) / (CONDITIONING_FRAMES - 1))
+        for index in range(CONDITIONING_FRAMES)
+    ]
+
+
+def _aligned_frame_select_filter() -> str:
+    return "select=" + "+".join(
+        f"eq(n\\,{index})" for index in _aligned_conditioning_frame_indices()
+    )
+
+
+def _extract_aligned_conditioning_frames(
+    conditioning: Path, output_dir: Path
+) -> list[Path]:
+    pattern = output_dir / "conditioning-frame-%04d.png"
+    command = [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-i",
+        str(conditioning),
+        "-vf",
+        _aligned_frame_select_filter(),
+        "-vsync",
+        "vfr",
+        "-frames:v",
+        str(CONDITIONING_FRAMES),
+        str(pattern),
+    ]
+    _run_ffmpeg(command, "extract endpoint-aligned PAIDF conditioning frames")
+    frames = sorted(output_dir.glob("conditioning-frame-*.png"))
+    if len(frames) != CONDITIONING_FRAMES:
+        raise PaidfInputError(
+            f"conditioning-frame extraction produced {len(frames)} frames; "
+            f"expected {CONDITIONING_FRAMES}"
+        )
+    return frames
+
+
+def _aligned_frame_extraction_arguments() -> list[str]:
+    return [
+        "-i",
+        "<conditioning-by-sha256>",
+        "-vf",
+        _aligned_frame_select_filter(),
         "-vsync",
         "vfr",
         "-frames:v",

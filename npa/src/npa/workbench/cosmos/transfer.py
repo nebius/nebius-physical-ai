@@ -409,6 +409,7 @@ def _spec_for_input_video(
     control_weight: float,
     guidance: float,
     name: str,
+    negative_prompt: str = "",
     seed: int | None = None,
     control_asset: str = "",
     control_prompt: str = "",
@@ -461,6 +462,8 @@ def _spec_for_input_video(
         "guidance": guidance,
         modality: control_config,
     }
+    if str(negative_prompt or "").strip():
+        spec["negative_prompt"] = str(negative_prompt).strip()
     if seed is not None:
         spec["seed"] = int(seed)
     safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in str(name or "input"))
@@ -878,7 +881,14 @@ def _guardrail_nltk_data_path(
     return root / revision
 
 
-def _spec_with_prompt(repo: Path, spec: str, prompt: str, *, tag: str = "") -> str:
+def _spec_with_prompt(
+    repo: Path,
+    spec: str,
+    prompt: str,
+    *,
+    negative_prompt: str = "",
+    tag: str = "",
+) -> str:
     """Write a copy of ``spec`` with its text prompt overridden; return its path.
 
     Cosmos controlnet specs carry the text prompt that steers appearance. Patching
@@ -896,7 +906,10 @@ def _spec_with_prompt(repo: Path, spec: str, prompt: str, *, tag: str = "") -> s
         data = _json.loads(spec_path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             return spec
-        data["prompt"] = prompt
+        if prompt:
+            data["prompt"] = prompt
+        if str(negative_prompt or "").strip():
+            data["negative_prompt"] = str(negative_prompt).strip()
         safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in str(tag or ""))
         prefix = f"_npa_prompted_{safe}_" if safe else "_npa_prompted_"
         patched = spec_path.with_name(prefix + spec_path.name)
@@ -951,6 +964,7 @@ def run_cosmos_transfer(
     run_id: str = "",
     spec: str | None = None,
     prompt: str | None = None,
+    negative_prompt: str | None = None,
     out_subdir: str | None = None,
     hf_home: str | None = None,
     input_video: str | None = None,
@@ -972,6 +986,8 @@ def run_cosmos_transfer(
     ``COSMOS_TRANSFER_SPEC`` environment override). No upstream fixture is baked.
     ``prompt`` (or ``COSMOS_TRANSFER_PROMPT``), when set, overrides the spec's text
     prompt so the sampled appearance actually conditions the augmentation.
+    ``negative_prompt`` (or ``COSMOS_TRANSFER_NEGATIVE_PROMPT``) is rendered into
+    that same effective spec and retained in the published evidence.
 
     When ``input_video`` is provided the transfer is CONDITIONED ON THAT CLIP: a
     controlnet spec is built with ``video_path`` = the input and the ``control``
@@ -992,10 +1008,14 @@ def run_cosmos_transfer(
     tag = str(variant_tag or run_id or "input")
     conditioned_control = ""
     if input_video:
+        effective_negative_prompt = negative_prompt or os.environ.get(
+            "COSMOS_TRANSFER_NEGATIVE_PROMPT", ""
+        )
         spec, conditioned_control = _spec_for_input_video(
             repo,
             input_video=input_video,
             prompt=prompt or os.environ.get("COSMOS_TRANSFER_PROMPT", ""),
+            negative_prompt=effective_negative_prompt,
             control=control,
             control_weight=control_weight,
             guidance=guidance,
@@ -1014,8 +1034,17 @@ def run_cosmos_transfer(
                 "COSMOS_TRANSFER_SPEC; no upstream media is bundled"
             )
         prompt = prompt or os.environ.get("COSMOS_TRANSFER_PROMPT", "")
-        if prompt:
-            spec = _spec_with_prompt(repo, spec, prompt, tag=tag)
+        effective_negative_prompt = negative_prompt or os.environ.get(
+            "COSMOS_TRANSFER_NEGATIVE_PROMPT", ""
+        )
+        if prompt or effective_negative_prompt:
+            spec = _spec_with_prompt(
+                repo,
+                spec,
+                prompt,
+                negative_prompt=effective_negative_prompt,
+                tag=tag,
+            )
     out = out_subdir or f"outputs/{run_id or 'transfer'}"
     out_abs = repo / out
     if out_abs.exists():
@@ -1112,6 +1141,7 @@ def run_cosmos_transfer(
         "mask_videos": mask_videos,
         "control_weight": float(control_weight),
         "control_prompt": control_prompt,
+        "negative_prompt": str(effective_negative_prompt or ""),
         "mask_prompt": mask_prompt,
         "control_asset": control_asset,
         "mask_asset": mask_asset,
@@ -1245,6 +1275,7 @@ def publish_transfer_clip(
     effective_guidance = transfer.get("effective_guidance")
     inference_seed = transfer.get("inference_seed")
     conditioning_clip_uri = str(transfer.get("conditioning_clip_uri") or "")
+    negative_prompt = str(transfer.get("negative_prompt") or "")
 
     control_uris: dict[str, str] = {}
     control_frames: dict[str, list[str]] = {}
@@ -1278,6 +1309,7 @@ def publish_transfer_clip(
             "variant_index": int(variant_index),
             "variables": variables or {},
             "prompt": str((variables or {}).get("prompt") or ""),
+            "negative_prompt": negative_prompt,
             "control_spec": transfer.get("spec", ""),
             "input_conditioned": input_conditioned,
             "conditioned_input": conditioned_input,
@@ -1360,6 +1392,7 @@ def publish_transfer_clip(
         "control": conditioned_control,
         "control_weight": float(transfer.get("control_weight", 0.0) or 0.0),
         "control_prompt": str(transfer.get("control_prompt") or ""),
+        "negative_prompt": negative_prompt,
         "mask_prompt": str(transfer.get("mask_prompt") or ""),
         "control_uris": control_uris,
         "control_frames": control_frames,
@@ -1904,6 +1937,7 @@ def build_run_manifest(
         # segmentation, and the region mask that limited where it applied.
         "control_weight": float(first.get("control_weight", 0.0) or 0.0),
         "control_prompt": str(first.get("control_prompt") or ""),
+        "negative_prompt": str(first.get("negative_prompt") or ""),
         "mask_prompt": str(first.get("mask_prompt") or ""),
         "control_uris": first.get("control_uris", {}),
         "content_guardrails_enabled": bool(
@@ -1920,6 +1954,7 @@ def build_run_manifest(
                 "variant_index": int(c.get("variant_index", index) or 0),
                 "variables": c.get("variables", {}),
                 "prompt": str((c.get("variables") or {}).get("prompt") or ""),
+                "negative_prompt": str(c.get("negative_prompt") or ""),
                 "frame_count": int(c.get("frame_count", 0) or 0),
                 "augmented_video_uri": c.get("augmented_video_uri", ""),
                 "control_uris": c.get("control_uris", {}),

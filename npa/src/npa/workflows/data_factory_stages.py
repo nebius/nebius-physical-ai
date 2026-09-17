@@ -122,6 +122,72 @@ APPEARANCE_VARIABLES = {
     for key in APPEARANCE_PROFILES[0]
 }
 
+SOURCE_FIDELITY_PROMPT_POLICY = "source-fidelity-v2"
+SOURCE_FIDELITY_APPEARANCE_PROFILES: tuple[dict[str, str], ...] = (
+    {
+        "lighting": "bright diffuse daylight",
+        "background": "neutral gray backdrop",
+        "color_grade": "neutral balanced backdrop palette",
+        "surface_finish": "matte low-gloss backdrop finish",
+    },
+    {
+        "lighting": "soft warm studio illumination",
+        "background": "solid beige backdrop",
+        "color_grade": "gently warm backdrop palette",
+        "surface_finish": "satin soft-sheen backdrop finish",
+    },
+    {
+        "lighting": "bright indirect studio illumination",
+        "background": "solid light-gray backdrop",
+        "color_grade": "natural daylight backdrop palette",
+        "surface_finish": "fine-textured low-gloss backdrop finish",
+    },
+    {
+        "lighting": "soft even studio illumination",
+        "background": "solid warm-gray backdrop",
+        "color_grade": "softly muted neutral backdrop palette",
+        "surface_finish": "matte uniform backdrop finish",
+    },
+    {
+        "lighting": "soft directional side lighting with clear shadows",
+        "background": "solid warm beige backdrop",
+        "color_grade": "warm amber backdrop palette",
+        "surface_finish": "satin softly reflective backdrop finish",
+    },
+    {
+        "lighting": "warm diffuse studio illumination",
+        "background": "solid tan backdrop",
+        "color_grade": "warm balanced backdrop palette",
+        "surface_finish": "low-gloss smooth backdrop finish",
+    },
+    {
+        "lighting": "bright directional daylight with clear side shadows",
+        "background": "solid terracotta backdrop",
+        "color_grade": "warm earth-tone backdrop palette",
+        "surface_finish": "fine canvas-textured backdrop finish",
+    },
+    {
+        "lighting": "balanced overhead studio illumination",
+        "background": "solid taupe backdrop",
+        "color_grade": "muted earth-tone backdrop palette",
+        "surface_finish": "satin uniform backdrop finish",
+    },
+    {
+        "lighting": "soft diffuse evening illumination",
+        "background": "neutral warm-gray backdrop",
+        "color_grade": "subtly warm neutral backdrop palette",
+        "surface_finish": "matte fine-grain backdrop finish",
+    },
+)
+SOURCE_FIDELITY_NEGATIVE_PROMPT = (
+    "cyan or blue color cast, washed-out exposure, clipped highlights, extreme "
+    "oversaturation, distorted or warped objects, duplicated or missing objects, "
+    "changed foreground object colors, inconsistent object scale or position, "
+    "broken gripper-object contact, changed action order, camera reframing, split "
+    "screen, scene cuts, repeated action, temporal jumps, flicker, frozen motion, "
+    "cartoon, text, watermark"
+)
+
 LEISAAC_SCENES = {
     "LeIsaac-SO101-PickOrange-v0": (
         "An SO101 robot arm demonstrating the same orange pick-and-place motion"
@@ -132,7 +198,9 @@ LEISAAC_SCENES = {
 }
 
 
-def prompt_from_combo(combo: dict[str, Any], *, scene: str = "") -> str:
+def prompt_from_combo(
+    combo: dict[str, Any], *, scene: str = "", prompt_policy: str = ""
+) -> str:
     """Turn a sampled appearance combo into a natural-language Cosmos prompt.
 
     The clip defines the scene. This varies appearance only and explicitly
@@ -145,6 +213,24 @@ def prompt_from_combo(combo: dict[str, Any], *, scene: str = "") -> str:
     subject = (
         scene or "Photorealistic input-conditioned physical robot manipulation scene"
     )
+    if prompt_policy == SOURCE_FIDELITY_PROMPT_POLICY:
+        return (
+            f"Photorealistic video of {subject}. "
+            "The input video is the authoritative scene and action reference. "
+            "Keep every foreground object at the same position, scale, silhouette, "
+            "orientation, depth ordering, and contact relationship in every frame. "
+            "Keep the exact camera framing, action order, trajectory, and timing. "
+            "Preserve each foreground object's source color, texture, and material identity. "
+            "Apply all four visible appearance requirements consistently: "
+            f"lighting is {lighting or 'bright diffuse daylight'}; "
+            f"the non-identity-bearing background is a {background or 'neutral gray backdrop'}; "
+            "only that non-identity-bearing background uses the "
+            f"{color_grade or 'neutral balanced backdrop palette'}; "
+            "that background has a "
+            f"{surface_finish or 'matte low-gloss backdrop finish'}. "
+            "Do not recolor, relight into clipping, add, remove, duplicate, resize, "
+            "reshape, or spatially move any foreground object."
+        )
     return (
         f"Photorealistic {subject}. "
         "Apply all four visible appearance requirements consistently in every frame: "
@@ -1097,6 +1183,7 @@ def generate_configs(
     augment_subject: str = "",
     augmentation_seed: str = "",
     quality_anchor_uri: str = "",
+    prompt_policy: str = "",
 ) -> dict[str, Any]:
     """Sample appearance-only augmentation combos and write a real config manifest.
 
@@ -1122,8 +1209,27 @@ def generate_configs(
         or leisaac_scene
         or "input-conditioned physical robot manipulation"
     )
+    normalized_prompt_policy = str(prompt_policy or "").strip()
+    if normalized_prompt_policy not in {"", SOURCE_FIDELITY_PROMPT_POLICY}:
+        raise ValueError(
+            "prompt_policy must be empty or source-fidelity-v2"
+        )
+    profile_table = (
+        SOURCE_FIDELITY_APPEARANCE_PROFILES
+        if normalized_prompt_policy == SOURCE_FIDELITY_PROMPT_POLICY
+        else APPEARANCE_PROFILES
+    )
+    variables = {
+        key: list(dict.fromkeys(profile[key] for profile in profile_table))
+        for key in profile_table[0]
+    }
     anchor = _derive_quality_anchor(quality_anchor_uri)
-    variables = {key: list(values) for key, values in APPEARANCE_VARIABLES.items()}
+    if anchor and normalized_prompt_policy == SOURCE_FIDELITY_PROMPT_POLICY:
+        if any(
+            value not in variables[key]
+            for key, value in anchor["variables"].items()
+        ):
+            anchor = None
     if anchor:
         for key, value in anchor["variables"].items():
             if value not in variables[key]:
@@ -1135,7 +1241,7 @@ def generate_configs(
     if anchor:
         profiles.append(dict(anchor["variables"]))
     while len(profiles) < max(1, n):
-        cycle = [dict(profile) for profile in APPEARANCE_PROFILES]
+        cycle = [dict(profile) for profile in profile_table]
         rng.shuffle(cycle)
         profiles.extend(cycle)
     for profile_index, profile in enumerate(profiles[: max(1, n)]):
@@ -1149,13 +1255,18 @@ def generate_configs(
         )
         # The prompt is what actually conditions the Cosmos Transfer augmentation,
         # so the sampled appearance drives the pixels (not just a Rerun label).
-        combo["prompt"] = prompt_from_combo(combo, scene=subject)
+        combo["prompt"] = prompt_from_combo(
+            combo, scene=subject, prompt_policy=normalized_prompt_policy
+        )
+        if normalized_prompt_policy == SOURCE_FIDELITY_PROMPT_POLICY:
+            combo["negative_prompt"] = SOURCE_FIDELITY_NEGATIVE_PROMPT
         combos.append(combo)
     manifest = {
         "schema": "npa.data_factory.configs.v1",
         "scene": subject,
         "n_augmentations": len(combos),
         "augmentation_seed": effective_augmentation_seed,
+        "prompt_policy": normalized_prompt_policy or "legacy-v1",
         "variables": variables,
         "augmentations": combos,
         "quality_anchor": (
@@ -1842,6 +1953,33 @@ def _persist_quality_disposition(
 
     accepted = not reasons
     decision = "promote_checkpoint" if accepted else "loop_back"
+    criterion_fields = (
+        "attribute_verification",
+        "hallucination",
+        "temporal_consistency",
+        "appearance_fidelity",
+    )
+    criterion_evidence = []
+    raw_clips = report.get("clips")
+    for clip in raw_clips if isinstance(raw_clips, list) else []:
+        if not isinstance(clip, dict):
+            continue
+        criterion_evidence.append(
+            json.loads(
+                json.dumps(
+                    {
+                        "clip_id": str(clip.get("clip_id") or ""),
+                        "score": clip.get("score"),
+                        "passed": clip.get("passed") is True,
+                        **{
+                            field: clip[field]
+                            for field in criterion_fields
+                            if field in clip
+                        },
+                    }
+                )
+            )
+        )
     payload = {
         "schema": "npa.data_factory.quality_disposition.v1",
         "quality_status": "accepted" if accepted else "rejected",
@@ -1851,6 +1989,8 @@ def _persist_quality_disposition(
         "threshold": numeric_threshold,
         "hard_checks_passed": hard_checks_passed,
         "evaluator_report_uri": report_uri,
+        "evaluator_report_sha256": _payload_sha256(report) if report else "",
+        "criterion_evidence": criterion_evidence,
         "reasons": reasons,
     }
     payload["written_uri"] = _upload_json(payload, disposition_uri)

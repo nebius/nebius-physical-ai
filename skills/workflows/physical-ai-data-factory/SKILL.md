@@ -333,6 +333,21 @@ supply a video. Conditioned runs record `mode: cosmos_transfer2.5_gpu` +
 `input_conditioned: true` + `conditioned_input` in the augment `metadata.json` /
 `manifest.json`, which the agent's provenance panel surfaces.
 
+For `nvidia-paidf-vda-cosmos-transfer25`, require the task-scoped
+`source-fidelity-v2` input and prompt policies. The input policy stretches or
+samples the complete source timeline into one 93-frame traversal (never loops a
+short action), letterboxes rather than crops, writes explicit limited-range
+BT.709 metadata, extracts endpoint-inclusive caption frames, and records the full
+source-index/timestamp map. The prompt policy confines palette/finish changes to
+the replaceable backdrop, makes foreground color/geometry/contact/timing
+invariants explicit, and passes Transfer's native `negative_prompt` for cyan
+cast, clipping, warping, duplication, contact loss, repeated action, and flicker.
+Verify both prompt fields in the candidate manifest; do not infer them from a
+render label. Its RRD must open with source, conditioning control, and generated
+videos together on `video_time`, and retain the exact probed codec, cadence,
+frame-count, pixel-format, range, matrix, transfer, primaries, byte-size, and
+SHA-256 evidence.
+
 **Segmentation conditioning and region masks (`--var augment_control=seg`).**
 `edge` (Canny), `vis` (bilateral blur), and `seg` (GroundingDINO-base + SAM2) may
 be derived from the staged input. `depth` is deliberately precomputed-only and

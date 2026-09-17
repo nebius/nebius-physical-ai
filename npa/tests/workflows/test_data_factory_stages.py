@@ -187,6 +187,58 @@ def test_prompt_from_combo_is_appearance_only() -> None:
     assert "cloth" not in prompt
 
 
+def test_source_fidelity_prompt_policy_is_deterministic_and_fail_mode_specific(
+    tmp_path: Path,
+) -> None:
+    first = dfs.generate_configs(
+        str(tmp_path / "first.json"),
+        n_augmentations=4,
+        seed="run-a",
+        augmentation_seed="controlled-vda-quality",
+        prompt_policy=dfs.SOURCE_FIDELITY_PROMPT_POLICY,
+    )
+    second = dfs.generate_configs(
+        str(tmp_path / "second.json"),
+        n_augmentations=4,
+        seed="run-b",
+        augmentation_seed="controlled-vda-quality",
+        prompt_policy=dfs.SOURCE_FIDELITY_PROMPT_POLICY,
+    )
+
+    assert first["prompt_policy"] == "source-fidelity-v2"
+    assert first["augmentations"] == second["augmentations"]
+    for combo in first["augmentations"]:
+        assert combo["negative_prompt"] == dfs.SOURCE_FIDELITY_NEGATIVE_PROMPT
+        assert "cyan or blue color cast" in combo["negative_prompt"]
+        assert "repeated action" in combo["negative_prompt"]
+        assert "input video is the authoritative scene" in combo["prompt"]
+        assert "contact relationship" in combo["prompt"]
+        assert "Preserve each foreground object's source color" in combo["prompt"]
+        assert combo["color_grade"] in combo["prompt"]
+        assert "cool blue" not in combo["prompt"].lower()
+
+    production_seed = dfs.generate_configs(
+        str(tmp_path / "production-seed.json"),
+        n_augmentations=2,
+        augmentation_seed="profile4",
+        prompt_policy=dfs.SOURCE_FIDELITY_PROMPT_POLICY,
+    )
+    # The controlled production seed deliberately uses high-signal backdrop
+    # attributes. The previous subtle off-white/matte and overcast/matte pairs
+    # each failed two of four independent attribute checks.
+    for combo in production_seed["augmentations"]:
+        assert "clear" in combo["lighting"]
+        assert combo["background"] in {
+            "solid warm beige backdrop",
+            "solid terracotta backdrop",
+        }
+        assert combo["surface_finish"] in {
+            "satin softly reflective backdrop finish",
+            "fine canvas-textured backdrop finish",
+        }
+        assert "blue" not in combo["prompt"].lower()
+
+
 def test_generate_configs_is_deterministic_by_seed(tmp_path: Path) -> None:
     a = dfs.generate_configs(str(tmp_path / "a.json"), n_augmentations=2, seed="s")
     b = dfs.generate_configs(str(tmp_path / "b.json"), n_augmentations=2, seed="s")
@@ -1692,6 +1744,48 @@ def test_quality_disposition_accepts_only_a_complete_hard_check_pass(
     )
     assert result["quality_status"] == "accepted"
     assert json.loads(disposition.read_text())["quality_status"] == "accepted"
+
+
+def test_quality_disposition_preserves_per_criterion_evaluator_evidence(
+    tmp_path: Path,
+) -> None:
+    scores = tmp_path / "cosmos_evaluator.json"
+    disposition = tmp_path / "quality_disposition.json"
+    criteria = {
+        "attribute_verification": {
+            "passed": True,
+            "passed_checks": 4,
+            "total_checks": 4,
+            "checks": [
+                {"variable": "background", "score": 1.0, "passed": True}
+            ],
+        },
+        "hallucination": {"passed": True, "score": 0.91},
+        "temporal_consistency": {"passed": False, "score": 0.42},
+        "appearance_fidelity": {"passed": True, "score": 0.88},
+    }
+    report = {
+        "status": "completed",
+        "score": 0.81,
+        "passed": True,
+        "clips": [
+            {"clip_id": "candidate-0", "score": 0.81, "passed": True, **criteria}
+        ],
+    }
+    scores.write_text(json.dumps(report), encoding="utf-8")
+
+    result = dfs.enforce_quality_disposition(
+        str(scores), str(disposition), threshold=0.75
+    )
+
+    assert result["score"] == report["score"]
+    assert result["evaluator_report_sha256"] == dfs._payload_sha256(report)
+    assert result["criterion_evidence"] == [
+        {"clip_id": "candidate-0", "score": 0.81, "passed": True, **criteria}
+    ]
+    assert json.loads(disposition.read_text())["criterion_evidence"] == result[
+        "criterion_evidence"
+    ]
 
 
 @pytest.mark.parametrize(

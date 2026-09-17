@@ -1659,6 +1659,7 @@ def submit_cmd(
         if is_paidf_spec:
             from npa.workflows.data_factory_input import (
                 PaidfInputError,
+                SOURCE_FIDELITY_CONDITIONING_POLICY,
                 plan_paidf_input,
                 prepare_paidf_input,
             )
@@ -1668,6 +1669,7 @@ def submit_cmd(
             )
 
             paidf_input_artifact_prefix = ""
+            paidf_conditioning_policy = ""
             if workflow_identity == NVIDIA_PAIDF_VDA_WORKFLOW_NAME:
                 from npa.orchestration.npa_workflow.runtime import _resolved_config
 
@@ -1676,6 +1678,7 @@ def submit_cmd(
                     _resolved_config(merged_npa_spec, resolved_run_id).get("prefix")
                     or ""
                 ).strip("/")
+                paidf_conditioning_policy = SOURCE_FIDELITY_CONDITIONING_POLICY
 
             try:
                 if plan_only:
@@ -1693,6 +1696,7 @@ def submit_cmd(
                         ),
                         lerobot_episode_was_explicit=lerobot_episode is not None,
                         seed_fixture=fixture_requested,
+                        conditioning_policy=paidf_conditioning_policy,
                     )
                 else:
                     prepared_input = prepare_paidf_input(
@@ -1715,6 +1719,7 @@ def submit_cmd(
                             "AWS_SECRET_ACCESS_KEY", ""
                         ),
                         reporter=lambda message: typer.echo(message, err=True),
+                        conditioning_policy=paidf_conditioning_policy,
                     )
             except PaidfInputError as exc:
                 _fail(str(exc))

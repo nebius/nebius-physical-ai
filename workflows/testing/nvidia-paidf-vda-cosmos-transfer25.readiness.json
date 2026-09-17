@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "7689f4836d72462c0fa463d99c91d3c12a78a02db2bf71d4fef84ae01ab5dc31",
+  "workflow_sha256": "8bb28ee6499124b8ef0b11f679b0e064b42b17353753562fd9fba1b66261b5d3",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "Schema validation plus accepted and rejected static plans completed on September 13, 2026; the direct NVIDIA-derived VDA starts with the pinned upstream contract and both quality dispositions resolve to terminal paths.",
+      "reason": "Schema validation plus accepted and rejected static plans completed on September 17, 2026; the direct NVIDIA-derived VDA starts with the pinned upstream contract and both quality dispositions resolve to terminal paths.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml --json",
         "npa workbench workflow plan-spec workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml --run-id paidf-vda-review --assume-decision promote_checkpoint --json",

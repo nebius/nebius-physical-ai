@@ -225,6 +225,7 @@ def _build_data_factory_blueprint(
     has_captions: bool,
     has_pipeline_evidence: bool,
     default_timeline: str,
+    foreground_controls: bool = False,
 ) -> Any:
     """Foreground media comparison while keeping factual evidence in another tab."""
 
@@ -244,6 +245,14 @@ def _build_data_factory_blueprint(
     media_columns: list[Any] = []
     if source_entities:
         media_columns.append(media_group(source_entities, "Original source"))
+    if has_controls and foreground_controls:
+        media_columns.append(
+            rrb.Spatial2DView(
+                origin="control",
+                contents="control/**",
+                name="Conditioning controls",
+            )
+        )
     if candidate_entities:
         media_columns.append(media_group(candidate_entities, "Generated candidates"))
     media_tab: Any = (
@@ -257,7 +266,7 @@ def _build_data_factory_blueprint(
     )
 
     context_views: list[Any] = []
-    if has_controls:
+    if has_controls and not foreground_controls:
         context_views.append(
             rrb.Spatial2DView(
                 origin="control",
@@ -412,7 +421,19 @@ def build_run_rrd(
             f"augmented/{record['candidate_id']}" for record in variant_records
         ]
         stage_docs = _load_stage_docs(local)
-        has_controls = bool(_image_files(local / "cosmos_control"))
+        media_evidence = _source_fidelity_media_evidence(
+            local,
+            input_provenance=input_provenance,
+            variant_records=variant_records,
+        )
+        if media_evidence:
+            stage_docs["pipeline/2_media_metadata"] = _json_block(
+                "Synchronized source, conditioning, control, and generated media",
+                media_evidence,
+            )
+        has_controls = bool(_image_files(local / "cosmos_control")) or bool(
+            media_evidence.get("controls") if media_evidence else False
+        )
         if (
             effective_app_id == APPLICATION_ID
             and variant_records
@@ -426,6 +447,15 @@ def build_run_rrd(
             for record in variant_records
         )
         default_timeline = "video_time" if has_video_timing else "frame"
+        blueprint_source_entities = sorted(source_entities)
+        if media_evidence:
+            source_priority = {
+                "source/original": 0,
+                "conditioning/derived": 1,
+            }
+            blueprint_source_entities.sort(
+                key=lambda entity: (source_priority.get(entity, 2), entity)
+            )
 
         out_path = Path(tmp) / "sim2real.rrd"
         rec = rr.RecordingStream(effective_app_id, recording_id=run_id)
@@ -441,12 +471,13 @@ def build_run_rrd(
                 str(out_path),
                 default_blueprint=_build_data_factory_blueprint(
                     rrb,
-                    source_entities=sorted(source_entities),
+                    source_entities=blueprint_source_entities,
                     candidate_entities=candidate_entities,
                     has_controls=has_controls,
                     has_captions=bool(captions),
                     has_pipeline_evidence=bool(stage_docs),
                     default_timeline=default_timeline,
+                    foreground_controls=bool(media_evidence),
                 ),
             )
         else:
@@ -645,7 +676,11 @@ def build_run_rrd(
         "source_video_components": source_video_count,
         "presentation": {
             "default_timeline": default_timeline,
-            "default_view": "original-versus-generated",
+            "default_view": (
+                "source-control-generated"
+                if media_evidence
+                else "original-versus-generated"
+            ),
             "source_entities": sorted(source_entities),
             "source_video_entities": [
                 str(record["entity"]) for record in source_video_records
@@ -861,6 +896,99 @@ def _sha256_path(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _source_fidelity_media_evidence(
+    local: Path,
+    *,
+    input_provenance: Any,
+    variant_records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Probe the exact VDA media bytes that the synchronized RRD embeds.
+
+    This is intentionally opt-in to the NVIDIA VDA source-fidelity policy so
+    existing DIG/IAA/EVG recordings and their defaults remain byte-for-byte
+    behaviorally unchanged.
+    """
+
+    if not isinstance(input_provenance, dict):
+        return {}
+    derivation = input_provenance.get("derivation")
+    if (
+        not isinstance(derivation, dict)
+        or derivation.get("policy") != "source-fidelity-v2"
+    ):
+        return {}
+
+    from npa.workflows.data_factory_input import PaidfInputError, probe_video
+
+    def probe(path: Path) -> dict[str, Any]:
+        try:
+            return {
+                **probe_video(path),
+                "sha256": _sha256_path(path),
+                "byte_size": path.stat().st_size,
+            }
+        except PaidfInputError as exc:
+            raise DataFactoryVizError(
+                f"source-fidelity RRD media probe failed for {path.name}"
+            ) from exc
+
+    source = local / "input" / "source.mp4"
+    conditioning = local / "input" / "conditioning.mp4"
+    if not source.is_file() or not conditioning.is_file():
+        raise DataFactoryVizError(
+            "source-fidelity RRD requires source.mp4 and conditioning.mp4"
+        )
+    candidates = [
+        {
+            "candidate_id": str(record["candidate_id"]),
+            "media": probe(record["video"]),
+        }
+        for record in variant_records
+        if isinstance(record.get("video"), Path)
+    ]
+    if len(candidates) != len(variant_records):
+        raise DataFactoryVizError(
+            "source-fidelity RRD could not probe every committed candidate"
+        )
+    control_root = local / "cosmos_control"
+    selected_control_videos: set[Path] = set()
+    for _iteration, augment_root in _augment_roots(local):
+        manifest = _read_json(augment_root / "manifest.json")
+        if not isinstance(manifest, dict):
+            continue
+        for variant in _validated_viz_manifest(manifest):
+            for uri in (variant.get("control_uris") or {}).values():
+                value = str(uri or "")
+                marker = "/cosmos_control/"
+                if marker in value:
+                    selected_control_videos.add(
+                        control_root / value.split(marker, 1)[1]
+                    )
+    missing_controls = [
+        path for path in sorted(selected_control_videos) if not path.is_file()
+    ]
+    if missing_controls:
+        raise DataFactoryVizError(
+            "source-fidelity RRD is missing a manifest-referenced control video"
+        )
+    controls = [
+        {
+            "signal": path.relative_to(control_root).as_posix(),
+            "media": probe(path),
+        }
+        for path in sorted(selected_control_videos)
+    ]
+    return {
+        "schema": "npa.paidf.vda.media-evidence.v1",
+        "synchronization_timeline": "video_time",
+        "source": probe(source),
+        "conditioning": probe(conditioning),
+        "controls": controls,
+        "generated_candidates": candidates,
+        "temporal_alignment": derivation.get("temporal_alignment", {}),
+    }
+
+
 def _image_files(root: Path) -> list[Path]:
     """Every image under ``root``, any supported suffix, deterministically ordered."""
     if not root.is_dir():
@@ -971,11 +1099,14 @@ def _log_control_entities(rr: Any, rec: Any, local: Path) -> int:
                 for signal_dir in sorted(p for p in clip_dir.iterdir() if p.is_dir())
             ]
     for clip, signal_dir in selected:
-        if signal_dir.is_dir():
+        control_video = signal_dir.with_suffix(".mp4")
+        if signal_dir.is_dir() or control_video.is_file():
             frames = _subsample(
                 sorted(_image_files(signal_dir)), RRD_MAX_FRAMES_PER_ENTITY
             )
             entity = f"control/{clip}/{signal_dir.name}"
+            if control_video.is_file():
+                _log_video_asset(rr, rec, f"{entity}/video", control_video)
             for frame in frames:
                 _set_frame(rr, rec, _frame_index(frame.stem))
                 _log_frame(rr, rec, entity, _load_rgb(frame))

@@ -721,6 +721,11 @@ Prepare one project/workflow-scoped fresh `RUN_ID`. With no input selector, subm
 the pinned RoboPro Aloha-Agilex physical capture, verifies its SHA-256, caches it,
 and stages `source.mp4`, the exact 93-frame `conditioning.mp4`, eight derived
 caption frames, and `provenance.json` under the canonical input prefix.
+For this NVIDIA VDA spec, the conditioning clip traverses the complete source
+exactly once, maps its endpoints to frames 0 and 92, letterboxes without cropping,
+and carries explicit limited-range BT.709 metadata. The eight caption frames also
+include both endpoints; `provenance.json` records the complete source-index and
+timestamp map.
 
 ```bash
 BUCKET="<your-artifact-bucket>"

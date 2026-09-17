@@ -280,6 +280,7 @@ def test_spec_for_input_video_builds_edge_control(tmp_path: Path) -> None:
         repo,
         input_video=str(clip),
         prompt="rainy night, wet asphalt",
+        negative_prompt="cyan cast, warped objects, repeated action",
         control="edge",
         control_weight=0.8,
         guidance=4,
@@ -290,6 +291,7 @@ def test_spec_for_input_video_builds_edge_control(tmp_path: Path) -> None:
     spec = json.loads((repo / rel).read_text())
     assert spec["video_path"] == str(clip.resolve())
     assert spec["prompt"] == "rainy night, wet asphalt"
+    assert spec["negative_prompt"] == "cyan cast, warped objects, repeated action"
     assert spec["edge"] == {"control_weight": 0.8}
     assert spec["guidance"] == 4
     assert spec["seed"] == 1234
@@ -860,6 +862,7 @@ def test_publish_marks_real_gpu_mode_and_conditioning(
             "input_video": "/tmp/robot_input.mp4",
             "conditioning_clip_uri": "s3://bkt/run1/input/conditioning.mp4",
             "control": "edge",
+            "negative_prompt": "cyan cast, warped objects",
             "content_guardrails_enabled": False,
             "protected_chroma": {"mode": "source-chroma", "region_count": 2},
             "refinement": {"attempt": 1},
@@ -876,6 +879,10 @@ def test_publish_marks_real_gpu_mode_and_conditioning(
     assert manifest["conditioned_input"] == "robot_input.mp4"
     assert manifest["conditioning_clip_uri"] == "s3://bkt/run1/input/conditioning.mp4"
     assert manifest["control"] == "edge"
+    assert manifest["negative_prompt"] == "cyan cast, warped objects"
+    assert manifest["variants"][0]["negative_prompt"] == (
+        "cyan cast, warped objects"
+    )
     assert manifest["content_guardrails_enabled"] is False
     meta = json.loads(recorded["metadata"])
     assert meta["mode"] == "cosmos_transfer2.5_gpu"
@@ -883,6 +890,7 @@ def test_publish_marks_real_gpu_mode_and_conditioning(
     assert meta["conditioned_input"] == "robot_input.mp4"
     assert meta["content_guardrails_enabled"] is False
     assert meta["conditioning_clip_uri"] == "s3://bkt/run1/input/conditioning.mp4"
+    assert meta["negative_prompt"] == "cyan cast, warped objects"
     assert meta["protected_chroma"]["mode"] == "source-chroma"
     assert meta["refinement"]["attempt"] == 1
     assert meta["effective_control_weight"] == 1.5
