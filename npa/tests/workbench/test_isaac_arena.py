@@ -209,6 +209,9 @@ def test_dry_run_builds_real_pinned_upstream_argv(tmp_path: Path) -> None:
         "--/rtx-transient/dldenoiser/enabled=true",
         "--/rtx-transient/dlssg/enabled=false",
         "--/rtx/ecoMode/enabled=false",
+        "--/rtx/directLighting/sampledLighting/samplesPerPixel=32",
+        "--/rtx/indirectDiffuse/fetchSampleCount=32",
+        "--/rtx/reflections/sampledLighting/samplesPerPixel=16",
     ]
     assert kit_args_index < video_argv.index("cube_goal_pose")
     assert "--record_viewport_video" in video_argv
