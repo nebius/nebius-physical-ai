@@ -1155,9 +1155,11 @@ skills:
           - workflows/testing/cosmos-fetch.yaml
           - npa/src/npa/workflows/byof/profiles/isaac-lab-rl-train.yaml
           - workflows/testing/sonic-train.yaml
-      # Retired SkyPilot templates whose npa.workflow spec is now the reference.
+      # Declarative workflow specs exercised as references.
       - type: npa_workflow_yaml
         paths:
+          - workflows/testing/antioch-warehouse.yaml
+          - workflows/testing/antioch-posttrain.yaml
           - workflows/testing/bdd100k-pipeline.yaml
           - workflows/testing/cosmos3-text-to-image.yaml
           - workflows/main/sim2real.yaml

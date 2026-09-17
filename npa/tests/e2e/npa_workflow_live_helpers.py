@@ -244,6 +244,17 @@ def _live_s3_root(run_id: str) -> str:
     return explicit
 
 
+def _seed_antioch_recording(client, bucket: str, marker: str) -> None:
+    from npa.workflows.antioch_posttrain.artifacts import materialize, tree_hashes
+
+    source = os.environ.get("NPA_E2E_ANTIOCH_SOURCE_DIR", "")
+    if not source or source.startswith("s3://"):
+        pytest.fail("Set NPA_E2E_ANTIOCH_SOURCE_DIR to a sealed real local warehouse recording bundle")
+    directory = materialize(source, Path(source))
+    for name in [*tree_hashes(directory), "checksums.json"]:
+        client.upload_file(str(directory / name), bucket, f"{marker}/source/{name}")
+
+
 def seed_live_workflow_inputs(
     *,
     spec_name: str,
@@ -259,6 +270,10 @@ def seed_live_workflow_inputs(
 
     marker = f"{_live_s3_root(run_id)}/{spec_name.replace('.yaml', '')}"
     client = s3_client_for_project(e2e_project, allow_host_creds=True)
+
+    if spec_name == "antioch-posttrain.yaml":
+        _seed_antioch_recording(client, bucket, marker)
+        return
 
     if spec_name == "nurec-colmap-reconstruct.yaml":
         _seed_nurec_colmap_source(client, bucket=bucket, prefix=marker)

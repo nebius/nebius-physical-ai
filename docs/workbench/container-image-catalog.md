@@ -66,6 +66,8 @@ The four-wave [LeRobot transfer experiment](guides/lerobot-transfer.md) selects
 that optional 0.6.0 image by digest and stages its adapters from the checkout.
 It uses the image's non-root runtime user and baked SkyPilot prerequisites;
 no new image publication is required for the experiment.
+The [Antioch post-training workflow](antioch-posttrain.md) also selects this
+existing digest for native TorchVision training and evaluation.
 
 ## Pending NCore conversion image
 

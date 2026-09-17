@@ -1,0 +1,69 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: antioch-posttrain
+  description: >-
+    Post-train official ImageNet ResNet-18 weights on real Antioch warehouse
+    video and measured state labels. Split complete carton cycles, select by
+    validation, and evaluate an untouched cycle. Visual recognition, not robot control.
+config:
+  bucket: example-bucket
+  prefix: "antioch-posttrain/{{run.id}}"
+  source_overlay: true
+  frame_stride: "3"
+  epochs: "20"
+  batch_size: "32"
+  seed: "42"
+  source_uri: "s3://{{config.bucket}}/{{config.prefix}}/source/"
+  dataset_uri: "s3://{{config.bucket}}/{{config.prefix}}/dataset/"
+  checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoint/"
+  reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/"
+resources:
+  cpu:
+    cloud: kubernetes
+    image: ghcr.io/nebius/nebius-physical-ai/npa-lerobot@sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643
+    cpus: 4
+    memory: 16Gi
+  gpu:
+    cloud: kubernetes
+    image: ghcr.io/nebius/nebius-physical-ai/npa-lerobot@sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643
+    accelerators: RTXPRO6000:1
+    cpus: 4
+    memory: 16Gi
+initial: prepare
+states:
+  prepare:
+    toolRef: workflow.antioch_posttrain.prepare
+    resources: cpu
+    inputs:
+      - uri: "{{config.source_uri}}checksums.json"
+    outputs:
+      - uri: "{{config.dataset_uri}}dataset.json"
+        schema: npa.antioch-posttrain.dataset.v1
+      - uri: "{{config.dataset_uri}}frames.npz"
+      - uri: "{{config.dataset_uri}}records.json"
+      - uri: "{{config.dataset_uri}}checksums.json"
+    next: train
+  train:
+    toolRef: workflow.antioch_posttrain.train
+    resources: gpu
+    inputs:
+      - uri: "{{config.dataset_uri}}checksums.json"
+    outputs:
+      - uri: "{{config.checkpoint_uri}}model.pt"
+      - uri: "{{config.checkpoint_uri}}baseline.pt"
+      - uri: "{{config.checkpoint_uri}}training.json"
+        schema: npa.antioch-posttrain.training.v1
+      - uri: "{{config.checkpoint_uri}}checksums.json"
+    next: evaluate
+  evaluate:
+    toolRef: workflow.antioch_posttrain.evaluate
+    resources: gpu
+    inputs:
+      - uri: "{{config.dataset_uri}}checksums.json"
+      - uri: "{{config.checkpoint_uri}}checksums.json"
+    outputs:
+      - uri: "{{config.reports_uri}}evaluation.json"
+        schema: npa.antioch-posttrain.evaluation.v1
+      - uri: "{{config.reports_uri}}checksums.json"
+    terminal: true
