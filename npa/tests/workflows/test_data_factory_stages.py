@@ -205,7 +205,7 @@ def test_source_fidelity_prompt_policy_is_deterministic_and_fail_mode_specific(
         prompt_policy=dfs.SOURCE_FIDELITY_PROMPT_POLICY,
     )
 
-    assert first["prompt_policy"] == "source-fidelity-v2"
+    assert first["prompt_policy"] == "source-fidelity-v3"
     assert first["augmentations"] == second["augmentations"]
     for combo in first["augmentations"]:
         assert combo["negative_prompt"] == dfs.SOURCE_FIDELITY_NEGATIVE_PROMPT
@@ -214,6 +214,8 @@ def test_source_fidelity_prompt_policy_is_deterministic_and_fail_mode_specific(
         assert "input video is the authoritative scene" in combo["prompt"]
         assert "contact relationship" in combo["prompt"]
         assert "Preserve each foreground object's source color" in combo["prompt"]
+        assert "horizontal work surface" in combo["prompt"]
+        assert "do not treat walls, cabinets" in combo["prompt"]
         assert combo["color_grade"] in combo["prompt"]
         assert "cool blue" not in combo["prompt"].lower()
 
@@ -229,14 +231,33 @@ def test_source_fidelity_prompt_policy_is_deterministic_and_fail_mode_specific(
     for combo in production_seed["augmentations"]:
         assert "clear" in combo["lighting"]
         assert combo["background"] in {
-            "solid warm beige backdrop",
-            "solid terracotta backdrop",
+            "solid warm-beige work surface beneath the manipulation",
+            "solid terracotta work surface beneath the manipulation",
         }
         assert combo["surface_finish"] in {
-            "satin softly reflective backdrop finish",
-            "fine canvas-textured backdrop finish",
+            "satin softly reflective work-surface finish",
+            "fine canvas-textured work-surface finish",
         }
         assert "blue" not in combo["prompt"].lower()
+
+
+def test_source_fidelity_v2_prompt_policy_remains_replay_compatible(
+    tmp_path: Path,
+) -> None:
+    result = dfs.generate_configs(
+        str(tmp_path / "v2.json"),
+        n_augmentations=2,
+        augmentation_seed="profile4",
+        prompt_policy=dfs.SOURCE_FIDELITY_PROMPT_POLICY_V2,
+    )
+
+    assert result["prompt_policy"] == "source-fidelity-v2"
+    assert result["augmentations"][0]["background"] == "solid warm beige backdrop"
+    assert "horizontal work surface" not in result["augmentations"][0]["prompt"]
+    assert (
+        result["augmentations"][0]["negative_prompt"]
+        == dfs.SOURCE_FIDELITY_NEGATIVE_PROMPT
+    )
 
 
 def test_generate_configs_is_deterministic_by_seed(tmp_path: Path) -> None:
@@ -665,7 +686,9 @@ def test_candidate_selection_lock_heartbeats_during_slow_object_operation(
         )
         selection_uri = "s3://synthetic/run/selection/slow-copy/"
         monkeypatch.setattr(dfs, "_storage", lambda: storage)
-        monkeypatch.setattr(dfs, "_CANDIDATE_SELECTION_LOCK_LEASE_SECONDS", 0.15)
+        monkeypatch.setattr(
+            dfs, "_CANDIDATE_SELECTION_LOCK_LEASE_SECONDS", 0.15
+        )
 
         with dfs._candidate_selection_destination_lock(selection_uri) as acquired:
             initial_etag = acquired["etag"]
@@ -817,9 +840,7 @@ def test_selection_heartbeat_accepts_its_own_terminal_commit(
             manager.dict(), manager.RLock(), manager.Value("i", 0)
         )
         monkeypatch.setattr(dfs, "_storage", lambda: storage)
-        monkeypatch.setattr(
-            dfs, "_CANDIDATE_SELECTION_LOCK_LEASE_SECONDS", 0.15
-        )
+        monkeypatch.setattr(dfs, "_CANDIDATE_SELECTION_LOCK_LEASE_SECONDS", 0.15)
         selection_uri = "s3://synthetic/run/selection/committed/"
         with dfs._candidate_selection_destination_lock(selection_uri) as lock:
             attempt_uri = dfs._candidate_selection_attempt_uri(selection_uri, lock)

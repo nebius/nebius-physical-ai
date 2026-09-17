@@ -105,10 +105,10 @@ config:
   seed_default_input: "false"
   n_augmentations: "2"            # augmented variants sampled per source video
   augment_subject: "the input robot manipulation scene"  # sampled Cosmos prompts
-  # This NVIDIA VDA-only policy keeps palette/finish changes on the replaceable
-  # backdrop, treats source foreground colors and contact geometry as invariants,
-  # and supplies Transfer's native negative_prompt with measured failure modes.
-  prompt_policy: "source-fidelity-v2"
+  # This NVIDIA VDA-only policy names the horizontal work surface that Transfer
+  # actually restyles, treats source foreground colors and contact geometry as
+  # invariants, and supplies the native negative_prompt with measured failure modes.
+  prompt_policy: "source-fidelity-v3"
   # Explicit input-derivation version. Keeping this separate from the workflow
   # name preserves legacy conditioning bytes when an older committed spec is
   # restored for resume.

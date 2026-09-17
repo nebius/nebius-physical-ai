@@ -229,7 +229,7 @@ def test_augment_runs_real_cosmos_transfer() -> None:
     description = states["augment"]["description"].lower()
     assert "input/conditioning.mp4" in description
     assert "no bundled or geometric fallback" in description
-    assert spec["config"]["prompt_policy"] == "source-fidelity-v2"
+    assert spec["config"]["prompt_policy"] == "source-fidelity-v3"
     assert spec["config"]["input_conditioning_policy"] == "source-fidelity-v3"
     generate_argv = states["generate-configs"]["run"]["argv"]
     assert generate_argv[-1] == "{{config.prompt_policy}}"

@@ -658,8 +658,9 @@ The planner validates Cosmos Transfer's native constraints before reserving a GP
 edge-control weights stay within `0..1`, and guidance remains a non-negative
 integer.
 
-The NVIDIA VDA workflow also selects `prompt_policy: source-fidelity-v2`.
-Appearance palettes and surface finishes apply only to the replaceable backdrop;
+The NVIDIA VDA workflow selects `prompt_policy: source-fidelity-v3`.
+Appearance palettes and surface finishes apply only to the replaceable horizontal
+work surface beneath the manipulation;
 foreground color, material identity, geometry, contact relationships, action
 order, and camera framing remain explicit invariants. Each generated config
 includes Cosmos Transfer 2.5's native `negative_prompt` for measured failure

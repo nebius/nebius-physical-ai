@@ -340,13 +340,14 @@ supply a video. Conditioned runs record `mode: cosmos_transfer2.5_gpu` +
 `manifest.json`, which the agent's provenance panel surfaces.
 
 For `nvidia-paidf-vda-cosmos-transfer25`, require the task-scoped
-`source-fidelity-v3` input policy and `source-fidelity-v2` prompt policy. The
+`source-fidelity-v3` input policy and `source-fidelity-v3` prompt policy. The
 input policy maps decoded frame timestamps across one 93-frame traversal (never
 loops a short action), letterboxes rather than crops, performs an explicit SDR
 conversion to limited-range BT.709, extracts endpoint-inclusive caption frames,
 and records the full source-index/timestamp map. It rejects HDR/BT.2020 rather
 than silently retagging it. The prompt policy confines palette/finish changes to
-the replaceable backdrop, makes foreground color/geometry/contact/timing
+the replaceable horizontal work surface beneath the manipulation, makes
+foreground color/geometry/contact/timing
 invariants explicit, and passes Transfer's native `negative_prompt` for cyan
 cast, clipping, warping, duplication, contact loss, repeated action, and flicker.
 Verify both prompt fields in the candidate manifest; do not infer them from a

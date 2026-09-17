@@ -122,8 +122,9 @@ APPEARANCE_VARIABLES = {
     for key in APPEARANCE_PROFILES[0]
 }
 
-SOURCE_FIDELITY_PROMPT_POLICY = "source-fidelity-v2"
-SOURCE_FIDELITY_APPEARANCE_PROFILES: tuple[dict[str, str], ...] = (
+SOURCE_FIDELITY_PROMPT_POLICY_V2 = "source-fidelity-v2"
+SOURCE_FIDELITY_PROMPT_POLICY = "source-fidelity-v3"
+SOURCE_FIDELITY_APPEARANCE_PROFILES_V2: tuple[dict[str, str], ...] = (
     {
         "lighting": "bright diffuse daylight",
         "background": "neutral gray backdrop",
@@ -179,6 +180,68 @@ SOURCE_FIDELITY_APPEARANCE_PROFILES: tuple[dict[str, str], ...] = (
         "surface_finish": "matte fine-grain backdrop finish",
     },
 )
+# Cosmos Transfer consistently interprets the broad ``backdrop`` request above
+# as the horizontal work surface in close manipulation footage. Keep v2 intact
+# for durable-run replay, but make the current policy name and score the pixels
+# that are actually replaceable. Every profile still carries four independently
+# observable attributes; foreground identity, geometry, contact, and motion stay
+# invariants rather than becoming part of the requested appearance.
+SOURCE_FIDELITY_APPEARANCE_PROFILES: tuple[dict[str, str], ...] = (
+    {
+        "lighting": "bright diffuse daylight",
+        "background": "solid neutral-gray work surface beneath the manipulation",
+        "color_grade": "neutral balanced work-surface palette",
+        "surface_finish": "matte low-gloss work-surface finish",
+    },
+    {
+        "lighting": "soft warm studio illumination",
+        "background": "solid beige work surface beneath the manipulation",
+        "color_grade": "gently warm work-surface palette",
+        "surface_finish": "satin soft-sheen work-surface finish",
+    },
+    {
+        "lighting": "bright indirect studio illumination",
+        "background": "solid light-gray work surface beneath the manipulation",
+        "color_grade": "natural daylight work-surface palette",
+        "surface_finish": "fine-textured low-gloss work-surface finish",
+    },
+    {
+        "lighting": "soft even studio illumination",
+        "background": "solid warm-gray work surface beneath the manipulation",
+        "color_grade": "softly muted neutral work-surface palette",
+        "surface_finish": "matte uniform work-surface finish",
+    },
+    {
+        "lighting": "soft directional side lighting with clear shadows",
+        "background": "solid warm-beige work surface beneath the manipulation",
+        "color_grade": "warm amber work-surface palette",
+        "surface_finish": "satin softly reflective work-surface finish",
+    },
+    {
+        "lighting": "warm diffuse studio illumination",
+        "background": "solid tan work surface beneath the manipulation",
+        "color_grade": "warm balanced work-surface palette",
+        "surface_finish": "low-gloss smooth work-surface finish",
+    },
+    {
+        "lighting": "bright directional daylight with clear side shadows",
+        "background": "solid terracotta work surface beneath the manipulation",
+        "color_grade": "warm earth-tone work-surface palette",
+        "surface_finish": "fine canvas-textured work-surface finish",
+    },
+    {
+        "lighting": "balanced overhead studio illumination",
+        "background": "solid taupe work surface beneath the manipulation",
+        "color_grade": "muted earth-tone work-surface palette",
+        "surface_finish": "satin uniform work-surface finish",
+    },
+    {
+        "lighting": "soft diffuse evening illumination",
+        "background": "solid warm-gray fine-grain work surface beneath the manipulation",
+        "color_grade": "subtly warm neutral work-surface palette",
+        "surface_finish": "matte fine-grain work-surface finish",
+    },
+)
 SOURCE_FIDELITY_NEGATIVE_PROMPT = (
     "cyan or blue color cast, washed-out exposure, clipped highlights, extreme "
     "oversaturation, distorted or warped objects, duplicated or missing objects, "
@@ -214,6 +277,27 @@ def prompt_from_combo(
         scene or "Photorealistic input-conditioned physical robot manipulation scene"
     )
     if prompt_policy == SOURCE_FIDELITY_PROMPT_POLICY:
+        return (
+            f"Photorealistic video of {subject}. "
+            "The input video is the authoritative scene and action reference. "
+            "Keep every foreground object at the same position, scale, silhouette, "
+            "orientation, depth ordering, and contact relationship in every frame. "
+            "Keep the exact camera framing, action order, trajectory, and timing. "
+            "Preserve each foreground object's source color, texture, material identity, "
+            "and illumination without clipping. The replaceable non-identity-bearing "
+            "horizontal work surface is the tabletop beneath and around the manipulation; "
+            "do not treat walls, cabinets, the robot, gripper, or task objects as that surface. "
+            "Apply all four visible appearance requirements consistently: "
+            f"lighting is {lighting or 'bright diffuse daylight'}; "
+            f"the work surface is a {background or 'solid neutral-gray work surface beneath the manipulation'}; "
+            "only that work surface uses the "
+            f"{color_grade or 'neutral balanced work-surface palette'}; "
+            "that work surface has a "
+            f"{surface_finish or 'matte low-gloss work-surface finish'}. "
+            "Do not recolor, relight into clipping, add, remove, duplicate, resize, "
+            "reshape, or spatially move any foreground object."
+        )
+    if prompt_policy == SOURCE_FIDELITY_PROMPT_POLICY_V2:
         return (
             f"Photorealistic video of {subject}. "
             "The input video is the authoritative scene and action reference. "
@@ -1210,21 +1294,26 @@ def generate_configs(
         or "input-conditioned physical robot manipulation"
     )
     normalized_prompt_policy = str(prompt_policy or "").strip()
-    if normalized_prompt_policy not in {"", SOURCE_FIDELITY_PROMPT_POLICY}:
+    source_fidelity_policies = {
+        SOURCE_FIDELITY_PROMPT_POLICY_V2,
+        SOURCE_FIDELITY_PROMPT_POLICY,
+    }
+    if normalized_prompt_policy not in {"", *source_fidelity_policies}:
         raise ValueError(
-            "prompt_policy must be empty or source-fidelity-v2"
+            "prompt_policy must be empty, source-fidelity-v2, or source-fidelity-v3"
         )
-    profile_table = (
-        SOURCE_FIDELITY_APPEARANCE_PROFILES
-        if normalized_prompt_policy == SOURCE_FIDELITY_PROMPT_POLICY
-        else APPEARANCE_PROFILES
-    )
+    if normalized_prompt_policy == SOURCE_FIDELITY_PROMPT_POLICY:
+        profile_table = SOURCE_FIDELITY_APPEARANCE_PROFILES
+    elif normalized_prompt_policy == SOURCE_FIDELITY_PROMPT_POLICY_V2:
+        profile_table = SOURCE_FIDELITY_APPEARANCE_PROFILES_V2
+    else:
+        profile_table = APPEARANCE_PROFILES
     variables = {
         key: list(dict.fromkeys(profile[key] for profile in profile_table))
         for key in profile_table[0]
     }
     anchor = _derive_quality_anchor(quality_anchor_uri)
-    if anchor and normalized_prompt_policy == SOURCE_FIDELITY_PROMPT_POLICY:
+    if anchor and normalized_prompt_policy in source_fidelity_policies:
         if any(
             value not in variables[key]
             for key, value in anchor["variables"].items()
@@ -1258,7 +1347,7 @@ def generate_configs(
         combo["prompt"] = prompt_from_combo(
             combo, scene=subject, prompt_policy=normalized_prompt_policy
         )
-        if normalized_prompt_policy == SOURCE_FIDELITY_PROMPT_POLICY:
+        if normalized_prompt_policy in source_fidelity_policies:
             combo["negative_prompt"] = SOURCE_FIDELITY_NEGATIVE_PROMPT
         combos.append(combo)
     manifest = {
