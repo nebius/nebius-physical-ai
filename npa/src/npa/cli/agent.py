@@ -4335,7 +4335,7 @@ def _maybe_toolground_chat_reply(
             sim_viz = dict(live_status)
         if not isinstance(sim_viz, dict):
             sim_viz = {{}}
-        rerun_ready = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
+        rerun_ready = bool(sim_viz.get("rerun_ready"))
     elif intent == "foxglove_viewer":
         # Ground the reply on the same payload the viewer pane mounts from.
         try:
