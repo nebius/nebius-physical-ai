@@ -44,6 +44,7 @@ prepare its project and compute, then inspect the result.
 | --- | --- |
 | Add a tool or integration | [Contributing](../CONTRIBUTING.md) · [OSS onboarding ladder](architecture/oss-onboarding-ladder.md) |
 | Understand the platform | [Contributor context](architecture/contributor-context.md) · [solutions model](architecture/solutions-model.md) · [CLI namespaces](architecture/cli-namespaces.md) |
+| Plan a Cosmos 3 model factory | [Architecture and implementation plan](architecture/cosmos3-model-factory.md) |
 | Package a container | [Container contract](workbench/container-packaging.md) · [image reproducibility](security/image-reproducibility.md) |
 | Run local and live checks | [Package test commands](../npa/README.md#developing-and-testing-npa) · [E2E](testing/e2e.md) · [serverless E2E](testing/e2e-serverless.md) · [daily dev VM](testing/dev-vm-daily.md) |
 | Verify release quality | [Golden evals](security/container-golden-evals.md) · [merge security gate](security/merge-security-gate.md) · [releasing](releasing.md) |

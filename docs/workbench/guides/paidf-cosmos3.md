@@ -70,6 +70,11 @@ supported.
 The result is augmented video and review artifacts for one episode/camera, not
 a reconstructed LeRobot dataset containing action/state records.
 
+For extending this data pipeline into training and policy evaluation, see the
+[Cosmos 3 model factory assessment](../../architecture/cosmos3-model-factory.md).
+It maps current NPA capabilities and defines the
+dataset, checkpoint, and simulation evidence needed for each proposed addition.
+
 The committed `example-bucket` and run-scoped fixture path are placeholders.
 The generic workflow submit command stages a verified, pinned starter video
 when no input is supplied; use `--input-video` or `--input-uri` for your own
