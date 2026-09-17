@@ -8,7 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     NPA_ANTIOCH_RUNTIME_CACHE=/workspace/.cache/npa/antioch
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+    && apt-get install -y --no-install-recommends ffmpeg ca-certificates rsync \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 npa
 

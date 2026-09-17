@@ -1294,5 +1294,6 @@ def test_adapter_build_is_base_pinned_and_records_exact_revision() -> None:
     dockerfile = (root / "docker/workbench/antioch/Dockerfile").read_text()
     build = (root / "docker/workbench/antioch/build.sh").read_text()
     assert "FROM python:3.12-slim-bookworm@sha256:" in dockerfile
+    assert "ffmpeg ca-certificates rsync" in dockerfile
     assert 'org.opencontainers.image.revision="${NPA_REVISION}"' in dockerfile
     assert '--build-arg "NPA_REVISION=${REVISION}"' in build
