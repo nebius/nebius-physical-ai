@@ -500,6 +500,20 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/robocasa-smoke.yaml
+  - name: openarm
+    category: tools
+    when_to_use: "Package, run, validate, or troubleshoot Enactic OpenArm v2 workloads through the first-class MuJoCo and NVIDIA Isaac Sim/Isaac Lab surfaces."
+    path: skills/tools/openarm/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "openarm", "run", "--help"]
+        contains: "simulator"
+      - type: cli_help
+        args: ["workbench", "openarm", "deploy", "--help"]
+        contains: "gpu-type"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/openarm-simulators.yaml
   - name: foxglove
     category: tools
     when_to_use: "Embed, operate, or debug the Foxglove viewer in the NPA agent: the @foxglove/embed TypeScript SDK, MCAP recordings, the npa-foxglove-embed container, and /api/foxglove/* endpoints."
@@ -916,12 +930,12 @@ skills:
         path: workflows/testing/cosmos3-generate.yaml
   - name: cosmos3-post-training
     category: workflows
-    when_to_use: "Plan or review Cosmos3 supervised fine-tuning and post-training support."
+    when_to_use: "Operate the experimental native LIBERO policy workflow or plan and review other Cosmos3 post-training recipes."
     path: skills/workflows/cosmos3-post-training/SKILL.md
     smoke:
       - type: cli_help
-        args: ["workbench", "cosmos", "train", "--help"]
-        contains: "runtime"
+        args: ["workbench", "cosmos3", "policy-train", "--help"]
+        contains: "SFT"
   - name: sim-to-real
     category: workflows
     when_to_use: "Design, review, or operate sim-to-real data, training, evaluation, and loop-control workflows."

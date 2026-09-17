@@ -46,10 +46,11 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory has **40 packaging entries** (38 redistribution-eligible
-and two restricted) and **41 mapped tools**: 35 public-release members, two
+The current source inventory has **41 packaging entries** (39 redistribution-eligible
+and two restricted) and **42 mapped tools**: 36 public-release members, two
 restricted tools, and four quarantined tools (`curobo`, `ncore`, `openpi` and
-`robocasa`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`.
+`robocasa`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
+they do not constitute acceptance of the quarantined images.
 
 LeRobot 0.6.0 is selectable package support with an accepted optional public
 image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact
@@ -193,6 +194,25 @@ rigid-physics checks were non-null, and both the USD and USDZ reopened
 independently. These measurements establish built, payload-clean, GPU-validated,
 published, and anonymously pullable status for this exact digest only.
 
+## 2026-09-15 OpenArm publication
+
+`npa-openarm:2.2.0-isaac0.1.0-rtfetch` was promoted without rebuilding from
+development revision `01fbf3a554cb7b15066283fd171c5b81f6207eda`. Independent
+anonymous reads resolved both tags to the same `linux/amd64` manifest,
+`sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a`,
+with non-root user `ubuntu` and the matching source revision.
+
+The exact development bytes passed full-layer payload and history inspection
+across 98,660 filesystem entries, critical-vulnerability, secret, and license
+scans, a 644-package SPDX inventory, and provenance/SBOM attestation checks.
+One RTX PRO 6000 then completed a real 500-step OpenArm MuJoCo rollout with a
+fully decoded 100-frame H.264 render, a 64-environment × 100-step upstream Isaac
+reach rollout on CUDA/PhysX, and one iteration of the upstream RSL-RL trainer
+with a serialized Torch checkpoint. A fail-closed qualification stage and a
+separate read-after-run validation agreed on all four artifact hashes. Isaac
+Sim 5.1.0.0 and Isaac Lab 2.3.2.post1 were runtime-fetched under the operator's
+accepted terms and do not occur in the public layers.
+
 ## 2026-09-16 Alpamayo 2 Super provenance correction
 
 `npa-alpamayo2-super:0.1.0-cu128-r3` was promoted from immutable development tag
@@ -251,6 +271,7 @@ and populated caches remain absent from the public image.
 | Diffusers native generation and depth | `npa-diffusers` | `0.38.0-rtfetch-20260916` | 2026-09-16 | Pinned OSS runtime for Mochi 1, CogVideoX-2B, Wan 2.1 14B and Depth Anything V2 Small. All four native capabilities qualified on B200 at the exact public digest; CUDA and checkpoints fetched at runtime. |
 | LingBot World v1 | `npa-lingbot-world` | `a43bec7-rtfetch-20260916` | 2026-09-16 | Camera-conditioned video generation, qualified on four B200s with positive attention/all-to-all execution on every rank and 161 decoded frames. Authored camera poses; no robot-action or calibrated-geometry claim. |
 | SAM 2.1 Small | `npa-sam2` | `2.1-rtfetch-20260916` | 2026-09-16 | Native CUDA video-mask propagation from a first-frame box; raw arrays and color-preserving visualization qualified on B200. Predicted masks are not ground truth. |
+| Enactic OpenArm | `npa-openarm` | `2.2.0-isaac0.1.0-rtfetch` | 2026-09-15 | OpenArm v2 bimanual MuJoCo simulation plus upstream OpenArm Isaac Lab reach rollout and RSL-RL training. Apache-2.0 OpenArm source and simulator assets are baked; Isaac Sim/Lab are exact runtime fetches after the operator's EULA decision. The exact release digest passed byte/supply-chain gates and a complete RTX PRO 6000 dual-simulator workflow with independently checked traces, rendered video, checkpoint, and qualification report. See [OpenArm](openarm.md). |
 
 ## Candidates outside the supported public release plan
 
@@ -302,10 +323,8 @@ this chart is generated from that table and the publishing plan:
 
 ![Published GHCR images against every Nebius GPU platform](../assets/image-gpu-coverage.svg)
 
-All 32 accepted release references resolved anonymously to their recorded
-digests on 2026-09-11. Nineteen resolve directly to an image manifest and 13 to
-an OCI index; the runtime variants in both forms are `linux/amd64`. The chart
-groups the current publishing plan three ways:
+All 36 accepted release references resolved anonymously to their recorded
+digests on 2026-09-17. The chart groups the current publishing plan three ways:
 
 - **20 GPU images have no known blocked platform**: `npa-alpamayo2-super`,
   `npa-cosmos3`, `npa-cosmos3-ray-serve`, `npa-cosmos3-reason`,
@@ -315,9 +334,10 @@ groups the current publishing plan three ways:
   `npa-wan2-2`, `npa-diffusers`, `npa-lingbot-world`, and `npa-sam2`. This band does not mean every cell has a current-release run:
   the matrix distinguishes verified, historical, supported, and unverified
   cells.
-- **7 public images are blocked on at least one platform**:
+- **8 public images are blocked on at least one platform**:
   `npa-content-agents`, `npa-cosmos`, `npa-cosmos2-transfer`,
-  `npa-cosmos3-serving`, `npa-isaac-lab`, `npa-leisaac`, and `npa-sonic`.
+  `npa-cosmos3-serving`, `npa-isaac-lab`, `npa-leisaac`, `npa-openarm`, and
+  `npa-sonic`.
   Their constraints are not interchangeable. They include missing RT cores,
   vendor-stack or extension allowlists, a CUDA 12.8 NVRTC `sm_103` gap, and an
   8-GPU memory floor; `npa-leisaac` is also not routed to L40S by its launcher.
@@ -362,11 +382,11 @@ table. The independently rebuilt `sonic-mujoco:0.2.0-runtime` and zero-payload
 
 ## Verification scope
 
-The registry verification confirms exact tag spelling, anonymous manifest and
+The earlier catalog inspections checked tag spelling, anonymous manifest and
 config access, content hashes, platform metadata, selected OCI labels, exposed
-ports, entrypoints, and build timestamps. It is not a new packaging-policy or
-functional-validation pass. The current accepted SONIC Kubernetes pin declares
-OCI user `root`; the other 31 current releases declare non-root users. SONIC's
+ports, entrypoints, and build timestamps. The 2026-09-17 check above verifies
+accepted release digests; it is not a new packaging-policy or functional-validation
+pass. The accepted SONIC Kubernetes pin retains its documented OCI user `root`. SONIC's
 legacy runtime-user limitation remains documented in the
 [security review](../security/container-golden-evals.md); a current non-root
 Dockerfile does not retroactively change those accepted bytes. Source contracts

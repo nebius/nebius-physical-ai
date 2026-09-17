@@ -313,6 +313,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
         "cosmos3-ray-serve",
         "cosmos3-serving",
         "detection-training",
+        "openarm",
         "sonic-mujoco",
     }
 
@@ -435,12 +436,13 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
             "diffusers",
             "lingbot-world",
             "sam2",
+            "openarm",
             "alpamayo2-super",
         )
     }
     # The five Sim2Real roles share one source, and the three Studio runtimes
-    # share another. The eight other accepted sources remain distinct.
-    assert len(set(accepted_shas.values())) == 10
+    # share another. The nine other accepted sources remain distinct.
+    assert len(set(accepted_shas.values())) == 11
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
         target_image = item.target_ref.rsplit("/", 1)[-1]
@@ -469,6 +471,7 @@ def test_accepted_images_use_distinct_exact_development_sources_and_digests() ->
         "diffusers",
         "lingbot-world",
         "sam2",
+        "openarm",
         "alpamayo2-super",
     ):
         entry = manifest[tool]

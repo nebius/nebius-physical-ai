@@ -74,38 +74,44 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "byof-mochi-1.yaml", "gpu",
         plan_only=True,
-        plan_only_justification="requires an operator-built immutable BYOF image and, where applicable, an attributed input",
-        notes="Native capability workflow; exact private image and GPU evidence are recorded in the OSS solution catalog.",
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
     ),
     SubmitLiveCase(
         "byof-cogvideox-2b.yaml", "gpu",
         plan_only=True,
-        plan_only_justification="requires an operator-built immutable BYOF image and, where applicable, an attributed input",
-        notes="Native capability workflow; exact private image and GPU evidence are recorded in the OSS solution catalog.",
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
     ),
     SubmitLiveCase(
         "byof-wan2.1-14b.yaml", "gpu",
         plan_only=True,
-        plan_only_justification="requires an operator-built immutable BYOF image and, where applicable, an attributed input",
-        notes="Native capability workflow; exact private image and GPU evidence are recorded in the OSS solution catalog.",
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
     ),
     SubmitLiveCase(
         "byof-lingbot-world.yaml", "gpu",
         plan_only=True,
-        plan_only_justification="requires an operator-built immutable BYOF image and, where applicable, an attributed input",
-        notes="Native capability workflow; exact private image and GPU evidence are recorded in the OSS solution catalog.",
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
     ),
     SubmitLiveCase(
         "byof-depth-anything-v2.yaml", "gpu",
         plan_only=True,
-        plan_only_justification="requires an operator-built immutable BYOF image and, where applicable, an attributed input",
-        notes="Native capability workflow; exact private image and GPU evidence are recorded in the OSS solution catalog.",
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
     ),
     SubmitLiveCase(
         "byof-sam2.1.yaml", "gpu",
         plan_only=True,
-        plan_only_justification="requires an operator-built immutable BYOF image and, where applicable, an attributed input",
-        notes="Native capability workflow; exact private image and GPU evidence are recorded in the OSS solution catalog.",
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "cosmos3-policy-model-factory.yaml", "gpu",
+        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="cosmos3",
+        notes="Native LIBERO policy SFT, matching simulator evaluation, failure feedback, and guarded video candidates. Requires eight GPUs by default and runtime training dependency fetch.",
     ),
     SubmitLiveCase(
         "curobo-benchmark.yaml", "gpu",
@@ -978,6 +984,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         notes="Production PandaOmron RoboCasa data->policy pipeline: multi-task trajectory export, LeRobotDataset materialization, real ACT training, disjoint RoboCasa exact-checkpoint evaluation, insights lineage.",
+    ),
+    SubmitLiveCase(
+        "openarm-simulators.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="openarm",
+        notes=(
+            "Real Enactic OpenArm v2 MuJoCo control/render rollout followed by "
+            "runtime-fetched Isaac Sim/Lab reach rollout and upstream RSL-RL training."
+        ),
     ),
     SubmitLiveCase(
         "byof-openpi.yaml",
