@@ -25,6 +25,8 @@ Python and HTTP access follow each tool's documented contract.
 | Cosmos 3 batch generation | [Generate](cosmos3-generate.md) · [access preflight](cosmos3-access-preflight.md) |
 | Cosmos 3 persistent serving | [Nano with Ray Serve](cosmos3-ray-serve.md) · [Super serving](cosmos3-super-serving.md) |
 | Video augmentation and dataset production | [PAIDF + Cosmos 3](guides/paidf-cosmos3.md) · [Cosmos Transfer data factory](guides/physical-ai-data-factory-deploy.md) · [concepts](guides/physical-ai-data-factory.md) · [campaign reuse](guides/paidf-campaign-reuse.md) |
+| Plan a Cosmos 3 model factory | [Architecture, current gaps, and implementation sequence](../architecture/cosmos3-model-factory.md) · [Live generation and quality feedback](cosmos3-model-factory-live-20260915.md) |
+| Train and evaluate a Cosmos 3 robot policy | [Experimental native LIBERO model-factory workflow](cosmos3-policy-model-factory.md) |
 | Scene reconstruction | [NuRec](guides/neural-reconstruction.md) · [living-lab fan-out](guides/living-lab-nurec-fanout.md) |
 | USD object preparation | [Content Agents](content-agents.md) |
 | Other video models | [Wan 2.2](wan2.2.md) · [LTX-2](ltx2.md) |
@@ -41,6 +43,7 @@ Python and HTTP access follow each tool's documented contract.
 | Browser teleoperation | [LeIsaac](leisaac-teleoperation.md) · [latency measurement](guides/leisaac-transport-latency.md) |
 | Motion planning | [cuRobo](curobo.md) |
 | BEHAVIOR 2026 household challenge | [Evaluation workflow and rules](behavior-challenge.md) — radio development Q: RLC 0.20, official baseline 0.10; [π0.5 research candidate](behavior-policy-research.md); requires licensed runtime and fixed policy |
+| OpenArm simulation and RL | [OpenArm with MuJoCo and Isaac Lab](openarm.md) |
 | Isaac Lab versions | [Isaac Lab 3](isaac-lab-3.md) |
 
 ## Data and evaluation
