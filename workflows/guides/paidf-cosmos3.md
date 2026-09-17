@@ -20,6 +20,12 @@ preserves Rerun quality evidence and stops before curation.
 
 You need:
 
+- A Linux operator host with Python 3.12 and `/proc` mounted. Run this guide's
+  setup, submission, monitoring, recovery, and cleanup on that host. The
+  isolated SkyPilot API verifies process and socket ownership through Linux
+  procfs; native macOS cannot execute this workflow. From a Mac, connect to a
+  Linux workstation or VM with `ssh <your-linux-host>` and complete the Linux
+  steps there. Keep credentials and run state on that host throughout the run.
 - A Nebius AI Cloud account with billing enabled. If you are new to Nebius,
   follow the [account and billing setup](https://docs.nebius.com/signup-billing/sign-up).
 - A project in the region where you will run the GPU workload. You can use a
@@ -46,11 +52,14 @@ capacity in your region before provisioning.
 
 ### P1. Install the base tools
 
-On macOS with Homebrew:
+For local validation and planning on macOS with Homebrew:
 
 ```bash
 brew install python@3.12 git kubectl awscli ffmpeg socat netcat jq
 ```
+
+For workflow execution, use the Linux operator host described above. Installing
+these tools on macOS does not supply the Linux process-inspection interface.
 
 On Ubuntu 24.04, install the base packages, including its
 [Python 3.12 package](https://packages.ubuntu.com/noble/python3.12) and venv module:
@@ -63,8 +72,24 @@ python3.12 --version
 
 Also install `kubectl` using the
 [Kubernetes Linux instructions](https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/)
-and `aws` using the
+and the bundled **AWS CLI v2** using the
 [AWS CLI installation instructions](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html).
+Verify the selected executable before configuring storage or provisioning:
+
+```bash
+command -v aws
+aws --version
+```
+
+Require version output beginning with `aws-cli/2.`. If an older executable is
+selected, put the v2 installer's bin directory first on `PATH` and refresh the
+shell's command cache with `hash -r`. An alias or shell function can still shadow
+it; invoke the v2 executable directly until that customization is corrected.
+The Linux installer accepts
+`--install-dir` and `--bin-dir` for an installation in directories you own.
+Use that same executable for S7 and the artifact commands below. Python import
+errors from a host-installed CLI require correcting that installation first.
+
 For a Linux distribution without Python 3.12 packages, use
 [uv's Python installation instructions](https://docs.astral.sh/uv/guides/install-python/#installing-a-specific-version)
 to install version `3.12`, and verify that `python3.12 --version` succeeds.
@@ -72,9 +97,11 @@ to install version `3.12`, and verify that `python3.12 --version` succeeds.
 Use Python 3.12 for both the NPA environment and isolated SkyPilot environment
 in this guide. The supported
 SkyPilot runtime requires Python 3.9–3.12; a newer interpreter can fail at submit.
-For the new-cluster path in S5, also install Terraform 1.x using the
-[platform tool instructions](../../docs/install.md#5-optional-operator-tools)
-and have an SSH public key available. NPA discovers an existing key such as
+For the new-cluster path in S5, install Terraform 1.12.0 or newer using the
+[platform tool instructions](../../docs/install.md#5-tools-for-cloud-workloads)
+and verify `terraform version`. If a compatible binary is installed outside
+`PATH`, set `NPA_TERRAFORM_BIN` to its absolute path. Have an SSH public key
+available. NPA discovers an existing key such as
 `~/.ssh/id_ed25519.pub`; if you need a new key, create it with
 `ssh-keygen -t ed25519` and keep the private key on your machine. Adopting an
 existing cluster does not require Terraform.
@@ -87,11 +114,21 @@ the repository's CLI compatibility check:
 ```bash
 curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | NEBIUS_CLI_VERSION=0.12.254 bash
 export PATH="$HOME/.nebius/bin:$PATH"
+hash -r
+command -v nebius
+nebius version
 ```
 
-Use the version requested by NPA if its compatibility check changes. An
-unsupported CLI can produce an authentication-looking error; check the version
-before recreating a working profile.
+Require the selected executable to report `0.12.254` before continuing. An
+existing compatible installation can be reused by putting its bin directory
+first on `PATH` and running the last three commands again. Repeat this check
+after changing `PATH` or activating another environment. `NPA_NEBIUS_BIN` alone
+does not select the executable used by health preflight and configure.
+
+Use the version requested by NPA if its compatibility check changes. Online
+Nebius health preflight proves profile authentication; it does not check NPA's
+CLI compatibility requirements. A compatibility error requires correcting the
+selected installation before retrying setup.
 
 ### P3. Select the project and authenticate
 
@@ -108,17 +145,32 @@ export PROJECT_ID='<your-project-id>'
 export REGION='<your-region>'
 export PROJECT_ALIAS=paidf
 export NPA_NEBIUS_PROFILE="$PROJECT_ALIAS"
+```
 
+If you already have an authorized human or service-account profile, set
+`NPA_NEBIUS_PROFILE` to its actual name and activate it with
+`nebius profile activate "$NPA_NEBIUS_PROFILE"`.
+
+For a new human profile on a Linux host without a browser, complete the client
+installation in S1 first (it needs no cloud credentials), then follow the
+[headless Nebius authentication procedure](../../skills/atomic/vm-nebius-auth/SKILL.md)
+for this profile. It prints an SSH callback tunnel to run on your workstation
+before opening the login URL there.
+
+On an operator host with a browser, create the new human profile directly:
+
+```bash
 nebius profile create "$NPA_NEBIUS_PROFILE" \
   --endpoint api.nebius.cloud \
   --federation-endpoint auth.nebius.com \
   --parent-id "$PROJECT_ID"
 ```
 
-Authentication opens a browser. Sign in with the account that has access to
-this project. If the named profile already exists, use
-`nebius profile activate "$NPA_NEBIUS_PROFILE"` instead of creating it again.
-See [CLI authentication](https://docs.nebius.com/cli/configure) for service-account
+Sign in with the account that has access to this project. Complete
+authentication on the operator host; copying a workstation's federation-token
+cache does not prove that host can authenticate. Require the S2 online Nebius
+health check to pass before provisioning. See
+[CLI authentication](https://docs.nebius.com/cli/configure) for service-account
 and multi-tenant setup. If you see `invalid IAM subject` or `PermissionDenied`,
 check the selected account and project permissions in the web console.
 
@@ -258,6 +310,8 @@ successful GPU run or acceptable generated data.
 
 Choose one path below. For an existing cluster, use the adoption path so NPA
 records its identity before considering provisioning.
+Both paths define `CLUSTER_OPTIONS`, a shell array of the expected topology and
+driver settings. Keep it in the same shell for the health checks in S6.
 
 #### Create a new cluster
 
@@ -267,36 +321,61 @@ stages. Terraform and an SSH public key must be available as described in P1.
 
 ```bash
 export CLUSTER_NAME=paidf-cosmos3
+CLUSTER_OPTIONS=(
+  --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb
+  --gpu-nodes 1 --gpu-platform gpu-rtx6000 --gpu-preset 1gpu-24vcpu-218gb
+  --gpu-driver-mode auto --managed-driver-preset cuda13.0
+  --on-demand
+)
 npa workbench health preflight --checks nebius
 npa provision-if-absent --project "$PROJECT_ALIAS" --cluster-name "$CLUSTER_NAME" \
-  --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
-  --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
-  --gpu-preset 1gpu-24vcpu-218gb --on-demand \
-  --dry-run --output-format json
+  "${CLUSTER_OPTIONS[@]}" --dry-run --output-format json
 ```
 
 Check `status` and `preflight.decision`: a dry run can exit zero while reporting
 `blocked`. Resolve the listed `preflight.reasons` first; reserved GPU capacity
 does not replace the boot-disk quota required by the cluster.
 
-Check the project, region, node types, and disk sizes in the plan. When they
-match your intended setup and quota, run the same `provision-if-absent` command
-without `--dry-run --output-format json`. Wait for provisioning and node health
-checks to succeed. Do not proceed with a degraded cluster. This creates cloud
-resources; use the [teardown guide](../../docs/teardown.md) when you finish with
-a cluster you own.
+The default boot disks require 1,151 GiB of network SSD capacity: 128 GiB for the
+CPU node and 1,023 GiB for the GPU node. Disk-count quota is separate. If the
+preview blocks on disk capacity, obtain enough quota or size the disks for your
+workload. Account for compressed and expanded image layers, model weights and
+runtime caches, generated media, the operating system, and free working space.
+For example, this override requests a 512 GiB GPU boot disk:
 
-Inspect the resulting cluster and load its kubeconfig:
+```bash
+export TF_VAR_gpu_disk_size=512
+```
+
+Rerun the preview and require its GPU disk size and total capacity to match the
+intended topology. Keep the same override for apply; explicit Terraform tfvars
+take precedence over environment variables. Monitor actual node capacity and
+disk pressure during the workflow as described in R4.
+
+Check the project, region, node types, and disk sizes in the plan. When they
+match your intended setup and quota, apply the same options:
+
+```bash
+npa provision-if-absent --project "$PROJECT_ALIAS" --cluster-name "$CLUSTER_NAME" \
+  "${CLUSTER_OPTIONS[@]}"
+```
+
+Wait for provisioning and node health checks to succeed. Do not proceed with a
+degraded cluster. This creates cloud resources; use the
+[teardown guide](../../docs/teardown.md) when you finish with a cluster you own.
+
+Inspect the resulting cluster and set `KUBECONFIG` to the exact path reported
+by provisioning. The default is `~/.npa/clusters/<cluster-name>/kubeconfig`:
 
 ```bash
 npa cluster status --name "$CLUSTER_NAME" --project "$PROJECT_ALIAS"
-export KUBECONFIG="$HOME/.npa/clusters/$CLUSTER_NAME/kubeconfig"
+export KUBECONFIG='<kubeconfig-path-reported-by-NPA>'
 export KUBE_CONTEXT="$(kubectl config current-context)"
 npa skypilot bind-controller \
   --project "$PROJECT_ALIAS" --context "$KUBE_CONTEXT"
 ```
 
-If NPA reports a different kubeconfig path, use that path. Continue with S6.
+Continue with S6 using this kubeconfig path.
 The [Workbench setup guide](../../docs/workbench/getting-started.md#verify-kubernetes-access)
 has more detail about provisioning and cluster access.
 
@@ -324,9 +403,42 @@ export KUBE_CONTEXT='<context-from-the-previous-command>'
 npa cluster kubeconfig \
   --cluster-name "$CLUSTER_NAME" \
   --project "$PROJECT_ALIAS" --context "$KUBE_CONTEXT"
+export KUBECONFIG='<kubeconfig-path-reported-by-NPA>'
 npa skypilot bind-controller \
   --project "$PROJECT_ALIAS" --context "$KUBE_CONTEXT"
 ```
+
+List [all node groups](https://docs.nebius.com/cli/reference/mk8s/node-group/list)
+in the adopted cluster without changing them:
+
+```bash
+nebius mk8s node-group list --parent-id "$CLUSTER_ID" --all --format json
+```
+
+Set the expected CPU and GPU node totals from `spec.fixed_node_count` (or
+`status.target_node_count` for autoscaled groups); require `status.node_count` to
+agree. Counts are nodes, so one eight-GPU node means `--gpu-nodes 1`.
+Copy each pool's `spec.template.resources.platform` and `.preset`. This command
+requires all GPU groups to share one platform/preset and driver policy.
+For managed-driver images, copy `spec.template.gpu_settings.drivers_preset`:
+
+```bash
+CLUSTER_OPTIONS=(
+  --cpu-nodes '<cpu-node-total>' --cpu-platform '<cpu-platform>'
+  --cpu-preset '<cpu-preset>'
+  --gpu-nodes '<gpu-node-total>' --gpu-platform '<gpu-platform>'
+  --gpu-preset '<gpu-preset>'
+  --gpu-driver-mode managed-image --managed-driver-preset '<managed-preset>'
+)
+```
+
+If there is no CPU pool, set `--cpu-nodes 0` and omit the CPU platform/preset
+options.
+For an existing GPU Operator deployment, replace both driver options with
+`--gpu-driver-mode operator`. Preserve any original workload-profile or MIG
+options in the array. Resolve unknown or mixed driver settings using the
+[driver strategy reference](../../docs/workbench/mk8s-gpu-driver-strategy.md)
+before S6; changing the validation policy does not repair the installed drivers.
 
 The Nebius CLI profile supplies cloud authentication, the NPA project alias
 selects saved project credentials, and the Kubernetes context selects the
@@ -334,18 +446,38 @@ cluster. Use the values belonging to the selected project throughout.
 
 ### S6. Bootstrap and verify SkyPilot
 
-Resolve Python from your own environment. This works on Linux and macOS without
-assuming a Homebrew installation directory; `python3.12` must be on `PATH`.
+Resolve Python from your Linux operator environment; `python3.12` must be on
+`PATH`. Use that same host for every subsequent run command. Keep the
+`KUBECONFIG` path and `CLUSTER_OPTIONS` array from S5; a context name need not
+match its directory. In a new shell, restore the array before continuing.
 
 ```bash
 npa skypilot bootstrap --python "$(command -v python3.12)"
 export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
-export KUBECONFIG="$HOME/.npa/clusters/$KUBE_CONTEXT/kubeconfig"
-npa skypilot verify --cluster "$KUBE_CONTEXT"
+npa skypilot verify --cluster "$KUBE_CONTEXT" --kubeconfig "$KUBECONFIG"
+npa provision-if-absent \
+  --project "$PROJECT_ALIAS" --cluster-name "$CLUSTER_NAME" \
+  --context "$KUBE_CONTEXT" --kubeconfig "$KUBECONFIG" \
+  "${CLUSTER_OPTIONS[@]}" --skip-s3 --sky-smoke --sky-bin "$NPA_SKYPILOT_BIN"
 npa workbench workflow gpus --context "$KUBE_CONTEXT" --project "$PROJECT_ALIAS"
 ```
 
-Verification must report Kubernetes enabled for this context. Copy the exact
+Verification must report Kubernetes enabled for this context. The targeted
+`verify` and `workflow gpus` commands each use a durable owned API session with
+the selected SkyPilot interpreter, exact kubeconfig and context. They stop only
+their own check-only API before reporting success; discovery's `--project`
+also checks the selected project's local cluster identity. Neither command uses
+the shared controller API. Keep one kubeconfig file selected for these checks.
+
+The smoke checks actual GPU dispatch, including supported accelerator-label
+setup, and removes its temporary workload before succeeding. Cluster validation
+uses one owned SkyPilot API across its checks, GPU discovery, launch, and cleanup,
+then stops it after verifying workload removal. Standalone verification and
+discovery refuse a recorded pending smoke; recover it through its original
+cluster/provision command before repeating these checks. If removal cannot be verified, retain
+the reported validation state and original environment for recovery; an older
+shared API must remain untouched. It also runs against an existing
+cluster; it is not enabled by default in S5's provisioning command. Copy the exact
 GPU spelling from discovery; for example, an RTX PRO 6000 cluster may advertise
 `RTXPRO-6000-BLACKWELL-SERVER-EDITION`. Use it with the requested count in the run
 section. See [SkyPilot setup](../../docs/orchestration/skypilot-setup.md).
@@ -480,17 +612,18 @@ configuration, and execution identity.
 ### R1. Select the project, GPU, and caption model
 
 In a new terminal, return to your checkout and activate `.venv`. Restore the
-project alias and cluster context selected above, and set the bucket and
-accelerator from your setup results:
+project alias, verified Nebius profile, cluster context, and exact kubeconfig
+path selected above. The profile name can differ from the NPA project alias.
+Set the bucket and accelerator from your setup results:
 
 ```bash
 source .venv/bin/activate
 export PROJECT_ALIAS=paidf
-export NPA_NEBIUS_PROFILE="$PROJECT_ALIAS"
-export KUBE_CONTEXT='<your-adopted-context>'
+export NPA_NEBIUS_PROFILE='<your-verified-nebius-profile>'
+export KUBE_CONTEXT='<your-verified-context>'
 export BUCKET='<your-configured-bucket-name>'
 export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
-export KUBECONFIG="$HOME/.npa/clusters/$KUBE_CONTEXT/kubeconfig"
+export KUBECONFIG='<your-verified-kubeconfig-path>'
 export NPA_WORKFLOW_GPU_ACCELERATOR='<discovered-gpu-name>:1'
 SPEC=workflows/main/paidf-cosmos3.yaml
 
@@ -533,13 +666,16 @@ Keep this SkyPilot directory for this run's submission, monitoring, resume, and
 cleanup. An isolated API binds the concrete storage prefix, including the run
 ID. Rerun R2 for a new experiment so it gets a fresh run ID and API directory;
 reusing the previous run's API can fail before launch with `different executing
-identity`. After a run finishes, follow the [controller cleanup
-procedure](../../docs/teardown.md) in its original environment before moving on.
+identity`. After a run finishes, follow [R7: finish owned cleanup](#r7-finish-owned-cleanup)
+in its original environment before moving on.
 Keep the run's state and artifacts available for inspection.
 
 ### R3. Submit
 
 ```bash
+NPA_E2E_PAIDF_STARTER_FRESH_AFTER="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" || exit 1
+export NPA_E2E_PAIDF_STARTER_FRESH_AFTER
+printf 'Save this run freshness timestamp: %s\n' "$NPA_E2E_PAIDF_STARTER_FRESH_AFTER"
 npa workbench workflow submit "$SPEC" \
   --run-id "$RUN_ID" \
   --var bucket="$BUCKET" \
@@ -558,6 +694,9 @@ The first run needs no input preparation: submit fetches and verifies the
 pinned upstream starter video, stages it for the run, and passes the source
 to the Cosmos 3 workflow. It also stages source code and forwards the four
 named secrets without requiring their values in the command.
+Keep the pre-submission UTC timestamp with this run's records. The
+[completed starter audit](#audit-a-completed-default-starter-run) uses it to
+reject artifacts that predate this submission.
 Both starter variants passed the exploratory default quality gate in the
 recorded live run. Review generated data separately for training suitability.
 Generation and evaluator results can vary, and a new run can still be rejected.
@@ -863,6 +1002,16 @@ npa workbench workflow logs "$RUN_ID" --project "$PROJECT_ALIAS" \
   --stage generate-variants --no-follow
 ```
 
+Between waves and during finalization, all recorded jobs can report `SUCCEEDED`
+while the workflow lifecycle still reports `RUNNING`. Status retains that durable
+lifecycle and reports `workflow_lifecycle.completion_recorded: false` with
+`driver_liveness: unknown`; a successful live job query does not prove the submit
+driver is alive. The original lifecycle timestamp stays separate from the latest
+job observation and real stage heartbeats. `--watch` continues across this
+handoff. Keep the original submit driver running; this observation alone is not
+a reason to resume. Actual live-query failures still exit nonzero, and completed
+workflow evidence and artifact checks remain required before declaring success.
+
 The runtime may submit several managed jobs or attempts. Use NPA's stage records
 to identify the GPU task and each retry; do not assume one job ID or a fixed
 15-row queue describes every run. Repeat the log command to retrieve a fresh
@@ -916,9 +1065,15 @@ and stop an existing driver with `credential configuration changed after
 verification`, even when its credentials are unchanged. Finish the active run
 before changing that configuration, or use separate NPA configuration stores
 for independently isolated controllers. The check also covers the Nebius CLI
-credential cache: another process refreshing a shared cache can interrupt the
-driver. Use a dedicated operator environment for a long run and keep its
-configuration stable. Preserve the run records and original authentication
+authentication sources. Normal renewable-cache refresh for a supported RSA
+service-account profile preserves API identity while the effective profile,
+account, key, and explicit credential sources remain unchanged. Nebius CLI
+`0.12.254` keeps this cache under `HOME/.nebius` even with `--config`;
+`NEBIUS_CONFIG_DIR` does not select a different CLI configuration or cache.
+Unsupported or mixed authentication formats remain byte-strict. Use a dedicated
+operator environment for a long run and keep its configuration stable.
+Existing ownership records are not silently rebound. Preserve the run records
+and original authentication
 state; do not edit API ownership records or assume that restarting the API
 accepts changed credentials. Ask the platform operator to reconcile the exact
 controller before retrying after this error.
@@ -1124,6 +1279,160 @@ run. If you intentionally accept weaker visual matching, set the chosen
 `grade_threshold` and `attribute_threshold` in both plan and submit commands.
 Every variant still needs complete evaluation and verified alignment.
 
+### R7. Finish owned cleanup
+
+Wait for the R3 submit driver to exit, confirm terminal state in R4, and finish
+the [output audit](#inspect-the-outputs). Do not run cleanup while a driver,
+monitor, or another user is still using this API. This procedure applies only
+to the fresh, unique per-run API directory created in R2. Keep the original
+checkout and environment, including `RUN_ID`, `PROJECT_ALIAS`, `KUBE_CONTEXT`,
+and `NPA_SKYPILOT_ISOLATED_CONFIG_DIR`; do not repoint them to shared state.
+
+First finish cloud cleanup. This block stops if either command fails or its
+receipt is unverified. It retains private JSON receipts under the run's API
+directory and leaves their path in `CLEANUP_RECEIPTS` for the final local stop.
+A separate success receipt binds their hashes only after both commands and all
+checks succeed; JSON output alone is not proof of a successful command.
+
+```bash
+CLEANUP_RECEIPTS="$(
+  set -e
+  umask 077
+  : "${RUN_ID:?Keep the original run ID}"
+  : "${PROJECT_ALIAS:?Keep the original project}"
+  : "${KUBE_CONTEXT:?Keep the original context}"
+  : "${NPA_SKYPILOT_ISOLATED_CONFIG_DIR:?Keep the original per-run API directory}"
+  export RUN_ID PROJECT_ALIAS KUBE_CONTEXT
+  npa/.venv/bin/python - <<'PY'
+import json, os, tempfile
+from pathlib import Path
+run_id = os.environ["RUN_ID"]
+root = Path(os.environ["NPA_SKYPILOT_ISOLATED_CONFIG_DIR"]).expanduser().absolute()
+expected = Path.home() / ".npa/workflow-runs" / run_id / "skypilot"
+if Path(run_id).name != run_id or run_id in {".", ".."} or root != expected:
+    raise SystemExit("Cleanup requires the original R2 per-run API directory.")
+record_path = root / "local-api/daemon.json"
+if not record_path.is_file():
+    raise SystemExit("The owned API record is missing; preserve state and investigate.")
+record = json.loads(record_path.read_text())
+if (record.get("schema_version") != 1 or record.get("root") != str(root / "local-api")
+        or not record.get("interpreter") or record.get("project_alias") != os.environ["PROJECT_ALIAS"]):
+    raise SystemExit("The API ownership record does not match this run environment.")
+receipts = Path(tempfile.mkdtemp(prefix="cleanup.", dir=root))
+identity = {key: record[key] for key in ("root", "marker", "interpreter", "pid", "start_ticks")}
+(receipts / "api-identity.json").write_text(json.dumps({"run_id": run_id, "api": identity,
+    "project_alias": os.environ["PROJECT_ALIAS"], "context": os.environ["KUBE_CONTEXT"]}) + "\n")
+print(receipts)
+PY
+)" &&
+export CLEANUP_RECEIPTS RUN_ID PROJECT_ALIAS KUBE_CONTEXT &&
+(
+  set -e
+  umask 077
+  npa workbench workflow cancel "$RUN_ID" --project "$PROJECT_ALIAS" --json \
+    > "$CLEANUP_RECEIPTS/cancel.json"
+  npa/.venv/bin/python - <<'PY'
+import json, os
+from pathlib import Path
+cancel = json.loads((Path(os.environ["CLEANUP_RECEIPTS"]) / "cancel.json").read_text())
+if (cancel.get("run_id") != os.environ["RUN_ID"] or cancel.get("errors")
+        or cancel.get("outcome") not in {"terminal", "no_cancellation_needed", "cancelled"}):
+    raise SystemExit("Exact-run cancellation is unverified; preserve the cleanup receipts.")
+PY
+  npa skypilot cleanup-controller --project "$PROJECT_ALIAS" --context "$KUBE_CONTEXT" --yes --json \
+    > "$CLEANUP_RECEIPTS/controller.json"
+  npa/.venv/bin/python - <<'PY'
+import hashlib, json, os
+from pathlib import Path
+receipts = Path(os.environ["CLEANUP_RECEIPTS"])
+controller = json.loads((receipts / "controller.json").read_text())
+verified = ("overall_verified", "remote_absence_verified", "local_metadata_cleared")
+if (any(controller.get(key) is not True for key in verified) or controller.get("errors")
+        or controller.get("outcome") not in {"cleaned", "already_absent"}
+        or controller.get("project_alias") != os.environ["PROJECT_ALIAS"]
+        or controller.get("context") != os.environ["KUBE_CONTEXT"]):
+    raise SystemExit("Controller cleanup is unverified; preserve the cleanup receipts.")
+sources = ("api-identity.json", "cancel.json", "controller.json")
+(receipts / "cloud-cleanup.json").write_text(json.dumps({"commands_succeeded": True,
+    "sha256": {name: hashlib.sha256((receipts / name).read_bytes()).hexdigest() for name in sources}}) + "\n")
+print("Cloud cleanup verified; keep CLEANUP_RECEIPTS for the final local API stop.")
+PY
+)
+```
+
+Then stop the local API. This block makes no cloud calls and can be run
+independently after an interrupted local stop, using the preserved successful
+receipts and unchanged original environment. If opening a new shell, restore
+`CLEANUP_RECEIPTS` to that private receipt directory. Do not repeat cloud cleanup
+just to stop the API: other controllers may remain on the cluster, and a later
+controller cleanup can correctly refuse after your metadata is gone.
+
+```bash
+(
+  set -e
+  umask 077
+  : "${RUN_ID:?Keep the original run ID}"
+  : "${PROJECT_ALIAS:?Keep the original project}"
+  : "${KUBE_CONTEXT:?Keep the original context}"
+  : "${NPA_SKYPILOT_ISOLATED_CONFIG_DIR:?Keep the original per-run API directory}"
+  : "${CLEANUP_RECEIPTS:?Select the preserved successful cleanup receipts}"
+  export RUN_ID PROJECT_ALIAS KUBE_CONTEXT CLEANUP_RECEIPTS
+  npa/.venv/bin/python - <<'PY'
+import hashlib, json, os
+from pathlib import Path
+from npa.orchestration.skypilot.local_api import stop_isolated_api
+run_id = os.environ["RUN_ID"]
+root = Path(os.environ["NPA_SKYPILOT_ISOLATED_CONFIG_DIR"]).expanduser().absolute()
+expected = Path.home() / ".npa/workflow-runs" / run_id / "skypilot"
+if Path(run_id).name != run_id or run_id in {".", ".."} or root != expected:
+    raise SystemExit("Local stop requires the original R2 per-run API directory.")
+receipts = Path(os.environ["CLEANUP_RECEIPTS"])
+success = json.loads((receipts / "cloud-cleanup.json").read_text())
+sources = ("api-identity.json", "cancel.json", "controller.json")
+if success.get("commands_succeeded") is not True or any(
+        success.get("sha256", {}).get(name) != hashlib.sha256((receipts / name).read_bytes()).hexdigest()
+        for name in sources):
+    raise SystemExit("Successful cloud cleanup is unproven or its receipts changed; keep the API running.")
+saved = json.loads((receipts / "api-identity.json").read_text())
+cancel = json.loads((receipts / "cancel.json").read_text())
+controller = json.loads((receipts / "controller.json").read_text())
+if (saved.get("run_id") != run_id or saved.get("project_alias") != os.environ["PROJECT_ALIAS"]
+        or saved.get("context") != os.environ["KUBE_CONTEXT"]):
+    raise SystemExit("Cleanup receipts do not match this run environment.")
+if (cancel.get("run_id") != run_id or cancel.get("errors")
+        or cancel.get("outcome") not in {"terminal", "no_cancellation_needed", "cancelled"}):
+    raise SystemExit("Exact-run cancellation is unverified; keep the owned API running.")
+verified = ("overall_verified", "remote_absence_verified", "local_metadata_cleared")
+if (any(controller.get(key) is not True for key in verified) or controller.get("errors")
+        or controller.get("outcome") not in {"cleaned", "already_absent"}
+        or controller.get("project_alias") != os.environ["PROJECT_ALIAS"]
+        or controller.get("context") != os.environ["KUBE_CONTEXT"]):
+    raise SystemExit("Controller cleanup is unverified; keep the owned API running.")
+record = json.loads((root / "local-api/daemon.json").read_text())
+if any(record.get(key) != saved["api"].get(key) for key in ("root", "marker", "interpreter")):
+    raise SystemExit("The API identity changed after cloud cleanup; preserve its state.")
+already_stopped = record.get("state") == "stopped" and record.get("pid") is None and record.get("start_ticks") is None
+if not already_stopped and any(record.get(key) != saved["api"].get(key) for key in ("pid", "start_ticks")):
+    raise SystemExit("The API process changed after cloud cleanup; preserve its state.")
+stop_isolated_api(root)
+record = json.loads((root / "local-api/daemon.json").read_text())
+if record.get("state") != "stopped" or record.get("pid") is not None or record.get("start_ticks") is not None:
+    raise SystemExit("Owned API shutdown is unverified; retain its state for recovery.")
+(receipts / "local-api.json").write_text(json.dumps({"state": "stopped", "processes_remaining": 0}) + "\n")
+print("Owned local API stopped; private cleanup receipts and run state retained.")
+PY
+)
+```
+
+Controller removal alone does not stop this API. Cluster and storage teardown
+are separate actions described in [the general teardown guide](../../docs/teardown.md).
+Keep the API ownership records, workflow state, and artifacts. The helper
+verifies the exact recorded process identity and waits for its process tree to
+exit; it does not cancel cloud jobs or delete stored outputs. Do not use
+`sky api stop`, which is not scoped to this owned API, or delete state to hide a
+failed cleanup. If a check fails, keep the original environment and receipts
+while resolving that exact failed phase.
+
 ## Troubleshooting
 
 Use the current setup and recovery paths below when one of these symptoms
@@ -1137,7 +1446,8 @@ appears.
 | Runtime status has no stage rows, or artifacts reports `manifest_pending` | Summary/index publication can lag the runtime record | Read the per-wave record in R4 and inspect stage logs before relaunching. |
 | `ERROR:root:'NoneType' object has no attribute 'strip'` during an otherwise successful launch | A kubeconfig credential plugin returned a valid token with `expirationTimestamp: null` | This was nonfatal in live validation: the Kubernetes client logged an expiry parsing error after loading the token. Check the actual command exit and stage status; rerun credential preflight for authentication failures. |
 | `invalid IAM subject` or `PermissionDenied` | Selected account, CLI profile, and project permissions | Verify that the account can access this project in the web console, correct its permissions, and retry P3. |
-| `The active Nebius CLI profile cannot authenticate non-interactively` | CLI compatibility as well as authentication | Check the version first; install the compatible CLI from P2 before replacing the profile. |
+| `Unsupported Nebius CLI` or `Could not check/parse the Nebius CLI version` | Effective executable and NPA's supported version | Follow P2 and verify `command -v nebius` and `nebius version` after setting `PATH`. |
+| `The active Nebius CLI profile cannot authenticate non-interactively` | Selected profile and credentials | Follow P3 and the headless authentication procedure where applicable; recheck online authentication before provisioning. |
 | `legacy global storage credentials have no unique exact-project ownership` | Credentials left by an older NPA installation | Back up the local credential file, identify which project owns the keys, and reconcile against the [project credential schema](../../docs/credentials.yaml.example). Do not assign ambiguous keys to the new project. |
 | Missing bootstrap-contract attestation for `npa-rerun-viewer` | Old checkout or image override | Use current supported pins and rerun `preflight-images`; retain the failing check. |
 | Private-registry `403` when expecting GHCR | Explicit image/registry overrides or an older client | Use the current default public mirror and remove unintended overrides. Current runtime image selection does not inherit `NPA_REGISTRY`. |
@@ -1149,7 +1459,8 @@ appears.
 | `FAILED_SETUP: Forced include not found` | Incomplete manually staged source | Use current automatic source staging. For a persisted bad source URI, follow the [source-staging recovery guide](../../docs/workbench/guides/physical-ai-data-factory-deploy.md#if-submit-fails). |
 | `--run-id` and `--resume-run` are mutually exclusive | Recovery command combines both options | Use only `--resume-run` for the existing run, or `prepare-run` for a fresh experiment. |
 | Workflow GPU discovery says `Kubeconfig not found` | Missing NPA-managed kubeconfig | Complete S5/S6 and verify the selected context. |
-| `UnsatisfiableAcceleratorError` reports no free GPU | Matching nodes may already be occupied | Check GPU discovery and active workloads. Wait for capacity or select a compatible available cluster; do not cancel another user's workload. Resume an unchanged run as described in R4. |
+| `requested GPU task has no compatible free placement` or `UnsatisfiableAcceleratorError` | No free node matches the complete GPU, CPU, memory, and placement request | Check GPU discovery and active workloads. Wait for capacity or select a compatible available cluster; do not cancel another user's workload. Resume an unchanged run as described in R4. |
+| `shared GPU capacity is indeterminate because active GPU pods await placement` | Other GPU requests are active but not yet assigned to a node | Wait for authoritative scheduling, or cancel only pending workloads you own. Recheck GPU discovery before retrying. A successful setup smoke does not reserve capacity for later workflow stages. |
 | A CPU stage reports the resource request of an already completed GPU stage | An older runtime checked free GPU capacity across the entire workflow before each stage | Current runtime checks the resources of the stage being launched. Update the checkout and start a fresh run when changing its code; an unchanged older run can resume once its existing capacity check passes. |
 | Stage repeatedly recreates; `container not found` during setup | Image cannot satisfy SkyPilot bootstrap | Cancel the affected run using the [run lifecycle](../../docs/run-lifecycle.md) and correct its image. Keep image preflight enabled. |
 | GPU stage recovers repeatedly; events show `Evicted`, `ephemeral-storage`, or `NodeHasDiskPressure` | GPU-node disk capacity for image layers and runtime weights | Inspect node disk pressure and available capacity, or ask the cluster administrator. Keep enough disk for image layers and runtime weights. |
@@ -1309,6 +1620,46 @@ against retained live reports; a full rejected runtime replay was not completed.
 
 ## Inspect the outputs
 
+### Audit a completed default-starter run
+
+After R3 reaches successful finalization, run the read-only audit below from
+the checkout that submitted it. Restore its saved pre-submission timestamp
+if using another shell. This audit requires the default starter and batch
+settings; R3a and R3b have separate audits for their selected inputs.
+
+Install the test dependencies in the separate contributor environment once:
+
+```bash
+python3.12 -m venv npa/.venv
+npa/.venv/bin/python -m pip install -e 'npa[dev,adapter]'
+```
+
+Then run the audit:
+
+```bash
+(
+  set -e
+  : "${NPA_E2E_PAIDF_STARTER_FRESH_AFTER:?Restore the saved pre-submission UTC timestamp for this run}"
+  export NPA_E2E_PAIDF_STARTER_FRESH_AFTER
+  export NPA_INTEGRATION_E2E=1
+  export NPA_E2E_PROJECT="$PROJECT_ALIAS"
+  export NPA_E2E_PAIDF_STARTER_RUN_URI="s3://$BUCKET/paidf-cosmos3/$RUN_ID/"
+  npa/.venv/bin/python -m pytest npa/tests/e2e/test_paidf_cosmos3_starter_live.py -q
+)
+```
+
+Require **one passed test**, with no skip. It verifies fresh run objects,
+the pinned starter bytes, successful stages without replay or adoption,
+both default variants and quality thresholds, complete native transfer and
+evaluation evidence, accepted annotation and real curation, and both Rerun
+recordings. It reads existing outputs without submitting or resuming work.
+Automatic partial-launch transport recovery may leave failed historical attempts;
+the audit verifies their exact cancelled parent/successor chains, immutable
+reservation hashes, output-absence evidence, fresh preflight proof, and recovery
+accounting before accepting the successful logical stages. It rejects manual
+payload retries, replay, adoption, and records resumed by another driver. Keep
+all failed-attempt evidence alongside the successful outputs.
+
 ### Check every stage and full pipeline completion
 
 Use the R4 runtime record to verify executed stages, then check their artifacts
@@ -1398,6 +1749,12 @@ available source/generated frames, generation prompts, captions, evaluator
 decisions, and pipeline evidence. A rejected run may contain a useful recording
 without accepted data or a final curation report. Check the variant MP4s and
 the evaluator's individual dispositions as well as its aggregate score.
+
+New recordings contain selected producer facts, source-report SHA-256 hashes,
+and artifact references relative to the run root, such as `input/source.mp4`.
+Private storage locations and runtime identities are omitted. The original
+JSON reports remain private and unchanged; use their recorded hashes to trace
+details outside the review panels. Existing recordings are not rewritten.
 
 Each Rerun caption panel previews the first 12 entries. For the complete
 annotations, inspect `labeled_original/captions.json` and

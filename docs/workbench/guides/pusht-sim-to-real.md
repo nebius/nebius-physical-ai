@@ -56,6 +56,12 @@ fixture rollout data is not a learned policy evaluation.
 
 ## Continue with a real workflow
 
+For a smaller demonstration-first experiment, use the
+[LeRobot transfer workflow](lerobot-transfer.md). It trains native ACT baseline
+and augmented policies, measures paired closed-loop PushT success under four
+conditions, and produces an expert-demo collection queue from validation
+failures. Its report distinguishes simulation robustness from physical transfer.
+
 The maintained 14-stage workflow is
 [`workflows/main/sim2real.yaml`](../../../workflows/main/sim2real.yaml).
 Follow its [runbook](sim2real-workflow.md) and

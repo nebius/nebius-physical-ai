@@ -218,7 +218,7 @@ def test_native_check_is_an_executed_gate_with_separate_private_dependencies():
             ):
                 assert step["with"]["python-version"] == "3.11"
     security = yaml.safe_load(SECURITY.read_text())
-    job = security["jobs"]["complete-byte-native-integration"]
+    job = security["jobs"]["image-policy"]
     assert "if" not in job
     native_step = next(step for step in job["steps"] if "real_helper_checks.py" in step.get("run", ""))
     for step in [native_step, named("Prepare and test the cuRobo complete-byte scanner")]:
@@ -232,14 +232,15 @@ def test_native_check_is_an_executed_gate_with_separate_private_dependencies():
 
 
 def test_minimal_curobo_base_gets_the_unchanged_critical_vulnerability_gate():
-    spec = yaml.safe_load(SECURITY.read_text())
-    job = spec["jobs"]["base-image-cve-scan"]
+    inventory = json.loads(
+        (ROOT / "npa/docker/workbench/base-image-security.json").read_text()
+    )
     base = (ROOT / "npa/docker/workbench/curobo/Dockerfile").read_text().split("FROM ", 1)[1].splitlines()[0]
-    entries = [entry for entry in job["strategy"]["matrix"]["include"] if entry["image"] == base]
+    entries = [entry for entry in inventory if entry["image"] == base]
     assert len(entries) == 1 and entries[0]["purge_linux_libc_dev"] is False
-    gate = next(step for step in job["steps"] if step.get("name") == "Trivy image scan")
-    assert gate["with"]["severity"] == "CRITICAL"
-    assert gate["with"]["exit-code"] == "1"
+    scanner = (ROOT / "npa/scripts/scan_base_images.py").read_text()
+    assert '"--severity", "CRITICAL"' in scanner
+    assert '"--exit-code", "0" if sarif else "1"' in scanner
 
 
 def test_publisher_policy_pin_matches_the_reviewed_product_catalog():
