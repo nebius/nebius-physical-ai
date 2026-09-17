@@ -66,6 +66,45 @@ and 24 minutes after the respective outer failures. Both exited successfully and
 uploaded all declared outputs. The table uses the durable 10/10 evaluator
 artifacts; the outer workflow failures remain part of the evidence.
 
+## Work completed and next measurements
+
+The eight evaluated cells executed 498,108 simulator steps across 80 rollouts.
+Those rollouts cover 30 distinct task/instance pairs, with different policies
+evaluated on the same prescribed cases. The three training runs completed
+18,000 optimizer updates in total. Only one of the three exported fine-tunes
+received a development evaluation.
+
+Matching each candidate to the stock policy by task and instance makes the
+negative results more concrete:
+
+| Candidate | Paired cases | Higher Q | Lower Q | Equal Q | Mean Q change |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 16-action uncompressed execution, three tasks | 30 | 1 | 17 | 12 | -0.335556 |
+| Uniform radio fine-tune | 10 | 0 | 1 | 9 | -0.100000 |
+| KMY public step-5000, radio | 10 | 0 | 3 | 7 | -0.300000 |
+
+These are descriptive comparisons from one attempt per policy and case. They
+do not estimate significance, simulator variance, or performance on other tasks.
+
+The next experiment should prioritize measuring preserved candidates:
+
+1. Verify renewable authentication and independent deadline cleanup before
+   provisioning another campaign. The previous cleanup overrun is unresolved
+   as a reusable automation fix.
+2. Freeze the balanced three-task checkpoint and published stock control, then
+   evaluate both on the same complete panel: six cells and 60 attempts. Retain
+   every outcome and record the new comparison separately from this campaign.
+3. Verify Meta100 GPU serving, observation/action compatibility, normalization,
+   and the submission memory constraint before evaluating it on that panel.
+4. Audit the contact annotations against decoded frames before using their
+   labels to interpret that candidate. Add held-out loss measurement before
+   another training campaign, alongside rollout-based model selection.
+
+This ordering has no new measured performance result. It scores existing
+training investments before expanding training or controller experiments.
+Further GPU execution requires a new operator time allowance because the
+original 12-hour window has ended.
+
 ## Completed training artifacts
 
 All three candidates started from published RLC checkpoint 2 and completed
@@ -165,6 +204,7 @@ storage access, and default network were retained to preserve the results.
 ## Reproducibility identities
 
 - Independently recomputed eight-cell totals: `f678f72a7a8c3a8f8a2e80f51ca8253b4c59f9993fcd5de5f3320739e57f0409`
+- Paired development review and work accounting: `ac54987ab767505639fb44b13628cb5d83ede668f96a9878cddf858be51d4083`
 - Six newly collected cells and workflow status receipts: `17302b8f306e738f6ad6a6df854be864ac84120341904a6e278573f9faff4fe8`
 - Task-22 supervisor authentication-failure audit: `c36e6eb9ca76e2338f910a72a91a13d1c16c94bfeadd0d8e4b46ac7bb67179b8`
 - Final independent cleanup audit: `54ed5907bb9e11107b637607bfcc7639bec55028eae4bf5859cd2900ef3b993f`
