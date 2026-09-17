@@ -121,7 +121,6 @@ npa workbench workflow submit "$SPEC" \
   --run-id "$RUN_ID" --runtime --auto-load \
   --var bucket="$BUCKET" \
   --var n_augmentations=1 \
-  --assume-decision promote_checkpoint \
   --infra "k8s/$KUBE_CONTEXT" \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
@@ -361,7 +360,7 @@ npa workbench workflow submit "$SPEC" --project "$PROJECT" \
   --registry "$REGISTRY" \
   --run-id "$RUN_ID" --runtime --var bucket="$BUCKET" \
   --var n_augmentations=1 \
-  --assume-decision promote_checkpoint --infra "k8s/$CONTEXT" \
+  --infra "k8s/$CONTEXT" \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY --secret-env HF_TOKEN
 
@@ -772,7 +771,8 @@ and the separate Cosmos source/model/media license boundaries.
 
 ### 5b. Submit a real run
 
-Submit with the **same** `RUN_ID` (dynamic gate → pass `--assume-decision`):
+Submit with the **same** `RUN_ID`. Runtime-required workflows deliberately do
+not accept `--assume-decision`; the measured evaluator result controls the gate:
 
 ```bash
 npa workbench workflow submit "$SPEC" \
@@ -781,7 +781,6 @@ npa workbench workflow submit "$SPEC" \
   --var bucket="$BUCKET" \
   --runtime --auto-load \
   --registry "$REGISTRY" \
-  --assume-decision promote_checkpoint \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY \
@@ -852,7 +851,6 @@ npa workbench workflow submit "$SPEC" \
   --run-id "$(date -u +paidf-4gpu-%Y%m%dt%H%M%sz)" \
   --var bucket="<your-artifact-bucket>" \
   --var n_augmentations=4 \
-  --assume-decision promote_checkpoint \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY \
@@ -904,7 +902,6 @@ npa workbench workflow submit "$SPEC" \
   --var bucket="<your-artifact-bucket>" \
   --var n_augmentations=16 \
   --var augment_nodes=4 \
-  --assume-decision promote_checkpoint \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY
@@ -980,7 +977,6 @@ npa workbench workflow submit "$SPEC" \
   --var augment_control=seg \
   --var augment_control_prompt="robot arm, conveyor, bin" \
   --var augment_mask_prompt="robot arm" \
-  --assume-decision promote_checkpoint \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY
