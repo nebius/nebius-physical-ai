@@ -8864,7 +8864,24 @@
         // inventory. Refresh from that active state rather than reconstructing
         // a bucket/key in the browser, where it could leak into the transcript.
         await refresh();
-        await activateMainTab("rerun");
+        if (render === "rerun") {
+          const simViz = await loadJson("/api/sim-viz/status");
+          const runId = String((simViz && simViz.run_id) || activeRunId || "").trim();
+          if (runId) setActiveRunId(runId);
+          activeArtifactRender = "rerun";
+          hideArtifactPreview();
+          await activateMainTab("rerun", { skipEnsure: true });
+          // A boot-warmed iframe can still be displaying the empty Rerun
+          // welcome recording. Mount against the just-loaded run so the View
+          // tab proves the actual artifact rather than only reporting status.
+          await waitForRerunSuccess(String((simViz && simViz.camera) || "workspace"), {
+            deadlineMs: 90000,
+            mountAttemptsPerLoop: 4,
+            runId,
+          });
+        } else {
+          await activateMainTab("rerun");
+        }
         openChatDrawer();
         showToast("Live cloud evidence loaded in View.", "success");
       }

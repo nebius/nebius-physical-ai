@@ -1634,6 +1634,7 @@ def test_agent_ui_opens_view_after_live_evidence_chat_action() -> None:
     assert "async function applyLiveEvidence(evidence)" in ui
     assert "await applyLiveEvidence(data.live_evidence);" in ui
     assert "await activateMainTab(\"rerun\");" in ui
+    assert "await waitForRerunSuccess(String((simViz && simViz.camera) || \"workspace\"), {" in ui
 
 
 def test_existing_agent_bootstrap_fails_closed_when_https_ingress_cannot_be_ensured() -> (
