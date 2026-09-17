@@ -119,6 +119,19 @@ def test_success_preserves_exact_native_result_and_command(tmp_path):
     assert not (tmp_path / "simulator-liveness.json").exists()
 
 
+def test_state_only_evaluation_stages_private_log_without_replay_or_graphics(tmp_path):
+    private = tmp_path / "private"
+    assert not private.exists()
+    result = liveness.run_supervised(
+        [sys.executable, "-c", "print('state-only native result'); raise SystemExit(7)"],
+        artifact_root=tmp_path, private_dir=private, text=True,
+    )
+    assert result.returncode == 7
+    assert result.stdout == "state-only native result\n"
+    assert (private / "simulator-process.log").read_text() == result.stdout
+    assert private.stat().st_mode & 0o077 == 0
+
+
 def test_termination_escalates_only_for_owned_process(tmp_path):
     process = subprocess.Popen([sys.executable, "-c", "import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); print('ready',flush=True); time.sleep(60)"],
                                start_new_session=True, stdout=subprocess.PIPE, text=True)

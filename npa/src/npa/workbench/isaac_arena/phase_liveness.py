@@ -180,6 +180,9 @@ def run_supervised(argv, *, artifact_root: Path, private_dir: Path, **kwargs):
         OSError: Process or evidence staging failed, after owned-process cleanup.
     """
     options = {k: v for k, v in kwargs.items() if k not in {"stdout", "stderr", "check"}}
+    # State-only evaluations have neither replay staging nor graphics setup;
+    # the supervisor owns creation of its private log directory in every mode.
+    private_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     log_path = private_dir / "simulator-process.log"
     with log_path.open("w") as stream:
         process = subprocess.Popen(argv, stdout=stream, stderr=subprocess.STDOUT,
