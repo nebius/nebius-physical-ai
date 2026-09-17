@@ -13,34 +13,46 @@
     "task_fidelity": {
       "status": "verified",
       "reason": "The stage invokes the pinned upstream checkpoint and policy adapter, then requires a finite 32x14 action chunk.",
-      "evidence": ["docs/workbench/flex-pi.md#artifacts-and-acceptance"]
+      "evidence": [
+        "docs/workbench/flex-pi.md#artifacts-and-acceptance"
+      ]
     }
   },
   "prerequisites": {
     "output_storage": {
       "status": "verified",
       "reason": "The selected project's object-storage credential preflight passed before allocation.",
-      "evidence": ["npa workbench health preflight --checks nebius,s3 --json (sanitized private record)"]
+      "evidence": [
+        "npa workbench health preflight --checks nebius,s3 --json (sanitized private record)"
+      ]
     },
     "worker_input": {
       "status": "verified",
       "reason": "The public input manifest pins every source object and SHA-256 digest.",
-      "evidence": ["npa/docker/workbench/flex-pi/public_robotwin_sample.json"]
+      "evidence": [
+        "npa/docker/workbench/flex-pi/public_robotwin_sample.json"
+      ]
     },
     "credentials": {
       "status": "verified",
       "reason": "Exact pinned checkpoint, observation, tokenizer, DINOv3, and converted Wan asset endpoints were reachable before allocation.",
-      "evidence": ["sanitized private access-preflight record; no credential values retained"]
+      "evidence": [
+        "sanitized private access-preflight record; no credential values retained"
+      ]
     },
     "source_image": {
       "status": "verified",
-      "reason": "The immutable development digest passed source, license, payload, vulnerability, secret, SBOM, provenance, and anonymous-pull gates.",
-      "evidence": ["sanitized guarded-build record for the accepted exact digest"]
+      "reason": "The exact 0.1.0-cu128-r2 release digest passed source, licensing, full-layer payload, configured vulnerability/secret policy, SBOM/provenance, and anonymous full-layer pull gates.",
+      "evidence": [
+        "npa/src/npa/deploy/public_release_manifest.json"
+      ]
     },
     "target_runtime": {
       "status": "verified",
-      "reason": "The accepted exact digest completed strict checkpoint loading and repeated eager-versus-compiled action-only policy inference on one RTX PRO 6000; the compiled toolRef path then published verified standard artifacts.",
-      "evidence": ["docs/workbench/flex-pi.md#measured-blackwell-compile-optimization"]
+      "reason": "The exact r2 digest completed strict checkpoint loading and real compiled four-step action-only inference on one RTX PRO 6000, with terminal success, zero restarts, finite 32x14 actions, and three read-back-verified JSON artifacts. Earlier fan-out and paired benchmarks remain historical evidence for the original digest.",
+      "evidence": [
+        "docs/workbench/flex-pi.md#r2-exact-image-acceptance"
+      ]
     }
   }
 }

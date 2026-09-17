@@ -105,6 +105,16 @@ Require all of the following from the exact image digest:
 Keep raw logs and object locations access-controlled. Repository and PR evidence
 may report only sanitized status, metrics, hashes, and generic GPU class.
 
+The current `0.1.0-cu128-r2` release (`sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6`)
+passed every publication gate and independent real compiled inference on one
+B200 and one RTX PRO 6000 on 2026-09-17. Each exact-image worker passed native
+architecture and baked-source checks, produced finite 32x14 actions, and ended
+successfully with zero restarts and three read-back-verified JSON objects.
+See `docs/workbench/flex-pi.md#r2-exact-image-acceptance` for measured values.
+
+The following fan-out and paired benchmarks are historical evidence for
+`0.1.0-cu128` (`sha256:88359258470d9622d9fb5274d8ad39627a57a5682cb8630c7ac85a3f303c7b91`), not r2 qualification.
+
 The accepted 2026-09-16 RTX PRO 6000 run used the exact `0.1.0-cu128` digest,
 torch 2.7.1+cu128, four Euler steps, 0.678 seconds of inference, and
 25,268,430,336 bytes peak allocated GPU memory. It produced a finite 32×14
@@ -135,7 +145,7 @@ at most 0.1%. The observed relative-L2 maxima were 0.2563% and 0.2927%,
 respectively. Compile setup is not free: it added 30.94 seconds on RTX PRO 6000
 and 24.16 seconds on B200, so keep eager mode available for one-shot callers.
 
-Reuse these only as acceptance baselines. They are not latency SLAs or
+Keep these historical observations tied to their exact digest. They are not latency SLAs or
 closed-loop task-success claims; other GPU classes remain unmeasured for this
 release.
 

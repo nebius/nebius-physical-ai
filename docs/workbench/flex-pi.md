@@ -26,7 +26,7 @@ use independent replicas, not tensor, pipeline, or other model parallelism.
 
 ## Packaging and terms
 
-`npa-flex-pi:0.1.0-cu128` contains pinned MIT flex-pi source, configs, the
+`npa-flex-pi:0.1.0-cu128-r2` contains pinned MIT flex-pi source, configs, the
 RoboTwin policy adapter, and its CUDA/Python runtime. It contains no checkpoint,
 Wan/T5/DINOv3 weights, observation media, credentials, actions, or populated
 cache. A narrow maintained patch makes upstream inspect the lexical Hugging Face
@@ -139,7 +139,32 @@ capability (RTX PRO 6000 12.0 or B200 10.0), and exact
 source/checkpoint/data revisions. Raw logs and S3 locations stay outside Git;
 reports and pull requests use only sanitized summaries.
 
-### Measured RTX PRO 6000 acceptance
+### r2 exact-image acceptance
+
+On 2026-09-17, `0.1.0-cu128-r2` was promoted from immutable source commit
+`8904daf36d0cc9152193b0e87a687bce7e6fca46` at exact manifest digest
+`sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6`. The replacement contains the
+JSON stdout correction and fail-closed DINO checkpoint gate. Every publication
+gate passed, including full-layer payload scans, the configured vulnerability
+and secret policy, signed SBOM/provenance, and anonymous full-layer validation.
+
+Independent real workflows ran the exact image without a source overlay on one
+B200 and one RTX PRO 6000. Both verified native GPU architecture, baked source
+hashes, strict checkpoint loading, the compiled four-step inference path,
+terminal success, zero restarts, and three durable JSON objects read back twice.
+
+| Target | GPU count | Finite action shape | Inference time | Peak allocated GPU memory | Verified objects |
+| --- | --- | --- | --- | --- | --- |
+| B200 | 1 | 32×14 | 0.094180 s | 25,270,528,512 bytes | 3 |
+| RTX PRO 6000 | 1 | 32×14 | 0.151054 s | 25,270,528,512 bytes | 3 |
+
+These are single-observation compiled inference results, not paired speedup or
+fleet-scaling measurements. The historical results below remain bound to
+`0.1.0-cu128`, digest `sha256:88359258470d9622d9fb5274d8ad39627a57a5682cb8630c7ac85a3f303c7b91`;
+they do not qualify the replacement image. Neither release claims closed-loop
+RoboTwin task success. Other GPU classes remain unmeasured for r2.
+
+### Historical RTX PRO 6000 acceptance
 
 On 2026-09-16, the exact public-development image later selected for
 `0.1.0-cu128` completed a real action-only run on one NVIDIA RTX PRO 6000
@@ -155,7 +180,7 @@ policy-inference and artifact-integrity result for one public observation, not a
 closed-loop RoboTwin success measurement. L40S, Hopper, and B300 remain
 supported by the measured wheel architectures but unmeasured for this release.
 
-### Measured B200 acceptance
+### Historical B200 acceptance
 
 On 2026-09-16, the same exact accepted digest ran on the maximum B200 capacity
 that fresh provider and scheduler evidence made available. The reserved pool
@@ -185,9 +210,9 @@ hashes; the identical pinned input intentionally had one content hash. This is
 observation-level policy inference and scaling evidence, not closed-loop
 RoboTwin task success.
 
-### Measured Blackwell compile optimization
+### Historical Blackwell compile optimization
 
-On 2026-09-17, the unchanged release digest was measured in paired eager and
+On 2026-09-17, the unchanged `0.1.0-cu128` digest was measured in paired eager and
 compiled runs on one RTX PRO 6000 (`sm_120`) and one B200 (`sm_100`). Each mode
 used the released checkpoint, the same public observation, seed 42, four Euler
 steps, two untimed warmups, and all five timed inferences. The optimized path is

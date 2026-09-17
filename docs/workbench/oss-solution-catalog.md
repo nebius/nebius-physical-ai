@@ -52,7 +52,7 @@ unique and must be tested with its own upstream-named capabilities.
 | OpenPI | `pi05_droid_jointpos_polaris_cross_pod_serve` | **accepted** | Isolated single-B200 connected gate: private ClusterIP, ready digest-pinned server Deployment, and a distinct CPU client pod completed two finite `float64[15,8]` requests; exact service cleanup passed |
 | OpenPI | `pi05_droid_jointpos_polaris_lora_optimizer_smoke` | **accepted** | Same connected gate: upstream pi0.5 LoRA forward/backward/AdamW step, finite loss, changed trainable-state hash, and independently reloadable private Orbax checkpoint |
 | OpenPI | `pi05_droid_jointpos_polaris_heldout_evaluate` | **accepted** | Same connected gate: exact trained-checkpoint reload, two samples excluded from the four-sample training split, finite upstream loss and action MAE/MSE, and finite `float64[15,8]` trajectory |
-| flex-pi | `robotwin_action_only_infer` | **accepted** | Exact public digest independently on B200 and RTX PRO 6000: complete checkpoint-state load, four Euler steps, finite `float32[32,14]` actions, and read-back-verified JSON artifacts. The B200 capacity run completed 24 one-GPU replicas; it was not model parallelism. |
+| flex-pi | `robotwin_action_only_infer` | **accepted** | Current r2 digest independently on one B200 and one RTX PRO 6000: complete checkpoint-state load, compiled four-step inference, finite `float32[32,14]` actions, and three read-back-verified JSON artifacts per target. The historical `0.1.0-cu128` B200 capacity run completed 24 independent one-GPU replicas; that scaling record does not qualify r2. |
 | DROID | `rlds_config_generator_contract` | **accepted** | `defcap8-droid-policy-learning-20260709-024455` (+ prior) |
 | DROID | `droid_100_download` | **accepted** | Same run (`https_meta` `dataset_info.json`) |
 | DROID | `droid_100_config_gen` | **accepted** | Same run (`EXP_NAMES` droid_100 wiring) |
@@ -132,7 +132,7 @@ acceptance/refusal bootstrap. See [OpenArm](openarm.md) and
 | `robotwin_action_only_infer` | accepted (live) | Released 6B RoboTwin checkpoint; three RGB cameras, 14D state, and language input produced finite 32-step bimanual action chunks independently on B200 and RTX PRO 6000 |
 | `strict_checkpoint_state` | accepted (live) | Maintained fail-closed loader rejected missing/unexpected MoT keys and required proprio, DINO, and pointmap state before the success marker |
 | `action_artifact_provenance` | accepted (live) | Source, checkpoint, data, runtime-asset, input, action, and image identities persisted in three hash-verified JSON artifacts |
-| `blackwell_compiled_infer` | accepted (live) | Exact unchanged digest with five paired fixed-seed samples per mode: median warm latency improved 2.645× on RTX PRO 6000 and 2.278× on B200 within the documented BF16 numerical envelope |
+| `blackwell_compiled_infer` | accepted (live) | Current r2 digest passed real compiled inference independently on one B200 and one RTX PRO 6000. Historical `0.1.0-cu128` paired benchmarks measured 2.645× and 2.278× median speedup; those values apply only to the old digest |
 
 > **Promoted to a first-class workbench tool.** flex-pi is available through
 > `npa workbench flex-pi`, `npa.sdk.workbench.flex_pi`, the
