@@ -16,7 +16,8 @@ The module-level `prepare --learning-recipe` option defaults to `joint-baseline`
 for compatibility; the workflow passes its selected recipe explicitly.
 
 The five stages are **prepare → train → evaluate → visual-evaluate → report**.
-Training and rendering use one RTX GPU sequentially. The hosted VLM stage uses
+Each workflow uses one RTX GPU for sequential training and rendering. Separate
+embodiments can run concurrently on separate workers. The hosted VLM stage uses
 CPU resources and the operator's Token Factory credential.
 
 This complements the [LeRobot PushT benchmark](lerobot-transfer.md). PushT
@@ -78,7 +79,7 @@ specifies XYZW quaternions; the [sensor kernel](https://github.com/isaac-sim/Isa
 computes world TCP from the target body independently of the source frame.
 
 Object assets, PPO update count, success criteria, and physics shifts remain
-fixed. Both recipes interpret raw arm actions as offsets from the native default
+fixed. All recipes interpret raw arm actions as offsets from the native default
 joint positions with a 0.5-radian scale. The adaptive recipe then constrains the
 physical target and its slew; it does not clip raw actions to a small reachable
 neighborhood. The historical common control convention is a comparison baseline, not a claim of optimal
@@ -132,7 +133,7 @@ all three embodiments:
 
 The earlier `learning_recipe=adaptive` remains reproducible with its original
 gated goal reward, lift weight 5, exploration standard deviation 0.5, and
-native entropy coefficient 0.006. Training checkpoint diagnostics exposed
+native entropy coefficient 0.006. Training checkpoint diagnostics were consistent with
 an open-gripper, table-level local optimum with narrowing exploration. The
 `adaptive-exploration` recipe restores lift weight 15, starts exploration at
 1.0, increases entropy regularization to 0.02, and gives partial goal-distance
@@ -153,6 +154,24 @@ correspond to the captured frame before the recorded action; targets correspond
 to that action after servo constraints. Joint order and timing are declared in
 the capture metadata. Historical baseline artifacts remain separate, and their
 measurements do not establish that the adaptive recipe improves success.
+
+The first native `adaptive` Franka run completed all five stages and 1,500 PPO
+updates, but its selected policy achieved **0/512 lifts and 0/512 strict
+successes** on the held-out tests. Its curriculum stayed at the initial
+difficulty. The independent visual audit also failed: five invalid responses
+and two positive lift judgments against negative synchronized height references
+among 32 captures. This is a retained negative result, not an improvement over
+the historical baseline. The `adaptive-exploration` follow-up requires its own
+measured result; higher training reward alone does not establish better control.
+The [failure evidence](../evidence/franka-initial-adaptive-parts-rtx.json),
+[individual trials](../evidence/franka-initial-adaptive-parts-rtx-trials.csv), and
+[training curve](../evidence/franka-initial-adaptive-parts-rtx-training.png)
+retain this result separately from the follow-up.
+
+Reporting streams RGB frames into the video encoder and accumulates image
+statistics in a fixed-size per-channel histogram. It preserves LeRobot pixel
+normalization without retaining every rollout image or converting the complete
+video collection into a floating-point array.
 
 ## Relationship to the reference Sim2Real pipeline
 
