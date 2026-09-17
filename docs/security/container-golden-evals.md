@@ -118,7 +118,7 @@ flowchart TB
 | `cosmos3-reason` | `cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | container-smoke | CUDA; real Reason VLM pass | optional | gpu-gated |
 | `sonic` | `0.1.2` | entrypoint-smoke | `/entrypoint.sh smoke`; GPU proofs; JSON artifact | required | gpu-gated |
 | `retargeting` | `0.1.1` | container-smoke | validate_motion_lib on synthetic motion | none | ready |
-| `fiftyone` | `1.15.0.post1` | container-smoke | import+version; CLI; app config (env smoke) | none | ready |
+| `fiftyone` | `1.21.0-skypilot-v1-20260915` | container-smoke | version; dataset creation/query; Brain curation; loopback App launch (functional smoke) | none | ready |
 | `lancedb` | `0.30.3` | server-smoke | server start; create table; vector query; list | optional | ready |
 | `detection-training` | `bdd100k-golden-eval-smoke-*` | server-smoke | server start; `/health`; `/system-info` | optional | ready |
 | `sim2real-control` | `0.1.2-sim2real-coherent-20260904` | container-smoke | load canonical graph; expand promote and loop-back plans across all 14 stages; exact-source guard | none | ready |
@@ -130,6 +130,15 @@ flowchart TB
 
 Machine-readable probes: ``npa/src/npa/smoke/capabilities.py`` (enforced by
 ``npa/tests/smoke/test_golden_eval_capabilities.py``).
+
+The FiftyOne source golden now selects the standalone CPU functional smoke.
+The historical env-smoke result below remains evidence for that older check.
+The candidate implements the source annex and image validator. The rebuilt
+image still needs its source-delivery, bootstrap, dependency and functional
+gates before publication; see the
+[candidate release requirements](../../npa/docker/workbench/fiftyone/RELEASE.md).
+The validator's ASGI root-response CORS check and the smoke's TCP App
+readiness are separate checks; they do not establish media-route CORS coverage.
 
 ## Golden-eval kinds
 
@@ -334,6 +343,8 @@ pipeline. Key safety notes are condensed below.
   public ingress without auth. `lancedb` and `detection-training` ship a token
   auth mode and warn loudly when started with `auth_mode=none` (the golden eval
   uses `none` against a throwaway store/port only).
+  FiftyOne binds its App to loopback and uses authenticated SSH or Kubernetes
+  port-forwarding for operator access.
 - **Content safety** — `cosmos` ships a content-safety guardrail.
   `COSMOS_DISABLE_SAFETY` must remain `"0"` in production; the functional smoke
   keeps safety enabled by default.
@@ -382,7 +393,7 @@ Run these inside the corresponding built image (or via
 - `cosmos3-reason` — `python -m npa.workflows.sim2real_loop inner-loop --help`
 - `sonic` — `/entrypoint.sh smoke` (artifact: `sonic_smoke_result.json`)
 - `retargeting` — `python -c "import npa.workbench.retargeting"`
-- `fiftyone` — `python -m npa.smoke.test_fiftyone_functional` (env: `test_fiftyone_env`)
+- `fiftyone` — `python /opt/npa/docker/workbench/fiftyone/smoke_functional.py` (standalone CPU smoke with bundled MongoDB; lighter env check: `smoke_env.py`)
 - `lancedb` — `python -m npa.smoke.test_lancedb_functional`
 - `detection-training` — `python -m npa.smoke.test_detection_training_functional`
 - `sim2real-control` — `python -m npa.smoke.test_sim2real_control_functional`

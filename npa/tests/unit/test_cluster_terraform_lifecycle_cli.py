@@ -45,6 +45,17 @@ runner = CliRunner()
 _REAL_WHOLE_PATH_PREFLIGHT = tf_mod._preflight_whole_path_capacity
 
 
+@pytest.fixture(autouse=True)
+def _owned_api_process_boundary(monkeypatch):
+    from npa.orchestration.skypilot import local_api
+
+    # These CLI tests exercise argv/state; owned process verification has its
+    # own Linux tests and must not start an API on the test runner.
+    monkeypatch.setattr(local_api, "_require_linux_host", lambda: None)
+    monkeypatch.setattr(local_api, "ensure_isolated_api", lambda **_kwargs: None)
+    monkeypatch.setattr(local_api, "stop_isolated_api", lambda _scope: None)
+
+
 def _completed(
     stdout: str = "", returncode: int = 0
 ) -> subprocess.CompletedProcess[str]:
@@ -194,20 +205,21 @@ def test_skypilot_smoke_scopes_check_and_uses_explicit_binary(
         "kubernetes",
     ]
     assert streams[0][1]["KUBECONFIG"] == str(kubeconfig)
-    assert streams[0][2] == kubeconfig.parent
+    scope = Path(streams[0][1]["NPA_SKYPILOT_ISOLATED_API_DIR"])
+    assert streams[0][2] == scope
     launch = streams[1][0]
     assert launch[0:2] == ["/opt/npa/sky", "launch"]
     assert launch[launch.index("--config") + 1] == (
         'kubernetes.allowed_contexts=["fleet-exact"]'
     )
     assert launch[launch.index("--gpus") + 1] == "RTXPRO6000:1"
-    assert streams[1][2] == kubeconfig.parent
+    assert streams[1][2] == scope
     down = streams[2][0]
     assert down[0:2] == ["/opt/npa/sky", "down"]
     assert down[down.index("--config") + 1] == (
         'kubernetes.allowed_contexts=["fleet-exact"]'
     )
-    assert streams[2][2] == kubeconfig.parent
+    assert streams[2][2] == scope
 
 
 @pytest.mark.parametrize("gpu", ["RTXPRO-6000-BLACKWELL-SERVER-EDITION", "B200", "H200"])
@@ -297,10 +309,13 @@ def test_cluster_validation_uses_owned_api_and_selected_kubeconfig(
 
     monkeypatch.setattr(tf_mod, "_run_stream", stream)
     monkeypatch.setattr(tf_mod, "_wait_for_sky_down", lambda *_args, **_kwargs: None)
-    tf_mod._run_skypilot_smoke(selected, "selected-context", "validation", "RTXPRO6000:1", sky_bin="/opt/npa/sky")
-    catalog = k8s_gpu_catalog.discover_kubernetes_gpu_catalog(
-        context="selected-context", kubeconfig=selected, sky_bin="/opt/npa/sky", runner=stream,
-    )
+    from npa.orchestration.skypilot.cluster_validation import cluster_validation_session
+
+    with cluster_validation_session(selected, "selected-context"):
+        tf_mod._run_skypilot_smoke(selected, "selected-context", "validation", "RTXPRO6000:1", sky_bin="/opt/npa/sky")
+        catalog = k8s_gpu_catalog.discover_kubernetes_gpu_catalog(
+            context="selected-context", kubeconfig=selected, sky_bin="/opt/npa/sky", runner=stream,
+        )
     assert catalog.max_per_node("RTXPRO6000") == 1
 
     assert len(starts) == 2
