@@ -46,13 +46,22 @@ successful `npa skypilot verify --cluster <exact-context>`:
   `HF_TOKEN` / `NGC_API_KEY` for gated model pulls. Submit resolves each requested
   name from the explicit process environment first, then the selected project's
   configured NPA credentials; it fails locally if the value is unavailable.
-- **`NPA_SRC_S3_URI` (or `--image`)** for CPU tool steps and `run.shell` states —
-  they have no heavy workbench image and install npa from that source tarball,
-  else render fails with "planned step has no workbench image and NPA_SRC_S3_URI
-  is unset". Persist it once with `npa configure --src-s3-uri s3://bucket/prefix/npa`
-  so a new shell resolves it from `~/.npa/config.yaml` instead of failing preflight
-  on already-staged objects (`scripts/stage-npa-src.sh` does this for you).
-- **`--assume-decision promote_checkpoint`** for specs with a dynamic gate/loop.
+- **NPA source for steps that need it.** Submit automatically stages missing
+  or outdated saved source from the local editable checkout under a
+  content-addressed S3 prefix and reuses verified matching source. An exported
+  `NPA_SRC_S3_URI` or `NPA_E2E_NPA_SRC_S3_URI` is an explicit selection and is
+  retained. For a new run after upgrading, clear an old export or use
+  `--stage-src` to force restaging; leave `--no-stage-src` off for the automatic
+  path. Updating NPA does not require syncing an unchanged input dataset or
+  the whole bucket. Specs with `config.source_overlay: true` also apply the
+  submitted NPA code inside pinned workbench images.
+- **Dynamic decisions.** `--assume-decision promote_checkpoint` previews an
+  accepted path in `plan-spec`, `preflight-images`, or `submit --plan-only`.
+  For execution, specs declaring `metadata.executionMode: runtime`, including
+  PAIDF Cosmos3, select the runtime automatically and reject assumed decisions.
+  Keep `--runtime` and omit `--assume-decision` when executing that workflow;
+  actual evaluator decisions control its refinement and terminal routing.
+  See the [PAIDF Cosmos3 upgrade guidance](../../../workflows/guides/paidf-cosmos3.md#upgrading-an-existing-installation).
 - **`--var key=value`** to override `config` (e.g. `--var bucket=<real-bucket>`;
   the reference specs default to `bucket: example-bucket`).
 

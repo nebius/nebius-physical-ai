@@ -653,37 +653,20 @@ def read_project_quota_observations(
 ) -> Mapping[str, QuotaObservation]:
     """Read exact-project quota constraints after tenant scope is denied.
 
-    Project allowances are an additional provider-enforced boundary.  Providers
-    omit rows for unconstrained project quotas, so an absent row is represented
-    as unbounded rather than confused with unreadable quota evidence.
+    Project allowances are an additional provider-enforced boundary. An absent
+    row does not establish that a quota is unconstrained, so it remains unknown
+    and blocks a mutation until the provider returns explicit allowance data.
     """
-    from copy import deepcopy
-
     from npa.clients.nebius import list_quota_allowances
 
-    payload = deepcopy(list_quota_allowances(str(project_id or "").strip()))
-    items = payload.get("items")
-    if isinstance(items, list):
-        for item in items:
-            if not isinstance(item, dict):
-                raise ValueError("project quota response contains a non-mapping item")
-            metadata = item.get("metadata")
-            if not isinstance(metadata, dict):
-                raise ValueError("project quota response contains malformed metadata")
-            if str(metadata.get("name") or "") not in names:
-                continue
-            spec = item.get("spec")
-            if not isinstance(spec, dict):
-                raise ValueError("project quota response contains a malformed spec")
-            if not str(spec.get("limit") or "").strip():
-                spec["limit"] = "unbounded"
+    payload = list_quota_allowances(str(project_id or "").strip())
     parsed = parse_quota_allowances(payload, region=region, names=names)
     return {
         name: (
             QuotaObservation(
                 name=name,
-                state="unbounded",
-                reason="no project-specific quota restriction is configured",
+                state="unknown",
+                reason="project quota response has no allowance for this resource",
             )
             if observation.state == "unsupported"
             else observation

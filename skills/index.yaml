@@ -337,6 +337,25 @@ skills:
       - type: cli_help
         args: ["--help"]
         contains: "Nebius Physical AI"
+  - name: nebius-headless-oauth
+    category: atomic
+    when_to_use: "Complete human Nebius CLI OAuth on a headless operator/dev machine without SSH forwarding, using a private terminal and a validated manual loopback callback."
+    path: skills/atomic/nebius-headless-oauth/SKILL.md
+    smoke:
+      - type: file_exists
+        path: skills/atomic/nebius-headless-oauth/scripts/relay_callback.py
+      - type: file_exists
+        path: npa/tests/unit/test_headless_oauth_relay.py
+  - name: nebius-service-account-auth
+    category: atomic
+    when_to_use: "Set up or verify unattended Nebius CLI authentication on a VM or CI runner using a project-scoped service account, an attached identity, or an authorized-key profile."
+    path: skills/atomic/nebius-service-account-auth/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "health", "preflight", "--help"]
+        contains: "nebius"
+      - type: file_exists
+        path: npa/src/npa/clients/nebius_auth.py
   - name: vm-nebius-auth
     category: atomic
     when_to_use: "Start, recover, or verify no-browser human Nebius CLI profile authentication on a remote operator/dev VM with a safe SSH loopback callback forward."
@@ -478,6 +497,20 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/robocasa-smoke.yaml
+  - name: openarm
+    category: tools
+    when_to_use: "Package, run, validate, or troubleshoot Enactic OpenArm v2 workloads through the first-class MuJoCo and NVIDIA Isaac Sim/Isaac Lab surfaces."
+    path: skills/tools/openarm/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "openarm", "run", "--help"]
+        contains: "simulator"
+      - type: cli_help
+        args: ["workbench", "openarm", "deploy", "--help"]
+        contains: "gpu-type"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/openarm-simulators.yaml
   - name: foxglove
     category: tools
     when_to_use: "Embed, operate, or debug the Foxglove viewer in the NPA agent: the @foxglove/embed TypeScript SDK, MCAP recordings, the npa-foxglove-embed container, and /api/foxglove/* endpoints."
@@ -611,6 +644,9 @@ skills:
     when_to_use: "LeRobot policy training, evaluation, serving, inference, dataset conversion, or policy workflows."
     path: skills/tools/lerobot/SKILL.md
     smoke:
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/lerobot-transfer.yaml
       - type: cli_help
         args: ["workbench", "lerobot", "train", "--help"]
         contains: "policy"
@@ -639,10 +675,14 @@ skills:
           - workflows/testing/mjlab-eval.yaml
   - name: nebius-infra
     category: tools
-    when_to_use: "Runtime configuration, provision-if-absent setup, registry, storage, Kubernetes, and credential assumptions."
+    when_to_use: "Runtime configuration, provision-if-absent setup, registry, storage, Kubernetes, credentials, retained-backup checksum verification and VM maintenance pauses across reboot."
     path: skills/tools/nebius-infra/SKILL.md
     smoke:
       - type: configure_provision_dry_run
+      - type: file_exists
+        path: skills/tools/nebius-infra/references/backup-verification.md
+      - type: file_exists
+        path: skills/tools/nebius-infra/references/maintenance-pauses.md
   - name: fleet
     category: tools
     when_to_use: "Deploy or operate a fleet of Nebius Managed Kubernetes (k8s-training) clusters across one or many projects in a tenant from an npa.fleet/v0.0.1 spec: strict capacity-block-backed GPU pools, identical and/or custom clusters, create-on-demand projects, and a k8s-training source that can consume the latest upstream recipe."
@@ -890,12 +930,12 @@ skills:
         path: workflows/testing/cosmos3-generate.yaml
   - name: cosmos3-post-training
     category: workflows
-    when_to_use: "Plan or review Cosmos3 supervised fine-tuning and post-training support."
+    when_to_use: "Operate the experimental native LIBERO policy workflow or plan and review other Cosmos3 post-training recipes."
     path: skills/workflows/cosmos3-post-training/SKILL.md
     smoke:
       - type: cli_help
-        args: ["workbench", "cosmos", "train", "--help"]
-        contains: "runtime"
+        args: ["workbench", "cosmos3", "policy-train", "--help"]
+        contains: "SFT"
   - name: sim-to-real
     category: workflows
     when_to_use: "Design, review, or operate sim-to-real data, training, evaluation, and loop-control workflows."

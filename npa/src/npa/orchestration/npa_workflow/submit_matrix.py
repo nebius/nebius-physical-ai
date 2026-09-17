@@ -72,6 +72,24 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "franka-rl-transfer.yaml", "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "NEBIUS_TOKEN_FACTORY_KEY"),
+        runtime=True, requires_token_factory=True,
+        notes="Real Franka PPO with USD parts, paired physics tests, blinded Token Factory audit, and LeRobot/RRD capture.",
+    ),
+    SubmitLiveCase(
+        "lerobot-transfer.yaml", "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True, expected_parallel_tasks=2, image_tool="lerobot",
+        notes="Pinned PushT data, matched real ACT training, paired closed-loop shifts, next-demo queue and RRD.",
+    ),
+    SubmitLiveCase(
+        "cosmos3-policy-model-factory.yaml", "gpu",
+        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="cosmos3",
+        notes="Native LIBERO policy SFT, matching simulator evaluation, failure feedback, and guarded video candidates. Requires eight GPUs by default and runtime training dependency fetch.",
+    ),
+    SubmitLiveCase(
         "curobo-benchmark.yaml", "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         image_tool="curobo",
@@ -943,6 +961,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "ROBOCASA_TOKEN"),
         notes="Production PandaOmron RoboCasa data->policy pipeline: multi-task trajectory export, LeRobotDataset materialization, real ACT training, disjoint RoboCasa exact-checkpoint evaluation, insights lineage.",
+    ),
+    SubmitLiveCase(
+        "openarm-simulators.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="openarm",
+        notes=(
+            "Real Enactic OpenArm v2 MuJoCo control/render rollout followed by "
+            "runtime-fetched Isaac Sim/Lab reach rollout and upstream RSL-RL training."
+        ),
     ),
     SubmitLiveCase(
         "byof-openpi.yaml",

@@ -3904,7 +3904,9 @@ def test_bootstrap_pins_nebius_cli_for_the_root_backend() -> None:
     assert 'sudo install -m 0755 "$NEBIUS_USER_BIN" /usr/local/bin/nebius' in source
 
 
-def test_bootstrap_reuses_verified_previously_adopted_remote_owner(monkeypatch) -> None:
+def test_bootstrap_reuses_verified_previously_adopted_remote_owner(
+    monkeypatch, tmp_path: Path
+) -> None:
     """A safe initial adoption must not make all later refreshes impossible."""
     from types import SimpleNamespace
 
@@ -3936,7 +3938,7 @@ def test_bootstrap_reuses_verified_previously_adopted_remote_owner(monkeypatch) 
         record={"deployment": persisted},
         host="203.0.113.50",
         ssh_user="ubuntu",
-        ssh_key_path="/tmp/key",
+        ssh_key_path=str(tmp_path / "key"),
         project_alias="demo",
         agent_name="agent",
         backend_port=8787,

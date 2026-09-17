@@ -41,6 +41,18 @@ class IsolatedApiError(ValueError):
     """Secret-safe failure; no fallback to a shared daemon is permitted."""
 
 
+def _require_linux_host() -> None:
+    """Reject hosts without the kernel evidence needed for safe API ownership."""
+
+    if sys.platform != "linux" or not Path("/proc/self").is_dir():
+        raise IsolatedApiError(
+            "isolated SkyPilot execution requires a Linux operator host with /proc "
+            "for process and socket ownership verification; run setup, submission, "
+            "monitoring, recovery, and cleanup on that same Linux host. "
+            "See docs/orchestration/skypilot-setup.md"
+        )
+
+
 def _isolated_api_root(isolated_dir: Path) -> Path:
     """Return one canonical owner directory for equivalent isolated paths.
 
@@ -55,6 +67,7 @@ def _isolated_api_root(isolated_dir: Path) -> Path:
 
 @contextmanager
 def _locked(root: Path):
+    _require_linux_host()
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     root.chmod(0o700)
     with open(root / "lock", "a", opener=lambda p, flags: os.open(p, flags, 0o600)) as handle:
@@ -286,7 +299,11 @@ def _selected_nebius_identity(
 ):
     """Resolve one exact Nebius CLI profile used by every selected kube exec."""
     selections = []
-    provider_dir = _nebius_config_dir(environment, home)
+    # Nebius CLI 0.12.254 keeps its token cache in HOME/.nebius, even where a
+    # kube exec supplies NEBIUS_CONFIG_DIR. The supported config selector is
+    # --config; do not let an ignored environment directory relocate either
+    # the selected profile or the cache identity we protect.
+    provider_dir = home / ".nebius"
     alternate_auth = ("NEBIUS_ENDPOINT", "NEBIUS_IAM_TOKEN", "NEBIUS_IAM_TOKEN_FILE",
                       "NPA_NEBIUS_IAM_TOKEN", "NPA_NEBIUS_IAM_TOKEN_FILE")
     for spec in execs or [{}]:
@@ -294,8 +311,6 @@ def _selected_nebius_identity(
         if env is None or any(env.get(key) for key in alternate_auth):
             return None
         if credential_source and env.get("NPA_NEBIUS_CREDENTIAL_SOURCE") != credential_source:
-            return None
-        if _nebius_config_dir(env, home) != provider_dir:
             return None
         selectors = _nebius_exec_selectors(spec)
         if selectors is None:
@@ -316,9 +331,9 @@ def _nebius_service_account_identity(environment: Mapping[str, str], home: Path,
     """Bind one supported CLI RSA profile and its durable key; never fetch tokens.
 
     CLI --config/--profile override exec environment and default selection.
-    NEBIUS_CONFIG_DIR selects the default profile directory and token cache.
-    Relative paths, extra auth sources, and multiple effective selections remain
-    byte-strict, including exec overrides selecting a different cache directory.
+    CLI 0.12.254 ignores NEBIUS_CONFIG_DIR for this selection and keeps the
+    cache in HOME/.nebius. Relative paths, extra auth sources, and multiple
+    effective selections remain byte-strict.
     """
     resolved = _selected_nebius_identity(
         environment, home, execs, profile_supported=_supported_service_account_profile,
@@ -487,7 +502,7 @@ def _identity_files(environment: Mapping[str, str], *, config: Mapping[str, Any]
         durable = _nebius_service_account_identity(environment, home, execs)
         if not durable:
             durable = _nebius_metadata_token_identity(environment, home, execs)
-        cache = _nebius_config_dir(environment, home) / "credentials.yaml"
+        cache = home / ".nebius" / "credentials.yaml"
         return _hash_identity_paths(paths, protected, designated_caches, durable, cache)
     except OSError:
         raise IsolatedApiError("executing credential/configuration file identity cannot be inspected") from None
@@ -936,7 +951,10 @@ def ensure_isolated_api(
             if record.get("interpreter") != interpreter or record.get("config_sha256") != config_hash:
                 raise IsolatedApiError("running isolated SkyPilot API has a different verified configuration; preserve its jobs before restarting")
             if record["environment_binding"] != binding or record.get("identity_files") != files:
-                raise IsolatedApiError("running isolated SkyPilot API has a different executing identity or changed credential configuration")
+                raise IsolatedApiError(
+                    "running isolated SkyPilot API has a different executing "
+                    "identity or its credential configuration changed"
+                )
             runtime_settings = {
                 setting: daemon_env[name]
                 for setting, name in _RUNTIME_SETTINGS.items()
@@ -1077,16 +1095,15 @@ def stop_isolated_api(isolated_dir: Path) -> None:
                 while _session_members(record):
                     time.sleep(0.2)
         # A stopped controller has no authority to pin the next controller's
-        # credentials or generated configuration.  Retain the endpoint marker
-        # and ports so clients cannot fall back to a shared API, but clear the
-        # retired process binding before a later clean start.
+        # credentials or generated configuration. Retain the endpoint, known
+        # interpreter, and non-secret runtime settings so a status/reconcile
+        # client can restart the same persistent local API without submitting
+        # work; clear every identity/configuration binding before that start.
         for key in (
-            "interpreter",
             "environment_binding",
             "config_sha256",
             "identity_files",
             "project_alias",
-            "runtime_settings",
             "darwin_process_fingerprint",
             "session_processes",
         ):

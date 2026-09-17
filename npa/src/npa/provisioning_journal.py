@@ -534,7 +534,10 @@ def _locked_project_execution(
         prior_operation_id = str(lease.get("operation_id") or "")
         if prior_operation_id and prior_operation_id != operation.operation_id:
             try:
-                prior = ProvisioningOperation(prior_operation_id).reconcile_liveness()
+                prior = (
+                    ProvisioningOperation(prior_operation_id).reconcile_liveness()
+                    or lease
+                )
             except OperationJournalError:
                 prior = lease
             if _is_empty_provider_collision(prior):

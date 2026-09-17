@@ -757,9 +757,7 @@ sudo install -m 0600 /dev/null "$stage/auth"
 builtin printf '%s\\n' {shlex.quote(auth_password)} | sudo htpasswd -iBc -C 12 "$stage/auth" {shlex.quote(auth_user)}
 sudo chown root:www-data "$stage/auth"
 sudo chmod 0640 "$stage/auth"
-# The staged source and regular-file destination share /etc/nginx, so this
-# portable rename atomically replaces the complete credential file.
-sudo mv -f "$stage/auth" /etc/nginx/.npa-agent-htpasswd
+sudo mv -fT -- "$stage/auth" /etc/nginx/.npa-agent-htpasswd
 )
 """
 
@@ -1032,6 +1030,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from datetime import datetime, timezone
@@ -1512,7 +1511,9 @@ def _save_state(state: dict) -> None:
         # concurrent status/viewer request may still complete with an older
         # load-work-save snapshot, so preserve the latest gate just as we do
         # the independently updated LeIsaac selection namespace.
-        preserved = preserve_latest_namespaces(state, latest, ("leisaac", "agent_act"))
+        preserved = preserve_latest_namespaces(
+            state, latest, ("leisaac", "agent_act", "workflow_executions")
+        )
         state.clear()
         state.update(preserved)
         _save_state_unlocked(state)
@@ -3926,7 +3927,7 @@ def _run_sim2real_pipeline_background(run_id: str, selection: dict) -> None:
 
 
 def _write_workflow_temp_yaml(yaml_text: str) -> Path:
-    tmp_dir = Path("/tmp/npa-agent-workflows")
+    tmp_dir = Path(tempfile.gettempdir()) / "npa-agent-workflows"
     tmp_dir.mkdir(parents=True, exist_ok=True)
     path = tmp_dir / f"workflow-{{secrets.token_hex(8)}}.yaml"
     path.write_text(yaml_text, encoding="utf-8")
@@ -3935,7 +3936,7 @@ def _write_workflow_temp_yaml(yaml_text: str) -> Path:
 
 def _workflow_execution_action(
     *, yaml_text: str, run_id: str, project: str, cluster_name: str,
-    kubernetes_context: str, workflow_name: str
+    kubernetes_context: str, workflow_name: str, assume_decision: str
 ) -> dict:
     # Return the single-use confirmation payload for an executable workflow.
     return {{
@@ -3946,6 +3947,7 @@ def _workflow_execution_action(
         "project": str(project or ""),
         "cluster_name": str(cluster_name or ""),
         "kubernetes_context": str(kubernetes_context or ""),
+        "assume_decision": str(assume_decision or ""),
         "execution_target": "kubernetes",
     }}
 
@@ -4630,7 +4632,7 @@ def _adopt_agent_infra(project: str, cluster_name: str) -> dict:
 
 
 def _write_soperator_temp_spec(spec_text: str) -> Path:
-    tmp_dir = Path("/tmp/npa-agent-soperator")
+    tmp_dir = Path(tempfile.gettempdir()) / "npa-agent-soperator"
     tmp_dir.mkdir(parents=True, exist_ok=True)
     path = tmp_dir / f"soperator-{{secrets.token_hex(8)}}.yaml"
     path.write_text(spec_text, encoding="utf-8")
@@ -5433,7 +5435,7 @@ def _maybe_toolground_chat_reply(
             sim_viz = dict(live_status)
         if not isinstance(sim_viz, dict):
             sim_viz = {{}}
-        rerun_ready = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
+        rerun_ready = bool(sim_viz.get("rerun_ready"))
     elif intent == "foxglove_viewer":
         # Ground the reply on the same payload the viewer pane mounts from.
         try:
@@ -9866,6 +9868,7 @@ def submit_npa_workflow(payload: dict):
         cluster_name=cluster_name,
         kubernetes_context=kubernetes_context,
         workflow_name=str(validation.get("name") or ""),
+        assume_decision=assume_decision,
     )
     if prepare_execution and not execute:
         submit_record = {{

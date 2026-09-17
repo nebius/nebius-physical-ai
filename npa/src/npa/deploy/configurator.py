@@ -160,9 +160,9 @@ def write_remote_text_file(
     """Stage privately, then atomically replace a root-managed destination.
 
     Both staging directories are created with mode 0700 before file creation.
-    The final temporary file resides on the destination filesystem. A portable
-    ``mv -f`` therefore publishes one complete regular file atomically without
-    opening an existing destination.
+    The final temporary file resides on the destination filesystem. GNU ``mv
+    -fT`` publishes one complete regular file without treating a directory
+    destination as a target directory.
     """
     parent = shlex.quote(str(Path(remote_path).parent))
     target = shlex.quote(remote_path)
@@ -178,7 +178,7 @@ def write_remote_text_file(
             "trap 'sudo rm -rf -- \"$npa_install_dir\"' EXIT HUP INT TERM; "
             f"sudo install -m {shlex.quote(mode)} -o {shlex.quote(owner)} "
             f"-g {group_name} -- {shlex.quote(source)} \"$npa_install_dir/payload\"; "
-            f"sudo mv -f \"$npa_install_dir/payload\" {target}"
+            f"sudo mv -fT -- \"$npa_install_dir/payload\" {target}"
         )
         ssh.run_or_raise(f"bash -lc {shlex.quote(script)}", label="install remote file")
 

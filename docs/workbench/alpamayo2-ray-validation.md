@@ -27,7 +27,7 @@ multi-node Ray cluster.
   Their baseline means were below the checked-in `2.0` default; that default
   would correctly produce an empty refinement on this small dataset.
 
-The accepted image digest was
+The historical `0.1.0-cu128` image digest used for this Ray study was
 `sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5`.
 The staged source archive was independently checked in each worker against
 SHA-256 `a04ec3f2ff53020ca90d0ff5873b4e7469921a37ed2ad94b048741228f14ed74`.
@@ -36,6 +36,10 @@ changes tightened finite-metric validation, corrected renderer dependency
 probe formatting, and updated documentation/tests. The final artifact
 validator was run against all 20 downloaded real outputs; the GPU runs were
 not repeated for those later changes.
+
+The current `0.1.0-cu128-r3` release has separate exact-digest single-inference
+qualification on B200 and RTX PRO 6000. This historical report does not claim
+that its multi-case Ray grid was rerun on r3.
 
 Each of the three report hashes passed the independent live artifact verifier.
 All 20 case JSON/PNG artifacts decoded and matched their requested sample,

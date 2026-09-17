@@ -23,6 +23,9 @@ def _successful_storage_probe(monkeypatch):
     resolved_binaries: list[str] = []
     from npa.clients import storage_validation
     from npa.clients.storage_validation import StorageProbeResult
+    from npa.orchestration.skypilot import local_api
+
+    monkeypatch.setattr(local_api, "_require_linux_host", lambda: None)
 
     monkeypatch.setattr(
         storage_validation,
@@ -213,10 +216,10 @@ def test_provision_if_absent_dry_run_reports_actions(
     assert result.storage_bucket == "s3://bucket/checkpoints/"
 
 
-def test_provision_dry_run_uses_exact_project_quota_view_after_tenant_rbac_denial(
+def test_provision_dry_run_keeps_absent_project_quota_unknown_after_tenant_rbac_denial(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A project-scoped agent can plan against its verified project allowance."""
+    """An empty project response must not authorize a quota-backed mutation."""
     _write_runtime(tmp_path, monkeypatch)
     from npa import provisioning_preflight
     from npa.clients import nebius
@@ -241,10 +244,42 @@ def test_provision_dry_run_uses_exact_project_quota_view_after_tenant_rbac_denia
         skip_s3=True,
     )
 
-    assert result.status == "ready"
+    assert result.status == "unknown"
     assert calls == ["tenant-1", "project-1"]
-    scope = next(item for item in result.preflight["checks"] if item["name"] == "quota_evidence_scope")
-    assert scope["status"] == "ready"
+    scope = next(
+        item
+        for item in result.preflight["checks"]
+        if item["name"] == "quota_evidence_scope"
+    )
+    assert scope["status"] == "unknown"
+
+
+def test_provision_blocks_mutation_when_project_quota_is_absent_after_rbac_denial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The project fallback is fail-closed before Terraform can create nodes."""
+    _write_runtime(tmp_path, monkeypatch)
+    from npa import provisioning_preflight
+    from npa.clients import nebius
+    from npa.provisioning_preflight import PreflightBlockedError
+
+    monkeypatch.setattr(
+        provisioning_preflight,
+        "read_provider_quotas",
+        lambda *_args: (_ for _ in ()).throw(nebius.NebiusError("PermissionDenied")),
+    )
+    monkeypatch.setattr(nebius, "list_quota_allowances", lambda _parent: {"items": []})
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle.up_cmd",
+        lambda **_kwargs: pytest.fail("quota-blocked plan must not create a cluster"),
+    )
+
+    with pytest.raises(PreflightBlockedError, match="quota"):
+        provisioning.provision_if_absent(
+            project="proj",
+            kubeconfig=tmp_path / "missing-kubeconfig",
+            skip_s3=True,
+        )
 
 
 def test_provision_if_absent_dry_run_preserves_strict_reserved_topology(

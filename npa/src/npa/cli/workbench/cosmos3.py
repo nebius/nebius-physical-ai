@@ -9,6 +9,7 @@ from typing import Optional
 
 import typer
 
+from npa.cli.workbench import cosmos3_policy
 from npa.lifecycle_intent import json_stdout_contract
 from npa.cli.path_contract import validate_read_path, validate_write_path
 from npa.workbench.cosmos.text_to_image import DEFAULT_UV_GROUP
@@ -43,6 +44,11 @@ app = typer.Typer(
     help="Cosmos3 omni-model generation and reasoning workflow contracts.",
     no_args_is_help=True,
 )
+
+app.command("policy-train")(cosmos3_policy.policy_train_cmd)
+app.command("policy-eval")(cosmos3_policy.policy_eval_cmd)
+app.command("policy-feedback")(cosmos3_policy.policy_feedback_cmd)
+app.command("failure-candidates")(cosmos3_policy.failure_candidates_cmd)
 
 
 @app.command("nano-video-augment")

@@ -10,10 +10,105 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # One candidate-level group cancels every child gate when a PR advances.
+  # Main validation is also superseded by the newest commit on main.
+  group: pr-gate-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 jobs:
+  test-gate:
+    if: github.event_name != 'push'
+    uses: ./.github/workflows/test.yml
+
+  lint-gate:
+    if: github.event_name != 'push'
+    uses: ./.github/workflows/lint.yml
+
+  guardrails-gate:
+    if: github.event_name != 'push'
+    uses: ./.github/workflows/harness-guardrails.yml
+
+  # Keep these two job names stable while their former standalone workflows
+  # become main-only audits. Existing branch protection remains fail closed
+  # throughout the rollout and the parent concurrency cancels them atomically.
+  gitleaks:
+    if: github.event_name != 'push'
+    name: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install verified gitleaks release
+        env:
+          GITLEAKS_VERSION: 8.28.0
+          GITLEAKS_SHA256: a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o gitleaks.tar.gz
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Reject committed secrets
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          git rev-parse --verify "${BASE_SHA}^{commit}"
+          gitleaks detect --source . --config .gitleaks.toml --redact --no-banner \
+            --log-opts="${BASE_SHA}..HEAD"
+
+  scan:
+    if: github.event_name != 'push'
+    name: scan
+    runs-on: ubuntu-latest
+    env:
+      CUSTOMER_DENYLIST: ${{ secrets.CUSTOMER_DENYLIST }}
+      INFRA_DENYLIST: ${{ secrets.INFRA_DENYLIST }}
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: npa/pyproject.toml
+
+      - name: Install the confidentiality scanner
+        run: |
+          python -m venv npa/.venv
+          npa/.venv/bin/python -m pip install -e npa
+
+      - name: Reject confidential data
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          git rev-parse --verify "${BASE_SHA}^{commit}"
+          scan_args=(--repo-root . --tree --diff-range "${BASE_SHA}..HEAD")
+
+          proof_directory="${RUNNER_TEMP}/ncore-source-attribution-proof"
+          install -d -m 0700 "${proof_directory}"
+          npa/.venv/bin/python -m npa.guardrails.confidentiality \
+            "${scan_args[@]}" --pattern-env CUSTOMER_DENYLIST \
+            --ncore-attribution-proof-directory "${proof_directory}"
+
+          if [ -n "${INFRA_DENYLIST:-}" ]; then
+            npa/.venv/bin/python -m npa.guardrails.confidentiality \
+              "${scan_args[@]}" --pattern-env INFRA_DENYLIST --ignore-case
+          else
+            echo "::warning::operator-private denylist is not configured"
+          fi
+
   image-security:
     uses: ./.github/workflows/image-security-scan.yml
     permissions:
@@ -32,6 +127,8 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: scripts/security-requirements.txt
       - name: Select target revision and trusted scanner policy
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
@@ -71,23 +168,13 @@ jobs:
             --base "$SECURITY_BASE" --head "$GITHUB_SHA" \
             --output-dir "$RUNNER_TEMP/security-report"
 
-  security-regression:
-    name: security-regression
-    needs: [security-scanners, image-security]
-    if: ${{ always() }}
+  security-runtime:
+    name: hostile-input-runtime
     runs-on: ubuntu-latest
     env:
       NPA_PROJECT_ID: project-test-00000000
       NPA_S3_BUCKET: test-bucket-00000000
     steps:
-      - name: Require successful source and image scans
-        env:
-          SCANNER_RESULT: ${{ needs.security-scanners.result }}
-          IMAGE_RESULT: ${{ needs.image-security.result }}
-        run: |
-          test "$SCANNER_RESULT" = success
-          test "$IMAGE_RESULT" = success
-
       - name: Check out repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -97,6 +184,8 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: npa/pyproject.toml
 
       - name: Install the repository and real CPU checkpoint runtime
         run: |
@@ -131,3 +220,41 @@ jobs:
             npa/tests/orchestration/skypilot/test_local_api.py \
             npa/tests/orchestration/skypilot/test_controller_identity_transaction.py \
             -q
+
+  security-regression:
+    name: security-regression
+    needs:
+      - test-gate
+      - lint-gate
+      - guardrails-gate
+      - gitleaks
+      - scan
+      - security-scanners
+      - image-security
+      - security-runtime
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every candidate gate and security audit
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TEST_RESULT: ${{ needs.test-gate.result }}
+          LINT_RESULT: ${{ needs.lint-gate.result }}
+          GUARDRAIL_RESULT: ${{ needs.guardrails-gate.result }}
+          GITLEAKS_RESULT: ${{ needs.gitleaks.result }}
+          CONFIDENTIALITY_RESULT: ${{ needs.scan.result }}
+          SCANNER_RESULT: ${{ needs.security-scanners.result }}
+          IMAGE_RESULT: ${{ needs.image-security.result }}
+          RUNTIME_RESULT: ${{ needs.security-runtime.result }}
+        run: |
+          set -euo pipefail
+          test "$SCANNER_RESULT" = success
+          test "$IMAGE_RESULT" = success
+          test "$RUNTIME_RESULT" = success
+          if [ "$EVENT_NAME" != push ]; then
+            test "$TEST_RESULT" = success
+            test "$LINT_RESULT" = success
+            test "$GUARDRAIL_RESULT" = success
+            test "$GITLEAKS_RESULT" = success
+            test "$CONFIDENTIALITY_RESULT" = success
+          fi

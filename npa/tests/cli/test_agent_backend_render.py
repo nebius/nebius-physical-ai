@@ -153,7 +153,7 @@ def _render_backend_body(monkeypatch) -> str:
     agent_module._bootstrap_agent_stack(
         host="203.0.113.50",
         ssh_user="ubuntu",
-        ssh_key_path="/tmp/key",
+        ssh_key_path="unit-test-ssh-key",
         project_alias="smoke",
         project_id="project-id",
         tenant_id="tenant-id",
@@ -1422,7 +1422,7 @@ def test_shipped_agent_backend_memory_module_compiles(monkeypatch) -> None:
     agent_module._bootstrap_agent_stack(
         host="203.0.113.50",
         ssh_user="ubuntu",
-        ssh_key_path="/tmp/key",
+        ssh_key_path="unit-test-ssh-key",
         project_alias="smoke",
         project_id="project-id",
         tenant_id="tenant-id",
@@ -1489,7 +1489,7 @@ def _capture_setup_script(
     agent_module._bootstrap_agent_stack(
         host="203.0.113.50",
         ssh_user="ubuntu",
-        ssh_key_path="/tmp/key",
+        ssh_key_path="unit-test-ssh-key",
         project_alias="smoke",
         project_id="project-id",
         tenant_id="tenant-id",
@@ -1518,7 +1518,7 @@ def test_bootstrap_installs_auth_with_protected_stdin(monkeypatch) -> None:
     assert "| sudo htpasswd -iBc" in commands[0]
     assert "password" not in commands[0].split("| sudo htpasswd", 1)[1]
     assert 'sudo chown root:www-data "$stage/auth"' in setup
-    assert 'sudo mv -f "$stage/auth" /etc/nginx/.npa-agent-htpasswd' in setup
+    assert 'sudo mv -fT -- "$stage/auth" /etc/nginx/.npa-agent-htpasswd' in setup
 
 
 def test_bootstrap_pins_backend_durable_config_identity(monkeypatch) -> None:
@@ -2329,6 +2329,50 @@ def test_workflow_execution_requires_and_uses_action_bound_confirmation(
     assert status["execution"]["status"] == "SUCCEEDED"
 
 
+def test_workflow_confirmation_binds_assume_decision(monkeypatch, tmp_path) -> None:
+    module = _import_rendered_backend(
+        monkeypatch,
+        tmp_path,
+        module_name="npa_rendered_workflow_confirmation_decision_backend",
+    )
+    state: dict[str, object] = {}
+
+    def mutate_state(fn):
+        current = dict(state)
+        result = fn(current)
+        state.clear()
+        state.update(current)
+        return result
+
+    monkeypatch.setattr(module, "_mutate_state", mutate_state)
+    prepared = module._workflow_execution_action(
+        yaml_text="workflow",
+        run_id="run-confirmed-decision",
+        project="demo",
+        cluster_name="existing-cluster",
+        kubernetes_context="existing-context",
+        workflow_name="confirmed-workflow",
+        assume_decision="approved",
+    )
+    state["agent_act"] = {
+        "confirm_token": "single-use-token",
+        "confirm_digest": module._workflow_confirmation_digest(prepared),
+        "pending_action": prepared,
+    }
+    changed_decision = {**prepared, "assume_decision": "rejected"}
+
+    with pytest.raises(module.HTTPException, match="invalid or expired confirmation"):
+        module._consume_workflow_confirmation(
+            confirm_token="single-use-token", expected_action=changed_decision
+        )
+
+    assert state["agent_act"] == {
+        "confirm_token": "",
+        "confirm_digest": "",
+        "pending_action": None,
+    }
+
+
 def test_agent_execution_skips_shared_controller_binding_for_isolated_state(
     monkeypatch, tmp_path
 ) -> None:
@@ -2419,6 +2463,7 @@ def test_agent_execution_binds_project_credentials_before_workflow_commands(
     captured["run_npa_json"](["workbench", "workflow", "submit"])
 
     assert command_envs == [{
+        "NPA_SKYPILOT_ISOLATED_CONFIG_DIR": "/owned/agent-sky",
         "KUBECONFIG": "selected-kubeconfig",
         "NPA_SKYPILOT_PROJECT": "demo",
         "AWS_ACCESS_KEY_ID": "test-access",
@@ -4551,6 +4596,36 @@ def test_rendered_backend_has_no_mangled_regex_escapes(monkeypatch) -> None:
     # The word boundaries are present as real two-character regex escapes.
     assert r"\b(?:stage|stages|step|steps)\b" in body
     assert r"\b(agent-run-[A-Za-z0-9_-]+|sim2real-[A-Za-z0-9_.:-]+)\b" in body
+
+
+def test_grounded_status_preserves_video_readiness(monkeypatch, tmp_path) -> None:
+    """Grounded chat must mirror the selected viewer's non-Rerun readiness."""
+    module_name = "npa_rendered_video_status_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    video_status = {
+        "run_id": "run-video",
+        "stage": "artifact-loaded",
+        "camera": "workspace",
+        "artifact_render": "video",
+        "rrd_uri": "",
+        "rerun_ready": False,
+    }
+    state = {"sim_viz": dict(video_status)}
+    monkeypatch.setattr(module, "_load_state", lambda: state)
+    monkeypatch.setattr(module, "_save_state", lambda payload: state.update(payload))
+    monkeypatch.setattr(module, "sim_viz_status", lambda: dict(video_status))
+    monkeypatch.setattr(module, "_rerun_ready_state", lambda **_kwargs: True)
+    try:
+        reply, used, _suggested, _yaml, _validation, intent = (
+            module._maybe_toolground_chat_reply(
+                "what is the current sim2real status"
+            )
+        )
+        assert intent == "sim2real_status"
+        assert used == ["sim-viz/status"]
+        assert "**rerun_ready**: `false`" in reply
+    finally:
+        sys.modules.pop(module_name, None)
 
 
 def test_agent_module_source_has_no_invalid_escape_sequences() -> None:

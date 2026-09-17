@@ -43,6 +43,10 @@ class KubernetesGpuCatalogError(RuntimeError):
     """Raised when the live Kubernetes GPU catalog cannot be discovered."""
 
 
+class PendingGpuPlacementError(KubernetesGpuCatalogError):
+    """Active unbound GPU demand makes shared placement indeterminate."""
+
+
 class UnsatisfiableAcceleratorError(ValueError):
     """Raised when a requested accelerator cannot be scheduled on the cluster."""
 
@@ -193,121 +197,106 @@ def _is_stale_validation_api_error(error: Exception) -> bool:
 def kubernetes_sky_environment(
     *, context: str, kubeconfig: Kubeconfig, sky_executable: str,
 ) -> dict[str, str]:
-    """Bind cluster checks and discovery to one exact owned API when isolated."""
+    """Bind cluster checks and discovery to one exact owned API session."""
     env = _kubeconfig_env(kubeconfig) or os.environ.copy()
     from npa.orchestration.skypilot._bin import resolve_isolated_config_dir
+    from npa.orchestration.skypilot.cluster_validation import current_validation_session
 
+    session = current_validation_session()
     isolated_root = resolve_isolated_config_dir()
-    if isolated_root is not None:
-        selected = str(kubeconfig or env.get("KUBECONFIG") or "").strip()
-        if not selected or not str(context).strip():
-            raise KubernetesGpuCatalogError(
-                "Isolated SkyPilot discovery requires an exact kubeconfig and context"
-            )
-        kubeconfig_path = Path(selected).expanduser().resolve(strict=True)
-        env["KUBECONFIG"] = str(kubeconfig_path)
-        # Cluster validation may launch a GPU task. It must never fall through
-        # to the operator's shared API, even before workflow submission exists.
-        from npa.orchestration.skypilot.cleanup import sky_environment
-        from npa.orchestration.skypilot import local_api
-        from npa.orchestration.skypilot.local_api import ensure_isolated_api
-        import yaml
+    if session is None and isolated_root is None:
+        return env
+    selected = str(kubeconfig or env.get("KUBECONFIG") or "").strip()
+    if not selected or not str(context).strip():
+        raise KubernetesGpuCatalogError(
+            "Isolated SkyPilot discovery requires an exact kubeconfig and context"
+        )
+    kubeconfig_path = Path(selected).expanduser().resolve(strict=True)
+    env["KUBECONFIG"] = str(kubeconfig_path)
+    if session is not None:
+        session.require_target(kubeconfig_path, context)
+        env["SKYPILOT_USER_ID"] = "npa-" + hashlib.sha256(
+            str(session.scope.resolve()).encode()
+        ).hexdigest()[:12]
+        if session.record.get("project_alias"):
+            env["NPA_SKYPILOT_PROJECT"] = session.record["project_alias"]
 
-        identity = hashlib.sha256(
-            f"{kubeconfig_path.resolve()}\0{context}".encode()
-        ).hexdigest()[:24]
-        scope = isolated_root / "cluster-validation" / identity
-        scope.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if scope.is_symlink():
-            raise RuntimeError("Cluster validation state must not be a symlink")
-        # Keep this derivation adjacent to the scope construction so config
-        # migration can use the same controller selector even before
-        # ``sky_environment`` has returned its derived environment.
-        validation_user_id = str(env.get("SKYPILOT_USER_ID") or "").strip()
-        if not validation_user_id:
-            validation_user_id = "npa-" + hashlib.sha256(
-                str(scope.resolve()).encode()
-            ).hexdigest()[:12]
-        config: dict = {}
-        inherited = str(env.get("SKYPILOT_GLOBAL_CONFIG") or "")
-        if inherited:
-            config = yaml.safe_load(Path(inherited).read_text(encoding="utf-8")) or {}
-            if not isinstance(config, dict):
-                raise RuntimeError("SkyPilot configuration must be a mapping")
-        kubernetes = config.setdefault("kubernetes", {})
-        if not isinstance(kubernetes, dict):
-            raise RuntimeError("SkyPilot Kubernetes configuration must be a mapping")
-        kubernetes["allowed_contexts"] = [context]
-        # This validation scope is deliberately Kubernetes-only.  Without an
-        # explicit allowlist, SkyPilot refreshes every bundled provider while
-        # looking up cached cloud capability, including optional providers
-        # whose extras are not part of NPA's Kubernetes runtime.
-        config["allowed_clouds"] = ["kubernetes"]
-        config_bytes = yaml.safe_dump(config, sort_keys=True).encode()
-        config_path = scope / "client-config.yaml"
-        write_config = False
-        try:
-            fd = os.open(config_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            write_config = True
-        except FileExistsError:
-            if config_path.is_symlink() or config_path.read_bytes() != config_bytes:
-                # A new NPA release can make a validation-only config more
-                # restrictive (for example, narrowing provider discovery).
-                # Never overwrite a receipt in place: first prove its exact
-                # controller is absent, archive the complete validation scope,
-                # then create a fresh owner-only config.
-                if config_path.is_symlink() or not _recover_idle_validation_scope(
-                    scope,
-                    context=context,
-                    kubeconfig_path=kubeconfig_path,
-                    user_id=validation_user_id,
-                ):
-                    raise RuntimeError(
-                        "Cluster validation configuration changed; reconcile its owned API first"
-                    ) from None
-                fd = os.open(config_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-                write_config = True
-        if write_config:
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(config_bytes)
-                handle.flush()
-                os.fsync(handle.fileno())
-        env["SKYPILOT_GLOBAL_CONFIG"] = str(config_path)
-        base_environment = dict(env)
+    identity = hashlib.sha256(
+        f"{kubeconfig_path.resolve()}\0{context}".encode()
+    ).hexdigest()[:24]
+    scope = session.scope if session is not None else isolated_root / "cluster-validation" / identity
+    scope.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if scope.is_symlink():
+        raise RuntimeError("Cluster validation state must not be a symlink")
+    from npa.orchestration.skypilot.cleanup import sky_environment
+    from npa.orchestration.skypilot import local_api
+    from npa.orchestration.skypilot.local_api import ensure_isolated_api
+    import yaml
 
-        # ``sky_environment`` persists the isolated API endpoint intent and
-        # can itself attempt to reconnect a stopped owned daemon.  Keep that
-        # call inside the recovery boundary below: a credential-bound stale
-        # receipt is detected there before ``ensure_isolated_api`` is reached.
-        # The identity is deterministic when the caller did not explicitly
-        # provide one, matching ``sky_environment``'s derivation.
-        def start_validation_api() -> dict[str, str]:
-            validation_env = sky_environment(scope, environment=base_environment)
-            ensure_isolated_api(
-                isolated_dir=scope,
-                sky_executable=sky_executable,
-                environment=validation_env,
-                cwd=str(kubeconfig_path.parent),
-            )
-            return validation_env
-
-        try:
-            env = start_validation_api()
-        except local_api.IsolatedApiError as exc:
-            # A stale running or stopped validation daemon can retain a
-            # credential-bound identity after its metadata/profile source
-            # changes. Retire only this validation scope after Kubernetes
-            # proves its exact controller pod does not exist; workflow
-            # controller state is never touched here.
-            if not _is_stale_validation_api_error(exc) or not _recover_idle_validation_scope(
+    validation_user_id = str(env.get("SKYPILOT_USER_ID") or "").strip()
+    if not validation_user_id:
+        validation_user_id = "npa-" + hashlib.sha256(
+            str(scope.resolve()).encode()
+        ).hexdigest()[:12]
+    config: dict = {}
+    inherited = str(env.get("SKYPILOT_GLOBAL_CONFIG") or "")
+    if inherited:
+        config = yaml.safe_load(Path(inherited).read_text(encoding="utf-8")) or {}
+        if not isinstance(config, dict):
+            raise RuntimeError("SkyPilot configuration must be a mapping")
+    kubernetes = config.setdefault("kubernetes", {})
+    if not isinstance(kubernetes, dict):
+        raise RuntimeError("SkyPilot Kubernetes configuration must be a mapping")
+    kubernetes["allowed_contexts"] = [context]
+    config["allowed_clouds"] = ["kubernetes"]
+    config_bytes = yaml.safe_dump(config, sort_keys=True).encode()
+    config_path = scope / "client-config.yaml"
+    write_config = False
+    try:
+        fd = os.open(config_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        write_config = True
+    except FileExistsError:
+        if config_path.is_symlink() or config_path.read_bytes() != config_bytes:
+            if config_path.is_symlink() or not _recover_idle_validation_scope(
                 scope,
                 context=context,
                 kubeconfig_path=kubeconfig_path,
                 user_id=validation_user_id,
             ):
-                raise
-            env = start_validation_api()
-    return env
+                raise RuntimeError(
+                    "Cluster validation configuration changed; reconcile its owned API first"
+                ) from None
+            fd = os.open(config_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            write_config = True
+    if write_config:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(config_bytes)
+            handle.flush()
+            os.fsync(handle.fileno())
+    env["SKYPILOT_GLOBAL_CONFIG"] = str(config_path)
+    base_environment = dict(env)
+
+    def start_validation_api() -> dict[str, str]:
+        validation_env = sky_environment(scope, environment=base_environment)
+        ensure_isolated_api(
+            isolated_dir=scope,
+            sky_executable=sky_executable,
+            environment=validation_env,
+            cwd=str(kubeconfig_path.parent),
+        )
+        return validation_env
+
+    try:
+        return start_validation_api()
+    except local_api.IsolatedApiError as exc:
+        if not _is_stale_validation_api_error(exc) or not _recover_idle_validation_scope(
+            scope,
+            context=context,
+            kubeconfig_path=kubeconfig_path,
+            user_id=validation_user_id,
+        ):
+            raise
+        return start_validation_api()
 
 
 def _kubectl_failure(*, action: str, returncode: int, output: str) -> str:
@@ -932,7 +921,7 @@ def preflight_kubernetes_gpu_gang(
     if inventory.error:
         raise KubernetesGpuCatalogError(inventory.error)
     if inventory.unbound_pending_gpu_pods:
-        raise KubernetesGpuCatalogError(
+        raise PendingGpuPlacementError(
             "free shared GPU capacity is indeterminate: Kubernetes has "
             f"{inventory.unbound_pending_gpu_pods} active unbound GPU pod(s) "
             f"requesting {inventory.unbound_pending_gpu_requests} GPU(s); wait for "

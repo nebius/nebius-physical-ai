@@ -159,9 +159,11 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "motion-lib validate_motion_lib on synthetic payload",
     ],
     "fiftyone": [
-        "fiftyone import + version pin",
-        "CLI --help",
-        "app config (DB-free env smoke)",
+        "FiftyOne installed version pin",
+        "create a real dataset using bundled MongoDB",
+        "query the dataset and verify sample fields",
+        "CPU Brain uniqueness, similarity and PCA visualization",
+        "launch the App on loopback, read its response and stop it",
     ],
     "lancedb": [
         "FastAPI server start",
@@ -182,6 +184,14 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "kitchen asset availability check",
         "headless EGL environment reset",
         "random rollout with video artifact",
+    ],
+    "openarm": [
+        "pinned upstream OpenArm v2 bimanual MJCF loads through openarm_mujoco",
+        "500 real MuJoCo position-control steps advance finite robot state",
+        "compressed joint, actuator-command, and velocity-energy trajectory artifact",
+        "exact-digest RTX gate launches runtime-fetched Isaac Sim/Isaac Lab",
+        "upstream Isaac-Reach-OpenArm-v0 vectorized environment steps on CUDA",
+        "upstream RSL-RL trainer writes a real checkpoint",
     ],
     "wan2-2": [
         "pinned Wan source import with OSS CPU dependency base",

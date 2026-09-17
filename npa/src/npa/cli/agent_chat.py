@@ -1224,7 +1224,7 @@ def format_infra_backends(state: dict[str, Any]) -> str:
         lines.extend(
             [
                 "- **No Kubernetes infra is currently specified or available.**",
-                "- Ask the Agent to prepare a minimal Kubernetes deployment; it will require a one-time confirmation before creating cloud resources.",
+                "- Ask the Agent to deploy minimal GPU Kubernetes infrastructure; it will require a one-time confirmation before creating cloud resources.",
             ]
         )
     else:

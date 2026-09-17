@@ -11,6 +11,7 @@ import pytest
 import yaml
 
 from npa.orchestration.skypilot import _bin as bin_module
+from npa.orchestration.skypilot import local_api as local_api_module
 from npa.orchestration.skypilot import workflow as workflow_module
 from npa.orchestration.skypilot.workflow import (
     SkyPilotSubmitError,
@@ -53,6 +54,9 @@ def _skip_version_check(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
     # This module isolates launch transactions/argv. The actual SDK-to-provider
     # execution gate is covered in unit/test_execution_preflight.py.
     monkeypatch.setattr(workflow_module, "_execution_preflight", lambda *args, **kwargs: (None, {}, {}))
+    # Host rejection is covered by test_local_api_host.py. These fake-Sky
+    # transaction/argv tests do not operate a real host control plane.
+    monkeypatch.setattr(local_api_module, "_require_linux_host", lambda: None)
     # Separate local_api tests exercise real owned-daemon/socket lifecycle.
     # These transaction/argv fixtures use a fake Sky executable.
     monkeypatch.setattr(workflow_module, "_ensure_isolated_api", lambda **kwargs: workflow_module.ApiDaemonCwdProbe(True, "test-owned-api"))

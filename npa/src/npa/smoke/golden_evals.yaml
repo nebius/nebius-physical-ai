@@ -689,7 +689,7 @@ containers:
       command: python /opt/npa/docker/workbench/cosmos-evaluator/smoke_functional.py
       serverless_gpu: h100
       gpu: none
-      timeout_seconds: 600
+      timeout_seconds: unlimited
       status: ready
 
   sonic:
@@ -794,18 +794,18 @@ containers:
     safety:
       runs_as: ubuntu
       base_image: python:3.11-slim-trixie
-      network: FiftyOne app on :5151
+      network: FiftyOne app on 127.0.0.1:5151; authenticated SSH or Kubernetes port-forward
       external_fetch: [pypi, huggingface, s3]
       notes: >-
-        CPU-only; app should be exposed via controlled public-access path, not
-        bound to 0.0.0.0 without auth. The image ships standalone smoke scripts
-        (it does not install the npa package). The golden eval is the env smoke
-        (import + version + CLI + app config); the functional smoke is a heavier
-        integration test that needs a working MongoDB, which the slim base does
-        not provision.
+        CPU-only; keep App access private through loopback and an authenticated
+        SSH or Kubernetes port-forward. The image ships standalone smoke scripts
+        and bundled MongoDB, without installing the npa package. The functional
+        golden eval checks version, dataset creation and query, real Brain
+        curation, and App launch. Source installation and publication security
+        gates require separate exact-image evidence.
     golden_eval:
       kind: container-smoke
-      command: python /opt/npa/docker/workbench/fiftyone/smoke_env.py
+      command: python /opt/npa/docker/workbench/fiftyone/smoke_functional.py
       serverless_gpu: h100
       gpu: none
       timeout_seconds: 300
@@ -894,6 +894,36 @@ containers:
       serverless_gpu: h100
       gpu: optional
       timeout_seconds: 300
+      status: ready
+
+  openarm:
+    image: npa-openarm
+    dockerfile: npa/docker/workbench/openarm/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Enactic OpenArm v2 bimanual MuJoCo simulation and OpenArm reinforcement
+        learning environments in NVIDIA Isaac Sim/Isaac Lab.
+    safety:
+      runs_as: ubuntu
+      base_image: nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04 (digest pinned)
+      network: FastAPI service on :8792; operator S3; first-use Isaac runtime fetch
+      external_fetch: [pypi-nvidia-isaac-runtime, github-isaaclab-source, s3]
+      notes: >-
+        Bakes exact Apache-2.0 OpenArm MuJoCo and Isaac sources/assets plus a
+        hash-locked OSS closure. No Isaac Sim, Isaac Lab, Omniverse Kit,
+        credentials, accepted terms, caches, or operator data are baked. The
+        golden eval performs a real 500-step OpenArm v2 bimanual MuJoCo control
+        rollout and validates its trajectory; exact-digest RTX qualification
+        additionally runs the upstream OpenArm Isaac reach rollout and trainer.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_openarm_functional
+      command: python -m npa.smoke.test_openarm_functional
+      artifact: /tmp/npa-openarm-golden/golden_eval.json
+      serverless_gpu: rtx6000
+      gpu: optional
+      timeout_seconds: 600
       status: ready
 
   wan2-2:

@@ -49,7 +49,7 @@ def test_service_env_is_private_before_credentials_and_published_atomically(
         "curl": "#!/bin/sh\nexit 0\n",
         "mv": "#!/bin/sh\n"
         "replace=false\n"
-        'if [ "$1" = "-T" ]; then replace=true; shift; fi\n'
+        'if [ "$1" = "-T" ] || [ "$1" = "-fT" ]; then replace=true; shift; fi\n'
         'if [ "$1" = "--" ]; then shift; fi\n'
         'if [ "$replace" = "true" ]; then rm -f "$2"; fi\n'
         'exec /bin/mv "$@"\n',

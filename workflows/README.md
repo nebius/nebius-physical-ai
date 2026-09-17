@@ -106,6 +106,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`cosmos2-transfer.yaml`](testing/cosmos2-transfer.yaml) | Standalone Cosmos Transfer 2.5 GPU augmentation → video and frames |
 | [`cosmos3-checkpoint-eval.yaml`](testing/cosmos3-checkpoint-eval.yaml) | B200-only guarded Cosmos3 still-image checkpoint evaluation |
 | [`cosmos3-generate.yaml`](testing/cosmos3-generate.yaml) | Cosmos3-Nano image generation with default guardrails; gated guardrail assets require HF access |
+| [`cosmos3-policy-model-factory.yaml`](testing/cosmos3-policy-model-factory.yaml) | Experimental native LIBERO policy SFT → simulator evaluation → failure feedback → guarded video candidates; [scope and prerequisites](../docs/workbench/cosmos3-policy-model-factory.md) |
 | [`cosmos3-ray-batch.yaml`](testing/cosmos3-ray-batch.yaml) | Prepared SDG batch through an existing Cosmos3-Nano Ray Serve deployment → media and provenance |
 | [`cosmos3-reason.yaml`](testing/cosmos3-reason.yaml) | Cosmos3 reason |
 | [`cosmos3-super-b200-benchmark.yaml`](testing/cosmos3-super-b200-benchmark.yaml) | Cosmos3-Super serving benchmark on one eight-GPU B200 node |
@@ -129,6 +130,8 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`retargeting.yaml`](testing/retargeting.yaml) | Motion retargeting |
 | [`rl-policy-training-sim-success.yaml`](testing/rl-policy-training-sim-success.yaml) | Isaac Lab RL train (partial) |
 | [`robocasa-data-policy.yaml`](testing/robocasa-data-policy.yaml) | Native multi-task PandaOmron trajectories → LeRobotDataset v3 → real ACT training → exact-checkpoint evaluation on disjoint RoboCasa tasks → insights |
+| [`lerobot-transfer.yaml`](testing/lerobot-transfer.yaml) | Four-phase LeRobot demonstration experiment: paired ACT training → native PushT transfer stress tests → measured comparison and next-expert-demo queue. [Runbook](../docs/workbench/guides/lerobot-transfer.md). |
+| [`franka-rl-transfer.yaml`](testing/franka-rl-transfer.yaml) | PPO with selectable Franka, UR10e/Robotiq, or Kinova JACO2 embodiment, bounded learned targets and exploration, stable-hold rewards, and an outcome-driven curriculum (`learning_recipe=adaptive-bounded-exploration`). Measured-state checks reject invalid simulation before learning; sealed USD parts, paired physics tests, Token Factory evaluation, and actual LeRobot/Rerun rollouts retain the evidence. Latest native UR diagnostic **failed**; physics remains unqualified despite passing CPU checks. One RTX GPU plus a hosted VLM credential. [Runbook](../docs/workbench/guides/franka-rl-transfer.md). |
 | [`robocasa-smoke.yaml`](testing/robocasa-smoke.yaml) | Native RoboCasa workbench: task registration, asset availability, headless EGL reset, and a real random rollout with video through the npa-robocasa service |
 | [`sonic-eval.yaml`](testing/sonic-eval.yaml) | SONIC eval |
 | [`sonic-export-eval.yaml`](testing/sonic-export-eval.yaml) | Export → eval |

@@ -154,15 +154,20 @@ def test_legacy_state_save_preserves_latest_atomic_namespaces() -> None:
             },
         },
         "agent_act": {"confirmation": {"action": "latest"}},
+        "workflow_executions": {"run": {"state": "succeeded"}},
     }
 
-    merged = preserve_latest_namespaces(stale, latest, ("leisaac", "agent_act"))
+    merged = preserve_latest_namespaces(
+        stale, latest, ("leisaac", "agent_act", "workflow_executions")
+    )
 
     assert merged["chat_history"] == stale["chat_history"]
     assert merged["leisaac"] == latest["leisaac"]
     assert merged["leisaac"] is not latest["leisaac"]
     assert merged["agent_act"] == latest["agent_act"]
     assert merged["agent_act"] is not latest["agent_act"]
+    assert merged["workflow_executions"] == latest["workflow_executions"]
+    assert merged["workflow_executions"] is not latest["workflow_executions"]
 
 
 def test_rendered_agent_legacy_save_preserves_atomic_namespaces() -> None:
@@ -170,7 +175,7 @@ def test_rendered_agent_legacy_save_preserves_atomic_namespaces() -> None:
     block = source.split("def _save_state(state: dict) -> None:", 1)[1].split(
         "def _mutate_state", 1
     )[0]
-    assert 'preserve_latest_namespaces(state, latest, ("leisaac", "agent_act"))' in block
+    assert "workflow_executions" in block
 
 
 def test_resolve_workflow_yaml_no_draft_fallback() -> None:

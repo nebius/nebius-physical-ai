@@ -12,6 +12,12 @@ For the configuration keys and timing contract, see the setup guide's
 [generation and evaluation settings](../../../workflows/guides/paidf-cosmos3.md#r5-find-and-change-generation-and-evaluation-settings).
 For rejected runs, see its
 [quality-rejection diagnostics](../../../workflows/guides/paidf-cosmos3.md#r6-diagnose-quality-rejection-and-prepare-the-next-run).
+For an older installation, see
+[upgrading an existing installation](../../../workflows/guides/paidf-cosmos3.md#upgrading-an-existing-installation):
+new submissions stage the current NPA source automatically unless explicitly
+overridden, unchanged datasets need no bucket resync, and executing submits
+must omit `--assume-decision promote_checkpoint`. Check the Git SHA and import
+path because the package version remains `0.1.0`.
 
 `workflows/main/paidf-cosmos3.yaml` is an independent
 Physical AI Data Factory composition. It does not replace or change
@@ -63,6 +69,11 @@ supported.
 
 The result is augmented video and review artifacts for one episode/camera, not
 a reconstructed LeRobot dataset containing action/state records.
+
+For extending this data pipeline into training and policy evaluation, see the
+[Cosmos 3 model factory assessment](../../architecture/cosmos3-model-factory.md).
+It maps current NPA capabilities and defines the
+dataset, checkpoint, and simulation evidence needed for each proposed addition.
 
 The committed `example-bucket` and run-scoped fixture path are placeholders.
 The generic workflow submit command stages a verified, pinned starter video

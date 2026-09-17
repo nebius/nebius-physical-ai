@@ -36,6 +36,30 @@ the whole triage:
   (threshold `--startup-failure-threshold`, default 3). This is infrastructure,
   not your payload.
 
+All currently recorded jobs can be `SUCCEEDED` between waves while the workflow
+lifecycle remains `RUNNING`. This is a successful observation of incomplete
+workflow evidence, not a failed query: inspect `workflow_lifecycle` for the
+original durable timestamp, `completion_recorded: false`, and
+`driver_liveness: unknown`. Fresh job polls do not prove driver liveness or create
+progress heartbeats. Keep the original driver running and let `--watch` cross the
+handoff; do not recommend resume solely from this state. Actual query failures
+still exit nonzero, and terminal workflow/artifact proof remains required.
+
+The job aggregate and task rows are separate queue snapshots. A recognized
+nonterminal job can coexist with a successful task or durable stage record while
+the workflow remains incomplete. Compare each stage's `raw_job_scheduler_state`
+and `raw_task_scheduler_state`; keep the original driver and watch running through
+this transition. Missing/unknown/malformed job evidence and query/authentication
+failures still stop verification. Contradictory terminal job/task outcomes remain
+`UNKNOWN` with explicit stage conflicts; a failed parallel job may still have
+successful individual tasks.
+
+At finalization, the interpreter manifest's `completed` marker is normalized to
+`SUCCEEDED`. Inspect `workflow_lifecycle.manifest_evidence` for its unchanged raw
+status, timestamp, and authoritative source. This alias applies only to the
+manifest; runtime ledgers require `succeeded`. Keep latest-attempt conflicts,
+live-query failures, and final-artifact validation as separate checks.
+
 Runtime-supervised runs also expose `supervisor.classification` and
 `supervisor.recovery` in JSON status. `actionable_configuration` means automatic
 retry has stopped and only the exact recorded attempt was cancelled;
@@ -44,6 +68,16 @@ ID until the finite `--max-infrastructure-recoveries` policy is exhausted;
 `payload` uses only explicit `--retries`; `unknown` blocks relaunch to prevent
 duplicates. `INFRASTRUCTURE_RECOVERY_EXHAUSTED` is terminal durable evidence, not
 permission to increase payload retries implicitly.
+
+A credential-exec RPC stream closure during controller file sync may leave a
+Pending reservation without a submitted payload. The runtime records this as a
+partial launch, verifies exact cancellation and actual terminal state, checks
+all declared outputs remain absent, and refreshes the shared SDK preflight
+before using the existing infrastructure recovery allowance. Inspect both the
+failed parent and its exact reserved successor; do not count the failed row as
+running work or launch another copy. Missing/ambiguous rows, denied access,
+changed identities, output uncertainty, and unverified cancellation still block
+recovery. Fresh preflight denials retain their sanitized actionable reason.
 
 Add `--watch --interval 10` to follow a run to a terminal state. Use `--cached`
 only when the live controller is unreachable: its output is explicitly marked
@@ -115,6 +149,18 @@ shortage:
 - **`NAME:N` needs N GPUs on one node.** SkyPilot places all GPUs of a task on a
   single node, so `NAME:2` can never schedule across 2 nodes × 1 GPU. `gpus`
   prints the requestable quantity per node.
+
+`requested GPU task has no compatible free placement` means the live inventory
+cannot satisfy the complete request. Check per-node GPU, CPU, memory, pod slots,
+placement rules, and active workloads.
+
+`shared GPU capacity is indeterminate because active GPU pods await placement`
+means active GPU demand has not yet been assigned to a node. The preflight stops
+before launch even when the hardware supports the requested shape. Wait for
+authoritative scheduling, or cancel only pending workloads the operator owns,
+then recheck capacity. Earlier setup success does not reserve the GPU for a
+later workflow stage. Preserve this placement category in diagnostics without
+publishing raw provider errors, node names, or workload identities.
 
 ## 6. When the run looks fine but the controller does not
 

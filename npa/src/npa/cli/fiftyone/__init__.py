@@ -1408,9 +1408,7 @@ if [ -n "$nebius_s3_bucket" ]; then printf '%s\\n' "NEBIUS_S3_BUCKET=$nebius_s3_
 if [ -n "$nebius_region" ]; then printf '%s\\n' "NEBIUS_REGION=$nebius_region" | sudo tee -a "$fiftyone_env_stage/env" >/dev/null; fi
 sudo chown "$service_user:$service_group" "$fiftyone_env_stage/env"
 sudo chmod 600 "$fiftyone_env_stage/env"
-# The stage and destination are regular files in the same directory. This is
-# an atomic rename and works with both GNU and BSD mv.
-sudo mv -f "$fiftyone_env_stage/env" /etc/npa-fiftyone/env
+sudo mv -fT -- "$fiftyone_env_stage/env" /etc/npa-fiftyone/env
 )
 sudo tee /etc/systemd/system/{FIFTYONE_SERVICE}.service >/dev/null <<UNIT
 [Unit]

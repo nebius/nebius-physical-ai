@@ -50,6 +50,45 @@ storage or a custom size. To reuse your own bucket, create one first; see
 [Manage projects](https://docs.nebius.com/iam/manage-projects), and
 [Manage buckets](https://docs.nebius.com/object-storage/buckets/manage).
 
+### Authentication on a headless machine
+
+Choose the identity to match the work. Human OAuth is convenient for
+interactive development with the operator's existing permissions. A service
+account gives unattended workloads their own permissions and credentials.
+
+| Work | Route | Setup and ongoing interaction |
+| --- | --- | --- |
+| Unattended VM or CI workload | [Service-account skill](../skills/atomic/nebius-service-account-auth/SKILL.md) | Project administrator sets up the identity and grants once; attached VM identity or an authorized-key profile authenticates without a browser |
+| Interactive human login with SSH forwarding | [VM authentication skill](../skills/atomic/vm-nebius-auth/SKILL.md) | Open the authorization link; the SSH tunnel delivers the browser callback |
+| Interactive human login without forwarding | [Headless OAuth skill](../skills/atomic/nebius-headless-oauth/SKILL.md) | Open the authorization link, then paste the final callback into hidden prompts on the CLI machine |
+
+For a new Nebius VM, an attached service account avoids distributing a private
+authorized key. On an existing VM without one, use a dedicated authorized-key
+profile and maintain its key lifecycle. Human OAuth does not require creating a
+service account, but later CLI reauthentication can require browser interaction.
+Copying the operator's entire `~/.nebius` credential cache is not needed for
+either route.
+
+### Human login on a headless machine
+
+If the Nebius CLI runs on a remote operator or development machine, open its
+authorization link in the browser where you are signed in to Nebius. With SSH
+access, follow the [VM authentication skill](../skills/atomic/vm-nebius-auth/SKILL.md)
+to forward the CLI's callback port.
+
+When forwarding is unavailable, the
+[headless OAuth skill](../skills/atomic/nebius-headless-oauth/SKILL.md) provides a
+manual copy/paste flow. It requires a private terminal on the CLI machine, such
+as a browser terminal: its helper accepts the original authorization link and
+final browser callback URL through hidden prompts, checks the callback's port
+and state, and delivers it locally. The returned URL contains a one-time login
+code; keep it out of chat, shell arguments, and saved logs. This is an operator
+skill with a repository helper, not a callback input in the NPA agent chat UI.
+
+After the CLI exits successfully, verify the selected profile with
+`npa workbench health preflight --checks nebius --json`. Keep deployed agent VMs
+on their attached service account; human login belongs on the operator machine.
+
 ### Creating a project from the CLI (tenant administrator)
 
 Creating a project is a privileged action outside NPA. A tenant administrator

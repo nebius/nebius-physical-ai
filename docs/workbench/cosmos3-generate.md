@@ -60,7 +60,7 @@ setup, the two-repo table, the 401-vs-403 diagnostic for a gated-download
 failure, and the Xet download workaround for a specific Hugging Face client
 pin.
 
-The current r6 image keeps the faster Xet transfer path enabled with its measured,
+The current r7 image keeps the faster Xet transfer path enabled with its measured,
 compatible baked versions (`huggingface_hub==0.36.2`, `hf-xet==1.3.2`). The
 image build records this pair and fails if the known-bad `1.23.0` / `1.5.1`
 combination is ever resolved; only non-image/custom environments need the
@@ -231,9 +231,23 @@ The Runs & Artifacts panel also finds the run by name (`cosmos3-`), and
 
 ## Validated on real GPUs
 
-Previously verified on NVIDIA RTX PRO 6000 Blackwell Server Edition
-(sm_120) with `nvidia/Cosmos3-Nano`. The workflow path produced a non-blank
-960x960 JPEG in S3 with `guardrails: true` and `weights_baked: false`:
+The September 12 r7 regression in merged [PR #462](https://github.com/nebius/nebius-physical-ai/pull/462)
+resolves [#270](https://github.com/nebius/nebius-physical-ai/issues/270).
+On an NVIDIA RTX PRO 6000, Cosmos3-Nano completed 50 UniPC text-to-image steps.
+Blocklist and Qwen3Guard evaluated the prompt; VideoContentSafetyFilter
+successfully evaluated 1/1 generated-media inputs; RetinaFace postprocessing
+ran. The native receipt reported effective guardrail execution. The nonblank
+960×960 JPEG was 183,829 bytes with SHA-256
+`d80f7d11c49d66b12d3c896a9aa55a6d79b02de5a8ca24041a0e15b8efb4f2fd`.
+The accepted image digest is recorded in
+[`public_release_manifest.json`](../../npa/src/npa/deploy/public_release_manifest.json).
+This is text-to-image guardrail evidence; other generation modes require their
+own workload validation.
+
+Earlier generation and publication checks used NVIDIA RTX PRO 6000 Blackwell
+Server Edition (sm_120) with `nvidia/Cosmos3-Nano`. The workflow path produced a non-blank
+960x960 JPEG in S3 with `guardrails: true` and `weights_baked: false`. Those
+request flags alone did not prove effective safety execution:
 
 | Path | Result |
 | --- | --- |
