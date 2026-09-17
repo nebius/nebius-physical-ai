@@ -28,7 +28,9 @@ def _assert_ray_version() -> None:
 
 _assert_ray_version()
 
-from ray.serve.request_router import FIFOMixin, RequestRouter
+# Deliberately after the version guard above (E402): the guard must reject a
+# wrong Ray version before this import executes.
+from ray.serve.request_router import FIFOMixin, RequestRouter  # noqa: E402
 
 
 class LeastOutstandingRouter(FIFOMixin, RequestRouter):
