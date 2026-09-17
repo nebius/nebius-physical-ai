@@ -84,7 +84,10 @@ aws --profile nebius s3 sync "$LEROBOT_DIR/" "$LEROBOT_URI/" --only-show-errors
 ```
 
 Record downloaded file hashes and the dataset revision in private run evidence.
-Set a coherent appearance experiment, keeping task identity colors unchanged:
+The following reproduces the earlier **rejected subtle-lighting baseline**. Its
+appearance changes were too weak; use it for comparison, not as the recipe to
+fan out. The visible-surface experiment below separates material changes from
+first-frame conditioning. Both still require task-quality review.
 
 ```bash
 APPEARANCE_PROFILES='[
@@ -262,6 +265,60 @@ appearance checks measure preservation, not a minimum edit strength. There is
 currently no automatic minimum-diversity gate: record paired visual review
 separately, including examples with no effective edit. Do not substitute a pixel
 difference threshold for this review; gripper deformation also changes pixels.
+
+### Visible surface change experiment
+
+For a work-surface edit, replace the corresponding fields in a private copy of
+the workflow's `config` with this fragment. Keep the input selection, task
+description, negative prompt and strict evaluation settings from your task.
+The material names are configuration values, not special cases in the adapter.
+Do not retain this prompt's battery identities for an unrelated task.
+If reusing the earlier plan/submit commands, remove matching baseline overrides
+from `QUALITY_ARGS` or update them to these values: command-line `--var` values
+take precedence over the private workflow's `config`. Inspect the effective
+planned configuration before submission.
+
+```yaml
+appearance_profiles_json: >-
+  [
+    {"lighting":"soft neutral diffuse indoor illumination",
+     "background":"the existing flat tabletop rendered as light natural oak with fine realistic wood grain, retaining its exact boundary and layout",
+     "color_grade":"neutral white balance with light tan wood confined to the tabletop",
+     "surface_finish":"matte low-gloss natural oak work surface"},
+    {"lighting":"soft neutral diffuse indoor illumination",
+     "background":"the existing flat tabletop rendered as a clearly muted blue work surface, retaining its exact boundary and layout",
+     "color_grade":"neutral white balance with muted blue confined to the tabletop",
+     "surface_finish":"matte low-gloss blue work surface with fine realistic texture"}
+  ]
+prompt: >-
+  Change the existing gray tabletop to the material and color specified in the
+  requested appearance edit. Make that tabletop change clearly visible and
+  spatially consistent throughout the video. Preserve its flat geometry,
+  boundaries and contact shadows; do not add a mat, seam, props or objects.
+  Preserve both robot arms and grippers with their white plastic plates and
+  dark charcoal-gray mechanical parts. Preserve the black cylindrical battery
+  with metallic gold-colored ends, its markings and polarity, and the white
+  remote controller with its open battery slot. Retain these foreground identity
+  colors. Keep exact grasp and insertion contacts, camera viewpoint, trajectories,
+  timing, occlusions and final outcome.
+transfer_edge_threshold: low
+transfer_rgb_weight: 0.0
+transfer_first_chunk_conditional_frames: "0"
+control_guidance: "1.0"
+guidance: "5.0"
+steps: "35"
+augmentation_seed: "30"
+seed: "17"
+variant_count: "2"
+variant_parallelism: "1"
+```
+
+Use a fresh run with `transfer_first_chunk_conditional_frames=1` for a matched
+baseline. Keep all other generation settings fixed. Inspect the first frame,
+the whole timeline and the padded image boundaries: gradual gray-to-color
+transitions or newly rendered material in letterbox padding do not establish a
+consistent edit to the intended surface. For a subsequent RGB-control comparison,
+hold the first-frame setting fixed and change only `transfer_rgb_weight`.
 
 ## Fan out a reviewed recipe
 
@@ -454,9 +511,47 @@ ends remained visible in reviewed frames, but fine gripper geometry still
 differed and the intended appearance edits were weak. RGB conditioning is a
 verified general-purpose control, not a qualified battery augmentation recipe.
 
+A subsequent material experiment replaced the subtle-lighting profiles with
+muted blue and light oak tabletop appearances, removed the blanket subtle-edit
+instruction and RGB hint, and used low edges, control guidance 1.0, text guidance
+5.0 and 35 steps. With the original first-frame anchor retained, the blue surface
+emerged partway through the clip; the oak candidate largely retained the gray
+surface and generated wood in side padding. Both were rejected. The evaluator
+reported aggregate score 0.133584, temporal scores 0.138742 and 0.128425, and
+attribute checks 4/4 and 3/4. The blue attribute pass did not detect the initial
+gray-to-blue transition; the oak background pass did not prove the intended
+surface changed.
+
+The matched follow-up changed only first-window source conditioning from 1 to
+0. Both videos now show their requested blue or oak work-surface appearance from
+the first frame through the reviewed ending. Native receipts verify zero source
+frames anchoring the first window, five generated overlap frames for later
+windows, four native windows and complete edge coverage. Both outputs retain
+288 aligned frames. Mean absolute decoded channel differences in the source's
+image area were 32.69/255 for blue and 41.13/255 for oak, compared with roughly
+4/255 for the earlier weak RGB-conditioned lighting edits. These describe edit
+magnitude, not realism. Sampled contact review still found altered gripper and
+controller details; the oak render also changed padding and contact shadows.
+Both matched all four requested appearance attributes, while the unchanged
+required temporal check rejected both (0.127409 and 0.091969; aggregate 0.109689).
+This establishes a visible-edit control, not a training-qualified recipe.
+
+A final matched pair retained zero first-window source frames and changed only
+`transfer_rgb_weight` from 0 to 0.25. Both native receipts verified all 288 RGB
+and edge control frames; text/video guardrails remained enabled. The blue
+surface remained visibly changed in reviewed first, contact, release and final
+frames, while fine gripper/controller details still differed. Oak remained
+visible on the lower work surface but also appeared in side padding, with a
+gray upper surface and altered shadows. Mean absolute decoded channel
+differences in the source image area were 29.30/255 and 40.03/255. Both outputs
+retained the complete aligned timeline and matched all four appearance
+attributes. The unchanged evaluator still rejected both: aggregate score
+0.117891, temporal scores 0.140340 and 0.095442. The slight score improvement
+over zero RGB weight does not qualify either candidate for training.
+
 These temporal scores come from NPA's source-relative motion-residual check,
 which accompanies the upstream Cosmos Evaluator result. They do not certify
-contact physics. Across all seven trials, thirteen complete generated clips
-were reviewed; the six completed two-variant evaluator batches accepted none.
+contact physics. Across these ten trials, nineteen complete generated clips
+were reviewed; the nine completed two-variant evaluator batches accepted none.
 Generation covered episode zero's high camera only. The separately prepared
 wrist input and the remaining episodes have not been generation-validated.
