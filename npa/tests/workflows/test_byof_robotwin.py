@@ -108,12 +108,14 @@ def test_robotwin_selects_only_the_quarantined_zero_payload_bootstrap() -> None:
     sys.path.insert(0, str(ROOT / "npa" / "scripts"))
     import run_byof_repo as runner
 
-    assert runner.ROBOTWIN_BUILD_COMMAND_SHA256 == hashlib.sha256(
-        build.encode()
-    ).hexdigest()
-    assert runner.ROBOTWIN_SMOKE_COMMAND_SHA256 == hashlib.sha256(
-        str(config["smoke_command"]).encode()
-    ).hexdigest()
+    assert (
+        runner.ROBOTWIN_BUILD_COMMAND_SHA256
+        == hashlib.sha256(build.encode()).hexdigest()
+    )
+    assert (
+        runner.ROBOTWIN_SMOKE_COMMAND_SHA256
+        == hashlib.sha256(str(config["smoke_command"]).encode()).hexdigest()
+    )
 
 
 def test_robotwin_runtime_lock_records_exact_deferred_boundaries() -> None:
@@ -155,9 +157,7 @@ def test_robotwin_runtime_lock_records_exact_deferred_boundaries() -> None:
     assert curobo["use_restriction"] == "noncommercial-research-or-evaluation"
     assert {item["revision"] for item in lock["assets"]} == {ASSET_REVISION}
     assert all(item["sha256"] and item["size_bytes"] > 0 for item in lock["assets"])
-    assert {item["provider_access"] for item in lock["assets"]} == {
-        "public-ungated"
-    }
+    assert {item["provider_access"] for item in lock["assets"]} == {"public-ungated"}
     assert {item["license"] for item in lock["assets"]} == {"MIT"}
     assert lock["packaging_shape"] == "whole-source-sdk-runtime-fetch"
     assert lock["operator_scope"] == {
@@ -185,7 +185,9 @@ def test_robotwin_runtime_lock_records_exact_deferred_boundaries() -> None:
     assert lock["access"]["customer_authorization"]["control"] == (
         "authenticated-customer-control-plane-consume-once"
     )
-    assert lock["access"]["customer_authorization"]["manager_or_npa_acceptance"] is False
+    assert (
+        lock["access"]["customer_authorization"]["manager_or_npa_acceptance"] is False
+    )
     assert lock["cache"]["tier"] == "node-local-ephemeral"
     assert lock["cache"]["owner_access"] == "single-customer-single-workload"
     assert lock["cache"]["durable_reuse"] == (
@@ -205,12 +207,8 @@ def test_robotwin_profile_requests_one_rtx_and_runs_authorized_bootstrap() -> No
 
     assert isinstance(resources, dict)
     assert resources["cloud"] == "kubernetes"
-    assert resources["accelerators"] == (
-        "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
-    )
-    pod_env = resources["kubernetes"]["pod_config"]["spec"]["containers"][0][
-        "env"
-    ]
+    assert resources["accelerators"] == ("RTXPRO-6000-BLACKWELL-SERVER-EDITION:1")
+    pod_env = resources["kubernetes"]["pod_config"]["spec"]["containers"][0]["env"]
     assert {item["name"] for item in pod_env} == {"POD_NAME", "POD_NAMESPACE"}
     assert {item["valueFrom"]["fieldRef"]["fieldPath"] for item in pod_env} == {
         "metadata.name",
@@ -224,7 +222,7 @@ def test_robotwin_profile_requests_one_rtx_and_runs_authorized_bootstrap() -> No
         "NPA_INTERNAL_BYOF_ROBOTWIN_IMAGE",
         "NPA_INTERNAL_BYOF_ROBOTWIN_RUNTIME_AUTH_V1",
     ):
-        assert f'${{{secret_name}:?}}' in run
+        assert f"${{{secret_name}:?}}" in run
     assert envs["NVIDIA_DRIVER_CAPABILITIES"] == "all"
     assert envs["VK_ICD_FILENAMES"] == "/usr/share/vulkan/icd.d/nvidia_icd.json"
     assert '/bin/bash -lc "${BYOF_SMOKE_COMMAND}"' in run
@@ -245,18 +243,21 @@ def test_robotwin_has_exactly_one_accelerator_request_across_both_layers() -> No
         [inner["accelerators"]] if "accelerators" in inner else []
     )
 
-    assert accelerator_requests == [
-        "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
-    ]
+    assert accelerator_requests == ["RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"]
     assert all("B200" not in request for request in accelerator_requests)
 
 
-def test_robotwin_live_gate_requires_context_and_authenticated_customer_boundary() -> None:
+def test_robotwin_live_gate_requires_context_and_authenticated_customer_boundary() -> (
+    None
+):
     live_test = LIVE_E2E.read_text(encoding="utf-8")
 
-    assert inspect.signature(
-        live_e2e.test_live_robotwin_build_push_run_and_artifacts
-    ).parameters == {}
+    assert (
+        inspect.signature(
+            live_e2e.test_live_robotwin_build_push_run_and_artifacts
+        ).parameters
+        == {}
+    )
     for required in (
         '"workflow"',
         '"submit"',
@@ -273,8 +274,8 @@ def test_robotwin_live_gate_requires_context_and_authenticated_customer_boundary
         '"--registry"',
         '"--project"',
         '"--config-path"',
-        'ROBOTWIN_IMAGE_SCANNER',
-        'str(BYOF_RUNNER)',
+        "ROBOTWIN_IMAGE_SCANNER",
+        "str(BYOF_RUNNER)",
     ):
         assert forbidden not in inspect.getsource(
             live_e2e.test_live_robotwin_build_push_run_and_artifacts
@@ -283,10 +284,7 @@ def test_robotwin_live_gate_requires_context_and_authenticated_customer_boundary
 
 
 def test_robotwin_live_gate_redacts_only_schema_valid_private_coordinates() -> None:
-    image = (
-        "registry.example/private/robotwin/npa-robotwin@sha256:"
-        + "a" * 64
-    )
+    image = "registry.example/private/robotwin/npa-robotwin@sha256:" + "a" * 64
     runtime = {
         "project": "private-project",
         "nebius_profile": "private-profile",
@@ -324,7 +322,10 @@ def test_robotwin_live_gate_refuses_missing_owner_context_before_work(
 def test_robotwin_readiness_hash_matches_workflow() -> None:
     readiness = json.loads(READINESS.read_text(encoding="utf-8"))
     assert readiness["schema_version"] == "workflow-readiness/v1"
-    assert readiness["workflow_sha256"] == hashlib.sha256(WORKFLOW.read_bytes()).hexdigest()
+    assert (
+        readiness["workflow_sha256"]
+        == hashlib.sha256(WORKFLOW.read_bytes()).hexdigest()
+    )
     assert set(readiness["planning"]) == {"validation", "task_fidelity"}
     assert set(readiness["prerequisites"]) == {
         "output_storage",

@@ -482,11 +482,19 @@ def test_robotwin_authorized_profile_is_environment_only(monkeypatch, tmp_path) 
     assert _run_authorized_robotwin(module, _robotwin_args(module)) == 0
 
 
+@pytest.mark.parametrize("allocated_outer", [False, True])
 def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
-    monkeypatch, capsys, tmp_path
+    monkeypatch, capsys, tmp_path, allocated_outer
 ) -> None:
     module = _load_module()
     payload = _install_robotwin_context(module, monkeypatch, tmp_path)
+    if allocated_outer:
+        monkeypatch.setenv("NPA_WORKFLOW_RUN_ID", "synthetic-outer-run")
+        monkeypatch.setenv("NPA_WORKFLOW_STATE", "synthetic-cpu-launcher")
+    monkeypatch.setattr(
+        module, "_run_worker",
+        lambda *_args, **_kwargs: pytest.fail("RoboTwin entered generic capability worker"),
+    )
     monkeypatch.setattr(
         module, "validate_repository_url", lambda *_args, **_kwargs: None
     )

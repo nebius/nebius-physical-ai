@@ -164,6 +164,11 @@ The outer run ID and lower-level worker run ID are separate provenance fields.
 Image builds and other host-orchestrated BYOF workloads must run from the
 operator entrypoint above, before workflow submission.
 
+RoboTwin is the explicit exception: its immutable workflow allocates a CPU-only
+outer launcher, not a capability worker. The validated internal bridge then
+requests exactly one STRICT RTX PRO 6000 workload. Generic worker markers do not
+replace that authorization or route RoboTwin into the prebuilt capability path.
+
 For a checked-in solution that needs manager resource authorization, set
 `config.runtime_context_env` only to its documented environment-variable name
 and pass the value through the workflow's secret environment channel. The

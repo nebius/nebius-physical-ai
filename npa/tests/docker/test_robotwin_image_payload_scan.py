@@ -452,7 +452,9 @@ def test_oci_layer_count_and_aggregate_quotas_are_enforced(
 
     uncompressed = tmp_path / "uncompressed"
     uncompressed.mkdir()
-    monkeypatch.setattr(scanner, "MAX_OCI_COMPRESSED_TOTAL_BYTES", sum(map(len, layers)))
+    monkeypatch.setattr(
+        scanner, "MAX_OCI_COMPRESSED_TOTAL_BYTES", sum(map(len, layers))
+    )
     monkeypatch.setattr(
         scanner, "MAX_OCI_UNCOMPRESSED_TOTAL_BYTES", sum(map(len, layers)) - 1
     )

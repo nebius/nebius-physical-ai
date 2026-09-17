@@ -1,4 +1,4 @@
-"""Static contract for the unbuilt RoboTwin public bootstrap recipe."""
+"""Packaging contracts and hermetic archive-verifier behavior for RoboTwin."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 
 import pytest
@@ -101,6 +102,185 @@ def test_apt_archive_contract_rejects_missing_or_late_guards(guard: str) -> None
         _assert_archive_install_contract(text.replace(guard, "", 1))
     with pytest.raises(AssertionError):
         _assert_archive_install_contract(_move_guard_after_install(text, guard))
+
+
+def _archive_verification_shell() -> str:
+    dockerfile = (IMAGE_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    _assert_archive_install_contract(dockerfile)
+    start = dockerfile.index('packages="$(awk')
+    end = dockerfile.index(ARCHIVE_INSTALL) + len(ARCHIVE_INSTALL)
+    shell = dockerfile[start:end].replace("\\\n", "")
+    shell = shell.replace("/opt/npa/robotwin/apt-packages.lock", '"${FIXTURE_LOCK}"')
+    # Redirect only locations; execute the committed checks and install boundary.
+    for name in ("archive_dir", "expected_archives", "verified_archives"):
+        shell, count = re.subn(
+            rf"\b{name}=[^;]+;", f'{name}="${{{name.upper()}}}";', shell
+        )
+        assert count == 1
+    return "set -eux;\n" + shell
+
+
+def _inert_archive_set(source: Path) -> list[list[str]]:
+    source.mkdir()
+    rows = []
+    for index in range(75):
+        name = f"fixture-package-{index:02d}"
+        content = f"Package: {name}\nVersion: 1.0\nArchitecture: amd64\n".encode()
+        (source / f"{name}.deb").write_bytes(content)
+        rows.append(
+            [
+                "binary",
+                name,
+                "1.0",
+                "amd64",
+                hashlib.sha256(content).hexdigest(),
+                str(len(content)),
+            ]
+        )
+    return rows
+
+
+def _corrupt_archive_fixture(source: Path, rows: list[list[str]], case: str) -> None:
+    first = source / f"{rows[0][1]}.deb"
+    second = source / f"{rows[1][1]}.deb"
+    if case == "hash":
+        rows[0][4] = "0" * 64
+    elif case == "size":
+        rows[0][5] = str(int(rows[0][5]) + 1)
+    elif case in {"package", "version", "architecture"}:
+        original, replacement = {
+            "package": (rows[0][1], "unknown-package"),
+            "version": ("1.0", "2.0"),
+            "architecture": ("amd64", "arm64"),
+        }[case]
+        data = first.read_text().replace(original, replacement).encode()
+        first.write_bytes(data)
+        rows[0][4:6] = [hashlib.sha256(data).hexdigest(), str(len(data))]
+    elif case == "duplicate-lock":
+        rows[1] = rows[0].copy()
+    elif case == "duplicate-archive":
+        second.write_bytes(first.read_bytes())
+    elif case == "missing":
+        second.unlink()
+    elif case == "extra":
+        (source / "extra.deb").write_bytes(first.read_bytes())
+    elif case == "unexpected-file":
+        (source / "unexpected.txt").write_text("inert fixture")
+    else:
+        raise AssertionError(case)
+
+
+def _archive_command_stubs(directory: Path) -> None:
+    directory.mkdir()
+    scripts = {
+        "apt-get": (
+            '#!/bin/sh\nset -eu\ncase "$1" in\n'
+            'download) printf download > "$DOWNLOAD_MARKER"; cp "$FIXTURE_SOURCE/"* . ;;\n'
+            'install) printf "%s\\n" "$@" > "$INSTALL_MARKER" ;;\n'
+            "*) exit 99 ;;\nesac\n"
+        ),
+        "dpkg-deb": (
+            '#!/bin/sh\nset -eu\ntest "$1" = -f\n'
+            "awk -F ': ' -v field=\"$3\" '$1 == field {print $2}' \"$2\"\n"
+        ),
+    }
+    for name, script in scripts.items():
+        target = directory / name
+        target.write_text(script)
+        target.chmod(0o700)
+
+
+def _run_archive_verifier(
+    tmp_path: Path, case: str
+) -> subprocess.CompletedProcess[str]:
+    source = tmp_path / "source"
+    rows = _inert_archive_set(source)
+    if case != "valid":
+        _corrupt_archive_fixture(source, rows, case)
+    lock = tmp_path / "lock.tsv"
+    lock.write_text("".join("\t".join(row) + "\n" for row in rows))
+    commands = tmp_path / "commands"
+    _archive_command_stubs(commands)
+    environment = {
+        "PATH": f"{commands}:/usr/bin:/bin",
+        "LC_ALL": "C",
+        "FIXTURE_SOURCE": str(source),
+        "FIXTURE_LOCK": str(lock),
+        "ARCHIVE_DIR": str(tmp_path / "archives"),
+        "EXPECTED_ARCHIVES": str(tmp_path / "expected.tsv"),
+        "VERIFIED_ARCHIVES": str(tmp_path / "verified.tsv"),
+        "DOWNLOAD_MARKER": str(tmp_path / "downloaded"),
+        "INSTALL_MARKER": str(tmp_path / "installed"),
+    }
+    return subprocess.run(
+        ["/bin/sh", "-c", _archive_verification_shell()],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_real_archive_verifier_accepts_complete_locked_fixture_before_install(
+    tmp_path: Path,
+) -> None:
+    result = _run_archive_verifier(tmp_path, "valid")
+
+    assert result.returncode == 0, result.stderr
+    install_arguments = (tmp_path / "installed").read_text().splitlines()
+    assert "--no-download" in install_arguments
+    assert (
+        len([argument for argument in install_arguments if argument.endswith(".deb")])
+        == 75
+    )
+    assert (tmp_path / "verified.tsv").read_bytes() == (
+        tmp_path / "expected.tsv"
+    ).read_bytes()
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "hash",
+        "size",
+        "package",
+        "version",
+        "architecture",
+        "duplicate-lock",
+        "duplicate-archive",
+        "missing",
+        "extra",
+        "unexpected-file",
+    ],
+)
+def test_real_archive_verifier_rejects_bad_inputs_before_install(
+    tmp_path: Path, case: str
+) -> None:
+    result = _run_archive_verifier(tmp_path, case)
+
+    assert result.returncode != 0
+    assert not (tmp_path / "installed").exists()
+    assert (tmp_path / "downloaded").exists() is (case != "duplicate-lock")
+    if case in {"duplicate-lock", "missing", "extra"}:
+        count = 76 if case == "extra" else 74
+        assert result.stderr.rstrip().endswith(f"test {count} = 75")
+    elif case == "unexpected-file":
+        assert result.stderr.rstrip().endswith("/archives/unexpected.txt")
+    elif case == "duplicate-archive":
+        # Every archive passes its own hash/size/identity check; set equality must fail.
+        assert len((tmp_path / "verified.tsv").read_text().splitlines()) == 75
+        assert "cmp " in result.stderr
+    elif case in {"hash", "size", "package", "version", "architecture"}:
+        expected_boundary = {
+            "hash": "sha256sum ",
+            "size": "stat -c ",
+            "package": "locked_identity_count=0",
+            "version": "locked_identity_count=0",
+            "architecture": "locked_identity_count=0",
+        }[case]
+        assert expected_boundary in result.stderr
+        assert not (tmp_path / "verified.tsv").read_text()
 
 
 def test_build_script_passes_the_dockerfile_source_sha_argument() -> None:

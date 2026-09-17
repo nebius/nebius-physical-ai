@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import textwrap
 
 import pytest
 from typer.testing import CliRunner
@@ -106,7 +107,17 @@ def test_skypilot_path_can_come_from_flag_or_env(monkeypatch: pytest.MonkeyPatch
     assert env_result.output.strip() == str((env_venv / "bin" / "sky").resolve())
 
 
-def test_skypilot_bootstrap_reports_missing_python(tmp_path: Path) -> None:
+def _assert_missing_python_diagnostic(exit_code: int, output: str) -> None:
+    normalized = " ".join(output.split())
+    assert exit_code == 1
+    assert "Unable to create SkyPilot venv" in normalized
+    assert "install Python with venv support" in normalized
+
+
+@pytest.mark.parametrize("width", [40, 100])
+def test_skypilot_bootstrap_reports_missing_python(
+    tmp_path: Path, width: int
+) -> None:
     missing_python = tmp_path / "missing-python"
 
     result = runner.invoke(
@@ -119,11 +130,34 @@ def test_skypilot_bootstrap_reports_missing_python(tmp_path: Path) -> None:
             "--python",
             str(missing_python),
         ],
+        env={"COLUMNS": str(width)},
+        terminal_width=width,
     )
 
-    assert result.exit_code == 1
-    assert "Unable to create SkyPilot venv" in result.output
-    assert "install Python with venv support" in result.output
+    _assert_missing_python_diagnostic(result.exit_code, result.output)
+
+
+@pytest.mark.parametrize("width", [40, 100])
+def test_missing_python_diagnostic_accepts_only_whitespace_wrapping(width: int) -> None:
+    output = textwrap.fill(
+        "Unable to create SkyPilot venv: install Python with venv support", width
+    )
+    _assert_missing_python_diagnostic(1, output)
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "output"),
+    [
+        (0, "Unable to create SkyPilot venv: install Python with venv support"),
+        (1, "install Python with venv support"),
+        (1, "Unable to create SkyPilot venv"),
+    ],
+)
+def test_missing_python_diagnostic_rejects_incomplete_contract(
+    exit_code: int, output: str
+) -> None:
+    with pytest.raises(AssertionError):
+        _assert_missing_python_diagnostic(exit_code, output)
 
 
 def test_skypilot_bootstrap_reports_network_failure_from_pip(

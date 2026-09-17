@@ -1243,7 +1243,9 @@ def _run_byof(
                 f"registered solution {postprocess_key!r} cannot use --skip-run "
                 "because verified postprocessing is mandatory"
             )
-        if in_workflow_worker():
+        # RoboTwin's authenticated CPU outer task launches its one reserved RTX
+        # workload; it is not the generic already-allocated capability worker.
+        if authorization is None and in_workflow_worker():
             return _run_worker(
                 args, summary, image=image, base_profile=base_profile,
                 postprocess_key=postprocess_key,

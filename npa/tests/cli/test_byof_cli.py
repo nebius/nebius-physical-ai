@@ -436,10 +436,12 @@ def test_robotwin_worker_transport_failure_detaches_private_exception_graph(
 @pytest.mark.parametrize(
     "failure_boundary", ["materialize_transport", "load_runtime_authorization"]
 )
+@pytest.mark.parametrize("terminal_width", [40, 100, 200])
 def test_robotwin_worker_transport_failure_keeps_private_details_out_of_cli(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     failure_boundary: str,
+    terminal_width: int,
 ) -> None:
     argv, transport = _robotwin_transport_fixture(tmp_path)
     private_canary = "owner-only-worker-cli-canary"
@@ -457,19 +459,30 @@ def test_robotwin_worker_transport_failure_keeps_private_details_out_of_cli(
     monkeypatch.setenv(TRANSPORT_CONTEXT_ENV, transport)
     monkeypatch.setattr(robotwin_preflight, failure_boundary, fail_privately)
 
-    result = runner.invoke(app, ["workbench", "byof", "run", *argv])
+    monkeypatch.setenv("COLUMNS", str(terminal_width))
+    result = runner.invoke(
+        app, ["workbench", "byof", "run", *argv], terminal_width=terminal_width
+    )
 
-    assert result.exit_code != 0
-    assert "Phase A worker bridge is disabled" in result.output
+    # Rich wraps prose inside a bordered error panel; retain the whole message
+    # contract without depending on which words share a rendered line.
+    diagnostic = " ".join(result.output.replace("│", " ").split())
+    compact_diagnostic = "".join(diagnostic.split())
+    assert result.exit_code == 2
+    assert "Phase A worker bridge is disabled" in diagnostic
     assert private_canary not in result.output
     assert private_digest not in result.output
+    assert private_canary not in compact_diagnostic
+    assert private_digest not in compact_diagnostic
     assert os.environ[TRANSPORT_CONTEXT_ENV] == transport
     assert PUBLIC_CONTEXT_ENV not in os.environ
 
 
+@pytest.mark.parametrize("terminal_width", [40, 100, 200])
 def test_robotwin_caller_supplied_transport_cannot_activate_internal_runner(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    terminal_width: int,
 ) -> None:
     real_runner = byof_cli._load_runner()
     argv, transport = _robotwin_transport_fixture(tmp_path)
@@ -492,10 +505,14 @@ def test_robotwin_caller_supplied_transport_cannot_activate_internal_runner(
         ),
     )
 
-    result = runner.invoke(app, ["workbench", "byof", "run", *argv])
+    monkeypatch.setenv("COLUMNS", str(terminal_width))
+    result = runner.invoke(
+        app, ["workbench", "byof", "run", *argv], terminal_width=terminal_width
+    )
 
     assert result.exit_code == 2
-    assert "Phase A worker bridge is disabled" in result.output
+    diagnostic = " ".join(result.output.replace("│", " ").split())
+    assert "Phase A worker bridge is disabled" in diagnostic
     assert observed == {}
 
 
