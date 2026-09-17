@@ -47,7 +47,7 @@ logger = antioch.Logger(TELEMETRY_ROOT)
 # at an atomically replaced, authenticated client bundle.  Keep it independent
 # of TMPDIR: Isaac Kit requires its own temporary files below the portable root,
 # while Antioch installs the authenticated relay handoff at this fixed location.
-CLIENT_ROOT = Path("/tmp/npa-live-client-current")
+CLIENT_ROOT = Path("/") / "tmp" / "npa-live-client-current"
 ACTION_SHAPE = (15, 8)
 CONTROL_HZ = 15.0
 CAMERA_SENSOR_TICK_RATE_HZ = CONTROL_HZ

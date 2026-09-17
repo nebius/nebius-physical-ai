@@ -89,7 +89,7 @@ def test_live_scenario_is_real_bounded_and_fail_closed() -> None:
         "isinstance(exc, ActionValidationError)",
         "next_attempt = now + 1.0 / CONTROL_HZ",
         "ssl.create_default_context",
-        'CLIENT_ROOT = Path("/tmp/npa-live-client-current")',
+        'CLIENT_ROOT = Path("/") / "tmp" / "npa-live-client-current"',
         'return "wss://127.0.0.1:8444", token, context',
         '"X-NPA-Relay-Role": "simulation"',
         'TELEMETRY_ROOT = "openpi-live"',
