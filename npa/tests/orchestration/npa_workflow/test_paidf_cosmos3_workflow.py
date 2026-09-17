@@ -101,6 +101,49 @@ def test_invalid_appearance_profile_override_fails_during_planning():
     assert "appearance profile" in result.output
 
 
+def test_source_caption_instruction_uses_task_context(tmp_path):
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    document = _doc()
+    document["config"]["augment_subject"] = "two grippers inserting a battery"
+    path = tmp_path / "workflow.yaml"
+    path.write_text(yaml.safe_dump(document))
+    plan = build_plan(load_spec(path), run_id="caption-context",
+                      assume_decision="promote_checkpoint")
+    stage = next(step for step in plan.steps if step.state == "annotate-original")
+    instruction = stage.argv[stage.argv.index("--instruction") + 1]
+    assert "two grippers inserting a battery" in instruction
+    assert "Do not infer motion or task completion" in instruction
+    assert "{{" not in instruction
+
+
+def test_existing_caption_workflow_retains_default_instruction():
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    spec = load_spec(ROOT / "workflows/testing/token-factory-caption.yaml")
+    plan = build_plan(spec, run_id="legacy-caption")
+    stage = next(step for step in plan.steps
+                 if step.tool_ref == "workbench.token_factory.caption")
+    assert stage.argv[stage.argv.index("--instruction") + 1] == ""
+
+
+def test_custom_caption_instruction_is_forwarded_literally(tmp_path):
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    document = _doc()
+    instruction = 'Describe the "left wrist" view; do not infer hidden contacts.'
+    document["config"]["caption_instruction"] = instruction
+    path = tmp_path / "workflow.yaml"
+    path.write_text(yaml.safe_dump(document))
+    plan = build_plan(load_spec(path), run_id="custom-caption",
+                      assume_decision="promote_checkpoint")
+    stage = next(step for step in plan.steps if step.state == "annotate-original")
+    assert stage.argv[stage.argv.index("--instruction") + 1] == instruction
+
+
 def test_paidf_cosmos3_schema_and_real_component_contract() -> None:
     doc = _doc()
     assert doc["apiVersion"] == "npa.workflow/v0.0.1"

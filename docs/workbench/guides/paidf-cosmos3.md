@@ -146,7 +146,9 @@ Supply a JSON array with `lighting`, `background`, `color_grade`, and
 `surface_finish` in every profile to select plausible edits for the chosen
 camera and task. The manifest retains those profiles and evaluator choices.
 Source captions sampled across the episode are separated from the requested
-appearance edit in the effective prompt. See the
+appearance edit in the effective prompt. `caption_instruction` supplies task
+context from `augment_subject` and asks for uncertainty when features are unclear;
+override it for the selected camera and inspect the resulting captions. See the
 [realistic manipulation guide](paidf-realistic-augmentation.md) for battery
 insertion, controlled sampling experiments and review criteria.
 

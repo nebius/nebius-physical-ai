@@ -2182,6 +2182,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     "workbench.token_factory.caption": ToolEntry(
         name="workbench.token_factory.caption",
         description="Caption images with Nebius Token Factory (zero-GPU).",
+        config_defaults={"caption_instruction": ""},
         argv_template=[
             "npa",
             "workbench",
@@ -2193,6 +2194,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.captions_uri}}",
             "--model",
             "{{config.caption_model}}",
+            "--instruction",
+            "{{config.caption_instruction}}",
             "--max-images",
             "{{config.max_images}}",
             "--max-tokens",

@@ -46,7 +46,7 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.vlm_eval.judge_against_plan` | `npa workbench vlm-eval run --task-from` | `config.rollouts_uri`, `config.plan_uri` | `<scores_uri>/vlm_eval_stub.json` | no |
 | `workbench.vlm_eval.loop` | `npa workbench vlm-eval loop` | `config.rollouts_uri` | `config.scores_uri` | no |
 | `workbench.token_factory.reason` | `npa workbench token-factory reason` | `config.scene_uri` | `config.plan_uri` | no |
-| `workbench.token_factory.caption` | `npa workbench token-factory caption` | `config.images_uri` | `config.captions_uri` | no |
+| `workbench.token_factory.caption` | `npa workbench token-factory caption` | `config.images_uri`, optional `config.caption_instruction` (empty keeps the tool default) | `config.captions_uri` | no |
 | `workbench.token_factory.generate` | `npa workbench token-factory generate` | `config.prompts_uri` | `config.generations_uri` | no |
 | `workbench.token_factory.batch_generate` | `npa workbench token-factory batch-generate` | `config.prompts_uri`, `config.batch_model`, `config.completion_window`, `config.batch_timeout_s` | `config.generations_uri` | no |
 | `workbench.cosmos2.transfer` | `npa workbench cosmos2 transfer` | `config.trigger_uri` | `config.augment_uri` | no |

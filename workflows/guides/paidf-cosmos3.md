@@ -1005,6 +1005,11 @@ profiles. The config manifest records the exact profiles and evaluator options.
 Keep the same overrides in plan and submit, and reserve a fresh run ID for each
 experiment. Use R7 for owned cleanup after each run.
 
+`caption_instruction` supplies `augment_subject` as context for source captioning
+while requiring uncertainty and forbidding unsupported claims of motion or task
+completion from a still frame. Override it for camera-specific terminology and
+review the captions; task context does not establish what an image actually shows.
+
 ### R4. Monitor and recover
 
 In another terminal, restore the same project, run ID, and other R1 variables,
@@ -1129,6 +1134,7 @@ Use a fresh run ID after changing inputs or settings.
 | `attribute_threshold` | `0.25` | Minimum fraction of requested appearance attributes correctly recognized per variant: at least 1 of the default 4 attributes. Every question must have a valid answer. |
 | `alignment_mode` | `required` | Decode and verify matching source/output timelines and generation hashes before quality scoring. |
 | `caption_model` | `MiniMaxAI/MiniMax-M3` | Hosted captioning model and evaluator visual-answer model; R1 selects an available model. |
+| `caption_instruction` | Task-aware factual description | Source captioning instructions; resolves `augment_subject` as context and asks for uncertainty about unclear features. |
 | `attribute_sample_policy` | `ranking` | Evaluator attribute-observation policy. |
 | `temporal_consistency_mode`, `temporal_consistency_threshold` | `advisory`, `0.8` | Source-relative temporal diagnostic. Related `temporal_*` keys configure regions, noise floor, and blur. |
 | `appearance_fidelity_mode`, `appearance_fidelity_threshold` | `advisory`, `0.8` | Protected-appearance diagnostic. Related `appearance_*` keys configure regions and tolerances. |

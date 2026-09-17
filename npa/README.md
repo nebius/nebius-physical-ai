@@ -44,7 +44,10 @@ saved pre-submission UTC timestamp. Its test settings are scoped to the audit
 shell and do not submit work. For task-specific augmentation, set the optional
 `appearance_profiles_json` workflow config to a JSON array of coherent lighting,
 background, color-grade and surface-finish profiles; its empty default retains
-the starter sampler. The [realistic manipulation guide](../docs/workbench/guides/paidf-realistic-augmentation.md)
+the starter sampler. Cosmos3's `caption_instruction` supplies `augment_subject`
+as context while requiring uncertainty for unclear features; override it for
+task or camera terminology. Older caption workflows retain their default
+instruction. The [realistic manipulation guide](../docs/workbench/guides/paidf-realistic-augmentation.md)
 includes the battery dataset, configuration examples and quality review.
 
 Extra tools required by specific commands:

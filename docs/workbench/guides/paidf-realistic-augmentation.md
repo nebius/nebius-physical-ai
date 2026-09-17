@@ -38,6 +38,15 @@ those observations. The source video remains authoritative for motion and
 geometry. These instructions improve the specification; they do not enforce
 physical correctness in the model output.
 
+Source captioning receives `augment_subject` as task context through
+`caption_instruction`. Its default asks the captioner to distinguish visible
+evidence from uncertain identities and avoid claiming motion or completion from
+a still frame. Override `caption_instruction` for camera-specific terminology;
+inspect the captions before treating them as reliable observations. In the
+initial battery run, generic captions confused white gripper parts with lights
+and missed the insertion task. The shared caption tool keeps its existing
+instruction when an older workflow omits this optional configuration.
+
 ## Battery insertion example
 
 The [pinned `lerobot/aloha_static_battery` dataset](https://huggingface.co/datasets/lerobot/aloha_static_battery/tree/06dc3da83c4fd3d1889b00f1dfd3780da8421f64)
@@ -151,6 +160,43 @@ The outputs remain augmented videos, captions, curation artifacts and Rerun
 recordings. They are not a newly aligned LeRobot action dataset. Training use
 requires separate action/timestamp alignment, multi-view checks where applicable,
 and task validation.
+
+## Make a synchronized comparison
+
+Download `input/source.mp4` and the selected variant's `augmented_video.mp4`
+from the same run. Use the prepared source: the shared dataset MP4 contains
+other episodes and runs at a different frame rate. Preserve the original
+downloads and record their hashes alongside the variant metadata and verdict.
+
+From the repository root, set the two local paths and verify the complete
+decoded timelines before rendering:
+
+```bash
+ORIGINAL='<downloaded input/source.mp4>'
+AUGMENTED='<downloaded cosmos_augmented/variant-0000/augmented_video.mp4>'
+npa/.venv/bin/python - "$ORIGINAL" "$AUGMENTED" <<'PY'
+import json
+from pathlib import Path
+import sys
+from npa.workflows.paidf_cosmos3_media import verify_pair
+
+print(json.dumps(verify_pair(Path(sys.argv[1]), Path(sys.argv[2])), indent=2))
+PY
+```
+
+Continue only if verification succeeds. Put the original on the left and the
+model output on the right, retaining every frame:
+
+```bash
+ffmpeg -i "$ORIGINAL" -i "$AUGMENTED" \
+  -filter_complex '[0:v][1:v]hstack=inputs=2[comparison]' \
+  -map '[comparison]' -an -c:v libx264 -crf 18 -pix_fmt yuv420p \
+  -movflags +faststart original-vs-augmented.mp4
+```
+
+Do not trim to the shorter clip, retime either video, or blend the source into
+the generated frames. A rejected candidate is still useful for comparison;
+label its quality verdict separately from successful decoding and alignment.
 
 ## Validation status
 
