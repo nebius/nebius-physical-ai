@@ -15,7 +15,7 @@ import httpx
 import pytest
 import uvicorn
 
-from npa.workbench.alpamayo2_super import service
+from npa.workbench.alpamayo2_super import healthcheck, service
 from npa.workbench.alpamayo2_super.runtime import (
     DEFAULT_DATASET_REVISION,
     DEFAULT_MODEL_ID,
@@ -28,6 +28,24 @@ from npa.workbench.alpamayo2_super.runtime import (
 
 TOKEN = "test-inference-credential"
 HEADERS = {"Authorization": "Bearer " + TOKEN}
+
+
+class _HealthConnection:
+    def __init__(self, host, port, *, timeout):
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+        self.request_arguments = None
+        self.closed = False
+
+    def request(self, method, path, *, headers):
+        self.request_arguments = (method, path, headers)
+
+    def getresponse(self):
+        return type("HealthResponse", (), {"status": 200})()
+
+    def close(self):
+        self.closed = True
 
 
 @pytest.fixture
@@ -109,6 +127,39 @@ def test_missing_admission_credential_fails_startup(monkeypatch):
     with pytest.raises(ValueError, match="TOKEN is required"):
         with TestClient(service.create_app()):
             pass
+
+
+def test_container_healthcheck_uses_the_runtime_admission_credential(monkeypatch):
+    connections = []
+
+    def open_connection(*args, **kwargs):
+        connection = _HealthConnection(*args, **kwargs)
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setenv("NPA_ALPAMAYO2_SUPER_TOKEN", TOKEN)
+    monkeypatch.setattr(healthcheck, "HTTPConnection", open_connection)
+
+    assert healthcheck.main() == 0
+    assert len(connections) == 1
+    assert connections[0].host == "127.0.0.1"
+    assert connections[0].port == 8080
+    assert connections[0].timeout == 3
+    assert connections[0].request_arguments == (
+        "GET", "/health", {"Authorization": "Bearer " + TOKEN}
+    )
+    assert connections[0].closed is True
+
+
+def test_container_healthcheck_fails_closed_without_a_credential(monkeypatch):
+    monkeypatch.delenv("NPA_ALPAMAYO2_SUPER_TOKEN", raising=False)
+    monkeypatch.setattr(
+        healthcheck,
+        "HTTPConnection",
+        lambda *_args, **_kwargs: pytest.fail("health request must not be sent"),
+    )
+
+    assert healthcheck.main() == 1
 
 
 def test_upstream_errors_do_not_reflect_sensitive_diagnostics(configured, monkeypatch):
