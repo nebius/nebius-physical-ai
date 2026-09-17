@@ -909,6 +909,12 @@ def ensure_isolated_api(
         if record is None or environment.get(_ENDPOINT) != _endpoint(record):
             raise IsolatedApiError("isolated SkyPilot API endpoint intent is missing or inconsistent")
         interpreter = str(Path(sky_executable).absolute().parent / "python")
+        # A stopped receipt deliberately retains its executable so lifecycle
+        # commands can recover the same persistent controller endpoint.  It
+        # must not, however, become an approval to replace that controller
+        # with an arbitrary SkyPilot installation.
+        if record.get("state") == "stopped" and record.get("interpreter") != interpreter:
+            raise IsolatedApiError("isolated SkyPilot API recovery requires the original recorded interpreter")
         config_source = Path(environment.get("SKYPILOT_GLOBAL_CONFIG") or "")
         if not config_source.is_file():
             raise IsolatedApiError("isolated SkyPilot API requires the verified runtime configuration")
