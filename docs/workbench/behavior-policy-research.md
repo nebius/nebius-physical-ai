@@ -86,6 +86,12 @@ it, verify padding exclusion and preserve an informative wrist camera even
 when input dictionary ordering changes. Full-model training remains a separate
 validation step.
 
+An abstract backward-pass check also reaches both losses through the pinned
+RLC model: 3,405,453,735 total parameters and 477,001,399 trainable parameters
+at batch size 16. That check uses real demonstration RGB/actions with synthetic
+evidence weights to validate graph compatibility. It allocates no trained
+checkpoint and does not establish finite numerical gradients in the full model.
+
 Privileged visibility labels are training-only supervision. Serving keeps the
 existing RGB/proprioception input filter and requires no segmentation or
 success-state input. The [challenge rules](https://behavior.stanford.edu/challenge/evaluation.html)
@@ -109,6 +115,12 @@ it means a direct frame-index join is unverified. Do not stretch timestamps,
 silently truncate labels, or train a semantic transition predictor on that join.
 Replay-derived camera evidence must instead pass frame count, source-action and
 observation alignment checks.
+
+Direct robot-camera segmentation replay encountered the upstream failure in
+[BEHAVIOR issue #2312](https://github.com/StanfordVL/BEHAVIOR-1K/issues/2312).
+A training-only viewer-camera replay is being checked against the recorded
+camera poses, intrinsics and released observations. Its labels must pass those
+checks before use; no EGR checkpoint has been trained or evaluated.
 
 ## Evidence required before promoting a candidate
 
