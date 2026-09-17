@@ -176,7 +176,8 @@ def build_public_manifests(config: ClusterLiveConfig) -> dict[str, dict[str, Any
     private_root = "/run/npa-antioch-private"
     state_root = "/var/run/npa-antioch"
     copy_private = (
-        "install -d -m 0700 /private/antioch-config /private/live-bundle; "
+        "install -d -m 0700 /private/antioch-config /private/home "
+        "/private/live-bundle; "
         # Kubernetes Secret volumes are symlink farms backed by read-only
         # projections. Dereference their regular files into the writable tmpfs;
         # preserving those symlinks makes the later ownership change fail.
@@ -252,6 +253,10 @@ def build_public_manifests(config: ClusterLiveConfig) -> dict[str, dict[str, Any
             f"{state_root}/stop",
         ],
         "env": [
+            # Antioch 0.4.236 persists session-local state below the user's
+            # home. Keep it in the controller-only writable tmpfs instead of
+            # the image's read-only home directory.
+            {"name": "HOME", "value": f"{private_root}/home"},
             {"name": "ANTIOCH_CONFIG_DIR", "value": f"{private_root}/antioch-config"},
             {
                 "name": "ANTIOCH_ENV",

@@ -240,6 +240,7 @@ def test_public_manifests_keep_vm_out_and_policy_cluster_local(tmp_path: Path) -
     assert len(init_mount_names) == len(set(init_mount_names))
     assert "tar --extract --file /sources/config/config.tar" in init_command
     assert "cp -L /sources/bundle/*" in init_command
+    assert "install -d -m 0700 /private/antioch-config /private/home" in init_command
     assert init["securityContext"]["capabilities"] == {
         "drop": ["ALL"],
         "add": ["CHOWN"],
@@ -255,6 +256,7 @@ def test_public_manifests_keep_vm_out_and_policy_cluster_local(tmp_path: Path) -
     controller, relay = pod["containers"]
     controller_env = {item["name"]: item["value"] for item in controller["env"]}
     assert controller_env["ANTIOCH_ENV"] == config.antioch_deployment_profile
+    assert controller_env["HOME"] == "/run/npa-antioch-private/home"
     controller_mounts = {mount["name"]: mount for mount in controller["volumeMounts"]}
     relay_mounts = {mount["name"]: mount for mount in relay["volumeMounts"]}
     assert controller_mounts["private"]["readOnly"] is False
