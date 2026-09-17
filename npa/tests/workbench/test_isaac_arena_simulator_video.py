@@ -419,11 +419,15 @@ def test_capture_setup_preserves_existing_metric_configuration(
         "/rtx-transient/dldenoiser/enabled": True,
         "/rtx-transient/dlssg/enabled": False,
         "/rtx/ecoMode/enabled": False,
+        "/rtx/directLighting/sampledLighting/samplesPerPixel": 32,
+        "/rtx/indirectDiffuse/fetchSampleCount": 32,
+        "/rtx/reflections/sampledLighting/samplesPerPixel": 16,
         "/rtx/sceneDb/ambientLightIntensity": 0.0,
     }
     assert cfg.sim.render.antialiasing_mode == "TAA"
     assert cfg.sim.render.dlss_mode == 2
     assert cfg.sim.render.enable_dl_denoiser is True
+    assert cfg.sim.render.samples_per_pixel == 32
     assert (
         cfg.recorders.npa_video.class_type.__mro__[1]
         is simulator_video._VideoCaptureMethods
@@ -649,6 +653,30 @@ def test_capture_refuses_wrong_startup_renderer_registration(
     ):
         env.reset()
     assert env.renders == 0
+
+
+@pytest.mark.parametrize("setting", [
+    "/rtx/directLighting/sampledLighting/samplesPerPixel",
+    "/rtx/indirectDiffuse/fetchSampleCount",
+    "/rtx/reflections/sampledLighting/samplesPerPixel",
+])
+def test_capture_refuses_lighting_sample_reduction_after_render(
+    simulator_modules, tmp_path: Path, setting: str
+) -> None:
+    env = _AutoResetEnvironment(tmp_path, simulator_modules)
+    native_render = env.video_recorder.render_rgb_array
+
+    def reduce_samples_during_render():
+        frame = native_render()
+        simulator_modules.settings.set(setting, 1)
+        return frame
+
+    env.video_recorder.render_rgb_array = reduce_samples_during_render
+    with pytest.raises(RuntimeError, match="required capture settings"):
+        env.reset()
+    assert env.renders == simulator_video._MINIMUM_SETTLING_RENDERS + 1
+    assert not (tmp_path / "simulator-initial.png").exists()
+    assert not (tmp_path / "simulator-video-evidence.json").exists()
 
 
 def test_capture_refuses_rt2_remap_triggered_by_render(

@@ -34,6 +34,12 @@ _CAPTURE_RENDER_SETTINGS = {
     "/rtx-transient/dldenoiser/enabled": True,
     "/rtx-transient/dlssg/enabled": False,
     "/rtx/ecoMode/enabled": False,
+    # Pin native lighting quality instead of inheriting the interactive
+    # renderer's low sample defaults. Temporal settling alone left severe
+    # grain in a completed episode and failed the unchanged motion gate.
+    "/rtx/directLighting/sampledLighting/samplesPerPixel": 32,
+    "/rtx/indirectDiffuse/fetchSampleCount": 32,
+    "/rtx/reflections/sampledLighting/samplesPerPixel": 16,
 }
 _RENDER_SETTINGS = {**_STARTUP_RENDER_SETTINGS, **_CAPTURE_RENDER_SETTINGS}
 _MINIMUM_SETTLING_RENDERS = 8
@@ -477,6 +483,9 @@ def configure_video_capture(env_cfg: Any) -> None:
     env_cfg.sim.render.antialiasing_mode = "TAA"
     env_cfg.sim.render.dlss_mode = 2
     env_cfg.sim.render.enable_dl_denoiser = True
+    env_cfg.sim.render.samples_per_pixel = _CAPTURE_RENDER_SETTINGS[
+        "/rtx/directLighting/sampledLighting/samplesPerPixel"
+    ]
     env_cfg.recorders.npa_video = RecorderTermCfg(class_type=_capture_recorder_type())
 
 

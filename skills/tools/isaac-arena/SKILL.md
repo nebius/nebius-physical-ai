@@ -88,12 +88,17 @@ fresh task/video validation and is not proof of successful reproduction.
 The RTX renderer must explicitly enable legacy RTX and disable RT2 plus
 interactive path tracing through AppLauncher Kit startup arguments, then
 reassert legacy RTX Real-Time plus supported TAA,
-the DL denoiser, disabled frame generation, and at least eight consecutive ready
-physics-frozen settling renders after the readiness baseline at the live capture
+the DL denoiser, native per-pixel sampling of 32 direct-light, 32 indirect-diffuse,
+and 16 reflection samples, disabled frame generation, and at least eight
+consecutive ready physics-frozen settling renders after the readiness baseline at the live capture
 boundary and verify
 exact Carb-setting readback before rendering and again,
 without another write, after the final accepted render. Treat a mismatch as a failed run; do not accept a
 default renderer or infer stability from the requested configuration alone.
+The explicit sample counts improve native rendering quality after a completed
+successful replay failed the existing progress-overlap gate. Keep that gate,
+physics binding, action order, resolution, and settling requirement unchanged;
+require fresh immutable-image qualification before claiming the correction works.
 Task-qualified evidence also requires the registered environment/policy pair,
 a sanitized policy-to-`env.step` action journal covering the full scored episode,
 finite nonzero varied actions, and zero synthetic padding. Replay must match the
