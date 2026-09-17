@@ -56,6 +56,12 @@ requires its separate prescribed instances and the full 1,000-case denominator.
 
 ## Developing a stronger policy
 
+The [recent-research candidate](behavior-policy-research.md) keeps the existing
+π0.5-derived backbone and adds training-only camera consistency helpers inspired
+by September 2026 research. It also records the failed adaptation run and the
+timestamp and annotation-alignment audits. Its rollout performance is unmeasured;
+the published RLC comparison below remains the measured result.
+
 `--policy-kind rlc` selects a development-only transfer of the published
 [RLC 2025 winning solution](https://github.com/IliaLarchenko/behavior-1k-solution).
 Its learned task/stage memory, rolling action inpainting, compression and
