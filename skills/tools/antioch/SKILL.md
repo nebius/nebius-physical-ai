@@ -56,10 +56,10 @@ endpoints, print identity/config/environment data, or inspect unrelated runs.
   `session status`, and `service ps` JSON. The one live scenario's `session_id`
   must equal the current project session and the simulator process/session must
   be ready. Fail closed on absent, mismatched, or ambiguous ownership.
-- A scenario dispatch or renewal may recreate the sim container. While the
+- A scenario dispatch or failure recovery may recreate the sim container. While the
   foreground run lives, verify every required bundle file through `service exec`
   and re-stage missing files with `service cp`; never bake them into the sim image.
-  Stage a full generation and atomically switch one symlink so a renewing bridge
+  Stage a full generation and atomically switch one symlink so a recovering bridge
   cannot observe a certificate/key or token generation mix.
 - Build an immutable revision with `project build`, start it with `session new
   --revision`, and do not force-replace unrelated active work. On a lost session,
@@ -77,8 +77,10 @@ endpoints, print identity/config/environment data, or inspect unrelated runs.
 - Treat livestream state `ready` as published but awaiting an authenticated Mission
   Control viewer. Do not claim an actively viewed frame until a supported viewer
   connection advances the first render, and never inspect browser auth storage.
-- Describe renewal honestly: each boundary resets the simulated episode and briefly
-  interrupts the viewport; it does not create one infinitely lived simulator process.
+- For the OpenPI PoC, require a finite `completed/passed` record with named checks
+  for advancing nonblack exterior/wrist observations and finite `[15,8]` responses.
+  Retire compute after verifying that durable record; never use timeout/renewal as
+  the successful outcome.
 - A live policy loop must log current camera frames and decision counters from the
   executing scenario. Reject stale, malformed, non-finite, wrong-shaped, or unsafe
   actions and hold position while reconnecting. Do not claim hard real-time control.

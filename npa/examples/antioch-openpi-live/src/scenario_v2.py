@@ -49,6 +49,7 @@ logger = antioch.Logger(TELEMETRY_ROOT)
 # while Antioch installs the authenticated relay handoff at this fixed location.
 CLIENT_ROOT = Path("/") / "tmp" / "npa-live-client-current"
 ACTION_SHAPE = (15, 8)
+POC_REQUIRED_POLICY_ROUND_TRIPS = 2
 CONTROL_HZ = 15.0
 CAMERA_SENSOR_TICK_RATE_HZ = CONTROL_HZ
 PINNED_ANTIOCH_SDK_VERSION = "0.4.236"
@@ -1515,7 +1516,7 @@ def openpi_franka_mk8s_live_v2(
         "pick up the red cube", description="DROID task prompt"
     ),
 ) -> None:
-    """Continuously render, infer, validate and apply pi0.5 action chunks."""
+    """Record a finite camera-to-pi0.5 communication proof."""
 
     import numpy as np
     import rerun as rr
@@ -1632,6 +1633,12 @@ def openpi_franka_mk8s_live_v2(
     latencies_ms: list[float] = []
     luminance_means: list[float] = []
     luminance_variances: list[float] = []
+    exterior_luminance_means: list[float] = []
+    exterior_luminance_variances: list[float] = []
+    exterior_dynamic_ranges: list[float] = []
+    wrist_luminance_means: list[float] = []
+    wrist_luminance_variances: list[float] = []
+    wrist_dynamic_ranges: list[float] = []
     camera_rejections: Counter[str] = Counter()
     raw_gripper_range_mismatches = 0
     raw_joint_limit_mismatches = 0
@@ -1654,6 +1661,7 @@ def openpi_franka_mk8s_live_v2(
     current_wrist_dynamic_range = 0.0
     camera_pair_id = request_camera_pair_id = round_trip_camera_pair_id = 0
     render_sequence = request_render_sequence = round_trip_render_sequence = 0
+    first_accepted_render_sequence = 0
     last_accepted_render_sequence = 0
     current_camera_pair_difference = 0.0
     current_exterior_red_cube_pixels = 0
@@ -1677,6 +1685,7 @@ def openpi_franka_mk8s_live_v2(
     pickup_hold_started = None
     pickup_hold_seconds = 0.0
     pickup_success = False
+    communication_proof_complete = False
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="openpi-policy")
     camera_readiness = CameraReadinessMonitor()
     camera_policy_eligible = False
@@ -1762,6 +1771,9 @@ def openpi_franka_mk8s_live_v2(
                         f"joint_step_projections={joint_step_projections}",
                         flush=True,
                     )
+                    communication_proof_complete = (
+                        round_trips >= POC_REQUIRED_POLICY_ROUND_TRIPS
+                    )
                     print(
                         "NPA_OPENPI_METRICS "
                         f"elapsed_seconds={now - started:.3f} "
@@ -1790,6 +1802,8 @@ def openpi_franka_mk8s_live_v2(
                         f"camera_render_sequence={render_sequence} "
                         f"request_render_sequence={request_render_sequence} "
                         f"round_trip_render_sequence={round_trip_render_sequence} "
+                        f"first_accepted_render_sequence={first_accepted_render_sequence} "
+                        f"last_accepted_render_sequence={last_accepted_render_sequence} "
                         f"camera_pair_difference_current={current_camera_pair_difference:.3f} "
                         f"camera_exterior_red_cube_pixels_current={current_exterior_red_cube_pixels} "
                         f"camera_exterior_cube_in_frame_current={current_exterior_cube_in_frame} "
@@ -1842,6 +1856,16 @@ def openpi_franka_mk8s_live_v2(
                     pending_joint_positions = None
                     pending_started_at = 0.0
                     pending_stall_reported = False
+
+                if communication_proof_complete:
+                    print(
+                        "NPA_OPENPI_COMMUNICATION_PROOF_COMPLETE "
+                        f"round_trips={round_trips} "
+                        f"required_round_trips={POC_REQUIRED_POLICY_ROUND_TRIPS} "
+                        "action_shape=[15,8] finite=true",
+                        flush=True,
+                    )
+                    break
 
             if now >= next_camera_attempt:
                 next_camera_attempt = now + 1.0 / CONTROL_HZ
@@ -1982,7 +2006,17 @@ def openpi_franka_mk8s_live_v2(
                     current_luminance_mean_min = min(luminance_means[-2:])
                     current_luminance_variance_min = min(luminance_variances[-2:])
                     camera_pair_id += 1
+                    if not first_accepted_render_sequence:
+                        first_accepted_render_sequence = render_sequence
                     last_accepted_render_sequence = render_sequence
+                    exterior_luminance_means.append(pair.exterior.luminance_mean)
+                    exterior_luminance_variances.append(
+                        pair.exterior.luminance_variance
+                    )
+                    exterior_dynamic_ranges.append(pair.exterior.dynamic_range)
+                    wrist_luminance_means.append(pair.wrist.luminance_mean)
+                    wrist_luminance_variances.append(pair.wrist.luminance_variance)
+                    wrist_dynamic_ranges.append(pair.wrist.dynamic_range)
                     observation = _build_policy_observation(
                         exterior_rgb, wrist_rgb, joint_positions, prompt
                     )
@@ -2295,6 +2329,13 @@ def openpi_franka_mk8s_live_v2(
         run.add_result("observation_sequence", observation_sequence)
         run.add_result("policy_requests", requests)
         run.add_result("policy_round_trips", round_trips)
+        run.add_result("required_policy_round_trips", POC_REQUIRED_POLICY_ROUND_TRIPS)
+        run.add_result("communication_proof_complete", communication_proof_complete)
+        run.add_result("action_shape", list(ACTION_SHAPE))
+        run.add_result(
+            "action_values_finite",
+            communication_proof_complete and rejected_actions["non_finite"] == 0,
+        )
         run.add_result("safe_targets_applied", applied)
         run.add_result("raw_gripper_range_mismatches", raw_gripper_range_mismatches)
         run.add_result("raw_joint_limit_mismatches", raw_joint_limit_mismatches)
@@ -2313,6 +2354,8 @@ def openpi_franka_mk8s_live_v2(
         run.add_result("camera_render_sequence", render_sequence)
         run.add_result("request_render_sequence", request_render_sequence)
         run.add_result("round_trip_render_sequence", round_trip_render_sequence)
+        run.add_result("first_accepted_render_sequence", first_accepted_render_sequence)
+        run.add_result("last_accepted_render_sequence", last_accepted_render_sequence)
         run.add_result("camera_pair_difference_current", current_camera_pair_difference)
         run.add_result(
             "camera_exterior_red_cube_pixels_current",
@@ -2336,3 +2379,72 @@ def openpi_franka_mk8s_live_v2(
             run.add_result(
                 "camera_luminance_variance_min", float(min(luminance_variances))
             )
+        exterior_proof = bool(
+            len(exterior_luminance_means) >= POC_REQUIRED_POLICY_ROUND_TRIPS
+            and last_accepted_render_sequence > first_accepted_render_sequence > 0
+            and min(exterior_luminance_means) > MIN_CAMERA_LUMINANCE_MEAN
+            and min(exterior_luminance_variances) > MIN_CAMERA_LUMINANCE_VARIANCE
+        )
+        wrist_proof = bool(
+            len(wrist_luminance_means) >= POC_REQUIRED_POLICY_ROUND_TRIPS
+            and last_accepted_render_sequence > first_accepted_render_sequence > 0
+            and min(wrist_luminance_means) > MIN_CAMERA_LUMINANCE_MEAN
+            and min(wrist_luminance_variances) > MIN_CAMERA_LUMINANCE_VARIANCE
+        )
+        response_proof = bool(
+            communication_proof_complete
+            and round_trips >= POC_REQUIRED_POLICY_ROUND_TRIPS
+            and rejected_actions["non_finite"] == 0
+        )
+        run.add_result("exterior_observation_count", len(exterior_luminance_means))
+        run.add_result("wrist_observation_count", len(wrist_luminance_means))
+        if exterior_luminance_means:
+            run.add_result(
+                "exterior_luminance_mean_min", float(min(exterior_luminance_means))
+            )
+            run.add_result(
+                "exterior_luminance_variance_min",
+                float(min(exterior_luminance_variances)),
+            )
+            run.add_result(
+                "exterior_dynamic_range_min", float(min(exterior_dynamic_ranges))
+            )
+        if wrist_luminance_means:
+            run.add_result(
+                "wrist_luminance_mean_min", float(min(wrist_luminance_means))
+            )
+            run.add_result(
+                "wrist_luminance_variance_min",
+                float(min(wrist_luminance_variances)),
+            )
+            run.add_result("wrist_dynamic_range_min", float(min(wrist_dynamic_ranges)))
+        sequence_detail = (
+            f"accepted render sequences {first_accepted_render_sequence}"
+            f"->{last_accepted_render_sequence}"
+        )
+        run.check(
+            "exterior_observations_advancing_nonblack",
+            exterior_proof,
+            detail=(
+                f"{len(exterior_luminance_means)} observations; {sequence_detail}; "
+                f"minimum luminance mean {min(exterior_luminance_means, default=0.0):.3f}; "
+                "producer markers advanced before every accepted observation"
+            ),
+        )
+        run.check(
+            "wrist_observations_advancing_nonblack",
+            wrist_proof,
+            detail=(
+                f"{len(wrist_luminance_means)} observations; {sequence_detail}; "
+                f"minimum luminance mean {min(wrist_luminance_means, default=0.0):.3f}; "
+                "producer markers advanced before every accepted observation"
+            ),
+        )
+        run.check(
+            "pi05_responses_finite_15x8",
+            response_proof,
+            detail=(
+                f"{round_trips} validated real policy responses; "
+                "each response contained a finite [15,8] action array"
+            ),
+        )

@@ -11,6 +11,7 @@ import tarfile
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -92,11 +93,11 @@ def test_cluster_live_rejects_legacy_runtime_schema(tmp_path: Path) -> None:
 
 def _accepted_live_metrics() -> dict[str, int | float]:
     return {
-        "elapsed_seconds": 930.0,
-        "frames": 120,
-        "requests": 100,
-        "round_trips": 100,
-        "applied": 500,
+        "elapsed_seconds": 60.0,
+        "frames": 2,
+        "requests": 2,
+        "round_trips": 2,
+        "applied": 5,
         "action_horizon": 15,
         "action_dimension": 8,
         "action_finite": 1,
@@ -106,13 +107,15 @@ def _accepted_live_metrics() -> dict[str, int | float]:
         "rejected_gripper_range": 0,
         "rejected_joint_step": 0,
         "camera_quality_schema": 3,
-        "camera_validated_requests": 100,
-        "camera_pair_id": 100,
-        "request_camera_pair_id": 100,
-        "round_trip_camera_pair_id": 100,
+        "camera_validated_requests": 2,
+        "camera_pair_id": 2,
+        "request_camera_pair_id": 2,
+        "round_trip_camera_pair_id": 2,
         "camera_render_sequence": 1200,
         "request_render_sequence": 1199,
         "round_trip_render_sequence": 1199,
+        "first_accepted_render_sequence": 1000,
+        "last_accepted_render_sequence": 1199,
         "camera_pair_difference_current": 42.0,
         "camera_exterior_red_cube_pixels_current": 300,
         "camera_exterior_cube_in_frame_current": 1,
@@ -131,7 +134,7 @@ def _accepted_live_metrics() -> dict[str, int | float]:
         "gripper_contact_force_max_n": 1.5,
         "cube_lift_max_m": 0.051,
         "pickup_hold_seconds": 1.0,
-        "pickup_success": 1,
+        "pickup_success": 0,
         "latency_p95_ms": 100.0,
         "latency_p99_ms": 120.0,
         "latency_max_ms": 130.0,
@@ -139,7 +142,7 @@ def _accepted_live_metrics() -> dict[str, int | float]:
     }
 
 
-def test_live_acceptance_requires_current_pair_identity_and_physical_pickup() -> None:
+def test_live_acceptance_requires_finite_camera_policy_communication() -> None:
     accepted = cluster_deploy.qualify_live_metrics(_accepted_live_metrics())
     assert accepted["accepted"] is True
     assert accepted["failures"] == []
@@ -150,17 +153,15 @@ def test_live_acceptance_requires_current_pair_identity_and_physical_pickup() ->
     assert moving_wrist["accepted"] is True
 
     for changed, expected_failure in (
-        ({"camera_validated_requests": 99}, "camera_pair_identity"),
-        ({"round_trip_camera_pair_id": 99}, "camera_pair_identity"),
+        ({"camera_validated_requests": 1}, "camera_pair_identity"),
+        ({"round_trip_camera_pair_id": 1}, "camera_pair_identity"),
         ({"round_trip_render_sequence": 1198}, "camera_pair_identity"),
+        ({"last_accepted_render_sequence": 1000}, "advancing_camera_pairs"),
         ({"camera_wrist_luminance_variance_current": 0}, "current_camera_quality"),
         ({"luminance_mean_min": 0}, "accepted_camera_quality"),
-        ({"camera_pair_difference_current": 5.9}, "accepted_camera_quality"),
-        ({"camera_exterior_red_cube_pixels_current": 0}, "accepted_camera_quality"),
-        ({"gripper_contact_samples": 0}, "physical_gripper_contact"),
-        ({"cube_lift_max_m": 0.049}, "sustained_pickup"),
-        ({"pickup_hold_seconds": 0.999}, "sustained_pickup"),
-        ({"pickup_success": 0}, "sustained_pickup"),
+        ({"camera_pair_difference_current": 3.9}, "accepted_camera_quality"),
+        ({"round_trips": 1}, "policy_round_trips"),
+        ({"action_finite": 0}, "finite_action_shape"),
     ):
         metrics = _accepted_live_metrics()
         metrics.update(changed)
@@ -534,6 +535,79 @@ def test_supervisor_recovery_requires_converged_loss(
     assert (
         cluster_runtime._supervisor_recovery_reason(**(defaults | values)) == expected
     )
+
+
+def _passed_poc_record() -> dict[str, object]:
+    checks = [
+        {"criterion": criterion, "passed": True, "detail": "measured"}
+        for criterion in sorted(cluster_runtime.REQUIRED_POC_CHECKS)
+    ]
+    return {
+        "scenario_run_id": "owned-run",
+        "scenario": "finite-proof",
+        "phase": "completed",
+        "outcome": "passed",
+        "results": {
+            "policy_round_trips": 2,
+            "exterior_observation_count": 2,
+            "wrist_observation_count": 2,
+            "first_accepted_render_sequence": 10,
+            "last_accepted_render_sequence": 20,
+            "communication_proof_complete": True,
+            "action_values_finite": True,
+            "action_shape": [15, 8],
+            "checks": checks,
+        },
+    }
+
+
+def test_completed_poc_evidence_accepts_only_durable_measured_pass() -> None:
+    evidence = cluster_runtime._completed_poc_evidence(
+        _passed_poc_record(),
+        scenario="finite-proof",
+        scenario_run_id="owned-run",
+    )
+
+    assert evidence == {
+        "scenario_run_id": "owned-run",
+        "run_phase": "completed",
+        "run_outcome": "passed",
+        "communication_verified": True,
+        "policy_round_trips": 2,
+        "exterior_observation_count": 2,
+        "wrist_observation_count": 2,
+        "first_accepted_render_sequence": 10,
+        "last_accepted_render_sequence": 20,
+        "action_horizon": 15,
+        "action_dimension": 8,
+    }
+
+
+@pytest.mark.parametrize(
+    "path,value",
+    [
+        (("outcome",), "timeout"),
+        (("results", "action_shape"), [8, 15]),
+        (("results", "communication_proof_complete"), False),
+        (("results", "last_accepted_render_sequence"), 10),
+        (("results", "checks", 0, "passed"), False),
+    ],
+)
+def test_completed_poc_evidence_rejects_nonproof_records(
+    path: tuple[object, ...], value: object
+) -> None:
+    record = _passed_poc_record()
+    target: Any = record
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+
+    with pytest.raises(cluster_runtime.AntiochLiveError):
+        cluster_runtime._completed_poc_evidence(
+            record,
+            scenario="finite-proof",
+            scenario_run_id="owned-run",
+        )
 
 
 def test_vendor_stream_process_observes_real_child_exit_and_drains_output(

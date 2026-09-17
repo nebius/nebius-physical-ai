@@ -73,6 +73,7 @@ def test_live_scenario_is_real_bounded_and_fail_closed() -> None:
     compile(source, "antioch-openpi-live-scenario", "exec")
     for contract in (
         "ACTION_SHAPE = (15, 8)",
+        "POC_REQUIRED_POLICY_ROUND_TRIPS = 2",
         "MAX_RESPONSE_AGE_SECONDS",
         "MAX_JOINT_STEP",
         "GRIPPER_JOINT_MAX = 0.04",
@@ -145,13 +146,18 @@ def test_live_scenario_is_real_bounded_and_fail_closed() -> None:
         "NPA_OPENPI_DISPLAY_LOG_OK",
         "NPA_OPENPI_LOOP_HEARTBEAT",
         "NPA_OPENPI_POLICY_STALL",
+        "NPA_OPENPI_COMMUNICATION_PROOF_COMPLETE",
+        '"exterior_observations_advancing_nonblack"',
+        '"wrist_observations_advancing_nonblack"',
+        '"pi05_responses_finite_15x8"',
         'ThreadPoolExecutor(max_workers=1, thread_name_prefix="openpi-policy")',
     ):
         assert contract in source
     assert "WebsocketClientPolicy(" not in source
     assert "verify_mode = ssl.CERT_NONE" not in source
     assert "rr.LineStrips3D" not in source
-    assert "while True:" in source
+    assert "if communication_proof_complete:" in source
+    assert 'run.add_result("pickup_success", pickup_success)' in source
 
     relay = (ROOT / "npa/src/npa/workbench/antioch/relay.py").read_text(
         encoding="utf-8"
@@ -1458,12 +1464,13 @@ def test_live_bridge_prepares_an_owned_kit_temp_child(
         bridge._prepare_temp_root()
 
 
-def test_live_example_documents_supported_renewal_boundary() -> None:
+def test_live_example_documents_finite_persisted_proof() -> None:
     readme = (EXAMPLE / "README.md").read_text(encoding="utf-8")
     assert "antioch service cp" in readme
-    assert "finite supported timeout" in readme
-    assert "resets the simulated episode" in readme
-    assert "not one infinitely lived simulator process" in readme
+    assert "finite communication proof" in readme
+    assert "finite `[15,8]` pi0.5 action arrays" in readme
+    assert "completed Antioch record" in readme
+    assert "fails closed and is not renewed" in readme
 
 
 def test_runtime_staging_keeps_private_project_id_out_of_source(tmp_path: Path) -> None:

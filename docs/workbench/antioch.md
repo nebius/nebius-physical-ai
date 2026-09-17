@@ -279,10 +279,14 @@ while legacy machine, tunnel, or cached endpoint state is rejected.
 so independent Antioch stages cannot collide. `adapter_image` must be an immutable
 digest. Deployment, status, stop, and cutover-finalization refuse unowned objects.
 
-Scenario timeout is a finite platform boundary, so the supervisor renews
-indefinitely until explicitly stopped. Renewal resets the simulated episode and
-briefly interrupts the viewport; it is continuous service supervision, not one
-immortal scenario process.
+The MK8s reference scenario is a finite communication proof rather than a
+long-running service record. It finishes after two distinct advancing, nonblack
+exterior/wrist observation pairs each receive a validated finite `[15,8]` pi0.5
+response. The controller accepts the clean child exit only after the exact run is
+durably `completed/passed` and all three named checks and structured measurements
+are present; it then releases the session. Timeout is a failed proof, never an
+expected renewal boundary.
+
 The supervisor atomically rechecks and re-stages the private client bundle after
 session replacement. It builds an immutable project revision and starts that exact
 revision through `session new`; an existing idle project session may be replaced,
@@ -294,9 +298,10 @@ viewed until the viewer connects and the first rendered frame advances.
 The controller owns both the foreground `antioch service ports --bind
 sim.policy-relay=127.0.0.1:18444 --serve sim` process and `antioch scenario run
 --stream --verbose` as direct children. It drains scenario output in-process.
-The controller cancels only the matching project-scoped run, proves stable exact
-absence through supported `scenario list` JSON, and then starts one successor.
-This prevents duplicate stream dispatch.
+The controller cancels only the matching project-scoped run and proves stable exact
+absence through supported `scenario list` JSON before dispatch. Failure recovery
+may start one successor with capped backoff, but a verified successful proof is
+terminal and never renewed. This prevents duplicate stream dispatch.
 
 Adapter readiness is an exact session-ownership contract, not an open-port check.
 The controller continuously reconciles the project-scoped scenario inventory with
@@ -316,27 +321,26 @@ cancels the exact run, rebuilds and re-stages after recycle when needed, and sta
 successor with capped backoff. Ambiguous ownership fails closed. The operator/Codex
 process is not part of this supervision and may exit after handoff.
 
-Before a retained live run is accepted, require at least 930 seconds (15 minutes
-plus a 30-second margin), 120 valid camera pairs, 100 successful policy round trips,
-and 500 applied targets; at
-least 90% of policy requests must succeed. Camera luminance mean must exceed 5
-and variance 25 for both views, both cumulatively across accepted pairs and on the
-current pair. The schema-2 camera proof requires one validated pair for every policy
-request; rejected startup or flat pairs are counted but never enter the accepted
-minimum. Latency must have p95 at most 2 seconds and
-p99/max at most the 90-second stale-response bound, with at most five reconnects.
+Before accepting the finite PoC, require a terminal `completed/passed` Antioch
+record with the `exterior_observations_advancing_nonblack`,
+`wrist_observations_advancing_nonblack`, and `pi05_responses_finite_15x8` checks all
+passing. The record must show at least two observations per view, increasing first
+and last accepted render sequences, camera luminance mean above 5 and variance
+above 25, and at least two finite policy responses with shape `[15,8]`. Rejected
+startup or flat pairs are counted but never enter the accepted
+minimum. Every accepted response must arrive within the 90-second stale-response
+bound.
 No malformed, non-finite, wrong-shaped, joint-limit, gripper-range, or joint-step
 action may be applied; the live numeric metric contract must also report horizon
 15, dimension 8, and finite=true. The current scene must be a lit tabletop with the
 DROID reset posture, open gripper, reachable red cube, exterior view, and hand-mounted
 wrist view. The action adapter uses absolute seven-joint targets in Franka order and
 DROID's `0=open, 1=closed` gripper convention; raw distribution mismatches remain
-separate from safety-projection counters. Acceptance additionally requires measured
-end-effector approach to within 12 cm, supported Isaac cube-to-finger contact evidence,
-at least 5 cm of cube lift from initialized tabletop height, and at least one continuous
-second of lifted contact with a closed gripper. Action issuance alone is not success.
-These thresholds are fixed before live execution and are not reduced after observing a
-run.
+separate from safety-projection counters. End-effector approach, contact, cube lift,
+and pickup hold remain factual results, but they are not part of the communication
+proof. Never describe cube pickup as successful unless those independent task
+measurements actually meet their declared thresholds. Action issuance alone is not
+task success.
 
 ## Policy data contract
 

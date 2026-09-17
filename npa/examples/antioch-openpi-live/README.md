@@ -75,10 +75,12 @@ current CLI restricts copies to `/workspace/project`, it uploads there and uses
 The controller builds one immutable project revision and starts that exact revision
 as the project session.
 
-The scenario is continuous within one Antioch run. Since scenario runs have a
-finite supported timeout, the pod controller renews them until explicitly
-stopped. A renewal resets the simulated episode and briefly interrupts the
-viewport; it is service continuity, not one infinitely lived simulator process.
+The scenario is a finite communication proof. It returns successfully only after
+two policy requests used distinct advancing, nonblack exterior and wrist camera
+pairs and both responses were validated as finite `[15,8]` pi0.5 action arrays.
+Those measurements and named checks remain on the completed Antioch record after
+the controller retires the session and the adapter is scaled down. A clean child
+exit without that exact persisted passed record fails closed and is not renewed.
 The supervisor verifies every private bundle file and atomically swaps one complete
 generation into place after session replacement. The pod controller directly owns
 both `antioch service ports --bind sim.policy-relay=127.0.0.1:18444 --serve sim`
@@ -86,7 +88,7 @@ and `antioch scenario run --stream --verbose` as foreground children. Supported
 structured `scenario list`, `session status`, and `service ps` must agree on the
 exact current session; the simulator process and session must be ready. A child
 exit, mismatched session, unhealthy process, or stale observation revokes readiness.
-Recovery cancels only the exact scenario, proves stable absence, rebuilds an
+Failure recovery cancels only the exact scenario, proves stable absence, rebuilds an
 immutable revision when the session is lost, re-stages source and credentials, and
 starts one successor with capped backoff. Ambiguous ownership fails closed.
 

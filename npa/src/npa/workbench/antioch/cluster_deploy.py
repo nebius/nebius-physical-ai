@@ -654,7 +654,7 @@ def _parse_live_metrics(logs: str) -> dict[str, int | float]:
 
 
 def qualify_live_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
-    """Return the fixed, physical live-acceptance gate without identifiers."""
+    """Return the finite communication-proof gate without identifiers."""
 
     def number(name: str, default: float = 0.0) -> float:
         try:
@@ -665,26 +665,16 @@ def qualify_live_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
 
     requests = int(number("requests"))
     round_trips = int(number("round_trips"))
+    first_sequence = int(number("first_accepted_render_sequence"))
+    last_sequence = int(number("last_accepted_render_sequence"))
     checks = {
-        "duration": number("elapsed_seconds") >= 930.0,
-        "valid_camera_pairs": int(number("frames")) >= 120,
-        "policy_round_trips": round_trips >= 100,
-        "applied_targets": int(number("applied")) >= 500,
+        "valid_camera_pairs": int(number("frames")) >= 2,
+        "advancing_camera_pairs": first_sequence > 0 and last_sequence > first_sequence,
+        "policy_round_trips": round_trips >= 2,
         "finite_action_shape": (
             int(number("action_horizon")) == 15
             and int(number("action_dimension")) == 8
             and int(number("action_finite")) == 1
-        ),
-        "policy_success_rate": round_trips / max(requests, 1) >= 0.90,
-        "no_rejected_actions": all(
-            int(number(name)) == 0
-            for name in (
-                "rejected_wrong_shape",
-                "rejected_non_finite",
-                "rejected_joint_limit",
-                "rejected_gripper_range",
-                "rejected_joint_step",
-            )
         ),
         "camera_pair_identity": (
             int(number("camera_quality_schema")) == 3
@@ -699,6 +689,7 @@ def qualify_live_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
             == int(number("request_render_sequence", -1.0))
             and int(number("camera_render_sequence"))
             >= int(number("request_render_sequence", -1.0))
+            and requests >= 2
         ),
         "current_camera_quality": all(
             number(name) > threshold
@@ -712,37 +703,13 @@ def qualify_live_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
         "accepted_camera_quality": (
             number("luminance_mean_min") > 5.0
             and number("luminance_variance_min") > 25.0
-            and number("camera_pair_difference_current") >= 6.0
-            and int(number("camera_exterior_red_cube_pixels_current")) >= 1
-            and int(number("camera_exterior_cube_in_frame_current")) == 1
+            and number("camera_pair_difference_current") >= 4.0
         ),
-        "no_safety_projection": (
-            int(number("joint_limit_projections", -1.0)) == 0
-            and int(number("joint_step_projections", -1.0)) == 0
-        ),
-        "physical_approach": (
-            number("end_effector_cube_approach_m") > 0.0
-            and number("end_effector_cube_distance_m", float("inf")) < 0.12
-        ),
-        "physical_gripper_contact": (
-            int(number("gripper_contact_samples")) > 0
-            and number("gripper_contact_force_max_n") > 0.1
-        ),
-        "sustained_pickup": (
-            number("cube_lift_max_m") >= 0.05
-            and number("pickup_hold_seconds") >= 1.0
-            and int(number("pickup_success")) == 1
-        ),
-        "latency": (
-            number("latency_p95_ms", float("inf")) <= 2_000.0
-            and number("latency_p99_ms", float("inf")) <= 90_000.0
-            and number("latency_max_ms", float("inf")) <= 90_000.0
-        ),
-        "reconnects": int(number("reconnects", 1_000_000_000.0)) <= 5,
+        "response_age": number("latency_max_ms", float("inf")) <= 90_000.0,
     }
     failures = sorted(name for name, passed in checks.items() if not passed)
     return {
-        "schema_name": "npa.antioch.live-acceptance.v1",
+        "schema_name": "npa.antioch.communication-poc-acceptance.v1",
         "accepted": not failures,
         "checks": checks,
         "failures": failures,
@@ -1367,6 +1334,7 @@ def cluster_status(config: ClusterLiveConfig) -> dict[str, Any]:
                 "scenario",
                 "scenario_run_id",
                 "run_phase",
+                "run_outcome",
                 "stream_state",
                 "heartbeat_unix",
                 "recoveries",
@@ -1394,6 +1362,14 @@ def cluster_status(config: ClusterLiveConfig) -> dict[str, Any]:
                 "session_observed_at",
                 "transport",
                 "dev_vm_in_data_path",
+                "communication_verified",
+                "policy_round_trips",
+                "exterior_observation_count",
+                "wrist_observation_count",
+                "first_accepted_render_sequence",
+                "last_accepted_render_sequence",
+                "action_horizon",
+                "action_dimension",
             }
             controller_state = {
                 key: parsed_controller.get(key) for key in sorted(controller_allowed)

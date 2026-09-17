@@ -51,6 +51,15 @@ SESSION_ERROR_THRESHOLD = 3
 SESSION_STARTUP_GRACE_SECONDS = 600.0
 RESTAGE_INTERVAL_SECONDS = 60.0
 RECOVERY_BACKOFF_SECONDS = (2.0, 5.0, 10.0, 20.0, 30.0)
+COMPLETION_POLL_ATTEMPTS = 12
+COMPLETION_POLL_SECONDS = 5.0
+REQUIRED_POC_CHECKS = frozenset(
+    {
+        "exterior_observations_advancing_nonblack",
+        "wrist_observations_advancing_nonblack",
+        "pi05_responses_finite_15x8",
+    }
+)
 _METRIC_KEY = re.compile(r"^[a-z][a-z0-9_]*$")
 _CAMERA_REJECTION_VIEWS = frozenset({"exterior", "wrist", "pair"})
 _CAMERA_REJECTION_REASONS = frozenset(
@@ -481,6 +490,94 @@ def _supervisor_recovery_reason(
     return ""
 
 
+def _integer_result(results: dict[str, Any], name: str, *, minimum: int) -> int:
+    value = results.get(name)
+    if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
+        raise AntiochLiveError(f"completed Antioch proof has invalid {name}")
+    return value
+
+
+def _completed_poc_evidence(
+    record: dict[str, Any], *, scenario: str, scenario_run_id: str
+) -> dict[str, Any]:
+    """Validate the durable terminal record before retiring live compute."""
+
+    if (
+        record.get("scenario_run_id") != scenario_run_id
+        or record.get("scenario") != scenario
+        or record.get("phase") != "completed"
+        or record.get("outcome") != "passed"
+    ):
+        raise AntiochLiveError(
+            "Antioch proof did not persist as the expected passed run"
+        )
+    results = record.get("results")
+    if not isinstance(results, dict):
+        raise AntiochLiveError("completed Antioch proof has no structured results")
+    round_trips = _integer_result(results, "policy_round_trips", minimum=2)
+    exterior_count = _integer_result(results, "exterior_observation_count", minimum=2)
+    wrist_count = _integer_result(results, "wrist_observation_count", minimum=2)
+    first_sequence = _integer_result(
+        results, "first_accepted_render_sequence", minimum=1
+    )
+    last_sequence = _integer_result(
+        results, "last_accepted_render_sequence", minimum=first_sequence + 1
+    )
+    if (
+        results.get("communication_proof_complete") is not True
+        or results.get("action_values_finite") is not True
+        or results.get("action_shape") != [15, 8]
+    ):
+        raise AntiochLiveError("completed Antioch proof has invalid policy evidence")
+    checks = results.get("checks")
+    if not isinstance(checks, list):
+        raise AntiochLiveError("completed Antioch proof has no recorded checks")
+    passed = {
+        item.get("criterion")
+        for item in checks
+        if isinstance(item, dict) and item.get("passed") is True
+    }
+    if not REQUIRED_POC_CHECKS.issubset(passed):
+        raise AntiochLiveError(
+            "completed Antioch proof is missing required passed checks"
+        )
+    return {
+        "scenario_run_id": scenario_run_id,
+        "run_phase": "completed",
+        "run_outcome": "passed",
+        "communication_verified": True,
+        "policy_round_trips": round_trips,
+        "exterior_observation_count": exterior_count,
+        "wrist_observation_count": wrist_count,
+        "first_accepted_render_sequence": first_sequence,
+        "last_accepted_render_sequence": last_sequence,
+        "action_horizon": 15,
+        "action_dimension": 8,
+    }
+
+
+def _wait_for_completed_poc_record(
+    cli: AntiochCli,
+    *,
+    runtime: Path,
+    scenario: str,
+    scenario_run_id: str,
+) -> dict[str, Any]:
+    """Wait briefly for the clean foreground exit to become durable."""
+
+    if not scenario_run_id:
+        raise AntiochLiveError("clean Antioch exit had no observed owned run identity")
+    for attempt in range(COMPLETION_POLL_ATTEMPTS):
+        record = cli.show(runtime, kind="scenario", remote_id=scenario_run_id)
+        if record.get("phase") == "completed":
+            return _completed_poc_evidence(
+                record, scenario=scenario, scenario_run_id=scenario_run_id
+            )
+        if attempt + 1 < COMPLETION_POLL_ATTEMPTS:
+            time.sleep(COMPLETION_POLL_SECONDS)
+    raise AntiochLiveError("clean Antioch exit did not persist a terminal record")
+
+
 def _private_value(path: Path, *, label: str) -> str:
     if not path.is_file() or path.is_symlink() or path.stat().st_mode & 0o077:
         raise AntiochLiveError(f"private {label} file is unavailable")
@@ -623,6 +720,7 @@ def run_cluster(args: argparse.Namespace) -> NoReturn:
     cleanup_complete = False
     failed = False
     cleanup_error: AntiochCliError | AntiochLiveError | None = None
+    completion_evidence: dict[str, Any] = {}
     health: StateHealthServer | None = None
 
     def request_stop(_signum: int, _frame: object) -> None:
@@ -719,10 +817,27 @@ def run_cluster(args: argparse.Namespace) -> NoReturn:
             if stop_file.exists() and not stopping:
                 request_stop(signal.SIGTERM, None)
                 break
-            child_dead = (
-                vendor.process.poll() is not None
-                or port_bridge.process.poll() is not None
-            )
+            vendor_exit_class, _vendor_exit_code = vendor.exit_snapshot()
+            route_exit_class, _route_exit_code = port_bridge.exit_snapshot()
+            if vendor_exit_class == "completed":
+                completion_evidence = _wait_for_completed_poc_record(
+                    cli,
+                    runtime=runtime,
+                    scenario=args.scenario,
+                    scenario_run_id=last_run_id,
+                )
+                _write_state(
+                    state_path,
+                    status="completed",
+                    session_status="retiring",
+                    owner_identity=args.owner_identity,
+                    session_id=session_id,
+                    scenario=args.scenario,
+                    heartbeat_unix=time.time(),
+                    **completion_evidence,
+                )
+                break
+            child_dead = vendor_exit_class != "running" or route_exit_class != "running"
             recovery_reason = _supervisor_recovery_reason(
                 child_dead=child_dead,
                 last_owned_heartbeat=last_owned_heartbeat,
@@ -1016,6 +1131,7 @@ def run_cluster(args: argparse.Namespace) -> NoReturn:
             session_id=session_id,
             scenario=args.scenario,
             heartbeat_unix=time.time(),
+            **completion_evidence,
         )
         if failed or cleanup_error is not None:
             if health is not None:
@@ -1038,6 +1154,7 @@ def run_cluster(args: argparse.Namespace) -> NoReturn:
                     session_id=session_id,
                     scenario=args.scenario,
                     heartbeat_unix=time.time(),
+                    **completion_evidence,
                 )
     raise AssertionError("Antioch controller reached an impossible exit path")
 
