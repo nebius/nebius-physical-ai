@@ -101,23 +101,31 @@ def test_invalid_media_refused_before_generation(tmp_path, content):
 
 
 @pytest.mark.parametrize("preset", ["very_low", "low", "medium", "high", "very_high"])
-def test_native_sample_uses_all_source_controls_and_explicit_seed(prepared, tmp_path, preset):
+@pytest.mark.parametrize("rgb_weight", [0.0, 0.5])
+def test_native_sample_uses_all_source_controls_and_explicit_seed(prepared, tmp_path, preset, rgb_weight):
     _, source, _ = prepared
     sample = transfer.transfer_sample({"name": "sample", "model_mode": "video2video",
-                                       "vision_path": str(source)}, transfer.TransferSettings(edge_threshold=preset), tmp_path, 17)
+                                       "vision_path": str(source)}, transfer.TransferSettings(edge_threshold=preset, rgb_weight=rgb_weight), tmp_path, 17)
     assert sample["max_frames"] == 81
     assert sample["seed"] == 17
     assert sample["fps"] == 24
     assert sample["num_video_frames_per_chunk"] == 93
     assert sample["edge"]["preset_edge_threshold"] == preset
     assert sample["show_input"] is sample["show_control_condition"] is False
+    if rgb_weight:
+        assert sample["blur"] == {"control_path": str(tmp_path / "controls/sample-rgb.mkv"),
+                                  "preset_blur_strength": "none", "weight": rgb_weight}
+    else:
+        assert "blur" not in sample
 
 
 @pytest.mark.parametrize("values", [{"fps": 50}, {"fps": True}, {"chunk_frames": 94},
                                     {"control_guidance": float("nan")}, {"control_guidance": 10.1},
                                     {"control_guidance": "1.5"}, {"control_guidance": False},
                                     {"edge_threshold": "auto"}, {"edge_threshold": None},
-                                    {"edge_threshold": []}])
+                                    {"edge_threshold": []}, {"rgb_weight": -0.1},
+                                    {"rgb_weight": float("nan")}, {"rgb_weight": float("inf")},
+                                    {"rgb_weight": True}, {"rgb_weight": "0.5"}])
 def test_unsupported_native_controls_are_rejected(values):
     with pytest.raises(ValueError):
         transfer.TransferSettings(**values).validate()
@@ -150,6 +158,52 @@ def test_real_edge_video_retains_exact_preset_pixels(prepared, tmp_path, preset,
         control.release()
     assert decoded == count == 81
     assert digest == expected_hash.hexdigest()
+
+
+def test_rgb_control_retains_all_source_colors_and_frames(tmp_path):
+    cv2 = pytest.importorskip("cv2")
+    source = _video(tmp_path / "source.mp4", fps=24, frames=9, size="832x480")
+    destination = tmp_path / "rgb.mkv"
+    count, digest = native._write_rgb(source, destination, 24)
+    original, control = cv2.VideoCapture(str(source)), cv2.VideoCapture(str(destination))
+    expected_hash = hashlib.sha256()
+    decoded = 0
+    try:
+        while True:
+            ok, frame = original.read()
+            read, actual = control.read()
+            assert ok == read
+            if not ok:
+                break
+            assert np.array_equal(actual, frame)
+            expected_hash.update(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB).tobytes())
+            decoded += 1
+    finally:
+        original.release()
+        control.release()
+    assert decoded == count == 9
+    assert digest == expected_hash.hexdigest()
+    media.validate_reference(media.probe_video(destination), 24)
+
+
+def test_native_rgb_verification_rejects_changed_pixels(monkeypatch, tmp_path):
+    torch = pytest.importorskip("torch")
+    pixels = np.zeros((9, 480, 832, 3), dtype=np.uint8)
+    pixels[..., 0], pixels[..., 1], pixels[..., 2] = 13, 97, 211
+    frames = torch.from_numpy(pixels).permute(3, 0, 1, 2)
+    control_path = tmp_path / "rgb.mkv"
+    control_path.write_bytes(b"native-loader-seam")
+    control = SimpleNamespace(control_path=control_path, preset_blur_strength="none", weight=0.5)
+    sample = SimpleNamespace(transfer_hints={"blur": control}, resolution="480", aspect_ratio="16,9", max_frames=9)
+    monkeypatch.setitem(sys.modules, "cosmos_framework.inference.args", SimpleNamespace(TransferHintKey=SimpleNamespace(BLUR="blur")))
+    monkeypatch.setitem(sys.modules, "cosmos_framework.inference.transfer", SimpleNamespace(load_transfer_control_frames=lambda **kw: frames))
+    digest = hashlib.sha256(pixels.tobytes()).hexdigest()
+    evidence = native._verify_rgb(sample, 9, digest)
+    assert evidence["weight"] == 0.5 and evidence["control_loader_verified"] is True
+    assert evidence["output_pixel_blending"] is False
+    pixels[0, 0, 0, 0] += 1
+    with pytest.raises(ValueError, match="RGB control pixels"):
+        native._verify_rgb(sample, 9, digest)
 
 
 def test_effective_prompt_is_checked_before_each_native_chunk():
@@ -218,11 +272,16 @@ def test_saved_output_is_guardrail_postprocessed_tensor(monkeypatch, tmp_path):
     assert evidence["native_torch_compile"] is False
 
 
-def test_native_parser_sees_real_control_created_first(monkeypatch, tmp_path):
+@pytest.mark.parametrize("include_rgb", [False, True])
+def test_native_parser_sees_real_control_created_first(monkeypatch, tmp_path, include_rgb):
     input_file = tmp_path / "sample.json"
     control = tmp_path / "edges.mkv"
-    input_file.write_text(json.dumps({"name": "sample", "vision_path": "source.mp4", "fps": 24,
-                                     "edge": {"control_path": str(control), "preset_edge_threshold": "low"}}))
+    rgb = tmp_path / "rgb.mkv"
+    fields = {"name": "sample", "vision_path": "source.mp4", "fps": 24,
+              "edge": {"control_path": str(control), "preset_edge_threshold": "low"}}
+    if include_rgb:
+        fields["blur"] = {"control_path": str(rgb), "preset_blur_strength": "none", "weight": 0.5}
+    input_file.write_text(json.dumps(fields))
 
     def edges(source, destination, fps, preset):
         assert preset == "low"
@@ -231,7 +290,15 @@ def test_native_parser_sees_real_control_created_first(monkeypatch, tmp_path):
 
     def parse(*args, **kwargs):
         assert control.read_bytes() == b"real-control-seam"
+        if include_rgb:
+            assert rgb.read_bytes() == b"rgb-control-seam"
         raise RuntimeError("reached native parser after preprocessing")
+
+    def colors(source, destination, fps):
+        destination.write_bytes(b"rgb-control-seam")
+        return 81, "rgb-digest"
+
+    monkeypatch.setattr(native, "_write_rgb", colors)
 
     setup = SimpleNamespace(guardrails=True, sample_overrides={}, get_sample_overrides_cls=lambda: SimpleNamespace(from_files=parse))
     def build_setup():

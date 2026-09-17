@@ -3017,7 +3017,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     "workbench.cosmos3.generate_variants": ToolEntry(
         name="workbench.cosmos3.generate_variants",
         config_defaults={"structural_control": "", "conditioning_fps": "",
-                         "transfer_chunk_frames": "", "control_guidance": "", "transfer_edge_threshold": ""},
+                         "transfer_chunk_frames": "", "control_guidance": "", "transfer_edge_threshold": "", "transfer_rgb_weight": ""},
         omit_flags_when_empty=("--structural-control", "--conditioning-fps",
                                "--transfer-chunk-frames", "--control-guidance", "--transfer-edge-threshold"),
         access_capabilities=("cosmos3",),
@@ -3083,6 +3083,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.control_guidance}}",
             "--transfer-edge-threshold",
             "{{config.transfer_edge_threshold}}",
+            "--transfer-rgb-weight",
+            "{{config.transfer_rgb_weight}}",
             "--run-id",
             "{{run.id}}",
         ],

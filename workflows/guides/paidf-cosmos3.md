@@ -1124,6 +1124,7 @@ Use a fresh run ID after changing inputs or settings.
 | `transfer_chunk_frames` | `93` | Native generation window, `4k+1` frames from 9 through 297. Longer videos use overlapping windows and retain complete source coverage. |
 | `control_guidance` | `1.5` | Native structural-control strength, greater than 0 and at most 10. |
 | `transfer_edge_threshold` | `medium` | Native Canny preset: `very_low`, `low`, `medium`, `high`, or `very_high`. Lower thresholds preserve weaker source edges but may retain noise; inspect controls and generated task details. |
+| `transfer_rgb_weight` | `0.0` | Optional native RGB conditioning weight relative to edge weight 1. Finite and nonnegative; 0 disables it. Requires edge transfer. Uses the native `blur` hint with preset `none`, retaining complete source RGB pixels as conditioning, never blending them into output. |
 | `prompt`, `negative_prompt`, `augment_subject` | See YAML | Generation intent and appearance sampling. Each effective prompt also includes source captions and the sampled appearance profile. |
 | `seed`, `guidance`, `steps` | `17`, `5.0`, `24` | Generation sampling. |
 | `variant_count`, `variant_parallelism` | `2`, `1` | Number of variants and concurrent generation workers, limited by visible GPUs. |

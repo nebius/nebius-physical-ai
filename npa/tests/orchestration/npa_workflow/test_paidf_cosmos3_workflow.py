@@ -108,6 +108,7 @@ def test_edge_preset_reaches_generation_cli_and_settings(tmp_path, monkeypatch):
 
     document = _doc()
     document["config"]["transfer_edge_threshold"] = "very_low"
+    document["config"]["transfer_rgb_weight"] = 0.5
     path = tmp_path / "workflow.yaml"
     path.write_text(yaml.safe_dump(document))
     plan = build_plan(load_spec(path), run_id="edge-detail", assume_decision="promote_checkpoint")
@@ -117,6 +118,7 @@ def test_edge_preset_reaches_generation_cli_and_settings(tmp_path, monkeypatch):
     result = runner.invoke(app, list(stage.argv[1:]))
     assert result.exit_code == 0, result.output
     assert calls[0]["transfer_edge_threshold"] == "very_low"
+    assert calls[0]["transfer_rgb_weight"] == 0.5
 
 
 def test_invalid_edge_preset_fails_during_planning():
@@ -124,6 +126,22 @@ def test_invalid_edge_preset_fails_during_planning():
                                 "--run-id", "invalid-edge", "--var", "transfer_edge_threshold=auto", "--json"])
     assert result.exit_code != 0
     assert "transfer_edge_threshold" in result.output
+
+
+@pytest.mark.parametrize("value", ["-0.1", "nan", "inf", "true", "invalid"])
+def test_invalid_rgb_weight_fails_during_planning(value):
+    result = runner.invoke(app, ["workbench", "workflow", "plan-spec", str(SPEC),
+                                "--run-id", "invalid-rgb", "--var", f"transfer_rgb_weight={value}", "--json"])
+    assert result.exit_code != 0
+    assert "transfer_rgb_weight" in result.output
+
+
+def test_rgb_conditioning_requires_edge_transfer_during_planning():
+    result = runner.invoke(app, ["workbench", "workflow", "plan-spec", str(SPEC),
+                                "--run-id", "rgb-without-edge", "--var", "transfer_rgb_weight=0.5",
+                                "--var", "structural_control=none", "--json"])
+    assert result.exit_code != 0
+    assert "transfer_rgb_weight requires structural_control=edge" in result.output
 
 
 def test_source_caption_instruction_uses_task_context(tmp_path):

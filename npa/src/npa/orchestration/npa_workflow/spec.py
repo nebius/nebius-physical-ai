@@ -445,6 +445,7 @@ def validate_spec(spec: NpaWorkflowSpec) -> None:
     _validate_executable_resource_contracts(spec)
     _validate_optional_sam2_config(spec)
     _validate_appearance_profiles(spec)
+    _validate_transfer_rgb_weight(spec)
     if "transfer_edge_threshold" in spec.config:
         from npa.workbench.cosmos.structural_transfer import edge_thresholds
 
@@ -456,6 +457,23 @@ def validate_spec(spec: NpaWorkflowSpec) -> None:
     _assert_terminal_exists(spec)
     _assert_bounded_control_flow_cycles(spec)
     _validate_resolvable(spec)
+
+
+def _validate_transfer_rgb_weight(spec: NpaWorkflowSpec) -> None:
+    if "transfer_rgb_weight" not in spec.config:
+        return
+    from npa.workbench.cosmos.structural_transfer import TransferSettings
+
+    value = spec.config["transfer_rgb_weight"]
+    try:
+        if isinstance(value, bool):
+            raise ValueError("transfer_rgb_weight must be numeric, not boolean")
+        weight = float(value)
+        TransferSettings(rgb_weight=weight).validate()
+        if weight and spec.config.get("structural_control") != "edge":
+            raise ValueError("transfer_rgb_weight requires structural_control=edge")
+    except (TypeError, ValueError) as exc:
+        raise NpaWorkflowError(f"invalid transfer_rgb_weight: {exc}") from exc
 
 
 def _validate_appearance_profiles(spec: NpaWorkflowSpec) -> None:

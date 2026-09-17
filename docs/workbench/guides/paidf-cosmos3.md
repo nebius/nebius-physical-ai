@@ -108,6 +108,11 @@ The canonical workflow enables `structural_control: edge`. The optional
 the actual preset and verified pixel hash. Lower thresholds retain weaker
 edges, which can help expose small or dark features, but also admit noise.
 Inspect the controls and qualify the generated output independently.
+`transfer_rgb_weight` optionally adds native RGB conditioning to retain source
+color and surface cues that edges omit. Zero (the default) disables it; a
+positive weight is relative to edge weight 1. This uses the framework's `blur`
+hint with its `none` preset and verified lossless RGB controls. It changes model
+conditioning, never output-pixel blending, and can suppress the requested edit.
 `conditioning_fps`
 defaults to 24; preparation letterboxes to 832×480 and preserves duration within
 one prepared frame. `transfer_chunk_frames` defaults to 93 and `control_guidance`

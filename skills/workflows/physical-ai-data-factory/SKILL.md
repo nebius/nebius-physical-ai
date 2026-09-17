@@ -69,6 +69,13 @@ GPU outputs before recommending a setting. Neither the reviewed high-control
 battery candidate nor the standard-control warm/cool pair preserved acceptable
 gripper detail; keep those rejected trials in the guide's validation record.
 
+With edge transfer, `transfer_rgb_weight` can add native source RGB conditioning
+using the framework's `blur` hint and `none` preset. Zero disables it; positive
+weights are relative to edge weight 1. Validate before model work, retain the
+lossless-control and native-loader hashes, and distinguish this model input
+from output-pixel blending. Check both task preservation and visible appearance
+change: more source conditioning can suppress the requested edit.
+
 For operator setup, verify `command -v nebius` and `nebius version` after selecting
 `PATH` and after any environment activation. Health preflight proves profile
 authentication, while configure also enforces NPA's supported CLI version.

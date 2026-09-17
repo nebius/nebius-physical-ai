@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from npa.workflows.paidf_cosmos3_media import HEIGHT, WIDTH, video_sha256
-from npa.workbench.cosmos.structural_transfer import edge_thresholds
+from npa.workbench.cosmos.structural_transfer import TransferSettings, edge_thresholds
 
 
 class _GuardedTransferModel:
@@ -91,6 +91,59 @@ def _verify_control(sample: Any, count: int, digest: str) -> dict[str, Any]:
             "edge_threshold": str(control.preset_edge_threshold)}
 
 
+def _write_rgb(source: Path, destination: Path, fps: int) -> tuple[int, str]:
+    import cv2
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    capture = cv2.VideoCapture(str(source))
+    digest, count = hashlib.sha256(), 0
+    argv = ["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
+            "-s", f"{WIDTH}x{HEIGHT}", "-r", str(fps), "-i", "pipe:0", "-an",
+            "-c:v", "ffv1", "-pix_fmt", "bgr0", str(destination)]
+    try:
+        with subprocess.Popen(argv, stdin=subprocess.PIPE, stderr=subprocess.PIPE) as encoder:
+            assert encoder.stdin is not None
+            while True:
+                readable, frame = capture.read()
+                if not readable:
+                    break
+                if frame.shape[:2] != (HEIGHT, WIDTH):
+                    raise ValueError("Source dimensions changed during RGB control extraction")
+                pixels = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB).tobytes()
+                encoder.stdin.write(pixels)
+                digest.update(pixels)
+                count += 1
+            encoder.stdin.close()
+            if encoder.wait() or count < 6:
+                raise ValueError("Complete source RGB control extraction failed")
+    finally:
+        capture.release()
+    return count, digest.hexdigest()
+
+
+def _verify_rgb(sample: Any, count: int, digest: str) -> dict[str, Any]:
+    import torch
+    from cosmos_framework.inference.args import TransferHintKey
+    from cosmos_framework.inference.transfer import load_transfer_control_frames
+
+    control = sample.transfer_hints[TransferHintKey.BLUR]
+    TransferSettings(rgb_weight=control.weight).validate()
+    if str(control.preset_blur_strength) != "none" or not control.weight:
+        raise ValueError("Native RGB conditioning changed its preset or positive weight")
+    frames = load_transfer_control_frames(hint_key=TransferHintKey.BLUR, transfer=control,
+        resolution=sample.resolution, aspect_ratio=sample.aspect_ratio, max_frames=sample.max_frames)
+    if frames.dtype != torch.uint8 or tuple(frames.shape) != (3, count, HEIGHT, WIDTH):
+        raise ValueError("Native transfer loader changed RGB control shape or frame count")
+    pixels = frames.permute(1, 2, 3, 0).contiguous().cpu().numpy().tobytes()
+    if hashlib.sha256(pixels).hexdigest() != digest or count != sample.max_frames:
+        raise ValueError("Native transfer loader changed RGB control pixels or coverage")
+    return {"native_hint": "blur", "preset": str(control.preset_blur_strength),
+            "weight": float(control.weight), "control_path": str(control.control_path),
+            "control_sha256": video_sha256(Path(control.control_path)),
+            "control_pixels_sha256": digest, "source_frames": count,
+            "control_loader_verified": True, "output_pixel_blending": False}
+
+
 def _save_guarded_output(pipe: Any, sample: Any, generated: Any, prompts: list[str], control: dict[str, Any]) -> None:
     from cosmos_framework.inference.common.args import SampleOutput, SampleOutputs
     from cosmos_framework.inference.inference import save_img_or_video
@@ -118,7 +171,7 @@ def _save_guarded_output(pipe: Any, sample: Any, generated: Any, prompts: list[s
     (sample.output_dir / "sample_outputs.json").write_text(result.model_dump_json())
 
 
-def _prepare_controls(input_files: list[Path]) -> dict[str, tuple[int, str]]:
+def _prepare_controls(input_files: list[Path]) -> dict[str, dict[str, tuple[int, str]]]:
     controls = {}
     for path in input_files:
         fields = json.loads(Path(path).read_text())
@@ -127,9 +180,21 @@ def _prepare_controls(input_files: list[Path]) -> dict[str, tuple[int, str]]:
             raise ValueError("An explicit Canny control path is required")
         preset = control.get("preset_edge_threshold")
         edge_thresholds(preset)
-        controls[fields["name"]] = _write_edges(
+        edge = _write_edges(
             Path(fields["vision_path"]), Path(control["control_path"]), int(fields["fps"]), preset
         )
+        controls[fields["name"]] = {"edge": edge}
+        rgb = fields.get("blur")
+        if rgb is not None:
+            if not isinstance(rgb, dict) or not rgb.get("control_path"):
+                raise ValueError("An explicit RGB control path is required")
+            TransferSettings(rgb_weight=rgb["weight"]).validate()
+            if rgb.get("preset_blur_strength") != "none" or not rgb["weight"]:
+                raise ValueError("RGB conditioning requires the native none blur preset and positive weight")
+            prepared = _write_rgb(Path(fields["vision_path"]), Path(rgb["control_path"]), int(fields["fps"]))
+            if prepared[0] != edge[0]:
+                raise ValueError("RGB and edge controls do not cover the same source frames")
+            controls[fields["name"]]["rgb"] = prepared
     return controls
 
 
@@ -150,9 +215,10 @@ def _run_samples(args: Any) -> None:
         item.download(item.output_dir / "inputs")
     pipe = setup.get_inference_cls().create(setup)
     for item in overrides:
-        count, digest = controls[item.name]
         sample = item.build_sample(model_config=pipe.model_config)
-        control = _verify_control(sample, count, digest)
+        control = _verify_control(sample, *controls[item.name]["edge"])
+        if "rgb" in controls[item.name]:
+            control["rgb_conditioning"] = _verify_rgb(sample, *controls[item.name]["rgb"])
         (sample.output_dir / "sample_args.json").write_text(sample.model_dump_json())
         model = _GuardedTransferModel(pipe, sample.name)
         generated = generate_transfer_sample(sample_args=sample, model=model)

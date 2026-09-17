@@ -49,7 +49,10 @@ as context while requiring uncertainty for unclear features; override it for
 task or camera terminology. Source and generated-video caption frames are sampled
 across the complete decoded clip, including both endpoints, instead of stopping
 after its first eight seconds. Older caption workflows retain their default
-instruction. The [realistic manipulation guide](../docs/workbench/guides/paidf-realistic-augmentation.md)
+instruction. With edge transfer, `transfer_rgb_weight` optionally adds the
+complete source RGB video as a native conditioning hint, weighted relative to
+edge weight 1. Its default 0 disables the hint; it never blends source pixels
+into generated output. The [realistic manipulation guide](../docs/workbench/guides/paidf-realistic-augmentation.md)
 includes the battery dataset, configuration examples and quality review.
 
 Extra tools required by specific commands:

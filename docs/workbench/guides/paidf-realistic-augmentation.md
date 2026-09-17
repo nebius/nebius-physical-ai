@@ -163,6 +163,16 @@ Compare a lower preset with all other settings fixed before adopting it. On the
 battery source, the medium preset omits substantial internal gripper detail;
 this observation alone does not qualify a lower preset's generated output.
 
+Edges omit RGB color and surface cues. The optional `transfer_rgb_weight` adds
+the complete source RGB video as a second native conditioning input, weighted
+relative to edge weight 1. Zero, the default, leaves edge-only behavior unchanged.
+A positive value uses the framework's `blur` hint with its `none` preset. The
+adapter writes lossless RGB controls and verifies every decoded control pixel
+and frame through the native loader; `transfer.json` records this evidence.
+This is model conditioning, not source/output pixel blending. Compare it on the
+same source, captions, profiles and seeds, checking both fine task details and
+the intended appearance change: stronger source conditioning may suppress edits.
+
 | Observed failure | Next controlled experiment |
 | --- | --- |
 | Small battery, gripper or slot geometry drifts | Reject the output. Check whether source edges resolve the feature and whether captions misidentify it. Simplify the appearance edit, then compare one control-guidance change at a time; larger values can still distort details. |
