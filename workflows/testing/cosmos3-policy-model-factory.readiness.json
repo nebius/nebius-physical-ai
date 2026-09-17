@@ -1,0 +1,59 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "48c9ef1df693503acb42128256fab7efb37c85ae71dbb94b2573403b9d778893",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation and four-stage planning pass. Latest focused policy/CLI tests: 53 passed on macOS and Linux Python 3.10; documentation checks: 589 passed.",
+      "evidence": [
+        "npa/tests/workbench/test_cosmos3_policy_factory.py",
+        "docs/workbench/cosmos3-policy-model-factory.md"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Native eight-GPU training completed; an explicit continuation reloaded its checkpoint, ran a 520-step LIBERO episode, produced measured failure feedback and generated one video candidate. Execution is verified; 0/1 policy success and manual candidate task mismatch do not qualify model or data quality. No automatic retraining.",
+      "evidence": [
+        "docs/workbench/cosmos3-policy-model-factory.md",
+        "docs/workbench/cosmos3-policy-model-factory-live-20260916.md"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The live run published and read back the complete native training bundle. Every new submission still requires private output-prefix write/read verification.",
+      "evidence": [
+        "docs/workbench/cosmos3-policy-model-factory-live-20260916.md"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The RTX worker materialized the pinned dataset, model and VAE and completed five native training iterations. Future inputs still require independent access and integrity checks.",
+      "evidence": [
+        "docs/workbench/cosmos3-policy-model-factory-live-20260916.md"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Live Nebius, object-storage and model access passed. The human credential required normal reauthentication during the run; future submissions need their own preflight and guardrail entitlement.",
+      "evidence": [
+        "docs/workbench/cosmos3-policy-model-factory-live-20260916.md"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The existing Cosmos image with source f6f886557 completed eight-GPU training. Source 044a840fa completed checkpoint reload, simulator evaluation, feedback and guarded candidate generation. Each future source/image combination requires independent qualification.",
+      "evidence": [
+        "docs/workbench/cosmos3-policy-model-factory-live-20260916.md"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "Five training iterations completed on eight reserved RTX PRO 6000 GPUs; one-GPU evaluation completed with 0 successes in one episode. The default eight-B200, 2,000-iteration and full 500-episode recipe remains unqualified.",
+      "evidence": [
+        "docs/workbench/cosmos3-policy-model-factory-live-20260916.md"
+      ]
+    }
+  }
+}

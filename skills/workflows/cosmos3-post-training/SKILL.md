@@ -27,6 +27,22 @@ agent skill runnable.
 
 ## Current NPA Boundary
 
+The experimental `workflows/testing/cosmos3-policy-model-factory.yaml` now
+invokes native LIBERO-10 SFT through `npa workbench cosmos3 policy-train`, then
+the matching `policy-eval`, `policy-feedback`, and `failure-candidates`
+primitives. See `docs/workbench/cosmos3-policy-model-factory.md` and its linked
+readiness record before claiming GPU qualification. The new shared modules are
+`npa/src/npa/workbench/cosmos/policy_*.py`; CLI and SDK call these implementations.
+
+The runtime synchronizes a separate pinned `cu130-train` environment. Do not
+treat the baked inference environment as training support. Keep the native
+20 Hz LIBERO action, camera, normalization, and gripper semantics paired with
+the simulator. A reduced execution smoke cannot qualify the policy: selection
+requires all ten tasks and fifty trials each. Absolute qualification does not
+prove improvement against an incumbent. Generated videos remain ineligible for
+action training until labels are independently validated. Cross-run training
+resume and automatic subsequent learning rounds are not implemented.
+
 Retained real Cosmos3 workflows:
 
 - `workflows/testing/cosmos-fetch.yaml`

@@ -310,6 +310,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
         "cosmos3-ray-serve",
         "cosmos3-serving",
         "detection-training",
+        "openarm",
         "sonic-mujoco",
     }
 
@@ -445,6 +446,7 @@ def test_accepted_images_use_distinct_exact_development_sources_and_digests() ->
         "cosmos3-ray-serve",
         "sonic-mujoco",
         "detection-training",
+        "openarm",
         "alpamayo2-super",
     ):
         entry = manifest[tool]

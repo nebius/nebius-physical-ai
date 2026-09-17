@@ -1,6 +1,6 @@
 {
   "format": "npa_blackwell_dc_image_manifest_v1",
-  "as_of": "2026-09-12T00:00:00Z",
+  "as_of": "2026-09-15T00:00:00Z",
   "registry_ref": "${NPA_REGISTRY}",
   "registry_note": "Resolve official public development and release tags through npa.deploy.images. Development tags are immutable full-SHA tags and release provenance is digest-bound.",
   "target": {
@@ -843,6 +843,40 @@
       "notes": "Built on the CUDA 12.4 base from the live-accepted BYOF evidence. cu124 wheels stop at sm_90, so the image cannot run on datacenter Blackwell (sm_100/sm_103) without a CUDA 13 rebuild; RTX PRO 6000 (sm_120) also requires a cu130 rebuild. RoboCasa/robosuite are Apache-2.0 and kitchen assets are runtime downloads. Validation candidate: not yet built or GPU-validated.",
       "blocked_reason": "CUDA 12.4 base wheels stop at sm_90; datacenter Blackwell (sm_100/sm_103) and RTX PRO 6000 (sm_120) need a CUDA 13 rebuild",
       "upstream_tracking": "robosuite/MuJoCo CUDA 13 wheel availability and a cu130 rebuild of the npa-robocasa image"
+    },
+    {
+      "name": "npa-openarm",
+      "dockerfile": "openarm/Dockerfile",
+      "build_script": "openarm/build.sh",
+      "redistribution": "public",
+      "verdict": "blocked",
+      "validation": "validated",
+      "torch": "runtime-fetched with Isaac Sim 5.1.0.0 and Isaac Lab 2.3.2.post1",
+      "source_compiled_extensions": [
+        "Isaac Sim and Isaac Lab runtime-fetched extensions"
+      ],
+      "smoke": "real 500-step OpenArm v2 bimanual MuJoCo rollout plus upstream Isaac reach rollout and RSL-RL checkpoint",
+      "notes": "The public image contains Apache-2.0 OpenArm MuJoCo/Isaac source and assets but no Isaac, Kit, credentials, accepted terms, caches, or generated data. The exact public development digest passed full-byte and supply-chain gates, then a one-GPU RTX PRO 6000 workflow produced finite MuJoCo and Isaac traces, a fully decoded rendered video, a real upstream RSL-RL checkpoint, and a matching fail-closed qualification report. This proves the RTX path only; B200/B300 remain blocked because they have no RT cores.",
+      "blocked_reason": "The accepted Isaac Sim/Isaac Lab capability requires an RT-capable GPU. B200 and B300 are datacenter Blackwell parts without RT cores and are not substitutes for the validated RTX target.",
+      "upstream_tracking": "NVIDIA Isaac Sim rendering support; route the complete OpenArm qualification to L40S or RTX PRO 6000.",
+      "validation_run": "private-access-controlled-validation-record",
+      "validated_tag": "dev-01fbf3a554cb7b15066283fd171c5b81f6207eda",
+      "validated_digest": "sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a",
+      "publication_model": "exact-digest-promoted",
+      "published_tag": "2.2.0-isaac0.1.0-rtfetch",
+      "published_digest": "sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a",
+      "published_registries": [
+        "public-development",
+        "public-release"
+      ],
+      "validated_gpu": {
+        "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "capability": "12.0",
+        "platform": "gpu-rtx6000",
+        "result": "OPENARM_DUAL_SIMULATOR_QUALIFICATION_PASSED",
+        "tag": "dev-01fbf3a554cb7b15066283fd171c5b81f6207eda",
+        "digest": "sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a"
+      }
     },
     {
       "name": "npa-curobo",
