@@ -144,6 +144,11 @@ def test_live_acceptance_requires_current_pair_identity_and_physical_pickup() ->
     assert accepted["accepted"] is True
     assert accepted["failures"] == []
 
+    moving_wrist_metrics = _accepted_live_metrics()
+    moving_wrist_metrics["camera_wrist_cube_in_frame_current"] = 0
+    moving_wrist = cluster_deploy.qualify_live_metrics(moving_wrist_metrics)
+    assert moving_wrist["accepted"] is True
+
     for changed, expected_failure in (
         ({"camera_validated_requests": 99}, "camera_pair_identity"),
         ({"round_trip_camera_pair_id": 99}, "camera_pair_identity"),
@@ -151,8 +156,7 @@ def test_live_acceptance_requires_current_pair_identity_and_physical_pickup() ->
         ({"camera_wrist_luminance_variance_current": 0}, "current_camera_quality"),
         ({"luminance_mean_min": 0}, "accepted_camera_quality"),
         ({"camera_pair_difference_current": 5.9}, "accepted_camera_quality"),
-        ({"camera_exterior_red_cube_pixels_current": 9}, "accepted_camera_quality"),
-        ({"camera_wrist_cube_in_frame_current": 0}, "accepted_camera_quality"),
+        ({"camera_exterior_red_cube_pixels_current": 0}, "accepted_camera_quality"),
         ({"gripper_contact_samples": 0}, "physical_gripper_contact"),
         ({"cube_lift_max_m": 0.049}, "sustained_pickup"),
         ({"pickup_hold_seconds": 0.999}, "sustained_pickup"),

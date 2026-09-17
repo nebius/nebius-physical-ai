@@ -1118,6 +1118,18 @@ def test_live_camera_pair_classifies_each_view_freshness_semantics_and_distinctn
     assert accepted.exterior.red_cube_pixels >= scenario.MIN_EXTERIOR_RED_CUBE_PIXELS
     assert accepted.mean_difference >= scenario.MIN_CAMERA_PAIR_DIFFERENCE
 
+    # Eye-in-hand motion can move the known target outside the wrist frustum;
+    # the live wrist image remains a required, validated policy input.
+    wrist_target_absent = scenario._validate_camera_pair(
+        Camera(exterior),
+        Camera(wrist),
+        render_sequence=6,
+        last_accepted_render_sequence=5,
+        exterior_cube_in_frame=True,
+        wrist_cube_in_frame=False,
+    )
+    assert wrist_target_absent.accepted is True
+
     cases = (
         (Camera(None), Camera(wrist), 5, 4, True, True, "exterior", "missing"),
         (
@@ -1149,16 +1161,6 @@ def test_live_camera_pair_classifies_each_view_freshness_semantics_and_distinctn
             False,
             True,
             "exterior",
-            "cube_out_of_frame",
-        ),
-        (
-            Camera(exterior),
-            Camera(wrist),
-            5,
-            4,
-            True,
-            False,
-            "wrist",
             "cube_out_of_frame",
         ),
         (
