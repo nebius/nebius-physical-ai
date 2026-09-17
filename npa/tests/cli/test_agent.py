@@ -2841,6 +2841,16 @@ def test_bootstrap_visualize_run_selector_lists_discovered_runs() -> None:
     assert 'fillRunSelectOptionsRich(document.getElementById("runIdSelect")' in source
 
 
+def test_bootstrap_rerun_uses_active_server_recording_when_available() -> None:
+    """An active, server-loaded RRD must not be replaced by a fragile URL override."""
+    source = _agent_ui_bundle()
+    assert "let recordingPublished = false;" in source
+    assert "recordingPublished = true;" in source
+    assert 'const directHref = "/rerun/?camera=" + encodeURIComponent(cam);' in source
+    assert "if (recordingPublished) {" in source
+    assert "return directHref;" in source
+
+
 def test_bootstrap_run_history_uses_run_id_index() -> None:
 
     source = _agent_source()

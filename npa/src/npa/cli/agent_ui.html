@@ -10204,9 +10204,11 @@
       async function rerunIframeSrc(camera, runId, isCurrent = () => true) {
         const cam = String(camera || "workspace");
         let rrdUrl = "";
+        let recordingPublished = false;
         try {
           rrdUrl = await resolveRerunRecordingUrl(isCurrent);
           if (!isCurrent()) return "";
+          recordingPublished = true;
           // Still verify the authenticated blob path; the viewer itself loads
           // the unauthenticated recording copy because Rerun's WASM fetch path
           // does not reliably consume parent-created blob URLs across browsers.
@@ -10222,6 +10224,16 @@
           rrdUrl = location.origin + "/api/sim-viz/rrd-blob?t=" + String(Date.now());
         }
         if (!isCurrent()) return "";
+        // The Agent's same-origin Rerun server is restarted with the selected
+        // run's RRD. Prefer that active recording over a `?url=` override:
+        // self-hosted Rerun versions can otherwise discard the query recording
+        // and show their welcome page despite a successfully loaded artifact.
+        if (recordingPublished) {
+          const directHref = "/rerun/?camera=" + encodeURIComponent(cam);
+          const openLink = document.getElementById("openFullRerun");
+          if (openLink) openLink.href = directHref;
+          return directHref;
+        }
         // Prefer the public recording copy; authenticated blob fetch remains the fallback.
         // Rerun parses path-only `/rerun/...` as host `rerun` → http://rerun/... (broken).
         if (rrdUrl.startsWith("/")) {
