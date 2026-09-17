@@ -175,7 +175,7 @@ def test_tool_ref_argv_resolves_to_a_real_command(tool_ref: str) -> None:
 
 
 def test_non_cli_argv_entries_are_pinned() -> None:
-    """Inline python/bash toolRefs are exempt; the exemption list may only shrink."""
+    """Unchecked wrappers stay pinned; new module entries must pass their real parser."""
 
     actual = {
         tool_ref
@@ -185,6 +185,11 @@ def test_non_cli_argv_entries_are_pinned() -> None:
         and str(entry.argv_template[0]) != "npa"
     }
     unexpected = actual - NON_CLI_ARGV
+    for tool_ref in tuple(unexpected):
+        argv = TOOL_CATALOG[tool_ref].argv_template
+        if len(argv) > 3 and argv[0] == "python3" and argv[1] == "-m":
+            _check_module_parser(tool_ref, argv)
+            unexpected.remove(tool_ref)
     assert not unexpected, (
         "new non-CLI toolRef argv templates are unchecked by this guardrail; "
         f"prefer an `npa ...` invocation, or pin them explicitly: {sorted(unexpected)}"
@@ -193,6 +198,25 @@ def test_non_cli_argv_entries_are_pinned() -> None:
     assert not stale, (
         f"NON_CLI_ARGV lists entries that no longer exist: {sorted(stale)}"
     )
+
+
+def _check_module_parser(tool_ref: str, argv: list[str]) -> None:
+    from importlib import import_module
+    import runpy
+
+    audit = runpy.run_path(str(Path(__file__).with_name("test_module_toolref_argv.py")))
+    factory = audit["PARSER_FACTORIES"].get(argv[2])
+    assert factory, f"{tool_ref}: module is not registered with the argv parser audit"
+    parser = getattr(import_module(argv[2]), factory)()
+    parser.parse_args(audit["_resolve"](argv[3:], parser))
+
+
+def test_new_module_parser_audit_rejects_unknown_flags() -> None:
+    with pytest.raises(SystemExit):
+        _check_module_parser("fixture", [
+            "python3", "-m", "npa.workflows.lerobot_transfer", "prepare",
+            "--output-path", "fixture", "--flag-that-does-not-exist", "value",
+        ])
 
 
 #: Options typed as a plain ``str`` whose value genuinely IS a format word. Verified by

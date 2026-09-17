@@ -84,6 +84,10 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.sonic.export` | `npa workbench sonic export` | `config.checkpoint_uri` | `config.onnx_uri` | no |
 | `workbench.sonic.eval` | `npa workbench sonic eval` | `config.onnx_uri` | eval report | no |
 | `workbench.lerobot.policy_rollout` | `python3 -m npa.workbench.lerobot.policy_container eval` | `config.policy_checkpoint`, `config.rollout_episodes` | rendered episodes under `config.rollouts_uri` | no |
+| `workbench.lerobot.transfer_prepare` | `python3 -m npa.workflows.lerobot_transfer prepare` | pinned PushT demonstrations and experiment settings | sealed dataset, episode split, training-only statistics and recipe | no |
+| `workbench.lerobot.transfer_train` | `python3 -m npa.workflows.lerobot_transfer train` | `config.prepared_uri`, `config.arm` | native ACT checkpoint, training log and byte provenance | no |
+| `workbench.lerobot.transfer_evaluate` | `python3 -m npa.workflows.lerobot_transfer evaluate` | prepared recipe and both exact checkpoints | paired native PushT trials and real rollout videos | no |
+| `workbench.lerobot.transfer_report` | `python3 -m npa.workflows.lerobot_transfer report` | `config.evaluation_uri` | held-out comparison, expert-demo queue, PNG and RRD | no |
 | `workbench.lerobot.policy_train` | `python -m npa.workbench.lerobot.policy_container train` | `config.lerobot_dataset`, `config.train_steps` | checkpoint + run artifacts under `config.artifacts_uri` | no |
 | `workbench.token_factory.triage` | `python -m npa.workflows.token_factory_triage run` | `config.artifacts_uri` | `<triage_uri>/generations.jsonl` | no |
 | `workbench.cosmos3.text_to_image` | `npa workbench cosmos3 text-to-image` | `config.t2i_prompt`, `config.t2i_output_uri`, `config.cosmos_model_id`, `config.cosmos_source_repo`, `config.cosmos_cache_dir`, `config.t2i_uv_group`, `config.t2i_seed`, `config.t2i_checkpoint_name` | `<t2i_output_uri>success.json`, `<t2i_output_uri>text-to-image.png` | no |

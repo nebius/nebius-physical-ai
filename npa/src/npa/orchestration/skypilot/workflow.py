@@ -44,6 +44,7 @@ from npa.orchestration.skypilot.json_output import (
     is_verified_empty_queue_result,
     parse_single_json_document,
     queue_rows_from_output,
+    verified_structured_queue_rows,
 )
 from npa.orchestration.skypilot.launch_transaction import (
     ControllerState,
@@ -790,6 +791,108 @@ def _selected_kube_context(
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
+
+@dataclass
+class _PreparedWorkflowSubmission:
+    runtime_config: Any
+    docs: list[dict[str, Any]]
+    submission_dir: Path
+    yaml_path: Path
+    config_path: Path
+    sky_executable: str
+    global_config: dict[str, Any]
+    env: dict[str, str] = field(default_factory=dict)
+
+
+def _submission_global_config(runtime, controller_backend, infra):
+    config = _controller_config_for_execution(
+        _load_base_config(runtime.global_config_path),
+        controller_backend=controller_backend, infra=infra,
+    )
+    context = _controller_region_from_infra(infra, controller_backend)
+    if context:
+        kubernetes = config.setdefault("kubernetes", {})
+        if not isinstance(kubernetes, dict):
+            raise ValueError("SkyPilot global config kubernetes section must be a mapping")
+        # The selected workload and controller share this exact context; other
+        # operator settings, including pod configuration, retain their values.
+        kubernetes["allowed_contexts"] = [context]
+    return config
+
+
+def _preflight_prepared_submission(prepared, *, project, infra, extra_env, target):
+    from npa.execution_preflight import ExecutionPreflightError
+
+    env = sky_environment(prepared.runtime_config.isolated_config_dir)
+    for key, value in (extra_env or {}).items():
+        if value or key in {"NPA_S3_BUCKET", "NPA_S3_PREFIX"}:
+            env[key] = value
+    env["SKYPILOT_GLOBAL_CONFIG"] = str(prepared.config_path)
+    try:
+        selected, _report, injected = _execution_preflight(
+            prepared.docs, project=project, infra=infra, extra_env=env,
+            target=target, global_config=prepared.global_config,
+            sky_bin=prepared.sky_executable,
+            cwd=_stable_sky_cwd(prepared.runtime_config.isolated_config_dir),
+        )
+    except (ExecutionPreflightError, ValueError) as exc:
+        raise SkyPilotSubmitError(str(exc)) from exc
+    env.update(injected)
+    if selected is not None:
+        env["NPA_SKYPILOT_PROJECT"] = selected.project
+    prepared.env = env
+    prepared.config_path.write_text(yaml.safe_dump(prepared.global_config, sort_keys=False), encoding="utf-8")
+    _chmod_owner_only(prepared.config_path)
+    prepared.yaml_path.write_text(yaml.safe_dump_all(prepared.docs, sort_keys=False), encoding="utf-8")
+    _chmod_owner_only(prepared.yaml_path)
+
+
+def _prepare_workflow_submission(
+    yaml_path, run_id, *, isolated_config_dir=None, config_path=None, sky_bin=None,
+    controller_backend=DEFAULT_CONTROLLER_BACKEND, infra="", extra_env=None,
+    project="", execution_target=None,
+):
+    runtime = resolve_config(sky_bin=sky_bin, global_config_path=config_path,
+                             isolated_config_dir=isolated_config_dir)
+    docs = _load_yaml_documents(Path(yaml_path))
+    if not docs:
+        raise ValueError("SkyPilot YAML is empty")
+    directory = _submission_dir(run_id, runtime.isolated_config_dir)
+    try:
+        rendered = directory / "workflow.yaml"
+        shutil.copy2(yaml_path, rendered)
+        _chmod_owner_only(rendered)
+        executable = str(ensure_skypilot_version(runtime.sky_bin))
+        global_config = _submission_global_config(runtime, controller_backend, infra)
+        generated = directory / "skypilot-config.yaml"
+        generated.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")
+        _chmod_owner_only(generated)
+        prepared = _PreparedWorkflowSubmission(runtime, docs, directory, rendered,
+                                                generated, executable, global_config)
+        _preflight_prepared_submission(prepared, project=project, infra=infra,
+                                      extra_env=extra_env, target=execution_target)
+        return prepared
+    except BaseException:
+        if runtime.isolated_config_dir is None:
+            _cleanup_owned_submission_dir(directory)
+        raise
+
+
+def _refresh_workflow_preflight(yaml_path, run_id, **kwargs):
+    """Use the normal SDK gate without starting a controller or submitting a job."""
+    from uuid import uuid4
+
+    # Failed-attempt files are immutable evidence. A refresh prepares a separate
+    # local document; its name is never submitted as a provider job.
+    preparation_id = f"{run_id}-recovery-preflight-{uuid4().hex}"
+    prepared = _prepare_workflow_submission(yaml_path, preparation_id, **kwargs)
+    try:
+        return hashlib.sha256(Path(yaml_path).read_bytes()).hexdigest()
+    finally:
+        if prepared.runtime_config.isolated_config_dir is None:
+            _cleanup_owned_submission_dir(prepared.submission_dir)
+
+
 def submit_workflow(
     yaml_path: Path,
     run_id: str,
@@ -827,75 +930,18 @@ def submit_workflow(
     prepared_yaml: Path | None = None
     streamer: _LaunchStreamer | None = None
     try:
-        runtime_config = resolve_config(
-            sky_bin=sky_bin,
-            global_config_path=config_path,
-            isolated_config_dir=isolated_config_dir,
-        )
-        docs = _load_yaml_documents(yaml_path)
-        if not docs:
-            raise ValueError("SkyPilot YAML is empty")
-        submission_dir = _submission_dir(run_id, runtime_config.isolated_config_dir)
-        if runtime_config.isolated_config_dir is None:
-            owned_submission_dir = submission_dir
-        prepared_yaml = submission_dir / "workflow.yaml"
-        shutil.copy2(yaml_path, prepared_yaml)
-        # The task YAML can carry registry/docker auth + S3 creds; keep it owner-only.
-        _chmod_owner_only(prepared_yaml)
-        sky_executable = str(ensure_skypilot_version(runtime_config.sky_bin))
-        controller_context = _controller_region_from_infra(infra, controller_backend)
-        global_config = _controller_config_for_execution(
-            _load_base_config(runtime_config.global_config_path),
+        prepared = _prepare_workflow_submission(
+            yaml_path, run_id, isolated_config_dir=isolated_config_dir,
+            config_path=config_path, sky_bin=sky_bin,
             controller_backend=controller_backend, infra=infra,
+            extra_env=extra_env, project=project, execution_target=execution_target,
         )
-        if controller_context:
-            # ``--infra k8s/<context>`` is an exact target, not merely a
-            # controller placement hint.  A pre-existing SkyPilot config may
-            # carry an allowlist from an older cluster; leaving it intact makes
-            # ``sky jobs launch`` reject the requested context even when the
-            # selected kubeconfig contains it.  Bind the generated, owner-only
-            # per-submit config to the same immutable context used by the task
-            # and controller.  Preserve all other Kubernetes settings (notably
-            # pod_config / registry pull secrets).
-            kubernetes = global_config.setdefault("kubernetes", {})
-            if not isinstance(kubernetes, dict):
-                raise ValueError(
-                    "SkyPilot global config kubernetes section must be a mapping"
-                )
-            kubernetes["allowed_contexts"] = [controller_context]
-        generated_config_path = submission_dir / "skypilot-config.yaml"
-        generated_config_path.write_text(
-            yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8"
-        )
-        _chmod_owner_only(generated_config_path)
-        env = sky_environment(runtime_config.isolated_config_dir)
-        for key, value in (extra_env or {}).items():
-            if value or key in {"NPA_S3_BUCKET", "NPA_S3_PREFIX"}:
-                env[key] = value
-        env["SKYPILOT_GLOBAL_CONFIG"] = str(generated_config_path)
-
-        # Both direct SDK callers and the CLI cross this gate. Resolve the
-        # actual rendered task environment before controller/job side effects.
-        from npa.execution_preflight import ExecutionPreflightError
-
-        try:
-            _target, _target_report, injected = _execution_preflight(
-                docs, project=project, infra=infra, extra_env=env,
-                target=execution_target, global_config=global_config,
-                sky_bin=sky_executable,
-                cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
-            )
-        except (ExecutionPreflightError, ValueError) as exc:
-            raise SkyPilotSubmitError(str(exc)) from exc
-        env.update(injected)
-        if _target is not None:
-            env["NPA_SKYPILOT_PROJECT"] = _target.project
-        # Native preflight pins the exact project/region in this per-submit
-        # configuration; persist the verified version before any controller.
-        generated_config_path.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")
-        _chmod_owner_only(generated_config_path)
-        prepared_yaml.write_text(yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8")
-        _chmod_owner_only(prepared_yaml)
+        runtime_config = prepared.runtime_config
+        docs, env = prepared.docs, prepared.env
+        submission_dir, prepared_yaml = prepared.submission_dir, prepared.yaml_path
+        generated_config_path = prepared.config_path
+        sky_executable = prepared.sky_executable
+        owned_submission_dir = submission_dir if runtime_config.isolated_config_dir is None else None
 
         cmd = [
             sky_executable,
@@ -1200,6 +1246,21 @@ def workflow_status(
     )
 
 
+def _verify_task_queue_result(result: subprocess.CompletedProcess[str]) -> None:
+    from npa.verification import sanitize_reason
+
+    if is_verified_empty_queue_result(result):
+        return
+    detail = sanitize_reason(redact_text(_command_detail(result)))
+    if result.returncode != 0:
+        raise RuntimeError(f"SkyPilot task queue query failed: {detail}")
+    if verified_structured_queue_rows(result) is None:
+        raise RuntimeError(
+            "SkyPilot task queue response is malformed or has conflicting diagnostics: "
+            + detail
+        )
+
+
 def workflow_task_statuses(
     job_id: str,
     *,
@@ -1207,6 +1268,7 @@ def workflow_task_statuses(
     config_path: Path | None = None,
     sky_bin: SkyBin = None,
     timeout: int = 300,
+    raise_on_error: bool = False,
 ) -> list[dict[str, Any]]:
     """Return per-task rows for a managed job (pipeline tasks or JobGroup members).
 
@@ -1214,6 +1276,23 @@ def workflow_task_statuses(
     (``submitted_at`` / ``start_at`` / ``end_at``), which is how a JobGroup can be
     shown to have run its members *concurrently* and how a barrier state can be
     shown to have started only after its predecessors finished.
+
+    Args:
+        job_id: Exact managed-job identity to select from the queue.
+        isolated_config_dir: Optional isolated SkyPilot configuration directory.
+        config_path: Optional global SkyPilot configuration path.
+        sky_bin: Optional SkyPilot executable override.
+        timeout: Queue subprocess timeout in seconds.
+        raise_on_error: Require a verified queue response for authoritative status.
+            The default preserves empty results for optional diagnostics callers.
+
+    Returns:
+        Task rows sorted by task ID, including an empty list for verified empties.
+
+    Raises:
+        RuntimeError: Strict observation encountered a failed or malformed query.
+        subprocess.SubprocessError: The queue subprocess could not complete.
+        OSError: The queue executable could not be started.
     """
 
     runtime_config = resolve_config(
@@ -1241,6 +1320,8 @@ def workflow_task_statuses(
         timeout=timeout,
         check=False,
     )
+    if raise_on_error:
+        _verify_task_queue_result(result)
     if result.returncode != 0:
         return []
     return parse_task_statuses(result.stdout, job_id)
@@ -2402,6 +2483,17 @@ def _cleanup_owned_submission_dir(path: Path | None) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
+def _submit_failure_prefix(result: subprocess.CompletedProcess[str], detail: str) -> str:
+    state, _category = classify_failure(
+        phase="launch", stdout=result.stdout or "", stderr=result.stderr or ""
+    )
+    if state is EvidenceState.TRANSIENT_UNAVAILABLE:
+        return "SkyPilot transport failure during jobs launch"
+    if _looks_like_auth_error(detail):
+        return "SkyPilot auth failure during jobs launch"
+    return "sky jobs launch failed"
+
+
 def _format_submit_error(
     cmd: Sequence[str],
     result: subprocess.CompletedProcess[str],
@@ -2409,11 +2501,7 @@ def _format_submit_error(
     streamed: Sequence[SkyPilotDiagnosis] = (),
 ) -> str:
     detail = _command_detail(result)
-    prefix = (
-        "SkyPilot auth failure during jobs launch"
-        if _looks_like_auth_error(detail)
-        else "sky jobs launch failed"
-    )
+    prefix = _submit_failure_prefix(result, detail)
     # `sky status --refresh` exits 0 while merely *warning* about clusters it
     # cannot refresh, so a controller cached against a dead kubeconfig gets past
     # the health check and fails here instead (CachedClusterUnavailable). Attach
