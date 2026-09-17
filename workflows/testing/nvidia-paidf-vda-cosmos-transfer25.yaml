@@ -120,6 +120,12 @@ config:
   # (`--var augment_nodes=4`) rather than editing this file; deployIfAbsent then
   # provisions a cluster with that many GPU nodes.
   augment_nodes: "1"
+  # Placement-only requests for the lightweight metadata, captioning, grading,
+  # and curation stages. Defaults fit the provisioned CPU worker. An operator
+  # reusing a capacity-constrained cluster may lower both after a read-only
+  # node-allocation preflight; neither value changes media/model/gate semantics.
+  cpu_cpus: "4"
+  cpu_memory: "16Gi"
   # Host CPU requested by each GPU augment pod. Keep 16 for multi-GPU fan-out;
   # a single-GPU run on an existing node may lower this (for example to 12)
   # when read-only capacity preflight proves that controller/system reservations
@@ -352,8 +358,8 @@ resources:
     # The same cluster serves both profiles, so only the GPU one declares
     # deployIfAbsent; these requests must fit its CPU node (see
     # tests/guardrails/test_default_cluster_fits_quickstart.py).
-    cpus: 4
-    memory: 16Gi
+    cpus: "{{config.cpu_cpus}}"
+    memory: "{{config.cpu_memory}}"
 
 initial: record-upstream
 

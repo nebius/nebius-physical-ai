@@ -392,6 +392,31 @@ def test_single_gpu_augment_cpu_request_can_fit_existing_cluster_headroom(
     assert resolved["accelerators"] == "RTXPRO6000:1"
 
 
+def test_cpu_stage_request_can_fit_existing_cluster_headroom(
+    tmp_path: pathlib.Path,
+) -> None:
+    from npa.orchestration.npa_workflow.spec import resolve_resource_profile
+
+    raw = _spec()
+    assert raw["resources"]["cpu"] == {
+        "cloud": "kubernetes",
+        "cpus": "{{config.cpu_cpus}}",
+        "memory": "{{config.cpu_memory}}",
+    }
+    assert raw["config"]["cpu_cpus"] == "4"
+    assert raw["config"]["cpu_memory"] == "16Gi"
+
+    raw["config"].update(cpu_cpus="1", cpu_memory="4Gi")
+    path = tmp_path / "capacity-constrained-existing-cluster.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    spec = load_spec(path)
+    resolved = resolve_resource_profile(
+        "cpu", spec.resources["cpu"], config=spec.config, run={"id": "capacity"}
+    )
+
+    assert resolved == {"cloud": "kubernetes", "cpus": "1", "memory": "4Gi"}
+
+
 def test_optional_sam2_config_is_validated_before_provisioning(
     tmp_path: pathlib.Path,
 ) -> None:
