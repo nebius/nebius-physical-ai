@@ -62,7 +62,6 @@ def _p(
 #
 SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
     "flex-pi/infer": {
-        "torch_compile": "boolean",
         "runtime_image": "infra",
         "dry_run": "boolean",
     },
@@ -166,7 +165,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         sdk_attr="infer",
         spec_path=SPECS / "flex-pi-rtxpro-inference.yaml",
         tool_ref="workbench.flex_pi.infer",
-        spec_gap=("torch_compile", "runtime_image", "dry_run"),
+        spec_gap=("runtime_image", "dry_run"),
         params=(
             _p("input_path", "input_path", "--input-path"),
             _p("output_path", "output_path", "--output-path"),

@@ -153,9 +153,9 @@
 <rect x="582" y="294" width="154" height="26" rx="3" fill="#1a7f37"/>
 <text x="659" y="311" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
 </g>
-<g><title>npa-flex-pi on B200 sm_100: supported</title>
-<rect x="740" y="294" width="154" height="26" rx="3" fill="#c3e6cd"/>
-<text x="817" y="311" font-size="11.5" fill="#11301d" text-anchor="middle">supported</text>
+<g><title>npa-flex-pi on B200 sm_100: verified</title>
+<rect x="740" y="294" width="154" height="26" rx="3" fill="#1a7f37"/>
+<text x="817" y="311" font-size="11.5" fill="#ffffff" text-anchor="middle">verified</text>
 </g>
 <g><title>npa-flex-pi on B300 sm_103: supported (same-major `sm_100` coverage; not measured)</title>
 <rect x="898" y="294" width="154" height="26" rx="3" fill="#c3e6cd"/>

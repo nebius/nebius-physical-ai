@@ -19,8 +19,10 @@ The reference configuration observes RGB and DINO, omits pointmap, and disables
 future video/DINO/pointmap denoising. It keeps the trained action horizon and
 four Euler steps. Upstream reports the same 94.6% average RoboTwin success for
 action-only and full-joint modes, while action-only avoids unnecessary stream
-generation. One RTX PRO 6000 supplies the required Blackwell `sm_120` target and
-ample memory above upstream's 16–26 GB inference range.
+generation. The maintained reference targets are one RTX PRO 6000 (`sm_120`) or
+one B200 (`sm_100`); both supply ample memory above upstream's 16–26 GB
+inference range. Flex-pi remains single-GPU inference. Capacity-wide B200 runs
+use independent replicas, not tensor, pipeline, or other model parallelism.
 
 ## Packaging and terms
 
@@ -73,8 +75,15 @@ Run inside the GPU image with a local directory or S3 prefix:
 npa workbench flex-pi infer \
   --input-path /opt/flex-pi/npa/public_robotwin_sample.json \
   --output-path "s3://${OPERATOR_BUCKET}/runs/${RUN_ID}/flex-pi/" \
+  --torch-compile \
   --expected-gpu RTXPRO6000
 ```
+
+Use `--expected-gpu B200` for the B200 reference target. The maintained
+`workbench.flex_pi.infer` toolRef passes `--torch-compile` literally for both
+Blackwell workflows. Direct CLI and SDK callers must opt in explicitly. Compile
+warmup is accounted as model setup; it does not change the checkpoint, public
+observation, four Euler steps, seed, or 32×14 action contract.
 
 The SDK exposes the same implementation as
 `npa.sdk.workbench.flex_pi.infer(...)`. For serving, set an owner-controlled
@@ -89,19 +98,23 @@ input manifest.
 Validate, plan, and submit the reference workflow:
 
 ```bash
-npa workbench workflow validate-spec workflows/testing/flex-pi-rtxpro-inference.yaml
-npa workbench workflow plan-spec workflows/testing/flex-pi-rtxpro-inference.yaml
-npa workbench workflow submit workflows/testing/flex-pi-rtxpro-inference.yaml \
+npa workbench workflow validate-spec workflows/testing/flex-pi-b200-inference.yaml
+npa workbench workflow plan-spec workflows/testing/flex-pi-b200-inference.yaml
+npa workbench workflow submit workflows/testing/flex-pi-b200-inference.yaml \
   --infra "$CONFIGURED_TARGET" --var "bucket=$OPERATOR_BUCKET" \
   --secret-env HF_TOKEN
 ```
 
-The spec requests exactly one RTX PRO 6000 and routes
-`workbench.flex_pi.infer` to the flex-pi image. It publishes only verified
-artifacts to operator-owned object storage. The released checkpoint is public,
-so `HF_TOKEN` is not an access gate; forwarding an operator read token through
-the secret channel avoids anonymous multi-shard download throttling. Never put
-the token in the workflow YAML or an artifact.
+Use `flex-pi-rtxpro-inference.yaml` for the independent RTX PRO 6000 path. Each
+spec requests exactly one GPU and routes `workbench.flex_pi.infer` to the
+flex-pi image. It publishes only verified artifacts to operator-owned object
+storage. Capacity-wide validation must discover live capacity first and fan out
+independent one-GPU replicas with unique seeds and output prefixes; do not make
+multiple devices visible to one flex-pi process or call that model parallelism.
+The released checkpoint is public, so `HF_TOKEN` is not an access gate;
+forwarding an operator read token through the secret channel avoids anonymous
+multi-shard download throttling. Never put the token in the workflow YAML or an
+artifact.
 
 ## Artifacts and acceptance
 
@@ -112,9 +125,10 @@ the token in the workflow YAML or an artifact.
   provenance under `npa.workbench.flex_pi.inference.v1`.
 
 A passing run requires terminal job success, all three durable objects,
-read-after-write verification, RTX PRO 6000 identity with compute capability
-12.0, and exact source/checkpoint/data revisions. Raw logs and S3 locations stay
-outside Git; reports and pull requests use only sanitized summaries.
+read-after-write verification, the requested device identity and compute
+capability (RTX PRO 6000 12.0 or B200 10.0), and exact
+source/checkpoint/data revisions. Raw logs and S3 locations stay outside Git;
+reports and pull requests use only sanitized summaries.
 
 ### Measured RTX PRO 6000 acceptance
 
@@ -129,8 +143,77 @@ SHA-256 digests `b69156c1…`, `e2ff5ada…`, and `638e072d…`, respectively.
 The run used torch 2.7.1+cu128 and ended with
 `FLEX_PI_REAL_INFERENCE_PASSED`; it had no pod restarts or traceback. This is a
 policy-inference and artifact-integrity result for one public observation, not a
-closed-loop RoboTwin success measurement. L40S, Hopper, B200, and B300 remain
+closed-loop RoboTwin success measurement. L40S, Hopper, and B300 remain
 supported by the measured wheel architectures but unmeasured for this release.
+
+### Measured B200 acceptance
+
+On 2026-09-16, the same exact accepted digest ran on the maximum B200 capacity
+that fresh provider and scheduler evidence made available. The reserved pool
+had 23 unallocated B200s; a pre-existing shared eight-GPU node had one additional
+scheduler-free B200 while seven devices were already requested by workloads
+that were left untouched. NPA therefore requested, allocated, and used 24
+B200s: two reserved eight-GPU nodes, seven reserved one-GPU nodes, and one free
+device on the shared node. Provider advice fell to zero available reservation
+GPUs during the run and returned to the pre-run count after cleanup.
+
+The exact digest first passed 24 independent `sm_100` probes with one visible
+device and 24 distinct anonymized placements. A cached single-B200 baseline
+completed in 91.823 seconds wall time with 0.578 seconds of model inference.
+The measured capacity run then launched 24 independent action-only replicas,
+not multi-GPU model parallelism. All 24 loaded the complete released checkpoint,
+emitted `FLEX_PI_REAL_INFERENCE_PASSED`, and produced finite 32×14 actions with
+zero failures, restarts, or tracebacks. The fan-out completed in 132.0 seconds
+(0.1818 replicas/s): 16.70× throughput speedup and 69.56% wall-scaling
+efficiency relative to the cached single-GPU baseline. Per-replica inference
+latency was 0.579–1.053 seconds (0.752-second median, 1.028-second p95); peak
+allocated GPU memory was 25,268,430,336 bytes per replica. Sampled GPU
+utilization was nonzero on every device.
+
+All 72 declared objects were read back from operator-owned storage under 72
+unique keys. The run produced 24 unique action hashes and 24 unique result
+hashes; the identical pinned input intentionally had one content hash. This is
+observation-level policy inference and scaling evidence, not closed-loop
+RoboTwin task success.
+
+### Measured Blackwell compile optimization
+
+On 2026-09-17, the unchanged release digest was measured in paired eager and
+compiled runs on one RTX PRO 6000 (`sm_120`) and one B200 (`sm_100`). Each mode
+used the released checkpoint, the same public observation, seed 42, four Euler
+steps, two untimed warmups, and all five timed inferences. The optimized path is
+upstream's `torch.compile` denoising-step specialization (`inductor`,
+`reduce-overhead`); no image bytes or model semantics changed.
+
+| Target | Requested / allocated / used | Eager median / p95 | Compiled median / p95 | Eager → compiled throughput | Median speedup | Eager → compiled peak memory |
+| --- | --- | --- | --- | --- | --- | --- |
+| RTX PRO 6000 | 1 / 1 / 1 | 0.2701 / 0.2989 s | 0.1021 / 0.1278 s | 3.688 → 9.331 samples/s | 2.645× | 25,268,430,336 → 25,270,528,512 bytes |
+| B200 | 1 / 1 / 1 | 0.1990 / 0.2075 s | 0.08738 / 0.08759 s | 4.992 → 11.450 samples/s | 2.278× | 25,268,430,336 → 25,270,528,512 bytes |
+
+Cold asset preparation took 686.59 seconds on RTX PRO 6000 and 451.77 seconds
+on B200. Eager model setup took 90.09 and 97.35 seconds, respectively; compiled
+model setup including warmup took 121.03 and 121.51 seconds. The corresponding
+end-to-end cold setup totals were 776.68→807.62 seconds on RTX PRO 6000 and
+549.12→573.28 seconds on B200. Compile therefore trades a one-time 30.94- or
+24.16-second setup increment for the repeated warm-inference gains above.
+
+Every mode produced one stable fixed-seed action hash across all five repeats.
+Compiled versus eager actions passed `atol=rtol=0.01`, a 0.5% relative-L2 cap,
+and a 0.1% action-L2-drift cap. The observed maxima were 0.008001 absolute and
+0.2563% relative L2 on RTX PRO 6000, and 0.008001 absolute and 0.2927% relative
+L2 on B200. This bounded envelope accounts for BF16 kernel reordering without
+clipping or changing outputs. Eager profiling identified `aten::addmm` as the
+largest CUDA operation on both targets, supporting compilation of the repeated
+denoising step rather than reducing solver work.
+
+Both final Jobs terminated successfully with zero restarts, nonzero physical
+GPU utilization, finite 32×14 actions, and five read-back-verified objects per
+target. The standard action/result/placement identities were independently
+different across the two GPUs: `889285410675…` / `10bd2ee9a53f…` /
+`9bca9a4c6fd4…` on RTX PRO 6000 and `14355dc20f35…` / `c12ef1159c19…` /
+`32bb6615e5a3…` on B200. Both used torch 2.7.1+cu128, CUDA runtime 12.8,
+and driver 580.159.04. The prior 24-B200 fan-out remains the scaling record;
+this one-B200 comparison proves only the shared runtime optimization.
 
 ## Build qualification
 

@@ -1,4 +1,4 @@
-"""Real flex-pi golden evaluation executed inside the RTX GPU image."""
+"""Real flex-pi golden evaluation executed inside a supported GPU image."""
 
 from __future__ import annotations
 

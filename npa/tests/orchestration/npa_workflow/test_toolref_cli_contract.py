@@ -74,6 +74,7 @@ CHECKED_TOOLREFS = [
     ("workbench.token_factory.caption", "npa.cli.workbench.token_factory", "caption"),
     ("workbench.token_factory.generate", "npa.cli.workbench.token_factory", "generate"),
     ("workbench.token_factory.reason", "npa.cli.workbench.token_factory", "reason"),
+    ("workbench.flex_pi.infer", "npa.cli.workbench.flex_pi", "infer"),
     ("workbench.vlm_eval.run", "npa.cli.workbench.vlm_eval", "run"),
     ("workbench.nurec.visualize", "npa.cli.nurec", "visualize"),
 ]

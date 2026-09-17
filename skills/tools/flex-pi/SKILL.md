@@ -1,6 +1,6 @@
 ---
 name: flex-pi
-description: Run, package, validate, or troubleshoot flex-pi world-action policy inference in NPA, including its runtime-fetch assets, RTX PRO 6000 workflow, and action artifacts.
+description: Run, package, validate, or troubleshoot flex-pi world-action policy inference in NPA, including its runtime-fetch assets, B200 and RTX PRO 6000 workflows, and action artifacts.
 ---
 
 # flex-pi
@@ -34,9 +34,12 @@ upstream evaluation without pretending an isolated observation proves simulator
 success. The upstream model card reports equal average RoboTwin success for
 action-only and full-joint inference, while action-only is substantially faster.
 
-Route the reference workflow to one RTX PRO 6000. It is headless and does not
-need RT cores, but this target proves the required CUDA `sm_120` path. A B200 run
-does not substitute for RTX evidence.
+Route a reference workflow to one RTX PRO 6000 or one B200. The workload is
+headless and does not need RT cores. These targets independently prove CUDA
+`sm_120` and `sm_100`; neither substitutes for the other. Flex-pi inference
+requires exactly one visible CUDA GPU. To exercise more capacity, fan out
+independent one-GPU replicas with unique seeds and output prefixes. Never claim
+that replica fan-out is model parallelism.
 
 ## Preflight and run
 
@@ -49,12 +52,19 @@ Validate and plan the reference spec, then submit it with the selected project's
 bucket and exact immutable image:
 
 ```bash
-npa workbench workflow validate-spec workflows/testing/flex-pi-rtxpro-inference.yaml
-npa workbench workflow plan-spec workflows/testing/flex-pi-rtxpro-inference.yaml
-npa workbench workflow submit workflows/testing/flex-pi-rtxpro-inference.yaml \
+npa workbench workflow validate-spec workflows/testing/flex-pi-b200-inference.yaml
+npa workbench workflow plan-spec workflows/testing/flex-pi-b200-inference.yaml
+npa workbench workflow submit workflows/testing/flex-pi-b200-inference.yaml \
   --infra "$CONFIGURED_TARGET" --var "bucket=$OPERATOR_BUCKET" \
   --secret-env HF_TOKEN
 ```
+
+Use `flex-pi-rtxpro-inference.yaml` for the independent RTX PRO 6000 path.
+Both maintained workflow specs resolve through a toolRef that passes the
+literal `--torch-compile` flag. This compiles only the upstream denoising step
+after complete checkpoint load and performs its warmup before timed inference.
+For a direct CLI or SDK call, opt in explicitly; do not infer compile mode from
+the GPU name.
 
 The cache may be run-owned and persistent across retries. Never place it in the
 image build context or upload it as evidence. The checkpoint is public and the
@@ -79,11 +89,13 @@ partial model state.
 
 Require all of the following from the exact image digest:
 
-- terminal workflow/job success on one RTX PRO 6000;
+- terminal workflow/job success on the requested one-GPU B200 or RTX PRO 6000
+  target;
 - `actions.json` with schema `npa.flex_pi.actions.v1`, action-only regime, and
   exactly 32 rows of 14 finite numbers;
 - positive inference latency and peak allocated GPU memory;
-- CUDA device name matching RTX PRO 6000 and compute capability 12.0;
+- CUDA device name and compute capability matching the request: B200 10.0 or
+  RTX PRO 6000 12.0;
 - pinned source/checkpoint/dataset identity plus checkpoint, stats, and input
   SHA-256 provenance;
 - non-empty `result.json` and read-after-write verification in operator storage.
@@ -96,9 +108,36 @@ may report only sanitized status, metrics, hashes, and generic GPU class.
 The accepted 2026-09-16 RTX PRO 6000 run used the exact `0.1.0-cu128` digest,
 torch 2.7.1+cu128, four Euler steps, 0.678 seconds of inference, and
 25,268,430,336 bytes peak allocated GPU memory. It produced a finite 32×14
-action chunk and three read-back-verified JSON objects. Reuse this only as an
-acceptance baseline; it is not a latency SLA or a closed-loop task-success
-claim, and other GPU classes remain unmeasured for this release.
+action chunk and three read-back-verified JSON objects.
+
+The independent B200 validation used the same exact digest on the maximum live
+capacity: 23 newly allocated reservation-backed devices plus one scheduler-free
+device on a pre-existing shared node, for 24 requested/allocated/used GPUs.
+Every one-GPU replica loaded the complete checkpoint, produced finite 32×14
+actions, and published three durable objects. The run had 24 successes, zero
+failures/restarts/tracebacks, 24 unique placement hashes, 24 unique action
+hashes, and 72 unique object keys. It completed in 132.0 seconds at 0.1818
+replicas/s, a 16.70× wall-throughput speedup and 69.56% efficiency versus the
+91.823-second cached single-B200 baseline. Per-replica inference latency was
+0.579–1.053 seconds (0.752-second median, 1.028-second p95), with
+25,268,430,336 bytes peak allocated memory per replica. This was replica
+fan-out, not model parallelism.
+
+The 2026-09-17 runtime optimization retained the exact image, checkpoint,
+public observation, seed, four Euler steps, and 32x14 output contract. With five
+fixed-seed warm samples per mode, the maintained `--torch-compile` path reduced
+median / p95 latency from 0.2701 / 0.2989 to 0.1021 / 0.1278 seconds on one RTX
+PRO 6000 (2.645x), and from 0.1990 / 0.2075 to 0.08738 / 0.08759 seconds on one
+B200 (2.278x). Peak allocated memory changed from 25,268,430,336 to
+25,270,528,512 bytes. Require the measured correctness envelope as well as
+finite actions: `atol=rtol=0.01`, relative L2 at most 0.5%, and action-L2 drift
+at most 0.1%. The observed relative-L2 maxima were 0.2563% and 0.2927%,
+respectively. Compile setup is not free: it added 30.94 seconds on RTX PRO 6000
+and 24.16 seconds on B200, so keep eager mode available for one-shot callers.
+
+Reuse these only as acceptance baselines. They are not latency SLAs or
+closed-loop task-success claims; other GPU classes remain unmeasured for this
+release.
 
 Cancel the exact run before removing only run-owned infrastructure. Never tear
 down a shared or pre-existing cluster.
@@ -116,7 +155,7 @@ down a shared or pre-existing cluster.
 - CUDA OOM: verify action-only flags and absence of competing workloads. Do not
   silently reduce cameras, horizon, action dimensions, or checkpoint fidelity.
 - GPU mismatch: inspect scheduler labels and the artifact's device name. Do not
-  infer RTX support from a B200 result.
+  infer RTX support from a B200 result, or B200 support from an RTX result.
 - Invalid actions: retain the failed artifact privately and diagnose upstream;
   never coerce, clip, or fabricate values to pass validation.
 

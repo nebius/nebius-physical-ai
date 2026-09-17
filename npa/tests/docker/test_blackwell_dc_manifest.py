@@ -345,6 +345,49 @@ def test_cosmos3_validation_is_bound_to_guarded_promoted_bytes(
     assert re.fullmatch(r"[0-9a-f]{64}", artifact["sha256"])
 
 
+def test_flex_pi_validation_binds_both_blackwell_targets_to_release_bytes(
+    manifest: dict, entries: list[dict]
+) -> None:
+    flex_pi = next(entry for entry in entries if entry["name"] == "npa-flex-pi")
+    evidence = manifest["validation_evidence"]["npa-flex-pi"]
+
+    assert flex_pi["publication_model"] == "exact-digest-promoted"
+    assert evidence["validated_digest"] == flex_pi["published_digest"]
+    assert evidence["development_sha"] == flex_pi["development_sha"]
+    assert set(evidence["validated_gpus"]) == {"B200", "RTX PRO 6000"}
+
+    b200 = evidence["validated_gpus"]["B200"]
+    assert b200["platform"] == "gpu-b200-sxm"
+    assert b200["capability"] == "10.0"
+    assert b200["result"] == "FLEX_PI_REAL_INFERENCE_PASSED"
+    assert b200["replica_count"] == 24
+    assert b200["peak_memory_bytes"] > 0
+    assert b200["fanout_wall_seconds"] > 0
+    assert b200["throughput_replicas_per_second"] > 0
+    assert 0 < b200["wall_scaling_efficiency"] <= 1
+
+    rtx = evidence["validated_gpus"]["RTX PRO 6000"]
+    assert rtx["platform"] == "gpu-rtx6000"
+    assert rtx["capability"] == "12.0"
+    assert rtx["result"] == "FLEX_PI_REAL_INFERENCE_PASSED"
+
+    for target in (b200, rtx):
+        assert target["paired_repeats"] == 5
+        assert target["warm_compiled_median_seconds"] < target["warm_eager_median_seconds"]
+        assert target["warm_compiled_p95_seconds"] < target["warm_eager_p95_seconds"]
+        assert target["warm_compiled_throughput_samples_per_second"] > (
+            target["warm_eager_throughput_samples_per_second"]
+        )
+        assert target["warm_compiled_speedup"] > 1
+        assert target["compiled_peak_memory_bytes"] > 0
+
+    tolerance = evidence["compile_correctness"]
+    assert tolerance["atol"] == tolerance["rtol"] == 0.01
+    assert tolerance["observed_max_absolute"] <= tolerance["atol"]
+    assert tolerance["max_relative_l2"] == 0.005
+    assert tolerance["max_action_l2_relative_drift"] == 0.001
+
+
 def test_wan_validation_is_bound_to_an_immutable_accepted_tuple(
     entries: list[dict],
 ) -> None:

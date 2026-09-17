@@ -52,11 +52,58 @@ def test_is_npa_workflow_spec_false_for_skypilot() -> None:
     assert detect_submit_format(path) == "skypilot"
 
 
-def test_flex_pi_recommends_hub_token_without_rendering_its_value() -> None:
-    spec = load_spec(NPA_SPECS / "flex-pi-rtxpro-inference.yaml")
+@pytest.mark.parametrize(
+    "spec_name",
+    ["flex-pi-b200-inference.yaml", "flex-pi-rtxpro-inference.yaml"],
+)
+def test_flex_pi_recommends_hub_token_without_rendering_its_value(
+    spec_name: str,
+) -> None:
+    spec = load_spec(NPA_SPECS / spec_name)
     plan = build_plan(spec, run_id="flex-pi-secret-hint")
 
     assert secret_env_hints_for_plan(plan.steps) == ("HF_TOKEN",)
+
+
+def test_flex_pi_b200_reference_renders_one_b200_and_the_tool_image() -> None:
+    spec = load_spec(NPA_SPECS / "flex-pi-b200-inference.yaml")
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="flex-pi-b200"),
+        run_id="flex-pi-b200",
+        options=SkypilotRenderOptions(
+            registry="registry.example", materialize_registry_secrets=False
+        ),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+
+    assert task["resources"]["accelerators"] == "B200:1"
+    assert task["resources"]["image_id"].startswith(
+        "docker:registry.example/npa-flex-pi:"
+    )
+    assert "--expected-gpu B200" in task["run"]
+    assert task["run"].count("--torch-compile") == 1
+
+
+@pytest.mark.parametrize(
+    "spec_name",
+    ["flex-pi-b200-inference.yaml", "flex-pi-rtxpro-inference.yaml"],
+)
+def test_flex_pi_reference_workflows_compile_the_denoising_step(
+    spec_name: str,
+) -> None:
+    spec = load_spec(NPA_SPECS / spec_name)
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="flex-pi-compiled"),
+        run_id="flex-pi-compiled",
+        options=SkypilotRenderOptions(
+            registry="registry.example", materialize_registry_secrets=False
+        ),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+
+    assert task["run"].count("--torch-compile") == 1
 
 
 @pytest.mark.parametrize(

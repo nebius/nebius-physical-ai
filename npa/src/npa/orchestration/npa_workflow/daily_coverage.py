@@ -48,8 +48,8 @@ WORKFLOW_IMAGE_TOOLS: frozenset[str] = frozenset(TOOL_REF_IMAGE_TOOL.values())
 #:   cosmos3-reason      : single-step reason spec only.
 #:   alpamayo2-super     : dedicated single-step inference spec; covered by its
 #:                         own B200 and RTX PRO 6000 workflow validation.
-#:   flex-pi             : dedicated single-step action-inference spec; covered
-#:                         by its exact-image RTX PRO 6000 workflow validation.
+#:   flex-pi             : dedicated single-step action-inference specs; covered
+#:                         by exact-image B200 and RTX PRO 6000 validation.
 #:   cosmos3-ray-serve   : one-step CPU submission client for a separately
 #:                         deployed persistent GPU service; its exact image has
 #:                         dedicated model-backed B200/RTX validation.

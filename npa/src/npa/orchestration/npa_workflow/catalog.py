@@ -281,6 +281,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--checkpoint-revision", "{{config.checkpoint_revision}}",
             "--num-inference-steps", "{{config.num_inference_steps}}",
             "--seed", "{{config.seed}}",
+            "--torch-compile",
             "--expected-gpu", "{{config.expected_gpu}}",
             "--run-id", "{{run.id}}",
         ],

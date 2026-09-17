@@ -1,13 +1,13 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "65946a95b9e96560e3c29a6936883b8a66e0547e49f63188c6880cf9efb6f13d",
+  "workflow_sha256": "1d275d88c10990e6b753d4dd1de65dfa706b66d16fc739bcfadf07a4bb74b90c",
   "planning": {
     "validation": {
       "status": "verified",
       "reason": "validate-spec and plan-spec both completed successfully.",
       "evidence": [
-        "npa workbench workflow validate-spec workflows/testing/flex-pi-rtxpro-inference.yaml --json",
-        "npa workbench workflow plan-spec workflows/testing/flex-pi-rtxpro-inference.yaml --json"
+        "npa workbench workflow validate-spec workflows/testing/flex-pi-b200-inference.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/flex-pi-b200-inference.yaml --json"
       ]
     },
     "task_fidelity": {
@@ -34,12 +34,12 @@
     },
     "source_image": {
       "status": "verified",
-      "reason": "The immutable development digest passed source, license, payload, vulnerability, secret, SBOM, provenance, and anonymous-pull gates.",
-      "evidence": ["sanitized guarded-build record for the accepted exact digest"]
+      "reason": "The immutable release digest passed source, license, payload, vulnerability, secret, SBOM, provenance, and anonymous-pull gates.",
+      "evidence": ["npa/src/npa/deploy/public_release_manifest.json"]
     },
     "target_runtime": {
       "status": "verified",
-      "reason": "The accepted exact digest completed strict checkpoint loading and repeated eager-versus-compiled action-only policy inference on one RTX PRO 6000; the compiled toolRef path then published verified standard artifacts.",
+      "reason": "The accepted exact digest completed the 24-replica scaling run and a separate repeated eager-versus-compiled one-B200 comparison; the compiled toolRef path then published verified standard artifacts.",
       "evidence": ["docs/workbench/flex-pi.md#measured-blackwell-compile-optimization"]
     }
   }

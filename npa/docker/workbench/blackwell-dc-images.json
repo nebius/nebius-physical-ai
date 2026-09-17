@@ -339,7 +339,7 @@
       "redistribution": "public",
       "source_compiled_extensions": [],
       "smoke": "Real four-step action-only inference produces a finite 32x14 bimanual action chunk from a hash-pinned public RoboTwin observation.",
-      "notes": "The public image contains pinned MIT source/runtime only. Checkpoint, Wan/T5/DINOv3 assets, observation media, credentials, and populated caches are runtime fetches. The exact release passed complete checkpoint-state loading and real action-only inference on RTX PRO 6000. Its torch wheel also carries sm_100 SASS, but datacenter Blackwell remains unmeasured.",
+      "notes": "The public image contains pinned MIT source/runtime only. Checkpoint, Wan/T5/DINOv3 assets, observation media, credentials, and populated caches are runtime fetches. The exact release passed complete checkpoint-state loading and real action-only inference independently on B200 and RTX PRO 6000. The unchanged digest then passed five-sample eager-versus-compiled warm comparisons and the standard compiled artifact path on both targets.",
       "measured_torch": "2.7.1+cu128",
       "measured_arch_list": [
         "sm_75",
@@ -962,14 +962,54 @@
     "npa-flex-pi": {
       "built": true,
       "payload_scan": "passed source, licensing, full-layer payload, history, vulnerability, secret, SBOM, provenance, and anonymous-pull gates; no checkpoint, observation media, model cache, token, or credential payload was found",
-      "hardware_run": "The exact accepted image completed real four-step action-only inference on a physical RTX PRO 6000 on 2026-09-16. Strict state loading rejected missing or unexpected checkpoint keys. The run produced a finite 32x14 action chunk, required FLEX_PI_REAL_INFERENCE_PASSED, and read back all three durable JSON artifacts. Inference took 0.678 seconds and peak allocated GPU memory was 25,268,430,336 bytes. This observation-level result does not claim closed-loop task success.",
+      "hardware_run": "The exact accepted image completed real four-step action-only inference independently on physical RTX PRO 6000 and B200 on 2026-09-16. Strict state loading rejected missing or unexpected checkpoint keys. The maximum-capacity B200 run used 24 independent one-GPU replicas, not model parallelism: all 24 produced finite 32x14 actions and 72 read-back-verified objects in 132.0 seconds. On 2026-09-17 the unchanged digest passed five-sample paired eager-versus-compiled warm benchmarks and the standard compiled artifact path on both targets: 2.645x median speedup on RTX PRO 6000 and 2.278x on B200, with five durable objects per final target, zero restarts, and bounded BF16 numerical drift. This observation-level result does not claim closed-loop task success.",
+      "compile_correctness": {
+        "atol": 0.01,
+        "rtol": 0.01,
+        "max_relative_l2": 0.005,
+        "max_action_l2_relative_drift": 0.001,
+        "observed_max_absolute": 0.00800064206123352
+      },
       "validated_gpus": {
+        "B200": {
+          "platform": "gpu-b200-sxm",
+          "capability": "10.0",
+          "result": "FLEX_PI_REAL_INFERENCE_PASSED",
+          "peak_memory_bytes": 25268430336,
+          "baseline_inference_seconds": 0.577788796,
+          "replica_count": 24,
+          "fanout_wall_seconds": 132.0,
+          "throughput_replicas_per_second": 0.181818,
+          "wall_scaling_efficiency": 0.695627,
+          "warm_eager_median_seconds": 0.1990382052026689,
+          "warm_eager_p95_seconds": 0.20746170124039054,
+          "warm_compiled_median_seconds": 0.08738366886973381,
+          "warm_compiled_p95_seconds": 0.08759428886696696,
+          "warm_compiled_speedup": 2.277750611494498,
+          "warm_eager_throughput_samples_per_second": 4.992263232577875,
+          "warm_compiled_throughput_samples_per_second": 11.449643619011335,
+          "compiled_peak_memory_bytes": 25270528512,
+          "cold_asset_seconds": 451.77155646309257,
+          "compiled_setup_seconds": 121.50725780287758,
+          "paired_repeats": 5
+        },
         "RTX PRO 6000": {
           "platform": "gpu-rtx6000",
           "capability": "12.0",
           "result": "FLEX_PI_REAL_INFERENCE_PASSED",
           "peak_memory_bytes": 25268430336,
-          "inference_seconds": 0.6778233840013854
+          "inference_seconds": 0.6778233840013854,
+          "warm_eager_median_seconds": 0.27005410566926,
+          "warm_eager_p95_seconds": 0.29886764381080866,
+          "warm_compiled_median_seconds": 0.10210401099175215,
+          "warm_compiled_p95_seconds": 0.12783511634916067,
+          "warm_compiled_speedup": 2.644892233382239,
+          "warm_eager_throughput_samples_per_second": 3.6881252237560536,
+          "warm_compiled_throughput_samples_per_second": 9.331415115232462,
+          "compiled_peak_memory_bytes": 25270528512,
+          "cold_asset_seconds": 686.5896260133013,
+          "compiled_setup_seconds": 121.02701552398503,
+          "paired_repeats": 5
         }
       },
       "validated_tag": "0.1.0-cu128",
