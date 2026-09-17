@@ -1050,6 +1050,21 @@ def test_live_camera_optics_and_stock_franka_mount_are_explicit_and_rigid(
         wrist,
     )
 
+    with pytest.raises(ValueError, match="fingertip axis is degenerate"):
+        scenario._stock_franka_gripper_frame(
+            hand,
+            np.asarray([0.2, 0.0, 0.0]),
+            np.asarray([0.2, 0.0, 0.0]),
+        )
+    grasp, closed_basis = scenario._stock_franka_gripper_frame(
+        hand,
+        np.asarray([0.2, 0.0, 0.0]),
+        np.asarray([0.2, 0.0, 0.0]),
+        side_hint=np.asarray([0.0, 1.0, 0.0]),
+    )
+    np.testing.assert_allclose(grasp, [0.2, 0.0, 0.0])
+    np.testing.assert_allclose(closed_basis.T @ closed_basis, np.eye(3), atol=1e-12)
+
 
 def test_live_camera_optics_are_applied_to_usd_camera(
     monkeypatch: pytest.MonkeyPatch,

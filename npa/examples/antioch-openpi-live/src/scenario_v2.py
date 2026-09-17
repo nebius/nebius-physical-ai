@@ -185,6 +185,7 @@ class WristCameraMount:
     eye_offset_tool: object
     look_direction_tool: object
     up_direction_tool: object
+    side_direction_hand: object | None = None
 
 
 @dataclass(frozen=True)
@@ -675,17 +676,24 @@ def _configure_camera_optics(stage, path: str, view: str) -> None:
     camera.CreateFStopAttr().Set(config["f_stop"])
 
 
-def _world_position(stage, path: str):
-    import numpy as np
+def _world_transform(stage, path: str):
     from pxr import Usd, UsdGeom
 
-    transform = UsdGeom.Xformable(
+    return UsdGeom.Xformable(
         stage.GetPrimAtPath(path)
     ).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+
+
+def _world_position(stage, path: str):
+    import numpy as np
+
+    transform = _world_transform(stage, path)
     return np.asarray(transform.ExtractTranslation(), dtype=np.float64)
 
 
-def _stock_franka_gripper_frame(hand, left_finger, right_finger):
+def _stock_franka_gripper_frame(
+    hand, left_finger, right_finger, *, side_hint=None
+):
     """Return the measured stock-Franka grasp origin and orthonormal basis."""
 
     import numpy as np
@@ -702,6 +710,13 @@ def _stock_franka_gripper_frame(hand, left_finger, right_finger):
     side = right - left
     side -= float(np.dot(side, forward)) * forward
     side_norm = float(np.linalg.norm(side))
+    if side_norm <= 1e-9 and side_hint is not None:
+        # The stock fingertip origins coincide when the gripper fully closes.
+        # Retain roll from the hand transform instead of terminating an
+        # otherwise healthy policy rollout at that normal articulation state.
+        side = np.asarray(side_hint, dtype=np.float64)
+        side -= float(np.dot(side, forward)) * forward
+        side_norm = float(np.linalg.norm(side))
     if side_norm <= 1e-9:
         raise ValueError("stock Franka fingertip axis is degenerate")
     side /= side_norm
@@ -712,7 +727,9 @@ def _stock_franka_gripper_frame(hand, left_finger, right_finger):
     return grasp, basis
 
 
-def _calibrate_wrist_camera_mount(hand, left_finger, right_finger, look_at):
+def _calibrate_wrist_camera_mount(
+    hand, left_finger, right_finger, look_at, *, hand_transform=None
+):
     """Freeze a cube-framing camera pose in the measured gripper coordinates."""
 
     import numpy as np
@@ -722,19 +739,34 @@ def _calibrate_wrist_camera_mount(hand, left_finger, right_finger, look_at):
     eye = grasp + basis @ eye_offset
     look = np.asarray(look_at, dtype=np.float64) - eye
     look /= max(float(np.linalg.norm(look)), 1e-9)
+    side_direction_hand = None
+    if hand_transform is not None:
+        from pxr import Gf
+
+        side_direction_hand = np.asarray(
+            hand_transform.GetInverse().TransformDir(
+                Gf.Vec3d(*(float(value) for value in basis[:, 1]))
+            ),
+            dtype=np.float64,
+        )
     return WristCameraMount(
         eye_offset_tool=eye_offset,
         look_direction_tool=basis.T @ look,
         up_direction_tool=basis.T @ np.asarray([0.0, 0.0, 1.0]),
+        side_direction_hand=side_direction_hand,
     )
 
 
-def _wrist_camera_pose_from_points(hand, left_finger, right_finger, mount=None):
+def _wrist_camera_pose_from_points(
+    hand, left_finger, right_finger, mount=None, *, side_hint=None
+):
     """Resolve fixed camera extrinsics in the measured stock-Franka tool frame."""
 
     import numpy as np
 
-    grasp, basis = _stock_franka_gripper_frame(hand, left_finger, right_finger)
+    grasp, basis = _stock_franka_gripper_frame(
+        hand, left_finger, right_finger, side_hint=side_hint
+    )
     if mount is None:
         mount = WristCameraMount(
             eye_offset_tool=np.asarray(WRIST_EYE_OFFSET_TOOL, dtype=np.float64),
@@ -756,9 +788,23 @@ def _stock_franka_camera_points(stage):
 
 
 def _aim_wrist_camera(stage, mount):
+    side_hint = None
+    if mount.side_direction_hand is not None:
+        import numpy as np
+        from pxr import Gf
+
+        side_hint = np.asarray(
+            _world_transform(stage, STOCK_FRANKA_HAND_PATH).TransformDir(
+                Gf.Vec3d(
+                    *(float(value) for value in mount.side_direction_hand)
+                )
+            ),
+            dtype=np.float64,
+        )
     pose = _wrist_camera_pose_from_points(
         *_stock_franka_camera_points(stage),
         mount,
+        side_hint=side_hint,
     )
     _look_at(stage, WRIST_CAMERA_PATH, *pose)
     return pose
@@ -1552,6 +1598,7 @@ def openpi_franka_mk8s_live_v2(
     wrist_mount = _calibrate_wrist_camera_mount(
         *_stock_franka_camera_points(world.stage),
         cube.get_world_pose()[0],
+        hand_transform=_world_transform(world.stage, STOCK_FRANKA_HAND_PATH),
     )
     wrist_pose = _aim_wrist_camera(world.stage, wrist_mount)
     _configure_camera_optics(world.stage, EXTERIOR_CAMERA_PATH, "exterior")
