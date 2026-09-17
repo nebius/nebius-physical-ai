@@ -18,8 +18,8 @@ COPY --chmod=0644 docker/workbench/robotwin/apt-packages.lock \
 # Install only the exact Ubuntu main packages selected from the signed immutable
 # snapshot. The locked direct set is ca-certificates, openssh-server,
 # python3-minimal, rsync, and sudo. The base keyring, all three InRelease files,
-# every installed version, and every retained package copyright file are bound
-# to the committed lock.
+# every downloaded archive byte, every installed version, and every retained
+# package copyright file are bound to the committed lock.
 RUN set -eux; \
     printf '%s\n' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$'; \
     test "$(sha256sum /usr/share/keyrings/ubuntu-archive-keyring.gpg | cut -d ' ' -f1)" = "1a4dd63e5c76728960a2edddae22e2e0fc53df8e8b87806deb971030ac704eb0"; \
@@ -40,14 +40,41 @@ RUN set -eux; \
       /opt/npa/robotwin/apt-packages.lock | sha256sum -c -; \
     packages="$(awk -F '\t' '$1 == "binary" { printf "%s=%s ", $2, $3 }' /opt/npa/robotwin/apt-packages.lock)"; \
     test "$(awk -F '\t' '$1 == "binary" { count += 1 } END { print count + 0 }' /opt/npa/robotwin/apt-packages.lock)" = 75; \
-    apt-get install -y --no-install-recommends --allow-downgrades ${packages}; \
+    archive_dir=/tmp/npa-apt-archives; \
+    expected_archives=/tmp/npa-apt-expected.tsv; \
+    verified_archives=/tmp/npa-apt-verified.tsv; \
+    install -d -m 0700 "${archive_dir}"; \
+    awk -F '\t' '$1 == "binary" { print $2 "\t" $3 "\t" $4 }' \
+      /opt/npa/robotwin/apt-packages.lock | LC_ALL=C sort > "${expected_archives}"; \
+    test "$(wc -l < "${expected_archives}")" = 75; \
+    test "$(uniq "${expected_archives}" | wc -l)" = 75; \
+    cd "${archive_dir}"; \
+    apt-get download ${packages}; \
+    test "$(find "${archive_dir}" -mindepth 1 -maxdepth 1 -type f -name '*.deb' | wc -l)" = 75; \
+    test -z "$(find "${archive_dir}" -mindepth 1 -maxdepth 1 \( ! -type f -o ! -name '*.deb' \) -print -quit)"; \
+    : > "${verified_archives}"; \
+    for archive in "${archive_dir}"/*.deb; do \
+      package_name="$(dpkg-deb -f "${archive}" Package)"; \
+      package_version="$(dpkg-deb -f "${archive}" Version)"; \
+      package_architecture="$(dpkg-deb -f "${archive}" Architecture)"; \
+      locked_identity_count="$(awk -F '\t' -v name="${package_name}" -v version="${package_version}" -v architecture="${package_architecture}" '$1 == "binary" && $2 == name && $3 == version && $4 == architecture { count += 1 } END { print count + 0 }' /opt/npa/robotwin/apt-packages.lock)"; \
+      test "${locked_identity_count}" = 1; \
+      archive_sha="$(awk -F '\t' -v name="${package_name}" -v version="${package_version}" -v architecture="${package_architecture}" '$1 == "binary" && $2 == name && $3 == version && $4 == architecture { print $5 }' /opt/npa/robotwin/apt-packages.lock)"; \
+      archive_size="$(awk -F '\t' -v name="${package_name}" -v version="${package_version}" -v architecture="${package_architecture}" '$1 == "binary" && $2 == name && $3 == version && $4 == architecture { print $6 }' /opt/npa/robotwin/apt-packages.lock)"; \
+      test "$(sha256sum "${archive}" | cut -d ' ' -f1)" = "${archive_sha}"; \
+      test "$(stat -c '%s' "${archive}")" = "${archive_size}"; \
+      printf '%s\t%s\t%s\n' "${package_name}" "${package_version}" "${package_architecture}" >> "${verified_archives}"; \
+    done; \
+    LC_ALL=C sort -o "${verified_archives}" "${verified_archives}"; \
+    cmp "${expected_archives}" "${verified_archives}"; \
+    apt-get install -y --no-install-recommends --allow-downgrades --no-download "${archive_dir}"/*.deb; \
     while IFS="$(printf '\t')" read -r kind name version architecture archive_sha archive_size archive_path source source_version relationship copyright_sha copyright_path annotation; do \
       test "${kind}" = binary || continue; \
       test "$(dpkg-query -W -f='${Version}' "${name}")" = "${version}"; \
       test "$(dpkg-query -W -f='${Architecture}' "${name}")" = "${architecture}"; \
       test "$(sha256sum "/${copyright_path}" | cut -d ' ' -f1)" = "${copyright_sha}"; \
     done < /opt/npa/robotwin/apt-packages.lock; \
-    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb; \
+    rm -rf "${archive_dir}" "${expected_archives}" "${verified_archives}" /var/lib/apt/lists/* /var/cache/apt/archives/*.deb; \
     rm -f /etc/ssh/ssh_host_*; \
     install -d -m 0755 /run/sshd; \
     printf '%s\n' 'PasswordAuthentication no' 'PermitRootLogin no' > /etc/ssh/sshd_config.d/npa.conf; \

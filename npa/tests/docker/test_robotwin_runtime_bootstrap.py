@@ -313,6 +313,46 @@ def test_real_cli_missing_access_refusal_is_numeric_and_nonzero() -> None:
     assert completed.stderr.strip() == "ROBOTWIN_RUNTIME_REFUSED:authorization-missing"
 
 
+def test_assert_refusal_passes_only_isolated_allowlisted_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinels = {
+        runtime.AUTH_ENV: "authorization-secret-canary",
+        "AWS_SECRET_ACCESS_KEY": "storage-secret-canary",
+        "GH_TOKEN": "source-token-canary",
+        "HF_TOKEN": "model-token-canary",
+        "NEBIUS_IAM_TOKEN": "provider-token-canary",
+        "NGC_API_KEY": "runtime-token-canary",
+        "NPA_MANAGER_CONTEXT": "manager-context-canary",
+        "NPA_REGISTRY": "registry-context-canary",
+        "NPA_ROBOTWIN_RUNTIME_CONTEXT": "runtime-context-canary",
+        "NPA_S3_BUCKET": "storage-context-canary",
+    }
+    for name, value in sentinels.items():
+        monkeypatch.setenv(name, value)
+    observed: dict[str, str] = {}
+
+    def capture_refusal(command, **kwargs):
+        observed.update(kwargs["env"])
+        return subprocess.CompletedProcess(
+            command,
+            78,
+            stdout="",
+            stderr="ROBOTWIN_RUNTIME_REFUSED:authorization-missing\n",
+        )
+
+    monkeypatch.setattr(runtime.subprocess, "run", capture_refusal)
+
+    assert runtime.assert_refusal() == 0
+    assert set(observed) == {
+        "HOME",
+        "PYTHONDONTWRITEBYTECODE",
+        *runtime.REFUSAL_PATH_ENV_KEYS,
+    }
+    assert not sentinels.keys() & observed.keys()
+    assert observed["PYTHONDONTWRITEBYTECODE"] == "1"
+
+
 def test_assert_refusal_uses_the_real_run_gate_and_isolated_paths() -> None:
     completed = subprocess.run(
         [sys.executable, str(RUNTIME), "assert-refusal"],

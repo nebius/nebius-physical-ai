@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import subprocess
 
+import pytest
 import yaml
 
 from npa.deploy import images
@@ -15,6 +16,38 @@ from npa.deploy import images
 
 ROOT = Path(__file__).resolve().parents[3]
 IMAGE_ROOT = ROOT / "npa/docker/workbench/robotwin"
+ARCHIVE_DOWNLOAD = "apt-get download ${packages};"
+ARCHIVE_INSTALL = (
+    "apt-get install -y --no-install-recommends --allow-downgrades "
+    '--no-download "${archive_dir}"/*.deb;'
+)
+LOCK_ONLY_SANITY_GUARD = 'test "$(uniq "${expected_archives}" | wc -l)" = 75;'
+ARCHIVE_PREINSTALL_GUARDS = (
+    LOCK_ONLY_SANITY_GUARD,
+    "! -type f -o ! -name '*.deb'",
+    'test "${locked_identity_count}" = 1;',
+    'test "$(sha256sum "${archive}" | cut -d \' \' -f1)" = "${archive_sha}";',
+    'test "$(stat -c \'%s\' "${archive}")" = "${archive_size}";',
+    'cmp "${expected_archives}" "${verified_archives}";',
+)
+
+
+def _assert_archive_install_contract(text: str) -> None:
+    download_position = text.index(ARCHIVE_DOWNLOAD)
+    install_position = text.index(ARCHIVE_INSTALL)
+    assert download_position < install_position
+    for guard in ARCHIVE_PREINSTALL_GUARDS:
+        assert text.count(guard) == 1
+        guard_position = text.index(guard)
+        assert guard_position < install_position
+        if guard != LOCK_ONLY_SANITY_GUARD:
+            assert download_position < guard_position
+
+
+def _move_guard_after_install(text: str, guard: str) -> str:
+    without_guard = text.replace(guard, "", 1)
+    boundary = without_guard.index(ARCHIVE_INSTALL) + len(ARCHIVE_INSTALL)
+    return without_guard[:boundary] + guard + without_guard[boundary:]
 
 
 def test_candidate_is_registered_public_but_unbuilt_and_quarantined() -> None:
@@ -52,6 +85,22 @@ def test_dockerfile_is_nonroot_zero_payload_and_immutably_resolved() -> None:
         "COPY --from",
     ):
         assert forbidden not in text
+
+
+def test_apt_archives_are_verified_one_to_one_before_local_install() -> None:
+    text = (IMAGE_ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    _assert_archive_install_contract(text)
+
+
+@pytest.mark.parametrize("guard", ARCHIVE_PREINSTALL_GUARDS)
+def test_apt_archive_contract_rejects_missing_or_late_guards(guard: str) -> None:
+    text = (IMAGE_ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    with pytest.raises((AssertionError, ValueError)):
+        _assert_archive_install_contract(text.replace(guard, "", 1))
+    with pytest.raises(AssertionError):
+        _assert_archive_install_contract(_move_guard_after_install(text, guard))
 
 
 def test_build_script_passes_the_dockerfile_source_sha_argument() -> None:

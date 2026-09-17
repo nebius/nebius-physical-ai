@@ -40,6 +40,22 @@ CAPABILITY_FIELDS = frozenset(
         "expires_at",
     }
 )
+REFUSAL_PATH_ENV_KEYS = (
+    "NPA_ROBOTWIN_SOURCE_DIR",
+    "NPA_ROBOTWIN_ASSETS_DIR",
+    "NPA_ROBOTWIN_CACHE_DIR",
+    "NPA_ROBOTWIN_OUTPUT_DIR",
+    "NPA_SMOKE_OUTPUT_DIR",
+    "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "HF_HOME",
+    "TORCH_HOME",
+    "WARP_CACHE_PATH",
+    "PIP_CACHE_DIR",
+    "CUDA_CACHE_PATH",
+    "TMPDIR",
+)
 
 
 class Refusal(RuntimeError):
@@ -209,6 +225,51 @@ def run(*, lock_path: Path, environ: Mapping[str, str]) -> int:
     _refuse("runtime-fetch-not-implemented")
 
 
+def _refusal_runtime_paths(root: Path, temporary: Path) -> dict[str, Path]:
+    paths = {
+        "NPA_ROBOTWIN_SOURCE_DIR": root / "source",
+        "NPA_ROBOTWIN_ASSETS_DIR": root / "assets",
+        "NPA_ROBOTWIN_CACHE_DIR": root / "cache",
+        "NPA_ROBOTWIN_OUTPUT_DIR": root / "output",
+        "NPA_SMOKE_OUTPUT_DIR": root / "output" / "smoke",
+        "XDG_CACHE_HOME": root / "cache" / "xdg",
+        "XDG_CONFIG_HOME": root / "config",
+        "XDG_DATA_HOME": root / "data",
+        "HF_HOME": root / "cache" / "huggingface",
+        "TORCH_HOME": root / "cache" / "torch",
+        "WARP_CACHE_PATH": root / "cache" / "warp",
+        "PIP_CACHE_DIR": root / "cache" / "pip",
+        "CUDA_CACHE_PATH": root / "cache" / "cuda",
+        "TMPDIR": temporary,
+    }
+    if tuple(paths) != REFUSAL_PATH_ENV_KEYS:
+        raise RuntimeError("RoboTwin refusal path environment is inconsistent")
+    return paths
+
+
+def _refusal_environment(
+    *, home: Path, runtime_paths: Mapping[str, Path]
+) -> dict[str, str]:
+    environment = {
+        "HOME": str(home),
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    environment.update({name: str(path) for name, path in runtime_paths.items()})
+    return environment
+
+
+def _isolated_tree(root: Path) -> tuple[tuple[str, str], ...]:
+    return tuple(
+        sorted(
+            (
+                str(path.relative_to(root)),
+                "directory" if path.is_dir() else "entry",
+            )
+            for path in root.rglob("*")
+        )
+    )
+
+
 def assert_refusal() -> int:
     """Exercise the genuine first gate and prove no work directories are created."""
 
@@ -220,43 +281,12 @@ def assert_refusal() -> int:
         home.mkdir(mode=0o700)
         cwd.mkdir(mode=0o700)
         temporary.mkdir(mode=0o700)
-        runtime_paths = {
-            "NPA_ROBOTWIN_SOURCE_DIR": root / "source",
-            "NPA_ROBOTWIN_ASSETS_DIR": root / "assets",
-            "NPA_ROBOTWIN_CACHE_DIR": root / "cache",
-            "NPA_ROBOTWIN_OUTPUT_DIR": root / "output",
-            "NPA_SMOKE_OUTPUT_DIR": root / "output" / "smoke",
-            "XDG_CACHE_HOME": root / "cache" / "xdg",
-            "XDG_CONFIG_HOME": root / "config",
-            "XDG_DATA_HOME": root / "data",
-            "HF_HOME": root / "cache" / "huggingface",
-            "TORCH_HOME": root / "cache" / "torch",
-            "WARP_CACHE_PATH": root / "cache" / "warp",
-            "PIP_CACHE_DIR": root / "cache" / "pip",
-            "CUDA_CACHE_PATH": root / "cache" / "cuda",
-            "TMPDIR": temporary,
-        }
-
-        def tree() -> tuple[tuple[str, str], ...]:
-            return tuple(
-                sorted(
-                    (
-                        str(path.relative_to(root)),
-                        "directory" if path.is_dir() else "entry",
-                    )
-                    for path in root.rglob("*")
-                )
-            )
-
-        before = tree()
-        env = dict(os.environ)
-        env.pop(AUTH_ENV, None)
-        env["HOME"] = str(home)
-        env["PYTHONDONTWRITEBYTECODE"] = "1"
-        env.update({name: str(path) for name, path in runtime_paths.items()})
+        runtime_paths = _refusal_runtime_paths(root, temporary)
+        before = _isolated_tree(root)
+        environment = _refusal_environment(home=home, runtime_paths=runtime_paths)
         completed = subprocess.run(
             [sys.executable, str(Path(__file__).resolve()), "run"],
-            env=env,
+            env=environment,
             cwd=cwd,
             text=True,
             capture_output=True,
@@ -267,7 +297,7 @@ def assert_refusal() -> int:
             or "ROBOTWIN_RUNTIME_REFUSED:authorization-missing" not in completed.stderr
         ):
             raise RuntimeError("RoboTwin missing-authorization refusal did not execute")
-        if tree() != before:
+        if _isolated_tree(root) != before:
             raise RuntimeError("RoboTwin refusal changed its isolated runtime tree")
     print("robotwin bootstrap refusal verified; no simulator capability claimed")
     return 0
