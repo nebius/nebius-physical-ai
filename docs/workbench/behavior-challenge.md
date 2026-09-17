@@ -5,13 +5,13 @@
 Run the official BEHAVIOR evaluator on a Nebius L40S through Workbench and
 SkyPilot. A separately served policy receives RGB, depth, and robot
 proprioception and returns robot actions over WebSocket. This workflow evaluates
-a fixed policy; training and serving use the challenge's upstream baseline
-implementations.
+a fixed policy; policy serving uses pinned upstream implementations.
 
-**Status:** the complete ten-instance radio development selection ran through
-Workbench, with **one success and mean Q = 0.10**. All nine failures are retained.
-The subsequent ten-instance radio reporting selection scored **Q = 0.00**.
-This validates the evaluation path and a task-specific baseline; performance on
+**Status:** the published RLC policy completed the ten-instance radio development
+selection with **two successes and mean Q = 0.20**, compared with the official
+baseline's **one success and Q = 0.10** on the same cases. All failures are retained.
+The official baseline's separate reporting selection scored **Q = 0.00**.
+This is a measured improvement on one task's development selection; performance on
 the other 99 tasks and 24 GB serving compliance require separate validation.
 Organizer submission is a separate step. The runtime image, licensed
 asset volume, and policy endpoint are required operator inputs. This integration
@@ -60,8 +60,33 @@ requires its separate prescribed instances and the full 1,000-case denominator.
 [RLC 2025 winning solution](https://github.com/IliaLarchenko/behavior-1k-solution).
 Its learned task/stage memory, rolling action inpainting, compression and
 proprioception-based recovery replace the radio-only baseline controller.
-This is a transfer candidate, with no measured 2026 improvement yet.
-The authors' 2025 results do not establish 2026 performance.
+The measured 2026 radio comparison is below. The authors' 2025 results do not
+establish 2026 performance on the full challenge.
+
+### Recorded RLC comparison
+
+Both policies ran all ten prescribed development instances, 311–320, once each
+through the same unchanged 2026 evaluator and official task timeout.
+
+| Policy | Successes | Mean Q | Successful instances |
+| --- | ---: | ---: | --- |
+| Official radio baseline | 1/10 | 0.10 | 317 |
+| Published RLC checkpoint 2 with the 2026 adapter | 2/10 | 0.20 | 319, 320 |
+
+RLC succeeded in 2,556 steps on instance 319 and 1,057 steps on instance 320.
+Its other eight cases failed with Q=0 after 3,225 steps each. It lost the baseline's
+success on instance 317, so the paired result is two gains and one loss, with a
+mean-Q increase of 0.10. Ten cases from one task do not establish a reliable gain
+across the 100-task challenge.
+
+An independent download check matched every original JSON and MP4 hash and
+decoded all **29,413 video frames**. The complete summary has SHA-256
+`dff5e8aecd31d1531db22eed5dc909d7cfb84e1b46e0b58b4c524152de68d9f6`.
+The evaluated checkpoint ZIP has SHA-256
+`9e7e078a721e5a0db60ca180e8ed6ace57d66da03d9884923b5d88304b5f98ea`.
+These are development results, not an organizer-verified score or submission.
+
+### Reproduce the transfer
 
 The candidate requires the clean source checkout at
 `ca556f74a455cef7987a2be4537b5ac85cc56dd7`, including its pinned OpenPI and
@@ -97,9 +122,10 @@ WebSocket response. Original checkpoints and evaluator code remain unchanged.
 One transfer limitation needs measurement: the 2025 training vector's base
 velocity convention differs from the robot-local velocity supplied in 2026.
 The adapter passes the permitted local velocity directly, without consulting
-simulator pose. Development rollouts will determine whether fine-tuning on the
-2026 training demonstrations is needed. Full-task coverage, a new reporting
-score, and the policy memory requirement remain unverified.
+simulator pose. Fine-tuning on the 2026 training demonstrations is the next
+experiment; this comparison uses the published weights without fine-tuning.
+Full-task coverage, a new reporting score, and the policy memory requirement
+remain unverified.
 
 ## Rules and pinned source
 
