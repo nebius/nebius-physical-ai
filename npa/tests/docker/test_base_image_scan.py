@@ -171,3 +171,49 @@ def test_base_cve_gate_is_blocking_and_os_scoped() -> None:
     assert command[command.index("--severity") + 1] == "CRITICAL"
     assert command[command.index("--vuln-type") + 1] == "os"
     assert "--ignore-unfixed" in command
+
+
+def test_parallel_scans_use_worker_private_trivy_caches(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Share the downloaded database without sharing Trivy's mutable cache.
+
+    Args:
+        monkeypatch: Isolated subprocess replacement.
+        tmp_path: Temporary Trivy cache root.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Parallel scans share mutable cache state.
+    """
+
+    cache = tmp_path / "trivy"
+    scan_caches: list[Path] = []
+
+    def record(command, **arguments):
+        if "--download-db-only" in command:
+            database = cache / "db"
+            database.mkdir()
+            (database / "trivy.db").write_text("verified database")
+        else:
+            worker_cache = Path(command[command.index("--cache-dir") + 1])
+            database = worker_cache / "db/trivy.db"
+            assert database.read_text() == "verified database"
+            scan_caches.append(worker_cache)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(scanner.subprocess, "run", record)
+    entries = [
+        {
+            "name": f"base-{index}",
+            "image": f"example.invalid/base@sha256:{index}",
+            "purge_linux_libc_dev": False,
+            "upgrade_os": False,
+        }
+        for index in range(3)
+    ]
+    scanner.scan_inventory(entries, cache, workers=2, sarif_directory=None)
+
+    assert len(scan_caches) == 3
+    assert cache not in scan_caches
+    assert len(set(scan_caches)) == 2

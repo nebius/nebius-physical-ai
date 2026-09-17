@@ -99,10 +99,11 @@ branch-protection context is needed when `security-regression` is already requir
 
 The workflow scans Dockerfile/config issues and the digest-pinned public base
 image lineages. Seven bases are processed inside one runner with two bounded
-workers and a shared Trivy database, so the inventory does not create seven
-queued jobs. Dockerfile/config misconfigurations fail on HIGH and CRITICAL
-findings. Base-image CVE jobs are intentionally OS-package only, use
-`--ignore-unfixed`, and fail on fixed CRITICAL vulnerabilities. When a pinned
+workers. One Trivy database download is hard-linked into worker-private caches,
+so parallel scans cannot contend on mutable cache state and the inventory does
+not create seven queued jobs. Dockerfile/config misconfigurations fail on HIGH
+and CRITICAL findings. Base-image CVE jobs are intentionally OS-package only,
+use `--ignore-unfixed`, and fail on fixed CRITICAL vulnerabilities. When a pinned
 CUDA base contains a fixable CRITICAL in a build-only OS package that consuming
 Dockerfiles remove before the final runtime layer, CI builds a minimal purged
 derivative of that pinned base and scans that derivative. This keeps the

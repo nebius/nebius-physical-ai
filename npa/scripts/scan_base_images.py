@@ -5,9 +5,12 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import json
+import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
+import tempfile
 
 
 _NAME_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]+")
@@ -114,7 +117,7 @@ def scan_entry(
 
     Args:
         entry: Validated base-image inventory entry.
-        cache: Shared pre-populated Trivy cache.
+        cache: Worker-private Trivy cache with a pre-populated database.
         sarif_directory: Output directory for non-PR reporting.
     Returns:
         Blocking table-scan exit status.
@@ -130,6 +133,43 @@ def scan_entry(
     return blocking.returncode
 
 
+def _scan_lane(
+    entries: list[dict[str, object]], cache: Path, sarif_directory: Path | None
+) -> list[int]:
+    """Scan one serial lane with its worker-private Trivy cache.
+
+    Args:
+        entries: Entries assigned to this worker.
+        cache: Worker-private Trivy cache.
+        sarif_directory: Optional SARIF output directory.
+    Returns:
+        Blocking scan exit statuses.
+    Raises:
+        subprocess.CalledProcessError: Preparation or SARIF generation fails.
+    """
+
+    return [scan_entry(entry, cache, sarif_directory) for entry in entries]
+
+
+def _create_worker_cache(database: Path, root: Path, index: int) -> Path:
+    """Create a private artifact cache that reuses the read-only database.
+
+    Args:
+        database: Pre-populated vulnerability database directory.
+        root: Temporary worker-cache root.
+        index: Stable worker index.
+    Returns:
+        Worker-private cache directory.
+    Raises:
+        OSError: Cache directories or database links cannot be created.
+    """
+
+    worker_cache = root / str(index)
+    worker_cache.mkdir()
+    shutil.copytree(database, worker_cache / "db", copy_function=os.link)
+    return worker_cache
+
+
 def scan_inventory(
     entries: list[dict[str, object]], cache: Path, workers: int,
     sarif_directory: Path | None,
@@ -138,7 +178,7 @@ def scan_inventory(
 
     Args:
         entries: Validated base-image inventory.
-        cache: Shared Trivy cache.
+        cache: Trivy database and temporary worker-cache root.
         workers: Maximum concurrent image scans.
         sarif_directory: Optional SARIF output directory.
     Returns:
@@ -154,12 +194,20 @@ def scan_inventory(
         ["trivy", "image", "--cache-dir", str(cache), "--download-db-only"],
         check=True,
     )
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        results = list(
-            executor.map(
-                lambda entry: scan_entry(entry, cache, sarif_directory), entries
-            )
-        )
+    worker_count = min(workers, len(entries))
+    with tempfile.TemporaryDirectory(prefix="scan-workers-", dir=cache) as temp:
+        root = Path(temp)
+        worker_caches = [
+            _create_worker_cache(cache / "db", root, index)
+            for index in range(worker_count)
+        ]
+        lanes = [entries[index::worker_count] for index in range(worker_count)]
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = [
+                executor.submit(_scan_lane, lane, worker_cache, sarif_directory)
+                for lane, worker_cache in zip(lanes, worker_caches, strict=True)
+            ]
+            results = [result for future in futures for result in future.result()]
     if any(result != 0 for result in results):
         raise RuntimeError("one or more base-image security scans failed")
 
