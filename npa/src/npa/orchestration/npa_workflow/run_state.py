@@ -942,6 +942,28 @@ def normalize_startup_failure(controller_output: str) -> tuple[str, int]:
     return (NORMALIZED_DELETED_RAY_NODE, matches) if matches else ("", 0)
 
 
+def _job_task_outcomes_conflict(
+    job_state: str, task_rows: Sequence[Mapping[str, Any]],
+) -> bool:
+    if job_state.startswith("FAILED"):
+        job_state = "FAILED"
+    if job_state not in {"SUCCEEDED", "FAILED", "CANCELLED"} or not task_rows:
+        return False
+    task_states = [_normalized_stage_state(row.get("status")) for row in task_rows]
+    # The queue aggregate uses the first failed/cancelled row, while task rows
+    # are sorted by task ID. Either represented outcome is compatible in a
+    # mixed parallel job; the sorted task order cannot select its aggregate.
+    unsuccessful_outcomes = set()
+    for state in task_states:
+        if state.startswith("FAILED"):
+            unsuccessful_outcomes.add("FAILED")
+        elif state == "CANCELLED":
+            unsuccessful_outcomes.add(state)
+    if unsuccessful_outcomes:
+        return job_state not in unsuccessful_outcomes
+    return all(state == "SUCCEEDED" for state in task_states) and job_state != "SUCCEEDED"
+
+
 def build_actionable_run_status(
     manifest: RunManifest,
     *,
@@ -1042,7 +1064,12 @@ def build_actionable_run_status(
                 and attempt_state != scheduler_state
             )
         )
-        if outcome_conflict:
+        job_task_conflict = _job_task_outcomes_conflict(scheduler_job_state, observed_rows)
+        if job_task_conflict:
+            outcome_conflict = True
+            state = "UNKNOWN"
+            outcome_provenance = "conflicting_scheduler_job_and_tasks"
+        elif outcome_conflict:
             state = "UNKNOWN"
             outcome_provenance = "conflicting_durable_and_scheduler_evidence"
         elif step_terminal:
@@ -1138,6 +1165,8 @@ def build_actionable_run_status(
             "task_id": row.get("task_id", index),
             "scheduler_state": raw_scheduler or state,
             "raw_scheduler_state": raw_scheduler,
+            "raw_job_scheduler_state": scheduler_job_state,
+            "raw_task_scheduler_state": str(row.get("status") or "").upper(),
             "outcome_provenance": outcome_provenance,
             "outcome_conflict": outcome_conflict,
             "retry_count": retry_count,
@@ -1241,6 +1270,85 @@ def build_actionable_run_status(
             or max(0, int((current - newest_progress).total_seconds())) > 300
         ),
         "stages": stages,
+    }
+
+
+_WORKFLOW_NONTERMINAL_STATES = frozenset({"PLANNED", "SUBMITTED", "RUNNING"})
+_WORKFLOW_TERMINAL_STATES = frozenset(
+    {"SUCCEEDED", "FAILED", "FAILED_STARTUP", "CANCELLED", "BLOCKED"}
+)
+
+
+def _workflow_lifecycle_state(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("Workflow lifecycle status is missing or malformed")
+    status = value.upper()
+    if status not in _WORKFLOW_NONTERMINAL_STATES | _WORKFLOW_TERMINAL_STATES:
+        raise ValueError("Workflow lifecycle status is missing or unsupported")
+    return status
+
+
+def manifest_workflow_lifecycle_state(value: object) -> str:
+    """Normalize the interpreter's completion marker at the manifest boundary.
+
+    Args:
+        value: Lifecycle status read from the authoritative workflow manifest.
+
+    Returns:
+        Validated lifecycle state, with manifest completion represented as success.
+
+    Raises:
+        ValueError: The manifest lifecycle status is missing or unsupported.
+    """
+    if isinstance(value, str) and value.upper() == "COMPLETED":
+        return "SUCCEEDED"
+    return _workflow_lifecycle_state(value)
+
+
+def _manifest_lifecycle_evidence(manifest: RunManifest) -> dict[str, str]:
+    return {
+        "status": manifest.status,
+        "updated_at": manifest.updated_at,
+        "source": "authoritative_manifest",
+    }
+
+
+def runtime_workflow_lifecycle(
+    manifest: RunManifest, runtime_state: Mapping[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    """Separate durable workflow lifecycle from the observed jobs' outcomes.
+
+    Args:
+        manifest: Original durable manifest, before scheduler projection.
+        runtime_state: Exact run's runtime ledger, including its update time.
+
+    Returns:
+        Lifecycle state and evidence; neither proves the submit driver is alive.
+
+    Raises:
+        ValueError: A workflow lifecycle status is missing or unsupported.
+    """
+    manifest_status = manifest_workflow_lifecycle_state(manifest.status)
+    runtime_status = _workflow_lifecycle_state(runtime_state.get("status"))
+    terminal = {
+        state for state in (manifest_status, runtime_status)
+        if state in _WORKFLOW_TERMINAL_STATES
+    }
+    from_manifest = manifest_status in terminal and runtime_status not in terminal
+    status = manifest_status if from_manifest else runtime_status
+    if len(terminal) > 1:
+        status = "EVIDENCE_INCONSISTENT"
+    return status, {
+        "manifest_status": manifest_status,
+        "manifest_evidence": _manifest_lifecycle_evidence(manifest),
+        "runtime_status": runtime_status,
+        "completion_recorded": "SUCCEEDED" in terminal and len(terminal) == 1,
+        "driver_liveness": "unknown",
+        "source": "authoritative_manifest" if from_manifest else "durable_runtime_ledger",
+        "updated_at": (
+            manifest.updated_at if from_manifest
+            else str(runtime_state.get("updated_at") or "")
+        ),
     }
 
 
