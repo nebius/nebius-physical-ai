@@ -262,6 +262,60 @@ must fit inside the decoded image. Compute each digest with
 
 ## Renderer development
 
+### Exact picture edits and centered dissolves
+
+For a footage montage with its own shot list and continuous narration, use the
+shared `picture_timeline` Python API from an external production script. This
+composes already encoded shots into a silent picture asset; the existing Studio
+storyboard then supplies narration and music. Shot lengths use integer frames,
+so subsecond cuts do not require splitting or regenerating narration.
+
+```python
+from pathlib import Path
+from npa.studio_renderer.picture_timeline import PictureShot, assemble_picture
+
+report = assemble_picture(
+    [
+        PictureShot(Path("opening.mp4"), frames=90, tail_frames=4),
+        PictureShot(Path("simulation.mp4"), frames=120, head_frames=4),
+        PictureShot(Path("diagram.mp4"), frames=180),
+    ],
+    Path("picture.mp4"),
+    cache_dir=Path(".picture-cache"),
+    fps=30,
+)
+```
+
+A *handle* is extra footage outside a shot's nominal in/out points. The example
+requires 94 frames in `opening.mp4`, 124 in `simulation.mp4`, and 180 in
+`diagram.mp4`, all at 30 fps and the same even dimensions. Four matching handle
+frames form an eight-frame dissolve centered at 3 seconds. The output is exactly
+390 frames (13 seconds); the diagram starts at 7 seconds and remains unobscured
+for all six seconds. Zero handles select a hard cut. The first head and final
+tail must be zero, and each shot must retain at least one clear body frame.
+
+Supply real additional footage when encoding handles. Assembly does not invent
+handles, loop footage, stretch shots, or generate intermediate motion. It blends
+the two shots with a smoothstep opacity curve, normalizes output to BT.709 limited
+range, and leaves audio separate. Record any source retiming or processing in
+your film's own provenance. Keep overlays restrained near dissolves, where two
+shots briefly share the frame.
+
+Verified bodies and transitions are cached separately by their input bytes,
+frame ranges, compositor source and FFmpeg version. A changed shot rebuilds only
+the affected segments; corrupt cache entries rebuild automatically. The return
+value records source hashes, frame counts, handles, output hash and cache reuse.
+Retain that report with the film. Assembly checks media timing and unchanged
+source bytes before atomically replacing its destination. Archive substantial
+editorial revisions as new projects to preserve prior deliveries.
+
+`npa studio init` also copies `picture_timeline.py` and `film_cache.py` into its
+portable renderer. External scripts can import `picture_timeline` from that
+directory without an installed NPA package. Existing storyboard `cut`/`fade`
+semantics are unchanged; dissolves are an explicit picture-assembly operation.
+
+### Validate the shared renderer
+
 The installed source is `npa/src/npa/studio_renderer/`; command dispatch, local
 project creation and artifact search live in `npa/src/npa/studio*.py`. Update the
 shared implementation and its unit tests, then initialize a new local studio to
@@ -273,7 +327,8 @@ are bundled with NPA; the sample storyboards use generic placeholder text.
 npa/.venv/bin/python -m pytest npa/tests/unit/test_studio_entry.py \
   npa/tests/unit/test_studio_artifacts.py npa/tests/unit/test_film_studio.py \
   npa/tests/unit/test_film_brief.py npa/tests/unit/test_executive_film.py \
-  npa/tests/unit/test_executive_film_player.py -q
+  npa/tests/unit/test_executive_film_player.py \
+  npa/tests/unit/test_picture_timeline.py -q
 ```
 
 The official Nebius logo and the font retain source and licensing records under
