@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import re
+
 import pytest
 import yaml
 
@@ -200,16 +202,23 @@ def test_required_policy_precedes_build_and_secret_environment_is_scoped():
 def test_native_check_is_an_executed_gate_with_separate_private_dependencies():
     publish = yaml.safe_load(PUBLISH.read_text())
     build_steps = publish["jobs"]["build-development"]["steps"]
-    setup = next(step for step in build_steps if step.get("uses") == "actions/setup-python@v6")
+    setup = next(
+        step
+        for step in build_steps
+        if isinstance(step.get("uses"), str)
+        and re.fullmatch(r"actions/setup-python@[0-9a-f]{40}", step["uses"])
+    )
     assert setup["with"]["python-version"] == "${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore') && '3.12' || '3.11' }}"
     for name, job in publish["jobs"].items():
         if name == "build-development":
             continue
         for step in job.get("steps", []):
-            if step.get("uses") == "actions/setup-python@v6":
+            if isinstance(step.get("uses"), str) and re.fullmatch(
+                r"actions/setup-python@[0-9a-f]{40}", step["uses"]
+            ):
                 assert step["with"]["python-version"] == "3.11"
     security = yaml.safe_load(SECURITY.read_text())
-    job = security["jobs"]["complete-byte-native-integration"]
+    job = security["jobs"]["image-policy"]
     assert "if" not in job
     native_step = next(step for step in job["steps"] if "real_helper_checks.py" in step.get("run", ""))
     for step in [native_step, named("Prepare and test the cuRobo complete-byte scanner")]:
@@ -223,14 +232,15 @@ def test_native_check_is_an_executed_gate_with_separate_private_dependencies():
 
 
 def test_minimal_curobo_base_gets_the_unchanged_critical_vulnerability_gate():
-    spec = yaml.safe_load(SECURITY.read_text())
-    job = spec["jobs"]["base-image-cve-scan"]
+    inventory = json.loads(
+        (ROOT / "npa/docker/workbench/base-image-security.json").read_text()
+    )
     base = (ROOT / "npa/docker/workbench/curobo/Dockerfile").read_text().split("FROM ", 1)[1].splitlines()[0]
-    entries = [entry for entry in job["strategy"]["matrix"]["include"] if entry["image"] == base]
+    entries = [entry for entry in inventory if entry["image"] == base]
     assert len(entries) == 1 and entries[0]["purge_linux_libc_dev"] is False
-    gate = next(step for step in job["steps"] if step.get("name") == "Trivy image scan")
-    assert gate["with"]["severity"] == "CRITICAL"
-    assert gate["with"]["exit-code"] == "1"
+    scanner = (ROOT / "npa/scripts/scan_base_images.py").read_text()
+    assert '"--severity", "CRITICAL"' in scanner
+    assert '"--exit-code", "0" if sarif else "1"' in scanner
 
 
 def test_publisher_policy_pin_matches_the_reviewed_product_catalog():

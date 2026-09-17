@@ -1,18 +1,30 @@
 # Security regression gate
 
 Every pull request, merge queue candidate (`merge_group`), and push to `main`
-runs **Security regression / security-regression**. This required job checks that
-the isolated **security-scanners** job and reusable **image-security** workflow
-passed before running the hostile-input and CPU checkpoint tests introduced on
-main. Image scans cover every PR and merge candidate without path filters and
-block on fixed CRITICAL OS-package vulnerabilities and HIGH/CRITICAL configuration
-findings. Their [patched base targets and regression tests](image-reproducibility.md#cve-scanning)
+runs **Security regression / security-regression**. It is the only automatic PR
+workflow and atomically owns test, lint, guardrail, gitleaks, confidentiality,
+source-scanner, image-security, and hostile-input jobs. A superseding PR commit
+cancels that complete gate rather than leaving work in six workflow queues.
+Ordinary PRs receive fast smoke feedback; merge-queue candidates run browser and
+compatibility checks alongside the full duration-balanced coverage suite against
+the latest `main` before merging.
+
+The image workflow has no top-level path filter. Its two automatic jobs always
+report an internal, fail-closed scope decision. Image, packaging, workflow, and
+security-policy changes run complete-byte, configuration, and base-image checks;
+unrelated source changes take the verified fast path. Main, scheduled, and manual
+audits always run the deep checks. Seven pinned bases use one Trivy database
+download and two isolated worker caches inside one runner. Deep candidates block
+on fixed CRITICAL OS-package vulnerabilities and HIGH/CRITICAL configuration
+findings. Their
+[patched base targets and regression tests](image-reproducibility.md#cve-scanning)
 are checked separately from the differential application-dependency scan.
-Failed, skipped, or cancelled scanner
-work cannot produce a passing required check. A new finding fails the scanner job
+Failed, skipped, or cancelled required work cannot produce a passing result.
+Main, scheduled, and manual image scans additionally generate and upload SARIF
+with the established per-image identities. A new finding fails the scanner job
 with its file, rule or advisory, and remediation detail. Scanner, dependency
 resolution, malformed report, incomplete inventory, and source parsing failures
-also fail the job. There are no path filters or successful fallback results.
+also fail the job. There are no top-level path filters or successful error fallbacks.
 
 NPA accepts commands and artifacts through a Python CLI and FastAPI agent,
 uses browser dependencies, and runs GitHub Actions with repository access.
@@ -108,14 +120,15 @@ npa/.venv/bin/python -m npa.guardrails.confidentiality \
 ## Merge enforcement and limits
 
 Require the **security-regression**, **gitleaks**, and **scan** (confidentiality)
-contexts from GitHub Actions on `main`, with the branch up to date before merging.
-Preserve other required checks and branch protections. Workflow configuration
-alone does not enable branch protection; administrators must verify each required
-context after its first successful run.
+contexts from GitHub Actions on `main`. Use the merge queue so GitHub validates
+the exact latest-main candidate without requiring every open PR branch to be
+bulk-refreshed. Preserve other required checks and branch protections. Workflow
+configuration alone does not enable merge enforcement; administrators must
+verify the required contexts and active merge-queue rule.
 Repository administrators and configured bypass actors may still bypass checks.
-Keep the existing `gitleaks`, confidentiality, image security, lint, guardrail,
-and test workflows enabled. Secret and confidentiality checks also run for
-merge queue candidates.
+Keep the component workflows enabled as reusable candidate gates and
+superseding main audits. Secret and confidentiality checks also run for merge
+queue candidates.
 
 These checks reduce known risks; they do not prove the absence of vulnerabilities.
 Bandit is Python pattern analysis, not application-wide dataflow or JavaScript
