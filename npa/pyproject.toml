@@ -191,7 +191,7 @@ cosmos-curate = "0.1.2-skypilot-v1-20260813T164700Z"
 # r2 includes the attribute-sample-policy CLI consumed by PAIDF.
 cosmos-evaluator = "0.1.2-skypilot-v1-20260813T164700Z-r2"
 groot = "0.1.0"
-fiftyone = "1.15.0-post1-skypilot-v1-20260815-review5"
+fiftyone = "1.21.0-skypilot-v1-20260915"
 sonic = "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 sonic-mujoco = "0.2.0-runtime"
 retargeting = "0.1.1"
@@ -224,6 +224,7 @@ terraform-cli = "1.13.3"
 # auditable without asking an installed package to report an image tag as its
 # Python package version.
 [tool.npa.package-versions]
+fiftyone = "1.21.0"
 lerobot = "0.5.1"
 genesis = "0.4.6"
 cosmos = "1.0.9"

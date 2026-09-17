@@ -12,7 +12,9 @@ import json
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from tempfile import TemporaryFile
+from threading import Thread
+from typing import Any, BinaryIO
 
 import numpy as np
 import pyarrow as pa
@@ -254,8 +256,7 @@ def convert(
         "index": [],
         "task_index": [],
     }
-    if include_video:
-        stats_accum[video_key] = []
+    video_stats = _RgbStats() if include_video else None
 
     global_index = 0
     video_shape: tuple[int, int, int] | None = None
@@ -322,7 +323,8 @@ def convert(
                 / f"file-{episode_index:03d}.mp4"
             )
             _encode_video(frames, video_path, fps=fps)
-            stats_accum[video_key].append(frames)
+            video_stats.update(frames)
+            del frames
             episode_row[f"videos/{video_key}/chunk_index"] = 0
             episode_row[f"videos/{video_key}/file_index"] = episode_index
             episode_row[f"videos/{video_key}/from_timestamp"] = 0.0
@@ -341,7 +343,11 @@ def convert(
         output_dir / "meta" / "episodes" / "chunk-000" / "file-000.parquet",
     )
     _write_tasks_parquet(task_text, output_dir / "meta" / "tasks.parquet")
-    _write_stats(stats_accum, output_dir / "meta" / "stats.json")
+    _write_stats(
+        stats_accum,
+        output_dir / "meta" / "stats.json",
+        video_stats={video_key: video_stats.as_dict()} if video_stats is not None else None,
+    )
     _write_info(
         output_dir / "meta" / "info.json",
         task=task_text,
@@ -428,7 +434,7 @@ def _load_episode_arrays(
 
 def _load_rgb_frames(episode_dir: Path, *, expected_frames: int) -> np.ndarray:
     path = episode_dir / RGB_FRAMES_FILENAME
-    frames = np.load(path, allow_pickle=False)
+    frames = np.load(path, allow_pickle=False, mmap_mode="r")
     if frames.ndim != 4 or frames.shape[-1] not in {3, 4}:
         raise IsaacLabLeRobotError(
             f"{path} must contain [frames,height,width,RGB(A)] pixels, got {frames.shape}"
@@ -444,7 +450,7 @@ def _load_rgb_frames(episode_dir: Path, *, expected_frames: int) -> np.ndarray:
         frames = frames[..., :3]
     if frames.shape[1] <= 1 or frames.shape[2] <= 1:
         raise IsaacLabLeRobotError(f"{path} has invalid image dimensions {frames.shape[1:3]}")
-    return np.ascontiguousarray(frames)
+    return frames
 
 
 def _visual_provenance(
@@ -546,28 +552,69 @@ def _write_tasks_parquet(task: str, output_path: Path) -> None:
     )
 
 
-def _write_stats(stats_accum: dict[str, list[np.ndarray]], output_path: Path) -> None:
+@dataclass
+class _RgbStats:
+    """Keep exact uint8 pixel counts without retaining episode images."""
+
+    histogram: np.ndarray = field(default_factory=lambda: np.zeros((3, 256), dtype=np.int64))
+    frame_count: int = 0
+
+    def update(self, frames: np.ndarray) -> None:
+        if frames.dtype != np.uint8 or frames.ndim != 4 or frames.shape[-1] != 3:
+            raise IsaacLabLeRobotError("RGB statistics require uint8 [frames,height,width,3]")
+        if any(size == 0 for size in frames.shape):
+            raise IsaacLabLeRobotError("RGB statistics require nonempty frames")
+        for frame in frames:
+            for channel in range(3):
+                self.histogram[channel] += np.bincount(
+                    frame[..., channel].reshape(-1), minlength=256
+                )
+        self.frame_count += int(frames.shape[0])
+
+    def as_dict(self) -> dict[str, Any]:
+        if self.frame_count == 0:
+            raise IsaacLabLeRobotError("RGB statistics require at least one frame")
+        levels = np.arange(256, dtype=np.float64)
+        pixel_count = self.histogram.sum(axis=1)
+        mean = self.histogram @ levels / pixel_count
+        # Center before squaring to preserve small variances and exact constant channels.
+        variance = (self.histogram * (levels - mean[:, None]) ** 2).sum(axis=1) / pixel_count
+        occupied = self.histogram > 0
+        values = {
+            "min": occupied.argmax(axis=1) / 255.0,
+            "max": (255 - occupied[:, ::-1].argmax(axis=1)) / 255.0,
+            "mean": mean / 255.0,
+            "std": np.sqrt(variance) / 255.0,
+        }
+        return {
+            **{name: value.reshape(3, 1, 1).tolist() for name, value in values.items()},
+            "count": [self.frame_count],
+        }
+
+
+def _write_stats(
+    stats_accum: dict[str, list[np.ndarray]],
+    output_path: Path,
+    *,
+    video_stats: dict[str, Any] | None = None,
+) -> None:
     stats = {
         key: _compute_feature_stats(
             arrays, is_video=key.startswith("observation.images.")
         )
         for key, arrays in stats_accum.items()
     }
+    stats.update(video_stats or {})
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(stats, indent=2))
 
 
 def _compute_feature_stats(arrays: list[np.ndarray], *, is_video: bool = False) -> dict[str, Any]:
     if is_video:
-        frames = np.concatenate(arrays, axis=0).astype(np.float64) / 255.0
-        per_channel = frames.reshape(-1, frames.shape[-1])
-        return {
-            "min": [[[float(per_channel[:, channel].min())]] for channel in range(3)],
-            "max": [[[float(per_channel[:, channel].max())]] for channel in range(3)],
-            "mean": [[[float(per_channel[:, channel].mean())]] for channel in range(3)],
-            "std": [[[float(per_channel[:, channel].std())]] for channel in range(3)],
-            "count": [int(frames.shape[0])],
-        }
+        video_stats = _RgbStats()
+        for frames in arrays:
+            video_stats.update(frames)
+        return video_stats.as_dict()
 
     concat = np.concatenate(arrays, axis=0).astype(np.float64)
     if concat.ndim == 1:
@@ -690,8 +737,36 @@ def _encode_video(frames: np.ndarray, output_path: Path, *, fps: int) -> None:
         "2",
         str(output_path),
     ]
-    proc = subprocess.run(cmd, input=frames.tobytes(), capture_output=True, timeout=max(30, t))
-    if proc.returncode != 0:
-        raise IsaacLabLeRobotError(
-            f"ffmpeg failed (exit {proc.returncode}): {proc.stderr.decode(errors='ignore')[-500:]}"
-        )
+    _run_video_encoder(cmd, frames, timeout=max(30, t))
+
+
+def _write_video_frames(stream: BinaryIO, frames: np.ndarray, errors: list[OSError]) -> None:
+    try:
+        with stream:
+            for frame in frames:
+                stream.write(frame.tobytes())
+    except OSError as error:
+        errors.append(error)
+
+
+def _run_video_encoder(command: list[str], frames: np.ndarray, *, timeout: int) -> None:
+    # A file drains diagnostics without retaining them or blocking the encoder's stderr pipe.
+    with TemporaryFile() as diagnostics, subprocess.Popen(
+        command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=diagnostics
+    ) as process:
+        errors: list[OSError] = []
+        writer = Thread(target=_write_video_frames, args=(process.stdin, frames, errors), daemon=True)
+        writer.start()
+        try:
+            process.wait(timeout=timeout)
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+            writer.join()
+        if process.returncode != 0:
+            diagnostics.seek(max(0, diagnostics.tell() - 500))
+            message = diagnostics.read().decode(errors="ignore")
+            raise IsaacLabLeRobotError(f"ffmpeg failed (exit {process.returncode}): {message}")
+        if errors:
+            raise IsaacLabLeRobotError("Failed to write RGB frames to ffmpeg") from errors[0]

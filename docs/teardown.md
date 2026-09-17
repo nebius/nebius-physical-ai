@@ -17,6 +17,8 @@ Cleanup follows this order: cancel jobs → agent → controller → cluster →
 → owned storage IAM → project entry → local state. Keep recovery identity until
 cloud cleanup is verified. `npa cleanup` reports local residue and recovery
 instructions; it never deletes cloud resources.
+For a dedicated workflow API, also finish the [owned local API stop](#owned-local-workflow-api)
+after its controller cleanup and before retiring the operator environment.
 
 ## Two ways in
 
@@ -173,6 +175,29 @@ the same provider identity checks and rejects missing, destroyed, rolled-back, o
 replaced clusters. Cross-project use is refused. `--rebind` is allowed only after
 the managed-job queue is proven terminal; changing an alias for the same
 project/cluster ids is not a rebind.
+
+### Owned local workflow API
+
+Controller cleanup stops its temporary transaction API, but leaves the original
+workflow API running. After the submit driver and every other client of that
+unique API have finished, preserve successful exact-run cancellation and
+controller-cleanup receipts before calling
+`npa.orchestration.skypilot.local_api.stop_isolated_api(Path(owned_run_directory))`.
+Controller cleanup must report `overall_verified`, `remote_absence_verified`,
+and `local_metadata_cleared` as true. A controller result for one context is not
+permission to stop an API shared by other workflows.
+
+The [PAIDF receipt-checked cleanup example](../workflows/guides/paidf-cosmos3.md#r7-finish-owned-cleanup)
+validates its original per-run directory and API identity before cloud cleanup,
+then provides an independent local-stop block for recovery from those receipts.
+Do not repeat controller deletion merely to finish the local stop: unrelated
+controllers can remain after the owned metadata has been removed.
+
+The helper stops only its recorded local process tree; it does not cancel jobs,
+delete cloud resources, or remove run state and artifacts. Verify its retained
+daemon record reports `state: stopped` with null `pid` and `start_ticks`.
+Preserve records on any failure. Never substitute `sky api stop`, which is not
+scoped to the owned API, or remove state while processes are still alive.
 
 ### Cluster teardown
 
