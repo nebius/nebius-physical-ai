@@ -290,6 +290,102 @@ def test_source_fidelity_blueprint_foregrounds_synchronized_control_video() -> N
     assert blueprint.time_panel.timeline == "video_time"
 
 
+def test_source_video_references_are_remapped_to_conditioning_timeline(
+    tmp_path: Path,
+) -> None:
+    from npa.workflows.data_factory_viz import _log_video_asset
+
+    class Asset:
+        def __init__(self, **_kwargs):
+            pass
+
+        def read_frame_timestamps_nanos(self):
+            return [0, 20_000_000, 50_000_000, 400_000_000, 1_000_000_000]
+
+    class References:
+        @staticmethod
+        def columns_nanos(values):
+            return list(values)
+
+    class TimeColumn:
+        def __init__(self, name, **values):
+            self.name = name
+            self.values = values
+
+    class FakeRerun:
+        def __init__(self):
+            self.sent = []
+
+        def log(self, *_args, **_kwargs):
+            pass
+
+        def send_columns(self, entity, *, indexes, columns, recording):
+            self.sent.append((entity, indexes, columns, recording))
+
+    FakeRerun.AssetVideo = Asset
+    FakeRerun.VideoFrameReference = References
+    FakeRerun.TimeColumn = TimeColumn
+    rr = FakeRerun()
+    alignment = {
+        "frame_map": [
+            {"source_index": 0, "output_timestamp_seconds": 0.0},
+            {"source_index": 3, "output_timestamp_seconds": 0.0625},
+            {"source_index": 4, "output_timestamp_seconds": 0.125},
+        ]
+    }
+
+    count = _log_video_asset(
+        rr,
+        object(),
+        "source/original/video",
+        tmp_path / "source.mp4",
+        temporal_alignment=alignment,
+    )
+
+    assert count == 3
+    assert rr.sent[0][1][0].name == "video_time"
+    assert rr.sent[0][1][0].values["duration"] == [0.0, 0.0625, 0.125]
+    assert rr.sent[0][2] == [0, 400_000_000, 1_000_000_000]
+    assert rr.sent[1][1][0].values["sequence"] == range(3)
+
+
+def test_only_v3_alignment_remaps_original_source_references() -> None:
+    from npa.workflows.data_factory_viz import _source_video_temporal_alignment
+
+    alignment = {"frame_map": [{"source_index": 0}]}
+
+    assert (
+        _source_video_temporal_alignment(
+            {
+                "conditioning_policy": "source-fidelity-v3",
+                "temporal_alignment": alignment,
+            },
+            "source/original",
+        )
+        == alignment
+    )
+    assert (
+        _source_video_temporal_alignment(
+            {
+                "conditioning_policy": "source-fidelity-v2",
+                "temporal_alignment": alignment,
+            },
+            "source/original",
+        )
+        is None
+    )
+    assert (
+        _source_video_temporal_alignment(
+            {
+                "conditioning_policy": "source-fidelity-v3",
+                "temporal_alignment": alignment,
+            },
+            "source/conditioning",
+        )
+        is None
+    )
+
+
 def test_vda_recording_rejects_generated_only_comparison(tmp_path: Path) -> None:
     pytest.importorskip("rerun")
     run = tmp_path / "generated-only"
@@ -551,8 +647,9 @@ def test_control_maps_are_logged_beside_the_variants_they_conditioned(
     assert result["frames_logged"] == 4
 
 
+@pytest.mark.parametrize("policy", ["source-fidelity-v2", "source-fidelity-v3"])
 def test_source_fidelity_media_evidence_probes_exact_synchronized_bytes(
-    tmp_path: Path,
+    tmp_path: Path, policy: str
 ) -> None:
     from npa.workflows.data_factory_viz import _source_fidelity_media_evidence
 
@@ -607,8 +704,18 @@ def test_source_fidelity_media_evidence_probes_exact_synchronized_bytes(
         run,
         input_provenance={
             "derivation": {
-                "policy": "source-fidelity-v2",
-                "temporal_alignment": {"loop_count": 0},
+                "policy": policy,
+                "temporal_alignment": {
+                    "loop_count": 0,
+                    "frame_map": [
+                        {
+                            "output_index": index,
+                            "output_timestamp_seconds": index / 16,
+                            "source_index": index,
+                        }
+                        for index in range(5)
+                    ],
+                },
             }
         },
         variant_records=[
@@ -620,11 +727,13 @@ def test_source_fidelity_media_evidence_probes_exact_synchronized_bytes(
     assert evidence["synchronization_timeline"] == "video_time"
     assert evidence["source"]["codec"] == "h264"
     assert evidence["source"]["sha256"] == _sha256_path(source)
+    assert evidence["conditioning_policy"] == policy
     assert evidence["source"]["byte_size"] == source.stat().st_size
     assert evidence["conditioning"]["frame_count"] == evidence["source"][
         "frame_count"
     ]
     assert len(evidence["controls"]) == 1
+    assert evidence["controls"][0]["candidate_id"] == "candidate-a"
     assert evidence["controls"][0]["signal"] == "candidate-a/control_edge.mp4"
     assert evidence["controls"][0]["media"]["sha256"] == _sha256_path(control)
     assert evidence["generated_candidates"][0]["candidate_id"] == "candidate-a"
@@ -685,10 +794,59 @@ def test_source_fidelity_media_evidence_rejects_missing_committed_control(
     ):
         _source_fidelity_media_evidence(
             run,
-            input_provenance={"derivation": {"policy": "source-fidelity-v2"}},
+            input_provenance={"derivation": {"policy": "source-fidelity-v3"}},
             variant_records=[
                 {"candidate_id": "candidate-a", "video": candidate}
             ],
+        )
+
+
+def test_source_fidelity_media_evidence_rejects_candidate_without_control_uri(
+    tmp_path: Path,
+) -> None:
+    from npa.workflows.data_factory_viz import (
+        DataFactoryVizError,
+        _source_fidelity_media_evidence,
+    )
+
+    run = tmp_path / "run"
+    frame = run / "fixture.png"
+    _write_png(frame, (220, 80, 20))
+    source = run / "input" / "source.mp4"
+    conditioning = run / "input" / "conditioning.mp4"
+    candidate = run / "cosmos_augmented" / "candidate-a" / "augmented_video.mp4"
+    for video in (source, conditioning, candidate):
+        video.parent.mkdir(parents=True, exist_ok=True)
+        _write_mp4_from_png(frame, video)
+    (candidate.parents[1] / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "npa.cosmos2.transfer.v1",
+                "mode": "cosmos_transfer2.5_gpu",
+                "status": "executed",
+                "node_count": 1,
+                "variant_count": 1,
+                "variants": [
+                    {
+                        "clip": "candidate-a",
+                        "variant_index": 0,
+                        "augmented_video_uri": (
+                            "s3://test/run/cosmos_augmented/candidate-a/"
+                            "augmented_video.mp4"
+                        ),
+                        "control_uris": {},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DataFactoryVizError, match="has no committed control video"):
+        _source_fidelity_media_evidence(
+            run,
+            input_provenance={"derivation": {"policy": "source-fidelity-v3"}},
+            variant_records=[{"candidate_id": "candidate-a", "video": candidate}],
         )
 
 

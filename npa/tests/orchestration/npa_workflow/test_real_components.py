@@ -6,6 +6,8 @@ real command/module call, or if the augment stage isn't the real Cosmos execute.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import pathlib
 import re
 
@@ -228,8 +230,18 @@ def test_augment_runs_real_cosmos_transfer() -> None:
     assert "input/conditioning.mp4" in description
     assert "no bundled or geometric fallback" in description
     assert spec["config"]["prompt_policy"] == "source-fidelity-v2"
+    assert spec["config"]["input_conditioning_policy"] == "source-fidelity-v3"
     generate_argv = states["generate-configs"]["run"]["argv"]
     assert generate_argv[-1] == "{{config.prompt_policy}}"
+
+
+def test_readiness_record_is_bound_to_exact_workflow_bytes() -> None:
+    readiness_path = BLUEPRINT.with_suffix(".readiness.json")
+    readiness = json.loads(readiness_path.read_text(encoding="utf-8"))
+
+    assert readiness["workflow_sha256"] == hashlib.sha256(
+        BLUEPRINT.read_bytes()
+    ).hexdigest()
 
 
 def test_input_conditioned_cosmos_toolref_fails_closed_without_input() -> None:

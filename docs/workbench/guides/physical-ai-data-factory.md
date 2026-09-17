@@ -468,13 +468,16 @@ frames at 16 fps, and extracts eight caption frames. The catalog always invokes
 for hallucination scoring. Missing or invalid input therefore cannot turn into a
 decorative staged object or a fixed control example.
 
-The separately named NVIDIA VDA workflow uses the `source-fidelity-v2`
-normalizer: it maps the complete source frame span to those 93 frames exactly
-once instead of repeating a short action, includes both endpoints in the eight
-caption frames, preserves aspect ratio with letterboxing rather than cropping,
-and emits limited-range BT.709 range/matrix/transfer/primaries metadata. Its
-provenance records the intended source index and timestamp for every conditioning
-frame, so source/control alignment is independently checkable.
+The separately named NVIDIA VDA workflow uses the `source-fidelity-v3` input
+normalizer: it maps decoded frame timestamps to those 93 frames exactly once
+instead of repeating a short action, includes both endpoints in the eight caption
+frames, preserves aspect ratio with letterboxing rather than cropping, and
+performs a real SDR conversion to limited-range BT.709. HDR/BT.2020 is rejected
+rather than silently retagged. Its provenance records the source index and
+decoded timestamp selected for every conditioning frame, so source/control
+alignment is independently checkable. Historical committed specs without an
+explicit input policy retain the byte-compatible `source-fidelity-v2` transform
+for immutable resume.
 The resulting VDA RRD opens with source, conditioning-control, and generated
 videos together on the decoded `video_time` timeline. Its evidence panel also
 records the probed codec, frame cadence/count, pixel format, range, matrix,

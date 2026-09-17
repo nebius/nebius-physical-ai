@@ -42,6 +42,32 @@ SIM2REAL_SPEC = (
 )
 
 
+def test_nvidia_vda_conditioning_policy_is_versioned_by_the_committed_spec() -> None:
+    from npa.cli.workbench.workflow import _paidf_conditioning_policy
+    from npa.orchestration.npa_workflow.run_state import (
+        NVIDIA_PAIDF_VDA_WORKFLOW_NAME,
+    )
+
+    assert (
+        _paidf_conditioning_policy(NVIDIA_PAIDF_VDA_WORKFLOW_NAME, {})
+        == "source-fidelity-v2"
+    )
+    assert (
+        _paidf_conditioning_policy(
+            NVIDIA_PAIDF_VDA_WORKFLOW_NAME,
+            {"input_conditioning_policy": "source-fidelity-v3"},
+        )
+        == "source-fidelity-v3"
+    )
+    assert (
+        _paidf_conditioning_policy(
+            "physical-ai-data-factory",
+            {"input_conditioning_policy": "source-fidelity-v3"},
+        )
+        == ""
+    )
+
+
 @pytest.fixture(autouse=True)
 def _no_ambient_src(monkeypatch: pytest.MonkeyPatch) -> None:
     # These tests isolate prerequisite/image/provisioning ordering. Exact

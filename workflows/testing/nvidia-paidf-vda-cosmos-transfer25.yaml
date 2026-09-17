@@ -109,6 +109,10 @@ config:
   # backdrop, treats source foreground colors and contact geometry as invariants,
   # and supplies Transfer's native negative_prompt with measured failure modes.
   prompt_policy: "source-fidelity-v2"
+  # Explicit input-derivation version. Keeping this separate from the workflow
+  # name preserves legacy conditioning bytes when an older committed spec is
+  # restored for resume.
+  input_conditioning_policy: "source-fidelity-v3"
   # Nodes in the augment block. The variants are independent diffusions, so they
   # shard across a gang-scheduled block: each node renders its stride of the
   # sampled combos on its own GPUs. Every managed attempt publishes clips below a

@@ -722,9 +722,15 @@ and stages `source.mp4`, the exact 93-frame `conditioning.mp4`, eight derived
 caption frames, and `provenance.json` under the canonical input prefix.
 For this NVIDIA VDA spec, the conditioning clip traverses the complete source
 exactly once, maps its endpoints to frames 0 and 92, letterboxes without cropping,
-and carries explicit limited-range BT.709 metadata. The eight caption frames also
-include both endpoints; `provenance.json` records the complete source-index and
-timestamp map.
+and performs a metadata-driven SDR conversion to limited-range BT.709. Decoded
+frame timestamps, rather than average FPS, define the mapping, so valid VFR input
+still traverses exactly once. HDR/BT.2020 or an untagged range/matrix is rejected
+before staging instead of being mislabeled; tone-map or tag replacement input
+explicitly. If an SDR clip declares its matrix but omits transfer/primaries, those
+two fields inherit that supported matrix and the inference is recorded in provenance.
+The eight caption frames include both endpoints; `provenance.json` records the
+complete source-index and decoded-timestamp map used to synchronize the original,
+conditioning, control, and generated Rerun streams.
 
 ```bash
 BUCKET="<your-artifact-bucket>"

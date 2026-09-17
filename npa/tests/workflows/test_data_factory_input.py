@@ -146,7 +146,7 @@ def test_nvidia_vda_plan_uses_its_workflow_specific_artifact_prefix() -> None:
         "s3://bucket/nvidia-paidf-vda-cosmos-transfer25/paidf-one/input/"
     )
     assert result.provenance["provenance_uri"].endswith("/input/provenance.json")
-    assert result.provenance["derivation"]["policy"] == "source-fidelity-v2"
+    assert result.provenance["derivation"]["policy"] == "source-fidelity-v3"
 
 
 @pytest.mark.parametrize(
@@ -951,9 +951,10 @@ def test_source_fidelity_conditioning_preserves_channels_timeline_and_shape(
         check=True,
     )
     source_media = dfi.probe_video(source)
+    source_timestamps = dfi._decoded_video_timestamps(source, source_media)
     output = tmp_path / "conditioning.mp4"
     contract = dfi._derive_source_fidelity_conditioning(
-        source, output, source_media
+        source, output, source_media, source_timestamps
     )
     output_media = dfi.probe_video(output)
 
@@ -1012,7 +1013,7 @@ def test_source_fidelity_conditioning_preserves_channels_timeline_and_shape(
     extracted = dfi._extract_aligned_conditioning_frames(output, aligned)
     assert len(extracted) == dfi.CONDITIONING_FRAMES
     assert dfi._aligned_conditioning_frame_indices() == [0, 13, 26, 39, 53, 66, 79, 92]
-    alignment = dfi._source_fidelity_alignment(source_media)
+    alignment = dfi._source_fidelity_alignment(source_media, source_timestamps)
     assert alignment["loop_count"] == 0
     assert alignment["frame_map"][0]["source_index"] == 0
     assert alignment["frame_map"][-1]["source_index"] == 168
@@ -1029,6 +1030,102 @@ def test_source_fidelity_conditioning_preserves_channels_timeline_and_shape(
             inferred_source_indices, expected_source_indices
         )
     ) <= 1
+
+
+def test_source_fidelity_alignment_uses_decoded_vfr_timestamps() -> None:
+    media = {"frame_count": 5, "frame_rate": "30/1"}
+    timestamps = [0.0, 0.02, 0.05, 0.4, 1.0]
+
+    alignment = dfi._source_fidelity_alignment(media, timestamps)
+
+    assert alignment["method"] == (
+        "single-pass-endpoint-aligned-fps-round-near-decoded-pts"
+    )
+    assert alignment["frame_map"][0]["source_index"] == 0
+    assert alignment["frame_map"][46]["source_index"] == 3
+    assert alignment["frame_map"][-1]["source_index"] == 4
+    assert dfi._source_fidelity_time_scale(timestamps) == pytest.approx(5.75)
+
+
+def test_source_fidelity_v2_contract_remains_resume_compatible() -> None:
+    media = {
+        "frame_count": 169,
+        "frame_rate": "50/1",
+        "color_range": "pc",
+        "color_space": "bt470bg",
+    }
+
+    arguments = dfi._source_fidelity_v2_conditioning_arguments(media)
+    alignment = dfi._source_fidelity_v2_alignment(media)
+
+    assert arguments[3] == (
+        "setpts=(PTS-STARTPTS)*1.71130952380952,"
+        "fps=16:round=near:start_time=0,"
+        "scale=1280:720:force_original_aspect_ratio=decrease:"
+        "in_range=pc:in_color_matrix=bt470bg:out_range=tv:out_color_matrix=bt709,"
+        "pad=1280:720:(ow-iw)/2:(oh-ih)/2:black"
+    )
+    assert alignment["method"] == "single-pass-endpoint-aligned-nearest-frame"
+    assert [alignment["frame_map"][index]["source_index"] for index in (0, 46, 92)] == [
+        0,
+        84,
+        168,
+    ]
+    assert dfi._conditioning_policy("source-fidelity-v2") == "source-fidelity-v2"
+    assert dfi._conditioning_policy("source-fidelity-v3") == "source-fidelity-v3"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {
+            "color_space": "bt2020nc",
+            "color_transfer": "smpte2084",
+            "color_primaries": "bt2020",
+        },
+        {
+            "color_space": "bt2020nc",
+            "color_transfer": "arib-std-b67",
+            "color_primaries": "bt2020",
+        },
+    ],
+)
+def test_source_fidelity_rejects_hdr_instead_of_retagging(overrides: dict) -> None:
+    media = {
+        "color_range": "tv",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        **overrides,
+    }
+
+    with pytest.raises(dfi.PaidfInputError, match="does not silently retag HDR"):
+        dfi._source_color_filter(media)
+
+
+def test_source_fidelity_records_bounded_sdr_color_tag_inference() -> None:
+    conversion = dfi._source_color_conversion(
+        {
+            "color_range": "pc",
+            "color_space": "bt470bg",
+            "color_transfer": "unknown",
+            "color_primaries": "unknown",
+        }
+    )
+
+    assert conversion["inferred_fields"] == ["color_transfer", "color_primaries"]
+    assert conversion["resolved_input"] == {
+        "color_range": "pc",
+        "color_space": "bt470bg",
+        "color_transfer": "bt470bg",
+        "color_primaries": "bt470bg",
+    }
+    assert conversion["output"] == {
+        "color_range": "tv",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+    }
 
 
 @pytest.mark.parametrize(

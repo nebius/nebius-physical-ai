@@ -1659,7 +1659,6 @@ def submit_cmd(
         if is_paidf_spec:
             from npa.workflows.data_factory_input import (
                 PaidfInputError,
-                SOURCE_FIDELITY_CONDITIONING_POLICY,
                 plan_paidf_input,
                 prepare_paidf_input,
             )
@@ -1678,7 +1677,10 @@ def submit_cmd(
                     _resolved_config(merged_npa_spec, resolved_run_id).get("prefix")
                     or ""
                 ).strip("/")
-                paidf_conditioning_policy = SOURCE_FIDELITY_CONDITIONING_POLICY
+                paidf_conditioning_policy = _paidf_conditioning_policy(
+                    workflow_identity,
+                    _resolved_config(merged_npa_spec, resolved_run_id),
+                )
 
             try:
                 if plan_only:
@@ -3588,6 +3590,26 @@ def _parse_submit_vars(var: list[str]) -> dict[str, str]:
             _fail("Invalid --var format. Use KEY=VALUE.")
         substitutions[key] = value
     return substitutions
+
+
+def _paidf_conditioning_policy(
+    workflow_identity: str, resolved_config: dict[str, object]
+) -> str:
+    """Select explicit v3 while preserving the historical VDA v2 default."""
+
+    from npa.orchestration.npa_workflow.run_state import (
+        NVIDIA_PAIDF_VDA_WORKFLOW_NAME,
+    )
+    from npa.workflows.data_factory_input import (
+        SOURCE_FIDELITY_CONDITIONING_POLICY_V2,
+    )
+
+    if workflow_identity != NVIDIA_PAIDF_VDA_WORKFLOW_NAME:
+        return ""
+    return str(
+        resolved_config.get("input_conditioning_policy")
+        or SOURCE_FIDELITY_CONDITIONING_POLICY_V2
+    ).strip()
 
 
 def _parse_image_overrides(items: list[str]) -> dict[str, str]:

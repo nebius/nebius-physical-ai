@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import tempfile
@@ -183,7 +184,14 @@ def _set_frame(rr: Any, rec: Any, idx: int) -> None:
         rr.set_time_sequence("frame", idx, recording=rec)
 
 
-def _log_video_asset(rr: Any, rec: Any, entity: str, path: Path) -> int:
+def _log_video_asset(
+    rr: Any,
+    rec: Any,
+    entity: str,
+    path: Path,
+    *,
+    temporal_alignment: dict[str, Any] | None = None,
+) -> int:
     """Log one video and its real decoded timestamps on the duration timeline."""
 
     asset = rr.AssetVideo(path=path)
@@ -191,10 +199,45 @@ def _log_video_asset(rr: Any, rec: Any, entity: str, path: Path) -> int:
     timestamps = asset.read_frame_timestamps_nanos()
     if not len(timestamps):
         raise DataFactoryVizError(f"video has no decoded frame timestamps: {path.name}")
-    references = rr.VideoFrameReference.columns_nanos(timestamps)
+    timeline_timestamps = timestamps
+    reference_timestamps = timestamps
+    if temporal_alignment is not None:
+        frame_map = temporal_alignment.get("frame_map")
+        if not isinstance(frame_map, list) or not frame_map:
+            raise DataFactoryVizError(
+                "source video temporal alignment has no frame-reference map"
+            )
+        try:
+            source_indices = [int(item["source_index"]) for item in frame_map]
+            timeline_timestamps = [
+                round(float(item["output_timestamp_seconds"]) * 1_000_000_000)
+                for item in frame_map
+            ]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise DataFactoryVizError(
+                "source video temporal alignment is malformed"
+            ) from exc
+        if any(index < 0 or index >= len(timestamps) for index in source_indices):
+            raise DataFactoryVizError(
+                "source video temporal alignment references an absent frame"
+            )
+        if any(
+            right <= left
+            for left, right in zip(timeline_timestamps, timeline_timestamps[1:])
+        ):
+            raise DataFactoryVizError(
+                "source video temporal alignment is not strictly increasing"
+            )
+        reference_timestamps = [timestamps[index] for index in source_indices]
+    references = rr.VideoFrameReference.columns_nanos(reference_timestamps)
     rr.send_columns(
         entity,
-        indexes=[rr.TimeColumn("video_time", duration=1e-9 * timestamps)],
+        indexes=[
+            rr.TimeColumn(
+                "video_time",
+                duration=[1e-9 * value for value in timeline_timestamps],
+            )
+        ],
         columns=references,
         recording=rec,
     )
@@ -202,11 +245,25 @@ def _log_video_asset(rr: Any, rec: Any, entity: str, path: Path) -> int:
     # viewer uses ``video_time`` and therefore never invents playback speed.
     rr.send_columns(
         entity,
-        indexes=[rr.TimeColumn("frame", sequence=range(len(timestamps)))],
+        indexes=[rr.TimeColumn("frame", sequence=range(len(reference_timestamps)))],
         columns=references,
         recording=rec,
     )
-    return len(timestamps)
+    return len(reference_timestamps)
+
+
+def _source_video_temporal_alignment(
+    media_evidence: dict[str, Any], entity: str
+) -> dict[str, Any] | None:
+    """Use only the decoded-PTS v3 map for exact source-frame remapping."""
+
+    if (
+        media_evidence.get("conditioning_policy") == "source-fidelity-v3"
+        and entity == "source/original"
+    ):
+        value = media_evidence.get("temporal_alignment")
+        return value if isinstance(value, dict) else None
+    return None
 
 
 def _image(rr: Any, arr: Any):
@@ -486,11 +543,19 @@ def build_run_rrd(
 
         source_video_count = 0
         for source_video in source_video_records:
+            temporal_alignment = (
+                _source_video_temporal_alignment(
+                    media_evidence, source_video["entity"]
+                )
+                if media_evidence
+                else None
+            )
             _log_video_asset(
                 rr,
                 rec,
                 f"{source_video['entity']}/video",
                 source_video["video"],
+                temporal_alignment=temporal_alignment,
             )
             source_video_count += 1
 
@@ -912,11 +977,12 @@ def _source_fidelity_media_evidence(
     if not isinstance(input_provenance, dict):
         return {}
     derivation = input_provenance.get("derivation")
-    if (
-        not isinstance(derivation, dict)
-        or derivation.get("policy") != "source-fidelity-v2"
-    ):
+    if not isinstance(derivation, dict) or derivation.get("policy") not in {
+        "source-fidelity-v2",
+        "source-fidelity-v3",
+    }:
         return {}
+    conditioning_policy = str(derivation["policy"])
 
     from npa.workflows.data_factory_input import PaidfInputError, probe_video
 
@@ -938,6 +1004,8 @@ def _source_fidelity_media_evidence(
         raise DataFactoryVizError(
             "source-fidelity RRD requires source.mp4 and conditioning.mp4"
         )
+    source_media = probe(source)
+    conditioning_media = probe(conditioning)
     candidates = [
         {
             "candidate_id": str(record["candidate_id"]),
@@ -950,20 +1018,43 @@ def _source_fidelity_media_evidence(
         raise DataFactoryVizError(
             "source-fidelity RRD could not probe every committed candidate"
         )
+    candidate_ids = {str(record["candidate_id"]) for record in variant_records}
     control_root = local / "cosmos_control"
-    selected_control_videos: set[Path] = set()
-    for _iteration, augment_root in _augment_roots(local):
+    selected_control_videos: dict[Path, str] = {}
+    controls_by_candidate = {candidate_id: 0 for candidate_id in candidate_ids}
+    for iteration, augment_root in _augment_roots(local):
         manifest = _read_json(augment_root / "manifest.json")
         if not isinstance(manifest, dict):
             continue
         for variant in _validated_viz_manifest(manifest):
-            for uri in (variant.get("control_uris") or {}).values():
+            clip = str(variant.get("clip") or "").strip()
+            candidate_id = f"iteration-{iteration}/{clip}" if iteration else clip
+            if candidate_id not in candidate_ids:
+                continue
+            control_uris = variant.get("control_uris") or {}
+            if not isinstance(control_uris, dict) or not control_uris:
+                raise DataFactoryVizError(
+                    f"source-fidelity RRD candidate {candidate_id} has no committed control video"
+                )
+            for uri in control_uris.values():
                 value = str(uri or "")
                 marker = "/cosmos_control/"
-                if marker in value:
-                    selected_control_videos.add(
-                        control_root / value.split(marker, 1)[1]
+                if marker not in value or not value.lower().endswith(".mp4"):
+                    raise DataFactoryVizError(
+                        f"source-fidelity RRD candidate {candidate_id} has an invalid control URI"
                     )
+                path = control_root / value.split(marker, 1)[1]
+                selected_control_videos[path] = candidate_id
+                controls_by_candidate[candidate_id] += 1
+    missing_candidate_controls = sorted(
+        candidate_id
+        for candidate_id, count in controls_by_candidate.items()
+        if count == 0
+    )
+    if missing_candidate_controls:
+        raise DataFactoryVizError(
+            "source-fidelity RRD requires a committed control video for every candidate"
+        )
     missing_controls = [
         path for path in sorted(selected_control_videos) if not path.is_file()
     ]
@@ -973,6 +1064,7 @@ def _source_fidelity_media_evidence(
         )
     controls = [
         {
+            "candidate_id": selected_control_videos[path],
             "signal": path.relative_to(control_root).as_posix(),
             "media": probe(path),
         }
@@ -980,13 +1072,54 @@ def _source_fidelity_media_evidence(
     ]
     return {
         "schema": "npa.paidf.vda.media-evidence.v1",
+        "conditioning_policy": conditioning_policy,
         "synchronization_timeline": "video_time",
-        "source": probe(source),
-        "conditioning": probe(conditioning),
+        "source": source_media,
+        "conditioning": conditioning_media,
         "controls": controls,
         "generated_candidates": candidates,
-        "temporal_alignment": derivation.get("temporal_alignment", {}),
+        "temporal_alignment": _validated_source_fidelity_alignment(
+            derivation.get("temporal_alignment"),
+            source_frame_count=int(source_media["frame_count"]),
+            conditioning_frame_count=int(conditioning_media["frame_count"]),
+        ),
     }
+
+
+def _validated_source_fidelity_alignment(
+    value: Any,
+    *,
+    source_frame_count: int,
+    conditioning_frame_count: int,
+) -> dict[str, Any]:
+    """Validate the exact source-reference map before using it as RRD timing."""
+
+    if not isinstance(value, dict) or not isinstance(value.get("frame_map"), list):
+        raise DataFactoryVizError(
+            "source-fidelity RRD requires a complete temporal-alignment map"
+        )
+    frame_map = value["frame_map"]
+    if len(frame_map) != conditioning_frame_count:
+        raise DataFactoryVizError(
+            "source-fidelity temporal alignment does not match conditioning frames"
+        )
+    for expected_index, item in enumerate(frame_map):
+        if not isinstance(item, dict):
+            raise DataFactoryVizError("source-fidelity temporal alignment is malformed")
+        source_index = item.get("source_index")
+        output_index = item.get("output_index")
+        output_timestamp = item.get("output_timestamp_seconds")
+        if (
+            output_index != expected_index
+            or not isinstance(source_index, int)
+            or not 0 <= source_index < source_frame_count
+            or not isinstance(output_timestamp, (int, float))
+            or not math.isclose(
+                float(output_timestamp), expected_index / 16, rel_tol=0, abs_tol=1e-9
+            )
+        ):
+            raise DataFactoryVizError("source-fidelity temporal alignment is malformed")
+    return value
 
 
 def _image_files(root: Path) -> list[Path]:
