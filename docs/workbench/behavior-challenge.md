@@ -7,9 +7,17 @@ SkyPilot. A separately served policy receives RGB, depth, and robot
 proprioception and returns robot actions over WebSocket. This workflow evaluates
 a fixed policy; policy serving uses pinned upstream implementations.
 
-**Status:** the published RLC policy completed the ten-instance radio development
-selection with **two successes and mean Q = 0.20**, compared with the official
-baseline's **one success and Q = 0.10** on the same cases. All failures are retained.
+**Latest experiment, September 17:** [80 verified development rollouts](behavior-experiment-results-2026-09-17.md)
+cover three tasks. The published RLC controller averaged Q=0.427778 across that
+panel. Shorter action execution hurt all three tasks, and a 6,000-update radio
+fine-tune scored Q=0.20 against the campaign's stock Q=0.30. Two further
+fine-tunes completed but remain unevaluated. These results do not establish
+competitive full-challenge performance or 24 GB serving compliance.
+
+**Earlier validation, September 16:** the published RLC policy completed the
+ten-instance radio development selection with **two successes and mean Q = 0.20**,
+compared with the official baseline's **one success and Q = 0.10** on the same
+cases. All failures are retained.
 The official baseline's separate reporting selection scored **Q = 0.00**.
 This is a measured improvement on one task's development selection; performance on
 the other 99 tasks and 24 GB serving compliance require separate validation.

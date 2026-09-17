@@ -2,11 +2,16 @@
 
 [Challenge workflow](behavior-challenge.md)
 
-The current RLC controller already uses a π0.5-derived model. Its verified result
-is **Q = 0.20 on ten radio development instances**, against the official radio
-baseline's Q = 0.10. Neither result establishes performance across the 100-task
-2026 challenge. The research candidate described here has no measured rollout
-improvement yet.
+The current RLC controller already uses a π0.5-derived model. The
+[September 17 experiment](behavior-experiment-results-2026-09-17.md) completed
+80 development rollouts and three 6,000-update fine-tunes. The evaluated
+fine-tune and shorter action execution showed no improvement over the campaign's
+stock controls. Two trained candidates and a newer public 100-task checkpoint
+remain unevaluated. No competitive full-challenge score is established.
+
+The earlier September 16 radio comparison remains recorded at RLC Q=0.20 versus
+the official baseline's Q=0.10. The EGR objective described below has no trained
+and evaluated checkpoint.
 
 ## Research reviewed
 
@@ -156,8 +161,8 @@ and the complete policy's 24 GB memory use before combining memory and recovery.
    export/reload. A helper test or a decreasing training loss is insufficient.
 3. Run the unchanged official evaluator on all ten frozen development instances,
    once each, at its default timeout. Preserve every failure and original video.
-4. Compare complete policies against the Q = 0.20 RLC control. Never combine the
-   best individual outcomes across policies.
+4. Compare complete policies against the same campaign's frozen RLC control.
+   Never combine the best individual outcomes across policies.
 5. Establish gains across a frozen set of additional tasks, expand training to
    all 100 tasks, and validate the submission's 24 GB serving constraint before
    making a full-challenge or winning-performance claim.
