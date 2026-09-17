@@ -94,10 +94,12 @@ guidance:
   certificate change fails the connection loudly; there is no silent
   re-pinning. If you legitimately rotate the agent certificate, update the
   stored fingerprint deliberately — never automate re-capture on mismatch.
-- **Protect the stored fingerprint.** The fingerprint lives in the agent
-  configuration alongside credentials; anyone who can modify it can redirect
-  trust. It inherits the credential-handling rules above
-  (`~/.npa/credentials.yaml`, 0600 files, never committed).
+- **Protect the stored fingerprint.** The fingerprint is written into the
+  per-run Kubernetes Secret (`relay_client_secret_manifest`) alongside the
+  relay credentials; anyone who can modify it can redirect trust. It is
+  protected by Kubernetes Secret RBAC in the agent namespace — not by
+  local file permissions — so restrict `get`/`update` on that Secret to
+  the deployer role. Never commit fingerprints to the repo.
 - **TLS 1.2+ is still enforced** (`context.minimum_version =
   ssl.TLSVersion.TLSv1_2`); only CA-chain validation is replaced by pinning.
 
