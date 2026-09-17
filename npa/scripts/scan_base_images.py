@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
+from queue import Empty, Queue
 import re
 import shutil
 import subprocess
@@ -133,13 +134,13 @@ def scan_entry(
     return blocking.returncode
 
 
-def _scan_lane(
-    entries: list[dict[str, object]], cache: Path, sarif_directory: Path | None
+def _scan_worker(
+    entries: Queue[dict[str, object]], cache: Path, sarif_directory: Path | None
 ) -> list[int]:
-    """Scan one serial lane with its worker-private Trivy cache.
+    """Drain shared work with one worker-private Trivy cache.
 
     Args:
-        entries: Entries assigned to this worker.
+        entries: Shared queue of unclaimed inventory entries.
         cache: Worker-private Trivy cache.
         sarif_directory: Optional SARIF output directory.
     Returns:
@@ -148,7 +149,16 @@ def _scan_lane(
         subprocess.CalledProcessError: Preparation or SARIF generation fails.
     """
 
-    return [scan_entry(entry, cache, sarif_directory) for entry in entries]
+    results = []
+    while True:
+        try:
+            entry = entries.get_nowait()
+        except Empty:
+            return results
+        try:
+            results.append(scan_entry(entry, cache, sarif_directory))
+        finally:
+            entries.task_done()
 
 
 def _create_worker_cache(database: Path, root: Path, index: int) -> Path:
@@ -201,11 +211,13 @@ def scan_inventory(
             _create_worker_cache(cache / "db", root, index)
             for index in range(worker_count)
         ]
-        lanes = [entries[index::worker_count] for index in range(worker_count)]
+        queue: Queue[dict[str, object]] = Queue()
+        for entry in entries:
+            queue.put(entry)
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
             futures = [
-                executor.submit(_scan_lane, lane, worker_cache, sarif_directory)
-                for lane, worker_cache in zip(lanes, worker_caches, strict=True)
+                executor.submit(_scan_worker, queue, worker_cache, sarif_directory)
+                for worker_cache in worker_caches
             ]
             results = [result for future in futures for result in future.result()]
     if any(result != 0 for result in results):
@@ -227,7 +239,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--inventory", type=Path, required=True)
     parser.add_argument("--cache-dir", type=Path, required=True)
-    parser.add_argument("--workers", type=int, default=2)
+    parser.add_argument("--workers", type=int, default=3)
     parser.add_argument("--sarif-directory", type=Path)
     arguments = parser.parse_args()
     if arguments.workers < 1:

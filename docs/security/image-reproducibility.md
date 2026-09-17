@@ -98,10 +98,11 @@ preserves that identity across direct and reusable invocation. No additional
 branch-protection context is needed when `security-regression` is already required.
 
 The workflow scans Dockerfile/config issues and the digest-pinned public base
-image lineages. Seven bases are processed inside one runner with two bounded
-workers. One Trivy database download is hard-linked into worker-private caches,
-so parallel scans cannot contend on mutable cache state and the inventory does
-not create seven queued jobs. Dockerfile/config misconfigurations fail on HIGH
+image lineages. Seven bases are dynamically distributed inside one runner across
+three bounded workers. One Trivy database download is hard-linked into
+worker-private caches, so parallel scans cannot contend on mutable cache state,
+slow images do not strand work in a static lane, and the inventory does not
+create seven queued jobs. Dockerfile/config misconfigurations fail on HIGH
 and CRITICAL findings. Base-image CVE jobs are intentionally OS-package only,
 use `--ignore-unfixed`, and fail on fixed CRITICAL vulnerabilities. When a pinned
 CUDA base contains a fixable CRITICAL in a build-only OS package that consuming

@@ -7,14 +7,16 @@ source-scanner, image-security, and hostile-input jobs. A superseding PR commit
 cancels that complete gate rather than leaving work in six workflow queues.
 Ordinary PRs receive fast smoke feedback; merge-queue candidates run browser and
 compatibility checks alongside the full duration-balanced coverage suite against
-the latest `main` before merging.
+the latest `main` before merging. The full three-interpreter test audit runs
+daily instead of immediately after each merge, so it cannot consume the hosted
+runner slots needed by the next queue candidate.
 
 The image workflow has no top-level path filter. Its two automatic jobs always
 report an internal, fail-closed scope decision. Image, packaging, workflow, and
 security-policy changes run complete-byte, configuration, and base-image checks;
 unrelated source changes take the verified fast path. Main, scheduled, and manual
 audits always run the deep checks. Seven pinned bases use one Trivy database
-download and two isolated worker caches inside one runner. Deep candidates block
+download and three isolated worker caches inside one runner. Deep candidates block
 on fixed CRITICAL OS-package vulnerabilities and HIGH/CRITICAL configuration
 findings. Their
 [patched base targets and regression tests](image-reproducibility.md#cve-scanning)

@@ -128,9 +128,9 @@ def test_base_inventory_uses_bounded_parallelism_without_a_matrix() -> None:
 
     job = _workflow("image-security-scan.yml")["jobs"]["base-image-cve-scan"]
     assert "strategy" not in job
-    scan = _step(job, "Scan all pinned bases with two local workers")
+    scan = _step(job, "Scan all pinned bases with three local workers")
     assert "scan_base_images.py" in scan["run"]
-    assert "--workers 2" in scan["run"]
+    assert "--workers 3" in scan["run"]
     assert "base-image-security.json" in scan["run"]
 
 
