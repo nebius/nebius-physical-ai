@@ -1,7 +1,5 @@
 """All-replica least-outstanding request routing for Ray Serve 2.56.0."""
 
-from ray.serve.request_router import FIFOMixin, RequestRouter
-
 EXPECTED_RAY_VERSION = "2.56.0"
 
 
@@ -9,9 +7,11 @@ def _assert_ray_version() -> None:
     # This module subclasses private Ray Serve internals (FIFOMixin /
     # RequestRouter) whose behavior changed between releases. A rebuild against
     # a different Ray version would silently alter routing semantics, so fail
-    # loudly instead. Skipped when ray is not installed at all (unit-test
-    # harnesses fake ray.serve.request_router); the import above then decides
-    # what happens next.
+    # loudly instead. The check runs BEFORE the import below: importing first
+    # would execute the risky import before the guard can reject a wrong
+    # version. Skipped when ray is not installed at all (unit-test harnesses
+    # fake ray.serve.request_router); the import below then decides what
+    # happens next.
     try:
         import ray
     except ImportError:
@@ -27,6 +27,8 @@ def _assert_ray_version() -> None:
 
 
 _assert_ray_version()
+
+from ray.serve.request_router import FIFOMixin, RequestRouter
 
 
 class LeastOutstandingRouter(FIFOMixin, RequestRouter):
