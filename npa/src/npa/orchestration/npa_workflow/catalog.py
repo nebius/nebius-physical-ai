@@ -3019,7 +3019,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         config_defaults={"structural_control": "", "conditioning_fps": "",
                          "transfer_chunk_frames": "", "control_guidance": "", "transfer_edge_threshold": "", "transfer_rgb_weight": ""},
         omit_flags_when_empty=("--structural-control", "--conditioning-fps",
-                               "--transfer-chunk-frames", "--control-guidance", "--transfer-edge-threshold"),
+                               "--transfer-chunk-frames", "--control-guidance", "--transfer-edge-threshold",
+                               "--transfer-rgb-weight"),
         access_capabilities=("cosmos3",),
         description=(
             "Run real Cosmos 3 video2video inference once per PAIDF variant, "

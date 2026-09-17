@@ -128,6 +128,25 @@ def test_invalid_edge_preset_fails_during_planning():
     assert "transfer_edge_threshold" in result.output
 
 
+def test_legacy_generation_config_uses_default_rgb_weight(tmp_path, monkeypatch):
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+    from npa.workflows import paidf_cosmos3
+
+    document = _doc()
+    document["config"].pop("transfer_rgb_weight")
+    path = tmp_path / "workflow.yaml"
+    path.write_text(yaml.safe_dump(document))
+    plan = build_plan(load_spec(path), run_id="legacy-rgb", assume_decision="promote_checkpoint")
+    stage = next(step for step in plan.steps if step.state == "generate-variants")
+    calls = []
+    monkeypatch.setattr(paidf_cosmos3, "generate_variants", lambda *args, **kwargs: calls.append(kwargs) or {})
+    result = runner.invoke(app, list(stage.argv[1:]))
+    assert result.exit_code == 0, result.output
+    assert "--transfer-rgb-weight" not in stage.argv
+    assert calls[0]["transfer_rgb_weight"] == 0.0
+
+
 @pytest.mark.parametrize("value", ["-0.1", "nan", "inf", "true", "invalid"])
 def test_invalid_rgb_weight_fails_during_planning(value):
     result = runner.invoke(app, ["workbench", "workflow", "plan-spec", str(SPEC),
