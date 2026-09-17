@@ -5,6 +5,7 @@ import gzip
 import hashlib
 import importlib.util
 import io
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -87,7 +88,7 @@ class _Response(io.BytesIO):
         "169.254.1.1",
         "240.0.0.1",
         "224.0.0.1",
-        "0.0.0.0",
+        pytest.param(str(ipaddress.IPv4Address(0)), id="ipv4-unspecified"),
         "::1",
         "fc00::1",
         "fe80::1",
