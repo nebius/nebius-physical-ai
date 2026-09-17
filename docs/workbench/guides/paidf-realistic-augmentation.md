@@ -205,6 +205,114 @@ recordings. They are not a newly aligned LeRobot action dataset. Training use
 requires separate action/timestamp alignment, multi-view checks where applicable,
 and task validation.
 
+## Tune visible changes before fan-out
+
+The runtime has no battery-dataset branch, fixed battery appearance profile, or
+special case for episode zero. Input selection, task description, appearance
+profiles, sampling settings and variant count come from configuration. The
+battery values above are a worked experiment. For another task, replace the
+input selection, `augment_subject`, `prompt`, `negative_prompt` and profiles
+together; do not retain battery-specific restrictions in an unrelated task.
+The adapter still enforces the pinned model's supported frame size and timing
+contracts. Those are model constraints, not dataset-specific tuning.
+
+The measured battery recipe produced very similar scenes: it requested only
+subtle lighting changes, held the work surface and palette nearly constant,
+and added source RGB conditioning. Increasing its variant count repeats that
+weak edit. Before scaling, choose a visible change that the selected camera can
+show and specify how it should differ from the source. For example, compare
+diffuse frontal lighting with directional side lighting and coherent shadows,
+or compare two visibly different finishes on an existing work surface. Keep
+task-bearing geometry and identity cues fixed. These are experiment designs,
+not generation-qualified recipes.
+
+| Control | How to tune it |
+| --- | --- |
+| `appearance_profiles_json` | Define visibly distinct, coherent profiles. Change one appearance axis during diagnosis, then combine qualified edits. A neutral color grade can counteract a requested warm/cool look; keep the four fields consistent. |
+| `prompt`, `negative_prompt` | State task invariants and the allowed appearance changes separately. Remove a blanket “only subtle lighting” restriction when testing a more visible edit. Preserve object identity without demanding unchanged illumination on every surface. |
+| `transfer_rgb_weight` | Compare 0, 0.25 and 0.5 as illustrative experiment points while holding source, captions, profiles and seeds fixed. Smaller values reduce RGB conditioning; inspect whether edit strength improves and whether task details deteriorate. These values are not qualified defaults. |
+| `guidance` | With the RGB setting fixed, compare text-guidance values around the current recipe. Stronger guidance may increase the edit or introduce artifacts; inspect both. |
+| `control_guidance`, `transfer_edge_threshold` | Tune source structure independently of text guidance. Inspect edge controls when small or dark features disappear. Higher control guidance did not reliably preserve the battery task. |
+| `steps`, `transfer_chunk_frames` | Use these for sampling quality or visible temporal discontinuities after the edit is specified. More steps or longer windows do not establish greater appearance diversity. |
+
+For each comparison, retain the source hash, resolved model revision, profiles,
+actual per-variant seeds, effective prompts and control receipts. Change one
+generation control at a time and use fresh run IDs. Keep the same quality
+criteria across comparisons. Review two separate outcomes: whether task details
+survived, and whether the intended appearance change is visibly present relative
+to the original. Reject a near-copy when the objective is appearance diversity.
+
+The existing attribute verifier examines the generated video; it does not prove
+that an attribute changed relative to the source. An already cool-lit source can
+match a cool-light description with almost no augmentation. Source-relative
+appearance checks measure preservation, not a minimum edit strength. There is
+currently no automatic minimum-diversity gate: record paired visual review
+separately, including examples with no effective edit. Do not substitute a pixel
+difference threshold for this review; gripper deformation also changes pixels.
+
+## Fan out a reviewed recipe
+
+Separate the number of desired outputs from their execution concurrency:
+
+| Setting | What it expands |
+| --- | --- |
+| Number of profiles | Requested appearance diversity. Profiles are shuffled without replacement within each cycle. |
+| `variant_count` | Generated candidates per episode/camera and generation pass. With P profiles and R samples per profile, choose P × R candidates for R complete cycles. More candidates than profiles repeat appearances with distinct generation seeds. |
+| `augmentation_seed` | Profile ordering; hold it fixed for matched comparisons. |
+| `seed` | Cosmos 3 sampling. Actual seeds are `seed + attempt * retry_seed_stride + variant_index`; read each output's metadata as the authority. When increasing variant count, choose a retry stride at least as large as that count if seed ranges must not overlap across retries. |
+| `variant_parallelism` | Requested generation concurrency inside one job. Effective concurrency is the minimum of variant count, this setting and visible GPUs. It does not allocate GPUs or create jobs on other nodes. |
+| Episode/camera selection | Source coverage. Each selection requires its own workflow run and source lineage; equal seeds across cameras do not enforce multi-view consistency. |
+
+Keep `variant_parallelism=1` when expanding output count on a single GPU. This
+executes the additional candidates serially. Increasing GPU concurrency requires
+an appropriately allocated generation job and separate live qualification of
+that setting; the battery runs in this guide do not qualify multi-GPU fan-out.
+Use the setup guide's discovered accelerator override or the private spec's GPU
+resource profile, then verify the rendered resource request and the resulting
+manifest's actual `variant_parallelism`. `parallelism_preset` is a model runtime
+setting, not an episode or variant fan-out count.
+
+For a concrete count expansion, copy the `QUALITY_ARGS` definition above into
+your private run configuration and replace its task/profile values with the
+reviewed recipe. Set `VARIANT_COUNT` to the desired candidate count, then add
+these arguments once to both its plan and submit commands. Set
+`LEROBOT_EPISODE` and `LEROBOT_CAMERA` from the selected source recording:
+
+```bash
+FANOUT_ARGS=(
+  --var "variant_count=$VARIANT_COUNT"
+  --var variant_parallelism=1
+)
+npa workbench workflow plan-spec "$SPEC" --run-id "$RUN_ID" \
+  --assume-decision promote_checkpoint --var "bucket=$BUCKET" \
+  --var input_kind=lerobot --var "lerobot_dataset_uri=$LEROBOT_URI/" \
+  --var "input_camera=$LEROBOT_CAMERA" --var "input_episode=$LEROBOT_EPISODE" \
+  "${QUALITY_ARGS[@]}" "${FANOUT_ARGS[@]}" --json
+```
+
+Use the same `QUALITY_ARGS` and `FANOUT_ARGS` for submission, selecting
+`--lerobot-episode "$LEROBOT_EPISODE"` and the corresponding camera in the
+submit command above. Review both accepted and rejected plans before launching;
+`--assume-decision` is for planning and does not override live evaluation.
+Variant count is per generation pass: the existing `refinement_iterations` and
+retry controls may produce additional candidates. Keep them explicit in the
+campaign record instead of treating the first-pass count as the campaign total.
+
+For dataset expansion, keep a private selection manifest containing dataset
+revision, episode, camera, recipe revision and a unique run ID for every selected
+combination. Stage the video and metadata for every selected camera. Reuse the
+same source and seeds when comparing recipes; use held-out episodes when
+qualifying the chosen recipe. Each concurrently submitted workflow needs its own
+artifact prefix, isolated SkyPilot API directory and `NPA_CONFIG_DIR`; follow the
+setup and cleanup procedures for each run. Independent workflows can be placed
+on separately allocated GPUs after their resource requests are reviewed.
+
+Check each output manifest against the requested count and profile coverage,
+retaining rejected candidates and any incomplete run. Confirm that requested
+appearance differences survived generation before reporting diversity. For
+training, perform the action/timestamp and multi-view validation described above.
+The rejected battery recipe is not a qualified campaign to scale unchanged.
+
 ## Make a synchronized comparison
 
 Download `input/source.mp4` and the selected variant's `augmented_video.mp4`

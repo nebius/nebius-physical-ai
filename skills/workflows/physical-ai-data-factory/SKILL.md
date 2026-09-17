@@ -76,6 +76,15 @@ lossless-control and native-loader hashes, and distinguish this model input
 from output-pixel blending. Check both task preservation and visible appearance
 change: more source conditioning can suppress the requested edit.
 
+For tuning and fan-out, follow the guide's “Tune visible changes before fan-out”
+and “Fan out a reviewed recipe” sections. Keep task-specific values in run
+configuration. Distinguish profile diversity, variant count, generation seeds,
+per-job GPU concurrency and episode/camera coverage. More seeds do not add new
+appearance profiles. Verify actual source-to-output changes separately: the
+existing output attribute check does not enforce minimum augmentation strength.
+Keep per-run storage/API/config isolation and report the actual concurrency;
+single-GPU evidence does not qualify multi-GPU fan-out.
+
 For operator setup, verify `command -v nebius` and `nebius version` after selecting
 `PATH` and after any environment activation. Health preflight proves profile
 authentication, while configure also enforces NPA's supported CLI version.
