@@ -304,3 +304,13 @@ The unchanged evaluator rejected both: aggregate score 0.149534, temporal scores
 complete its terminal disposition stage: its isolated API refused a source
 configuration changed by another trial. These measurements come from the retained
 evaluator report, not a successful end-to-end workflow receipt.
+
+A sixth pair re-extracted and re-captioned the complete episode using the same
+identity-color specification and sampling controls. The prepared video hash
+remained unchanged. The eight saved caption frames matched source indices 0,
+41, 82, 123, 164, 205, 246 and 287, including release and the final state. Both
+generated videos retained all 288 frames with zero timestamp error. The actual
+outputs still changed fine gripper details; the evaluator rejected both with
+aggregate score 0.150257, temporal scores 0.147766 and 0.152749, and attribute
+scores 2/4 and 1/4. Complete caption coverage fixes missing observations; it
+does not establish faithful generation.
