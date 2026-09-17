@@ -85,9 +85,10 @@ GRIPPER_CONTACT_FORCE_NEWTONS = 0.1
 MIN_CAMERA_LUMINANCE_MEAN = 5.0
 MIN_CAMERA_LUMINANCE_VARIANCE = 25.0
 MIN_CAMERA_PAIR_DIFFERENCE = 6.0
-# The fixed exterior view can resolve the 7 cm cube to only a few red pixels at
-# 224x224 after valid robot motion; keep a positive color-area floor without
-# rejecting that still-visible target.
+# The strict run-acceptance report uses this positive color-area floor to prove
+# the target is visibly resolved. Policy eligibility deliberately does not:
+# normal arm motion can briefly occlude the cube while the fixed camera remains
+# useful and the known target stays geometrically inside its frustum.
 MIN_EXTERIOR_RED_CUBE_PIXELS = 1
 EXTERIOR_CAMERA_PATH = "/World/PolicyExterior"
 WRIST_CAMERA_PATH = "/World/PolicyWrist"
@@ -978,19 +979,6 @@ def _camera_frame_from_buffer(buffer, *, view: str) -> CameraFrame:
             raw_nonzero,
             raw_channels,
         )
-    if view == "exterior" and result.red_cube_pixels < MIN_EXTERIOR_RED_CUBE_PIXELS:
-        return CameraFrame(
-            rgb,
-            "cube_not_visible",
-            luminance_mean,
-            luminance_variance,
-            dynamic_range,
-            result.red_cube_pixels,
-            raw_min,
-            raw_max,
-            raw_nonzero,
-            raw_channels,
-        )
     return result
 
 
@@ -1149,7 +1137,7 @@ def _validate_camera_pair(
     exterior_cube_in_frame: bool,
     wrist_cube_in_frame: bool,
 ) -> CameraPair:
-    """Require useful paired views and continuous target context from exterior."""
+    """Require useful paired views and geometric target context from exterior."""
 
     import numpy as np
 

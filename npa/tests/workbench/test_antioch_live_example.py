@@ -1130,18 +1130,23 @@ def test_live_camera_pair_classifies_each_view_freshness_semantics_and_distinctn
     )
     assert wrist_target_absent.accepted is True
 
+    # Normal arm motion can temporarily occlude the cube in the fixed view.
+    # Keep controlling from a fresh, textured, distinct pair while the known
+    # target remains geometrically inside the exterior camera frustum; the
+    # separate strict acceptance report still requires positive red pixels.
+    exterior_target_occluded = scenario._validate_camera_pair(
+        Camera(no_cube),
+        Camera(wrist),
+        render_sequence=7,
+        last_accepted_render_sequence=6,
+        exterior_cube_in_frame=True,
+        wrist_cube_in_frame=False,
+    )
+    assert exterior_target_occluded.accepted is True
+    assert exterior_target_occluded.exterior.red_cube_pixels == 0
+
     cases = (
         (Camera(None), Camera(wrist), 5, 4, True, True, "exterior", "missing"),
-        (
-            Camera(no_cube),
-            Camera(wrist),
-            5,
-            4,
-            True,
-            True,
-            "exterior",
-            "cube_not_visible",
-        ),
         (
             Camera(exterior),
             Camera(np.zeros_like(wrist)),
