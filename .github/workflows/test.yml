@@ -2,17 +2,18 @@ name: Test
 
 on:
   workflow_call:
-  push:
-    branches: [main]
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  # The parent PR gate cancels a superseded candidate atomically. Direct main
-  # runs also supersede older validation because the newest commit contains it.
+  # The parent PR gate cancels a superseded candidate atomically. Scheduled and
+  # manual compatibility audits retain their complete results for diagnosis.
   group: test-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   browser-mocked:
@@ -133,20 +134,22 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       # A merge candidate releases the remaining runners after a hard failure.
-      # Main keeps every compatibility result for diagnosis and audit coverage.
-      fail-fast: ${{ github.event_name != 'push' }}
+      # Scheduled/manual audits keep every compatibility result for diagnosis.
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         # Merge queue candidates run the complete suite on the primary
-        # interpreter. Main keeps all supported Python versions.
-        python-version: ${{ fromJSON(github.event_name == 'push' && '["3.10", "3.12", "3.14"]' || '["3.12"]') }}
-        shard: [1, 2, 3, 4]
+        # interpreter. Scheduled/manual audits keep all supported versions.
+        python-version: ${{ fromJSON(github.event_name == 'merge_group' && '["3.12"]' || '["3.10", "3.12", "3.14"]') }}
+        # The queue uses one extra shard to stay below its wall-clock target.
+        # The periodic three-version audit retains four per interpreter.
+        shard: ${{ fromJSON(github.event_name == 'merge_group' && '[1, 2, 3, 4, 5]' || '[1, 2, 3, 4]') }}
     env:
       NPA_PROJECT_ID: project-test-00000000
       NPA_S3_BUCKET: test-bucket-00000000
       NPA_E2E_PROJECT_ID: project-test-00000000
       NPA_E2E_GROOT_BUCKET: test-bucket-00000000
       NPA_CI_SHARD_INDEX: ${{ matrix.shard }}
-      NPA_CI_TOTAL_SHARDS: 4
+      NPA_CI_TOTAL_SHARDS: ${{ github.event_name == 'merge_group' && 5 || 4 }}
       COVERAGE_FILE: .coverage.${{ matrix.python-version }}.${{ matrix.shard }}
       NPA_CI_TIMING_OUTPUT: ci-timings-${{ matrix.python-version }}-${{ matrix.shard }}.json
       # The LTX-2.5 output validator decides whether a GPU run produced anything
@@ -259,8 +262,8 @@ jobs:
           path: npa/.coverage.${{ matrix.python-version }}.${{ matrix.shard }}
           include-hidden-files: true
 
-      - name: Upload trusted main timing shard
-        if: github.event_name == 'push' && matrix.python-version == '3.12'
+      - name: Upload scheduled timing shard
+        if: github.event_name == 'schedule' && matrix.python-version == '3.12'
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: ci-timings-${{ matrix.shard }}
@@ -324,23 +327,23 @@ jobs:
           .venv/bin/python -m coverage combine coverage-data
           .venv/bin/python -m coverage report --show-missing --fail-under=60
 
-      - name: Download trusted main timing shards
-        if: github.event_name == 'push'
+      - name: Download scheduled timing shards
+        if: github.event_name == 'schedule'
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
           pattern: ci-timings-*
           path: npa/ci-timing-data
           merge-multiple: true
 
-      - name: Merge trusted main duration profile
-        if: github.event_name == 'push'
+      - name: Merge scheduled duration profile
+        if: github.event_name == 'schedule'
         run: |
           npa/.venv/bin/python npa/scripts/merge_ci_test_timings.py \
             --input-directory npa/ci-timing-data \
             --output npa/ci-test-durations.json
 
-      - name: Upload trusted main duration profile
-        if: github.event_name == 'push'
+      - name: Upload scheduled duration profile
+        if: github.event_name == 'schedule'
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: ci-test-durations-${{ github.sha }}

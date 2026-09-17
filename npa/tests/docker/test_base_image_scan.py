@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from threading import Barrier, Event, Lock
 
 import pytest
 
@@ -217,3 +218,58 @@ def test_parallel_scans_use_worker_private_trivy_caches(
     assert len(scan_caches) == 3
     assert cache not in scan_caches
     assert len(set(scan_caches)) == 2
+
+
+def test_parallel_scans_dynamically_claim_the_next_entry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Let an available worker claim work instead of waiting on a static lane.
+
+    Args:
+        monkeypatch: Isolated scanner and subprocess replacements.
+        tmp_path: Temporary Trivy cache root.
+    Returns:
+        None.
+    Raises:
+        AssertionError: The third entry cannot start while the first is blocked.
+    """
+
+    cache = tmp_path / "trivy"
+    first_pair = Barrier(2)
+    third_started = Event()
+    lock = Lock()
+    entry_caches: dict[str, Path] = {}
+
+    def download(command, **arguments):
+        database = cache / "db"
+        database.mkdir()
+        (database / "trivy.db").write_text("verified database")
+        return subprocess.CompletedProcess(command, 0)
+
+    def scan(entry, worker_cache, sarif_directory):
+        name = str(entry["name"])
+        with lock:
+            entry_caches[name] = worker_cache
+        if name in {"base-0", "base-1"}:
+            first_pair.wait(timeout=2)
+        if name == "base-0":
+            assert third_started.wait(timeout=2)
+        elif name == "base-2":
+            third_started.set()
+        return 0
+
+    monkeypatch.setattr(scanner.subprocess, "run", download)
+    monkeypatch.setattr(scanner, "scan_entry", scan)
+    entries = [
+        {
+            "name": f"base-{index}",
+            "image": f"example.invalid/base@sha256:{index}",
+            "purge_linux_libc_dev": False,
+            "upgrade_os": False,
+        }
+        for index in range(3)
+    ]
+    scanner.scan_inventory(entries, cache, workers=2, sarif_directory=None)
+
+    assert entry_caches["base-1"] == entry_caches["base-2"]
+    assert entry_caches["base-0"] != entry_caches["base-2"]

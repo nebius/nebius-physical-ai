@@ -175,7 +175,7 @@ jobs:
           bash scripts/security_install.sh "$RUNNER_TEMP/security-tools"
           echo "$RUNNER_TEMP/security-tools" >> "$GITHUB_PATH"
 
-      - name: Scan all pinned bases with two local workers
+      - name: Scan all pinned bases with three local workers
         if: steps.scope.outputs.deep == 'true'
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -187,7 +187,7 @@ jobs:
           fi
           npa/.venv/bin/python npa/scripts/scan_base_images.py \
             --inventory npa/docker/workbench/base-image-security.json \
-            --cache-dir "$RUNNER_TEMP/trivy-cache" --workers 2 \
+            --cache-dir "$RUNNER_TEMP/trivy-cache" --workers 3 \
             "${report_args[@]}"
 
       - name: Upload CUDA 12.4 SARIF
