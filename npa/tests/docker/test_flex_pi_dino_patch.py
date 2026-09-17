@@ -1,6 +1,6 @@
 """Execute the shipped DINO patch at its model-loading boundary."""
 
-import os
+import importlib.util
 from pathlib import Path
 import subprocess
 from unittest.mock import Mock
@@ -20,9 +20,11 @@ def patched_encoder(tmp_path):
     patch = Path(__file__).resolve().parents[2] / "docker/workbench/flex-pi/pins/dino-checkpoint.patch"
     subprocess.run(["patch", "--batch", "-p1", "-i", str(patch)], cwd=tmp_path, check=True, capture_output=True)
     timm = Mock()
-    namespace = {"timm": timm, "os": os}
-    exec(compile(source.read_text(), str(source), "exec"), namespace)
-    return namespace["DinoEncoder"], timm
+    spec = importlib.util.spec_from_file_location("patched_dino_encoder", source)
+    module = importlib.util.module_from_spec(spec)
+    module.timm = timm
+    spec.loader.exec_module(module)
+    return module.DinoEncoder, timm
 
 
 @pytest.mark.parametrize("checkpoint", [None, "", "  "])
