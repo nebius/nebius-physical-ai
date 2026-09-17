@@ -31,6 +31,7 @@ SPECS = REPO_ROOT / "workflows" / "testing"
         "av-night-scene-hardening.yaml",
         "cosmos-synth-fanout-curation.yaml",
         "robocasa-data-policy.yaml",
+        "lerobot-transfer.yaml",
     ],
 )
 def test_example_specs_validate(name: str) -> None:

@@ -232,6 +232,8 @@ jobs:
             npa/tests/docker/test_cosmos3_serving_image_contract.py \
             npa/tests/docker/test_cosmos3_ray_serve_image_contract.py \
             npa/tests/docker/test_sonic_mujoco_public_image_contract.py \
+            npa/tests/docker/test_fiftyone_image_validation.py \
+            npa/tests/docker/test_fiftyone_source_delivery.py \
             npa/tests/deploy/test_public_publish.py \
             npa/tests/guardrails/test_secure_image_build_skill.py \
             -q
@@ -550,6 +552,28 @@ jobs:
               --format spdx-json \
               --output "/output/${TOOL}-sbom.spdx.json" \
               "$IMAGE"
+
+      - name: Validate exact FiftyOne runtime before publication
+        if: matrix.tool == 'fiftyone'
+        id: fiftyone-validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+          npa/.venv/bin/python npa/docker/workbench/fiftyone/validate_image.py \
+            --image-id "$image_id" --revision "$DEVELOPMENT_SHA" \
+            --source-root "$GITHUB_WORKSPACE" \
+            --output-path "$RUNNER_TEMP/fiftyone-validation"
+
+      - name: Retain only the public FiftyOne validation summary
+        if: always() && matrix.tool == 'fiftyone' && steps.fiftyone-validation.outcome != 'skipped'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: fiftyone-validation-summary
+          path: ${{ runner.temp }}/fiftyone-validation/public-summary.json
+          if-no-files-found: error
+          # Original logs and raw receipts stay on the runner and are not public artifacts.
 
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
