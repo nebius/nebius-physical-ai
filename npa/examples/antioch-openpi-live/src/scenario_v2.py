@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 import operator
 import ssl
-import tempfile
 import time
 import contextlib
 from collections import Counter
@@ -45,8 +44,10 @@ def _resolved_telemetry_entity(relative_entity: str) -> str:
 logger = antioch.Logger(TELEMETRY_ROOT)
 
 # This fixed path is private to the single-run simulation container and points
-# at an atomically replaced, authenticated client bundle.
-CLIENT_ROOT = Path(tempfile.gettempdir()) / "npa-live-client-current"
+# at an atomically replaced, authenticated client bundle.  Keep it independent
+# of TMPDIR: Isaac Kit requires its own temporary files below the portable root,
+# while Antioch installs the authenticated relay handoff at this fixed location.
+CLIENT_ROOT = Path("/tmp/npa-live-client-current")
 ACTION_SHAPE = (15, 8)
 CONTROL_HZ = 15.0
 CAMERA_SENSOR_TICK_RATE_HZ = CONTROL_HZ
