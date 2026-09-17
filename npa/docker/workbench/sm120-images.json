@@ -61,9 +61,9 @@
     },
     {
       "name": "npa-isaac-arena",
-      "tag": "0.3.0-isaaclab3-20260912-r3",
-      "source_tag": "dev-feadf144a277366265c1331d0176d43e835092be",
-      "digest": "sha256:267f2b5785c9a1d2df7aba58a0ea4bb112edb976b5b83fef2afbbd130a23c32c",
+      "tag": "0.3.0-isaaclab3-20260917-r4",
+      "source_tag": "dev-ae5adea6ab895660996f513f14160c89d06f47e5",
+      "digest": "sha256:9c6a417672d6f87499680ba337c90488c2a33d41ac9f7b5452eb5d97d00e097e",
       "purpose": "Isaac Lab-Arena candidate qualified on B200 state evaluation and RTX PRO 6000 successful GR1 open-microwave evaluation. The visual gate binds exact actions, upstream task success, simulator door progress, and coherent denoised motion; provider assets remain runtime fetched.",
       "visual_validation": "validated",
       "candidate_validation": "qualified"

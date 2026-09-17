@@ -62,7 +62,28 @@ publication gates plus the checked-in Blackwell validator and real
 0.5.1 as the current default or add a second `lerobot` row to the default public
 release plan.
 
-## 2026-09-15 Isaac Arena task-evidence publication
+## 2026-09-17 Isaac Arena recovery qualification
+
+`npa-isaac-arena:0.3.0-isaaclab3-20260917-r4` selects the accepted public
+manifest `sha256:9c6a417672d6f87499680ba337c90488c2a33d41ac9f7b5452eb5d97d00e097e`
+from source `ae5adea6ab895660996f513f14160c89d06f47e5`. Official build
+`35211514544` passed the full publication gates. Independent anonymous pull,
+source hashes and digest-bound signatures passed; corrected payload/history
+checks inspected all 42 layers / 127,560 paths and the 126,146-path registry
+filesystem. The earlier outer-archive probe is not accepted as a payload scan.
+
+Fresh `arena-b200-reconcile-ae5adea6-20260917-r3` completed four native
+1,050-step state-only episodes. Fresh `arena-rtx-reconcile-ae5adea6-20260917-r3`
+completed 43 exact replay actions through native terminal with no padding,
+success 1.0 and door openness 0.200→0.815. Four coherent frame pairs bind
+spatially to native task progress. Independent retrieval verified 60 B200
+objects / 51,006,097 bytes and 24 RTX objects / 4,978,517 bytes; both
+43-frame MP4s fully decoded. The separate factual RRD was decoded, checked
+against native pixels/metrics and privately stored with read-after-write.
+Both controllers are SUCCEEDED with zero active workers; shared capacity,
+controllers and storage remain intact. See [fresh proof and hashes](isaac-arena.md#fresh-recovery-qualification--2026-09-17).
+
+## Historical 2026-09-15 Isaac Arena task-evidence publication
 
 `npa-isaac-arena:0.3.0-isaaclab3-20260912-r3` promotes, without rebuilding, the
 exact public development manifest
@@ -292,7 +313,7 @@ and populated caches remain absent from the public image.
 | Rerun 0.31.4 | `npa-rerun-viewer` | `0.31.4-sim2real-coherent-20260904` | 2026-09-04 | Published non-root `ubuntu` SkyPilot worker and Rerun viewer/server on ports 9876/9090 for `.rrd` robotics traces. It includes the attested bootstrap contract and exact-source Sim2Real Stage 14 runtime, and bakes no models, datasets, credentials, or runtime caches. The coherent release converted an actual three-sample robot joint trace, reopened its RRD entity through the CLI, and served/read the artifact over HTTP. |
 | Sim2Real Controller 0.1.2 | `npa-sim2real-control` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Non-root CPU controller containing the canonical 14-stage orchestration capability. The coherent release expanded and validated both the checkpoint-promotion and loop-back decision branches; it contains no model weights, datasets, credentials, or runtime caches. |
 | Sim2Real EnvGen 0.1.2 | `npa-envgen` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Generates randomized Sim2Real environments and scenes on the Genesis base. The coherent exact-source release bakes the snapshot-pinned non-root SkyPilot Kubernetes bootstrap closure (`sudo`, SSH, and rsync) and was validated through real environment generation plus a Genesis CUDA physics step. It is built from `sim2real-envgen/Dockerfile`. |
-| Isaac Lab-Arena 0.3.0 | `npa-isaac-arena` | `0.3.0-isaaclab3-20260912-r3` | 2026-09-15 | Real completed-episode evaluation through pinned upstream `policy_runner.py`. The public image bakes Apache-2.0 Arena source and its hash-locked Apache-2.0 Lightwheel SDK client, but no Lightwheel registry asset; Isaac Sim/Lab and provider-controlled registry USDs remain operator runtime fetches. Exact-digest qualification covers a four-seed B200 state regression and successful RTX GR1 open-microwave evaluation whose task progress is spatially bound to denoised video motion. Upstream remains alpha; only the pinned evaluator contract is supported. |
+| Isaac Lab-Arena 0.3.0 | `npa-isaac-arena` | `0.3.0-isaaclab3-20260917-r4` | 2026-09-17 | Real completed-episode evaluation through pinned upstream `policy_runner.py`, with independent phase-liveness supervision and verified native rendering quality. The public image bakes Apache-2.0 Arena source and its hash-locked Apache-2.0 Lightwheel SDK client, but no Lightwheel registry asset; Isaac Sim/Lab and provider-controlled registry USDs remain operator runtime fetches. Fresh exact-digest qualification covers four B200 state seeds and successful RTX GR1 open-microwave replay with 43 exact native actions, progress-bound video and a factual RRD. Upstream remains alpha. |
 | Enactic OpenArm | `npa-openarm` | `2.2.0-isaac0.1.0-rtfetch` | 2026-09-15 | OpenArm v2 bimanual MuJoCo simulation plus upstream OpenArm Isaac Lab reach rollout and RSL-RL training. Apache-2.0 OpenArm source and simulator assets are baked; Isaac Sim/Lab are exact runtime fetches after the operator's EULA decision. The exact release digest passed byte/supply-chain gates and a complete RTX PRO 6000 dual-simulator workflow with independently checked traces, rendered video, checkpoint, and qualification report. See [OpenArm](openarm.md). |
 
 ## Candidates outside the supported public release plan

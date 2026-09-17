@@ -179,8 +179,8 @@ PUBLIC_RELEASE_TAG_OVERRIDES: dict[str, str] = {
 # A newly built dev tag must earn fresh evidence before this mapping changes.
 GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES: dict[str, dict[str, str]] = {
     "isaac-arena": {
-        "development_sha": "feadf144a277366265c1331d0176d43e835092be",
-        "oci_digest": "sha256:267f2b5785c9a1d2df7aba58a0ea4bb112edb976b5b83fef2afbbd130a23c32c",
+        "development_sha": "ae5adea6ab895660996f513f14160c89d06f47e5",
+        "oci_digest": "sha256:9c6a417672d6f87499680ba337c90488c2a33d41ac9f7b5452eb5d97d00e097e",
     },
     "alpamayo2-super": {
         "development_sha": "5b693476c113c833e9d9d4f8c7aa492492a27505",
@@ -240,7 +240,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "lerobot-policy": "0.1.1",
     "genesis": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "isaac-lab": "3.0.0b2.post1-sim2real-coherent-20260904",
-    "isaac-arena": "0.3.0-isaaclab3-20260912-r3",
+    "isaac-arena": "0.3.0-isaaclab3-20260917-r4",
     "openarm": "2.2.0-isaac0.1.0-rtfetch",
     "leisaac": "0.4.0-20260817T231825Z",
     "cosmos": "cu128-torch27-sm100-1.0.9-20260803T002017Z",

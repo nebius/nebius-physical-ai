@@ -454,7 +454,7 @@ def test_isaac_arena_license_evidence_matches_exact_distribution_bytes() -> None
 
 def test_isaac_arena_image_catalog_identity() -> None:
     assert CONTAINER_IMAGE_NAMES["isaac-arena"] == "npa-isaac-arena"
-    assert SUPPORTED_TOOL_VERSIONS["isaac-arena"] == "0.3.0-isaaclab3-20260912-r3"
+    assert SUPPORTED_TOOL_VERSIONS["isaac-arena"] == "0.3.0-isaaclab3-20260917-r4"
 
 
 def test_isaac_arena_golden_smoke_uses_hash_pinned_nonzero_replay() -> None:

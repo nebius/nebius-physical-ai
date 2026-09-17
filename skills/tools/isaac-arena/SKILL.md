@@ -130,11 +130,19 @@ npa workbench workflow validate-spec workflows/testing/isaac-arena-evaluation-b2
 npa workbench workflow validate-spec workflows/testing/isaac-arena-evaluation-rtxpro.yaml
 ```
 
-The current release is `0.3.0-isaaclab3-20260912-r3`, exact manifest
-`sha256:267f2b5785c9a1d2df7aba58a0ea4bb112edb976b5b83fef2afbbd130a23c32c`,
+The current release is `0.3.0-isaaclab3-20260917-r4`, exact manifest
+`sha256:9c6a417672d6f87499680ba337c90488c2a33d41ac9f7b5452eb5d97d00e097e`,
 promoted without rebuilding from development source SHA
-`feadf144a277366265c1331d0176d43e835092be` after exact-digest B200 state and
-successful RTX task/visual qualification. The historical r2 RTX proof remains
+`ae5adea6ab895660996f513f14160c89d06f47e5` after fresh exact-digest B200 state
+and RTX task/visual qualification. B200 seeds 42–45 each completed 1,050
+native steps. RTX executed 43 replay actions through native terminal with
+zero padding, success 1.0, door openness 0.200→0.815 and four spatially bound
+progress-overlap pairs. Both raw and evidence MP4s were fully decoded;
+the separate factual RRD preserves 44 source captures and native metrics.
+Both new controllers are SUCCEEDED with zero active workers; shared capacity
+and controllers are retained. See the digest-scoped readiness records and
+[fresh proof](../../../docs/workbench/isaac-arena.md#fresh-recovery-qualification--2026-09-17).
+The historical r2 RTX proof remains
 rejected: 80 source actions were followed by 170 held-action steps, the recorded
 initial state was not applied, success rate was zero, and render grain passed
 the former pixel-change gate. Do not treat that historical digest or its

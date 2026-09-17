@@ -42,10 +42,10 @@ tests, sample checkpoints, demonstration data, and documentation media are
 removed.
 
 The current published release is
-`npa-isaac-arena:0.3.0-isaaclab3-20260912-r3`, manifest
-`sha256:267f2b5785c9a1d2df7aba58a0ea4bb112edb976b5b83fef2afbbd130a23c32c`.
+`npa-isaac-arena:0.3.0-isaaclab3-20260917-r4`, manifest
+`sha256:9c6a417672d6f87499680ba337c90488c2a33d41ac9f7b5452eb5d97d00e097e`.
 It is an exact-digest promotion of source revision
-`feadf144a277366265c1331d0176d43e835092be` after complete payload/security,
+`ae5adea6ab895660996f513f14160c89d06f47e5` after complete payload/security,
 SBOM, provenance, bootstrap, anonymous-pull, B200 state, and successful RTX
 task/visual gates. The r2 release remains historical: its RTX qualification is
 rejected because stochastic rendering noise passed its former pixel-change
@@ -566,7 +566,7 @@ the wrong order changes their physical orientations. The replacement normalizer
 handles this declared representation change explicitly; a successful source
 recording still does not establish a successful live replay.
 
-The replacement candidate qualified as
+The historical 2026-09-15 candidate qualified as
 `arena-b200-state-feadf144-20260915-r1` and
 `arena-rtx-task-feadf144-20260915-r1`. The B200 run completed four 1,050-step
 state-only episodes for seeds 42–45 with `success_rate=0.0` and
@@ -580,6 +580,63 @@ motion after strong denoising. The 1280×720 evidence H.264 has SHA-256
 Independent retrieval re-read and hash-checked 63 B200 objects / 51,025,377
 bytes and 26 RTX objects / 13,264,455 bytes. No historical digest or failed run
 is reused to claim the changed implementation passed.
+
+## Fresh recovery qualification — 2026-09-17
+
+The current digest adds identity-checked controller recovery, independent
+phase-liveness supervision, state-only log staging and explicit native lighting
+sampling. The recorded scene omits the optional soup can: inventing that object
+would make native `reset_to` require state absent from the replay. The source
+recording, action order, renderer mode, eight settling renders, resolution and
+all task/video acceptance thresholds remain unchanged.
+
+Fresh run `arena-rtx-reconcile-ae5adea6-20260917-r3` completed
+`gr1_open_microwave` on the reserved RTX PRO 6000. It executed the exact
+43-action prefix of the 103-action replay through native terminal, with zero
+padding and success 1.0. The remaining 60 source actions were not executed
+after termination. Door openness increased from 0.200 to 0.815. Four coherent
+frame pairs both overlapped native progress and satisfied spatial binding.
+The preceding noisy run remains rejected; its native action evidence and all
+44 physics-state/time bindings exactly match this newly qualified run.
+
+Independent retrieval verified 24 objects / 4,978,517 bytes, recomputed the
+native action, state, renderer and task gates, and fully decoded both
+43-frame 1280×720 H.264 videos. Native JSONL/HDF5 and linked HTML agree.
+
+| Artifact | SHA-256 |
+|---|---|
+| Initial PNG | `579f9a93316575aa0721897a6a9fd84796683d835c9f5188ae0abcd85bdc8a11` |
+| Native terminal PNG | `a2e4afbc5456ab693eaa4c65b8d5a5d312549147c8bd77e36dd16c8afc02c29d` |
+| Raw MP4 | `bf52efc51552f8ad2a685b38d503eb67ac3f505166af828484ae226c3338a9e4` |
+| Evidence MP4 | `fd4390bdb1e3a66454efc4375abd628327b528286c24c978e790915e3ae84893` |
+| Review RRD | `f274b5657d944a2f8f7f764c5a6507c02e4e12b005650f1f7284b9fce445c993` |
+
+The 72,874,785-byte RRD is a factual post-download visualization, separate
+from workflow-emitted artifacts. It contains the actual initial PNG and all
+43 decoded raw-video frames, aligned with 44 native metric samples on the
+`action_step` timeline. Full RRD decoding proved pixel/metric equality with
+the sources; `rerun rrd verify` and private upload read-after-write passed.
+No wall-clock timeline, synthetic motion or padded frame was created.
+
+Fresh run `arena-b200-reconcile-ae5adea6-20260917-r3` independently completed
+four 1,050-step state-only episodes, seeds 42–45, retaining success 0.0.
+Independent retrieval verified 60 objects / 51,006,097 bytes and native
+JSONL/HDF5, HTML and phase ordering. It makes no visual or successful-policy
+claim. Both new controllers report SUCCEEDED with zero active run-owned
+workers. Controllers, reserved capacity and storage remain intact.
+
+The original stale review r3 is separately verified CANCELLED with zero
+active workers; review r2 remains inactive. The original action-5 native
+cause remains unknown because stack inspection was denied. Its measured
+worker-to-policy interval was 68 seconds; cold shader initialization is a
+separate observation. [Controller recovery](controller-recovery.md) explains
+the exact-run API and retained diagnostics. Cold phases without a measured
+baseline are not classified by the liveness monitor.
+
+Raw media, input replay, configuration receipts and live infrastructure
+details remain access-controlled. Public records contain reproducibility
+instructions, sanitized run IDs and hashes only. The image source above is
+distinct from later commits recording tests, release metadata and proof.
 
 For exact build, scan, qualification, and cleanup rules, use
 `skills/tools/isaac-arena/SKILL.md`.
