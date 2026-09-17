@@ -1,0 +1,101 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: cosmos3-policy-model-factory
+  description: >-
+    One native LIBERO-10 policy learning round: action-labeled demonstrations
+    train Cosmos3-Nano; the trained checkpoint controls a matching simulator;
+    measured failures produce video targets and guarded review candidates.
+    Generated videos require validated action labels before policy training.
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/cosmos3-policy-model-factory"
+  source_overlay: true
+  # Empty uses the pinned native recipe, adapted to one eight-GPU node with
+  # gradient accumulation 2 to retain global sample batch 2048.
+  training_settings_uri: ""
+  eval_trials: "50"
+  eval_tasks: "0,1,2,3,4,5,6,7,8,9"
+  minimum_success_rate: "0.9"
+  seed: "0"
+  train_uri: "s3://{{config.bucket}}/{{config.prefix}}/train/"
+  eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/"
+  feedback_uri: "s3://{{config.bucket}}/{{config.prefix}}/feedback/"
+  candidates_uri: "s3://{{config.bucket}}/{{config.prefix}}/candidates/"
+  input_uri: "{{config.training_settings_uri}}"
+  output_uri: "{{config.train_uri}}"
+
+resources:
+  training:
+    cloud: kubernetes
+    accelerators: B200:8
+    cpus: 32
+    memory: 256Gi
+  evaluation:
+    cloud: kubernetes
+    accelerators: B200:1
+    cpus: 16
+    memory: 128Gi
+  feedback:
+    cloud: kubernetes
+    cpus: 2
+    memory: 4Gi
+
+initial: train
+
+states:
+  train:
+    description: Train native action heads on pinned 20 Hz LIBERO demonstrations.
+    toolRef: workbench.cosmos3.policy_train
+    resources: training
+    outputs:
+      - uri: "{{config.train_uri}}training.json"
+        schema: npa.cosmos3.policy-train.v1
+    next: evaluate
+
+  evaluate:
+    description: Verify checkpoint hashes and measure actual closed-loop task success.
+    toolRef: workbench.cosmos3.policy_eval
+    resources: evaluation
+    params:
+      input_uri: "{{config.train_uri}}training.json"
+      output_uri: "{{config.eval_uri}}"
+    inputs:
+      - uri: "{{config.train_uri}}training.json"
+        schema: npa.cosmos3.policy-train.v1
+    outputs:
+      - uri: "{{config.eval_uri}}evaluation.json"
+        schema: npa.cosmos3.policy-eval.v1
+    next: feedback
+
+  feedback:
+    description: Qualify only complete benchmark evidence and identify failed tasks.
+    toolRef: workbench.cosmos3.policy_feedback
+    resources: feedback
+    params:
+      input_uri: "{{config.eval_uri}}evaluation.json"
+      output_uri: "{{config.feedback_uri}}"
+    inputs:
+      - uri: "{{config.eval_uri}}evaluation.json"
+        schema: npa.cosmos3.policy-eval.v1
+    outputs:
+      - uri: "{{config.feedback_uri}}feedback.json"
+        schema: npa.cosmos3.policy-feedback.v1
+    next: generate_candidates
+
+  generate_candidates:
+    description: Generate guarded video candidates for each task with observed failures.
+    toolRef: workbench.cosmos3.failure_candidates
+    resources: evaluation
+    params:
+      input_uri: "{{config.feedback_uri}}feedback.json"
+      output_uri: "{{config.candidates_uri}}"
+    inputs:
+      - uri: "{{config.feedback_uri}}feedback.json"
+        schema: npa.cosmos3.policy-feedback.v1
+    outputs:
+      - uri: "{{config.candidates_uri}}candidates.json"
+        schema: npa.cosmos3.failure-candidates.v1
+    terminal: true

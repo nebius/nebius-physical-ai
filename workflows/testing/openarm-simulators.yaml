@@ -1,0 +1,73 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: openarm-simulators
+  description: >
+    Real Enactic OpenArm qualification: a controlled bimanual MuJoCo rollout,
+    an Isaac Lab vectorized reach rollout, upstream RSL-RL training, and
+    independent validation of every persisted artifact.
+
+config:
+  bucket: example-bucket
+  prefix: "openarm/{{run.id}}"
+  seed: "17"
+  mujoco_steps: "500"
+  isaac_task: "Isaac-Reach-OpenArm-v0"
+  isaac_steps: "100"
+  num_envs: "64"
+  max_iterations: "1"
+  run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  mujoco_output_uri: "s3://{{config.bucket}}/{{config.prefix}}/mujoco/"
+  isaac_output_uri: "s3://{{config.bucket}}/{{config.prefix}}/isaac-rollout/"
+  training_output_uri: "s3://{{config.bucket}}/{{config.prefix}}/isaac-training/"
+  qualification_output_uri: "s3://{{config.bucket}}/{{config.prefix}}/qualification/"
+
+resources:
+  openarm-rtx:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 16
+    memory: 64Gi
+
+initial: mujoco-rollout
+
+states:
+  mujoco-rollout:
+    description: Step and render the real OpenArm v2 bimanual MJCF.
+    toolRef: workbench.openarm.mujoco_rollout
+    resources: openarm-rtx
+    outputs:
+      - uri: "{{config.mujoco_output_uri}}"
+        schema: npa.openarm.mujoco_rollout.v1
+    next: isaac-rollout
+
+  isaac-rollout:
+    description: Step the real upstream OpenArm reach task in Isaac Sim/Isaac Lab.
+    toolRef: workbench.openarm.isaac_rollout
+    resources: openarm-rtx
+    needs: [mujoco-rollout]
+    outputs:
+      - uri: "{{config.isaac_output_uri}}"
+        schema: npa.openarm.isaac_lab_rollout.v1
+    next: isaac-training
+
+  isaac-training:
+    description: Run upstream OpenArm RSL-RL training and retain a real checkpoint.
+    toolRef: workbench.openarm.isaac_train
+    resources: openarm-rtx
+    needs: [isaac-rollout]
+    outputs:
+      - uri: "{{config.training_output_uri}}"
+        schema: npa.openarm.isaac_lab_training.v1
+    next: qualify-artifacts
+
+  qualify-artifacts:
+    description: Download, hash, and validate every dual-simulator artifact.
+    toolRef: workbench.openarm.qualify
+    resources: openarm-rtx
+    needs: [isaac-training]
+    outputs:
+      - uri: "{{config.qualification_output_uri}}"
+        schema: npa.openarm.qualification.v1
+    terminal: true
