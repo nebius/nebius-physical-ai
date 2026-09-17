@@ -83,6 +83,18 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Official v3.9.2 RGBD evaluator; no challenge score has been measured.",
     ),
     SubmitLiveCase(
+        "franka-rl-transfer.yaml", "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "NEBIUS_TOKEN_FACTORY_KEY"),
+        runtime=True, requires_token_factory=True,
+        notes="Real Franka PPO with USD parts, paired physics tests, blinded Token Factory audit, and LeRobot/RRD capture.",
+    ),
+    SubmitLiveCase(
+        "lerobot-transfer.yaml", "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True, expected_parallel_tasks=2, image_tool="lerobot",
+        notes="Pinned PushT data, matched real ACT training, paired closed-loop shifts, next-demo queue and RRD.",
+    ),
+    SubmitLiveCase(
         "cosmos3-policy-model-factory.yaml", "gpu",
         secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         image_tool="cosmos3",
