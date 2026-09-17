@@ -66,6 +66,43 @@ reachable from `main`.
 If pre-W14 history needs to be referenced for any reason, it is
 preserved out-of-band at the local archive tag created during W14.
 
+## LeIsaac agent TLS trust model
+
+The LeIsaac reverse-client path (`npa/src/npa/workbench/leisaac/reverse_client.py`)
+and the agent CLI (`npa/src/npa/cli/workbench/leisaac.py`) connect to agent
+HTTPS endpoints with `ssl.CERT_NONE` and hostname checking disabled, and instead
+pin the peer by SHA-256 certificate fingerprint:
+
+- Every connection fetches the peer certificate in binary form and compares
+  `hashlib.sha256(certificate).hexdigest()` against the expected fingerprint
+  (`reverse_client.py` `connect()`; `cli/workbench/leisaac.py`
+  `_select_agent_leisaac_run()` uses `secrets.compare_digest` and fails the
+  connection on mismatch).
+- The expected fingerprint is captured at agent-deploy time by
+  `_agent_certificate_sha256()`, which records the fingerprint of whatever
+  certificate the fresh agent endpoint presents.
+
+This is a trust-on-first-use (TOFU) model. Its assumptions and operator
+guidance:
+
+- **First capture is the trust decision.** The deploy-time capture itself is
+  unauthenticated: a man-in-the-middle present during the very first fetch
+  would pin the attacker's certificate instead. Perform initial deployment
+  over a trusted network, and independently verify the fingerprint out of
+  band when the deployment is security-sensitive.
+- **A fingerprint change is treated as an attack.** After pinning, any
+  certificate change fails the connection loudly; there is no silent
+  re-pinning. If you legitimately rotate the agent certificate, update the
+  stored fingerprint deliberately — never automate re-capture on mismatch.
+- **Protect the stored fingerprint.** The fingerprint is written into the
+  per-run Kubernetes Secret (`relay_client_secret_manifest`) alongside the
+  relay credentials; anyone who can modify it can redirect trust. It is
+  protected by Kubernetes Secret RBAC in the agent namespace — not by
+  local file permissions — so restrict `get`/`update` on that Secret to
+  the deployer role. Never commit fingerprints to the repo.
+- **TLS 1.2+ is still enforced** (`context.minimum_version =
+  ssl.TLSVersion.TLSv1_2`); only CA-chain validation is replaced by pinning.
+
 ## Learning More About Security in Nebius
 
 To learn more about security in Nebius, please see the [Nebius Security Documentation](https://nebius.ai/docs/security).
