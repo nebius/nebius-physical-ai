@@ -976,7 +976,11 @@ def test_evaluate_run_grades_every_local_variant(tmp_path: Path) -> None:
     _write_variant(
         augment,
         "clip-a",
-        {"cloth_color": "blue", "prompt": "ignored"},
+        {
+            "cloth_color": "blue",
+            "prompt": "ignored",
+            "negative_prompt": "also an instruction, not a requested attribute",
+        },
         conditioned=False,
     )
     _write_variant(augment, "clip-b", {"cloth_color": "red"}, conditioned=False)
@@ -1005,8 +1009,9 @@ def test_evaluate_run_grades_every_local_variant(tmp_path: Path) -> None:
     assert result.score == 1.0
     assert result.passed is True
     assert [clip.clip_id for clip in result.clips] == ["clip-a", "clip-b"]
-    # `prompt` is an instruction, not a visual attribute, so it is never asked about.
+    # Prompt instructions are not visual attributes, so they are never asked about.
     assert "prompt" not in result.clips[0].variables
+    assert "negative_prompt" not in result.clips[0].variables
     # Without a source clip the hallucination check is skipped, and says so.
     assert any("hallucination" in reason for reason in result.clips[0].skipped)
 

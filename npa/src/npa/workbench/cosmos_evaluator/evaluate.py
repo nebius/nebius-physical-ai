@@ -90,7 +90,7 @@ DEFAULT_HALLUCINATION_WEIGHT = 0.5
 
 # Sampled appearance combos carry a `prompt` alongside the attributes; it is an
 # instruction, not a visual attribute, so it is never turned into a question.
-NON_ATTRIBUTE_KEYS = frozenset({"prompt", "inference_seed"})
+NON_ATTRIBUTE_KEYS = frozenset({"prompt", "negative_prompt", "inference_seed"})
 
 
 @dataclass(frozen=True)
