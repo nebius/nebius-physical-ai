@@ -6,10 +6,11 @@ description: Use before pushing an npa change to pick which gates apply and run 
 # Pre-PR Validation
 
 Every pull request has one automatic candidate workflow. It runs lint, docs
-drift, guardrails, browser/smoke feedback, security regressions, secret scanning,
-and confidentiality scanning. The merge queue additionally runs the complete
-four-shard Python 3.12 coverage suite against the latest `main`; main audits all
-supported Python versions. `Security regression / security-regression` requires
+drift, guardrails, smoke feedback, security regressions, secret scanning, and
+confidentiality scanning. The merge queue additionally runs browser and focused
+compatibility checks alongside the complete four-shard Python 3.12 coverage suite
+against the latest `main`; main audits all supported Python versions.
+`Security regression / security-regression` requires
 every candidate component and the reusable image-security workflow.
 The required workflows have no top-level path filters. Image scope is classified
 inside always-reporting jobs: image, packaging, workflow, or security-policy

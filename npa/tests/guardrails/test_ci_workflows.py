@@ -110,6 +110,9 @@ def test_merge_queue_suite_is_sharded_and_main_keeps_full_compatibility() -> Non
     assert "npa/tests/smoke" in commands
     assert "test_ci_workflows.py" in commands
 
+    assert workflow["jobs"]["browser-mocked"]["if"] == (
+        "github.event_name != 'pull_request'"
+    )
     browser_steps = workflow["jobs"]["browser-mocked"]["steps"]
     browser_step_names = {step["name"] for step in browser_steps}
     for version in ("3.10", "3.14"):

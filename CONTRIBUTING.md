@@ -480,7 +480,7 @@ cancels the complete superseded gate instead of six independent fragments:
 
 | Workflow | What it runs | Reproduce locally |
 | --- | --- | --- |
-| `.github/workflows/test.yml` | PR smoke feedback; merge-queue `pytest tests/` with `--cov-fail-under=60`; main compatibility audit | `make test` |
+| `.github/workflows/test.yml` | PR smoke feedback; merge-queue browser/compatibility plus `pytest tests/` with `--cov-fail-under=60`; main compatibility audit | `make test` |
 | `.github/workflows/lint.yml` | `ruff check .`, and `scripts/build_docs.sh --check` for `docs/cli/` drift | `make lint`, `make docs-check` |
 | `.github/workflows/harness-guardrails.yml` | `pytest npa/tests/guardrails` | `make test-guardrails` |
 | `.github/workflows/confidentiality-scan.yml` | `npa.guardrails.confidentiality` over the diff and tree | needs the denylist secrets; see `skills/atomic/protect-nebius-infra-details/SKILL.md` |
@@ -504,11 +504,12 @@ tree and lets those tests self-skip. Both numbers rise as tests land; the shape 
 the difference, several hundred more collected and skipped in CI, is the part that
 stays true.
 
-Ordinary pull requests run smoke, browser, and focused Python 3.10/3.14
-compatibility feedback. The merge queue tests the exact candidate against the
-latest `main`: four Python 3.12 shards run the complete suite, then merge coverage
-before enforcing the 60% floor. Pushes to `main` retain that four-shard suite on
-all three supported Python versions; `requires-python` is `>=3.10`.
+Ordinary pull requests run smoke feedback alongside the security and repository
+gates. The merge queue tests the exact candidate against the latest `main`: the
+browser and focused Python 3.10/3.14 compatibility checks run alongside four
+Python 3.12 shards of the complete suite, which merge coverage before enforcing
+the 60% floor. Pushes to `main` retain that four-shard suite on all three supported
+Python versions; `requires-python` is `>=3.10`.
 
 The internal sharder activates only when `NPA_CI_SHARD_INDEX` and
 `NPA_CI_TOTAL_SHARDS` are both set. The index is one-based and must not exceed

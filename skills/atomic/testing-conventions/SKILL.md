@@ -30,8 +30,9 @@ only running a slice:
 ```
 
 Use the serial form when a failure needs a readable, ordered traceback. PR CI
-runs fast feedback; merge-queue CI uses xdist inside four duration-balanced
-Python 3.12 coverage shards, then merges their data before enforcing the floor.
+runs fast feedback; merge-queue CI runs browser and compatibility checks alongside
+xdist inside four duration-balanced Python 3.12 coverage shards, then merges
+their data before enforcing the floor.
 Main repeats the shards across supported interpreters and emits the next timing
 profile. A local parallel pass is the fast signal, not a reproduction of that
 distributed coverage gate.

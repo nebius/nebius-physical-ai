@@ -17,6 +17,7 @@ concurrency:
 jobs:
   browser-mocked:
     name: browser-and-compatibility
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository

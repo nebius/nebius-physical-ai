@@ -5,8 +5,9 @@ runs **Security regression / security-regression**. It is the only automatic PR
 workflow and atomically owns test, lint, guardrail, gitleaks, confidentiality,
 source-scanner, image-security, and hostile-input jobs. A superseding PR commit
 cancels that complete gate rather than leaving work in six workflow queues.
-Ordinary PRs receive fast smoke/browser feedback; merge-queue candidates run the
-full duration-balanced coverage suite against the latest `main` before merging.
+Ordinary PRs receive fast smoke feedback; merge-queue candidates run browser and
+compatibility checks alongside the full duration-balanced coverage suite against
+the latest `main` before merging.
 
 The image workflow has no top-level path filter. Its two automatic jobs always
 report an internal, fail-closed scope decision. Image, packaging, workflow, and

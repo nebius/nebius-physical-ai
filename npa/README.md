@@ -195,14 +195,14 @@ The CPU wheel exercises real checkpoint loading without a GPU. See
 [the CI environment](../.github/workflows/test.yml) for the complete coverage
 gate; some optional checks also use Node, tmux, or Docker.
 
-Pull requests receive smoke, browser, and focused Python 3.10/3.14 feedback.
-The merge queue runs the exact latest-main candidate through four duration-
-balanced Python 3.12 coverage shards and enforces the merged floor. Main pushes
-run the sharded full suite on all three supported versions and publish the
-measured module-duration profile used to rebalance later shards. A focused
-compatibility check runs before the CPU tensor dependencies are installed, so
-async cancellation and isolated SkyPilot fixture regressions surface early. Run
-it locally with:
+Pull requests receive fast smoke and security feedback. The merge queue runs the
+exact latest-main candidate through browser and focused Python 3.10/3.14 checks
+alongside four duration-balanced Python 3.12 coverage shards, then enforces the
+merged floor. Main pushes run the sharded full suite on all three supported
+versions and publish the measured module-duration profile used to rebalance later
+shards. The focused compatibility check runs before the CPU tensor dependencies
+are installed, so async cancellation and isolated SkyPilot fixture regressions
+surface before merge. Run it locally with:
 
 ```bash
 npa/.venv/bin/python -m pytest \
