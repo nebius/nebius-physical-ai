@@ -180,6 +180,8 @@ def physics_evidence(env) -> dict:
         evidence["tool_frame_check"] = unwrapped.npa_tool_frame_check
     if getattr(unwrapped, "npa_normalization_evidence", None):
         evidence["frozen_observation_normalization"] = unwrapped.npa_normalization_evidence
+    if getattr(unwrapped, "npa_distribution_evidence", None):
+        evidence["frozen_action_distribution"] = unwrapped.npa_distribution_evidence
     for name, value in values.items():
         if not torch.isfinite(value).all():
             raise RuntimeError("Applied Franka physics is nonfinite")

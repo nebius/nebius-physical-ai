@@ -2,8 +2,29 @@
 
 from __future__ import annotations
 
+import math
+
 import torch
 from isaaclab.envs.mdp.actions.joint_actions import JointPositionAction
+
+
+def _position_limits(asset, joint_ids) -> torch.Tensor:
+    limits = asset.data.soft_joint_pos_limits.torch[:, joint_ids].clone()
+    valid = torch.isfinite(limits).all(dim=-1)
+    if valid.all():
+        return limits
+    hard = asset.data.joint_pos_limits.torch[:, joint_ids]
+    factor = float(asset.cfg.soft_joint_pos_limit_factor)
+    if (not torch.isfinite(hard).all() or (hard[..., 0] > hard[..., 1]).any()
+            or not math.isfinite(factor) or not 0 <= factor <= 1):
+        raise ValueError("Invalid native joint limits or soft-limit factor")
+    # PhysX uses +/-FLT_MAX for continuous joints. The native float32 range
+    # subtraction overflows; reconstruct its declared limits without narrowing them.
+    hard = hard.to(torch.float64)
+    midpoint = hard.mean(dim=-1)
+    radius = (hard[..., 1] - hard[..., 0]) * (factor / 2)
+    rebuilt = torch.stack((midpoint - radius, midpoint + radius), dim=-1).to(limits.dtype)
+    return torch.where(valid[..., None], limits, rebuilt)
 
 
 class BoundedJointPositionAction(JointPositionAction):
@@ -22,7 +43,7 @@ class BoundedJointPositionAction(JointPositionAction):
         super().__init__(cfg, env)
         settings = env.cfg.npa_learning
         data = self._asset.data
-        self._limits = data.soft_joint_pos_limits.torch[:, self._joint_ids].clone()
+        self._limits = _position_limits(self._asset, self._joint_ids)
         velocities = data.joint_vel_limits.torch[:, self._joint_ids]
         if (not torch.isfinite(self._limits).all() or not torch.isfinite(velocities).all()
                 or (velocities <= 0).any() or (self._limits[..., 0] > self._limits[..., 1]).any()):

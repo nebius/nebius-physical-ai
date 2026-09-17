@@ -42,6 +42,7 @@ def _train(args, recipe: dict, config) -> None:
     import torch
 
     from npa.workflows.franka_rl_environment import build_runner, physics_evidence
+    from npa.workflows.franka_rl_learning import distribution_evidence
 
     output = Path(args.output_path)
     env = gym.make(recipe["task"], cfg=config)
@@ -49,6 +50,7 @@ def _train(args, recipe: dict, config) -> None:
         wrapped, runner, agent = build_runner(env, recipe, output / "checkpoints")
         initial = output / "initial.pt"
         _save_initial(runner, initial)
+        initial_distribution = distribution_evidence(runner, recipe)
         parameters_before = _policy_parameters(runner)
         applied = physics_evidence(env)
         started = time.monotonic()
@@ -70,6 +72,8 @@ def _train(args, recipe: dict, config) -> None:
             "transitions": recipe["iterations"] * recipe["num_envs"] * recipe["steps_per_env"],
             "checkpoints": {p.relative_to(output).as_posix(): file_sha256(p) for p in [initial, *checkpoints]},
             "policy_loaded": True, "physical_robot_tested": False,
+            **({"exploration": {"initial": initial_distribution,
+                                "final": distribution_evidence(runner, recipe)}} if initial_distribution else {}),
             **_learning_evidence(env),
         })
     finally:

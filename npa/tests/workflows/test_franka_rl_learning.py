@@ -127,6 +127,65 @@ def test_servo_refuses_nonfinite_policy_commands(servo):
 
 
 @pytest.fixture
+def continuous_joint(servo):
+    action, env, torch = servo
+    maximum = torch.finfo(torch.float32).max
+    hard = torch.tensor([[[-maximum, maximum], [-2.0, 2.0]]] * 2)
+    midpoint = hard.mean(dim=-1)
+    radius = (hard[..., 1] - hard[..., 0]) / 2
+    env.robot.data.joint_pos_limits = SimpleNamespace(torch=hard)
+    env.robot.data.soft_joint_pos_limits.torch = torch.stack((midpoint - radius, midpoint + radius), dim=-1)
+    env.robot.data.joint_vel_limits.torch[:] = torch.tensor([0.628, 0.838])
+    env.robot.cfg = SimpleNamespace(soft_joint_pos_limit_factor=1.0)
+    return type(action), env, torch
+
+
+@pytest.mark.parametrize("factor", [0.0, 0.95, 1.0])
+def test_servo_recovers_native_continuous_joint_overflow(continuous_joint, factor):
+    action_type, env, torch = continuous_joint
+    original = env.robot.data.soft_joint_pos_limits.torch.clone()
+    assert not torch.isfinite(original[:, 0]).any()
+    env.robot.cfg.soft_joint_pos_limit_factor = factor
+
+    action = action_type(None, env)
+
+    assert torch.isfinite(action._limits).all()
+    expected = env.robot.data.joint_pos_limits.torch[:, 0].double() * factor
+    assert torch.equal(action._limits[:, 0], expected.float())
+    assert torch.equal(action._limits[:, 1], original[:, 1])
+    assert torch.equal(env.robot.data.soft_joint_pos_limits.torch, original)
+    assert torch.equal(action._step_limit, torch.tensor([[0.628, 0.838]] * 2) * env.step_dt)
+
+
+def test_continuous_joint_keeps_rotation_range_and_native_speed_cap(continuous_joint):
+    action_type, env, torch = continuous_joint
+    action = action_type(None, env)
+    previous = action.target.clone()
+    for _ in range(300):
+        action.process_actions(torch.tensor([[100.0, -100.0]] * 2))
+        assert torch.all((action.target - previous).abs() <= action._step_limit + 1e-6)
+        previous = action.target.clone()
+    assert (action.target[:, 0] > torch.pi).all()
+    assert torch.equal(action.target[:, 1], torch.tensor([-2.0, -2.0]))
+
+
+@pytest.mark.parametrize("factor", [float("nan"), float("inf"), -0.1, 1.1])
+def test_servo_recovery_rejects_invalid_native_soft_factor(continuous_joint, factor):
+    action_type, env, _ = continuous_joint
+    env.robot.cfg.soft_joint_pos_limit_factor = factor
+    with pytest.raises(ValueError, match="Invalid native joint limits"):
+        action_type(None, env)
+
+
+@pytest.mark.parametrize("bounds", [(float("nan"), 1.0), (-float("inf"), 1.0), (2.0, 1.0)])
+def test_servo_recovery_rejects_invalid_native_hard_limits(continuous_joint, bounds):
+    action_type, env, torch = continuous_joint
+    env.robot.data.joint_pos_limits.torch[:, 0] = torch.tensor(bounds)
+    with pytest.raises(ValueError, match="Invalid native joint limits"):
+        action_type(None, env)
+
+
+@pytest.fixture
 def reward(monkeypatch):
     torch = pytest.importorskip("torch")
 

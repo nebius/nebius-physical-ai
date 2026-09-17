@@ -11,7 +11,7 @@ import numpy as np
 
 from npa.workflows.franka_rl_environment import build_runner, environment_config, load_checkpoint, physics_evidence
 from npa.workflows.franka_rl_metrics import PlacementMetrics, rank_checkpoint
-from npa.workflows.franka_rl_learning import normalization_evidence
+from npa.workflows.franka_rl_learning import distribution_evidence, normalization_evidence
 from npa.workflows.lerobot_transfer_data import file_sha256, write_json
 
 
@@ -68,6 +68,7 @@ def _rollout(checkpoint: Path, recipe: dict, *, split: str, condition: str,
         load_checkpoint(runner, checkpoint)
         policy = runner.get_inference_policy(device="cuda:0")
         normalization = normalization_evidence(runner, recipe)
+        distribution = distribution_evidence(runner, recipe)
         obs, _ = wrapped.reset()
         initial_hashes = _initial_state_hashes(env)
         metrics = PlacementMetrics(recipe["eval_episodes"], recipe)
@@ -82,7 +83,10 @@ def _rollout(checkpoint: Path, recipe: dict, *, split: str, condition: str,
                 previous = action.clone()
         if normalization != normalization_evidence(runner, recipe):
             raise RuntimeError("Evaluation changed the checkpoint observation normalizer")
+        if distribution != distribution_evidence(runner, recipe):
+            raise RuntimeError("Evaluation changed the checkpoint action distribution")
         env.unwrapped.npa_normalization_evidence = normalization
+        env.unwrapped.npa_distribution_evidence = distribution
         rows = _rows(metrics, split=split, condition=condition, checkpoint=checkpoint,
                      seed=seed, iteration=iteration, initial_hashes=initial_hashes)
         return rows, physics_evidence(env)

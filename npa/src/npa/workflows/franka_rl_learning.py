@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-LEARNING_RECIPES = ("joint-baseline", "adaptive", "adaptive-exploration")
+LEARNING_RECIPES = ("joint-baseline", "adaptive", "adaptive-exploration", "adaptive-bounded-exploration")
 _ADAPTIVE = {
     "schema": "npa.manipulation-learning.v1", "name": "adaptive",
     "control": "bounded_joint_target", "target_velocity_rad_s": 2.0,
@@ -34,10 +34,16 @@ def learning_profile(name: str) -> dict | None:
     if name == "joint-baseline":
         return None
     settings = deepcopy(_ADAPTIVE)
-    if name == "adaptive-exploration":
+    if name in ("adaptive-exploration", "adaptive-bounded-exploration"):
         settings["name"] = name
         settings["reward"].update(lift_weight=15.0, goal_requires_lift=False)
         settings["ppo"].update(initial_std=1.0, entropy_coef=0.02)
+    if name == "adaptive-bounded-exploration":
+        settings["ppo"]["distribution"] = {
+            "class_name": "npa.workflows.franka_rl_distribution:BoundedGaussianDistribution",
+            "parameterization": "bounded_sigmoid", "scale_semantics": "raw_action_standard_deviation",
+            "min_std": 0.05, "max_std": 1.5,
+        }
     return settings
 
 
@@ -107,10 +113,47 @@ def configure_learner(config, recipe: dict) -> None:
         return
     config.actor.obs_normalization = settings["ppo"]["observation_normalization"]
     config.critic.obs_normalization = settings["ppo"]["observation_normalization"]
-    config.actor.distribution_cfg.init_std = settings["ppo"]["initial_std"]
+    if "distribution" in settings["ppo"]:
+        distribution = settings["ppo"]["distribution"]
+        config.actor.distribution_cfg = {key: distribution[key] for key in ("class_name", "min_std", "max_std")}
+        config.actor.distribution_cfg["init_std"] = settings["ppo"]["initial_std"]
+    else:
+        config.actor.distribution_cfg.init_std = settings["ppo"]["initial_std"]
     config.algorithm.gamma = settings["ppo"]["gamma"]
     if "entropy_coef" in settings["ppo"]:
         config.algorithm.entropy_coef = settings["ppo"]["entropy_coef"]
+
+
+def distribution_evidence(runner, recipe: dict) -> dict:
+    """Read actual bounded exploration parameters for training and checkpoint audits.
+
+    Args:
+        runner: Native runner after construction or checkpoint loading.
+        recipe: Sealed experiment recipe.
+    Returns:
+        Distribution identity, persisted bounds, and current action scales; empty for older recipes.
+    Raises:
+        ValueError: The distribution identity, bounds, or parameters violate the sealed recipe.
+    """
+    settings = recipe_learning(recipe)
+    if settings is None or "distribution" not in settings["ppo"]:
+        return {}
+    import torch
+    from npa.workflows.franka_rl_distribution import BoundedGaussianDistribution
+
+    distribution = runner.alg.get_policy().distribution
+    if type(distribution) is not BoundedGaussianDistribution:
+        raise ValueError("Native distribution differs from the sealed bounded Gaussian")
+    declared = settings["ppo"]["distribution"]
+    expected = distribution.std_bounds.new_tensor([declared["min_std"], declared["max_std"]])
+    scale = distribution.learned_std.detach()
+    if (not torch.equal(distribution.std_bounds, expected)
+            or not torch.isfinite(distribution.raw_std).all() or not torch.isfinite(scale).all()
+            or (scale < expected[0]).any() or (scale > expected[1]).any()):
+        raise ValueError("Native bounded Gaussian parameters violate the sealed recipe")
+    return {**declared, "learned_std": scale.cpu().tolist(),
+            "raw_std": distribution.raw_std.detach().cpu().tolist(),
+            "stored_std_bounds": distribution.std_bounds.detach().cpu().tolist()}
 
 
 def normalization_evidence(runner, recipe: dict) -> dict:

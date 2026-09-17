@@ -142,6 +142,26 @@ a minimum action variance or command a grasp. Distance reward can be positive
 below the lift threshold and is never treated as task success. These choices
 come from training diagnostics, independently of held-out policy selection.
 
+The opt-in `learning_recipe=adaptive-bounded-exploration` keeps those rewards
+and entropy settings but parameterizes each learned action standard deviation
+as `0.05 + 1.45 * sigmoid(raw_std)`, initialized at 1.0. In training-only
+diagnostics, the unbounded recipe's standard deviations grew above 21 on Franka
+and above 12 on UR10e while strict training successes stayed at zero. Once
+commands encounter physical servo limits, increasing raw variance can earn
+entropy reward without producing useful movement. The bounded distribution
+removes that unlimited incentive. Its limits are shared hyperparameters, not
+embodiment-specific grasp commands; the actor still learns every action mean.
+Sampling, probability ratios, entropy, and KL all use the same transformed
+standard deviation. Checkpoints preserve both the learned raw parameters and
+the bounds, and evaluation verifies that neither changes during inference.
+This mechanism requires a new measured comparison before claiming improvement.
+
+Continuous joints retain their native angle and speed domains. When Isaac's
+float32 soft-limit calculation overflows on continuous-joint sentinel bounds,
+the controller reconstructs that same calculation in float64; it leaves finite
+native soft limits unchanged. This enables Kinova's continuous joints without
+inventing a rotation limit.
+
 There is no grasp trajectory, waypoint sequence, timed gripper closure, or
 success-conditioned action override. The curriculum changes only the training
 distribution. Validation, all four test conditions, checkpoint selection,
@@ -172,6 +192,11 @@ Reporting streams RGB frames into the video encoder and accumulates image
 statistics in a fixed-size per-channel histogram. It preserves LeRobot pixel
 normalization without retaining every rollout image or converting the complete
 video collection into a floating-point array.
+Replaying the complete report on the retained 8,000 frames used **541 MiB**
+maximum resident memory, reproduced all 32 MP4 files byte-for-byte, and differed
+from the prior image statistics by less than `9e-15`. This
+[report replay](../evidence/isaac-lerobot-streaming-report.json) measures the
+conversion fix independently; it does not repeat policy training or evaluation.
 
 ## Relationship to the reference Sim2Real pipeline
 
@@ -223,8 +248,8 @@ the process exits zero; failed-stage logs are retained beside the normal output
 under a unique `-failures/` prefix. Such an attempt cannot qualify the policy.
 
 Set `NPA_PROJECT`, `NPA_KUBE_CONTEXT`, `NPA_OUTPUT_BUCKET`, and a fresh
-`NPA_RUN_ID`. Use the project's private configuration and a new isolated
-SkyPilot directory for this run. The spec enables `source_overlay: "1"` so both
+`NPA_RUN_ID`. Set `NPA_SKYPILOT_ISOLATED_CONFIG_DIR` to a new private directory
+for this run and use the project's private configuration. The spec enables `source_overlay: "1"` so both
 images execute this checkout's modules. Stage the source before starting its API:
 
 ```bash
@@ -271,6 +296,7 @@ procedure.
 | `minimum_success` | 0.7 | Required success rate in every test condition |
 | `asset` | `spool` | Target part: `spool`, `hex_nut`, or `bottle`; changing it requires a new training run |
 | `embodiment` | `franka` | Native robot: `franka`, `ur10e_robotiq85`, or `kinova_jaco7`; each trains independently |
+| `learning_recipe` | `adaptive-exploration` | Select a learning profile; `adaptive-bounded-exploration` bounds learned action variance, and `joint-baseline` / `adaptive` reproduce earlier recipes |
 | `vlm_model` | `MiniMaxAI/MiniMax-M3` | Exact Token Factory vision model, checked against the account's model list |
 | `bucket`, `prefix` | Project binding and run-specific prefix | Durable stage artifacts |
 
@@ -296,8 +322,9 @@ configuration, and task managers are reused with the sealed target replacement.
 Training randomizes object mass to 0.7–1.3 times the stock mass and object
 friction to 0.5–1.5. Applied values are read back from Isaac's rigid-body view.
 The resolved PPO architecture and optimizer settings remain explicit in
-`training.json`; the digest-pinned task supplies its stock reward terms. The run
-records the actual policy parameter change, framework
+`training.json`. The historical `joint-baseline` uses the pinned task's stock
+reward terms; adaptive profiles replace them with the sealed learning definition
+described above. The run records the actual policy parameter change, framework
 versions, accelerator, optimizer settings, elapsed training time, and native
 checkpoint hashes.
 
