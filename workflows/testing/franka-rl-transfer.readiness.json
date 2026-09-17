@@ -29,10 +29,12 @@
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "Frozen bounded-exploration runs completed but showed articulation violations and zero strict placement successes. The new measured-state contract and gripper compatibility profile require native validation; artifact integrity does not establish valid physics.",
+      "reason": "The native UR compatibility diagnostic ended FAILED. Retained candidate arrays still violate physical constraints, and all four original case-summary receipts are missing. Passing CPU checks and verified artifact hashes do not qualify native physics; the frozen bounded policies achieved zero strict placements.",
       "evidence": [
         "docs/workbench/evidence/manipulation-physics-counterexamples.json",
-        "docs/workbench/evidence/manipulation-bounded-exploration-rtx.json"
+        "docs/workbench/evidence/manipulation-bounded-exploration-rtx.json",
+        "docs/workbench/evidence/manipulation-native-conformance.json",
+        "docs/workbench/evidence/manipulation-integrated-cpu-validation.json"
       ]
     },
     "credentials": {
@@ -51,10 +53,12 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "Frozen bounded-exploration runs completed but showed articulation violations and zero strict placement successes. The new measured-state contract and gripper compatibility profile require native validation; artifact integrity does not establish valid physics.",
+      "reason": "The native UR compatibility diagnostic ended FAILED. Retained candidate arrays still violate physical constraints, and all four original case-summary receipts are missing. Passing CPU checks and verified artifact hashes do not qualify native physics; the frozen bounded policies achieved zero strict placements.",
       "evidence": [
         "docs/workbench/evidence/manipulation-physics-counterexamples.json",
-        "docs/workbench/evidence/manipulation-bounded-exploration-rtx.json"
+        "docs/workbench/evidence/manipulation-bounded-exploration-rtx.json",
+        "docs/workbench/evidence/manipulation-native-conformance.json",
+        "docs/workbench/evidence/manipulation-integrated-cpu-validation.json"
       ]
     }
   }

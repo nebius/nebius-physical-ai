@@ -8,6 +8,12 @@ through Token Factory. Franka Panda is the default; UR10e/Robotiq and Kinova
 JACO2 use explicit native embodiment bindings. It exports LeRobotDataset v3 and
 Rerun evidence.
 
+**Current result: physics qualification remains false.** The latest native
+UR10e diagnostic failed, and retained candidate motion still violated physical
+constraints. [Diagnostic evidence](../evidence/manipulation-native-conformance.json)
+and [passing CPU checks](../evidence/manipulation-integrated-cpu-validation.json)
+have separate scopes; neither establishes improved task success or physical transfer.
+
 The workflow defaults to `learning_recipe=adaptive-bounded-exploration`: learned joint commands,
 physically bounded servo targets, richer observations, stable-goal rewards, and
 a training-only curriculum driven by completed episode outcomes. Use
@@ -220,9 +226,34 @@ standalone gripper's 64/1 solver iterations. Startup verifies the actual variant
 mimic references/gearing, composed solver properties, and initialized actuator
 buffers. This follows the mechanism discussed in NVIDIA's
 [Robotiq tuning guide](https://docs.omniverse.nvidia.com/kit/docs/omni_physics/110.0/dev_guide/guides/gripper_tuning_example.html).
-The learned arm/gripper command mapping stays the same. Native conformance and
-motion validation are required before claiming that the compatibility change
-resolves the observed instability.
+The learned arm/gripper command mapping stays the same. The native diagnostic
+of this compatibility candidate ended **FAILED**. Independent review verified
+59 retained files and measured 813 native RGB frames across four cases. All four
+original case-summary receipts remain missing after simulator shutdown; the
+post-hoc audit does not reconstruct or replace them.
+
+The two recorded-action replays used the same initial snapshot and action sequence:
+
+| Replay | Peak absolute joint position (rad) | Peak absolute joint velocity (rad/s) | Peak mimic-relation residual (rad) |
+| --- | ---: | ---: | ---: |
+| Legacy configuration | 263,572,512 | 12,552,627,200 | 273,411,584 |
+| Compatibility candidate | 3.663995 | 285.661133 | 0.897502 |
+
+Extreme angle divergence did not recur in this candidate replay, but its later
+velocity, gripper-driver position, and mimic-relation violations remain
+disqualifying. Small first-fault speed overages alone do not establish catastrophic
+instability. These diagnostic replays disabled episode resets and termination
+to expose the failure mechanism; they are excluded from training, held-out
+scoring, and VLM calibration. There is no task-success improvement claim. The
+[native diagnostic record](../evidence/manipulation-native-conformance.json)
+binds each measurement to retained arrays, frame hashes, and both source versions.
+
+The integrated source at `e15124dd2b0643783d6e5fc36c3b67b635261a27` separately
+passed 21,860 non-live Linux tests (103 skipped, one xpassed), with 75.90% package
+coverage, 279 focused manipulation tests, and 738 security regressions. Ruff,
+guardrails, docs drift, and the built-in confidentiality scan also passed.
+[Exact CPU evidence](../evidence/manipulation-integrated-cpu-validation.json)
+records the tested commit and log hashes. These checks do not qualify native physics.
 
 Replacing the cube with a procedural part now preserves the task's rigid-body
 solver and depenetration properties, without inheriting the cube's geometry scale.
