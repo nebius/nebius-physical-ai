@@ -62,6 +62,10 @@ PYPI_JSON = "https://pypi.org/pypi/lerobot/{version}/json"
 # ── The surface this repo binds to ──────────────────────────────────────────
 # (module, symbol, call-site provenance). symbol=None checks the module only.
 IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
+    ("lerobot.envs.configs", "PushtEnv", ("npa/src/npa/workflows/lerobot_transfer_eval.py",)),
+    ("lerobot.envs.factory", "make_env_pre_post_processors", ("npa/src/npa/workflows/lerobot_transfer_eval.py",)),
+    ("lerobot.scripts.lerobot_eval", "rollout", ("npa/src/npa/workflows/lerobot_transfer_eval.py",)),
+    ("lerobot.utils.random_utils", "set_seed", ("npa/src/npa/workflows/lerobot_transfer_eval.py",)),
     (
         "lerobot.datasets.lerobot_dataset",
         "LeRobotDataset",
@@ -137,6 +141,7 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
         "lerobot.policies.factory",
         "make_pre_post_processors",
         (
+            "npa/src/npa/workflows/lerobot_transfer_eval.py",
             "npa/src/npa/genesis/eval_student.py",
             "npa/src/npa/server/app.py",
             "npa/src/npa/workbench/robocasa/capabilities.py",
@@ -152,6 +157,7 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
         "lerobot.policies.act.modeling_act",
         "ACTPolicy",
         (
+            "npa/src/npa/workflows/lerobot_transfer_eval.py",
             "npa/src/npa/genesis/eval_student.py",
             "npa/src/npa/workbench/robocasa/capabilities.py",
         ),

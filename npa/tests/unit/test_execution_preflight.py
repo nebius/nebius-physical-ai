@@ -474,6 +474,61 @@ def test_workflow_rendered_gpu_minimum_passes_sdk_preflight(provider, configured
     assert report["checks"]["gpu"] == "pass"
 
 
+def test_pending_gpu_demand_reports_placement_before_storage(provider, configured, gpu_inventory, monkeypatch):
+    from npa.execution_preflight import preflight_skypilot_submission
+    from npa.orchestration.skypilot.k8s_gpu_catalog import KubernetesGpuInventory
+
+    inventory = KubernetesGpuInventory(
+        "unit-context", 1, 1, 1, 1, ("NVIDIA-B200",), {}, nodes=(gpu_inventory,),
+        unbound_pending_gpu_pods=1, unbound_pending_gpu_requests=1,
+    )
+    monkeypatch.setattr("npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory", lambda **kwargs: inventory)
+    document = raw_task()
+    document["resources"].update(accelerators="B200:1", cpus=16, memory=128)
+    with pytest.raises(ExecutionPreflightError, match="active GPU pods await placement") as caught:
+        preflight_skypilot_submission([document], project="unit", infra="k8s/unit-context")
+    assert caught.value.check == "gpu" and caught.value.status == "unknown"
+    assert "workloads you own" in str(caught.value)
+    assert "unit-context" not in str(caught.value)
+    assert "unit-node" not in str(caught.value)
+    assert not provider.s3.calls
+
+
+@pytest.mark.parametrize("error_type,reason", [
+    ("PendingGpuPlacementError", "active GPU pods await placement"),
+    ("UnsatisfiableAcceleratorError", "no compatible free placement"),
+])
+def test_gpu_diagnostic_does_not_publish_source_exception(provider, error_type, reason):
+    from npa.orchestration.skypilot import k8s_gpu_catalog
+
+    def unavailable():
+        raise getattr(k8s_gpu_catalog, error_type)("private-provider-text private-node-name")
+
+    with pytest.raises(ExecutionPreflightError, match=reason) as caught:
+        verify_execution_target(target(), gpu_check=unavailable)
+    assert "private" not in str(caught.value)
+    assert caught.value.status == "unknown"
+    assert not provider.s3.calls
+
+
+def test_bound_gpu_demand_reports_no_free_placement_before_storage(provider, configured, gpu_inventory, monkeypatch):
+    from dataclasses import replace
+    from npa.execution_preflight import preflight_skypilot_submission
+    from npa.orchestration.skypilot.k8s_gpu_catalog import KubernetesGpuInventory
+
+    occupied = replace(gpu_inventory, free=0, committed=1)
+    inventory = KubernetesGpuInventory("unit-context", 1, 1, 1, 1, ("NVIDIA-B200",), {}, nodes=(occupied,))
+    monkeypatch.setattr("npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory", lambda **kwargs: inventory)
+    document = raw_task()
+    document["resources"].update(accelerators="B200:1", cpus=16, memory=128)
+    with pytest.raises(ExecutionPreflightError, match="no compatible free placement") as caught:
+        preflight_skypilot_submission([document], project="unit", infra="k8s/unit-context")
+    assert caught.value.check == "gpu" and caught.value.status == "unknown"
+    assert "unit-context" not in str(caught.value)
+    assert "unit-node" not in str(caught.value)
+    assert not provider.s3.calls
+
+
 @pytest.mark.parametrize("missing", ["cpu", "memory"])
 @pytest.mark.parametrize("minimum_suffix", ["", "+"])
 def test_gpu_minimum_capacity_denial_precedes_storage(provider, configured, gpu_inventory, monkeypatch, missing, minimum_suffix):
@@ -489,6 +544,7 @@ def test_gpu_minimum_capacity_denial_precedes_storage(provider, configured, gpu_
     with pytest.raises(ExecutionPreflightError, match="gpu") as caught:
         preflight_skypilot_submission([document], project="unit", infra="k8s/unit-context")
     assert isinstance(caught.value.__cause__, UnsatisfiableAcceleratorError)
+    assert "no compatible free placement" in str(caught.value)
     assert "128000000000 memory bytes" in str(caught.value.__cause__)
     assert not provider.s3.calls
 

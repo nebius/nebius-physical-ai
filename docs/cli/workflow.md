@@ -26,7 +26,7 @@ validate-spec  Validate an NPA workflow specification file.
 plan-spec  Expand an NPA workflow spec into an execution plan (dry-run).
 run-spec  Run or plan an NPA workflow spec.
 preflight-images  Prove every image this spec pulls is pullable, with the run's own credentials.
-gpus  Print the accelerator names this cluster advertises to SkyPilot.
+gpus  Print advertised GPU names using an owned API for a selected context.
 trigger  Watch S3-compatible data prefixes and retrigger Workbench workflows.
 ```
 
@@ -56,7 +56,7 @@ trigger  Watch S3-compatible data prefixes and retrigger Workbench workflows.
 | `plan-spec` | Expand an NPA workflow spec into an execution plan (dry-run). |
 | `run-spec` | Run or plan an NPA workflow spec. |
 | `preflight-images` | Prove every image this spec pulls is pullable, with the run's own credentials. |
-| `gpus` | Print the accelerator names this cluster advertises to SkyPilot. |
+| `gpus` | Print advertised GPU names using an owned API for a selected context. |
 | `trigger` | Watch S3-compatible data prefixes and retrigger Workbench workflows. |
 
 ## Examples

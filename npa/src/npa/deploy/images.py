@@ -161,7 +161,6 @@ PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = (
 # anonymous channel. Public execution stays on the last accepted release while
 # an explicit custom registry resolves the newer supported-tool pin.
 PUBLIC_RELEASE_TAG_OVERRIDES: dict[str, str] = {
-    "fiftyone": "1.15.0.post1",
     # 0.31.4 (plain) predates the bootstrap contract and cannot host a SkyPilot
     # task: the container exits immediately, the provisioner's exec finds no
     # ray-node container, and the stage retries forever. The 20260903 build is
@@ -248,7 +247,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "cosmos-curate": "0.1.2-skypilot-v1-20260813T164700Z",
     "cosmos-evaluator": "0.1.2-skypilot-v1-20260813T164700Z-r2",
     "groot": "0.1.0",
-    "fiftyone": "1.15.0-post1-skypilot-v1-20260815-review5",
+    "fiftyone": "1.21.0-skypilot-v1-20260915",
     "sonic": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "sonic-mujoco": "0.2.0-runtime",
     "retargeting": "0.1.1",
