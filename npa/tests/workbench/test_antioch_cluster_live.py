@@ -150,7 +150,7 @@ def test_live_acceptance_requires_current_pair_identity_and_physical_pickup() ->
         ({"round_trip_render_sequence": 1198}, "camera_pair_identity"),
         ({"camera_wrist_luminance_variance_current": 0}, "current_camera_quality"),
         ({"luminance_mean_min": 0}, "accepted_camera_quality"),
-        ({"camera_pair_difference_current": 7.9}, "accepted_camera_quality"),
+        ({"camera_pair_difference_current": 5.9}, "accepted_camera_quality"),
         ({"camera_exterior_red_cube_pixels_current": 19}, "accepted_camera_quality"),
         ({"camera_wrist_cube_in_frame_current": 0}, "accepted_camera_quality"),
         ({"gripper_contact_samples": 0}, "physical_gripper_contact"),
