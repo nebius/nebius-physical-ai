@@ -1115,7 +1115,7 @@ def test_live_camera_pair_classifies_each_view_freshness_semantics_and_distinctn
         wrist_cube_in_frame=True,
     )
     assert accepted.accepted is True
-    assert accepted.exterior.red_cube_pixels >= 20
+    assert accepted.exterior.red_cube_pixels >= scenario.MIN_EXTERIOR_RED_CUBE_PIXELS
     assert accepted.mean_difference >= scenario.MIN_CAMERA_PAIR_DIFFERENCE
 
     cases = (

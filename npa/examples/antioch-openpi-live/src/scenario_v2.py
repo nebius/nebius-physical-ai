@@ -85,7 +85,10 @@ GRIPPER_CONTACT_FORCE_NEWTONS = 0.1
 MIN_CAMERA_LUMINANCE_MEAN = 5.0
 MIN_CAMERA_LUMINANCE_VARIANCE = 25.0
 MIN_CAMERA_PAIR_DIFFERENCE = 6.0
-MIN_EXTERIOR_RED_CUBE_PIXELS = 20
+# The fixed exterior view can resolve the 7 cm cube to the low teens at
+# 224x224 after valid robot motion; keep a positive color-area floor without
+# rejecting that still-visible target.
+MIN_EXTERIOR_RED_CUBE_PIXELS = 10
 EXTERIOR_CAMERA_PATH = "/World/PolicyExterior"
 WRIST_CAMERA_PATH = "/World/PolicyWrist"
 EXTERIOR_CAMERA_EYE = (1.45, -1.25, 0.95)

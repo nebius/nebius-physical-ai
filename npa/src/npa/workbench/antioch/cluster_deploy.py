@@ -713,7 +713,7 @@ def qualify_live_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
             number("luminance_mean_min") > 5.0
             and number("luminance_variance_min") > 25.0
             and number("camera_pair_difference_current") >= 6.0
-            and int(number("camera_exterior_red_cube_pixels_current")) >= 20
+            and int(number("camera_exterior_red_cube_pixels_current")) >= 10
             and int(number("camera_exterior_cube_in_frame_current")) == 1
             and int(number("camera_wrist_cube_in_frame_current")) == 1
         ),
