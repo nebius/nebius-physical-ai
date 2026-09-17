@@ -174,6 +174,31 @@ def test_base_cve_gate_is_blocking_and_os_scoped() -> None:
     assert "--ignore-unfixed" in command
 
 
+def _record_parallel_scans(cache: Path, scan_caches: list[Path]):
+    """Keep the first two fake scans active together to exercise both workers."""
+
+    first_pair = Barrier(2)
+    lock = Lock()
+
+    def record(command, **arguments):
+        if "--download-db-only" in command:
+            database = cache / "db"
+            database.mkdir()
+            (database / "trivy.db").write_text("verified database")
+        else:
+            worker_cache = Path(command[command.index("--cache-dir") + 1])
+            database = worker_cache / "db/trivy.db"
+            assert database.read_text() == "verified database"
+            with lock:
+                scan_caches.append(worker_cache)
+                scan_index = len(scan_caches)
+            if scan_index <= first_pair.parties:
+                first_pair.wait(timeout=2)
+        return subprocess.CompletedProcess(command, 0)
+
+    return record
+
+
 def test_parallel_scans_use_worker_private_trivy_caches(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -190,20 +215,7 @@ def test_parallel_scans_use_worker_private_trivy_caches(
 
     cache = tmp_path / "trivy"
     scan_caches: list[Path] = []
-
-    def record(command, **arguments):
-        if "--download-db-only" in command:
-            database = cache / "db"
-            database.mkdir()
-            (database / "trivy.db").write_text("verified database")
-        else:
-            worker_cache = Path(command[command.index("--cache-dir") + 1])
-            database = worker_cache / "db/trivy.db"
-            assert database.read_text() == "verified database"
-            scan_caches.append(worker_cache)
-        return subprocess.CompletedProcess(command, 0)
-
-    monkeypatch.setattr(scanner.subprocess, "run", record)
+    monkeypatch.setattr(scanner.subprocess, "run", _record_parallel_scans(cache, scan_caches))
     entries = [
         {
             "name": f"base-{index}",
