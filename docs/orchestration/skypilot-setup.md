@@ -137,6 +137,36 @@ extras. To upgrade, create a new venv at a separate path, install the candidate
 SkyPilot version, run `sky check`, and replay the NPA SkyPilot e2e before
 switching `NPA_SKYPILOT_BIN`.
 
+### Upgrade checklist
+
+The `0.12.2` pin is coupled to every site below. When bumping the version,
+update all of them together and re-run the SkyPilot guardrail tests:
+
+1. `npa/src/npa/orchestration/skypilot/_bin.py` — `REQUIRED_SKYPILOT_VERSION`
+   (canonical pin; `npa skypilot bootstrap` and `_bin` fail closed on mismatch).
+   `npa/src/npa/cli/skypilot/__init__.py` aliases it as `SKYPILOT_VERSION`.
+2. `npa/src/npa/cli/skypilot/constraints-0.12.2.txt` — rename to the new
+   version and re-resolve the pinned dependency set.
+3. `npa/src/npa/orchestration/skypilot/local_api.py` — health-check version
+   assertion against the isolated API daemon (`health.get("version")`).
+4. `npa/src/npa/orchestration/skypilot/native_preflight.py` —
+   `sky.__version__` assertion in the native preflight.
+5. `npa/src/npa/orchestration/skypilot/controller_clone.py` —
+   `sky.__version__` assertion when cloning controller state.
+6. `npa/src/npa/orchestration/skypilot/image_bootstrap_contract.py` —
+   `CONTRACT_VERSION` (e.g. `skypilot-0.12.2-v1`); bump the `-vN` suffix and
+   re-attest images.
+7. `npa/src/npa/deploy/images.py` — attestation label values referencing the
+   contract version (e.g. `org.nebius.npa.skypilot-bootstrap-contract=
+   skypilot-0.12.2-v1`); rebuilt images must be re-attested.
+8. Behavior mirrors of SkyPilot 0.12.2 internals — re-verify each against the
+   new version and update the versioned comments:
+   - `orchestration/skypilot/resource_quantities.py` (memory-suffix normalization)
+   - `orchestration/skypilot/k8s_gpu_catalog.py` (GFD label handling)
+   - `orchestration/skypilot/launch_transaction.py` (`jobs launch --name` idempotency)
+   - `orchestration/skypilot/workflow_state.py` (S3 mount env vars)
+9. `docs/orchestration/skypilot-setup.md` — this section (validated version).
+
 Controller cleanup uses the originating isolated runtime's user and controller
 identity. It snapshots controller metadata into a temporary owned API, without
 replaying the original API's pending requests, and verifies remote absence before

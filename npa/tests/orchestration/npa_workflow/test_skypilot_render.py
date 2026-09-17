@@ -540,7 +540,7 @@ def test_alpamayo2_super_resolves_configured_image() -> None:
         tool_ref,
         {},
         options=SkypilotRenderOptions(registry="cr.example.invalid/reg"),
-    ) == "cr.example.invalid/reg/npa-alpamayo2-super:0.1.0-cu128"
+    ) == "cr.example.invalid/reg/npa-alpamayo2-super:0.1.0-cu128-r3"
 
 
 def test_cosmos3_generate_and_reason_resolve_to_different_images() -> None:
