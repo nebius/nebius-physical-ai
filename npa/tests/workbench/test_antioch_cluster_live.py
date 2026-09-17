@@ -35,6 +35,7 @@ def _config(tmp_path: Path, **updates: object) -> cluster_deploy.ClusterLiveConf
         "namespace": "workbench",
         "adapter_image": "registry.invalid/npa-antioch@sha256:" + "a" * 64,
         "policy_selector": {"app": "openpi-policy"},
+        "policy_managed_by": cluster_deploy.LIVE_MANAGED_BY,
         "policy_network_policy_name": "openpi-policy",
         "policy_auth_secret_name": "openpi-auth",
         "policy_tls_secret_name": "openpi-tls",
@@ -187,6 +188,7 @@ def test_config_archive_copies_only_current_credential_files(
     workspace = root / "workspace.json"
     workspace.write_bytes(b'{"credential":"private-runtime-state"}')
     os.chmod(workspace, 0o600)
+    (root / ".auth.lock").write_bytes(b"")
 
     first = cluster_deploy._config_archive(root)["config.tar"]
     second = cluster_deploy._config_archive(root)["config.tar"]
@@ -873,6 +875,24 @@ def test_retained_openpi_cleanup_owner_is_a_narrow_adoption_proof() -> None:
         "new-live-identity",
         allow_openpi=True,
         openpi_cleanup_owner="different-run",
+    )
+
+
+def test_retained_openpi_managed_by_is_a_narrow_adoption_proof() -> None:
+    metadata = SimpleNamespace(
+        labels={"app.kubernetes.io/managed-by": "retained-policy-manager"}
+    )
+    assert cluster_deploy._owned(
+        metadata,
+        "new-live-identity",
+        allow_openpi=True,
+        openpi_managed_by="retained-policy-manager",
+    )
+    assert not cluster_deploy._owned(
+        metadata,
+        "new-live-identity",
+        allow_openpi=True,
+        openpi_managed_by="different-manager",
     )
 
 

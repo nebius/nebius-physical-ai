@@ -20,7 +20,7 @@ from npa.workflows.byof.openpi_live import LIVE_MANAGED_BY, _certificate
 
 from .live import _relay_certificate
 
-CONFIG_SCHEMA = "npa.antioch.mk8s-live-config.v2"
+CONFIG_SCHEMA = "npa.antioch.mk8s-live-config.v3"
 ANTIOCH_TLS_EGRESS_PORTS = (443,)
 UNRESTRICTED_VENDOR_EGRESS_CIDR = "0.0.0.0/0"
 MANAGED_BY = "npa-antioch-mk8s-live"
@@ -30,6 +30,7 @@ _SECRET_KEY = re.compile(r"^[A-Za-z0-9._-]+$")
 _METRIC_KEY = re.compile(r"^[a-z][a-z0-9_]*$")
 _ANTIOCH_TERMS_ENV = "NPA_ANTIOCH_ACCEPT_TERMS"
 _ANTIOCH_CREDENTIAL_FILES = frozenset({"auth.json", "workspace.json"})
+_ANTIOCH_IGNORED_STATE_FILES = frozenset({".auth.lock"})
 # Every use is backed by the deployment's pod-scoped emptyDir volume, not a
 # host-shared temporary directory.
 _POD_TMP_PATH = str(PurePosixPath("/") / "tmp")
@@ -52,6 +53,7 @@ class ClusterLiveConfig(BaseModel):
     namespace: str = "workbench"
     adapter_image: str
     policy_selector: dict[str, str]
+    policy_managed_by: str
     policy_gateway_port: int = Field(default=8443, ge=1, le=65535)
     policy_probe_ports: list[int] = Field(default_factory=lambda: [8001, 8002])
     policy_network_policy_name: str
@@ -72,6 +74,7 @@ class ClusterLiveConfig(BaseModel):
     @field_validator(
         "namespace",
         "policy_network_policy_name",
+        "policy_managed_by",
         "policy_auth_secret_name",
         "policy_tls_secret_name",
         "policy_cache_pvc_name",
@@ -572,6 +575,10 @@ def _config_archive(directory: Path) -> dict[str, bytes]:
         raise ClusterLiveError("private Antioch config directory must be mode 0700")
     members: list[tuple[Path, Path]] = []
     for path in sorted(directory.iterdir()):
+        if path.name in _ANTIOCH_IGNORED_STATE_FILES:
+            if path.is_symlink() or not path.is_file():
+                raise ClusterLiveError("Antioch config lock state is malformed")
+            continue
         if path.name not in _ANTIOCH_CREDENTIAL_FILES:
             raise ClusterLiveError(
                 "Antioch config must contain only current credential files"
@@ -789,13 +796,17 @@ def _owned(
     *,
     allow_openpi: bool = False,
     openpi_cleanup_owner: str = "",
+    openpi_managed_by: str = "",
 ) -> bool:
     labels = getattr(metadata, "labels", None) or {}
     if labels.get("npa.nebius.ai/live-identity") == identity:
         return labels.get("app.kubernetes.io/managed-by") == MANAGED_BY
     if not allow_openpi:
         return False
-    if labels.get("app.kubernetes.io/managed-by") == LIVE_MANAGED_BY:
+    managed_by = labels.get("app.kubernetes.io/managed-by")
+    if managed_by == LIVE_MANAGED_BY or (
+        openpi_managed_by and managed_by == openpi_managed_by
+    ):
         return True
     return bool(
         openpi_cleanup_owner
@@ -814,6 +825,7 @@ def _apply_owned(
     identity: str,
     allow_openpi: bool = False,
     openpi_cleanup_owner: str = "",
+    openpi_managed_by: str = "",
 ) -> str:
     try:
         current = read(name=name, namespace=namespace)
@@ -827,6 +839,7 @@ def _apply_owned(
         identity,
         allow_openpi=allow_openpi,
         openpi_cleanup_owner=openpi_cleanup_owner,
+        openpi_managed_by=openpi_managed_by,
     ):
         raise ClusterLiveError("refusing to replace an unowned Kubernetes object")
     patch(name=name, namespace=namespace, body=body)
@@ -997,7 +1010,12 @@ def apply_cluster(config: ClusterLiveConfig) -> dict[str, Any]:
     if len(deployments) != 1:
         raise ClusterLiveError("policy selector must resolve exactly one Deployment")
     policy_deployment = deployments[0]
-    if not _owned(policy_deployment.metadata, config.identity, allow_openpi=True):
+    if not _owned(
+        policy_deployment.metadata,
+        config.identity,
+        allow_openpi=True,
+        openpi_managed_by=config.policy_managed_by,
+    ):
         raise ClusterLiveError("policy Deployment ownership is not proven")
     pvc = core.read_namespaced_persistent_volume_claim(
         name=config.policy_cache_pvc_name, namespace=config.namespace
@@ -1007,7 +1025,12 @@ def apply_cluster(config: ClusterLiveConfig) -> dict[str, Any]:
     auth = core.read_namespaced_secret(
         name=config.policy_auth_secret_name, namespace=config.namespace
     )
-    if not _owned(auth.metadata, config.identity, allow_openpi=True):
+    if not _owned(
+        auth.metadata,
+        config.identity,
+        allow_openpi=True,
+        openpi_managed_by=config.policy_managed_by,
+    ):
         raise ClusterLiveError("policy authentication Secret ownership is not proven")
     encoded_api_key = (auth.data or {}).get("api-key", "")
     try:
@@ -1061,7 +1084,12 @@ def apply_cluster(config: ClusterLiveConfig) -> dict[str, Any]:
         existing_tls = core.read_namespaced_secret(
             name=config.policy_tls_secret_name, namespace=config.namespace
         )
-        if not _owned(existing_tls.metadata, config.identity, allow_openpi=True):
+        if not _owned(
+            existing_tls.metadata,
+            config.identity,
+            allow_openpi=True,
+            openpi_managed_by=config.policy_managed_by,
+        ):
             raise ClusterLiveError("policy TLS Secret ownership is not proven")
         encoded_tls = existing_tls.data or {}
         try:
@@ -1147,6 +1175,7 @@ def apply_cluster(config: ClusterLiveConfig) -> dict[str, Any]:
         body=tls_body,
         identity=config.identity,
         allow_openpi=True,
+        openpi_managed_by=config.policy_managed_by,
     )
     manifests = build_public_manifests(config)
     service = manifests["policy_service"]
@@ -1172,6 +1201,7 @@ def apply_cluster(config: ClusterLiveConfig) -> dict[str, Any]:
         openpi_cleanup_owner=config.policy_selector.get(
             "npa.nebius.ai/cleanup-owner", ""
         ),
+        openpi_managed_by=config.policy_managed_by,
     )
     annotations = {
         "npa.nebius.ai/cluster-live-tls-sha256": hashlib.sha256(
@@ -1277,7 +1307,10 @@ def cluster_status(config: ClusterLiveConfig) -> dict[str, Any]:
         config.policy_selector,
     )
     if len(policy) != 1 or not _owned(
-        policy[0].metadata, config.identity, allow_openpi=True
+        policy[0].metadata,
+        config.identity,
+        allow_openpi=True,
+        openpi_managed_by=config.policy_managed_by,
     ):
         raise ClusterLiveError("policy Deployment ownership is not proven")
     policy_ready = int(policy[0].status.ready_replicas or 0) == 1
@@ -1573,7 +1606,12 @@ def disable_public_rollback_service(config: ClusterLiveConfig) -> dict[str, Any]
     service = core.read_namespaced_service(
         config.public_rollback_service_name, config.namespace
     )
-    if not _owned(service.metadata, config.identity, allow_openpi=True):
+    if not _owned(
+        service.metadata,
+        config.identity,
+        allow_openpi=True,
+        openpi_managed_by=config.policy_managed_by,
+    ):
         raise ClusterLiveError("refusing to alter an unowned rollback Service")
     if str(service.spec.type) != "LoadBalancer":
         return {"status": "already_private"}

@@ -265,13 +265,16 @@ npa workbench antioch live-k8s-status \
   --runtime-config /path/to/private-runtime.json --output json
 ```
 
-The runtime schema is `npa.antioch.mk8s-live-config.v2`; the checked-in example
+The runtime schema is `npa.antioch.mk8s-live-config.v3`; the checked-in example
 uses only placeholders. `antioch_deployment_profile` is required and is forwarded
 to the controller as the vendor CLI's supported `ANTIOCH_ENV` selector; it has no
 default because silently falling back to a different deployment can bind the wrong
-project namespace. `antioch_config_dir` must be a fresh owner-only copy containing
-only the current CLI's `auth.json` and optional `workspace.json`; legacy machine,
-tunnel, lock, or cached endpoint state is rejected instead of copied into the pod.
+project namespace. `policy_managed_by` must come from the verified retained-policy
+handoff and must match the selected Deployment, authentication Secret, TLS Secret,
+and NetworkPolicy before any is adopted. `antioch_config_dir` may point directly
+at the current CLI's owner-only deployment profile; only `auth.json` and optional
+`workspace.json` are copied into the pod. The current CLI's `.auth.lock` is ignored,
+while legacy machine, tunnel, or cached endpoint state is rejected.
 `workflow_run` plus `state_id` derive every adapter identity,
 so independent Antioch stages cannot collide. `adapter_image` must be an immutable
 digest. Deployment, status, stop, and cutover-finalization refuse unowned objects.

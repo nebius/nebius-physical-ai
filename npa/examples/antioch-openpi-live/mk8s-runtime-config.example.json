@@ -1,5 +1,5 @@
 {
-  "schema_name": "npa.antioch.mk8s-live-config.v2",
+  "schema_name": "npa.antioch.mk8s-live-config.v3",
   "workflow_run": "replace-with-run-identity",
   "state_id": "antioch-mk8s-live",
   "kubeconfig": "/path/to/owner-readable-kubeconfig",
@@ -9,6 +9,7 @@
   "policy_selector": {
     "app.kubernetes.io/name": "replace-with-owned-policy-label"
   },
+  "policy_managed_by": "replace-with-verified-policy-owner-label",
   "policy_gateway_port": 8443,
   "policy_probe_ports": [8001, 8002],
   "policy_network_policy_name": "replace-with-owned-policy-network-policy",
