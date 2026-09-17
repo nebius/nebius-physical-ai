@@ -1,0 +1,20 @@
+{
+  "all_checks_passed": true,
+  "source_commit": "4c1babdfd3e5b9ef92ce9f4b794ef6fb6b5c3a61",
+  "scope": "Diagnostic report replay of independently audited earlier adaptive policy outputs; no training or evaluation was repeated.",
+  "retained_input_audit_sha256": "78039fb050c3f6fba536fac1c4435f2f0be6426232a2473f8fbb6a5453823f22",
+  "peak_resident_memory_kib": 554172,
+  "memory_measurement_scope": "GNU time maximum resident set size for the report command; native pod validation remains separate.",
+  "existing_report_request_gib": 16,
+  "identical_video_bytes": 32,
+  "statistics_max_absolute_difference": 8.548717289613705e-15,
+  "identical_trials_and_qualification": true,
+  "native_workflow_validation": {
+    "all_five_stages_completed": true,
+    "artifact_audit_sha256": "39a42b3d51e3e6c9f9b84f8e6eff2e2d30e54d0cf3651799f23208ffea60db13",
+    "all_source_modules_verified": true,
+    "intermediate_worker_cgroup_peak_bytes": 13245546496,
+    "observed_cgroup_oom_events": 0,
+    "scope": "Whole report-worker cgroup, including installation and file cache; one intermediate observation, not final converter-only peak RSS. Workflow completed and full artifacts independently audited afterward."
+  }
+}

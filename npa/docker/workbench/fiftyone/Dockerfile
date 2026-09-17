@@ -74,6 +74,7 @@ RUN useradd -m -s /bin/bash -u 1000 ubuntu \
     && install -d -m 0755 -o ubuntu -g ubuntu \
       /opt/fiftyone \
       /opt/fiftyone/db \
+      /opt/fiftyone/mongodb-notices \
       /opt/fiftyone/datasets \
       /opt/fiftyone/smoke \
       /opt/fiftyone/venv \
@@ -85,6 +86,11 @@ RUN useradd -m -s /bin/bash -u 1000 ubuntu \
 
 USER ubuntu
 WORKDIR /opt/fiftyone
+
+COPY --chown=ubuntu:ubuntu docker/workbench/fiftyone/mongodb-source.json /opt/fiftyone/mongodb-notices/source.json
+COPY --chown=ubuntu:ubuntu docker/workbench/fiftyone/mongodb-source-version.json /opt/fiftyone/mongodb-notices/version.json
+COPY --chown=ubuntu:ubuntu docker/workbench/fiftyone/SOURCE.md /opt/fiftyone/mongodb-notices/SOURCE.md
+COPY --chown=ubuntu:ubuntu docker/workbench/fiftyone/verify_source.py /opt/npa/docker/workbench/fiftyone/verify_source.py
 
 # Replace any wheel-provided database binary before this installation layer is
 # committed, so an older executable cannot survive in an ancestor layer.
@@ -114,6 +120,12 @@ RUN python -m venv "${FIFTYONE_VENV}" \
       "/tmp/mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}/MPL-2" \
       "/tmp/mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}/THIRD-PARTY-NOTICES" \
       /opt/fiftyone/mongodb-notices/ \
+    && SOURCE_URL="$(python -c 'import json; print(json.load(open("/opt/fiftyone/mongodb-notices/source.json"))["source"]["url"])')" \
+    && curl --fail --location --silent --show-error \
+      -o /opt/fiftyone/mongodb-notices/mongodb-source.tar.gz "$SOURCE_URL" \
+    && cp /opt/fiftyone/mongodb-notices/SOURCE.md "$DBBIN/MONGODB_SOURCE.md" \
+    && python /opt/npa/docker/workbench/fiftyone/verify_source.py \
+      --mongod "$DBBIN/mongod" --notices-dir /opt/fiftyone/mongodb-notices \
     && rm -rf /tmp/mongodb.tgz "/tmp/mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}" \
     && "$DBBIN/mongod" --version | head -n 1 \
     && python -m pip check
