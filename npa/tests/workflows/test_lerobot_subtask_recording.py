@@ -134,3 +134,30 @@ def test_committed_bundle_proves_the_saved_parquet_row() -> None:
         assert json.loads(archive.read("manifest.json")) == manifest
     for relative, digest in manifest["provenance"]["recipe_sha256"].items():
         assert hashlib.sha256((REPOSITORY / relative).read_bytes()).hexdigest() == digest
+
+
+def test_agent_ui_mp4_decodes_and_matches_its_capture_receipt() -> None:
+    import av
+
+    receipt = json.loads((EVIDENCE / "agent-ui-capture.json").read_text())
+    video = receipt["video"]
+    path = EVIDENCE / video["path"]
+    assert path.stat().st_size == video["bytes"]
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == video["sha256"]
+    source = receipt["source"]
+    assert hashlib.sha256((EVIDENCE / source["path"]).read_bytes()).hexdigest() == source["sha256"]
+    sampled_pixels = set()
+    with av.open(str(path)) as container:
+        stream = container.streams.video[0]
+        assert stream.codec_context.name == "h264"
+        assert (stream.width, stream.height) == (video["width"], video["height"])
+        assert float(stream.average_rate) == 25.0
+        assert float(stream.duration * stream.time_base) == pytest.approx(video["duration_seconds"])
+        timestamps = []
+        for index, frame in enumerate(container.decode(video=0)):
+            timestamps.append(frame.pts)
+            if index in (0, 225, 600):
+                sampled_pixels.add(hashlib.sha256(frame.to_ndarray(format="rgb24")).hexdigest())
+    assert len(timestamps) == video["decoded_frame_count"]
+    assert all(left < right for left, right in zip(timestamps, timestamps[1:]))
+    assert len(sampled_pixels) == 3

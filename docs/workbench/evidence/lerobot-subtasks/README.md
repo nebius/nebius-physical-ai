@@ -1,5 +1,6 @@
 # Recorded LeRobot subtask proof
 
+[Watch the agent UI recording (MP4)](agent-ui-playback.mp4) ·
 [Download the complete proof bundle](proof-bundle.zip) ·
 [Rerun recording](lerobot-subtasks.rrd) ·
 [Verification manifest](manifest.json) ·
@@ -10,6 +11,15 @@ robot data or a screen recording of FiftyOne. Programmatic temporal tags pass
 through the real production parser and label writer. The checked-in workflow
 then runs locally and verifies the exported Parquet. No NVIDIA tool, cloud
 job, model inference, or policy training was used.
+
+The **33-second MP4** is a real browser screen recording of this exact RRD
+opened in the deployed agent UI's fullscreen embedded Rerun viewer. It steps
+through all eight rows and pauses on `grasp` (visible around 9 seconds).
+The synthetic-data disclaimer stays visible. Setup footage was trimmed and the
+browser capture was transcoded to H.264; the frames were not recreated from
+tables or screenshots. The [capture receipt](agent-ui-capture.json) binds the
+MP4 to its source RRD hash and records full-video decoding checks. This MP4 is
+a separate companion artifact, not part of the earlier proof ZIP.
 
 ## What the recording proves
 
