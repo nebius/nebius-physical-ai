@@ -49,6 +49,14 @@ labels, categorical indexes, and video references on the `episode_time` timeline
 Tests independently decode the video and RRD and compare complete sequences,
 embedded media bytes, artifact hashes, and unchanged input columns.
 
+These recordings retain their original [archived recipe](../lerobot-subtask-recipes/README.md).
+The newer [native FiftyOne validation](../fiftyone-subtasks-native.md) is separate
+evidence, not a claim that the old videos were re-recorded. The companion
+[native-plane receipt](source-camera-planes.json) verifies exact decoded YUV
+pixels against the pinned full source. CI uses these visible-plane hashes because
+RGB conversion rounding differs across CPU architectures; the original RGB
+capture receipt remains unchanged.
+
 The additional **18.76-second agent UI MP4** is an actual browser screen recording
 of this RRD playing in the deployed agent's embedded Rerun viewer, at 1× speed.
 Only fullscreen viewer playback is retained; setup and private infrastructure UI

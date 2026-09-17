@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -190,6 +191,7 @@ def import_lerobot_dataset(name: str, source: str, datasets_dir: Path) -> dict[s
     warnings: list[str] = []
     info = _read_info_json(source_root, warnings)
     if _supports_native_lerobot(fo, info):
+        source_root = _prepare_native_lerobot_source(source_root, datasets_dir / name)
         return _import_native_lerobot_dataset(
             fo,
             name=name,
@@ -232,6 +234,34 @@ def import_lerobot_dataset(name: str, source: str, datasets_dir: Path) -> dict[s
         "metadata_fields": plan.metadata_fields,
         "warnings": plan.warnings,
     }
+
+
+def _prepare_native_lerobot_source(source_root: Path, staging_parent: Path) -> Path:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    tasks_path = source_root / "meta/tasks.parquet"
+    if not tasks_path.exists():
+        return source_root
+    table = pq.read_table(tasks_path)
+    if "task" in table.column_names:
+        return source_root
+    # LeRobot saves task text as the Pandas index; FiftyOne 1.22 expects a column.
+    index_columns = (table.schema.pandas_metadata or {}).get("index_columns", [])
+    if len(index_columns) != 1 or not isinstance(index_columns[0], str):
+        raise ValueError("LeRobot tasks metadata requires a task column or one named Pandas index")
+    index = index_columns[0]
+    if index not in table.column_names or "task_index" not in table.column_names:
+        raise ValueError("LeRobot tasks metadata is missing task_index or its Pandas index")
+    if not pa.types.is_string(table[index].type) and not pa.types.is_large_string(table[index].type):
+        raise ValueError("LeRobot task names must be strings")
+    if staging_parent.resolve().is_relative_to(source_root.resolve()):
+        raise ValueError("Native LeRobot staging must be outside the source dataset")
+    staging_parent.mkdir(parents=True, exist_ok=True)
+    staged = Path(tempfile.mkdtemp(prefix="lerobot-native-", dir=staging_parent))
+    shutil.copytree(source_root, staged, dirs_exist_ok=True)
+    pq.write_table(table.append_column("task", table[index]), staged / "meta/tasks.parquet")
+    return staged
 
 
 def _supports_native_lerobot(fo: Any, info: dict[str, Any]) -> bool:

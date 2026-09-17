@@ -277,6 +277,35 @@ contract, not semantic correctness or improved policy performance.
 
 ## Reproducible test evidence
 
+The [native FiftyOne validation report](../evidence/fiftyone-subtasks-native.md)
+tests the actual 1.22 importer/exporter and MongoDB, not a mocked dataset.
+It imports real SO100 episodes in order `7, 2`, exports them deterministically as
+`2 → 0, 7 → 1`, checks all 771 frame identities and four labels, and re-imports
+the result. The export report includes `episode_index_mapping`; source episode
+indexes are not the same as the contiguous indexes in the derived dataset.
+
+When LeRobot stores task text as a Pandas index, `load-dataset` makes a separate
+staging copy with an additional `task` column for FiftyOne 1.22 compatibility.
+Allow disk space for that copy; the original files remain unchanged. Re-import
+datasets loaded by older Workbench versions before exporting if FiftyOne reports
+`LeRobot tasks metadata must contain task_index and task`.
+
+To run the opt-in native test, use a dedicated development environment containing
+`fiftyone==1.22.0`, FFmpeg, and the pinned full SO100 snapshot downloaded above:
+
+```bash
+NPA_INTEGRATION_E2E=1 \
+NPA_E2E_FIFTYONE_LEROBOT_SOURCE="$PWD/results/lerobot-video-proof/source" \
+  npa/.venv/bin/python -m pytest npa/tests/e2e/test_fiftyone_subtasks_native.py -q
+```
+
+`NPA_E2E_FIFTYONE_LEROBOT_SOURCE` has no default and must point to that local
+snapshot. The test creates temporary MongoDB data and deletes its own FiftyOne
+datasets. Its tags are programmatic test labels, not a recorded human review.
+S3 upload uses the shared `StorageClient` with adaptive retries and a nonempty
+prefix check. Use a unique destination per export: that check is not a lock
+against simultaneous writers.
+
 Start with the [real labeled LeRobot MP4](../evidence/lerobot-video-subtasks/lerobot-labeled.mp4):
 two synchronized SO-100 cameras, eight changing subtask labels, and a phase
 timeline. Its [evidence and reproduction guide](../evidence/lerobot-video-subtasks/README.md)

@@ -146,31 +146,31 @@ exec(compile({adapter_source}, _npa_subtask_module.__file__, "exec"), _npa_subta
 
 def _subtask_export_python_script(dataset_name: str, output_path: str) -> str:
     module_source = json.dumps(_subtask_adapter_source())
+    storage_source = json.dumps(resources.files("npa.clients").joinpath("storage.py").read_text())
     return f"""\
 from __future__ import annotations
-import importlib.util
 import json
 import sys
-import tempfile
-from pathlib import Path
+import types
 
 MODULE_SOURCE = {module_source}
+STORAGE_SOURCE = {storage_source}
 DATASET_NAME = {json.dumps(dataset_name)}
 OUTPUT_PATH = {json.dumps(output_path)}
 
-with tempfile.TemporaryDirectory(prefix="npa-fiftyone-subtasks-module-") as private_directory:
-    module_path = Path(private_directory) / "npa_fiftyone_lerobot_subtasks.py"
-    module_path.write_text(MODULE_SOURCE, encoding="utf-8")
-    spec = importlib.util.spec_from_file_location("_npa_fiftyone_lerobot_subtasks_export", module_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("Unable to load the bundled LeRobot subtask adapter")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    try:
-        spec.loader.exec_module(module)
-        report = module.export_fiftyone_subtasks_to_s3(DATASET_NAME, OUTPUT_PATH)
-    finally:
-        sys.modules.pop(spec.name, None)
+storage_module = types.ModuleType("_npa_bundled_storage")
+exec(compile(STORAGE_SOURCE, "<bundled-npa-storage>", "exec"), storage_module.__dict__)
+
+module = types.ModuleType("_npa_fiftyone_lerobot_subtasks_export")
+sys.modules[module.__name__] = module
+try:
+    exec(compile(MODULE_SOURCE, "<bundled-npa-subtasks>", "exec"), module.__dict__)
+    report = module.export_fiftyone_subtasks_to_s3(
+        DATASET_NAME, OUTPUT_PATH,
+        storage_client=storage_module.StorageClient.from_environment(),
+    )
+finally:
+    sys.modules.pop(module.__name__, None)
 print(json.dumps(report))
 """
 

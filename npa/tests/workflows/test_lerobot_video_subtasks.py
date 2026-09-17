@@ -39,7 +39,10 @@ def test_all_artifacts_and_recipe_bytes_match_manifest(manifest) -> None:
     for relative, digest in manifest["artifacts"].items():
         assert hashlib.sha256((EVIDENCE / relative).read_bytes()).hexdigest() == digest
     for relative, digest in manifest["provenance"]["recipe_sha256"].items():
-        assert hashlib.sha256((REPOSITORY / relative).read_bytes()).hexdigest() == digest
+        recipe = REPOSITORY / relative
+        if relative == "npa/src/npa/fiftyone_lerobot_subtasks.py":
+            recipe = EVIDENCE.parent / "lerobot-subtask-recipes" / f"{digest}.py"
+        assert hashlib.sha256(recipe.read_bytes()).hexdigest() == digest
     assert manifest["input_unchanged"] is True
     assert "not upstream ground truth" in manifest["provenance"]["limitations"]
     assert str(REPOSITORY) not in json.dumps(manifest)
@@ -75,10 +78,22 @@ def test_source_camera_clips_decode_exactly_one_episode(camera) -> None:
         times = []
         for frame in container.decode(video=0):
             times.append(frame.time)
-            digest.update(frame.to_ndarray(format="rgb24").tobytes())
+            assert frame.format.name == "yuv420p"
+            # RGB conversion uses platform-dependent SIMD rounding. Hash decoded
+            # native planes, excluding allocator-dependent row padding, instead.
+            for plane in frame.planes:
+                data = bytes(plane)
+                for row in range(plane.height):
+                    digest.update(data[row * plane.line_size:row * plane.line_size + plane.width])
     assert times == pytest.approx([index / 30 for index in range(454)], abs=1e-6)
-    receipt = json.loads((EVIDENCE / "agent-ui-capture.json").read_text())
-    assert digest.hexdigest() == receipt["validation"]["source_camera_pixel_match"][f"{camera}_sha256"]
+    receipt = json.loads((EVIDENCE / "source-camera-planes.json").read_text())
+    provenance = json.loads((EVIDENCE / "manifest.json").read_text())["provenance"]
+    assert receipt["source_revision"] == provenance["source_revision"]
+    assert len(times) == receipt["cameras"][camera]["frame_count"]
+    assert digest.hexdigest() == receipt["cameras"][camera]["decoded_yuv420p_sha256"]
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == receipt["cameras"][camera]["clip_sha256"]
+    reviewed = EVIDENCE / f"reviewed/videos/observation.images.{camera}/chunk-000/file-000.mp4"
+    assert path.read_bytes() == reviewed.read_bytes()
 
 
 def test_labeled_mp4_decodes_all_frames_and_shows_eight_distinct_label_colors() -> None:

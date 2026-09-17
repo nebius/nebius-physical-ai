@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
+from urllib.parse import urlparse
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -152,46 +154,17 @@ def export_fiftyone_subtasks(
     import fiftyone as fo
 
     dataset_type, dataset, samples = _load_review_dataset(fo, dataset_name)
-    export_view, episode_by_sample_id, episode_mapping = _ordered_export(dataset, samples)
+    episode_by_sample_id = {str(sample.id): index for index, sample in enumerate(samples)}
     segments = segments_from_temporal_tags(
         episode_by_sample_id,
         dataset.temporal_tags.values(),
     )
     destination = output_dir.expanduser().resolve()
     _require_empty_destination(destination)
-    export_view.export(export_dir=str(destination), dataset_type=dataset_type)
+    dataset.export(export_dir=str(destination), dataset_type=dataset_type)
     report = apply_subtask_segments(destination, segments, require_complete=require_complete)
     report.update({"dataset_name": dataset_name, "output_dir": str(destination)})
-    report["episode_index_mapping"] = episode_mapping
     return report
-
-
-def _ordered_export(dataset: Any, samples: list[Any]) -> tuple[Any, dict[str, int], list[dict[str, int]]]:
-    indexed_samples = [(_source_episode_index(sample), sample) for sample in samples]
-    indexed_samples.sort(key=lambda item: item[0])
-    source_indexes = [index for index, _sample in indexed_samples]
-    if len(set(source_indexes)) != len(source_indexes):
-        raise SubtaskLabelError("LeRobot source episode indexes must be unique")
-    sample_ids = [str(sample.id) for _index, sample in indexed_samples]
-    # FiftyOne 1.22 rewrites episode_index in collection order, not source order.
-    # Freeze that order for both label mapping and the native export's second read.
-    view = dataset.select(sample_ids, ordered=True)
-    mapping = {sample_id: index for index, sample_id in enumerate(sample_ids)}
-    provenance = [
-        {"source_episode_index": source_index, "export_episode_index": output_index}
-        for output_index, source_index in enumerate(source_indexes)
-    ]
-    return view, mapping, provenance
-
-
-def _source_episode_index(sample: Any) -> int:
-    try:
-        index = sample["episode_index"]
-    except (KeyError, AttributeError) as exc:
-        raise SubtaskLabelError("LeRobot sample is missing episode_index") from exc
-    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
-        raise SubtaskLabelError("LeRobot sample episode_index must be a nonnegative integer")
-    return index
 
 
 def _load_review_dataset(fo: Any, dataset_name: str) -> tuple[Any, Any, list[Any]]:
@@ -214,7 +187,6 @@ def export_fiftyone_subtasks_to_s3(
     output_uri: str,
     *,
     require_complete: bool = True,
-    storage_client: Any = None,
 ) -> dict[str, Any]:
     """Export reviewed FiftyOne subtasks to a new S3 LeRobot dataset prefix.
 
@@ -222,15 +194,12 @@ def export_fiftyone_subtasks_to_s3(
         dataset_name: Persistent FiftyOne dataset containing reviewed episodes.
         output_uri: Empty S3 prefix that will receive the derived dataset.
         require_complete: Whether every exported frame must have a subtask.
-        storage_client: Shared StorageClient; otherwise built from the environment.
 
     Returns:
         A JSON-serializable export and upload report.
 
     Raises:
-        SubtaskLabelError: If the dataset or annotations are invalid.
-        StorageError: If the S3 URI is invalid or its prefix is nonempty.
-        Exception: If the storage service rejects or cannot complete the upload.
+        SubtaskLabelError: If the URI is invalid, nonempty, or export fails.
     """
     with tempfile.TemporaryDirectory(prefix="npa-lerobot-subtasks-") as temporary_directory:
         output_dir = Path(temporary_directory) / "dataset"
@@ -239,7 +208,7 @@ def export_fiftyone_subtasks_to_s3(
             output_dir,
             require_complete=require_complete,
         )
-        uploaded_files = _upload_directory(output_dir, output_uri, storage_client)
+        uploaded_files = _upload_directory(output_dir, output_uri)
     report.pop("output_dir", None)
     report.update({"output_path": output_uri, "uploaded_files": uploaded_files})
     return report
@@ -484,17 +453,33 @@ def _require_empty_destination(destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
 
 
-def _upload_directory(root: Path, output_uri: str, storage_client: Any = None) -> int:
-    paths = sorted(root.rglob("*"))
-    for path in paths:
+def _upload_directory(root: Path, output_uri: str) -> int:
+    import boto3
+
+    bucket, prefix = _parse_s3_uri(output_uri)
+    endpoint = os.environ.get("NEBIUS_S3_ENDPOINT") or os.environ.get("AWS_ENDPOINT_URL") or None
+    client = boto3.client("s3", endpoint_url=endpoint)
+    existing = client.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
+    if existing.get("Contents"):
+        raise SubtaskLabelError(f"Output S3 prefix must be empty: {output_uri}")
+    files = sorted(path for path in root.rglob("*") if path.is_file())
+    for path in files:
         if path.is_symlink():
             raise SubtaskLabelError(f"Refusing to upload symlinked dataset asset: {path}")
-    if storage_client is None:
-        from npa.clients.storage import StorageClient
+        relative = path.relative_to(root).as_posix()
+        key = f"{prefix}{relative}" if prefix else relative
+        client.upload_file(str(path), bucket, key)
+    return len(files)
 
-        storage_client = StorageClient.from_environment()
-    storage_client.upload_directory(str(root), output_uri, require_empty=True)
-    return sum(path.is_file() for path in paths)
+
+def _parse_s3_uri(uri: str) -> tuple[str, str]:
+    parsed = urlparse(uri)
+    if parsed.scheme != "s3" or not parsed.netloc:
+        raise SubtaskLabelError(f"Output path must be an s3:// URI: {uri}")
+    prefix = parsed.path.lstrip("/")
+    if prefix and not prefix.endswith("/"):
+        prefix += "/"
+    return parsed.netloc, prefix
 
 
 def _read_subtask_labels(root: Path) -> dict[int, str]:

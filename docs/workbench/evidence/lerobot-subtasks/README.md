@@ -12,6 +12,9 @@ through the real production parser and label writer. The checked-in workflow
 then runs locally and verifies the exported Parquet. No NVIDIA tool, cloud
 job, model inference, or policy training was used.
 
+This historical recording retains its [original recipe](../lerobot-subtask-recipes/README.md).
+Current native-export validation is recorded [separately](../fiftyone-subtasks-native.md).
+
 The **33-second MP4** is a real browser screen recording of this exact RRD
 opened in the deployed agent UI's fullscreen embedded Rerun viewer. It steps
 through all eight rows and pauses on `grasp` (visible around 9 seconds).

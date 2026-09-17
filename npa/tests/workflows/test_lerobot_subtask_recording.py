@@ -133,7 +133,10 @@ def test_committed_bundle_proves_the_saved_parquet_row() -> None:
         assert archive.read("lerobot-subtasks.rrd") == (EVIDENCE / "lerobot-subtasks.rrd").read_bytes()
         assert json.loads(archive.read("manifest.json")) == manifest
     for relative, digest in manifest["provenance"]["recipe_sha256"].items():
-        assert hashlib.sha256((REPOSITORY / relative).read_bytes()).hexdigest() == digest
+        recipe = REPOSITORY / relative
+        if relative == "npa/src/npa/fiftyone_lerobot_subtasks.py":
+            recipe = EVIDENCE.parent / "lerobot-subtask-recipes" / f"{digest}.py"
+        assert hashlib.sha256(recipe.read_bytes()).hexdigest() == digest
 
 
 def test_agent_ui_mp4_decodes_and_matches_its_capture_receipt() -> None:
