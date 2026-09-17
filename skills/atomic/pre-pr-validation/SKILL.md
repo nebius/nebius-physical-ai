@@ -8,8 +8,9 @@ description: Use before pushing an npa change to pick which gates apply and run 
 Every pull request has one automatic candidate workflow. It runs lint, docs
 drift, guardrails, smoke feedback, security regressions, secret scanning, and
 confidentiality scanning. The merge queue additionally runs browser and focused
-compatibility checks alongside the complete four-shard Python 3.12 coverage suite
-against the latest `main`; main audits all supported Python versions.
+compatibility checks alongside the complete five-shard Python 3.12 coverage suite
+against the latest `main`; a daily audit covers all supported Python versions
+without competing with the next merge-queue candidate after every merge.
 `Security regression / security-regression` requires
 every candidate component and the reusable image-security workflow.
 The required workflows have no top-level path filters. Image scope is classified
@@ -130,9 +131,9 @@ existing PR concurrency controls. Image findings must not produce a passing
 sets a 180s timeout; CI runs with coverage and enforces `--cov-fail-under=60`.
 A local pass is a strong signal, not proof of the CI result.
 
-Run the equivalent coverage floor from the package directory. Merge-queue and
-main CI partition the same collection across four deterministic,
-duration-balanced shards and merge their coverage data:
+Run the equivalent coverage floor from the package directory. Merge-queue CI
+uses five deterministic, duration-balanced shards; the daily three-interpreter
+audit retains four per interpreter. Both merge their coverage data:
 
 ```bash
 cd npa

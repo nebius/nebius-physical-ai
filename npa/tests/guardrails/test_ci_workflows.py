@@ -69,11 +69,14 @@ def test_test_and_lint_do_not_duplicate_feature_branch_pushes() -> None:
         "gitleaks.yml",
         "harness-guardrails.yml",
         "lint.yml",
-        "test.yml",
     ):
         workflow = _load_workflow(name)
         assert workflow["on"]["push"] == {"branches": ["main"]}, name
         assert "pull_request" not in workflow["on"], name
+
+    test = _load_workflow("test.yml")["on"]
+    assert set(test) == {"workflow_call", "schedule", "workflow_dispatch"}
+    assert test["schedule"] == [{"cron": "23 5 * * *"}]
 
 
 def test_main_validation_cancels_superseded_commits() -> None:
@@ -82,7 +85,6 @@ def test_main_validation_cancels_superseded_commits() -> None:
         "gitleaks.yml",
         "harness-guardrails.yml",
         "lint.yml",
-        "test.yml",
     ):
         cancellation = _load_workflow(name)["concurrency"]["cancel-in-progress"]
         assert cancellation in (
@@ -91,15 +93,18 @@ def test_main_validation_cancels_superseded_commits() -> None:
         ), name
 
 
-def test_merge_queue_suite_is_sharded_and_main_keeps_full_compatibility() -> None:
+def test_merge_queue_suite_is_sharded_and_scheduled_audit_keeps_compatibility() -> None:
     workflow = _load_workflow("test.yml")
     job = workflow["jobs"]["test"]
     python_matrix = job["strategy"]["matrix"]["python-version"]
-    assert "github.event_name == 'push'" in python_matrix
+    assert "github.event_name == 'merge_group'" in python_matrix
     assert '["3.12"]' in python_matrix
     assert '["3.10", "3.12", "3.14"]' in python_matrix
-    assert job["strategy"]["matrix"]["shard"] == ["1", "2", "3", "4"]
-    assert job["strategy"]["fail-fast"] == "${{ github.event_name != 'push' }}"
+    shard_matrix = job["strategy"]["matrix"]["shard"]
+    assert "github.event_name == 'merge_group'" in shard_matrix
+    assert "[1, 2, 3, 4]" in shard_matrix
+    assert "[1, 2, 3, 4, 5]" in shard_matrix
+    assert job["strategy"]["fail-fast"] == "${{ github.event_name == 'merge_group' }}"
     assert job["if"] == "github.event_name != 'pull_request'"
     assert "continue-on-error" not in job
     assert workflow["on"]["workflow_call"] == ""
@@ -158,7 +163,7 @@ def test_coverage_shards_are_parallel_and_merged_before_enforcement() -> None:
         "NPA_E2E_PROJECT_ID": "project-test-00000000",
         "NPA_E2E_GROOT_BUCKET": "test-bucket-00000000",
         "NPA_CI_SHARD_INDEX": "${{ matrix.shard }}",
-        "NPA_CI_TOTAL_SHARDS": "4",
+        "NPA_CI_TOTAL_SHARDS": "${{ github.event_name == 'merge_group' && 5 || 4 }}",
         "COVERAGE_FILE": ".coverage.${{ matrix.python-version }}.${{ matrix.shard }}",
         "NPA_CI_TIMING_OUTPUT": "ci-timings-${{ matrix.python-version }}-${{ matrix.shard }}.json",
         "NPA_REQUIRE_FFMPEG": "1",
@@ -172,7 +177,7 @@ def test_coverage_shards_are_parallel_and_merged_before_enforcement() -> None:
     report = _step("test.yml", "coverage", "merged coverage floor")["run"]
     assert "coverage combine" in report
     assert "--fail-under=60" in report
-    profile = _step("test.yml", "coverage", "Merge trusted main duration")["run"]
+    profile = _step("test.yml", "coverage", "Merge scheduled duration")["run"]
     assert "merge_ci_test_timings.py" in profile
 
 

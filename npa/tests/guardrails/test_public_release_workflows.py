@@ -193,9 +193,10 @@ def test_base_image_scans_do_not_inherit_trivys_five_minute_timeout() -> None:
     command = next(
         step["run"]
         for step in job["steps"]
-        if step.get("name") == "Scan all pinned bases with two local workers"
+        if step.get("name") == "Scan all pinned bases with three local workers"
     )
     assert "scan_base_images.py" in command
+    assert "--workers 3" in command
 
 
 def test_post_push_and_promotion_gates_are_digest_bound() -> None:

@@ -1,0 +1,61 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "9c8908f20cdb1c87df44bb5a041a4c80469a362ccafc9f7b82ff18d6c331c24a",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec pass; four waves with two training members.",
+      "evidence": [
+        "npa workbench workflow validate-spec",
+        "npa workbench workflow plan-spec --waves"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Real LeRobot training and native PushT evaluation are wired to sealed datasets and exact checkpoints.",
+      "evidence": [
+        "npa/tests/workflows/test_lerobot_transfer.py",
+        "docs/workbench/guides/lerobot-transfer.md"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "Dedicated project storage passed credential and capability probes.",
+      "evidence": [
+        "Private operator preflight evidence"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "Pinned public data was downloaded and validated: 206 episodes, 25650 frames.",
+      "evidence": [
+        "Pinned LeRobot preparation execution"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Nebius authentication and dedicated S3 credential checks passed; no gated input is required.",
+      "evidence": [
+        "Private operator preflight evidence"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "Pinned LeRobot 0.6.0 image is pullable; new modules require staged source.",
+      "evidence": [
+        "sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643"
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "All four waves completed on reserved B200 capacity: two native ACT policies each trained for 20000 updates, 768 paired trials, 16 decoded MP4s, verified RRD, and five verified stage manifests. The measured candidate fails the absolute-success qualification gate; physical transfer remains unverified.",
+      "evidence": [
+        "docs/workbench/evidence/lerobot-transfer-b200.json",
+        "docs/workbench/evidence/lerobot-transfer-b200-trials.csv",
+        "docs/workbench/guides/lerobot-transfer.md#measured-b200-results"
+      ]
+    }
+  }
+}

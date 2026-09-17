@@ -1,0 +1,78 @@
+{
+  "schema": "npa.manipulation-integrated-cpu-validation.public.v1",
+  "source_commit": "e15124dd2b0643783d6e5fc36c3b67b635261a27",
+  "date_utc": "2026-09-17",
+  "all_checks_passed": true,
+  "runtime": {
+    "python": "3.12.14",
+    "torch": "2.13.0+cpu",
+    "rsl_rl": "5.0.1"
+  },
+  "scope": "Complete fresh Linux non-live suite in a separate environment with isolated test metadata access; host mounts unchanged.",
+  "checks": {
+    "ruff": {
+      "passed": true,
+      "log_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    },
+    "smoke": {
+      "passed": true,
+      "log_sha256": "e84fe3eb8706287bdadf32c1f9c4cbf1649553a855984b6d4099ec7150a8df2c",
+      "tests_passed": 114
+    },
+    "guardrails": {
+      "passed": true,
+      "log_sha256": "eadc8fdffd22839c38488762925027aa2d500572c5123c6cee3a8bfd2b9b912a",
+      "tests_passed": 3583
+    },
+    "focused": {
+      "passed": true,
+      "log_sha256": "839f151617019ea754b94f66556b1cb6b8fd3698eaf8f18c96f4d294b4c8cb73",
+      "tests_passed": 279
+    },
+    "linux-coverage": {
+      "passed": true,
+      "log_sha256": "9d9a34baa21f69ee8d4ca7ba85a917fc8b30d3c5110102b5905dc3885bd94214",
+      "tests_passed": 21860,
+      "tests_skipped": 103,
+      "tests_xpassed": 1,
+      "tests_failed": 0,
+      "workers": 4,
+      "elapsed_seconds": 703.76
+    },
+    "security": {
+      "passed": true,
+      "log_sha256": "e214074bb5d441bdffa4783f08b0d8d607b5d5635e8d045028109b67eeb9f5ae",
+      "tests_passed": 738
+    },
+    "docs": {
+      "passed": true,
+      "log_sha256": "e3c7c20b07ffc3d0e8949241f87ae693308997cbb0d44981138358d7203d9cdb"
+    },
+    "confidentiality-pr-range": {
+      "passed": true,
+      "log_sha256": "80ce1012249c31ad0182418840799432a4e2577239da80db1c0dd5bf65ca7bf8"
+    }
+  },
+  "package_coverage": {
+    "package_file_count": 786,
+    "package_lines_valid": 147500,
+    "package_lines_covered": 111951,
+    "package_coverage_percent": 75.898983,
+    "package_zero_coverage_files": 42
+  },
+  "coverage_note": "The raw 75.90% report includes one covered temporary fixture line. Excluding that line from retained XML gives the package-only counts above; raw data was preserved.",
+  "evidence_sha256": {
+    "final_readback": "3e26eec9ab47a46c0f2a5b4576d70d1dfc92c2652edac0030034090e5e6f3d02",
+    "validation_summary": "e10b40372365e0c911b6375eab6c793b5216b592967cc7c28b3d83bd2f8cde03",
+    "coverage_xml": "df657ff33c74e9c7a59c93204ba0cb705cc8d4a36fc1e5c8ec018854c003169c",
+    "coverage_population_audit": "56406fd89e26794e55c515a810dc86ed1477fee19f742d8c43247c1798e4a178"
+  },
+  "limits": [
+    "These checks validate CPU behavior and mocked integration boundaries; they do not establish native simulation validity or physical robot transfer.",
+    "The native diagnostic used source 519cc166916b5bb1ce4055bd1b91e6d0007c9a66; the only subsequent manipulation-module change is extraction of the frozen-inference verification helper in franka_rl_eval.py.",
+    "Earlier incomplete attempts are retained separately and contribute no passing results to this complete run.",
+    "The confidentiality check covers built-in patterns for the integrated PR range; it does not replace the private denylist or native image-security CI gate."
+  ],
+  "native_physics_qualified": false,
+  "physical_robot_tested": false
+}

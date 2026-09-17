@@ -701,15 +701,16 @@ class SkyPilotWaveExecutor:
                 # work.  A terminal-success scheduler observation plus the durable
                 # outputs is the same evidence accepted for an ordinary completed
                 # replay, so converge the failed driver record to succeeded.
-                if is_terminal_ok(sky_status) and self._outputs_exist(
-                    list(latest.get("outputs") or [])
-                ):
+                completion = self._verified_completion(latest)
+                if completion is not None:
                     attempt = self._attempt_from_record(
                         latest, steps=steps, kind=kind, group=group
                     )
                     attempt.status = "succeeded"
+                    attempt.sky_status = "SUCCEEDED"
                     attempt.adopted = True
                     attempt.replayed = True
+                    attempt.reconciliation.append(completion)
                     attempt.recovery_decision = (
                         "adopted_terminal_success_after_driver_failure"
                     )
@@ -871,6 +872,38 @@ class SkyPilotWaveExecutor:
         failed = self.attempts[-1]
         failed.error = last_error or "wave failed"
         return failed
+
+    def _verified_completion(self, record: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Recover a completed wave whose driver failed while recording success."""
+        outputs = list(record.get("outputs") or [])
+        status = str(record.get("sky_status") or "").upper()
+        source = "recorded_scheduler_success"
+        if not is_terminal_ok(status):
+            # Older drivers recorded every verified cancellation as CANCELLED,
+            # even when verification actually observed a job finish successfully.
+            if (
+                status != "CANCELLED"
+                or (record.get("cancellation") or {}).get("state") != "verified"
+                or not all(record.get(key) for key in ("job_id", "job_name", "logical_launch_id"))
+                or not outputs
+            ):
+                return None
+            evidence = self._reconcile_exact(str(record["job_name"]), str(record["job_id"]))
+            status = str(getattr(evidence, "status", "") or "").upper()
+            if (
+                getattr(evidence, "outcome", "") != "found"
+                or not getattr(evidence, "workload_observable", True)
+                or not is_terminal_ok(status)
+            ):
+                return None
+            source = "exact_managed_job_reconciliation"
+        if not self._outputs_exist(outputs):
+            return None
+        return {
+            "outcome": "found", "source": source, "status": status,
+            "job_id": str(record.get("job_id") or ""),
+            "declared_outputs_valid": True, "checked_at": utc_now(),
+        }
 
     @staticmethod
     def _attempt_from_record(
