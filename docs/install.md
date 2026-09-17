@@ -70,8 +70,9 @@ npa --version
 npa workbench --help
 ```
 
-Prefer [`uv`](https://docs.astral.sh/uv/)? From the clone root, use these commands
-instead of the venv creation and installation commands above:
+Prefer [`uv`](https://docs.astral.sh/uv/)? The commands below are equivalent to
+the venv creation and installation commands above — pick whichever tool you
+prefer; the quickstarts standardize on `venv`/`pip`. From the clone root:
 
 ```bash
 uv venv .venv
