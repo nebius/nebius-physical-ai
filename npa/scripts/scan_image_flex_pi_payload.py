@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict, dataclass
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -41,6 +42,11 @@ SECRET_CONTENT = (
     re.compile(rb"AKIA[0-9A-Z]{16}"),
     re.compile(rb"hf_[A-Za-z0-9]{24,}"),
 )
+DEEPSPEED_LAUNCHER = "opt/conda/bin/deepspeed.pt"
+# DeepSpeed 0.18.5's bin/deepspeed.pt is a Python launcher, not a checkpoint.
+# Bind its exact source body; pip rewrites only the interpreter shebang.
+# Source: https://pypi.org/project/deepspeed/0.18.5/
+DEEPSPEED_LAUNCHER_BODY_SHA256 = "ec0f0f7dc8b59ded078668a97341535e382040ed7e6b928d119abd36a4a5fb6c"
 
 
 def _application_content(name: str) -> bool:
@@ -64,6 +70,20 @@ def _python_path_configuration(name: str, payload: bytes | None) -> bool:
     )
 
 
+def _deepspeed_launcher(name: str, payload: bytes | None) -> bool:
+    if name != DEEPSPEED_LAUNCHER or payload is None:
+        return False
+    shebang, separator, body = payload.partition(b"\n")
+    return (
+        bool(separator)
+        and shebang in {
+            b"#!/opt/conda/bin/python", b"#!/opt/conda/bin/python3",
+            b"#!/opt/conda/bin/python3.11",
+        }
+        and hashlib.sha256(body).hexdigest() == DEEPSPEED_LAUNCHER_BODY_SHA256
+    )
+
+
 def _scan_archive(archive: tarfile.TarFile, *, layer: str) -> list[Finding]:
     findings = []
     for member in archive:
@@ -72,12 +92,14 @@ def _scan_archive(archive: tarfile.TarFile, *, layer: str) -> list[Finding]:
             continue
         payload = None
         if member.isfile() and member.size <= 16 * 1024**2:
-            if _application_content(name) or name.endswith(".pth"):
+            if _application_content(name) or name.endswith(".pth") or name == DEEPSPEED_LAUNCHER:
                 stream = archive.extractfile(member)
                 payload = stream.read() if stream is not None else None
         for kind, pattern in FORBIDDEN_PATHS:
             if pattern.search(name):
-                if kind == "model_weight" and _python_path_configuration(name, payload):
+                if kind == "model_weight" and (
+                    _python_path_configuration(name, payload) or _deepspeed_launcher(name, payload)
+                ):
                     continue
                 findings.append(Finding(kind, layer, name))
         if payload is not None and _application_content(name):

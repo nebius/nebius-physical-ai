@@ -94,6 +94,32 @@ def test_python_path_configuration_is_not_a_checkpoint(tmp_path):
     assert findings == []
 
 
+DEEPSPEED_LAUNCHER_BODY = (
+    b"\nfrom deepspeed.launcher.runner import main\n\n"
+    b"if __name__ == '__main__':\n    main()\n"
+)
+
+
+@pytest.mark.parametrize("interpreter", ["python", "python3", "python3.11"])
+def test_exact_deepspeed_launcher_is_not_a_checkpoint(tmp_path, interpreter):
+    payload = f"#!/opt/conda/bin/{interpreter}\n".encode() + DEEPSPEED_LAUNCHER_BODY
+    findings, _ = scanner.scan_saved_image(_image(tmp_path, {
+        "opt/conda/bin/deepspeed.pt": payload,
+    }))
+    assert findings == []
+
+
+@pytest.mark.parametrize("name,payload", [
+    ("opt/conda/bin/deepspeed.pt", b"PK\x03\x04checkpoint"),
+    ("opt/conda/bin/deepspeed.pt", b"#!/opt/conda/bin/python\n" + DEEPSPEED_LAUNCHER_BODY + b"payload"),
+    ("opt/conda/bin/checkpoint.pt", b"#!/opt/conda/bin/python\n" + DEEPSPEED_LAUNCHER_BODY),
+    ("opt/conda/bin/deepspeed.pt", b"#!/unverified/python\n" + DEEPSPEED_LAUNCHER_BODY),
+])
+def test_deepspeed_exception_refuses_changed_bytes_or_path(tmp_path, name, payload):
+    findings, _ = scanner.scan_saved_image(_image(tmp_path, {name: payload}))
+    assert any(item.kind == "model_weight" for item in findings)
+
+
 def test_packaging_acceptance_matches_publication_inventories():
     root = Path(__file__).resolve().parents[2]
     contract = yaml.safe_load((root / "docker/workbench/packaging-contract.yaml").read_text())
