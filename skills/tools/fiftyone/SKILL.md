@@ -9,6 +9,8 @@ The PAIDF worker image remains contract-attested and non-root for SkyPilot
 0.12.2, with passwordless sudo, SSH/rsync/service prerequisites, writable paths,
 and a forwarding entrypoint. Submit the verified immutable digest; never use a
 `runAsUser: 0` workflow override.
+Verify the actual bootstrap behavior for each replacement digest; the OCI label
+alone does not prove that setup, SSH and command forwarding work.
 
 FiftyOne is the dataset curation and visualization tool. It is CPU-only and does not require a GPU.
 
@@ -58,8 +60,9 @@ changed SSH host keys fail closed; provide an independently verified
 `NPA_SSH_KNOWN_HOSTS` file for a BYOVM host without a provider pin.
 
 Redeploy old Kubernetes and container deployments to replace public listeners;
-native VM launch also migrates its service environment to loopback. Existing
-published images are old bytes until an updated image is built and validated.
+native VM launch also migrates its service environment to loopback. Redeploy
+older versions to use the current validated image; existing tags retain their
+original bytes.
 
 ## Real Curation (Brain)
 
@@ -83,9 +86,22 @@ always means both real stages ran. The container functional smoke
 
 The `npa-fiftyone` image bundles `mongod` (the prebuilt `fiftyone_db` wheel ships
 no mongod for trixie) into `fiftyone/db/bin/` so FiftyOne launches its own
-metadata DB with no external MongoDB — required for any Brain method. To run
-curation against an *un-rebuilt* image, supply an external DB instead
-(`-e FIFTYONE_DATABASE_URI=mongodb://<host>:27017`).
+metadata DB. The CPU golden evaluation runs the standalone functional smoke:
+version, dataset creation and query, Brain curation, and App launch on loopback.
+Qualify the bundled database and repeat the dependency check after the actual
+initial NPA source install in the selected FiftyOne interpreter.
+
+MongoDB Community Server uses SSPL v1, not an OSI-approved license. Its notices,
+matching corresponding source and recipient access need verification before
+public image redistribution; service-use obligations remain a separate review.
+The supported FiftyOne 1.21 release includes a verified source annex and
+passes the actual initial NPA install, dependency and functional gates. Repeat
+these checks for each replacement digest. Follow the
+[release requirements and validator command](../../../npa/docker/workbench/fiftyone/RELEASE.md)
+to bind the exact local image ID and committed source revision, check real
+bootstrap and functional behavior, and retain raw evidence in a private
+directory. Only the allowlisted public summary belongs in the CI artifact.
+Do not infer publication readiness from the Dockerfile or license labels.
 
 ## Data Patterns
 

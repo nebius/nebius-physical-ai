@@ -642,6 +642,92 @@ def _assert_recorded_video(batches, video, alignment):
     assert max(abs(a - b) for a, b in zip(sorted(timestamps), expected)) <= 1000
 
 
+def _recording_document(entities, entity):
+    parts = []
+    for batch in entities[entity]:
+        for name in batch.schema.names:
+            if "text" in name.lower() or "body" in name.lower():
+                for row in batch.column(name).to_pylist():
+                    parts.extend(str(value) for value in (row if isinstance(row, list) else [row]))
+    return "\n".join(parts)
+
+
+def _recording_public_references():
+    from npa.workflows.data_factory_input import load_starter_contract
+    from npa.workbench.cosmos_curate.upstream import UPSTREAM_REPO as CURATOR_REPO
+    from npa.workbench.cosmos_evaluator.upstream import UPSTREAM_REPO as EVALUATOR_REPO
+
+    contract = load_starter_contract()
+    source = contract["source"]
+    return {
+        CURATOR_REPO, EVALUATOR_REPO, contract["license"]["url"],
+        *(source[key] for key in ("authoritative_url", "asset_url", "episode_metadata_url")),
+    }
+
+
+def _assert_recording_text_is_portable(text, bucket):
+    import re
+
+    assert bucket not in text, "Recording text contains the private bucket"
+    assert "s3://" not in text.lower(), "Recording text must use run-relative references"
+    assert "file://" not in text.lower(), "Recording text contains a local file URI"
+    assert not re.search(r"(?i)[?&](?:x-amz-|signature=|token=)", text), "Recording text contains a signed URL"
+    public = _recording_public_references()
+    for uri in re.findall(r'''\b[A-Za-z][A-Za-z0-9+.-]*://[^\s<>"'`)\]}]+''', text):
+        assert uri in public, "Recording text contains an unapproved location"
+    local_path = r"(?<![\w:/])/(?:[\w.~%-]+/)+[\w.~%-]+|\b[A-Za-z]:[\\/]"
+    assert not re.search(local_path, text), "Recording text contains a local path"
+    private_fields = (
+        "runtime|hostname|host|pod|pod_name|pod_id|node|node_name|node_id|"
+        "project_id|tenant_id|cluster_id|cluster_name|bucket|bucket_name|endpoint|"
+        "endpoint_url|cwd|working_directory|local_path|credential_path"
+    )
+    credential_fields = (
+        "credential|credentials|authorization|cookie|password|passwd|private_key|"
+        "secret|token|access_key|api_key|client_secret|secret_key|access_key_id|"
+        "secret_access_key|session_token|iam_token|aws_access_key_id|"
+        "aws_secret_access_key|aws_session_token|hf_token|ngc_api_key|nebius_iam_token"
+    )
+    keys = r'"(?:' + private_fields + "|" + credential_fields + r')"\s*:'
+    assert not re.search(keys, text, re.IGNORECASE), "Recording text contains private metadata"
+
+
+def _assert_curation_fields(recorded, original, fields):
+    for field in fields:
+        actual, expected = recorded, original
+        for key in field.split("."):
+            assert key in actual and key in expected, f"Missing recorded curation fact: {field}"
+            actual, expected = actual[key], expected[key]
+        assert type(actual) is type(expected) and actual == expected, f"Recorded curation fact differs from source: {field}"
+
+
+def _assert_recorded_curation(text, raw, relative):
+    import hashlib
+    import re
+
+    blocks = re.findall(r"```json\s*(.*?)```", text, re.DOTALL)
+    assert len(blocks) == 1, "Curation panel must contain one factual JSON document"
+    recorded, original = json.loads(blocks[0]), json.loads(raw)
+    assert isinstance(recorded, dict) and isinstance(original, dict)
+    source = recorded["source_report"]
+    assert source["artifact"] == relative, "Curation source must name the exact run-relative report"
+    assert source["sha256"] == hashlib.sha256(raw).hexdigest(), "Curation source-report bytes differ"
+    if relative == "curation/cosmos_curator.json":
+        assert original["schema"] == "npa.cosmos_curate.curation.v1"
+        assert original["engine"] in {"cosmos-curator-stages", "cosmos-curator-video-pipeline"}, "Curator must use a real engine"
+        assert original["status"] == "completed" and original["clip_count"] > 0
+        fields = "schema status engine variant_count clip_count motion_filter encoder".split()
+    else:
+        assert original["schema"] == "npa.fiftyone.curation.v1"
+        assert original["curation_engine"] == "fiftyone-brain"
+        assert original["status"] == "curated" and original["augmented_clips"] > 0
+        fields = ("schema status curation_engine augmented_clips clip_ids video_count frame_count "
+                  "curated_kept curated_dropped multiply.mode multiply.variant_count").split()
+        if "fiftyone" in original:
+            fields += ["fiftyone.fiftyone_version", "fiftyone.dedup_threshold"]
+    _assert_curation_fields(recorded, original, fields)
+
+
 def _assert_transfer_recording(client, bucket, prefix, folder, variants, read_json):
     from rerun.recording import load_recording
 
@@ -652,17 +738,14 @@ def _assert_transfer_recording(client, bucket, prefix, folder, variants, read_js
         entities.setdefault(str(chunk.entity_path), []).append(chunk.to_record_batch())
 
     def document(entity):
-        parts = []
-        for batch in entities[entity]:
-            for name in batch.schema.names:
-                if "text" in name.lower() or "body" in name.lower():
-                    for row in batch.column(name).to_pylist():
-                        parts.extend(str(value) for value in (row if isinstance(row, list) else [row]))
-        return "\n".join(parts)
+        return _recording_document(entities, entity)
 
     for entity, relative in (("/pipeline/4_cosmos_curator", "curation/cosmos_curator.json"),
                              ("/pipeline/4_curation", "curation/report.json")):
-        assert json.dumps(read_json(relative), indent=2, sort_keys=True) in document(entity)
+        with client.get_object(Bucket=bucket, Key=prefix + relative)["Body"] as body:
+            _assert_recorded_curation(document(entity), body.read(), relative)
+    for entity in entities:
+        _assert_recording_text_is_portable(document(entity), bucket)
     captions = document("/captions/labeled_augmented")
     for variant in variants:
         clip = variant["clip"]
