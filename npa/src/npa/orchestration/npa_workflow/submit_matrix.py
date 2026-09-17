@@ -72,6 +72,12 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "antioch-warehouse.yaml", "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_overrides=(("workbench.isaac_lab.antioch_warehouse", "isaac-lab"),),
+        notes="Antioch-authored warehouse batch on native Isaac, followed by CPU S3 evidence readback.",
+    ),
+    SubmitLiveCase(
         "cosmos3-policy-model-factory.yaml", "gpu",
         secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         image_tool="cosmos3",

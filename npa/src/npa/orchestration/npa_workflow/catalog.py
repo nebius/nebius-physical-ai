@@ -1046,6 +1046,23 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.augmented_frames_uri}}",
         ],
     ),
+    "workbench.isaac_lab.antioch_warehouse": ToolEntry(
+        name="workbench.isaac_lab.antioch_warehouse",
+        description="Run the Antioch-authored warehouse as a native Isaac six-carton batch.",
+        argv_template=[
+            "python3", "-m", "npa.workflows.antioch_warehouse", "simulate",
+            "--output-path", "{{config.simulation_uri}}", "--run-id", "{{run.id}}",
+        ],
+    ),
+    "workflow.antioch_warehouse.verify": ToolEntry(
+        name="workflow.antioch_warehouse.verify",
+        description="Read back warehouse measurements and images and enforce acceptance checks.",
+        argv_template=[
+            "python3", "-m", "npa.workflows.antioch_warehouse", "verify",
+            "--input-path", "{{config.simulation_uri}}",
+            "--output-path", "{{config.reports_uri}}",
+        ],
+    ),
     "workbench.isaac_lab.capture_frames": ToolEntry(
         name="workbench.isaac_lab.capture_frames",
         description="Capture RGB frames from a headless Isaac Lab task and publish them.",

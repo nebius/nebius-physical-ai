@@ -1,0 +1,52 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: antioch-warehouse
+  description: >-
+    Run the locally Antioch-authored fulfillment warehouse on native Isaac/PhysX:
+    contact conveyor, scripted Cartesian gantry, six dynamic carton placements,
+    then independent S3 measurement and image readback. No Antioch cloud dependency.
+config:
+  bucket: example-bucket
+  prefix: "antioch-warehouse/{{run.id}}"
+  source_overlay: true
+  simulation_uri: "s3://{{config.bucket}}/{{config.prefix}}/simulation/"
+  reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/"
+resources:
+  isaac-gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 8
+    memory: 32Gi
+  cpu:
+    cloud: kubernetes
+    cpus: 2
+    memory: 4Gi
+initial: simulate
+states:
+  simulate:
+    toolRef: workbench.isaac_lab.antioch_warehouse
+    resources: isaac-gpu
+    outputs:
+      - uri: "{{config.simulation_uri}}validation.json"
+        schema: npa.antioch-warehouse.measurements.v1
+      - uri: "{{config.simulation_uri}}events.json"
+      - uri: "{{config.simulation_uri}}trajectory.json"
+      - uri: "{{config.simulation_uri}}aisle.png"
+        schema: image/png
+      - uri: "{{config.simulation_uri}}overview.png"
+        schema: image/png
+      - uri: "{{config.simulation_uri}}packing.png"
+        schema: image/png
+      - uri: "{{config.simulation_uri}}verification.json"
+        schema: npa.antioch-warehouse.verification.v1
+    next: verify
+  verify:
+    toolRef: workflow.antioch_warehouse.verify
+    resources: cpu
+    inputs:
+      - uri: "{{config.simulation_uri}}"
+    outputs:
+      - uri: "{{config.reports_uri}}verification.json"
+        schema: npa.antioch-warehouse.verification.v1
+    terminal: true

@@ -144,6 +144,13 @@ workflow templates.
 
 ## Gotchas
 
+- `workflows/testing/antioch-warehouse.yaml` ports the local Antioch warehouse
+  into a native Isaac GPU batch and a CPU evidence readback stage. It needs an
+  RTX worker, runtime NVIDIA assets, writable S3, and the submitted source overlay;
+  it does not need an Antioch session. Follow `docs/workbench/antioch-warehouse.md`
+  and check `docs/testing/antioch-warehouse.md` before claiming live Workbench
+  readiness. A successful native simulation does not prove the two-stage submit.
+
 - The native Ray CLIP recipe has an optional completed-result archive companion
   at `npa/workflows/workbench/ray-clip-development/archive.py`; follow
   `docs/testing/ray-clip-archive.md` for quiescent source inventories, conditional
