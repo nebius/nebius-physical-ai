@@ -27,6 +27,7 @@ def _spec(name: str) -> Path:
         "av-night-scene-hardening.yaml",
         "cosmos-synth-fanout-curation.yaml",
         "physical-ai-data-factory.yaml",
+        "lerobot-transfer.yaml",
     ],
 )
 def test_cli_validate_spec(name: str) -> None:

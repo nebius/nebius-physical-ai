@@ -644,6 +644,9 @@ skills:
     when_to_use: "LeRobot policy training, evaluation, serving, inference, dataset conversion, or policy workflows."
     path: skills/tools/lerobot/SKILL.md
     smoke:
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/lerobot-transfer.yaml
       - type: cli_help
         args: ["workbench", "lerobot", "train", "--help"]
         contains: "policy"

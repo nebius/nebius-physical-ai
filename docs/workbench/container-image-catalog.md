@@ -60,6 +60,11 @@ publication gates plus the checked-in Blackwell validator and real
 0.5.1 as the current default or add a second `lerobot` row to the default public
 release plan.
 
+The four-wave [LeRobot transfer experiment](guides/lerobot-transfer.md) selects
+that optional 0.6.0 image by digest and stages its adapters from the checkout.
+It uses the image's non-root runtime user and baked SkyPilot prerequisites;
+no new image publication is required for the experiment.
+
 ## 2026-09-16 flex-pi publication
 
 `npa-flex-pi:0.1.0-cu128` is bound to direct `linux/amd64` manifest
