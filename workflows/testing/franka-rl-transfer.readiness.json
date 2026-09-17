@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "8e86992946b4dd61e9723851efb558097a01b1b6289fcf52bb8cd328b92f993e",
+  "workflow_sha256": "0cab0738eea75c7a10f5f6b25ed9d10b617de445a1ff938c991dfefc0124f312",
   "planning": {
     "validation": {
       "status": "verified",
@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "The adaptive-exploration recipe configures bounded learned targets, motion-aware observations, partial goal-progress rewards, stable-hold rewards, and a training-only outcome curriculum. Full held-out physics tests and hosted visual judgments remain separate.",
+      "reason": "The bounded-exploration recipe configures learned servo targets, motion-aware observations, stable-hold rewards and an outcome curriculum. New recipes reject measured-state violations before reward and keep hosted visual judgments independent.",
       "evidence": [
         "npa/tests/workflows/test_franka_rl_learning.py",
         "docs/workbench/guides/franka-rl-transfer.md"
@@ -29,9 +29,10 @@
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "Historical joint-baseline runs are verified for three embodiments; the new adaptive default requires a fresh native run and artifact audit. Prior policy results do not validate this learning change.",
+      "reason": "Frozen bounded-exploration runs completed but showed articulation violations and zero strict placement successes. The new measured-state contract and gripper compatibility profile require native validation; artifact integrity does not establish valid physics.",
       "evidence": [
-        "docs/workbench/evidence/embodiment-parts-validation.json"
+        "docs/workbench/evidence/manipulation-physics-counterexamples.json",
+        "docs/workbench/evidence/manipulation-bounded-exploration-rtx.json"
       ]
     },
     "credentials": {
@@ -50,9 +51,10 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "Historical joint-baseline runs are verified for three embodiments; the new adaptive default requires a fresh native run and artifact audit. Prior policy results do not validate this learning change.",
+      "reason": "Frozen bounded-exploration runs completed but showed articulation violations and zero strict placement successes. The new measured-state contract and gripper compatibility profile require native validation; artifact integrity does not establish valid physics.",
       "evidence": [
-        "docs/workbench/evidence/embodiment-parts-validation.json"
+        "docs/workbench/evidence/manipulation-physics-counterexamples.json",
+        "docs/workbench/evidence/manipulation-bounded-exploration-rtx.json"
       ]
     }
   }

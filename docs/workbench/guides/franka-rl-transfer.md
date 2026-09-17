@@ -61,8 +61,8 @@ from pi to zero to face the positive-X task workspace. Kinova retains its
 upstream initial joints and identity root pose. UR10e's nominal grasp
 frame is 14.5 cm along the wrist's tool axis. JACO2 uses its authored
 `j2n7s300_end_effector` frame. These are simulation conventions, not physical
-TCP calibrations. Native robot actuator/gravity/collision settings otherwise
-remain unchanged and are recorded separately.
+TCP calibrations. Native gravity and collision settings remain recorded separately;
+new UR10e recipes apply the gripper compatibility profile described below.
 
 UR10e uses `shoulder_link` as the frame sensor's source because the pinned PhysX
 frame-view initialization unexpectedly includes the Robotiq gripper's nested
@@ -80,8 +80,9 @@ continuous monitoring. The pinned [link-pose API](https://github.com/isaac-sim/I
 specifies XYZW quaternions; the [sensor kernel](https://github.com/isaac-sim/IsaacLab/blob/ffff603eafc6b74264a5261cc0183d6a65390d78/source/isaaclab_physx/isaaclab_physx/sensors/frame_transformer/kernels.py)
 computes world TCP from the target body independently of the source frame.
 
-Object assets, PPO update count, success criteria, and physics shifts remain
-fixed. All recipes interpret raw arm actions as offsets from the native default
+Object assets, PPO update count, lift/hold thresholds, and physics shifts remain
+fixed. New recipes additionally reject invalid physics and task-domain departures.
+All recipes interpret raw arm actions as offsets from the native default
 joint positions with a 0.5-radian scale. The adaptive recipe then constrains the
 physical target and its slew; it does not clip raw actions to a small reachable
 neighborhood. The historical common control convention is a comparison baseline, not a claim of optimal
@@ -156,7 +157,24 @@ embodiment-specific grasp commands; the actor still learns every action mean.
 Sampling, probability ratios, entropy, and KL all use the same transformed
 standard deviation. Checkpoints preserve both the learned raw parameters and
 the bounds, and evaluation verifies that neither changes during inference.
-This mechanism requires a new measured comparison before claiming improvement.
+The frozen bounded follow-up completed 1,500 PPO updates for each embodiment,
+but none achieved a strict held-out placement. Its artifacts are independently
+verified; its physics is not qualified:
+
+| Embodiment | Raw trained height events | Strict held-out placements |
+| --- | ---: | ---: |
+| Franka Panda | 266/512 | 0/512 |
+| Kinova JACO2 | 125/512 | 0/512 |
+| UR10e + Robotiq | 53/512 | 0/512 |
+
+Initial policies recorded zero height events and placements. The trained height
+counts are threshold crossings, **not verified lifts**: the retained captures
+include articulation-limit violations, including another extreme UR object
+launch. Training curricula stayed at their initial difficulty. The
+[bounded-run evidence](../evidence/manipulation-bounded-exploration-rtx.json)
+records checkpoint selection, counts, timings, full artifact hashes, and visual
+auditing separately from physics qualification. Improved strict task success
+has not been demonstrated.
 
 ### Simulation integrity before learning
 
@@ -218,9 +236,10 @@ inventing a rotation limit.
 
 There is no grasp trajectory, waypoint sequence, timed gripper closure, or
 success-conditioned action override. The curriculum changes only the training
-distribution. Validation, all four test conditions, checkpoint selection,
-Token Factory evaluation, and deployment qualification retain their original
-criteria. The visual judge never supplies training rewards.
+distribution. Validation selects checkpoints independently of all four test
+conditions and Token Factory judgments. The lift/hold thresholds remain unchanged;
+new physics and task-domain checks can invalidate an otherwise positive result.
+The visual judge never supplies training rewards.
 
 Adaptive captures additionally retain `telemetry.npz` with actual object, goal,
 and tool poses, object velocities, and the physical controller targets. Poses

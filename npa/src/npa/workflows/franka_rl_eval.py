@@ -54,6 +54,15 @@ def _initial_state_hashes(env) -> list[str]:
     return [hashlib.sha256(row.tobytes()).hexdigest() for row in state.detach().cpu().numpy()]
 
 
+def _verify_frozen_inference(env, runner, recipe, normalization, distribution) -> None:
+    if normalization != normalization_evidence(runner, recipe):
+        raise RuntimeError("Evaluation changed the checkpoint observation normalizer")
+    if distribution != distribution_evidence(runner, recipe):
+        raise RuntimeError("Evaluation changed the checkpoint action distribution")
+    env.unwrapped.npa_normalization_evidence = normalization
+    env.unwrapped.npa_distribution_evidence = distribution
+
+
 def _rollout(checkpoint: Path, recipe: dict, *, split: str, condition: str,
              seed: int, iteration: int) -> tuple[list[dict], dict]:
     import gymnasium as gym
@@ -83,12 +92,7 @@ def _rollout(checkpoint: Path, recipe: dict, *, split: str, condition: str,
                 obs, _, done, _ = wrapped.step(applied)
                 metrics.update(*_observe(env), done.cpu().numpy(), task_domain_exits(env.unwrapped).cpu().numpy())
                 previous = action.clone()
-        if normalization != normalization_evidence(runner, recipe):
-            raise RuntimeError("Evaluation changed the checkpoint observation normalizer")
-        if distribution != distribution_evidence(runner, recipe):
-            raise RuntimeError("Evaluation changed the checkpoint action distribution")
-        env.unwrapped.npa_normalization_evidence = normalization
-        env.unwrapped.npa_distribution_evidence = distribution
+        _verify_frozen_inference(env, runner, recipe, normalization, distribution)
         rows = _rows(metrics, split=split, condition=condition, checkpoint=checkpoint,
                      seed=seed, iteration=iteration, initial_hashes=initial_hashes)
         physics = physics_evidence(env)
