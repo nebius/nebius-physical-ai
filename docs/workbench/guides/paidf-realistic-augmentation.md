@@ -97,13 +97,13 @@ APPEARANCE_PROFILES='[
    "color_grade":"neutral balanced color palette",
    "surface_finish":"matte low-gloss work surface finish"}
 ]'
-TASK_PROMPT='Preserve both robot arms and grippers, the same battery, its polarity markings, the remote controller, its open slot, the exact grasp and insertion contacts, camera viewpoint, trajectories, timing, occlusions and final outcome. Apply only the requested appearance variation to existing surfaces.'
+TASK_PROMPT='Preserve both robot arms and grippers with white plastic plates and dark charcoal-gray mechanical parts. Preserve the black cylindrical battery with metallic gold-colored ends, its existing markings and polarity, and the white remote controller with its open battery slot. Keep these object identity colors exactly as in the source. Keep the exact grasp and insertion contacts, camera viewpoint, trajectories, timing, occlusions and final outcome. Apply only the requested subtle lighting variation to existing surfaces.'
 
 QUALITY_ARGS=(
   --var "appearance_profiles_json=$APPEARANCE_PROFILES"
-  --var 'augment_subject=two robot arms placing a battery into a remote controller slot'
+  --var 'augment_subject=two white-and-dark-gray robotic grippers inserting a black cylindrical battery with metallic gold-colored ends into a white remote controller'
   --var "prompt=$TASK_PROMPT"
-  --var 'negative_prompt=extra or missing objects, warped grippers, altered battery or slot, floating objects, interpenetration, motion retiming, flicker, ghosting, unsafe content'
+  --var 'negative_prompt=red battery, orange battery, recolored battery terminals, changed object colors, extra or missing objects, warped grippers, altered battery or slot, floating objects, interpenetration, motion retiming, flicker, ghosting, unsafe content'
   --var augmentation_seed=30 --var seed=17
   --var transfer_edge_threshold=low
   --var control_guidance=1.0 --var guidance=3.0 --var steps=35
@@ -129,14 +129,18 @@ npa workbench workflow submit "$SPEC" --run-id "$RUN_ID" \
 
 These gentler sampling settings reduced excessive contrast in the battery
 experiment; they remain an **unqualified starting experiment**, not a
-training-quality recommendation. The cool candidate still recolored the battery,
-and the warm candidate's intended appearance change was difficult to verify.
+training-quality recommendation. Before the explicit identity-color wording shown
+here, the cool candidate still recolored the battery and the warm candidate's
+intended appearance change was difficult to verify.
 A real trial with
 `control_guidance=3.0`, `guidance=3.5`, and `steps=32` produced harsh contrast and
 distorted gripper/battery details and was rejected. Higher control guidance did
 not establish task preservation. Compare changes on the same episode, appearance
 profiles and seeds in separate fresh run IDs, with a separate SkyPilot API
-directory per run. Use the same strict evaluation settings for each. Adjust one
+directory per run. When testing different source revisions, also give each run
+its own `NPA_CONFIG_DIR`: source staging updates that configuration, and a live
+API correctly rejects changes to its bound configuration. Use the same strict
+evaluation settings for each. Adjust one
 generation control at a time after observing the failure; lowering thresholds
 does not improve pixels.
 
@@ -280,3 +284,13 @@ the cool recoloring and found insufficient evidence of the warm appearance
 edit. It does not replace human inspection or establish continuous dynamics.
 The unchanged evaluator rejected both: aggregate score 0.146111, temporal scores
 0.142263 and 0.149958, and 2/4 attributes correct for each candidate.
+
+A fifth pair kept the fourth trial's sampling controls and added explicit
+object identity colors to the task specification, with fresh task-aware source
+captions. Both videos and the real evaluator report completed. The gold battery
+ends were retained in reviewed frames, but fine gripper details still differed.
+The unchanged evaluator rejected both: aggregate score 0.149534, temporal scores
+0.148944 and 0.150124, and attribute scores 2/4 and 1/4. The workflow did not
+complete its terminal disposition stage: its isolated API refused a source
+configuration changed by another trial. These measurements come from the retained
+evaluator report, not a successful end-to-end workflow receipt.
