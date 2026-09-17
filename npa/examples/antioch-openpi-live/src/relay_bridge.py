@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import hmac
 import ipaddress
+import os
 import ssl
+import stat
 import threading
 import time
 from pathlib import Path
@@ -17,6 +19,30 @@ MAX_MESSAGE_BYTES = 32 * 1024 * 1024
 # WSS client certificates and the API token gate every request.
 LISTEN_HOST = str(ipaddress.IPv4Address(0))
 ROLES = frozenset({"operator", "simulation"})
+
+
+def _prepare_temp_root() -> None:
+    """Create the uid-owned lock root required by the Antioch runner."""
+
+    portable = Path(os.environ.get("ANTIOCH_KIT_PORTABLE_ROOT", ""))
+    temp_root = Path(os.environ.get("TMPDIR", ""))
+    if (
+        not portable.is_absolute()
+        or not temp_root.is_absolute()
+        or temp_root.parent != portable
+    ):
+        raise RuntimeError("TMPDIR must be a direct child of the Kit portable root")
+    if temp_root.is_symlink():
+        raise RuntimeError("TMPDIR must not be a symlink")
+    temp_root.mkdir(mode=0o700, parents=False, exist_ok=True)
+    temp_root.chmod(0o700)
+    observed = temp_root.stat()
+    if (
+        not stat.S_ISDIR(observed.st_mode)
+        or observed.st_uid != os.geteuid()
+        or stat.S_IMODE(observed.st_mode) != 0o700
+    ):
+        raise RuntimeError("TMPDIR ownership or mode is unsafe")
 
 
 class RelayBridge:
@@ -68,6 +94,7 @@ class RelayBridge:
 
 
 def main() -> int:
+    _prepare_temp_root()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle", required=True)
     parser.add_argument("--wait-for-bundle", action="store_true")

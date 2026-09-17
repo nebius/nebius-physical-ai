@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -51,7 +52,9 @@ def test_live_example_uses_only_runtime_project_identity() -> None:
     sim = manifest["services"]["sim"]
     assert "image" not in sim
     assert sim["build"] == {"context": ".", "dockerfile": "Dockerfile"}
-    assert sim["environment"] == {"TMPDIR": "/tmp/npa-home/tmp"}
+    assert sim["environment"] == {
+        "TMPDIR": "/antioch/renderer-cache/npa-live-tmp"
+    }
     assert sim["ports"] == [
         {
             "name": "policy-relay",
@@ -1360,8 +1363,7 @@ def test_live_sim_image_contains_only_protocol_dependencies() -> None:
     scratch_home = str(PurePosixPath("/") / "tmp" / "npa-home")
     assert f"{scratch_home}/.cache \\" in dockerfile
     assert f"{scratch_home}/.cache/ov" in dockerfile
-    assert f"{scratch_home}/tmp" in dockerfile
-    assert f"TMPDIR={scratch_home}/tmp" in dockerfile
+    assert "TMPDIR=/antioch/renderer-cache/npa-live-tmp" in dockerfile
     assert (
         "/usr/local/lib/python3.12/dist-packages/isaacsim/kit/cache/DerivedDataCache"
         in dockerfile
@@ -1387,6 +1389,31 @@ def test_live_sim_image_contains_only_protocol_dependencies() -> None:
     ).read_text(encoding="utf-8")
     assert "git clone" not in dockerfile
     assert "checkpoint" not in dockerfile.lower()
+
+
+def test_live_bridge_prepares_an_owned_kit_temp_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = EXAMPLE / "src/relay_bridge.py"
+    spec = importlib.util.spec_from_file_location("antioch_live_relay_bridge", path)
+    assert spec is not None and spec.loader is not None
+    bridge = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bridge)
+
+    portable = tmp_path / "portable"
+    portable.mkdir()
+    temp_root = portable / "runner-tmp"
+    monkeypatch.setenv("ANTIOCH_KIT_PORTABLE_ROOT", str(portable))
+    monkeypatch.setenv("TMPDIR", str(temp_root))
+    bridge._prepare_temp_root()
+
+    assert temp_root.is_dir()
+    assert temp_root.stat().st_uid == os.geteuid()
+    assert temp_root.stat().st_mode & 0o777 == 0o700
+
+    monkeypatch.setenv("TMPDIR", str(tmp_path / "outside"))
+    with pytest.raises(RuntimeError, match="direct child"):
+        bridge._prepare_temp_root()
 
 
 def test_live_example_documents_supported_renewal_boundary() -> None:
