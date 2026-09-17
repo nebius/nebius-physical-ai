@@ -42,7 +42,7 @@
     },
     "source_image": {
       "status": "verified",
-      "reason": "The recorded source archive was SHA-256 checked and executed in the accepted image; subsequent changes and their validation are documented.",
+      "reason": "The recorded source archive was SHA-256 checked and executed in the historical 0.1.0-cu128 image; the current r2 single-inference validation is documented separately.",
       "evidence": [
         "sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5",
         "source archive sha256:a04ec3f2ff53020ca90d0ff5873b4e7469921a37ed2ad94b048741228f14ed74",
