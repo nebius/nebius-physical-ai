@@ -7,9 +7,142 @@ frame-aligned subtask for low-level control. LeRobot remains the training data
 contract; FiftyOne 1.22 supplies synchronized camera/state/action playback and
 the human timeline editor. No NVIDIA model or service is required.
 
+There are two distinct paths:
+
+- [Reproduce the recorded SO-100 example](#reproduce-the-recorded-so-100-example):
+  real robot footage with scripted demonstration annotations, local YAML
+  verification, and a labeled MP4/RRD.
+- [Label your own dataset](#before-labeling-your-own-dataset): human review in FiftyOne,
+  followed by a derived LeRobot export and the same verification gate.
+
+FiftyOne is the annotation/review interface, not the model deciding what a
+subtask means. Workbench's exporter writes its temporal tags into LeRobot
+Parquet using PyArrow. Rerun and PyAV/FFmpeg produce the recorded visualization.
+An optional VLM can propose labels for review, but that automation is not part
+of this example. Label export alone does not implement System 1/System 2 policy
+training.
+
+## Reproduce the recorded SO-100 example
+
+The source is [lerobot/svla_so100_pickplace at the pinned revision](https://huggingface.co/datasets/lerobot/svla_so100_pickplace/tree/728583b5eaf9e739a7f119e2def466fa1d552402),
+published under Apache-2.0. Episode **0** shows a real SO-100 arm picking up a cube
+and placing it in a box: **454 frames at 30 FPS, approximately 15.13 seconds**.
+Inputs include top and wrist camera MP4s, joint states, actions, and timestamps.
+
+The eight added labels are `ready`, `approach`, `grasp`, `transfer`, `place`,
+`release`, `retract`, and `complete`. They are assistant-authored demonstration
+annotations, visually checked against the cameras, **not upstream ground truth**.
+The recording exercises the production parser/exporter programmatically; it
+does not show someone labeling in the FiftyOne App.
+
+### Watch the existing result
+
+- [Labeled two-camera MP4](../evidence/lerobot-video-subtasks/lerobot-labeled.mp4)
+- [Actual agent UI playback capture](../evidence/lerobot-video-subtasks/agent-ui-playback.mp4)
+- [Interactive RRD](../evidence/lerobot-video-subtasks/lerobot-video-subtasks.rrd)
+- [Frame boundaries, source license, manifests, and input/output datasets](../evidence/lerobot-video-subtasks/README.md)
+
+From the repository root on a Mac:
+
+```bash
+open docs/workbench/evidence/lerobot-video-subtasks/lerobot-labeled.mp4
+open docs/workbench/evidence/lerobot-video-subtasks/agent-ui-playback.mp4
+npa/.venv/bin/rerun docs/workbench/evidence/lerobot-video-subtasks/lerobot-video-subtasks.rrd
+```
+
+For Rerun, select `episode_time`, move to the beginning, and play. The main view
+shows both cameras, the current label, and all eight phases. Inspect
+`labeled/frame` and `subtasks/index` to see the underlying exported frame values.
+
+### Regenerate the labeled dataset, MP4, and RRD
+
+Start from a checkout containing this guide and the producer script, with the
+[repository virtualenv installed](../../../CONTRIBUTING.md#testing-requirements).
+The local producer uses the NPA environment's PyAV, Pillow, PyArrow, and pinned
+Rerun SDK. It also needs `ffmpeg` on `PATH`, DejaVu Sans or Arial, and the Hugging
+Face CLI (`hf`) for the download below. On a Mac with Homebrew, install both
+tools with `brew install ffmpeg hf`; Arial is supported by the renderer. Other
+platforms can follow the [Hugging Face CLI installation guide](https://huggingface.co/docs/huggingface_hub/guides/cli#install-with-pip).
+Run these commands from the repository root:
+
+```bash
+hf download lerobot/svla_so100_pickplace --repo-type dataset \
+  --revision 728583b5eaf9e739a7f119e2def466fa1d552402 \
+  --local-dir results/so100-source
+
+PYTHONPATH=npa/src npa/.venv/bin/python npa/scripts/record_lerobot_video_subtasks.py \
+  --source-dir results/so100-source \
+  --output-dir results/so100-labeled-new \
+  --run-id so100-labeled-new
+
+npa/.venv/bin/rerun rrd verify results/so100-labeled-new/lerobot-video-subtasks.rrd
+npa/.venv/bin/python -m json.tool results/so100-labeled-new/subtask-proof.json
+```
+
+The public snapshot is approximately 470 MB. Keep the pinned revision: the
+producer verifies the original file hashes before writing anything. Use a new
+output directory on every run; an existing destination is rejected.
+
+Expected outputs under `results/so100-labeled-new/`:
+
+| Artifact | What to check |
+| --- | --- |
+| `input/`, `reviewed/` | Original episode and separate labeled copy; original actions/states are unchanged. |
+| `lerobot-labeled.mp4` | Two cameras with changing labels, 1280×720, 30 FPS, 454 frames. |
+| `lerobot-video-subtasks.rrd` | The exact MP4 plus all 454 labeled rows and synchronized video references. |
+| `subtask-proof.json` | `status: verified`, 454 labeled frames, eight segments, zero unlabeled frames; `grasp` at frame 160. |
+| `manifest.json`, `workflow-report.json` | Source/artifact hashes and successful local YAML execution. |
+
+The producer is deliberately fixed to this dataset, episode, and vocabulary.
+It is **not a generic renderer for arbitrary labeled datasets**. For a different
+dataset, follow the manual labeling/export path below; the current generic
+conversion commands do not reproduce this example's custom subtask overlays.
+
+### Record the RRD playing in the agent UI
+
+The producer creates the labeled MP4 and RRD, but **does not create the separate
+agent UI screen recording**. To make that recording yourself:
+
+1. Open your authenticated agent UI, choose the **Rerun** tab, and drag the new
+   `lerobot-video-subtasks.rrd` into its viewer. Confirm that the SO-100 cameras
+   and eight phase labels appear, not a stock demo.
+2. Expand the viewer, choose `episode_time`, pause, and seek to the beginning.
+   Keep private endpoints, credentials, and infrastructure panels outside the
+   captured area.
+3. On macOS, press **Shift–Command–5**, select the viewer region, start recording,
+   and click the viewer's **Play** control. Stop after the final `complete` phase.
+4. Save the screen recording and convert it to a broadly playable MP4 if needed:
+
+```bash
+ffmpeg -n -i '<screen-recording.mov>' -an -c:v libx264 -crf 18 \
+  -pix_fmt yuv420p -movflags +faststart results/so100-labeled-new/agent-ui-playback.mp4
+```
+
+Watch the saved file to confirm every label transition is visible. A screen
+capture can repeat or drop displayed frames; use the direct MP4/RRD for exact
+source-frame alignment. This records **playback**, not a FiftyOne editing session.
+
+## Before labeling your own dataset
+
+- Use a persistent, configured FiftyOne VM or container-on-VM workbench with
+  **FiftyOne 1.22 or newer** and native `fo.types.LeRobotDataset` support. The
+  load/export commands below use that same configured service and database;
+  do not substitute a short-lived serverless job or an unrelated App instance.
+- Verify the installed service version in its Python environment. Installing
+  the new client code does not upgrade an older remote FiftyOne image. This PR's
+  source candidate still needs the normal image acceptance/promotion gates.
+- Keep the source LeRobot v3 metadata, Parquet, and referenced videos together in
+  a readable S3 prefix. Configure source-read and destination-write credentials
+  using the [Workbench setup guide](../getting-started.md), and choose a new
+  derived-data prefix. Do not publish credentials or signed source URLs.
+- Define a vocabulary and boundary rules first: for example, whether `grasp`
+  starts when the fingers begin closing or only after contact. Use the same rule
+  across episodes. Include genuine waiting/recovery phases so full coverage does
+  not require labeling idle footage as motion.
+
 ## 1. Load the source dataset
 
-Deploy or update the FiftyOne workbench, then load a LeRobot v3 dataset:
+Once those prerequisites are satisfied, load the LeRobot v3 dataset:
 
 ```bash
 npa workbench fiftyone load-dataset \
@@ -22,23 +155,36 @@ npa workbench fiftyone open
 
 The source is loaded as one multimodal sample per episode. Existing
 `subtask_index` metadata is restored as timeline tags when present.
+Keep `npa workbench fiftyone open` running while you use its authenticated local
+tunnel. Use another terminal for export; Ctrl-C closes the tunnel, not the
+remote dataset or workbench.
 
 ## 2. Review and label
 
-Open an episode, scrub the synchronized streams, then Shift-drag each interval
-on the timeline. Name every subtask tag with this exact namespace:
+Open `robot-subtasks` and choose an episode. Display both camera streams and
+the state/action signals you need. Pause at a boundary, then hold Shift and drag
+across the playback timeline to select an interval. Enter a temporal tag such as
+`subtask:grasp`; a whole-episode sample tag is not a substitute. This uses
+[FiftyOne's native temporal-tag interface](https://docs.voxel51.com/user_guide/multimodal.html#temporal-tags),
+not the separate community Annotate-LeRobot plugin.
+
+Repeat with this exact namespace, using your agreed vocabulary:
 
 ```text
 subtask:approach
-subtask:align
 subtask:grasp
+subtask:transfer
 subtask:place
+subtask:release
 ```
 
 Intervals are half-open (`[start, end)`). They may touch, but must not overlap,
 and every frame in every exported episode must be covered. Other temporal tags
 are left untouched and are not training labels. The episode's existing LeRobot
 task instruction remains the high-level task.
+Replay every boundary from both cameras, then review the whole episode. The
+export command processes the entire named dataset, not just the episode visible
+in the App: finish coverage for every imported episode before exporting.
 
 ## 3. Export a derived LeRobot dataset
 
@@ -88,6 +234,7 @@ npa workbench workflow submit workflows/testing/lerobot-subtask-proof.yaml \
   --run-id '<new-run-id>' \
   --var 'bucket=<configured-bucket>' \
   --var 'reviewed_dataset_uri=s3://<bucket>/<derived-dataset>/' \
+  --var 'proof_uri=s3://<bucket>/<proof-prefix>/subtask-proof.json' \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
@@ -104,6 +251,29 @@ Parquet and label-catalog SHA-256, row SHA-256, and dataset-wide coverage counts
 The worker downloads metadata and frame Parquet only; videos are not needed for
 this check. Missing frames, unlabeled rows, unknown indexes, and an absent
 requested label fail the workflow before it publishes a proof.
+
+YAML runs **after** annotation; it neither opens the editor nor discovers subtask
+boundaries. The SO-100 example above executes this same YAML locally. It is not
+evidence of a completed cloud submission; check the
+[readiness record](../../../workflows/testing/lerobot-subtask-proof.readiness.json)
+before attempting the cloud route.
+
+## Troubleshooting and completion checklist
+
+| Symptom | Action |
+| --- | --- |
+| No multimodal episode viewer or native LeRobot type | Check the remote FiftyOne version and accepted deployment, not only the local CLI. |
+| Export cannot find the dataset | Use the exact `--name` from import as `--dataset-name`, against the same persistent service/database. |
+| Gaps or overlapping labels | Inspect adjacent `subtask:` boundaries and all episodes; the default export requires complete non-overlapping coverage. |
+| Derived prefix is nonempty | Choose a new prefix. Do not overwrite the source or an earlier reviewed export. |
+| YAML cannot find `grasp` | Pass `--var 'expected_subtask=<your-label>'` to planning and submission. |
+| Reproduction rejects source hashes | Fetch the exact pinned full snapshot, not a different revision or only the trimmed episode clips. |
+| Video has no changing labels | Open `lerobot-labeled.mp4` or the new RRD; a raw camera MP4 and the earlier numeric fixture are different artifacts. |
+
+Before training, require zero unlabeled frames, inspect representative boundaries,
+and retain the source/derived dataset identities and verification report. Have
+the training code explicitly consume the labels; validation proves the data
+contract, not semantic correctness or improved policy performance.
 
 ## Reproducible test evidence
 

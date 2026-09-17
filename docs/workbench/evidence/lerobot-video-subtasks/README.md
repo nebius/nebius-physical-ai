@@ -1,5 +1,7 @@
 # Real LeRobot video with eight synchronized subtasks
 
+[Step-by-step labeling, reproduction, and Mac viewing guide](../../guides/lerobot-subtask-labeling.md)
+
 [Watch the labeled robot video (MP4)](lerobot-labeled.mp4) ·
 [Watch its agent UI playback (MP4)](agent-ui-playback.mp4) ·
 [Open the interactive recording (RRD)](lerobot-video-subtasks.rrd) ·
