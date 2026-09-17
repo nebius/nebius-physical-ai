@@ -321,6 +321,25 @@ inspect_shared_tag() {
   return 1
 }
 
+canonical_registry_reference() {
+  local reference="$1"
+  local first=""
+  [[ "${reference}" =~ ^[a-z0-9]+([._-][a-z0-9]+)*(:[0-9]+)?(/[a-z0-9]+([._-][a-z0-9]+)*)*$ ]] \
+    || return 1
+  first="${reference%%/*}"
+  case "${first}" in
+    docker.io|index.docker.io)
+      printf 'docker.io%s\n' "${reference#${first}}"
+      ;;
+    *.*|*:*|localhost)
+      printf '%s\n' "${reference}"
+      ;;
+    *)
+      printf 'docker.io/%s\n' "${reference}"
+      ;;
+  esac
+}
+
 write_success_receipt() {
   local destination="$1"
   python3 - "${revision}" "${transaction_id}" "${image_id}" "${image}" "${cas_outcome}" \
@@ -347,20 +366,55 @@ PY
 write_cleanup_receipt() {
   local destination="$1" status="$2" disposition="$3"
   python3 - "${revision}" "${transaction_id}" "${image_id}" "${status}" \
-    "${disposition}" > "${destination}" <<'PY'
+    "${disposition}" "${transaction_id}.cleanup-journal.json" \
+    > "${destination}" <<'PY'
 import json
 import sys
 
-revision, transaction_id, image_id, status, disposition = sys.argv[1:]
+revision, transaction_id, image_id, status, disposition, journal_name = sys.argv[1:]
 print(json.dumps({
     "schema": "npa.robomimic.neutral-build-cleanup.v1",
     "revision": revision,
     "transaction_id": transaction_id,
     "immutable_image_id": image_id,
+    "cleanup_journal": journal_name,
     "status": status,
     "transaction_evidence_disposition": disposition,
 }, sort_keys=True, separators=(",", ":")))
 PY
+}
+
+write_cleanup_journal() {
+  local destination="$1"
+  python3 - "${revision}" "${transaction_id}" "${image_id}" \
+    "${transaction_id}.cleanup.json" > "${destination}" <<'PY'
+import json
+import sys
+
+revision, transaction_id, image_id, terminal_name = sys.argv[1:]
+print(json.dumps({
+    "schema": "npa.robomimic.neutral-build-cleanup-journal.v1",
+    "revision": revision,
+    "transaction_id": transaction_id,
+    "immutable_image_id": image_id,
+    "cleanup_intent": "remove-transaction-context",
+    "intent_state": "durably-recorded-before-context-deletion",
+    "terminal_outcome_record": terminal_name,
+}, sort_keys=True, separators=(",", ":")))
+PY
+}
+
+publish_cleanup_journal() {
+  local target_name="${transaction_id}.cleanup-journal.json"
+  directory_binding_matches \
+    "${receipt_dir_fd}" "${receipt_dir}" "${receipt_dir_identity}" || return 1
+  [[ -z "${receipt_tmp_name}" ]] || return 1
+  start_receipt_staging "cleanup-journal" || return 1
+  write_cleanup_journal "${receipt_anchor}/${receipt_tmp_name}" || return 1
+  receipt_staging_matches || return 1
+  link_receipt_target "${target_name}" || return 1
+  [[ "$(stat -c '%u:%a:%h' -- "${receipt_anchor}/${target_name}" 2>/dev/null)" \
+    == "$(id -u):600:1" ]]
 }
 
 publish_cleanup_receipt() {
@@ -539,6 +593,7 @@ discard_preimage_context() {
 }
 
 discard_success_context() {
+  publish_cleanup_journal || return 1
   if remove_transaction_context; then
     publish_cleanup_receipt "completed" "removed" && return 0
   else
@@ -574,8 +629,8 @@ repo_root="$(git rev-parse --show-toplevel)"
 revision="$(git -C "${repo_root}" rev-parse HEAD)"
 [[ "${revision}" =~ ^[0-9a-f]{40}$ ]] || fail "expected a full Git revision"
 registry="${NPA_BYOF_ROBOMIMIC_REGISTRY:-local.invalid}"
-[[ "${registry}" =~ ^[A-Za-z0-9][A-Za-z0-9./:_-]*$ ]] \
-  || fail "local registry name is malformed"
+registry="$(canonical_registry_reference "${registry}")" \
+  || fail "local registry name is malformed or noncanonicalizable"
 image="${registry}/npa-robomimic:dev-${revision}"
 
 if [[ -n "${TMPDIR+x}" ]]; then
