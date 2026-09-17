@@ -14,11 +14,13 @@ Reviewed September 16, 2026 using author papers, repositories and model releases
 
 | Research | Relevant finding | Decision for this integration |
 | --- | --- | --- |
+| [EMERGE-Policy, September 2026 revision](https://arxiv.org/html/2608.29896v2) | Combines policy execution, outcome verification, memory and local recovery. Its LIBERO setup adds five cameras and increases episode step limits. | Study observation-based recovery, but retain BEHAVIOR's permitted sensors and default timeout. Its reported gains do not establish gains under this challenge protocol. |
 | [Evidence-Gated Regularization, September 2026](https://arxiv.org/abs/2609.03142) | A π0.5 training objective addresses distraction by irrelevant cameras and dependence on cameras that become occluded. | Implement camera evidence and importance-weighted consistency losses; measure the resulting policy on the unchanged evaluator. |
+| [LeRobot π0.5 memory implementation, August 2026](https://github.com/huggingface/lerobot/commit/8ae2354592ec4480c38134fb75350b8e7992e0e9) | Releases optional recent visual and proprioceptive history. | Compare memory-enabled training with its matched single-frame control. This is a separate PyTorch candidate; the flags do not enable memory in the current JAX RLC controller. |
 | [SERF, June 2026](https://arxiv.org/abs/2606.12956), [released code](https://github.com/ExistentialRobotics/SERF-VLA) | Spatial and temporal feature maps provide scene memory. Its formulation includes robot base pose and camera poses. | A challenge candidate needs pose estimated from permitted sensors. Do not connect simulator global pose to the released mapper. |
 | [ForesightFlow, June 2026](https://arxiv.org/abs/2606.04968) | Jointly generated action and success-potential coordinates support learning from mixed-quality trajectories and selecting action chunks. | Requires additional training-instance rollouts containing both successes and failures. The existing development rollouts are evaluation evidence, not training data. |
 | [π0.7, April 2026](https://www.pi.website/blog/pi07) | Diverse conditioning supports compositional behavior and strategy control. | The checked [OpenPI release](https://github.com/Physical-Intelligence/openpi) supplies π0.5 models. This integration does not claim to run π0.7. |
-| [Multi-scale Embodied Memory, March 2026](https://www.pi.website/research/memory) | Combines recent visual history with longer-term language memory. | Pursue observation-derived subtask memory after validating annotation alignment; elapsed time is insufficient evidence that a subtask finished. |
+| [Multi-scale Embodied Memory, March 2026](https://www.pi.website/research/memory) | Combines recent visual history with longer-term language memory. | Separate short visual memory, which needs no semantic annotation join, from long-term subtask memory. Elapsed time is insufficient evidence that a subtask finished. |
 | [OpenPI Comet](https://arxiv.org/abs/2512.10071) | Studies π0.5 training and data choices on the 2025 BEHAVIOR tasks. | Keep matched controls and separate general training from task adaptation. Its 2025 score is not a 2026 comparison. |
 
 These papers use different tasks, data, resets and evaluation protocols. Their
@@ -122,6 +124,27 @@ A training-only viewer-camera replay is being checked against the recorded
 camera poses, intrinsics and released observations. Its labels must pass those
 checks before use; no EGR checkpoint has been trained or evaluated.
 
+## Next candidate: give π0.5 recent observation history
+
+The official [LeRobot π0.5 memory documentation](https://huggingface.co/docs/lerobot/main/en/pi05#short-horizon-observation-memory-mem)
+now provides a concrete implementation to test. It implements short-horizon
+visual and proprioceptive memory; long-horizon language summaries remain
+separate work. The documented public checkpoints lack memory pretraining, so
+fine-tuning them does not reproduce the full MEM model's headline results.
+
+Use six observations, including the current frame, with a stride of 30 frames
+for the released 30 Hz data. This covers five seconds of history. Compare
+single-frame, visual-memory, and visual-plus-proprioception variants using the
+same training split, action representation, initialization and evaluation
+protocol. Enable the selected memory inputs during training, and reset history
+at every episode boundary. These experiments do not depend on the unverified
+semantic annotation join.
+
+This requires a pinned LeRobot PyTorch training and serving integration. It is
+not implemented by the JAX EGR helpers, and this PR does not change the shared
+Workbench image to an unvalidated upstream revision. Measure inference latency
+and the complete policy's 24 GB memory use before combining memory and recovery.
+
 ## Evidence required before promoting a candidate
 
 1. Verify replay inputs and frame alignment, including the observation/action
@@ -136,7 +159,8 @@ checks before use; no EGR checkpoint has been trained or evaluated.
    all 100 tasks, and validate the submission's 24 GB serving constraint before
    making a full-challenge or winning-performance claim.
 
-ForesightFlow-style recovery and MEM-style semantic history are subsequent
-experiments, not implemented capabilities of the current candidate. The EGR
-helpers and JAX objective have 32 numerical and gradient tests; complete GPU training, full-task coverage
-and organizer submission remain separate evidence gates.
+Memory-enabled π0.5 training, ForesightFlow-style recovery and semantic history
+are subsequent experiments, not implemented capabilities of the current
+candidate. The EGR helpers and JAX objective have 32 numerical and gradient
+tests; complete GPU training, full-task coverage and organizer submission remain
+separate evidence gates.
