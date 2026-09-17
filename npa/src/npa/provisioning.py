@@ -688,6 +688,7 @@ def provision_if_absent(
         from npa.controller_ownership import ensure_controller_owner
         from npa.cli.cluster.terraform_lifecycle import (
             _check_skypilot_kubernetes,
+            _recover_skypilot_smoke,
             _run_skypilot_smoke,
         )
         from npa.orchestration.skypilot.k8s_gpu_catalog import (
@@ -700,44 +701,49 @@ def provision_if_absent(
                 f"controller:bound {owner.project_alias}/{owner.context}/{owner.cluster_id}"
             )
 
-            _check_skypilot_kubernetes(
-                Path(kubeconfig_path),
-                context,
-                sky_bin=sky_bin,
-            )
-            actions.append("skypilot:kubernetes-enabled")
+            from npa.orchestration.skypilot.cluster_validation import cluster_validation_session
 
-            def report_gpu_status(message: str) -> None:
-                actions.append(f"gpu:{message}")
-                sys.stderr.write(message.rstrip() + "\n")
-                sys.stderr.flush()
-                operation = current_operation()
-                if operation is not None:
-                    operation.heartbeat(details={"gpu_readiness": message})
-
-            resolutions = wait_for_kubernetes_accelerators(
-                [requested_accelerator] if requested_accelerator else [],
-                context=context,
-                kubeconfig=kubeconfig_path,
-                sky_bin=sky_bin or None,
-                label_known_gpus=True,
-                timeout=gpu_readiness_timeout,
-                poll_interval=gpu_readiness_poll_interval,
-                on_status=report_gpu_status,
-            )
-            if sky_smoke:
-                smoke_accelerator = requested_accelerator
-                if requested_accelerator and requested_accelerator in resolutions:
-                    smoke_accelerator = resolutions[requested_accelerator].resolved
-                _run_skypilot_smoke(
+            with cluster_validation_session(Path(kubeconfig_path), context):
+                _check_skypilot_kubernetes(
                     Path(kubeconfig_path),
                     context,
-                    cluster_name,
-                    smoke_accelerator,
                     sky_bin=sky_bin,
-                    credentials_checked=True,
                 )
-                actions.append("sky-smoke:passed")
+                actions.append("skypilot:kubernetes-enabled")
+                if sky_smoke:
+                    _recover_skypilot_smoke(Path(kubeconfig_path), context, cluster_name, sky_bin=sky_bin)
+
+                def report_gpu_status(message: str) -> None:
+                    actions.append(f"gpu:{message}")
+                    sys.stderr.write(message.rstrip() + "\n")
+                    sys.stderr.flush()
+                    operation = current_operation()
+                    if operation is not None:
+                        operation.heartbeat(details={"gpu_readiness": message})
+
+                resolutions = wait_for_kubernetes_accelerators(
+                    [requested_accelerator] if requested_accelerator else [],
+                    context=context,
+                    kubeconfig=kubeconfig_path,
+                    sky_bin=sky_bin or None,
+                    label_known_gpus=True,
+                    timeout=gpu_readiness_timeout,
+                    poll_interval=gpu_readiness_poll_interval,
+                    on_status=report_gpu_status,
+                )
+                if sky_smoke:
+                    smoke_accelerator = requested_accelerator
+                    if requested_accelerator and requested_accelerator in resolutions:
+                        smoke_accelerator = resolutions[requested_accelerator].resolved
+                    _run_skypilot_smoke(
+                        Path(kubeconfig_path),
+                        context,
+                        cluster_name,
+                        smoke_accelerator,
+                        sky_bin=sky_bin,
+                        credentials_checked=True,
+                    )
+                    actions.append("sky-smoke:passed")
         except Exception as exc:  # noqa: BLE001 - return a resumable partial result
             gpu_readiness = (
                 "timeout" if str(exc).startswith("Timed out after ") else "failed"

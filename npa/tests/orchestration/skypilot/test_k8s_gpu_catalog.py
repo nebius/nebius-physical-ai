@@ -974,6 +974,8 @@ def test_live_inventory_pins_explicit_kubeconfig_for_nodes_and_pods(
 
 
 def test_gang_capacity_fails_unknown_for_unbound_pending_gpu_demand() -> None:
+    from npa.orchestration.skypilot.k8s_gpu_catalog import PendingGpuPlacementError
+
     inventory = KubernetesGpuInventory(
         context="exact-context",
         ready_nodes=2,
@@ -987,7 +989,7 @@ def test_gang_capacity_fails_unknown_for_unbound_pending_gpu_demand() -> None:
         unbound_pending_gpu_requests=1,
     )
 
-    with pytest.raises(KubernetesGpuCatalogError, match="active unbound GPU pod"):
+    with pytest.raises(PendingGpuPlacementError, match="active unbound GPU pod"):
         preflight_kubernetes_gpu_gang(
             inventory, accelerator="RTXPRO6000:1", node_count=2
         )
