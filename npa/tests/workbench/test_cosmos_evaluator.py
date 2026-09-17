@@ -1367,6 +1367,9 @@ def test_empty_independent_selection_is_a_truthful_quality_rejection(
 
     selection = tmp_path / "selection"
     selection.mkdir()
+    attempt = selection / "_attempts" / "fence-1"
+    attempt.mkdir(parents=True)
+    (attempt / "selection.json").write_text("{}", encoding="utf-8")
     (selection / "manifest.json").write_text(
         json.dumps(
             {

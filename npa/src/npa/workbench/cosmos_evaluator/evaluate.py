@@ -810,6 +810,18 @@ def _list_clip_targets(augment_uri: str, *, store: Any) -> list[tuple[str, str]]
             variants = validate_committed_run_manifest(manifest, augment_uri)
         except (TypeError, ValueError) as exc:
             raise CosmosEvaluatorError(str(exc)) from exc
+        if (
+            not variants
+            and manifest.get("selection_policy")
+            == "independent-hard-pass-only"
+            and manifest.get("variant_count") == 0
+            and manifest.get("variants") == []
+        ):
+            # Candidate selection is append-only, so its committed empty batch
+            # legitimately coexists with the fenced attempt that produced it.
+            # Return no targets and let evaluate_run emit the explicit rejected
+            # report; never infer media from those preserved attempt objects.
+            return []
         if variants:
             targets: list[tuple[str, str]] = []
             for item in variants:
