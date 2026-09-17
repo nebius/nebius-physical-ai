@@ -1,0 +1,3 @@
+# Replace the shared Isaac closure's GitPython 3.1.57, affected by
+# CVE-2026-78676, in the final OpenArm filesystem.
+GitPython==3.1.62

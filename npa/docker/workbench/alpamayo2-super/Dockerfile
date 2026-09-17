@@ -7,7 +7,7 @@ ARG ALPAMAYO2_SOURCE_REF=beb2977d9a7e9d66837d4a3ad5144ff59de37519
 ARG NPA_SOURCE_COMMIT=unknown
 
 LABEL npa.tool="alpamayo2-super" \
-      npa.version="0.1.0-cu128" \
+      npa.version="0.1.0-cu128-r3" \
       npa.source.repo="${ALPAMAYO2_SOURCE_URL}" \
       npa.source.ref="${ALPAMAYO2_SOURCE_REF}" \
       npa.weights="operator-runtime-fetch" \
@@ -26,12 +26,18 @@ ENV DEBIAN_FRONTEND=noninteractive \
 SHELL ["/bin/bash", "-lc"]
 USER root
 
+# The CUDA devel base carries an old linux-libc-dev build and an unused Nsight
+# EFA helper linked against vulnerable Go standard libraries. Refresh the
+# headers explicitly and remove the profiler tree instead of exempting either
+# finding from the complete-image security gate.
 RUN rm -f /etc/apt/sources.list.d/*.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-      ca-certificates ffmpeg git openssh-server python3.12 python3.12-dev \
+      ca-certificates ffmpeg git linux-libc-dev openssh-server python3.12 python3.12-dev \
       python3.12-venv rsync sudo \
     && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
+    && rm -rf /opt/nvidia/nsight-compute \
+    && test ! -e /opt/nvidia/nsight-compute \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
     && (id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu) \
     && printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/npa-runtime \
@@ -88,6 +94,6 @@ VOLUME ["/workspace/.cache/huggingface"]
 WORKDIR /workspace
 USER ubuntu
 EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["/opt/npa-venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["/opt/npa-venv/bin/python", "-m", "npa.workbench.alpamayo2_super.healthcheck"]
 ENTRYPOINT ["alpamayo2-entrypoint"]
 CMD ["serve"]
