@@ -172,6 +172,10 @@ media generation or hosted inference calls.
 
 ## Find footage in object storage
 
+For selected-bucket and cross-project examples, coverage handling, provenance,
+Python retrieval, and the Workbench agent browser, use the
+[artifact discovery guide](../../workbench/cookbooks/find-artifacts.md).
+
 `npa studio search` discovers assets before a film project exists. It uses the
 operator's external NPA configuration and credentials, follows every listing
 page, and keeps unknown formats visible as downloads. It does not provision,
