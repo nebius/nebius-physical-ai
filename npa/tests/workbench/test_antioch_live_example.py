@@ -1160,6 +1160,26 @@ def test_live_camera_pair_classifies_each_view_freshness_semantics_and_distinctn
     assert exterior_target_occluded.accepted is True
     assert exterior_target_occluded.exterior.red_cube_pixels == 0
 
+    # A moving eye-in-hand view can converge toward the fixed perspective.
+    # Preserve a separate-view floor for policy control without weakening the
+    # stricter 6.0 final acceptance threshold.
+    similar_wrist = exterior.copy()
+    similar_wrist[..., :3] ^= 4
+    policy_distinct = scenario._validate_camera_pair(
+        Camera(exterior),
+        Camera(similar_wrist),
+        render_sequence=8,
+        last_accepted_render_sequence=7,
+        exterior_cube_in_frame=True,
+        wrist_cube_in_frame=False,
+    )
+    assert policy_distinct.accepted is True
+    assert (
+        scenario.MIN_POLICY_CAMERA_PAIR_DIFFERENCE
+        <= policy_distinct.mean_difference
+        < scenario.MIN_CAMERA_PAIR_DIFFERENCE
+    )
+
     cases = (
         (Camera(None), Camera(wrist), 5, 4, True, True, "exterior", "missing"),
         (

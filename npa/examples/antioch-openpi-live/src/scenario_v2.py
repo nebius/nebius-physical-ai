@@ -84,6 +84,10 @@ PICKUP_HOLD_SECONDS = 1.0
 GRIPPER_CONTACT_FORCE_NEWTONS = 0.1
 MIN_CAMERA_LUMINANCE_MEAN = 5.0
 MIN_CAMERA_LUMINANCE_VARIANCE = 25.0
+# Policy control only needs proof that these are two different, useful camera
+# products.  The stricter acceptance report below the controller still requires
+# a 6.0 mean-pixel difference for final evidence.
+MIN_POLICY_CAMERA_PAIR_DIFFERENCE = 4.0
 MIN_CAMERA_PAIR_DIFFERENCE = 6.0
 # The strict run-acceptance report uses this positive color-area floor to prove
 # the target is visibly resolved. Policy eligibility deliberately does not:
@@ -1224,7 +1228,7 @@ def _validate_camera_pair(
         return CameraPair(
             False, exterior_frame, wrist_frame, "exterior", "cube_out_of_frame"
         )
-    if difference < MIN_CAMERA_PAIR_DIFFERENCE:
+    if difference < MIN_POLICY_CAMERA_PAIR_DIFFERENCE:
         return CameraPair(
             False,
             exterior_frame,
