@@ -2893,6 +2893,35 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.onnx_uri}}",
         ],
     ),
+    "workbench.cosmos3.policy_train": ToolEntry(
+        name="workbench.cosmos3.policy_train",
+        description="Native Cosmos LIBERO-10 policy SFT with complete DCP state and content hashes.",
+        argv_template=["npa", "workbench", "cosmos3", "policy-train",
+                       "--input-path", "{{config.input_uri}}", "--output-path", "{{config.output_uri}}"],
+    ),
+    "workbench.cosmos3.policy_eval": ToolEntry(
+        name="workbench.cosmos3.policy_eval",
+        description="Closed-loop LIBERO evaluation of the exact native policy checkpoint.",
+        argv_template=["npa", "workbench", "cosmos3", "policy-eval",
+                       "--input-path", "{{config.input_uri}}", "--output-path", "{{config.output_uri}}",
+                       "--trials-per-task", "{{config.eval_trials}}", "--task-ids", "{{config.eval_tasks}}",
+                       "--seed", "{{config.seed}}"],
+    ),
+    "workbench.cosmos3.policy_feedback": ToolEntry(
+        name="workbench.cosmos3.policy_feedback",
+        description="Validate measured success, qualify full-suite results, and derive failure targets.",
+        argv_template=["npa", "workbench", "cosmos3", "policy-feedback",
+                       "--input-path", "{{config.input_uri}}", "--output-path", "{{config.output_uri}}",
+                       "--minimum-success-rate", "{{config.minimum_success_rate}}"],
+    ),
+    "workbench.cosmos3.failure_candidates": ToolEntry(
+        name="workbench.cosmos3.failure_candidates",
+        access_capabilities=("cosmos3",),
+        description="Generate guarded Cosmos video review candidates for measured failed LIBERO tasks.",
+        argv_template=["npa", "workbench", "cosmos3", "failure-candidates",
+                       "--input-path", "{{config.input_uri}}", "--output-path", "{{config.output_uri}}",
+                       "--seed", "{{config.seed}}"],
+    ),
     "workbench.cosmos3.generate": ToolEntry(
         name="workbench.cosmos3.generate",
         access_capabilities=("cosmos3",),
@@ -3298,6 +3327,107 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.poll_seconds}}",
             "--timeout-seconds",
             "{{config.timeout_seconds}}",
+        ],
+    ),
+    "workbench.openarm.mujoco_rollout": ToolEntry(
+        name="workbench.openarm.mujoco_rollout",
+        description=(
+            "Step the real OpenArm v2 bimanual MJCF under position control and "
+            "persist joint, command, energy, and rendered-video artifacts."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "openarm",
+            "run",
+            "--simulator",
+            "mujoco",
+            "--output-path",
+            "{{config.mujoco_output_uri}}",
+            "--steps",
+            "{{config.mujoco_steps}}",
+            "--seed",
+            "{{config.seed}}",
+            "--render",
+            "--output-format",
+            "json",
+        ],
+    ),
+    "workbench.openarm.isaac_rollout": ToolEntry(
+        name="workbench.openarm.isaac_rollout",
+        description=(
+            "Launch runtime-fetched Isaac Sim/Lab and step an upstream OpenArm "
+            "vectorized environment with real PhysX/CUDA state and reward artifacts."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "openarm",
+            "run",
+            "--simulator",
+            "isaac-lab",
+            "--isaac-mode",
+            "rollout",
+            "--task",
+            "{{config.isaac_task}}",
+            "--output-path",
+            "{{config.isaac_output_uri}}",
+            "--steps",
+            "{{config.isaac_steps}}",
+            "--num-envs",
+            "{{config.num_envs}}",
+            "--seed",
+            "{{config.seed}}",
+            "--output-format",
+            "json",
+        ],
+    ),
+    "workbench.openarm.isaac_train": ToolEntry(
+        name="workbench.openarm.isaac_train",
+        description=(
+            "Run the pinned upstream OpenArm RSL-RL trainer and retain its real "
+            "checkpoint, configs, simulator logs, and provenance."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "openarm",
+            "run",
+            "--simulator",
+            "isaac-lab",
+            "--isaac-mode",
+            "train",
+            "--task",
+            "{{config.isaac_task}}",
+            "--output-path",
+            "{{config.training_output_uri}}",
+            "--num-envs",
+            "{{config.num_envs}}",
+            "--max-iterations",
+            "{{config.max_iterations}}",
+            "--seed",
+            "{{config.seed}}",
+            "--output-format",
+            "json",
+        ],
+    ),
+    "workbench.openarm.qualify": ToolEntry(
+        name="workbench.openarm.qualify",
+        description=(
+            "Download and independently validate the MuJoCo trace/video, Isaac "
+            "rollout trace, and Isaac training checkpoint before finalization."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "openarm",
+            "qualify",
+            "--input-path",
+            "{{config.run_root_uri}}",
+            "--output-path",
+            "{{config.qualification_output_uri}}",
+            "--output-format",
+            "json",
         ],
     ),
 }

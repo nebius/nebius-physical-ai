@@ -10,6 +10,28 @@ not to use it in production. NPA therefore supports only the immutable
 evaluation contract documented here. Its packaging and qualification records
 do not make the broader upstream project production-ready.
 
+## Recover a stalled evaluation
+
+Retain the exact run's `status`, `artifacts`, and `logs` before cancellation.
+A failed client or runtime ledger does not prove that its worker stopped.
+Cancellation now refuses a client-queue absence claim after a recorded failed
+cancellation. When the original client state is missing, use the identity-checked
+[controller recovery](controller-recovery.md) procedure.
+
+The evaluator observes scalar phase journals from outside the simulator process.
+After eight completed samples of a phase, an open phase with no advancement for
+more than 4,096 times its longest measured duration fails closed. This follows
+measured phase progress, not total episode duration. Advancing nested phases
+continue normally. Cold phases without a baseline remain unclassified; this is
+not a universal startup watchdog. Invalid or truncated progress evidence fails.
+
+Failure retains `simulator-liveness.json`, journals, available captures and logs,
+terminates the owned process group, and publishes a failed result. The five-second
+termination escalation is cleanup protocol, not a workload budget. Replay order,
+physics, settling renders, resolution and task/video thresholds are unchanged.
+The observer cannot manufacture a native terminal or establish an upstream native
+cause from the blocked phase alone.
+
 ## What the image contains
 
 The public `npa-isaac-arena` image adds the Apache-2.0 Arena source at commit

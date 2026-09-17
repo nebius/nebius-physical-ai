@@ -240,9 +240,15 @@ unscored diagnostic and cannot create upstream success or completed episodes.
 When emitted, `simulator-phases-rank*.jsonl` contains fixed phase/event labels,
 monotonic timestamps, rank, action/render counters, and readiness booleans for
 policy, Pink IK, environment, and capture operations. It never contains their
-arguments, input arrays, or exception text. Treat its last unfinished phase as
-an observation, not a timeout decision or task result; journal writes are best
-effort and preserve the original operation's result or exception.
+arguments, input arrays, or exception text. One unfinished phase alone is not a
+task result. The independent parent observer fails closed after eight completed
+samples when a phase has no advancement for over 4,096 times its longest measured
+duration. It retains scalar liveness diagnostics and terminates only its owned
+process group. This is a phase-progress policy, not an episode budget. Cold phases
+without a baseline remain unclassified. Keep replay, physics and graphics fidelity
+unchanged; do not describe liveness failure as a proven upstream native cause.
+Journal writes remain best effort inside the simulator; malformed or truncated
+progress evidence fails in the parent observer.
 An `unavailable` method-phase event means the native binding could not be
 overridden on its instance. Keep that binding untouched and use the enclosing
 simulator phase; availability is neither execution evidence nor task progress.

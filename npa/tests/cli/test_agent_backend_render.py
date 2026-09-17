@@ -3481,6 +3481,36 @@ def test_rendered_backend_has_no_mangled_regex_escapes(monkeypatch) -> None:
     assert r"\b(agent-run-[A-Za-z0-9_-]+|sim2real-[A-Za-z0-9_.:-]+)\b" in body
 
 
+def test_grounded_status_preserves_video_readiness(monkeypatch, tmp_path) -> None:
+    """Grounded chat must mirror the selected viewer's non-Rerun readiness."""
+    module_name = "npa_rendered_video_status_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    video_status = {
+        "run_id": "run-video",
+        "stage": "artifact-loaded",
+        "camera": "workspace",
+        "artifact_render": "video",
+        "rrd_uri": "",
+        "rerun_ready": False,
+    }
+    state = {"sim_viz": dict(video_status)}
+    monkeypatch.setattr(module, "_load_state", lambda: state)
+    monkeypatch.setattr(module, "_save_state", lambda payload: state.update(payload))
+    monkeypatch.setattr(module, "sim_viz_status", lambda: dict(video_status))
+    monkeypatch.setattr(module, "_rerun_ready_state", lambda **_kwargs: True)
+    try:
+        reply, used, _suggested, _yaml, _validation, intent = (
+            module._maybe_toolground_chat_reply(
+                "what is the current sim2real status"
+            )
+        )
+        assert intent == "sim2real_status"
+        assert used == ["sim-viz/status"]
+        assert "**rerun_ready**: `false`" in reply
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_agent_module_source_has_no_invalid_escape_sequences() -> None:
     """``agent.py`` must compile without invalid-escape warnings.
 

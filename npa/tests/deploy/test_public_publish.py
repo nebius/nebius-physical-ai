@@ -313,6 +313,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
         "cosmos3-serving",
         "detection-training",
         "isaac-arena",
+        "openarm",
         "sonic-mujoco",
     }
 
@@ -435,13 +436,14 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
             "sonic-mujoco",
             "detection-training",
             "isaac-arena",
+            "openarm",
             "alpamayo2-super",
         )
     }
-    # The five Sim2Real roles deliberately share one coherent source. The nine
-    # other accepted sources, including Arena, Alpamayo, Cosmos3, and the detector,
-    # remain distinct from it.
-    assert len(set(accepted_shas.values())) == 10
+    # The five Sim2Real roles deliberately share one coherent source. The ten
+    # other accepted sources include Arena, OpenArm, Alpamayo, Cosmos3,
+    # and the detector; each remains distinct from the coherent Sim2Real source.
+    assert len(set(accepted_shas.values())) == 11
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
         target_image = item.target_ref.rsplit("/", 1)[-1]
@@ -468,6 +470,7 @@ def test_accepted_images_use_distinct_exact_development_sources_and_digests() ->
         "sonic-mujoco",
         "detection-training",
         "isaac-arena",
+        "openarm",
         "alpamayo2-super",
     ):
         entry = manifest[tool]

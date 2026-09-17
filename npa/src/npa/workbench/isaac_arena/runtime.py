@@ -536,6 +536,11 @@ def _execute_upstream(
             private_dir / "viewport-graphics",
             sim_env,
         )
+    if runner is subprocess.run:
+        from functools import partial
+        from .phase_liveness import run_supervised
+
+        runner = partial(run_supervised, artifact_root=artifact_root, private_dir=private_dir)
     completed = runner(
         argv,
         cwd=ISAAC_ARENA_ROOT,

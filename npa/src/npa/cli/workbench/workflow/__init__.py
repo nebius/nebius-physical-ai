@@ -23,6 +23,7 @@ from rich.console import Console
 from rich.text import Text
 
 from npa.cli.workbench.trigger import app as trigger_app
+from npa.cli.workbench.workflow.controller_recovery import register as register_controller_recovery
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
 
@@ -7617,3 +7618,4 @@ def gpus_cmd(
 
 
 app.add_typer(trigger_app, name="trigger")
+register_controller_recovery(app)

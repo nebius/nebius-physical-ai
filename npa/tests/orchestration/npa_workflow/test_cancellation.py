@@ -54,6 +54,17 @@ def test_terminal_multistage_run_without_root_job_id_is_an_explicit_noop() -> No
     assert [job.job_id for job in assessment.terminal_jobs] == ["101", "102"]
 
 
+def test_failed_controller_cancellation_cannot_become_an_ambient_absence_noop():
+    resolution = _resolution({"status": "failed", "waves": [{
+        "job_id": "1", "job_name": "synthetic-original-job", "status": "failed",
+        "sky_status": "SUBMITTED", "cancellation": {"state": "failed", "error": "original client lost"},
+    }]}, manifest={"run_id": "paidf-runtime", "status": "failed"})
+    result = assess_run_cancellation(resolution, lookup=lambda *a, **kw: ManagedJobEvidence("absent"))
+    assert not result.no_cancellation_needed
+    assert result.detected_state == "VERIFICATION_UNAVAILABLE"
+    assert "original controller absence" in result.errors[0]
+
+
 def test_active_multistage_assessment_targets_every_nonterminal_job_once() -> None:
     resolution = _resolution(
         {

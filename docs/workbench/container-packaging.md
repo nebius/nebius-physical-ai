@@ -66,6 +66,7 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-sonic` | `sonic/Dockerfile` | `/entrypoint.sh` modes |
 | `npa-detection-training` | `detection-training/Dockerfile` | uvicorn `:8790` |
 | `npa-robocasa` | `robocasa/Dockerfile` | uvicorn `:8791`; non-root service with no sudo grant |
+| `npa-openarm` | `openarm/Dockerfile` | authenticated service `:8792`; MuJoCo baked, Isaac runtime-fetched |
 | `npa-retargeting` | `retargeting/Dockerfile` | job shell |
 | `npa-foxglove-embed` | `foxglove-embed/Dockerfile` | static host `:8099` (Foxglove embed SDK + MCAP data) |
 | Sim2Real stack | `sim2real-*/`, `cosmos3-reason/`, `lerobot-vlm-rl/` | workflow modules |
@@ -355,7 +356,7 @@ The manually dispatched `publish-public-images.yml` workflow builds selected
 development images and separately promotes validated digests. Registry state
 must still be checked: source availability is not proof of publication.
 
-The public-plan inventory retains all 33 published release tags. The current
+The public-plan inventory retains all 34 published release tags. The current
 Isaac Arena r3 tag is an exact-digest promotion of the public full-SHA candidate
 after image security, B200 state, and successful RTX task/visual gates. The
 historical r2 tag remains recorded, but its RTX visual acceptance is rejected:

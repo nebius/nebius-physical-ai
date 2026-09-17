@@ -20,14 +20,14 @@ images. It and existing saved `container_registry` values do not repoint these
 repository-owned runtime defaults; select custom bytes with a complete image
 reference or an explicit workflow `--registry`.
 
-The main-branch public plan and accepted-release manifest were verified against
-GHCR without credentials on **2026-09-12**. All **33 current release tags**
-resolved and matched their recorded digests. All **44 retained table references**
-(33 current pins and 11 historical aliases) resolved anonymously; manifest and
-OCI config hashes were checked, and every inspected runtime was `linux/amd64`.
-The 32 pre-existing release references required no registry write; Isaac Arena
-was built, qualified, and promoted as the additive 33rd release. Capability
-results below remain tied to their original exact-digest evidence.
+The combined public plan and accepted-release manifest were verified against
+GHCR without credentials on **2026-09-17**. All **34 current release tags**
+matched their recorded digests; independent manifest and OCI config reads
+confirmed `linux/amd64` runtime metadata. This read-only audit includes both
+Isaac Arena and OpenArm. The earlier 2026-09-12 audit covered 44 table references
+(33 then-current pins and 11 historical aliases); historical aliases were not
+re-audited on September 17. Capability results below remain tied to their
+original exact-digest evidence.
 
 **Built** is the UTC build date of the newest listed variant, read from OCI
 `created`, or from the immutable timestamp/`npa.build_ts` when a reproducible
@@ -47,8 +47,8 @@ image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
 The current source inventory, including the pending NCore integration, has
-**38 packaging entries** (36 redistribution-eligible and two restricted) and
-**39 mapped tools**: 33 public-release members, two restricted tools, and four
+**39 packaging entries** (37 redistribution-eligible and two restricted) and
+**40 mapped tools**: 34 public-release members, two restricted tools, and four
 quarantined tools (`curobo`, `ncore`, `openpi`, and `robocasa`). These counts come
 from `packaging-contract.yaml` and `npa.deploy.images`; they do not constitute
 a new registry audit or acceptance of the quarantined images.
@@ -218,6 +218,25 @@ rigid-physics checks were non-null, and both the USD and USDZ reopened
 independently. These measurements establish built, payload-clean, GPU-validated,
 published, and anonymously pullable status for this exact digest only.
 
+## 2026-09-15 OpenArm publication
+
+`npa-openarm:2.2.0-isaac0.1.0-rtfetch` was promoted without rebuilding from
+development revision `01fbf3a554cb7b15066283fd171c5b81f6207eda`. Independent
+anonymous reads resolved both tags to the same `linux/amd64` manifest,
+`sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a`,
+with non-root user `ubuntu` and the matching source revision.
+
+The exact development bytes passed full-layer payload and history inspection
+across 98,660 filesystem entries, critical-vulnerability, secret, and license
+scans, a 644-package SPDX inventory, and provenance/SBOM attestation checks.
+One RTX PRO 6000 then completed a real 500-step OpenArm MuJoCo rollout with a
+fully decoded 100-frame H.264 render, a 64-environment × 100-step upstream Isaac
+reach rollout on CUDA/PhysX, and one iteration of the upstream RSL-RL trainer
+with a serialized Torch checkpoint. A fail-closed qualification stage and a
+separate read-after-run validation agreed on all four artifact hashes. Isaac
+Sim 5.1.0.0 and Isaac Lab 2.3.2.post1 were runtime-fetched under the operator's
+accepted terms and do not occur in the public layers.
+
 ## 2026-09-16 Alpamayo 2 Super provenance correction
 
 `npa-alpamayo2-super:0.1.0-cu128-r3` was promoted from immutable development tag
@@ -274,6 +293,7 @@ and populated caches remain absent from the public image.
 | Sim2Real Controller 0.1.2 | `npa-sim2real-control` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Non-root CPU controller containing the canonical 14-stage orchestration capability. The coherent release expanded and validated both the checkpoint-promotion and loop-back decision branches; it contains no model weights, datasets, credentials, or runtime caches. |
 | Sim2Real EnvGen 0.1.2 | `npa-envgen` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Generates randomized Sim2Real environments and scenes on the Genesis base. The coherent exact-source release bakes the snapshot-pinned non-root SkyPilot Kubernetes bootstrap closure (`sudo`, SSH, and rsync) and was validated through real environment generation plus a Genesis CUDA physics step. It is built from `sim2real-envgen/Dockerfile`. |
 | Isaac Lab-Arena 0.3.0 | `npa-isaac-arena` | `0.3.0-isaaclab3-20260912-r3` | 2026-09-15 | Real completed-episode evaluation through pinned upstream `policy_runner.py`. The public image bakes Apache-2.0 Arena source and its hash-locked Apache-2.0 Lightwheel SDK client, but no Lightwheel registry asset; Isaac Sim/Lab and provider-controlled registry USDs remain operator runtime fetches. Exact-digest qualification covers a four-seed B200 state regression and successful RTX GR1 open-microwave evaluation whose task progress is spatially bound to denoised video motion. Upstream remains alpha; only the pinned evaluator contract is supported. |
+| Enactic OpenArm | `npa-openarm` | `2.2.0-isaac0.1.0-rtfetch` | 2026-09-15 | OpenArm v2 bimanual MuJoCo simulation plus upstream OpenArm Isaac Lab reach rollout and RSL-RL training. Apache-2.0 OpenArm source and simulator assets are baked; Isaac Sim/Lab are exact runtime fetches after the operator's EULA decision. The exact release digest passed byte/supply-chain gates and a complete RTX PRO 6000 dual-simulator workflow with independently checked traces, rendered video, checkpoint, and qualification report. See [OpenArm](openarm.md). |
 
 ## Candidates outside the supported public release plan
 
@@ -325,8 +345,8 @@ this chart is generated from that table and the publishing plan:
 
 ![Published GHCR images against every Nebius GPU platform](../assets/image-gpu-coverage.svg)
 
-All 33 accepted release references resolved anonymously to their recorded
-digests on 2026-09-12. Nineteen resolve directly to an image manifest and 14 to
+All 34 accepted release references resolved anonymously to their recorded
+digests on 2026-09-17. Twenty-three resolve directly to an image manifest and 11 to
 an OCI index; the runtime variants in both forms are `linux/amd64`. The chart
 groups the current publishing plan three ways:
 
@@ -339,9 +359,10 @@ groups the current publishing plan three ways:
   `npa-wan2-2`. This band does not mean every cell has a current-release run:
   the matrix distinguishes verified, historical, supported, and unverified
   cells.
-- **7 public images are blocked on at least one platform**:
+- **8 public images are blocked on at least one platform**:
   `npa-content-agents`, `npa-cosmos`, `npa-cosmos2-transfer`,
-  `npa-cosmos3-serving`, `npa-isaac-lab`, `npa-leisaac`, and `npa-sonic`.
+  `npa-cosmos3-serving`, `npa-isaac-lab`, `npa-leisaac`, `npa-openarm`, and
+  `npa-sonic`.
   Their constraints are not interchangeable. They include missing RT cores,
   vendor-stack or extension allowlists, a CUDA 12.8 NVRTC `sm_103` gap, and an
   8-GPU memory floor; `npa-leisaac` is also not routed to L40S by its launcher.
@@ -390,7 +411,7 @@ The registry verification confirms exact tag spelling, anonymous manifest and
 config access, content hashes, platform metadata, selected OCI labels, exposed
 ports, entrypoints, and build timestamps. It is not a new packaging-policy or
 functional-validation pass. The current accepted SONIC Kubernetes pin declares
-OCI user `root`; the other 31 current releases declare non-root users. SONIC's
+OCI user `root`; the other 33 current releases declare non-root users. SONIC's
 legacy runtime-user limitation remains documented in the
 [security review](../security/container-golden-evals.md); a current non-root
 Dockerfile does not retroactively change those accepted bytes. Source contracts
