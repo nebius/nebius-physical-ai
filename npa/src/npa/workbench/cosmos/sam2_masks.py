@@ -24,6 +24,7 @@ SAM2_ENGINE = "meta-sam2-upstream"
 SAM2_SOURCE_REVISION = "2b90b9f5ceec907a1c18123530e92e794ad901a4"
 SAM2_DISTRIBUTION = "SAM-2"
 SAM2_DISTRIBUTION_VERSION = "1.0"
+SAM2_SELECTION_POLICY = "compact-foreground-nms-v2"
 DEFAULT_SAM2_MODEL = "facebook/sam2.1-hiera-tiny"
 DEFAULT_SAM2_REVISION = "de431c4043854a71d8101e17995dfe596bf101a5"
 SAM2_LICENSE = "Apache-2.0"
@@ -78,6 +79,7 @@ class Sam2MaskConfig:
 
         return {
             "mode": self.mode,
+            "selection_policy": SAM2_SELECTION_POLICY,
             "model_id": self.model_id,
             "model_revision": self.model_revision,
             "points_per_side": self.points_per_side,
@@ -488,6 +490,15 @@ def _select_automatic_boxes(
 ) -> list[tuple[float, float, float, float]]:
     frame_area = float(width * height)
     ranked: list[tuple[float, tuple[float, float, float, float]]] = []
+    # The geometric midpoint treats the configured area interval as a log-scale
+    # foreground prior. The previous sqrt(area * (1 - area)) term peaks at half
+    # a frame, so large table/backdrop masks outranked compact manipulation
+    # objects and their union could protect almost the whole scene. Penalize
+    # distance from the midpoint symmetrically instead: neither a barely eligible
+    # speckle nor a broad background region should win on area alone.
+    preferred_area_fraction = math.sqrt(
+        min_area_fraction * max_area_fraction
+    )
     for proposal in proposals:
         try:
             area_fraction = float(proposal["area"]) / frame_area
@@ -500,17 +511,47 @@ def _select_automatic_boxes(
             continue
         if box_width <= 0 or box_height <= 0:
             continue
-        # Prefer stable, accurately predicted foreground masks while avoiding
-        # either tiny speckles or whole-frame/background masks.
-        balance = math.sqrt(area_fraction * (1.0 - area_fraction))
+        size_affinity = math.sqrt(
+            min(
+                area_fraction / preferred_area_fraction,
+                preferred_area_fraction / area_fraction,
+            )
+        )
         ranked.append(
             (
-                predicted_iou * stability * balance,
+                predicted_iou * stability * size_affinity,
                 (x, y, x + box_width, y + box_height),
             )
         )
     ranked.sort(key=lambda item: item[0], reverse=True)
-    return [box for _score, box in ranked[:limit]]
+    selected: list[tuple[float, float, float, float]] = []
+    for _score, box in ranked:
+        # Automatic-mask generation commonly returns several almost identical
+        # boxes for one object. Spending every propagation slot on those boxes
+        # both hides other foreground objects and inflates the combined mask.
+        if any(_box_iou(box, prior) >= 0.85 for prior in selected):
+            continue
+        selected.append(box)
+        if len(selected) == limit:
+            break
+    return selected
+
+
+def _box_iou(
+    left: tuple[float, float, float, float],
+    right: tuple[float, float, float, float],
+) -> float:
+    """Return intersection-over-union for two validated XYXY boxes."""
+
+    x0 = max(left[0], right[0])
+    y0 = max(left[1], right[1])
+    x1 = min(left[2], right[2])
+    y1 = min(left[3], right[3])
+    intersection = max(0.0, x1 - x0) * max(0.0, y1 - y0)
+    left_area = (left[2] - left[0]) * (left[3] - left[1])
+    right_area = (right[2] - right[0]) * (right[3] - right[1])
+    union = left_area + right_area - intersection
+    return intersection / union if union > 0.0 else 0.0
 
 
 def _package_version(name: str) -> str:

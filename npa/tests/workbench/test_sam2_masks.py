@@ -42,6 +42,57 @@ def test_automatic_mask_selection_rejects_speckles_and_background() -> None:
     assert selected == [(20.0, 20.0, 60.0, 60.0)]
 
 
+def test_automatic_mask_selection_prefers_compact_distinct_foreground() -> None:
+    selected = sm._select_automatic_boxes(
+        [
+            # The historical area score preferred this broad, high-confidence
+            # background proposal because its area was closest to half a frame.
+            {
+                "area": 5_500,
+                "bbox": [0, 0, 100, 55],
+                "predicted_iou": 1.0,
+                "stability_score": 1.0,
+            },
+            {
+                "area": 400,
+                "bbox": [10, 10, 20, 20],
+                "predicted_iou": 0.95,
+                "stability_score": 0.96,
+            },
+            # A near-duplicate of the compact object must not consume another
+            # propagation slot even though its confidence is also high.
+            {
+                "area": 420,
+                "bbox": [10, 10, 21, 20],
+                "predicted_iou": 0.94,
+                "stability_score": 0.95,
+            },
+            {
+                "area": 300,
+                "bbox": [65, 60, 15, 20],
+                "predicted_iou": 0.91,
+                "stability_score": 0.93,
+            },
+        ],
+        width=100,
+        height=100,
+        min_area_fraction=0.002,
+        max_area_fraction=0.65,
+        limit=2,
+    )
+
+    assert selected == [
+        (10.0, 10.0, 30.0, 30.0),
+        (65.0, 60.0, 80.0, 80.0),
+    ]
+
+
+def test_sam2_contract_versions_the_automatic_selection_policy() -> None:
+    assert sm.Sam2MaskConfig().public_contract()["selection_policy"] == (
+        "compact-foreground-nms-v2"
+    )
+
+
 def test_publish_sam2_masks_requires_and_publishes_exact_frame_count(
     tmp_path: Path,
 ) -> None:
