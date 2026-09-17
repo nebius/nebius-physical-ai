@@ -590,6 +590,44 @@ def test_project_lease_requires_explicit_resume_after_owner_crash(
         resumed.transition("rolled-back")
 
 
+@pytest.mark.parametrize("has_recovery_command", [True, False])
+def test_missing_owner_journal_keeps_lease_identity_and_blocks_mutation(
+    journal_root: Path, monkeypatch: pytest.MonkeyPatch, has_recovery_command: bool
+) -> None:
+    monkeypatch.setenv("NPA_CONFIG_DIR", str(journal_root.parent / "first-config"))
+    resume_command = "npa agent deploy --project prod --name agent"
+    owner = _prepare(
+        resume_command=resume_command if has_recovery_command else "",
+        destroy_command="",
+    )
+    with operation_context(owner):
+        owner.record_failure(RuntimeError("synthetic interrupted apply"))
+        owner.transition("recovery-required")
+    owner_pid = owner.read()["owner_pid"]
+    lease_path = next((journal_root / ".projects").glob("*/lease.json"))
+    lease_bytes = lease_path.read_bytes()
+    owner.path.unlink()
+    monkeypatch.setenv("NPA_CONFIG_DIR", str(journal_root.parent / "next-config"))
+    candidate = _prepare(command="npa configure", resource_type="configure")
+
+    with pytest.raises(OperationJournalError) as exc_info:
+        with operation_context(candidate):
+            pytest.fail("missing owner journal must not permit provider mutation")
+
+    message = str(exc_info.value)
+    assert f"nonterminal lifecycle operation {owner.operation_id}" in message
+    assert f"phase recovery-required, owner_pid {owner_pid}" in message
+    expected_hint = (
+        f"Safe recovery: {resume_command}"
+        if has_recovery_command
+        else f"Inspect the owner journal at {owner.path} before retrying"
+    )
+    assert expected_hint in message
+    assert lease_path.read_bytes() == lease_bytes
+    assert not owner.path.exists()
+    assert candidate.read()["phase"] == "prepared"
+
+
 def test_project_lease_allows_only_explicit_parent_child_reentrancy(
     journal_root: Path,
 ) -> None:

@@ -2655,6 +2655,8 @@ def _run_known_project_configure(
     if provision:
         try:
             nebius_client.get_iam_token()
+        except nebius_client.NebiusCliCompatibilityError as exc:
+            raise typer.BadParameter(str(exc)) from exc
         except nebius_client.NebiusError as exc:
             raise typer.BadParameter(
                 "The active Nebius CLI profile cannot authenticate "

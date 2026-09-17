@@ -680,3 +680,102 @@ def test_hermetic_incident_boundary_recovers_without_cancellation() -> None:
     assert launches == 2
     assert cancellations == []
     assert result.recovery_decision == "submitted_and_reconciled"
+
+
+_CREDENTIAL_RPC_TRANSPORT = (
+    "Error: rpc error: code = Internal desc = server closed the stream without sending trailers\n"
+    "Unable to connect to the server: getting credentials: exec: executable nebius failed with exit code 5"
+)
+
+
+def test_credential_exec_internal_stream_close_is_typed_transport() -> None:
+    assert classify_failure(phase="launch", stderr=_CREDENTIAL_RPC_TRANSPORT) == (
+        EvidenceState.TRANSIENT_UNAVAILABLE, FailureCategory.KUBERNETES_TRANSPORT,
+    )
+    assert classify_failure(phase="workload", stderr=_CREDENTIAL_RPC_TRANSPORT) == (
+        EvidenceState.AMBIGUOUS, FailureCategory.UNKNOWN,
+    )
+
+
+@pytest.mark.parametrize("denial,category", [
+    ("Unauthorized", FailureCategory.AUTH),
+    ("credentials expired", FailureCategory.AUTH),
+    ("exec plugin authentication failed", FailureCategory.AUTH),
+    ("Forbidden", FailureCategory.RBAC),
+    ("Invalid pod_config", FailureCategory.SCHEMA),
+    ("credential configuration changed after verification", FailureCategory.IDENTITY),
+])
+def test_real_denial_precedes_credential_transport(denial, category) -> None:
+    state, actual = classify_failure(phase="launch", stderr=_CREDENTIAL_RPC_TRANSPORT + "\n" + denial)
+    assert state is EvidenceState.TERMINAL and actual is category
+
+
+def test_typed_transport_still_refuses_unobservable_reserved_row(tmp_path: Path) -> None:
+    launches = []
+    evidence = iter([
+        ReconciliationEvidence(ReconciliationState.ABSENT),
+        ReconciliationEvidence(ReconciliationState.FOUND, job_id="41", status="PENDING", workload_observable=False),
+    ])
+
+    def launch():
+        launches.append(True)
+        raise RuntimeError(_CREDENTIAL_RPC_TRANSPORT)
+
+    with pytest.raises(LaunchTransactionError) as caught:
+        run_launch_transaction(
+            logical_id="partial-transport", readiness=_stable, launch=launch,
+            reconcile=lambda: next(evidence), classify_launch_error=_transient, lock_root=tmp_path,
+        )
+    result = caught.value.result
+    assert result.category is FailureCategory.KUBERNETES_TRANSPORT and result.job_id == "41"
+    assert result.recovery_decision == "reject_unobservable_queue_record_after_launch_failure"
+    assert len(launches) == 1
+
+
+def test_non_idempotent_intent_is_durable_before_provider_post(tmp_path: Path) -> None:
+    sequence = []
+    evidence = iter([
+        ReconciliationEvidence(ReconciliationState.ABSENT),
+        ReconciliationEvidence(ReconciliationState.FOUND, job_id="42", status="PENDING"),
+    ])
+
+    def launch():
+        assert sequence[-1] == 1
+        return "accepted"
+
+    run_launch_transaction(
+        logical_id="durable-intent", readiness=_stable, launch=launch,
+        reconcile=lambda: next(evidence), classify_launch_error=_transient,
+        lock_root=tmp_path, record=lambda payload: sequence.append(payload["launch_sequence"]),
+    )
+    assert sequence[-1] == 1
+
+
+def test_failed_non_idempotent_intent_write_prevents_post(tmp_path: Path) -> None:
+    posts = []
+
+    def launch():
+        posts.append(True)
+        raise RuntimeError("synthetic provider result unknown")
+
+    def record(payload):
+        if payload["launch_sequence"]:
+            raise OSError("durable store unavailable")
+
+    with pytest.raises(OSError, match="durable store unavailable"):
+        run_launch_transaction(
+            logical_id="intent-write-failure", readiness=_stable,
+            launch=launch,
+            reconcile=lambda: ReconciliationEvidence(ReconciliationState.ABSENT),
+            classify_launch_error=_transient, lock_root=tmp_path, record=record,
+        )
+    assert posts == []
+
+
+def test_submit_diagnostic_does_not_mislabel_credential_transport_as_auth() -> None:
+    from npa.orchestration.skypilot.workflow import _format_submit_error
+
+    result = subprocess.CompletedProcess(["sky", "jobs", "launch"], 1, "", _CREDENTIAL_RPC_TRANSPORT)
+    assert _format_submit_error(result.args, result).startswith("SkyPilot transport failure")
+    denied = subprocess.CompletedProcess(result.args, 1, "", _CREDENTIAL_RPC_TRANSPORT + "\nUnauthorized")
+    assert _format_submit_error(denied.args, denied).startswith("SkyPilot auth failure")
