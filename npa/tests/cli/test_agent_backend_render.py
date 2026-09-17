@@ -5145,6 +5145,69 @@ def test_selected_run_artifact_chat_preserves_exact_source(monkeypatch, tmp_path
     assert "report.json" in result["reply"] and "`2`" in result["reply"]
     assert "example-bucket" not in result["reply"] and "synthetic/metrics" not in result["reply"]
 
+
+def test_live_evidence_chat_loads_exact_artifact_without_exposing_source(
+    monkeypatch, tmp_path
+):
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="live_evidence_chat_backend"
+    )
+    state = {
+        "workflow_executions": {
+            "private-workflow-run": {
+                "status": "succeeded",
+                "submitted_at": "2026-09-16T12:00:00Z",
+            }
+        }
+    }
+    exact_selection = {
+        "run_id": "private-artifact-run",
+        "run_ref": "npa1_exact_source_ref",
+        "key": "private/prefix/rollout.rrd",
+        "resource_bucket": "private-bucket",
+        "project_id": "private-project",
+        "resolved_prefix": "private/prefix",
+        "source_selected": True,
+    }
+    monkeypatch.setattr(module, "_load_state", lambda: copy.deepcopy(state))
+    monkeypatch.setattr(
+        module,
+        "_agent_k8s_backends",
+        lambda: {"cloud_clusters": [{"status": "RUNNING"}, {"status": "RUNNING"}]},
+    )
+    monkeypatch.setattr(module, "_visual_evidence_selection", lambda: exact_selection)
+    calls = []
+
+    def load_artifact(payload):
+        calls.append(payload)
+        return {"sim_viz": {"artifact_render": "rerun", "rrd_uri": "s3://private/rollout.rrd"}}
+
+    monkeypatch.setattr(module, "sim_viz_load_artifact", load_artifact)
+    monkeypatch.setattr(
+        module,
+        "sim_viz_status",
+        lambda: {"artifact_render": "rerun", "rrd_uri": "s3://private/rollout.rrd"},
+    )
+
+    response = module._agent_chat_with_tools(
+        raw_messages=[
+            {"role": "user", "content": "Show live cloud evidence and a real RRD artifact."}
+        ],
+        model="unused",
+    )
+
+    assert calls == [exact_selection]
+    assert response["live_evidence"] == {
+        "cloud_status_counts": {"running": 2},
+        "workflow_status": "succeeded",
+        "artifact_loaded": True,
+        "artifact_render": "rerun",
+    }
+    assert response["grounded"] is True
+    assert "2 running" in response["reply"]
+    assert "private-bucket" not in response["reply"]
+    assert "private/prefix" not in response["reply"]
+
 def test_rendered_action_catalog_returns_every_registered_tool_ref(
     monkeypatch, tmp_path
 ):

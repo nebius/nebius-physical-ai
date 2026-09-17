@@ -314,6 +314,17 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         ),
     ),
     (
+        "live_runtime_evidence",
+        re.compile(
+            r"\b(?:show|open|load)\b.{0,100}\b(?:live|real)\b.{0,100}"
+            r"\b(?:cloud|runtime|deployment)\b.{0,100}"
+            r"\b(?:evidence|proof|artifact|rrd|video)\b"
+            r"|\b(?:live|real)\b.{0,80}\b(?:cloud|runtime|deployment)\b"
+            r".{0,100}\b(?:evidence|proof)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "find_artifacts",
         re.compile(
             r"\b(?:find|discover|list|browse|show|view|open|inspect)\b.{0,120}\b(?:artifacts?|outputs?)\b"
@@ -540,6 +551,7 @@ INTENT_APIS: dict[str, list[str]] = {
     ],
     "start_sim2real": ["workflows/sim2real/submit"],
     "watch_sim": ["sim-viz/status", "sim-viz/rrd", "sim-viz/rrd-blob", "workflows/sim2real/status"],
+    "live_runtime_evidence": ["infra/k8s", "artifacts/runs", "artifacts/run/{run_id}", "sim-viz/load-artifact", "sim-viz/status"],
     "find_artifacts": ["artifacts/runs", "artifacts/run/{run_id}", "sim-viz/load-artifact", "sim-viz/status"],
     "create_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
     "create_vlm_rl_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
@@ -1185,60 +1197,38 @@ def format_live_infra_loop_guidance() -> str:
     )
 
 
+def _infra_status_counts(rows: list[Any]) -> str:
+    """Return aggregate cloud status counts without resource identifiers."""
+    counts: dict[str, int] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        status = str(row.get("status") or row.get("state") or "unknown").lower()
+        counts[status] = counts.get(status, 0) + 1
+    return ", ".join(f"{count} {status}" for status, count in sorted(counts.items())) or "none"
+
+
 def format_infra_backends(state: dict[str, Any]) -> str:
-    infra = state.get("infra")
-    if not isinstance(infra, dict):
-        infra = {}
+    infra = state.get("infra") if isinstance(state.get("infra"), dict) else {}
     configured = infra.get("configured") if isinstance(infra.get("configured"), list) else []
     local_clusters = infra.get("local_clusters") if isinstance(infra.get("local_clusters"), list) else []
     cloud_clusters = infra.get("cloud_clusters") if isinstance(infra.get("cloud_clusters"), list) else []
-    has_infra = bool(infra.get("has_infra"))
-    project = str(infra.get("project") or "default")
     lines = [
         "**Kubernetes / workflow infra status**:",
-        f"- **project**: `{project}`",
         f"- **agent_npa_ready**: `{bool(infra.get('agent_npa_ready'))}`",
+        f"- **configured backends**: `{len(configured)}`",
+        f"- **agent-local contexts**: `{len(local_clusters)}`",
+        f"- **Nebius MK8s backends**: `{_infra_status_counts(cloud_clusters)}`",
     ]
-    if configured:
-        lines.append("- **configured backends**:")
-        for item in configured[:5]:
-            if isinstance(item, dict):
-                lines.append(
-                    "  - "
-                    f"`{item.get('cluster_name') or item.get('context') or 'configured'}` "
-                    f"source=`{item.get('source', 'project_config')}` "
-                    f"kubeconfig=`{item.get('kubeconfig', '')}`"
-                )
-    if local_clusters:
-        lines.append("- **local agent clusters**:")
-        for item in local_clusters[:5]:
-            if isinstance(item, dict):
-                lines.append(
-                    "  - "
-                    f"`{item.get('cluster_name') or item.get('context') or 'cluster'}` "
-                    f"kubeconfig_exists=`{bool(item.get('kubeconfig_exists'))}`"
-                )
-    if cloud_clusters:
-        lines.append("- **Nebius MK8s clusters**:")
-        for item in cloud_clusters[:5]:
-            if isinstance(item, dict):
-                lines.append(
-                    "  - "
-                    f"`{item.get('name') or item.get('id') or 'cluster'}` "
-                    f"id=`{item.get('id', '')}` status=`{item.get('status', '')}`"
-                )
-    if not has_infra:
+    if not bool(infra.get("has_infra")):
         lines.extend(
             [
                 "- **No Kubernetes infra is currently specified or available.**",
-                "- Options:",
-                "  1. Let the agent deploy minimal GPU Kubernetes for the workflow (`POST /api/infra/provision`).",
-                "  2. Configure an existing backend in `~/.npa/config.yaml` under `projects.<alias>.kubernetes`.",
-                "  3. Submit with explicit `project` / `cluster_name` once you choose a target.",
+                "- Ask the Agent to prepare a minimal Kubernetes deployment; it will require a one-time confirmation before creating cloud resources.",
             ]
         )
     else:
-        lines.append("- The agent can use the listed backend or provision another one if requested.")
+        lines.append("- Resource identifiers stay hidden in chat; the Agent can use the configured backend after a workflow confirmation.")
     return "\n".join(lines)
 
 

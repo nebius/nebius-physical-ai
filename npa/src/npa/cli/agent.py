@@ -4818,6 +4818,7 @@ _SKILL_CACHE = {{"loaded_at": 0.0, "index": {{}}, "root": Path("/")}}
 _INTENT_SKILLS = {{
     "onboard_solution": ("byof-onboard", "oss-solution-registry-onboard"),
     "find_artifacts": ("find-artifacts",),
+    "live_runtime_evidence": ("find-artifacts", "artifact-viz-share", "npa-agent"),
     "create_workflow": ("author-npa-workflow",),
     "create_vlm_rl_workflow": ("author-npa-workflow", "sim-to-real"),
     "create_gate_workflow": ("author-npa-workflow", "sim-to-real"),
@@ -4948,6 +4949,99 @@ def _safe_infra_chat_status(response: object) -> str:
         return "ready"
     status = str(result.get("status") or payload.get("status") or "").strip().lower()
     return status if status in {{"blocked", "invalid", "unavailable", "unknown", "partial", "error"}} else "unavailable"
+
+
+def _chat_payload(response: object) -> dict:
+    if isinstance(response, JSONResponse):
+        try:
+            response = json.loads(response.body.decode("utf-8"))
+        except Exception:
+            return {{}}
+    return response if isinstance(response, dict) else {{}}
+
+
+def _visual_evidence_selection() -> dict:
+    try:
+        page = _chat_payload(artifacts_runs(limit=12))
+        rows = page.get("runs") if isinstance(page.get("runs"), list) else []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            run_ref = str(row.get("run_ref") or "")
+            scope = {{
+                "resource_bucket": str(row.get("bucket") or ""),
+                "project_id": str(row.get("project_id") or ""),
+                "resolved_prefix": str(row.get("resolved_prefix") or ""),
+                "source_selected": True,
+            }}
+            if not run_ref.startswith("npa1_") or not scope["resource_bucket"] or not scope["project_id"]:
+                continue
+            inventory = _chat_payload(artifacts_for_run(run_ref, **scope))
+            artifacts = inventory.get("artifacts") if isinstance(inventory.get("artifacts"), list) else []
+            visuals = [
+                item for item in artifacts
+                if isinstance(item, dict) and str(item.get("render") or "") in {{"rerun", "video"}}
+            ]
+            if not visuals:
+                continue
+            artifact = sorted(
+                visuals,
+                key=lambda item: str(item.get("render") or "") != "rerun",
+            )[0]
+            key = str(artifact.get("key") or "")
+            if key:
+                return {{
+                    "run_id": str(inventory.get("run_id") or row.get("run_id") or ""),
+                    "run_ref": str(inventory.get("run_ref") or run_ref),
+                    "key": key,
+                    **scope,
+                }}
+    except Exception:
+        # Evidence discovery is optional to the status report. Do not turn an
+        # inaccessible artifact source into a provider-detail leak in chat.
+        pass
+    return {{}}
+
+
+def _live_runtime_evidence(state: dict) -> dict:
+    try:
+        infra = _agent_k8s_backends()
+    except Exception:
+        infra = {{}}
+    cloud = infra.get("cloud_clusters") if isinstance(infra.get("cloud_clusters"), list) else []
+    statuses: dict[str, int] = {{}}
+    allowed_cloud_states = {{"running", "creating", "provisioning", "updating", "degraded", "failed", "stopped", "unknown"}}
+    for cluster in cloud:
+        if isinstance(cluster, dict):
+            status = str(cluster.get("status") or cluster.get("state") or "unknown").lower()
+            if status not in allowed_cloud_states:
+                status = "unknown"
+            statuses[status] = statuses.get(status, 0) + 1
+    executions = _workflow_execution_snapshots(state)
+    execution = executions[0] if executions else {{}}
+    workflow_status = str(execution.get("status") or execution.get("state") or "unavailable").lower()
+    if workflow_status not in {{"queued", "preparing", "running", "succeeded", "failed", "cancelled", "unavailable"}}:
+        workflow_status = "unavailable"
+    selection = _visual_evidence_selection()
+    try:
+        loaded = _chat_payload(sim_viz_load_artifact(selection)) if selection else {{}}
+        live_viz = _chat_payload(sim_viz_status()) if selection else {{}}
+    except Exception:
+        loaded, live_viz = {{}}, {{}}
+    sim_viz = live_viz if isinstance(live_viz, dict) and live_viz else loaded.get("sim_viz")
+    sim_viz = sim_viz if isinstance(sim_viz, dict) else {{}}
+    artifact_render = str(sim_viz.get("artifact_render") or "none")
+    if artifact_render not in {{"rerun", "video"}}:
+        artifact_render = "none"
+    return {{
+        "cloud_status_counts": statuses,
+        "workflow_status": workflow_status,
+        "artifact_loaded": bool(
+            artifact_render in {{"rerun", "video"}}
+            and (sim_viz.get("artifact_preview_url") or sim_viz.get("rrd_uri"))
+        ),
+        "artifact_render": artifact_render,
+    }}
 
 
 def _mk8s_chat_desired(user_text: str) -> dict:
@@ -5083,6 +5177,35 @@ def _maybe_toolground_chat_reply(
             intent=intent, tool_refs=frozenset(TOOL_REFS),
         )
         return result["reply"], suggested_apis, [], None, result, intent
+    if intent == "live_runtime_evidence":
+        evidence = _live_runtime_evidence(state)
+        status_counts = evidence.get("cloud_status_counts")
+        cloud_summary = ", ".join(
+            f"{{int(count)}} {{status}}"
+            for status, count in sorted(status_counts.items())
+            if isinstance(count, int) and count > 0
+        ) if isinstance(status_counts, dict) else ""
+        render = str(evidence.get("artifact_render") or "none")
+        if bool(evidence.get("artifact_loaded")):
+            artifact_summary = f"real `{{render}}` artifact loaded in **View**"
+        else:
+            artifact_summary = "no visual artifact could be loaded from the authorized inventory"
+        reply = (
+            "**Live cloud evidence loaded**\\n"
+            f"- **Nebius Kubernetes backends**: `{{cloud_summary or 'none observed'}}`\\n"
+            f"- **latest durable workflow**: `{{str(evidence.get('workflow_status') or 'unavailable')}}`\\n"
+            f"- **artifact viewer**: {{artifact_summary}}\\n"
+            "- I queried the configured cloud backends and selected a discovered artifact from its exact authorized source. "
+            "The View tab now opens that real run output; resource identifiers remain private."
+        )
+        used = [
+            "infra/k8s",
+            "artifacts/runs",
+            "artifacts/run/{{run_id}}",
+            "sim-viz/load-artifact",
+            "sim-viz/status",
+        ]
+        return reply, used, suggested_apis, None, {{"live_evidence": evidence}}, intent
     if intent == "start_sim2real":
         submit = submit_sim2real({{}})
         apis_used.append("workflows/sim2real/submit")
@@ -5539,6 +5662,11 @@ def _agent_chat_with_tools(*, raw_messages: list, model: str, confirm_token: str
         token = str(workflow_validation.get("confirm_token") or "")
         if token:
             payload["confirm_token"] = token
+        return payload
+    if intent == "live_runtime_evidence" and isinstance(workflow_validation, dict):
+        evidence = workflow_validation.get("live_evidence")
+        if isinstance(evidence, dict):
+            payload["live_evidence"] = evidence
         return payload
     if isinstance(workflow_validation, dict):
         payload["workflow_validation"] = workflow_validation

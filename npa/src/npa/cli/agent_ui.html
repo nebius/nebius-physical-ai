@@ -8828,6 +8828,9 @@
             if (!data.workflow_yaml && draft && draft.yaml) {
               setWorkflowYaml(draft.yaml, draft.validation || draft);
             }
+            if (data && data.live_evidence && data.live_evidence.artifact_loaded) {
+              await applyLiveEvidence(data.live_evidence);
+            }
             if (opts.onDone) opts.onDone(data);
           } catch (err) {
             clearThinkingBubble();
@@ -8853,6 +8856,17 @@
         }
         const text = String(input.value || "").trim();
         return queueChatText(text, { restoreInput: true });
+      }
+      async function applyLiveEvidence(evidence) {
+        const render = String((evidence && evidence.artifact_render) || "");
+        if (!evidence || !evidence.artifact_loaded || !["rerun", "video"].includes(render)) return;
+        // The backend selects only from its server-discovered, exact-source
+        // inventory. Refresh from that active state rather than reconstructing
+        // a bucket/key in the browser, where it could leak into the transcript.
+        await refresh();
+        await activateMainTab("rerun");
+        openChatDrawer();
+        showToast("Live cloud evidence loaded in View.", "success");
       }
       function setChatInput(text) {
         const input = document.getElementById("chatInput");

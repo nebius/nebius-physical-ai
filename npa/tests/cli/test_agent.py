@@ -1626,6 +1626,16 @@ def test_agent_ui_treats_restricted_tenant_listing_as_partial_access_notice() ->
     assert "errorsHost.classList.toggle(\"is-notice\", limitedDiscovery)" in ui
 
 
+def test_agent_ui_opens_view_after_live_evidence_chat_action() -> None:
+    ui = Path(agent_module.__file__).with_name("agent_ui.html").read_text(
+        encoding="utf-8"
+    )
+
+    assert "async function applyLiveEvidence(evidence)" in ui
+    assert "await applyLiveEvidence(data.live_evidence);" in ui
+    assert "await activateMainTab(\"rerun\");" in ui
+
+
 def test_existing_agent_bootstrap_fails_closed_when_https_ingress_cannot_be_ensured() -> (
     None
 ):
