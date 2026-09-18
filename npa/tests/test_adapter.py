@@ -410,6 +410,90 @@ class TestConvert:
                 assert stats[cam_key]["max"][ch][0][0] <= 1.0
 
 
+@needs_ffmpeg
+class TestLeRobotLibraryLoad:
+    """Load a converted dataset with the real LeRobot library.
+
+    Everything above reads the exported files directly, so it cannot see
+    anything that only breaks once `LeRobotDataset` joins meta, data, and
+    videos: a `codebase_version` the loader refuses, a video the loader looks
+    for under a different path, or a declared feature shape it will not decode
+    into. `lerobot` pulls in torch and is not a test dependency, so this skips
+    unless it is installed.
+    """
+
+    @pytest.fixture(autouse=True)
+    def lerobot_dataset_module(self):
+        """Skip before converting anything, so a missing library costs nothing."""
+        return pytest.importorskip(
+            "lerobot.datasets.lerobot_dataset",
+            reason="install lerobot to validate the export against the real loader",
+        )
+
+    def _load(
+        self,
+        lerobot_dataset_module,
+        output_dir: Path,
+        *,
+        repo_id: str = "npa/adapter-test",
+    ):
+        return lerobot_dataset_module.LeRobotDataset(repo_id=repo_id, root=output_dir)
+
+    def test_converted_dataset_loads_with_declared_shape(
+        self, lerobot_dataset_module, demo_dir: Path, output_dir: Path
+    ) -> None:
+        convert(demo_dir, output_dir, fps=FPS, robot_type="franka_panda")
+
+        dataset = self._load(lerobot_dataset_module, output_dir)
+
+        assert len(dataset) == N_EPISODES * N_TIMESTEPS
+        assert dataset.num_episodes == N_EPISODES
+        assert dataset.meta.total_frames == N_EPISODES * N_TIMESTEPS
+        assert dataset.meta.fps == FPS
+        assert dataset.meta.robot_type == "franka_panda"
+
+    def test_first_sample_decodes_state_action_and_video(
+        self, lerobot_dataset_module, demo_dir: Path, output_dir: Path
+    ) -> None:
+        convert(demo_dir, output_dir, fps=FPS, robot_type="franka_panda")
+
+        sample = self._load(lerobot_dataset_module, output_dir)[0]
+
+        assert tuple(sample["observation.state"].shape) == (N_STATE_DIM,)
+        assert tuple(sample["action"].shape) == (N_ACTIONS,)
+        assert int(sample["episode_index"]) == 0
+        assert int(sample["frame_index"]) == 0
+        assert float(sample["timestamp"]) == 0.0
+
+        for cam in ("observation.images.workspace", "observation.images.wrist"):
+            frame = sample[cam]
+            # The loader hands back channels-first normalized frames, so a
+            # correct shape here means the mp4 was found and decoded.
+            assert tuple(frame.shape) == (3, IMG_H, IMG_W), cam
+            assert 0.0 <= float(frame.min()) and float(frame.max()) <= 1.0, cam
+            # Random source frames cannot decode to a constant image; a zeroed
+            # or placeholder frame would.
+            assert float(frame.std()) > 0.0, cam
+
+    def test_loader_rejects_a_mislabelled_codebase_version(
+        self, lerobot_dataset_module, demo_dir: Path, output_dir: Path
+    ) -> None:
+        """Guards the assumption the parquet assertions rest on: the exported
+        `codebase_version` is load-bearing, not cosmetic."""
+        convert(demo_dir, output_dir, fps=FPS)
+        info_path = output_dir / "meta" / "info.json"
+        info = json.loads(info_path.read_text())
+        info["codebase_version"] = "v2.1"
+        info_path.write_text(json.dumps(info))
+
+        with pytest.raises(Exception, match="2.1"):
+            self._load(
+                lerobot_dataset_module,
+                output_dir,
+                repo_id="npa/adapter-test-downgraded",
+            )
+
+
 class TestConvertErrors:
     def test_convert_missing_required_array_raises_file_not_found(
         self, tmp_path: Path

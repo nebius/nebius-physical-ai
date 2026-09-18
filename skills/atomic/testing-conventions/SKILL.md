@@ -104,6 +104,29 @@ dependency or empty host cache masks the denial and privacy assertions. Preserve
 those assertions; never prime a real cache or download vendor data to make a
 hermetic test pass.
 
+### Optional Third-Party Library Validation
+
+Some exported artifact is only truly valid if the upstream library will load it,
+and asserting on the bytes we wrote cannot prove that. Those tests use
+`pytest.importorskip` and skip by default, because the library (`lerobot` pulls
+in torch) is not a test dependency. Put the `importorskip` in an `autouse`
+fixture, not mid-test, so a skip does not first pay for the fixture work it will
+throw away.
+
+A skipped test proves nothing, so run it against the real library when you touch
+the exporter. `npa/tests/test_adapter.py::TestLeRobotLibraryLoad` covers the
+sim-to-LeRobot export; give it its own virtualenv rather than adding torch to
+the shared one:
+
+```bash
+python3 -m venv /tmp/lerobot-venv
+/tmp/lerobot-venv/bin/pip install "lerobot==0.5.1" -e "npa[dev]"
+/tmp/lerobot-venv/bin/python -m pytest npa/tests/test_adapter.py -k LeRobotLibraryLoad -q
+```
+
+`lerobot` needs `ffmpeg` on `PATH` to decode the exported videos, and building
+its `evdev` dependency needs `python3-dev` and `linux-libc-dev`.
+
 ## Live-Infra Testing Is A Priority (not optional)
 
 Smoke + mocked-unit tests are necessary but **not sufficient**. Any change to an
