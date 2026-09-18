@@ -1,3 +1,5 @@
+"""Check runtime boundaries with inert local fixtures, never live qualification."""
+
 from __future__ import annotations
 
 import hashlib
@@ -28,6 +30,53 @@ SPEC.loader.exec_module(verifier)
 
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _refusal_probe_environment(tmp_path: Path, claim: str | None) -> dict[str, str]:
+    commands = tmp_path / "commands"
+    commands.mkdir()
+    marker = tmp_path / "external-command-called"
+    for name in ("robomimic-runtime", "python", "python3", "mktemp"):
+        shim = commands / name
+        shim.write_text('#!/bin/sh\n: >"$NPA_TEST_MARKER"\nexit 99\n')
+        shim.chmod(0o755)
+    env = {
+        "PATH": str(commands),
+        "HOME": str(tmp_path / "home"),
+        "TMPDIR": str(tmp_path / "snapshots"),
+        "NPA_TEST_MARKER": str(marker),
+        "NPA_ROBOMIMIC_RUNTIME_ROOT": str(tmp_path / "runtime"),
+        "NPA_ROBOMIMIC_INPUT_DIR": str(tmp_path / "input"),
+        "NPA_SMOKE_OUTPUT_DIR": str(tmp_path / "output"),
+        "NPA_ROBOMIMIC_ENTITLEMENT_FILE": "inert-private-value",
+    }
+    if claim is not None:
+        env["NPA_ROBOMIMIC_STRICT_B200_ATTESTED"] = claim
+    return env
+
+
+@pytest.mark.parametrize("claim", [None, "1", "true"])
+@pytest.mark.parametrize("arguments", [["smoke"], ["smoke", "--help"]])
+def test_baked_smoke_refuses_before_external_dispatch(
+    tmp_path: Path, claim: str | None, arguments: list[str]
+) -> None:
+    env = _refusal_probe_environment(tmp_path, claim)
+    before = sorted(tmp_path.rglob("*"))
+    result = subprocess.run(
+        ["/bin/bash", str(IMAGE_ROOT / "entrypoint.sh"), *arguments],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 78
+    assert result.stdout == ""
+    assert result.stderr == (
+        "STRICT capacity qualification deferred: authenticated run/Pod-bound "
+        "provider allocation observation is unavailable\n"
+    )
+    assert not Path(env["NPA_TEST_MARKER"]).exists()
+    assert sorted(tmp_path.rglob("*")) == before
 
 
 def _runtime(tmp_path: Path) -> tuple[Path, Path, str]:
@@ -271,9 +320,7 @@ def _wait_for_file(
                     if child_pid_path is not None and child_pid_path.is_file()
                     else None
                 )
-                _kill_process_groups(
-                    process, child_process_group=child_process_group
-                )
+                _kill_process_groups(process, child_process_group=child_process_group)
                 stdout, stderr = process.communicate(timeout=5)
             pytest.fail(
                 f"bootstrap exited before {path.name}: "
@@ -635,7 +682,9 @@ def test_runtime_cli_refusals_never_serialize_rejected_paths(
     assert "Traceback" not in output
 
 
-def test_entitlement_timestamp_refusal_drops_rejected_value_and_exception_chain() -> None:
+def test_entitlement_timestamp_refusal_drops_rejected_value_and_exception_chain() -> (
+    None
+):
     marker = "private-malformed-timestamp-marker"
 
     with pytest.raises(verifier.VerificationError) as raised:
@@ -811,9 +860,7 @@ def test_runtime_inventory_fails_closed(tmp_path: Path, mutation: str) -> None:
     else:
         (runtime_root / "payload" / "extra").write_text("undeclared")
     message = (
-        "runtime package inventory mismatch"
-        if mutation == "wrong-package"
-        else None
+        "runtime package inventory mismatch" if mutation == "wrong-package" else None
     )
     with pytest.raises(verifier.VerificationError, match=message):
         verifier.verify_external_runtime(
@@ -832,7 +879,9 @@ def test_initial_runtime_verification_refuses_fifo_replacement_without_blocking(
     original_open = verifier.os.open
     replaced = False
 
-    def replace_before_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
+    def replace_before_open(
+        path: object, flags: int, *args: object, **kwargs: object
+    ) -> int:
         nonlocal replaced
         if Path(path) == interpreter and not replaced:
             replaced = True
@@ -842,7 +891,9 @@ def test_initial_runtime_verification_refuses_fifo_replacement_without_blocking(
 
     monkeypatch.setattr(verifier.os, "open", replace_before_open)
     started = time.monotonic()
-    with pytest.raises(verifier.VerificationError, match="runtime file identity mismatch"):
+    with pytest.raises(
+        verifier.VerificationError, match="runtime file identity mismatch"
+    ):
         verifier.verify_external_runtime(
             runtime_root=runtime_root,
             runtime_lock_path=lock_path,
@@ -863,7 +914,9 @@ def test_snapshot_copy_refuses_fifo_replacement_without_blocking(
     original_open = verifier.os.open
     replaced = False
 
-    def replace_before_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
+    def replace_before_open(
+        path: object, flags: int, *args: object, **kwargs: object
+    ) -> int:
         nonlocal replaced
         if Path(path) == source and not replaced:
             replaced = True
@@ -1243,7 +1296,7 @@ def test_bootstrap_has_no_fetch_install_or_cache_population_path() -> None:
     assert 'run_child "${snapshot_root}/payload/bin/python" "$@"' in text
     assert 'exec "$@"' in text
     assert 'find "${snapshot_parent}" -type d -exec chmod u+w' in text
-    assert '${empty_root}.proof' not in text
+    assert "${empty_root}.proof" not in text
     assert "trap - EXIT" not in text
     assert "EPOCHREALTIME" not in text
     assert "</proc/uptime" in text
@@ -1319,9 +1372,7 @@ def test_bootstrap_cleans_snapshot_when_snapshot_creation_fails(
         check=False,
         capture_output=True,
         text=True,
-        env=_exec_environment(
-            tmp_path, import_mode="success", snapshot_mode="fail"
-        ),
+        env=_exec_environment(tmp_path, import_mode="success", snapshot_mode="fail"),
         timeout=5,
     )
 
@@ -1349,9 +1400,7 @@ def test_bootstrap_stops_snapshot_creation_before_cleanup(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        env=_exec_environment(
-            tmp_path, import_mode="success", snapshot_mode="block"
-        ),
+        env=_exec_environment(tmp_path, import_mode="success", snapshot_mode="block"),
         start_new_session=True,
     )
     snapshot_pid: int | None = None
@@ -1363,9 +1412,7 @@ def test_bootstrap_stops_snapshot_creation_before_cleanup(
             child_pid_path=tmp_path / "snapshot-pid",
         )
         snapshot_pid = _recorded_pid(tmp_path / "snapshot-pid")
-        snapshot_root = Path(
-            (tmp_path / "snapshot-record").read_text(encoding="utf-8")
-        )
+        snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
         signal_started = time.monotonic()
         os.kill(process.pid, signal_number)
         _communicate_or_kill(process, child_process_group=snapshot_pid)
@@ -1389,9 +1436,7 @@ def test_signal_pending_across_child_launch_is_forwarded(tmp_path: Path) -> None
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        env=_exec_environment(
-            tmp_path, import_mode="success", snapshot_mode="block"
-        ),
+        env=_exec_environment(tmp_path, import_mode="success", snapshot_mode="block"),
         start_new_session=True,
     )
     snapshot_pid: int | None = None
@@ -1408,9 +1453,7 @@ def test_signal_pending_across_child_launch_is_forwarded(tmp_path: Path) -> None
             child_pid_path=tmp_path / "snapshot-pid",
         )
         snapshot_pid = _recorded_pid(tmp_path / "snapshot-pid")
-        snapshot_root = Path(
-            (tmp_path / "snapshot-record").read_text(encoding="utf-8")
-        )
+        snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
         os.kill(process.pid, signal.SIGTERM)
         _wait_for_file(
             tmp_path / "signal-pending",
@@ -1462,9 +1505,7 @@ def test_bootstrap_cleans_snapshot_when_signalled_during_import(
             child_pid_path=tmp_path / "import-pid",
         )
         import_pid = _recorded_pid(tmp_path / "import-pid")
-        snapshot_root = Path(
-            (tmp_path / "snapshot-record").read_text(encoding="utf-8")
-        )
+        snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
         signal_started = time.monotonic()
         os.kill(process.pid, signal_number)
         _communicate_or_kill(process, child_process_group=import_pid)
@@ -1504,9 +1545,7 @@ def test_finite_payload_exit_cleans_snapshot(tmp_path: Path) -> None:
         check=False,
         capture_output=True,
         text=True,
-        env=_exec_environment(
-            tmp_path, import_mode="success", exec_mode="exit"
-        ),
+        env=_exec_environment(tmp_path, import_mode="success", exec_mode="exit"),
         timeout=5,
     )
 
@@ -1526,9 +1565,7 @@ def test_successful_leader_keeps_snapshot_until_descendant_exits(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        env=_exec_environment(
-            tmp_path, import_mode="success", exec_mode="descendant"
-        ),
+        env=_exec_environment(tmp_path, import_mode="success", exec_mode="descendant"),
         start_new_session=True,
     )
     snapshot_root: Path | None = None
@@ -1540,9 +1577,7 @@ def test_successful_leader_keeps_snapshot_until_descendant_exits(
             child_pid_path=tmp_path / "exec-pid",
         )
         payload_group = _recorded_pid(tmp_path / "exec-pid")
-        snapshot_root = Path(
-            (tmp_path / "snapshot-record").read_text(encoding="utf-8")
-        )
+        snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
         _wait_for_process_gone(payload_group, process)
         assert process.poll() is None
         os.killpg(payload_group, 0)
@@ -1596,9 +1631,7 @@ def test_supervisor_stops_payload_before_cleaning_snapshot(
             child_pid_path=tmp_path / "exec-pid",
         )
         payload_pid = _recorded_pid(tmp_path / "exec-pid")
-        snapshot_root = Path(
-            (tmp_path / "snapshot-record").read_text(encoding="utf-8")
-        )
+        snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
         assert process.poll() is None
         assert snapshot_root.is_dir()
         assert snapshot_root.stat().st_mode & 0o222 == 0
@@ -1629,9 +1662,7 @@ def test_payload_observes_snapshot_until_supervisor_reaps_it(tmp_path: Path) -> 
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        env=_exec_environment(
-            tmp_path, import_mode="success", exec_mode="observe"
-        ),
+        env=_exec_environment(tmp_path, import_mode="success", exec_mode="observe"),
         start_new_session=True,
     )
     snapshot_root: Path | None = None
@@ -1643,9 +1674,7 @@ def test_payload_observes_snapshot_until_supervisor_reaps_it(tmp_path: Path) -> 
             child_pid_path=tmp_path / "exec-pid",
         )
         payload_pid = _recorded_pid(tmp_path / "exec-pid")
-        snapshot_root = Path(
-            (tmp_path / "snapshot-record").read_text(encoding="utf-8")
-        )
+        snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
         os.kill(process.pid, signal.SIGTERM)
         _communicate_or_kill(process, child_process_group=payload_pid)
 
@@ -1671,9 +1700,7 @@ def test_monotonic_deadline_does_not_depend_on_a_hanging_ps(tmp_path: Path) -> N
         encoding="utf-8",
     )
     hostile_ps.chmod(0o755)
-    environment = _exec_environment(
-        tmp_path, import_mode="success", exec_mode="ignore"
-    )
+    environment = _exec_environment(tmp_path, import_mode="success", exec_mode="ignore")
     environment["PATH"] = f"{hostile_bin}:{environment['PATH']}"
     environment["NPA_TEST_PS_CALLED"] = str(tmp_path / "ps-called")
     process = subprocess.Popen(
@@ -1693,9 +1720,7 @@ def test_monotonic_deadline_does_not_depend_on_a_hanging_ps(tmp_path: Path) -> N
             child_pid_path=tmp_path / "exec-pid",
         )
         payload_pid = _recorded_pid(tmp_path / "exec-pid")
-        snapshot_root = Path(
-            (tmp_path / "snapshot-record").read_text(encoding="utf-8")
-        )
+        snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
         signal_started = time.monotonic()
         os.kill(process.pid, signal.SIGTERM)
         time.sleep(0.2)
@@ -1718,13 +1743,17 @@ def test_monotonic_deadline_does_not_depend_on_a_hanging_ps(tmp_path: Path) -> N
 
 def test_shipped_assert_refusal_reaches_missing_ready_marker(tmp_path: Path) -> None:
     source = (IMAGE_ROOT / "runtime_bootstrap.sh").read_text(encoding="utf-8")
-    source = source.replace(
-        'readonly verifier="/opt/npa/robomimic/verify_image.py"',
-        f'readonly verifier="{IMAGE_ROOT / "verify_image.py"}"',
-    ).replace(
-        'readonly runtime_lock="/opt/npa/robomimic/runtime-requirements.lock"',
-        f'readonly runtime_lock="{IMAGE_ROOT / "runtime-requirements.lock"}"',
-    ).replace("/usr/local/bin/python3", sys.executable)
+    source = (
+        source.replace(
+            'readonly verifier="/opt/npa/robomimic/verify_image.py"',
+            f'readonly verifier="{IMAGE_ROOT / "verify_image.py"}"',
+        )
+        .replace(
+            'readonly runtime_lock="/opt/npa/robomimic/runtime-requirements.lock"',
+            f'readonly runtime_lock="{IMAGE_ROOT / "runtime-requirements.lock"}"',
+        )
+        .replace("/usr/local/bin/python3", sys.executable)
+    )
     script = tmp_path / "runtime_bootstrap.sh"
     script.write_text(source, encoding="utf-8")
     result = subprocess.run(
