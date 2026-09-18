@@ -407,6 +407,9 @@ def generate_variants_cmd(
     conditioning_fps: int = typer.Option(24, "--conditioning-fps", help="Prepared-source and generated-video frame rate."),
     transfer_chunk_frames: int = typer.Option(93, "--transfer-chunk-frames", help="Native transfer window, 4k+1 frames; complete source coverage is mandatory."),
     control_guidance: float = typer.Option(1.5, "--control-guidance", help="Positive native structural-control strength."),
+    transfer_edge_threshold: str = typer.Option("medium", "--transfer-edge-threshold", help="Native Canny preset: very_low, low, medium, high or very_high."),
+    transfer_rgb_weight: float = typer.Option(0.0, "--transfer-rgb-weight", help="Native RGB conditioning weight relative to edge weight 1; zero disables it. Does not blend source pixels into output."),
+    transfer_first_chunk_conditional_frames: int = typer.Option(1, "--transfer-first-chunk-conditional-frames", help="Source RGB frames anchoring the first native transfer window: 1 preserves the existing behavior; 0 allows restyling from the first frame. Later windows retain generated overlap."),
 ) -> None:
     """Generate and publish real source-video-conditioned Cosmos 3 variants."""
 
@@ -442,6 +445,9 @@ def generate_variants_cmd(
             conditioning_fps=conditioning_fps,
             transfer_chunk_frames=transfer_chunk_frames,
             control_guidance=control_guidance,
+            transfer_edge_threshold=transfer_edge_threshold,
+            transfer_rgb_weight=transfer_rgb_weight,
+            transfer_first_chunk_conditional_frames=transfer_first_chunk_conditional_frames,
         )
     except (PaidfCosmos3Error, Cosmos3GenerateError, VideoAlignmentError, ValueError) as exc:
         typer.echo(f"cosmos3 generate-variants failed: {exc}", err=True)

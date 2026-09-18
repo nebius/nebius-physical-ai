@@ -71,6 +71,164 @@ def _doc() -> dict:
     return yaml.safe_load(SPEC.read_text(encoding="utf-8"))
 
 
+def test_custom_appearance_profiles_reach_the_real_sampler(tmp_path):
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+    from npa.workflows.data_factory_stages import generate_configs
+
+    profile = {"lighting": "soft warm room lighting", "background": "gray work surface",
+               "color_grade": "neutral balanced color palette",
+               "surface_finish": "matte low-gloss work surface"}
+    document = _doc()
+    document["config"]["appearance_profiles_json"] = json.dumps([profile])
+    document["config"]["configs_uri"] = str(tmp_path / "configs")
+    document["config"]["images_uri"] = str(tmp_path / "input")
+    path = tmp_path / "workflow.yaml"
+    path.write_text(yaml.safe_dump(document))
+    plan = build_plan(load_spec(path), run_id="custom-profiles",
+                      assume_decision="promote_checkpoint")
+    stage = next(step for step in plan.steps if step.state == "generate-configs")
+    manifest = generate_configs(*stage.argv[3:])
+    assert manifest["appearance_profiles"] == [profile]
+    assert all(item["lighting"] == profile["lighting"] for item in manifest["augmentations"])
+
+
+def test_invalid_appearance_profile_override_fails_during_planning():
+    result = runner.invoke(app, ["workbench", "workflow", "plan-spec", str(SPEC),
+                                "--run-id", "invalid-profiles", "--var",
+                                'appearance_profiles_json=[{"lighting":"warm"}]', "--json"])
+    assert result.exit_code != 0
+    assert "appearance profile" in result.output
+
+
+def test_edge_preset_reaches_generation_cli_and_settings(tmp_path, monkeypatch):
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+    from npa.workflows import paidf_cosmos3
+
+    document = _doc()
+    document["config"]["transfer_edge_threshold"] = "very_low"
+    document["config"]["transfer_rgb_weight"] = 0.5
+    document["config"]["transfer_first_chunk_conditional_frames"] = "0"
+    path = tmp_path / "workflow.yaml"
+    path.write_text(yaml.safe_dump(document))
+    plan = build_plan(load_spec(path), run_id="edge-detail", assume_decision="promote_checkpoint")
+    stage = next(step for step in plan.steps if step.state == "generate-variants")
+    calls = []
+    monkeypatch.setattr(paidf_cosmos3, "generate_variants", lambda *args, **kwargs: calls.append(kwargs) or {})
+    result = runner.invoke(app, list(stage.argv[1:]))
+    assert result.exit_code == 0, result.output
+    assert calls[0]["transfer_edge_threshold"] == "very_low"
+    assert calls[0]["transfer_rgb_weight"] == 0.5
+    assert calls[0]["transfer_first_chunk_conditional_frames"] == 0
+
+
+def test_invalid_edge_preset_fails_during_planning():
+    result = runner.invoke(app, ["workbench", "workflow", "plan-spec", str(SPEC),
+                                "--run-id", "invalid-edge", "--var", "transfer_edge_threshold=auto", "--json"])
+    assert result.exit_code != 0
+    assert "transfer_edge_threshold" in result.output
+
+
+def test_legacy_generation_config_uses_default_rgb_weight(tmp_path, monkeypatch):
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+    from npa.workflows import paidf_cosmos3
+
+    document = _doc()
+    document["config"].pop("transfer_rgb_weight")
+    document["config"].pop("transfer_first_chunk_conditional_frames")
+    path = tmp_path / "workflow.yaml"
+    path.write_text(yaml.safe_dump(document))
+    plan = build_plan(load_spec(path), run_id="legacy-rgb", assume_decision="promote_checkpoint")
+    stage = next(step for step in plan.steps if step.state == "generate-variants")
+    calls = []
+    monkeypatch.setattr(paidf_cosmos3, "generate_variants", lambda *args, **kwargs: calls.append(kwargs) or {})
+    result = runner.invoke(app, list(stage.argv[1:]))
+    assert result.exit_code == 0, result.output
+    assert "--transfer-rgb-weight" not in stage.argv
+    assert calls[0]["transfer_rgb_weight"] == 0.0
+    assert "--transfer-first-chunk-conditional-frames" not in stage.argv
+    assert calls[0]["transfer_first_chunk_conditional_frames"] == 1
+
+
+@pytest.mark.parametrize("value", ["-1", "2", "0.5", "true", "invalid"])
+def test_invalid_first_chunk_conditioning_fails_during_planning(value):
+    result = runner.invoke(app, ["workbench", "workflow", "plan-spec", str(SPEC),
+                                "--run-id", "invalid-first-frame", "--var",
+                                f"transfer_first_chunk_conditional_frames={value}", "--json"])
+    assert result.exit_code != 0
+    assert "transfer_first_chunk_conditional_frames" in result.output
+
+
+def test_first_chunk_conditioning_requires_edge_transfer():
+    result = runner.invoke(app, ["workbench", "workflow", "plan-spec", str(SPEC),
+                                "--run-id", "first-frame-without-edge", "--var",
+                                "transfer_first_chunk_conditional_frames=0",
+                                "--var", "structural_control=none", "--json"])
+    assert result.exit_code != 0
+    assert "transfer_first_chunk_conditional_frames requires structural_control=edge" in result.output
+
+
+@pytest.mark.parametrize("value", ["-0.1", "nan", "inf", "true", "invalid"])
+def test_invalid_rgb_weight_fails_during_planning(value):
+    result = runner.invoke(app, ["workbench", "workflow", "plan-spec", str(SPEC),
+                                "--run-id", "invalid-rgb", "--var", f"transfer_rgb_weight={value}", "--json"])
+    assert result.exit_code != 0
+    assert "transfer_rgb_weight" in result.output
+
+
+def test_rgb_conditioning_requires_edge_transfer_during_planning():
+    result = runner.invoke(app, ["workbench", "workflow", "plan-spec", str(SPEC),
+                                "--run-id", "rgb-without-edge", "--var", "transfer_rgb_weight=0.5",
+                                "--var", "structural_control=none", "--json"])
+    assert result.exit_code != 0
+    assert "transfer_rgb_weight requires structural_control=edge" in result.output
+
+
+def test_source_caption_instruction_uses_task_context(tmp_path):
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    document = _doc()
+    document["config"]["augment_subject"] = "two grippers inserting a battery"
+    path = tmp_path / "workflow.yaml"
+    path.write_text(yaml.safe_dump(document))
+    plan = build_plan(load_spec(path), run_id="caption-context",
+                      assume_decision="promote_checkpoint")
+    stage = next(step for step in plan.steps if step.state == "annotate-original")
+    instruction = stage.argv[stage.argv.index("--instruction") + 1]
+    assert "two grippers inserting a battery" in instruction
+    assert "Do not infer motion or task completion" in instruction
+    assert "{{" not in instruction
+
+
+def test_existing_caption_workflow_retains_default_instruction():
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    spec = load_spec(ROOT / "workflows/testing/token-factory-caption.yaml")
+    plan = build_plan(spec, run_id="legacy-caption")
+    stage = next(step for step in plan.steps
+                 if step.tool_ref == "workbench.token_factory.caption")
+    assert stage.argv[stage.argv.index("--instruction") + 1] == ""
+
+
+def test_custom_caption_instruction_is_forwarded_literally(tmp_path):
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    document = _doc()
+    instruction = 'Describe the "left wrist" view; do not infer hidden contacts.'
+    document["config"]["caption_instruction"] = instruction
+    path = tmp_path / "workflow.yaml"
+    path.write_text(yaml.safe_dump(document))
+    plan = build_plan(load_spec(path), run_id="custom-caption",
+                      assume_decision="promote_checkpoint")
+    stage = next(step for step in plan.steps if step.state == "annotate-original")
+    assert stage.argv[stage.argv.index("--instruction") + 1] == instruction
+
+
 def test_paidf_cosmos3_schema_and_real_component_contract() -> None:
     doc = _doc()
     assert doc["apiVersion"] == "npa.workflow/v0.0.1"
@@ -157,7 +315,7 @@ def test_configuration_surface_and_privacy_defaults() -> None:
     assert float(config["attribute_threshold"]) == 0.25
     assert config["augmentation_seed"] == "30"
     assert (
-        doc["states"]["generate-configs"]["run"]["argv"][-1]
+        doc["states"]["generate-configs"]["run"]["argv"][-3]
         == "{{config.augmentation_seed}}"
     )
     assert config["bucket"] == "example-bucket"

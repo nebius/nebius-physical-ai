@@ -41,7 +41,24 @@ cleanup; see [SkyPilot setup](../docs/orchestration/skypilot-setup.md#verify).
 The [PAIDF starter guide](../workflows/guides/paidf-cosmos3.md#audit-a-completed-default-starter-run)
 also provides a read-only live audit using the selected run URI, project, and
 saved pre-submission UTC timestamp. Its test settings are scoped to the audit
-shell and do not submit work.
+shell and do not submit work. For task-specific augmentation, set the optional
+`appearance_profiles_json` workflow config to a JSON array of coherent lighting,
+background, color-grade and surface-finish profiles; its empty default retains
+the starter sampler. Cosmos3's `caption_instruction` supplies `augment_subject`
+as context while requiring uncertainty for unclear features; override it for
+task or camera terminology. Source and generated-video caption frames are sampled
+across the complete decoded clip, including both endpoints, instead of stopping
+after its first eight seconds. Older caption workflows retain their default
+instruction. With edge transfer, `transfer_rgb_weight` optionally adds the
+complete source RGB video as a native conditioning hint, weighted relative to
+edge weight 1. Its default 0 disables the hint; it never blends source pixels
+into generated output. Independently, `transfer_first_chunk_conditional_frames`
+defaults to 1, anchoring the first generation window to the original RGB frame.
+Set it to 0 with edge transfer to allow a new appearance from the first frame;
+complete source edges and generated overlap between later windows remain active.
+This can also reduce object-identity preservation, so review actual paired clips.
+The [realistic manipulation guide](../docs/workbench/guides/paidf-realistic-augmentation.md)
+includes the battery dataset, configuration examples and quality review.
 
 Extra tools required by specific commands:
 
