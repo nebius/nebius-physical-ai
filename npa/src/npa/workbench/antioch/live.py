@@ -44,7 +44,7 @@ RELAY_BUNDLE_FILES = (
     "relay-api-key",
 )
 REQUIRED_BUNDLE_FILES = UPSTREAM_BUNDLE_FILES + RELAY_BUNDLE_FILES
-RUNTIME_SOURCE_FILES = ("scenario_v2.py", "openpi_protocol.py", "relay_bridge.py")
+RUNTIME_SOURCE_FILES = ("scenario_v2.py", "openpi_protocol.py", "relay_bridge.py", "policy_episode.py")
 RELAY_TARGET_PORT = 8_444
 RELAY_PUBLISHED_PORT = 18_444
 
@@ -495,9 +495,9 @@ def _stage_project(source: Path, destination: Path, project_id: str) -> None:
     # ``antioch service cp`` preserves the local source mode while transferring
     # through the assignment's SSH user.  The service itself runs as uid 1000,
     # so owner-only files become unreadable after that supported copy boundary.
-    # These three files are reviewed public source (never the private bundle),
+    # These files are reviewed public source (never the private bundle),
     # and must be readable by the unprivileged service container.
-    for name in ("scenario_v2.py", "openpi_protocol.py", "relay_bridge.py"):
+    for name in RUNTIME_SOURCE_FILES:
         staged_source = destination / "src" / name
         if not staged_source.is_file() or staged_source.is_symlink():
             raise AntiochLiveError(f"live runtime source {name!r} is unavailable")
@@ -545,7 +545,7 @@ def _write_supervisor(
             "--verbose",
         ]
     )
-    source_names = ("scenario_v2.py", "openpi_protocol.py", "relay_bridge.py")
+    source_names = RUNTIME_SOURCE_FILES
     source_paths = {name: path.parent / "src" / name for name in source_names}
     for name, source_path in source_paths.items():
         if not source_path.is_file() or source_path.is_symlink():

@@ -139,22 +139,18 @@ targets. These are emitted by the running scenario, not inferred from an `.rrd`.
 The scenario uses one `openpi-live` telemetry root: Antioch's logger resolves all
 relative entities below it, and the Rerun blueprint uses those exact resolved
 origins for both cameras, the 3D scene, metrics, Franka joint plots, and errors.
-The versioned `openpi_franka_mk8s_live_v2` remote scenario identity prevents a
-previously published definition from masking the schema-2 camera/action contract.
+The versioned `openpi_franka_pickup_v3` remote scenario identity prevents a
+previously published definition from masking the schema-4 camera/action contract.
 Its default dispatched instruction is `pick up the red cube`; public proof telemetry
 uses only the non-sensitive `red_cube_pickup` label.
 
 The two 224x224 policy cameras use Isaac Sim 6's supported
 `isaacsim.sensors.experimental.rtx` API: separate `RtxCamera` authoring objects
 and `CameraSensor` runtime objects with an explicit `rgb` annotator. The scenario
-authors a nonzero 15 Hz sensor tick rate and calls Isaac Replicator's documented
-blocking `orchestrator.step(delta_time=0.0, pause_timeline=False,
-wait_for_render=True)` hook immediately before sampling. This explicit scheduling
-boundary does not assume that Antioch's scenario lifecycle autoplays independent
-RTX render products. `world.step(render=True)` continues to advance physics and
-the streamed viewport; the orchestrator step completes the policy-camera capture.
-The scenario refuses an unreviewed Antioch SDK/engine identity or a missing or
-incompatible orchestrator hook before policy control begins.
+authors a nonzero 15 Hz sensor tick rate, commits timeline play once, and
+uses a completed `world.step(render=True)` before every sensor read. There is
+one stepping owner. Adding a second Replicator orchestrator step can invalidate
+the policy render products and is not part of this contract.
 
 The scenario reads `(data, info)` from
 `get_data("rgb", out=cpu_rgb)`, using the documented uint8 RGB shape and safely
@@ -171,7 +167,7 @@ and advancing; viewer state and control-loop iterations are not producer clocks.
 | Antioch SDK/CLI | `antioch-sim==0.4.236`; public scenario surface exposes `scenario`, `ScenarioRun`, `Logger`, `world`, and `engine` | Exact runtime check; any other version is unsupported until reviewed. |
 | Antioch engine | `antioch-engine/isaac-sim-6.0.1:0.4.236` / engine identity `isaac-sim-6.0.1` | Exact runtime check; do not substitute a newer engine under the old scenario. |
 | Isaac camera | `isaacsim.sensors.experimental.rtx.RtxCamera` + `CameraSensor`, documented uint8 RGB CPU output, immediate scenario-owned copy, nonzero sensor tick | Capability is exercised through public Isaac Sim 6 APIs. |
-| Render advancement | synchronous `omni.replicator.core.orchestrator.step` with `wait_for_render=True` | Missing or incompatible signatures fail clearly; no implicit autoplay fallback. |
+| Render advancement | timeline play committed once, followed by `world.step(render=True)` and exact producer-marker readback | No second stepping owner; a loop counter does not prove camera freshness. |
 | Antioch control plane | Project revisions, project sessions, singular `service` operations, and named session routes | Re-discover the supported profile and project through structured CLI commands; never persist a service endpoint or console hostname. |
 
 The Isaac contracts above are documented in the official [Isaac Sim 6 camera
@@ -184,12 +180,11 @@ an API endpoint or a substitute for supported discovery.
 To upgrade safely, obtain versioned vendor SDK and engine documentation, inspect
 the installed public exports without reading auth state, update this boundary
 and its dependency-injected scheduler tests, then repeat the full local gates.
-Keep the PR draft until one authorized live run on the exact proposed versions
-shows both producer clocks advancing beyond their initial value, at least 120
-valid camera pairs, at least 100 successful policy round trips, at least 500
-applied targets, and every remaining acceptance threshold below. Do not infer
-camera readiness from a healthy service, viewer state, loop count, or scheduler
-call alone.
+Keep the PR draft until an authorized live run on the exact proposed versions
+shows both producer clocks advancing, useful decoded camera images, executed
+actions and every declared task check passing. Local unit tests do not prove
+rendered appearance or policy task success. Do not infer camera readiness from
+a healthy service, viewer state, loop count, or scheduler call alone.
 
 The scenario keeps safety calculations and durable acceptance counters at control
 cadence, but groups Rerun scalars and generated scene geometry at a documented
@@ -279,13 +274,23 @@ while legacy machine, tunnel, or cached endpoint state is rejected.
 so independent Antioch stages cannot collide. `adapter_image` must be an immutable
 digest. Deployment, status, stop, and cutover-finalization refuse unowned objects.
 
-The MK8s reference scenario is a finite communication proof rather than a
-long-running service record. It finishes after two distinct advancing, nonblack
-exterior/wrist observation pairs each receive a validated finite `[15,8]` pi0.5
-response. The controller accepts the clean child exit only after the exact run is
-durably `completed/passed` and all three named checks and structured measurements
-are present; it then releases the session. Timeout is a failed proof, never an
-expected renewal boundary.
+The default MK8s reference is `openpi_franka_pickup_v3`. It distinguishes
+communication from measured manipulation: 5 cm of end-effector approach,
+bilateral finger contact, and 5 cm of lift held continuously for one simulation
+second are required for pickup success. Its `control_steps` parameter defaults
+to 450 applied targets; exhaustion without pickup is an explicit failed result.
+Camera exposure/contrast and initial target/gripper framing are separate gates.
+The exact requests, lossless inputs, raw actions, applied targets and measured
+physics are retained in `policy-evidence.zip` with a SHA-256 manifest. The
+controller checks both the persisted verdicts and archive digest before retiring
+compute. No failed finite attempt is automatically resubmitted.
+
+The explicit `openpi_franka_mk8s_live_v2` communication proof remains available.
+It validates two finite `[15,8]` replies and executes both five-target segments
+before returning. Its success does not claim a reach or pickup. Both identities
+must persist as `completed/passed`; a timeout is never successful completion.
+See the [example README](../../npa/examples/antioch-openpi-live/README.md) for
+camera thresholds, rendering settings, episode parameters and evidence formats.
 
 A completed controller remains live while retiring its session. Once shutdown
 writes the pod's stop marker, a container restart refuses to initialize another
@@ -330,8 +335,7 @@ kubelet CIDRs and the health ports have no Service. A
 missing schema, malformed value, wrong identity, stale heartbeat, absent scenario owner,
 mismatched or unhealthy session/service state, child exit, or unreadable
 state revokes readiness. Converged loss terminates the exact child process group,
-cancels the exact run, rebuilds and re-stages after recycle when needed, and starts one
-successor with capped backoff. Ambiguous ownership fails closed. The operator/Codex
+cancels the exact run, rebuilds and re-stages after recycle when needed, and fails closed for finite evaluations. Ambiguous ownership fails closed. The operator/Codex
 process is not part of this supervision and may exit after handoff.
 
 Before accepting the finite PoC, require a terminal `completed/passed` Antioch
@@ -350,8 +354,8 @@ DROID reset posture, open gripper, reachable red cube, exterior view, and hand-m
 wrist view. The action adapter uses absolute seven-joint targets in Franka order and
 DROID's `0=open, 1=closed` gripper convention; raw distribution mismatches remain
 separate from safety-projection counters. End-effector approach, contact, cube lift,
-and pickup hold remain factual results, but they are not part of the communication
-proof. Never describe cube pickup as successful unless those independent task
+and pickup hold are mandatory checks for the default pickup scenario. They remain
+separate from the explicit communication-only proof. Never describe cube pickup as successful unless those independent task
 measurements actually meet their declared thresholds. Action issuance alone is not
 task success.
 

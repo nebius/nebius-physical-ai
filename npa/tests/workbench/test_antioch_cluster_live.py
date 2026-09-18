@@ -8,6 +8,7 @@ import os
 import socket
 import stat
 import tarfile
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -106,7 +107,7 @@ def _accepted_live_metrics() -> dict[str, int | float]:
         "rejected_joint_limit": 0,
         "rejected_gripper_range": 0,
         "rejected_joint_step": 0,
-        "camera_quality_schema": 3,
+        "camera_quality_schema": 4,
         "camera_validated_requests": 2,
         "camera_pair_id": 2,
         "request_camera_pair_id": 2,
@@ -123,6 +124,10 @@ def _accepted_live_metrics() -> dict[str, int | float]:
         "camera_exterior_luminance_mean_current": 40.0,
         "camera_exterior_luminance_variance_current": 100.0,
         "camera_wrist_luminance_mean_current": 35.0,
+        "camera_exterior_near_white_fraction_current": 0.1,
+        "camera_wrist_near_white_fraction_current": 0.1,
+        "camera_exterior_dynamic_range_current": 80.0,
+        "camera_wrist_dynamic_range_current": 80.0,
         "camera_wrist_luminance_variance_current": 90.0,
         "luminance_mean_min": 30.0,
         "luminance_variance_min": 80.0,
@@ -268,7 +273,7 @@ def test_public_manifests_keep_vm_out_and_policy_cluster_local(tmp_path: Path) -
     assert relay_mounts["private"]["readOnly"] is True
     assert "cluster_runtime" in " ".join(controller["command"])
     assert "14400" in controller["command"]
-    assert "openpi_franka_mk8s_live_v2" in controller["command"]
+    assert "openpi_franka_pickup_v3" in controller["command"]
     assert "antioch.relay" in " ".join(relay["command"])
     assert "18444" in relay["command"]
     assert controller["readinessProbe"]["httpGet"] == {
@@ -465,6 +470,7 @@ def test_atomic_state_read_recovers_one_transient_partial_json(
 
 def test_recovery_heartbeat_keeps_liveness_fresh_but_readiness_revoked(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     state = tmp_path / "controller.json"
     recovery = {
@@ -482,9 +488,17 @@ def test_recovery_heartbeat_keeps_liveness_fresh_but_readiness_revoked(
     }
     cluster_runtime._write_state(state, **recovery)
     first_publication = cluster_runtime._read_state(state)["published_unix"]
+    published = threading.Event()
+    write_state = cluster_runtime._write_state
+
+    def observe_publication(path, **values):
+        write_state(path, **values)
+        published.set()
+
+    monkeypatch.setattr(cluster_runtime, "_write_state", observe_publication)
 
     with cluster_runtime._recovery_heartbeat(state, interval_seconds=0.01, **recovery):
-        time.sleep(0.04)
+        assert published.wait(2), "heartbeat did not publish"
         refreshed = cluster_runtime._read_state(state)
         assert refreshed["published_unix"] > first_publication
         assert cluster_runtime._state_ready(
@@ -492,6 +506,11 @@ def test_recovery_heartbeat_keeps_liveness_fresh_but_readiness_revoked(
             component="controller-liveness",
             expected_owner_identity="owner",
             max_age_seconds=0.02,
+            now=refreshed["published_unix"] + 0.01,
+        )
+        assert not cluster_runtime._state_ready(
+            refreshed, component="controller-liveness", expected_owner_identity="owner",
+            max_age_seconds=0.02, now=refreshed["published_unix"] + 0.03,
         )
         assert not cluster_runtime._state_ready(
             refreshed,
@@ -1420,3 +1439,58 @@ def test_adapter_build_is_base_pinned_and_records_exact_revision() -> None:
     assert "ffmpeg ca-certificates rsync" in dockerfile
     assert 'org.opencontainers.image.revision="${NPA_REVISION}"' in dockerfile
     assert '--build-arg "NPA_REVISION=${REVISION}"' in build
+
+
+def _passed_pickup_record():
+    record = _passed_poc_record()
+    record['scenario'] = 'openpi_franka_pickup_v3'
+    record['results'].update({
+        'episode_objective': 'pickup', 'termination_reason': 'pickup_complete',
+        'pickup_success': True, 'end_effector_approach_m': 0.3,
+        'maximum_cube_lift_m': 0.06, 'pickup_hold_seconds': 1.1,
+        'completed_action_chunks': 3, 'safe_targets_applied': 15,
+        'gripper_contact_samples': 66, 'policy_evidence_sha256': 'a' * 64,
+        'checks': [{'criterion': name, 'passed': True}
+                   for name in cluster_runtime.REQUIRED_PICKUP_CHECKS],
+    })
+    for view in ('exterior', 'wrist'):
+        record['results'].update({f'{view}_luminance_mean_max': 180.0,
+                                  f'{view}_near_white_fraction_max': 0.1,
+                                  f'{view}_dynamic_range_min': 100.0})
+    record['artifacts'] = {'policy-evidence.zip': {'size_bytes': 12345, 'sha256': 'a' * 64}}
+    return record
+
+
+def test_pickup_acceptance_requires_physics_and_matching_archive():
+    record = _passed_pickup_record()
+    evidence = cluster_runtime._completed_poc_evidence(
+        record, scenario='openpi_franka_pickup_v3', scenario_run_id='owned-run')
+    assert evidence['pickup_verified'] is True
+    record['artifacts']['policy-evidence.zip']['sha256'] = 'b' * 64
+    with pytest.raises(cluster_runtime.AntiochLiveError, match='archive'):
+        cluster_runtime._completed_poc_evidence(
+            record, scenario='openpi_franka_pickup_v3', scenario_run_id='owned-run')
+
+
+@pytest.mark.parametrize('key,value', [
+    ('termination_reason', 'control_steps_exhausted'), ('pickup_success', False),
+    ('pickup_hold_seconds', 0.99), ('pickup_hold_seconds', float('nan')),
+    ('end_effector_approach_m', 0.0094), ('maximum_cube_lift_m', 0),
+    ('completed_action_chunks', 1), ('gripper_contact_samples', 0),
+    ('exterior_near_white_fraction_max', 0.91), ('wrist_dynamic_range_min', 8.6),
+    ('episode_objective', 'communication'), ('policy_evidence_sha256', ''),
+])
+def test_pickup_record_rejects_previous_failure_modes(key, value):
+    record = _passed_pickup_record()
+    record['results'][key] = value
+    with pytest.raises(cluster_runtime.AntiochLiveError):
+        cluster_runtime._completed_poc_evidence(
+            record, scenario='openpi_franka_pickup_v3', scenario_run_id='owned-run')
+
+
+@pytest.mark.parametrize('scenario', ['openpi_franka_mk8s_live_v2', 'openpi_franka_pickup_v3'])
+@pytest.mark.parametrize('reason', ['controller_child_exit', 'session_owner_absent', 'session_state_unreadable'])
+def test_finite_evaluation_cannot_recover_into_a_second_scenario(scenario, reason):
+    with pytest.raises(cluster_runtime.AntiochLiveError, match='automatic resubmission is disabled'):
+        cluster_runtime._require_single_attempt(scenario, reason)
+    cluster_runtime._require_single_attempt(scenario, '')

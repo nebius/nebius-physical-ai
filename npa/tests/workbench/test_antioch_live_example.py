@@ -146,7 +146,7 @@ def test_live_scenario_is_real_bounded_and_fail_closed() -> None:
         "NPA_OPENPI_DISPLAY_LOG_OK",
         "NPA_OPENPI_LOOP_HEARTBEAT",
         "NPA_OPENPI_POLICY_STALL",
-        "NPA_OPENPI_COMMUNICATION_PROOF_COMPLETE",
+        "NPA_OPENPI_EPISODE_COMPLETE",
         '"exterior_observations_advancing_nonblack"',
         '"wrist_observations_advancing_nonblack"',
         '"pi05_responses_finite_15x8"',
@@ -156,7 +156,7 @@ def test_live_scenario_is_real_bounded_and_fail_closed() -> None:
     assert "WebsocketClientPolicy(" not in source
     assert "verify_mode = ssl.CERT_NONE" not in source
     assert "rr.LineStrips3D" not in source
-    assert "if communication_proof_complete:" in source
+    assert "if communication_proof_complete:" not in source
     assert 'run.add_result("pickup_success", pickup_success)' in source
 
     relay = (ROOT / "npa/src/npa/workbench/antioch/relay.py").read_text(
@@ -276,8 +276,8 @@ def test_live_camera_rejects_black_or_flat_annotator_warmup(
     classified = scenario._camera_frame(Camera(low_dynamic), view="exterior")
     assert classified.dynamic_range < 32.0
     assert classified.luminance_variance > scenario.MIN_CAMERA_LUMINANCE_VARIANCE
-    assert classified.red_cube_pixels >= scenario.MIN_EXTERIOR_RED_CUBE_PIXELS
-    assert classified.reason == ""
+    assert classified.red_cube_pixels < scenario.MIN_EXTERIOR_RED_CUBE_PIXELS
+    assert classified.reason == "low_dynamic_range"
 
 
 def test_live_rejected_camera_pixels_are_logged_and_metrics_are_not_blank(
@@ -1028,15 +1028,15 @@ def test_live_camera_optics_and_stock_franka_mount_are_explicit_and_rigid(
     exterior = scenario._camera_optical_config("exterior")
     wrist = scenario._camera_optical_config("wrist")
     assert exterior == {
-        "focal_length": 18.0,
-        "horizontal_aperture": 36.0,
-        "vertical_aperture": 36.0,
+        "focal_length": 0.30,
+        "horizontal_aperture": 0.36,
+        "vertical_aperture": 0.36,
         "clipping_range": (0.01, 100.0),
         "focus_distance": 1.0,
         "f_stop": 0.0,
     }
-    assert wrist["focal_length"] == 12.0
-    assert wrist["horizontal_aperture"] == 36.0
+    assert wrist["focal_length"] == 0.24
+    assert wrist["horizontal_aperture"] == 0.36
 
     hand = np.asarray([0.0, 0.0, 0.0])
     left = np.asarray([0.2, -0.04, 0.0])
@@ -1151,10 +1151,7 @@ def test_live_camera_pair_classifies_each_view_freshness_semantics_and_distinctn
     )
     assert wrist_target_absent.accepted is True
 
-    # Normal arm motion can temporarily occlude the cube in the fixed view.
-    # Keep controlling from a fresh, textured, distinct pair while the known
-    # target remains geometrically inside the exterior camera frustum; the
-    # separate strict acceptance report still requires positive red pixels.
+    # Geometry alone must not authorize action with an unresolved target in both views.
     exterior_target_occluded = scenario._validate_camera_pair(
         Camera(no_cube),
         Camera(wrist),
@@ -1163,7 +1160,8 @@ def test_live_camera_pair_classifies_each_view_freshness_semantics_and_distinctn
         exterior_cube_in_frame=True,
         wrist_cube_in_frame=False,
     )
-    assert exterior_target_occluded.accepted is True
+    assert exterior_target_occluded.accepted is False
+    assert exterior_target_occluded.reason == "target_unresolved"
     assert exterior_target_occluded.exterior.red_cube_pixels == 0
 
     # A moving eye-in-hand view can converge toward the fixed perspective.
@@ -1373,7 +1371,7 @@ def test_live_droid_jointpos_and_gripper_mapping_matches_pinned_contract(
 
 def test_live_scene_is_tabletop_lit_and_droid_reset_aligned() -> None:
     source = (EXAMPLE / "src/scenario_v2.py").read_text(encoding="utf-8")
-    assert "world.scene.add_ground_plane(z_position=-0.75)" in source
+    assert "world.scene.add_ground_plane(z_position=-0.75, color=" in source
     assert 'prim_path="/World/Tabletop"' in source
     assert 'prim_path="/World/Cube"' in source
     assert "position=np.array(CUBE_INITIAL_POSITION)" in source
@@ -1482,14 +1480,14 @@ def test_runtime_staging_keeps_private_project_id_out_of_source(tmp_path: Path) 
     assert source["id"] == "replace-at-runtime"
     assert destination.stat().st_mode & 0o777 == 0o700
     assert (destination / "antioch.yaml").stat().st_mode & 0o777 == 0o600
-    for name in ("scenario_v2.py", "openpi_protocol.py", "relay_bridge.py"):
+    for name in live.RUNTIME_SOURCE_FILES:
         assert (destination / "src" / name).stat().st_mode & 0o777 == 0o644
 
 
 def test_supervisor_has_finite_run_boundary_but_no_total_limit(tmp_path: Path) -> None:
     source_dir = tmp_path / "src"
     source_dir.mkdir()
-    for name in ("scenario_v2.py", "openpi_protocol.py", "relay_bridge.py"):
+    for name in live.RUNTIME_SOURCE_FILES:
         (source_dir / name).write_text("# reviewed source\n", encoding="utf-8")
     bundle = tmp_path / "bundle"
     bundle.mkdir()
@@ -1696,7 +1694,7 @@ def test_runtime_source_is_staged_through_supported_service_copy(
 ) -> None:
     source = tmp_path / "src"
     source.mkdir()
-    for name in ("scenario_v2.py", "openpi_protocol.py", "relay_bridge.py"):
+    for name in live.RUNTIME_SOURCE_FILES:
         (source / name).write_text("# reviewed public source\n", encoding="utf-8")
     calls: list[tuple[str, object]] = []
 
@@ -1731,7 +1729,7 @@ def test_runtime_source_staging_recovers_from_service_recreation(
 ) -> None:
     source = tmp_path / "src"
     source.mkdir()
-    for name in ("scenario_v2.py", "openpi_protocol.py", "relay_bridge.py"):
+    for name in live.RUNTIME_SOURCE_FILES:
         (source / name).write_text("# reviewed public source\n", encoding="utf-8")
     copies: list[str] = []
 
@@ -2246,7 +2244,7 @@ def test_cluster_relay_holds_stopped_state_until_controller_resumes(
 
 def test_live_metrics_bind_current_valid_camera_pair_to_policy_request() -> None:
     source = (EXAMPLE / "src/scenario_v2.py").read_text(encoding="utf-8")
-    assert "camera_quality_schema=3" in source
+    assert "camera_quality_schema=4" in source
     assert "action_horizon={ACTION_SHAPE[0]}" in source
     assert "action_dimension={ACTION_SHAPE[1]} action_finite=1" in source
     assert "camera_luminance_mean_current_min" in source
@@ -2258,7 +2256,7 @@ def test_live_metrics_bind_current_valid_camera_pair_to_policy_request() -> None
     )
     readiness = source.index("camera_policy_eligible = readiness.policy_eligible")
     request_gate = source.index(
-        "elif chunk is None and pending is None and now >= next_attempt:"
+        "if (camera_policy_eligible and chunk is None and pending is None"
     )
     request = source.index("requests += 1", request_gate)
     assert readiness < request_gate < request

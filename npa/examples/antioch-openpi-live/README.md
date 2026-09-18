@@ -16,7 +16,7 @@ observation convention. The inverse actuator mapping sends `0` to two 4 cm-open
 Isaac finger joints and `1` to closed joints; the model output is binarized at 0.5
 as in the upstream DROID deployment example. Raw out-of-distribution joint/gripper
 counts are reported separately from Franka-limit and per-target-step safety
-projections. Five returned targets are applied at a nominal 15 Hz. The
+projections. Each receding-horizon query executes five returned targets at 15 Hz of simulation time. Wall time remains the authority for transport staleness. The
 observation-to-action loop is best-effort and not hard real time.
 
 The manipulation scene is a lit tabletop with a reachable red cube and an open
@@ -33,17 +33,26 @@ sample asks `CameraSensor` to fill a documented `(224, 224, 3)` uint8 CPU buffer
 and immediately copies it into scenario-owned memory
 instead of exposing a mutable or device-backed view to downstream code; a
 public clock attached to that sensor's render product supplies the exact marker
-when the RGB annotator omits it. The wide exterior camera has explicit optics
-and frames the complete tabletop manipulation region. The wide wrist camera is
-calibrated once from the measured stock-Franka hand and fingertip transforms,
-then its fixed tool-frame extrinsics are re-applied before every rendered step so
-it follows the live gripper without looking through the fingers. Flat, black,
-malformed, stale, non-finite, geometrically irrelevant, or mutually duplicated
-camera pairs are never sent to policy inference. The exterior gate also requires
-rendered red-cube pixels; both views require the known cube center inside their
-current optical frustum. Every accepted pair receives monotonically increasing
-pair and render identities carried unchanged through its one policy request and
-response evidence.
+when the RGB annotator omits it. The exterior camera is now about one metre
+from the cube with a 62-degree field of view; the wrist camera uses a 74-degree
+field of view and aims between the initial target and grasp origin before its
+mount is frozen in tool coordinates. Raw USD lens units are explicitly converted
+for a metre stage. Both cameras must initially contain the target and gripper
+geometrically, and both must visibly resolve the red target before inference.
+
+The renderer uses fixed exposure (ISO 100, shutter 50, f-number 4, automatic
+exposure disabled), lower light intensities, and a dark ground plane. These are
+scene-specific authored starting settings, not a claim of live calibration.
+The **actual RGB arrays** must pass brightness, contrast and framing checks:
+mean intensity above 5 and at most 220; variance above 25; 95th–5th percentile
+range at least 32; and at most 60% near-white pixels (mean RGB above 240).
+The initial red-target proxy must occupy at least 64 pixels and span at least
+8 pixels in both dimensions in each view. This color mask is not semantic
+segmentation. During motion, the target must remain resolved in at least one
+view, except during a measured bilateral grasp with commanded closure. Freshness, distinct-view and
+exterior-frustum checks still apply. A missing wrist target alone does not stop
+motion when the exterior view remains useful. Rejected images remain inspectable;
+no postprocessing brightens or recolors policy inputs to make the gate pass.
 
 The checked-in project ID is deliberately unusable. The cluster-native controller
 creates a private runtime copy with an assigned Antioch project ID, starts the
@@ -75,14 +84,31 @@ current CLI restricts copies to `/workspace/project`, it uploads there and uses
 The controller builds one immutable project revision and starts that exact revision
 as the project session.
 
-The scenario is a finite communication proof. It returns successfully only after
-two policy requests used distinct advancing, nonblack exterior and wrist camera
-pairs and both responses were validated as finite `[15,8]` pi0.5 action arrays.
-Those measurements and named checks remain on the completed Antioch record after
-the controller retires the session and the adapter is scaled down. A clean child
-exit without that exact persisted passed record fails closed and is not renewed.
-The controller preserves its stop marker across container restarts so shutdown
-cannot silently dispatch another proof. A fresh attempt needs a fresh adapter identity.
+The default cluster scenario is `openpi_franka_pickup_v3`. Two valid replies
+establish communication only. Pickup requires at least 5 cm of measured approach,
+force on **both** fingers, and 5 cm of cube lift held continuously for one
+**simulation second** while the gripper is measurably closed from its open width.
+The closure check accommodates the 7 cm cube; it does not incorrectly require
+a finger gap below 4 cm. Both initial action segments must execute before task
+success can be reported.
+
+`control_steps` is the finite trial length in applied policy targets, default
+450 (30 nominal seconds of target intervals, excluding inference waits).
+Exhaustion without physical pickup produces a failed task with saved evidence.
+The existing 90-second transport safety interval also bounds continuous camera
+or lack of applied control progress, yielding an explicit failure instead of waiting for
+the outer platform timeout. The final target receives a full control interval
+of physics before termination. The controller verifies the persisted physical
+checks, quality measurements and matching evidence archive before accepting a
+pickup. A failed finite attempt is never automatically replaced by another scenario.
+
+`openpi_franka_mk8s_live_v2` remains available as an explicit finite communication proof.
+It requires two replies containing finite `[15,8]` pi0.5 action arrays and now
+executes both five-target segments before exiting. It is excluded from the default
+pickup suite. Those measurements and named checks remain on the completed Antioch record.
+A clean child exit without the exact persisted passed record fails closed and is not renewed.
+The controller preserves its stop marker across restarts. A fresh attempt needs
+a fresh adapter identity; it cannot reuse retained runtime state to launch another proof.
 
 For read-only verification of a saved proof, set
 `NPA_ANTIOCH_COMPLETED_SCENARIO_ID` to its run identifier and
@@ -100,7 +126,7 @@ exact current session; the simulator process and session must be ready. A child
 exit, mismatched session, unhealthy process, or stale observation revokes readiness.
 Failure recovery cancels only the exact scenario, proves stable absence, rebuilds an
 immutable revision when the session is lost, re-stages source and credentials, and
-starts one successor with capped backoff. Ambiguous ownership fails closed.
+fails closed for either finite evaluation identity. Ambiguous ownership fails closed.
 
 Mission Control's livestream state is independent of policy-camera readiness.
 The scenario waits in safe hold for both RTX render products to return distinct,
@@ -111,7 +137,7 @@ committed once, then every sensor read follows a completed rendered world step. 
 [compatibility matrix](../../../docs/workbench/antioch.md#live-camera-compatibility-contract)
 before changing either pin.
 
-`openpi_franka_mk8s_live_v2` uses a versioned remote scenario identity so an
+`openpi_franka_pickup_v3` uses a versioned remote scenario identity so an
 already-published definition cannot mask a new camera/action contract. It dispatches
 the default instruction `pick up the red cube`
 and records only the non-sensitive `red_cube_pickup` task label in proof telemetry.
@@ -143,9 +169,27 @@ Pickup evidence is physical rather than inferred from action issuance: live Isaa
 poses report end-effector approach and distance, a tracked rigid-contact view reports
 cube-to-finger contact force, and the cube pose reports lift relative to its initialized
 tabletop height. Acceptance requires at least 5 cm of lift held with gripper contact
-and closure for at least one continuous second.
+and measurable closure for at least one continuous simulation second.
 
 The source is original Apache-2.0 NPA example code. Isaac Sim is supplied by the
 Antioch-managed runtime under the operator-accepted NVIDIA terms. OpenPI source and
 the pi0.5 checkpoint remain governed by their own runtime contracts; no model
 weights or proprietary simulator payloads are present here.
+
+Every run attaches `policy-evidence.zip`. It contains exact client request
+MessagePack bytes, lossless exterior/wrist PPM images with pixel hashes, raw
+numeric action arrays before projections (`.npy`, never pickle), and a JSONL
+control trace. Request/response identities join applied targets to pre-action
+joint state and subsequent measured physics poses and contacts. A SHA-256 manifest
+covers each file. The request payload saved here is the exact payload passed to
+the WSS client, not a claim of an independent policy-server receipt. Rejected
+camera samples are included on failure. The live Rerun display can drop stale
+viewer updates; this archive is the full control evidence and distinguishes
+raw actions, commanded targets and measured state.
+
+For independent, read-only pickup verification, use
+`NPA_ANTIOCH_COMPLETED_PICKUP_SCENARIO_ID` with
+`test_completed_pickup_checks_and_evidence_persist` in the live test module.
+It does not deploy or dispatch. Local fake-simulator tests exercise loop ordering,
+physics-time holds, input rejection and byte-preserving evidence, but do not prove
+rendered appearance or policy task success. Those require a fresh live run.

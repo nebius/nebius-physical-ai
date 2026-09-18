@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from npa.sdk.workbench.antioch import live_k8s_deploy, live_k8s_status
-from npa.workbench.antioch.cluster_deploy import load_private_config, qualify_live_metrics
+from npa.workbench.antioch.cluster_deploy import load_private_config
 from npa.workbench.antioch.cluster_runtime import _completed_poc_evidence
 from npa.workbench.antioch.runtime import ensure_runtime
 from npa.workbench.antioch.vendor_cli import AntiochCli
@@ -47,25 +47,19 @@ if not _RUNTIME_CONFIG_VALUE:
 RUNTIME_CONFIG = Path(_RUNTIME_CONFIG_VALUE)
 
 
-def _accepted(metrics: dict[str, int | float]) -> bool:
-    return bool(qualify_live_metrics(metrics)["accepted"])
-
-
-def test_real_franka_camera_policy_loop_sustains_cluster_native_acceptance() -> None:
+def test_real_franka_pickup_requires_persisted_task_acceptance() -> None:
     deployed = live_k8s_deploy(runtime_config=RUNTIME_CONFIG)
     assert deployed["policy_service_type"] == "ClusterIP"
     assert deployed["dev_vm_in_data_path"] is False
     while True:
         status = live_k8s_status(runtime_config=RUNTIME_CONFIG)
-        metrics = status.get("live_metrics") or {}
-        if _accepted(metrics):
-            assert status["status"] == "ready"
-            assert status["controller_liveness_ready"] is True
-            assert status["relay_liveness_ready"] is True
-            assert status["controller"]["scenario_run_id"]
-            assert status["controller"]["heartbeat_age_seconds"] <= 30
+        controller = status.get("controller") or {}
+        assert controller.get("status") not in {"failed", "cleanup_failed"}
+        if controller.get("pickup_verified") is True:
+            assert controller["run_phase"] == "completed"
+            assert controller["run_outcome"] == "passed"
+            assert controller["scenario_run_id"]
             assert status["adapter_restarts"] == 0
-            assert status["cluster_local_policy_resolved"] is True
             assert status["dev_vm_in_data_path"] is False
             return
         time.sleep(5)
@@ -97,3 +91,21 @@ def test_completed_poc_checks_persist_after_session_release(
     assert reread["phase"] == "completed"
     assert reread["outcome"] == "passed"
     assert reread["results"]["checks"] == results["checks"]
+
+
+def test_completed_pickup_checks_and_evidence_persist(tmp_path, monkeypatch) -> None:
+    """Read an exact saved pickup without starting compute or dispatching a run."""
+    run_id = os.environ.get("NPA_ANTIOCH_COMPLETED_PICKUP_SCENARIO_ID", "").strip()
+    if not run_id:
+        pytest.skip("set NPA_ANTIOCH_COMPLETED_PICKUP_SCENARIO_ID for pickup verification")
+    config = load_private_config(RUNTIME_CONFIG)
+    monkeypatch.setenv("ANTIOCH_ENV", config.antioch_deployment_profile)
+    cli = AntiochCli(ensure_runtime(), config_dir=config.antioch_config_dir)
+    record = cli.show(tmp_path, kind="scenario", remote_id=run_id)
+    assert record["project_id"] == Path(config.antioch_project_id_file).read_text().strip()
+    evidence = _completed_poc_evidence(
+        record, scenario="openpi_franka_pickup_v3", scenario_run_id=run_id)
+    assert evidence["pickup_verified"] is True
+    reread = cli.show(tmp_path, kind="scenario", remote_id=run_id)
+    assert reread["results"]["checks"] == record["results"]["checks"]
+    assert reread["artifacts"]["policy-evidence.zip"] == record["artifacts"]["policy-evidence.zip"]

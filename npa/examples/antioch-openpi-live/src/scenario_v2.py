@@ -9,7 +9,7 @@ import time
 import contextlib
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Condition, Thread
 from typing import Callable
@@ -85,21 +85,22 @@ PICKUP_HOLD_SECONDS = 1.0
 GRIPPER_CONTACT_FORCE_NEWTONS = 0.1
 MIN_CAMERA_LUMINANCE_MEAN = 5.0
 MIN_CAMERA_LUMINANCE_VARIANCE = 25.0
+MAX_CAMERA_LUMINANCE_MEAN = 220.0
+MAX_CAMERA_NEAR_WHITE_FRACTION = 0.60
+MIN_CAMERA_DYNAMIC_RANGE = 32.0
 # Policy control only needs proof that these are two different, useful camera
 # products.  The stricter acceptance report below the controller still requires
 # a 6.0 mean-pixel difference for final evidence.
 MIN_POLICY_CAMERA_PAIR_DIFFERENCE = 4.0
 MIN_CAMERA_PAIR_DIFFERENCE = 6.0
-# The strict run-acceptance report uses this positive color-area floor to prove
-# the target is visibly resolved. Policy eligibility deliberately does not:
-# normal arm motion can briefly occlude the cube while the fixed camera remains
-# useful and the known target stays geometrically inside its frustum.
-MIN_EXTERIOR_RED_CUBE_PIXELS = 1
+# These are scene-specific color-area proxies, not semantic segmentation.
+MIN_EXTERIOR_RED_CUBE_PIXELS = 64
+MIN_TARGET_EXTENT_PIXELS = 8
 EXTERIOR_CAMERA_PATH = "/World/PolicyExterior"
 WRIST_CAMERA_PATH = "/World/PolicyWrist"
-EXTERIOR_CAMERA_EYE = (1.45, -1.25, 0.95)
-EXTERIOR_CAMERA_TARGET = (0.45, 0.0, 0.08)
-WRIST_EYE_OFFSET_TOOL = (-0.12, 0.0, 0.10)
+EXTERIOR_CAMERA_EYE = (0.95, -0.65, 0.65)
+EXTERIOR_CAMERA_TARGET = (0.40, 0.0, 0.22)
+WRIST_EYE_OFFSET_TOOL = (-0.18, 0.0, 0.14)
 WRIST_TARGET_OFFSET_TOOL = (0.24, 0.0, -0.03)
 STOCK_FRANKA_HAND_PATH = "/World/Franka/panda_hand"
 STOCK_FRANKA_LEFT_FINGER_PATH = "/World/Franka/panda_leftfinger"
@@ -118,6 +119,8 @@ class CameraFrame:
     raw_max: float = 0.0
     raw_nonzero: int = 0
     raw_channels: int = 0
+    near_white_fraction: float = 0.0
+    target_extent: tuple[int, int] = (0, 0)
 
 
 @dataclass(frozen=True)
@@ -183,6 +186,7 @@ class PolicyRequest:
     observation: dict
     camera_pair_id: int
     render_sequence: int
+    payload: bytes | None = None
 
 
 @dataclass(frozen=True)
@@ -593,7 +597,10 @@ class SafePolicyClient:
             self.connect()
         started = time.monotonic()
         try:
-            self._connection.send(openpi_protocol.Packer().pack(request.observation))
+            payload = request.payload
+            if payload is None:
+                payload = openpi_protocol.Packer().pack(request.observation)
+            self._connection.send(payload)
             payload = self._connection.recv(timeout=MAX_RESPONSE_AGE_SECONDS)
             result = openpi_protocol.unpackb(payload)
         except Exception:
@@ -650,16 +657,17 @@ def _look_at(stage, path: str, eye, target, up_hint=(0.0, 0.0, 1.0)) -> None:
 def _camera_optical_config(view: str) -> dict[str, object]:
     """Return the explicit square-sensor optical contract for one policy view."""
 
+    # Raw USD optics are tenths of a scene unit: 0.30 means 30 mm on this metre stage.
     if view == "exterior":
-        focal_length = 18.0
+        focal_length = 0.30
     elif view == "wrist":
-        focal_length = 12.0
+        focal_length = 0.24
     else:
         raise ValueError(f"unknown camera view: {view}")
     return {
         "focal_length": focal_length,
-        "horizontal_aperture": 36.0,
-        "vertical_aperture": 36.0,
+        "horizontal_aperture": 0.36,
+        "vertical_aperture": 0.36,
         "clipping_range": (0.01, 100.0),
         "focus_distance": 1.0,
         "f_stop": 0.0,
@@ -742,7 +750,8 @@ def _calibrate_wrist_camera_mount(
     grasp, basis = _stock_franka_gripper_frame(hand, left_finger, right_finger)
     eye_offset = np.asarray(WRIST_EYE_OFFSET_TOOL, dtype=np.float64)
     eye = grasp + basis @ eye_offset
-    look = np.asarray(look_at, dtype=np.float64) - eye
+    # Frame the object and grasp origin together, then keep that mount rigid.
+    look = 0.5 * (np.asarray(look_at, dtype=np.float64) + grasp) - eye
     look /= max(float(np.linalg.norm(look)), 1e-9)
     side_direction_hand = None
     if hand_transform is not None:
@@ -851,17 +860,34 @@ def _configure_lighting(stage) -> None:
     from pxr import Gf, UsdGeom, UsdLux
 
     dome = UsdLux.DomeLight.Define(stage, "/World/PolicyFillLight")
-    dome.CreateIntensityAttr(900.0)
-    dome.CreateExposureAttr(1.0)
+    dome.CreateIntensityAttr(200.0)
+    dome.CreateExposureAttr(0.0)
     dome.CreateColorAttr(Gf.Vec3f(1.0, 0.98, 0.95))
 
     key = UsdLux.DistantLight.Define(stage, "/World/PolicyKeyLight")
-    key.CreateIntensityAttr(2_500.0)
-    key.CreateExposureAttr(1.0)
+    key.CreateIntensityAttr(700.0)
+    key.CreateExposureAttr(0.0)
     key.CreateAngleAttr(4.0)
     key.CreateColorAttr(Gf.Vec3f(1.0, 0.96, 0.9))
     transform = UsdGeom.Xformable(key.GetPrim())
     transform.AddRotateXYZOp().Set(Gf.Vec3f(-35.0, -25.0, -35.0))
+
+
+def _configure_policy_rendering(settings) -> dict:
+    """Pin exposure so a viewer's adaptive settings cannot wash out policy RGB."""
+    values = {
+        "/rtx/post/histogram/enabled": False,
+        "/rtx/post/tonemap/op": 4,
+        "/rtx/post/tonemap/filmIso": 100.0,
+        "/rtx/post/tonemap/cameraShutter": 50.0,
+        "/rtx/post/tonemap/fNumber": 4.0,
+        "/rtx/post/tonemap/whitepoint": (1.0, 1.0, 1.0),
+        "/rtx/post/dof/enabled": False,
+        "/rtx/post/motionblur/enabled": False,
+    }
+    for path, value in values.items():
+        settings.set(path, value)
+    return values
 
 
 def _contact_force_magnitude(contact_view, physics_dt: float) -> float:
@@ -879,7 +905,10 @@ def _contact_force_magnitude(contact_view, physics_dt: float) -> float:
     array = np.asarray(forces, dtype=np.float64)
     if array.size == 0 or not np.isfinite(array).all():
         return 0.0
-    return float(np.linalg.norm(array, axis=-1).max(initial=0.0))
+    # Both fingers must support the cube; a one-sided collision is not a grasp.
+    if array.shape != (1, 2, 3):
+        raise ValueError("unexpected cube-to-finger contact matrix")
+    return float(np.linalg.norm(array[0], axis=-1).min())
 
 
 def _droid_gripper_observation(joint_positions) -> float:
@@ -910,7 +939,8 @@ def _validated_actions(response: dict, current) -> tuple[object, dict[str, int]]
     actions = np.asarray(response.get("actions"))
     if actions.shape != ACTION_SHAPE:
         raise ActionValidationError("wrong_shape")
-    if not np.issubdtype(actions.dtype, np.number) or not np.isfinite(actions).all():
+    if (not np.issubdtype(actions.dtype, np.number) or not np.isrealobj(actions)
+            or not np.isfinite(actions).all()):
         raise ActionValidationError("non_finite")
     targets = actions.astype(np.float64, copy=True)
     low, high = np.asarray(JOINT_LOW), np.asarray(JOINT_HIGH)
@@ -957,9 +987,43 @@ def _install_overlay():
     return window, title, state, counters, latency
 
 
-def _camera_frame_from_buffer(buffer, *, view: str) -> CameraFrame:
-    """Copy and classify one numpy/Warp RGB buffer without unsafe aliasing."""
+def _camera_quality_reason(frame: CameraFrame) -> str:
+    if frame.luminance_mean <= MIN_CAMERA_LUMINANCE_MEAN:
+        return "blank"
+    if (frame.luminance_mean > MAX_CAMERA_LUMINANCE_MEAN
+            or frame.near_white_fraction > MAX_CAMERA_NEAR_WHITE_FRACTION):
+        return "overexposed"
+    if frame.luminance_variance <= MIN_CAMERA_LUMINANCE_VARIANCE:
+        return "flat"
+    if frame.dynamic_range < MIN_CAMERA_DYNAMIC_RANGE:
+        return "low_dynamic_range"
+    return ""
 
+
+def _classify_camera_rgb(rgb, frame) -> CameraFrame:
+    import numpy as np
+
+    luminance = np.mean(rgb, axis=2)
+    red_mask = ((rgb[..., 0] > 80)
+                & (rgb[..., 0].astype(np.float32) > rgb[..., 1] * 1.35)
+                & (rgb[..., 0].astype(np.float32) > rgb[..., 2] * 1.35))
+    rows, columns = np.nonzero(red_mask)
+    extent = (int(columns.max() - columns.min() + 1),
+              int(rows.max() - rows.min() + 1)) if rows.size else (0, 0)
+    result = CameraFrame(
+        rgb=rgb, reason="", luminance_mean=float(luminance.mean()),
+        luminance_variance=float(luminance.var()),
+        dynamic_range=float(np.percentile(luminance, 95) - np.percentile(luminance, 5)),
+        red_cube_pixels=int(red_mask.sum()), raw_min=float(frame.min()),
+        raw_max=float(frame.max()), raw_nonzero=int(np.count_nonzero(frame)),
+        raw_channels=int(frame.shape[2]),
+        near_white_fraction=float(np.mean(luminance > 240)), target_extent=extent,
+    )
+    return replace(result, reason=_camera_quality_reason(result))
+
+
+def _camera_frame_from_buffer(buffer, *, view: str) -> CameraFrame:
+    """Copy and classify the sensor's RGB without modifying exposure in pixels."""
     import numpy as np
 
     if buffer is None:
@@ -967,70 +1031,22 @@ def _camera_frame_from_buffer(buffer, *, view: str) -> CameraFrame:
     try:
         source = buffer.numpy() if callable(getattr(buffer, "numpy", None)) else buffer
         frame = np.array(source, copy=True)
-    except Exception:
+    except (TypeError, ValueError, RuntimeError):
         return CameraFrame(None, "unreadable")
     if frame.ndim != 3 or frame.shape not in ((224, 224, 3), (224, 224, 4)):
         return CameraFrame(None, "wrong_shape")
     if not np.issubdtype(frame.dtype, np.number) or not np.isfinite(frame).all():
         return CameraFrame(None, "non_finite")
-    raw_min = float(frame.min())
-    raw_max = float(frame.max())
-    raw_nonzero = int(np.count_nonzero(frame))
-    raw_channels = int(frame.shape[2])
     rgb_source = frame[:, :, :3]
-    if np.issubdtype(rgb_source.dtype, np.floating):
-        upper = float(rgb_source.max())
-        if upper <= 1.0:
-            rgb_source = rgb_source * 255.0
+    if np.issubdtype(rgb_source.dtype, np.floating) and float(rgb_source.max()) <= 1.0:
+        rgb_source = rgb_source * 255.0
     rgb = np.ascontiguousarray(np.clip(rgb_source, 0, 255).astype(np.uint8, copy=False))
-    luminance = np.mean(rgb, axis=2)
-    luminance_mean = float(luminance.mean())
-    luminance_variance = float(luminance.var())
-    dynamic_range = float(np.percentile(luminance, 95) - np.percentile(luminance, 5))
-    red_mask = (
-        (rgb[..., 0] > 80)
-        & (rgb[..., 0].astype(np.float32) > rgb[..., 1] * 1.35)
-        & (rgb[..., 0].astype(np.float32) > rgb[..., 2] * 1.35)
-    )
-    result = CameraFrame(
-        rgb,
-        "",
-        luminance_mean,
-        luminance_variance,
-        dynamic_range,
-        int(red_mask.sum()),
-        raw_min,
-        raw_max,
-        raw_nonzero,
-        raw_channels,
-    )
-    if luminance_mean <= MIN_CAMERA_LUMINANCE_MEAN:
-        return CameraFrame(
-            rgb,
-            "blank",
-            luminance_mean,
-            luminance_variance,
-            dynamic_range,
-            result.red_cube_pixels,
-            raw_min,
-            raw_max,
-            raw_nonzero,
-            raw_channels,
-        )
-    if luminance_variance <= MIN_CAMERA_LUMINANCE_VARIANCE:
-        return CameraFrame(
-            rgb,
-            "flat",
-            luminance_mean,
-            luminance_variance,
-            dynamic_range,
-            result.red_cube_pixels,
-            raw_min,
-            raw_max,
-            raw_nonzero,
-            raw_channels,
-        )
-    return result
+    return _classify_camera_rgb(rgb, frame)
+
+
+def _target_resolved(frame: CameraFrame) -> bool:
+    return (frame.red_cube_pixels >= MIN_EXTERIOR_RED_CUBE_PIXELS
+            and min(frame.target_extent) >= MIN_TARGET_EXTENT_PIXELS)
 
 
 def _camera_frame(camera, *, view: str) -> CameraFrame:
@@ -1187,6 +1203,9 @@ def _validate_camera_pair(
     last_accepted_render_sequence: int,
     exterior_cube_in_frame: bool,
     wrist_cube_in_frame: bool,
+    initial_alignment: bool = False,
+    gripper_contact: bool = False,
+    gripper_views_aligned: bool = True,
 ) -> CameraPair:
     """Require useful paired views and geometric target context from exterior."""
 
@@ -1229,6 +1248,15 @@ def _validate_camera_pair(
         return CameraPair(
             False, exterior_frame, wrist_frame, "exterior", "cube_out_of_frame"
         )
+    exterior_target = _target_resolved(exterior_frame)
+    wrist_target = wrist_cube_in_frame and _target_resolved(wrist_frame)
+    if initial_alignment and not gripper_views_aligned:
+        return CameraPair(False, exterior_frame, wrist_frame, "pair", "gripper_out_of_frame")
+    if initial_alignment and not (exterior_target and wrist_target):
+        view = "exterior" if not exterior_target else "wrist"
+        return CameraPair(False, exterior_frame, wrist_frame, view, "target_unresolved")
+    if not (exterior_target or wrist_target or gripper_contact):
+        return CameraPair(False, exterior_frame, wrist_frame, "pair", "target_unresolved")
     if difference < MIN_POLICY_CAMERA_PAIR_DIFFERENCE:
         return CameraPair(
             False,
@@ -1366,7 +1394,7 @@ def _camera_rejection_metrics_line(
         f"elapsed_seconds={elapsed_seconds:.3f} "
         f"frames={frames} requests={requests} round_trips={round_trips} "
         f"applied={applied} reconnects={reconnects} "
-        "camera_quality_schema=3 "
+        "camera_quality_schema=4 "
         f"camera_rejected_pairs={camera_rejected_pairs} "
         f"camera_validated_requests={camera_validated_requests} "
         f"camera_pair_id={camera_pair_id} "
@@ -1509,15 +1537,109 @@ def _franka_proxy_geometry(link_points):
     return {"base": base, "links": links, "joints": joints, "gripper": gripper}
 
 
-@antioch.scenario(tags=["openpi-live", "mk8s-native"])
+def _record_camera_quality(run, camera_quality):
+    accepted = all(camera_quality.values())
+    for view, samples in camera_quality.items():
+        maximum_mean = max((sample["mean"] for sample in samples), default=0.0)
+        maximum_white = max((sample["near_white"] for sample in samples), default=1.0)
+        minimum_contrast = min((sample["dynamic_range"] for sample in samples), default=0.0)
+        run.add_result(f"{view}_luminance_mean_max", maximum_mean)
+        run.add_result(f"{view}_near_white_fraction_max", maximum_white)
+        run.add_result(f"{view}_dynamic_range_min", minimum_contrast)
+        accepted = bool(accepted and maximum_mean <= MAX_CAMERA_LUMINANCE_MEAN
+                        and maximum_white <= MAX_CAMERA_NEAR_WHITE_FRACTION
+                        and minimum_contrast >= MIN_CAMERA_DYNAMIC_RANGE)
+    run.check("policy_views_exposure_and_contrast", accepted,
+              detail="Every submitted input met the recorded scene-specific image thresholds")
+    run.add_result("camera_quality_thresholds", {
+        "maximum_mean": MAX_CAMERA_LUMINANCE_MEAN,
+        "maximum_near_white_fraction": MAX_CAMERA_NEAR_WHITE_FRACTION,
+        "minimum_dynamic_range": MIN_CAMERA_DYNAMIC_RANGE,
+        "minimum_target_pixels": MIN_EXTERIOR_RED_CUBE_PIXELS,
+        "minimum_target_extent": MIN_TARGET_EXTENT_PIXELS,
+    })
+
+
+def _record_episode_checks(
+    run, *, objective, reason, progress, completed_chunks, camera_quality,
+    initial_target_resolved, evidence, evidence_sha256, requests, applied,
+    control_steps, render_settings,
+):
+    run.add_result("episode_objective", objective)
+    run.add_result("termination_reason", reason)
+    run.add_result("control_steps", control_steps)
+    run.add_result("completed_action_chunks", completed_chunks)
+    run.add_result("end_effector_approach_m", progress.approach)
+    run.add_result("policy_evidence_sha256", evidence_sha256)
+    run.add_result("render_settings", render_settings)
+    _record_camera_quality(run, camera_quality)
+    run.check("initial_target_resolved_both_views", initial_target_resolved,
+              detail="Both initial policy views resolved the target before any inference")
+    run.check("policy_evidence_complete", evidence.requests == requests > 0
+              and evidence.applied == applied and evidence.responses > 0,
+              detail="Lossless inputs, request hashes, raw responses and control trace archived")
+    run.check("policy_actions_executed", completed_chunks >= 2,
+              detail=f"{completed_chunks} five-target control segments fully applied")
+    run.check("episode_completed", reason in {"communication_complete", "pickup_complete"},
+              detail=reason)
+    if objective == "pickup":
+        _record_pickup_checks(run, progress)
+
+
+def _record_pickup_checks(run, progress):
+    run.check("end_effector_approached_cube", progress.approach >= 0.05,
+              detail=f"{progress.approach:.6f} m approach; required 0.05 m")
+    run.check("bilateral_gripper_contact", progress.contact_samples > 0,
+              detail=f"{progress.contact_samples} physics samples with force on both fingers")
+    run.check("cube_lift_held", progress.success,
+              detail=f"5 cm lift with bilateral contact and closure held {progress.hold_seconds:.6f} simulation seconds")
+
+
+@antioch.scenario(tags=["openpi-communication"])
 def openpi_franka_mk8s_live_v2(
     run: antioch.ScenarioRun,
     prompt: str = antioch.param(
         "pick up the red cube", description="DROID task prompt"
     ),
 ) -> None:
-    """Record a finite camera-to-pi0.5 communication proof."""
+    """Record two policy replies and execute both control segments.
 
+    Args:
+        run: Antioch result and artifact handle.
+        prompt: Instruction sent unchanged to the DROID policy.
+    Returns:
+        None.
+    Raises:
+        RuntimeError: The policy, camera, or evidence contract cannot be met.
+    """
+    _run_openpi_episode(run, prompt, objective="communication", control_steps=10)
+
+
+@antioch.scenario(tags=["openpi-live", "mk8s-native"])
+def openpi_franka_pickup_v3(
+    run: antioch.ScenarioRun,
+    prompt: str = antioch.param("pick up the red cube", description="DROID task prompt"),
+    control_steps: int = antioch.param(
+        450, ge=10, description="Finite manipulation episode length in applied policy targets"
+    ),
+) -> None:
+    """Evaluate measured approach and a sustained physical pickup.
+
+    Args:
+        run: Antioch result and artifact handle.
+        prompt: Instruction sent unchanged to the DROID policy.
+        control_steps: Applied-target budget; exhaustion is a failed task.
+    Returns:
+        None.
+    Raises:
+        RuntimeError: The policy, camera, or evidence contract cannot be met.
+    """
+    _run_openpi_episode(run, prompt, objective="pickup", control_steps=control_steps)
+
+
+def _run_openpi_episode(run, prompt, *, objective, control_steps):
+    from policy_episode import _PickupProgress, _PolicyEvidence, _termination_reason, _readiness_failure
+    import carb
     import numpy as np
     import rerun as rr
     import rerun.blueprint as rrb
@@ -1534,7 +1656,7 @@ def openpi_franka_mk8s_live_v2(
     from isaacsim.sensors.experimental.rtx import CameraSensor, RtxCamera
 
     world = antioch.world()
-    world.scene.add_ground_plane(z_position=-0.75)
+    world.scene.add_ground_plane(z_position=-0.75, color=np.array([0.12, 0.14, 0.17]))
     tabletop = world.scene.add(
         FixedCuboid(
             prim_path="/World/Tabletop",
@@ -1590,6 +1712,7 @@ def openpi_franka_mk8s_live_v2(
         path=WRIST_CAMERA_PATH,
     )
     _configure_lighting(world.stage)
+    render_settings = _configure_policy_rendering(carb.settings.get_settings())
     world.reset()
     robot.set_joint_positions(
         np.asarray([*DROID_RESET_JOINTS, GRIPPER_JOINT_MAX, GRIPPER_JOINT_MAX])
@@ -1649,7 +1772,7 @@ def openpi_franka_mk8s_live_v2(
     next_attempt = 0.0
     chunk = None
     chunk_index = 0
-    last_apply = time.monotonic()
+    last_apply = float(world.current_time)
     first_frame = True
     current_luminance_mean_min = 0.0
     current_luminance_variance_min = 0.0
@@ -1659,6 +1782,7 @@ def openpi_franka_mk8s_live_v2(
     current_wrist_luminance_variance = 0.0
     current_exterior_dynamic_range = 0.0
     current_wrist_dynamic_range = 0.0
+    current_exterior_near_white_fraction = current_wrist_near_white_fraction = 1.0
     camera_pair_id = request_camera_pair_id = round_trip_camera_pair_id = 0
     render_sequence = request_render_sequence = round_trip_render_sequence = 0
     first_accepted_render_sequence = 0
@@ -1671,7 +1795,6 @@ def openpi_franka_mk8s_live_v2(
     pending = None
     pending_observation = 0
     pending_camera_pair_id = 0
-    pending_joint_positions = None
     pending_started_at = 0.0
     pending_stall_reported = False
     current_policy_error = ""
@@ -1682,10 +1805,20 @@ def openpi_franka_mk8s_live_v2(
     maximum_cube_lift = 0.0
     gripper_contact_samples = 0
     maximum_gripper_contact_force = 0.0
-    pickup_hold_started = None
     pickup_hold_seconds = 0.0
     pickup_success = False
     communication_proof_complete = False
+    completed_action_chunks = 0
+    chunk_camera_pair_id = 0
+    gripper_commanded_closed = False
+    in_gripper_contact = False
+    progress = _PickupProgress()
+    evidence = _PolicyEvidence()
+    camera_quality = {"exterior": [], "wrist": []}
+    initial_target_resolved = False
+    termination_reason = "interrupted_or_error"
+    unavailable_since = started
+    last_control_at = None
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="openpi-policy")
     camera_readiness = CameraReadinessMonitor()
     camera_policy_eligible = False
@@ -1700,6 +1833,7 @@ def openpi_franka_mk8s_live_v2(
             world.step(render=True)
             render_sequence += 1
             now = time.monotonic()
+            sim_now = float(world.current_time)
 
             if pending is not None and not pending.done():
                 pending_age = now - pending_started_at
@@ -1735,11 +1869,13 @@ def openpi_franka_mk8s_live_v2(
                         raise RuntimeError(
                             "policy response camera-pair identity mismatch"
                         )
-                    if last_latency > MAX_RESPONSE_AGE_SECONDS:
+                    evidence.response(pending_camera_pair_id, response, sim_seconds=sim_now)
+                    if now - pending_started_at > MAX_RESPONSE_AGE_SECONDS:
                         raise TimeoutError("policy response was stale")
                     chunk, action_evidence = _validated_actions(
-                        response, pending_joint_positions
+                        response, robot.get_joint_positions()
                     )
+                    chunk_camera_pair_id = pending_camera_pair_id
                     raw_gripper_range_mismatches += action_evidence[
                         "raw_gripper_range_mismatches"
                     ]
@@ -1793,7 +1929,7 @@ def openpi_franka_mk8s_live_v2(
                         f"joint_step_projections={joint_step_projections} "
                         f"transport_failures={sum(transport_failures.values())} "
                         f"reconnects={client.reconnects} "
-                        "camera_quality_schema=3 "
+                        "camera_quality_schema=4 "
                         f"camera_rejected_pairs={camera_rejected_pairs} "
                         f"camera_validated_requests={camera_validated_requests} "
                         f"camera_pair_id={camera_pair_id} "
@@ -1811,6 +1947,10 @@ def openpi_franka_mk8s_live_v2(
                         f"camera_luminance_mean_current_min={current_luminance_mean_min:.3f} "
                         f"camera_luminance_variance_current_min={current_luminance_variance_min:.3f} "
                         f"camera_exterior_luminance_mean_current={current_exterior_luminance_mean:.3f} "
+                        f"camera_exterior_near_white_fraction_current={current_exterior_near_white_fraction:.6f} "
+                        f"camera_wrist_near_white_fraction_current={current_wrist_near_white_fraction:.6f} "
+                        f"camera_exterior_dynamic_range_current={current_exterior_dynamic_range:.3f} "
+                        f"camera_wrist_dynamic_range_current={current_wrist_dynamic_range:.3f} "
                         f"camera_exterior_luminance_variance_current={current_exterior_luminance_variance:.3f} "
                         f"camera_wrist_luminance_mean_current={current_wrist_luminance_mean:.3f} "
                         f"camera_wrist_luminance_variance_current={current_wrist_luminance_variance:.3f} "
@@ -1853,22 +1993,12 @@ def openpi_franka_mk8s_live_v2(
                     )
                 finally:
                     pending = None
-                    pending_joint_positions = None
                     pending_started_at = 0.0
                     pending_stall_reported = False
 
-                if communication_proof_complete:
-                    print(
-                        "NPA_OPENPI_COMMUNICATION_PROOF_COMPLETE "
-                        f"round_trips={round_trips} "
-                        f"required_round_trips={POC_REQUIRED_POLICY_ROUND_TRIPS} "
-                        "action_shape=[15,8] finite=true",
-                        flush=True,
-                    )
-                    break
 
-            if now >= next_camera_attempt:
-                next_camera_attempt = now + 1.0 / CONTROL_HZ
+            if sim_now >= next_camera_attempt:
+                next_camera_attempt = sim_now + 1.0 / CONTROL_HZ
                 joint_positions = np.asarray(
                     robot.get_joint_positions(), dtype=np.float32
                 )
@@ -1889,6 +2019,14 @@ def openpi_franka_mk8s_live_v2(
                     wrist_pose,
                     _camera_optical_config("wrist"),
                 )
+                gripper_position = robot.end_effector.get_world_pose()[0]
+                gripper_views_aligned = _point_in_camera_frame(
+                    gripper_position,
+                    (EXTERIOR_CAMERA_EYE, EXTERIOR_CAMERA_TARGET, (0, 0, 1)),
+                    _camera_optical_config("exterior"),
+                ) and _point_in_camera_frame(
+                    gripper_position, wrist_pose, _camera_optical_config("wrist")
+                )
                 samples = _capture_camera_samples(cameras)
                 pair = _validate_camera_pair(
                     samples["exterior"].frame,
@@ -1897,6 +2035,9 @@ def openpi_franka_mk8s_live_v2(
                     last_accepted_render_sequence=last_accepted_render_sequence,
                     exterior_cube_in_frame=exterior_cube_in_frame,
                     wrist_cube_in_frame=wrist_cube_in_frame,
+                    initial_alignment=not initial_target_resolved,
+                    gripper_contact=bool(gripper_commanded_closed and in_gripper_contact),
+                    gripper_views_aligned=gripper_views_aligned,
                 )
                 producers_advanced, current_markers, producer_reason = (
                     _camera_markers_advanced(samples, camera_markers)
@@ -1924,6 +2065,8 @@ def openpi_franka_mk8s_live_v2(
                 current_wrist_luminance_variance = pair.wrist.luminance_variance
                 current_exterior_dynamic_range = pair.exterior.dynamic_range
                 current_wrist_dynamic_range = pair.wrist.dynamic_range
+                current_exterior_near_white_fraction = pair.exterior.near_white_fraction
+                current_wrist_near_white_fraction = pair.wrist.near_white_fraction
                 current_camera_quality_accepted = int(pair.accepted)
                 published_views = telemetry.publish_camera_pair(pair, render_sequence)
                 if published_views:
@@ -1951,6 +2094,8 @@ def openpi_franka_mk8s_live_v2(
                     rejection_reason = pair.reason or readiness.reason
                     camera_rejections[f"{rejection_view}_{rejection_reason}"] += 1
                     safe_holds += 1
+                    if readiness.emit_status:
+                        evidence.rejected_pair(pair, render_sequence=render_sequence)
                     overlay[
                         2
                     ].text = f"SAFE HOLD / {rejection_view} camera {rejection_reason}"
@@ -1980,7 +2125,20 @@ def openpi_franka_mk8s_live_v2(
                             ),
                             flush=True,
                         )
-                elif chunk is None and pending is None and now >= next_attempt:
+                else:
+                    unavailable_since = now
+                if (camera_policy_eligible and chunk is None and pending is None
+                        and now >= next_attempt and applied < control_steps
+                        and not (objective == "communication" and completed_action_chunks >= 2)):
+                    initial_target_resolved = True
+                    for view in ("exterior", "wrist"):
+                        frame = getattr(pair, view)
+                        camera_quality[view].append({
+                            "mean": frame.luminance_mean,
+                            "near_white": frame.near_white_fraction,
+                            "dynamic_range": frame.dynamic_range,
+                            "target_pixels": frame.red_cube_pixels,
+                        })
                     exterior_rgb = pair.exterior.rgb
                     wrist_rgb = pair.wrist.rgb
                     if first_frame:
@@ -2034,24 +2192,22 @@ def openpi_franka_mk8s_live_v2(
                     )
                     pending_observation = observation_sequence
                     pending_camera_pair_id = request_camera_pair_id
-                    pending_joint_positions = joint_positions.copy()
                     pending_started_at = now
+                    if last_control_at is None:
+                        last_control_at = now
                     pending_stall_reported = False
-                    pending = executor.submit(
-                        client.infer,
-                        PolicyRequest(
-                            observation=observation,
-                            camera_pair_id=request_camera_pair_id,
-                            render_sequence=request_render_sequence,
-                        ),
-                    )
+                    request = PolicyRequest(observation, request_camera_pair_id, request_render_sequence)
+                    payload = evidence.request(request, sim_seconds=sim_now, producer_markers=camera_markers)
+                    pending = executor.submit(client.infer, replace(request, payload=payload))
 
             if (
                 chunk is not None
                 and camera_policy_eligible
-                and now - last_apply >= 1.0 / CONTROL_HZ
+                and sim_now - last_apply >= 1.0 / CONTROL_HZ - 1e-9
+                and applied < control_steps
             ):
                 target = chunk[chunk_index]
+                measured_before = np.asarray(robot.get_joint_positions(), dtype=float)
                 robot.apply_action(
                     ArticulationAction(
                         joint_positions=np.concatenate(
@@ -2062,14 +2218,19 @@ def openpi_franka_mk8s_live_v2(
                         )
                     )
                 )
+                evidence.target(camera_pair_id=chunk_camera_pair_id, row=chunk_index,
+                                target=target, before=measured_before, sim_seconds=sim_now)
+                gripper_commanded_closed = bool(target[7] > 0.5)
                 applied += 1
+                last_control_at = now
                 chunk_index += 1
-                last_apply = now
+                last_apply = sim_now
                 print(
                     f"NPA_OPENPI_APPLIED applied={applied} chunk_index={chunk_index}",
                     flush=True,
                 )
                 if chunk_index >= TARGETS_PER_QUERY:
+                    completed_action_chunks += 1
                     chunk = None
 
             cube_position = np.asarray(cube.get_world_pose()[0], dtype=np.float64)
@@ -2092,21 +2253,35 @@ def openpi_franka_mk8s_live_v2(
             current_joint_positions = np.asarray(
                 robot.get_joint_positions(), dtype=float
             )
-            gripper_closed = _droid_gripper_observation(current_joint_positions) > 0.5
-            pickup_candidate = bool(
-                cube_lift >= PICKUP_LIFT_METERS
-                and in_gripper_contact
-                and gripper_closed
-            )
-            if pickup_candidate:
-                if pickup_hold_started is None:
-                    pickup_hold_started = now
-                pickup_hold_seconds = now - pickup_hold_started
-                pickup_success = pickup_hold_seconds >= PICKUP_HOLD_SECONDS
-            else:
-                pickup_hold_started = None
-                if not pickup_success:
-                    pickup_hold_seconds = 0.0
+            # A 7 cm object cannot fit between fingers less than 4 cm apart.
+            # Require measurable closure from the 8 cm open width, not a binary
+            # observation threshold copied from a much smaller object.
+            gripper_closed = bool(gripper_commanded_closed and
+                _droid_gripper_observation(current_joint_positions) >= 0.05)
+            progress.observe(sim_seconds=sim_now, distance=ee_distance, lift=cube_lift,
+                             contact_force=contact_force, closed=gripper_closed)
+            pickup_hold_seconds = progress.hold_seconds
+            pickup_success = progress.success
+            evidence.event("physics", sim_seconds=sim_now, render_sequence=render_sequence,
+                           joints=current_joint_positions.tolist(), cube=cube_position.tolist(),
+                           end_effector=ee_position.tolist(), contact_force=contact_force,
+                           lift=cube_lift, approach=progress.approach, pickup=pickup_success)
+            terminal = _termination_reason(
+                objective=objective, round_trips=round_trips,
+                completed_chunks=completed_action_chunks, pickup=progress,
+                applied=applied, control_steps=control_steps, sim_seconds=sim_now,
+                last_apply_sim_seconds=last_apply)
+            if terminal:
+                termination_reason = terminal
+                print(f"NPA_OPENPI_EPISODE_COMPLETE reason={terminal} applied={applied}", flush=True)
+                break
+            failure = _readiness_failure(
+                now=now, camera_ready=camera_policy_eligible,
+                camera_unavailable_since=unavailable_since,
+                last_control_at=last_control_at, deadline=MAX_RESPONSE_AGE_SECONDS)
+            if failure:
+                termination_reason = failure
+                break
 
             safe_hold = chunk is None
             if display_rate.due(now):
@@ -2326,6 +2501,14 @@ def openpi_franka_mk8s_live_v2(
             raise TelemetryShutdownError(
                 "logger worker remained alive; refusing result finalization"
             )
+        evidence_sha256 = evidence.finish(run)
+        _record_episode_checks(
+            run, objective=objective, reason=termination_reason, progress=progress,
+            completed_chunks=completed_action_chunks, camera_quality=camera_quality,
+            initial_target_resolved=initial_target_resolved, evidence=evidence,
+            evidence_sha256=evidence_sha256, requests=requests, applied=applied,
+            control_steps=control_steps, render_settings=render_settings,
+        )
         run.add_result("observation_sequence", observation_sequence)
         run.add_result("policy_requests", requests)
         run.add_result("policy_round_trips", round_trips)
@@ -2344,7 +2527,7 @@ def openpi_franka_mk8s_live_v2(
         run.add_result("reconnects", client.reconnects)
         run.add_result("rejected_actions", dict(sorted(rejected_actions.items())))
         run.add_result("transport_failures", dict(sorted(transport_failures.items())))
-        run.add_result("camera_quality_schema", 3)
+        run.add_result("camera_quality_schema", 4)
         run.add_result("camera_rejected_pairs", camera_rejected_pairs)
         run.add_result("camera_rejections", dict(sorted(camera_rejections.items())))
         run.add_result("camera_validated_requests", camera_validated_requests)
@@ -2362,7 +2545,8 @@ def openpi_franka_mk8s_live_v2(
             current_exterior_red_cube_pixels,
         )
         run.add_result("task_label", TASK_LABEL)
-        run.add_result("minimum_end_effector_cube_distance_m", minimum_ee_distance)
+        run.add_result("minimum_end_effector_cube_distance_m",
+                       minimum_ee_distance if math.isfinite(minimum_ee_distance) else None)
         run.add_result("maximum_cube_lift_m", maximum_cube_lift)
         run.add_result("gripper_contact_samples", gripper_contact_samples)
         run.add_result("maximum_gripper_contact_force_n", maximum_gripper_contact_force)

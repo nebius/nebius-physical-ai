@@ -60,6 +60,11 @@ REQUIRED_POC_CHECKS = frozenset(
         "pi05_responses_finite_15x8",
     }
 )
+REQUIRED_PICKUP_CHECKS = REQUIRED_POC_CHECKS | {
+    "policy_views_exposure_and_contrast", "initial_target_resolved_both_views",
+    "policy_evidence_complete", "policy_actions_executed", "episode_completed",
+    "end_effector_approached_cube", "bilateral_gripper_contact", "cube_lift_held",
+}
 _METRIC_KEY = re.compile(r"^[a-z][a-z0-9_]*$")
 _CAMERA_REJECTION_VIEWS = frozenset({"exterior", "wrist", "pair"})
 _CAMERA_REJECTION_REASONS = frozenset(
@@ -69,6 +74,9 @@ _CAMERA_REJECTION_REASONS = frozenset(
         "non_finite",
         "blank",
         "flat",
+        "overexposed",
+        "target_unresolved",
+        "gripper_out_of_frame",
         "low_dynamic_range",
         "cube_not_visible",
         "cube_out_of_frame",
@@ -541,7 +549,9 @@ def _completed_poc_evidence(
         raise AntiochLiveError(
             "completed Antioch proof is missing required passed checks"
         )
-    return {
+    if scenario == "openpi_franka_pickup_v3":
+        _validate_pickup_record(record, results, passed)
+    evidence = {
         "scenario_run_id": scenario_run_id,
         "run_phase": "completed",
         "run_outcome": "passed",
@@ -554,6 +564,56 @@ def _completed_poc_evidence(
         "action_horizon": 15,
         "action_dimension": 8,
     }
+    if scenario == "openpi_franka_pickup_v3":
+        evidence["pickup_verified"] = True
+    return evidence
+
+
+def _validate_pickup_record(record, results, passed) -> None:
+    """Reject communication-only or incomplete evidence for the pickup identity."""
+    if not REQUIRED_PICKUP_CHECKS.issubset(passed):
+        raise AntiochLiveError("completed pickup lacks required measured checks")
+    if (results.get("episode_objective") != "pickup"
+            or results.get("termination_reason") != "pickup_complete"
+            or results.get("pickup_success") is not True):
+        raise AntiochLiveError("completed pickup has no physical task success")
+    for name, minimum in (("end_effector_approach_m", 0.05),
+                          ("maximum_cube_lift_m", 0.05), ("pickup_hold_seconds", 1.0)):
+        value = results.get(name)
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value) or value < minimum):
+            raise AntiochLiveError(f"completed pickup has invalid {name}")
+    _integer_result(results, "completed_action_chunks", minimum=2)
+    _integer_result(results, "safe_targets_applied", minimum=10)
+    _integer_result(results, "gripper_contact_samples", minimum=1)
+    _validate_camera_quality_record(results)
+    artifacts = record.get("artifacts")
+    artifact = artifacts.get("policy-evidence.zip") if isinstance(artifacts, dict) else None
+    if (not isinstance(artifact, dict) or not artifact.get("size_bytes")
+            or artifact.get("sha256") != results.get("policy_evidence_sha256")
+            or not re.fullmatch(r"[a-f0-9]{64}", str(results.get("policy_evidence_sha256", "")))):
+        raise AntiochLiveError("completed pickup lacks its matching control evidence archive")
+
+
+def _validate_camera_quality_record(results) -> None:
+    for view in ("exterior", "wrist"):
+        for suffix, lower, upper in (
+            ("luminance_mean_max", 5.0, 220.0),
+            ("near_white_fraction_max", 0.0, 0.60),
+            ("dynamic_range_min", 32.0, 255.0),
+        ):
+            value = results.get(f"{view}_{suffix}")
+            if (isinstance(value, bool) or not isinstance(value, (int, float))
+                    or not math.isfinite(value) or not lower <= value <= upper):
+                raise AntiochLiveError("completed pickup has invalid camera quality")
+
+
+def _require_single_attempt(scenario: str, reason: str) -> None:
+    """Keep a finite evaluation failure from silently becoming another scenario."""
+    if reason and scenario in {"openpi_franka_mk8s_live_v2", "openpi_franka_pickup_v3"}:
+        raise AntiochLiveError(
+            "finite Antioch evaluation lost its owner; automatic resubmission is disabled"
+        )
 
 
 def _wait_for_completed_poc_record(
@@ -977,6 +1037,7 @@ def run_cluster(args: argparse.Namespace) -> NoReturn:
                         vendor_process_status=vendor.exit_snapshot()[0],
                         route_process_status=port_bridge.exit_snapshot()[0],
                     )
+            _require_single_attempt(args.scenario, recovery_reason)
             if recovery_reason:
                 recoveries += 1
                 exit_class, exit_code = vendor.exit_snapshot()
@@ -1194,7 +1255,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--runtime-root", default="/var/lib/npa-antioch-live")
     run.add_argument("--state-path", default="/var/run/npa-antioch/controller.json")
     run.add_argument("--stop-file", default="/var/run/npa-antioch/stop")
-    run.add_argument("--scenario", default="openpi_franka_mk8s_live_v2")
+    run.add_argument("--scenario", default="openpi_franka_pickup_v3")
     run.add_argument("--scenario-timeout-seconds", type=int, default=14_400)
     run.add_argument("--owner-identity", required=True)
     run.add_argument("--health-port", type=int, default=18_080)

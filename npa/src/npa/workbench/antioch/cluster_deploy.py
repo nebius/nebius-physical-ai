@@ -24,7 +24,7 @@ CONFIG_SCHEMA = "npa.antioch.mk8s-live-config.v3"
 ANTIOCH_TLS_EGRESS_PORTS = (443,)
 UNRESTRICTED_VENDOR_EGRESS_CIDR = "0.0.0.0/0"
 MANAGED_BY = "npa-antioch-mk8s-live"
-SCENARIO = "openpi_franka_mk8s_live_v2"
+SCENARIO = "openpi_franka_pickup_v3"
 _DNS_LABEL = re.compile(r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$")
 _SECRET_KEY = re.compile(r"^[A-Za-z0-9._-]+$")
 _METRIC_KEY = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -677,7 +677,7 @@ def qualify_live_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
             and int(number("action_finite")) == 1
         ),
         "camera_pair_identity": (
-            int(number("camera_quality_schema")) == 3
+            int(number("camera_quality_schema")) == 4
             and int(number("camera_validated_requests")) == requests
             and int(number("camera_pair_id")) == requests
             and int(number("request_camera_pair_id"))
@@ -699,6 +699,12 @@ def qualify_live_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
                 ("camera_wrist_luminance_mean_current", 5.0),
                 ("camera_wrist_luminance_variance_current", 25.0),
             )
+        ),
+        "exposure_and_contrast": all(
+            number(f"camera_{view}_luminance_mean_current", float("inf")) <= 220.0
+            and number(f"camera_{view}_near_white_fraction_current", 1.0) <= 0.60
+            and number(f"camera_{view}_dynamic_range_current") >= 32.0
+            for view in ("exterior", "wrist")
         ),
         "accepted_camera_quality": (
             number("luminance_mean_min") > 5.0
@@ -1363,6 +1369,7 @@ def cluster_status(config: ClusterLiveConfig) -> dict[str, Any]:
                 "transport",
                 "dev_vm_in_data_path",
                 "communication_verified",
+                "pickup_verified",
                 "policy_round_trips",
                 "exterior_observation_count",
                 "wrist_observation_count",
