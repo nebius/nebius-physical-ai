@@ -2342,7 +2342,7 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
         "action.shape != (7,)",
         '"B200" not in gpu_name.upper()',
         'architecture != "sm_100"',
-        'os.environ.get("NPA_ROBOMIMIC_STRICT_B200_ATTESTED") != "1"',
+        "_require_strict_capacity_observation()",
         'os.environ.get("NPA_ROBOMIMIC_EXPECTED_NAMESPACE", "").strip()',
         'os.environ["NPA_ROBOMIMIC_ACTIVE_RUNTIME_ROOT"]',
         "runtime_root == runtime_mount_root",
@@ -2354,7 +2354,6 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
         '.get("readOnly")',
         "os.statvfs(runtime_root).f_flag & os.ST_RDONLY",
         '"architecture": architecture',
-        '"strict_reserved_capacity_attested": True',
         '"observed_head": source_identity["observed_head"]',
         '"git_tree_sha1": source_identity["git_tree_sha1"]',
         '"trajectory_count": len(demo_keys)',
@@ -2389,6 +2388,7 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
     assert "simulator_rollouts" in smoke
     assert "full_algorithm_matrix" in smoke
     assert "robosuite" not in smoke
+    assert '"strict_reserved_capacity_attested": True' not in smoke
     ast.parse(_smoke_python())
 
 
@@ -2409,7 +2409,11 @@ def test_robomimic_dataset_stream_stops_and_removes_oversized_partial(
         def read(self, _size: int) -> bytes:
             return next(self.chunks)
 
+        def close(self) -> None:
+            return None
+
     module = _smoke_module(monkeypatch)
+    monkeypatch.setattr(module, "verify_customer_runtime_entitlement", lambda **_kw: {})
     response = OversizedResponse()
     connection_closed: list[bool] = []
     connection = SimpleNamespace(close=lambda: connection_closed.append(True))
@@ -2421,7 +2425,7 @@ def test_robomimic_dataset_stream_stops_and_removes_oversized_partial(
     )
 
     with pytest.raises(RuntimeError, match="exceeds its locked byte count"):
-        module._download_dataset(tmp_path / "inputs")
+        module._download_dataset(tmp_path / "inputs", entitlement_arguments={})
 
     assert connection_closed == [True]
     assert list((tmp_path / "inputs").iterdir()) == []
@@ -2432,6 +2436,7 @@ def test_robomimic_dataset_retry_cleans_owned_stale_partial_before_network(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _smoke_module(monkeypatch)
+    monkeypatch.setattr(module, "verify_customer_runtime_entitlement", lambda **_kw: {})
     input_dir = tmp_path / "inputs"
     input_dir.mkdir()
     partial = input_dir / "lift_ph_lowdim_v15.download"
@@ -2446,7 +2451,7 @@ def test_robomimic_dataset_retry_cleans_owned_stale_partial_before_network(
     monkeypatch.setattr(module, "_open_allowed_https", fail_after_cleanup)
 
     with pytest.raises(RuntimeError, match="network sentinel"):
-        module._download_dataset(input_dir)
+        module._download_dataset(input_dir, entitlement_arguments={})
 
     assert opened == [True]
     assert list(input_dir.iterdir()) == []
@@ -2457,6 +2462,7 @@ def test_robomimic_dataset_retry_rejects_stale_partial_symlink(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _smoke_module(monkeypatch)
+    monkeypatch.setattr(module, "verify_customer_runtime_entitlement", lambda **_kw: {})
     input_dir = tmp_path / "inputs"
     input_dir.mkdir()
     outside = tmp_path / "outside"
@@ -2465,10 +2471,207 @@ def test_robomimic_dataset_retry_rejects_stale_partial_symlink(
     partial.symlink_to(outside)
 
     with pytest.raises(RuntimeError, match="unsafe stale dataset partial"):
-        module._download_dataset(input_dir)
+        module._download_dataset(input_dir, entitlement_arguments={})
 
     assert partial.is_symlink()
     assert outside.read_bytes() == b"preserve"
+
+
+@pytest.mark.parametrize("assertion", ("", "1", '{"policy":"STRICT"}'))
+def test_robomimic_strict_claim_refuses_caller_assertions_without_side_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, assertion: str
+) -> None:
+    """Inert interface refusal, never a recorded or live allocation proof."""
+    module = _smoke_module(monkeypatch)
+    output = tmp_path / "output"
+    monkeypatch.setenv("NPA_SMOKE_OUTPUT_DIR", str(output))
+    monkeypatch.setenv("NPA_ROBOMIMIC_STRICT_B200_ATTESTED", assertion)
+    monkeypatch.setattr(module, "_pod_identity", lambda *_a: pytest.fail("Pod query"))
+    monkeypatch.setattr(module, "_hardware", lambda: pytest.fail("GPU query"))
+    monkeypatch.setattr(module, "_download_dataset", lambda *_a: pytest.fail("fetch"))
+    with pytest.raises(RuntimeError, match="STRICT capacity qualification deferred"):
+        module.main()
+    assert not output.exists()
+
+
+def test_robomimic_inert_local_b200_shape_does_not_claim_strict_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mocked hardware shape only: no GPU, scheduler or provider qualification."""
+    module = _smoke_module(monkeypatch)
+    monkeypatch.setattr(module.torch.cuda, "device_count", lambda: 1)
+    monkeypatch.setattr(module.torch.cuda, "get_device_name", lambda _i: "NVIDIA B200")
+    monkeypatch.setattr(module.torch.cuda, "get_device_capability", lambda _i: (10, 0))
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *_a, **_kw: SimpleNamespace(stdout="0, NVIDIA B200"),
+    )
+    observed = module._hardware()
+    assert observed["accelerator_count"] == 1
+    assert observed["architecture"] == "sm_100"
+    assert not any("strict" in key or "reserved" in key for key in observed)
+
+
+def _inert_smoke_entitlement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    module: ModuleType,
+    *,
+    expire_at_check: int | None = None,
+) -> SimpleNamespace:
+    """Synthetic customer/run record checked by the real pure verifier, no acceptance."""
+    path = _customer_entitlement(tmp_path, project="inert-project", run_id="inert-run")
+    record = json.loads(path.read_text())
+    spec = importlib.util.spec_from_file_location(
+        "inert_verifier", IMAGE_ROOT / "verify_image.py"
+    )
+    assert spec is not None and spec.loader is not None
+    verifier = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(verifier)
+    arguments = {
+        "entitlement_path": path,
+        "runtime_lock_path": IMAGE_ROOT / "runtime-requirements.lock",
+        "expected_entitlement_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "expected_customer_binding_sha256": _customer_binding("inert-project"),
+        "expected_run_id": "inert-run",
+        "expected_inventory_sha256": "a" * 64,
+    }
+    calls: list[dict[str, object]] = []
+
+    def verify(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        key = "expires_at" if expire_at_check == len(calls) else "accepted_at"
+        now = datetime.strptime(record[key], "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+        return verifier.verify_customer_runtime_entitlement(**kwargs, now=now)
+
+    monkeypatch.setattr(module, "verify_customer_runtime_entitlement", verify)
+    return SimpleNamespace(arguments=arguments, calls=calls, path=path)
+
+
+class _InertDatasetBody(_SmokeProofBody):
+    def __enter__(self) -> _InertDatasetBody:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
+
+
+@pytest.mark.parametrize("expire_at_check", (1, 2, 3, 4, 5))
+def test_robomimic_dataset_expiry_at_each_side_effect_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    expire_at_check: int,
+) -> None:
+    module = _smoke_module(monkeypatch)
+    binding = _inert_smoke_entitlement(
+        tmp_path, monkeypatch, module, expire_at_check=expire_at_check
+    )
+    events: list[str] = []
+    response = _InertDatasetBody(b"abc")
+    connection = SimpleNamespace(close=lambda: events.append("close"))
+
+    def open_inert(*_args: object, **kwargs: object) -> tuple[object, object]:
+        kwargs["before_request"]()
+        events.append("request")
+        return connection, response
+
+    monkeypatch.setattr(module, "_open_allowed_https", open_inert)
+    inputs = tmp_path / "inputs"
+    with pytest.raises(
+        RuntimeError, match="customer runtime entitlement refused"
+    ) as error:
+        module._download_dataset(inputs, entitlement_arguments=binding.arguments)
+    assert len(binding.calls) == expire_at_check
+    assert all(call == binding.arguments for call in binding.calls)
+    assert str(binding.path) not in _serialized_entitlement_refusal(error.value)
+    assert not inputs.exists() if expire_at_check == 1 else list(inputs.iterdir()) == []
+    assert ("request" in events) == (expire_at_check > 3)
+    if "request" in events:
+        assert response.closed and events[-1] == "close"
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "expected_entitlement_sha256",
+        "expected_customer_binding_sha256",
+        "expected_run_id",
+        "expected_inventory_sha256",
+    ),
+)
+def test_robomimic_dataset_binding_mismatch_precedes_cache_or_network(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+) -> None:
+    module = _smoke_module(monkeypatch)
+    binding = _inert_smoke_entitlement(tmp_path, monkeypatch, module)
+    module._value_free_customer_entitlement(**binding.arguments)
+    binding.arguments[field] = (
+        "different-run" if field == "expected_run_id" else "b" * 64
+    )
+    monkeypatch.setattr(
+        module, "_open_allowed_https", lambda *_a, **_k: pytest.fail("network")
+    )
+    inputs = tmp_path / "inputs"
+    with pytest.raises(RuntimeError, match="customer runtime entitlement refused"):
+        module._download_dataset(inputs, entitlement_arguments=binding.arguments)
+    assert not inputs.exists()
+
+
+def test_robomimic_expiry_preserves_preexisting_partial_until_authorized(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _smoke_module(monkeypatch)
+    binding = _inert_smoke_entitlement(tmp_path, monkeypatch, module, expire_at_check=2)
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    partial = inputs / "lift_ph_lowdim_v15.download"
+    partial.write_bytes(b"inert-owned-partial")
+    monkeypatch.setattr(
+        module, "_open_allowed_https", lambda *_a, **_k: pytest.fail("network")
+    )
+    with pytest.raises(RuntimeError, match="customer runtime entitlement refused"):
+        module._download_dataset(inputs, entitlement_arguments=binding.arguments)
+    assert partial.read_bytes() == b"inert-owned-partial"
+
+
+def test_robomimic_https_reauthorizes_before_redirect_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _smoke_module(monkeypatch)
+    events: list[str] = []
+    response = SimpleNamespace(
+        status=302,
+        getheader=lambda _n: "https://huggingface.co/next",
+        close=lambda: events.append("response-close"),
+    )
+    connection = SimpleNamespace(
+        request=lambda *_a, **_k: events.append("request"),
+        getresponse=lambda: response,
+        close=lambda: events.append("connection-close"),
+    )
+    monkeypatch.setattr(
+        module.http.client, "HTTPSConnection", lambda *_a, **_k: connection
+    )
+
+    def authorize() -> None:
+        if "request" in events:
+            raise RuntimeError("expired inert record")
+        events.append("authorized")
+
+    with pytest.raises(RuntimeError, match="expired inert record"):
+        module._open_allowed_https(
+            "https://huggingface.co/start",
+            headers={},
+            allowed_hosts=("huggingface.co",),
+            before_request=authorize,
+        )
+    assert events == ["authorized", "request", "response-close", "connection-close"]
 
 
 def test_robomimic_profile_is_exactly_one_compute_only_b200() -> None:
