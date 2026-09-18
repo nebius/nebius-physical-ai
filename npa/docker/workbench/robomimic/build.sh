@@ -32,6 +32,7 @@ receipt_dir=""
 receipt_dir_fd=""
 receipt_dir_identity=""
 receipt_anchor=""
+tag_daemon_id=""
 
 fail() {
   failure_reason="$1"
@@ -507,6 +508,179 @@ recover_created_image() {
   fi
 }
 
+# This is a local-owner terminal proof, not a lease expiry or cross-host oracle.
+tag_terminal_program="$(cat <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import subprocess
+import sys
+
+SCHEMA = "npa.robomimic.tag-terminal.v1"
+
+def host_identity():
+    return [Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+            os.readlink("/proc/self/ns/pid")]
+
+def process_start(pid):
+    return Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()[19]
+
+def daemon_output(*args):
+    result = subprocess.run(["docker", *args], capture_output=True, text=True, check=True)
+    lines = result.stdout.splitlines()
+    if len(lines) != 1 or not lines[0]:
+        raise ValueError("ambiguous daemon response")
+    return lines[0]
+
+def daemon_identity():
+    value = daemon_output("info", "--format", "{{.ID}}")
+    if not re.fullmatch(r"[A-Za-z0-9:_-]{10,128}", value):
+        raise ValueError("invalid daemon identity")
+    return value
+
+def terminal_record(values):
+    pid, daemon, revision, transaction, lock_id, tag, image = values
+    if daemon_identity() != daemon:
+        raise ValueError("daemon changed")
+    return dict(schema=SCHEMA, phase="no-further-tag-writes", host=host_identity(),
+                uid=os.geteuid(), pid=int(pid), start_ticks=process_start(int(pid)),
+                daemon=daemon, revision=revision, transaction=transaction,
+                lock_id=lock_id, tag=tag, image=image)
+
+def private_parent(path):
+    if not path.is_absolute() or ".." in path.parts:
+        raise ValueError("unsafe receipt path")
+    descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for part in path.parts[1:-1]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                            dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+            value = os.fstat(descriptor)
+            mode = stat.S_IMODE(value.st_mode)
+            trusted = value.st_uid in {0, os.geteuid()}
+            sticky_root = value.st_uid == 0 and bool(mode & stat.S_ISVTX)
+            if not trusted or mode & 0o022 and not sticky_root:
+                raise ValueError("unsafe receipt parent")
+        value = os.fstat(descriptor)
+        if value.st_uid != os.geteuid() or stat.S_IMODE(value.st_mode) != 0o700:
+            raise ValueError("receipt parent is not owner-private")
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+def unique_fields(pairs):
+    result = dict(pairs)
+    if len(result) != len(pairs):
+        raise ValueError("ambiguous terminal fields")
+    return result
+
+def stable_file_identity(value):
+    return (value.st_dev, value.st_ino, value.st_uid, value.st_mode,
+            value.st_nlink, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+
+def read_terminal(path):
+    parent = private_parent(path)
+    try:
+        descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        try:
+            before = os.fstat(descriptor)
+            if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid()
+                    or stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1
+                    or not 0 < before.st_size <= 4096):
+                raise ValueError("unsafe terminal receipt")
+            raw = os.read(descriptor, 4097)
+            if (len(raw) != before.st_size
+                    or stable_file_identity(os.fstat(descriptor)) != stable_file_identity(before)):
+                raise ValueError("terminal receipt changed")
+            identity = (stable_file_identity(before), os.fstat(parent).st_dev, os.fstat(parent).st_ino)
+            return json.loads(raw, object_pairs_hook=unique_fields), hashlib.sha256(raw).hexdigest(), identity
+        finally:
+            os.close(descriptor)
+    finally:
+        os.close(parent)
+
+def require_terminal_owner(record, revision, tag):
+    required = {"schema", "phase", "host", "uid", "pid", "start_ticks", "daemon",
+                "revision", "transaction", "lock_id", "tag", "image"}
+    if (set(record) != required or record["schema"] != SCHEMA
+            or record["phase"] != "no-further-tag-writes"
+            or record["host"] != host_identity() or record["uid"] != os.geteuid()
+            or record["revision"] != revision or record["tag"] != tag):
+        raise ValueError("terminal ownership binding refused")
+    if (type(record["pid"]) is not int or record["pid"] <= 1
+            or not re.fullmatch(r"[0-9]+", record["start_ticks"])
+            or not re.fullmatch(r"npa-robomimic-context\.[A-Za-z0-9]{8}", record["transaction"])
+            or not re.fullmatch(r"[0-9a-f]{64}", record["lock_id"])
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", record["image"])):
+        raise ValueError("malformed terminal binding")
+    try:
+        process_start(record["pid"])
+    except FileNotFoundError:
+        return
+    raise ValueError("owner live, unreaped, or PID reused")
+
+def require_daemon_binding(record):
+    if daemon_identity() != record["daemon"]:
+        raise ValueError("daemon changed")
+    name = "npa-robomimic-tag-lock-" + hashlib.sha256(record["tag"].encode()).hexdigest()
+    template = '{{.Id}}|{{index .Config.Labels "org.nebius.npa.robomimic.lock.transaction"}}|{{.Image}}|{{.State.Running}}|{{.Name}}'
+    expected = f'{record["lock_id"]}|{record["transaction"]}|{record["image"]}|false|/{name}'
+    if daemon_output("container", "inspect", "--format", template, name) != expected:
+        raise ValueError("lock changed or not stopped")
+    if daemon_output("image", "inspect", "--format", "{{.Id}}", record["tag"]) != record["image"]:
+        raise ValueError("tag changed")
+
+def reconcile(path, revision, tag):
+    record, digest, identity = read_terminal(path)
+    require_terminal_owner(record, revision, tag)
+    if path.name != record["transaction"] + ".tag-terminal.json":
+        raise ValueError("transaction receipt name differs")
+    require_daemon_binding(record)
+    if read_terminal(path) != (record, digest, identity):
+        raise ValueError("receipt changed")
+    require_terminal_owner(record, revision, tag)
+    require_daemon_binding(record)
+    # The terminal fence follows synchronous completion of every tag writer.
+    # Only this immutable stopped lock object can be removed; never a tag/image.
+    subprocess.run(["docker", "container", "rm", record["lock_id"]],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    print("reconciled exact owner-terminal tag mutex; no image or tag modified")
+
+def main():
+    action, *values = sys.argv[1:]
+    try:
+        if action == "daemon-id":
+            print(daemon_identity())
+        elif action == "record":
+            print(json.dumps(terminal_record(values), sort_keys=True, separators=(",", ":")))
+        elif action == "reconcile":
+            reconcile(Path(values[0]), values[1], values[2])
+        else:
+            raise ValueError("unsupported terminal operation")
+    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+        raise SystemExit("robomimic tag-terminal reconciliation refused; retain owner evidence") from None
+
+if __name__ == "__main__":
+    main()
+PY
+)"
+
+publish_tag_terminal_receipt() {
+  local target_name="${transaction_id}.tag-terminal.json"
+  require_transaction_bindings
+  start_receipt_staging "tag-terminal" || return 1
+  python3 - record "$$" "${tag_daemon_id}" "${revision}" "${transaction_id}" \
+    "${tag_lock_id}" "${image}" "${image_id}" \
+    > "${receipt_anchor}/${receipt_tmp_name}" <<< "${tag_terminal_program}" || return 1
+  link_receipt_target "${target_name}"
+}
+
 inspect_tag_lock() {
   local reference="$1" output_path="$2" error_path="$3"
   local -a lines=()
@@ -661,6 +835,12 @@ registry="$(canonical_registry_reference "${registry}")" \
   || fail "local registry name is malformed or noncanonicalizable"
 image="${registry}/npa-robomimic:dev-${revision}"
 
+if [[ "$#" -ne 0 ]]; then
+  [[ "$#" -eq 2 && "$1" == "--reconcile-tag-lock" ]] \
+    || fail "expected --reconcile-tag-lock with an owner terminal receipt"
+  exec python3 - reconcile "$2" "${revision}" "${image}" <<< "${tag_terminal_program}"
+fi
+
 if [[ -n "${TMPDIR+x}" ]]; then
   scratch_root="${TMPDIR}"
 else
@@ -733,6 +913,8 @@ require_transaction_bindings
 [[ "${observed_id}" == "${image_id}" ]] \
   || fail "built immutable image ID changed during inspection"
 
+tag_daemon_id="$(python3 - daemon-id <<< "${tag_terminal_program}")" \
+  || fail "daemon identity could not be established"
 acquire_tag_lock \
   || fail "daemon-wide shared-tag coordination could not be established"
 
@@ -777,6 +959,8 @@ require_transaction_bindings
   && "${final_built_id}" == "${image_id}" \
   && "${final_tagged_id}" == "${image_id}" ]] \
   || fail "image identity changed before receipt publication"
+publish_tag_terminal_receipt \
+  || fail "owner tag-terminal fence could not be published"
 release_tag_lock \
   || fail "daemon-wide shared-tag coordination could not be released"
 

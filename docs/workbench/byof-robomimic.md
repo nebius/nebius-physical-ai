@@ -55,6 +55,36 @@ All scanning, SBOM, archive, and provenance consumers must use the receipt's
 `consumer_image_ref` immutable ID (or a separately recorded archive digest),
 never the mutable tag alone.
 
+The daemon-wide named-container mutex remains the cross-client exclusion
+mechanism; a local filesystem lock cannot replace it. Immediately after all
+synchronous tag writes and identity checks finish, the helper durably publishes
+an owner-private `<transaction>.tag-terminal.json` fence. That fence states
+that this transaction will perform no further tag writes. If the owner then
+dies before releasing the mutex, an explicitly requested reconciliation is
+available from the same revision, registry setting, host boot, PID namespace,
+and OS owner:
+
+```bash
+bash npa/docker/workbench/robomimic/build.sh \
+  --reconcile-tag-lock "$OWNER_TERMINAL_RECEIPT"
+```
+
+This mode never builds, fetches, tags, removes images, or starts a container. It
+requires the exact private terminal receipt, an absent original PID (a live,
+unreaped, or reused PID refuses), unchanged daemon identity, unchanged full-SHA
+tag and image ID, and the exact stopped lock container/name/transaction. It
+rechecks these bindings and removes only that immutable lock-container ID;
+the receipt is retained. A subsequent build must acquire the same daemon-wide
+mutex normally. Every cooperating tag writer must honor this protocol.
+
+This is **limited owner-terminal reconciliation, not general autonomous crash
+recovery**. Death before durable fence publication, legacy locks without this
+receipt, foreign hosts or boots, inaccessible process identity, PID reuse,
+changed daemon/tag/transaction, and ambiguous evidence remain fail-closed.
+Elapsed time is never death proof. Those unsupported cases need independent
+daemon-owner authority to establish terminal writers and reconcile the exact
+mutex; this helper supplies neither cross-host authority nor automatic cleanup.
+
 `baked-requirements.lock` contains 40 exact version pins with approved artifact
 hashes. The retained packages cover the pinned source's unconditional import
 graph: `robomimic.algo` registers Diffusion Policy, while
