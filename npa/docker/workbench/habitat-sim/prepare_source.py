@@ -201,15 +201,25 @@ def _stream_archive(
         size += len(chunk)
 
 
-def _remove_partial_download(target: Path, primary: Exception) -> None:
+def _report_download_cleanup(cleanup_error: Exception) -> None:
+    """Best-effort stderr diagnostics on Python 3.10, never replacing the primary."""
+    try:
+        print(
+            "source archive cleanup failed: "
+            f"{type(cleanup_error).__name__}: {cleanup_error}",
+            file=sys.stderr,
+        )
+    except Exception:
+        # Formatting or stderr can fail too; the initiating error takes priority.
+        return
+
+
+def _remove_partial_download(target: Path) -> None:
     """Attempt owned-target cleanup without replacing the initiating failure."""
     try:
         target.unlink(missing_ok=True)
     except Exception as cleanup_error:
-        primary.add_note(
-            "source archive cleanup failed: "
-            f"{type(cleanup_error).__name__}: {cleanup_error}"
-        )
+        _report_download_cleanup(cleanup_error)
 
 
 def _download(
@@ -230,9 +240,9 @@ def _download(
                 size, digest = _stream_archive(response, stream, expected_bytes)
         if size != expected_bytes or digest != item["archive_sha256"]:
             raise SourceError("source archive size or SHA-256 mismatch")
-    except Exception as error:
+    except Exception:
         if created_target:
-            _remove_partial_download(target, error)
+            _remove_partial_download(target)
         raise
     return target
 

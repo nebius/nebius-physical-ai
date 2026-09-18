@@ -831,13 +831,17 @@ def test_mock_download_success_retains_exact_bytes_without_cleanup(monkeypatch):
     )
 
 
-@pytest.mark.parametrize("cleanup_fails", [False, True])
-def test_mock_download_preserves_primary_identity_and_traceback(
-    monkeypatch, cleanup_fails
-):
-    """Cleanup observations cannot replace the source stream's initiating error."""
-    fixture = _mock_download_target(monkeypatch)
-    primary = OSError("inert stream failure")
+class _NoAddNoteError(OSError):
+    """Simulate only the absence of add_note, not Python 3.10 execution."""
+
+    def __getattribute__(self, name):
+        if name == "add_note":
+            raise AttributeError("add_note unavailable in this inert fixture")
+        return super().__getattribute__(name)
+
+
+def _inject_mock_read_error(fixture, primary):
+    """Retain the exact original raising frame for independently checked identity."""
     original_tracebacks = []
 
     def fail_read(_size):
@@ -848,24 +852,58 @@ def test_mock_download_preserves_primary_identity_and_traceback(
             raise
 
     fixture.response.read = fail_read
+    return original_tracebacks
+
+
+def _assert_primary_traceback(observed, primary, original):
+    """Check object and original traceback identity without filesystem effects."""
+    assert observed.value is primary
+    trace = observed.value.__traceback__
+    while trace is not None:
+        if trace is original:
+            return
+        trace = trace.tb_next
+    pytest.fail("original initiating traceback missing")
+
+
+@pytest.mark.parametrize(
+    ("cleanup_fails", "no_add_note", "report_fails"),
+    [
+        (False, False, False),
+        (True, False, False),
+        (True, True, False),
+        (True, False, True),
+        (True, True, True),
+    ],
+)
+def test_mock_download_preserves_primary_identity_and_traceback(
+    monkeypatch, cleanup_fails, no_add_note, report_fails
+):
+    """Cleanup/reporting failures preserve the initiating error even without notes."""
+    fixture = _mock_download_target(monkeypatch)
+    error_type = _NoAddNoteError if no_add_note else OSError
+    primary = error_type("inert stream failure")
+    original = _inject_mock_read_error(fixture, primary)
+    reporter = Mock(
+        side_effect=OSError("inert stderr refusal") if report_fails else None
+    )
+    monkeypatch.setattr(PREPARER, "print", reporter, raising=False)
+    if no_add_note:
+        assert not hasattr(primary, "add_note")
     if cleanup_fails:
         fixture.target.unlink.side_effect = PermissionError("inert removal refusal")
     with pytest.raises(OSError) as observed:
         PREPARER._download(fixture.item, fixture.directory, opener=fixture.opener)
-    assert observed.value is primary
-    frames = []
-    trace = observed.value.__traceback__
-    while trace is not None:
-        frames.append(trace)
-        trace = trace.tb_next
-    assert original_tracebacks[0] in frames
+    _assert_primary_traceback(observed, primary, original[0])
     fixture.target.unlink.assert_called_once_with(missing_ok=True)
-    expected_notes = (
-        ["source archive cleanup failed: PermissionError: inert removal refusal"]
-        if cleanup_fails
-        else []
-    )
-    assert getattr(primary, "__notes__", []) == expected_notes
+    if cleanup_fails:
+        reporter.assert_called_once_with(
+            "source archive cleanup failed: PermissionError: inert removal refusal",
+            file=PREPARER.sys.stderr,
+        )
+    else:
+        reporter.assert_not_called()
+    assert not getattr(primary, "__notes__", [])
 
 
 @pytest.mark.parametrize("failure_stage", ["response", "open"])
