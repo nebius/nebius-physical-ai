@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -170,6 +171,34 @@ def test_submit_workflow_loads_yaml_applies_controller_and_calls_subprocess(
         "memory": 8,
         "autostop": False,
     }
+
+
+def test_recovery_preflight_preserves_authorization_identity(monkeypatch, tmp_path) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: recovery\n", encoding="utf-8")
+    sky_bin = _fake_sky(tmp_path)
+    observed = {}
+    cleaned = []
+
+    def preflight(_documents, **kwargs):
+        observed["run_id"] = kwargs["run_id"]
+        return None, {}, {}
+
+    monkeypatch.setattr(workflow_module, "_execution_preflight", preflight)
+    monkeypatch.setattr(
+        workflow_module,
+        "_cleanup_owned_submission_dir",
+        lambda path: cleaned.append(path),
+    )
+
+    digest = workflow_module._refresh_workflow_preflight(
+        yaml_path, "authorized-run", sky_bin=sky_bin
+    )
+
+    assert digest == hashlib.sha256(yaml_path.read_bytes()).hexdigest()
+    assert observed["run_id"] == "authorized-run"
+    assert len(cleaned) == 1
+    assert cleaned[0].name.startswith("npa-skypilot-authorized-run-recovery-preflight-")
 
 
 def test_submit_capacity_preflight_proves_no_launch(monkeypatch, tmp_path) -> None:

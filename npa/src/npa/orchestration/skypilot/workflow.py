@@ -897,6 +897,7 @@ def _prepare_workflow_submission(
     yaml_path,
     run_id,
     *,
+    submission_id=None,
     isolated_config_dir=None,
     config_path=None,
     sky_bin=None,
@@ -929,7 +930,10 @@ def _prepare_workflow_submission(
         target=execution_target,
     )
     # Refuse and sanitize before any submission artifact exists.
-    directory = _submission_dir(run_id, runtime.isolated_config_dir)
+    directory = _submission_dir(
+        submission_id if submission_id is not None else run_id,
+        runtime.isolated_config_dir,
+    )
     try:
         rendered = directory / "workflow.yaml"
         rendered.write_bytes(yaml.safe_dump_all(docs, sort_keys=False).encode())
@@ -967,7 +971,9 @@ def _refresh_workflow_preflight(yaml_path, run_id, **kwargs):
     # Failed-attempt files are immutable evidence. A refresh prepares a separate
     # local document; its name is never submitted as a provider job.
     preparation_id = f"{run_id}-recovery-preflight-{uuid4().hex}"
-    prepared = _prepare_workflow_submission(yaml_path, preparation_id, **kwargs)
+    prepared = _prepare_workflow_submission(
+        yaml_path, run_id, submission_id=preparation_id, **kwargs
+    )
     try:
         return hashlib.sha256(Path(yaml_path).read_bytes()).hexdigest()
     finally:
