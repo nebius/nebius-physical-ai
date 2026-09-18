@@ -321,10 +321,16 @@ requests must be finite `float64[T>=5,8]`. Training and held-out evaluation must
 consume machine-verifiably disjoint samples, and evaluation must consume the
 exact independently read-back training checkpoint.
 
-This checkpoint contains Gemma-derived material. Require the exact run-scoped
-`NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` gate before build or download; forward it
-only through the secret channel and never bake/persist it. The image contains
-the pinned Apache-2.0 source and CUDA/JAX runtime, not checkpoint bytes. A tiny
+This checkpoint contains Gemma-derived material. The existing
+`NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` marker is retained only for refusal fixtures
+and compatibility wiring; it is never customer acceptance evidence. Before any
+accepted checkpoint, a future customer-run authorization must bind direct,
+customer-controlled terms evidence. Until that migration is complete, every
+OpenPI checkpoint and capability remains unqualified and must not build or
+download. If a separately authorized customer-run checkpoint gate is used,
+forward the marker only through the secret channel and never bake or persist it
+(`Forward it only as a runtime secret`). The image contains the pinned
+Apache-2.0 source and CUDA/JAX runtime, not checkpoint bytes. A tiny
 deterministic compatible dataset is valid only for the real optimizer and
 held-out offline operational gate. It is not convergence evidence. Do not claim
 physical Franka success, external Ingress, or robot success from offline
