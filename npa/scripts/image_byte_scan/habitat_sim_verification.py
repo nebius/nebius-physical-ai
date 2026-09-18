@@ -215,6 +215,7 @@ def _track_bytes(path: str) -> bool:
         or path.startswith("opt/npa-runtime/npa/")
         or (path.startswith("var/lib/dpkg/info/") and path.endswith(".list"))
         or path.startswith("usr/share/doc/npa-habitat-sim/")
+        or path.startswith("usr/share/doc/npa-habitat-sim/ubuntu-sources/")
         or (
             "/site-packages/" in path
             and path.endswith((".dist-info/METADATA", ".dist-info/RECORD"))
@@ -1106,10 +1107,49 @@ def _record_source_population(state: _ScanState) -> None:
         state.source_inventory[_source_identity(row)] = row
 
 
-def _delivered_source_matches(state: _ScanState, artifacts: object) -> bool:
+def _source_artifact_binding(row: dict[str, object], path: str) -> bool:
+    """Require an artifact locator to encode its inventoried source identity."""
+    name = PurePosixPath(path).name
+    ecosystem = row.get("ecosystem")
+    if ecosystem == "dpkg":
+        source = row.get("source")
+        version = str(row.get("source_version", "")).split("-", 1)[0]
+        prefix = f"usr/share/doc/npa-habitat-sim/ubuntu-sources/{source}/"
+        return (
+            isinstance(source, str)
+            and path.startswith(prefix)
+            and name.startswith(f"{source}_")
+            and bool(version)
+            and version in name
+        )
+    if ecosystem == "python":
+        package = _normalize_distribution(str(row.get("name", "")))
+        version = str(row.get("version", ""))
+        prefix = f"usr/share/doc/npa-habitat-sim/python-sources/{package}/{version}/"
+        normalized_name = _normalize_distribution(name)
+        return (
+            bool(package)
+            and bool(version)
+            and path.startswith(prefix)
+            and package in normalized_name
+            and version in name
+        )
+    return False
+
+
+def _source_component_key(row: dict[str, object]) -> tuple[str, str, str]:
+    if row.get("ecosystem") == "dpkg":
+        return ("dpkg", str(row.get("source")), str(row.get("source_version")))
+    return ("python", str(row.get("name")), str(row.get("version")))
+
+
+def _delivered_source_matches(
+    state: _ScanState, row: dict[str, object], artifacts: object
+) -> bool:
     if not isinstance(artifacts, list) or not artifacts:
         return False
     paths = set()
+    dsc_paths: list[str] = []
     for artifact in artifacts:
         if not isinstance(artifact, dict) or set(artifact) != {
             "path",
@@ -1121,8 +1161,10 @@ def _delivered_source_matches(state: _ScanState, artifacts: object) -> bool:
         if not isinstance(path, str) or path in paths:
             return False
         paths.add(path)
-        if not path.startswith("usr/share/doc/npa-habitat-sim/"):
+        if not _source_artifact_binding(row, path):
             return False
+        if path.endswith(".dsc"):
+            dsc_paths.append(path)
         if any(part in {"", ".", ".."} for part in path.split("/")):
             return False
         if type(artifact["bytes"]) is not int or artifact["bytes"] <= 0:
@@ -1135,6 +1177,22 @@ def _delivered_source_matches(state: _ScanState, artifacts: object) -> bool:
         if (
             actual.get("sha256") != artifact["sha256"]
             or actual.get("size") != artifact["bytes"]
+        ):
+            return False
+    if row.get("ecosystem") == "dpkg":
+        if len(dsc_paths) != 1:
+            return False
+        payload = state.tracked.get(dsc_paths[0])
+        if payload is None:
+            return False
+        fields = {}
+        for line in payload.decode("utf-8", errors="strict").splitlines():
+            if ": " in line:
+                key, value = line.split(": ", 1)
+                fields[key] = value
+        if (fields.get("Source"), fields.get("Version")) != (
+            row.get("source"),
+            row.get("source_version"),
         ):
             return False
     return True
@@ -1153,12 +1211,27 @@ def _source_delivery_findings(state: _ScanState, contract: dict) -> list[dict]:
         return findings + [{"code": "corresponding_source_population_mismatch"}]
     # Conservative: every package requires accompanying source. No inference
     # from a top-level license or a caller-provided "not copyleft" exemption.
+    claimed_artifacts: dict[str, tuple[str, str, str]] = {}
     for identity, row in inventory.items():
         record = records[identity]
         if not isinstance(record, dict) or record.get("component") != row:
             findings.append({"code": "corresponding_source_component_mismatch"})
             continue
-        if not _delivered_source_matches(state, record.get("artifacts")):
+        artifacts = record.get("artifacts")
+        if isinstance(artifacts, list):
+            for artifact in artifacts:
+                if isinstance(artifact, dict) and isinstance(artifact.get("path"), str):
+                    path = artifact["path"]
+                    component_key = _source_component_key(row)
+                    previous = claimed_artifacts.setdefault(path, component_key)
+                    if previous != component_key:
+                        findings.append(
+                            {
+                                "code": "corresponding_source_artifact_reused",
+                                "path": path,
+                            }
+                        )
+        if not _delivered_source_matches(state, row, artifacts):
             findings.append(
                 {
                     "code": "corresponding_source_delivery_mismatch",

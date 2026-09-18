@@ -74,7 +74,34 @@ def _source_delivery_state() -> H._ScanState:
         "usr/share/doc/npa-habitat-sim/fixture-source.txt",
         b"inert source fixture\n",
     )
+    for row in state.source_inventory.values():
+        path, payload = _source_artifact(row)
+        _memory_inventory_file(state, path, payload)
     return state
+
+
+def _source_artifact(row: dict[str, object]) -> tuple[str, bytes]:
+    if row["ecosystem"] == "dpkg":
+        source = str(row["source"])
+        version = str(row["source_version"])
+        path = (
+            "usr/share/doc/npa-habitat-sim/ubuntu-sources/"
+            f"{source}/{source}_{version}.dsc"
+        )
+        label = source
+        payload = (
+            f"Format: 3.0 (quilt)\nSource: {source}\nVersion: {version}\n".encode()
+        )
+    else:
+        package = H._normalize_distribution(str(row["name"]))
+        version = str(row["version"])
+        path = (
+            "usr/share/doc/npa-habitat-sim/python-sources/"
+            f"{package}/{version}/{package}-{version}.tar.gz"
+        )
+        label = package
+        payload = f"inert source fixture:{label}\n".encode()
+    return path, payload
 
 
 def test_source_delivery_covers_superseded_base_and_installed_versions() -> None:
@@ -137,6 +164,26 @@ def test_source_delivery_refuses_incomplete_or_unbound_closure(mutation: str) ->
     )
     assert findings
     assert all(row["code"].startswith("corresponding_source_") for row in findings)
+
+
+def test_source_delivery_rejects_reused_artifact_path() -> None:
+    state = _source_delivery_state()
+    closure = _fixture_source_delivery(
+        {
+            "corresponding_source_inventory": copy.deepcopy(state.source_inventory),
+            "corresponding_source_inventory_sha256": H._source_identity(
+                state.source_inventory
+            ),
+        }
+    )
+    identities = list(closure["records"])
+    closure["records"][identities[1]]["artifacts"] = copy.deepcopy(
+        closure["records"][identities[0]]["artifacts"]
+    )
+    findings = H._source_delivery_findings(
+        state, {"corresponding_source_closure": closure}
+    )
+    assert "corresponding_source_artifact_reused" in {row["code"] for row in findings}
 
 
 def test_current_image_contract_remains_source_delivery_quarantined() -> None:
@@ -1017,6 +1064,50 @@ def _fixture() -> tuple[dict[str, object], list[tuple]]:
             file("opt/venv/lib/python3.10/site-packages/fixture/native.so", native),
         ]
     )
+    entries.extend(
+        [
+            file(
+                "usr/share/doc/npa-habitat-sim/ubuntu-sources/"
+                "python3-defaults/python3-defaults_3.10.6-1~22.04.1.dsc",
+                b"Format: 3.0 (quilt)\nSource: python3-defaults\n"
+                b"Version: 3.10.6-1~22.04.1\n",
+            ),
+            file(
+                "usr/share/doc/npa-habitat-sim/python-sources/fixture/1.0/"
+                "fixture-1.0.tar.gz",
+                b"inert source fixture:fixture\n",
+            ),
+            file(
+                "usr/share/doc/npa-habitat-sim/python-sources/habitat-sim/0.3.3/"
+                "habitat-sim-0.3.3.tar.gz",
+                b"inert source fixture:habitat-sim\n",
+            ),
+            file(
+                "usr/share/doc/npa-habitat-sim/python-sources/pip/22.0.2/"
+                "pip-22.0.2.tar.gz",
+                b"inert source fixture:pip\n",
+            ),
+            file(
+                "usr/share/doc/npa-habitat-sim/python-sources/setuptools/59.6.0/"
+                "setuptools-59.6.0.tar.gz",
+                b"inert source fixture:setuptools\n",
+            ),
+            file(
+                "usr/share/doc/npa-habitat-sim/ubuntu-sources/"
+                "fixture-source/fixture-source_1.0.dsc",
+                b"Format: 3.0 (quilt)\nSource: fixture-source\nVersion: 1.0\n",
+            ),
+            file(
+                "usr/share/doc/npa-habitat-sim/ubuntu-sources/"
+                "transitive/transitive_1.0.dsc",
+                b"Format: 3.0 (quilt)\nSource: transitive\nVersion: 1.0\n",
+            ),
+            file(
+                "usr/share/doc/npa-habitat-sim/ubuntu-sources/cmake/cmake_1.dsc",
+                b"Format: 3.0 (quilt)\nSource: cmake\nVersion: 1\n",
+            ),
+        ]
+    )
     distributions = {
         "fixture": "1.0",
         "habitat_sim": "0.3.3",
@@ -1055,9 +1146,9 @@ def _fixture_source_delivery(report: dict[str, object]) -> dict[str, object]:
                 "component": row,
                 "artifacts": [
                     {
-                        "path": "usr/share/doc/npa-habitat-sim/fixture-source.txt",
-                        "bytes": len(b"inert source fixture\n"),
-                        "sha256": _digest(b"inert source fixture\n"),
+                        "path": _source_artifact(row)[0],
+                        "bytes": len(_source_artifact(row)[1]),
+                        "sha256": _digest(_source_artifact(row)[1]),
                     }
                 ],
             }
@@ -1361,7 +1452,7 @@ def test_valid_attested_oci_has_complete_graph_and_payload_receipt(tmp_path) -> 
     report = _verify(tmp_path, [_required_entries()])
     assert report["valid"] is True
     assert report["layer_count"] == 1
-    assert report["regular_files_read"] == 37
+    assert report["regular_files_read"] == 45
     assert report["installed_package_count"] == 1
     assert report["dpkg_inventory"]["python3"] == {
         "version": "3.10.6-1~22.04.1",
