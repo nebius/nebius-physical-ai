@@ -56,6 +56,31 @@ def test_selected_project_endpoint_and_credentials_are_resolved(monkeypatch) -> 
     assert "project-ak" not in repr(context)
 
 
+def test_normal_resolution_keeps_session_token_with_selected_pair(monkeypatch) -> None:
+    _configured(monkeypatch)
+    context = resolve_submit_credentials(
+        project="test-rtx",
+        requested=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+        ),
+        environ={
+            "AWS_ACCESS_KEY_ID": "environment-ak",
+            "AWS_SECRET_ACCESS_KEY": "environment-sk",
+            "AWS_SESSION_TOKEN": "environment-session",
+            "AWS_ENDPOINT_URL": "https://storage.example",
+        },
+        workflow_env={"AWS_SESSION_TOKEN": "different-workflow-session"},
+    )
+
+    assert context.access_key_id == "environment-ak"
+    assert context.secret_access_key == "environment-sk"
+    assert context.session_token == "environment-session"
+    assert context.secret_values["AWS_SESSION_TOKEN"] == "environment-session"
+    assert "different-workflow-session" not in context.secret_values.values()
+
+
 def test_explicit_environment_and_endpoint_take_precedence(monkeypatch) -> None:
     _configured(monkeypatch)
     context = resolve_submit_credentials(
