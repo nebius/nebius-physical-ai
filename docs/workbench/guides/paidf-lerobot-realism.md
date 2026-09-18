@@ -106,3 +106,87 @@ to retain every aligned frame.
 
 These outputs are augmented videos. No action/state dataset reconstruction,
 multi-view consistency, policy improvement or real-world transfer is implied.
+
+## Measured comparison
+
+The six complete Cosmos3-Nano outputs below were generated with the controls
+above. Native CFG normalization changed appearance slightly, but this comparison
+does not establish a realism improvement. Keep it disabled by default and retain
+all six outputs as rejected review evidence.
+
+| Task | Temporal score, normalization off | Temporal score, normalization on | Attribute checks, both | Disposition, both |
+| --- | ---: | ---: | ---: | --- |
+| Cup opening | 0.122709 | 0.121682 | 3/4 | Rejected |
+| Coffee preparation | 0.096260 | 0.097463 | 3/4 | Rejected |
+| Cube lift | 0.032292 | 0.032106 | 3/4 | Rejected |
+
+The required temporal threshold is 0.8; these scores also determine the aggregate
+minimum in these runs. All videos decode fully and match the source frame count,
+24 fps timeline and timestamps. Native text/video guardrails passed, including
+publication of the video guardrail's processed tensor. Those execution checks do
+not certify realism. The read-only live audit passed all three matched pairs.
+
+The [result manifest](../evidence/paidf-lerobot/results.json) contains video and
+receipt hashes, all reviewed frame indices, decoded timing and measured edit
+magnitude. Its source-relative image-motion score is not calibrated to contact
+physics. Intended recoloring can also change that diagnostic. The advisory
+appearance score was 1.0 for both cube outputs despite the visible cube-color and
+surface changes; do not interpret it as an object-identity guarantee.
+
+Every failed attribute check concerned `surface_finish`. The VLM selected
+“matte low-gloss backdrop finish” instead of “matte low-gloss blue tabletop
+finish.” These answers overlap, so this failure alone does not establish an
+incorrect material. Preserve the raw failure and inspect the actual options;
+future evaluations need mutually exclusive alternatives before comparing their
+attribute pass rates. The generation inputs were matched, but evaluation question
+generation was not frozen. The deterministic temporal measurements and direct
+frame comparisons are the stronger evidence for this particular ablation.
+
+The contact sheets show prepared source, normalization off, then normalization
+on. Frames were decoded from the actual videos, resized and arranged without
+retouching or source/output blending. Complete synchronized videos and reports
+are retained in the operator's evidence directory. The sheets below are samples,
+not a review of every contact in every frame.
+
+### Cup opening
+
+The blue tabletop and broad arm movement are plausible. Transparent plastic
+remains visible in the sampled frames, but gripper details, plate markings and
+shadows differ from the source. Normalization leaves those differences visible;
+small grasp contacts remain unverified.
+
+![Cup opening: source, CFG normalization off, CFG normalization on](../evidence/paidf-lerobot/cups.jpg)
+
+### Coffee preparation
+
+The full 22-second sequence retains the broad action progression. Gray tabletop
+registration squares become black, and capsule shading, machine details and
+gripper detail change. Neither setting demonstrates faithful preservation of all
+small task objects or contacts. The normalized version looks very similar to the
+baseline at the sampled generation joins and final frame.
+
+![Coffee preparation: source, CFG normalization off, CFG normalization on](../evidence/paidf-lerobot/coffee.jpg)
+
+### Cube lift
+
+The original turquoise cube becomes brighter cyan, robot detail is smoothed, and
+the tabletop edit is uneven in early frames. The 84×84 source limits any contact
+judgment after upsampling. Normalization does not resolve these visible issues.
+
+![Cube lift: source, CFG normalization off, CFG normalization on](../evidence/paidf-lerobot/lift.jpg)
+
+### Apply the findings to another task
+
+Keep the requested appearance edit separate from task invariants in the prompt.
+Pin the source and reuse captions/configuration for every sampling comparison.
+Review object colors, markings and contact geometry even when the overall image
+looks plausible. Report both the active-image edit and padding artifacts: the
+mean absolute RGB differences here were about 25.5/255 for cups, 50.3/255 for
+coffee and 35.7/255 for the lift, excluding the letterbox. Those values describe
+edit size, not quality. Fewer than 0.15% of padding pixels had a channel above 16
+in every output, but even that padding change is not useful scene diversity.
+
+This is one episode and one seed per task, with sampled visual review. It does
+not establish a universal sampling setting or policy-training benefit. The
+generalized code change exposes and records a native model control; it does not
+change per-dataset behavior, blend source pixels, or relax quality thresholds.
