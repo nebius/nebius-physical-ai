@@ -185,7 +185,7 @@ Neither mechanism grants redistribution rights or enables privacy/telemetry.
 
 | Audited surface | Assets/images covered | Outcome |
 | --- | --- | --- |
-| Isaac runtime images and routes | `isaac-lab`, `sonic`, `groot`, Isaac-backed `sim2real` builders and raw-shell sweep states | No Isaac/Kit bytes are baked. Resolved-image routing injects canonical `ACCEPT_EULA=Y` by default; empty/negative values opt out, affirmative legacy values normalize, and invalid values fail before pull/provision/scheduling. No second public EULA variable exists. |
+| Isaac runtime images and routes | `isaac-lab`, `sonic`, `groot`, Isaac-backed `sim2real` builders and raw-shell sweep states | No Isaac Sim/Lab wheels or restricted Kit runtime payloads are baked. Resolved-image routing injects canonical `ACCEPT_EULA=Y` by default; empty/negative values opt out, affirmative legacy values normalize, and invalid values fail before pull/provision/scheduling. No second public EULA variable exists. |
 | GR00T deployment | `nvidia/GR00T-N1.7-3B`, `nvidia/Cosmos-Reason2-2B` | Both runtime dependencies are probed before every deploy/update path. Gated access is determined only by the operator's HF token and actual upstream permission; there is no skip or NPA terms flag. |
 | Cosmos and Physical AI Data Factory | `nvidia/Cosmos-Transfer2.5-2B`, `nvidia/Cosmos-Reason2-2B`, `nvidia/Cosmos-Reason2-8B`, `nvidia/Cosmos-Reason1-7B`, `nvidia/Cosmos3-Nano`, `nvidia/Cosmos-Guardrail1`, `nvidia/Cosmos-1.0-Guardrail`, `nvidia/Cosmos-1.0-Diffusion-7B-Text2World` | Weights stay out of image layers. Public repositories may be fetched anonymously; gated repositories require a successful upstream HF probe with the operator's token. Deploy has no bypass or duplicate consent flag. |
 | Other runtime-fetched NVIDIA assets | `nvidia/GEAR-SONIC`, `nvidia/PhysicalAI-NuRec-PPISP`; NuRec NRE runtime | Public HF assets remain anonymous. NuRec's NGC-hosted NRE runtime requires a real `NGC_API_KEY` repository probe; no local EULA boolean substitutes for vendor access. |
@@ -198,20 +198,26 @@ Isaac examples now state `Y`; non-Isaac tasks do not receive the variable.
 
 ## Runtime-fetched Isaac Sim (why the Isaac images are publishable)
 
-The four Isaac images used to bake **NVIDIA Omniverse Kit (Isaac Sim)**. The Isaac Sim
-*source* is Apache-2.0, but the shipped binary bundles the Kit SDK and NVIDIA assets,
-and — this is the part that is easy to get wrong — **both** the `isaacsim` *and*
-`isaaclab` PyPI packages declare `License: NVIDIA Proprietary Software`, with
-`isaaclab/__init__.py` carrying an explicit no-redistribution header. The
-`isaac-sim/IsaacLab` **GitHub repo** is BSD-3-Clause; the wheel is a
-differently-licensed repackaging of it. So "Isaac Lab is BSD-3, we can bake that half"
-is wrong, and read-the-metadata beats read-the-badge.
+The Isaac runtime images previously baked **NVIDIA Omniverse Kit (Isaac Sim)**.
+Isaac Sim's Apache-2.0 source license does not cover its proprietary Kit SDK and
+runtime dependencies. Classify each exact wheel and its bundled components:
+the `isaaclab==3.0.0b2.post1` wheel selected by Arena declares **BSD-3-Clause**,
+in its structured `METADATA` License field. The exact wheel and metadata hashes
+are recorded in Arena's `license-evidence.json`; the wheel has no standalone
+license member. Isaac Sim 6.0.1.0 and its proprietary runtime dependencies
+retain their separate NVIDIA terms. Do not apply a license finding from another wheel or
+version to this Lab wheel, or extend its BSD license to the complete runtime.
+The [Arena third-party notices](../../npa/docker/workbench/isaac-arena/THIRD_PARTY_NOTICES.md)
+record these component boundaries.
 
 A runtime token could not have rescued a baked image: a token gates a *download*, and
 Kit was already in the layers. So the images were changed to make the statement true.
 
-**How it works.** The images contain **no NVIDIA Isaac bytes**. On first use of
-`/isaac-sim/python.sh`, `npa/docker/workbench/common/isaac_bootstrap.sh`:
+**How it works.** The public images omit the Isaac Sim/Lab wheels and restricted
+Kit runtime payloads. Arena separately bakes its Apache-2.0 application source
+and redistributable client dependencies; that source is not the simulator
+runtime. On first use of `/isaac-sim/python.sh`,
+`npa/docker/workbench/common/isaac_bootstrap.sh`:
 
 1. Applies NPA's non-interactive Isaac default when `ACCEPT_EULA` is unset, then
    validates the value before download. `Y`, `YES`, `1`, and `TRUE` normalize to
@@ -236,10 +242,12 @@ wrapper but deletes its wheel-bundled static executable and resolves video work
 through Ubuntu's dynamically packaged `/usr/bin/ffmpeg`. The built-image payload
 scanner fails if that bundled executable returns.
 
-`pypi.nvidia.com` serves these wheels **anonymously**, so the credential was never the
-gate — acceptance is. NVIDIA delivers Isaac to each operator under that operator's own
-acceptance, and we redistribute nothing. This is the same pattern already used for gated
-model weights (Cosmos, GR00T N1, Cosmos-Reason).
+`pypi.nvidia.com` serves these wheels **anonymously**. The shared bootstrap checks
+the operator's acceptance before fetching the runtime closure; this does not
+change the Lab wheel's BSD license or the separate Sim/runtime terms. NVIDIA
+delivers the fetched wheels directly to the operator's cache, and NPA keeps
+those wheels out of published image layers. Gated model weights use a similar
+runtime-delivery boundary, with provider access checked separately.
 
 **What it costs.** Runtime size and cold-bootstrap cost are version-specific.
 Do not apply the old Isaac Lab 2 / Isaac Sim 5 cache measurements to the Isaac
@@ -367,8 +375,13 @@ The manually dispatched `publish-public-images.yml` workflow builds selected
 development images and separately promotes validated digests. Registry state
 must still be checked: source availability is not proof of publication.
 
-The 2026-09-05 anonymous audit resolved all 32 current public-plan tags and
-matched all 32 accepted release digests. It required no build or registry write.
+The public-plan inventory retains all 34 published release tags. The current
+Isaac Arena r3 tag is an exact-digest promotion of the public full-SHA candidate
+after image security, B200 state, and successful RTX task/visual gates. The
+historical r2 tag remains recorded, but its RTX visual acceptance is rejected:
+render grain satisfied the old pixel-delta test despite a zero-success task
+result and 170 held-action steps.
+
 See the [public image catalog](container-image-catalog.md) for retained aliases,
 exclusions, and the distinction between current source and released bytes.
 

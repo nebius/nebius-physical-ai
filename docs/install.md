@@ -70,8 +70,9 @@ npa --version
 npa workbench --help
 ```
 
-Prefer [`uv`](https://docs.astral.sh/uv/)? From the clone root, use these commands
-instead of the venv creation and installation commands above:
+Prefer [`uv`](https://docs.astral.sh/uv/)? The commands below are equivalent to
+the venv creation and installation commands above — pick whichever tool you
+prefer; the quickstarts standardize on `venv`/`pip`. From the clone root:
 
 ```bash
 uv venv .venv
@@ -80,13 +81,15 @@ uv pip install --python .venv/bin/python -e npa
 ```
 
 The base install includes dataframe/reporting tools, LanceDB, Rerun, and the
-local eval/agent server. Cloud engines run in their containers. Install extras
-only for local engines, tracing, or development:
+local eval/agent server. Heavy GPU engines can also run on Nebius cloud GPUs
+— the cloud engines run in their containers, so you do not need a local GPU
+to use them. Install extras only to run an engine locally (needs a local GPU),
+for contributor development, tracing, or tests:
 
 ```bash
-pip install -e "npa[genesis]"   # Genesis + distillation stages (GPU, local)
-pip install -e "npa[groot]"     # GR00T SDK (GPU, local)
-pip install -e "npa[sonic]"     # SONIC ONNX export/runtime (GPU, local)
+pip install -e "npa[genesis]"   # Genesis sim + distillation (local GPU)
+pip install -e "npa[groot]"     # GR00T SDK (local GPU)
+pip install -e "npa[sonic]"     # SONIC ONNX export/runtime (local GPU)
 pip install -e "npa[agent-trace]" # Langfuse/OpenTelemetry tracing (optional)
 pip install -e "npa[dev]"       # tests, lint (pytest, ruff)
 ```

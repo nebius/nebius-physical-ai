@@ -23,6 +23,7 @@ from rich.console import Console
 from rich.text import Text
 
 from npa.cli.workbench.trigger import app as trigger_app
+from npa.cli.workbench.workflow.controller_recovery import register as register_controller_recovery
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
 
@@ -128,6 +129,28 @@ def _fail(msg: str, code: int = 1) -> None:
     error.append(str(msg))
     console.print(error, soft_wrap=True)
     raise typer.Exit(code)
+
+
+def _submit_failure_code(error: BaseException) -> int:
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        PendingGpuPlacementError, TemporarilyUnavailableAcceleratorError,
+    )
+    from npa.orchestration.skypilot.workflow import SkyPilotSubmitError
+
+    seen: set[int] = set()
+    cause: BaseException | None = error
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        # An ambiguous provider response must never become an automatic retry.
+        if isinstance(cause, SkyPilotSubmitError):
+            if cause.launch_attempted is not False:
+                return 1
+            if cause.transaction is not None and cause.transaction.launch_sequence != 0:
+                return 1
+        if isinstance(cause, (TemporarilyUnavailableAcceleratorError, PendingGpuPlacementError)):
+            return 75
+        cause = cause.__cause__
+    return 1
 
 
 def _workflow_access_requirements(spec) -> tuple:  # noqa: ANN001
@@ -954,6 +977,10 @@ def submit_cmd(
             "--adopt-absent-in-flight-outputs requires an explicit --resume-run ID"
         )
         return
+    if not project:
+        from npa.clients.config import default_project_name
+
+        project = default_project_name()
     workflow_identity = ""
     if is_npa_spec:
         assert merged_npa_spec is not None
@@ -1426,7 +1453,7 @@ def submit_cmd(
                     )) if infra_context and not deploy_if_absent and not runtime else None,
                 )
             except (RuntimeError, ValueError) as exc:
-                _fail(str(exc))
+                _fail(str(exc), code=_submit_failure_code(exc))
                 return
 
         # An existing target can prove that PAIDF has nowhere schedulable to run
@@ -1773,6 +1800,7 @@ def submit_cmd(
                 project=project,
                 run_id=resolved_run_id,
                 force=stage_src is True,
+                persist=not runtime,
             )
             if not staged_uri:
                 return
@@ -1811,7 +1839,11 @@ def submit_cmd(
             # Never mint/print live registry tokens for --plan-only.
             materialize_registry_secrets=not plan_only,
             accept_eula=accept_eula,
-            gpu_accelerator_overrides=_resolve_submit_accelerators(
+        )
+        # The first discovery starts the isolated API. Bind it to the same
+        # resolved principal and storage settings that every runtime wave uses.
+        with _temporary_runtime_environment(runtime_environment):
+            accelerator_overrides = _resolve_submit_accelerators(
                 yaml_path,
                 spec=merged_npa_spec,
                 infra=infra,
@@ -1823,7 +1855,9 @@ def submit_cmd(
                 isolated_config_dir=isolated_config_dir,
                 readiness_timeout=gpu_readiness_timeout,
                 readiness_poll_interval=gpu_readiness_poll_interval,
-            ),
+            )
+        npa_render_options = replace(
+            npa_render_options, gpu_accelerator_overrides=accelerator_overrides
         )
         # Runtime submits one rendered wave at a time through the mandatory SDK
         # execution preflight. Checking every state here would block CPU-only
@@ -1840,7 +1874,8 @@ def submit_cmd(
                     isolated_config_dir=isolated_config_dir,
                 )
             except Exception as exc:
-                _fail(f"multi-node GPU capacity preflight failed: {exc}")
+                _fail(f"multi-node GPU capacity preflight failed: {exc}",
+                      code=_submit_failure_code(exc))
                 return
 
         if runtime and not plan_only:
@@ -2407,8 +2442,8 @@ def submit_cmd(
                     sort_keys=True,
                 )
             )
-            raise typer.Exit(1) from exc
-        _fail(str(exc))
+            raise typer.Exit(_submit_failure_code(exc)) from exc
+        _fail(str(exc), code=_submit_failure_code(exc))
         return
     finally:
         if submitted_yaml_context is not None:
@@ -2534,8 +2569,8 @@ def _runtime_submit_environment(
     for key in ("bucket", "prefix"):
         if key in resolved_config:
             environment[f"NPA_S3_{key.upper()}"] = str(resolved_config[key] or "")
-    if endpoint:
-        environment.update(dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, endpoint))
+    if endpoint.strip():
+        environment.update(dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, endpoint.strip()))
     return environment
 
 
@@ -3402,7 +3437,9 @@ def _preflight_submit_gang_capacity(
         discover_kubernetes_gpu_inventory,
         preflight_kubernetes_gpu_gang,
     )
-    from npa.orchestration.skypilot.resource_quantities import kubernetes_gpu_quantities
+    from npa.orchestration.skypilot.resource_quantities import (
+        kubernetes_ephemeral_storage_quantity, kubernetes_gpu_quantities,
+    )
 
     checks: list[dict[str, object]] = []
     resolved_allowed_nodes = allowed_nodes
@@ -3450,6 +3487,7 @@ def _preflight_submit_gang_capacity(
             node_count=nodes,
             cpus=cpus,
             memory=memory,
+            ephemeral_storage=kubernetes_ephemeral_storage_quantity(effective),
             allowed_nodes=resolved_allowed_nodes,
             pod_spec=pod_spec,
         )
@@ -3546,7 +3584,14 @@ def _record_workflow_submit_failure(operation, exc: BaseException) -> None:  # n
 
     transaction = getattr(exc, "transaction", None)
     launch_sequence = getattr(transaction, "launch_sequence", None)
-    if launch_sequence == 0:
+    from npa.orchestration.skypilot.workflow import SkyPilotSubmitError
+
+    preflight_failed = (
+        transaction is None
+        and isinstance(exc, SkyPilotSubmitError)
+        and exc.launch_attempted is False
+    )
+    if launch_sequence == 0 or preflight_failed:
         operation.record_rollback(
             attempted=False,
             completed=True,
@@ -3699,8 +3744,13 @@ def _stage_npa_src_for_submit(
     project: str = "",
     run_id: str = "workflow",
     force: bool = False,
+    persist: bool = True,
 ) -> str:
-    """Upload once, then durably record the exact ``NPA_SRC_S3_URI``."""
+    """Upload source, optionally updating the project-level source setting.
+
+    Runtime submissions bind the returned URI into their durable run record.
+    They must not rewrite the configuration used to identify an active daemon.
+    """
     from npa.clients.config import ConfigError, persist_workflow_src_s3_uri
     from npa.orchestration.npa_workflow.src_staging import (
         SrcStagingError,
@@ -3725,10 +3775,11 @@ def _stage_npa_src_for_submit(
             on_status=lambda message: typer.echo(f"  {message}", err=True),
             force=force,
         )
-        # This project-level cache is content-addressed and safe to update before
-        # the run exists.  Do not create a run submission ledger here: upload
-        # failure must leave no evidence that a managed job was reserved.
-        persist_workflow_src_s3_uri(uri, project or None)
+        # The isolated daemon verifies configuration bytes as part of its
+        # credential identity. Runtime source refreshes are run-scoped; changing
+        # this setting would invalidate an otherwise healthy owned controller.
+        if persist:
+            persist_workflow_src_s3_uri(uri, project or None)
         return uri
     except (ConfigError, SrcStagingError) as exc:
         _fail(str(exc))
@@ -7669,3 +7720,4 @@ def _emit_gpu_discovery_json(inventory, catalog, sky_error, resolutions):
 
 
 app.add_typer(trigger_app, name="trigger")
+register_controller_recovery(app)

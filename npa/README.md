@@ -41,7 +41,24 @@ cleanup; see [SkyPilot setup](../docs/orchestration/skypilot-setup.md#verify).
 The [PAIDF starter guide](../workflows/guides/paidf-cosmos3.md#audit-a-completed-default-starter-run)
 also provides a read-only live audit using the selected run URI, project, and
 saved pre-submission UTC timestamp. Its test settings are scoped to the audit
-shell and do not submit work.
+shell and do not submit work. For task-specific augmentation, set the optional
+`appearance_profiles_json` workflow config to a JSON array of coherent lighting,
+background, color-grade and surface-finish profiles; its empty default retains
+the starter sampler. Cosmos3's `caption_instruction` supplies `augment_subject`
+as context while requiring uncertainty for unclear features; override it for
+task or camera terminology. Source and generated-video caption frames are sampled
+across the complete decoded clip, including both endpoints, instead of stopping
+after its first eight seconds. Older caption workflows retain their default
+instruction. With edge transfer, `transfer_rgb_weight` optionally adds the
+complete source RGB video as a native conditioning hint, weighted relative to
+edge weight 1. Its default 0 disables the hint; it never blends source pixels
+into generated output. Independently, `transfer_first_chunk_conditional_frames`
+defaults to 1, anchoring the first generation window to the original RGB frame.
+Set it to 0 with edge transfer to allow a new appearance from the first frame;
+complete source edges and generated overlap between later windows remain active.
+This can also reduce object-identity preservation, so review actual paired clips.
+The [realistic manipulation guide](../docs/workbench/guides/paidf-realistic-augmentation.md)
+includes the battery dataset, configuration examples and quality review.
 
 Extra tools required by specific commands:
 
@@ -214,12 +231,18 @@ The CPU wheel exercises real checkpoint loading without a GPU. See
 [the CI environment](../.github/workflows/test.yml) for the complete coverage
 gate; some optional checks also use Node, tmux, or Docker.
 
-Pull requests receive fast smoke and security feedback. The merge queue runs the
-exact latest-main candidate through browser and focused Python 3.10/3.14 checks
-alongside four duration-balanced Python 3.12 coverage shards, then enforces the
-merged floor. Main pushes run the sharded full suite on all three supported
-versions and publish the measured module-duration profile used to rebalance later
-shards. The focused compatibility check runs before the CPU tensor dependencies
+Pull requests receive smoke, affected subsystem tests, and security feedback.
+Agent/browser changes also run Cypress before queue admission; unknown and
+shared changes receive full Python 3.12 validation. The merge queue runs the
+combined latest-main candidate through one dedicated browser job and focused
+Python 3.10/3.14 checks alongside five duration-balanced Python 3.12 coverage
+shards, then enforces the merged floor. Recognized prose-only edits retain smoke,
+documentation, lint, guardrail, and security checks while skipping runtime suites.
+See the [contributor CI guide](../CONTRIBUTING.md) for the conservative selection
+rules and local inspection command. Scheduled/manual audits run the full suite
+on all three supported versions; the scheduled audit publishes measured module
+durations for later rebalancing. The focused compatibility check runs before the
+CPU tensor dependencies
 are installed, so async cancellation and isolated SkyPilot fixture regressions
 surface before merge. Run it locally with:
 
@@ -259,3 +282,12 @@ for the remaining environment variables and the exact test command.
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full test layout and PR
 conventions (branch → PR → squash, one approval, never self-approve).
+
+## Workbench Studio
+
+`npa studio init --directory ./my-studio` creates a portable local film editor
+using the installed renderer. Create a project from your own media with
+`npa studio create`, author its storyboard, then draft, narrate and render it.
+Install `npa[studio]` for optional speech generation and FFmpeg separately.
+See the [Studio developer flow](../docs/demos/workbench-studio/README.md) for
+configuration, offline narration, artifact search and privacy boundaries.

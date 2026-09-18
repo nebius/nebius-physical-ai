@@ -16,9 +16,55 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  scope:
+    name: test-scope
+    runs-on: ubuntu-latest
+    outputs:
+      prose_only: ${{ steps.scope.outputs.prose_only }}
+      full_suite: ${{ steps.scope.outputs.full_suite }}
+      browser: ${{ steps.scope.outputs.browser }}
+      test_paths: ${{ steps.scope.outputs.test_paths }}
+    steps:
+      - name: Check out comparison history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Select tests using the trusted base policy
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          python -m venv npa/.venv
+          policy=npa/scripts/ci_test_scope.py
+          if [[ "$EVENT_NAME" == pull_request || "$EVENT_NAME" == merge_group ]]; then
+            git rev-parse --verify "${BASE_SHA}^{commit}"
+            if git cat-file -e "${BASE_SHA}:${policy}"; then
+              git show "${BASE_SHA}:${policy}" > "${RUNNER_TEMP}/ci_test_scope.py"
+              npa/.venv/bin/python "${RUNNER_TEMP}/ci_test_scope.py" \
+                --base "$BASE_SHA" --head "$GITHUB_SHA" --event "$EVENT_NAME" \
+                --github-output "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          # Missing base policy and periodic audits both retain all coverage.
+          {
+            echo 'prose_only=false'
+            echo 'full_suite=true'
+            echo 'browser=true'
+            echo 'test_paths=[]'
+          } >> "$GITHUB_OUTPUT"
+
   browser-mocked:
     name: browser-and-compatibility
-    if: github.event_name != 'pull_request'
+    needs: scope
+    if: needs.scope.outputs.browser != 'false'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -45,6 +91,7 @@ jobs:
         run: npm run --prefix npa/tests/browser cy:mock
 
       - name: Set up Python 3.10 compatibility
+        if: github.event_name != 'pull_request'
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.10"
@@ -52,11 +99,13 @@ jobs:
           cache-dependency-path: npa/pyproject.toml
 
       - name: Install Python 3.10 compatibility environment
+        if: github.event_name != 'pull_request'
         run: |
           python -m venv npa/.venv-3.10
           npa/.venv-3.10/bin/python -m pip install -e "npa[dev,adapter]"
 
       - name: Run Python 3.10 compatibility regressions
+        if: github.event_name != 'pull_request'
         run: |
           npa/.venv-3.10/bin/python -m pytest \
             npa/tests/guardrails/test_ci_workflows.py \
@@ -66,6 +115,7 @@ jobs:
             -q
 
       - name: Set up Python 3.14 compatibility
+        if: github.event_name != 'pull_request'
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
@@ -73,11 +123,13 @@ jobs:
           cache-dependency-path: npa/pyproject.toml
 
       - name: Install Python 3.14 compatibility environment
+        if: github.event_name != 'pull_request'
         run: |
           python -m venv npa/.venv-3.14
           npa/.venv-3.14/bin/python -m pip install -e "npa[dev,adapter]"
 
       - name: Run Python 3.14 compatibility regressions
+        if: github.event_name != 'pull_request'
         run: |
           npa/.venv-3.14/bin/python -m pytest \
             npa/tests/guardrails/test_ci_workflows.py \
@@ -88,7 +140,8 @@ jobs:
 
   pr-smoke:
     name: pr-smoke
-    if: github.event_name == 'pull_request'
+    needs: scope
+    if: github.event_name == 'pull_request' || needs.scope.outputs.prose_only == 'true'
     runs-on: ubuntu-latest
     env:
       NPA_PROJECT_ID: project-test-00000000
@@ -115,6 +168,7 @@ jobs:
           npa/.venv/bin/python -m pytest \
             npa/tests/smoke \
             npa/tests/test_ci_sharding.py \
+            npa/tests/test_ci_test_scope.py \
             npa/tests/guardrails/test_ci_workflows.py \
             npa/tests/docker/test_base_image_scan.py \
             npa/tests/orchestration/skypilot/test_workflow_logs.py \
@@ -130,26 +184,27 @@ jobs:
 
   test:
     name: pytest-${{ matrix.python-version }}-shard-${{ matrix.shard }}
-    if: github.event_name != 'pull_request'
+    needs: scope
+    if: needs.scope.outputs.full_suite != 'false'
     runs-on: ubuntu-latest
     strategy:
       # A merge candidate releases the remaining runners after a hard failure.
       # Scheduled/manual audits keep every compatibility result for diagnosis.
-      fail-fast: ${{ github.event_name == 'merge_group' }}
+      fail-fast: ${{ github.event_name == 'merge_group' || github.event_name == 'pull_request' }}
       matrix:
-        # Merge queue candidates run the complete suite on the primary
-        # interpreter. Scheduled/manual audits keep all supported versions.
-        python-version: ${{ fromJSON(github.event_name == 'merge_group' && '["3.12"]' || '["3.10", "3.12", "3.14"]') }}
-        # The queue uses one extra shard to stay below its wall-clock target.
+        # Candidates needing the full suite use the primary interpreter.
+        # Scheduled/manual audits keep all supported versions.
+        python-version: ${{ fromJSON(contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && '["3.12"]' || '["3.10", "3.12", "3.14"]') }}
+        # Candidates use one extra shard to keep feedback prompt.
         # The periodic three-version audit retains four per interpreter.
-        shard: ${{ fromJSON(github.event_name == 'merge_group' && '[1, 2, 3, 4, 5]' || '[1, 2, 3, 4]') }}
+        shard: ${{ fromJSON(contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && '[1, 2, 3, 4, 5]' || '[1, 2, 3, 4]') }}
     env:
       NPA_PROJECT_ID: project-test-00000000
       NPA_S3_BUCKET: test-bucket-00000000
       NPA_E2E_PROJECT_ID: project-test-00000000
       NPA_E2E_GROOT_BUCKET: test-bucket-00000000
       NPA_CI_SHARD_INDEX: ${{ matrix.shard }}
-      NPA_CI_TOTAL_SHARDS: ${{ github.event_name == 'merge_group' && 5 || 4 }}
+      NPA_CI_TOTAL_SHARDS: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && 5 || 4 }}
       COVERAGE_FILE: .coverage.${{ matrix.python-version }}.${{ matrix.shard }}
       NPA_CI_TIMING_OUTPUT: ci-timings-${{ matrix.python-version }}-${{ matrix.shard }}.json
       # The LTX-2.5 output validator decides whether a GPU run produced anything
@@ -286,10 +341,62 @@ jobs:
         if: always() && matrix.python-version == '3.12' && matrix.shard == 1
         run: ./scripts/check-source-drift.sh
 
+  affected-tests:
+    name: affected-tests
+    needs: scope
+    if: github.event_name == 'pull_request' && needs.scope.outputs.full_suite == 'false' && needs.scope.outputs.test_paths != '[]'
+    runs-on: ubuntu-latest
+    env:
+      NPA_PROJECT_ID: project-test-00000000
+      NPA_S3_BUCKET: test-bucket-00000000
+      NPA_REQUIRE_FFMPEG: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: npa/pyproject.toml
+      - name: Install affected test dependencies
+        run: |
+          test -s /etc/apt/sources.list.d/ubuntu.sources
+          apt_options=(
+            -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources
+            -o Dir::Etc::sourceparts=-
+          )
+          sudo apt-get "${apt_options[@]}" update
+          sudo apt-get "${apt_options[@]}" install -y --no-install-recommends ffmpeg
+          python -m venv npa/.venv
+          npa/.venv/bin/python -m pip install -e "npa[dev,adapter]"
+          npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
+          npa/.venv/bin/python -m pip install -e "npa[sonic]"
+          npa/.venv/bin/python -c "import torch, onnx, onnxscript, onnxruntime; assert torch.version.cuda is None"
+          echo "${GITHUB_WORKSPACE}/npa/.venv/bin" >> "$GITHUB_PATH"
+      - name: Run affected subsystem tests
+        env:
+          TEST_PATHS: ${{ needs.scope.outputs.test_paths }}
+        run: |
+          npa/.venv/bin/python - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+
+          paths = json.loads(os.environ["TEST_PATHS"])
+          if not paths:
+              raise SystemExit("Affected tests require a non-empty selection")
+          subprocess.run(
+              [sys.executable, "-m", "pytest", *paths, "-n", "auto", "--dist", "worksteal", "-q"],
+              check=True,
+          )
+          PY
+
   coverage:
     name: coverage
-    needs: test
-    if: ${{ always() && github.event_name != 'pull_request' }}
+    needs: [scope, test]
+    if: ${{ always() && needs.scope.outputs.full_suite != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - name: Require successful pytest shards

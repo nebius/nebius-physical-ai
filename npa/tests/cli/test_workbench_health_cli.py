@@ -118,11 +118,11 @@ def test_health_rejects_unknown_check() -> None:
 def test_health_help_lists_preflight_not_deprecated_sim2real() -> None:
     result = runner.invoke(app, ["workbench", "health", "--help"])
     assert result.exit_code == 0
-    # The generic credential preflight is the advertised command; the sim2real
-    # one is hidden/deprecated in favor of `workbench workflow submit`. Assert on
-    # the command *rows* (Typer renders each listed command as "│ <name> ...")
-    # rather than a broad substring, so help copy mentioning "sim2real" elsewhere
-    # can't silently break this.
+    # Both the generic credential preflight and the sim2real preflight are
+    # advertised, supported commands (see #510). Assert on the command *rows*
+    # (Typer renders each listed command as "│ <name> ...") rather than a
+    # broad substring, so help copy mentioning "sim2real" elsewhere can't
+    # silently break this.
     assert "preflight" in result.output
     command_rows = [
         line for line in result.output.splitlines() if line.strip().startswith("│ ")
@@ -131,7 +131,11 @@ def test_health_help_lists_preflight_not_deprecated_sim2real() -> None:
         line.split()[1] for line in command_rows if len(line.split()) > 1
     }
     assert "preflight" in listed_commands
-    assert "sim2real" not in listed_commands
+    assert "sim2real" in listed_commands
+    # The sim2real command itself must not be marked deprecated.
+    sim2real_help = runner.invoke(app, ["workbench", "health", "sim2real", "--help"])
+    assert sim2real_help.exit_code == 0
+    assert "deprecat" not in sim2real_help.output.lower()
 
 
 class _EmptyCreds:

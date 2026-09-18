@@ -88,10 +88,31 @@ def test_prelaunch_reconciliation_failure_does_not_leave_recovery_blocker() -> N
     assert operation.transitions[0][1]["details"]["launch_attempted"] is False
 
 
-def test_postlaunch_failure_preserves_recovery_blocker() -> None:
+def test_verified_preflight_failure_releases_lifecycle_lock() -> None:
+    operation = _RecordingOperation()
+    error = SkyPilotSubmitError("capacity unavailable", launch_attempted=False)
+
+    workflow_cli._record_workflow_submit_failure(operation, error)
+
+    assert operation.rollback["attempted"] is False
+    assert operation.rollback["completed"] is True
+    assert operation.transitions[0][0] == "rolled-back"
+
+
+def test_ambiguous_failure_preserves_recovery_blocker() -> None:
+    operation = _RecordingOperation()
+    workflow_cli._record_workflow_submit_failure(operation, SkyPilotSubmitError("unknown"))
+
+    assert operation.rollback is None
+    assert operation.transitions == [("recovery-required", {"error": "unknown"})]
+
+
+@pytest.mark.parametrize("launch_attempted", [None, False])
+def test_postlaunch_failure_preserves_recovery_blocker(launch_attempted) -> None:
     operation = _RecordingOperation()
     transaction = type("Transaction", (), {"launch_sequence": 1})()
-    error = SkyPilotSubmitError("launch indeterminate", transaction=transaction)
+    error = SkyPilotSubmitError("launch indeterminate", transaction=transaction,
+                               launch_attempted=launch_attempted)
 
     workflow_cli._record_workflow_submit_failure(operation, error)
 

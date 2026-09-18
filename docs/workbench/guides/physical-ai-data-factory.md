@@ -598,3 +598,16 @@ the disposition fields queryable after workflow compute has exited.
 > augmentation has produced frames, both accepted and quality-rejected paths
 > materialize the recording; only accepted runs include the downstream curation
 > and final report panels.
+
+## Clean up
+
+Idle GPU clusters keep billing after the run finishes. When you are done,
+tear them down:
+
+```bash
+npa destroy --project "<alias>" --all
+```
+
+The plan previews read-only until you pass `--yes`, and the Nebius project
+itself is retained by default. See [teardown](../../teardown.md) for what
+`npa destroy` removes (cloud spend) versus what it keeps.

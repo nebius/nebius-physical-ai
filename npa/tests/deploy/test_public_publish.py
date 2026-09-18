@@ -96,9 +96,7 @@ def _avoid_registry_attestation_reads_in_unrelated_publish_tests(monkeypatch) ->
     )
 
 
-@pytest.mark.parametrize(
-    "tool", ["alpamayo2-super", "cosmos3-serving", "detection-training"]
-)
+@pytest.mark.parametrize("tool", ["cosmos3-serving", "detection-training"])
 def test_gpu_accepted_publication_gate_binds_exact_digest(monkeypatch, tool) -> None:
     from npa.deploy import publish_public
 
@@ -303,13 +301,19 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
     assert RESTRICTED_DERIVED_IMAGES == frozenset()
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
-    assert UNVALIDATED_PUBLICATION_TOOLS == frozenset({"openpi", "curobo", "ncore"})
+    assert UNVALIDATED_PUBLICATION_TOOLS == frozenset(
+        {"openpi", "curobo", "ncore"}
+    )
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
+        "diffusers",
+        "lingbot-world",
+        "sam2",
         "alpamayo2-super",
         "cosmos3",
         "cosmos3-ray-serve",
         "cosmos3-serving",
         "detection-training",
+        "isaac-arena",
         "openarm",
         "sonic-mujoco",
     }
@@ -339,6 +343,7 @@ def test_public_set_includes_the_oss_tools() -> None:
         "lichtblick",
         # Newly publishable: no baked Omniverse Kit, weights or assets.
         "isaac-lab",
+        "isaac-arena",
         "sonic",
         "groot",
         "cosmos3-serving",
@@ -359,6 +364,7 @@ def test_publish_plan_now_includes_the_isaac_images() -> None:
     names = {item.source_ref.rsplit("/", 1)[-1].split(":", 1)[0] for item in plan}
     for image in (
         "npa-isaac-lab",
+        "npa-isaac-arena",
         "npa-sonic",
         "npa-groot",
     ):
@@ -421,6 +427,9 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
         if entry.get("development_sha")
     }
     assert accepted_shas
+    # Five Sim2Real roles share a source, as do the three native model images.
+    # Arena and the other accepted images retain their distinct exact sources.
+    assert len(set(accepted_shas.values())) == 13
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
         target_image = item.target_ref.rsplit("/", 1)[-1]
@@ -446,6 +455,10 @@ def test_accepted_images_use_distinct_exact_development_sources_and_digests() ->
         "cosmos3-ray-serve",
         "sonic-mujoco",
         "detection-training",
+        "isaac-arena",
+        "diffusers",
+        "lingbot-world",
+        "sam2",
         "openarm",
         "alpamayo2-super",
     ):

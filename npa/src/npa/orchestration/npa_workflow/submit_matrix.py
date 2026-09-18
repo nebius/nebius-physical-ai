@@ -95,6 +95,42 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Pinned PushT data, matched real ACT training, paired closed-loop shifts, next-demo queue and RRD.",
     ),
     SubmitLiveCase(
+        "byof-mochi-1.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-cogvideox-2b.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-wan2.1-14b.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-lingbot-world.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-depth-anything-v2.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-sam2.1.yaml", "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
         "cosmos3-policy-model-factory.yaml", "gpu",
         secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         image_tool="cosmos3",
@@ -115,6 +151,26 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "Real single-B200 Alpamayo 2 Super VLM + diffusion-expert inference; "
             "publishes calibrated trajectory JSON/PNG and provenance. Requires "
             "operator-side PhysicalAI-AV dataset acceptance."
+        ),
+    ),
+    SubmitLiveCase(
+        "isaac-arena-evaluation-b200.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="isaac-arena",
+        notes=(
+            "Real completed-episode, state-only Isaac Lab-Arena policy_runner "
+            "evaluation on one B200; publishes scored JSONL and HTML report."
+        ),
+    ),
+    SubmitLiveCase(
+        "isaac-arena-evaluation-rtxpro.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="isaac-arena",
+        notes=(
+            "Real completed-episode Isaac Lab-Arena policy_runner evaluation "
+            "on RTX PRO 6000; additionally requires a recorded viewport MP4."
         ),
     ),
     SubmitLiveCase(

@@ -134,7 +134,7 @@ workflow templates.
 ## Three-Tier Contract
 
 - CLI: use `npa workbench workflow ...` and tool-specific workflow commands
-  such as `npa workbench mjlab workflow` or `npa workbench retargeting workflow`.
+  such as `npa workbench mjlab workflow` or `npa workbench sonic retargeting workflow`.
 - SDK: route through shared workflow submission helpers rather than shelling out
   from business logic.
 - Workflow: the `npa.workflow` spec is the executable source of truth for stage

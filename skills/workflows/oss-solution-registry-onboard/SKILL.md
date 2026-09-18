@@ -612,3 +612,21 @@ failure and keep the solution out of registry-ready status.
   only the root `skills/` tree and `skills/index.yaml`.
 - Do not add hidden infrastructure defaults. Let project, registry, Kubernetes,
   and storage resolve through NPA config.
+
+
+## Diffusers video candidate contracts
+
+- `byof-mochi-1.yaml`: `mochi-1_text_to_video` emits `mochi_1_text_to_video.json`; invoke the native pipeline and validate every decoded MP4 frame.
+- `byof-cogvideox-2b.yaml`: `cogvideox-2b_text_to_video` emits `cogvideox_2b_text_to_video.json`; invoke the native pipeline and validate every decoded MP4 frame.
+- `byof-wan2.1-14b.yaml`: `wan2.1-14b_text_to_video` emits `wan2_1_14b_text_to_video.json`; invoke the native pipeline and validate every decoded MP4 frame.
+
+Catalog status remains authoritative. These recipes use an operator-built image; no official public release is implied.
+
+
+### LingBot World v1 camera candidate
+
+`byof-lingbot-world.yaml` exercises `lingbot_world_camera_conditioned_video` using pinned upstream `generate.py`, FSDP, and Ulysses on four B200 GPUs. It emits `lingbot_world_camera_conditioned_video.json`, per-rank execution evidence, authored camera controls, the source image, and a fully decoded MP4. See the catalog for packaged GPU qualification status. Camera trajectories and approximate intrinsics are authored, not measured. This v1 recipe does not claim robot action input, training, real-time performance, or support for the separate World Infinity successor.
+
+- `byof-depth-anything-v2.yaml`: `relative_depth_video` emits `depth_anything_v2_relative_depth.json`, raw prediction arrays and a fully decoded GPU-derived video. See the catalog for packaged GPU qualification status. Model checkpoints are immutable runtime fetches; video inputs require a complete SHA256. No metric-depth, ground-truth-mask, or robot-success claim.
+
+- `byof-sam2.1.yaml`: `prompted_video_mask_propagation` emits `sam2_1_video_mask_propagation.json`, raw prediction arrays and a fully decoded GPU-derived video. See the catalog for packaged GPU qualification status. Model checkpoints are immutable runtime fetches; video inputs require a complete SHA256. No metric-depth, ground-truth-mask, or robot-success claim.

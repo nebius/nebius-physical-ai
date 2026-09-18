@@ -580,7 +580,9 @@ def preflight_skypilot_submission(
         from npa.orchestration.skypilot.k8s_gpu_catalog import (
             discover_kubernetes_gpu_inventory, preflight_kubernetes_gpu_gang,
         )
-        from npa.orchestration.skypilot.resource_quantities import kubernetes_gpu_quantities
+        from npa.orchestration.skypilot.resource_quantities import (
+            kubernetes_ephemeral_storage_quantity, kubernetes_gpu_quantities,
+        )
         if native_documents:
             from npa.orchestration.skypilot.native_preflight import verify_native_nebius_submission
 
@@ -615,6 +617,7 @@ def preflight_skypilot_submission(
             preflight_kubernetes_gpu_gang(discover_kubernetes_gpu_inventory(context=context),
                 accelerator=str(gpu), node_count=int(document.get("num_nodes") or 1),
                 cpus=cpus, memory=memory,
+                ephemeral_storage=kubernetes_ephemeral_storage_quantity(resources),
                 allowed_nodes=allowed, pod_spec=pod_spec)
 
     report = verify_execution_target(target, gpu_check=gpu_check)

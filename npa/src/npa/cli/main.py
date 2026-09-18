@@ -138,6 +138,26 @@ app.add_typer(viz_app, name="viz", rich_help_panel="Platform utilities")
 app.add_typer(workflow_shim_app, name="workflow", hidden=True)
 
 
+@app.command(
+    "studio", rich_help_panel="Platform utilities",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    add_help_option=False,
+)
+def studio_cmd(ctx: typer.Context) -> None:
+    """Author and render portable local films; use npa studio --help for commands.
+
+    Args:
+        ctx: Arguments forwarded to the project-owned studio renderer.
+    Returns:
+        None.
+    Raises:
+        typer.Exit: Carries the renderer's process status.
+    """
+    from npa.studio import run
+
+    raise typer.Exit(run(ctx.args))
+
+
 @app.command("destroy", rich_help_panel="Platform utilities")
 @intent_boundary(OperationIntent.DESTROY)
 @json_stdout_contract
@@ -1597,6 +1617,12 @@ def _run_interactive_configure(
     # Interactive configure offers storage by default because agent and workbench
     # data paths need it, but the user can decline before any storage mutation.
     if discovered_selection and provision:
+        typer.echo(
+            "  Creating object storage requires Nebius project-admin permissions. "
+            "If you do not have them, answer 'n' here (or re-run with "
+            "`npa configure --no-provision`) — a project admin can provision "
+            "storage separately."
+        )
         want_storage = ask(
             "Set up object storage (S3 bucket + access key) now? "
             "The agent VM, workflow submits (`stage-src`) and the Physical AI "
@@ -1936,6 +1962,13 @@ def _run_interactive_configure(
         f"Summary: mode={'provision' if provision else 'project-only'}; "
         f"project={alias or 'not set'}; storage={storage_disposition}; "
         "configuration=saved."
+    )
+    preflight_cmd = "npa workbench health preflight --checks nebius"
+    if alias:
+        preflight_cmd += f" --project {alias}"
+    typer.echo(
+        "Validate the setup (project, Nebius CLI auth, S3 reachability) with: "
+        f"`{preflight_cmd}`"
     )
     typer.echo(
         _skipped_model_access_note()

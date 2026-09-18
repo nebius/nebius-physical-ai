@@ -123,6 +123,8 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | --- | --- |
 | [`curobo-benchmark.yaml`](testing/curobo-benchmark.yaml) | Complete pinned MotionBenchMaker and MPiNets benchmark in cuRobo V2 kinematic and payload-dynamics modes; image remains publication-quarantined pending image checks and real GPU validation ([guide](../docs/workbench/curobo.md)) |
 | [`groot-1-7-finetune.yaml`](testing/groot-1-7-finetune.yaml) | Real GR00T data → parameterized 1-to-many-GPU optimizer smoke → immutable checkpoint → aligned offline evaluation → outcome classification → RRD/MCAP → inspected S3 publication → NPA agent viewer handoff; no rollout or statistical-learning claim |
+| [`isaac-arena-evaluation-b200.yaml`](testing/isaac-arena-evaluation-b200.yaml) | Four-seed Arena zero-action state regression on B200; completed scored episodes and hash-bound reports, with no visual claim ([guide](../docs/workbench/isaac-arena.md)) |
+| [`isaac-arena-evaluation-rtxpro.yaml`](testing/isaac-arena-evaluation-rtxpro.yaml) | Arena replay on RTX PRO 6000; exact-digest qualification completed with upstream task success and simulator-ground-truth-bound viewport motion ([readiness](testing/isaac-arena-evaluation-rtxpro.readiness.json)) |
 | [`isaac-franka-capture-reason.yaml`](testing/isaac-franka-capture-reason.yaml) | Headless Isaac Lab Franka RGB capture on GPU → hosted manipulation reasoning |
 | [`isaac-lab-rl-sweep.yaml`](testing/isaac-lab-rl-sweep.yaml) | **Parallel** GPU sweep (port of the `execution: parallel` SkyPilot template) + ranking barrier; submit with `--runtime` |
 | [`mjlab-eval.yaml`](testing/mjlab-eval.yaml) | MJLab locomotion eval |
@@ -169,7 +171,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`byof-openpi.yaml`](testing/byof-openpi.yaml) | OSS registry: OpenPI pi0.5 Polaris direct + WebSocket-served Franka joint-position inference on `B200:1`; runtime-only checkpoint and scoped Gemma gate ([guide](../docs/workbench/openpi-pi05-polaris.md)) |
 | [`byof-robocasa.yaml`](testing/byof-robocasa.yaml) | OSS registry: RoboCasa pinned image + headless kitchen-task smoke |
 | [`byof-wan2.2-multigpu.yaml`](testing/byof-wan2.2-multigpu.yaml) | Wan 2.2 generation across four participating GPU ranks; MP4, topology, and Rerun evidence |
-| [`byof-wan2.2.yaml`](testing/byof-wan2.2.yaml) | Wan 2.2 TI2V-5B on one RTX PRO 6000; decoded MP4 and verified Rerun evidence |
+| [`byof-wan2.2.yaml`](testing/byof-wan2.2.yaml) | Wan 2.2 TI2V-5B on one RTX PRO 6000; decoded MP4 and verified Rerun evidence; [configurable frames, sampling steps, and seed](../docs/workbench/wan2.2.md#generate-a-longer-clip) on both Wan routes |
 | [`byof.yaml`](testing/byof.yaml) | BYOF via `run_byof_repo.py` |
 
 #### Hosted inference and VLM evaluation

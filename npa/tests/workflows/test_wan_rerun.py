@@ -35,8 +35,8 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     )
 
 
-@lru_cache(maxsize=1)
-def _valid_video_bytes() -> bytes:
+@lru_cache(maxsize=2)
+def _valid_video_bytes(frame_count: int = 17) -> bytes:
     output = io.BytesIO()
     x = np.arange(1280, dtype=np.uint16)[None, :]
     y = np.arange(704, dtype=np.uint16)[:, None]
@@ -46,7 +46,7 @@ def _valid_video_bytes() -> bytes:
         stream.height = 704
         stream.pix_fmt = "yuv420p"
         stream.options = {"preset": "ultrafast"}
-        for index in range(17):
+        for index in range(frame_count):
             pixels = np.empty((704, 1280, 3), dtype=np.uint8)
             pixels[:, :, 0] = (x + index * 13) % 256
             pixels[:, :, 1] = (y * 2 + index * 7) % 256
@@ -113,9 +113,9 @@ def _rank(rank: int) -> dict[str, Any]:
     }
 
 
-def _materialize_multigpu_run(root: Path) -> None:
+def _materialize_multigpu_run(root: Path, frame_count: int = 17) -> None:
     root.mkdir(parents=True, exist_ok=True)
-    video = _valid_video_bytes()
+    video = _valid_video_bytes(frame_count)
     video_path = root / MULTI_GPU_LAYOUT.video_filename
     video_path.write_bytes(video)
     decoded = wan_rerun._decode_video_metrics(video_path)
@@ -186,7 +186,7 @@ def _materialize_multigpu_run(root: Path) -> None:
                 "seed": 42,
                 "width": 1280,
                 "height": 704,
-                "frames": 17,
+                "frames": frame_count,
                 "fps": 24.0,
                 "steps": 8,
             },
@@ -303,9 +303,9 @@ def _materialize_multigpu_run(root: Path) -> None:
     )
 
 
-def _materialize_single_gpu_run(root: Path) -> None:
+def _materialize_single_gpu_run(root: Path, frame_count: int = 17) -> None:
     root.mkdir(parents=True, exist_ok=True)
-    video = _valid_video_bytes()
+    video = _valid_video_bytes(frame_count)
     video_path = root / SINGLE_GPU_LAYOUT.video_filename
     video_path.write_bytes(video)
     decoded = wan_rerun._decode_video_metrics(video_path)
@@ -347,7 +347,10 @@ def _materialize_single_gpu_run(root: Path) -> None:
             "task": "text-to-video",
             "prompt": "An abstract color study.",
             "seed": 42,
-            "requested": {"width": 1280, "height": 704, "frames": 17, "fps": 24.0},
+            "requested": {
+                "width": 1280, "height": 704, "frame_count": frame_count,
+                "fps": 24.0, "inference_steps": 8,
+            },
             "observed": {
                 "width": decoded["width"],
                 "height": decoded["height"],
@@ -509,6 +512,59 @@ def test_single_gpu_layout_builds_and_uses_accurate_execution_entity(
     entities = {str(chunk.entity_path) for chunk in load_recording(output).chunks()}
     assert "/wan2_2/evidence/execution" in entities
     assert not any("/distributed" in entity for entity in entities)
+
+
+@pytest.mark.parametrize("layout", [SINGLE_GPU_LAYOUT, MULTI_GPU_LAYOUT])
+def test_longer_generation_embeds_every_requested_frame(tmp_path: Path, layout) -> None:
+    materialize = (
+        _materialize_multigpu_run if layout is MULTI_GPU_LAYOUT
+        else _materialize_single_gpu_run
+    )
+    materialize(tmp_path, frame_count=21)
+    result = build_wan_rrd(tmp_path, tmp_path / layout.rrd_filename, layout=layout)
+    assert result["verification"]["video_frame_reference_count"] == 21
+    assert result["verification"]["embedded_mp4_sha256_match"] is True
+    assert result["verification"]["video_timestamps_valid"] is True
+
+
+@pytest.mark.parametrize("layout", [SINGLE_GPU_LAYOUT, MULTI_GPU_LAYOUT])
+def test_decoded_frame_count_must_match_the_generation_request(tmp_path: Path, layout):
+    materialize = (
+        _materialize_multigpu_run if layout is MULTI_GPU_LAYOUT
+        else _materialize_single_gpu_run
+    )
+    materialize(tmp_path)
+    name = ("wan2_2_ti2v_5b_multigpu.json" if layout is MULTI_GPU_LAYOUT
+            else "wan2_2_ti2v_5b_text_to_video.json")
+    primary = json.loads((tmp_path / name).read_text())
+    if layout is MULTI_GPU_LAYOUT:
+        primary["generation"]["frames"] = 121
+    else:
+        primary["requested"]["frame_count"] = 121
+    _write_json(tmp_path / name, primary)
+    with pytest.raises(WanRrdError, match="requested 1280x704/121-frame/24-fps"):
+        build_wan_rrd(tmp_path, tmp_path / layout.rrd_filename, layout=layout)
+
+
+@pytest.mark.parametrize("layout", [SINGLE_GPU_LAYOUT, MULTI_GPU_LAYOUT])
+@pytest.mark.parametrize(
+    "field,value",
+    [("frames", None), ("frames", 120), ("frames", "121"), ("frames", True),
+     ("steps", 0), ("steps", "50"), ("seed", -1), ("seed", False)],
+)
+def test_rerun_rejects_invalid_requested_generation(layout, field, value):
+    generation = {"width": 1280, "height": 704, "fps": 24.0,
+                  "frames": 121, "steps": 50, "seed": 42}
+    generation[field] = value
+    if layout is MULTI_GPU_LAYOUT:
+        primary = {"generation": generation}
+    else:
+        primary = {"seed": generation["seed"], "requested": {
+            "width": 1280, "height": 704, "fps": 24.0,
+            "frame_count": generation["frames"], "inference_steps": generation["steps"],
+        }}
+    with pytest.raises(WanRrdError, match=f"requested {field}"):
+        wan_rerun._requested_frame_count(primary, layout)
 
 
 def test_single_gpu_rejects_stale_torch_cuda_evidence(tmp_path: Path) -> None:
