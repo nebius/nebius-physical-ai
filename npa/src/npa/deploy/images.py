@@ -636,6 +636,19 @@ def sonic_image_variants() -> dict[str, dict[str, Any]]:
 
 
 def supported_tool_version(tool: str) -> str:
+    """Return the configured version, with an unbuilt-candidate fallback.
+
+    Args:
+        tool: Tool name; SONIC resolves its active image metadata.
+    Returns:
+        Project version, otherwise the unbuilt-candidate or supported pin.
+    Raises:
+        RuntimeError: Unknown tool or unsupported SONIC manifest format.
+        OSError: Project TOML or SONIC metadata cannot be read.
+        ValueError: Invalid TOML/JSON or unusable SONIC image metadata.
+        KeyError, TypeError, AttributeError: Required metadata is malformed.
+        ImportError: Neither the standard nor fallback TOML loader exists.
+    """
     if tool == "sonic":
         return str(_default_sonic_image()["tag"])
 
@@ -1135,6 +1148,9 @@ def is_publicly_redistributable(tool: str) -> bool:
 
     Returns:
         False for any permanent or pending public-registry refusal.
+
+    Raises:
+        None for a canonical string tool name.
     """
     return tool not in _public_registry_refusals()
 
@@ -1142,8 +1158,14 @@ def is_publicly_redistributable(tool: str) -> bool:
 def restricted_image_names() -> list[str]:
     """Return every permanent or pending public-registry refusal in stable order.
 
+    Args:
+        None.
+
     Returns:
         Sorted names from the same refusal union used by the public predicate.
+
+    Raises:
+        None.
     """
     return sorted(_public_registry_refusals())
 
@@ -1151,8 +1173,14 @@ def restricted_image_names() -> list[str]:
 def omniverse_restricted_image_names() -> list[str]:
     """Compatibility alias for :func:`restricted_image_names`.
 
+    Args:
+        None.
+
     Returns:
         All permanent and pending public-registry refusal names, sorted.
+
+    Raises:
+        None.
     """
     return restricted_image_names()
 
