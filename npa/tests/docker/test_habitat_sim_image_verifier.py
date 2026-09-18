@@ -49,23 +49,31 @@ VERIFIER_SPEC.loader.exec_module(VERIFIER)
 SOURCE_REVISION = "a" * 40
 
 
+def _memory_inventory_file(state, path, payload=b"inert inventory fixture"):
+    """Populate an in-memory regular-file observation without archive I/O."""
+    state.paths[path] = "file"
+    state.files[path] = {"sha256": _digest(payload), "size": len(payload)}
+    state.metadata[path] = {"kind": "file", "uid": 0, "gid": 0, "mode": 0o644}
+    state.tracked[path] = payload
+
+
 def _source_delivery_state() -> H._ScanState:
     state = H._ScanState()
-    state.paths["usr/share/doc/base-package/copyright"] = "file"
+    _memory_inventory_file(state, "usr/share/doc/base-package/copyright")
     state.files["usr/share/doc/base-package/copyright"] = {"sha256": "b" * 64}
-    state.tracked["var/lib/dpkg/status"] = (
+    status = (
         b"Package: base-package\nStatus: install ok installed\n"
         b"Version: 1.0\nSource: base-source (1.0-1)\n\n"
     )
+    _memory_inventory_file(state, "var/lib/dpkg/status", status)
     H._record_source_population(state)
-    state.tracked["var/lib/dpkg/status"] = state.tracked["var/lib/dpkg/status"].replace(
-        b"1.0", b"2.0"
+    _memory_inventory_file(state, "var/lib/dpkg/status", status.replace(b"1.0", b"2.0"))
+    H._record_source_population(state)
+    _memory_inventory_file(
+        state,
+        "usr/share/doc/npa-habitat-sim/fixture-source.txt",
+        b"inert source fixture\n",
     )
-    H._record_source_population(state)
-    state.files["usr/share/doc/npa-habitat-sim/fixture-source.txt"] = {
-        "sha256": _digest(b"inert source fixture\n"),
-        "size": len(b"inert source fixture\n"),
-    }
     return state
 
 
@@ -146,6 +154,181 @@ def test_current_image_contract_remains_source_delivery_quarantined() -> None:
 
 def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _memory_member(kind):
+    """Describe a benign member observation; never construct an archive."""
+    return SimpleNamespace(
+        uid=0,
+        gid=0,
+        mode=0o644,
+        linkname="ordinary.txt",
+        isfile=lambda: kind == "file",
+        isdir=lambda: kind == "directory",
+        issym=lambda: kind == "symlink",
+        islnk=lambda: kind == "hardlink",
+    )
+
+
+def _memory_inventory_state():
+    state = H._ScanState()
+    for path in ("sample/child.txt", "sample/nested/item.txt", "separate.txt"):
+        _memory_inventory_file(state, path)
+        state.elf[path] = b"inert metadata, not executable bytes"
+    state.paths["sample"] = "directory"
+    state.metadata["sample"] = {"kind": "directory"}
+    state.events.append({"path": "sample/child.txt", "kind": "file", "layer": 0})
+    state.source_inventory["prior"] = {"ecosystem": "fixture"}
+    state.regular_files = 3
+    state.content_bytes = 3
+    return state
+
+
+@pytest.mark.parametrize("kind", ["file", "symlink", "hardlink", "unsupported"])
+def test_inventory_memory_nondirectory_replacement_evicts_all_descendants(kind):
+    state = _memory_inventory_state()
+    before = copy.deepcopy(state)
+    H._replace_path(state, "sample", kind)
+    for mapping in H._final_state_maps(state):
+        assert not any(
+            path == "sample" or path.startswith("sample/") for path in mapping
+        )
+        assert "separate.txt" in mapping or mapping is state.links
+    assert state.events == before.events
+    assert state.source_inventory == before.source_inventory
+    assert (state.regular_files, state.content_bytes) == (3, 3)
+    H._require_reachable_state(state)
+
+
+@pytest.mark.parametrize("previous", ["directory", "implicit"])
+def test_inventory_memory_directory_observation_preserves_children(
+    previous, monkeypatch
+):
+    state = _memory_inventory_state()
+    if previous == "implicit":
+        state.paths.pop("sample")
+        state.metadata.pop("sample")
+    before = copy.deepcopy(state)
+    read = Mock(side_effect=AssertionError("directory must not read payload"))
+    monkeypatch.setattr(H, "_read_member", read)
+    H._record_member(state, None, _memory_member("directory"), "sample", 1, 0, CONTRACT)
+    assert state.files == before.files and state.tracked == before.tracked
+    assert state.elf == before.elf and state.links == before.links
+    assert state.events[:-1] == before.events
+    assert state.source_inventory == before.source_inventory
+    read.assert_not_called()
+    H._require_reachable_state(state)
+
+
+@pytest.mark.parametrize("kind", ["file", "symlink", "hardlink", "unsupported"])
+def test_inventory_memory_parent_refuses_before_member_effects(kind, monkeypatch):
+    state = H._ScanState(paths={"sample": kind})
+    before = copy.deepcopy(state)
+    read = Mock(side_effect=AssertionError("refusal must precede payload read"))
+    monkeypatch.setattr(H, "_read_member", read)
+    with pytest.raises(H.W.ScanError, match="habitat_oci_parent_not_directory"):
+        H._record_member(
+            state, None, _memory_member("file"), "sample/item.txt", 1, 0, CONTRACT
+        )
+    assert state == before
+    read.assert_not_called()
+
+
+@pytest.mark.parametrize("kind", ["file", "directory", "symlink", "hardlink"])
+def test_inventory_memory_type_changes_keep_maps_and_layer_history(kind, monkeypatch):
+    state = _memory_inventory_state()
+    before = copy.deepcopy(state)
+    payload = b"benign replacement observation"
+    row = {"sha256": _digest(payload), "size": len(payload), "elf": False}
+    read = Mock(return_value=(row, payload, None))
+    monkeypatch.setattr(H, "_read_member", read)
+    H._record_member(state, None, _memory_member(kind), "sample", 1, 7, CONTRACT)
+    H._require_reachable_state(state)
+    assert state.paths["sample"] == kind
+    assert ("sample/child.txt" in state.files) is (kind == "directory")
+    assert ("sample" in state.files) is (kind == "file")
+    assert ("sample" in state.links) is (kind in {"symlink", "hardlink"})
+    assert state.events[:-1] == before.events
+    assert state.source_inventory == before.source_inventory
+    assert state.regular_files == 3 + (kind == "file")
+    assert state.content_bytes == 3 + (len(payload) if kind == "file" else 0)
+    assert read.call_count == (kind == "file")
+
+
+@pytest.mark.parametrize("mapping", ["files", "links", "metadata", "tracked", "elf"])
+def test_inventory_memory_unbound_map_entry_is_refused(mapping):
+    state = H._ScanState()
+    getattr(state, mapping)["ordinary.txt"] = b"inert"
+    with pytest.raises(H.W.ScanError, match="habitat_oci_final_state_population"):
+        H._require_reachable_state(state)
+
+
+@pytest.mark.parametrize("boundary", ["_record_source_population", "_runtime_closures"])
+def test_inventory_memory_unreachable_population_refuses_before_closure(
+    boundary, monkeypatch
+):
+    state = _memory_inventory_state()
+    state.paths["sample"] = "file"
+    _memory_inventory_file(state, "sample")
+    before = copy.deepcopy(state)
+    parser = Mock(side_effect=AssertionError("unreachable input must not be consumed"))
+    monkeypatch.setattr(H, "_dpkg_records", parser)
+    monkeypatch.setattr(H, "_dpkg_findings", parser)
+    args = (
+        (state,)
+        if boundary == "_record_source_population"
+        else (state, CONTRACT, ("", "", ""))
+    )
+    with pytest.raises(H.W.ScanError, match="habitat_oci_parent_not_directory"):
+        getattr(H, boundary)(*args)
+    assert state == before
+    parser.assert_not_called()
+
+
+def test_inventory_memory_final_guard_precedes_all_population_checks(monkeypatch):
+    state = _memory_inventory_state()
+    _memory_inventory_file(state, "sample")
+    monkeypatch.setattr(H, "_ScanState", lambda: state)
+    population = Mock(
+        side_effect=AssertionError("must refuse before population checks")
+    )
+    monkeypatch.setattr(H, "_source_delivery_findings", population)
+    with pytest.raises(H.W.ScanError, match="habitat_oci_parent_not_directory"):
+        H._scan_layers(-1, [], CONTRACT, "", "", "")
+    population.assert_not_called()
+
+
+@pytest.mark.parametrize("mapping", ["metadata", "links"])
+def test_inventory_memory_inconsistent_kind_is_refused(mapping):
+    state = H._ScanState(paths={"ordinary.txt": "symlink"})
+    state.metadata["ordinary.txt"] = {"kind": "symlink"}
+    state.links["ordinary.txt"] = ("symlink", "other.txt")
+    if mapping == "metadata":
+        state.metadata["ordinary.txt"]["kind"] = "file"
+    else:
+        state.links["ordinary.txt"] = ("hardlink", "other.txt")
+    with pytest.raises(H.W.ScanError, match="habitat_oci_final_state_kind"):
+        H._require_reachable_state(state)
+
+
+def test_inventory_memory_changed_helpers_are_focused_and_documented():
+    tree = ast.parse(Path(H.__file__).read_text())
+    names = {
+        "_final_state_maps",
+        "_require_directory_ancestors",
+        "_require_reachable_state",
+        "_replace_path",
+        "_record_regular_member",
+        "_record_member",
+    }
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in names
+    ]
+    assert len(functions) == len(names)
+    assert all(node.end_lineno - node.lineno + 1 < 40 for node in functions)
+    assert all(ast.get_docstring(node) for node in functions)
 
 
 def _mock_archive_info():
@@ -769,6 +952,52 @@ def _cli_source_manifest() -> tuple[bytes, dict[str, bytes]]:
         for path, payload in inputs.items()
     ]
     return b"".join(sorted(rows, key=lambda row: row.split(b"  ", 1)[1])), inputs
+
+
+@pytest.mark.parametrize("observation", ["valid", "missing", "changed"])
+def test_apt_source_module_provenance_binds_exact_final_bytes(observation):
+    manifest, _inputs = _cli_source_manifest()
+    expected = VERIFIER._parse_source_manifest(manifest)
+    relative = "inputs/docker/workbench/habitat-sim/verify_apt_source.py"
+    assert len(expected) == 20 and relative in expected
+    assert relative not in VERIFIER.EXECUTABLE_SOURCE_DESTINATIONS
+    contract = {
+        "required_labels": {},
+        "required_final_paths": [],
+        "required_final_file_sha256": {},
+    }
+    VERIFIER._bind_provenance_files(
+        contract, SOURCE_REVISION, expected, _digest(manifest)
+    )
+    files = {
+        path.lstrip("/"): {"sha256": digest}
+        for path, digest in contract["required_final_file_sha256"].items()
+    }
+    target = f"{VERIFIER.PROVENANCE_ROOT}/{relative}"
+    if observation == "missing":
+        files.pop(target)
+    elif observation == "changed":
+        files[target]["sha256"] = _digest(b"changed benign source text")
+    findings = H._required_file_findings(files, contract)
+    assert findings == (
+        []
+        if observation == "valid"
+        else [{"code": "required_file_hash_mismatch", "path": "/" + target}]
+    )
+
+
+def test_apt_source_module_missing_manifest_member_is_refused():
+    manifest, _inputs = _cli_source_manifest()
+    reduced = (
+        b"\n".join(
+            row
+            for row in manifest.splitlines()
+            if not row.endswith(b"/verify_apt_source.py")
+        )
+        + b"\n"
+    )
+    with pytest.raises(H.W.ScanError, match="source_manifest_path_set_mismatch"):
+        VERIFIER._parse_source_manifest(reduced)
 
 
 def _cli_fixture(

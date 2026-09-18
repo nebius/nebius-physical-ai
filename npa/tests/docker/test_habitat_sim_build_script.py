@@ -28,6 +28,7 @@ SOURCE_PATHS = (
     "docker/workbench/habitat-sim/runtime-payload.json",
     "docker/workbench/habitat-sim/source-manifest.json",
     "docker/workbench/habitat-sim/verify_apt_artifacts.sh",
+    "docker/workbench/habitat-sim/verify_apt_source.py",
     "docker/workbench/habitat-sim/verify_image.py",
     "docker/workbench/packaging-contract.yaml",
     "src/npa/__init__.py",
@@ -177,6 +178,7 @@ def test_builder_keeps_relative_output_bound_to_original_cwd(tmp_path: Path) -> 
 
 
 def test_builder_and_verifier_share_the_exact_source_input_path_set() -> None:
+    assert len(SOURCE_PATHS) == 20
     tree = ast.parse((SCRIPT.parent / "verify_image.py").read_text(encoding="utf-8"))
     assignment = next(
         node
@@ -193,6 +195,23 @@ def test_builder_and_verifier_share_the_exact_source_input_path_set() -> None:
     assert tuple(line.strip() for line in declared.splitlines() if line.strip()) == (
         SOURCE_PATHS
     )
+
+
+def test_source_verifier_module_is_projected_from_exact_committed_bytes(tmp_path):
+    repository, script = _committed_fixture(tmp_path)
+    env, _log, capture = _stubbed_environment(tmp_path)
+    result = _run(tmp_path / "candidate.oci.tar", env=env, script=script)
+    assert result.returncode == 0, result.stderr
+    relative = "docker/workbench/habitat-sim/verify_apt_source.py"
+    committed = subprocess.check_output(
+        ["git", "-C", str(repository), "show", f"HEAD:npa/{relative}"]
+    )
+    assert (capture / "inputs" / relative).read_bytes() == committed
+    manifest = (capture / "npa-source-manifest.sha256").read_text().splitlines()
+    assert len(manifest) == 20
+    import hashlib
+
+    assert f"{hashlib.sha256(committed).hexdigest()}  inputs/{relative}" in manifest
 
 
 @pytest.mark.parametrize("mode", [0o777, 0o770, 0o722])

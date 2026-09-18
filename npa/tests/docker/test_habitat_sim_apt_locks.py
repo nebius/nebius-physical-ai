@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+import ast
 import lzma
 from pathlib import Path
 import re
+import runpy
 import subprocess
+import sys
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import yaml
@@ -108,10 +113,69 @@ def _assert_verifier_mount_in_consuming_run(dockerfile: str) -> None:
         assert consumers[0].startswith(f"RUN {mount} "), (
             "APT verifier must be mounted in its consuming RUN"
         )
+        module = (
+            f"--mount={source}verify_apt_source.py,"
+            "target=/usr/local/libexec/verify_apt_source.py,ro"
+        )
+        assert consumers[0].count(module) == 1, (
+            "APT source module must be mounted in its consuming RUN"
+        )
 
 
 def test_apt_verifier_is_mounted_in_each_consuming_run() -> None:
     _assert_verifier_mount_in_consuming_run((PACKAGE / "Dockerfile").read_text())
+
+
+@pytest.mark.parametrize("stage_index", [0, 1])
+@pytest.mark.parametrize("mutation", ["missing", "previous-run", "wrong-source"])
+def test_source_module_requires_exact_same_run_mount(stage_index, mutation):
+    stages = (
+        (PACKAGE / "Dockerfile").read_text().split("FROM ${BASE_IMAGE} AS runtime", 1)
+    )
+    stage = stages[stage_index]
+    mount = re.search(
+        r"--mount=[^\n]+target=/usr/local/libexec/verify_apt_source.py,ro", stage
+    )
+    assert mount is not None
+    original = mount.group()
+    replacement = (
+        ""
+        if mutation != "wrong-source"
+        else original.replace("source=/", "source=/wrong/")
+    )
+    stages[stage_index] = stage.replace(original, replacement, 1)
+    if mutation == "previous-run":
+        stages[stage_index] = f"RUN {original} true\n" + stages[stage_index]
+    with pytest.raises(AssertionError, match="source module must be mounted"):
+        _assert_verifier_mount_in_consuming_run(
+            "FROM ${BASE_IMAGE} AS runtime".join(stages)
+        )
+
+
+def test_source_module_has_explicit_cli_and_short_documented_helpers():
+    source = (PACKAGE / "verify_apt_source.py").read_text()
+    tree = ast.parse(source, feature_version=(3, 10))
+    assert ast.get_docstring(tree)
+    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+    assert functions and {
+        node.name for node in functions if not node.name.startswith("_")
+    } == {"main"}
+    for node in functions:
+        assert node.end_lineno - node.lineno + 1 < 40, node.name
+        assert ast.get_docstring(node), node.name
+    main = next(node for node in functions if node.name == "main")
+    assert all(
+        section in ast.get_docstring(main)
+        for section in ("Args:", "Returns:", "Raises:")
+    )
+    wrapper = (
+        APT_VERIFIER.read_text()
+        .split("verify_source_package() {", 1)[1]
+        .split("\n}", 1)[0]
+    )
+    assert len(wrapper.splitlines()) < 10 and "<<" not in wrapper
+    assert "${BASH_SOURCE[0]}" in wrapper and 'cd -- "$(dirname --' in wrapper
+    assert '/usr/bin/python3 "$script_directory/verify_apt_source.py" "$@"' in wrapper
 
 
 @pytest.mark.parametrize("stage_index", [0, 1])
@@ -298,6 +362,61 @@ def test_source_index_refuses_semantic_mismatch_despite_valid_archive_hash(
     result = _run_apt_verifier("verify-source", lock, index, directory)
     assert result.returncode != 0
     assert "source package refused:" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "",
+        "version",
+        "directory",
+        "duplicate",
+        "missing",
+        "extra",
+        "files-size",
+        "digest",
+    ],
+)
+def test_explicit_source_module_and_wrapper_are_equivalent(tmp_path, mutation):
+    lock, index, directory = _source_index_fixture(tmp_path, mutation)
+    args = [str(path) for path in (lock, index, directory)]
+    direct = subprocess.run(
+        [sys.executable, str(PACKAGE / "verify_apt_source.py"), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    wrapped = _run_apt_verifier("verify-source", *args)
+    assert (direct.returncode, direct.stdout, direct.stderr) == (
+        wrapped.returncode,
+        wrapped.stdout,
+        wrapped.stderr,
+    )
+    assert (direct.returncode == 0) is (mutation == "")
+
+
+@pytest.mark.parametrize("count", [0, 1, 4])
+def test_source_module_refuses_wrong_arity_before_reads(count, monkeypatch):
+    module = runpy.run_path(str(PACKAGE / "verify_apt_source.py"))
+    read = Mock(side_effect=AssertionError("input read before arity refusal"))
+    monkeypatch.setattr(Path, "read_text", read)
+    with pytest.raises(SystemExit, match="usage: LOCK SOURCES_XZ"):
+        module["main"](["inert"] * count)
+    read.assert_not_called()
+
+
+@pytest.mark.parametrize("eof,unused", [(False, b""), (True, b"inert-trailing")])
+def test_source_module_keeps_bounded_decoder_boundary(
+    tmp_path, monkeypatch, eof, unused
+):
+    lock, index, _directory = _source_index_fixture(tmp_path)
+    module = runpy.run_path(str(PACKAGE / "verify_apt_source.py"))
+    decompress = Mock(return_value=b"benign in-memory index observation")
+    decoder = SimpleNamespace(decompress=decompress, eof=eof, unused_data=unused)
+    monkeypatch.setattr(lzma, "LZMADecompressor", lambda: decoder)
+    with pytest.raises(SystemExit, match="index compression boundary"):
+        module["main"]([str(lock), str(index)])
+    decompress.assert_called_once_with(index.read_bytes(), max_length=64 * 1024 * 1024)
 
 
 def test_ca_bootstrap_is_bound_to_same_snapshot_and_exact_hash() -> None:

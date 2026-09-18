@@ -1070,6 +1070,7 @@ def _source_identity(row: dict[str, object]) -> str:
 def _record_source_population(state: _ScanState) -> None:
     # Retain each distinct version from every layer, including superseded base
     # packages. A final-rootfs-only inventory cannot describe distributed layers.
+    _require_reachable_state(state)
     installed = _dpkg_records(state.tracked.get("var/lib/dpkg/status", b""))
     for name, identity in installed.items():
         copyright_path = _resolve_final_path(
@@ -1202,16 +1203,74 @@ def _read_member(
     return {"sha256": digest, "size": size, "elf": prefix == b"\x7fELF"}, tracked, elf
 
 
-def _replace_path(state: _ScanState, path: str) -> None:
-    for mapping in (
+def _final_state_maps(state: _ScanState) -> tuple[dict, ...]:
+    """Return only final-filesystem maps, excluding immutable layer evidence."""
+    return (
         state.paths,
         state.files,
         state.links,
         state.metadata,
         state.tracked,
         state.elf,
-    ):
-        mapping.pop(path, None)
+    )
+
+
+def _require_directory_ancestors(paths: dict[str, str], path: str) -> None:
+    """Permit existing implicit directories, never a non-directory parent."""
+    for ancestor in PurePosixPath(path).parents:
+        name = str(ancestor)
+        if name not in {".", ""}:
+            W.require(
+                paths.get(name) in {None, "directory"},
+                "habitat_oci_parent_not_directory",
+            )
+
+
+def _require_reachable_state(state: _ScanState) -> None:
+    """Require consistent reachable populations before computing any closure."""
+    files = {path for path, kind in state.paths.items() if kind == "file"}
+    links = {
+        path for path, kind in state.paths.items() if kind in {"symlink", "hardlink"}
+    }
+    W.require(
+        set(state.files) == files
+        and set(state.links) == links
+        and set(state.metadata) == set(state.paths)
+        and set(state.tracked) <= files
+        and set(state.elf) <= files,
+        "habitat_oci_final_state_population",
+    )
+    for path, kind in state.paths.items():
+        _require_directory_ancestors(state.paths, path)
+        W.require(
+            state.metadata[path]["kind"] == kind
+            and (path not in links or state.links[path][0] == kind),
+            "habitat_oci_final_state_kind",
+        )
+
+
+def _replace_path(state: _ScanState, path: str, kind: str) -> None:
+    """Keep children only for directories; replace other types as subtrees."""
+    for mapping in _final_state_maps(state):
+        if kind == "directory":
+            mapping.pop(path, None)
+        else:
+            _remove_tree(mapping, path)
+
+
+def _record_regular_member(state, archive, member, path, location, contract) -> str:
+    """Retain byte accounting and independent per-layer payload findings."""
+    file_row, tracked, elf = _read_member(archive, member, path)
+    state.files[path] = file_row
+    state.regular_files += 1
+    state.content_bytes += int(file_row["size"])
+    if tracked is not None:
+        state.tracked[path] = tracked
+    if elf is not None:
+        state.elf[path] = elf
+    if file_row["sha256"] in contract["forbidden_content_sha256"]:
+        state.findings.append({"code": "forbidden_payload_hash", **location})
+    return str(file_row["sha256"])
 
 
 def _record_member(
@@ -1223,9 +1282,11 @@ def _record_member(
     entry: int,
     contract: dict[str, object],
 ) -> None:
+    """Record a reachable member without rewriting earlier layer evidence."""
+    _require_directory_ancestors(state.paths, path)
     kind = _member_kind(member)
     state.findings.extend(_member_policy_findings(path, kind, layer, entry, contract))
-    _replace_path(state, path)
+    _replace_path(state, path, kind)
     state.paths[path] = kind
     metadata = {
         "kind": kind,
@@ -1238,19 +1299,9 @@ def _record_member(
     if member.issym() or member.islnk():
         state.links[path] = (kind, member.linkname)
     if member.isfile():
-        file_row, tracked, elf = _read_member(archive, member, path)
-        state.files[path] = file_row
-        event["sha256"] = file_row["sha256"]
-        state.regular_files += 1
-        state.content_bytes += int(file_row["size"])
-        if tracked is not None:
-            state.tracked[path] = tracked
-        if elf is not None:
-            state.elf[path] = elf
-        if file_row["sha256"] in contract["forbidden_content_sha256"]:
-            state.findings.append(
-                {"code": "forbidden_payload_hash", "layer": layer, "entry": entry}
-            )
+        event["sha256"] = _record_regular_member(
+            state, archive, member, path, {"layer": layer, "entry": entry}, contract
+        )
     state.events.append(event)
 
 
@@ -1268,6 +1319,7 @@ def _scan_layer(
             state.entries += 1
             path = W.safe_name(member.name)
             W.require(path not in seen, "habitat_oci_duplicate_layer_path")
+            _require_directory_ancestors(state.paths, path)
             seen.add(path)
             state.events.append({"path": path, "layer": layer, "kind": "whiteout"})
             if _apply_whiteout(
@@ -1390,6 +1442,7 @@ def _executable_source_findings(
 def _runtime_closures(
     state: _ScanState, contract: dict[str, object], expected: tuple[str, str, str]
 ) -> dict[str, object]:
+    _require_reachable_state(state)
     dpkg = _dpkg_findings(
         state.paths, state.files, state.links, state.tracked, contract, expected[0]
     )
@@ -1464,6 +1517,7 @@ def _scan_layers(
     for layer, row in enumerate(layers):
         _scan_layer(fd, row, layer, contract, state)
         _record_source_population(state)
+    _require_reachable_state(state)
     state.findings.extend(_source_delivery_findings(state, contract))
     state.findings.extend(
         _required_path_findings(state.paths, contract["required_final_paths"])

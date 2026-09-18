@@ -95,6 +95,7 @@ RUN test -n "${NPA_SOURCE_SHA}" && printf '%s' "${NPA_SOURCE_SHA}" | grep -Eq '^
       > /opt/npa-source-provenance/npa-source-provenance.json && \
     rm -f /tmp/npa-source-expected-paths /tmp/npa-source-observed-paths
 RUN --mount=from=npa-source-provenance,source=/inputs/docker/workbench/habitat-sim/verify_apt_artifacts.sh,target=/usr/local/libexec/npa-habitat-verify-apt,ro \
+    --mount=from=npa-source-provenance,source=/inputs/docker/workbench/habitat-sim/verify_apt_source.py,target=/usr/local/libexec/verify_apt_source.py,ro \
     test -n "${NPA_SOURCE_SHA}" && printf '%s' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$' && \
     test "$(wc -l < /etc/ca-certificates.conf)" -eq "${CA_CERT_COUNT}" && \
     test "$(stat -c %s /etc/ca-certificates.conf)" -eq "${CA_CONFIG_BYTES}" && \
@@ -245,6 +246,7 @@ COPY --from=npa-ca-trust /etc/ca-certificates.conf /etc/ca-certificates.conf
 COPY --from=npa-ca-trust /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /opt/npa-build/apt-runtime.lock /tmp/npa-apt-runtime.lock
 RUN --mount=from=build,source=/opt/npa-source-provenance/inputs/docker/workbench/habitat-sim/verify_apt_artifacts.sh,target=/usr/local/libexec/npa-habitat-verify-apt,ro \
+    --mount=from=build,source=/opt/npa-source-provenance/inputs/docker/workbench/habitat-sim/verify_apt_source.py,target=/usr/local/libexec/verify_apt_source.py,ro \
     test "$(wc -l < /etc/ca-certificates.conf)" -eq "${CA_CERT_COUNT}" && \
     test "$(stat -c %s /etc/ca-certificates.conf)" -eq "${CA_CONFIG_BYTES}" && \
     printf '%s  %s\n' "${CA_CONFIG_SHA256}" /etc/ca-certificates.conf | sha256sum -c - && \

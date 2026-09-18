@@ -39,6 +39,7 @@ NPA_SOURCE_PATHS = (
     "docker/workbench/habitat-sim/runtime-payload.json",
     "docker/workbench/habitat-sim/source-manifest.json",
     "docker/workbench/habitat-sim/verify_apt_artifacts.sh",
+    "docker/workbench/habitat-sim/verify_apt_source.py",
     "docker/workbench/habitat-sim/verify_image.py",
     "docker/workbench/packaging-contract.yaml",
     "src/npa/__init__.py",
