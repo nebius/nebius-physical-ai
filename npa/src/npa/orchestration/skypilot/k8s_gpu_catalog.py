@@ -294,7 +294,7 @@ def kubernetes_sky_environment(
             isolated_dir=scope,
             sky_executable=sky_executable,
             environment=validation_env,
-            cwd=str(kubeconfig_path.parent),
+            cwd=str(scope),
         )
         return validation_env
 
@@ -1146,6 +1146,7 @@ def discover_kubernetes_gpu_catalog(
     environment = kubernetes_sky_environment(
         context=context, kubeconfig=kubeconfig, sky_executable=sky_executable
     )
+    session_cwd = Path(environment["NPA_SKYPILOT_ISOLATED_API_DIR"])
     try:
         result = execute(
             cmd,
@@ -1155,6 +1156,7 @@ def discover_kubernetes_gpu_catalog(
             timeout=timeout,
             check=False,
             env=environment,
+            cwd=session_cwd,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise KubernetesGpuCatalogError(
@@ -1174,6 +1176,7 @@ def discover_kubernetes_gpu_catalog(
             timeout=timeout,
             check=False,
             env=environment,
+            cwd=session_cwd,
         )
         checked_output = "\n".join(
             part for part in (checked.stdout, checked.stderr) if part
@@ -1197,6 +1200,7 @@ def discover_kubernetes_gpu_catalog(
             timeout=timeout,
             check=False,
             env=environment,
+            cwd=session_cwd,
         )
         output = "\n".join(part for part in (result.stdout, result.stderr) if part)
     if result.returncode != 0:
