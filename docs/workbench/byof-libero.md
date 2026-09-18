@@ -90,26 +90,24 @@ provenance equality. Finite
 path and content signatures remain defense in depth, not the proof that
 arbitrary renamed, compiled, or subsequently whiteouted bytes are absent.
 Before LIBERO's first package-wide visibility change, the private destination
-must contain exactly the qualified untagged candidate digest and no other image
-or embedded attestation graph. Other first publications still require a nonexistent
-or zero-version destination, then re-enumerate and tag-filter the complete
-post-push version graph immediately before the visibility mutation. The target
-namespace is globally serialized. A failed first publish
-of another image reconciles a still-private package only after proving its
-repository binding, exact retained run tag, complete candidate/referrer graph,
-and zero unrelated versions; ambiguity refuses without mutation. A failed
-LIBERO attempt before visibility changes retains the independently qualified
-private untagged graph as recovery evidence.
-If a build runner fails or is cancelled after the package-wide visibility
-transition, an `always()` reconciliation job on a separate runner first makes a
-complete, repository-bound, zero-unrelated candidate graph private, rechecks it,
-and deletes the package with a 404 absence proof. When unrelated public versions
-exist, it deletes only the identity-stable candidate and bound referrers while
-proving unrelated versions unchanged. LIBERO uses its signed qualified digest
-set for the same decision: an exact whole package is made private and deleted;
-graph drift triggers version-scoped deletion of only the qualified graph.
-Requested LIBERO cleanup remains a separately authorized package-wide public
-deletion and refuses retained private evidence or any extra/shared version.
+must contain exactly the qualified untagged OCI graph and no unrelated version.
+The workflow still refuses the visibility change: repository workflow concurrency
+does not exclude other registry writers, and no registry-enforced exclusive-writer
+or atomic compare-and-set primitive is available. Other first publications also
+require a nonexistent or zero-version destination; a retained nonempty private
+package is preserved and refused, never deleted merely because its tags or OCI
+subjects match a candidate.
+
+Requested and failed-build reconciliation may inspect package identity, graph,
+tags, and run-bound evidence, but it does not delete package versions or change
+visibility. Even an exact final graph read cannot exclude another writer adding
+a release tag before a version deletion. Without an atomic identity-and-tag
+deletion primitive, reconciliation exits with an explicit refusal and retains
+the versions and package configuration for operator recovery. Absence can be
+reported only from the existing bounded read-only checks. A failed or cancelled
+build remains failed; retained public bytes are not claimed revoked or cleaned.
+This source-only boundary is not authorization to publish, repair a registry,
+accept customer terms, or perform a live run.
 Both build paths derive `SOURCE_DATE_EPOCH` from that exact source commit so the
 identity comparison cannot depend on the wall-clock build time. The package
 transaction removes APT/dpkg/account logs and normalizes the non-root account's

@@ -584,7 +584,7 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
         "LIBERO_PRIVATE_CONFIG_DIGEST: ${{ matrix.libero_private_config_digest }}"
     ) in text
     assert 'version_count="$(jq \'length\' "$versions")"' in text
-    assert "closed unpublished candidate/referrer graph before retry" in text
+    assert "Retained private destination has no atomic run-owned cleanup proof" in text
     assert "Private destination is genuinely empty" in text
     assert "exactly the qualified untagged OCI graph" in text
     assert "tagged_count=" in text
@@ -616,10 +616,9 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
         assert host_gate in text
     assert 'test "$LIBERO_PACKAGE_WRITER_REPOSITORY" = "$GITHUB_REPOSITORY"' in text
     assert "Retained the private qualified LIBERO versions" in text
-    assert "Deleted only the exact qualified failed public LIBERO OCI versions" in text
-    assert "Deleted the complete exact failed public LIBERO OCI graph" in text
-    assert "Failed-build candidate package absence is unverified" in text
-    assert 'gh api --method DELETE "${package_api}/versions/${version_id}"' in text
+    assert "Refusing non-atomic registry cleanup" in text
+    assert "versions and package configuration are retained" in text
+    assert "gh api --method DELETE" not in text
     assert "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_B64" not in text
     assert "LIBERO_QUALIFIED_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_SHA256" not in text
     assert "LIBERO_QUALIFIED_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_SHA256" in text
@@ -630,7 +629,7 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
         "--secret id=npa_libero_output_storage_authorization_public_key_b64,"
         "env=NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64"
     ) in text
-    assert "Deleted the complete exact requested public LIBERO OCI graph" in text
+    assert "no atomic run-owned cleanup proof; preserve the package" in text
     assert '"failure","cancelled"' in text
     for immutable_action in (
         "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
@@ -675,7 +674,7 @@ def test_libero_scratch_cleanup_failure_runs_once_and_fails(
     assert completed.stderr.count("LIBERO scratch config cleanup failed") == 1
 
 
-def test_libero_requested_cleanup_executes_complete_exact_graph_or_refuses(
+def test_libero_requested_cleanup_refuses_even_a_complete_exact_graph(
     tmp_path: Path,
 ) -> None:
     spec = yaml.safe_load(PUBLICATION_WORKFLOW.read_text(encoding="utf-8"))
@@ -761,14 +760,10 @@ def test_libero_requested_cleanup_executes_complete_exact_graph_or_refuses(
         text=True,
         check=False,
     )
-    assert completed.returncode == 0, completed.stderr
-    assert delete_record.read_text(encoding="utf-8").splitlines() == [
-        "/orgs/nebius/packages/container/nebius-physical-ai%2Fnpa-libero/versions/102",
-        "/orgs/nebius/packages/container/nebius-physical-ai%2Fnpa-libero/versions/103",
-        "/orgs/nebius/packages/container/nebius-physical-ai%2Fnpa-libero/versions/101",
-    ]
-
-    delete_record.unlink()
+    assert completed.returncode != 0, completed.stderr
+    assert "Refusing non-atomic registry cleanup" in completed.stdout
+    assert not delete_record.exists()
+    assert json.loads(exact_state.read_text(encoding="utf-8")) == exact_versions
     unrelated = [
         *exact_versions,
         {
@@ -874,7 +869,7 @@ def test_failed_build_cleanup_accepts_only_proven_package_absence(
         )
 
 
-def test_failed_libero_cleanup_removes_only_qualified_versions_under_graph_drift(
+def test_failed_libero_cleanup_preserves_qualified_and_unrelated_versions(
     tmp_path: Path,
 ) -> None:
     spec = yaml.safe_load(PUBLICATION_WORKFLOW.read_text(encoding="utf-8"))
@@ -1065,25 +1060,22 @@ def test_failed_libero_cleanup_removes_only_qualified_versions_under_graph_drift
         check=False,
     )
 
-    assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert set(delete_record.read_text(encoding="utf-8").splitlines()) == {
-        "1",
-        "2",
-        "3",
-    }
+    assert completed.returncode != 0, completed.stdout + completed.stderr
+    assert "Refusing non-atomic registry cleanup" in completed.stdout
+    assert not delete_record.exists()
     assert json.loads(state_path.read_text(encoding="utf-8")) == [
+        {"id": 1, "name": root, "metadata": {"container": {"tags": [tag]}}},
+        {"id": 2, "name": platform, "metadata": {"container": {"tags": []}}},
+        {"id": 3, "name": attestation, "metadata": {"container": {"tags": []}}},
         {
             "id": 99,
             "name": unrelated,
             "metadata": {"container": {"tags": ["stable-other"]}},
-        }
+        },
     ]
-    assert "Deleted only the exact qualified" in (tmp_path / "summary").read_text(
-        encoding="utf-8"
-    )
 
 
-def test_failed_libero_cleanup_makes_exact_graph_private_before_package_delete(
+def test_failed_libero_cleanup_preserves_public_visibility_and_exact_graph(
     tmp_path: Path,
 ) -> None:
     spec = yaml.safe_load(PUBLICATION_WORKFLOW.read_text(encoding="utf-8"))
@@ -1285,21 +1277,20 @@ def test_failed_libero_cleanup_makes_exact_graph_private_before_package_delete(
         check=False,
     )
 
-    assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert operations.read_text(encoding="utf-8").splitlines() == [
-        "delete-version-2",
-        "delete-version-3",
-        "delete-version-1",
-    ]
+    assert completed.returncode != 0, completed.stdout + completed.stderr
+    assert "Refusing non-atomic registry cleanup" in completed.stdout
+    assert not operations.exists()
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["visibility"] == "public"
-    assert state["deleted"] is True
-    assert "Deleted the complete exact failed public LIBERO OCI graph" in (
-        tmp_path / "summary"
-    ).read_text(encoding="utf-8")
+    assert state["deleted"] is False
+    assert state["versions"] == [
+        {"id": 1, "name": root, "metadata": {"container": {"tags": [tag]}}},
+        {"id": 2, "name": platform, "metadata": {"container": {"tags": []}}},
+        {"id": 3, "name": attestation, "metadata": {"container": {"tags": []}}},
+    ]
 
 
-def test_first_publication_retry_reconciles_only_a_closed_private_graph(
+def test_first_publication_retry_preserves_a_closed_private_graph_without_ownership(
     tmp_path: Path,
 ) -> None:
     spec = yaml.safe_load(PUBLICATION_WORKFLOW.read_text(encoding="utf-8"))
@@ -1393,9 +1384,15 @@ def test_first_publication_retry_reconciles_only_a_closed_private_graph(
         check=False,
     )
 
-    assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert json.loads(state_path.read_text(encoding="utf-8"))["deleted"] is True
+    assert completed.returncode != 0, completed.stdout + completed.stderr
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["deleted"] is False
+    assert state["versions"] == [
+        {"id": 1, "name": root, "metadata": {"container": {"tags": [tag]}}},
+        {"id": 2, "name": referrer, "metadata": {"container": {"tags": []}}},
+    ]
     assert "NPA_FIRST_PUBLICATION_REQUIRED=1" in github_env.read_text(encoding="utf-8")
-    assert "closed unpublished candidate/referrer graph" in (
-        tmp_path / "summary"
-    ).read_text(encoding="utf-8")
+    assert (
+        "Retained private destination has no atomic run-owned cleanup proof"
+        in completed.stdout
+    )

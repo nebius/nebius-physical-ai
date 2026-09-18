@@ -48,7 +48,7 @@ on:
         required: false
         default: ""
       cleanup_development_tools:
-        description: "Exact failed/superseded dev tags to delete without promotion"
+        description: "Inspect exact failed/superseded dev tags; deletion requires registry atomicity"
         required: false
         default: ""
 
@@ -590,82 +590,10 @@ jobs:
                 echo "Private destination is repository-bound and contains exactly the qualified untagged OCI graph (${version_count} versions)." >> "$GITHUB_STEP_SUMMARY"
               else
                 if [ "$version_count" != 0 ]; then
-                  validate_retained_graph() {
-                    npa/.venv/bin/python - "$repository" "$tag" "$1" <<'PY'
-          import json
-          import re
-          import subprocess
-          import sys
-
-          repository, tag, versions_path = sys.argv[1:]
-          versions = json.load(open(versions_path, encoding="utf-8"))
-          if not isinstance(versions, list) or not versions:
-              raise SystemExit("retained package graph is empty or malformed")
-          identities = [str(item.get("id") or "") for item in versions if isinstance(item, dict)]
-          if len(identities) != len(versions) or len(set(identities)) != len(versions) or any(re.fullmatch(r"[1-9][0-9]*", item) is None for item in identities):
-              raise SystemExit("retained package version identities are ambiguous")
-          tagged = [item for item in versions if (item.get("metadata", {}).get("container", {}).get("tags") or [])]
-          if len(tagged) != 1 or (tagged[0].get("metadata", {}).get("container", {}).get("tags") or []) != [tag]:
-              raise SystemExit("retained package does not have exactly the expected candidate tag")
-          root = str(tagged[0].get("name") or "")
-          if re.fullmatch(r"sha256:[0-9a-f]{64}", root) is None:
-              raise SystemExit("retained candidate digest is invalid")
-          observed = subprocess.check_output(["crane", "digest", f"{repository}@{root}"], text=True).strip()
-          if observed != root:
-              raise SystemExit("retained candidate digest cannot be revalidated")
-          for item in versions:
-              if item is tagged[0]:
-                  continue
-              tags = item.get("metadata", {}).get("container", {}).get("tags") or []
-              digest = str(item.get("name") or "")
-              if tags or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
-                  raise SystemExit("retained package contains an unrelated version")
-              manifest = json.loads(subprocess.check_output(["crane", "manifest", f"{repository}@{digest}"]))
-              annotations = manifest.get("annotations") or {}
-              subject = manifest.get("subject") or {}
-              if (
-                  manifest.get("schemaVersion") != 2
-                  or manifest.get("mediaType") != "application/vnd.oci.image.manifest.v1+json"
-                  or not isinstance(manifest.get("layers"), list)
-                  or not manifest["layers"]
-                  or (
-                      subject.get("digest") != root
-                      and annotations.get("vnd.docker.reference.digest") != root
-                  )
-              ):
-                  raise SystemExit("retained referrer is not bound to the candidate")
-          print(root)
-          PY
-                  }
-                  test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
-                    "$GITHUB_REPOSITORY"
-                  retained_digest="$(validate_retained_graph "$versions")" || {
-                    echo "::error::Private destination is not a closed repository-bound retained candidate graph"
-                    exit 1
-                  }
-                  retained_snapshot="$(mktemp)"
-                  jq '[.[] | {id:(.id | tostring), name, tags:(.metadata.container.tags // [])}] | sort_by(.id)' \
-                    "$versions" > "$retained_snapshot"
-                  current_versions="$(mktemp)"
-                  gh api --paginate --slurp "${package_api}/versions?per_page=100" |
-                    jq 'add' > "$current_versions"
-                  test "$(validate_retained_graph "$current_versions")" = "$retained_digest"
-                  jq -e --slurpfile before "$retained_snapshot" '
-                    ([.[] | {id:(.id | tostring), name,
-                      tags:(.metadata.container.tags // [])}] | sort_by(.id)) == $before[0]
-                  ' "$current_versions" >/dev/null
-                  test "$(gh api "$package_api" --jq .visibility)" = private
-                  test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
-                    "$GITHUB_REPOSITORY"
-                  gh api --method DELETE "$package_api"
-                  if gh api -i "$package_api" >"$response" 2>&1; then
-                    echo "::error::Retained unpublished candidate package still exists after reconciliation"
-                    exit 1
-                  elif ! grep -q '^HTTP/.* 404 ' "$response"; then
-                    echo "::error::Retained unpublished candidate package absence is unverified"
-                    exit 1
-                  fi
-                  echo "Reconciled one exact closed unpublished candidate/referrer graph before retry." >> "$GITHUB_STEP_SUMMARY"
+                  # A matching tag or OCI subject does not prove run ownership.
+                  # Repeated graph reads cannot make package deletion atomic.
+                  echo "::error::Retained private destination has no atomic run-owned cleanup proof; preserve the package"
+                  exit 1
                 elif [ "$tagged_count" != 0 ]; then
                   echo "::error::Empty private destination unexpectedly contains tagged versions"
                   exit 1
@@ -680,7 +608,8 @@ jobs:
             echo "NPA_FIRST_PUBLICATION_REQUIRED=1" >> "$GITHUB_ENV"
             # A new package is created only after every local byte-level gate below
             # passes. The pushed digest is scanned again before the package visibility
-            # changes, and any failure triggers exact run-owned version cleanup.
+            # changes. Failure reconciliation is read-only: this registry has no
+            # atomic identity-and-tag deletion primitive, so bytes are retained.
             if [ "$TOOL" = libero ]; then
               echo "::error::Qualified LIBERO candidate package is absent"
               exit 1
@@ -1527,8 +1456,8 @@ jobs:
           test "$anonymous_digest" = "$DIGEST"
           if [ "$TOOL" = libero ]; then
             # Tagging is the final registry mutation. If it partially succeeds,
-            # the failure cleanup deletes the whole previously verified public
-            # package graph, including every untagged platform/referrer version.
+            # failure reconciliation retains the graph and reports refusal;
+            # read/check/delete is not an atomic registry cleanup transaction.
             crane tag "$exact" "dev-$DEVELOPMENT_SHA"
             test "$(crane digest "$IMAGE")" = "$LIBERO_QUALIFIED_OCI_DIGEST"
             tagged_versions="$RUNNER_TEMP/libero-tagged-package-versions.json"
@@ -1683,14 +1612,6 @@ jobs:
               }
             }
 
-            forget_requested_libero_version() {
-              local deleted_id="$1"
-              jq -S --arg id "$deleted_id" \
-                '[.[] | select((.id | tostring) != $id)] | sort_by(.id | tostring)' \
-                "$expected_versions" > "${expected_versions}.next"
-              mv "${expected_versions}.next" "$expected_versions"
-            }
-
             while IFS=$'\t' read -r version_id digest tags; do
               test "$(crane digest "$repository@$digest")" = "$digest"
               require_complete_requested_libero_graph
@@ -1704,33 +1625,11 @@ jobs:
                 echo "::error::Requested LIBERO cleanup target identity changed"
                 exit 1
               }
-              gh api --method DELETE "${package_api}/versions/${version_id}"
-              forget_requested_libero_version "$version_id"
             done < "$cleanup_rows"
-            test "$(jq length "$expected_versions")" = 0
-            final_pages="$(mktemp)"
-            if gh api --paginate --slurp "${package_api}/versions?per_page=100" > "$final_pages"; then
-              jq -e '
-                type == "array" and length > 0 and
-                all(.[]; type == "array") and
-                ([.[][]] | length) == 0
-              ' "$final_pages" >/dev/null || {
-                echo "::error::Requested LIBERO versions remain after cleanup"
-                exit 1
-              }
-            else
-              response="$(mktemp)"
-              if gh api -i "$package_api" >"$response" 2>&1; then
-                echo "::error::Requested LIBERO package remains but versions are unreadable"
-                exit 1
-              elif ! grep -q '^HTTP/.* 404 ' "$response"; then
-                echo "::error::Requested LIBERO cleanup state is unverified"
-                exit 1
-              fi
-            fi
-            echo "Deleted the complete exact requested public LIBERO OCI graph by immutable version identity." >> "$GITHUB_STEP_SUMMARY"
-            echo "Deletion does not revoke downloads made while the package was public." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            # A final read cannot exclude a concurrent registry writer adding tags.
+            # No registry-enforced conditional delete primitive is available here.
+            echo "::error::Refusing non-atomic registry cleanup; versions and package configuration are retained"
+            exit 1
           fi
           matches="$(jq --arg tag "$tag" '[.[] | select((.metadata.container.tags // []) | index($tag))]' "$versions")"
           count="$(jq length <<<"$matches")"
@@ -1763,9 +1662,10 @@ jobs:
               (.metadata.container.tags // []) == [$tag]
             )] | length == 1
           ' "$current_versions" >/dev/null
-          gh api --method DELETE "${package_api}/versions/${version_id}"
-          echo "Deleted exact development tag $tag at $digest." >> "$GITHUB_STEP_SUMMARY"
-          echo "Deletion does not revoke downloads made while the public tag existed." >> "$GITHUB_STEP_SUMMARY"
+          # A final read cannot exclude a concurrent registry writer adding tags.
+          # No registry-enforced conditional delete primitive is available here.
+          echo "::error::Refusing non-atomic registry cleanup; versions and package configuration are retained"
+          exit 1
 
   cleanup-failed-build:
     needs: [resolve, build-development]
@@ -1908,8 +1808,8 @@ jobs:
               echo "::error::Unsupported failed LIBERO package visibility: $visibility"
               exit 1
             }
-            # Re-prove the complete qualified OCI graph before deleting any
-            # public version. Package-version names alone are not sufficient:
+            # Re-prove the qualified OCI graph for read-only reconciliation.
+            # Package-version names alone are not sufficient:
             # the root index, runtime descriptor, attestation descriptor, and
             # every attestation payload must still match the sealed candidate.
             root_manifest="$(mktemp)"
@@ -1984,14 +1884,6 @@ jobs:
                 exit 1
               }
             }
-            forget_libero_version() {
-              local deleted_id="$1"
-              local next
-              next="$(mktemp)"
-              jq -S --arg id "$deleted_id" \
-                'map(select((.id | tostring) != $id))' "$expected_versions" > "$next"
-              mv "$next" "$expected_versions"
-            }
             while IFS=$'\t' read -r version_id digest expected_tags; do
               require_complete_libero_graph
               jq -e --arg id "$version_id" --arg digest "$digest" \
@@ -2002,41 +1894,11 @@ jobs:
                 echo "::error::Qualified LIBERO version identity changed during cleanup"
                 exit 1
               }
-              gh api --method DELETE "${package_api}/versions/${version_id}"
-              forget_libero_version "$version_id"
             done < <(jq -r '.[] | [.id, .name, (.tags | tojson)] | @tsv' "$qualified_rows")
-            post_versions="$(mktemp)"
-            if gh api --paginate --slurp "${package_api}/versions?per_page=100" |
-              jq -S 'add | sort_by(.id | tostring)' > "$post_versions"; then
-              jq -e --slurpfile before "$unrelated_before" \
-                --argjson expected "$LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS" '
-                all(.[]; (.name as $name | $expected | index($name) | not)) and
-                ([.[] | {id:(.id | tostring), name,
-                  tags:(.metadata.container.tags // [])}] | sort_by(.id)) == $before[0]
-              ' "$post_versions" >/dev/null || {
-                echo "::error::Failed or unrelated LIBERO versions changed during cleanup"
-                exit 1
-              }
-            else
-              jq -e 'length == 0' "$unrelated_before" >/dev/null || {
-                echo "::error::Unrelated LIBERO graph became unreadable during cleanup"
-                exit 1
-              }
-              response="$(mktemp)"
-              if gh api -i "$package_api" >"$response" 2>&1; then
-                echo "::error::Failed LIBERO candidate package still exists after cleanup"
-                exit 1
-              elif ! grep -q '^HTTP/.* 404 ' "$response"; then
-                echo "::error::Failed LIBERO candidate package absence is unverified"
-                exit 1
-              fi
-            fi
-            test "$(jq length "$expected_versions")" = \
-              "$(jq length "$unrelated_before")"
-            echo "Deleted the complete exact failed public LIBERO OCI graph by exact version identity." >> "$GITHUB_STEP_SUMMARY"
-            echo "Deleted only the exact qualified failed public LIBERO OCI versions." >> "$GITHUB_STEP_SUMMARY"
-            echo "Deletion does not revoke downloads made while the package was public." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            # A final read cannot exclude a concurrent registry writer adding tags.
+            # No registry-enforced conditional delete primitive is available here.
+            echo "::error::Refusing non-atomic registry cleanup; versions and package configuration are retained"
+            exit 1
           fi
           test -f "$NPA_FAILED_PUBLICATION_PRE_GRAPH"
           jq -e --arg repository "$repository" --arg package_api "$package_api" \
@@ -2105,8 +1967,8 @@ jobs:
           while IFS=$'\t' read -r referrer_id referrer_digest; do
             manifest="$(mktemp)"
             crane manifest "$repository@$referrer_digest" > "$manifest"
-            # The adjacent graph delta establishes run ownership.
-            # A subject relationship alone is not proof; it is the second required bind.
+            # The adjacent delta identifies candidate versions, not exclusive ownership.
+            # A subject relationship alone is not proof of run ownership.
             jq -e --arg root "$root_digest" '
               .schemaVersion == 2 and
               .mediaType == "application/vnd.oci.image.manifest.v1+json" and
@@ -2130,58 +1992,22 @@ jobs:
               exit 1
             }
           }
-          forget_owned_version() {
-            local deleted_id="$1"
-            local next
-            next="$(mktemp)"
-            jq -S --arg id "$deleted_id" \
-              'map(select((.id | tostring) != $id))' "$expected_graph" > "$next"
-            mv "$next" "$expected_graph"
-          }
           while IFS=$'\t' read -r referrer_id referrer_digest; do
             require_complete_graph
             jq -e --arg id "$referrer_id" --arg digest "$referrer_digest" '
               [.[] | select((.id | tostring) == $id and .name == $digest and
                 (.metadata.container.tags // []) == [])] | length == 1
             ' "$expected_graph" >/dev/null
-            gh api --method DELETE "${package_api}/versions/${referrer_id}"
-            forget_owned_version "$referrer_id"
           done < <(jq -r '.referrers[] | [.id,.name] | @tsv' "$owned")
           require_complete_graph
           jq -e --arg id "$root_id" --arg digest "$root_digest" --arg tag "$tag" '
             [.[] | select((.id | tostring) == $id and .name == $digest and
               (.metadata.container.tags // []) == [$tag])] | length == 1
           ' "$expected_graph" >/dev/null
-          referrer_count="$(jq '.referrers | length' "$owned")"
-          package_was_absent=false
-          if jq -e '.package.state == "absent"' \
-            "$NPA_FAILED_PUBLICATION_PRE_GRAPH" >/dev/null; then
-            package_was_absent=true
-            test "$(jq length "$expected_graph")" = 1
-          fi
-          gh api --method DELETE "${package_api}/versions/${root_id}"
-          forget_owned_version "$root_id"
-          if [ "$package_was_absent" = true ]; then
-            test "$(jq length "$expected_graph")" = 0
-            response="$(mktemp)"
-            if gh api -i "$package_api" >"$response" 2>&1; then
-              echo "::error::Failed-build candidate package still exists after cleanup"
-              exit 1
-            elif ! grep -q '^HTTP/.* 404 ' "$response"; then
-              echo "::error::Failed-build candidate package absence is unverified"
-              exit 1
-            fi
-          else
-            post_versions="$(mktemp)"
-            gh api --paginate --slurp "${package_api}/versions?per_page=100" |
-              jq -S 'add | sort_by(.id | tostring)' > "$post_versions"
-            cmp -s "$before_versions" "$post_versions" || {
-              echo "::error::Unrelated package graph changed during cleanup"
-              exit 1
-            }
-          fi
-          echo "Deleted ${referrer_count} exact run-created attestation version(s), then the exact candidate root; the sealed unrelated graph is unchanged." >> "$GITHUB_STEP_SUMMARY"
-          echo "Deletion does not revoke downloads made while the public tag existed." >> "$GITHUB_STEP_SUMMARY"
+          # A final read cannot exclude a concurrent registry writer adding tags.
+          # No registry-enforced conditional delete primitive is available here.
+          echo "::error::Refusing non-atomic registry cleanup; versions and package configuration are retained"
+          exit 1
 
   promote:
     needs: [resolve, build-development]

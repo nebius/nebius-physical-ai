@@ -461,8 +461,8 @@ def test_failed_development_cleanup_is_exact_and_refuses_shared_digest() -> None
     assert "cleanup-failed-build" in text
     assert "metadata.container.tags" in text
     assert "Refusing cleanup: digest also carries tags" in text
-    assert "versions/${version_id}" in text
-    assert "Deletion does not revoke downloads" in text
+    assert "Refusing non-atomic registry cleanup" in text
+    assert "gh api --method DELETE" not in text
     assert "Requested development tag is already absent" in text
     failed_cleanup = _spec(PUBLISH)["jobs"]["cleanup-failed-build"]
     script = next(
@@ -472,7 +472,6 @@ def test_failed_development_cleanup_is_exact_and_refuses_shared_digest() -> None
     )
     assert 'gh api --method DELETE "$package_api"' not in script
     assert 'gh api --method PATCH "$package_api" -f visibility=private' not in script
-    assert "candidate package absence is unverified" in script
     assert 'gh api -i "$package_api"' in script
     assert "grep -q '^HTTP/.* 404 '" in script
     assert "Failed-build package absence is unverified" in script
@@ -481,18 +480,18 @@ def test_failed_development_cleanup_is_exact_and_refuses_shared_digest() -> None
     assert 'before_ids="$(jq -c' in script
     assert "Run-created attestation version is not bound" in script
     assert "require_complete_graph" in script
-    assert 'cmp -s "$before_versions" "$post_versions"' in script
+    assert "Unrelated package identity changed after the sealed" in script
     assert "require_complete_libero_graph" in script
     assert 'crane manifest "$repository@$LIBERO_QUALIFIED_OCI_DIGEST"' in script
     assert "$repository@$LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST" in script
     assert "vnd.docker.reference.digest" in script
-    assert 'gh api --method DELETE "${package_api}/versions/${version_id}"' in script
-    assert "Failed LIBERO candidate package absence is unverified" in script
-    assert "Deleted the complete exact failed public LIBERO OCI graph" in script
+    assert "gh api --method DELETE" not in script
+    assert script.count("Refusing non-atomic registry cleanup") == 2
+    assert "versions and package configuration are retained" in script
     assert "subprocess.check_output" not in script
 
 
-def test_requested_libero_cleanup_revalidates_each_immutable_version() -> None:
+def test_requested_libero_cleanup_revalidates_but_refuses_nonatomic_delete() -> None:
     script = _cleanup_requested_script()
 
     assert 'gh api --method DELETE "$package_api"' not in script
@@ -507,12 +506,11 @@ def test_requested_libero_cleanup_revalidates_each_immutable_version() -> None:
     immutable_digest = body.index('crane digest "$repository@$digest"')
     graph_readback = body.index("require_complete_requested_libero_graph")
     identity = body.index('jq -e --arg id "$version_id"')
-    delete = body.index(
-        'gh api --method DELETE "${package_api}/versions/${version_id}"'
-    )
-    forget = body.index('forget_requested_libero_version "$version_id"')
-    assert immutable_digest < graph_readback < identity < delete < forget
-    assert "by immutable version identity" in script
+    refusal = script.index("Refusing non-atomic registry cleanup", loop_end)
+    assert immutable_digest < graph_readback < identity
+    assert loop_end < refusal < script.index("exit 1", refusal)
+    assert "gh api --method DELETE" not in script
+    assert "forget_requested_libero_version" not in script
 
 
 def test_requested_libero_cleanup_refuses_hostile_graph_changes(tmp_path: Path) -> None:
@@ -601,7 +599,7 @@ print(reference.rsplit("@", 1)[1] if "@" in reference else os.environ["ROOT_DIGE
     )
     crane.chmod(0o700)
 
-    for mutation in ("unrelated", "retag", "digest", "identity", "pages"):
+    for mutation in ("unchanged", "unrelated", "retag", "digest", "identity", "pages"):
         run_dir = tmp_path / mutation
         run_dir.mkdir()
         log = run_dir / "gh.jsonl"
@@ -633,6 +631,8 @@ print(reference.rsplit("@", 1)[1] if "@" in reference else os.environ["ROOT_DIGE
             check=False,
         )
         assert completed.returncode != 0, mutation
+        if mutation == "unchanged":
+            assert "Refusing non-atomic registry cleanup" in completed.stdout
         calls = [
             json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()
         ]
@@ -748,7 +748,7 @@ def test_failed_publication_cleanup_seals_failure_cancellation_and_concurrency_s
     assert ".total_count == 1" in recover["run"]
 
 
-def test_failed_publication_cleanup_deletes_adjacent_referrers_before_root() -> None:
+def test_failed_publication_cleanup_checks_graph_without_nonatomic_deletion() -> None:
     cleanup = _spec(PUBLISH)["jobs"]["cleanup-failed-build"]
     script = next(
         step["run"]
@@ -757,15 +757,10 @@ def test_failed_publication_cleanup_deletes_adjacent_referrers_before_root() -> 
     )
     delta = script.index("before_ids=")
     subject = script.index("Run-created attestation version is not bound")
-    referrer_delete = script.index(
-        'gh api --method DELETE "${package_api}/versions/${referrer_id}"'
-    )
-    root_delete = script.index(
-        'gh api --method DELETE "${package_api}/versions/${root_id}"'
-    )
-    assert delta < subject < referrer_delete < root_delete
-    assert script.count("require_complete_graph() {") == 1
     helper = script.index("require_complete_graph() {")
+    refusal = script.index("Refusing non-atomic registry cleanup", helper)
+    assert delta < subject < helper < refusal
+    assert script.count("require_complete_graph() {") == 1
     referrer_loop = script.index(
         "while IFS=$'\\t' read -r referrer_id referrer_digest; do", helper
     )
@@ -773,32 +768,17 @@ def test_failed_publication_cleanup_deletes_adjacent_referrers_before_root() -> 
         "done < <(jq -r '.referrers[] | [.id,.name] | @tsv' \"$owned\")",
         referrer_loop,
     )
-    referrer_body = script[referrer_loop:referrer_loop_end]
-    assert referrer_body.count("require_complete_graph") == 1
-    assert (
-        referrer_body.index("require_complete_graph")
-        < referrer_body.index('jq -e --arg id "$referrer_id"')
-        < referrer_body.index(
-            'gh api --method DELETE "${package_api}/versions/${referrer_id}"'
-        )
-        < referrer_body.index('forget_owned_version "$referrer_id"')
+    body = script[referrer_loop:referrer_loop_end]
+    assert body.index("require_complete_graph") < body.index(
+        'jq -e --arg id "$referrer_id"'
     )
     root_check = script.index("\nrequire_complete_graph\n", referrer_loop_end)
     root_identity = script.index('jq -e --arg id "$root_id"', root_check)
-    assert referrer_loop_end < root_check < root_identity < root_delete
-    forget_root = script.index('forget_owned_version "$root_id"', root_delete)
-    absent_state = script.index(
-        'test "$(jq length "$expected_graph")" = 0', forget_root
-    )
-    absence_readback = script.index('gh api -i "$package_api"', absent_state)
-    absence_404 = script.index("grep -q '^HTTP/.* 404 '", absence_readback)
-    unrelated_readback = script.index(
-        'cmp -s "$before_versions" "$post_versions"', forget_root
-    )
-    assert root_delete < forget_root < absent_state < absence_readback < absence_404
-    assert root_delete < forget_root < unrelated_readback
-    assert "Unrelated package graph changed during cleanup" in script
-    assert "the sealed unrelated graph is unchanged" in script
+    assert referrer_loop_end < root_check < root_identity < refusal
+    assert script.index("exit 1", refusal) > refusal
+    assert "gh api --method DELETE" not in script
+    assert "forget_owned_version" not in script
+    assert "versions and package configuration are retained" in script
 
 
 def test_public_health_is_anonymous_and_read_only() -> None:
