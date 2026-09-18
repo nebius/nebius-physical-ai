@@ -1146,18 +1146,19 @@ def discover_kubernetes_gpu_catalog(
     environment = kubernetes_sky_environment(
         context=context, kubeconfig=kubeconfig, sky_executable=sky_executable
     )
-    session_cwd = Path(environment["NPA_SKYPILOT_ISOLATED_API_DIR"])
+    run_options: dict[str, object] = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+        "timeout": timeout,
+        "check": False,
+        "env": environment,
+    }
+    session_dir = environment.get("NPA_SKYPILOT_ISOLATED_API_DIR")
+    if session_dir:
+        run_options["cwd"] = Path(session_dir)
     try:
-        result = execute(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout,
-            check=False,
-            env=environment,
-            cwd=session_cwd,
-        )
+        result = execute(cmd, **run_options)
     except (OSError, subprocess.SubprocessError) as exc:
         raise KubernetesGpuCatalogError(
             f"Unable to run `{' '.join(cmd)}`: {exc}"
@@ -1168,16 +1169,7 @@ def discover_kubernetes_gpu_catalog(
         if config_override:
             check_cmd.extend(["--config", config_override])
         check_cmd.append("kubernetes")
-        checked = execute(
-            check_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout,
-            check=False,
-            env=environment,
-            cwd=session_cwd,
-        )
+        checked = execute(check_cmd, **run_options)
         checked_output = "\n".join(
             part for part in (checked.stdout, checked.stderr) if part
         )
@@ -1192,16 +1184,7 @@ def discover_kubernetes_gpu_catalog(
                 "SkyPilot Kubernetes discovery was disabled after API-server "
                 f"restart and `sky check kubernetes` failed: {detail}"
             )
-        result = execute(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout,
-            check=False,
-            env=environment,
-            cwd=session_cwd,
-        )
+        result = execute(cmd, **run_options)
         output = "\n".join(part for part in (result.stdout, result.stderr) if part)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or f"exit {result.returncode}").strip()
