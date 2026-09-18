@@ -224,3 +224,67 @@ class _PolicyEvidence:
             description="Exact policy inputs, raw actions, applied targets and measured physics",
         )
         return hashlib.sha256(archive.read_bytes()).hexdigest()
+
+
+class _ShowcaseRecording:
+    """Archive genuine HD sensor frames with their simulation timestamps."""
+
+    def __init__(self, root: Path | None = None):
+        self.root = root or Path(tempfile.mkdtemp(prefix="openpi-showcase-"))
+        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.frames: list[dict] = []
+        self.last_marker: tuple[int, int] | None = None
+        self.rejected = 0
+
+    def capture(self, pixels, *, sim_seconds, render_sequence, producer_marker):
+        """Save each advancing native frame once, with JPEG compression only."""
+        import numpy as np
+        from PIL import Image
+
+        rgb = np.asarray(pixels)
+        if rgb.dtype != np.uint8 or rgb.shape != (720, 1280, 3):
+            raise ValueError("showcase camera requires native 1280x720 uint8 RGB")
+        if not math.isfinite(sim_seconds):
+            raise ValueError("showcase simulation timestamp must be finite")
+        marker = producer_marker
+        if marker is None or marker[1] <= 0:
+            self.rejected += 1
+            return False
+        if self.last_marker and marker[0] * self.last_marker[1] <= self.last_marker[0] * marker[1]:
+            self.rejected += 1
+            return False
+        if self.frames and sim_seconds <= self.frames[-1]["sim_seconds"]:
+            raise ValueError("showcase simulation timestamp did not advance")
+        self.last_marker = marker
+        path = self.root / f"frame-{len(self.frames):06d}.jpg"
+        Image.fromarray(rgb).save(path, format="JPEG", quality=92, subsampling=0)
+        self.frames.append({
+            "file": path.name, "sim_seconds": sim_seconds,
+            "render_sequence": render_sequence, "producer_marker": list(marker),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "mean_rgb": float(rgb.mean()), "variance": float(rgb.var()),
+        })
+        return True
+
+    def finish(self, run):
+        """Publish a checksummed frame archive independent of the policy inputs."""
+        manifest = {
+            "schema": "npa.openpi.showcase-recording.v1", "resolution": [1280, 720],
+            "source": "native Isaac Sim RTX spectator camera",
+            "treatment": "JPEG encoding only; no generated or interpolated frames",
+            "policy_input": False, "frames": self.frames, "rejected": self.rejected,
+        }
+        (self.root / "manifest.json").write_text(json.dumps(manifest, indent=2))
+        archive = self.root / "showcase-frames.zip"
+        with zipfile.ZipFile(archive, "x", compression=zipfile.ZIP_STORED) as output:
+            for name in ["manifest.json", *(frame["file"] for frame in self.frames)]:
+                output.write(self.root / name, arcname=name)
+        run.add_artifact(archive, name="showcase-frames.zip",
+                         description="Native 1280x720 robot video frames and exact simulation times")
+        run.add_result("showcase_frame_count", len(self.frames))
+        run.add_result("showcase_recording_sha256", hashlib.sha256(archive.read_bytes()).hexdigest())
+        usable = sum(5 < frame["mean_rgb"] <= 220 and frame["variance"] > 25
+                     for frame in self.frames)
+        run.add_result("showcase_usable_frame_count", usable)
+        run.check("showcase_recording_available", usable >= 2,
+                  detail=f"{usable} advancing nonblack native HD camera frames")

@@ -1279,9 +1279,11 @@ def test_live_observation_mapping_and_telemetry_blueprint_are_exact(
     blueprint = scenario._camera_blueprint(Blueprint())
     vertical = blueprint["children"][0]
     cameras, lower = vertical["views"]
+    showcase, policy_views = cameras["views"]
     scene, telemetry = lower["views"]
-    views = [*cameras["views"], scene, *telemetry["views"]]
+    views = [showcase, *policy_views["views"], scene, *telemetry["views"]]
     assert [view["origin"] for view in views] == [
+        scenario._resolved_telemetry_entity(scenario.CAMERA_SHOWCASE_ENTITY),
         scenario._resolved_telemetry_entity(scenario.CAMERA_EXTERIOR_ENTITY),
         scenario._resolved_telemetry_entity(scenario.CAMERA_WRIST_ENTITY),
         scenario._resolved_telemetry_entity(scenario.SCENE_ENTITY),
@@ -1295,9 +1297,9 @@ def test_live_observation_mapping_and_telemetry_blueprint_are_exact(
         origin.startswith(f"{scenario.TELEMETRY_ROOT}/")
         for origin in (view["origin"] for view in views)
     )
-    assert cameras["column_shares"] == [1.0, 1.0]
+    assert cameras["column_shares"] == [3.0, 1.0]
     assert lower["column_shares"] == [1.0, 1.0]
-    assert vertical["row_shares"] == [1.0, 1.0]
+    assert vertical["row_shares"] == [2.4, 1.0]
     assert blueprint["auto_layout"] is False
 
     rrb = pytest.importorskip("rerun.blueprint")

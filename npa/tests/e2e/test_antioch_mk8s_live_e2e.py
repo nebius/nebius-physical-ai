@@ -106,6 +106,14 @@ def test_completed_pickup_checks_and_evidence_persist(tmp_path, monkeypatch) -> 
     evidence = _completed_poc_evidence(
         record, scenario="openpi_franka_pickup_v3", scenario_run_id=run_id)
     assert evidence["pickup_verified"] is True
+    results = record["results"]
+    assert results["showcase_frame_count"] >= results["showcase_usable_frame_count"] >= 2
+    assert any(item["criterion"] == "showcase_recording_available" and item["passed"]
+               for item in results["checks"])
+    recording = record["artifacts"]["showcase-frames.zip"]
+    assert recording["size_bytes"] > 0
+    assert recording["sha256"] == results["showcase_recording_sha256"]
     reread = cli.show(tmp_path, kind="scenario", remote_id=run_id)
     assert reread["results"]["checks"] == record["results"]["checks"]
     assert reread["artifacts"]["policy-evidence.zip"] == record["artifacts"]["policy-evidence.zip"]
+    assert reread["artifacts"]["showcase-frames.zip"] == recording

@@ -285,6 +285,14 @@ physics are retained in `policy-evidence.zip` with a SHA-256 manifest. The
 controller checks both the persisted verdicts and archive digest before retiring
 compute. No failed finite attempt is automatically resubmitted.
 
+The viewer leads with an independent native 1280x720 RTX recording camera and
+keeps the exterior/wrist policy inputs beside it. `showcase-frames.zip` preserves
+the rendered JPEG frames, producer markers, simulation timestamps and checksums
+for offline video assembly. This spectator view never supplies policy inputs or
+steps physics. Its recorded check requires advancing nonblack frames; physical
+pickup checks remain separate. Live GPU validation must establish the final
+framing, rendering performance and visual quality.
+
 The explicit `openpi_franka_mk8s_live_v2` communication proof remains available.
 It validates two finite `[15,8]` replies and executes both five-target segments
 before returning. Its success does not claim a reach or pickup. Both identities

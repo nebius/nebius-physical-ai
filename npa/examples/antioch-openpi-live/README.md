@@ -7,6 +7,15 @@ chunks, enters safe hold on stale/malformed/unsafe responses, and reconnects wit
 bounded exponential backoff. Antioch telemetry and a viewport overlay report the
 live counters; neither is reconstructed from a recording.
 
+An independent 1280x720 RTX camera records the real robot and tabletop at the
+same completed render steps. The viewer gives this native HD view the largest
+pane and keeps both policy inputs visible alongside it. `showcase-frames.zip`
+retains JPEG frames, exact producer markers, simulation timestamps, and checksums
+for video assembly after execution. JPEG compression is the only image treatment;
+the recording camera does not supply policy observations or advance physics.
+Black-only or stale recordings fail the recording check. The camera framing and
+rendering cost still require live validation on the selected GPU.
+
 The client uses a 90-second response-age safety deadline because a cold request
 can take tens of seconds even though warmed supported-GPU requests are normally tens of
 milliseconds. The reviewed `pi05_droid_jointpos_polaris` output contract is seven

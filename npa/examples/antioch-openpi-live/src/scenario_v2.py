@@ -19,6 +19,7 @@ import antioch
 TELEMETRY_ROOT = "openpi-live"
 CAMERA_EXTERIOR_ENTITY = "camera/exterior"
 CAMERA_WRIST_ENTITY = "camera/wrist"
+CAMERA_SHOWCASE_ENTITY = "camera/showcase"
 CAMERA_METRICS_ENTITY = "camera"
 SCENE_ENTITY = "scene"
 FRANKA_SCENE_ENTITY = "scene/franka"
@@ -148,11 +149,16 @@ class RtxRgbCamera:
         # Isaac Sim 6 documents RGB as uint8 ``(height, width, 3)``.  Ask the
         # public CameraSensor API to copy directly into CPU memory so the live
         # controller never aliases the renderer's CUDA external-memory view.
+        data, marker = self.read_pixels()
+        return CameraSample(_camera_frame_from_buffer(data, view=view), marker)
+
+    def read_pixels(self):
+        """Read this camera's native resolution and exact producer marker."""
         data, info = self.sensor.get_data("rgb", out=self.output_buffer)
         marker = _producer_marker_from_info(info)
         if marker is None:
             marker = _reference_time_marker(self.producer_clock)
-        return CameraSample(_camera_frame_from_buffer(data, view=view), marker)
+        return data, marker
 
     def close(self) -> None:
         with contextlib.suppress(Exception):
@@ -445,6 +451,14 @@ class LiveTelemetryPublisher:
     def publish_display(self, publication: DisplayPublication) -> bool:
         return self._worker.submit("display", publication)
 
+    def publish_showcase(self, rgb, frame) -> bool:
+        """Share the native recording view through the same serialized writer."""
+        publication = ImagePublication(
+            "showcase", CAMERA_SHOWCASE_ENTITY, rgb, frame["render_sequence"],
+            frame["mean_rgb"], frame["variance"], 0.0, 0,
+        )
+        return self._worker.submit("showcase", (publication,))
+
     def snapshot(self) -> dict[str, dict[str, int | bool]]:
         state = self._worker.snapshot()
         # Preserve the established per-channel diagnostics while proving that
@@ -486,7 +500,10 @@ class LiveTelemetryPublisher:
             flush=True,
         )
         try:
-            self._logger.image(publication.entity, rgb)
+            if publication.view == "showcase":
+                self._logger.image(publication.entity, rgb, max_width=1280, jpeg_quality=92)
+            else:
+                self._logger.image(publication.entity, rgb)
             self._logger.scalar(
                 f"{publication.entity}/render_sequence", publication.render_sequence
             )
@@ -1120,19 +1137,20 @@ def _reference_time_advanced(current: tuple[int, int], prior: tuple[int, int]) -
 
 
 def _build_rtx_rgb_camera(
-    RtxCamera, CameraSensor, *, path: str, position=None, output_buffer=None
+    RtxCamera, CameraSensor, *, path: str, position=None, output_buffer=None,
+    resolution=(224, 224),
 ):
-    """Construct one supported Isaac Sim 6 RTX camera and explicit RGB sensor."""
+    """Construct an RGB sensor using native (height, width) resolution order."""
 
     kwargs = {"tick_rate": CAMERA_SENSOR_TICK_RATE_HZ}
     if position is not None:
         kwargs["positions"] = [position]
     authoring = RtxCamera(path, **kwargs)
-    sensor = CameraSensor(authoring, resolution=(224, 224), annotators=["rgb"])
+    sensor = CameraSensor(authoring, resolution=resolution, annotators=["rgb"])
     if output_buffer is None:
         import warp as wp
 
-        output_buffer = wp.empty((224, 224, 3), dtype=wp.uint8, device="cpu")
+        output_buffer = wp.empty((*resolution, 3), dtype=wp.uint8, device="cpu")
     render_product = sensor.render_product
     prim = render_product.GetPrim()
     render_product_path = str(prim.GetPath()) if prim and prim.IsValid() else ""
@@ -1146,6 +1164,36 @@ def _build_rtx_rgb_camera(
         _new_reference_time_annotator(render_product_path),
         output_buffer,
     )
+
+
+def _build_showcase_camera(stage, RtxCamera, CameraSensor):
+    """Frame the real robot and table with an independent widescreen sensor."""
+    from pxr import UsdGeom
+
+    path = "/World/ShowcaseCamera"
+    eye, target = (1.25, -1.10, 0.82), (0.35, 0.0, 0.25)
+    camera = _build_rtx_rgb_camera(
+        RtxCamera, CameraSensor, path=path, position=eye, resolution=(720, 1280))
+    _look_at(stage, path, eye, target)
+    _configure_camera_optics(stage, path, "wrist")
+    UsdGeom.Camera(stage.GetPrimAtPath(path)).CreateVerticalApertureAttr().Set(0.36 * 720 / 1280)
+    return camera
+
+
+def _record_showcase_frame(camera, recording, telemetry, *, sim_seconds, render_sequence):
+    """Read completed-render pixels; never advance physics for the recording."""
+    import numpy as np
+
+    pixels, marker = camera.read_pixels()
+    if pixels is None:
+        recording.rejected += 1
+        return
+    if hasattr(pixels, "numpy"):
+        pixels = pixels.numpy()
+    rgb = np.ascontiguousarray(pixels).copy()
+    if recording.capture(rgb, sim_seconds=sim_seconds, render_sequence=render_sequence,
+                         producer_marker=marker):
+        telemetry.publish_showcase(rgb, recording.frames[-1])
 
 
 def _capture_camera_samples(cameras) -> dict[str, CameraSample]:
@@ -1292,14 +1340,21 @@ def _camera_blueprint(rrb):
         rrb.Vertical(
             rrb.Horizontal(
                 rrb.Spatial2DView(
-                    origin=_resolved_telemetry_entity(CAMERA_EXTERIOR_ENTITY),
-                    name="Exterior policy input",
+                    origin=_resolved_telemetry_entity(CAMERA_SHOWCASE_ENTITY),
+                    name="Robot recording — native HD",
                 ),
-                rrb.Spatial2DView(
-                    origin=_resolved_telemetry_entity(CAMERA_WRIST_ENTITY),
-                    name="Wrist policy input",
+                rrb.Vertical(
+                    rrb.Spatial2DView(
+                        origin=_resolved_telemetry_entity(CAMERA_EXTERIOR_ENTITY),
+                        name="Exterior policy input",
+                    ),
+                    rrb.Spatial2DView(
+                        origin=_resolved_telemetry_entity(CAMERA_WRIST_ENTITY),
+                        name="Wrist policy input",
+                    ),
+                    row_shares=[1.0, 1.0],
                 ),
-                column_shares=[1.0, 1.0],
+                column_shares=[3.0, 1.0],
             ),
             rrb.Horizontal(
                 rrb.Spatial3DView(
@@ -1331,7 +1386,7 @@ def _camera_blueprint(rrb):
                 ),
                 column_shares=[1.0, 1.0],
             ),
-            row_shares=[1.0, 1.0],
+            row_shares=[2.4, 1.0],
         ),
         auto_layout=False,
     )
@@ -1638,7 +1693,7 @@ def openpi_franka_pickup_v3(
 
 
 def _run_openpi_episode(run, prompt, *, objective, control_steps):
-    from policy_episode import _PickupProgress, _PolicyEvidence, _termination_reason, _readiness_failure
+    from policy_episode import _PickupProgress, _PolicyEvidence, _ShowcaseRecording, _termination_reason, _readiness_failure
     import carb
     import numpy as np
     import rerun as rr
@@ -1711,6 +1766,7 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
         CameraSensor,
         path=WRIST_CAMERA_PATH,
     )
+    showcase_camera = _build_showcase_camera(world.stage, RtxCamera, CameraSensor)
     _configure_lighting(world.stage)
     render_settings = _configure_policy_rendering(carb.settings.get_settings())
     world.reset()
@@ -1814,6 +1870,7 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
     in_gripper_contact = False
     progress = _PickupProgress()
     evidence = _PolicyEvidence()
+    showcase_recording = _ShowcaseRecording()
     camera_quality = {"exterior": [], "wrist": []}
     initial_target_resolved = False
     termination_reason = "interrupted_or_error"
@@ -1999,6 +2056,8 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
 
             if sim_now >= next_camera_attempt:
                 next_camera_attempt = sim_now + 1.0 / CONTROL_HZ
+                _record_showcase_frame(showcase_camera, showcase_recording, telemetry,
+                                       sim_seconds=sim_now, render_sequence=render_sequence)
                 joint_positions = np.asarray(
                     robot.get_joint_positions(), dtype=np.float32
                 )
@@ -2497,11 +2556,14 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
             exterior.close()
         with contextlib.suppress(Exception):
             wrist.close()
+        with contextlib.suppress(Exception):
+            showcase_camera.close()
         if not all(telemetry_closed.values()):
             raise TelemetryShutdownError(
                 "logger worker remained alive; refusing result finalization"
             )
         evidence_sha256 = evidence.finish(run)
+        showcase_recording.finish(run)
         _record_episode_checks(
             run, objective=objective, reason=termination_reason, progress=progress,
             completed_chunks=completed_action_chunks, camera_quality=camera_quality,

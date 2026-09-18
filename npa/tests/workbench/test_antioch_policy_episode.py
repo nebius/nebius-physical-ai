@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import importlib.util
 import json
 import sys
@@ -374,6 +375,7 @@ def _install_fake_camera_scene(scenario, monkeypatch, world):
         "_look_at",
         "_configure_camera_optics",
         "_start_camera_timeline",
+        "_record_showcase_frame",
     ):
         monkeypatch.setattr(scenario, name, lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
@@ -390,6 +392,7 @@ def _install_fake_camera_scene(scenario, monkeypatch, world):
     monkeypatch.setattr(
         scenario, "_build_rtx_rgb_camera", lambda *_args, **_kwargs: camera
     )
+    monkeypatch.setattr(scenario, "_build_showcase_camera", lambda *_args: camera)
     monkeypatch.setattr(
         scenario, "_initialize_live_capture", lambda *_args: (telemetry, {}, {})
     )
@@ -546,3 +549,110 @@ def test_readiness_deadline_does_not_require_an_advancing_simulation_clock(
         )
         == expected
     )
+
+
+def _recording_run():
+    results, checks, artifacts = {}, {}, []
+    return SimpleNamespace(
+        add_result=results.__setitem__,
+        check=lambda name, passed, **_kwargs: checks.__setitem__(name, passed),
+        add_artifact=lambda path, **_kwargs: artifacts.append(path),
+        results=results, checks=checks, artifacts=artifacts,
+    )
+
+
+def test_hd_recording_preserves_native_dimensions_times_and_checksums(modules, tmp_path):
+    from PIL import Image
+
+    _scenario, episode = modules
+    recording = episode._ShowcaseRecording(tmp_path)
+    rgb = np.full((720, 1280, 3), 40, dtype=np.uint8)
+    rgb[200:500, 700:1000] = [225, 20, 15]
+    for i in range(2):
+        assert recording.capture(rgb, sim_seconds=3 + i / 15,
+                                 render_sequence=100 + i, producer_marker=(100 + i, 15))
+    run = _recording_run()
+    recording.finish(run)
+    assert run.checks["showcase_recording_available"]
+    assert run.results["showcase_recording_sha256"] == hashlib.sha256(run.artifacts[0].read_bytes()).hexdigest()
+    with zipfile.ZipFile(run.artifacts[0]) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["policy_input"] is False
+        assert [f["sim_seconds"] for f in manifest["frames"]] == [3, 3 + 1 / 15]
+        for frame in manifest["frames"]:
+            blob = archive.read(frame["file"])
+            assert hashlib.sha256(blob).hexdigest() == frame["sha256"]
+            decoded = np.asarray(Image.open(io.BytesIO(blob)))
+            assert decoded.shape == (720, 1280, 3)
+            np.testing.assert_allclose(decoded[250, 750], rgb[250, 750], atol=3)
+
+
+def test_hd_recording_rejects_stale_producer_and_nonadvancing_time(modules, tmp_path):
+    _scenario, episode = modules
+    recording = episode._ShowcaseRecording(tmp_path)
+    rgb = np.zeros((720, 1280, 3), dtype=np.uint8)
+    assert not recording.capture(rgb, sim_seconds=0, render_sequence=1, producer_marker=None)
+    assert recording.capture(rgb, sim_seconds=1, render_sequence=2, producer_marker=(1, 15))
+    assert not recording.capture(rgb, sim_seconds=2, render_sequence=3, producer_marker=(2, 30))
+    with pytest.raises(ValueError, match="did not advance"):
+        recording.capture(rgb, sim_seconds=1, render_sequence=4, producer_marker=(3, 30))
+    assert len(recording.frames) == 1
+
+
+def test_hd_recording_does_not_pass_with_only_black_frames(modules, tmp_path):
+    _scenario, episode = modules
+    recording = episode._ShowcaseRecording(tmp_path)
+    for i in range(2):
+        recording.capture(np.zeros((720, 1280, 3), dtype=np.uint8), sim_seconds=i,
+                          render_sequence=i, producer_marker=(i, 15))
+    run = _recording_run()
+    recording.finish(run)
+    assert not run.checks["showcase_recording_available"]
+    assert run.results["showcase_usable_frame_count"] == 0
+
+
+def test_hd_capture_copies_sensor_pixels_and_uses_existing_render(modules, tmp_path):
+    scenario, episode = modules
+    rgb = np.full((720, 1280, 3), 50, dtype=np.uint8)
+    recording = episode._ShowcaseRecording(tmp_path)
+    published = []
+    camera = SimpleNamespace(read_pixels=lambda: (rgb, (9, 15)))
+    telemetry = SimpleNamespace(publish_showcase=lambda pixels, frame: published.append((pixels, frame)))
+    scenario._record_showcase_frame(camera, recording, telemetry,
+                                    sim_seconds=0.6, render_sequence=9)
+    rgb[:] = 100
+    assert len(published) == 1
+    assert (published[0][0] == 50).all()
+    assert published[0][1]["render_sequence"] == 9
+    assert published[0][1]["producer_marker"] == [9, 15]
+
+
+def test_native_hd_sensor_and_cpu_buffer_share_height_width_order(modules, monkeypatch, tmp_path):
+    scenario, episode = modules
+    warp = SimpleNamespace(uint8=np.uint8,
+                           empty=lambda shape, **_kwargs: np.zeros(shape, dtype=np.uint8))
+    monkeypatch.setitem(sys.modules, "warp", warp)
+    monkeypatch.setattr(scenario, "_new_reference_time_annotator", lambda _path: None)
+
+    class Sensor:
+        def __init__(self, _authoring, *, resolution, annotators):
+            # The Isaac Sim 6 native API documents NumPy (height, width) order.
+            assert resolution == (720, 1280)
+            assert annotators == ["rgb"]
+            self.render_product = SimpleNamespace(GetPrim=lambda: SimpleNamespace(
+                IsValid=lambda: True, GetPath=lambda: "/Render/showcase"))
+
+        def get_data(self, annotator, *, out):
+            assert annotator == "rgb"
+            assert out.shape == (720, 1280, 3)
+            out[:] = 50
+            return out, {"referenceTimeNumerator": 1, "referenceTimeDenominator": 15}
+
+    camera = scenario._build_rtx_rgb_camera(
+        lambda *_args, **_kwargs: object(), Sensor, path="/World/ShowcaseCamera",
+        resolution=(720, 1280))
+    recording = episode._ShowcaseRecording(tmp_path)
+    scenario._record_showcase_frame(camera, recording,
+                                    SimpleNamespace(publish_showcase=lambda *_args: None),
+                                    sim_seconds=1 / 15, render_sequence=1)
+    assert len(recording.frames) == 1
