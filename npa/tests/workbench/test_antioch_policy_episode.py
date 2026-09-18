@@ -74,6 +74,87 @@ def test_washed_out_but_nonblack_policy_frame_is_rejected(modules):
     np.testing.assert_array_equal(frame.rgb, image)
 
 
+@pytest.mark.parametrize("value,reason", [(0, "blank"), (255, "overexposed"), (120, "flat")])
+def test_droid_letterbox_cannot_hide_unusable_sensor_content(modules, value, reason):
+    scenario, _episode = modules
+    raw = np.full((180, 320, 3), value, dtype=np.uint8)
+    frame = scenario._camera_frame_from_buffer(raw, view="wrist", policy_format="droid")
+    assert frame.reason == reason
+    assert frame.luminance_mean == value
+    assert frame.luminance_variance == 0
+    assert frame.rgb.shape == (224, 224, 3)
+    assert not frame.rgb[:49].any() and not frame.rgb[175:].any()
+    np.testing.assert_array_equal(frame.rgb[49:175], value)
+
+
+def test_droid_policy_resize_preserves_aspect_and_measures_model_target_pixels(modules):
+    scenario, _episode = modules
+    raw = np.full((180, 320, 3), 100, dtype=np.uint8)
+    raw[:90] = 180
+    raw[70:110, 140:180] = [220, 12, 8]
+    frame = scenario._camera_frame_from_buffer(raw, view="wrist", policy_format="droid")
+    assert frame.reason == ""
+    assert frame.target_extent[0] == frame.target_extent[1]
+    assert 27 <= frame.target_extent[0] <= 30
+    assert 27**2 <= frame.red_cube_pixels <= 30**2
+    assert frame.luminance_mean > float(frame.rgb.mean())
+
+
+def test_droid_binds_observed_joints_by_name_and_excludes_passive_joints(modules):
+    from droid_scene import DroidRobot, MODEL_JOINT_NAMES, joint_indices
+
+    names = ("passive_finger", *reversed(MODEL_JOINT_NAMES))
+    raw = np.arange(len(names), dtype=float) / 10
+    articulation = SimpleNamespace(dof_names=names, get_joint_positions=lambda: raw)
+    robot = DroidRobot(articulation, None)
+    np.testing.assert_array_equal(robot.get_joint_positions(), raw[list(joint_indices(names))])
+    assert robot.get_joint_positions().shape == (8,)
+    raw[names.index("panda_joint4")] = np.nan
+    with pytest.raises(ValueError, match="finite"):
+        robot.get_joint_positions()
+
+
+@pytest.mark.parametrize("angle,position", [(0.0, 0.0), (np.pi / 8, 0.5), (np.pi / 4, 1.0)])
+def test_droid_observation_normalizes_measured_master_joint(modules, angle, position):
+    scenario, _episode = modules
+    state = np.array([*scenario.DROID_RESET_JOINTS, angle])
+    assert scenario._droid_gripper_observation(state) == pytest.approx(position)
+    state[7] = np.nan
+    with pytest.raises(scenario.ActionValidationError):
+        scenario._droid_gripper_observation(state)
+
+
+@pytest.mark.parametrize("names", [tuple(f"panda_joint{i}" for i in range(1, 8)),
+                                  tuple(f"panda_joint{i}" for i in range(1, 8)) + ("finger_joint", "finger_joint")])
+def test_droid_rejects_missing_or_ambiguous_policy_joints(modules, names):
+    from droid_scene import joint_indices
+
+    with pytest.raises(ValueError, match="unique"):
+        joint_indices(names)
+
+
+@pytest.mark.parametrize("command,angle", [(0.5, 0.0), (0.6, np.pi / 4)])
+def test_droid_target_drives_named_arm_and_master_gripper_only(modules, monkeypatch, command, angle):
+    from droid_scene import DroidRobot, MODEL_JOINT_NAMES, joint_indices
+
+    _install_fake_isaac(monkeypatch)
+    names = ("passive_finger", *reversed(MODEL_JOINT_NAMES))
+    sent = []
+    articulation = SimpleNamespace(dof_names=names, apply_action=sent.append)
+    robot = DroidRobot(articulation, None)
+    target = np.array([0.1] * 7 + [command])
+    robot.apply_policy_target(target)
+    assert len(sent) == 1
+    np.testing.assert_array_equal(sent[0].joint_indices, joint_indices(names))
+    np.testing.assert_array_equal(sent[0].joint_positions[:7], target[:7])
+    assert sent[0].joint_positions[7] == angle
+    assert target[7] == command
+    target[0] = np.nan
+    with pytest.raises(ValueError, match="finite"):
+        robot.apply_policy_target(target)
+    assert len(sent) == 1
+
+
 def test_tiny_target_or_wrong_initial_wrist_aim_blocks_inference(modules):
     scenario, _episode = modules
     good = scenario._camera_frame_from_buffer(_rgb(), view="exterior")
@@ -289,6 +370,7 @@ class _Body:
 class _World:
     def __init__(self):
         self.current_time = 0.0
+        self.reset_complete = False
         self.stage = object()
         self.scene = SimpleNamespace(
             add=lambda body: body, add_ground_plane=lambda **_kwargs: None
@@ -296,6 +378,7 @@ class _World:
 
     def reset(self):
         self.current_time = 0
+        self.reset_complete = True
 
     def step(self, **_kwargs):
         self.current_time += 1 / 60
@@ -379,6 +462,27 @@ def _install_fake_isaac(monkeypatch):
 
 
 def _install_fake_camera_scene(scenario, monkeypatch, world):
+    import droid_scene
+
+    def create_droid(_world):
+        body = (_GraspingBody if world.grasp else _Body)(name="franka")
+
+        def apply_target(target):
+            body.joints = np.asarray(target).copy()
+            body.joints[7] = ((0.1 if world.grasp else 1.0) *
+                              droid_scene.GRIPPER_CLOSED_ANGLE if target[7] > 0.5 else 0.0)
+            body.actions.append(body.joints.copy())
+
+        body.apply_policy_target = apply_target
+        return body
+
+    monkeypatch.setattr(droid_scene, "create_robot", create_droid)
+    def configure_camera(*_args):
+        assert world.reset_complete, "Sensor reset must precede fixed camera calibration"
+
+    monkeypatch.setattr(droid_scene, "configure_camera", configure_camera)
+    monkeypatch.setattr(droid_scene, "camera_pose", lambda *_args: (0, 0, 1))
+    monkeypatch.setattr(droid_scene, "grasp_region", lambda *_args: np.array([0.36, 0, 0.35]))
     camera = SimpleNamespace(close=lambda: None)
     telemetry = SimpleNamespace(
         publish_camera_pair=lambda *_args: (),
@@ -541,6 +645,11 @@ def test_executing_loop_runs_second_chunk_and_requires_task_evidence(
         assert run.results["safe_targets_applied"] == steps
         assert run.results["policy_round_trips"] == replies
     assert run.checks["policy_evidence_complete"]
+    assert run.results["robot_embodiment"] == (
+        "franka_robotiq_2f85" if objective == "pickup" else "stock_panda")
+    if objective == "pickup":
+        assert run.results["policy_image_content_rows"] == [49, 175]
+        assert run.results["policy_native_resolution_hw"] == [180, 320]
     assert run.checks["camera_startup_completed"]
     assert run.results["camera_startup_seconds"] == pytest.approx(cold_seconds + 3 / 60)
     assert run.checks["episode_completed"] == (objective == "communication" or grasp)

@@ -19,11 +19,14 @@ rendering cost still require live validation on the selected GPU.
 The client uses a 90-second response-age safety deadline because a cold request
 can take tens of seconds even though warmed supported-GPU requests are normally tens of
 milliseconds. The reviewed `pi05_droid_jointpos_polaris` output contract is seven
-absolute arm joints plus one DROID gripper-position command. The simulator uses the
-DROID reset posture and maps its finger joints into DROID's `0=open, 1=closed`
-observation convention. The inverse actuator mapping sends `0` to two 4 cm-open
-Isaac finger joints and `1` to closed joints; the model output is binarized at 0.5
-as in the upstream DROID deployment example. Raw out-of-distribution joint/gripper
+absolute arm joints plus one DROID gripper-position command. The pickup scenario
+selects Isaac's native Franka **Robotiq 2F-85** accessory and the DROID reset
+posture. Seven arm joints and the active `finger_joint` are bound by name;
+PhysX controls the passive mimic joints. The observed gripper angle is normalized
+from zero to pi/4 into DROID's `0=open, 1=closed` convention. Model commands are
+binarized at 0.5 and mapped back to that actuator angle. The older communication
+scenario retains the stock Panda fingers and their inverse opening mapping.
+Raw out-of-distribution joint/gripper
 counts are reported separately from Franka-limit and per-target-step safety
 projections. Each receding-horizon query executes five returned targets at 15 Hz of simulation time. Wall time remains the authority for transport staleness. The
 observation-to-action loop is best-effort and not hard real time.
@@ -38,19 +41,22 @@ physics, the streamed viewport, and the attached policy-camera render products
 before reading both sensors. It does not add a second Replicator orchestrator
 step, which can invalidate the RGB render-var lifecycle. Acquisition consumes the copied
 numpy/Warp result and producer metadata from `get_data("rgb")`. Each
-sample asks `CameraSensor` to fill a documented `(224, 224, 3)` uint8 CPU buffer
-and immediately copies it into scenario-owned memory
-instead of exposing a mutable or device-backed view to downstream code; a
-public clock attached to that sensor's render product supplies the exact marker
-when the RGB annotator omits it. The exterior camera is now about one metre
-from the cube with a 62-degree field of view; the wrist camera uses a 74-degree
-field of view and aims along the angular bisector of the initial target and grasp
-origin before its mount is frozen in tool coordinates. Equal angular weighting
-keeps the nearby fingers from being clipped by a world-space midpoint biased
-toward the more distant cube. The camera sits behind and beside the tool, and
-the robot base has a floor-to-table pedestal. Raw USD lens units are explicitly converted
-for a metre stage. Both cameras must initially contain the target and gripper
-geometrically, and both must visibly resolve the red target before inference.
+sample copies the completed sensor buffer into scenario-owned memory; a public
+clock attached to that sensor's render product supplies the exact producer marker.
+The pickup uses native 320x180 RGB inputs, resized to 224x126 and centered in a
+224x224 black-padded tensor, preserving the wide cameras' aspect ratio. Exposure
+and contrast checks inspect only the content rows, so padding cannot disguise a
+blank or overexposed sensor. Target resolution checks use the exact model pixels.
+
+The fixed exterior camera views the table over the robot's shoulder. A fixed
+wrist camera inherits the Robotiq body transform; it never tracks the cube.
+Extrinsics and optics follow the public
+[NVIDIA RoboLab DROID reference](https://github.com/NVlabs/RoboLab/blob/ad45d4f974725d020f82c2b0d77d78533aeba2b3/robolab/robots/droid.py),
+with a -90-degree local-Y basis correction for Isaac's native wrist accessory.
+No RoboLab robot assets are redistributed. Diagnostic renders verify the initial
+and approach framing; pickup success still requires the complete live policy run.
+Both cameras must initially contain the target and grasp region geometrically,
+and both must visibly resolve the red target before inference.
 
 The renderer uses fixed exposure (ISO 100, shutter 50, f-number 4, automatic
 exposure disabled), lower light intensities, and a dark ground plane. These are

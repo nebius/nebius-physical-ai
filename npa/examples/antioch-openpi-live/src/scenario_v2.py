@@ -136,11 +136,13 @@ class CameraSample:
 class RtxRgbCamera:
     """Own one Isaac Sim 6 RTX camera authoring/runtime pair."""
 
-    def __init__(self, authoring, sensor, producer_clock, output_buffer) -> None:
+    def __init__(self, authoring, sensor, producer_clock, output_buffer,
+                 *, policy_format="square") -> None:
         self.authoring = authoring
         self.sensor = sensor
         self.producer_clock = producer_clock
         self.output_buffer = output_buffer
+        self.policy_format = policy_format
 
     @property
     def render_product_path(self) -> str:
@@ -153,7 +155,8 @@ class RtxRgbCamera:
         # public CameraSensor API to copy directly into CPU memory so the live
         # controller never aliases the renderer's CUDA external-memory view.
         data, marker = self.read_pixels()
-        return CameraSample(_camera_frame_from_buffer(data, view=view), marker)
+        return CameraSample(_camera_frame_from_buffer(
+            data, view=view, policy_format=self.policy_format), marker)
 
     def read_pixels(self):
         """Read this camera's native resolution and exact producer marker."""
@@ -950,7 +953,14 @@ def _droid_gripper_observation(joint_positions) -> float:
 
     import numpy as np
 
-    fingers = np.asarray(joint_positions, dtype=np.float64)[7:9]
+    values = np.asarray(joint_positions, dtype=np.float64)
+    if values.shape == (8,):
+        from droid_scene import GRIPPER_CLOSED_ANGLE
+
+        if not np.isfinite(values[7]):
+            raise ActionValidationError("non_finite")
+        return float(np.clip(values[7] / GRIPPER_CLOSED_ANGLE, 0.0, 1.0))
+    fingers = values[7:9]
     if fingers.shape != (2,) or not np.isfinite(fingers).all():
         raise ActionValidationError("non_finite")
     opening_width = float(np.clip(fingers.sum(), 0.0, GRIPPER_TOTAL_WIDTH_MAX))
@@ -1034,10 +1044,12 @@ def _camera_quality_reason(frame: CameraFrame) -> str:
     return ""
 
 
-def _classify_camera_rgb(rgb, frame) -> CameraFrame:
+def _classify_camera_rgb(rgb, frame, *, content_rgb=None) -> CameraFrame:
     import numpy as np
 
-    luminance = np.mean(rgb, axis=2)
+    # Letterbox padding must not make a white or flat sensor image pass exposure
+    # and contrast checks. Target resolution still uses the exact model pixels.
+    luminance = np.mean(rgb if content_rgb is None else content_rgb, axis=2)
     red_mask = ((rgb[..., 0] > 80)
                 & (rgb[..., 0].astype(np.float32) > rgb[..., 1] * 1.35)
                 & (rgb[..., 0].astype(np.float32) > rgb[..., 2] * 1.35))
@@ -1056,7 +1068,7 @@ def _classify_camera_rgb(rgb, frame) -> CameraFrame:
     return replace(result, reason=_camera_quality_reason(result))
 
 
-def _camera_frame_from_buffer(buffer, *, view: str) -> CameraFrame:
+def _camera_frame_from_buffer(buffer, *, view: str, policy_format="square") -> CameraFrame:
     """Copy and classify the sensor's RGB without modifying exposure in pixels."""
     import numpy as np
 
@@ -1067,7 +1079,8 @@ def _camera_frame_from_buffer(buffer, *, view: str) -> CameraFrame:
         frame = np.array(source, copy=True)
     except (TypeError, ValueError, RuntimeError):
         return CameraFrame(None, "unreadable")
-    if frame.ndim != 3 or frame.shape not in ((224, 224, 3), (224, 224, 4)):
+    shapes = ((180, 320, 3),) if policy_format == "droid" else ((224, 224, 3), (224, 224, 4))
+    if policy_format not in {"square", "droid"} or frame.ndim != 3 or frame.shape not in shapes:
         return CameraFrame(None, "wrong_shape")
     if not np.issubdtype(frame.dtype, np.number) or not np.isfinite(frame).all():
         return CameraFrame(None, "non_finite")
@@ -1075,6 +1088,11 @@ def _camera_frame_from_buffer(buffer, *, view: str) -> CameraFrame:
     if np.issubdtype(rgb_source.dtype, np.floating) and float(rgb_source.max()) <= 1.0:
         rgb_source = rgb_source * 255.0
     rgb = np.ascontiguousarray(np.clip(rgb_source, 0, 255).astype(np.uint8, copy=False))
+    if policy_format == "droid":
+        from droid_scene import policy_image
+
+        rgb = policy_image(rgb)
+        return _classify_camera_rgb(rgb, frame, content_rgb=rgb[49:175])
     return _classify_camera_rgb(rgb, frame)
 
 
@@ -1155,7 +1173,7 @@ def _reference_time_advanced(current: tuple[int, int], prior: tuple[int, int]) -
 
 def _build_rtx_rgb_camera(
     RtxCamera, CameraSensor, *, path: str, position=None, output_buffer=None,
-    resolution=(224, 224),
+    resolution=(224, 224), policy_format="square",
 ):
     """Construct an RGB sensor using native (height, width) resolution order."""
 
@@ -1180,6 +1198,7 @@ def _build_rtx_rgb_camera(
         sensor,
         _new_reference_time_annotator(render_product_path),
         output_buffer,
+        policy_format=policy_format,
     )
 
 
@@ -1750,7 +1769,11 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
                 color=np.array([0.32, 0.22, 0.14]),
             )
         )
-    robot = world.scene.add(Franka(prim_path="/World/Franka", name="franka"))
+    import droid_scene
+
+    droid = objective == "pickup"
+    robot = (droid_scene.create_robot(world) if droid else
+             world.scene.add(Franka(prim_path="/World/Franka", name="franka")))
     world.scene.add(
         FixedCuboid(
             prim_path="/World/RobotPedestal", name="robot_pedestal",
@@ -1773,45 +1796,50 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
             prim_paths_expr="/World/Cube",
             name="cube_gripper_contacts",
             track_contact_forces=True,
-            contact_filter_prim_paths_expr=[
+            contact_filter_prim_paths_expr=(list(droid_scene.CONTACT_BODIES) if droid else [
                 "/World/Franka/panda_leftfinger",
                 "/World/Franka/panda_rightfinger",
-            ],
+            ]),
             max_contact_count=16,
         )
     )
-    exterior = _build_rtx_rgb_camera(
-        RtxCamera,
-        CameraSensor,
-        path=EXTERIOR_CAMERA_PATH,
-        position=EXTERIOR_CAMERA_EYE,
-    )
-    wrist = _build_rtx_rgb_camera(
-        RtxCamera,
-        CameraSensor,
-        path=WRIST_CAMERA_PATH,
-    )
+    if droid:
+        exterior, wrist = (
+            _build_rtx_rgb_camera(
+                RtxCamera, CameraSensor, path=droid_scene.CAMERA_PATHS[view],
+                resolution=droid_scene.NATIVE_POLICY_RESOLUTION, policy_format="droid")
+            for view in ("exterior", "wrist"))
+    else:
+        exterior = _build_rtx_rgb_camera(
+            RtxCamera, CameraSensor, path=EXTERIOR_CAMERA_PATH, position=EXTERIOR_CAMERA_EYE)
+        wrist = _build_rtx_rgb_camera(RtxCamera, CameraSensor, path=WRIST_CAMERA_PATH)
     showcase_camera = _build_showcase_camera(world.stage, RtxCamera, CameraSensor)
     _configure_lighting(world.stage)
     render_settings = _configure_policy_rendering(carb.settings.get_settings())
     world.reset()
-    robot.set_joint_positions(
-        np.asarray([*DROID_RESET_JOINTS, GRIPPER_JOINT_MAX, GRIPPER_JOINT_MAX])
-    )
-    _look_at(
-        world.stage,
-        EXTERIOR_CAMERA_PATH,
-        EXTERIOR_CAMERA_EYE,
-        EXTERIOR_CAMERA_TARGET,
-    )
-    wrist_mount = _calibrate_wrist_camera_mount(
-        *_stock_franka_camera_points(world.stage),
-        cube.get_world_pose()[0],
-        hand_transform=_world_transform(world.stage, STOCK_FRANKA_HAND_PATH),
-    )
-    wrist_pose = _aim_wrist_camera(world.stage, wrist_mount)
-    _configure_camera_optics(world.stage, EXTERIOR_CAMERA_PATH, "exterior")
-    _configure_camera_optics(world.stage, WRIST_CAMERA_PATH, "wrist")
+    if droid:
+        reset = np.asarray([*DROID_RESET_JOINTS, 0.0])
+        robot.set_joint_positions(reset)
+        robot.apply_policy_target(reset)
+        for view in ("exterior", "wrist"):
+            droid_scene.configure_camera(world.stage, view)
+        exterior_pose = droid_scene.camera_pose(world.stage, "exterior")
+        wrist_pose = droid_scene.camera_pose(world.stage, "wrist")
+        exterior_optics = droid_scene.optical_config("exterior")
+        wrist_optics = droid_scene.optical_config("wrist")
+    else:
+        robot.set_joint_positions(
+            np.asarray([*DROID_RESET_JOINTS, GRIPPER_JOINT_MAX, GRIPPER_JOINT_MAX]))
+        _look_at(world.stage, EXTERIOR_CAMERA_PATH, EXTERIOR_CAMERA_EYE, EXTERIOR_CAMERA_TARGET)
+        wrist_mount = _calibrate_wrist_camera_mount(
+            *_stock_franka_camera_points(world.stage), cube.get_world_pose()[0],
+            hand_transform=_world_transform(world.stage, STOCK_FRANKA_HAND_PATH))
+        wrist_pose = _aim_wrist_camera(world.stage, wrist_mount)
+        _configure_camera_optics(world.stage, EXTERIOR_CAMERA_PATH, "exterior")
+        _configure_camera_optics(world.stage, WRIST_CAMERA_PATH, "wrist")
+        exterior_pose = (EXTERIOR_CAMERA_EYE, EXTERIOR_CAMERA_TARGET, (0, 0, 1))
+        exterior_optics = _camera_optical_config("exterior")
+        wrist_optics = _camera_optical_config("wrist")
     _start_camera_timeline(app_utils)
     cameras = (("exterior", exterior), ("wrist", wrist))
     telemetry, render_products, camera_markers = _initialize_live_capture(
@@ -1912,8 +1940,11 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
     print("NPA_OPENPI_LOOP_READY", flush=True)
     try:
         while True:
-            wrist_pose = _aim_wrist_camera(world.stage, wrist_mount)
+            if not droid:
+                wrist_pose = _aim_wrist_camera(world.stage, wrist_mount)
             world.step(render=True)
+            if droid:
+                wrist_pose = droid_scene.camera_pose(world.stage, "wrist")
             render_sequence += 1
             now = time.monotonic()
             sim_now = float(world.current_time)
@@ -2094,25 +2125,22 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
                 )
                 exterior_cube_in_frame = _point_in_camera_frame(
                     cube_position_for_camera,
-                    (
-                        EXTERIOR_CAMERA_EYE,
-                        EXTERIOR_CAMERA_TARGET,
-                        (0.0, 0.0, 1.0),
-                    ),
-                    _camera_optical_config("exterior"),
+                    exterior_pose,
+                    exterior_optics,
                 )
                 wrist_cube_in_frame = _point_in_camera_frame(
                     cube_position_for_camera,
                     wrist_pose,
-                    _camera_optical_config("wrist"),
+                    wrist_optics,
                 )
-                gripper_position = robot.end_effector.get_world_pose()[0]
+                gripper_position = (droid_scene.grasp_region(world.stage) if droid else
+                                    robot.end_effector.get_world_pose()[0])
                 gripper_views_aligned = _point_in_camera_frame(
                     gripper_position,
-                    (EXTERIOR_CAMERA_EYE, EXTERIOR_CAMERA_TARGET, (0, 0, 1)),
-                    _camera_optical_config("exterior"),
+                    exterior_pose,
+                    exterior_optics,
                 ) and _point_in_camera_frame(
-                    gripper_position, wrist_pose, _camera_optical_config("wrist")
+                    gripper_position, wrist_pose, wrist_optics
                 )
                 samples = _capture_camera_samples(cameras)
                 pair = _validate_camera_pair(
@@ -2303,16 +2331,11 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
             ):
                 target = chunk[chunk_index]
                 measured_before = np.asarray(robot.get_joint_positions(), dtype=float)
-                robot.apply_action(
-                    ArticulationAction(
-                        joint_positions=np.concatenate(
-                            [
-                                target[:7],
-                                np.repeat(_isaac_finger_target(target[7]), 2),
-                            ]
-                        )
-                    )
-                )
+                if droid:
+                    robot.apply_policy_target(target)
+                else:
+                    robot.apply_action(ArticulationAction(joint_positions=np.concatenate(
+                        [target[:7], np.repeat(_isaac_finger_target(target[7]), 2)])))
                 evidence.target(camera_pair_id=chunk_camera_pair_id, row=chunk_index,
                                 target=target, before=measured_before, sim_seconds=sim_now)
                 gripper_commanded_closed = bool(target[7] > 0.5)
@@ -2348,9 +2371,8 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
             current_joint_positions = np.asarray(
                 robot.get_joint_positions(), dtype=float
             )
-            # A 7 cm object cannot fit between fingers less than 4 cm apart.
-            # Require measurable closure from the 8 cm open width, not a binary
-            # observation threshold copied from a much smaller object.
+            # Require measured closure as well as the command. Bilateral contact
+            # and sustained physical lift independently establish the grasp.
             gripper_closed = bool(gripper_commanded_closed and
                 _droid_gripper_observation(current_joint_positions) >= 0.05)
             progress.observe(sim_seconds=sim_now, distance=ee_distance, lift=cube_lift,
@@ -2643,6 +2665,12 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
             current_exterior_red_cube_pixels,
         )
         run.add_result("task_label", TASK_LABEL)
+        run.add_result("robot_embodiment", "franka_robotiq_2f85" if droid else "stock_panda")
+        if droid:
+            run.add_result("policy_joint_names", list(droid_scene.MODEL_JOINT_NAMES))
+            run.add_result("policy_camera_calibration", droid_scene.CAMERA_CALIBRATION)
+            run.add_result("policy_image_content_rows", [49, 175])
+            run.add_result("policy_native_resolution_hw", list(droid_scene.NATIVE_POLICY_RESOLUTION))
         run.add_result("minimum_end_effector_cube_distance_m",
                        minimum_ee_distance if math.isfinite(minimum_ee_distance) else None)
         run.add_result("maximum_cube_lift_m", maximum_cube_lift)
