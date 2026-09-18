@@ -293,6 +293,53 @@ def test_builder_passes_exact_git_sha_to_local_attested_oci_export(
         assert (capture / "inputs" / path).read_bytes() == committed
 
 
+def _cleanup_stub(bin_dir: Path, name: str, real: str) -> None:
+    stub = bin_dir / name
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        "target=${!#}\n"
+        'case "$target" in\n'
+        "  */manifest.unsorted|*/npa-source-manifest.sha256.unsorted) "
+        f'exec "{real}" "$@" ;;\n'
+        "  */candidate.oci.tar) kind=file ;;\n"
+        "  */.npa-habitat-oci.*) kind=directory ;;\n"
+        "  */npa-habitat-source.*) kind=projection ;;\n"
+        f'  *) exec "{real}" "$@" ;;\nesac\n'
+        'printf "%s\\n" "$kind" >> "$FIXTURE_CLEANUP_LOG"\n'
+        'if [[ "$kind" == "$FIXTURE_CLEANUP_FAILURE" ]]; then exit 23; fi\n'
+        f'exec "{real}" "$@"\n'
+    )
+    stub.chmod(0o755)
+
+
+@pytest.mark.parametrize("original_exit", [0, 19])
+@pytest.mark.parametrize("failure", ["projection", "file", "directory"])
+def test_cleanup_attempts_every_owned_target_preserving_original_exit(
+    tmp_path: Path, failure: str, original_exit: int
+) -> None:
+    _repository, script = _committed_fixture(tmp_path)
+    env, _log, _capture = _stubbed_environment(tmp_path)
+    cleanup_log = tmp_path / "cleanup-log"
+    for name in ("rm", "rmdir"):
+        real = shutil.which(name)
+        assert real
+        _cleanup_stub(tmp_path / "bin", name, real)
+    env.update(
+        TMPDIR=str(tmp_path),
+        FIXTURE_CLEANUP_LOG=str(cleanup_log),
+        FIXTURE_CLEANUP_FAILURE=failure,
+        FIXTURE_BUILD_FAILURE="yes" if original_exit else "no",
+    )
+    output = tmp_path / "candidate.oci.tar"
+    result = _run(output, env=env, script=script)
+    assert result.returncode == original_exit, result.stderr
+    assert cleanup_log.read_text().splitlines() == ["projection", "file", "directory"]
+    assert "cleanup failed" in result.stderr
+    assert output.exists() is (original_exit == 0)
+    if original_exit == 0:
+        assert output.read_bytes() == b"synthetic OCI bytes\n"
+
+
 def test_builder_refuses_a_committed_noncanonical_platform(tmp_path: Path) -> None:
     repository, script = _committed_fixture(tmp_path)
     env, log, _capture = _stubbed_environment(tmp_path)

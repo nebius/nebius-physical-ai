@@ -4,10 +4,14 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
+import ctypes
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import shutil
+import sys
 import tarfile
 import tempfile
 from typing import BinaryIO, Callable
@@ -349,46 +353,116 @@ def _inventory(root: Path) -> dict[str, object]:
     }
 
 
+def _materialize(manifest: dict[str, object], output: Path, temp: Path) -> bytes:
+    """Verify the complete projection in private staging before publication."""
+    source = dict(manifest["source"])
+    source["name"] = "habitat-sim"
+    parent_archive = _download(source, temp)
+    _extract(parent_archive, output, source.get("excluded_archive_links", []))
+    _verify_license(output, source)
+    _apply_metadata_patches(output, source["metadata_patches"])
+    _verify_required_source_files(output, source["required_projection_files"])
+    _prune_parent(output, source["required_projection_files"])
+    _verify_required_source_files(output, source["required_projection_files"])
+    _verify_internal_vendored(output, manifest["internal_vendored"])
+    for dependency in manifest["dependencies"]:
+        archive = _download(dependency, temp)
+        target = output / dependency["target"]
+        if target.exists():
+            shutil.rmtree(target)
+        _extract(archive, target, dependency.get("excluded_archive_links", []))
+        _verify_license(target, dependency)
+        projections = manifest["dependency_projection"]
+        _prune_dependency(target, projections[dependency["name"]])
+    _assert_forbidden(output, manifest["forbidden_paths"])
+    inventory = _inventory(output)
+    inventory_bytes = (json.dumps(inventory, indent=2, sort_keys=True) + "\n").encode()
+    expected = manifest["expected_projection"]
+    if (
+        inventory["file_count"] != expected["file_count"]
+        or hashlib.sha256(inventory_bytes).hexdigest() != expected["inventory_sha256"]
+    ):
+        raise SourceError("materialized source projection changed")
+    return inventory_bytes
+
+
+def _owned_destination(path: Path, stack: ExitStack) -> Path:
+    if path.name in {"", ".", ".."}:
+        raise SourceError("invalid source output name")
+    descriptor = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    stack.callback(os.close, descriptor)
+    info = os.fstat(descriptor)
+    if info.st_uid != os.getuid() or info.st_mode & 0o022:
+        raise SourceError("source output parent must be owned and not shared writable")
+    destination = Path(f"/proc/self/fd/{descriptor}") / path.name
+    if os.path.lexists(destination):
+        raise SourceError("source output already exists")
+    return destination
+
+
+def _rename_noreplace(source: Path, destination: Path) -> None:
+    """Publish on Linux atomically, refusing even a concurrent empty directory."""
+    library = ctypes.CDLL(None, use_errno=True)
+    rename = getattr(library, "renameat2", None)
+    if rename is None:
+        raise SourceError("atomic no-clobber directory publication is unavailable")
+    rename.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    rename.restype = ctypes.c_int
+    if rename(-100, os.fsencode(source), -100, os.fsencode(destination), 1) != 0:
+        raise OSError(ctypes.get_errno(), "source publication refused")
+
+
+def _publish_projection(staged: Path, output: Path, inventory: Path | None) -> None:
+    inventory_source = staged.parent / "inventory.json"
+    linked = False
+    try:
+        if inventory is not None:
+            os.link(inventory_source, inventory, follow_symlinks=False)
+            linked = True
+        _rename_noreplace(staged, output)
+    except BaseException:
+        if linked:
+            try:
+                observed, owned = inventory.lstat(), inventory_source.lstat()
+                if (observed.st_dev, observed.st_ino) == (owned.st_dev, owned.st_ino):
+                    inventory.unlink()
+            except OSError:
+                print("warning: source inventory cleanup failed", file=sys.stderr)
+        raise
+
+
 def stage(
     manifest: dict[str, object], output: Path, inventory_output: Path | None = None
 ) -> None:
-    if output.exists():
-        raise SourceError("source output already exists")
-    with tempfile.TemporaryDirectory(prefix="npa-habitat-source-") as temp_name:
-        temp = Path(temp_name)
-        source = dict(manifest["source"])
-        source["name"] = "habitat-sim"
-        parent_archive = _download(source, temp)
-        _extract(parent_archive, output, source.get("excluded_archive_links", []))
-        _verify_license(output, source)
-        _apply_metadata_patches(output, source["metadata_patches"])
-        _verify_required_source_files(output, source["required_projection_files"])
-        _prune_parent(output, source["required_projection_files"])
-        _verify_required_source_files(output, source["required_projection_files"])
-        _verify_internal_vendored(output, manifest["internal_vendored"])
-        for dependency in manifest["dependencies"]:
-            archive = _download(dependency, temp)
-            target = output / dependency["target"]
-            if target.exists():
-                shutil.rmtree(target)
-            _extract(archive, target, dependency.get("excluded_archive_links", []))
-            _verify_license(target, dependency)
-            projections = manifest["dependency_projection"]
-            _prune_dependency(target, projections[dependency["name"]])
-        _assert_forbidden(output, manifest["forbidden_paths"])
-        inventory = _inventory(output)
-        inventory_bytes = (
-            json.dumps(inventory, indent=2, sort_keys=True) + "\n"
-        ).encode()
-        expected = manifest["expected_projection"]
-        if (
-            inventory["file_count"] != expected["file_count"]
-            or hashlib.sha256(inventory_bytes).hexdigest()
-            != expected["inventory_sha256"]
-        ):
-            raise SourceError("materialized source projection changed")
-        if inventory_output is not None:
-            inventory_output.write_bytes(inventory_bytes)
+    """Expose only a fully verified projection; never replace caller-owned output."""
+    with ExitStack() as stack:
+        output = _owned_destination(output, stack)
+        inventory = (
+            _owned_destination(inventory_output, stack)
+            if inventory_output is not None
+            else None
+        )
+        temp = Path(tempfile.mkdtemp(prefix=".npa-habitat-source-", dir=output.parent))
+        try:
+            staged = temp / "projection"
+            archives = temp / "archives"
+            archives.mkdir(mode=0o700)
+            inventory_bytes = _materialize(manifest, staged, archives)
+            (temp / "inventory.json").write_bytes(inventory_bytes)
+            _publish_projection(staged, output, inventory)
+        finally:
+            try:
+                shutil.rmtree(temp)
+            except OSError:
+                print(
+                    "warning: temporary source staging cleanup failed", file=sys.stderr
+                )
 
 
 def main(argv: list[str] | None = None) -> int:

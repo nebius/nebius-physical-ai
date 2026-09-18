@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import tarfile
 
@@ -22,6 +23,167 @@ SPEC = importlib.util.spec_from_file_location(
 assert SPEC is not None and SPEC.loader is not None
 PREPARER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PREPARER)
+
+
+def _staging_fixture(monkeypatch, output: Path) -> dict:
+    payload = b"verified inert source\n"
+    inventory = {
+        "schema_version": "npa.habitat-sim.source-projection.v1",
+        "file_count": 1,
+        "files": [
+            {
+                "path": "source.txt",
+                "bytes": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }
+        ],
+    }
+    encoded = (json.dumps(inventory, indent=2, sort_keys=True) + "\n").encode()
+
+    def extract(_archive, staged, _excluded):
+        assert not os.path.lexists(output)
+        staged.mkdir()
+        (staged / "source.txt").write_bytes(payload)
+
+    monkeypatch.setattr(PREPARER, "_download", lambda _item, temp: temp / "inert")
+    monkeypatch.setattr(PREPARER, "_extract", extract)
+    for name in (
+        "_verify_license",
+        "_apply_metadata_patches",
+        "_verify_required_source_files",
+        "_prune_parent",
+        "_verify_internal_vendored",
+    ):
+        monkeypatch.setattr(PREPARER, name, lambda *_args: None)
+    return {
+        "source": {"metadata_patches": [], "required_projection_files": []},
+        "internal_vendored": [],
+        "dependencies": [],
+        "forbidden_paths": [],
+        "expected_projection": {
+            "file_count": 1,
+            "inventory_sha256": hashlib.sha256(encoded).hexdigest(),
+        },
+    }
+
+
+def test_stage_exposes_only_complete_verified_projection(tmp_path, monkeypatch):
+    output, inventory = tmp_path / "source", tmp_path / "inventory.json"
+    manifest = _staging_fixture(monkeypatch, output)
+    original = PREPARER._rename_noreplace
+
+    def publish(staged, destination):
+        assert not output.exists()
+        assert (staged / "source.txt").read_bytes() == b"verified inert source\n"
+        assert inventory.is_file()
+        original(staged, destination)
+
+    monkeypatch.setattr(PREPARER, "_rename_noreplace", publish)
+    PREPARER.stage(manifest, output, inventory)
+    assert json.loads(inventory.read_bytes()) == PREPARER._inventory(output)
+    assert not list(tmp_path.glob(".npa-habitat-source-*"))
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "_download",
+        "_extract",
+        "_verify_license",
+        "_apply_metadata_patches",
+        "_verify_required_source_files",
+        "_prune_parent",
+        "_verify_internal_vendored",
+        "_assert_forbidden",
+        "_inventory",
+    ],
+)
+def test_stage_failure_removes_only_owned_partial_staging(
+    tmp_path, monkeypatch, boundary
+):
+    output = tmp_path / "source"
+    manifest = _staging_fixture(monkeypatch, output)
+    unrelated = tmp_path / "caller-data"
+    unrelated.write_bytes(b"keep")
+
+    def fail(*_args):
+        raise PREPARER.SourceError("inert verification failure")
+
+    monkeypatch.setattr(PREPARER, boundary, fail)
+    with pytest.raises(PREPARER.SourceError, match="inert verification"):
+        PREPARER.stage(manifest, output)
+    assert not output.exists()
+    assert unrelated.read_bytes() == b"keep"
+    assert not list(tmp_path.glob(".npa-habitat-source-*"))
+
+
+def test_stage_inventory_mismatch_never_publishes(tmp_path, monkeypatch):
+    output = tmp_path / "source"
+    manifest = _staging_fixture(monkeypatch, output)
+    manifest["expected_projection"]["inventory_sha256"] = "0" * 64
+    with pytest.raises(PREPARER.SourceError, match="projection changed"):
+        PREPARER.stage(manifest, output)
+    assert not output.exists()
+    assert not list(tmp_path.glob(".npa-habitat-source-*"))
+
+
+@pytest.mark.parametrize("kind", ["directory", "file", "symlink"])
+def test_stage_refuses_existing_or_concurrent_output(tmp_path, monkeypatch, kind):
+    output, inventory = tmp_path / "source", tmp_path / "inventory.json"
+    manifest = _staging_fixture(monkeypatch, output)
+    original = PREPARER._rename_noreplace
+
+    def publish(staged, destination):
+        if kind == "directory":
+            output.mkdir()
+        elif kind == "file":
+            output.write_bytes(b"caller")
+        else:
+            output.symlink_to(tmp_path / "absent")
+        original(staged, destination)
+
+    monkeypatch.setattr(PREPARER, "_rename_noreplace", publish)
+    with pytest.raises(FileExistsError):
+        PREPARER.stage(manifest, output, inventory)
+    assert os.path.lexists(output)
+    assert not inventory.exists()
+    assert not list(tmp_path.glob(".npa-habitat-source-*"))
+    with pytest.raises(PREPARER.SourceError, match="already exists"):
+        PREPARER.stage(manifest, output, inventory)
+
+
+@pytest.mark.parametrize("verification_failure", [True, False])
+def test_stage_cleanup_failure_preserves_original_result(
+    tmp_path, monkeypatch, capsys, verification_failure
+):
+    output = tmp_path / "source"
+    manifest = _staging_fixture(monkeypatch, output)
+    if verification_failure:
+        manifest["expected_projection"]["file_count"] = 2
+
+    def fail_cleanup(_path):
+        raise OSError("inert cleanup refusal")
+
+    monkeypatch.setattr(PREPARER.shutil, "rmtree", fail_cleanup)
+    if verification_failure:
+        with pytest.raises(PREPARER.SourceError, match="projection changed"):
+            PREPARER.stage(manifest, output)
+    else:
+        PREPARER.stage(manifest, output)
+        assert output.is_dir()
+    assert "staging cleanup failed" in capsys.readouterr().err
+
+
+def test_stage_preserves_existing_inventory_without_fetch(tmp_path, monkeypatch):
+    output, inventory = tmp_path / "source", tmp_path / "inventory.json"
+    manifest = _staging_fixture(monkeypatch, output)
+    inventory.write_bytes(b"caller inventory")
+    with pytest.raises(PREPARER.SourceError, match="already exists"):
+        PREPARER.stage(manifest, output, inventory)
+    assert inventory.read_bytes() == b"caller inventory"
+    assert not output.exists()
+
+
 PBR_CONFIG = b"""group = pbr-images
 
 [file]

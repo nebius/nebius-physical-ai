@@ -102,8 +102,15 @@ and byte matching, not legal clearance or image qualification.
 The local build output requires an existing owner-controlled directory that is
 not group/world writable. BuildKit writes to a private temporary file; only a
 successful nonempty regular output is atomically linked to the absent requested
-name, mode 0600. An existing destination is never replaced and failure removes
-only the exact temporary output and source projection.
+name, mode 0600. An existing destination is never replaced. Cleanup attempts each
+exact temporary target independently and reports failures without replacing the
+original command exit status; callers must verify cleanup separately.
+
+Source preparation likewise requires owner-controlled output parents. It verifies
+the complete projection in private sibling staging before Linux atomic no-clobber
+directory publication. Existing projection or inventory paths are refused,
+including symlinks. Partial staging is cleaned best-effort on failure; no caller
+output is replaced, and cleanup warnings do not conceal the original result.
 
 `npa/docker/workbench/habitat-sim/verify_image.py` accepts only a closed,
 attested, single-linux/amd64 OCI graph. It verifies graph/config/layer identities,

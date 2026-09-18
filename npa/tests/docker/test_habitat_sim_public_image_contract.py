@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -32,6 +33,31 @@ EXPECTED_RUNTIME_IDENTITY_COMMANDS = (
     "printf '%s\\n' 'PasswordAuthentication no' 'PermitRootLogin no' "
     "> /etc/ssh/sshd_config.d/99-npa-worker.conf",
 )
+
+
+def test_habitat_pending_source_closure_agrees_with_catalog_totals() -> None:
+    entries = PACKAGING["images"]
+    assert entries["habitat-sim"]["redistribution"] == "unvalidated"
+    blackwell = json.loads(
+        (ROOT / "npa/docker/workbench/blackwell-dc-images.json").read_bytes()
+    )
+    (habitat,) = [
+        row for row in blackwell["images"] if row["name"] == "npa-habitat-sim"
+    ]
+    assert habitat["redistribution"] == "unvalidated"
+    assert habitat["validation"] == "pending-build"
+    counts = {
+        value: sum(row["redistribution"] == value for row in entries.values())
+        for value in ("public", "restricted", "unvalidated")
+    }
+    assert counts == {"public": 40, "restricted": 2, "unvalidated": 1}
+    catalog = (ROOT / "docs/workbench/container-image-catalog.md").read_text()
+    assert "43 packaging entries" in catalog
+    assert (
+        "40 redistribution-eligible, two restricted, and\none with pending source closure"
+        in catalog
+    )
+    assert "habitat-sim" in images.PENDING_REDISTRIBUTION_TOOLS
 
 
 def _run_bash(

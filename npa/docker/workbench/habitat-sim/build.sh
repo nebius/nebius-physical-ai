@@ -94,11 +94,19 @@ projection="$(mktemp -d "${TMPDIR:-/tmp}/npa-habitat-source.XXXXXX")"
 chmod 0700 "$projection"
 output_temporary=
 cleanup() {
-  rm -rf -- "$projection"
-  if [[ -n "$output_temporary" ]]; then
-    rm -f -- "$output_temporary/candidate.oci.tar"
-    rmdir -- "$output_temporary"
+  local original_status=$?
+  if ! rm -rf -- "$projection"; then
+    echo "warning: source projection cleanup failed" >&2
   fi
+  if [[ -n "$output_temporary" ]]; then
+    if ! rm -f -- "$output_temporary/candidate.oci.tar"; then
+      echo "warning: temporary OCI file cleanup failed" >&2
+    fi
+    if ! rmdir -- "$output_temporary"; then
+      echo "warning: temporary OCI directory cleanup failed" >&2
+    fi
+  fi
+  return "$original_status"
 }
 trap cleanup EXIT
 trap 'exit 130' INT

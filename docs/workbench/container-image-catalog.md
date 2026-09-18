@@ -47,7 +47,8 @@ image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
 The current source inventory, including the pending Habitat-Sim integration,
-has **43 packaging entries** (41 redistribution-eligible and two restricted)
+has **43 packaging entries** (40 redistribution-eligible, two restricted, and
+one with pending source closure)
 and **44 mapped tools**: 37 public-release members, two restricted
 tools, and five quarantined tools (`curobo`, `habitat-sim`, `ncore`, `openpi`,
 and `robocasa`). These counts come from `packaging-contract.yaml` and
