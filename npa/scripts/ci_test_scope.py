@@ -31,7 +31,7 @@ _PROSE_EXCLUSIONS = ("docs/cli/", "docs/security/", "docs/architecture/decisions
 
 
 @dataclass(frozen=True)
-class Change:
+class _Change:
     """One Git path change, including the modes needed to reject symlinks."""
 
     path: str
@@ -46,7 +46,7 @@ def _git(repo_root: Path, *arguments: str) -> bytes:
     ).stdout
 
 
-def _changes(repo_root: Path, base: str, head: str) -> list[Change]:
+def _changes(repo_root: Path, base: str, head: str) -> list[_Change]:
     for revision in (base, head):
         if not re.fullmatch(r"[0-9a-f]{40}", revision):
             raise ValueError("CI comparison revisions must be full commit SHAs")
@@ -56,7 +56,7 @@ def _changes(repo_root: Path, base: str, head: str) -> list[Change]:
     changes = []
     for metadata, path in zip(fields[::2], fields[1::2], strict=True):
         old_mode, new_mode, _, _, status = metadata.removeprefix(":").split()
-        changes.append(Change(path, status, old_mode, new_mode))
+        changes.append(_Change(path, status, old_mode, new_mode))
     return changes
 
 
@@ -85,12 +85,12 @@ def _protected_lines(lines: list[str]) -> set[int]:
                 frontmatter = False
         if fence or marker:
             protected.add(index)
-            if marker:
-                token = marker.group()
-                if not fence:
-                    fence = token
-                elif token[0] == fence[0] and len(token) >= len(fence):
-                    fence = ""
+        if marker:
+            token = marker.group()
+            if not fence:
+                fence = token
+            elif token[0] == fence[0] and len(token) >= len(fence):
+                fence = ""
         if line.startswith(("    ", "\t")) or re.search(r"[`<>]|\{[{%]", line):
             protected.add(index)
     return protected
@@ -116,7 +116,7 @@ def _prose_edit(before: str, after: str) -> bool:
     return True
 
 
-def _is_prose(repo_root: Path, base: str, head: str, change: Change) -> bool:
+def _is_prose(repo_root: Path, base: str, head: str, change: _Change) -> bool:
     if (
         change.status != "M"
         or change.old_mode != "100644"
@@ -133,7 +133,7 @@ def _is_prose(repo_root: Path, base: str, head: str, change: Change) -> bool:
     return _prose_edit(before, after)
 
 
-def _affected_paths(change: Change) -> tuple[str, ...] | None:
+def _affected_paths(change: _Change) -> tuple[str, ...] | None:
     if change.status not in {"A", "M"} or change.new_mode != "100644":
         return None
     path = change.path
@@ -191,7 +191,7 @@ def classify(repo_root: Path, base: str, head: str, event: str) -> dict:
     return _pull_request_scope(repo_root, relevant)
 
 
-def _pull_request_scope(repo_root: Path, changes: list[Change]) -> dict:
+def _pull_request_scope(repo_root: Path, changes: list[_Change]) -> dict:
     tests: set[str] = set()
     for change in changes:
         selected = _affected_paths(change)
