@@ -583,11 +583,9 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert (
         "LIBERO_PRIVATE_CONFIG_DIGEST: ${{ matrix.libero_private_config_digest }}"
     ) in text
-    assert 'version_count="$(jq \'length\' "$versions")"' in text
-    assert "Retained private destination has no atomic run-owned cleanup proof" in text
-    assert "Private destination is genuinely empty" in text
-    assert "exactly the qualified untagged OCI graph" in text
-    assert "tagged_count=" in text
+    assert "First publication is unavailable" in text
+    assert "refusing before any registry write" in text
+    assert "Private destination is genuinely empty" not in text
     assert "group: public-image-registry-mutation" in text
     assert "group: public-image-${{" not in text
     assert re.search(r"^\s*- uses: [^#\n]+@v", text, re.MULTILINE) is None
@@ -629,7 +627,7 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
         "--secret id=npa_libero_output_storage_authorization_public_key_b64,"
         "env=NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64"
     ) in text
-    assert "no atomic run-owned cleanup proof; preserve the package" in text
+    assert "refusing before any registry write" in text
     assert '"failure","cancelled"' in text
     for immutable_action in (
         "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
@@ -1392,7 +1390,70 @@ def test_first_publication_retry_preserves_a_closed_private_graph_without_owners
         {"id": 2, "name": referrer, "metadata": {"container": {"tags": []}}},
     ]
     assert "NPA_FIRST_PUBLICATION_REQUIRED=1" in github_env.read_text(encoding="utf-8")
-    assert (
-        "Retained private destination has no atomic run-owned cleanup proof"
-        in completed.stdout
+    assert "First publication is unavailable" in completed.stdout
+
+
+@pytest.mark.parametrize("destination", ["absent", "empty-private", "private-libero"])
+def test_first_publication_refuses_before_any_registry_write(
+    tmp_path: Path, destination: str
+) -> None:
+    spec = yaml.safe_load(PUBLICATION_WORKFLOW.read_text(encoding="utf-8"))
+    steps = spec["jobs"]["build-development"]["steps"]
+    script = next(
+        step["run"]
+        for step in steps
+        if step.get("name")
+        == "Prove destination cannot expose unvalidated tagged bytes"
     )
+    operations = tmp_path / "registry-writes"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    gh = bin_dir / "gh"
+    gh.write_text(
+        f"#!{sys.executable}\n"
+        "import os,sys\n"
+        "from pathlib import Path\n"
+        "args=sys.argv[1:]\n"
+        "if '--method' in args or '-X' in args:\n"
+        " Path(os.environ['REGISTRY_WRITES']).write_text('unexpected mutation')\n"
+        " raise SystemExit(99)\n"
+        "if '--include' in args:\n"
+        " absent=os.environ['DESTINATION']=='absent'\n"
+        " print('HTTP/2.0 404 Not Found' if absent else 'HTTP/2.0 200 OK')\n"
+        " raise SystemExit(1 if absent else 0)\n"
+        "if args[-2:]==['--jq','.visibility']:\n"
+        " print('private'); raise SystemExit(0)\n"
+        "raise SystemExit(98)\n",
+        encoding="utf-8",
+    )
+    gh.chmod(0o700)
+    github_env = tmp_path / "github-env"
+    completed = subprocess.run(
+        [
+            "bash",
+            "-euo",
+            "pipefail",
+            "-c",
+            script + '\nprintf push >> "$REGISTRY_WRITES"\n',
+        ],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "IMAGE": "ghcr.io/example/test-bootstrap:dev-" + "1" * 40,
+            "TOOL": "libero" if destination == "private-libero" else "genesis",
+            "GITHUB_ENV": str(github_env),
+            "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
+            "DESTINATION": destination,
+            "REGISTRY_WRITES": str(operations),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 1, completed.stdout + completed.stderr
+    assert "refusing before any registry write" in completed.stdout
+    assert (
+        github_env.read_text(encoding="utf-8") == "NPA_FIRST_PUBLICATION_REQUIRED=1\n"
+    )
+    assert not operations.exists()

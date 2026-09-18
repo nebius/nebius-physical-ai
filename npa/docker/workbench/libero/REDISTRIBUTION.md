@@ -64,25 +64,28 @@ The candidate remains unbuilt, unvalidated, and quarantined. A private stage
 must first emit a canonical complete-image inventory and OCI config digest for
 independent review. The inventory binds every byte in each ordered uncompressed
 layer tar and the canonical flattened-rootfs records. The public workflow
-refuses before building unless a current strict checked-in qualification record
-binds those exact identities and the exact development source revision. Dispatch
+currently rejects every LIBERO dispatch before building. A future publication
+path would also require a current strict checked-in qualification record binding
+those exact identities and the exact development source revision. Dispatch
 inputs cannot self-attest them. The dedicated complete-byte/layer/exported-rootfs
 scanner requires equality before push. Both builds derive `SOURCE_DATE_EPOCH` from the exact source
 commit; the package layer removes APT/dpkg/account logs and normalizes the
 non-root account's shadow day to that epoch. It must also pass the
 SBOM/provenance/security gates, anonymous pull proof, and an exact-digest B200
 hard gate before any supported release or public catalog claim.
-The first package visibility transition requires exactly the independently qualified,
-repository-bound package-version digest set for one OCI index. Every version
-starts untagged; the index contains the accepted linux/amd64 manifest plus the
-exact embedded provenance and SBOM manifests. The trusted workflow re-reads the
-complete untagged package version set and every accepted graph byte immediately
-before making the package public. It then proves anonymous exact-digest access,
-adds only `dev-<accepted-sha>` to the accepted root, re-reads the complete graph,
-and proves anonymous tag identity. A failure before the visibility transition
-retains the private qualified evidence for recovery. A failure after public
-disclosure revalidates and deletes only the exact qualified root and referrer
-version identities, then proves those versions absent without attempting to
-make the public package private. Deletion cannot revoke downloads. Public
-disclosure does not lift the candidate's release quarantine or replace the
-separately required exact-digest B200 acceptance.
+LIBERO public disclosure, public tagging, and registry deletion are currently
+unavailable. No exact-digest live-B200 authorization path has been accepted, and
+the workflow has no registry-enforced exclusive-writer or atomic compare-and-set
+primitive for visibility changes or identity-and-tag-bound deletion. Repository
+workflow concurrency and repeated graph reads do not provide those guarantees.
+The ordinary publication preflight also refuses absent and private destinations
+before any registry write, rather than creating a private artifact in a path
+that must subsequently refuse publication.
+
+Any qualified private state is retained. Requested and failed-build cleanup may
+validate identities and graph bytes, but explicitly refuse deletion and leave
+versions and package configuration intact. They do not claim public downloads
+can be revoked. Publication, public tagging, or deletion claims require a later
+exact-digest live-B200 authorization and implemented, independently evidenced
+registry-enforced atomic visibility/cleanup mechanisms. Source-only test results
+prove refusal behavior, not live publication capability or runtime validation.

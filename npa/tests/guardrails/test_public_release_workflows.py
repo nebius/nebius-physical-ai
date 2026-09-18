@@ -165,7 +165,7 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
     ):
         assert required in text
         assert text.index(required) < push
-    assert "exact pushed-byte gates and post-push anonymous verification apply" in text
+    assert "refusing before any registry write" in text[:push]
     assert "if matrix and head != sha" in text
 
 
@@ -301,11 +301,17 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     prepush = text.index("Prove destination cannot expose unvalidated tagged bytes")
     push = text.index("Push only after every pre-publication gate passes")
     assert prepush < push
+    destination_gate = text[prepush:push]
+    assert "refusing before any registry write" in destination_gate
+    assert "refuse_first_publication()" in destination_gate
     assert (
-        "Empty private destination unexpectedly contains tagged versions"
-        in text[prepush:push]
+        'elif [ "$visibility" = private ]; then\n              refuse_first_publication'
+        in destination_gate
     )
-    assert "tagged_count" in text[prepush:push]
+    assert (
+        "elif grep -q '^HTTP/.* 404 ' \"$response\"; then\n            refuse_first_publication"
+        in destination_gate
+    )
     steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
     attestations = {
         step["name"]: step

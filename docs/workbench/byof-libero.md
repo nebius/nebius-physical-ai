@@ -93,10 +93,11 @@ Before LIBERO's first package-wide visibility change, the private destination
 must contain exactly the qualified untagged OCI graph and no unrelated version.
 The workflow still refuses the visibility change: repository workflow concurrency
 does not exclude other registry writers, and no registry-enforced exclusive-writer
-or atomic compare-and-set primitive is available. Other first publications also
-require a nonexistent or zero-version destination; a retained nonempty private
-package is preserved and refused, never deleted merely because its tags or OCI
-subjects match a candidate.
+or atomic compare-and-set primitive is available. The ordinary publication path
+refuses every first publication before building or pushing, including an absent
+or empty private destination. A retained private package is preserved, never
+deleted merely because its tags or OCI subjects match a candidate. This workflow
+does not provide a separately authorized private staging operation.
 
 Requested and failed-build reconciliation may inspect package identity, graph,
 tags, and run-bound evidence, but it does not delete package versions or change

@@ -558,6 +558,13 @@ jobs:
           response="$(mktemp)"
           status="$(gh api --silent --include "/orgs/${owner}/packages/container/${encoded}" >"$response" 2>/dev/null; printf '%s' "$?")"
           package_api="/orgs/${owner}/packages/container/${encoded}"
+          refuse_first_publication() {
+            echo "NPA_FIRST_PUBLICATION_REQUIRED=1" >> "$GITHUB_ENV"
+            # A later visibility check cannot undo a private push. Neither an
+            # empty package nor a 404 supplies atomic publication authority.
+            echo "::error::First publication is unavailable without a registry-enforced exclusive-writer or atomic compare-and-set primitive; refusing before any registry write"
+            exit 1
+          }
           if [ "$status" = 0 ]; then
             visibility="$(gh api "$package_api" --jq .visibility)"
             if [ "$visibility" = public ]; then
@@ -568,53 +575,13 @@ jobs:
               fi
               echo "Existing package is already public." >> "$GITHUB_STEP_SUMMARY"
             elif [ "$visibility" = private ]; then
-              echo "NPA_FIRST_PUBLICATION_REQUIRED=1" >> "$GITHUB_ENV"
-              # Visibility is package-wide. Untagged images and OCI referrers are
-              # reachable by digest after this package becomes public, so no private
-              # version of any media type may survive the first-publication gate.
-              versions="$(mktemp)"
-              gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"
-              tagged_count="$(jq '[.[] | select((.metadata.container.tags // []) | length > 0)] | length' "$versions")"
-              version_count="$(jq 'length' "$versions")"
-              if [ "$TOOL" = libero ]; then
-                test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
-                  "$LIBERO_PACKAGE_WRITER_REPOSITORY"
-                test "$LIBERO_PACKAGE_WRITER_REPOSITORY" = "$GITHUB_REPOSITORY"
-                jq -e --argjson expected "$LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS" '
-                  ([.[].name] | sort) == $expected and
-                  all(.[]; (.metadata.container.tags // []) == [])
-                ' "$versions" >/dev/null || {
-                  echo "::error::Private LIBERO package versions differ from the qualified untagged OCI graph"
-                  exit 1
-                }
-                echo "Private destination is repository-bound and contains exactly the qualified untagged OCI graph (${version_count} versions)." >> "$GITHUB_STEP_SUMMARY"
-              else
-                if [ "$version_count" != 0 ]; then
-                  # A matching tag or OCI subject does not prove run ownership.
-                  # Repeated graph reads cannot make package deletion atomic.
-                  echo "::error::Retained private destination has no atomic run-owned cleanup proof; preserve the package"
-                  exit 1
-                elif [ "$tagged_count" != 0 ]; then
-                  echo "::error::Empty private destination unexpectedly contains tagged versions"
-                  exit 1
-                fi
-                echo "Private destination is genuinely empty; exact pushed-byte gates and visibility verification apply." >> "$GITHUB_STEP_SUMMARY"
-              fi
+              refuse_first_publication
             else
               echo "::error::Unsupported destination visibility: $visibility"
               exit 1
             fi
           elif grep -q '^HTTP/.* 404 ' "$response"; then
-            echo "NPA_FIRST_PUBLICATION_REQUIRED=1" >> "$GITHUB_ENV"
-            # A new package is created only after every local byte-level gate below
-            # passes. The pushed digest is scanned again before the package visibility
-            # changes. Failure reconciliation is read-only: this registry has no
-            # atomic identity-and-tag deletion primitive, so bytes are retained.
-            if [ "$TOOL" = libero ]; then
-              echo "::error::Qualified LIBERO candidate package is absent"
-              exit 1
-            fi
-            echo "New package; exact pushed-byte gates and post-push anonymous verification apply." >> "$GITHUB_STEP_SUMMARY"
+            refuse_first_publication
           else
             echo "::error::Could not prove destination package state"
             exit 1
