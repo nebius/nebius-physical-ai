@@ -337,6 +337,13 @@ images:
     dockerfile: sim2real-eval/Dockerfile
     tier: job
     redistribution: public
+  loop-eval:
+    dockerfile: sim2real-eval/Dockerfile
+    tier: job
+    redistribution: public
+    notes: >-
+      Alias for sim2real-eval; CONTAINER_IMAGE_NAMES key loop-eval
+      builds from sim2real-eval/Dockerfile via sim2real-build.sh.
   sim2real-control:
     dockerfile: sim2real-control/Dockerfile
     tier: job
@@ -359,6 +366,13 @@ images:
       scope: ephemeral-standard-workflow-task-pod
       prohibited_uses: [service, public-ingress, baked-credentials]
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
+  reference-policy:
+    dockerfile: sim2real-reference-policy/Dockerfile
+    tier: job
+    redistribution: public
+    notes: >-
+      Alias for sim2real-reference-policy; CONTAINER_IMAGE_NAMES key
+      reference-policy maps to sim2real-reference-policy/Dockerfile.
   cosmos2-transfer:
     dockerfile: cosmos2-transfer/Dockerfile
     tier: job
