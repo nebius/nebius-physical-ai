@@ -46,6 +46,10 @@ def _full_app() -> typer.Typer:
     from npa.cli.cosmos import app as cosmos_app
     from npa.cli.fiftyone import app as fiftyone_app
     from npa.cli.genesis import app as genesis_app
+    from npa.cli.ros2 import app as ros2_app
+    from npa.cli.newton import app as newton_app
+    from npa.cli.openvla import app as openvla_app
+    from npa.cli.molmoact import app as molmoact_app
     from npa.cli.groot import app as groot_app
     from npa.cli.isaac_lab import app as isaac_lab_app
     from npa.cli.nurec import app as nurec_app
@@ -60,6 +64,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.dataset import app as dataset_app
     from npa.cli.workbench.detection_training import app as detection_training_app
     from npa.cli.workbench.foxglove import app as foxglove_app
+    from npa.cli.gemini_robotics import app as gemini_robotics_app
     from npa.cli.workbench.golden_eval import app as golden_eval_app
     from npa.cli.workbench.health import app as health_app
     from npa.cli.workbench.insights import app as insights_app
@@ -102,6 +107,7 @@ def _full_app() -> typer.Typer:
     full.add_typer(cosmos_evaluator_app, name="cosmos-evaluator")
     full.add_typer(fiftyone_app, name="fiftyone")
     full.add_typer(foxglove_app, name="foxglove")
+    full.add_typer(gemini_robotics_app, name="gemini-robotics")
     full.add_typer(genesis_app, name="genesis")
     full.add_typer(groot_app, name="groot")
     full.add_typer(isaac_lab_app, name="isaac-lab")
@@ -112,6 +118,10 @@ def _full_app() -> typer.Typer:
     full.add_typer(mjlab_app, name="mjlab")
     full.add_typer(openarm_app, name="openarm")
     full.add_typer(robocasa_app, name="robocasa")
+    full.add_typer(ros2_app, name="ros2")
+    full.add_typer(newton_app, name="newton")
+    full.add_typer(openvla_app, name="openvla")
+    full.add_typer(molmoact_app, name="molmoact")
     full.add_typer(lichtblick_app, name="lichtblick")
     full.add_typer(ltx2_app, name="ltx2")
     full.add_typer(alpamayo2_super_app, name="alpamayo2-super")

@@ -129,6 +129,11 @@ _OPENPI_FULL_DROID_PIPELINE = [
     "-m",
     "npa.workflows.byof.openpi_full_droid",
 ]
+_NEWTON_PIPELINE = ["python3", "-m", "npa.workflows.byof.newton_pipeline"]
+_OPENVLA_PIPELINE = ["python3", "-m", "npa.workflows.byof.openvla_pipeline"]
+_MOLMOACT_PIPELINE = ["python3", "-m", "npa.workflows.byof.molmoact_pipeline"]
+_GEMINI_ROBOTICS_PIPELINE = ["python3", "-m", "npa.workflows.byof.gemini_robotics_pipeline"]
+_ROS2_PIPELINE = ["python3", "-m", "npa.workflows.byof.ros2_pipeline"]
 
 _CONTENT_AGENTS_PIPELINE = [
     "python3",
@@ -1515,6 +1520,204 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.gpu_count}}",
             "--expected-compute-capability",
             "{{config.expected_compute_capability}}",
+        ],
+    ),
+    "workbench.newton.train_teacher": ToolEntry(
+        name="workbench.newton.train_teacher",
+        description=(
+            "Train a teacher policy in Newton physics simulation."
+        ),
+        argv_template=[
+            *_NEWTON_PIPELINE,
+            "train-teacher",
+            "--output-uri",
+            "{{config.training_uri}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+        ],
+    ),
+    "workbench.newton.generate_demos": ToolEntry(
+        name="workbench.newton.generate_demos",
+        description=(
+            "Generate demonstrations using Newton physics simulation."
+        ),
+        argv_template=[
+            *_NEWTON_PIPELINE,
+            "generate-demos",
+            "--output-uri",
+            "{{config.demos_uri}}",
+            "--checkpoint-uri",
+            "{{config.trained_checkpoint_uri}}",
+        ],
+    ),
+    "workbench.newton.eval": ToolEntry(
+        name="workbench.newton.eval",
+        description="Evaluate a policy in Newton physics simulation.",
+        argv_template=[
+            *_NEWTON_PIPELINE,
+            "eval",
+            "--checkpoint-uri",
+            "{{config.trained_checkpoint_uri}}",
+            "--output-uri",
+            "{{config.evaluation_uri}}",
+        ],
+    ),
+    "workbench.openvla.train": ToolEntry(
+        name="workbench.openvla.train",
+        description=(
+            "Fine-tune OpenVLA with the OpenVLA-OFT LoRA recipe."
+        ),
+        argv_template=[
+            *_OPENVLA_PIPELINE,
+            "train",
+            "--output-uri",
+            "{{config.training_uri}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+            "--model-id",
+            "{{config.model_id}}",
+        ],
+        access_capabilities=("huggingface",),
+    ),
+    "workbench.openvla.serve": ToolEntry(
+        name="workbench.openvla.serve",
+        description="Serve an OpenVLA checkpoint over HTTP.",
+        argv_template=[
+            *_OPENVLA_PIPELINE,
+            "serve",
+            "--checkpoint-uri",
+            "{{config.trained_checkpoint_uri}}",
+            "--port",
+            "{{config.serve_port}}",
+        ],
+        access_capabilities=("huggingface",),
+    ),
+    "workbench.openvla.eval": ToolEntry(
+        name="workbench.openvla.eval",
+        description="Evaluate an OpenVLA checkpoint.",
+        argv_template=[
+            *_OPENVLA_PIPELINE,
+            "eval",
+            "--checkpoint-uri",
+            "{{config.trained_checkpoint_uri}}",
+            "--output-uri",
+            "{{config.evaluation_uri}}",
+        ],
+        access_capabilities=("huggingface",),
+    ),
+    "workbench.molmoact.finetune": ToolEntry(
+        name="workbench.molmoact.finetune",
+        description="Fine-tune a MolmoAct policy.",
+        argv_template=[
+            *_MOLMOACT_PIPELINE,
+            "finetune",
+            "--output-uri",
+            "{{config.training_uri}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+            "--model-id",
+            "{{config.model_id}}",
+        ],
+        access_capabilities=("huggingface",),
+    ),
+    "workbench.molmoact.serve": ToolEntry(
+        name="workbench.molmoact.serve",
+        description="Serve a MolmoAct checkpoint over HTTP.",
+        argv_template=[
+            *_MOLMOACT_PIPELINE,
+            "serve",
+            "--checkpoint-uri",
+            "{{config.trained_checkpoint_uri}}",
+            "--port",
+            "{{config.serve_port}}",
+        ],
+        access_capabilities=("huggingface",),
+    ),
+    "workbench.molmoact.eval": ToolEntry(
+        name="workbench.molmoact.eval",
+        description="Evaluate a MolmoAct checkpoint.",
+        argv_template=[
+            *_MOLMOACT_PIPELINE,
+            "eval",
+            "--checkpoint-uri",
+            "{{config.trained_checkpoint_uri}}",
+            "--output-uri",
+            "{{config.evaluation_uri}}",
+        ],
+        access_capabilities=("huggingface",),
+    ),
+    "workbench.gemini_robotics.plan": ToolEntry(
+        name="workbench.gemini_robotics.plan",
+        description=(
+            "Run ER embodied-reasoning planning via the Gemini API."
+        ),
+        argv_template=[
+            *_GEMINI_ROBOTICS_PIPELINE,
+            "plan",
+            "--prompt",
+            "{{config.plan_prompt}}",
+            "--output-uri",
+            "{{config.plan_uri}}",
+        ],
+    ),
+    "workbench.gemini_robotics.adapt": ToolEntry(
+        name="workbench.gemini_robotics.adapt",
+        description="Submit an on-device adaptation job via the Gemini API.",
+        argv_template=[
+            *_GEMINI_ROBOTICS_PIPELINE,
+            "adapt",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+            "--output-uri",
+            "{{config.adaptation_uri}}",
+        ],
+    ),
+    "workbench.gemini_robotics.eval": ToolEntry(
+        name="workbench.gemini_robotics.eval",
+        description="Evaluate a plan against a rubric via the Gemini API.",
+        argv_template=[
+            *_GEMINI_ROBOTICS_PIPELINE,
+            "eval",
+            "--plan-uri",
+            "{{config.plan_uri}}",
+            "--output-uri",
+            "{{config.evaluation_uri}}",
+        ],
+    ),
+    "workbench.ros2.bridge": ToolEntry(
+        name="workbench.ros2.bridge",
+        description=(
+            "Bidirectional bridge between workbench artifacts and ROS 2 topics."
+        ),
+        argv_template=[
+            *_ROS2_PIPELINE,
+            "bridge",
+            "--topics",
+            "{{config.bridge_topics}}",
+            "--output-uri",
+            "{{config.bridge_uri}}",
+        ],
+    ),
+    "workbench.ros2.bag_convert": ToolEntry(
+        name="workbench.ros2.bag_convert",
+        description="Convert between ROS 2 bags and MCAP files.",
+        argv_template=[
+            *_ROS2_PIPELINE,
+            "bag-convert",
+            "--input-uri",
+            "{{config.bag_input_uri}}",
+            "--output-uri",
+            "{{config.bag_output_uri}}",
+        ],
+    ),
+    "workbench.ros2.fleet": ToolEntry(
+        name="workbench.ros2.fleet",
+        description="Open-RMF fleet adapter status and operations.",
+        argv_template=[
+            *_ROS2_PIPELINE,
+            "fleet-status",
+            "--fleet-config-uri",
+            "{{config.fleet_config_uri}}",
         ],
     ),
     "workbench.isaac_lab.byof_repo": ToolEntry(
