@@ -22,7 +22,6 @@ sys.path.insert(0, str(NPA_ROOT / "scripts"))
 
 from image_byte_scan import core as W  # noqa: E402
 from image_byte_scan import habitat_sim_verification as H  # noqa: E402
-from image_byte_scan import prepare as P  # noqa: E402
 
 
 NPA_SOURCE_PATHS = (
@@ -163,16 +162,10 @@ def _parse_source_manifest(manifest: bytes) -> dict[str, str]:
     return expected
 
 
-def _bind_source_contract(
-    contract: dict[str, object], revision: str, manifest: bytes, manifest_sha256: str
-) -> tuple[dict[str, object], dict[str, str]]:
-    """Add exact revision, manifest, provenance, and input bytes to the scan."""
-
-    W.require(
-        hashlib.sha256(manifest).hexdigest() == manifest_sha256,
-        "source_manifest_digest_mismatch",
-    )
-    expected = _parse_source_manifest(manifest)
+def _bind_provenance_files(
+    contract: dict, revision: str, expected: dict[str, str], manifest_sha256: str
+) -> None:
+    """Bind the attested manifest and provenance population to image paths."""
     provenance = _provenance_bytes(revision, manifest_sha256)
     labels = contract["required_labels"]
     labels["org.nebius.npa.source-manifest-sha256"] = manifest_sha256
@@ -191,6 +184,12 @@ def _bind_source_contract(
         image_path = f"/{PROVENANCE_ROOT}/{path}"
         paths.append(image_path)
         files[image_path] = digest
+
+
+def _bind_executable_sources(contract: dict, expected: dict[str, str]) -> None:
+    """Bind installed entrypoints to the same verified source input bytes."""
+    paths = contract["required_final_paths"]
+    files = contract["required_final_file_sha256"]
     metadata = contract.setdefault("required_final_metadata", {})
     bindings = contract.setdefault("executable_source_bindings", {})
     for source, (destination, mode) in EXECUTABLE_SOURCE_DESTINATIONS.items():
@@ -206,37 +205,79 @@ def _bind_source_contract(
             "mode": mode,
         }
         bindings[destination] = {**metadata[destination], "sha256": digest}
+
+
+def _bind_bootstrap_files(contract: dict) -> None:
+    """Preserve the exact account, SSH and sudo bootstrap byte/mode contract."""
+    paths = contract["required_final_paths"]
+    files = contract["required_final_file_sha256"]
+    metadata = contract.setdefault("required_final_metadata", {})
     for destination, payload in SYSTEM_FILE_BYTES.items():
         paths.append(destination)
         files[destination] = hashlib.sha256(payload).hexdigest()
-    metadata.update(
-        {
-            "/etc/group": {"kind": "file", "uid": 0, "gid": 0, "mode": 0o644},
-            "/etc/passwd": {"kind": "file", "uid": 0, "gid": 0, "mode": 0o644},
-            "/etc/ssh/sshd_config.d/99-npa-worker.conf": {
-                "kind": "file",
-                "uid": 0,
-                "gid": 0,
-                "mode": 0o644,
-            },
-            "/etc/sudoers.d/90-npa-skypilot": {
-                "kind": "file",
-                "uid": 0,
-                "gid": 0,
-                "mode": 0o440,
-            },
-            "/home/ubuntu/.ssh": {
-                "kind": "directory",
-                "uid": 1000,
-                "gid": 1000,
-                "mode": 0o700,
-            },
-        }
-    )
+    for path, kind, owner, mode in (
+        ("/etc/group", "file", 0, 0o644),
+        ("/etc/passwd", "file", 0, 0o644),
+        ("/etc/ssh/sshd_config.d/99-npa-worker.conf", "file", 0, 0o644),
+        ("/etc/sudoers.d/90-npa-skypilot", "file", 0, 0o440),
+        ("/home/ubuntu/.ssh", "directory", 1000, 0o700),
+    ):
+        metadata[path] = {"kind": kind, "uid": owner, "gid": owner, "mode": mode}
     for path in metadata:
         if path not in paths:
             paths.append(path)
+
+
+def _bind_source_contract(
+    contract: dict[str, object], revision: str, manifest: bytes, manifest_sha256: str
+) -> tuple[dict[str, object], dict[str, str]]:
+    """Add exact revision, manifest, provenance, and input bytes to the scan."""
+    W.require(
+        hashlib.sha256(manifest).hexdigest() == manifest_sha256,
+        "source_manifest_digest_mismatch",
+    )
+    expected = _parse_source_manifest(manifest)
+    _bind_provenance_files(contract, revision, expected, manifest_sha256)
+    _bind_executable_sources(contract, expected)
+    _bind_bootstrap_files(contract)
     return contract, expected
+
+
+def _record_provenance_member(archive, member, relative, expected, observed, findings):
+    """Check one regular provenance member without extracting it to disk."""
+    if not member.isfile():
+        findings.append({"code": "source_provenance_nonregular_path", "path": relative})
+        return
+    body = archive.extractfile(member)
+    W.require(body is not None, "source_provenance_file_read")
+    digest = hashlib.sha256(body.read()).hexdigest()
+    if relative not in expected:
+        findings.append({"code": "source_provenance_unexpected_path", "path": relative})
+        return
+    if digest != expected[relative]:
+        findings.append({"code": "source_provenance_file_mismatch", "path": relative})
+    observed[relative] = digest
+
+
+def _inspect_provenance_layer(fd, layer, layer_index, expected, observed, findings):
+    """Account for each provenance-layer member, including removals and types."""
+    prefix = PROVENANCE_ROOT + "/"
+    with tarfile.open(fileobj=H._decoded(fd, layer), mode="r|") as archive:
+        for member in archive:
+            path = W.safe_name(member.name)
+            if not path.startswith(prefix):
+                continue
+            relative = path.removeprefix(prefix)
+            if not relative or member.isdir():
+                continue
+            if "/.wh." in f"/{relative}" or relative.startswith(".wh."):
+                findings.append(
+                    {"code": "source_provenance_whiteout", "layer": layer_index}
+                )
+                continue
+            _record_provenance_member(
+                archive, member, relative, expected, observed, findings
+            )
 
 
 def _source_provenance_findings(
@@ -259,43 +300,9 @@ def _source_provenance_findings(
     }
     observed: dict[str, str] = {}
     findings: list[dict[str, object]] = []
-    prefix = PROVENANCE_ROOT + "/"
     graph = H.inspect(fd, length, expected_image_id)
     for layer_index, layer in enumerate(graph["layers"]):
-        with tarfile.open(fileobj=H._decoded(fd, layer), mode="r|") as archive:
-            for member in archive:
-                path = W.safe_name(member.name)
-                if not path.startswith(prefix):
-                    continue
-                relative = path.removeprefix(prefix)
-                if not relative or member.isdir():
-                    continue
-                if "/.wh." in f"/{relative}" or relative.startswith(".wh."):
-                    findings.append(
-                        {"code": "source_provenance_whiteout", "layer": layer_index}
-                    )
-                    continue
-                if not member.isfile():
-                    findings.append(
-                        {
-                            "code": "source_provenance_nonregular_path",
-                            "path": relative,
-                        }
-                    )
-                    continue
-                body = archive.extractfile(member)
-                W.require(body is not None, "source_provenance_file_read")
-                digest = hashlib.sha256(body.read()).hexdigest()
-                if relative not in expected:
-                    findings.append(
-                        {"code": "source_provenance_unexpected_path", "path": relative}
-                    )
-                    continue
-                if digest != expected[relative]:
-                    findings.append(
-                        {"code": "source_provenance_file_mismatch", "path": relative}
-                    )
-                observed[relative] = digest
+        _inspect_provenance_layer(fd, layer, layer_index, expected, observed, findings)
     for path in sorted(set(expected) - set(observed)):
         findings.append({"code": "source_provenance_path_missing", "path": path})
     if observed.get("npa-source-manifest.sha256") == manifest_sha256:
@@ -314,7 +321,62 @@ def _require_root(path: Path, missing_code: str) -> None:
         raise W.ScanError(missing_code) from None
 
 
+class _ArchiveIdentityError(W.ScanError):
+    """Refuse report publication when the held archive identity is unstable."""
+
+
+def _confirm_archive_descriptor(fd: int, initial: os.stat_result) -> None:
+    """Compare the held object's device, inode, bytes, times and ownership."""
+    if W.stat_fingerprint(os.fstat(fd)) != W.stat_fingerprint(initial):
+        raise _ArchiveIdentityError("archive_changed_during_verification")
+
+
+@contextmanager
+def _bound_archive_descriptor(path: Path):
+    """Hash and verify one private descriptor without reopening its pathname."""
+    _, fd, initial = W.open_private_fd(path)
+    try:
+        _confirm_archive_descriptor(fd, initial)
+        digest = W.descriptor_digest(fd)
+        _confirm_archive_descriptor(fd, initial)
+        yield fd, initial.st_size, digest
+        _confirm_archive_descriptor(fd, initial)
+    finally:
+        os.close(fd)
+
+
+def _archive_report(args, fd, length, digest, contract, expected_inputs, manifest):
+    """Combine complete-byte and per-layer source verification on the same fd."""
+    report = H.verify(
+        fd,
+        length,
+        args.expected_image_id,
+        contract,
+        digest,
+        args.expected_source_revision,
+        args.expected_dpkg_inventory_sha256,
+        args.expected_python_venv_inventory_sha256,
+        args.expected_native_closure_sha256,
+    )
+    report["findings"].extend(
+        _source_provenance_findings(
+            fd,
+            length,
+            args.expected_image_id,
+            expected_inputs,
+            manifest,
+            args.expected_source_revision,
+            args.expected_npa_source_manifest_sha256,
+        )
+    )
+    report["valid"] = not report["findings"]
+    report["npa_source_manifest_sha256"] = args.expected_npa_source_manifest_sha256
+    report["npa_source_file_count"] = len(expected_inputs)
+    return report
+
+
 def _verify_archive(args: argparse.Namespace) -> dict[str, object]:
+    """Verify trusted source and complete archive evidence under private roots."""
     _require_root(args.analysis_root, "analysis_root_missing")
     _require_root(args.trusted_root, "trusted_root_missing")
     with W.authorized_roots(args.analysis_root, args.trusted_root) as roots:
@@ -331,38 +393,10 @@ def _verify_archive(args: argparse.Namespace) -> dict[str, object]:
             manifest,
             args.expected_npa_source_manifest_sha256,
         )
-        archive, fd, info = W.open_private_fd(args.oci_archive)
-        try:
-            archive_hash = P.binding(archive)["sha256"]
-            report = H.verify(
-                fd,
-                info.st_size,
-                args.expected_image_id,
-                contract,
-                archive_hash,
-                args.expected_source_revision,
-                args.expected_dpkg_inventory_sha256,
-                args.expected_python_venv_inventory_sha256,
-                args.expected_native_closure_sha256,
+        with _bound_archive_descriptor(args.oci_archive) as (fd, length, digest):
+            return _archive_report(
+                args, fd, length, digest, contract, expected_inputs, manifest
             )
-            provenance_findings = _source_provenance_findings(
-                fd,
-                info.st_size,
-                args.expected_image_id,
-                expected_inputs,
-                manifest,
-                args.expected_source_revision,
-                args.expected_npa_source_manifest_sha256,
-            )
-            report["findings"].extend(provenance_findings)
-            report["valid"] = not report["findings"]
-            report["npa_source_manifest_sha256"] = (
-                args.expected_npa_source_manifest_sha256
-            )
-            report["npa_source_file_count"] = len(expected_inputs)
-            return report
-        finally:
-            os.close(fd)
 
 
 def _failure_report(code: str) -> dict[str, object]:
@@ -541,6 +575,8 @@ def _publish_report(args: argparse.Namespace, parent: int, report: dict) -> None
 def _verification_report(args: argparse.Namespace) -> dict[str, object]:
     try:
         return _verify_archive(args)
+    except _ArchiveIdentityError:
+        raise
     except W.ScanError as error:
         return _failure_report(str(error))
     except W.INPUT_ERRORS as error:

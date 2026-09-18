@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import ast
 import copy
+from contextlib import nullcontext
 import gzip
 import hashlib
 import importlib.util
@@ -18,7 +19,7 @@ import sys
 import tarfile
 import textwrap
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 import yaml
@@ -145,6 +146,155 @@ def test_current_image_contract_remains_source_delivery_quarantined() -> None:
 
 def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _mock_archive_info():
+    """Describe a synthetic held descriptor without opening any object."""
+    return SimpleNamespace(
+        st_dev=1,
+        st_ino=2,
+        st_size=12,
+        st_mtime_ns=3,
+        st_ctime_ns=4,
+        st_mode=0o100600,
+        st_uid=5,
+        st_gid=6,
+    )
+
+
+def _mock_archive_arguments():
+    """Supply inert source and inventory identities for the descriptor test."""
+    return SimpleNamespace(
+        analysis_root=Path("analysis"),
+        trusted_root=VERIFIER.CHECKOUT_ROOT,
+        oci_archive=Path("inert-archive"),
+        expected_source_revision=SOURCE_REVISION,
+        expected_npa_source_manifest_sha256="b" * 64,
+        expected_image_id="c" * 64,
+        expected_dpkg_inventory_sha256="d" * 64,
+        expected_python_venv_inventory_sha256="e" * 64,
+        expected_native_closure_sha256="f" * 64,
+    )
+
+
+def _mock_archive_verification(monkeypatch):
+    """Prepare an inert descriptor; never open or parse an actual image."""
+    args, info = _mock_archive_arguments(), _mock_archive_info()
+    monkeypatch.setattr(VERIFIER, "_require_root", Mock())
+    monkeypatch.setattr(
+        VERIFIER.W,
+        "authorized_roots",
+        lambda *_: nullcontext((None, VERIFIER.CHECKOUT_ROOT)),
+    )
+    monkeypatch.setattr(VERIFIER, "_source_manifest_from_git", lambda _: b"manifest")
+    monkeypatch.setattr(VERIFIER, "_load_contract", lambda: {})
+    monkeypatch.setattr(
+        VERIFIER, "_bind_source_contract", lambda *_: ({}, {"input": "hash"})
+    )
+    unopened = Mock(spec=Path)
+    unopened.read_bytes.side_effect = AssertionError("pathname reopen forbidden")
+    opened = Mock(return_value=(unopened, 42, info))
+    digest = Mock(return_value=_digest(b"held descriptor fixture"))
+    verify = Mock(return_value={"findings": [], "valid": True})
+    provenance, close = Mock(return_value=[]), Mock()
+    monkeypatch.setattr(VERIFIER.W, "open_private_fd", opened)
+    monkeypatch.setattr(VERIFIER.W, "descriptor_digest", digest)
+    monkeypatch.setattr(VERIFIER.os, "fstat", Mock(return_value=info))
+    monkeypatch.setattr(VERIFIER.os, "close", close)
+    monkeypatch.setattr(VERIFIER.H, "verify", verify)
+    monkeypatch.setattr(VERIFIER, "_source_provenance_findings", provenance)
+    return args, info, opened, digest, verify, provenance, close
+
+
+def test_archive_digest_uses_only_the_held_verification_descriptor(monkeypatch) -> None:
+    args, _, opened, digest, verify, provenance, close = _mock_archive_verification(
+        monkeypatch
+    )
+    report = VERIFIER._verify_archive(args)
+    opened.assert_called_once_with(args.oci_archive)
+    opened.return_value[0].read_bytes.assert_not_called()
+    digest.assert_called_once_with(42)
+    assert verify.call_args.args[:2] == (42, 12)
+    assert verify.call_args.args[4] == _digest(b"held descriptor fixture")
+    assert provenance.call_args.args[:2] == (42, 12)
+    assert VERIFIER.os.fstat.call_args_list == [call(42)] * 3
+    close.assert_called_once_with(42)
+    assert report["valid"] is True and report["npa_source_file_count"] == 1
+
+
+@pytest.mark.parametrize("check", [0, 1, 2])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "st_dev",
+        "st_ino",
+        "st_size",
+        "st_mtime_ns",
+        "st_ctime_ns",
+        "st_mode",
+        "st_uid",
+        "st_gid",
+    ],
+)
+def test_archive_identity_mismatch_refuses_before_publication(
+    monkeypatch, capsys, check, field
+) -> None:
+    """Inject stat observations only; no concurrent filesystem mutation occurs."""
+    args, info, _, digest, verify, provenance, close = _mock_archive_verification(
+        monkeypatch
+    )
+    changed = SimpleNamespace(**{**vars(info), field: getattr(info, field) + 1})
+    monkeypatch.setattr(
+        VERIFIER.os, "fstat", Mock(side_effect=[info] * check + [changed])
+    )
+    monkeypatch.setattr(VERIFIER, "_arguments", lambda _: args)
+    monkeypatch.setattr(VERIFIER, "_report_destination", lambda _: nullcontext(41))
+    publish = Mock()
+    monkeypatch.setattr(VERIFIER, "_publish_report", publish)
+    assert VERIFIER.main([]) == 1
+    assert "archive_changed_during_verification" in capsys.readouterr().err
+    publish.assert_not_called()
+    assert digest.call_count == (check > 0)
+    assert verify.call_count == provenance.call_count == (check == 2)
+    close.assert_called_once_with(42)
+
+
+def test_descriptor_digest_preserves_benign_file_position(tmp_path) -> None:
+    payload = b"benign owner-created descriptor fixture\n"
+    path = tmp_path / "fixture.txt"
+    path.write_bytes(payload)
+    path.chmod(0o600)
+    with VERIFIER.W.authorized_roots(tmp_path, ROOT):
+        with VERIFIER._bound_archive_descriptor(path) as (fd, length, digest):
+            assert length == len(payload) and digest == _digest(payload)
+            assert os.lseek(fd, 0, os.SEEK_CUR) == 0
+            assert os.read(fd, length) == payload
+
+
+def test_host_verifier_source_helpers_are_focused_and_documented() -> None:
+    source = ast.parse((PACKAGE / "verify_image.py").read_text())
+    names = {
+        "_bind_source_contract",
+        "_bind_provenance_files",
+        "_bind_executable_sources",
+        "_bind_bootstrap_files",
+        "_source_provenance_findings",
+        "_inspect_provenance_layer",
+        "_record_provenance_member",
+        "_confirm_archive_descriptor",
+        "_bound_archive_descriptor",
+        "_archive_report",
+        "_verify_archive",
+    }
+    functions = {
+        node.name: node for node in source.body if isinstance(node, ast.FunctionDef)
+    }
+    for name in names:
+        assert functions[name].end_lineno - functions[name].lineno < 40, name
+        assert ast.get_docstring(functions[name]), name
+    assert set(name for name in functions if not name.startswith("_")) == {"main"}
+    for section in ("Args:", "Returns:", "Raises:"):
+        assert section in VERIFIER.main.__doc__
 
 
 def test_verifier_exported_contracts_have_structured_documentation() -> None:
