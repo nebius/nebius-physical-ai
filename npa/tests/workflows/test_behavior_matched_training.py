@@ -20,7 +20,7 @@ from action_partition import EXPECTED_TRAINABLE_PATHS, assert_partition
 from build_replay_trace import build
 from checkpoint_selection import LossRow, select_checkpoint
 from export_selected import export_selected
-from gpu_preflight import _result
+from gpu_preflight import _logits_equal, _result
 from generate_prefix_records import _transform_raw_sample
 from panel_data import PanelDataset, ReplanDataset, TaskBalancedSampler
 from stage_conditioning import (
@@ -79,6 +79,19 @@ def test_task0_reset_precedes_vote() -> None:
     assert reset is True
     assert updated.stage == 2
     assert tuple(updated.history) == (3,)
+
+
+def test_gpu_preflight_compares_storage_dtypes_as_float32(monkeypatch) -> None:
+    direct = np.array([[1.0, 2.0, np.nan]], dtype=np.float16)
+    native = np.array([[1.0, 2.0, np.nan]], dtype=np.float32)
+    original = np.allclose
+
+    def require_float32(left, right, **kwargs):
+        assert left.dtype == right.dtype == np.dtype(np.float32)
+        return original(left, right, **kwargs)
+
+    monkeypatch.setattr(np, "allclose", require_float32)
+    assert _logits_equal(direct, native) == (True, 2)
 
 
 def test_gpu_receipt_uses_real_panel_index_contract() -> None:

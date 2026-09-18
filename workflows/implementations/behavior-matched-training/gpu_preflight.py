@@ -29,18 +29,28 @@ def _paths(value, prefix=()):
         yield prefix
 
 
+def _logits_equal(direct: np.ndarray, native: np.ndarray) -> tuple[bool, int]:
+    """Compare finite stage logits in float32 across JAX storage dtypes."""
+    finite = np.isfinite(native)
+    if not finite.any():
+        return False, 0
+    direct_values = np.asarray(direct[finite], dtype=np.float32)
+    native_values = np.asarray(native[finite], dtype=np.float32)
+    return bool(np.allclose(direct_values, native_values, rtol=1e-5, atol=1e-5)), int(
+        finite.sum()
+    )
+
+
 def _verify_logits(jax, nnx, model, observation) -> int:
     direct = np.asarray(nnx.jit(predict_stage_logits)(model, observation))
     _, native = nnx.jit(model.sample_actions, static_argnames=("num_steps",))(
         jax.random.key(0), observation, num_steps=1
     )
     native = np.asarray(native)
-    finite = np.isfinite(native)
-    if not finite.any() or not np.allclose(
-        direct[finite], native[finite], rtol=1e-5, atol=1e-5
-    ):
+    equal, finite_logits = _logits_equal(direct, native)
+    if not equal:
         raise ValueError("Direct prefix logits differ from native inference logits")
-    return int(finite.sum())
+    return finite_logits
 
 
 def _result(jax, panel, finite_logits: int) -> dict:
