@@ -115,6 +115,8 @@ def _inert_authorized_context(module, monkeypatch):
 def test_authorized_default_wrapper_uses_one_private_native_state(
     inert_wrapper, monkeypatch, outcome
 ):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+
     module, effects = inert_wrapper
     context, environment = _inert_authorized_context(module, monkeypatch)
     root = Path("/synthetic-private/run")
@@ -124,7 +126,23 @@ def test_authorized_default_wrapper_uses_one_private_native_state(
     assert generated_config != input_config
     # This is an inert callback carrier, not a native/provider ownership receipt.
     cleanup = SimpleNamespace(
-        config_path=generated_config, verified=False, request=Mock(), cwd=expected
+        config_path=generated_config,
+        verified=False,
+        request=Mock(),
+        cwd=expected,
+        run_id=context.authorization.inner_launch_id,
+        job_id="42",
+        active=True,
+        submitting=False,
+        requested=False,
+        native_result=NativeLaunchResult(
+            "a" * 64,
+            "00000000-0000-4000-8000-000000000001",
+            "42",
+            (0,),
+            "c" * 64,
+        ),
+        native_verified=True,
     )
     calls = []
 
@@ -153,7 +171,19 @@ def test_authorized_default_wrapper_uses_one_private_native_state(
                 if outcome == "config-change"
                 else str(generated_config)
             )
-        return SimpleNamespace(log_paths=log_paths)
+        return SimpleNamespace(
+            status="SUBMITTED",
+            job_id="42",
+            returncode=0,
+            error="",
+            launch_transaction={
+                "state": "submitted",
+                "identity_source": "native_request_result",
+                "logical_launch_id": run_id,
+                "job_id": "42",
+            },
+            log_paths=log_paths,
+        )
 
     original_wait = module._wait_for_terminal
     status = Mock(
@@ -194,7 +224,7 @@ def test_authorized_default_wrapper_uses_one_private_native_state(
         poll.assert_called_once()
         assert status.call_count == 2
         for call in status.call_args_list:
-            assert call.args == (context.authorization.inner_launch_id,)
+            assert call.args == ("42",)
             assert call.kwargs["config_path"] == generated_config
             assert call.kwargs["isolated_config_dir"] is calls[0]["isolated_config_dir"]
             assert call.kwargs["environment"] == poll.call_args.kwargs["environment"]
@@ -230,6 +260,58 @@ def test_authorized_wrapper_refusal_precedes_isolated_state(inert_wrapper, monke
     for effect in effects.values():
         effect.assert_not_called()
     module.subprocess.run.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("logical_id", "result_job_id", "native_job_id", "expected"),
+    (
+        ("robotwin-inner-owned", "42", "42", "42"),
+        ("robotwin-inner-owned", "robotwin-inner-owned", "42", None),
+        ("robotwin-inner-owned", "42", "43", None),
+        ("robotwin-inner-other", "42", "42", None),
+    ),
+)
+def test_native_polling_identity_requires_bound_native_receipt(
+    logical_id, result_job_id, native_job_id, expected
+):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+
+    module = _load_module()
+    cleanup = SimpleNamespace(
+        run_id=logical_id,
+        job_id=native_job_id,
+        active=True,
+        submitting=False,
+        requested=False,
+        native_verified=True,
+        native_result=NativeLaunchResult(
+            "a" * 64,
+            "00000000-0000-4000-8000-000000000004",
+            native_job_id,
+            (0,),
+            "b" * 64,
+        ),
+    )
+    result = SimpleNamespace(
+        status="SUBMITTED",
+        job_id=result_job_id,
+        returncode=0,
+        error="",
+        launch_transaction={
+            "state": "submitted",
+            "identity_source": "native_request_result",
+            "logical_launch_id": "robotwin-inner-owned",
+            "job_id": result_job_id,
+        },
+    )
+    assert module._native_polling_identity(result, cleanup, logical_id) == expected
+
+    if expected is None:
+        guard = module._SubmitTeardown(cleanup_on_failure=True)
+        guard.bind(cleanup)
+        with pytest.raises(module.SkyPilotConfigError, match="native polling identity"):
+            guard.native_job_id(result, logical_id)
+        assert guard.retain_context and guard.pending
 
 
 def test_generic_wrapper_preserves_explicit_isolated_state(inert_wrapper, monkeypatch):
@@ -272,6 +354,7 @@ def test_managed_submit_cleanup_ownership_boundary(
     monkeypatch, tmp_path, confidential, failure
 ):
     from npa.orchestration.skypilot import workflow as submit_module
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
 
     module = _load_module()
     context = (
@@ -324,18 +407,38 @@ def test_managed_submit_cleanup_ownership_boundary(
             kwargs["config_path"],
             active=True,
         )
+        if failure == "post-return":
+            cleanup.native_result = NativeLaunchResult(
+                "e" * 64,
+                "00000000-0000-4000-8000-000000000003",
+                "42",
+                (0,),
+                "f" * 64,
+            )
+            cleanup.job_id = "42"
+            cleanup.native_verified = True
         handles.append(cleanup)
         kwargs["on_launch_ready"](cleanup)
         if failure == "signal":
             handlers[0]()
             assert not mutations
-        cleanup.finish_submit(failed=True)
+        cleanup.finish_submit(failed=failure != "post-return")
         if failure == "post-return":
             return SimpleNamespace(
+                status="SUBMITTED",
+                job_id="42",
+                returncode=0,
+                error="",
+                launch_transaction={
+                    "state": "submitted",
+                    "identity_source": "native_request_result",
+                    "logical_launch_id": _run_id,
+                    "job_id": "42",
+                },
                 log_paths={
                     "config": str(kwargs["config_path"]),
                     "submission_dir": str(workdirs[0]),
-                }
+                },
             )
         raise RuntimeError("synthetic accepted failure")
 
@@ -387,7 +490,11 @@ def test_managed_submit_cleanup_ownership_boundary(
         )
     assert not mutations and status == ["RUNNING"]
     assert all(path.exists() == (failure != "refused") for path in workdirs)
-    assert all(not handle.job_id and not handle.verified for handle in handles)
+    assert all(
+        (handle.job_id == "42" if failure == "post-return" else not handle.job_id)
+        and not handle.verified
+        for handle in handles
+    )
     assert all(handle.result.errors for handle in handles)
 
 
@@ -830,8 +937,8 @@ def test_robotwin_terminal_summary_never_discloses_destination_or_customer_run(
     monkeypatch.setattr(
         module,
         "submit_workflow",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            log_paths={"submission_dir": str(confidential_dir)}
+        lambda *_args, **kwargs: _summary_submit_result(
+            module, kwargs, confidential_dir
         ),
     )
     monkeypatch.setattr(
@@ -879,6 +986,44 @@ def test_robotwin_terminal_summary_never_discloses_destination_or_customer_run(
     assert run_canary not in output
     assert root_canary not in output
     assert "private-destination-canary" not in output
+
+
+def _summary_submit_result(module, kwargs, confidential_dir):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+
+    logical_id = kwargs["logical_launch_id"]
+    cleanup = SimpleNamespace(
+        config_path=None,
+        verified=True,
+        request=Mock(),
+        run_id=logical_id,
+        job_id="42",
+        active=True,
+        submitting=False,
+        requested=False,
+        native_result=NativeLaunchResult(
+            "b" * 64,
+            "00000000-0000-4000-8000-000000000002",
+            "42",
+            (0,),
+            "d" * 64,
+        ),
+        native_verified=True,
+    )
+    kwargs["on_launch_ready"](cleanup)
+    return SimpleNamespace(
+        status="SUBMITTED",
+        job_id="42",
+        returncode=0,
+        error="",
+        launch_transaction={
+            "state": "submitted",
+            "identity_source": "native_request_result",
+            "logical_launch_id": logical_id,
+            "job_id": "42",
+        },
+        log_paths={"submission_dir": str(confidential_dir)},
+    )
 
 
 def test_robotwin_render_only_summary_is_opaque(

@@ -24,6 +24,7 @@ from npa.clients.project_credentials import (
     storage_env_for_project,
 )
 from npa.orchestration.skypilot import submit_workflow, workflow_status
+from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
 from npa.orchestration.skypilot._bin import (
     SkyPilotConfigError,
     SkyPilotNotInstalledError,
@@ -622,6 +623,7 @@ class _SubmitTeardown:
         self.cleanup_on_failure = cleanup_on_failure
         self.cleanup = None
         self.requested = False
+        self.retain_context = False
 
     def bind(self, cleanup) -> None:
         cleanup.cleanup_on_failure = self.cleanup_on_failure
@@ -631,6 +633,10 @@ class _SubmitTeardown:
 
     def teardown(self) -> CleanupResult:
         self.requested = True
+        if self.retain_context:
+            return CleanupResult(
+                errors=["native identity mismatch; recovery state retained"]
+            )
         if self.cleanup is None:
             return CleanupResult(no_op=True)
         return self.cleanup.request()
@@ -639,9 +645,54 @@ class _SubmitTeardown:
         if self.cleanup is not None and path != self.cleanup.config_path:
             raise SkyPilotConfigError("submission cleanup configuration mismatch")
 
+    def native_job_id(self, result: Any, logical_id: str) -> str:
+        """Consume a consistent native result; never infer ownership from its number."""
+        job_id = _native_polling_identity(result, self.cleanup, logical_id)
+        if job_id is None or self.requested:
+            self.retain_context = True
+            raise SkyPilotConfigError(
+                "native polling identity unavailable; recovery state retained"
+            )
+        return job_id
+
     @property
     def pending(self) -> bool:
-        return self.cleanup is not None and not self.cleanup.verified
+        return self.retain_context or (
+            self.cleanup is not None and not self.cleanup.verified
+        )
+
+
+def _native_polling_identity(result: Any, cleanup: Any, logical_id: str) -> str | None:
+    """Check the producer's native-result/callback contract without adopting a job."""
+    job_id = getattr(result, "job_id", None)
+    transaction = getattr(result, "launch_transaction", None)
+    native = getattr(cleanup, "native_result", None)
+    if not (
+        isinstance(job_id, str)
+        and job_id.isascii()
+        and job_id.isdecimal()
+        and not job_id.startswith("0")
+        and isinstance(transaction, dict)
+        and isinstance(native, NativeLaunchResult)
+    ):
+        return None
+    if not (
+        getattr(result, "status", None) == "SUBMITTED"
+        and getattr(result, "returncode", None) == 0
+        and not getattr(result, "error", "")
+        and transaction.get("state") == "submitted"
+        and transaction.get("identity_source") == "native_request_result"
+        and transaction.get("logical_launch_id") == logical_id
+        and transaction.get("job_id") == job_id == native.job_id
+        and getattr(cleanup, "job_id", None) == job_id
+        and getattr(cleanup, "run_id", None) == logical_id
+        and getattr(cleanup, "native_verified", False) is True
+        and getattr(cleanup, "active", False) is True
+        and getattr(cleanup, "submitting", True) is False
+        and getattr(cleanup, "requested", True) is False
+    ):
+        return None
+    return job_id
 
 
 def _submit_and_wait(
@@ -806,6 +857,11 @@ def _submit_and_wait(
                     if robotwin_submit_context is not None
                     else submit_config_path
                 )
+                polling_job_id = (
+                    teardown_guard.native_job_id(result, scheduler_run_id)
+                    if robotwin_submit_context is not None
+                    else scheduler_run_id
+                )
                 summary = (
                     {"launch_id": scheduler_run_id, "status": "submitted"}
                     if robotwin_submit_context is not None
@@ -816,7 +872,7 @@ def _submit_and_wait(
                     }
                 )
                 final, wait_diagnostics = _wait_for_terminal(
-                    scheduler_run_id,
+                    polling_job_id,
                     sky_bin=sky_bin,
                     wait_timeout=args.wait_timeout,
                     poll_interval=args.poll_interval,
