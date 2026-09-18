@@ -1,0 +1,288 @@
+# robomimic neutral BYOF candidate
+
+This is a quarantined Phase A packaging candidate, not a published image or a
+live acceptance record. The intended image bakes immutable robomimic source and
+non-CUDA low-dimensional dependencies on a neutral Python base. CUDA/PyTorch is
+a separate, externally prepared runtime boundary. The planned workflow is
+[`workflows/testing/byof-robomimic.yaml`](../../workflows/testing/byof-robomimic.yaml).
+
+No image has been built. No source, dataset, CUDA runtime, or cache payload was
+fetched while implementing this candidate. There is no accepted image digest,
+anonymous pull proof, runtime-use approval, or B200 result.
+
+## Six independent boundaries
+
+| Boundary | Phase A contract | Status and gate |
+| --- | --- | --- |
+| Source | Bake only `ARISE-Initiative/robomimic@d309eaecc18acf4152a830a895a6984b8ac71b05`. Its MIT `LICENSE` SHA-256 is `7cdbfab482b23a4d925d59ff169ab0bc5f8c97ceb0db79f9fd5bf46ef8aa1556`. | Intended and statically checked; source bytes were not fetched or built in Phase A. A future build must record the observed commit and tree hash. |
+| Baked runtime | Digest-pinned `python:3.11.16-slim-bookworm` plus exactly 40 hash-locked non-CUDA Python distributions for the headless low-dimensional gate. | Candidate only. It must contain no torch, torchvision, Triton, NVIDIA distribution, CUDA, cuDNN, or NCCL payload. Base and dependency licenses remain subject to built-byte review; PyTorch source licensing is not closure for wheel/base binary dependencies. |
+| Weights | No pretrained weights are required or allowed in the image. | The four-step smoke produces its own run-scoped checkpoint only after authorization. Scanner rules reject common weight/checkpoint paths in every image layer. |
+| Data and assets | Official Lift proficient-human low-dimensional HDF5 at `robomimic/robomimic_datasets@74fa018461f479cd9fd15b924a16103012096203`, path `v1.5/lift/ph/low_dim_v15.hdf5`. The exact-revision dataset card declares MIT. | Anonymous runtime fetch only after all other gates. Accept only SHA-256 `2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540` and 21,084,088 bytes. Delete a mismatching partial before opening it. No simulator assets or rendering. |
+| Runtime cache | A pre-populated operator volume mounted read-only at `/opt/npa-runtime/robomimic`. | The image cannot populate it. Before access, the verifier requires an unexpired customer-created entitlement bound to the customer, run, exact runtime lock, and operator-selected `inventory.json` SHA-256. It then verifies the exact lock, package map, ABI, source revision, complete regular-file/symlink inventory, hashes, sizes, and executable interpreter. Missing, declined, stale, wrong-run, wrong-manifest, corrupt, extra, escaping, or mismatched inputs refuse with exit 78 without runtime or dataset mutation. Execution copies only declared objects into a private staging tree, verifies that copy, removes its write bits, and atomically renames it before invoking Python, so later changes to the external volume cannot change the point-in-time copy. Write-bit removal is hygiene, not a read-only isolation claim: the runtime UID owns the snapshot and can restore them. The observed source PVC remains the authoritative read-only boundary. |
+| Outputs | `/workspace/byof-runs/<run-id>` is separate from the input emptyDir and runtime PVC. | A later authorized run may write the checkpoint, config, logs, summary, and `robomimic-smoke.json` to its run-owned output prefix. Upload preflights regular single-link files, allows at most 1 GiB per file and 2 GiB in aggregate, and streams in at most 1 MiB chunks. Image and cache scans must prove output absence. Output rights remain a separate operator responsibility. |
+
+Runtime fetching changes delivery, not permission. A credential, environment
+flag, private registry, manager signature, or pre-populated cache is not
+evidence that restricted bytes may be used, redistributed, or offered as a
+service. The dedicated runner instead offers `notice`, `accept`, `decline`, and
+`resume` actions. `accept` is an explicit customer action that writes an
+owner-only, value-free record bound to that customer, run, runtime lock,
+inventory digest, exact official terms, and an expiry of at most 24 hours. It
+never accepts vendor terms on the customer's
+behalf and never grants redistribution, publication, derivative, service, or
+output rights beyond those terms. Recording acceptance also requires the exact
+notice digest returned by the immediately preceding `notice` action, so an old
+or altered term set cannot be accepted silently. The record path must already
+be inside a customer-owned `0700` directory; symlinked or permissive parents,
+special files, overwrite attempts, and parent replacement races fail closed.
+
+## Neutral candidate
+
+The Dockerfile intends to use the exact parent index digest
+`sha256:528257d48c1da0dcecc2e725d1ae34498d60c965f1241e39cd6a85a8859bdf84`.
+An authorized build must re-resolve its Linux/amd64 child and record the result;
+historical resolution metadata is not byte-portable evidence.
+
+The local build helper treats a successful Docker build as an immutable
+transaction, not as a tag claim. Docker must write one validated
+`sha256:<64-hex>` image ID through `--iidfile`; an owner-only success receipt
+binds that ID, the repository revision, a transaction-unique identity, the
+intended full-SHA tag, and the compare-and-set outcome. Assignment of that
+shared tag is serialized. An existing identical ID is idempotent, while an
+existing different or malformed ID refuses without retagging. The helper
+re-reads the iidfile, built image, and shared tag before publishing the receipt.
+All scanning, SBOM, archive, and provenance consumers must use the receipt's
+`consumer_image_ref` immutable ID (or a separately recorded archive digest),
+never the mutable tag alone.
+
+The daemon-wide named-container mutex remains the cross-client exclusion
+mechanism; a local filesystem lock cannot replace it. Immediately after all
+synchronous tag writes and identity checks finish, the helper durably publishes
+an owner-private `<transaction>.tag-terminal.json` fence. That fence states
+that this transaction will perform no further tag writes. If the owner then
+dies before releasing the mutex, an explicitly requested reconciliation is
+available from the same revision, registry setting, host boot, PID namespace,
+and OS owner:
+
+```bash
+bash npa/docker/workbench/robomimic/build.sh \
+  --reconcile-tag-lock "$OWNER_TERMINAL_RECEIPT"
+```
+
+This mode never builds, fetches, tags, removes images, or starts a container. It
+requires the exact private terminal receipt, an absent original PID (a live,
+unreaped, or reused PID refuses), unchanged daemon identity, unchanged full-SHA
+tag and image ID, and the exact stopped lock container/name/transaction. It
+rechecks these bindings and removes only that immutable lock-container ID;
+the receipt is retained. A subsequent build must acquire the same daemon-wide
+mutex normally. Every cooperating tag writer must honor this protocol.
+
+This is **limited owner-terminal reconciliation, not general autonomous crash
+recovery**. Death before durable fence publication, legacy locks without this
+receipt, foreign hosts or boots, inaccessible process identity, PID reuse,
+changed daemon/tag/transaction, and ambiguous evidence remain fail-closed.
+Elapsed time is never death proof. Those unsupported cases need independent
+daemon-owner authority to establish terminal writers and reconcile the exact
+mutex; this helper supplies neither cross-host authority nor automatic cleanup.
+
+`baked-requirements.lock` contains 40 exact version pins with approved artifact
+hashes. The retained packages cover the pinned source's unconditional import
+graph: `robomimic.algo` registers Diffusion Policy, while
+`robomimic.models.obs_core` imports the matplotlib-backed visualization helper
+even for low-dimensional BC. TensorBoard, transformer language-model,
+imageio-ffmpeg, and EGL-probe packages are lazy paths that this headless gate
+does not invoke. Torch, torchvision, Triton, and every `nvidia-*` distribution
+also remain absent. The Dockerfile installs the wheels with
+`--only-binary=:all: --no-deps --require-hashes`. Before any future authorized
+smoke begins, the verified external runtime interpreter must pass a pinned BC
+entrypoint import gate, including the upstream registry's Diffusers scheduler
+and EMA symbols, against the security-updated Diffusers 0.38 candidate. This is
+import compatibility for BC only; Diffusion Policy execution and the full
+algorithm matrix remain deferred to later separately scoped qualification. The
+image retains the immutable source without `.git`, removes SSH host keys, runs as
+`ubuntu`, starts no SSH daemon by default, and leaves the runtime/input/output
+mount points empty. Passwordless sudo exists solely for the repository's
+SkyPilot Kubernetes bootstrap contract.
+
+`runtime-requirements.lock` records the compatibility target used by the
+deferred gate. It is not a downloader and its version list is not an artifact
+hash closure. The external runtime inventory must supply that closure for every
+installed file before consumption, and its exact document hash must be selected
+by the operator outside the runtime volume. The lock also records the exact
+customer notice contract and official term URLs. The inventory digest is
+identity, never terms acceptance; the separate customer record must bind that
+identity before the runtime is inspected or executed. `runtime_bootstrap.sh` exposes only
+`verify`, `exec`, and `assert-refusal`; it has no ensure, fetch, install, sync,
+warm, or network path. `exec` verifies the read-only source, constructs a
+run-private snapshot from only declared objects, independently verifies the
+snapshot, atomically publishes it, and executes its interpreter. The ephemeral
+snapshot is a separate runtime-consumption boundary and is removed with the pod;
+it is neither baked into the image nor uploaded as output. Its absent write bits
+do not make it an enforced read-only filesystem; identity comes from the
+independently selected inventory hash and the observed read-only source mount.
+
+The checked-in `npa.workflow` remains a valid plan and immutable configuration
+source for the dedicated live harness. Its outer task names the proposed
+`npa-robomimic:0.1.0-neutral-unbuilt` public candidate so offline rendering does
+not imply an accepted release or pullable image; the BYOF target remains
+`tool://robomimic`, whose normal resolver fails without an explicit validated
+tag. Ordinary `workflow submit` is
+intentionally refused in Phase A: it would put the generic BYOF controller in a
+workload pod without the manager-owned Kubernetes context and run-owned RBAC
+that the nested launch requires. The authorized live path is the dedicated E2E
+harness, which reads this exact spec on the operator host, resolves the private
+image and target from manager context, materializes the reviewed run-local
+profile, creates least-privilege observer RBAC, and invokes the same BYOF runner.
+No future change should lift ordinary workflow submission without separately
+closing that controller identity and RBAC design.
+
+`scan_image_robomimic_payload.py` is designed to inspect every layer and image history entry
+plus OCI config, so deleting a prohibited object in a later layer cannot conceal
+it. It rejects CUDA/PyTorch/NVIDIA payloads, tools and headers, HDF5 data,
+weights, populated caches, credentials, run outputs, CUDA/vendor base history,
+build-time runtime or dataset population, and invented acceptance variables.
+Unreadable or unsupported images fail closed. This describes a future gate; it
+is not a claim that built bytes were scanned in Phase A.
+
+## CUDA and cuDNN customer entitlement
+
+The dependent capability remains private and live validation remains deferred,
+but an avoidable manager-signature hold is not part of the runtime-use gate.
+For the customer's bounded run, the customer reviews the exact
+[CUDA Toolkit EULA](https://docs.nvidia.com/cuda/eula/index.html),
+[NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/),
+and [cuDNN Software License Agreement](https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html).
+The runner presents those URLs and the customer's runtime, derivative, service,
+output, and non-redistribution responsibilities before any governed fetch,
+install, cache mutation, image pull, dataset fetch, or GPU action. Decline and
+missing, stale, wrong-customer, wrong-run, wrong-lock, or wrong-inventory records
+fail closed without starting those actions. When authoritative interpretation
+is needed, the customer must use NVIDIA's official license contact.
+
+The preferred sequence remains:
+
+1. Independently redistributable exact CUDA closure, if component-by-component
+   provenance, licenses, files, and service rights close.
+2. Vendor-direct pinned operator-side installation under the documented
+   acceptance/entitlement boundary, materialized outside this image.
+3. Operator-private build-your-own image or runtime volume under the operator's
+   controlled license and security process.
+
+The first option is not currently closed. CUDA and cuDNN licenses identify some
+redistributable runtime components, but that does not prove every byte in the
+PyTorch/NVIDIA wheels is redistributable, excludes developer/static/header
+payloads, satisfies notices/pass-through duties, or authorizes anonymous
+distribution and downstream service use. Customer runtime entitlement closes
+only the customer's bound use decision; it does not close public-image or
+service redistribution. Generic BYOF remains an operator-controlled
+arbitrary-source facility, not a content-aware license firewall. The runner and
+workflow gate recognize the exact accepted private image digest under a renamed
+repository reference, so relabeling cannot bypass the customer record or other
+technical gates.
+
+## Lift PH dataset license record
+
+The official Hugging Face repository metadata for exact revision
+`74fa018461f479cd9fd15b924a16103012096203` identifies
+`robomimic/robomimic_datasets` as public and ungated and declares license
+identifier `mit`. Its exact-revision `README.md` is Git object
+`736f9c17ae642026c84d2b534119cc4dfea1548a`, 1,065 bytes, SHA-256
+`e09a24720408bac08425dbaa0b7b55615e4440f1af0a61133303e4b5d5d6b09a`,
+at <https://huggingface.co/datasets/robomimic/robomimic_datasets/raw/74fa018461f479cd9fd15b924a16103012096203/README.md>.
+The same immutable tree binds `v1.5/lift/ph/low_dim_v15.hdf5` to LFS object
+SHA-256 `2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540`
+and 21,084,088 bytes. The exact revision has no standalone `LICENSE` file (the
+official raw-file endpoint returned 404), so the card's MIT declaration is the
+license record that must travel with this identity.
+
+The official provider terms at <https://huggingface.co/terms-of-service> were
+retrieved anonymously on 2026-09-16 at 12:41:42 UTC: HTTP 200,
+`text/html`, 114,631 bytes, SHA-256
+`42020fcaac52b7b036bf7e816910ca45485ad04c2d31faf09e13636a5b48a36b`;
+the page identified an effective date of 2022-09-15. That page is mutable, so
+its URL, retrieval identity, and current terms must be checked again before a
+new transaction. The card and those terms disclosed no dataset-specific
+field-of-use, service-use, or training-output restriction. MIT notice/license
+obligations still apply to copies or substantial portions of the dataset.
+Anonymous reachability does not itself grant rights, and this dataset finding
+does not close the separate CUDA, cuDNN, PyTorch, image, service, or B200 gates.
+
+Official sources for the later human/vendor decision include the NVIDIA CUDA
+Toolkit EULA, cuDNN Software License Agreement, CUDA container license, PyTorch
+2.7.1 license/release material and CUDA 12.8 wheel index, and the official
+Python image recipe/license. Review current authoritative copies immediately
+before any transaction; repository prose is not the decision.
+
+## Deferred exact-digest hard gate
+
+After a valid customer entitlement and separate transaction authorization, the
+private exact-digest stage must:
+
+1. Build the reviewed neutral image under a full repository SHA without
+   downloading runtime/data payloads into a layer.
+2. Scan every built layer and OCI history, inventory all packages/licenses,
+   scan vulnerabilities/secrets/malware, generate and verify SBOM/provenance,
+   and prove the cache/input/output roots are empty.
+3. Push only to authorized private staging, re-pull by exact digest, and repeat
+   byte/security verification.
+4. Prepare the CUDA runtime independently, record every file and symlink, hash
+   its inventory, have the manager select that hash outside the volume, mount it
+   read-only, and prove missing/corrupt/extra inventory refusal independently.
+   Before execution, atomically publish and reverify a run-private snapshot of
+   only the declared objects.
+5. Bind the workload to exactly one STRICT-reserved B200. This is an unresolved
+   execution prerequisite, not something that `NPA_ROBOMIMIC_STRICT_B200_ATTESTED`
+   or a caller-authored receipt can establish. The baked `smoke` entrypoint
+   immediately refuses with exit 78, before external runtime snapshot creation,
+   cache mutation, interpreter execution or runtime imports. Its Pod observer
+   has only `get pods` access and cannot independently observe a provider
+   allocation. Completing this path
+   requires an authenticated observer that joins the run ID, executing Pod UID,
+   scheduled node/provider instance, actual reservation and STRICT allocation
+   policy, rejecting missing, expired or mismatched evidence. Do not silently
+   broaden the workload service account or treat synthetic interface tests as
+   real capacity qualification. Pod image-digest/service-account checks and
+   local one-B200/`sm_100` observations remain necessary but insufficient.
+6. Fetch and hash the official HDF5, produce nonempty disjoint train/held-out
+   masks, run upstream `robomimic/scripts/train.py` for exactly four serialized
+   Adam optimizer steps and two validation forward steps, and require finite
+   train/validation loss.
+   The dataset helper revalidates the same byte-bound customer/run/runtime
+   record before creating or changing input-cache objects, before each HTTPS
+   request (including redirects), and before writing or publishing input bytes.
+   Expiry or binding mismatch refuses without private values in diagnostics;
+   partial bytes are cleaned. This record concerns the separate non-token-gated
+   runtime terms; public MIT Lift data does not acquire a new license gate, and
+   genuinely token-gated assets still use vendor-side entitlement alone.
+7. Save and hash the genuine epoch checkpoint, reload it through
+   `policy_from_checkpoint`, and infer exactly one held-out action of shape
+   `[7]` whose values are finite and within `[-1, 1]`.
+8. Write `$NPA_SMOKE_OUTPUT_DIR/robomimic-smoke.json` with the solution,
+   capability list, immutable source/data/runtime identities, trajectory/sample
+   and split proof, optimizer/loss proof, checkpoint/reload/action proof,
+   observed B200 and pod digest, and exit status. Upload no HDF5 input.
+9. Run a distinct read-only verifier against the exact private digest and
+   evidence, then clean run-owned RBAC/resources with ownership preconditions.
+
+Only after private acceptance may a separate authorized publication transaction
+copy digest-identical neutral bytes, repeat all scans, and prove a clean
+anonymous pull from an empty Docker configuration. Add a public catalog row
+only after that proof; the current candidate remains quarantined.
+
+Image-policy sweeps, simulator rollouts, rendering, and the full algorithm
+matrix remain deferred.
+
+## Local Phase A checks
+
+Use the repository Python 3.12 interpreter:
+
+```bash
+npa/.venv/bin/python --version
+npa/.venv/bin/python -m npa.cli.main workbench workflow validate-spec workflows/testing/byof-robomimic.yaml --json
+npa/.venv/bin/python -m npa.cli.main workbench workflow plan-spec workflows/testing/byof-robomimic.yaml --run-id robomimic-plan-local --json
+npa/.venv/bin/python -m pytest -q npa/tests/docker/test_robomimic_image_contract.py npa/tests/docker/test_robomimic_runtime_bootstrap.py npa/tests/docker/test_robomimic_image_payload_scan.py npa/tests/workflows/test_byof_robomimic.py
+```
+
+These local checks validate source contracts and refusal behavior. They do not
+build an image, fetch a payload, use CUDA, submit a workflow, or claim public or
+live acceptance.

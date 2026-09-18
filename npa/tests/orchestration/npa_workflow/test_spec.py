@@ -239,10 +239,10 @@ def test_tokenfactory_cosmos_gate_plan_expands_refinement_loop() -> None:
     assert states[-1] == "publish"
 
 
-def test_invalid_api_version() -> None:
+def test_invalid_api_version(tmp_path: Path) -> None:
     path = SPECS / "vlm-eval-single.yaml"
     text = path.read_text().replace("v0.0.1", "v9.9.9")
-    broken = REPO_ROOT / "npa" / "workflows" / "workbench" / "_tmp-broken.yaml"
+    broken = tmp_path / "_tmp-broken.yaml"
     broken.write_text(text)
     try:
         with pytest.raises(NpaWorkflowError, match="apiVersion"):

@@ -1,0 +1,70 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "93112d026d421f5fba6cd6ee6ecee20f8bf35a5b81beacf6abb4017638159415",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The redesigned Phase A workflow passed the repository schema validator under Python 3.12.",
+      "evidence": [
+        "npa/.venv/bin/python -m npa.cli.main workbench workflow validate-spec workflows/testing/byof-robomimic.yaml --json: status=valid",
+        "config.base_profile=prebuilt; config.controller_image is explicitly neutral-unbuilt; config.base_image=tool://robomimic; config.build_command is empty"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The Python 3.12 planner produced one B200 workbench.byof.repo step with both declared outputs; static tests preserve the real four-step held-out checkpoint-reload contract. The exact spec is consumed by the dedicated operator-host harness; ordinary workflow submission remains refused because its nested controller identity/RBAC path is not authorized. No image, external CUDA runtime, dataset, workflow execution, or GPU was used.",
+      "evidence": [
+        "plan-spec run_id=robomimic-plan-local: one byof-run step, B200:1, tool://robomimic, two outputs",
+        "npa/docker/workbench/robomimic/smoke.py",
+        "npa/tests/workflows/test_byof_robomimic.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "blocked",
+      "reason": "No child runtime context or transaction authority was published; the checked-in bucket is inert.",
+      "evidence": [
+        "config.bucket=example-bucket",
+        "Phase A forbids storage and cloud mutation"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "Immutable public metadata records the official Lift PH hash and size, but Phase A fetched no dataset bytes.",
+      "evidence": [
+        "dataset revision 74fa018461f479cd9fd15b924a16103012096203",
+        "expected SHA-256 2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540; 21084088 bytes"
+      ]
+    },
+    "credentials": {
+      "status": "blocked",
+      "reason": "The public, anonymously retrievable exact dataset carries its MIT notice and needs no separate NPA acceptance. The external CUDA/cuDNN runtime instead requires a customer-facing notice and a customer-created, unexpired authorization bound to the customer, run, exact runtime lock and inventory, exact terms set, and expiry. No such live-run record exists in this static readiness file; credentials, manager or generic human signatures, environment flags, private registries, and runtime fetches are not substitutes.",
+      "evidence": [
+        "notice, accept, decline, and resume are customer-controlled runner actions",
+        "missing, declined, stale, wrong-customer, wrong-run, wrong-lock, wrong-inventory, or wrong-terms records refuse before external action",
+        "a later gated Hugging Face or NGC asset uses only the customer's real vendor entitlement probe, without a duplicate NPA terms boolean",
+        "the record grants no redistribution or publication right"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The neutral Dockerfile and byte scanner are implemented but Phase A authorized neither source fetch nor image build, scan, push, pull, SBOM, provenance, or anonymous availability proof.",
+      "evidence": [
+        "pinned intended base python:3.11.16-slim-bookworm@sha256:528257d48c1da0dcecc2e725d1ae34498d60c965f1241e39cd6a85a8859bdf84",
+        "40-entry non-CUDA lock SHA-256 65efcf0065ad4662b348e54e3f2d86996d934a518fcad0e89ecf012399ce1504",
+        "no accepted image digest exists"
+      ]
+    },
+    "target_runtime": {
+      "status": "blocked",
+      "reason": "The exact-inventory read-only runtime and customer-entitlement contracts exist only as code. No runtime bytes or cache were populated, no run-bound customer record was created, and B200 authorization remains absent.",
+      "evidence": [
+        "profile requires one B200 and a read-only external runtime PVC",
+        "missing or mismatched customer entitlement or operator-selected runtime inventory exits 78 before workload execution",
+        "execution uses an atomically published independently reverified run-private snapshot",
+        "no B200 or live capability claim is made"
+      ]
+    }
+  }
+}

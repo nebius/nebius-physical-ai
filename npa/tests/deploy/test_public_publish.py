@@ -34,6 +34,7 @@ from npa.deploy import images
 from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
     DEFAULT_PUBLIC_CONTAINER_REGISTRY,
+    NEUTRAL_UNBUILT_CANDIDATE_TOOLS,
     RESTRICTED_DERIVED_IMAGES,
     RESTRICTED_PUBLICATION_TOOLS,
     UNVALIDATED_PUBLICATION_TOOLS,
@@ -301,9 +302,9 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
     assert RESTRICTED_DERIVED_IMAGES == frozenset()
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
-    assert UNVALIDATED_PUBLICATION_TOOLS == frozenset(
-        {"openpi", "curobo", "ncore"}
-    )
+    assert UNVALIDATED_PUBLICATION_TOOLS == frozenset({"openpi", "curobo", "ncore"})
+    assert NEUTRAL_UNBUILT_CANDIDATE_TOOLS == frozenset({"robomimic"})
+    assert not is_publicly_redistributable("robomimic")
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
         "diffusers",
         "lingbot-world",
@@ -522,7 +523,11 @@ def test_publish_plan_targets_public_registry_by_default() -> None:
     # redistributable image does not silently drift this gate.
     assert len(plan) == len(publicly_publishable_tools()) - len(
         set(publicly_publishable_tools())
-        & (set(UNVALIDATED_PUBLICATION_TOOLS) | set(VALIDATION_CANDIDATE_TOOLS))
+        & (
+            set(UNVALIDATED_PUBLICATION_TOOLS)
+            | set(VALIDATION_CANDIDATE_TOOLS)
+            | set(NEUTRAL_UNBUILT_CANDIDATE_TOOLS)
+        )
     )
     # And, since the Isaac re-architecture emptied the restricted set: every image the repo
     # builds and has validated is publishable. This is the assertion that would catch a
@@ -533,6 +538,7 @@ def test_publish_plan_targets_public_registry_by_default() -> None:
             set(RESTRICTED_PUBLICATION_TOOLS)
             | set(UNVALIDATED_PUBLICATION_TOOLS)
             | set(VALIDATION_CANDIDATE_TOOLS)
+            | set(NEUTRAL_UNBUILT_CANDIDATE_TOOLS)
         )
     )
     for item in plan:
@@ -625,6 +631,21 @@ def test_selector_matches_packaging_contract_classification() -> None:
             # A future non-canonical restricted image must map to a
             # restricted canonical tool
             assert tool in RESTRICTED_PUBLICATION_TOOLS, image_name
+
+
+def test_selector_refuses_unvalidated_neutral_redistribution() -> None:
+    """A neutral proposal is not public before its exact-byte license closure."""
+
+    contract = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
+    contract_unvalidated = {
+        name
+        for name, entry in contract["images"].items()
+        if entry.get("redistribution") == "unvalidated"
+    }
+    assert contract_unvalidated == set(NEUTRAL_UNBUILT_CANDIDATE_TOOLS)
+    assert all(
+        not is_publicly_redistributable(tool) for tool in contract_unvalidated
+    )
 
 
 # --- Resolution guard: a restricted tool must never resolve from a public registry ----

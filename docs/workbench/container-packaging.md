@@ -119,7 +119,7 @@ Strongly recommended for `service` images:
 
 The workbench is open source, and images should be pullable widely — but "widely"
 has a license boundary that the contract encodes in a `redistribution` field per
-image (`public` | `restricted`), enforced by
+image (`public` | `restricted` | `unvalidated`), enforced by
 `npa/tests/docker/test_packaging_contract.py`.
 
 - **`public`** — Every shipped component has reviewed permission for public
@@ -172,6 +172,12 @@ image (`public` | `restricted`), enforced by
   expressly listed as redistributable by their included SDK terms. Both current
   releases are bound to exact public development digests with accepted real-GPU
   evidence.
+
+- **`unvalidated`** — no restricted payload is asserted, but the complete exact
+  selected-byte base/package/wheel/license closure has not yet been accepted.
+  This fail-closed state is private and publication-quarantined; it becomes
+  `public` or `restricted` only after exact built-byte evidence supports that
+  decision.
 
 ## Manual gate audit (2026-08-16)
 
@@ -477,6 +483,30 @@ build hook.
 4. SONIC variants: `npa/src/npa/deploy/sonic_image_manifest.json`.
 5. Blackwell fleet digests: `npa/docker/workbench/sm120-images.json`.
 6. Update golden evals when the image’s “does its job” command changes.
+
+### Neutral robomimic candidate
+
+`npa-robomimic` is a quarantined example of a split runtime boundary. The
+intended image bakes pinned MIT robomimic source and a 40-entry hash-locked
+non-CUDA dependency closure on a digest-pinned Python base. It must contain no
+torch, torchvision, Triton, NVIDIA/CUDA runtime, weight, data, populated cache,
+credential, or output. `scan_image_robomimic_payload.py` must inspect every
+layer and OCI history after a future authorized build.
+
+Its packaging class remains `unvalidated`: pinned source and lock metadata do
+not establish redistribution rights for the exact base and selected package
+bytes. A future exact built-byte licence review must establish the final class.
+
+The CUDA-capable Python environment is not a runtime downloader. It is an exact
+file/package/ABI inventory prepared outside the image and mounted read-only.
+The bootstrap can verify, execute with, or prove refusal of that inventory; it
+cannot populate it or accept terms. This packaging split does not supply
+distribution, use, or service rights. Until an unexpired customer-created
+run/manifest entitlement, transaction
+authorization, built-byte/security/SBOM/provenance gates, private exact-digest
+B200 qualification, and anonymous pull proof all pass, the
+tool remains in `NEUTRAL_UNBUILT_CANDIDATE_TOOLS`, is included in
+`PUBLICATION_QUARANTINE_TOOLS`, and has no public catalog row.
 
 ## Operator checklist (new or changed image)
 

@@ -46,11 +46,12 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory has **42 packaging entries** (40 redistribution-eligible
-and two restricted) and **43 mapped tools**: 37 public-release members, two
-restricted tools, and four quarantined tools (`curobo`, `ncore`, `openpi` and
-`robocasa`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
-they do not constitute acceptance of the quarantined images.
+The current source inventory has **43 packaging entries** (40
+redistribution-eligible, two restricted, and one unvalidated neutral candidate)
+and **44 mapped tools**: 37 public-release members, two restricted tools, and five
+quarantined tools (`curobo`, `ncore`, `openpi`, `robocasa`, and `robomimic`). These
+counts come from `packaging-contract.yaml` and `npa.deploy.images`; they do not
+constitute a new registry audit or acceptance of the quarantined images.
 
 LeRobot 0.6.0 is selectable package support with an accepted optional public
 image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact
@@ -416,6 +417,21 @@ supported, blocked, not routed, unverified, or CPU-only rather than verified or
 historical evidence.
 
 ## Intentionally not published as separate images
+
+- **`npa-robomimic`** is a quarantined, unbuilt Phase A neutral candidate, not a
+  published image. Its intended bytes are pinned MIT robomimic source plus 40
+  hash-locked non-CUDA dependencies on a digest-pinned Python base. PyTorch,
+  torchvision, Triton, NVIDIA CUDA/cuDNN/NCCL distributions, weights, official
+  Lift PH data, populated runtime cache, credentials, and outputs are excluded.
+  The CUDA runtime is a separate exact-inventory read-only operator mount. Its
+  access requires a customer-created record bound to the customer, run, exact
+  runtime lock and inventory, official terms, and expiry; that record does not
+  grant redistribution or publication. No accepted digest, built-byte scan, SBOM,
+  provenance, private B200 result, anonymous pull proof, or public availability
+  is claimed; `NEUTRAL_UNBUILT_CANDIDATE_TOOLS` and the composed
+  `PUBLICATION_QUARANTINE_TOOLS` mechanically preserve quarantine. Its packaging
+  class is `unvalidated`, so the source design does not prematurely assert public
+  redistribution eligibility before an exact selected-byte licence review.
 
 - **`npa-cosmos3-nano-video`** extends the digest-pinned upstream
   `vllm/vllm-omni:cosmos3` image with Ray Serve, measured chunked video rollouts,
