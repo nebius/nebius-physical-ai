@@ -385,7 +385,7 @@ def test_layer_memory_removal_applies_only_to_completed_layers(
     assert state.source_inventory == prior.source_inventory
     assert (state.entries, state.regular_files, state.content_bytes) == (
         2,
-        4,
+        5,
         3 + len(payload),
     )
     assert reader.call_count == 1
@@ -444,6 +444,13 @@ def test_layer_memory_duplicate_observation_remains_refused(monkeypatch):
     observations = [_memory_layer_observation("sample/new.txt", "file")] * 2
     with pytest.raises(H.W.ScanError, match="habitat_oci_duplicate_layer_path"):
         _scan_memory_observations(monkeypatch, H._ScanState(), observations)
+
+
+@pytest.mark.parametrize("encoded", ["A" * 42 + "!", "A" * 42 + "="])
+def test_python_record_hash_requires_canonical_sha256_encoding(encoded: str) -> None:
+    findings: list[dict[str, str]] = []
+    assert H._python_record_identity(f"sha256={encoded}", "1", findings) is None
+    assert findings == [{"code": "python_record_entry_invalid"}]
 
 
 def test_layer_memory_lower_parent_refused_after_current_merge(monkeypatch):

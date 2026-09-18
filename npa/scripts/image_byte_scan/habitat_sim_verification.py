@@ -734,8 +734,14 @@ def _python_record_file(
 def _python_record_identity(hash_field, size_field, findings):
     try:
         algorithm, encoded = hash_field.split("=", 1)
-        padding = "=" * (-len(encoded) % 4)
-        expected_hash = base64.urlsafe_b64decode(encoded + padding).hex()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{43}", encoded):
+            raise ValueError("non-canonical RECORD hash")
+        expected_bytes = base64.b64decode(
+            encoded + "=", altchars=b"-_", validate=True
+        )
+        if algorithm == "sha256" and len(expected_bytes) != 32:
+            raise ValueError("invalid sha256 RECORD hash length")
+        expected_hash = expected_bytes.hex()
         expected_size = int(size_field)
         return algorithm, expected_hash, expected_size
     except (TypeError, ValueError):
@@ -1309,6 +1315,8 @@ def _observe_layer_member(lower, current, archive, member, path, location, contr
     """Apply removals only to lower layers; retain current observations separately."""
     layer, entry = location
     if _apply_whiteout(*_whiteout_arguments(lower, path, member)):
+        current.regular_files += 1
+        current.content_bytes += int(member.size)
         lower.events.append({"path": path, "layer": layer, "kind": "whiteout"})
         return
     if _member_kind(member) != "directory":
