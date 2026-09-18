@@ -3829,7 +3829,7 @@ def _status_from_queue_payload(output: str, job_id: str) -> str:
     if not statuses:
         return ""
     for status in statuses:
-        if status.startswith("FAILED") or status == "CANCELLED":
+        if is_terminal_failure_job_status(status):
             return status
     if all(status == "SUCCEEDED" for status in statuses):
         return "SUCCEEDED"

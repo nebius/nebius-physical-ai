@@ -3441,6 +3441,44 @@ def test_status_from_queue_payload_failure_wins() -> None:
     assert _status_from_queue_payload(json.dumps(payload), "1") == "FAILED"
 
 
+@pytest.mark.parametrize("failure", ("CANCELED", "STOPPED", "FAILED_CUSTOM"))
+def test_status_from_queue_payload_reordered_terminal_failure_wins(
+    failure: str,
+) -> None:
+    payload = [
+        {"job_id": 1, "task_id": 0, "status": "SUCCEEDED"},
+        {"job_id": 1, "task_id": 1, "status": failure},
+    ]
+
+    assert _status_from_queue_payload(json.dumps(payload), "1") == failure
+
+
+@pytest.mark.parametrize("failure", ("CANCELED", "STOPPED", "FAILED_CUSTOM"))
+def test_workflow_status_reordered_terminal_failure_is_not_success(
+    monkeypatch, tmp_path, failure: str
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    payload = json.dumps(
+        [
+            {"job_id": 42, "task_id": 0, "status": "SUCCEEDED"},
+            {"job_id": 42, "task_id": 1, "status": failure},
+        ]
+    )
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=payload, stderr=""
+        ),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == failure
+    assert result.status != "SUCCEEDED"
+
+
 def _controller_status_run(status: str):
     payload = json.dumps(
         {"clusters": [{"name": "sky-jobs-controller-abc123", "status": status}]}
