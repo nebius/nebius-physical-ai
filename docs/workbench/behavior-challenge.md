@@ -71,9 +71,13 @@ requires its separate prescribed instances and the full 1,000-case denominator.
 
 The [recent-research candidate](behavior-policy-research.md) keeps the existing
 π0.5-derived backbone and adds training-only camera consistency helpers inspired
-by September 2026 research. It also records the failed adaptation run and the
-timestamp and annotation-alignment audits. Its rollout performance is unmeasured;
-the published RLC comparison below remains the measured result.
+by September 2026 research. It records the failed adaptation run and the
+timestamp and annotation-alignment audits. The separate
+[matched stage-conditioning implementation](behavior-matched-training.md)
+freezes the parent task and stage modules while comparing teacher-bin and parent
+stage-replay action conditioning. The matched implementation has not completed
+native GPU validation or rollout evaluation; the published RLC
+comparison below remains the measured result.
 
 `--policy-kind rlc` selects a development-only transfer of the published
 [RLC 2025 winning solution](https://github.com/IliaLarchenko/behavior-1k-solution).
