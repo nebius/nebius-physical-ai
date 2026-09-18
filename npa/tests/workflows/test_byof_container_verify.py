@@ -102,7 +102,15 @@ def _inert_authorized_context(module, monkeypatch):
 
 @pytest.mark.parametrize(
     "outcome",
-    ("complete", "missing-identity", "changed-identity", "config-change", "signal"),
+    (
+        "complete",
+        "missing-identity",
+        "changed-identity",
+        "config-change",
+        "config-missing",
+        "signal",
+        "poll-error",
+    ),
 )
 def test_authorized_default_wrapper_uses_one_private_native_state(
     inert_wrapper, monkeypatch, outcome
@@ -112,6 +120,8 @@ def test_authorized_default_wrapper_uses_one_private_native_state(
     root = Path("/synthetic-private/run")
     expected = root / "skypilot-state"
     generated_config = expected / "submissions" / "config.yaml"
+    input_config = Path("/synthetic-private/authorized-config")
+    assert generated_config != input_config
     # This is an inert callback carrier, not a native/provider ownership receipt.
     cleanup = SimpleNamespace(
         config_path=generated_config, verified=False, request=Mock(), cwd=expected
@@ -124,6 +134,7 @@ def test_authorized_default_wrapper_uses_one_private_native_state(
         )
         effects["mkdir"].assert_called_once_with(expected, mode=0o700)
         assert kwargs["isolated_config_dir"] == expected
+        assert kwargs["config_path"] == input_config
         assert isinstance(kwargs["isolated_config_dir"], Path)
         assert kwargs["robotwin_submit_context"] is context
         assert run_id == context.authorization.inner_launch_id
@@ -135,24 +146,37 @@ def test_authorized_default_wrapper_uses_one_private_native_state(
             effects["install_teardown_signal_handlers"].call_args.args[0]()
         if outcome in {"missing-identity", "changed-identity", "signal"}:
             raise module.SkyPilotConfigError("synthetic native identity unavailable")
-        return SimpleNamespace(
-            log_paths={
-                "config": str(root / "unrelated")
+        log_paths = {"submission_dir": str(expected / "submissions")}
+        if outcome != "config-missing":
+            log_paths["config"] = (
+                str(root / "unrelated")
                 if outcome == "config-change"
-                else str(generated_config),
-                "submission_dir": str(expected / "submissions"),
-            }
-        )
+                else str(generated_config)
+            )
+        return SimpleNamespace(log_paths=log_paths)
+
+    original_wait = module._wait_for_terminal
+    status = Mock(
+        side_effect=[
+            SimpleNamespace(status="RUNNING", returncode=0),
+            SimpleNamespace(status="SUCCEEDED", returncode=0),
+        ]
+    )
+    monkeypatch.setattr(module, "workflow_status", status)
+    monkeypatch.setattr(module.time, "sleep", Mock())
 
     def wait(_run_id, **kwargs):
         assert kwargs["isolated_config_dir"] is calls[0]["isolated_config_dir"]
         assert cleanup.cwd is kwargs["isolated_config_dir"]
+        assert kwargs["config_path"] == generated_config
         assert kwargs["environment"] == {
             "HOME": "/synthetic-home",
             "PATH": "/bin",
             "KUBECONFIG": context.authorization.kubeconfig_source,
         }
-        return SimpleNamespace(status="SUCCEEDED", returncode=0), {}
+        if outcome == "poll-error":
+            raise module.SkyPilotConfigError("synthetic post-return polling failure")
+        return original_wait(_run_id, **kwargs)
 
     launch, poll = Mock(side_effect=submit), Mock(side_effect=wait)
     monkeypatch.setattr(module, "submit_workflow", launch)
@@ -168,12 +192,22 @@ def test_authorized_default_wrapper_uses_one_private_native_state(
             == 1
         )
         poll.assert_called_once()
+        assert status.call_count == 2
+        for call in status.call_args_list:
+            assert call.args == (context.authorization.inner_launch_id,)
+            assert call.kwargs["config_path"] == generated_config
+            assert call.kwargs["isolated_config_dir"] is calls[0]["isolated_config_dir"]
+            assert call.kwargs["environment"] == poll.call_args.kwargs["environment"]
     else:
         with pytest.raises(module.SkyPilotConfigError):
             module.run_authorized_robotwin(
                 argv, authorization=context.authorization, environment=environment
             )
-        poll.assert_not_called()
+        if outcome == "poll-error":
+            poll.assert_called_once()
+        else:
+            poll.assert_not_called()
+        status.assert_not_called()
     launch.assert_called_once()
     assert cleanup.cwd is calls[0]["isolated_config_dir"]
     assert cleanup.config_path == generated_config and not cleanup.verified
@@ -221,6 +255,8 @@ def test_generic_wrapper_preserves_explicit_isolated_state(inert_wrapper, monkey
     )
     assert launch.call_args.kwargs["isolated_config_dir"] == selected
     assert poll.call_args.kwargs["isolated_config_dir"] == selected
+    assert launch.call_args.kwargs["config_path"] == Path("/synthetic-config")
+    assert poll.call_args.kwargs["config_path"] == Path("/synthetic-config")
     assert launch.call_args.kwargs["robotwin_submit_context"] is None
     launch.assert_called_once()
     effects["mkdir"].assert_not_called()

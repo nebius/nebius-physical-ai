@@ -801,6 +801,11 @@ def _submit_and_wait(
                         result.log_paths["submission_dir"]
                     )
                 teardown_guard.refine_config(submitted_config_path)
+                polling_config_path = (
+                    submitted_config_path
+                    if robotwin_submit_context is not None
+                    else submit_config_path
+                )
                 summary = (
                     {"launch_id": scheduler_run_id, "status": "submitted"}
                     if robotwin_submit_context is not None
@@ -816,7 +821,7 @@ def _submit_and_wait(
                     wait_timeout=args.wait_timeout,
                     poll_interval=args.poll_interval,
                     isolated_config_dir=isolated_config_dir,
-                    config_path=submit_config_path,
+                    config_path=polling_config_path,
                     environment=robotwin_control_env,
                 )
                 if robotwin_submit_context is not None:
