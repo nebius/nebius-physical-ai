@@ -189,7 +189,8 @@ def test_large_image_scan_reclaims_build_cache_and_reuses_large_volume() -> None
 
 def test_base_image_scans_do_not_inherit_trivys_five_minute_timeout() -> None:
     script = (ROOT / "npa/scripts/scan_base_images.py").read_text()
-    assert '"--timeout", "2562047h47m16s"' in script
+    # Tokens, not one contiguous line: ruff format may split the arg list.
+    assert '"--timeout"' in script and '"2562047h47m16s"' in script
     job = _spec(SECURITY_SCAN)["jobs"]["base-image-cve-scan"]
     command = next(
         step["run"]
