@@ -19,7 +19,7 @@ prepare its project and compute, then inspect the result.
 | Task | Read |
 | --- | --- |
 | Author and submit YAML | [Workflow guide](workbench/npa-workflow-guide.md) · [toolRef catalog](workbench/npa-workflow-tool-catalog.md) |
-| Use CLI, Python, or HTTP | [CLI reference](cli/README.md) · [SDK walkthrough](workbench/cli-sdk-yaml-walkthrough.md) · [SDK errors](sdk/errors.md) |
+| Use CLI, Python, or HTTP | [CLI reference](cli/README.md) · [SDK surface](sdk/README.md) · [SDK walkthrough](workbench/cli-sdk-yaml-walkthrough.md) · [SDK errors](sdk/errors.md) |
 | Choose a direct deployment mode | [Runtime modes](workbench/runtime-modes.md) |
 | Understand status and resume | [Run lifecycle](run-lifecycle.md) |
 | View results in a browser | [Agent workbench](agent.md) · [Rerun shares](workbench/rerun-sharing.md) · [Foxglove export](workbench/foxglove-export.md) |

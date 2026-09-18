@@ -3,6 +3,12 @@
 This package exposes a Python SDK surface that mirrors supported npa CLI
 namespaces. The SDK is currently v0: pin the npa version for integrations until
 the public API reaches v1 stability.
+
+Everything in :data:`__all__` is supported; anything else is internal and may
+move without notice. ``npa.sdk`` is the namespaced entrypoint
+(``npa.sdk.workbench.<tool>``, plus ``fleet`` / ``provisioning`` / ``soperator``);
+the remaining names are shortcuts for surfaces that have no per-tool client.
+See `docs/sdk/README.md` for the surface map.
 """
 
 from __future__ import annotations
@@ -32,11 +38,12 @@ _LAZY_SUBMODULES = (
     "errors",
     "network",
     "rerun",
+    "sdk",
     "workflow",
     "workbench",
 )
 
-__all__ = ["__version__", *_LAZY_SUBMODULES]
+__all__ = ["__version__", *sorted(_LAZY_SUBMODULES)]
 
 if TYPE_CHECKING:  # pragma: no cover - type-checker visibility only
     from npa import (  # noqa: F401
@@ -45,6 +52,7 @@ if TYPE_CHECKING:  # pragma: no cover - type-checker visibility only
         errors,
         network,
         rerun,
+        sdk,
         workbench,
         workflow,
     )
@@ -60,4 +68,4 @@ def __getattr__(name: str):
 
 
 def __dir__() -> list[str]:
-    return sorted(set(globals()) | set(_LAZY_SUBMODULES))
+    return list(__all__)

@@ -3,8 +3,23 @@
 from __future__ import annotations
 
 import inspect
+import os
+import subprocess
+import sys
 from pathlib import Path
 from types import ModuleType
+
+
+def _probe(code: str, **env_overrides: str) -> subprocess.CompletedProcess[str]:
+    """Run ``code`` in a fresh interpreter so module-import state is not shared."""
+    env = {**os.environ, **env_overrides}
+    return subprocess.run(
+        [sys.executable, "-c", code],
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 
 
 def _public_modules() -> list[ModuleType]:
@@ -110,6 +125,98 @@ def test_errors_public_surface() -> None:
 
     assert issubclass(ScopedCredentialError, NpaError)
     assert issubclass(NpaError, Exception)
+
+
+def test_sdk_namespace_is_reachable_from_the_top_level_package() -> None:
+    """``npa.sdk.workbench.<tool>`` is the documented entrypoint, so plain
+    attribute access after ``import npa`` has to reach it."""
+    import npa
+
+    assert inspect.ismodule(npa.sdk)
+    assert inspect.ismodule(npa.sdk.workbench)
+    assert "sdk" in npa.__all__
+
+
+def test_top_level_dir_reports_only_the_public_surface() -> None:
+    """``dir(npa)`` is the answer to "what may I use?", so it must not leak
+    module-private helpers."""
+    import npa
+
+    assert dir(npa) == sorted(npa.__all__)
+    private = [
+        name for name in dir(npa) if name.startswith("_") and name != "__version__"
+    ]
+    assert not private, private
+
+
+def test_importing_the_sdk_namespace_does_not_pull_the_dependency_closure() -> None:
+    """The minimal workbench images import ``npa.sdk`` with a partial dependency
+    set, so the namespace itself must not import any tool client."""
+    result = _probe(
+        """
+import sys
+import npa.sdk
+
+heavy = [name for name in ("pyarrow", "lancedb", "boto3", "rerun", "torch")
+         if name in sys.modules]
+assert not heavy, f"npa.sdk eagerly imported {heavy}"
+loaded = sorted(name for name in sys.modules if name.startswith("npa"))
+assert loaded == ["npa", "npa.sdk"], loaded
+"""
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_sdk_workbench_exports_every_tool_client_on_disk() -> None:
+    """A new client under ``npa/src/npa/sdk/workbench/`` must be exported, or it
+    is unreachable by attribute access and invisible to ``dir()``."""
+    from npa.sdk import workbench
+
+    package_root = Path(workbench.__path__[0])
+    on_disk = {
+        path.stem if path.suffix == ".py" else path.name
+        for path in package_root.iterdir()
+        if (path.suffix == ".py" or (path.is_dir() and (path / "__init__.py").exists()))
+        and not path.name.startswith("_")
+    }
+
+    assert on_disk <= set(workbench.__all__), sorted(on_disk - set(workbench.__all__))
+
+
+def test_sdk_workbench_lancedb_is_the_sdk_client_regardless_of_import_order() -> None:
+    """``npa.sdk.workbench.lancedb`` used to resolve to the implementation module
+    until something imported the submodule and rebound the attribute."""
+    from npa.sdk import workbench
+
+    assert workbench.lancedb.__name__ == "npa.sdk.workbench.lancedb"
+
+    import npa.sdk.workbench.lancedb  # noqa: F401
+
+    assert workbench.lancedb.__name__ == "npa.sdk.workbench.lancedb"
+
+
+def test_light_openarm_image_narrows_the_sdk_surface() -> None:
+    """The OpenArm image serves one tool; the SDK surface it advertises has to
+    match, so nothing else can be reached behind its back."""
+    result = _probe(
+        """
+import npa.sdk
+
+assert npa.sdk.__all__ == ["workbench"], npa.sdk.__all__
+assert npa.sdk.workbench.__all__ == ["openarm"], npa.sdk.workbench.__all__
+try:
+    npa.sdk.workbench.sonic
+except AttributeError:
+    pass
+else:
+    raise AssertionError("sonic reachable from the light OpenArm surface")
+""",
+        NPA_SKIP_EAGER_IMPORTS="1",
+        NPA_LIGHT_WORKBENCH_TOOL="openarm",
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_sdk_compatibility_namespace_exposes_lancedb_import() -> None:
