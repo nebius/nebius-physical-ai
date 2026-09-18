@@ -107,6 +107,9 @@ def test_completed_pickup_checks_and_evidence_persist(tmp_path, monkeypatch) -> 
         record, scenario="openpi_franka_pickup_v3", scenario_run_id=run_id)
     assert evidence["pickup_verified"] is True
     results = record["results"]
+    assert 0 <= results["camera_startup_seconds"] < results["camera_startup_deadline_seconds"]
+    assert any(item["criterion"] == "camera_startup_completed" and item["passed"]
+               for item in results["checks"])
     assert results["showcase_frame_count"] >= results["showcase_usable_frame_count"] >= 2
     assert any(item["criterion"] == "showcase_recording_available" and item["passed"]
                for item in results["checks"])

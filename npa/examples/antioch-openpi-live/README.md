@@ -44,8 +44,11 @@ instead of exposing a mutable or device-backed view to downstream code; a
 public clock attached to that sensor's render product supplies the exact marker
 when the RGB annotator omits it. The exterior camera is now about one metre
 from the cube with a 62-degree field of view; the wrist camera uses a 74-degree
-field of view and aims between the initial target and grasp origin before its
-mount is frozen in tool coordinates. Raw USD lens units are explicitly converted
+field of view and aims along the angular bisector of the initial target and grasp
+origin before its mount is frozen in tool coordinates. Equal angular weighting
+keeps the nearby fingers from being clipped by a world-space midpoint biased
+toward the more distant cube. The camera sits behind and beside the tool, and
+the robot base has a floor-to-table pedestal. Raw USD lens units are explicitly converted
 for a metre stage. Both cameras must initially contain the target and gripper
 geometrically, and both must visibly resolve the red target before inference.
 
@@ -104,8 +107,14 @@ success can be reported.
 `control_steps` is the finite trial length in applied policy targets, default
 450 (30 nominal seconds of target intervals, excluding inference waits).
 Exhaustion without physical pickup produces a failed task with saved evidence.
-The existing 90-second transport safety interval also bounds continuous camera
-or lack of applied control progress, yielding an explicit failure instead of waiting for
+Cold streamed-renderer startup has a separate 600-second readiness bound: shader
+initialization can block a rendered step for several minutes. Until both native
+policy buffers and producer clocks appear, acquisition checks every completed
+render rather than waiting for the next 15 Hz sample. Startup duration and its
+named check are persisted. Merely producing pixels does not authorize inference;
+the same consecutive freshness, image-quality and target-visibility gates apply.
+After startup, the existing 90-second transport safety interval also bounds continuous camera
+unavailability or lack of applied control progress, yielding an explicit failure instead of waiting for
 the outer platform timeout. The final target receives a full control interval
 of physics before termination. The controller verifies the persisted physical
 checks, quality measurements and matching evidence archive before accepting a

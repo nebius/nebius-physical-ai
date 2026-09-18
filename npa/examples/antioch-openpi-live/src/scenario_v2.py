@@ -64,6 +64,9 @@ CAMERA_STATUS_INTERVAL_FRAMES = 120
 # are normally tens of milliseconds. This is a stale-response safety deadline,
 # not a real-time claim or a total run limit.
 MAX_RESPONSE_AGE_SECONDS = 90.0
+# A fresh streamed Kit can compile shaders for several minutes before either
+# camera produces a frame. This startup bound never extends response freshness.
+CAMERA_STARTUP_DEADLINE_SECONDS = 600.0
 JOINT_LOW = (-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973)
 JOINT_HIGH = (2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973)
 MAX_JOINT_STEP = 0.35
@@ -101,7 +104,7 @@ EXTERIOR_CAMERA_PATH = "/World/PolicyExterior"
 WRIST_CAMERA_PATH = "/World/PolicyWrist"
 EXTERIOR_CAMERA_EYE = (0.95, -0.65, 0.65)
 EXTERIOR_CAMERA_TARGET = (0.40, 0.0, 0.22)
-WRIST_EYE_OFFSET_TOOL = (-0.18, 0.0, 0.14)
+WRIST_EYE_OFFSET_TOOL = (-0.26, 0.0, 0.18)
 WRIST_TARGET_OFFSET_TOOL = (0.24, 0.0, -0.03)
 STOCK_FRANKA_HAND_PATH = "/World/Franka/panda_hand"
 STOCK_FRANKA_LEFT_FINGER_PATH = "/World/Franka/panda_leftfinger"
@@ -757,6 +760,21 @@ def _stock_franka_gripper_frame(
     return grasp, basis
 
 
+def _camera_target_bisector(eye, first, second):
+    """Give nearby fingers and the distant object equal angular screen space."""
+    import numpy as np
+
+    directions = np.asarray([first, second], dtype=np.float64) - eye
+    distances = np.linalg.norm(directions, axis=1, keepdims=True)
+    if np.any(distances <= 1e-9):
+        raise ValueError("camera target coincides with the camera eye")
+    bisector = np.sum(directions / distances, axis=0)
+    length = float(np.linalg.norm(bisector))
+    if length <= 1e-9:
+        raise ValueError("camera targets face opposite directions")
+    return bisector / length
+
+
 def _calibrate_wrist_camera_mount(
     hand, left_finger, right_finger, look_at, *, hand_transform=None
 ):
@@ -767,9 +785,8 @@ def _calibrate_wrist_camera_mount(
     grasp, basis = _stock_franka_gripper_frame(hand, left_finger, right_finger)
     eye_offset = np.asarray(WRIST_EYE_OFFSET_TOOL, dtype=np.float64)
     eye = grasp + basis @ eye_offset
-    # Frame the object and grasp origin together, then keep that mount rigid.
-    look = 0.5 * (np.asarray(look_at, dtype=np.float64) + grasp) - eye
-    look /= max(float(np.linalg.norm(look)), 1e-9)
+    # A world-space midpoint overweights the distant cube and clips the fingers.
+    look = _camera_target_bisector(eye, look_at, grasp)
     side_direction_hand = None
     if hand_transform is not None:
         from pxr import Gf
@@ -1693,7 +1710,7 @@ def openpi_franka_pickup_v3(
 
 
 def _run_openpi_episode(run, prompt, *, objective, control_steps):
-    from policy_episode import _PickupProgress, _PolicyEvidence, _ShowcaseRecording, _termination_reason, _readiness_failure
+    from policy_episode import _PickupProgress, _PolicyEvidence, _ShowcaseRecording, _termination_reason, _CameraStartup
     import carb
     import numpy as np
     import rerun as rr
@@ -1734,6 +1751,14 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
             )
         )
     robot = world.scene.add(Franka(prim_path="/World/Franka", name="franka"))
+    world.scene.add(
+        FixedCuboid(
+            prim_path="/World/RobotPedestal", name="robot_pedestal",
+            position=np.array([-0.025, 0.0, -0.375]),
+            scale=np.array([0.22, 0.24, 0.75]),
+            color=np.array([0.16, 0.18, 0.20]),
+        )
+    )
     cube = world.scene.add(
         DynamicCuboid(
             prim_path="/World/Cube",
@@ -1874,7 +1899,8 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
     camera_quality = {"exterior": [], "wrist": []}
     initial_target_resolved = False
     termination_reason = "interrupted_or_error"
-    unavailable_since = started
+    camera_startup = _CameraStartup(
+        started, CAMERA_STARTUP_DEADLINE_SECONDS, MAX_RESPONSE_AGE_SECONDS)
     last_control_at = None
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="openpi-policy")
     camera_readiness = CameraReadinessMonitor()
@@ -2054,7 +2080,9 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
                     pending_stall_reported = False
 
 
-            if sim_now >= next_camera_attempt:
+            # A long first render can return between the 15 Hz sampling ticks.
+            # Inspect each completed render during startup before its deadline.
+            if camera_startup.completed_at is None or sim_now >= next_camera_attempt:
                 next_camera_attempt = sim_now + 1.0 / CONTROL_HZ
                 _record_showcase_frame(showcase_camera, showcase_recording, telemetry,
                                        sim_seconds=sim_now, render_sequence=render_sequence)
@@ -2114,6 +2142,16 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
                     )
                 readiness = camera_readiness.observe(pair, producer_reason)
                 camera_policy_eligible = readiness.policy_eligible
+                first_pair = camera_startup.observe(
+                    now=now, produced_pair=producers_advanced and all(
+                        sample.frame.rgb is not None for sample in samples.values()),
+                    policy_eligible=camera_policy_eligible)
+                if first_pair:
+                    elapsed = now - started
+                    evidence.event("camera_startup", elapsed_seconds=elapsed,
+                                   sim_seconds=sim_now, render_sequence=render_sequence)
+                    print(f"NPA_OPENPI_CAMERA_STARTUP_COMPLETE elapsed_seconds={elapsed:.3f}",
+                          flush=True)
                 current_exterior_cube_in_frame = int(exterior_cube_in_frame)
                 current_wrist_cube_in_frame = int(wrist_cube_in_frame)
                 current_exterior_red_cube_pixels = pair.exterior.red_cube_pixels
@@ -2184,8 +2222,6 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
                             ),
                             flush=True,
                         )
-                else:
-                    unavailable_since = now
                 if (camera_policy_eligible and chunk is None and pending is None
                         and now >= next_attempt and applied < control_steps
                         and not (objective == "communication" and completed_action_chunks >= 2)):
@@ -2334,10 +2370,9 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
                 termination_reason = terminal
                 print(f"NPA_OPENPI_EPISODE_COMPLETE reason={terminal} applied={applied}", flush=True)
                 break
-            failure = _readiness_failure(
+            failure = camera_startup.failure(
                 now=now, camera_ready=camera_policy_eligible,
-                camera_unavailable_since=unavailable_since,
-                last_control_at=last_control_at, deadline=MAX_RESPONSE_AGE_SECONDS)
+                last_control_at=last_control_at)
             if failure:
                 termination_reason = failure
                 break
@@ -2564,6 +2599,7 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
             )
         evidence_sha256 = evidence.finish(run)
         showcase_recording.finish(run)
+        camera_startup.record(run)
         _record_episode_checks(
             run, objective=objective, reason=termination_reason, progress=progress,
             completed_chunks=completed_action_chunks, camera_quality=camera_quality,

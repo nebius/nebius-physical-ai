@@ -46,6 +46,22 @@ def _rgb(*, target_size=16, shifted=False):
     return np.roll(image, 31, axis=1) if shifted else image
 
 
+def test_wrist_aim_gives_near_gripper_and_distant_cube_equal_angular_space(modules):
+    scenario, _episode = modules
+    eye = np.array([0.0, 0.0, 0.0])
+    near_finger = np.array([0.18, 0.0, -0.20])
+    far_cube = np.array([-0.18, 0.0, -0.70])
+    direction = scenario._camera_target_bisector(eye, near_finger, far_cube)
+    normalized = [point / np.linalg.norm(point) for point in (near_finger, far_cube)]
+    assert np.dot(direction, normalized[0]) == pytest.approx(np.dot(direction, normalized[1]))
+    pose = (eye, direction, (0, 1, 0))
+    optics = scenario._camera_optical_config("wrist")
+    assert all(scenario._point_in_camera_frame(point, pose, optics)
+               for point in (near_finger, far_cube))
+    midpoint_pose = (eye, (near_finger + far_cube) / 2, (0, 1, 0))
+    assert not scenario._point_in_camera_frame(near_finger, midpoint_pose, optics)
+
+
 def test_washed_out_but_nonblack_policy_frame_is_rejected(modules):
     scenario, _episode = modules
     image = np.full((224, 224, 3), 247, dtype=np.uint8)
@@ -442,6 +458,24 @@ class _ImmediateExecutor:
         pass
 
 
+def _install_cold_renderer(scenario, monkeypatch, world, cold_seconds):
+    capture = scenario._capture_camera_samples
+    first_produced_sim_time = 3 / 60
+
+    def cold_capture(*args):
+        if world.current_time < first_produced_sim_time:
+            return {
+                view: scenario.CameraSample(scenario.CameraFrame(None, "missing"), None)
+                for view in ("exterior", "wrist")
+            }
+        return capture(*args)
+
+    monkeypatch.setattr(scenario, "_capture_camera_samples", cold_capture)
+    monkeypatch.setattr(scenario, "time", SimpleNamespace(monotonic=lambda:
+        world.current_time + (cold_seconds if world.current_time >= 2 / 60 else 0)))
+
+
+@pytest.mark.parametrize("cold_seconds", [0, 320])
 @pytest.mark.parametrize(
     "objective,steps,replies,grasp",
     [
@@ -458,6 +492,7 @@ def test_executing_loop_runs_second_chunk_and_requires_task_evidence(
     steps,
     replies,
     grasp,
+    cold_seconds,
 ):
     rr = pytest.importorskip("rerun")
     scenario, episode = modules
@@ -479,6 +514,7 @@ def test_executing_loop_runs_second_chunk_and_requires_task_evidence(
         )
     monkeypatch.setattr(sys.modules["antioch"], "world", lambda: world, raising=False)
     _install_fake_camera_scene(scenario, monkeypatch, world)
+    _install_cold_renderer(scenario, monkeypatch, world, cold_seconds)
     monkeypatch.setattr(rr, "send_blueprint", lambda *_args: None)
     client = SimpleNamespace(reconnects=0, shutdown=lambda: None)
     actions = np.tile([*scenario.DROID_RESET_JOINTS, float(grasp)], (15, 1))
@@ -505,6 +541,8 @@ def test_executing_loop_runs_second_chunk_and_requires_task_evidence(
         assert run.results["safe_targets_applied"] == steps
         assert run.results["policy_round_trips"] == replies
     assert run.checks["policy_evidence_complete"]
+    assert run.checks["camera_startup_completed"]
+    assert run.results["camera_startup_seconds"] == pytest.approx(cold_seconds + 3 / 60)
     assert run.checks["episode_completed"] == (objective == "communication" or grasp)
     if objective == "pickup" and not grasp:
         assert run.results["termination_reason"] == "control_steps_exhausted"
@@ -549,6 +587,30 @@ def test_readiness_deadline_does_not_require_an_advancing_simulation_clock(
         )
         == expected
     )
+
+
+def test_cold_camera_deadline_cannot_extend_operating_camera_stall(modules):
+    _scenario, episode = modules
+    startup = episode._CameraStartup(0, 600, 90)
+    assert not startup.failure(now=320, camera_ready=False, last_control_at=None)
+    assert startup.observe(now=320, produced_pair=True, policy_eligible=False)
+    assert not startup.failure(now=409, camera_ready=False, last_control_at=None)
+    assert startup.failure(now=410, camera_ready=False, last_control_at=None) == "camera_unavailable"
+    startup.observe(now=411, produced_pair=True, policy_eligible=True)
+    assert startup.failure(now=501, camera_ready=True, last_control_at=411) == "control_stalled"
+
+
+def test_never_producing_or_late_cameras_finish_as_startup_failure(modules):
+    _scenario, episode = modules
+    startup = episode._CameraStartup(0, 600, 90)
+    assert not startup.observe(now=599, produced_pair=False, policy_eligible=False)
+    assert not startup.failure(now=599, camera_ready=False, last_control_at=None)
+    assert not startup.observe(now=600, produced_pair=True, policy_eligible=False)
+    assert startup.failure(now=600, camera_ready=False, last_control_at=None) == "camera_startup_unavailable"
+    run = _Run()
+    startup.record(run)
+    assert not run.checks["camera_startup_completed"]
+    assert run.results["camera_startup_seconds"] is None
 
 
 def _recording_run():

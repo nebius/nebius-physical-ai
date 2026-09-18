@@ -101,6 +101,46 @@ def _readiness_failure(
     return ""
 
 
+@dataclass
+class _CameraStartup:
+    """Separate cold renderer startup from loss of an operating camera pair."""
+
+    started_at: float
+    startup_deadline: float
+    runtime_deadline: float
+    completed_at: float | None = None
+    unavailable_since: float | None = None
+
+    def observe(self, *, now, produced_pair, policy_eligible):
+        first_pair = (self.completed_at is None and produced_pair
+                      and now - self.started_at < self.startup_deadline)
+        if first_pair:
+            self.completed_at = now
+            self.unavailable_since = now
+        if policy_eligible:
+            self.unavailable_since = now
+        return first_pair
+
+    def failure(self, *, now, camera_ready, last_control_at):
+        if self.completed_at is None:
+            if now - self.started_at >= self.startup_deadline:
+                return "camera_startup_unavailable"
+            return ""
+        return _readiness_failure(
+            now=now, camera_ready=camera_ready,
+            camera_unavailable_since=self.unavailable_since,
+            last_control_at=last_control_at, deadline=self.runtime_deadline,
+        )
+
+    def record(self, run):
+        complete = self.completed_at is not None
+        elapsed = self.completed_at - self.started_at if complete else None
+        run.add_result("camera_startup_seconds", elapsed)
+        run.add_result("camera_startup_deadline_seconds", self.startup_deadline)
+        run.check("camera_startup_completed", complete,
+                  detail="Both native policy buffers and producer clocks became available")
+
+
 class _PolicyEvidence:
     def __init__(self, root: Path | None = None):
         self.root = root or Path(tempfile.mkdtemp(prefix="openpi-evidence-"))
