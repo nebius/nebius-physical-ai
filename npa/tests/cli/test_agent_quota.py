@@ -87,10 +87,21 @@ def test_agent_capacity_uses_project_quotas_when_tenant_list_is_forbidden(
         },
     ],
 )
-def test_agent_capacity_allows_unrestricted_project_quotas_with_warning(
+def test_agent_capacity_fails_closed_when_project_quota_rows_are_missing(
     monkeypatch, project_payload: dict
 ) -> None:
     _project_scoped_quota_setup(monkeypatch, project_payload)
+
+    with pytest.raises(
+        PreflightBlockedError,
+        match="Project-scoped quota evidence could not verify",
+    ):
+        _agent_check_whole_path_capacity(
+            "project-test",
+            "tenant-test",
+            REGION,
+            include_paidf=False,
+        )
 
     result = _agent_whole_path_capacity_result(
         "project-test",
@@ -99,9 +110,8 @@ def test_agent_capacity_allows_unrestricted_project_quotas_with_warning(
         include_paidf=False,
     )
 
-    assert result.status == "WARN"
-    assert "tenant-wide quota visibility is unavailable due to RBAC" in result.summary
-    assert "provider will still enforce the tenant aggregate" in result.details[0]
+    assert result.status == "FAIL"
+    assert "could not verify the requested capacity" in result.summary
 
 
 def test_project_quota_denial_is_not_hidden_by_tenant_rbac_fallback(
@@ -159,7 +169,7 @@ def test_malformed_project_quota_catalog_remains_fail_closed(monkeypatch) -> Non
     )
 
     assert result.status == "FAIL"
-    assert "project-scoped quota query failed (ValueError)" in result.summary
+    assert "could not verify the requested capacity" in result.summary
 
 
 def test_non_rbac_tenant_quota_failure_does_not_use_project_fallback(

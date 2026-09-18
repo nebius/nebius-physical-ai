@@ -10,9 +10,10 @@ resolve the project's real region and check the tenant's per-region
 ``vpc.ipv4-address.public.count`` allowance. A project-scoped administrator may
 not be allowed to inspect the tenant aggregate, so the whole-path check falls
 back to the same quota catalog under the exact deployment project. A real finite
-project allowance remains a hard gate; only the unavailable tenant-wide view is
-reported as advisory. The provider remains authoritative for the tenant
-aggregate during apply.
+project allowance remains a hard gate, and every required project quota must be
+present and readable before a mutation can proceed. Only a fully verified
+project-scoped fallback makes the unavailable tenant-wide view advisory. The
+provider remains authoritative for the tenant aggregate during apply.
 """
 
 from __future__ import annotations
