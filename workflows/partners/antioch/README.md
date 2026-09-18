@@ -42,8 +42,8 @@ Nebius training worker. Transfers are verified by complete readback.
 
 ## Recorded result
 
-The [readiness record](xr1-antioch-finetune.readiness.json) binds the training
-YAML to the [measured evidence](../../../docs/workbench/evidence/xr1-antioch-rtxpro.json).
+The [measured evidence](../../../docs/workbench/evidence/xr1-antioch-rtxpro.json)
+records the training YAML checksum and the run results.
 The recorded run completed 10,000 optimizer steps on eight Nebius RTX PRO 6000
 GPUs and selected step 9,000. Paired held-out task success improved from **0/32
 to 8/32**; all 192 policy camera videos passed decoding checks. Antioch used one
