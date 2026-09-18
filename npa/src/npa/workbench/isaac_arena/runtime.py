@@ -50,6 +50,7 @@ from .ground_truth import simulator_ground_truth as _simulator_ground_truth
 from .acceptance import qualify_visual_acceptance as _qualify_visual_acceptance
 from .action_evidence import read_action_evidence as _read_action_evidence
 from .simulator_video import legacy_rtx_kit_args
+from .capture_profiles import VIDEO_PROFILE_ENV, capture_profile
 from .runtime_identity import assert_runtime_identity
 
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
@@ -71,6 +72,7 @@ class IsaacArenaRequest:
         embodiment: Optional compatible upstream robot selector.
         object_name: Optional compatible upstream object selector.
         record_video: Capture and verify one environment's real viewport.
+        video_profile: Standard capture or native 4K film capture.
         run_id: Searchable operator run identifier.
         runtime_image: Exact candidate image coordinate for provenance.
         dry_run: Render the invocation without downloading or executing inputs.
@@ -87,6 +89,7 @@ class IsaacArenaRequest:
     embodiment: str = ""
     object_name: str = ""
     record_video: bool = False
+    video_profile: str = "standard"
     run_id: str = ""
     runtime_image: str = ""
     dry_run: bool = False
@@ -104,6 +107,9 @@ def _validate_output(request: IsaacArenaRequest) -> None:
 
 def _validate(request: IsaacArenaRequest) -> None:
     _validate_output(request)
+    capture_profile(request.video_profile)
+    if request.video_profile != "standard" and not request.record_video:
+        raise IsaacArenaError("video_profile film requires record_video")
     if request.policy_type not in SUPPORTED_POLICIES:
         raise IsaacArenaError(
             "policy_type must be one of: " + ", ".join(sorted(SUPPORTED_POLICIES))
@@ -185,7 +191,7 @@ def build_evaluation_argv(
                 "--rendering_mode",
                 "balanced",
                 "--kit_args",
-                legacy_rtx_kit_args(),
+                legacy_rtx_kit_args(request.video_profile),
                 "--record_viewport_video",
             ]
         )
@@ -241,7 +247,9 @@ def _policy_input_argv(
     return []
 
 
-def _subprocess_env(*, viewport_only: bool = False) -> dict[str, str]:
+def _subprocess_env(
+    *, viewport_only: bool = False, video_profile: str = "standard"
+) -> dict[str, str]:
     env = dict(os.environ)
     # Inputs are materialized and outputs are published by NPA, so the simulator
     # gets no cloud credentials or HTTP admission secrets.  This also keeps its
@@ -269,9 +277,11 @@ def _subprocess_env(*, viewport_only: bool = False) -> dict[str, str]:
         ):
             env.pop(key, None)
     env.setdefault("ACCEPT_EULA", "Y")
+    env.pop(VIDEO_PROFILE_ENV, None)
     env.pop("NPA_ISAAC_ARENA_VIEWPORT_ONLY", None)
     if viewport_only:
         env["NPA_ISAAC_ARENA_VIEWPORT_ONLY"] = "1"
+        env[VIDEO_PROFILE_ENV] = capture_profile(video_profile).name
     return env
 
 
@@ -530,7 +540,9 @@ def _require_optix_runtime(log_text: str) -> None:
 def _execute_upstream(
     request, artifact_root, private_dir, base, runner, graphics_preparer, argv
 ):
-    sim_env = _subprocess_env(viewport_only=request.record_video)
+    sim_env = _subprocess_env(
+        viewport_only=request.record_video, video_profile=request.video_profile
+    )
     if request.record_video:
         base["runtime"]["viewport_graphics"] = graphics_preparer(
             private_dir / "viewport-graphics",
@@ -719,11 +731,16 @@ def _video_artifacts(
             run_dir,
             source,
             task_motion=_capture_context(request, ground_truth),
+            expected_profile=request.video_profile,
             expected_steps=(ground_truth.get("task_motion") or {}).get(
                 "episode_length"
             ),
         )
-        video, derivation = video_preparer(source)
+        video, derivation = (
+            video_preparer(source)
+            if video_preparer is not None
+            else _denoise_mp4(source, video_profile=request.video_profile)
+        )
         metadata = _probe_mp4(
             video,
             evidence_interval=interval,
@@ -824,7 +841,7 @@ def evaluate(
     graphics_preparer: Callable[
         [Path, dict[str, str]], dict[str, Any]
     ] = _prepare_viewport_graphics,
-    video_preparer: Callable[[Path], tuple[Path, dict[str, Any]]] = _denoise_mp4,
+    video_preparer: Callable[[Path], tuple[Path, dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     """Execute real Arena evaluation and retain truthful scored or failed evidence.
 
@@ -832,7 +849,8 @@ def evaluate(
         request: Scored policy evaluation and optional visual qualification.
         runner: Upstream process executor, injectable for offline contract tests.
         graphics_preparer: Verify or privately prepare native graphics userspace.
-        video_preparer: Create the declared denoised derivative without altering source.
+        video_preparer: Optional test transform; None uses the selected profile's
+            declared evidence filter without altering source.
     Returns:
         Published evaluation manifest with metrics and independently hashed artifacts.
     Raises:

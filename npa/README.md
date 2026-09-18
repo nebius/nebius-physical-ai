@@ -19,6 +19,15 @@ and return types vary by tool. See the
 [CLI / SDK / workflow walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md)
 before integrating a tool programmatically.
 
+For [Isaac Arena footage](../docs/workbench/isaac-arena.md#supported-policies),
+`npa workbench isaac-arena evaluate --record-video --video-profile film`
+requests native 4K capture with additional physics-frozen settling renders.
+`standard` remains the default; workflows opt in with `config.video_profile`.
+The updated capture runtime must be present in the selected image or a recorded
+source overlay. Retained live output can be checked with
+`NPA_INTEGRATION_E2E=1 NPA_ARENA_FILM_RESULT=/path/to/result.json npa/.venv/bin/python -m pytest npa/tests/e2e/test_isaac_arena_film_capture_live.py -q`.
+That check reads the complete downloaded output bundle and launches no new job.
+
 ## Install
 
 From the repository root, with your virtual environment active:

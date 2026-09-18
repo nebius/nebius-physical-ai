@@ -13,7 +13,8 @@ import numpy as np
 
 from .errors import IsaacArenaError
 from .hashing import file_sha256 as _file_sha256
-from .simulator_video import _MINIMUM_SETTLING_RENDERS, _RENDER_SETTINGS
+from .simulator_video import _MINIMUM_SETTLING_RENDERS
+from .capture_profiles import capture_profile, render_settings
 
 _SAMPLE_WIDTH = 160
 _SAMPLE_HEIGHT = 90
@@ -30,6 +31,26 @@ _SEARCH_RADIUS = 8
 DENOISE_FILTER = "hqdn3d=20:16:30:24,gblur=sigma=3.5"
 EVIDENCE_PLAYBACK_RATE = 0.5
 EVIDENCE_FILTER = f"{DENOISE_FILTER},setpts={1 / EVIDENCE_PLAYBACK_RATE:g}*PTS"
+
+
+def evidence_filter(video_profile: str = "standard") -> str:
+    """Keep the evidence blur's image-relative radius at native film resolution.
+
+    Args:
+        video_profile: Validated capture profile; standard retains its exact filter.
+    Returns:
+        The declared evidence transform, without changing motion thresholds.
+    Raises:
+        IsaacArenaError: The profile is unknown.
+    """
+    profile = capture_profile(video_profile)
+    if profile.resolution is None:
+        return EVIDENCE_FILTER
+    sigma = 3.5 * profile.resolution[1] / 720
+    return (
+        f"hqdn3d=20:16:30:24,gblur=sigma={sigma:g},"
+        f"setpts={1 / EVIDENCE_PLAYBACK_RATE:g}*PTS"
+    )
 
 
 def video_acceptance_thresholds() -> dict[str, Any]:
@@ -760,9 +781,9 @@ def probe_mp4(
     return metadata
 
 
-def _render_denoised_video(source: Path, target: Path) -> None:
+def _render_denoised_video(source: Path, target: Path, filters: str) -> None:
     arguments = ["ffmpeg", "-v", "error", "-i", str(source)]
-    arguments += ["-vf", EVIDENCE_FILTER, "-an", "-vsync", "0"]
+    arguments += ["-vf", filters, "-an", "-vsync", "0"]
     arguments += ["-c:v", "libx264", "-preset", "medium", "-crf", "18"]
     arguments += ["-pix_fmt", "yuv420p", "-movflags", "+faststart", "-y", str(target)]
     try:
@@ -775,21 +796,25 @@ def _render_denoised_video(source: Path, target: Path) -> None:
         raise IsaacArenaError(f"viewport MP4 denoising failed: {source.name}")
 
 
-def denoise_mp4(source: Path) -> tuple[Path, dict[str, Any]]:
+def denoise_mp4(
+    source: Path, *, video_profile: str = "standard"
+) -> tuple[Path, dict[str, Any]]:
     """Create a declared denoised derivative while retaining the upstream MP4.
 
     Args:
         source: Original upstream MP4, preserved unchanged.
+        video_profile: Select the evidence filter's native-resolution scale.
     Returns:
         Derivative path and source hash with the exact FFmpeg filter declaration.
     Raises:
         IsaacArenaError: FFmpeg cannot produce a nonempty derivative.
     """
     target = source.with_name(f"{source.stem}-evidence-denoised.mp4")
-    _render_denoised_video(source, target)
+    filters = evidence_filter(video_profile)
+    _render_denoised_video(source, target, filters)
     return target, {
         "kind": "ffmpeg_spatiotemporal_denoise",
-        "filter": EVIDENCE_FILTER,
+        "filter": filters,
         "playback_rate": EVIDENCE_PLAYBACK_RATE,
         "source_path": source.name,
         "source_sha256": _file_sha256(source),
@@ -959,7 +984,9 @@ def _frozen_field_valid(row: dict[str, Any], prefix: str) -> bool:
     )
 
 
-def _freeze_row_valid(row: Any, step: int) -> bool:
+def _freeze_row_valid(
+    row: Any, step: int, minimum_settling_renders: int = _MINIMUM_SETTLING_RENDERS
+) -> bool:
     if (
         not isinstance(row, dict)
         or type(row.get("action_step")) is not int
@@ -981,7 +1008,7 @@ def _freeze_row_valid(row: Any, step: int) -> bool:
         and type(row.get("pre_settling_render_calls")) is int
         and row["pre_settling_render_calls"] >= 1
         and type(row.get("settling_render_calls")) is int
-        and row["settling_render_calls"] >= _MINIMUM_SETTLING_RENDERS
+        and row["settling_render_calls"] >= minimum_settling_renders
         and row["render_calls"]
         == row["pre_settling_render_calls"] + row["settling_render_calls"]
         and type(row.get("consecutive_ready_render_calls")) is int
@@ -996,6 +1023,9 @@ def _freeze_row_valid(row: Any, step: int) -> bool:
 
 def _rendering_proof(capture: dict[str, Any]) -> dict[str, Any]:
     rendering = capture.get("rendering")
+    if not isinstance(rendering, dict):
+        raise IsaacArenaError("invalid simulator capture rendering configuration")
+    profile = capture_profile(rendering.get("profile", "standard"))
     expected = {
         "mode": "RaytracedLighting",
         "legacy_mode_enabled": True,
@@ -1005,7 +1035,7 @@ def _rendering_proof(capture: dict[str, Any]) -> dict[str, Any]:
         "dlss_execution_mode": "quality",
         "dl_denoiser_enabled": True,
         "frame_generation_enabled": False,
-        "minimum_settling_renders": _MINIMUM_SETTLING_RENDERS,
+        "minimum_settling_renders": profile.settling_renders,
         "stochastic_accumulation": False,
         "readback_phase": "after_final_accepted_render",
     }
@@ -1015,12 +1045,13 @@ def _rendering_proof(capture: dict[str, Any]) -> dict[str, Any]:
     ):
         raise IsaacArenaError("invalid simulator capture rendering configuration")
     settings = rendering.get("settings")
+    required = render_settings(profile)
     if (
         not isinstance(settings, dict)
-        or set(settings) != set(_RENDER_SETTINGS)
+        or set(settings) != set(required)
         or any(
             type(settings[key]) is not type(value) or settings[key] != value
-            for key, value in _RENDER_SETTINGS.items()
+            for key, value in required.items()
         )
     ):
         raise IsaacArenaError(
@@ -1030,12 +1061,14 @@ def _rendering_proof(capture: dict[str, Any]) -> dict[str, Any]:
 
 
 def _physics_freeze_proof(capture: dict[str, Any], total: int) -> dict[str, Any]:
+    rendering = _rendering_proof(capture)
+    minimum = rendering["minimum_settling_renders"]
     rows = capture.get("physics_freeze_checks")
     if (
         capture.get("physics_clock") != "native_physx_step_events_since_capture_setup"
         or not isinstance(rows, list)
         or len(rows) != total + 1
-        or not all(_freeze_row_valid(row, step) for step, row in enumerate(rows))
+        or not all(_freeze_row_valid(row, step, minimum) for step, row in enumerate(rows))
     ):
         raise IsaacArenaError(
             "missing or inconsistent render-only physics freeze evidence"
@@ -1052,7 +1085,7 @@ def _physics_freeze_proof(capture: dict[str, Any], total: int) -> dict[str, Any]
         "verified_capture_count": len(rows),
         "simulation_advanced_during_render": False,
         "physics_state_changed_during_render": False,
-        "rendering": _rendering_proof(capture),
+        "rendering": rendering,
     }
 
 
@@ -1062,6 +1095,7 @@ def verify_capture_evidence(
     *,
     task_motion: dict[str, Any],
     expected_steps: int | None = None,
+    expected_profile: str | None = None,
 ) -> dict[str, Any]:
     """Verify native frame capture against HDF action steps and the raw MP4.
 
@@ -1070,6 +1104,7 @@ def verify_capture_evidence(
         raw_mp4: Untouched upstream MP4; derived videos are not source evidence.
         task_motion: Verified task interval and video_capture fields from HDF5.
         expected_steps: Exact native scored-episode action count when applicable.
+        expected_profile: Requested capture profile; None verifies recorded standalone evidence.
     Returns:
         Verified sidecar/PNG hashes, action counts, and terminal pixel comparison.
     Raises:
@@ -1084,6 +1119,7 @@ def verify_capture_evidence(
     terminal = _capture_step_mapping(task_motion, total)
     physics_freeze = _physics_freeze_proof(capture, total)
     dimensions = (metadata["width"], metadata["height"])
+    _verify_profile_dimensions(physics_freeze["rendering"], dimensions, expected_profile)
     initial = _verify_capture_png(run_dir, capture.get("initial"), 0, dimensions)
     final = _verify_capture_png(run_dir, capture["terminals"][0], terminal, dimensions)
     comparison = _terminal_frame_comparison(raw_mp4, run_dir / final["path"], terminal)
@@ -1096,3 +1132,24 @@ def verify_capture_evidence(
         "source_mp4_sha256": _file_sha256(raw_mp4),
         "terminal_frame_comparison": comparison,
     }
+
+
+def _verify_profile_dimensions(
+    rendering: dict, dimensions: tuple[int, int], expected_profile: str | None
+) -> None:
+    """Bind the decoded native dimensions to the requested capture profile.
+
+    Args:
+        rendering: Verified renderer evidence.
+        dimensions: Decoded raw video width and height.
+        expected_profile: Caller-selected profile, if available.
+    Returns:
+        None.
+    Raises:
+        IsaacArenaError: The capture silently downgraded its profile or resolution.
+    """
+    profile = capture_profile(rendering.get("profile", "standard"))
+    if expected_profile is not None and profile.name != expected_profile:
+        raise IsaacArenaError("capture profile differs from the requested profile")
+    if profile.resolution is not None and dimensions != profile.resolution:
+        raise IsaacArenaError("capture dimensions differ from the native profile resolution")

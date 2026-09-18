@@ -4,6 +4,7 @@ import copy
 from typing import Any
 
 from .action_evidence import ACTION_HOLD_DELTA_ABS_MAX_TOLERANCE
+from .capture_profiles import capture_profile, render_settings
 from .identity import (
     ISAAC_ARENA_VERSION,
     ISAAC_ARENA_REVISION,
@@ -11,7 +12,7 @@ from .identity import (
     CAPABILITIES_SCHEMA,
 )
 from .task_progress import task_progress_capabilities
-from .video_evidence import video_acceptance_thresholds
+from .video_evidence import evidence_filter, video_acceptance_thresholds
 
 _TASK_PROGRESS_CAPABILITIES = task_progress_capabilities()
 _TASK_QUALIFIED_POLICIES = sorted(
@@ -533,6 +534,19 @@ _CAPABILITY_MANIFEST = {
     "rendering": {
         "viewport_video": {
             "npa_status": ["implemented", "upstream_alpha"],
+            "profiles": {
+                name: {
+                    "native_resolution": (
+                        list(capture_profile(name).resolution)
+                        if capture_profile(name).resolution is not None else None
+                    ),
+                    "minimum_settling_renders": capture_profile(name).settling_renders,
+                    "settings": render_settings(capture_profile(name)),
+                    "evidence_filter": evidence_filter(name),
+                    "changes_camera_pose_or_physics": False,
+                }
+                for name in ("standard", "film")
+            },
             "request_constraints": {"num_envs": 1, "num_episodes": 1},
             "requires": "RTX rasterization/RT-capable GPU; the readiness record must prove the exact qualified digest and target",
             "renderer": {
