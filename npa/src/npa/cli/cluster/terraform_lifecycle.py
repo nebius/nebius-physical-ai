@@ -678,7 +678,9 @@ def up_cmd(
             # checks below instead of being reclassified as fleet state.
             provider_preflight=(
                 inherited_plan is None
-                and (mig_enabled or (not legacy_state_exists and shared_recipe_available))
+                and (
+                    mig_enabled or (not legacy_state_exists and shared_recipe_available)
+                )
             ),
             scope=MK8sExecutionScope(
                 fleet_name=one_target.name,

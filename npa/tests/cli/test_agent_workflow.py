@@ -1420,7 +1420,10 @@ def test_deployment_review_draft_is_runnable_and_chains_real_artifacts() -> None
     assert draft["plan"]["ok"] is True
     assert draft["runnable"] is True
     spec = yaml.safe_load(draft["yaml"])
-    assert "token_factory_deployment_input" in spec["states"]["prepare-prompts"]["run"]["shell"]
+    assert (
+        "token_factory_deployment_input"
+        in spec["states"]["prepare-prompts"]["run"]["shell"]
+    )
     assert spec["states"]["prepare-prompts"]["outputs"] == [
         {
             "uri": "{{config.prompts_uri}}",

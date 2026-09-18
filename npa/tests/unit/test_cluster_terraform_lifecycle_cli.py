@@ -2868,7 +2868,9 @@ def test_resolve_shared_ssh_public_key_accepts_json_path_from_older_agent(
     assert resolved == "ssh-ed25519 AAAAC3Nz older-agent@example"
 
 
-def test_shared_ssh_key_uses_first_authorized_keys_entry(monkeypatch, tmp_path: Path) -> None:
+def test_shared_ssh_key_uses_first_authorized_keys_entry(
+    monkeypatch, tmp_path: Path
+) -> None:
     """A service account can reuse its login key without a separate .pub file."""
     authorized_keys = tmp_path / "authorized_keys"
     authorized_keys.write_text(
@@ -2877,7 +2879,10 @@ def test_shared_ssh_key_uses_first_authorized_keys_entry(monkeypatch, tmp_path: 
     )
     monkeypatch.setenv("NPA_SSH_PUBLIC_KEY", str(authorized_keys))
 
-    assert tf_mod._resolve_shared_ssh_public_key({}, {}) == "ssh-ed25519 AAAAC3Nz agent@example"
+    assert (
+        tf_mod._resolve_shared_ssh_public_key({}, {})
+        == "ssh-ed25519 AAAAC3Nz agent@example"
+    )
     assert tf_mod._ssh_public_key_var_args({}, {}) == [
         "-var",
         'ssh_public_key={key="ssh-ed25519 AAAAC3Nz agent@example"}',

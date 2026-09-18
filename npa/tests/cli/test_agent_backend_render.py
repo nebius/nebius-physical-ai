@@ -711,10 +711,14 @@ def test_rendered_chat_mk8s_preflights_then_requires_click_confirmation(
         return {"ok": True, "status": "planned" if dry_run else "submitted"}
 
     monkeypatch.setattr(module, "_provision_agent_infra", provision)
-    monkeypatch.setattr(module, "_agent_k8s_backends", lambda _project="": {"has_infra": False})
+    monkeypatch.setattr(
+        module, "_agent_k8s_backends", lambda _project="": {"has_infra": False}
+    )
     try:
         initial = module._agent_chat_with_tools(
-            raw_messages=[{"role": "user", "content": "deploy an mk8s cluster for my workflow"}],
+            raw_messages=[
+                {"role": "user", "content": "deploy an mk8s cluster for my workflow"}
+            ],
             model="unused",
         )
         assert initial["grounded"] is True
@@ -731,7 +735,9 @@ def test_rendered_chat_mk8s_preflights_then_requires_click_confirmation(
         assert "npa provision-if-absent" in initial["reply"]
 
         confirmed = module._agent_chat_with_tools(
-            raw_messages=[{"role": "user", "content": "deploy an mk8s cluster for my workflow"}],
+            raw_messages=[
+                {"role": "user", "content": "deploy an mk8s cluster for my workflow"}
+            ],
             model="unused",
             confirm_token=initial["confirm_token"],
         )
@@ -759,7 +765,9 @@ def test_rendered_chat_mk8s_cpu_only_request_binds_confirmed_shape(
         return {"ok": True, "status": "planned" if dry_run else "submitted"}
 
     monkeypatch.setattr(module, "_provision_agent_infra", provision)
-    monkeypatch.setattr(module, "_agent_k8s_backends", lambda _project="": {"has_infra": False})
+    monkeypatch.setattr(
+        module, "_agent_k8s_backends", lambda _project="": {"has_infra": False}
+    )
     prompt = "Deploy a CPU-only MK8s cluster for the Token Factory workload."
     try:
         initial = module._agent_chat_with_tools(
@@ -801,7 +809,9 @@ def test_rendered_chat_mk8s_rtx_rendering_request_binds_profile(
         return {"ok": True, "status": "planned" if dry_run else "submitted"}
 
     monkeypatch.setattr(module, "_provision_agent_infra", provision)
-    monkeypatch.setattr(module, "_agent_k8s_backends", lambda _project="": {"has_infra": False})
+    monkeypatch.setattr(
+        module, "_agent_k8s_backends", lambda _project="": {"has_infra": False}
+    )
     prompt = (
         "Provision one on-demand RTX rendering GPU node in an MK8s cluster "
         "named demo-gpu-target for this workflow."
@@ -1770,7 +1780,9 @@ def test_workflow_prepare_confirms_infra_when_cloud_discovery_has_no_context(
 ) -> None:
     """A discovered cluster is not runnable until the Agent owns its context."""
     module = _import_rendered_backend(
-        monkeypatch, tmp_path, module_name="npa_rendered_workflow_discovered_only_backend"
+        monkeypatch,
+        tmp_path,
+        module_name="npa_rendered_workflow_discovered_only_backend",
     )
     monkeypatch.setattr(module, "_resolve_workflow_yaml", lambda _body: "workflow")
     monkeypatch.setattr(
@@ -1823,7 +1835,9 @@ def test_workflow_prepare_confirms_adoption_for_exact_discovered_cluster(
     monkeypatch, tmp_path
 ) -> None:
     module = _import_rendered_backend(
-        monkeypatch, tmp_path, module_name="npa_rendered_workflow_adopt_discovered_backend"
+        monkeypatch,
+        tmp_path,
+        module_name="npa_rendered_workflow_adopt_discovered_backend",
     )
     monkeypatch.setattr(module, "_resolve_workflow_yaml", lambda _body: "workflow")
     monkeypatch.setattr(
@@ -1885,7 +1899,10 @@ def test_agent_adopts_confirmed_discovered_cluster(monkeypatch, tmp_path) -> Non
     monkeypatch.setattr(
         module,
         "_agent_workflow_operation_env",
-        lambda project, context: {"NPA_SKYPILOT_PROJECT": project, "KUBECONFIG": context},
+        lambda project, context: {
+            "NPA_SKYPILOT_PROJECT": project,
+            "KUBECONFIG": context,
+        },
     )
 
     assert module._adopt_agent_infra("demo", "npa-cluster") == {
@@ -1895,7 +1912,14 @@ def test_agent_adopts_confirmed_discovered_cluster(monkeypatch, tmp_path) -> Non
     }
     assert calls == [
         (
-            ["cluster", "kubeconfig", "--project", "demo", "--cluster-name", "npa-cluster"],
+            [
+                "cluster",
+                "kubeconfig",
+                "--project",
+                "demo",
+                "--cluster-name",
+                "npa-cluster",
+            ],
             {
                 "timeout_s": 180,
                 "expect_json": False,
@@ -1949,7 +1973,12 @@ def test_workflow_gpu_preflight_blocks_before_execution_confirmation(
     monkeypatch.setattr(module, "_record_sim_viz_run", lambda *_args: None)
 
     response = module.submit_npa_workflow(
-        {"yaml": "workflow", "run_id": "gpu-preflight", "project": "demo", "prepare_execution": True}
+        {
+            "yaml": "workflow",
+            "run_id": "gpu-preflight",
+            "project": "demo",
+            "prepare_execution": True,
+        }
     )
 
     assert response["ok"] is False
@@ -1958,7 +1987,9 @@ def test_workflow_gpu_preflight_blocks_before_execution_confirmation(
     assert "no schedulable GPU capacity" in response["reason"]
 
 
-def test_workflow_gpu_request_detection_and_context_capacity(monkeypatch, tmp_path) -> None:
+def test_workflow_gpu_request_detection_and_context_capacity(
+    monkeypatch, tmp_path
+) -> None:
     """GPU detection is declarative and capacity ignores unready GPU nodes."""
     module = _import_rendered_backend(
         monkeypatch, tmp_path, module_name="npa_rendered_gpu_capacity_helpers"
@@ -2032,9 +2063,7 @@ def test_agent_provision_adds_named_gpu_profile_to_adopted_empty_target(
         module,
         "_agent_k8s_backends",
         lambda _project: {
-            "configured": [
-                {"cluster_name": "npa-cluster", "context": "npa-cluster"}
-            ]
+            "configured": [{"cluster_name": "npa-cluster", "context": "npa-cluster"}]
         },
     )
     monkeypatch.setattr(
@@ -2044,8 +2073,10 @@ def test_agent_provision_adds_named_gpu_profile_to_adopted_empty_target(
     monkeypatch.setattr(
         module,
         "_agent_add_gpu_node_group",
-        lambda **kwargs: additions.append(kwargs)
-        or {"ok": True, "status": "ready", "actions": ["gpu-node-group"]},
+        lambda **kwargs: (
+            additions.append(kwargs)
+            or {"ok": True, "status": "ready", "actions": ["gpu-node-group"]}
+        ),
     )
     provision_calls: list[dict[str, object]] = []
 
@@ -2303,7 +2334,8 @@ def test_workflow_execution_requires_and_uses_action_bound_confirmation(
         env
         for command, env in command_envs
         if command[:2] in (["skypilot", "bootstrap"], ["skypilot", "bind-controller"])
-        or command[:3] in (
+        or command[:3]
+        in (
             ["workbench", "workflow", "run-spec"],
             ["workbench", "workflow", "stage-src"],
             ["workbench", "workflow", "submit"],
@@ -2311,7 +2343,8 @@ def test_workflow_execution_requires_and_uses_action_bound_confirmation(
     ]
     assert context_bound_commands
     assert all(
-        env == {
+        env
+        == {
             "KUBECONFIG": "selected/existing-context/kubeconfig",
             "NPA_SKYPILOT_PROJECT": "demo",
         }
@@ -2413,7 +2446,9 @@ def test_agent_execution_skips_shared_controller_binding_for_isolated_state(
     monkeypatch.setattr(
         module,
         "_execute_workflow_yaml",
-        lambda *_args, **kwargs: observed.append(kwargs["bind_shared_controller"]) or {},
+        lambda *_args, **kwargs: (
+            observed.append(kwargs["bind_shared_controller"]) or {}
+        ),
     )
 
     module._execute_agent_workflow_yaml(
@@ -2465,9 +2500,9 @@ def test_agent_execution_binds_project_credentials_before_workflow_commands(
     monkeypatch.setattr(
         module,
         "_run_agent_npa_json",
-        lambda *_args, extra_env=None, **_kwargs: command_envs.append(
-            dict(extra_env or {})
-        ) or {},
+        lambda *_args, extra_env=None, **_kwargs: (
+            command_envs.append(dict(extra_env or {})) or {}
+        ),
     )
 
     module._execute_agent_workflow_yaml(
@@ -2479,18 +2514,20 @@ def test_agent_execution_binds_project_credentials_before_workflow_commands(
 
     captured["run_npa_json"](["workbench", "workflow", "submit"])
 
-    assert command_envs == [{
-        "NPA_SKYPILOT_ISOLATED_CONFIG_DIR": "/owned/agent-sky",
-        "KUBECONFIG": "selected-kubeconfig",
-        "NPA_SKYPILOT_PROJECT": "demo",
-        "AWS_ACCESS_KEY_ID": "test-access",
-        "AWS_SECRET_ACCESS_KEY": "test-secret",
-        "AWS_ENDPOINT_URL_S3": "https://storage.test.invalid",
-        "AWS_ENDPOINT_URL": "https://storage.test.invalid",
-        "NEBIUS_S3_ENDPOINT": "https://storage.test.invalid",
-        "NPA_STORAGE_ENDPOINT": "https://storage.test.invalid",
-        "S3_ENDPOINT_URL": "https://storage.test.invalid",
-    }]
+    assert command_envs == [
+        {
+            "NPA_SKYPILOT_ISOLATED_CONFIG_DIR": "/owned/agent-sky",
+            "KUBECONFIG": "selected-kubeconfig",
+            "NPA_SKYPILOT_PROJECT": "demo",
+            "AWS_ACCESS_KEY_ID": "test-access",
+            "AWS_SECRET_ACCESS_KEY": "test-secret",
+            "AWS_ENDPOINT_URL_S3": "https://storage.test.invalid",
+            "AWS_ENDPOINT_URL": "https://storage.test.invalid",
+            "NEBIUS_S3_ENDPOINT": "https://storage.test.invalid",
+            "NPA_STORAGE_ENDPOINT": "https://storage.test.invalid",
+            "S3_ENDPOINT_URL": "https://storage.test.invalid",
+        }
+    ]
 
 
 def test_workflow_execution_failure_observability_is_safe_and_actionable(
@@ -2531,7 +2568,9 @@ def test_workflow_execution_failure_observability_is_safe_and_actionable(
     }
 
 
-def test_agent_npa_failure_prefers_safe_structured_transaction(monkeypatch, tmp_path) -> None:
+def test_agent_npa_failure_prefers_safe_structured_transaction(
+    monkeypatch, tmp_path
+) -> None:
     module = _import_rendered_backend(
         monkeypatch, tmp_path, module_name="npa_rendered_safe_transaction_backend"
     )
@@ -4837,7 +4876,9 @@ def test_rendered_backend_allows_head_on_the_rrd_blob_probe(monkeypatch) -> None
     body = _render_backend_body(monkeypatch)
 
     assert '@app.get("/sim-viz/rrd-blob", operation_id="sim_viz_rrd_blob_get")' in body
-    assert '@app.head("/sim-viz/rrd-blob", operation_id="sim_viz_rrd_blob_head")' in body
+    assert (
+        '@app.head("/sim-viz/rrd-blob", operation_id="sim_viz_rrd_blob_head")' in body
+    )
 
 
 def test_rendered_backend_skips_unreadable_ssh_key_candidates(
@@ -4888,11 +4929,15 @@ def test_rendered_backend_exports_hcl_ssh_key_path_for_cluster_provisioning(
     monkeypatch.setattr(
         module.os,
         "access",
-        lambda value, mode: True if str(value) == candidate else real_access(value, mode),
+        lambda value, mode: (
+            True if str(value) == candidate else real_access(value, mode)
+        ),
     )
     try:
         env = module._agent_command_env()
-        assert env["TF_VAR_ssh_public_key"] == '{path="/home/ubuntu/.ssh/id_ed25519.pub"}'
+        assert (
+            env["TF_VAR_ssh_public_key"] == '{path="/home/ubuntu/.ssh/id_ed25519.pub"}'
+        )
     finally:
         sys.modules.pop(module_name, None)
 
@@ -4914,7 +4959,9 @@ def test_rendered_backend_uses_dedicated_agent_skypilot_state(
         sys.modules.pop(module_name, None)
 
 
-def test_rendered_backend_preserves_metadata_profile_home(monkeypatch, tmp_path) -> None:
+def test_rendered_backend_preserves_metadata_profile_home(
+    monkeypatch, tmp_path
+) -> None:
     module_name = "npa_rendered_metadata_profile_home"
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
     monkeypatch.setenv("NPA_NEBIUS_CONFIG", "/agent-home/.nebius/config.yaml")
@@ -4959,7 +5006,9 @@ def test_rendered_backend_keeps_agent_runtime_when_building_workflow_env(
     }
     monkeypatch.setattr(module, "_agent_command_env", lambda: dict(agent_env))
     monkeypatch.setattr(
-        module, "_agent_workflow_context_env", lambda _context: {"KUBECONFIG": "/agent/kubeconfig"}
+        module,
+        "_agent_workflow_context_env",
+        lambda _context: {"KUBECONFIG": "/agent/kubeconfig"},
     )
     monkeypatch.setattr(
         module,
@@ -4967,7 +5016,9 @@ def test_rendered_backend_keeps_agent_runtime_when_building_workflow_env(
         lambda _project, _environment: {"NPA_SKYPILOT_PROJECT": "agent-project"},
     )
     try:
-        assert module._agent_workflow_operation_env("agent-project", "agent-context") == {
+        assert module._agent_workflow_operation_env(
+            "agent-project", "agent-context"
+        ) == {
             **agent_env,
             "KUBECONFIG": "/agent/kubeconfig",
             "NPA_SKYPILOT_PROJECT": "agent-project",
@@ -5323,7 +5374,6 @@ def test_selected_run_artifact_chat_preserves_exact_source(monkeypatch, tmp_path
     )
 
 
-
 def test_live_evidence_chat_loads_exact_artifact_without_exposing_source(
     monkeypatch, tmp_path
 ):
@@ -5360,7 +5410,12 @@ def test_live_evidence_chat_loads_exact_artifact_without_exposing_source(
 
     def load_artifact(payload):
         calls.append(payload)
-        return {"sim_viz": {"artifact_render": "rerun", "rrd_uri": "s3://private/rollout.rrd"}}
+        return {
+            "sim_viz": {
+                "artifact_render": "rerun",
+                "rrd_uri": "s3://private/rollout.rrd",
+            }
+        }
 
     monkeypatch.setattr(module, "sim_viz_load_artifact", load_artifact)
     monkeypatch.setattr(
@@ -5371,7 +5426,10 @@ def test_live_evidence_chat_loads_exact_artifact_without_exposing_source(
 
     response = module._agent_chat_with_tools(
         raw_messages=[
-            {"role": "user", "content": "Show live cloud evidence and a real RRD artifact."}
+            {
+                "role": "user",
+                "content": "Show live cloud evidence and a real RRD artifact.",
+            }
         ],
         model="unused",
     )
@@ -5404,7 +5462,11 @@ def test_live_evidence_prefers_a_verified_active_visual_artifact(monkeypatch, tm
             "resolved_prefix": "workflows/visual",
         }
     }
-    monkeypatch.setattr(module, "artifacts_runs", lambda **_: pytest.fail("active evidence widened to discovery"))
+    monkeypatch.setattr(
+        module,
+        "artifacts_runs",
+        lambda **_: pytest.fail("active evidence widened to discovery"),
+    )
 
     assert module._visual_evidence_selection(state) == {
         "run_id": "artifact-run",
@@ -5417,7 +5479,9 @@ def test_live_evidence_prefers_a_verified_active_visual_artifact(monkeypatch, tm
     }
 
 
-def test_live_evidence_chat_can_select_a_real_video_from_active_source(monkeypatch, tmp_path):
+def test_live_evidence_chat_can_select_a_real_video_from_active_source(
+    monkeypatch, tmp_path
+):
     module = _import_rendered_backend(
         monkeypatch, tmp_path, module_name="live_evidence_video_backend"
     )
@@ -5450,18 +5514,29 @@ def test_live_evidence_chat_can_select_a_real_video_from_active_source(monkeypat
 
     def load_video(payload):
         loaded.append(payload)
-        return {"sim_viz": {"artifact_render": "video", "artifact_preview_url": "/api/artifacts/file/video"}}
+        return {
+            "sim_viz": {
+                "artifact_render": "video",
+                "artifact_preview_url": "/api/artifacts/file/video",
+            }
+        }
 
     monkeypatch.setattr(module, "sim_viz_load_artifact", load_video)
     monkeypatch.setattr(
         module,
         "sim_viz_status",
-        lambda: {"artifact_render": "video", "artifact_preview_url": "/api/artifacts/file/video"},
+        lambda: {
+            "artifact_render": "video",
+            "artifact_preview_url": "/api/artifacts/file/video",
+        },
     )
 
     response = module._agent_chat_with_tools(
         raw_messages=[
-            {"role": "user", "content": "Show live cloud evidence and a real MP4 artifact."}
+            {
+                "role": "user",
+                "content": "Show live cloud evidence and a real MP4 artifact.",
+            }
         ],
         model="unused",
     )

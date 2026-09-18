@@ -1368,9 +1368,11 @@ def test_default_npa_setup_installs_the_image_local_runtime_source_first() -> No
     # The image-local source must win before legacy / external paths, otherwise
     # a runtime-fetch task can acquire a GPU and then fail solely because no
     # NPA_SRC_S3_URI was supplied.
-    assert setup.index("npa_pip_install -e /opt/npa") < setup.index(
-        "npa_pip_install -e /opt/nebius-physical-ai/npa"
-    ) < setup.index("NPA_SRC_S3_URI")
+    assert (
+        setup.index("npa_pip_install -e /opt/npa")
+        < setup.index("npa_pip_install -e /opt/nebius-physical-ai/npa")
+        < setup.index("NPA_SRC_S3_URI")
+    )
 
 
 def test_openpi_full_droid_prepare_forces_cpu_jax_before_cli_import() -> None:

@@ -483,7 +483,7 @@ def test_terraform_optionally_binds_a_public_ipv4_pool_to_new_networks() -> None
         'resource "nebius_vpc_v1_subnet" "workbench"', 1
     )[0]
     subnet = main_tf.split('resource "nebius_vpc_v1_subnet" "workbench"', 1)[1].split(
-        '# ── Security group', 1
+        "# ── Security group", 1
     )[0]
 
     assert 'default     = ""' in pool_variable

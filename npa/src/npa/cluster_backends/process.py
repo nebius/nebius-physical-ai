@@ -415,7 +415,9 @@ def run_stream(
         # streaming path; otherwise a provider rejection degrades into a
         # content-free exit code and cannot be classified or repaired.
         detail = "\n".join(
-            part for part in ("".join(captured_stderr), "".join(captured_stdout)) if part
+            part
+            for part in ("".join(captured_stderr), "".join(captured_stdout))
+            if part
         ).strip()
         suffix = f": {detail[-3000:]}" if detail else ""
         raise BackendCommandError(

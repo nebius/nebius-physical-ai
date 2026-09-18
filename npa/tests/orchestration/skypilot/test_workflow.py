@@ -53,13 +53,19 @@ def _healthy_status(cmd: list[str]) -> subprocess.CompletedProcess[str]:
 def _skip_version_check(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     # This module isolates launch transactions/argv. The actual SDK-to-provider
     # execution gate is covered in unit/test_execution_preflight.py.
-    monkeypatch.setattr(workflow_module, "_execution_preflight", lambda *args, **kwargs: (None, {}, {}))
+    monkeypatch.setattr(
+        workflow_module, "_execution_preflight", lambda *args, **kwargs: (None, {}, {})
+    )
     # Host rejection is covered by test_local_api_host.py. These fake-Sky
     # transaction/argv tests do not operate a real host control plane.
     monkeypatch.setattr(local_api_module, "_require_linux_host", lambda: None)
     # Separate local_api tests exercise real owned-daemon/socket lifecycle.
     # These transaction/argv fixtures use a fake Sky executable.
-    monkeypatch.setattr(workflow_module, "_ensure_isolated_api", lambda **kwargs: workflow_module.ApiDaemonCwdProbe(True, "test-owned-api"))
+    monkeypatch.setattr(
+        workflow_module,
+        "_ensure_isolated_api",
+        lambda **kwargs: workflow_module.ApiDaemonCwdProbe(True, "test-owned-api"),
+    )
     real_daemon_probe = workflow_module._probe_local_api_daemon_cwd
 
     def fixture_daemon_probe(*args, **kwargs):
@@ -69,7 +75,9 @@ def _skip_version_check(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
             return real_daemon_probe(*args, **kwargs)
         return workflow_module.ApiDaemonCwdProbe(True, "absent")
 
-    monkeypatch.setattr(workflow_module, "_probe_local_api_daemon_cwd", fixture_daemon_probe)
+    monkeypatch.setattr(
+        workflow_module, "_probe_local_api_daemon_cwd", fixture_daemon_probe
+    )
     monkeypatch.setattr(
         workflow_module, "ensure_skypilot_version", lambda sky_bin: Path(sky_bin)
     )
@@ -168,14 +176,17 @@ def test_submit_workflow_loads_yaml_applies_controller_and_calls_subprocess(
     }
     # A task-owned API has a dynamic endpoint.  SkyPilot reads that endpoint
     # from the submitted config, not only SKYPILOT_API_SERVER_ENDPOINT.
-    assert config["api_server"]["endpoint"] == kwargs["env"][
-        "SKYPILOT_API_SERVER_ENDPOINT"
-    ]
+    assert (
+        config["api_server"]["endpoint"]
+        == kwargs["env"]["SKYPILOT_API_SERVER_ENDPOINT"]
+    )
 
 
 def test_submit_capacity_preflight_proves_no_launch(monkeypatch, tmp_path) -> None:
     from npa.execution_preflight import ExecutionPreflightError
-    from npa.orchestration.skypilot.k8s_gpu_catalog import TemporarilyUnavailableAcceleratorError
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        TemporarilyUnavailableAcceleratorError,
+    )
 
     yaml_path = tmp_path / "workflow.yaml"
     yaml_path.write_text("name: demo\nresources: {cloud: kubernetes}\n")
@@ -185,11 +196,18 @@ def test_submit_capacity_preflight_proves_no_launch(monkeypatch, tmp_path) -> No
         raise ExecutionPreflightError("gpu", "capacity occupied") from capacity
 
     monkeypatch.setattr(workflow_module, "_execution_preflight", reject)
-    monkeypatch.setattr(workflow_module, "run_launch_transaction",
-                        lambda **kwargs: pytest.fail("must not start a provider launch"))
+    monkeypatch.setattr(
+        workflow_module,
+        "run_launch_transaction",
+        lambda **kwargs: pytest.fail("must not start a provider launch"),
+    )
     with pytest.raises(SkyPilotSubmitError) as caught:
-        submit_workflow(yaml_path, "capacity-unit", sky_bin=_fake_sky(tmp_path),
-                        isolated_config_dir=tmp_path / "sky-state")
+        submit_workflow(
+            yaml_path,
+            "capacity-unit",
+            sky_bin=_fake_sky(tmp_path),
+            isolated_config_dir=tmp_path / "sky-state",
+        )
 
     assert caught.value.launch_attempted is False
     assert caught.value.transaction is None
@@ -572,7 +590,9 @@ def test_local_api_daemon_probe_rejects_other_isolated_home(tmp_path) -> None:
 
 
 @pytest.mark.parametrize("port_args", [("--port", "48001"), ("--port=48001",)])
-def test_local_api_daemon_probe_scopes_processes_to_selected_endpoint(tmp_path, port_args) -> None:
+def test_local_api_daemon_probe_scopes_processes_to_selected_endpoint(
+    tmp_path, port_args
+) -> None:
     proc_root = tmp_path / "proc"
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -582,30 +602,46 @@ def test_local_api_daemon_probe_scopes_processes_to_selected_endpoint(tmp_path, 
     for pid, args, cwd, home in (
         (100, port_args, durable, own_home),
         (200, (), tmp_path / "deleted-unrelated-cwd", str(tmp_path / "other-home")),
-        (300, ("--port=48002",), tmp_path / "also-deleted", str(tmp_path / "third-home")),
+        (
+            300,
+            ("--port=48002",),
+            tmp_path / "also-deleted",
+            str(tmp_path / "third-home"),
+        ),
     ):
         _fake_proc_process(
-            proc_root, pid=pid, ppid=1, uid=1234,
+            proc_root,
+            pid=pid,
+            ppid=1,
+            uid=1234,
             cmdline=(str(bin_dir / "python"), "-m", "sky.server.server", *args),
-            cwd=cwd, environment={"HOME": home},
+            cwd=cwd,
+            environment={"HOME": home},
         )
     result = workflow_module._probe_local_api_daemon_cwd(
-        str(bin_dir / "sky"), proc_root=proc_root, uid=1234,
-        expected_endpoint="http://127.0.0.1:48001", expected_home=own_home,
+        str(bin_dir / "sky"),
+        proc_root=proc_root,
+        uid=1234,
+        expected_endpoint="http://127.0.0.1:48001",
+        expected_home=own_home,
     )
     assert result.healthy
     assert result.outcome == "cwd_live"
     assert result.process_count == 1
     absent = workflow_module._probe_local_api_daemon_cwd(
-        str(bin_dir / "sky"), proc_root=proc_root, uid=1234,
-        expected_endpoint="http://127.0.0.1:48003", expected_home=own_home,
+        str(bin_dir / "sky"),
+        proc_root=proc_root,
+        uid=1234,
+        expected_endpoint="http://127.0.0.1:48003",
+        expected_home=own_home,
     )
     assert absent.healthy and absent.outcome == "absent"
 
 
 def test_local_api_daemon_probe_does_not_inspect_remote_server(tmp_path) -> None:
     result = workflow_module._probe_local_api_daemon_cwd(
-        "/opt/sky/bin/sky", proc_root=tmp_path / "missing",
+        "/opt/sky/bin/sky",
+        proc_root=tmp_path / "missing",
         expected_endpoint="https://sky.example.com",
     )
     assert result.healthy and result.outcome == "remote_api_endpoint"
@@ -614,14 +650,17 @@ def test_local_api_daemon_probe_does_not_inspect_remote_server(tmp_path) -> None
 @pytest.mark.parametrize("endpoint", ["invalid", "http://localhost:invalid"])
 def test_local_api_daemon_probe_rejects_invalid_endpoint(endpoint) -> None:
     result = workflow_module._probe_local_api_daemon_cwd(
-        "/opt/sky/bin/sky", expected_endpoint=endpoint,
+        "/opt/sky/bin/sky",
+        expected_endpoint=endpoint,
     )
     assert not result.healthy and result.outcome == "invalid_api_endpoint"
 
 
 @pytest.mark.parametrize("stale_key", ["HOME", "SKYPILOT_USER_ID", "KUBECONFIG"])
 @pytest.mark.parametrize("explicit_endpoint", [False, True])
-@pytest.mark.parametrize("runtime_identity", ["legacy", "matching", "caller-only", "daemon-only"])
+@pytest.mark.parametrize(
+    "runtime_identity", ["legacy", "matching", "caller-only", "daemon-only"]
+)
 def test_api_daemon_repairs_stale_local_environment(
     tmp_path, monkeypatch, stale_key, explicit_endpoint, runtime_identity
 ) -> None:
@@ -649,9 +688,13 @@ def test_api_daemon_repairs_stale_local_environment(
 
     def start(environment):
         _fake_proc_process(
-            proc_root, pid=100, ppid=1, uid=1234,
+            proc_root,
+            pid=100,
+            ppid=1,
+            uid=1234,
             cmdline=(str(bin_dir / "python"), "-m", "sky.server.server", *port_args),
-            cwd=durable, environment=environment,
+            cwd=durable,
+            environment=environment,
         )
 
     start(daemon_env)
@@ -677,7 +720,10 @@ def test_api_daemon_repairs_stale_local_environment(
         return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
 
     result = workflow_module._ensure_local_api_daemon_cwd(
-        str(bin_dir / "sky"), env=env, cwd=str(durable), runner=runner,
+        str(bin_dir / "sky"),
+        env=env,
+        cwd=str(durable),
+        runner=runner,
         sleeper=lambda _seconds: None,
     )
     assert result.healthy and result.outcome == "restarted_from_durable_cwd"
@@ -701,14 +747,22 @@ def test_api_daemon_repair_never_stops_a_proven_different_runtime(
         port_args = ("--port", "48001")
     if with_stale_root:
         _fake_proc_process(
-            proc_root, pid=100, ppid=1, uid=1234,
+            proc_root,
+            pid=100,
+            ppid=1,
+            uid=1234,
             cmdline=(str(bin_dir / "python"), "-m", "sky.server.server", *port_args),
-            cwd=durable, environment={**env, "HOME": str(tmp_path / "stale-home")},
+            cwd=durable,
+            environment={**env, "HOME": str(tmp_path / "stale-home")},
         )
     _fake_proc_process(
-        proc_root, pid=200, ppid=1, uid=1234,
+        proc_root,
+        pid=200,
+        ppid=1,
+        uid=1234,
         cmdline=(str(bin_dir / "python"), "-m", "sky.server.server", *port_args),
-        cwd=durable, environment={**env, "SKY_RUNTIME_DIR": str(tmp_path / "other-runtime")},
+        cwd=durable,
+        environment={**env, "SKY_RUNTIME_DIR": str(tmp_path / "other-runtime")},
     )
     real_probe = workflow_module._probe_local_api_daemon_cwd
 
@@ -719,9 +773,14 @@ def test_api_daemon_repair_never_stops_a_proven_different_runtime(
 
     monkeypatch.setattr(workflow_module, "_probe_local_api_daemon_cwd", inspect)
     calls = []
-    with pytest.raises(SkyPilotSubmitError, match="different SKY_RUNTIME_DIR.*no API server was stopped"):
+    with pytest.raises(
+        SkyPilotSubmitError,
+        match="different SKY_RUNTIME_DIR.*no API server was stopped",
+    ):
         workflow_module._ensure_local_api_daemon_cwd(
-            str(bin_dir / "sky"), env=env, cwd=str(durable),
+            str(bin_dir / "sky"),
+            env=env,
+            cwd=str(durable),
             runner=lambda *args, **kwargs: calls.append(args),
         )
     assert calls == []
@@ -734,18 +793,26 @@ def test_api_daemon_probe_accepts_alias_of_same_runtime(tmp_path) -> None:
     alias = tmp_path / "runtime-alias"
     alias.symlink_to(runtime, target_is_directory=True)
     _fake_proc_process(
-        proc_root, pid=100, ppid=1, uid=1234,
+        proc_root,
+        pid=100,
+        ppid=1,
+        uid=1234,
         cmdline=(str(tmp_path / "bin" / "python"), "-m", "sky.server.server"),
-        cwd=runtime, environment={"SKY_RUNTIME_DIR": str(alias)},
+        cwd=runtime,
+        environment={"SKY_RUNTIME_DIR": str(alias)},
     )
     result = workflow_module._probe_local_api_daemon_cwd(
-        str(tmp_path / "bin" / "sky"), proc_root=proc_root, uid=1234,
+        str(tmp_path / "bin" / "sky"),
+        proc_root=proc_root,
+        uid=1234,
         expected_runtime_dir=str(runtime),
     )
     assert result.healthy and result.outcome == "cwd_live"
 
 
-@pytest.mark.parametrize("cause", ["HOME", "SKYPILOT_USER_ID", "KUBECONFIG", "config", "cwd"])
+@pytest.mark.parametrize(
+    "cause", ["HOME", "SKYPILOT_USER_ID", "KUBECONFIG", "config", "cwd"]
+)
 @pytest.mark.parametrize("peer_scope", ["endpoint", "executable", "mount-namespace"])
 def test_api_daemon_repair_preserves_other_daemons(
     tmp_path, monkeypatch, cause, peer_scope
@@ -769,16 +836,29 @@ def test_api_daemon_repair_preserves_other_daemons(
         stale_env[cause] = str(tmp_path / "stale-value")
     _fake_proc_self_mount_namespace(proc_root, "mnt:[100]")
     _fake_proc_process(
-        proc_root, pid=100, ppid=1, uid=1234,
+        proc_root,
+        pid=100,
+        ppid=1,
+        uid=1234,
         cmdline=(str(bin_dir / "python"), "-m", "sky.server.server"),
-        cwd=cwd, environment=stale_env, mount_namespace="mnt:[100]",
+        cwd=cwd,
+        environment=stale_env,
+        mount_namespace="mnt:[100]",
     )
-    peer_python = tmp_path / "other-bin" / "python" if peer_scope == "executable" else bin_dir / "python"
+    peer_python = (
+        tmp_path / "other-bin" / "python"
+        if peer_scope == "executable"
+        else bin_dir / "python"
+    )
     peer_port = ("--port=48001",) if peer_scope != "mount-namespace" else ()
     _fake_proc_process(
-        proc_root, pid=200, ppid=1, uid=1234,
+        proc_root,
+        pid=200,
+        ppid=1,
+        uid=1234,
         cmdline=(str(peer_python), "-m", "sky.server.server", *peer_port),
-        cwd=durable, environment=env,
+        cwd=durable,
+        environment=env,
         mount_namespace="mnt:[200]" if peer_scope == "mount-namespace" else "mnt:[100]",
     )
     real_probe = workflow_module._probe_local_api_daemon_cwd
@@ -790,23 +870,35 @@ def test_api_daemon_repair_preserves_other_daemons(
 
     monkeypatch.setattr(workflow_module, "_probe_local_api_daemon_cwd", inspect)
     calls = []
-    with pytest.raises(SkyPilotSubmitError, match="api stop is not endpoint-scoped.*no API server was stopped"):
+    with pytest.raises(
+        SkyPilotSubmitError,
+        match="api stop is not endpoint-scoped.*no API server was stopped",
+    ):
         workflow_module._ensure_local_api_daemon_cwd(
-            str(bin_dir / "sky"), env=env, cwd=str(durable),
+            str(bin_dir / "sky"),
+            env=env,
+            cwd=str(durable),
             runner=lambda *args, **kwargs: calls.append(args),
         )
     assert calls == []
 
 
-def test_api_daemon_probe_rejects_selected_endpoint_from_another_executable(tmp_path) -> None:
+def test_api_daemon_probe_rejects_selected_endpoint_from_another_executable(
+    tmp_path,
+) -> None:
     proc_root = tmp_path / "proc"
     _fake_proc_process(
-        proc_root, pid=100, ppid=1, uid=1234,
+        proc_root,
+        pid=100,
+        ppid=1,
+        uid=1234,
         cmdline=(str(tmp_path / "other-bin" / "python"), "-m", "sky.server.server"),
         cwd=tmp_path,
     )
     result = workflow_module._probe_local_api_daemon_cwd(
-        str(tmp_path / "bin" / "sky"), proc_root=proc_root, uid=1234,
+        str(tmp_path / "bin" / "sky"),
+        proc_root=proc_root,
+        uid=1234,
     )
     assert not result.healthy and result.outcome == "foreign_api_daemon"
     assert "another executable" in result.error
@@ -1091,9 +1183,13 @@ def test_submit_workflow_surfaces_api_precheck_failure(monkeypatch, tmp_path) ->
             return _healthy_status(cmd)
         launches.append(cmd)
         if "--async" in cmd:
-            return subprocess.CompletedProcess(cmd, 0, stdout="Request accepted", stderr="")
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="Request accepted", stderr=""
+            )
         return subprocess.CompletedProcess(
-            cmd, 1, stdout="",
+            cmd,
+            1,
+            stdout="",
             stderr="Cloud-based file_mounts are specified, but no cloud storage is available.",
         )
 
@@ -2890,12 +2986,20 @@ def test_submit_does_not_create_an_empty_init_controller_before_first_launch(
         if cmd[1:3] == ["jobs", "queue"]:
             # Querying before launch is the SkyPilot 0.12 behavior that creates
             # a no-pod INIT controller and makes the first launch fail.
-            assert launched, "initial reconciliation must not query an absent controller"
+            assert launched, (
+                "initial reconciliation must not query an absent controller"
+            )
             return subprocess.CompletedProcess(
                 cmd,
                 0,
                 stdout=json.dumps(
-                    [{"job_id": 701, "job_name": "first-controller-run", "status": "PENDING"}]
+                    [
+                        {
+                            "job_id": 701,
+                            "job_name": "first-controller-run",
+                            "status": "PENDING",
+                        }
+                    ]
                 ),
                 stderr="",
             )
@@ -2963,14 +3067,24 @@ def test_submit_treats_cached_controller_without_a_pod_as_absent(
     def fake_run(cmd, **_kwargs):
         nonlocal launched
         if _is_status_cmd(cmd):
-            raise AssertionError("podless controller preflight must not read SkyPilot status")
+            raise AssertionError(
+                "podless controller preflight must not read SkyPilot status"
+            )
         if cmd[1:3] == ["jobs", "queue"]:
-            assert launched, "initial reconciliation must not query a podless controller"
+            assert launched, (
+                "initial reconciliation must not query a podless controller"
+            )
             return subprocess.CompletedProcess(
                 cmd,
                 0,
                 stdout=json.dumps(
-                    [{"job_id": 702, "job_name": "stale-controller-run", "status": "PENDING"}]
+                    [
+                        {
+                            "job_id": 702,
+                            "job_name": "stale-controller-run",
+                            "status": "PENDING",
+                        }
+                    ]
                 ),
                 stderr="",
             )

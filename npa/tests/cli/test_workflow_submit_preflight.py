@@ -1004,12 +1004,15 @@ def test_runtime_fetch_sonic_image_requires_staged_npa_source() -> None:
     from npa.cli.workbench.workflow import _plan_requires_npa_source
     from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
 
-    assert _plan_requires_npa_source(
-        SONIC_SPEC,
-        run_id="sonic-runtime-fetch-source",
-        assume_decision="",
-        options=SkypilotRenderOptions(materialize_registry_secrets=False),
-    ) is True
+    assert (
+        _plan_requires_npa_source(
+            SONIC_SPEC,
+            run_id="sonic-runtime-fetch-source",
+            assume_decision="",
+            options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        )
+        is True
+    )
 
 
 def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None:

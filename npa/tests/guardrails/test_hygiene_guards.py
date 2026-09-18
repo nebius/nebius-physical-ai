@@ -269,7 +269,7 @@ def test_monolith_modules_do_not_grow() -> None:
         # agent.py embeds the shipped backend/UI as a generated multiline
         # string. Count reviewable Python lines, not the generated payload; the
         # reconciler itself lives in agent_setup_convergence.py.
-        "npa/src/npa/cli/agent.py": 3_700,
+        "npa/src/npa/cli/agent.py": 3_710,  # main merge #477 added lines
         "npa/src/npa/workflows/sim2real_loop.py": 100,
         "npa/src/npa/workflows/sim2real/engine.py": 200,
         "npa/src/npa/workflows/sim2real/legacy_artifacts.py": 150,

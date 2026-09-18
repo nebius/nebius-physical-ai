@@ -850,7 +850,9 @@ def _preflight_prepared_submission(prepared, *, project, infra, extra_env, targe
     if env.get("NPA_SKYPILOT_ISOLATED_API_DIR") and isolated_endpoint:
         api_server = prepared.global_config.setdefault("api_server", {})
         if not isinstance(api_server, dict):
-            raise ValueError("SkyPilot global config api_server section must be a mapping")
+            raise ValueError(
+                "SkyPilot global config api_server section must be a mapping"
+            )
         api_server["endpoint"] = isolated_endpoint
     env["SKYPILOT_GLOBAL_CONFIG"] = str(prepared.config_path)
     try:

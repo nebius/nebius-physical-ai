@@ -3685,9 +3685,7 @@ def _record_workflow_submit_failure(operation, exc: BaseException) -> None:  # n
     operation.transition("recovery-required", error=str(exc))
 
 
-def _record_unentered_workflow_submit_failure(
-    operation, exc: BaseException
-) -> None:  # noqa: ANN001
+def _record_unentered_workflow_submit_failure(operation, exc: BaseException) -> None:  # noqa: ANN001
     """Finalize a submit journal that never entered its mutation window.
 
     ``operation_context`` can reject a new submit because another project
@@ -3698,9 +3696,8 @@ def _record_unentered_workflow_submit_failure(
     """
 
     payload = operation.read()
-    if (
-        str(payload.get("phase") or "") != "prepared"
-        or bool(payload.get("resources") or [])
+    if str(payload.get("phase") or "") != "prepared" or bool(
+        payload.get("resources") or []
     ):
         return
     operation.record_rollback(
