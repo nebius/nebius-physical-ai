@@ -598,7 +598,7 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
             remedy="Confirm RBAC allows listing nodes to verify schedulable GPU capacity.",
             details=(_short(nodes.stderr or nodes.stdout),),
         )
-    node_count, gpu_total = _count_schedulable_gpus(nodes.stdout, gpu_resource)
+    node_count, gpu_total, gpu_products = _count_schedulable_gpus(nodes.stdout, gpu_resource)
     if gpu_total <= 0:
         return CheckResult(
             name="cluster",
@@ -612,6 +612,22 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
                 "for some accelerators is zero by default."
             ),
         )
+    requested_product = config.k8s_gpu_product
+    if requested_product and requested_product not in gpu_products:
+        available = ", ".join(sorted(gpu_products)) if gpu_products else "none detected"
+        return CheckResult(
+            name="cluster",
+            status=FAIL,
+            summary=(
+                f"Context {context!r} has {gpu_total} schedulable {gpu_resource} "
+                f"but none match the requested product {requested_product!r}."
+            ),
+            remedy=(
+                f"Available GPU products: {available}. Update k8s_gpu_product in "
+                "the sim2real config to match, or provision nodes with the "
+                "requested accelerator."
+            ),
+        )
     return CheckResult(
         name="cluster",
         status=PASS,
@@ -622,15 +638,16 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
     )
 
 
-def _count_schedulable_gpus(nodes_json: str, gpu_resource: str) -> tuple[int, int]:
+def _count_schedulable_gpus(nodes_json: str, gpu_resource: str) -> tuple[int, int, set[str]]:
     import json
 
     try:
         payload = json.loads(nodes_json)
     except (json.JSONDecodeError, TypeError):
-        return (0, 0)
+        return (0, 0, set())
     items = payload.get("items") or []
     total = 0
+    products: set[str] = set()
     for node in items:
         allocatable = (node.get("status") or {}).get("allocatable") or {}
         raw = allocatable.get(gpu_resource)
@@ -640,7 +657,11 @@ def _count_schedulable_gpus(nodes_json: str, gpu_resource: str) -> tuple[int, in
             total += int(raw)
         except (TypeError, ValueError):
             continue
-    return (len(items), total)
+        labels = (node.get("metadata") or {}).get("labels") or {}
+        product = labels.get("nvidia.com/gpu.product")
+        if product:
+            products.add(product)
+    return (len(items), total, products)
 
 
 # Orchestration -------------------------------------------------------------

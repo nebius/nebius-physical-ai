@@ -380,4 +380,4 @@ def test_run_preflight_selects_requested_checks() -> None:
 
 @pytest.mark.parametrize("gpu_resource", ["nvidia.com/gpu"])
 def test_count_schedulable_handles_bad_json(gpu_resource: str) -> None:
-    assert health._count_schedulable_gpus("not-json", gpu_resource) == (0, 0)
+    assert health._count_schedulable_gpus("not-json", gpu_resource) == (0, 0, set())
