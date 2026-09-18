@@ -14,7 +14,7 @@ from pathlib import Path
 import stat
 import tarfile
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock, call
 
 from packaging.requirements import Requirement
 import pytest
@@ -922,6 +922,237 @@ def test_mock_download_never_removes_uncreated_target(monkeypatch, failure_stage
     assert observed.value is primary
     fixture.target.unlink.assert_not_called()
     assert not getattr(primary, "__notes__", [])
+
+
+def _mock_primary_failure(primary, original):
+    """Inject an ordinary failure and retain its exact initial traceback."""
+
+    def fail(*_args, **_kwargs):
+        try:
+            raise primary
+        except OSError:
+            original.append(primary.__traceback__)
+            raise
+
+    return fail
+
+
+def _mock_projection_publication(monkeypatch):
+    """Observe links, identity checks and removal without filesystem operations."""
+    staged = MagicMock(spec=Path)
+    output, inventory, source = (Mock(spec=Path) for _ in range(3))
+    staged.parent.__truediv__.return_value = source
+    owned = SimpleNamespace(st_dev=11, st_ino=22)
+    inventory.lstat.return_value = source.lstat.return_value = owned
+    link, rename, reporter, events = (Mock() for _ in range(4))
+    monkeypatch.setattr(PREPARER.os, "link", link)
+    monkeypatch.setattr(PREPARER, "_rename_noreplace", rename)
+    monkeypatch.setattr(PREPARER, "print", reporter, raising=False)
+    for name, observation in [
+        ("link", link),
+        ("rename", rename),
+        ("inventory_stat", inventory.lstat),
+        ("source_stat", source.lstat),
+        ("unlink", inventory.unlink),
+        ("report", reporter),
+    ]:
+        events.attach_mock(observation, name)
+    return SimpleNamespace(
+        staged=staged,
+        output=output,
+        inventory=inventory,
+        source=source,
+        link=link,
+        rename=rename,
+        reporter=reporter,
+        events=events,
+    )
+
+
+@pytest.mark.parametrize("has_inventory", [False, True])
+def test_mock_projection_publication_success_keeps_inventory(
+    monkeypatch, has_inventory
+):
+    """Successful publication retains inventory without cleanup or warning."""
+    fixture = _mock_projection_publication(monkeypatch)
+    inventory = fixture.inventory if has_inventory else None
+    PREPARER._publish_projection(fixture.staged, fixture.output, inventory)
+    expected = (
+        [call.link(fixture.source, inventory, follow_symlinks=False)]
+        if has_inventory
+        else []
+    )
+    expected.append(call.rename(fixture.staged, fixture.output))
+    assert fixture.events.mock_calls == expected
+
+
+@pytest.mark.parametrize("cleanup_failure", ["unlink", "stat"])
+@pytest.mark.parametrize("report_fails", [False, True])
+def test_mock_projection_cleanup_preserves_primary(
+    monkeypatch, cleanup_failure, report_fails
+):
+    """Inventory cleanup and reporting errors cannot replace publication failure."""
+    fixture = _mock_projection_publication(monkeypatch)
+    primary, original = OSError("inert publication failure"), []
+    fixture.rename.side_effect = _mock_primary_failure(primary, original)
+    failing = (
+        fixture.inventory.unlink
+        if cleanup_failure == "unlink"
+        else fixture.inventory.lstat
+    )
+    failing.side_effect = PermissionError("inert inventory cleanup refusal")
+    if report_fails:
+        fixture.reporter.side_effect = OSError("inert stderr refusal")
+    with pytest.raises(OSError) as observed:
+        PREPARER._publish_projection(fixture.staged, fixture.output, fixture.inventory)
+    _assert_primary_traceback(observed, primary, original[0])
+    expected = [
+        call.link(fixture.source, fixture.inventory, follow_symlinks=False),
+        call.rename(fixture.staged, fixture.output),
+        call.inventory_stat(),
+    ]
+    if cleanup_failure == "unlink":
+        expected.extend([call.source_stat(), call.unlink()])
+    expected.append(
+        call.report(
+            "warning: source inventory cleanup failed", file=PREPARER.sys.stderr
+        )
+    )
+    assert fixture.events.mock_calls == expected
+
+
+@pytest.mark.parametrize("ownership", ["mismatch", "uncreated"])
+def test_mock_projection_cleanup_refuses_unowned_inventory(monkeypatch, ownership):
+    """Mismatched identity or unsuccessful link creation never permits removal."""
+    fixture = _mock_projection_publication(monkeypatch)
+    primary, original = OSError("inert publication refusal"), []
+    failure = fixture.link if ownership == "uncreated" else fixture.rename
+    failure.side_effect = _mock_primary_failure(primary, original)
+    fixture.inventory.lstat.return_value = SimpleNamespace(st_dev=11, st_ino=23)
+    with pytest.raises(OSError) as observed:
+        PREPARER._publish_projection(fixture.staged, fixture.output, fixture.inventory)
+    _assert_primary_traceback(observed, primary, original[0])
+    fixture.inventory.unlink.assert_not_called()
+    fixture.reporter.assert_not_called()
+    if ownership == "uncreated":
+        fixture.rename.assert_not_called()
+        fixture.inventory.lstat.assert_not_called()
+        fixture.source.lstat.assert_not_called()
+    else:
+        fixture.inventory.lstat.assert_called_once_with()
+        fixture.source.lstat.assert_called_once_with()
+
+
+def _mock_staging_paths():
+    """Model the three owned children without creating filesystem entries."""
+    temp = MagicMock(spec=Path)
+    staged, archives, inventory, output = (Mock(spec=Path) for _ in range(4))
+    temp.__truediv__.side_effect = {
+        "projection": staged,
+        "archives": archives,
+        "inventory.json": inventory,
+    }.__getitem__
+    return SimpleNamespace(
+        temp=temp, staged=staged, archives=archives, inventory=inventory, output=output
+    )
+
+
+def _record_staging_observations(fixture, factory):
+    """Capture ordered observations from already mocked lifecycle operations."""
+    for name, observation in [
+        ("create", factory),
+        ("mkdir", fixture.archives.mkdir),
+        ("materialize", fixture.materialize),
+        ("write", fixture.inventory.write_bytes),
+        ("publish", fixture.publish),
+        ("remove", fixture.remove),
+        ("report", fixture.reporter),
+    ]:
+        fixture.events.attach_mock(observation, name)
+
+
+def _mock_owned_staging(monkeypatch):
+    """Replace every stage path/creation/write/publication/removal with mocks."""
+    fixture = _mock_staging_paths()
+    factory = Mock(return_value="inert-staging-token")
+    fixture.materialize = Mock(return_value=b"verified inert inventory\n")
+    fixture.publish, fixture.remove, fixture.reporter, fixture.events = (
+        Mock() for _ in range(4)
+    )
+    monkeypatch.setattr(PREPARER, "Path", Mock(return_value=fixture.temp))
+    monkeypatch.setattr(PREPARER.tempfile, "mkdtemp", factory)
+    monkeypatch.setattr(PREPARER, "_materialize", fixture.materialize)
+    monkeypatch.setattr(PREPARER, "_publish_projection", fixture.publish)
+    monkeypatch.setattr(PREPARER.shutil, "rmtree", fixture.remove)
+    monkeypatch.setattr(PREPARER, "print", fixture.reporter, raising=False)
+    _record_staging_observations(fixture, factory)
+    return fixture
+
+
+def _expected_mock_staging(fixture, failure=None):
+    """Specify the intended lifecycle independently of candidate observations."""
+    expected = [
+        call.create(prefix=".npa-habitat-source-", dir=fixture.output.parent),
+        call.mkdir(mode=0o700),
+        call.materialize({}, fixture.staged, fixture.archives),
+    ]
+    if failure != "materialize":
+        expected.extend(
+            [
+                call.write(b"verified inert inventory\n"),
+                call.publish(fixture.staged, fixture.output, fixture.inventory),
+            ]
+        )
+    expected.append(call.remove(fixture.temp))
+    return expected
+
+
+@pytest.mark.parametrize(
+    ("cleanup_fails", "report_fails"), [(False, False), (True, False), (True, True)]
+)
+def test_mock_staging_success_preserves_publication_order(
+    monkeypatch, cleanup_fails, report_fails
+):
+    """Completed publication stays successful even if its cleanup warning fails."""
+    fixture = _mock_owned_staging(monkeypatch)
+    if cleanup_fails:
+        fixture.remove.side_effect = PermissionError("inert staging cleanup refusal")
+    if report_fails:
+        fixture.reporter.side_effect = OSError("inert stderr refusal")
+    assert (
+        PREPARER._stage_owned_projection({}, fixture.output, fixture.inventory) is None
+    )
+    expected = _expected_mock_staging(fixture)
+    if cleanup_fails:
+        expected.append(
+            call.report(
+                "warning: temporary source staging cleanup failed",
+                file=PREPARER.sys.stderr,
+            )
+        )
+    assert fixture.events.mock_calls == expected
+
+
+@pytest.mark.parametrize("failure", ["materialize", "publish"])
+@pytest.mark.parametrize("report_fails", [False, True])
+def test_mock_staging_failure_preserves_primary(monkeypatch, failure, report_fails):
+    """Staging cleanup/reporting preserves the primary exception and traceback."""
+    fixture = _mock_owned_staging(monkeypatch)
+    primary, original = OSError("inert source staging failure"), []
+    getattr(fixture, failure).side_effect = _mock_primary_failure(primary, original)
+    fixture.remove.side_effect = PermissionError("inert staging cleanup refusal")
+    if report_fails:
+        fixture.reporter.side_effect = OSError("inert stderr refusal")
+    with pytest.raises(OSError) as observed:
+        PREPARER._stage_owned_projection({}, fixture.output, fixture.inventory)
+    _assert_primary_traceback(observed, primary, original[0])
+    expected = _expected_mock_staging(fixture, failure)
+    expected.append(
+        call.report(
+            "warning: temporary source staging cleanup failed", file=PREPARER.sys.stderr
+        )
+    )
+    assert fixture.events.mock_calls == expected
 
 
 @pytest.mark.parametrize("declared_length", ["invalid", "-1", "23"])

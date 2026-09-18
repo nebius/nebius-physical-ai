@@ -587,6 +587,15 @@ def _rename_noreplace(source: Path, destination: Path) -> None:
         raise OSError(ctypes.get_errno(), "source publication refused")
 
 
+def _report_staging_cleanup(message: str) -> None:
+    """Emit a best-effort Python 3.10 warning without masking an active failure."""
+    try:
+        print(message, file=sys.stderr)
+    except Exception:
+        # A failed diagnostic must not replace the source/publication exception.
+        return
+
+
 def _publish_projection(staged: Path, output: Path, inventory: Path | None) -> None:
     inventory_source = staged.parent / "inventory.json"
     linked = False
@@ -602,7 +611,7 @@ def _publish_projection(staged: Path, output: Path, inventory: Path | None) -> N
                 if (observed.st_dev, observed.st_ino) == (owned.st_dev, owned.st_ino):
                     inventory.unlink()
             except OSError:
-                print("warning: source inventory cleanup failed", file=sys.stderr)
+                _report_staging_cleanup("warning: source inventory cleanup failed")
         raise
 
 
@@ -621,7 +630,7 @@ def _stage_owned_projection(
         try:
             shutil.rmtree(temp)
         except OSError:
-            print("warning: temporary source staging cleanup failed", file=sys.stderr)
+            _report_staging_cleanup("warning: temporary source staging cleanup failed")
 
 
 def stage(
