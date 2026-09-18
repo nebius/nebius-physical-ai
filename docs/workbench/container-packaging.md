@@ -178,10 +178,13 @@ image (`public` | `restricted`), enforced by
 The image, model, and configuration surfaces below were audited for local
 `ACCEPT_*` booleans, terms flags, confirmation prompts, empty acceptance
 placeholders, and duplicated model-entitlement switches. The resulting contract
-has two independent mechanisms: Isaac routes use the one public `ACCEPT_EULA`
-variable with unset meaning `Y` and a reliable explicit opt-out; runtime-fetched
-gated assets use a real upstream access probe with the operator's credential.
-Neither mechanism grants redistribution rights or enables privacy/telemetry.
+has three independent mechanisms: Isaac routes use the one public `ACCEPT_EULA`
+variable with unset meaning `Y` and a reliable explicit opt-out; token-gated
+runtime assets use a real upstream access probe with the operator's credential;
+and separate non-token-gated terms require direct customer/run-controlled
+evidence. NPA may authenticate, transport, and validate that customer evidence,
+but a token, local boolean, or control-plane assertion cannot replace it.
+None of these mechanisms grants redistribution rights or enables privacy/telemetry.
 
 | Audited surface | Assets/images covered | Outcome |
 | --- | --- | --- |
