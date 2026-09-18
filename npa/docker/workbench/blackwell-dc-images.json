@@ -542,10 +542,10 @@
       "build_script": "gymnasium-robotics/build.sh",
       "verdict": "blocked",
       "validation": "pending-build",
-      "blocked_reason": "The genuine Shadow Dexterous Hand capability requires MuJoCo EGL rendering. B200/B300 have no RT cores, so they cannot execute this RTX rendering workload; no datacenter-Blackwell compatibility is claimed.",
+      "blocked_reason": "The genuine Shadow Dexterous Hand capability requires MuJoCo EGL rendering. B200/B300 remain unqualified and deferred: no exact image, driver, EGL path, or real Shadow workload qualification is recorded for either target. Preserve RTX-only routing until each target is separately qualified; do not infer raster-EGL compatibility from RT-core inventory.",
       "upstream_tracking": "docs/workbench/byof-gymnasium-robotics.md#hard-gate-capability",
       "smoke": "HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1 runs 120 MuJoCo steps and 2,400 substeps with contacts, touch response, object-orientation change, and distinct EGL RGB frames on exactly one RTX PRO 6000 Blackwell",
-      "notes": "This is a neutral pre-registration candidate. An owner-only reference build supplied the scanner's exact config and ordered 20-DiffID anchors, but did not complete the product scan, SBOM, push, or immutable-digest gates and left no accepted current image. Historical RTX PRO 6000 evidence does not qualify current candidate bytes; never route this rendering workload to B200/B300."
+      "notes": "This is a neutral pre-registration candidate. An owner-only reference build supplied the scanner's exact config and ordered 20-DiffID anchors, but did not complete the product scan, SBOM, push, or immutable-digest gates and left no accepted current image. Historical RTX PRO 6000 evidence does not qualify current candidate bytes. B200/B300 compatibility remains unqualified and deferred pending exact image, driver, EGL, and real Shadow workload evidence; never infer raster-EGL compatibility from RT-core inventory."
     },
     {
       "name": "npa-isaac-lab",

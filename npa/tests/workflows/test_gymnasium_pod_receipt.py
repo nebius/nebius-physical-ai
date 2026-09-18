@@ -32,6 +32,23 @@ PROFILE = ROOT / (
 )
 
 
+def test_profile_defers_runtime_fetch_until_after_admitted_receipt_validation() -> None:
+    """Setup must not install fetched code before the run-phase receipt gate."""
+
+    documents = [
+        document
+        for document in yaml.safe_load_all(PROFILE.read_text(encoding="utf-8"))
+        if document is not None
+    ]
+    setup = str(documents[1]["setup"])
+    run = str(documents[1]["run"])
+    assert "prepare-runtime" not in setup
+    assert "owner-side Pod image receipt" in run
+    assert run.index("owner-side Pod image receipt") < run.index(
+        "run-smoke"
+    )
+
+
 class _RunningProcess:
     def poll(self) -> None:
         return None

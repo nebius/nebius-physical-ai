@@ -219,7 +219,12 @@ def test_workflow_and_profile_never_route_to_b200() -> None:
     assert "${NPA_GYMNASIUM_RUNTIME_CACHE}/current" not in profile
     assert "RUNTIME_PYTHON" not in profile
     assert "/usr/bin/python3 -I -B" in profile
-    assert "/usr/local/bin/npa-gymnasium-entrypoint prepare-runtime" in profile
+    # Runtime preparation (including fetched-code installation) is reached only
+    # by run-smoke after the admitted-Pod receipt gate in the run phase.
+    assert "/usr/local/bin/npa-gymnasium-entrypoint prepare-runtime" not in profile
+    assert profile.index("owner-side Pod image receipt") < profile.index(
+        '"/usr/local/bin/npa-gymnasium-entrypoint", "run-smoke"'
+    )
     assert '/bin/bash -lc "${BYOF_SMOKE_COMMAND}"' not in profile
     assert '["/usr/local/bin/npa-gymnasium-entrypoint", "run-smoke"]' in profile
     assert "-u AWS_SECRET_ACCESS_KEY" not in profile

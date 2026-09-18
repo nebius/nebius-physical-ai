@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import importlib.util
+import ast
 import json
 import subprocess
-from pathlib import Path
+import sys
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -15,6 +17,15 @@ _SPEC = importlib.util.spec_from_file_location("security_source", _SCRIPT)
 assert _SPEC is not None and _SPEC.loader is not None
 source_scanner = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(source_scanner)
+
+_GATE_SPEC = importlib.util.spec_from_file_location(
+    "security_gate", Path(__file__).resolve().parents[3] / "scripts" / "security_gate.py"
+)
+assert _GATE_SPEC is not None and _GATE_SPEC.loader is not None
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+security_gate = importlib.util.module_from_spec(_GATE_SPEC)
+_GATE_SPEC.loader.exec_module(security_gate)
+sys.path.pop(0)
 
 
 def _python_report(root: Path, line: int = 1) -> dict:
@@ -124,6 +135,50 @@ def test_multiline_call_uses_full_expression_when_issue_marks_keyword(tmp_path: 
     findings = source_scanner._python_findings(report, tmp_path, {"candidate.py"})
     assert len(findings) == 1
     assert findings[0]["line"] == 3
+
+
+def test_only_reviewed_declarative_mount_metadata_is_dispositioned(tmp_path: Path) -> None:
+    """Raw B108 stays visible while only the exact trusted fixture shape is non-actionable."""
+
+    mount_path = str(PurePosixPath("/", "dev", "shm"))
+    unsafe_mount_path = str(PurePosixPath("/", "dev", "shm", "unsafe"))
+    path = tmp_path / "npa/tests/workflows/test_gymnasium_pod_receipt.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "def test_profile_accepts_closed_admitted_policy():\n"
+        f"    mount = {{'name': 'dshm', 'mountPath': {mount_path!r}}}\n",
+        encoding="utf-8",
+    )
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    node = next(item for item in ast.walk(tree) if isinstance(item, ast.Constant) and item.value == mount_path)
+    issue = {
+        "filename": str(path), "line_number": node.lineno, "col_offset": node.col_offset,
+        "test_id": "B108", "issue_text": "Insecure temporary file/directory creation",
+    }
+    findings = source_scanner._python_findings(
+        {"errors": [], "metrics": {str(path): {}}, "results": [issue]},
+        tmp_path,
+        {"npa/tests/workflows/test_gymnasium_pod_receipt.py"},
+    )
+    assert findings[0]["policy_disposition"] == "trusted-declarative-mount-metadata"
+    assert security_gate.regressions([], findings) == []
+
+    path.write_text(
+        "def test_profile_accepts_closed_admitted_policy():\n"
+        f"    return open({unsafe_mount_path!r}, 'w')\n",
+        encoding="utf-8",
+    )
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    node = next(item for item in ast.walk(tree) if isinstance(item, ast.Constant) and item.value == unsafe_mount_path)
+    issue["line_number"] = node.lineno
+    issue["col_offset"] = node.col_offset
+    findings = source_scanner._python_findings(
+        {"errors": [], "metrics": {str(path): {}}, "results": [issue]},
+        tmp_path,
+        {"npa/tests/workflows/test_gymnasium_pod_receipt.py"},
+    )
+    assert findings[0]["policy_disposition"] == "actionable"
+    assert security_gate.regressions([], findings) == findings
 
 
 @pytest.mark.parametrize("returncode,stdout", [(2, "{}"), (0, "{"), (1, "[]")])
