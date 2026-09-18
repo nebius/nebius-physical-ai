@@ -220,9 +220,10 @@ arbitrary-byte absence proof.
 The qualifying smoke must runtime-fetch and SHA-256-verify the exact official
 LIBERO-Spatial demonstration pinned in the spec, bind it to the reviewed BDDL
 and initial-state hashes, split whole trajectories into disjoint train and
-held-out partitions, execute more than zero upstream `Sequential.observe`
-optimizer steps with `BCRNNPolicy`, save and strictly reload an upstream
-checkpoint, and report finite held-out loss plus finite reloaded actions. It
+held-out partitions, execute exactly eight nonzero upstream
+`Sequential.observe` optimizer steps with `BCRNNPolicy`, record and validate
+that exact count, save and strictly reload an upstream checkpoint, and report
+finite held-out loss plus finite reloaded actions. It
 must run headlessly on exactly one STRICT-bound B200 (`sm_100`) and record the
 Pod-observed immutable digest of the qualified candidate, matching the
 anonymously resolved public-development digest; private or historical image
