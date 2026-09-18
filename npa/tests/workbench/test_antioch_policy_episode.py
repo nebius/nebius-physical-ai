@@ -466,6 +466,7 @@ def _install_fake_camera_scene(scenario, monkeypatch, world):
 
     def create_droid(_world):
         body = (_GraspingBody if world.grasp else _Body)(name="franka")
+        world.robot = body
 
         def apply_target(target):
             body.joints = np.asarray(target).copy()
@@ -584,7 +585,7 @@ def _install_cold_renderer(scenario, monkeypatch, world, cold_seconds):
     "objective,steps,replies,grasp",
     [
         ("communication", 10, 2, False),
-        ("pickup", 15, 3, False),
+        ("pickup", 30, 2, False),
         ("pickup", 450, None, True),
     ],
 )
@@ -622,6 +623,10 @@ def test_executing_loop_runs_second_chunk_and_requires_task_evidence(
     monkeypatch.setattr(rr, "send_blueprint", lambda *_args: None)
     client = SimpleNamespace(reconnects=0, shutdown=lambda: None)
     actions = np.tile([*scenario.DROID_RESET_JOINTS, float(grasp)], (15, 1))
+    if objective == "pickup" and not grasp:
+        # Late closure must reach the actuator before another query can replace
+        # the plan. The former five-target truncation discarded every close.
+        actions[7:, 7] = 1.0
     client.infer = lambda request: (
         {"actions": actions},
         0.01,
@@ -661,9 +666,22 @@ def test_executing_loop_runs_second_chunk_and_requires_task_evidence(
         for line in (tmp_path / "control.jsonl").read_text().splitlines()
     ]
     applied = [event for event in events if event["kind"] == "applied"]
-    assert {event["row"] for event in applied if event["camera_pair_id"] == 2} == set(
-        range(5)
-    )
+    horizon = 15 if objective == "pickup" else 5
+    assert run.results["policy_targets_per_query"] == horizon
+    first_pair = applied[0]["camera_pair_id"]
+    first_chunk = [event for event in applied if event["camera_pair_id"] == first_pair]
+    assert [event["row"] for event in first_chunk] == list(range(horizon))
+    if objective == "pickup" and not grasp:
+        from droid_scene import GRIPPER_CLOSED_ANGLE
+
+        assert [event["target"][7] for event in first_chunk] == [0.0] * 7 + [1.0] * 8
+        # Ignore the initial hold command; compare actual actuator calls to the
+        # entire two-query trace, including both late closure sequences.
+        commands = world.robot.actions[-steps:]
+        np.testing.assert_allclose([command[7] for command in commands],
+                                   ([0.0] * 7 + [GRIPPER_CLOSED_ANGLE] * 8) * 2)
+        assert run.results["policy_close_targets_returned"] == 16
+        assert run.results["policy_close_targets_applied"] == 16
     if not grasp:
         assert events[-1]["sim_seconds"] - applied[-1]["sim_seconds"] >= 1 / 15 - 1e-9
 

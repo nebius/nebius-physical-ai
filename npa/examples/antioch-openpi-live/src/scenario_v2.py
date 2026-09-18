@@ -55,7 +55,7 @@ CONTROL_HZ = 15.0
 CAMERA_SENSOR_TICK_RATE_HZ = CONTROL_HZ
 PINNED_ANTIOCH_SDK_VERSION = "0.4.236"
 PINNED_ANTIOCH_ENGINE = "isaac-sim-6.0.1"
-TARGETS_PER_QUERY = 5
+COMMUNICATION_TARGETS_PER_QUERY = 5
 TELEMETRY_DISPLAY_HZ = 5.0
 TELEMETRY_WORKER_JOIN_SECONDS = 0.5
 CAMERA_READY_CONSECUTIVE_FRAMES = 2
@@ -1670,7 +1670,7 @@ def _record_episode_checks(
               and evidence.applied == applied and evidence.responses > 0,
               detail="Lossless inputs, request hashes, raw responses and control trace archived")
     run.check("policy_actions_executed", completed_chunks >= 2,
-              detail=f"{completed_chunks} five-target control segments fully applied")
+              detail=f"{completed_chunks} control segments fully applied")
     run.check("episode_completed", reason in {"communication_complete", "pickup_complete"},
               detail=reason)
     if objective == "pickup":
@@ -1746,6 +1746,11 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
     from isaacsim.robot.manipulators.examples.franka import Franka
     from isaacsim.sensors.experimental.rtx import CameraSensor, RtxCamera
 
+    # Polaris predicts one second at 15 Hz. Truncating to five targets can
+    # repeatedly discard its planned grasp at the end of the returned chunk.
+    targets_per_query = (ACTION_SHAPE[0] if objective == "pickup"
+                         else COMMUNICATION_TARGETS_PER_QUERY)
+    run.add_result("policy_targets_per_query", targets_per_query)
     world = antioch.world()
     world.scene.add_ground_plane(z_position=-0.75, color=np.array([0.12, 0.14, 0.17]))
     tabletop = world.scene.add(
@@ -1859,6 +1864,7 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
     rr.send_blueprint(_camera_blueprint(rrb))
     client = SafePolicyClient()
     observation_sequence = requests = round_trips = applied = safe_holds = 0
+    close_targets_returned = close_targets_applied = 0
     camera_rejected_pairs = camera_validated_requests = 0
     rejected_actions: Counter[str] = Counter()
     transport_failures: Counter[str] = Counter()
@@ -1989,6 +1995,7 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
                     chunk, action_evidence = _validated_actions(
                         response, robot.get_joint_positions()
                     )
+                    close_targets_returned += int(np.count_nonzero(chunk[:, 7] > 0.5))
                     chunk_camera_pair_id = pending_camera_pair_id
                     raw_gripper_range_mismatches += action_evidence[
                         "raw_gripper_range_mismatches"
@@ -2032,6 +2039,9 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
                         f"applied={applied} rejected_actions={sum(rejected_actions.values())} "
                         f"action_horizon={ACTION_SHAPE[0]} "
                         f"action_dimension={ACTION_SHAPE[1]} action_finite=1 "
+                        f"targets_per_query={targets_per_query} "
+                        f"close_targets_returned={close_targets_returned} "
+                        f"close_targets_applied={close_targets_applied} "
                         f"rejected_wrong_shape={rejected_actions['wrong_shape']} "
                         f"rejected_non_finite={rejected_actions['non_finite']} "
                         f"rejected_joint_limit={rejected_actions['joint_limit']} "
@@ -2339,6 +2349,7 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
                 evidence.target(camera_pair_id=chunk_camera_pair_id, row=chunk_index,
                                 target=target, before=measured_before, sim_seconds=sim_now)
                 gripper_commanded_closed = bool(target[7] > 0.5)
+                close_targets_applied += int(gripper_commanded_closed)
                 applied += 1
                 last_control_at = now
                 chunk_index += 1
@@ -2347,7 +2358,7 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
                     f"NPA_OPENPI_APPLIED applied={applied} chunk_index={chunk_index}",
                     flush=True,
                 )
-                if chunk_index >= TARGETS_PER_QUERY:
+                if chunk_index >= targets_per_query:
                     completed_action_chunks += 1
                     chunk = None
 
@@ -2640,6 +2651,8 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
             communication_proof_complete and rejected_actions["non_finite"] == 0,
         )
         run.add_result("safe_targets_applied", applied)
+        run.add_result("policy_close_targets_returned", close_targets_returned)
+        run.add_result("policy_close_targets_applied", close_targets_applied)
         run.add_result("raw_gripper_range_mismatches", raw_gripper_range_mismatches)
         run.add_result("raw_joint_limit_mismatches", raw_joint_limit_mismatches)
         run.add_result("joint_limit_projections", joint_limit_projections)

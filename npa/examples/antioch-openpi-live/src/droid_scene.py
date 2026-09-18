@@ -1,6 +1,6 @@
 """Native DROID embodiment and camera calibration for joint-position policies.
 
-Camera calibration follows NVIDIA RoboLab's Apache-2.0 DROID reference at
+Wrist calibration follows NVIDIA RoboLab's Apache-2.0 DROID reference at
 ad45d4f974725d020f82c2b0d77d78533aeba2b3 (robolab/robots/droid.py and
 robolab/variations/camera.py). Robot assets remain in the operator's Isaac
 runtime; this module contains no redistributed meshes or simulator payload.
@@ -20,9 +20,12 @@ CAMERA_PATHS = {"exterior": "/World/ExteriorDroid", "wrist": f"{GRIPPER_BASE}/wr
 NATIVE_POLICY_RESOLUTION = (180, 320)
 CAMERA_CALIBRATION = {
     "exterior": {
-        "position": (0.05, 0.57, 0.66),
-        "quaternion_wxyz": (-0.393, -0.195, 0.399, 0.805),
-        "focal_length": 2.1,
+        # The over-shoulder view loses the cube behind the forearm near grasp.
+        # This fixed front-oblique view was checked at recorded failure poses.
+        "position": (0.85, 0.48, 0.75),
+        "quaternion_wxyz": (0.32286024864799473, 0.13954537788660748,
+                             0.37139296250295056, 0.8592762156354155),
+        "focal_length": 2.8,
     },
     "wrist": {
         # The native accessory frame differs from RoboLab's flattened asset.
@@ -121,8 +124,7 @@ def configure_camera(stage, view):
     transform.ClearXformOpOrder()
     quaternion = np.asarray(values["quaternion_wxyz"], dtype=np.float64)
     quaternion /= np.linalg.norm(quaternion)
-    # Use the same single local matrix as the verified native calibration probe.
-    # Sensor reset can overwrite its standard translate/orient authoring ops.
+    # One fixed local transform lets the rigid-body parent supply wrist motion.
     matrix = Gf.Matrix4d().SetRotate(
         Gf.Quatd(float(quaternion[0]), Gf.Vec3d(*map(float, quaternion[1:]))))
     matrix.SetTranslateOnly(Gf.Vec3d(*values["position"]))

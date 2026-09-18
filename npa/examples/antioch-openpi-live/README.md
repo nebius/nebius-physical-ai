@@ -28,8 +28,15 @@ binarized at 0.5 and mapped back to that actuator angle. The older communication
 scenario retains the stock Panda fingers and their inverse opening mapping.
 Raw out-of-distribution joint/gripper
 counts are reported separately from Franka-limit and per-target-step safety
-projections. Each receding-horizon query executes five returned targets at 15 Hz of simulation time. Wall time remains the authority for transport staleness. The
+projections. Each pickup query executes all 15 returned targets at 15 Hz of
+simulation time, matching the
+[upstream pi0.5 client horizon](https://github.com/NVlabs/RoboLab/blob/ad45d4f974725d020f82c2b0d77d78533aeba2b3/policies/pi0_family/client.py).
+This preserves planned closure late in a chunk instead of repeatedly discarding
+it during early replanning. Camera and action validity gates still apply before
+each target. Wall time remains the authority for transport staleness. The
 observation-to-action loop is best-effort and not hard real time.
+Persisted results include the execution horizon and separate counts of returned
+and applied close-gripper targets, so discarded closures are visible in review.
 
 The manipulation scene is a lit tabletop with a reachable red cube and an open
 Franka in the DROID reset posture. Both policy views use Isaac Sim 6's supported
@@ -48,13 +55,17 @@ The pickup uses native 320x180 RGB inputs, resized to 224x126 and centered in a
 and contrast checks inspect only the content rows, so padding cannot disguise a
 blank or overexposed sensor. Target resolution checks use the exact model pixels.
 
-The fixed exterior camera views the table over the robot's shoulder. A fixed
+The fixed exterior camera views the table from the front and side, keeping the
+cube visible when the forearm occludes the former over-shoulder view. A fixed
 wrist camera inherits the Robotiq body transform; it never tracks the cube.
-Extrinsics and optics follow the public
+The wrist extrinsics and optics follow the public
 [NVIDIA RoboLab DROID reference](https://github.com/NVlabs/RoboLab/blob/ad45d4f974725d020f82c2b0d77d78533aeba2b3/robolab/robots/droid.py),
 with a -90-degree local-Y basis correction for Isaac's native wrist accessory.
-No RoboLab robot assets are redistributed. Diagnostic renders verify the initial
-and approach framing; pickup success still requires the complete live policy run.
+No RoboLab robot assets are redistributed. Native diagnostic renders verify
+the exterior's target visibility at the initial, closest-approach, and previous
+visibility-loss poses. The wrist can still be occluded at unfavorable poses;
+the independent exterior view supplies target visibility then. Pickup success
+still requires the complete live policy run.
 Both cameras must initially contain the target and grasp region geometrically,
 and both must visibly resolve the red target before inference.
 
