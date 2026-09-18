@@ -233,14 +233,17 @@ demonstration in a run-scoped runtime cache outside `$NPA_SMOKE_OUTPUT_DIR` and
 never bake it. The selected task names Google Scanned Objects and a HOPE
 distractor; the headless qualification's runtime sparse checkout never fetches
 the unused render-asset tree while retaining the hash-bound MIT task
-definitions. Require a short-lived authorization from the authenticated NPA
-customer/control-plane surface, bound to the customer, run, exact terms,
-runtime manifest, and immutable qualified image when available, before any
-cache or network mutation. The neutral image must verify that authorization
-against its baked, root-owned Ed25519 public trust root; caller environment
-hashes and upstream credentials are not terms acceptance. Keep the payload on its pods/get-only
-account and require the separately precreated, non-wildcard controller Role to
-pass exact namespaced and no-ClusterRoleBinding checks before submission.
+definitions. Require a short-lived authorization signed directly by the
+customer-controlled key, bound to the customer, run, exact terms, runtime
+manifest, and immutable qualified image when available, before any cache or
+network mutation. The manager/control plane may authenticate, transport, and
+validate that evidence but never accept, acknowledge, issue, or sign the
+customer's terms decision. The signer public key is transported owner-private
+and must byte-match the customer-signed evidence; no customer signer trust root
+or fingerprint is baked into the neutral image. Keep the payload on its
+pods/get-only account and require the separately precreated, non-wildcard
+controller Role to pass exact namespaced and no-ClusterRoleBinding checks
+before submission.
 Never invent an `ACCEPT_*` variable, automate a vendor acceptance action, or
 treat fetch/authentication as permission.
 Rendered closed-loop sweeps, all 130
