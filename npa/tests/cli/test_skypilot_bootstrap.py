@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import base64
+import csv
+import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import zipfile
 
 import pytest
 from typer.testing import CliRunner
@@ -173,58 +178,135 @@ def test_skypilot_install_package_pins_runtime_dependencies_after_install(
     assert any(cmd[-1] == skypilot_cli.KUBERNETES_CLIENT_SPEC for cmd in installs), installs
 
 
+def _write_bootstrap_fixture_wheel(
+    directory: Path,
+    name: str,
+    version: str,
+    modules: dict[str, str],
+    entry_points: str = "",
+) -> Path:
+    distribution = name.replace("-", "_")
+    metadata_dir = f"{distribution}-{version}.dist-info"
+    files = {path: content.encode() for path, content in modules.items()}
+    files[f"{metadata_dir}/METADATA"] = (
+        f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+        "Summary: Synthetic offline bootstrap fixture, not vendor code\n"
+    ).encode()
+    files[f"{metadata_dir}/WHEEL"] = (
+        "Wheel-Version: 1.0\nGenerator: npa-test-fixture\n"
+        "Root-Is-Purelib: true\nTag: py3-none-any\n"
+    ).encode()
+    if entry_points:
+        files[f"{metadata_dir}/entry_points.txt"] = entry_points.encode()
+    records = io.StringIO(newline="")
+    writer = csv.writer(records)
+    for path, content in files.items():
+        digest = (
+            base64.urlsafe_b64encode(hashlib.sha256(content).digest())
+            .rstrip(b"=")
+            .decode()
+        )
+        writer.writerow((path, f"sha256={digest}", len(content)))
+    writer.writerow((f"{metadata_dir}/RECORD", "", ""))
+    files[f"{metadata_dir}/RECORD"] = records.getvalue().encode()
+    wheel = directory / f"{distribution}-{version}-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        for path, content in files.items():
+            archive.writestr(path, content)
+    return wheel
+
+
+def _offline_bootstrap_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    directory = tmp_path / "synthetic-wheels"
+    directory.mkdir()
+    for name, version in (("click", "8.1.8"), ("kubernetes", "30.1.0")):
+        _write_bootstrap_fixture_wheel(
+            directory,
+            name,
+            version,
+            {f"{name}/__init__.py": f"__version__ = {version!r}\n"},
+        )
+    wheel = _write_bootstrap_fixture_wheel(
+        directory,
+        "fake-skypilot",
+        "0.12.2",
+        {
+            "sky/__init__.py": "__version__ = '0.12.2'\n",
+            "sky/cli.py": "def main():\n    import sys\n    if '--version' in sys.argv:\n        print('SkyPilot 0.12.2')\n    elif len(sys.argv) > 1 and sys.argv[1] == 'check':\n        print('checks passed')\n",
+        },
+        "[console_scripts]\nsky=sky.cli:main\n",
+    )
+    monkeypatch.setenv("PIP_CONFIG_FILE", os.devnull)
+    monkeypatch.setenv("PIP_NO_INDEX", "1")
+    monkeypatch.setenv("PIP_FIND_LINKS", os.fspath(directory))
+    monkeypatch.setenv("PIP_DISABLE_PIP_VERSION_CHECK", "1")
+    monkeypatch.setenv("PIP_NO_CACHE_DIR", "1")
+    return wheel
+
+
+def _assert_bootstrap_fixture_refuses_index(python_bin: Path) -> None:
+    refused = subprocess.run(
+        [
+            str(python_bin),
+            "-m",
+            "pip",
+            "install",
+            "-vv",
+            "--index-url",
+            "https://index.invalid/simple",
+            "npa-missing-bootstrap-fixture==0",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    combined = refused.stdout + refused.stderr
+    assert refused.returncode != 0
+    assert "Ignoring indexes: https://index.invalid/simple" in combined
+    assert (
+        "No matching distribution found for npa-missing-bootstrap-fixture==0"
+        in combined
+    )
+    assert "Starting new HTTPS connection" not in combined
+    assert "Retrying" not in combined
+
+
 def test_skypilot_bootstrap_can_install_local_tiny_package(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Exercises venv-creation + install mechanics with the test interpreter; the
-    # SkyPilot Python-support policy is out of scope here (and the CI matrix runs
-    # this on Python versions outside SkyPilot's supported range), so treat the
-    # interpreter as supported.
+    # Exercise real bootstrap mechanics on the CI interpreter, independently of
+    # SkyPilot's narrower Python support policy and without vendor/package access.
     monkeypatch.setattr(skypilot_cli, "_is_supported_python", lambda _v: True)
-    package_dir = tmp_path / "fake-skypilot"
-    sky_pkg = package_dir / "sky"
-    sky_pkg.mkdir(parents=True)
-    (package_dir / "setup.py").write_text(
-        "\n".join(
-            [
-                "from setuptools import setup",
-                "setup(",
-                "    name='fake-skypilot',",
-                "    version='0.12.2',",
-                "    packages=['sky'],",
-                "    entry_points={'console_scripts': ['sky=sky.cli:main']},",
-                ")",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (sky_pkg / "__init__.py").write_text("__version__ = '0.12.2'\n", encoding="utf-8")
-    (sky_pkg / "cli.py").write_text(
-        "\n".join(
-            [
-                "def main():",
-                "    import sys",
-                "    if '--version' in sys.argv:",
-                "        print('SkyPilot 0.12.2')",
-                "    elif len(sys.argv) > 1 and sys.argv[1] == 'check':",
-                "        print('checks passed')",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    wheel = _offline_bootstrap_fixture(tmp_path, monkeypatch)
 
     result = skypilot_cli.bootstrap_skypilot(
         venv_path=tmp_path / "sky-venv",
         python_bin=sys.executable,
-        package_spec=os.fspath(package_dir),
+        package_spec=os.fspath(wheel),
         extras=("test",),
     )
 
     assert result.installed is True
     assert result.reused is False
     assert result.sky_bin.is_file()
-    assert '"extras": [\n    "test"\n  ]' in result.marker_path.read_text(encoding="utf-8")
+    assert '"extras": [\n    "test"\n  ]' in result.marker_path.read_text(
+        encoding="utf-8"
+    )
+    marker = json.loads(result.marker_path.read_text(encoding="utf-8"))
+    assert marker["version"] == "0.12.2"
+    assert marker["kubernetes_client"] == "30.1.0"
+    state = skypilot_cli.inspect_venv(result.sky_bin.parent.parent)
+    assert (
+        state.importable and state.version == "0.12.2" and state.kubernetes_compatible
+    )
+    installed = subprocess.run(
+        [str(state.python_bin), "-c", "import click; print(click.__version__)"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert installed.stdout.strip() == "8.1.8"
+    _assert_bootstrap_fixture_refuses_index(state.python_bin)
 
 
 @pytest.fixture

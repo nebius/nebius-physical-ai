@@ -10,6 +10,7 @@ iid_file=""
 tag_assignment_attempted=0
 tag_assignment_completed=0
 transaction_complete=0
+success_receipt_identity=""
 failure_receipt_published=0
 failure_receipt=""
 tag_lock_acquisition_attempted=0
@@ -440,6 +441,7 @@ publish_success_receipt() {
   write_success_receipt "${receipt_anchor}/${receipt_tmp_name}"
   receipt_staging_matches \
     || fail "transaction receipt staging identity changed"
+  success_receipt_identity="${receipt_tmp_identity}"
   if link_receipt_target "${receipt_name}"; then
     :
   else
@@ -603,6 +605,29 @@ discard_success_context() {
   fi
 }
 
+success_receipt_is_published() {
+  [[ -n "${success_receipt_identity}" ]] || return 1
+  [[ "$(descriptor_identity "${receipt_dir_fd}" 2>/dev/null)" \
+    == "${receipt_dir_identity}" ]] || return 1
+  local target="${receipt_anchor}/${receipt_name}"
+  [[ -f "${target}" && ! -L "${target}" ]] || return 1
+  [[ "$(file_identity "${target}" 2>/dev/null)" \
+    == "${success_receipt_identity}" ]]
+}
+
+retain_success_context() {
+  # Publication is the build outcome even if its caller is interrupted before
+  # observing completion. Never append a contradictory build-failure receipt.
+  # Retain the context and record cleanup separately from that immutable outcome.
+  if [[ -n "${receipt_tmp_name}" ]]; then
+    [[ ! -e "${receipt_anchor}/${receipt_tmp_name}" \
+      && ! -L "${receipt_anchor}/${receipt_tmp_name}" ]] || return 1
+    forget_receipt_staging
+  fi
+  publish_cleanup_journal || return 1
+  publish_cleanup_receipt "unresolved" "retained-owner-private-for-reconciliation"
+}
+
 cleanup() {
   local original_status=$?
   local cleanup_failed=0
@@ -611,7 +636,10 @@ cleanup() {
   recover_created_image
   recover_tag_lock || cleanup_failed=1
   release_tag_lock || cleanup_failed=1
-  if [[ "${original_status}" -ne 0 && "${image_created}" -eq 1 ]]; then
+  if [[ "${original_status}" -ne 0 ]] \
+    && { [[ "${transaction_complete}" -eq 1 ]] || success_receipt_is_published; }; then
+    retain_success_context || cleanup_failed=1
+  elif [[ "${original_status}" -ne 0 && "${image_created}" -eq 1 ]]; then
     retain_failed_image || cleanup_failed=1
   elif [[ "${original_status}" -ne 0 ]]; then
     discard_preimage_context || cleanup_failed=1

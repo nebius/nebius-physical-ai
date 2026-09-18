@@ -287,6 +287,13 @@ if [[ "${1:-}" == "-" && "${2:-}" == "receipt-link" ]]; then
         + shlex.quote(sys.executable)
         + """ "$@" 9<&9 || status=$?
   [[ "${status}" -eq 0 ]] || exit "${status}"
+  if [[ "${5}" == npa-robomimic-context.*.json \
+    && "${5}" != *.cleanup*.json && "${5}" != *.failure*.json ]]; then
+    if [[ -n "${FAKE_POST_PUBLICATION_SIGNAL:-}" ]]; then
+      kill -"${FAKE_POST_PUBLICATION_SIGNAL}" "$PPID"
+    fi
+    [[ "${FAKE_POST_PUBLICATION_EXIT:-0}" == "0" ]] || exit 97
+  fi
   if [[ "${FAKE_TERMINAL_RECEIPT_IDENTITY_FAILURE:-0}" == "1" \
     && "${5}" == *.cleanup.json ]]; then
         """
@@ -774,6 +781,78 @@ def test_build_helper_records_immutable_id_in_owner_only_receipt(
     assert list(temp_root.glob("npa-robomimic-context.*")) == []
 
 
+@pytest.mark.parametrize(
+    ("signal_name", "expected_status"), (("HUP", 129), ("INT", 130), ("TERM", 143))
+)
+def test_build_helper_signal_after_publication_preserves_success(
+    tmp_path: Path, signal_name: str, expected_status: int
+) -> None:
+    environment, temp_root, receipt_dir, tag_state = _fake_build_environment(tmp_path)
+    image_id = "sha256:" + "d" * 64
+    environment["FAKE_DOCKER_IMAGE_ID"] = image_id
+    environment["FAKE_POST_PUBLICATION_SIGNAL"] = signal_name
+
+    result = _run_fake_build(environment)
+
+    assert result.returncode == expected_status, result.stderr
+    _assert_interrupted_success(tmp_path, temp_root, receipt_dir, tag_state, image_id)
+
+
+def _assert_interrupted_success(
+    tmp_path: Path, temp_root: Path, receipt_dir: Path, tag_state: Path, image_id: str
+) -> None:
+    builds = _records_with_schema(receipt_dir, "npa.robomimic.neutral-build-receipt.v1")
+    assert len(builds) == 1
+    assert builds[0][1]["consumer_image_ref"] == image_id
+    assert not _records_with_schema(
+        receipt_dir, "npa.robomimic.neutral-build-failure.v1"
+    )
+    _assert_cleanup_journal(receipt_dir, image_id)
+    _assert_cleanup_receipt(
+        receipt_dir,
+        image_id,
+        status="unresolved",
+        disposition="retained-owner-private-for-reconciliation",
+    )
+    assert len(list(temp_root.glob("npa-robomimic-context.*"))) == 1
+    assert tag_state.read_text().strip() == image_id
+    assert _docker_actions(tmp_path) == ["tag"]
+    assert not (tmp_path / "daemon-lock").exists()
+
+
+def test_build_helper_error_after_publication_preserves_success(tmp_path: Path) -> None:
+    environment, temp_root, receipt_dir, tag_state = _fake_build_environment(tmp_path)
+    image_id = "sha256:" + "d" * 64
+    environment["FAKE_DOCKER_IMAGE_ID"] = image_id
+    environment["FAKE_POST_PUBLICATION_EXIT"] = "1"
+
+    result = _run_fake_build(environment)
+
+    assert result.returncode != 0
+    _assert_interrupted_success(tmp_path, temp_root, receipt_dir, tag_state, image_id)
+
+
+def test_build_helper_stdout_failure_cannot_reverse_success(tmp_path: Path) -> None:
+    environment, temp_root, receipt_dir, tag_state = _fake_build_environment(tmp_path)
+    image_id = "sha256:" + "d" * 64
+    environment["FAKE_DOCKER_IMAGE_ID"] = image_id
+
+    with open("/dev/full", "w") as full_output:
+        result = subprocess.run(
+            ["bash", str(BUILD_SCRIPT)],
+            cwd=ROOT,
+            env=environment,
+            check=False,
+            stdout=full_output,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+    assert result.returncode != 0
+    assert "No space left on device" in result.stderr
+    _assert_interrupted_success(tmp_path, temp_root, receipt_dir, tag_state, image_id)
+
+
 def test_build_helper_refuses_stale_shared_tag_without_retagging(
     tmp_path: Path,
 ) -> None:
@@ -1100,6 +1179,16 @@ def test_build_helper_refuses_receipt_fsync_failure_without_deleting_evidence(
     fsync_actions = (tmp_path / "fsync-actions").read_text().splitlines()
     expected_fsync = ["regular:ok"] if failure_kind == "directory" else []
     expected_fsync.append(f"{failure_kind}:failed")
+    if failure_kind == "directory":
+        # A visible success outcome is never reversed by failed durability
+        # acknowledgement. The nonzero exit retains context for reconciliation.
+        expected_fsync.extend(["regular:ok", "directory:ok"] * 2)
+        _assert_cleanup_receipt(
+            receipt_dir,
+            image_id,
+            status="unresolved",
+            disposition="retained-owner-private-for-reconciliation",
+        )
     assert fsync_actions == expected_fsync
     assert list(receipt_dir.glob(".*.receipt.*")) or expected_builds == 1
     assert len(list(temp_root.glob("npa-robomimic-context.*"))) == 1
