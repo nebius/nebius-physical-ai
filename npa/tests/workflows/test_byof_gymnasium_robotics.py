@@ -688,9 +688,65 @@ def _configuration_task(**pod_overrides: object) -> dict:
     return {
         "name": "gymnasium-robotics",
         "config": {"kubernetes": {"pod_config": {"spec": {
-            "automountServiceAccountToken": False, **pod_overrides,
+            "automountServiceAccountToken": False,
+            "securityContext": {"runAsNonRoot": True, "seccompProfile": {"type": "RuntimeDefault"}},
+            "containers": [{"name": "ray-node", "securityContext": {
+                "runAsNonRoot": True, "privileged": False,
+                "allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]},
+            }}],
+            **pod_overrides,
         }}}},
     }
+
+
+@pytest.mark.parametrize("context", [
+    {}, {"runAsNonRoot": False}, {"runAsNonRoot": "true"},
+    {"runAsNonRoot": True},
+    {"runAsNonRoot": True, "seccompProfile": {"type": "Unconfined"}},
+    {"runAsNonRoot": True, "seccompProfile": {"type": "Localhost", "localhostProfile": "synthetic"}},
+])
+def test_gymnasium_configuration_requires_restrictive_pod_policy(context: dict) -> None:
+    with pytest.raises(ExecutionPreflightError):
+        validate_gymnasium_task_configuration([_configuration_task(securityContext=context)])
+
+
+@pytest.mark.parametrize(("key", "value"), [
+    ("runAsNonRoot", None), ("runAsNonRoot", False), ("runAsUser", 0),
+    ("allowPrivilegeEscalation", None), ("allowPrivilegeEscalation", True),
+    ("allowPrivilegeEscalation", 0), ("privileged", True),
+    ("capabilities", {}), ("capabilities", {"drop": []}),
+    ("capabilities", {"drop": ["NET_RAW"]}),
+    ("capabilities", {"drop": ["ALL"], "add": ["NET_ADMIN"]}),
+    ("seccompProfile", {"type": "Unconfined"}), ("procMount", "Unmasked"),
+])
+def test_gymnasium_configuration_refuses_container_privilege_expansion(key: str, value: object) -> None:
+    task = _configuration_task()
+    context = task["config"]["kubernetes"]["pod_config"]["spec"]["containers"][0]["securityContext"]
+    if value is None:
+        context.pop(key)
+    else:
+        context[key] = value
+    with pytest.raises(ExecutionPreflightError):
+        validate_gymnasium_task_configuration([task])
+
+
+@pytest.mark.parametrize("containers", [[], [{"name": "synthetic-sidecar"}]])
+def test_gymnasium_configuration_requires_single_workload_container(containers: list) -> None:
+    with pytest.raises(ExecutionPreflightError, match="ray-node"):
+        validate_gymnasium_task_configuration([_configuration_task(containers=containers)])
+
+
+@pytest.mark.parametrize("context", [
+    {"allowPrivilegeEscalation": True}, {"capabilities": {"drop": []}},
+    {"seccompProfile": {"type": "Unconfined"}}, {"runAsNonRoot": False},
+])
+def test_gymnasium_configuration_refuses_global_security_expansion(context: dict) -> None:
+    with pytest.raises(ExecutionPreflightError):
+        validate_gymnasium_task_configuration([_configuration_task()], global_config={
+            "kubernetes": {"pod_config": {"spec": {
+                "containers": [{"name": "ray-node", "securityContext": context}],
+            }}},
+        })
 
 
 def test_gymnasium_configuration_is_explicit_in_both_task_shapes() -> None:

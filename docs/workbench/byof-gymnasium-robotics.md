@@ -37,6 +37,23 @@ validation and artifact bookkeeping stay on the image-baked system Python and
 Ubuntu `python3-boto3`; their transitive binary/source/license closure is bound
 to the signed immutable Ubuntu snapshot.
 
+The fetched-runtime policy admits only native amd64 syscall numbers, permits
+socket creation only for local Unix IPC, and denies all three `io_uring`
+interfaces. Ordinary file operations and EGL device operations remain outside
+this network filter's deny rules. Both task shapes explicitly disable
+service-account automount, require non-root execution and `RuntimeDefault`
+seccomp, disable privilege escalation, and drop all container capabilities.
+Gymnasium-selected configuration validation rejects unsafe overrides before
+credential resolution or launch; the separate authorized storage-secret
+channel remains available to the trusted coordinator.
+
+Static policy and mocked installation tests establish only these source-level
+rules. They do not prove kernel containment, local-IPC trust, inherited-resource
+isolation, or compatibility with the SkyPilot bootstrap and NVIDIA EGL stack.
+Those exact-image/live gates remain unmet; a launcher requiring extra privilege
+must fail closed rather than relaxing the policy. No current containment or
+capability claim follows from the historical private result.
+
 The accepted private result at repository head `c308945a` is historical proof
 for its exact private digest and workflow bytes only. It is not evidence for
 this redesigned source, an executable image, the current head, or a future

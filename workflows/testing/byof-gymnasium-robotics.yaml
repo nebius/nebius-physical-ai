@@ -43,6 +43,18 @@ resources:
       pod_config:
         spec:
           automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: ray-node
+              securityContext:
+                runAsNonRoot: true
+                privileged: false
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: [ALL]
 initial: byof-run
 states:
   byof-run:

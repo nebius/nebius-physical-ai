@@ -35,6 +35,98 @@ SPEC.loader.exec_module(BOOTSTRAP)
 PUBLIC_ADDRESS = "8.8.8.8"
 
 
+def _evaluate_network_policy(*, syscall: int, family: int = 0, arch: int = 0xC000003E) -> int:
+    """Interpret filter data only: no socket, syscall, fork, or kernel probe."""
+    fields = {0: syscall, 4: arch, 16: family}
+    policy = BOOTSTRAP._runtime_network_policy()
+    offset, accumulator = 0, 0
+    for _ in policy:
+        assert 0 <= offset < len(policy)
+        code, true_jump, false_jump, constant = policy[offset]
+        offset += 1
+        if code == 0x20:
+            accumulator = fields[constant] & 0xFFFFFFFF
+        elif code == 0x15:
+            offset += true_jump if accumulator == constant else false_jump
+        elif code == 0x35:
+            offset += true_jump if accumulator >= constant else false_jump
+        else:
+            assert code == 0x06
+            return constant
+    pytest.fail("policy must terminate at an explicit decision")
+
+
+@pytest.mark.parametrize("syscall", [41, 53])
+@pytest.mark.parametrize("family", [0, 2, 10, 16, 17, 40, 255, 0xFFFFFFFF])
+def test_runtime_network_policy_refuses_nonlocal_socket_families(syscall: int, family: int) -> None:
+    assert _evaluate_network_policy(syscall=syscall, family=family) == 0x00050001
+
+
+@pytest.mark.parametrize("syscall", [41, 53])
+def test_runtime_network_policy_preserves_unix_ipc(syscall: int) -> None:
+    assert _evaluate_network_policy(syscall=syscall, family=1) == 0x7FFF0000
+
+
+@pytest.mark.parametrize("syscall", [425, 426, 427, 0x40000000, 0x40000029, 0xFFFFFFFF])
+def test_runtime_network_policy_refuses_ring_and_alternate_abi_numbers(syscall: int) -> None:
+    assert _evaluate_network_policy(syscall=syscall, family=1) == 0x00050001
+
+
+@pytest.mark.parametrize("arch", [0, 0x40000003, 0xC00000B7])
+def test_runtime_network_policy_refuses_unreviewed_architectures(arch: int) -> None:
+    assert _evaluate_network_policy(syscall=0, arch=arch) == 0x00050001
+
+
+@pytest.mark.parametrize("syscall", [0, 1, 3, 9, 16, 60, 202])
+def test_runtime_network_policy_preserves_ordinary_egl_and_file_syscalls(syscall: int) -> None:
+    assert _evaluate_network_policy(syscall=syscall) == 0x7FFF0000
+
+
+def test_runtime_network_policy_mocked_installation_uses_exact_instructions(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[int] = []
+
+    def record(option: int, argument: int, pointer: Any = None) -> None:
+        calls.append(option)
+        if option == BOOTSTRAP.PR_SET_SECCOMP:
+            assert calls == [BOOTSTRAP.PR_SET_NO_NEW_PRIVS, BOOTSTRAP.PR_SET_SECCOMP]
+            assert argument == BOOTSTRAP.SECCOMP_MODE_FILTER
+            program = pointer._obj
+            actual = tuple((row.code, row.jt, row.jf, row.k) for row in program.filter[:program.len])
+            assert actual == BOOTSTRAP._runtime_network_policy()
+        else:
+            assert option == BOOTSTRAP.PR_SET_NO_NEW_PRIVS and argument == 1
+
+    monkeypatch.setattr(BOOTSTRAP.os, "uname", lambda: mock.Mock(machine="x86_64"))
+    monkeypatch.setattr(BOOTSTRAP, "_prctl", record)
+    BOOTSTRAP._install_runtime_network_filter()
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("failed_call", [1, 2])
+def test_runtime_network_policy_mocked_installation_fails_closed(monkeypatch: pytest.MonkeyPatch, failed_call: int) -> None:
+    calls: list[int] = []
+
+    def refuse(option: int, *_args: Any) -> None:
+        calls.append(option)
+        if len(calls) == failed_call:
+            raise OSError("synthetic installation refusal")
+
+    monkeypatch.setattr(BOOTSTRAP.os, "uname", lambda: mock.Mock(machine="x86_64"))
+    monkeypatch.setattr(BOOTSTRAP, "_prctl", refuse)
+    with pytest.raises(OSError, match="synthetic installation refusal"):
+        BOOTSTRAP._install_runtime_network_filter()
+    assert len(calls) == failed_call
+
+
+def test_runtime_network_policy_mocked_installation_refuses_other_machine(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(BOOTSTRAP.os, "uname", lambda: mock.Mock(machine="synthetic-other"))
+    prctl = mock.Mock(side_effect=AssertionError("must refuse before installation"))
+    monkeypatch.setattr(BOOTSTRAP, "_prctl", prctl)
+    with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="reviewed amd64"):
+        BOOTSTRAP._install_runtime_network_filter()
+    prctl.assert_not_called()
+
+
 def test_streaming_digest_is_bounded_without_file_digest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

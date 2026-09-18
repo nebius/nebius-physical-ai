@@ -72,8 +72,12 @@ SECCOMP_RET_ERRNO = 0x00050000
 SECCOMP_RET_ALLOW = 0x7FFF0000
 AUDIT_ARCH_X86_64 = 0xC000003E
 SYS_SOCKET_X86_64 = 41
-AF_INET = 2
-AF_INET6 = 10
+SYS_SOCKETPAIR_X86_64 = 53
+SYS_IO_URING_SETUP_X86_64 = 425
+SYS_IO_URING_ENTER_X86_64 = 426
+SYS_IO_URING_REGISTER_X86_64 = 427
+X32_SYSCALL_BIT = 0x40000000
+AF_UNIX = 1
 RUNTIME_ENVIRONMENT_ALLOWLIST = frozenset(
     {
         "BYOF_IMAGE",
@@ -1668,22 +1672,39 @@ def _runtime_environment(directory_fd: int | None = None) -> dict[str, str]:
     return environment
 
 
+def _runtime_network_policy() -> tuple[tuple[int, int, int, int], ...]:
+    """Return the native-amd64 filter; Unix IPC is the only socket family.
+
+    Each tuple is (BPF opcode, true jump, false jump, constant). This policy
+    excludes alternate syscall ABIs and asynchronous ring interfaces. It is
+    not a general syscall allowlist or proof of live kernel containment.
+    """
+
+    return (
+        (0x20, 0, 0, 4),  # Load seccomp_data.arch.
+        (0x15, 0, 10, AUDIT_ARCH_X86_64),  # Other architectures -> deny.
+        (0x20, 0, 0, 0),  # Load seccomp_data.nr.
+        (0x35, 8, 0, X32_SYSCALL_BIT),  # Non-native/high-bit numbers -> deny.
+        (0x15, 7, 0, SYS_IO_URING_SETUP_X86_64),
+        (0x15, 6, 0, SYS_IO_URING_ENTER_X86_64),
+        (0x15, 5, 0, SYS_IO_URING_REGISTER_X86_64),
+        (0x15, 2, 0, SYS_SOCKET_X86_64),
+        (0x15, 1, 0, SYS_SOCKETPAIR_X86_64),
+        (0x06, 0, 0, SECCOMP_RET_ALLOW),  # Ordinary EGL/file/process syscalls.
+        (0x20, 0, 0, 16),  # Socket domain is the low word of argument zero.
+        (0x15, 1, 0, AF_UNIX),
+        (0x06, 0, 0, SECCOMP_RET_ERRNO | errno.EPERM),
+        (0x06, 0, 0, SECCOMP_RET_ALLOW),  # Local Unix sockets/socket pairs.
+    )
+
+
 def _install_runtime_network_filter() -> None:
-    """Deny IPv4/IPv6 sockets while retaining local EGL/Unix IPC."""
+    """Install the restrictive socket policy, retaining local EGL/Unix IPC."""
 
     if os.uname().machine != "x86_64":
         _refuse("runtime network isolation supports only the reviewed amd64 target")
-    filters = (_SockFilter * 9)(
-        _SockFilter(0x20, 0, 0, 4),
-        _SockFilter(0x15, 0, 6, AUDIT_ARCH_X86_64),
-        _SockFilter(0x20, 0, 0, 0),
-        _SockFilter(0x15, 0, 3, SYS_SOCKET_X86_64),
-        _SockFilter(0x20, 0, 0, 16),
-        _SockFilter(0x15, 2, 0, AF_INET),
-        _SockFilter(0x15, 1, 0, AF_INET6),
-        _SockFilter(0x06, 0, 0, SECCOMP_RET_ALLOW),
-        _SockFilter(0x06, 0, 0, SECCOMP_RET_ERRNO | 1),
-    )
+    policy = _runtime_network_policy()
+    filters = (_SockFilter * len(policy))(*(_SockFilter(*row) for row in policy))
     program = _SockFprog(len=len(filters), filter=filters)
     _prctl(PR_SET_NO_NEW_PRIVS, 1)
     _prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, ctypes.byref(program))

@@ -358,13 +358,27 @@ def _validate_gymnasium_pod_environment(container: Mapping[str, Any]) -> None:
                 _gymnasium_configuration_error("pod credential references are forbidden")
 
 
-def _validate_gymnasium_security_context(context: Any) -> None:
+def _validate_gymnasium_security_context(context: Any, *, required: bool = False, container: bool = False) -> None:
     value = _gymnasium_mapping(context)
     if ("privileged" in value and value["privileged"] is not False) or value.get("runAsUser") == 0:
         _gymnasium_configuration_error("privileged or UID-zero pod overrides are forbidden")
+    if required or "runAsNonRoot" in value:
+        if value.get("runAsNonRoot") is not True:
+            _gymnasium_configuration_error("task must explicitly require non-root execution")
+    if (required and not container) or "seccompProfile" in value:
+        if value.get("seccompProfile") != {"type": "RuntimeDefault"}:
+            _gymnasium_configuration_error("only the RuntimeDefault seccomp profile is permitted")
+    if (required and container) or "allowPrivilegeEscalation" in value:
+        if value.get("allowPrivilegeEscalation") is not False:
+            _gymnasium_configuration_error("task must explicitly disable privilege escalation")
+    if value.get("procMount", "Default") != "Default" or value.get("sysctls"):
+        _gymnasium_configuration_error("proc mount or sysctl overrides are forbidden")
     capabilities = _gymnasium_mapping(value.get("capabilities", {}))
-    if capabilities.get("add"):
-        _gymnasium_configuration_error("additional container capabilities are forbidden")
+    if capabilities.get("add") or set(capabilities) - {"add", "drop"}:
+        _gymnasium_configuration_error("additional or unknown container capabilities are forbidden")
+    if (required and container) or "drop" in capabilities:
+        if capabilities.get("drop") != ["ALL"]:
+            _gymnasium_configuration_error("task must explicitly drop ALL container capabilities")
 
 
 def _validate_gymnasium_volumes(pod: Mapping[str, Any]) -> None:
@@ -389,11 +403,16 @@ def _validate_gymnasium_pod(pod: Mapping[str, Any], *, require_automount: bool) 
             _gymnasium_configuration_error("host/shared process namespace overrides are forbidden")
     if pod.get("initContainers") or pod.get("ephemeralContainers"):
         _gymnasium_configuration_error("additional initialization or ephemeral containers are forbidden")
-    _validate_gymnasium_security_context(pod.get("securityContext", {}))
+    _validate_gymnasium_security_context(pod.get("securityContext", {}), required=require_automount)
     _validate_gymnasium_volumes(pod)
-    for container in _gymnasium_entries(pod.get("containers", [])):
+    containers = _gymnasium_entries(pod.get("containers", []))
+    if (require_automount or containers) and [entry.get("name") for entry in containers] != ["ray-node"]:
+        _gymnasium_configuration_error("only the explicit ray-node workload container is permitted")
+    for container in containers:
         _validate_gymnasium_pod_environment(container)
-        _validate_gymnasium_security_context(container.get("securityContext", {}))
+        _validate_gymnasium_security_context(
+            container.get("securityContext", {}), required=require_automount, container=True,
+        )
         if container.get("volumeDevices"):
             _gymnasium_configuration_error("raw volume devices are forbidden")
         for mount in _gymnasium_entries(container.get("volumeMounts", [])):
