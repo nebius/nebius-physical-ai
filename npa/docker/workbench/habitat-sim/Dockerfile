@@ -147,6 +147,9 @@ RUN --mount=from=npa-source-provenance,source=/inputs/docker/workbench/habitat-s
       "$source_url" /tmp/npa-runtime-Sources.xz "$source_bytes" && \
     bash /usr/local/libexec/npa-habitat-verify-apt verify-file \
       /tmp/npa-runtime-Sources.xz "$source_bytes" "$source_digest" && \
+    bash /usr/local/libexec/npa-habitat-verify-apt verify-source \
+      /opt/npa-source-provenance/inputs/docker/workbench/habitat-sim/apt-runtime.lock \
+      /tmp/npa-runtime-Sources.xz && \
     install -d -m 0755 /opt/rsync-source && \
     cd /opt/rsync-source && \
     apt-get source --download-only rsync=3.2.7-0ubuntu0.22.04.7 && \
@@ -161,6 +164,9 @@ RUN --mount=from=npa-source-provenance,source=/inputs/docker/workbench/habitat-s
       05db0546477de617be806c2abd8d16f8aed4aa2cfe8d2273b3a030750c6cb811 rsync_3.2.7-0ubuntu0.22.04.7.debian.tar.xz \
       5e6e79695b709ce1606ddbb63f5c28c7cdc304f857f42e317bd53e753b8ca15d rsync_3.2.7-0ubuntu0.22.04.7.dsc | \
       sha256sum -c - && \
+    bash /usr/local/libexec/npa-habitat-verify-apt verify-source \
+      /opt/npa-source-provenance/inputs/docker/workbench/habitat-sim/apt-runtime.lock \
+      /tmp/npa-runtime-Sources.xz /opt/rsync-source && \
     ! grep -R -nE '^[[:space:]]*URIs:[[:space:]]*http://' /etc/apt/sources.list.d && \
     rm -rf /tmp/npa-build-direct-debs /tmp/npa-build-direct-packages \
       /tmp/npa-runtime-source-index /tmp/npa-runtime-Sources.xz \
@@ -338,7 +344,7 @@ ENV PATH=/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/
     NVIDIA_DRIVER_CAPABILITIES=compute,graphics,utility
 LABEL org.opencontainers.image.source="https://github.com/facebookresearch/habitat-sim" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
-      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.licenses="LicenseRef-Habitat-Sim-Image-Closure-Pending" \
       npa.tool="habitat-sim" \
       npa.version="0.3.3-public-unbuilt" \
       org.nebius.npa.source-manifest-sha256="${NPA_SOURCE_MANIFEST_SHA256}" \

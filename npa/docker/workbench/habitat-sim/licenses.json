@@ -1,7 +1,7 @@
 {
   "schema_version": "npa.habitat-sim.licenses.v1",
-  "classification": "public-eligible-unbuilt",
-  "decision": "All planned image bytes are redistributable; exact built bytes remain quarantined until complete verification.",
+  "classification": "quarantined-source-closure-pending",
+  "decision": "Public-neutral packaging is the objective, not an accepted eligibility claim. Complete inherited and installed corresponding-source closure and delivery remain unproved; exact built bytes must remain quarantined.",
   "source_manifest": "source-manifest.json",
   "source_licenses": [
     {"name": "habitat-sim", "license": "MIT", "sha256": "2d4c3d00d67067461412a2d9a2f3f8b7b9cda62b3db501e4b6844ccf35c949aa"},

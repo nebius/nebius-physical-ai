@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 if [[ $# -ne 1 || "$1" == -* ]]; then
   echo "usage: build.sh OWNER_ONLY_OUTPUT.oci.tar" >&2
@@ -17,8 +18,20 @@ if [[ ! -d "$output_parent_candidate" ]]; then
   exit 2
 fi
 output_parent="$(cd "$output_parent_candidate" && pwd -P)"
-output="$output_parent/$output_name"
-if [[ -e "$output" ]]; then
+if [[ "$output_name" == . || "$output_name" == .. || "$output_name" == *,* ]]; then
+  echo "invalid OCI output name" >&2
+  exit 2
+fi
+# Hold the directory inode, so replacing an ancestor cannot redirect output.
+exec {output_directory_fd}< "$output_parent"
+output_directory="/proc/$$/fd/$output_directory_fd"
+if [[ "$(stat -Lc %u "$output_directory")" != "$(id -u)" ]] ||
+   (( (8#$(stat -Lc %a "$output_directory") & 0022) != 0 )); then
+  echo "OCI output parent must be owned and not group/world writable" >&2
+  exit 2
+fi
+output="$output_directory/$output_name"
+if [[ -e "$output" || -L "$output" ]]; then
   echo "refusing to overwrite OCI output" >&2
   exit 2
 fi
@@ -79,10 +92,17 @@ readonly source_paths=(
 
 projection="$(mktemp -d "${TMPDIR:-/tmp}/npa-habitat-source.XXXXXX")"
 chmod 0700 "$projection"
+output_temporary=
 cleanup() {
   rm -rf -- "$projection"
+  if [[ -n "$output_temporary" ]]; then
+    rm -f -- "$output_temporary/candidate.oci.tar"
+    rmdir -- "$output_temporary"
+  fi
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 manifest="$projection/npa-source-manifest.sha256"
 : > "$manifest.unsorted"
 for context_path in "${source_paths[@]}"; do
@@ -109,17 +129,28 @@ if [[ ! "$manifest_sha256" =~ ^[0-9a-f]{64}$ ]]; then
 fi
 
 cd "$repo_root"
-if [[ -e "$output" ]]; then
+if [[ -e "$output" || -L "$output" ]]; then
   echo "refusing to overwrite OCI output" >&2
   exit 2
 fi
+output_temporary="$(mktemp -d "$output_directory/.npa-habitat-oci.XXXXXX")"
+: > "$output_temporary/candidate.oci.tar"
 docker buildx build \
   --platform="$build_platform" \
   --build-arg "NPA_SOURCE_SHA=$source_sha" \
   --build-arg "NPA_SOURCE_MANIFEST_SHA256=$manifest_sha256" \
   --build-context "npa-source-provenance=$projection" \
   --file npa/docker/workbench/habitat-sim/Dockerfile \
-  --output "type=oci,dest=$output" \
+  --output "type=oci,dest=$output_temporary/candidate.oci.tar" \
   --provenance=mode=max \
   --sbom=true \
   npa
+if [[ ! -f "$output_temporary/candidate.oci.tar" || -L "$output_temporary/candidate.oci.tar" ||
+      ! -s "$output_temporary/candidate.oci.tar" ||
+      "$(stat -c '%u:%h' "$output_temporary/candidate.oci.tar")" != "$(id -u):1" ]]; then
+  echo "invalid OCI build output" >&2
+  exit 2
+fi
+chmod 0600 "$output_temporary/candidate.oci.tar"
+# link(2) is atomic and refuses an existing destination, including symlinks.
+ln -T -- "$output_temporary/candidate.oci.tar" "$output"

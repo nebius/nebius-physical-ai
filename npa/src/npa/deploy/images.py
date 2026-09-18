@@ -138,17 +138,20 @@ RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
     {"cosmos3-super-benchmark", "cosmos3-nano-video"}
 )
 RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
+# A pending source-delivery proof is not a permanent upstream license restriction.
+PENDING_REDISTRIBUTION_TOOLS: frozenset[str] = frozenset({"habitat-sim"})
 
 # Compatibility exports for installed callers. New code uses the general names.
 OMNIVERSE_RESTRICTED_TOOLS = RESTRICTED_PUBLICATION_TOOLS
 OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 
-# Tools that are licence-eligible for public redistribution but have no accepted
-# built/GPU-validated artifact yet.
+# Tools without an accepted built/GPU-validated artifact. Habitat-Sim also has
+# pending complete corresponding-source closure: its planned public packaging
+# classification is not established eligibility or permission to publish.
 #
 # This is a different question from `RESTRICTED_PUBLICATION_TOOLS`, and conflating
-# them would be wrong in both directions: these are not restricted (the licensing
-# work is done and the answer was "public"), they are simply unproven. Publishing
+# them would be wrong in both directions: these target public delivery but remain
+# unproven. Publishing
 # an image whose payload scan and GPU smoke have never run would hand out a claim
 # we have not earned, so publish_public refuses them by name rather than relying
 # on the push failing because the tag happens not to exist.
@@ -383,7 +386,9 @@ def content_agents_accepted_image_manifest() -> dict[str, Any]:
         .read_text(encoding="utf-8")
     )
     if not isinstance(payload, dict):
-        raise RuntimeError("Content Agents accepted image manifest must be a JSON object")
+        raise RuntimeError(
+            "Content Agents accepted image manifest must be a JSON object"
+        )
     if payload.get("format") != "npa_content_agents_accepted_image_manifest_v1":
         raise RuntimeError("Unsupported Content Agents accepted image manifest format")
     if payload.get("tag") != SUPPORTED_TOOL_VERSIONS["content-agents"]:
@@ -585,7 +590,9 @@ def public_release_manifest() -> dict[str, Any]:
     if payload.get("format") != "npa_public_release_manifest_v1":
         raise RuntimeError("Unsupported public release manifest format")
     if payload.get("registry") != DEFAULT_PUBLIC_CONTAINER_REGISTRY:
-        raise RuntimeError("Public release manifest registry drifted from official GHCR")
+        raise RuntimeError(
+            "Public release manifest registry drifted from official GHCR"
+        )
     releases = payload.get("releases")
     pending = payload.get("publication_pending")
     if not isinstance(releases, dict) or not isinstance(pending, dict):
@@ -597,12 +604,17 @@ def public_release_manifest() -> dict[str, Any]:
         )
     for tool, entry in releases.items():
         if not isinstance(entry, dict):
-            raise RuntimeError(f"Public release manifest entry {tool!r} must be an object")
+            raise RuntimeError(
+                f"Public release manifest entry {tool!r} must be an object"
+            )
         if entry.get("tag") != public_release_tag_for_tool(tool):
             raise RuntimeError(f"Public release tag drifted for {tool!r}")
-        if re.fullmatch(
-            r"sha256:[0-9a-f]{64}", str(entry.get("published_digest") or "")
-        ) is None:
+        if (
+            re.fullmatch(
+                r"sha256:[0-9a-f]{64}", str(entry.get("published_digest") or "")
+            )
+            is None
+        ):
             raise RuntimeError(f"Public release digest is invalid for {tool!r}")
         development_sha = entry.get("development_sha")
         if development_sha is not None:
@@ -734,7 +746,10 @@ def sonic_image_variant_for_gpu(
             token = _normalize_gpu_target(str(match))
             # The family name also occurs in datacenter GPU labels. Those must
             # reach their model-specific rule, never the workstation default.
-            if token == "blackwell" and classify_gpu_target(normalized) == DATACENTER_HEADLESS:
+            if (
+                token == "blackwell"
+                and classify_gpu_target(normalized) == DATACENTER_HEADLESS
+            ):
                 continue
             if token in normalized:
                 if not requested:
@@ -861,6 +876,13 @@ def container_image_for_tool(
             public_release_tag_for_tool(tool)
             if is_public_registry(resolved_registry)
             else supported_tool_version(tool)
+        )
+    if tool in PENDING_REDISTRIBUTION_TOOLS and is_public_registry(resolved_registry):
+        raise ValueError(
+            f"{tool!r} has pending corresponding-source closure and no accepted "
+            "public image. Use only a separately byte-qualified operator-private "
+            "image after its source/delivery gates pass; see "
+            "docs/workbench/byof-habitat-sim.md."
         )
     if not is_publicly_redistributable(tool) and is_public_registry(resolved_registry):
         raise ValueError(
@@ -1094,11 +1116,12 @@ def is_official_public_image(image: str) -> bool:
 def is_publicly_redistributable(tool: str) -> bool:
     """Whether a tool image may be published to a public/anonymous registry.
 
-    ``False`` for any tool in ``RESTRICTED_PUBLICATION_TOOLS`` — images that bake a
+    ``False`` while exact redistribution/source delivery is pending, or for any
+    tool in ``RESTRICTED_PUBLICATION_TOOLS`` — images that bake a
     runtime we may not redistribute, which are licensed for internal-R&D /
     build-your-own use only. See the set's comment for current membership.
     """
-    return tool not in RESTRICTED_PUBLICATION_TOOLS
+    return tool not in RESTRICTED_PUBLICATION_TOOLS | PENDING_REDISTRIBUTION_TOOLS
 
 
 def restricted_image_names() -> list[str]:

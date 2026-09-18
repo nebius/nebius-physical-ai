@@ -97,6 +97,14 @@ for argument in "$@"; do
     source=${argument#npa-source-provenance=}
     cp -a "$source" "$DOCKER_SOURCE_CAPTURE"
   fi
+  if [[ "$previous" == --output ]]; then
+    output=${argument#type=oci,dest=}
+    printf 'synthetic OCI bytes\n' > "$output"
+    if [[ "${FIXTURE_BUILD_FAILURE:-}" == yes ]]; then exit 19; fi
+    if [[ -n "${FIXTURE_CONCURRENT_OUTPUT:-}" ]]; then
+      printf 'other owner bytes\n' > "$FIXTURE_CONCURRENT_OUTPUT"
+    fi
+  fi
   previous=$argument
 done
 """,
@@ -163,9 +171,8 @@ def test_builder_keeps_relative_output_bound_to_original_cwd(tmp_path: Path) -> 
     result = _run("candidate.oci.tar", cwd=caller, env=env, script=script)
 
     assert result.returncode == 0, result.stderr
-    assert (
-        f"type=oci,dest={caller_output}" in log.read_text(encoding="utf-8").splitlines()
-    )
+    assert caller_output.read_bytes() == b"synthetic OCI bytes\n"
+    assert not list(caller.glob(".npa-habitat-oci.*"))
     assert repository_output.read_bytes() == b"repository owner data"
 
 
@@ -186,6 +193,51 @@ def test_builder_and_verifier_share_the_exact_source_input_path_set() -> None:
     assert tuple(line.strip() for line in declared.splitlines() if line.strip()) == (
         SOURCE_PATHS
     )
+
+
+@pytest.mark.parametrize("mode", [0o777, 0o770, 0o722])
+def test_builder_refuses_shared_writable_output_parent(
+    tmp_path: Path, mode: int
+) -> None:
+    parent = tmp_path / "output"
+    parent.mkdir(mode=mode)
+    parent.chmod(mode)
+    result = _run(parent / "candidate.oci.tar")
+    assert result.returncode == 2
+    assert "parent must be owned" in result.stderr
+    assert not list(parent.iterdir())
+
+
+def test_builder_refuses_dangling_output_symlink(tmp_path: Path) -> None:
+    output = tmp_path / "candidate.oci.tar"
+    output.symlink_to(tmp_path / "absent")
+    result = _run(output)
+    assert result.returncode == 2
+    assert "refusing to overwrite" in result.stderr
+    assert output.is_symlink()
+    assert not (tmp_path / "absent").exists()
+
+
+@pytest.mark.parametrize("failure", ["build", "concurrent"])
+def test_builder_failure_cleans_exact_temporary_output(
+    tmp_path: Path, failure: str
+) -> None:
+    _repository, script = _committed_fixture(tmp_path)
+    env, _log, _capture = _stubbed_environment(tmp_path)
+    output = tmp_path / "candidate.oci.tar"
+    env["TMPDIR"] = str(tmp_path)
+    if failure == "build":
+        env["FIXTURE_BUILD_FAILURE"] = "yes"
+    else:
+        env["FIXTURE_CONCURRENT_OUTPUT"] = str(output)
+    result = _run(output, env=env, script=script)
+    assert result.returncode != 0
+    if failure == "build":
+        assert not output.exists()
+    else:
+        assert output.read_bytes() == b"other owner bytes\n"
+    assert not list(tmp_path.glob(".npa-habitat-oci.*"))
+    assert not list(tmp_path.glob("npa-habitat-source.*"))
 
 
 def test_builder_passes_exact_git_sha_to_local_attested_oci_export(
@@ -215,7 +267,11 @@ def test_builder_passes_exact_git_sha_to_local_attested_oci_export(
         value for value in argv if value.startswith("npa-source-provenance=")
     )
     assert not Path(build_context.split("=", 1)[1]).exists()
-    assert f"type=oci,dest={output}" in argv
+    assert output.read_bytes() == b"synthetic OCI bytes\n"
+    assert output.stat().st_mode & 0o777 == 0o600
+    assert output.stat().st_nlink == 1
+    assert not list(tmp_path.glob(".npa-habitat-oci.*"))
+    assert f"type=oci,dest={output}" not in argv
     assert "--provenance=mode=max" in argv
     assert "--sbom=true" in argv
     assert "--push" not in argv and "--load" not in argv

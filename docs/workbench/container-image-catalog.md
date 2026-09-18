@@ -419,9 +419,10 @@ historical evidence.
 
 ## Not in the public image table
 
-- **`npa-habitat-sim`** is an unbuilt, publication-quarantined public-eligibility
+- **`npa-habitat-sim`** is an unbuilt, publication-quarantined public-neutral
   candidate, not a public-image row. Its dedicated recipe contains the pinned
-  MIT source projection and hash-locked redistributable closure, while the CC BY
+  MIT source projection and locked dependencies; complete corresponding-source
+  closure and redistribution eligibility remain pending, while the CC BY
   Skokloster scene remains an exact runtime fetch. It is present in the packaging
   and image-name inventories but remains in `UNVALIDATED_PUBLICATION_TOOLS`.
   No digest, anonymous pull, accepted capability result, or release is claimed.

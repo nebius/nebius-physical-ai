@@ -121,6 +121,10 @@ redistribution:
         runtime even if the Dockerfile never spells out pip install.
       pattern: '(?is)\bRUN\b[^\n]*render_ovrtx[^\n]*--provision-only'
   classes:
+    unvalidated:
+      description: >-
+        Redistribution eligibility is pending exact component and corresponding-source
+        closure. No public development or release publication is permitted.
     public:
       description: >
         Eligible for public redistribution under the verified terms of every
@@ -165,7 +169,7 @@ images:
   habitat-sim:
     dockerfile: habitat-sim/Dockerfile
     tier: interactive
-    redistribution: public
+    redistribution: unvalidated
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
     passwordless_root_exemption:
       id: habitat-sim-skypilot-0.12.2-v1
@@ -198,9 +202,11 @@ images:
         - baked-credentials
         - mutable-image-capability-claim
     notes: >-
-      Unbuilt, publication-quarantined candidate. It bakes only the exact MIT
-      Habitat-Sim 0.3.3 source projection and its hash-locked redistributable
-      Ubuntu/Python closure. The CC BY 4.0 Skokloster Castle scene is fetched
+      Unbuilt, publication-quarantined candidate targeting public delivery;
+      complete inherited/installed corresponding-source closure is pending, not
+      established by the rsync source package or a top-level MIT grant.
+      The intended image contains the exact Habitat-Sim 0.3.3 source projection
+      and locked Ubuntu/Python closure. The CC BY 4.0 Skokloster Castle scene is fetched
       only at runtime from the official HTTPS locator after complete archive and
       selected-member hash checks; scene, cache, credentials, and outputs are
       absent from the image. A trusted public full-SHA rebuild creates a new

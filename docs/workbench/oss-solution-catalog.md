@@ -18,7 +18,7 @@ unique and must be tested with its own upstream-named capabilities.
 
 | Candidate | Pinned source | Primary (hard-gate) capability | Artifact | NPA workflow |
 | --- | --- | --- | --- | --- |
-| Habitat-Sim (**public-eligible image; unbuilt/quarantined**) | `facebookresearch/habitat-sim` `57ee4941…` | `skokloster_castle_rgb_depth_bullet_traversal` | `habitat-sim-smoke.json` + saved RGB/depth observations | `habitat-sim-smoke.yaml` |
+| Habitat-Sim (**source closure pending; unbuilt/quarantined**) | `facebookresearch/habitat-sim` `57ee4941…` | `skokloster_castle_rgb_depth_bullet_traversal` | `habitat-sim-smoke.json` + saved RGB/depth observations | `habitat-sim-smoke.yaml` |
 | ManiSkill | `mani-skill/ManiSkill` `v3.0.1` | `gymnasium_pickcube_registration` | `maniskill_pickcube_step.json` | `byof-maniskill.yaml` |
 | MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_task_registration` | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
@@ -76,8 +76,9 @@ unique and must be tested with its own upstream-named capabilities.
 Pinned MIT source:
 `facebookresearch/habitat-sim@57ee4941dc4765240f0f91f70b2c97a919bf9038`.
 Upstream warns that beyond v0.3.4, Meta internal teams do not officially
-maintain releases or provide active development. This is a public-eligible but
-unbuilt and publication-quarantined candidate, not a published NPA image or an
+maintain releases or provide active development. This public-neutral objective
+has pending corresponding-source closure and remains unbuilt and publication-quarantined,
+not a published NPA image or an
 accepted live capability.
 
 | Capability | Status | Upstream basis |

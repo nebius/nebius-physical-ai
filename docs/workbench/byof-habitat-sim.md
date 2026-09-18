@@ -1,7 +1,8 @@
 # Habitat-Sim quarantined public-image candidate
 
 Habitat-Sim has a dedicated image and a one-state `npa.workflow/v0.0.1` smoke
-spec. The candidate is **public-eligible but unbuilt and publication-quarantined**.
+spec. The public-neutral candidate is **unbuilt and publication-quarantined;
+complete corresponding-source closure is pending**.
 No image digest, registry publication, anonymous pull, or live capability result
 exists yet. An import, build, scene download, plan, or GPU visibility check cannot
 satisfy its hard gate.
@@ -29,7 +30,8 @@ The runtime's GPL-3.0+ `rsync` bootstrap binary is accompanied in the image by
 the complete four-file Ubuntu source package from the same signed immutable
 snapshot. `apt-runtime.lock` binds the signed `Sources.xz` metadata and every
 source artifact's name, size, and SHA-256. The build verifies the exact compressed
-index size/hash before accepting the four rsync source artifacts, and the OCI
+index size/hash and parses the unique source/version, directory, and complete
+Files/Checksums-Sha256 records before accepting the four rsync source artifacts. The OCI
 verifier requires those exact source bytes. No mutable source offer is used.
 
 The build obtains only official GitHub codeload archives bound by size and SHA-256.
@@ -50,7 +52,7 @@ and makes no newer-maintenance claim.
 | Boundary | Treatment |
 | --- | --- |
 | Source | The exact MIT Habitat-Sim projection and the exact permissively licensed build dependencies are baked with their notices and source inventory. |
-| Baked runtime | The digest-pinned Ubuntu base, signed immutable-snapshot packages, exact wheels, native closure, smoke module, and notices are eligible for redistribution; the unbuilt image still requires complete byte verification. |
+| Baked runtime | Public delivery is the objective, not accepted eligibility. Exact inherited and installed copyleft/source delivery, native wheel closure, all layers, notices, and built-byte verification remain pending. |
 | Weights | None. Any model, checkpoint, or weight path is forbidden. |
 | Data/assets | The image contains no scene. The smoke runtime-fetches only the official Meta archive and verifies the entire archive plus the exact Skokloster GLB/navmesh members. |
 | Runtime cache | Unique, mode-restricted, bounded, and ephemeral. Partial/archive bytes are removed on every outcome, and unrelated archive members are never extracted. |
@@ -84,9 +86,24 @@ or other scene data is permitted.
 
 ## Image and publication quarantine
 
-The packaging contract classifies the planned bytes as `redistribution: public`,
-while `UNVALIDATED_PUBLICATION_TOOLS` prevents publication. The candidate has no
+The packaging contract records `redistribution: unvalidated`, while public-neutral
+delivery remains the objective. `licenses.json` and the OCI contract record pending
+source closure; `UNVALIDATED_PUBLICATION_TOOLS` prevents publication. The candidate has no
 public-image-table row and no supported-release manifest entry.
+
+The verifier inventories distinct dpkg and Python package identities from every
+layer, including superseded base versions. A reviewed complete inventory and exact
+accompanying source bytes are required for every package; rsync alone is not a
+complete closure. The checked-in source-delivery contract remains pending and
+fails closed. SBOM/native-component and license review must establish sufficiency
+before a later authorized byte-qualified publication. Inert tests prove refusal
+and byte matching, not legal clearance or image qualification.
+
+The local build output requires an existing owner-controlled directory that is
+not group/world writable. BuildKit writes to a private temporary file; only a
+successful nonempty regular output is atomically linked to the absent requested
+name, mode 0600. An existing destination is never replaced and failure removes
+only the exact temporary output and source projection.
 
 `npa/docker/workbench/habitat-sim/verify_image.py` accepts only a closed,
 attested, single-linux/amd64 OCI graph. It verifies graph/config/layer identities,

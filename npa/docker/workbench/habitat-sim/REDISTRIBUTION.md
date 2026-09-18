@@ -1,6 +1,6 @@
 # Habitat-Sim image redistribution boundary
 
-This directory defines an unbuilt, quarantined public-eligibility candidate. It
+This directory defines an unbuilt, quarantined candidate targeting public delivery. It
 does not record a built image, a registry publication, or functional acceptance.
 
 The image may contain only the exact Habitat-Sim source projection and
@@ -26,12 +26,27 @@ The GPL-3.0+ `rsync` binary needed by SkyPilot is accompanied under
 signature, Ubuntu packaging delta, and `.dsc`. The same signed immutable Ubuntu
 snapshot supplies those four source artifacts; `apt-runtime.lock` pins their
 source version, signed metadata index, sizes, and SHA-256 values. The compressed
-index is size/hash verified before those source artifacts are accepted, and the
+index is size/hash verified and parsed: exactly one matching source/version and
+directory must contain the complete locked Files and Checksums-Sha256 population.
+Downloaded source sizes and both index checksums must match before acceptance. The
 final OCI verifier requires each exact source byte. Every direct Ubuntu package
 is likewise downloaded and lock-hash verified before its local `.deb` is passed
 to APT; transitive dependencies remain governed by the signed snapshot and final
 package inventory. This is accompanying corresponding source, not a mutable
 third-party link or an invented written offer.
+
+This rsync delivery does **not** close the other obligations of the Ubuntu base,
+installed packages, bundled native wheel components, or superseded ancestor-layer
+bytes. Complete corresponding-source closure remains pending. The OCI verifier
+retains every layer's distinct dpkg source/version/copyright identity and Python
+metadata/RECORD identity, including packages replaced or removed later. It refuses
+an absent, partial, or changed reviewed inventory and missing or modified accompanying
+source files. Conservatively every inventoried package requires source delivery;
+there is no guessed non-copyleft exemption or invented written offer. The checked-in
+contract is deliberately pending, so a source-only test cannot qualify real bytes.
+An authorized later inventory must also reconcile all native/bundled components
+and license obligations against SBOM and full-layer bytes before that contract can
+be completed. Hash agreement verifies delivery, not legal sufficiency of its content.
 
 Before HTTPS is available, one isolated trust stage raw-extracts checksum-pinned
 CA, OpenSSL CLI, and libssl packages from that same timestamped snapshot. It

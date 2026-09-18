@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import lzma
 from pathlib import Path
 import re
 import subprocess
@@ -218,6 +219,85 @@ def test_source_index_verification_precedes_source_artifact_acceptance() -> None
         "apt-get source --download-only rsync=3.2.7-0ubuntu0.22.04.7"
     )
     assert verify < source_download
+    calls = [
+        match.start()
+        for match in re.finditer("npa-habitat-verify-apt verify-source", build_stage)
+    ]
+    assert len(calls) == 2
+    assert verify < calls[0] < source_download < calls[1]
+
+
+def _source_index_fixture(
+    tmp_path: Path, mutation: str = ""
+) -> tuple[Path, Path, Path]:
+    source = _lock("apt-runtime.lock")["corresponding_sources"][0]
+    directory = tmp_path / "source"
+    directory.mkdir()
+    sha_rows, md5_rows = [], []
+    lock = (PACKAGE / "apt-runtime.lock").read_text()
+    for index, artifact in enumerate(source["artifacts"]):
+        payload = f"inert-source-{index}\n".encode()
+        (directory / artifact["filename"]).write_bytes(payload)
+        digest = hashlib.sha256(payload).hexdigest()
+        md5 = hashlib.md5(payload, usedforsecurity=False).hexdigest()
+        sha_rows.append(f" {digest} {len(payload)} {artifact['filename']}")
+        md5_rows.append(f" {md5} {len(payload)} {artifact['filename']}")
+        lock = lock.replace(f"bytes: {artifact['bytes']},", f"bytes: {len(payload)},")
+        lock = lock.replace(artifact["sha256"], digest)
+    stanza = (
+        f"Package: rsync\nVersion: {source['version']}\n"
+        f"Directory: {source['directory']}\nFiles:\n"
+        + "\n".join(md5_rows)
+        + "\nChecksums-Sha256:\n"
+        + "\n".join(sha_rows)
+        + "\n"
+    )
+    mutations = {
+        "version": stanza.replace(source["version"], "0.0-wrong"),
+        "directory": stanza.replace(source["directory"], "pool/wrong"),
+        "duplicate": stanza + "\n" + stanza,
+        "missing": stanza.replace(sha_rows[0] + "\n", ""),
+        "extra": stanza + " " + "0" * 64 + " 1 extra.tar\n",
+        "files-size": stanza.replace(md5_rows[0], md5_rows[0].replace(" 15 ", " 16 ")),
+        "digest": stanza.replace(sha_rows[0].split()[0], "0" * 64),
+    }
+    payload = lzma.compress(mutations.get(mutation, stanza).encode())
+    compressed = tmp_path / "Sources.xz"
+    compressed.write_bytes(payload)
+    lock = lock.replace(str(source["signed_index"]["bytes"]), str(len(payload)))
+    lock = lock.replace(
+        source["signed_index"]["sha256"], hashlib.sha256(payload).hexdigest()
+    )
+    lock_path = tmp_path / "apt.lock"
+    lock_path.write_text(lock)
+    return lock_path, compressed, directory
+
+
+def test_source_index_is_semantically_bound_to_delivered_artifacts(
+    tmp_path: Path,
+) -> None:
+    lock, index, directory = _source_index_fixture(tmp_path)
+    result = _run_apt_verifier("verify-source", lock, index)
+    assert result.returncode == 0, result.stderr
+    result = _run_apt_verifier("verify-source", lock, index, directory)
+    assert result.returncode == 0, result.stderr
+    next(directory.iterdir()).write_bytes(b"wrong source")
+    result = _run_apt_verifier("verify-source", lock, index, directory)
+    assert result.returncode != 0
+    assert "artifact size" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["version", "directory", "duplicate", "missing", "extra", "files-size", "digest"],
+)
+def test_source_index_refuses_semantic_mismatch_despite_valid_archive_hash(
+    tmp_path: Path, mutation: str
+) -> None:
+    lock, index, directory = _source_index_fixture(tmp_path, mutation)
+    result = _run_apt_verifier("verify-source", lock, index, directory)
+    assert result.returncode != 0
+    assert "source package refused:" in result.stderr
 
 
 def test_ca_bootstrap_is_bound_to_same_snapshot_and_exact_hash() -> None:

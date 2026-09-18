@@ -913,10 +913,115 @@ class _ScanState:
     tracked: dict[str, bytes] = field(default_factory=dict)
     elf: dict[str, bytes] = field(default_factory=dict)
     events: list[dict[str, object]] = field(default_factory=list)
+    source_inventory: dict[str, dict[str, object]] = field(default_factory=dict)
     findings: list[dict[str, object]] = field(default_factory=list)
     entries: int = 0
     regular_files: int = 0
     content_bytes: int = 0
+
+
+def _source_identity(row: dict[str, object]) -> str:
+    return hashlib.sha256(
+        json.dumps(row, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _record_source_population(state: _ScanState) -> None:
+    # Retain each distinct version from every layer, including superseded base
+    # packages. A final-rootfs-only inventory cannot describe distributed layers.
+    installed = _dpkg_records(state.tracked.get("var/lib/dpkg/status", b""))
+    for name, identity in installed.items():
+        copyright_path = _resolve_final_path(
+            f"usr/share/doc/{name}/copyright", state.paths, state.links
+        )
+        row = {
+            "ecosystem": "dpkg",
+            "name": name,
+            **identity,
+            "copyright_sha256": state.files.get(copyright_path, {}).get("sha256"),
+        }
+        state.source_inventory[_source_identity(row)] = row
+    for path, payload in state.tracked.items():
+        if not path.endswith(".dist-info/METADATA"):
+            continue
+        name, version = _metadata_identity(payload)
+        row = {
+            "ecosystem": "python",
+            "name": name,
+            "version": version,
+            "metadata_path": path,
+            "metadata_sha256": hashlib.sha256(payload).hexdigest(),
+            "record_sha256": state.files.get(
+                path.removesuffix("METADATA") + "RECORD", {}
+            ).get("sha256"),
+        }
+        state.source_inventory[_source_identity(row)] = row
+
+
+def _delivered_source_matches(state: _ScanState, artifacts: object) -> bool:
+    if not isinstance(artifacts, list) or not artifacts:
+        return False
+    paths = set()
+    for artifact in artifacts:
+        if not isinstance(artifact, dict) or set(artifact) != {
+            "path",
+            "bytes",
+            "sha256",
+        }:
+            return False
+        path = artifact["path"]
+        if not isinstance(path, str) or path in paths:
+            return False
+        paths.add(path)
+        if not path.startswith("usr/share/doc/npa-habitat-sim/"):
+            return False
+        if any(part in {"", ".", ".."} for part in path.split("/")):
+            return False
+        if type(artifact["bytes"]) is not int or artifact["bytes"] <= 0:
+            return False
+        if not isinstance(artifact["sha256"], str) or not re.fullmatch(
+            r"[0-9a-f]{64}", artifact["sha256"]
+        ):
+            return False
+        actual = state.files.get(path, {})
+        if (
+            actual.get("sha256") != artifact["sha256"]
+            or actual.get("size") != artifact["bytes"]
+        ):
+            return False
+    return True
+
+
+def _source_delivery_findings(state: _ScanState, contract: dict) -> list[dict]:
+    closure = contract.get("corresponding_source_closure", {})
+    inventory = state.source_inventory
+    findings = []
+    if closure.get("status") != "complete-accompanying-source":
+        findings.append({"code": "corresponding_source_closure_pending"})
+    if not inventory or closure.get("inventory_sha256") != _source_identity(inventory):
+        findings.append({"code": "corresponding_source_inventory_mismatch"})
+    records = closure.get("records", {})
+    if not isinstance(records, dict) or set(records) != set(inventory):
+        return findings + [{"code": "corresponding_source_population_mismatch"}]
+    # Conservative: every package requires accompanying source. No inference
+    # from a top-level license or a caller-provided "not copyleft" exemption.
+    for identity, row in inventory.items():
+        record = records[identity]
+        if not isinstance(record, dict) or record.get("component") != row:
+            findings.append({"code": "corresponding_source_component_mismatch"})
+            continue
+        if not _delivered_source_matches(state, record.get("artifacts")):
+            findings.append(
+                {
+                    "code": "corresponding_source_delivery_mismatch",
+                    "component": identity,
+                }
+            )
+        if row.get("ecosystem") == "dpkg" and not row.get("copyright_sha256"):
+            findings.append({"code": "corresponding_source_copyright_missing"})
+        if row.get("ecosystem") == "python" and not row.get("record_sha256"):
+            findings.append({"code": "corresponding_source_python_record_missing"})
+    return findings
 
 
 def _member_policy_findings(
@@ -1179,6 +1284,10 @@ def _scan_report(
     dpkg, python, native = closure["dpkg"], closure["python"], closure["native"]
     return {
         "entries_read": state.entries,
+        "corresponding_source_inventory": state.source_inventory,
+        "corresponding_source_inventory_sha256": _source_identity(
+            state.source_inventory
+        ),
         "regular_files_read": state.regular_files,
         "content_bytes_read": state.content_bytes,
         "final_path_count": len(state.paths),
@@ -1213,6 +1322,8 @@ def _scan_layers(
     state = _ScanState()
     for layer, row in enumerate(layers):
         _scan_layer(fd, row, layer, contract, state)
+        _record_source_population(state)
+    state.findings.extend(_source_delivery_findings(state, contract))
     state.findings.extend(
         _required_path_findings(state.paths, contract["required_final_paths"])
     )

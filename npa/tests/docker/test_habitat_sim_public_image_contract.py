@@ -257,12 +257,13 @@ def _create_ca(tmp_path: Path, name: str) -> bytes:
     return certificate.read_bytes()
 
 
-def test_candidate_is_public_eligible_but_unbuilt_and_unpublishable() -> None:
+def test_candidate_has_pending_source_closure_and_is_unpublishable() -> None:
     assert images.CONTAINER_IMAGE_NAMES["habitat-sim"] == "npa-habitat-sim"
     assert "habitat-sim" not in images.SUPPORTED_TOOL_VERSIONS
     assert images.UNBUILT_CANDIDATE_TOOL_VERSIONS["habitat-sim"].endswith("-unbuilt")
     assert images.supported_tool_version("habitat-sim").endswith("-unbuilt")
-    assert images.is_publicly_redistributable("habitat-sim")
+    assert not images.is_publicly_redistributable("habitat-sim")
+    assert "habitat-sim" in images.PENDING_REDISTRIBUTION_TOOLS
     assert "habitat-sim" in images.UNVALIDATED_PUBLICATION_TOOLS
     assert "habitat-sim" not in images.publicly_publishable_tools()
 

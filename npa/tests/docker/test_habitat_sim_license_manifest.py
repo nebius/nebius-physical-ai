@@ -66,7 +66,7 @@ def test_source_license_manifest_matches_exact_selected_dependencies() -> None:
 def test_runtime_asset_is_not_misclassified_as_baked() -> None:
     licenses = json.loads((PACKAGE / "licenses.json").read_text())
     text = json.dumps(licenses)
-    assert licenses["classification"] == "public-eligible-unbuilt"
+    assert licenses["classification"] == "quarantined-source-closure-pending"
     assert "Skokloster scene archive or members" in licenses["not_baked"]
     assert "credentials" in text and "generated outputs" in text
 

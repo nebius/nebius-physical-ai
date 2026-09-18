@@ -149,7 +149,9 @@ def test_renderer_preserves_the_exact_one_rtx_habitat_placement() -> None:
         spec,
         build_plan(spec, run_id="habitat-placement"),
         run_id="habitat-placement",
-        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        options=SkypilotRenderOptions(
+            registry="registry.invalid/run-owned", materialize_registry_secrets=False
+        ),
     )
     assert "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1" in rendered
 
@@ -162,7 +164,9 @@ def test_renderer_uses_only_the_baked_habitat_runtime(monkeypatch) -> None:
         spec,
         build_plan(spec, run_id="habitat-baked-runtime"),
         run_id="habitat-baked-runtime",
-        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        options=SkypilotRenderOptions(
+            registry="registry.invalid/run-owned", materialize_registry_secrets=False
+        ),
     )
     task = list(yaml.safe_load_all(rendered))[1]
     assert task["envs"].get("NPA_SRC_S3_URI") is None
@@ -182,7 +186,10 @@ def test_renderer_refuses_habitat_dependency_or_source_overlays(field) -> None:
             spec,
             build_plan(spec, run_id="habitat-overlay-refusal"),
             run_id="habitat-overlay-refusal",
-            options=SkypilotRenderOptions(materialize_registry_secrets=False),
+            options=SkypilotRenderOptions(
+                registry="registry.invalid/run-owned",
+                materialize_registry_secrets=False,
+            ),
         )
 
 
@@ -243,10 +250,13 @@ def test_readiness_binds_exact_workflow_and_records_unbuilt_blocker() -> None:
     assert payload["prerequisites"]["target_runtime"]["status"] == "blocked"
 
 
-def test_unbuilt_default_and_explicit_private_image_references_are_resolvable() -> None:
-    assert container_image_for_tool("habitat-sim").endswith(
-        "/npa-habitat-sim:0.3.3-public-unbuilt"
-    )
+def test_pending_public_image_is_refused_and_private_reference_is_resolvable() -> None:
+    with pytest.raises(
+        ValueError, match="pending corresponding-source closure"
+    ) as error:
+        container_image_for_tool("habitat-sim")
+    assert "--push" not in str(error.value)
+    assert "never distributed" not in str(error.value)
     assert (
         container_image_for_tool(
             "habitat-sim",

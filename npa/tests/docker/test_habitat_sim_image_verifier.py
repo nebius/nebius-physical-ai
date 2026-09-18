@@ -45,6 +45,101 @@ VERIFIER_SPEC.loader.exec_module(VERIFIER)
 SOURCE_REVISION = "a" * 40
 
 
+def _source_delivery_state() -> H._ScanState:
+    state = H._ScanState()
+    state.paths["usr/share/doc/base-package/copyright"] = "file"
+    state.files["usr/share/doc/base-package/copyright"] = {"sha256": "b" * 64}
+    state.tracked["var/lib/dpkg/status"] = (
+        b"Package: base-package\nStatus: install ok installed\n"
+        b"Version: 1.0\nSource: base-source (1.0-1)\n\n"
+    )
+    H._record_source_population(state)
+    state.tracked["var/lib/dpkg/status"] = state.tracked["var/lib/dpkg/status"].replace(
+        b"1.0", b"2.0"
+    )
+    H._record_source_population(state)
+    state.files["usr/share/doc/npa-habitat-sim/fixture-source.txt"] = {
+        "sha256": _digest(b"inert source fixture\n"),
+        "size": len(b"inert source fixture\n"),
+    }
+    return state
+
+
+def test_source_delivery_covers_superseded_base_and_installed_versions() -> None:
+    state = _source_delivery_state()
+    assert {row["version"] for row in state.source_inventory.values()} == {"1.0", "2.0"}
+    assert {row["source_version"] for row in state.source_inventory.values()} == {
+        "1.0-1",
+        "2.0-1",
+    }
+    closure = _fixture_source_delivery(
+        {
+            "corresponding_source_inventory": state.source_inventory,
+            "corresponding_source_inventory_sha256": H._source_identity(
+                state.source_inventory
+            ),
+        }
+    )
+    assert (
+        H._source_delivery_findings(state, {"corresponding_source_closure": closure})
+        == []
+    )
+    # Whiteout/removal from the final rootfs cannot erase an ancestor obligation.
+    state.tracked.clear()
+    H._record_source_population(state)
+    assert len(state.source_inventory) == 2
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["pending", "partial", "version", "digest", "missing", "size", "unbound"],
+)
+def test_source_delivery_refuses_incomplete_or_unbound_closure(mutation: str) -> None:
+    state = _source_delivery_state()
+    closure = _fixture_source_delivery(
+        {
+            "corresponding_source_inventory": copy.deepcopy(state.source_inventory),
+            "corresponding_source_inventory_sha256": H._source_identity(
+                state.source_inventory
+            ),
+        }
+    )
+    identity = next(iter(closure["records"]))
+    record = closure["records"][identity]
+    if mutation == "pending":
+        closure["status"] = "pending-exact-layer-inventory-and-delivery"
+    elif mutation == "partial":
+        del closure["records"][identity]
+    elif mutation == "version":
+        record["component"]["source_version"] = "wrong"
+    elif mutation == "digest":
+        record["artifacts"][0]["sha256"] = "0" * 64
+    elif mutation == "size":
+        record["artifacts"][0]["bytes"] += 1
+    elif mutation == "unbound":
+        closure["inventory_sha256"] = "0" * 64
+    else:
+        state.files.clear()
+    findings = H._source_delivery_findings(
+        state, {"corresponding_source_closure": closure}
+    )
+    assert findings
+    assert all(row["code"].startswith("corresponding_source_") for row in findings)
+
+
+def test_current_image_contract_remains_source_delivery_quarantined() -> None:
+    assert CONTRACT["corresponding_source_closure"] == {
+        "status": "pending-exact-layer-inventory-and-delivery",
+        "inventory_sha256": None,
+        "records": {},
+    }
+    findings = H._source_delivery_findings(_source_delivery_state(), CONTRACT)
+    assert {row["code"] for row in findings} >= {
+        "corresponding_source_closure_pending",
+        "corresponding_source_population_mismatch",
+    }
+
+
 def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -272,6 +367,11 @@ def _elf64(
 
 def _fixture() -> tuple[dict[str, object], list[tuple]]:
     contract = copy.deepcopy(CONTRACT)
+    contract["corresponding_source_closure"] = {
+        "status": "complete-accompanying-source",
+        "inventory_sha256": None,
+        "records": {},
+    }
     contract["expected_missing_python_record_count"] = 0
     projected_pbr = {
         row["path"]: f"pbr fixture:{row['path']}\n".encode()
@@ -316,6 +416,7 @@ def _fixture() -> tuple[dict[str, object], list[tuple]]:
         "usr/share/doc/npa-habitat-sim/requirements-runtime.lock": python_lock,
         "usr/share/doc/npa-habitat-sim/REDISTRIBUTION.md": b"redistribution\n",
         "usr/share/doc/npa-habitat-sim/THIRD_PARTY_NOTICES.md": b"notices\n",
+        "usr/share/doc/npa-habitat-sim/fixture-source.txt": b"inert source fixture\n",
     }
     contract["required_final_file_sha256"] = {
         "/" + path: _digest(payload)
@@ -382,6 +483,26 @@ def _required_entries() -> list[tuple]:
     return _fixture()[1]
 
 
+def _fixture_source_delivery(report: dict[str, object]) -> dict[str, object]:
+    return {
+        "status": "complete-accompanying-source",
+        "inventory_sha256": report["corresponding_source_inventory_sha256"],
+        "records": {
+            identity: {
+                "component": row,
+                "artifacts": [
+                    {
+                        "path": "usr/share/doc/npa-habitat-sim/fixture-source.txt",
+                        "bytes": len(b"inert source fixture\n"),
+                        "sha256": _digest(b"inert source fixture\n"),
+                    }
+                ],
+            }
+            for identity, row in report["corresponding_source_inventory"].items()
+        },
+    }
+
+
 def _verify(
     tmp_path: Path,
     layers: list[list[tuple]],
@@ -408,6 +529,13 @@ def _verify(
             "0" * 64,
             "0" * 64,
         )
+        if (
+            selected_contract["corresponding_source_closure"]["status"]
+            == "complete-accompanying-source"
+        ):
+            selected_contract["corresponding_source_closure"] = (
+                _fixture_source_delivery(probe)
+            )
         return H.verify(
             fd,
             archive.stat().st_size,
@@ -510,6 +638,7 @@ def _cli_fixture(
     baseline_root = tmp_path / "baseline"
     baseline_root.mkdir()
     baseline = _verify(baseline_root, [entries], contract=contract)
+    contract["corresponding_source_closure"] = _fixture_source_delivery(baseline)
     contract_path = analysis / "runtime-payload.json"
     contract_path.write_text(json.dumps(contract), encoding="utf-8")
     contract_path.chmod(0o600)
@@ -623,7 +752,7 @@ def test_valid_attested_oci_has_complete_graph_and_payload_receipt(tmp_path) -> 
     report = _verify(tmp_path, [_required_entries()])
     assert report["valid"] is True
     assert report["layer_count"] == 1
-    assert report["regular_files_read"] == 36
+    assert report["regular_files_read"] == 37
     assert report["installed_package_count"] == 1
     assert report["dpkg_inventory"]["python3"] == {
         "version": "3.10.6-1~22.04.1",
