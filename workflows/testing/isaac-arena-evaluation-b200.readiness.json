@@ -1,0 +1,66 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "a78610661e118b90e47fca97a3847521aca9645816f9e353774ea8516214850e",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The source workflow and owner-instantiated configuration passed validate-spec and plan-spec on 2026-09-17; the fresh workflow completed on the exact requested hardware.",
+      "evidence": [
+        "workflows/testing/isaac-arena-evaluation-b200.yaml",
+        "arena-b200-reconcile-ae5adea6-20260917-r3"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The four states invoke the real upstream zero-action cube-goal-pose evaluator with distinct seeds and output prefixes. This is a simulator/state regression only: success_rate=0.0 is retained and no policy or visual qualification is claimed.",
+      "evidence": [
+        "workflows/testing/isaac-arena-evaluation-b200.yaml",
+        "arena-b200-reconcile-ae5adea6-20260917-r3"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "Owner-bound storage passed preflight. Independent retrieval verified 60 objects / 51,006,097 bytes, including every declared artifact hash; anonymous reads were denied. Raw evidence remains access-controlled.",
+      "evidence": [
+        "arena-b200-reconcile-ae5adea6-20260917-r3"
+      ]
+    },
+    "worker_input": {
+      "status": "not_applicable",
+      "reason": "The zero-action state regression requires no policy, model, or dataset input.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Fresh Nebius/storage, caller identity, accelerator and existing run-scoped runtime-access preflights passed. Private configuration hashes remained unchanged; no hardware substitution or identity-gate bypass occurred.",
+      "evidence": [
+        "arena-b200-reconcile-ae5adea6-20260917-r3"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "Trusted public build 35211514544 passed source/license, complete-byte security, bootstrap, SBOM and provenance gates. Independent anonymous full pull, source hashes and signatures passed. Corrected independent scans verified all 42 layers / 127,560 paths, plus the 126,146-path registry filesystem and history. The earlier outer-archive probe is explicitly non-qualifying.",
+      "evidence": [
+        "ghcr.io/nebius/nebius-physical-ai/npa-isaac-arena:dev-ae5adea6ab895660996f513f14160c89d06f47e5",
+        "sha256:9c6a417672d6f87499680ba337c90488c2a33d41ac9f7b5452eb5d97d00e097e",
+        "35211514544",
+        "7b6dc47b183855907f1421e66a897ebe18cb02730f62a9245d77a2b9456fa2f7",
+        "39b90e7426879adc802f817fb23362df79f87b8248c8b6ac2ad11e8a063cf09e"
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "Exact B200 capability 10.0 completed four native cube_goal_pose episodes, seeds 42-45, each with 1,050 scored steps and success_rate=0.0. Independent JSONL/HDF5/metrics, HTML and ordered phase journals agree. This is state-only coverage; no video or successful policy claim. All four native controller jobs SUCCEEDED; zero active workers; controller and shared capacity retained.",
+      "evidence": [
+        "arena-b200-reconcile-ae5adea6-20260917-r3",
+        "9afaa49b1670e72fbf68b38f739ee7c0bc92ba2a4451cde7cc6a2942df762afc",
+        "6144c6ca6db10b61caa23bdd366ab287ad12ab29096d7b835d4598203143a950",
+        "f75dc0e7f18963d882b1db2ff6fd394fa6d75efbc345fedb6fbd4a255f4ee246",
+        "96ab48c4d6f42667eafc66b02db4abc2befdc04551f02ef6cdada32ce9f27c54",
+        "737b90b7e4f626ad89e3f23535ea4218687ec1aa03c22d4e8dcdffe3636f80b8"
+      ]
+    }
+  }
+}

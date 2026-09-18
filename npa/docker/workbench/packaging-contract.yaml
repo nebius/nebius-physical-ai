@@ -133,13 +133,14 @@ redistribution:
     restricted:
       description: >
         Bakes a runtime we may not redistribute — for NVIDIA Omniverse Kit (Isaac
-        Sim) that means the Kit SDK, models and textures, which are proprietary
-        even though the Isaac Sim SOURCE is Apache-2.0 (both the isaacsim and
-        isaaclab PyPI packages list their license as "NVIDIA Proprietary
-        Software"). Such an image may be built and run by the operator who owns
-        the registry (internal R&D, build-your-own), but hosting it PREBUILT on a
-        public/anonymous registry would make us the third-party redistributor,
-        which requires an NVIDIA AI Enterprise license.
+        Sim) that means the proprietary Kit SDK and runtime payloads, even
+        though the Isaac Sim SOURCE is Apache-2.0. Classify exact wheel versions
+        separately: the Arena-selected isaaclab 3.0.0b2.post1 wheel declares
+        BSD-3-Clause; that grant does not cover Isaac Sim 6.0.1.0 or its
+        proprietary runtime dependencies. Such an image may be built and run by
+        the operator who owns the registry (internal R&D, build-your-own), but
+        hosting it PREBUILT on a public/anonymous registry would make us the
+        third-party redistributor, which requires an NVIDIA AI Enterprise license.
         Membership is deliberately generic and may be empty. Historical
         Cosmos3-serving and SONIC-MuJoCo digests remain quarantined because they
         inherited restricted baked bytes; new zero-payload/independent builds do
@@ -565,6 +566,42 @@ images:
       base's unrelated Nsight Compute profiler tree from the final filesystem.
       Isaac Sim/Lab and task assets remain cryptographically verified runtime
       fetches after EULA preflight.
+    redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+  isaac-arena:
+    dockerfile: isaac-arena/Dockerfile
+    isaac_runtime_fetch: true
+    tier: job
+    notes: >-
+      Inherits the exact accepted payload-clean npa-isaac-lab digest and adds
+      Isaac Lab-Arena 0.3.0 Apache-2.0 source from its checksum-verified release
+      commit plus the hash-locked Apache-2.0 Lightwheel SDK client and the
+      open-source Pinocchio, Pink, ONNX Runtime, and solver dependency closure
+      that Arena imports during registry discovery. The exact Lightwheel wheel
+      and METADATA hashes are recorded in machine-readable evidence and checked
+      against the installed image bytes; upstream publishes no standalone
+      license member or source distribution for that SDK release. The exact
+      runtime-fetched Isaac Lab wheel's structured BSD-3-Clause metadata field
+      is also asserted after its wheel hash is verified.
+      Upstream tests, sample checkpoints, demonstration data, and documentation
+      media are removed. Isaac Sim/Lab, Lightwheel registry assets, operator
+      replay data, RSL-RL checkpoints, generated evaluation artifacts,
+      credentials, and populated caches remain runtime-only. NPA provides no
+      Lightwheel asset credential or redistribution grant. Viewport runs first
+      validate native NVIDIA headless EGL/Vulkan, libnvoptix.so.1, and readable
+      regular nonempty OptiX weights. When dependencies are missing, the worker
+      downloads the exact loaded-driver version from Ubuntu's
+      signed archive, validates its ICD metadata, and derives a canonical private
+      EGL ICD in run-private scratch. The image creates an empty user-owned
+      weights directory. Missing nvoptix.bin is copied only into the verified
+      private container root overlay, with no symlink or submount destination,
+      no overwrite, and hash readback. Copied weights remain only for the worker
+      container lifetime; they are never installed on the node, baked, published
+      as artifacts, or redistributed. Readiness does not prove denoising success.
+      The inherited
+      non-root SkyPilot bootstrap contract is
+      retained. Built-image byte/layer scanning and real B200 plus RTX PRO 6000
+      evaluation are required before release promotion.
     redistribution: public
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
   leisaac:

@@ -449,9 +449,20 @@ def test_literal_policy_is_compiled_once_and_record_state_is_independent(tmp_pat
 
 
 @pytest.mark.parametrize("kind", ["unlink", "symlink", "fifo"])
-def test_archive_replaced_at_completion_still_closes_fd_and_fails(tmp_path, kind):
+def test_archive_replaced_at_completion_still_closes_fd_and_fails(tmp_path, kind, monkeypatch):
     authorization = fixture(tmp_path)
     archive = Path(authorization["archive"]["path"])
+    archive_stat = archive.stat()
+    closed_archive_descriptors = []
+    original_close = os.close
+
+    def record_close(fd):
+        descriptor_stat = os.fstat(fd)
+        original_close(fd)
+        if (descriptor_stat.st_dev, descriptor_stat.st_ino) == (archive_stat.st_dev, archive_stat.st_ino):
+            closed_archive_descriptors.append(fd)
+
+    monkeypatch.setattr(W.os, "close", record_close)
 
     class ReplaceArchive(FakeDetector):
         def finish(self):
@@ -463,9 +474,8 @@ def test_archive_replaced_at_completion_still_closes_fd_and_fails(tmp_path, kind
                 os.mkfifo(archive, 0o600)
             return result
 
-    descriptors_before = len(list(Path("/proc/self/fd").iterdir()))
     report, _ = run(tmp_path, authorization, detector_type=ReplaceArchive)
-    assert len(list(Path("/proc/self/fd").iterdir())) == descriptors_before
+    assert len(closed_archive_descriptors) == 1
     assert not report["valid"] and not report["complete"] and report["helper_joined"]
     assert report["failure_code"] == "archive_changed_during_scan"
 

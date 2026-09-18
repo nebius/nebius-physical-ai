@@ -371,6 +371,8 @@ def test_single_node_gpu_preflight_rejects_wrong_product(provider, monkeypatch):
             KubernetesGpuNode(
                 "unit-node", True, True, ("NVIDIA-B200",), 1, 1, 0, 1,
                 free_cpu_millis=4000, free_memory_bytes=16 * 10**9, free_pod_slots=1,
+                allocatable_cpu_millis=4000, allocatable_memory_bytes=16 * 10**9,
+                allocatable_pods=1,
             ),
         ),
     )
@@ -440,6 +442,8 @@ def gpu_inventory(monkeypatch):
     node = KubernetesGpuNode(
         "unit-node", True, True, ("NVIDIA-B200",), 1, 1, 0, 1,
         free_cpu_millis=16000, free_memory_bytes=128 * 10**9, free_pod_slots=1,
+        allocatable_cpu_millis=16000, allocatable_memory_bytes=128 * 10**9,
+        allocatable_pods=1,
     )
     inventory = KubernetesGpuInventory("unit-context", 1, 1, 1, 1, ("NVIDIA-B200",), {}, nodes=(node,))
     monkeypatch.setattr("npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory", lambda **kwargs: inventory)
@@ -583,7 +587,7 @@ def test_fractional_gpu_minimum_never_rounds_down(provider, configured, gpu_inve
 
 
 @pytest.mark.parametrize("boundary", ["profile", "rendered"])
-@pytest.mark.parametrize("shortfall", ["", "cpu", "memory"])
+@pytest.mark.parametrize("shortfall", ["", "cpu", "memory", "storage"])
 def test_sky_resource_units_preserve_exact_gpu_capacity_checks(
     provider, configured, monkeypatch, boundary, shortfall,
 ):
@@ -601,6 +605,10 @@ def test_sky_resource_units_preserve_exact_gpu_capacity_checks(
                 free_cpu_millis=8000 - int(shortfall == "cpu"),
                 free_memory_bytes=32 * 10**9 - int(shortfall == "memory"),
                 free_pod_slots=1,
+                allocatable_cpu_millis=8000, allocatable_memory_bytes=32 * 10**9,
+                allocatable_pods=1,
+                allocatable_ephemeral_storage_bytes=100 * 10**9,
+                free_ephemeral_storage_bytes=100 * 10**9 - int(shortfall == "storage"),
             ),
         ),
     )
@@ -608,7 +616,8 @@ def test_sky_resource_units_preserve_exact_gpu_capacity_checks(
         "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory",
         lambda **kwargs: inventory,
     )
-    profile = {"cloud": "kubernetes", "accelerators": "B200:1", "cpus": 8, "memory": 32}
+    profile = {"cloud": "kubernetes", "accelerators": "B200:1", "cpus": 8, "memory": 32,
+               "disk_size": 100}
     document = raw_task()
     document["resources"].update(normalize_resources(profile))
     spec = SimpleNamespace(
@@ -677,6 +686,8 @@ def test_rendered_gpu_wave_respects_placement_and_gang_size(
                 "unit-node", True, True, ("NVIDIA-B200",), 1, 1, 0, 1,
                 free_cpu_millis=4000, free_memory_bytes=16 * 10**9, free_pod_slots=1,
                 labels=(("pool", "available"),),
+                allocatable_cpu_millis=4000, allocatable_memory_bytes=16 * 10**9,
+                allocatable_pods=1,
             ),
         ),
     )

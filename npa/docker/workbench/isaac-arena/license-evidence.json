@@ -1,0 +1,26 @@
+{
+  "schema": "npa.workbench.isaac_arena.license_evidence.v1",
+  "lightwheel_sdk": {
+    "artifact_url": "https://files.pythonhosted.org/packages/21/e3/68448f351bea9e1412bf13b62aa69eaf67ce652fd99a4aeafa4a5da3e1fb/lightwheel_sdk-1.0.3-py3-none-any.whl",
+    "declared_license": "Apache-2.0",
+    "declaration_form": "distribution description and installed module notices",
+    "distribution_name": "lightwheel-sdk",
+    "metadata_member": "lightwheel_sdk-1.0.3.dist-info/METADATA",
+    "metadata_sha256": "9c6ca9f214143e66b7ca8827b730a3b261437ae43ffd7ef494e5225f2dc4e850",
+    "standalone_license_member": null,
+    "version": "1.0.3",
+    "wheel_sha256": "841ec064ab21a403de024e1e860541e9949e0ea2330d51961b1fdf49d0ec21cd"
+  },
+  "isaac_lab_runtime_wheel": {
+    "artifact_url": "https://pypi.nvidia.com/isaaclab/isaaclab-3.0.0b2.post1-py3-none-any.whl",
+    "declared_license": "BSD-3-Clause",
+    "declaration_form": "structured METADATA License field",
+    "delivery": "operator runtime fetch; not baked in the public image",
+    "distribution_name": "isaaclab",
+    "metadata_member": "isaaclab-3.0.0b2.post1.dist-info/METADATA",
+    "metadata_sha256": "365d9b867dddc244d5aebe02becfe7a9bb8afea8fcdbfef7a4a9fb0a0266fae0",
+    "standalone_license_member": null,
+    "version": "3.0.0b2.post1",
+    "wheel_sha256": "dd32886588479ffd70f7348019aeac1582eb9ad16c40244f41d9f458f96f73c3"
+  }
+}

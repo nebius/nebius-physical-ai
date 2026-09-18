@@ -23,6 +23,7 @@ from rich.console import Console
 from rich.text import Text
 
 from npa.cli.workbench.trigger import app as trigger_app
+from npa.cli.workbench.workflow.controller_recovery import register as register_controller_recovery
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
 
@@ -128,6 +129,28 @@ def _fail(msg: str, code: int = 1) -> None:
     error.append(str(msg))
     console.print(error, soft_wrap=True)
     raise typer.Exit(code)
+
+
+def _submit_failure_code(error: BaseException) -> int:
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        PendingGpuPlacementError, TemporarilyUnavailableAcceleratorError,
+    )
+    from npa.orchestration.skypilot.workflow import SkyPilotSubmitError
+
+    seen: set[int] = set()
+    cause: BaseException | None = error
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        # An ambiguous provider response must never become an automatic retry.
+        if isinstance(cause, SkyPilotSubmitError):
+            if cause.launch_attempted is not False:
+                return 1
+            if cause.transaction is not None and cause.transaction.launch_sequence != 0:
+                return 1
+        if isinstance(cause, (TemporarilyUnavailableAcceleratorError, PendingGpuPlacementError)):
+            return 75
+        cause = cause.__cause__
+    return 1
 
 
 def _workflow_access_requirements(spec) -> tuple:  # noqa: ANN001
@@ -1430,7 +1453,7 @@ def submit_cmd(
                     )) if infra_context and not deploy_if_absent and not runtime else None,
                 )
             except (RuntimeError, ValueError) as exc:
-                _fail(str(exc))
+                _fail(str(exc), code=_submit_failure_code(exc))
                 return
 
         # An existing target can prove that PAIDF has nowhere schedulable to run
@@ -1853,7 +1876,8 @@ def submit_cmd(
                     isolated_config_dir=isolated_config_dir,
                 )
             except Exception as exc:
-                _fail(f"multi-node GPU capacity preflight failed: {exc}")
+                _fail(f"multi-node GPU capacity preflight failed: {exc}",
+                      code=_submit_failure_code(exc))
                 return
 
         if runtime and not plan_only:
@@ -2420,8 +2444,8 @@ def submit_cmd(
                     sort_keys=True,
                 )
             )
-            raise typer.Exit(1) from exc
-        _fail(str(exc))
+            raise typer.Exit(_submit_failure_code(exc)) from exc
+        _fail(str(exc), code=_submit_failure_code(exc))
         return
     finally:
         if submitted_yaml_context is not None:
@@ -3443,7 +3467,9 @@ def _preflight_submit_gang_capacity(
         discover_kubernetes_gpu_inventory,
         preflight_kubernetes_gpu_gang,
     )
-    from npa.orchestration.skypilot.resource_quantities import kubernetes_gpu_quantities
+    from npa.orchestration.skypilot.resource_quantities import (
+        kubernetes_ephemeral_storage_quantity, kubernetes_gpu_quantities,
+    )
 
     checks: list[dict[str, object]] = []
     resolved_allowed_nodes = allowed_nodes
@@ -3491,6 +3517,7 @@ def _preflight_submit_gang_capacity(
             node_count=nodes,
             cpus=cpus,
             memory=memory,
+            ephemeral_storage=kubernetes_ephemeral_storage_quantity(effective),
             allowed_nodes=resolved_allowed_nodes,
             pod_spec=pod_spec,
         )
@@ -3587,7 +3614,14 @@ def _record_workflow_submit_failure(operation, exc: BaseException) -> None:  # n
 
     transaction = getattr(exc, "transaction", None)
     launch_sequence = getattr(transaction, "launch_sequence", None)
-    if launch_sequence == 0:
+    from npa.orchestration.skypilot.workflow import SkyPilotSubmitError
+
+    preflight_failed = (
+        transaction is None
+        and isinstance(exc, SkyPilotSubmitError)
+        and exc.launch_attempted is False
+    )
+    if launch_sequence == 0 or preflight_failed:
         operation.record_rollback(
             attempted=False,
             completed=True,
@@ -7716,3 +7750,4 @@ def _emit_gpu_discovery_json(inventory, catalog, sky_error, resolutions):
 
 
 app.add_typer(trigger_app, name="trigger")
+register_controller_recovery(app)
