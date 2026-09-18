@@ -14,10 +14,7 @@ from npa.orchestration.npa_workflow.submit import load_spec_for_submit
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SPEC_PATH = (
-    REPO_ROOT
-    / "workflows/testing/cosmos3-super-h200-benchmark.yaml"
-)
+SPEC_PATH = REPO_ROOT / "workflows/testing/cosmos3-super-h200-benchmark.yaml"
 
 
 def test_h200_workflow_is_fixed_full_node_primary_sweep() -> None:
@@ -32,9 +29,7 @@ def test_h200_workflow_is_fixed_full_node_primary_sweep() -> None:
         "workbench.cosmos3.super_benchmark"
     )
     pod_spec = raw["resources"]["h200-node"]["kubernetes"]["pod_config"]["spec"]
-    assert pod_spec["imagePullSecrets"] == [
-        {"name": "{{config.image_pull_secret}}"}
-    ]
+    assert pod_spec["imagePullSecrets"] == [{"name": "{{config.image_pull_secret}}"}]
     assert pod_spec["volumes"][0]["emptyDir"]["sizeLimit"] == "32Gi"
     assert pod_spec["containers"] == [
         {
@@ -46,12 +41,11 @@ def test_h200_workflow_is_fixed_full_node_primary_sweep() -> None:
 
 def test_h200_workflow_renders_family_and_real_command(monkeypatch) -> None:
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src")
-    wrapper = "registry.example.invalid/operator/npa-cosmos3-super-benchmark@sha256:" + (
-        "2" * 64
+    wrapper = (
+        "registry.example.invalid/operator/npa-cosmos3-super-benchmark@sha256:"
+        + ("2" * 64)
     )
-    spec = load_spec_for_submit(
-        SPEC_PATH, config_overrides={"runtime_image": wrapper}
-    )
+    spec = load_spec_for_submit(SPEC_PATH, config_overrides={"runtime_image": wrapper})
     plan = build_plan(spec, run_id="cosmos3-super-h200-test")
     rendered = render_skypilot_yaml(
         spec,

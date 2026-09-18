@@ -93,7 +93,9 @@ def list_jsonl_uris(prefix: str) -> list[str]:
         client = _s3_client()
         paginator = client.get_paginator("list_objects_v2")
         found: list[str] = []
-        for page in paginator.paginate(Bucket=target.bucket, Prefix=target.key.rstrip("/") + "/"):
+        for page in paginator.paginate(
+            Bucket=target.bucket, Prefix=target.key.rstrip("/") + "/"
+        ):
             for obj in page.get("Contents", []) or []:
                 key = obj["Key"]
                 if key.endswith(".jsonl"):
@@ -118,7 +120,9 @@ def read_jsonl_store(uri: str) -> list[dict[str, Any]]:
     return rows
 
 
-def append_jsonl_uri(uri: str, rows: list[dict[str, Any]], *, previous_total: int | None = None) -> int:
+def append_jsonl_uri(
+    uri: str, rows: list[dict[str, Any]], *, previous_total: int | None = None
+) -> int:
     """Append rows to an append-only JSONL store; return the store's row count.
 
     Object storage has no native append. Rewriting one object read-modify-write
@@ -140,7 +144,9 @@ def append_jsonl_uri(uri: str, rows: list[dict[str, Any]], *, previous_total: in
     if new_rows:
         shard_name = f"{utc_stamp()}-{uuid.uuid4().hex[:12]}.jsonl"
         payload = "".join(json.dumps(row, sort_keys=True) + "\n" for row in new_rows)
-        write_bytes_uri(uri_join(shard_prefix_for(uri), shard_name), payload.encode("utf-8"))
+        write_bytes_uri(
+            uri_join(shard_prefix_for(uri), shard_name), payload.encode("utf-8")
+        )
     if previous_total is not None:
         return previous_total + len(new_rows)
     return len(read_jsonl_store(uri))
@@ -179,6 +185,8 @@ def _s3_client():
 
     return boto3.client(
         "s3",
-        endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT") or None,
+        endpoint_url=os.environ.get("AWS_ENDPOINT_URL")
+        or os.environ.get("NEBIUS_S3_ENDPOINT")
+        or None,
         config=BotoConfig(signature_version="s3v4"),
     )

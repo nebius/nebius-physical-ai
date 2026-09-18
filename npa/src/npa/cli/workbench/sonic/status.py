@@ -16,15 +16,23 @@ from npa.cli.workbench.sonic.helpers import (
     output,
 )
 from npa.clients.config import list_projects
-from npa.clients.serverless import EndpointNotFoundError, ServerlessClient, ServerlessClientError
+from npa.clients.serverless import (
+    EndpointNotFoundError,
+    ServerlessClient,
+    ServerlessClientError,
+)
 
 
 def _configured_status(project: str, name: str) -> dict[str, Any]:
     project_cfg = list_projects().get(project, {})
-    workbenches = project_cfg.get("workbenches", {}) if isinstance(project_cfg, dict) else {}
+    workbenches = (
+        project_cfg.get("workbenches", {}) if isinstance(project_cfg, dict) else {}
+    )
     wb_cfg = workbenches.get(name, {}) if isinstance(workbenches, dict) else {}
     if not isinstance(wb_cfg, dict) or not is_sonic_workbench(name, wb_cfg):
-        fail("--name must reference a configured SONIC workbench for vm/container/byovm status.")
+        fail(
+            "--name must reference a configured SONIC workbench for vm/container/byovm status."
+        )
     return {
         "project": project,
         "workbench": name,
@@ -43,9 +51,13 @@ def _configured_status(project: str, name: str) -> dict[str, Any]:
 
 
 def status_cmd(
-    runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help="Runtime to inspect."),
+    runtime: WorkbenchRuntime = typer.Option(
+        WorkbenchRuntime.vm, "--runtime", help="Runtime to inspect."
+    ),
     name: str = typer.Option("", "--name", help="Workbench or serverless job name."),
-    project_id: str = typer.Option("", "--project-id", help="Nebius project ID for serverless job lookup."),
+    project_id: str = typer.Option(
+        "", "--project-id", help="Nebius project ID for serverless job lookup."
+    ),
     job_id: str = typer.Option("", "--job-id", help="Serverless Job ID or name."),
     output_format: OutputFormat = typer.Option(
         OutputFormat.text, "--output-format", "--output", help="Output format."
@@ -66,7 +78,10 @@ def status_cmd(
         try:
             info = client.get_job(lookup, project_id)
         except EndpointNotFoundError:
-            output({"status": "not_found", "job": lookup, "project_id": project_id}, output_format)
+            output(
+                {"status": "not_found", "job": lookup, "project_id": project_id},
+                output_format,
+            )
             return
         except ServerlessClientError as exc:
             fail(f"Serverless Job lookup failed: {exc}")

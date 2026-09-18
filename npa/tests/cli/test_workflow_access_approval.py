@@ -14,7 +14,9 @@ from npa.workbench.model_access import GatedAsset, HF, NGC
 RUNNER = CliRunner()
 SPEC = (
     Path(__file__).resolve().parents[3]
-    / "workflows" / "main" / "nurec-reconstruct.yaml"
+    / "workflows"
+    / "main"
+    / "nurec-reconstruct.yaml"
 )
 RAY_BATCH_SPEC = SPEC.parent.parent / "testing" / "cosmos3-ray-batch.yaml"
 
@@ -121,8 +123,14 @@ def test_ray_batch_refuses_execution_without_native_guardrail_access(
     )
     result = RUNNER.invoke(
         app,
-        ["workbench", "workflow", "run-spec", str(RAY_BATCH_SPEC),
-         "--execute", "--json"],
+        [
+            "workbench",
+            "workflow",
+            "run-spec",
+            str(RAY_BATCH_SPEC),
+            "--execute",
+            "--json",
+        ],
     )
     assert result.exit_code == 1
     payload = json.loads(result.stdout)
@@ -140,7 +148,9 @@ def test_enforcement_uses_explicit_project_scoped_credentials(
     monkeypatch.setenv("NPA_ACCESS_APPROVAL_STATE_PATH", str(tmp_path / "state.json"))
     monkeypatch.setattr(
         "npa.clients.credentials.load_credentials",
-        lambda: (_ for _ in ()).throw(AssertionError("must not load default credentials")),
+        lambda: (_ for _ in ()).throw(
+            AssertionError("must not load default credentials")
+        ),
     )
     monkeypatch.setattr(
         "npa.clients.huggingface.validate_hf_access",
@@ -201,7 +211,9 @@ def test_interactive_workflow_gate_opens_exact_pages_only_after_affirmative_cons
         lambda _spec: _blocked_hf_ngc_requirements(),
     )
     monkeypatch.setattr("npa.cli.workbench.workflow.sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr("npa.cli.workbench.workflow.typer.confirm", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow.typer.confirm", lambda *_a, **_k: True
+    )
     opened: list[str] = []
     monkeypatch.setattr("webbrowser.open_new_tab", opened.append)
     spec = SimpleNamespace(states={})
@@ -232,7 +244,9 @@ def test_interactive_workflow_gate_negative_answer_opens_nothing(
         lambda _spec: _blocked_hf_ngc_requirements(),
     )
     monkeypatch.setattr("npa.cli.workbench.workflow.sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr("npa.cli.workbench.workflow.typer.confirm", lambda *_a, **_k: False)
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow.typer.confirm", lambda *_a, **_k: False
+    )
     opened: list[str] = []
     monkeypatch.setattr("webbrowser.open_new_tab", opened.append)
     spec = SimpleNamespace(states={})
@@ -263,9 +277,7 @@ def test_nurec_workflow_gate_accepts_provider_validated_registry_credential(
         observed.append((key, image))
         return "reachable"
 
-    monkeypatch.setattr(
-        "npa.workbench.nurec.nurec.check_ngc_image_access", validate
-    )
+    monkeypatch.setattr("npa.workbench.nurec.nurec.check_ngc_image_access", validate)
     spec = SimpleNamespace(
         states={"reconstruct": SimpleNamespace(tool_ref="workbench.nurec.reconstruct")}
     )

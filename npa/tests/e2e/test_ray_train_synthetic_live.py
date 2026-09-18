@@ -27,7 +27,9 @@ EXAMPLE = Path(__file__).parents[2] / "workflows/workbench/ray-train-synthetic"
 
 def _write_private(path, content):
     """Create evidence with owner-only access before writing its first byte."""
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    descriptor = os.open(
+        path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600
+    )
     with os.fdopen(descriptor, "w") as stream:
         stream.write(content)
 
@@ -57,7 +59,9 @@ def _cancel_owned_jobs(client, owned, evidence):
             _write_private(evidence / f"{job}.log", client.get_job_logs(job))
         except Exception as exc:
             errors.append({"job": job, "phase": "logs", "error": type(exc).__name__})
-    _write_private(evidence / "cleanup.json", json.dumps({"owned": owned, "errors": errors}))
+    _write_private(
+        evidence / "cleanup.json", json.dumps({"owned": owned, "errors": errors})
+    )
     return errors
 
 
@@ -72,7 +76,9 @@ def _live_configuration():
     assert endpoint.hostname in {"127.0.0.1", "localhost"} and endpoint.scheme == "http"
     assert not endpoint.username and not endpoint.password and not endpoint.query
     if any(os.environ.get(name) for name in ("RAY_ADDRESS", "RAY_API_SERVER_ADDRESS")):
-        raise ValueError("Unset RAY_ADDRESS and RAY_API_SERVER_ADDRESS before using the selected Jobs endpoint")
+        raise ValueError(
+            "Unset RAY_ADDRESS and RAY_API_SERVER_ADDRESS before using the selected Jobs endpoint"
+        )
     evidence = Path(config["evidence_dir"])
     evidence.mkdir(parents=True, exist_ok=True, mode=0o700)
     assert evidence.stat().st_mode & 0o077 == 0, "Evidence directory must be owner-only"
@@ -94,14 +100,28 @@ class _LiveRun:
     def submit(self, kind, *extra):
         """Record the exact intent before a submission response can be lost."""
         name = f"train-{kind}-{self.suffix}"
-        command = shlex.join([
-            "/opt/npa-ray-train/env/bin/python", "train.py", "--storage-path", self.config["storage_uri"],
-            "--run-name", name, "--output-dir", f"/opt/npa-ray-train/exports/{name}", *extra,
-        ])
+        command = shlex.join(
+            [
+                "/opt/npa-ray-train/env/bin/python",
+                "train.py",
+                "--storage-path",
+                self.config["storage_uri"],
+                "--run-name",
+                name,
+                "--output-dir",
+                f"/opt/npa-ray-train/exports/{name}",
+                *extra,
+            ]
+        )
         self.owned.append(name)
-        _write_private(self.evidence / "submission-intents.json", json.dumps(self.owned))
-        job = self.client.submit_job(submission_id=name, entrypoint=command,
-                                     runtime_env={"working_dir": str(EXAMPLE)})
+        _write_private(
+            self.evidence / "submission-intents.json", json.dumps(self.owned)
+        )
+        job = self.client.submit_job(
+            submission_id=name,
+            entrypoint=command,
+            runtime_env={"working_dir": str(EXAMPLE)},
+        )
         assert job == name
         return job
 
@@ -109,7 +129,10 @@ class _LiveRun:
         """Retain native diagnostics and reject detached cleanup-thread failures."""
         content = self.client.get_job_logs(job)
         _write_private(self.evidence / f"{job}.log", content)
-        _write_private(self.evidence / f"{job}-native-status.json", self.client.get_job_info(job).json())
+        _write_private(
+            self.evidence / f"{job}-native-status.json",
+            self.client.get_job_info(job).json(),
+        )
         assert "Exception in thread PlacementGroupCleanerMonitor" not in content
 
 
@@ -139,11 +162,20 @@ def _validate_exported_state(destination, kind):
     for parameter in model.parameters():
         momentum = optimizer.state[parameter]["momentum_buffer"]
         assert momentum.shape == parameter.shape and torch.isfinite(momentum).all()
-    assert optimizer.param_groups[0]["lr"] == 0.1 and optimizer.param_groups[0]["momentum"] == 0.8
+    assert (
+        optimizer.param_groups[0]["lr"] == 0.1
+        and optimizer.param_groups[0]["momentum"] == 0.8
+    )
     parameters = torch.cat([value.detach().flatten() for value in model.parameters()])
-    assert hashlib.sha256(parameters.numpy().tobytes()).hexdigest() == report["parameter_sha256"]
+    assert (
+        hashlib.sha256(parameters.numpy().tobytes()).hexdigest()
+        == report["parameter_sha256"]
+    )
     target = torch.arange(1, 9).reshape(8, 1) / 8 + 0.25
-    assert torch.nn.functional.mse_loss(model(torch.eye(8)), target).item() == report["held_out_loss"]
+    assert (
+        torch.nn.functional.mse_loss(model(torch.eye(8)), target).item()
+        == report["held_out_loss"]
+    )
     assert report["held_out_loss"] < report["baseline_held_out_loss"]
     assert report["final_loss"] < report["initial_loss"]
     _validate_rank_runtimes(state["journal"])
@@ -162,11 +194,20 @@ def _completed_export(run, kind, extra):
     run.preserve(job)
     assert run.client.get_job_status(job) == JobStatus.SUCCEEDED
     destination = run.evidence / job
-    inspected = subprocess.run([
-        sys.executable, str(EXAMPLE / "inspect_results.py"), str(destination),
-        "--download", run.config["storage_uri"].rstrip("/") + f"/{job}/exports",
-    ], capture_output=True, text=True)
-    _write_private(run.evidence / f"{job}-inspection.txt", inspected.stdout + inspected.stderr)
+    inspected = subprocess.run(
+        [
+            sys.executable,
+            str(EXAMPLE / "inspect_results.py"),
+            str(destination),
+            "--download",
+            run.config["storage_uri"].rstrip("/") + f"/{job}/exports",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    _write_private(
+        run.evidence / f"{job}-inspection.txt", inspected.stdout + inspected.stderr
+    )
     assert inspected.returncode == 0, "Private artifact inspection failed"
     return _validate_exported_state(destination, kind)
 
@@ -179,18 +220,32 @@ def _cancel_resource_identity(run, job):
     assert info.submission_id == job
     driver_id = info.job_id
     assert driver_id, "Native driver identity required for cleanup evidence"
-    groups = list_placement_groups(address=run.config["address"], detail=True,
-                                   filters=[("creator_job_id", "=", driver_id)],
-                                   raise_on_missing_output=True)
-    cleaners = list_actors(address=run.config["address"], detail=True,
-                           filters=[("job_id", "=", driver_id), ("class_name", "=", "PlacementGroupCleaner")],
-                           raise_on_missing_output=True)
+    groups = list_placement_groups(
+        address=run.config["address"],
+        detail=True,
+        filters=[("creator_job_id", "=", driver_id)],
+        raise_on_missing_output=True,
+    )
+    cleaners = list_actors(
+        address=run.config["address"],
+        detail=True,
+        filters=[
+            ("job_id", "=", driver_id),
+            ("class_name", "=", "PlacementGroupCleaner"),
+        ],
+        raise_on_missing_output=True,
+    )
     assert len(groups) == 1 and groups[0].state == "CREATED"
     assert len(cleaners) == 1 and cleaners[0].state == "ALIVE"
-    _write_private(run.evidence / "cancel-resources-before.json", json.dumps({
-        "groups": [group.asdict() for group in groups],
-        "cleaners": [actor.asdict() for actor in cleaners],
-    }))
+    _write_private(
+        run.evidence / "cancel-resources-before.json",
+        json.dumps(
+            {
+                "groups": [group.asdict() for group in groups],
+                "cleaners": [actor.asdict() for actor in cleaners],
+            }
+        ),
+    )
     return driver_id, groups, cleaners
 
 
@@ -200,7 +255,9 @@ def _wait_for_cancel_resources(run, driver_id, groups, cleaners):
 
     for group in groups:
         while True:
-            current = get_placement_group(group.placement_group_id, address=run.config["address"])
+            current = get_placement_group(
+                group.placement_group_id, address=run.config["address"]
+            )
             assert current is not None, "Captured placement group state unavailable"
             assert current.placement_group_id == group.placement_group_id
             assert current.creator_job_id == driver_id
@@ -215,9 +272,15 @@ def _wait_for_cancel_resources(run, driver_id, groups, cleaners):
             if current.state == "DEAD":
                 break
             time.sleep(1)
-    _write_private(run.evidence / "cancel-resources-after.json", json.dumps({
-        "placement_groups_removed": len(groups), "cleanup_actors_dead": len(cleaners),
-    }))
+    _write_private(
+        run.evidence / "cancel-resources-after.json",
+        json.dumps(
+            {
+                "placement_groups_removed": len(groups),
+                "cleanup_actors_dead": len(cleaners),
+            }
+        ),
+    )
 
 
 def _cancel_active_training(run):
@@ -226,7 +289,9 @@ def _cancel_active_training(run):
 
     job = run.submit("cancel", "--steps", "1000000")
     while "optimizer_step=4 checkpoint_uploaded" not in run.client.get_job_logs(job):
-        assert not run.client.get_job_status(job).is_terminal(), "Training ended before cancellation exercise"
+        assert not run.client.get_job_status(job).is_terminal(), (
+            "Training ended before cancellation exercise"
+        )
         time.sleep(1)
     driver_id, groups, cleaners = _cancel_resource_identity(run, job)
     assert run.client.stop_job(job)
@@ -254,14 +319,29 @@ def test_native_train_cuda_recovery_artifacts_and_cancel():
     try:
         for kind, extra in (("baseline", []), ("recovery", ["--fail-after-step", "8"])):
             results[kind] = _completed_export(run, kind, extra)
-        assert results["baseline"]["parameter_sha256"] == results["recovery"]["parameter_sha256"]
+        assert (
+            results["baseline"]["parameter_sha256"]
+            == results["recovery"]["parameter_sha256"]
+        )
         _cancel_active_training(run)
     finally:
         # Stop only this test's IDs, including when an assertion fails mid-training.
         errors = _cancel_owned_jobs(run.client, run.owned, evidence)
-        assert not errors, "Owned native Jobs cleanup incomplete; private evidence retained"
-    _write_private(evidence / "validation.json", json.dumps({
-        "success": True, "jobs": len(run.owned), "optimizer_steps": 64, "cuda_ranks": 2,
-        "native_worker_recovery": True, "cancel_status": "STOPPED",
-        "cancel_placement_group_removed": True, "cancel_cleanup_actor_dead": True,
-    }))
+        assert not errors, (
+            "Owned native Jobs cleanup incomplete; private evidence retained"
+        )
+    _write_private(
+        evidence / "validation.json",
+        json.dumps(
+            {
+                "success": True,
+                "jobs": len(run.owned),
+                "optimizer_steps": 64,
+                "cuda_ranks": 2,
+                "native_worker_recovery": True,
+                "cancel_status": "STOPPED",
+                "cancel_placement_group_removed": True,
+                "cancel_cleanup_actor_dead": True,
+            }
+        ),
+    )

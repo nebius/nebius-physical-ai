@@ -31,7 +31,11 @@ def compute_manifest_sha256(kind: str, payload: dict[str, Any]) -> str:
     digest = hashlib.sha256()
     digest.update(kind.encode("utf-8"))
     digest.update(b"\n")
-    digest.update(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8"))
+    digest.update(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode(
+            "utf-8"
+        )
+    )
     digest.update(b"\n")
     return digest.hexdigest()
 
@@ -49,7 +53,9 @@ def load_raw_records(input_uri: str) -> list[dict[str, Any]]:
     except FileNotFoundError as exc:
         raise DatasetIngestError(f"raw sensor data not found: {input_uri}") from exc
     except Exception as exc:
-        raise DatasetIngestError(f"cannot read raw sensor data {input_uri}: {exc}") from exc
+        raise DatasetIngestError(
+            f"cannot read raw sensor data {input_uri}: {exc}"
+        ) from exc
     records = payload.get("records") if isinstance(payload, dict) else payload
     if not isinstance(records, list) or not records:
         raise DatasetIngestError("raw sensor data has no records")
@@ -80,7 +86,9 @@ def normalize_records(
             raise DatasetIngestError(f"record {index} is not a mapping")
         for field in schema.required_fields:
             if not raw.get(field):
-                raise DatasetIngestError(f"record {index} missing required field {field!r}")
+                raise DatasetIngestError(
+                    f"record {index} missing required field {field!r}"
+                )
         modality = str(raw["modality"])
         if schema.modalities and modality not in schema.modalities:
             raise DatasetIngestError(
@@ -109,12 +117,16 @@ def normalize_records(
     return normalized, corrupt
 
 
-def compute_quality_stats(records: list[SensorRecord], corrupt_count: int) -> QualityStats:
+def compute_quality_stats(
+    records: list[SensorRecord], corrupt_count: int
+) -> QualityStats:
     per_modality: dict[str, int] = {}
     for record in records:
         per_modality[record.modality] = per_modality.get(record.modality, 0) + 1
     mean_completeness = (
-        round(sum(record.completeness for record in records) / len(records), 4) if records else 0.0
+        round(sum(record.completeness for record in records) / len(records), 4)
+        if records
+        else 0.0
     )
     return QualityStats(
         record_count=len(records),

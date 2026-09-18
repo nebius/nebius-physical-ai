@@ -50,11 +50,17 @@ def plan_initialization(
         return config, {}
     target = config.resolved_out_dir / "initialization" / "ncore-sfm.ply"
     sequence_dir = Path(ncore_json).resolve().parent
-    if (sequence_dir / "conversion.json").exists() and target.resolve().is_relative_to(sequence_dir):
-        raise NurecError("initialization output must be outside the NCore sequence directory")
+    if (sequence_dir / "conversion.json").exists() and target.resolve().is_relative_to(
+        sequence_dir
+    ):
+        raise NurecError(
+            "initialization output must be outside the NCore sequence directory"
+        )
     evidence = _initialization_evidence(config, ncore_json, target, selected)
     overrides = _native_overrides(target, evidence["point_count"])
-    return replace(config, extra_overrides=(*overrides, *config.extra_overrides)), evidence
+    return replace(
+        config, extra_overrides=(*overrides, *config.extra_overrides)
+    ), evidence
 
 
 def _selected_cameras(config: NurecConfig) -> tuple[str, ...]:
@@ -68,8 +74,12 @@ def _selected_cameras(config: NurecConfig) -> tuple[str, ...]:
         try:
             parsed = yaml.safe_load(value)
         except yaml.YAMLError as exc:
-            raise NurecError("dataset.camera_ids override must be a camera ID list") from exc
-        if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
+            raise NurecError(
+                "dataset.camera_ids override must be a camera ID list"
+            ) from exc
+        if not isinstance(parsed, list) or not all(
+            isinstance(item, str) for item in parsed
+        ):
             raise NurecError("dataset.camera_ids override must be a camera ID list")
         selected = tuple(parsed)
     return selected
@@ -130,7 +140,9 @@ def _point_readers(ncore_json: str) -> dict[str, Any]:
         from ncore.data.v4 import PointCloudsComponent, SequenceComponentGroupsReader
         from upath import UPath
     except ImportError as exc:
-        raise NurecError("multi-camera initialization requires the public NVIDIA NCore V4 reader") from exc
+        raise NurecError(
+            "multi-camera initialization requires the public NVIDIA NCore V4 reader"
+        ) from exc
     reader = SequenceComponentGroupsReader([UPath(ncore_json)])
     return reader.open_component_readers(PointCloudsComponent.Reader)
 
@@ -153,15 +165,20 @@ def export_initialization(ncore_json: str, plan: dict[str, Any]) -> dict[str, An
     clouds, components = _read_clouds(ncore_json)
     count = sum(len(xyz) for xyz, _ in clouds)
     if not count or count != plan["point_count"]:
-        raise NurecError("decoded initialization point count differs from the NCore inventory")
+        raise NurecError(
+            "decoded initialization point count differs from the NCore inventory"
+        )
     _verify_source(ncore_json, plan)
     target = Path(plan["point_cloud_path"])
     target.parent.mkdir(parents=True, exist_ok=True)
     _store_ply(target, clouds, count)
     _verify_source(ncore_json, plan)
     evidence = {
-        **plan, "status": "exported", "point_cloud_sha256": _sha256(target),
-        "point_cloud_bytes": target.stat().st_size, "components": components,
+        **plan,
+        "status": "exported",
+        "point_cloud_sha256": _sha256(target),
+        "point_cloud_bytes": target.stat().st_size,
+        "components": components,
     }
     _store_evidence(target.with_suffix(".json"), evidence)
     return evidence
@@ -176,22 +193,29 @@ def _verify_source(ncore_json: str, plan: dict[str, Any]) -> None:
         raise NurecError("conversion inventory changed during initialization export")
 
 
-def _read_clouds(ncore_json: str) -> tuple[list[tuple[np.ndarray, np.ndarray]], list[dict]]:
+def _read_clouds(
+    ncore_json: str,
+) -> tuple[list[tuple[np.ndarray, np.ndarray]], list[dict]]:
     clouds = []
     components = []
     for name, points in _point_readers(ncore_json).items():
         for index in range(points.pcs_count):
             xyz, rgb = _read_cloud(points, index)
             clouds.append((xyz, rgb))
-            components.append({"component": name, "index": index, "point_count": len(xyz)})
+            components.append(
+                {"component": name, "index": index, "point_count": len(xyz)}
+            )
     return clouds, components
 
 
 def _read_cloud(points: Any, index: int) -> tuple[np.ndarray, np.ndarray]:
     xyz = np.asarray(points.get_pc_xyz(index))
     if (
-        xyz.ndim != 2 or xyz.shape[1] != 3 or not len(xyz)
-        or xyz.dtype.kind not in "fiu" or not np.isfinite(xyz).all()
+        xyz.ndim != 2
+        or xyz.shape[1] != 3
+        or not len(xyz)
+        or xyz.dtype.kind not in "fiu"
+        or not np.isfinite(xyz).all()
         or points.get_pc_reference_frame_id(index) != "world"
     ):
         raise NurecError("initialization requires nonempty finite world XYZ points")
@@ -203,15 +227,23 @@ def _read_cloud(points: Any, index: int) -> tuple[np.ndarray, np.ndarray]:
     return xyz.copy(), rgb.copy()
 
 
-def _store_ply(target: Path, clouds: list[tuple[np.ndarray, np.ndarray]], count: int) -> None:
+def _store_ply(
+    target: Path, clouds: list[tuple[np.ndarray, np.ndarray]], count: int
+) -> None:
     try:
         with target.open("xb") as stream:
             _write_ply(stream.write, clouds, count)
     except FileExistsError:
         digest = hashlib.sha256()
         _write_ply(digest.update, clouds, count)
-        if target.is_symlink() or not target.is_file() or _sha256(target) != digest.hexdigest():
-            raise NurecError("existing initialization PLY differs; use a fresh output directory")
+        if (
+            target.is_symlink()
+            or not target.is_file()
+            or _sha256(target) != digest.hexdigest()
+        ):
+            raise NurecError(
+                "existing initialization PLY differs; use a fresh output directory"
+            )
 
 
 def _store_evidence(target: Path, evidence: dict[str, Any]) -> None:
@@ -221,10 +253,14 @@ def _store_evidence(target: Path, evidence: dict[str, Any]) -> None:
             stream.write(content)
     except FileExistsError:
         if target.is_symlink() or not target.is_file() or target.read_text() != content:
-            raise NurecError("existing initialization evidence differs; use a fresh output directory")
+            raise NurecError(
+                "existing initialization evidence differs; use a fresh output directory"
+            )
 
 
-def _write_ply(write: Any, clouds: list[tuple[np.ndarray, np.ndarray]], count: int) -> None:
+def _write_ply(
+    write: Any, clouds: list[tuple[np.ndarray, np.ndarray]], count: int
+) -> None:
     header = (
         "ply\nformat binary_little_endian 1.0\n"
         f"element vertex {count}\n"

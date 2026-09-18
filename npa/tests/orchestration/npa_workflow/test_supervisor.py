@@ -265,9 +265,7 @@ def test_valid_completed_outputs_reuse_wave_without_launch() -> None:
 def test_partial_output_evidence_blocks_transient_relaunch() -> None:
     decision = decide_recovery(
         identity(),
-        BackendObservation(
-            BackendState.ABSENT, reason_code="PROVIDER_INTERRUPTION"
-        ),
+        BackendObservation(BackendState.ABSENT, reason_code="PROVIDER_INTERRUPTION"),
         context(
             outputs=ArtifactValidation(
                 "partial",
@@ -326,16 +324,12 @@ def test_exhaustion_requires_verified_exact_cancellation() -> None:
 def test_checkpoint_recovery_requires_real_loader_and_valid_checkpoint() -> None:
     unsupported = decide_recovery(
         identity(),
-        BackendObservation(
-            BackendState.ABSENT, reason_code="PROVIDER_INTERRUPTION"
-        ),
+        BackendObservation(BackendState.ABSENT, reason_code="PROVIDER_INTERRUPTION"),
         context(checkpoint=CheckpointValidation(requested=True)),
     )
     supported = decide_recovery(
         identity(),
-        BackendObservation(
-            BackendState.ABSENT, reason_code="PROVIDER_INTERRUPTION"
-        ),
+        BackendObservation(BackendState.ABSENT, reason_code="PROVIDER_INTERRUPTION"),
         context(
             checkpoint=CheckpointValidation(
                 requested=True,
@@ -551,9 +545,7 @@ def test_supervisor_event_redacts_secret_shaped_fields() -> None:
 def test_failure_record_has_machine_readable_fields() -> None:
     decision = decide_recovery(
         identity(),
-        BackendObservation(
-            BackendState.QUEUED, reason_code="IMAGE_REFERENCE_INVALID"
-        ),
+        BackendObservation(BackendState.QUEUED, reason_code="IMAGE_REFERENCE_INVALID"),
         context(),
     )
     assert decision.to_dict() == {
@@ -567,18 +559,19 @@ def test_failure_record_has_machine_readable_fields() -> None:
 
 
 @pytest.mark.parametrize("state", [BackendState.QUEUED, BackendState.RUNNING])
-@pytest.mark.parametrize(
-    "code", ["CAPACITY_OR_QUOTA", "GANG_CAPACITY_UNAVAILABLE"]
-)
+@pytest.mark.parametrize("code", ["CAPACITY_OR_QUOTA", "GANG_CAPACITY_UNAVAILABLE"])
 @pytest.mark.parametrize("used", [0, 1])
 def test_live_capacity_wait_keeps_attempt_without_spending_recovery_budget(
-    state: BackendState, code: str, used: int,
+    state: BackendState,
+    code: str,
+    used: int,
 ) -> None:
     adapter = RecordingAdapter(BackendObservation(state, reason_code=code))
     ledger = SupervisorLedger(MemoryStore())
     recovery = replace(
         context(outputs=ArtifactValidation("partial"), preflight=PreflightEvidence()),
-        infrastructure_recoveries=used, max_infrastructure_recoveries=1,
+        infrastructure_recoveries=used,
+        max_infrastructure_recoveries=1,
     )
     for _ in range(2):
         result = WorkflowRunSupervisor(adapter=adapter, ledger=ledger).reconcile(
@@ -606,7 +599,9 @@ def test_capacity_wait_does_not_adopt_changed_immutable_identity(field: str) -> 
 
 @pytest.mark.parametrize("field", ["exact_identity", "workload_observable"])
 def test_capacity_wait_requires_authoritative_provider_identity(field: str) -> None:
-    observation = BackendObservation(BackendState.QUEUED, reason_code="CAPACITY_OR_QUOTA")
+    observation = BackendObservation(
+        BackendState.QUEUED, reason_code="CAPACITY_OR_QUOTA"
+    )
     adapter = RecordingAdapter(replace(observation, **{field: False}))
     result = WorkflowRunSupervisor(
         adapter=adapter, ledger=SupervisorLedger(MemoryStore())
@@ -618,15 +613,20 @@ def test_capacity_wait_requires_authoritative_provider_identity(field: str) -> N
 @pytest.mark.parametrize(
     ("used", "action"), [(0, "relaunch_incomplete_wave"), (1, "terminalize")]
 )
-def test_failed_capacity_attempt_still_uses_bounded_recovery(used: int, action: str) -> None:
+def test_failed_capacity_attempt_still_uses_bounded_recovery(
+    used: int, action: str
+) -> None:
     adapter = RecordingAdapter(
         BackendObservation(BackendState.FAILED, reason_code="CAPACITY_OR_QUOTA")
     )
     result = WorkflowRunSupervisor(
         adapter=adapter, ledger=SupervisorLedger(MemoryStore())
-    ).reconcile(identity(), replace(
-        context(), infrastructure_recoveries=used, max_infrastructure_recoveries=1
-    ))
+    ).reconcile(
+        identity(),
+        replace(
+            context(), infrastructure_recoveries=used, max_infrastructure_recoveries=1
+        ),
+    )
     assert result["recovery"]["action"] == action
     assert adapter.cancelled == []
     assert adapter.launched == (["wave:1"] if used == 0 else [])
@@ -639,10 +639,14 @@ def _scheduler_blocker_report(message: str):
         "metadata": {"name": "exact-worker"},
         "status": {
             "phase": "Pending",
-            "conditions": [{
-                "type": "PodScheduled", "status": "False",
-                "reason": "Unschedulable", "message": message,
-            }],
+            "conditions": [
+                {
+                    "type": "PodScheduled",
+                    "status": "False",
+                    "reason": "Unschedulable",
+                    "message": message,
+                }
+            ],
         },
     }
 
@@ -680,7 +684,10 @@ def test_real_pod_diagnostic_reaches_supervisor_as_capacity_wait() -> None:
         adapter=adapter, ledger=SupervisorLedger(MemoryStore())
     ).reconcile(identity(), replace(context(), infrastructure_recoveries=1))
     assert result["recovery"]["action"] == "adopt_exact_attempt"
-    assert result["observation"]["evidence"]["blockers"][0]["reason_code"] == "CAPACITY_OR_QUOTA"
+    assert (
+        result["observation"]["evidence"]["blockers"][0]["reason_code"]
+        == "CAPACITY_OR_QUOTA"
+    )
     assert recorder.cancelled == recorder.launched == []
 
 
@@ -696,14 +703,21 @@ def test_real_pod_diagnostic_reaches_supervisor_as_capacity_wait() -> None:
     ],
 )
 def test_capacity_wait_cannot_hide_another_pods_fatal_error(
-    code: str, action: str, capacity_first: bool,
+    code: str,
+    action: str,
+    capacity_first: bool,
 ) -> None:
     from npa.orchestration.skypilot.job_blockers import PodBlocker
 
     report = _scheduler_blocker_report("Insufficient nvidia.com/gpu")
-    report.blockers.append(PodBlocker(
-        pod="other-worker", phase="Pending", reason=code, reason_code=code,
-    ))
+    report.blockers.append(
+        PodBlocker(
+            pod="other-worker",
+            phase="Pending",
+            reason=code,
+            reason_code=code,
+        )
+    )
     if not capacity_first:
         report.blockers.reverse()
     recorder = RecordingAdapter(BackendObservation(BackendState.UNKNOWN))
@@ -714,4 +728,6 @@ def test_capacity_wait_cannot_hide_another_pods_fatal_error(
     assert result["recovery"]["action"] == action
     assert result["recovery"]["reason_code"] == code
     assert recorder.launched == []
-    assert recorder.cancelled == (["job-1"] if action == "cancel_and_terminalize" else [])
+    assert recorder.cancelled == (
+        ["job-1"] if action == "cancel_and_terminalize" else []
+    )

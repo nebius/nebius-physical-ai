@@ -8,7 +8,9 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 
-EXPORT_FILES = frozenset({"state.pt", "metrics.json", "metrics.rrd", "result.json", "SHA256SUMS"})
+EXPORT_FILES = frozenset(
+    {"state.pt", "metrics.json", "metrics.rrd", "result.json", "SHA256SUMS"}
+)
 
 
 def file_sha256(path: Path) -> str:
@@ -40,22 +42,43 @@ def storage(uri: str):
         OSError: Arrow cannot initialize the selected storage backend.
     """
     target = urlsplit(uri)
-    if (target.scheme != "s3" or not target.netloc or target.username or target.password
-            or target.query or target.fragment or not target.path.strip("/")
-            or any(part in ("", ".", "..") for part in target.path.strip("/").split("/"))):
-        raise ValueError("storage-path must be a run-scoped unsigned s3:// bucket/prefix")
+    if (
+        target.scheme != "s3"
+        or not target.netloc
+        or target.username
+        or target.password
+        or target.query
+        or target.fragment
+        or not target.path.strip("/")
+        or any(part in ("", ".", "..") for part in target.path.strip("/").split("/"))
+    ):
+        raise ValueError(
+            "storage-path must be a run-scoped unsigned s3:// bucket/prefix"
+        )
     endpoint = urlsplit(os.environ.get("AWS_ENDPOINT_URL_S3", ""))
-    if (endpoint.scheme != "https" or not endpoint.netloc or endpoint.username or endpoint.password
-            or endpoint.query or endpoint.fragment or endpoint.path not in ("", "/")):
-        raise ValueError("AWS_ENDPOINT_URL_S3 must be the verified unsigned HTTPS endpoint")
+    if (
+        endpoint.scheme != "https"
+        or not endpoint.netloc
+        or endpoint.username
+        or endpoint.password
+        or endpoint.query
+        or endpoint.fragment
+        or endpoint.path not in ("", "/")
+    ):
+        raise ValueError(
+            "AWS_ENDPOINT_URL_S3 must be the verified unsigned HTTPS endpoint"
+        )
     for name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION"):
         if not os.environ.get(name):
             raise ValueError(f"{name} is required for the verified workload bucket")
     from pyarrow import fs
 
     # Do not pass keys to the constructor: that serializes them into the filesystem.
-    filesystem = fs.S3FileSystem(endpoint_override=endpoint.netloc, scheme="https",
-                                 region=os.environ["AWS_DEFAULT_REGION"])
+    filesystem = fs.S3FileSystem(
+        endpoint_override=endpoint.netloc,
+        scheme="https",
+        region=os.environ["AWS_DEFAULT_REGION"],
+    )
     return filesystem, target.netloc + target.path.rstrip("/")
 
 
@@ -70,7 +93,9 @@ def _publish_file(filesystem, destination, path):
     if filesystem.get_file_info(remote).type != fs.FileType.NotFound:
         with filesystem.open_input_file(remote) as stream:
             if stream.read() != content:
-                raise ValueError("Existing export differs; preserve it and use a fresh run name")
+                raise ValueError(
+                    "Existing export differs; preserve it and use a fresh run name"
+                )
     else:
         with filesystem.open_output_stream(remote) as stream:
             stream.write(content)
@@ -96,7 +121,9 @@ def publish(filesystem, destination: str, directory: Path) -> None:
         raise ValueError("Export contains unexpected or missing files")
     if any(path.is_symlink() or not path.is_file() for path in directory.iterdir()):
         raise ValueError("Only regular exported artifact files may be published")
-    paths = sorted(directory.iterdir(), key=lambda path: (path.name == "SHA256SUMS", path.name))
+    paths = sorted(
+        directory.iterdir(), key=lambda path: (path.name == "SHA256SUMS", path.name)
+    )
     for path in paths:
         _publish_file(filesystem, destination, path)
 

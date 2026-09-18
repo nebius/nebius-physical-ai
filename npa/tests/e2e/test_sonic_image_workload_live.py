@@ -150,15 +150,27 @@ def test_manifest_selected_mujoco_checkpoint_dynamics() -> None:
 
     def run(args: list[str], *, input_text: str | None = None) -> str:
         result = subprocess.run(
-            [*kubectl, *args], input=input_text, capture_output=True, text=True, check=False
+            [*kubectl, *args],
+            input=input_text,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         if result.returncode:
-            (evidence / "runtime-failure.json").write_text(json.dumps({
-                "exit_code": result.returncode,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-            }, indent=2))
-            pytest.fail("live kubectl operation failed; inspect private runtime evidence", pytrace=False)
+            (evidence / "runtime-failure.json").write_text(
+                json.dumps(
+                    {
+                        "exit_code": result.returncode,
+                        "stdout": result.stdout,
+                        "stderr": result.stderr,
+                    },
+                    indent=2,
+                )
+            )
+            pytest.fail(
+                "live kubectl operation failed; inspect private runtime evidence",
+                pytrace=False,
+            )
         return result.stdout
 
     pod = json.loads(run(["get", "pod", config["pod"], "-o", "json"]))
@@ -173,13 +185,22 @@ def test_manifest_selected_mujoco_checkpoint_dynamics() -> None:
     entry = sonic_image_entry(**selection)
     digest = entry["digest"]
     assert digest in pod["status"]["containerStatuses"][0]["imageID"]
-    assert pod["spec"]["containers"][0]["image"].split("@")[0] == image.rsplit(":", 1)[0]
+    assert (
+        pod["spec"]["containers"][0]["image"].split("@")[0] == image.rsplit(":", 1)[0]
+    )
     command = [
-        "exec", "-i", config["pod"], "--", "env",
-        f"MODEL_REVISION={_MODEL_REVISION}", f"LIVE_EPISODES={_EPISODES}", f"LIVE_STEPS={_STEPS}",
+        "exec",
+        "-i",
+        config["pod"],
+        "--",
+        "env",
+        f"MODEL_REVISION={_MODEL_REVISION}",
+        f"LIVE_EPISODES={_EPISODES}",
+        f"LIVE_STEPS={_STEPS}",
         f"CHECKPOINT_SHA256={_CHECKPOINT_SHA256}",
         f"CHECKPOINT_LOADER_PYTHON={config['checkpoint_loader_python']}",
-        "/opt/npa/venv/bin/python", "-",
+        "/opt/npa/venv/bin/python",
+        "-",
     ]
     run(command, input_text=_WORKLOAD)
     run(["cp", f"{config['pod']}:/tmp/npa-sonic-live-evidence/.", str(evidence)])
@@ -201,12 +222,17 @@ def test_manifest_selected_mujoco_checkpoint_dynamics() -> None:
     assert (evidence / "dynamics.npz").stat().st_size > 100000
     with np.load(evidence / "dynamics.npz") as dynamics:
         for key, dimension in (("qpos", "nq"), ("qvel", "nv"), ("ctrl", "nu")):
-            assert dynamics[key].shape == (_EPISODES * _STEPS, metrics["mujoco"][dimension])
+            assert dynamics[key].shape == (
+                _EPISODES * _STEPS,
+                metrics["mujoco"][dimension],
+            )
             assert np.isfinite(dynamics[key]).all()
             assert np.ptp(dynamics[key], axis=0).max() > 0
     proof["resolved_image"] = image
     proof["runtime_digest"] = digest
     proof["gpu_target"] = config["gpu_target"]
     with (evidence / "dynamics.npz").open("rb") as dynamics_file:
-        proof["dynamics_sha256"] = hashlib.file_digest(dynamics_file, "sha256").hexdigest()
+        proof["dynamics_sha256"] = hashlib.file_digest(
+            dynamics_file, "sha256"
+        ).hexdigest()
     (evidence / "live-proof.json").write_text(json.dumps(proof, indent=2) + "\n")

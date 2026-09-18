@@ -213,10 +213,19 @@ def _check_module_parser(tool_ref: str, argv: list[str]) -> None:
 
 def test_new_module_parser_audit_rejects_unknown_flags() -> None:
     with pytest.raises(SystemExit):
-        _check_module_parser("fixture", [
-            "python3", "-m", "npa.workflows.lerobot_transfer", "prepare",
-            "--output-path", "fixture", "--flag-that-does-not-exist", "value",
-        ])
+        _check_module_parser(
+            "fixture",
+            [
+                "python3",
+                "-m",
+                "npa.workflows.lerobot_transfer",
+                "prepare",
+                "--output-path",
+                "fixture",
+                "--flag-that-does-not-exist",
+                "value",
+            ],
+        )
 
 
 #: Options typed as a plain ``str`` whose value genuinely IS a format word. Verified by

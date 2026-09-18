@@ -37,15 +37,17 @@ def _write_image_lerobot_dataset(
     meta = root / "meta"
     meta.mkdir(parents=True)
     (meta / "info.json").write_text(
-        json.dumps({
-            "codebase_version": "v3.0",
-            "features": {
-                "observation.image": {
-                    "dtype": "image",
-                    "shape": [1, 1, 3],
-                }
-            },
-        })
+        json.dumps(
+            {
+                "codebase_version": "v3.0",
+                "features": {
+                    "observation.image": {
+                        "dtype": "image",
+                        "shape": [1, 1, 3],
+                    }
+                },
+            }
+        )
     )
 
     rows: list[dict] = [
@@ -106,7 +108,9 @@ def test_build_lerobot_import_plan_maps_parquet_metadata(tmp_path: Path) -> None
     assert first.fields["task"] == "push cube"
 
 
-def test_build_lerobot_import_plan_skips_missing_columns_with_warnings(tmp_path: Path) -> None:
+def test_build_lerobot_import_plan_skips_missing_columns_with_warnings(
+    tmp_path: Path,
+) -> None:
     root = _write_image_lerobot_dataset(
         tmp_path / "dataset",
         include_optional_columns=False,

@@ -20,7 +20,10 @@ import yaml
 
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.interpreter import build_plan
-from npa.orchestration.npa_workflow.scheduler import build_scheduler_task, num_nodes_for_step
+from npa.orchestration.npa_workflow.scheduler import (
+    build_scheduler_task,
+    num_nodes_for_step,
+)
 from npa.orchestration.npa_workflow.skypilot_render import (
     SkypilotRenderOptions,
     normalize_resources,
@@ -69,7 +72,9 @@ def _write(tmp_path: Path, nodes: object) -> Path:
     return path
 
 
-def _render(tmp_path: Path, nodes: object, monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+def _render(
+    tmp_path: Path, nodes: object, monkeypatch: pytest.MonkeyPatch
+) -> list[dict]:
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
     spec = load_spec(_write(tmp_path, nodes))
     plan = build_plan(spec, run_id="probe")
@@ -265,13 +270,17 @@ def test_a_gang_stage_provisions_a_cluster_that_can_hold_it(tmp_path: Path) -> N
     assert [t.gpu_nodes for t in parse_deploy_targets(scaled)] == [4]
 
 
-def test_paidf_augment_scales_from_one_pod_to_a_gang(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_paidf_augment_scales_from_one_pod_to_a_gang(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
     blueprint = (
         Path(__file__).resolve().parents[4]
-        / "workflows" / "testing" / "physical-ai-data-factory.yaml"
+        / "workflows"
+        / "testing"
+        / "physical-ai-data-factory.yaml"
     )
     spec = load_spec(blueprint)
 
@@ -293,9 +302,7 @@ def test_paidf_augment_scales_from_one_pod_to_a_gang(monkeypatch: pytest.MonkeyP
     assert "num_nodes" not in _augment_task(spec)
 
     gang = _augment_task(
-        merge_config_overrides(
-            spec, {"augment_nodes": "4", "n_augmentations": "4"}
-        )
+        merge_config_overrides(spec, {"augment_nodes": "4", "n_augmentations": "4"})
     )
     assert gang["num_nodes"] == 4
     assert gang["envs"]["NPA_COSMOS_NODE_COUNT"] == "4"
@@ -314,9 +321,10 @@ def test_paidf_augment_scales_from_one_pod_to_a_gang(monkeypatch: pytest.MonkeyP
         merge_config_overrides(spec, {"augment_nodes": "2"}),
         execution_attempt_id="paidf-loop-2-wave-augment-attempt-1",
     )
-    assert first["envs"]["NPA_WORKFLOW_ATTEMPT_ID"] != second["envs"][
-        "NPA_WORKFLOW_ATTEMPT_ID"
-    ]
+    assert (
+        first["envs"]["NPA_WORKFLOW_ATTEMPT_ID"]
+        != second["envs"]["NPA_WORKFLOW_ATTEMPT_ID"]
+    )
 
 
 def test_more_augment_nodes_than_variants_fails_before_render(
@@ -326,7 +334,9 @@ def test_more_augment_nodes_than_variants_fails_before_render(
 
     blueprint = (
         Path(__file__).resolve().parents[4]
-        / "workflows" / "testing" / "physical-ai-data-factory.yaml"
+        / "workflows"
+        / "testing"
+        / "physical-ai-data-factory.yaml"
     )
     spec = load_spec(blueprint)
     with pytest.raises(NpaWorkflowError, match="num_nodes=3 exceeds n_augmentations=2"):
@@ -363,16 +373,16 @@ def test_cosmos_multi_node_requires_its_real_shard_publication_path(
 
     blueprint = (
         Path(__file__).resolve().parents[4]
-        / "workflows" / "testing" / "physical-ai-data-factory.yaml"
+        / "workflows"
+        / "testing"
+        / "physical-ai-data-factory.yaml"
     )
     with pytest.raises(NpaWorkflowError, match=match):
         merge_config_overrides(load_spec(blueprint), overrides)
 
 
 def test_multi_node_profile_reuse_by_unsharded_writer_fails(tmp_path: Path) -> None:
-    text = SPEC_TEMPLATE.format(nodes=2).replace(
-        "    multiNodeMode: sharded\n", "", 1
-    )
+    text = SPEC_TEMPLATE.format(nodes=2).replace("    multiNodeMode: sharded\n", "", 1)
     path = tmp_path / "duplicate.yaml"
     path.write_text(text, encoding="utf-8")
     with pytest.raises(NpaWorkflowError, match="not declared sharded"):

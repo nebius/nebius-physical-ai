@@ -44,18 +44,39 @@ def _synthesize(root: Path) -> tuple[Path, Path, Path]:
     preserving = root / "augmented_preserving.mp4"
     different = root / "augmented_different.mp4"
     _ffmpeg(
-        "-f", "lavfi", "-i", f"testsrc=size={WIDTH}x{HEIGHT}:rate=10:duration={SECONDS}",
-        "-pix_fmt", "yuv420p", "-c:v", "libx264", str(source),
+        "-f",
+        "lavfi",
+        "-i",
+        f"testsrc=size={WIDTH}x{HEIGHT}:rate=10:duration={SECONDS}",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:v",
+        "libx264",
+        str(source),
     )
     # Appearance-only change: same motion, new brightness/saturation.
     _ffmpeg(
-        "-i", str(source), "-vf", "eq=brightness=0.12:saturation=1.4",
-        "-pix_fmt", "yuv420p", "-c:v", "libx264", str(preserving),
+        "-i",
+        str(source),
+        "-vf",
+        "eq=brightness=0.12:saturation=1.4",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:v",
+        "libx264",
+        str(preserving),
     )
     # A different scene entirely, so its motion is hallucinated relative to source.
     _ffmpeg(
-        "-f", "lavfi", "-i", f"testsrc2=size={WIDTH}x{HEIGHT}:rate=10:duration={SECONDS}",
-        "-pix_fmt", "yuv420p", "-c:v", "libx264", str(different),
+        "-f",
+        "lavfi",
+        "-i",
+        f"testsrc2=size={WIDTH}x{HEIGHT}:rate=10:duration={SECONDS}",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:v",
+        "libx264",
+        str(different),
     )
     return source, preserving, different
 
@@ -66,7 +87,10 @@ def main() -> int:
 
     summary = evaluator_engine_summary()
     if summary["engine"] != "cosmos-evaluator-upstream":
-        print(f"COSMOS_EVALUATOR_SMOKE_FAIL upstream checkout not resolved: {summary}", file=sys.stderr)
+        print(
+            f"COSMOS_EVALUATOR_SMOKE_FAIL upstream checkout not resolved: {summary}",
+            file=sys.stderr,
+        )
         return 1
 
     with tempfile.TemporaryDirectory(prefix="cosmos-evaluator-smoke-") as tmp:
@@ -134,7 +158,13 @@ def main() -> int:
             )
             return 1
 
-        print("COSMOS_EVALUATOR_SMOKE_OK " + json.dumps({"source": summary["upstream_source"], "results": results}, sort_keys=True))
+        print(
+            "COSMOS_EVALUATOR_SMOKE_OK "
+            + json.dumps(
+                {"source": summary["upstream_source"], "results": results},
+                sort_keys=True,
+            )
+        )
     return 0
 
 

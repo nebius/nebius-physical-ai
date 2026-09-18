@@ -60,7 +60,9 @@ def test_force_accelerators_on_cpu_profiles() -> None:
     assert "cpus: 4\n" not in out
 
 
-def test_live_workflow_argv_builders_forward_selected_project_through_lifecycle() -> None:
+def test_live_workflow_argv_builders_forward_selected_project_through_lifecycle() -> (
+    None
+):
     argv = _load_live_argv()
     path = Path("/tmp/catalog-spec.yaml")
     common = {
@@ -93,9 +95,7 @@ def test_live_workflow_argv_builders_forward_selected_project_through_lifecycle(
         argv.status_args(
             common["run_id"],
             project=common["project"],
-            workflow_s3_uri=(
-                "s3://fixture-bucket/custom-prefix/npa-workflow"
-            ),
+            workflow_s3_uri=("s3://fixture-bucket/custom-prefix/npa-workflow"),
         ),
     ]
 

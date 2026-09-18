@@ -105,11 +105,9 @@ def test_confirmation_gate_blocks_gpu_action_without_token():
         submitted["count"] += 1
         return {"run_id": "x"}
 
-    planner = _scripted_planner([{ "tool": "sim2real_submit", "args": {"run_id": "x"}}])
+    planner = _scripted_planner([{"tool": "sim2real_submit", "args": {"run_id": "x"}}])
     tools = {"sim2real_submit": _submit}
-    result = A.run_action_loop(
-        "launch a sim2real run", tools=tools, model_call=planner
-    )
+    result = A.run_action_loop("launch a sim2real run", tools=tools, model_call=planner)
     assert submitted["count"] == 0
     assert result["needs_confirmation"] is True
     assert result["stopped_reason"] == A.STOP_NEEDS_CONFIRMATION
@@ -185,8 +183,10 @@ def test_confirmed_pending_action_executes_directly_without_replanning():
     result = A.run_action_loop(
         "Use sim2real_submit once for bound-run.",
         tools={
-            "sim2real_submit": lambda args: submitted.append(args)
-            or {"run_id": args["run_id"], "submit_mode": "agent-local"}
+            "sim2real_submit": lambda args: (
+                submitted.append(args)
+                or {"run_id": args["run_id"], "submit_mode": "agent-local"}
+            )
         },
         model_call=_planner_must_not_run,
         confirm_token="token",
@@ -217,7 +217,7 @@ def test_confirm_token_bound_to_action_digest():
 
     # Token is valid, but the digest was issued for a *different* action, so the
     # gated tool must not execute — it re-proposes instead.
-    planner = _scripted_planner([{ "tool": "sim2real_submit", "args": {"run_id": "x"}}])
+    planner = _scripted_planner([{"tool": "sim2real_submit", "args": {"run_id": "x"}}])
     tools = {"sim2real_submit": _submit}
     result = A.run_action_loop(
         "launch run x",
@@ -253,7 +253,7 @@ def test_confirm_token_bound_to_action_digest():
 def test_max_steps_guard_stops_loop():
     # Planner keeps calling a read-only tool forever; the first call succeeds and
     # repeats are rejected until the hard guard stops the loop.
-    planner = _scripted_planner([{ "tool": "health", "args": {}}])
+    planner = _scripted_planner([{"tool": "health", "args": {}}])
     tools = {"health": lambda args: {"ok": True}}
     result = A.run_action_loop(
         "loop forever", tools=tools, model_call=planner, max_steps=3
@@ -280,8 +280,14 @@ def test_explicitly_requested_tools_must_run_before_final_answer():
     result = A.run_action_loop(
         "Call insights_query and artifacts_run for run-a, then answer.",
         tools={
-            "insights_query": lambda args: {"count": 1, "records": [{"run_id": "run-a"}]},
-            "artifacts_run": lambda args: {"run_id": args["run_id"], "artifacts": ["report"]},
+            "insights_query": lambda args: {
+                "count": 1,
+                "records": [{"run_id": "run-a"}],
+            },
+            "artifacts_run": lambda args: {
+                "run_id": args["run_id"],
+                "artifacts": ["report"],
+            },
         },
         model_call=planner,
     )
@@ -308,7 +314,9 @@ def test_action_args_are_allowlisted_before_digest_and_execution():
     )
     result = A.run_action_loop(
         "Use artifacts_runs for run-a.",
-        tools={"artifacts_runs": lambda args: captured.append(args) or {"runs": ["run-a"]}},
+        tools={
+            "artifacts_runs": lambda args: captured.append(args) or {"runs": ["run-a"]}
+        },
         model_call=planner,
     )
 
@@ -426,9 +434,7 @@ def test_standalone_empty_query_is_an_honest_terminal_observation():
         planner_calls["n"] += 1
         if planner_calls["n"] > 1:  # pragma: no cover - terminal empty must stop
             raise AssertionError("terminal empty result spent another planner step")
-        return _completion(
-            {"tool": "insights_query", "args": {"workflow": "missing"}}
-        )
+        return _completion({"tool": "insights_query", "args": {"workflow": "missing"}})
 
     result = A.run_action_loop(
         "Which runs match workflow missing?",
@@ -490,7 +496,12 @@ def test_extract_json_object_handles_fenced_and_embedded():
 
 
 def test_allowlist_contains_readonly_insights_tools():
-    for name in ("insights_query", "insights_compare", "insights_lineage", "insights_dashboard"):
+    for name in (
+        "insights_query",
+        "insights_compare",
+        "insights_lineage",
+        "insights_dashboard",
+    ):
         assert A.is_allowed(name)
         # Insights tools observe recorded metrics — read-only, no confirmation gate.
         assert not A.requires_confirmation(name)
@@ -550,7 +561,9 @@ def test_loop_uses_insights_query_to_answer_gpu_question():
         return {
             "backend": "jsonl",
             "count": 1,
-            "records": [{"run_id": "insights-4gpu-viz", "metric_name": "gpus", "value": 4.0}],
+            "records": [
+                {"run_id": "insights-4gpu-viz", "metric_name": "gpus", "value": 4.0}
+            ],
         }
 
     planner = _scripted_planner(
@@ -558,13 +571,20 @@ def test_loop_uses_insights_query_to_answer_gpu_question():
             {
                 "thought": "filter runs by gpu count",
                 "tool": "insights_query",
-                "args": {"metric_name": "gpus", "threshold_metric": "gpus", "threshold_op": "ge", "threshold_value": 4},
+                "args": {
+                    "metric_name": "gpus",
+                    "threshold_metric": "gpus",
+                    "threshold_op": "ge",
+                    "threshold_value": 4,
+                },
             },
             {"thought": "answer", "final": "Runs using >=4 GPUs: `insights-4gpu-viz`."},
         ]
     )
     result = A.run_action_loop(
-        "which runs use 4 gpus", tools={"insights_query": _insights_query}, model_call=planner
+        "which runs use 4 gpus",
+        tools={"insights_query": _insights_query},
+        model_call=planner,
     )
     assert result["ok"] is True
     assert result["tools_used"] == ["insights_query"]
@@ -585,7 +605,10 @@ def test_loop_uses_insights_compare_to_answer_regression_question():
 
     planner = _scripted_planner(
         [
-            {"tool": "insights_compare", "args": {"base_run": "r1", "candidate_run": "r2"}},
+            {
+                "tool": "insights_compare",
+                "args": {"base_run": "r1", "candidate_run": "r2"},
+            },
             {"final": "Run `r2` regressed on **collision_rate** vs `r1`."},
         ]
     )
@@ -668,7 +691,9 @@ def test_run_chat_action_loop_shapes_readonly_result():
         ]
     )
     tools = {"insights_query": lambda args: {"count": 1, "records": [{"run_id": "r1"}]}}
-    result = A.run_chat_action_loop("which runs use gpus", tools=tools, model_call=planner)
+    result = A.run_chat_action_loop(
+        "which runs use gpus", tools=tools, model_call=planner
+    )
     assert result["mode"] == A.CHAT_ACTION_MODE
     assert result["grounded"] is False
     assert result["tools_used"] == ["insights_query"]
@@ -689,7 +714,12 @@ def test_loop_authors_workflow_with_repair_then_pass():
         calls["n"] += 1
         if calls["n"] == 1:
             # First attempt not runnable -> planner repairs and retries.
-            return {"ok": False, "runnable": False, "yaml": "", "error": "authored spec did not pass validate+plan"}
+            return {
+                "ok": False,
+                "runnable": False,
+                "yaml": "",
+                "error": "authored spec did not pass validate+plan",
+            }
         return {
             "ok": True,
             "runnable": True,
@@ -705,7 +735,9 @@ def test_loop_authors_workflow_with_repair_then_pass():
                 "tool": "workflow_author",
                 "args": {"goal": "2 step cosmos with validated tool refs", "steps": 3},
             },
-            {"final": "Here is your workflow:\n```yaml\napiVersion: npa.workflow/v0.0.1\n```"},
+            {
+                "final": "Here is your workflow:\n```yaml\napiVersion: npa.workflow/v0.0.1\n```"
+            },
         ]
     )
     result = A.run_action_loop(
@@ -733,8 +765,14 @@ def test_workflow_author_receives_the_complete_operator_goal() -> None:
     result = A.run_action_loop(
         operator_goal,
         tools={
-            "workflow_author": lambda args: captured.append(args)
-            or {"ok": True, "runnable": True, "states": ["curate", "train", "evaluate"]}
+            "workflow_author": lambda args: (
+                captured.append(args)
+                or {
+                    "ok": True,
+                    "runnable": True,
+                    "states": ["curate", "train", "evaluate"],
+                }
+            )
         },
         model_call=planner,
     )
@@ -750,7 +788,14 @@ def test_loop_insights_empty_store_reports_no_fabrication():
 
     planner = _scripted_planner(
         [
-            {"tool": "insights_query", "args": {"metric_name": "gpus", "threshold_op": "ge", "threshold_value": 4}},
+            {
+                "tool": "insights_query",
+                "args": {
+                    "metric_name": "gpus",
+                    "threshold_op": "ge",
+                    "threshold_value": 4,
+                },
+            },
             {"final": "No matching runs were found in the insights store."},
         ]
     )
@@ -818,7 +863,7 @@ def test_run_chat_action_loop_gpu_tool_needs_confirmation_without_token():
         submitted["count"] += 1
         return {"run_id": "x"}
 
-    planner = _scripted_planner([{ "tool": "sim2real_submit", "args": {"run_id": "x"}}])
+    planner = _scripted_planner([{"tool": "sim2real_submit", "args": {"run_id": "x"}}])
     result = A.run_chat_action_loop(
         "launch a sim2real run", tools={"sim2real_submit": _submit}, model_call=planner
     )
@@ -864,7 +909,7 @@ def test_extract_json_object_prefers_the_decision_object():
 
 def test_strip_reasoning_trace_handles_truncated_think():
     assert A.strip_reasoning_trace("<think>still thinking about {x}") == ""
-    assert A.strip_reasoning_trace("<think>t</think> {\"a\": 1}") == '{"a": 1}'
+    assert A.strip_reasoning_trace('<think>t</think> {"a": 1}') == '{"a": 1}'
 
 
 def test_balanced_json_spans_respects_strings_and_escapes():
@@ -878,7 +923,10 @@ def test_planner_retries_once_on_unparseable_reply():
     def _call(messages, *, tier="cheap"):
         calls["n"] += 1
         if calls["n"] == 1:
-            return {"choices": [{"message": {"content": "sorry, prose only"}}], "usage": {}}
+            return {
+                "choices": [{"message": {"content": "sorry, prose only"}}],
+                "usage": {},
+            }
         return _completion({"final": "recovered after the nudge"})
 
     result = A.run_action_loop("x", tools={}, model_call=_call)
@@ -894,10 +942,14 @@ def test_unparseable_plan_reports_empty_store_as_no_runs_found():
     def _call(messages, *, tier="cheap"):
         calls["n"] += 1
         if calls["n"] == 1:
-            return _completion({"tool": "insights_query", "args": {"metric_name": "gpus"}})
+            return _completion(
+                {"tool": "insights_query", "args": {"metric_name": "gpus"}}
+            )
         return {"choices": [{"message": {"content": "prose, not json"}}], "usage": {}}
 
-    tools = {"insights_query": lambda args: {"backend": "jsonl", "count": 0, "records": []}}
+    tools = {
+        "insights_query": lambda args: {"backend": "jsonl", "count": 0, "records": []}
+    }
     result = A.run_action_loop("which runs used 4 gpus", tools=tools, model_call=_call)
     assert result["stopped_reason"] == A.STOP_DONE
     assert "no runs found" in result["reply"].lower()
@@ -909,7 +961,13 @@ def test_unparseable_plan_reports_empty_store_as_no_runs_found():
 def test_summarize_observations_reports_only_what_tools_returned():
     summary = A.summarize_observations(
         [
-            {"tool": "insights_query", "result": {"count": 2, "records": [{"run_id": "run-a"}, {"run_id": "run-b"}]}},
+            {
+                "tool": "insights_query",
+                "result": {
+                    "count": 2,
+                    "records": [{"run_id": "run-a"}, {"run_id": "run-b"}],
+                },
+            },
             {"tool": "insights_dashboard", "result": {"total_records": 0, "runs": []}},
             {"tool": "health", "result": {"error": "boom"}},
         ]
@@ -1010,7 +1068,9 @@ def test_single_oversized_record_still_yields_a_run_id():
     observed = A._observe(observation, limit=600)
     assert observed.get("records_summarized") is True
     assert observed["records"][0]["run_id"] == "run-huge"
-    assert "labels" not in observed["records"][0], "bulky fields drop before grounding does"
+    assert "labels" not in observed["records"][0], (
+        "bulky fields drop before grounding does"
+    )
     assert len(json.dumps(observed)) <= 600
 
 
@@ -1024,8 +1084,8 @@ def test_strip_reasoning_trace_matches_token_factory_split_reasoning():
     from npa.clients.token_factory import split_reasoning
 
     cases = [
-        "<think>reasoning here</think>\n{\"tool\": \"health\"}",
-        "<think>braces {\"a\": 1} inside</think> {\"final\": \"done\"}",
+        '<think>reasoning here</think>\n{"tool": "health"}',
+        '<think>braces {"a": 1} inside</think> {"final": "done"}',
         "plain answer with no trace",
     ]
     for content in cases:

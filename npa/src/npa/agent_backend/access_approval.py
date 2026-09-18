@@ -26,7 +26,10 @@ def classify_followup(text: str, *, has_pending_plan: bool) -> str:
         return ""
     if re.fullmatch(r"(?:yes|y|open(?: them| the pages)?|do it|go ahead)[.! ]*", value):
         return "open"
-    if re.search(r"\b(?:done|completed|accepted|approved|recheck|check again|continue|resume)\b", value):
+    if re.search(
+        r"\b(?:done|completed|accepted|approved|recheck|check again|continue|resume)\b",
+        value,
+    ):
         return "recheck"
     if re.fullmatch(r"(?:no|n|later|not now|decline)[.! ]*", value):
         return "later"

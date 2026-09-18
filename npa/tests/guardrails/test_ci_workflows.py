@@ -17,9 +17,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 MAKEFILE = REPO_ROOT / "Makefile"
-AUTOMATIC_PR_WORKFLOWS = (
-    "security-regression.yml",
-)
+AUTOMATIC_PR_WORKFLOWS = ("security-regression.yml",)
 
 
 def _load_workflow(name: str) -> dict:
@@ -171,9 +169,7 @@ def test_coverage_shards_are_parallel_and_merged_before_enforcement() -> None:
 
     coverage = workflow["jobs"]["coverage"]
     assert coverage["needs"] == "test"
-    assert coverage["if"] == (
-        "${{ always() && github.event_name != 'pull_request' }}"
-    )
+    assert coverage["if"] == ("${{ always() && github.event_name != 'pull_request' }}")
     report = _step("test.yml", "coverage", "merged coverage floor")["run"]
     assert "coverage combine" in report
     assert "--fail-under=60" in report

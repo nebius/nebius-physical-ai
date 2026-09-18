@@ -41,7 +41,9 @@ def smoke_env(tmp_path: Path) -> dict[str, str]:
             sort_keys=False,
         )
     )
-    credentials_path.write_text(yaml.safe_dump({"HF_TOKEN": "hf-smoke"}, sort_keys=False))
+    credentials_path.write_text(
+        yaml.safe_dump({"HF_TOKEN": "hf-smoke"}, sort_keys=False)
+    )
     config_path.chmod(0o600)
     credentials_path.chmod(0o600)
 
@@ -357,7 +359,9 @@ def test_smoke_lerobot_train_serverless_cancel(smoke_env: dict[str, str]) -> Non
     assert json.loads(cancel.stdout)["status"]["state"] == "CANCELLED"
 
 
-def test_smoke_lerobot_train_serverless_output_path_is_s3_uri(smoke_env: dict[str, str]) -> None:
+def test_smoke_lerobot_train_serverless_output_path_is_s3_uri(
+    smoke_env: dict[str, str],
+) -> None:
     result = _run_npa(smoke_env, _train_args("--submit-only", name="smoke-output"))
     assert result.returncode == 0, result.stderr + result.stdout
 
@@ -368,19 +372,26 @@ def test_smoke_lerobot_train_serverless_output_path_is_s3_uri(smoke_env: dict[st
     assert output_env[0].split("=", 1)[1].startswith("s3://")
 
 
-def test_smoke_lerobot_train_serverless_b300_diffusion_warning(smoke_env: dict[str, str]) -> None:
+def test_smoke_lerobot_train_serverless_b300_diffusion_warning(
+    smoke_env: dict[str, str],
+) -> None:
     args = _train_args("--submit-only", "--gpu-type", "b300", name="smoke-b300")
     args[args.index("--policy-type") + 1] = "diffusion"
 
     result = _run_npa(smoke_env, args)
 
     assert result.returncode == 0, result.stderr + result.stdout
-    assert "B300 is ~2.5x slower than H200 on Diffusion Policy" in result.stderr + result.stdout
+    assert (
+        "B300 is ~2.5x slower than H200 on Diffusion Policy"
+        in result.stderr + result.stdout
+    )
     job = next(iter(_state(smoke_env)["jobs"].values()))
     assert job["spec"]["platform"] == "gpu-b300-sxm"
 
 
-def test_smoke_lerobot_train_serverless_idempotent_submit(smoke_env: dict[str, str]) -> None:
+def test_smoke_lerobot_train_serverless_idempotent_submit(
+    smoke_env: dict[str, str],
+) -> None:
     first = _run_npa(smoke_env, _train_args("--submit-only", name="smoke-idempotent"))
     second = _run_npa(smoke_env, _train_args("--submit-only", name="smoke-idempotent"))
 
@@ -390,7 +401,9 @@ def test_smoke_lerobot_train_serverless_idempotent_submit(smoke_env: dict[str, s
     assert len(_state(smoke_env)["jobs"]) == 1
 
 
-def test_smoke_lerobot_train_serverless_s3_input_command(smoke_env: dict[str, str]) -> None:
+def test_smoke_lerobot_train_serverless_s3_input_command(
+    smoke_env: dict[str, str],
+) -> None:
     result = _run_npa(
         smoke_env,
         _train_args(

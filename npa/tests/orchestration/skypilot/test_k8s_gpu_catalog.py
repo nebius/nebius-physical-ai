@@ -874,12 +874,20 @@ def test_live_inventory_uses_exact_context_and_subtracts_active_pods() -> None:
                     "initContainers": [
                         {
                             "resources": {
-                                "requests": {"cpu": "12", "memory": "32Gi", "ephemeral-storage": "200G"},
+                                "requests": {
+                                    "cpu": "12",
+                                    "memory": "32Gi",
+                                    "ephemeral-storage": "200G",
+                                },
                                 "limits": {"nvidia.com/gpu": "2"},
                             }
                         }
                     ],
-                    "overhead": {"cpu": "1", "memory": "1Gi", "ephemeral-storage": "1G"},
+                    "overhead": {
+                        "cpu": "1",
+                        "memory": "1Gi",
+                        "ephemeral-storage": "1G",
+                    },
                 },
                 "status": {"phase": "Running"},
             },
@@ -977,6 +985,7 @@ def test_live_inventory_pins_explicit_kubeconfig_for_nodes_and_pods(
 
 def test_gang_capacity_waits_for_unbound_pending_gpu_demand() -> None:
     from npa.orchestration.skypilot.k8s_gpu_catalog import PendingGpuPlacementError
+
     inventory = KubernetesGpuInventory(
         context="exact-context",
         ready_nodes=2,

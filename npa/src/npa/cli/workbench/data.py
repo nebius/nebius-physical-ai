@@ -85,16 +85,24 @@ def sync_cmd(
         "--dry-run",
         help="Plan the sync without writing destination objects.",
     ),
-    limit: int = typer.Option(0, "--limit", help="Maximum objects to process; 0 means all."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    limit: int = typer.Option(
+        0, "--limit", help="Maximum objects to process; 0 means all."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Copy S3 objects between pipeline prefixes."""
     effective_dry_run = dry_run or _env_dry_run()
     src_project = source_project or _project_alias or None
     dst_project = target_project or _project_alias or None
     try:
-        source_s3 = s3_client_for_project(src_project, allow_host_creds=allow_host_creds)
-        target_s3 = s3_client_for_project(dst_project, allow_host_creds=allow_host_creds)
+        source_s3 = s3_client_for_project(
+            src_project, allow_host_creds=allow_host_creds
+        )
+        target_s3 = s3_client_for_project(
+            dst_project, allow_host_creds=allow_host_creds
+        )
         result = sync_s3_prefix(
             input_path,
             output_path,
@@ -127,11 +135,15 @@ def status_cmd(
         "--allow-host-creds",
         help="Allow host S3 credentials when scoped project credentials are absent.",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Show object count and bytes for an S3 prefix."""
     try:
-        s3 = s3_client_for_project(project or _project_alias or None, allow_host_creds=allow_host_creds)
+        s3 = s3_client_for_project(
+            project or _project_alias or None, allow_host_creds=allow_host_creds
+        )
         payload = status_s3_prefix(input_path, s3_client=s3)
     except (DataBridgeError, ScopedCredentialError) as exc:
         _fail(str(exc))
@@ -157,12 +169,18 @@ def list_cmd(
         "--allow-host-creds",
         help="Allow host S3 credentials when scoped project credentials are absent.",
     ),
-    limit: int = typer.Option(100, "--limit", help="Maximum objects to print; 0 means all."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    limit: int = typer.Option(
+        100, "--limit", help="Maximum objects to print; 0 means all."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """List S3 objects under a Workbench data prefix."""
     try:
-        s3 = s3_client_for_project(project or _project_alias or None, allow_host_creds=allow_host_creds)
+        s3 = s3_client_for_project(
+            project or _project_alias or None, allow_host_creds=allow_host_creds
+        )
         objects = list_s3_objects(input_path, s3_client=s3, limit=limit)
     except (DataBridgeError, ScopedCredentialError) as exc:
         _fail(str(exc))
@@ -171,9 +189,11 @@ def list_cmd(
 
 
 def _env_dry_run() -> bool:
-    return os.environ.get("NPA_DRY_RUN", "").lower() in {"1", "true", "yes"} or os.environ.get(
-        "DRY_RUN", ""
-    ).lower() in {"1", "true", "yes"}
+    return os.environ.get("NPA_DRY_RUN", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    } or os.environ.get("DRY_RUN", "").lower() in {"1", "true", "yes"}
 
 
 def _emit(payload: dict[str, Any], output: OutputFormat) -> None:

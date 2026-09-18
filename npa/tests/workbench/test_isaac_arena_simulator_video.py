@@ -655,11 +655,14 @@ def test_capture_refuses_wrong_startup_renderer_registration(
     assert env.renders == 0
 
 
-@pytest.mark.parametrize("setting", [
-    "/rtx/directLighting/sampledLighting/samplesPerPixel",
-    "/rtx/indirectDiffuse/fetchSampleCount",
-    "/rtx/reflections/sampledLighting/samplesPerPixel",
-])
+@pytest.mark.parametrize(
+    "setting",
+    [
+        "/rtx/directLighting/sampledLighting/samplesPerPixel",
+        "/rtx/indirectDiffuse/fetchSampleCount",
+        "/rtx/reflections/sampledLighting/samplesPerPixel",
+    ],
+)
 def test_capture_refuses_lighting_sample_reduction_after_render(
     simulator_modules, tmp_path: Path, setting: str
 ) -> None:

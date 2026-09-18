@@ -267,8 +267,14 @@ class StorageClient:
             response = self._s3.put_object(**kwargs)
         except ClientError as exc:
             code = str(exc.response.get("Error", {}).get("Code", ""))
-            status = int(exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0) or 0)
-            if code in {"412", "PreconditionFailed", "ConditionalRequestConflict"} or status in {
+            status = int(
+                exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0) or 0
+            )
+            if code in {
+                "412",
+                "PreconditionFailed",
+                "ConditionalRequestConflict",
+            } or status in {
                 409,
                 412,
             }:

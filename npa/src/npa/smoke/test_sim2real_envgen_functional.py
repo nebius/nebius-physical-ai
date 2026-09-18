@@ -9,7 +9,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from npa.workflows.sim2real_envgen import EnvGenConfig, build_scene_spec, generate_raw_envs
+from npa.workflows.sim2real_envgen import (
+    EnvGenConfig,
+    build_scene_spec,
+    generate_raw_envs,
+)
 
 
 @dataclass
@@ -31,7 +35,9 @@ def check_raw_env_generation() -> CheckResult:
     )
     envs = generate_raw_envs(config)
     if len(envs) != 16:
-        return CheckResult("raw env generation", False, f"expected 16 envs, got {len(envs)}")
+        return CheckResult(
+            "raw env generation", False, f"expected 16 envs, got {len(envs)}"
+        )
     with tempfile.TemporaryDirectory(prefix="npa-envgen-smoke-") as tmp:
         path = Path(tmp) / "envs.jsonl"
         with path.open("w", encoding="utf-8") as handle:
@@ -68,7 +74,10 @@ def check_genesis_cuda_step() -> CheckResult:
 
 
 def main() -> int:
-    checks: list[Callable[[], CheckResult]] = [check_raw_env_generation, check_genesis_cuda_step]
+    checks: list[Callable[[], CheckResult]] = [
+        check_raw_env_generation,
+        check_genesis_cuda_step,
+    ]
     failed = 0
     for check in checks:
         result = check()

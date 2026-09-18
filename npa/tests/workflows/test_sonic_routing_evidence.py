@@ -16,7 +16,9 @@ from npa.workflows.sonic_routing_evidence import (
 
 SPEC = (
     Path(__file__).parents[3]
-    / "workflows" / "testing" / "sonic-b300-routing-evidence.yaml"
+    / "workflows"
+    / "testing"
+    / "sonic-b300-routing-evidence.yaml"
 )
 
 
@@ -32,7 +34,9 @@ def _generate(tmp_path: Path, **overrides):
     return generate_routing_evidence(**kwargs)
 
 
-def test_generate_routing_evidence_is_fail_closed_and_time_structured(tmp_path: Path) -> None:
+def test_generate_routing_evidence_is_fail_closed_and_time_structured(
+    tmp_path: Path,
+) -> None:
     result = _generate(tmp_path)
     manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
     report = json.loads((tmp_path / "test-report.json").read_text(encoding="utf-8"))
@@ -97,7 +101,9 @@ def test_live_assertions_are_recorded_separately(tmp_path: Path) -> None:
     )
     manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["assertions"]["routing_resolution"]["status"] == "passed"
-    assert manifest["assertions"]["provider_accelerator_recognition"]["status"] == "passed"
+    assert (
+        manifest["assertions"]["provider_accelerator_recognition"]["status"] == "passed"
+    )
     assert manifest["assertions"]["scheduling_placement"]["status"] == "passed"
     assert manifest["assertions"]["workload_completion"]["status"] == "failed"
     assert manifest["assertions"]["output_verification"]["status"] == "passed"

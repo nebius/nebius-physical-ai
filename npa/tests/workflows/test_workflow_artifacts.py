@@ -60,7 +60,9 @@ def test_complete_canonical_run_wins_over_same_id_one_file_overlay() -> None:
         "canonical",
         [
             canonical_rrd,
-            artifact("canonical", "cosmos_augmented/a/augmented_video.mp4", 200, "video"),
+            artifact(
+                "canonical", "cosmos_augmented/a/augmented_video.mp4", 200, "video"
+            ),
             artifact("canonical", "grade/quality_disposition.json", 50, "json"),
         ],
     )

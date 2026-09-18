@@ -122,7 +122,9 @@ def objective(config: dict[str, Any]) -> None:
         }
         loss = (config["step_size"] - config["target"]) ** 2
         loss += (config["iterations"] - iteration) * 0.01
-        _report_iteration({"loss": loss, "iteration": iteration, "resumed": resumed}, state)
+        _report_iteration(
+            {"loss": loss, "iteration": iteration, "resumed": resumed}, state
+        )
         if inject:
             raise RuntimeError("intentional one-time trial failure after checkpoint")
 
@@ -164,7 +166,9 @@ def _trial_record(result: Any) -> dict[str, Any]:
     }
     if record["step_size"] not in SEARCH_VALUES:
         raise RuntimeError("trial reported an undeclared search value")
-    if not isinstance(record["loss"], (int, float)) or not math.isfinite(record["loss"]):
+    if not isinstance(record["loss"], (int, float)) or not math.isfinite(
+        record["loss"]
+    ):
         raise RuntimeError("trial reported a non-finite loss")
     if record["iterations"] != 3 or type(record["resumed"]) is not bool:
         raise RuntimeError("trial completion metrics are invalid")
@@ -224,7 +228,9 @@ def normalize_storage_path(storage_path: str) -> str:
     return str(Path(storage_path).expanduser().resolve())
 
 
-def _build_tuner(settings: dict[str, Any], storage_path: str, run_name: str, restore: bool):
+def _build_tuner(
+    settings: dict[str, Any], storage_path: str, run_name: str, restore: bool
+):
     """Build or restore the native Tuner for one immutable recipe."""
     from ray import tune
 
@@ -233,8 +239,12 @@ def _build_tuner(settings: dict[str, Any], storage_path: str, run_name: str, res
     experiment_path = _experiment_path(storage_path, run_name)
     if restore:
         if not tune.Tuner.can_restore(experiment_path):
-            raise ValueError("no restorable Tune experiment exists at the requested path")
-        return tune.Tuner.restore(experiment_path, trainable=trainable, resume_errored=True)
+            raise ValueError(
+                "no restorable Tune experiment exists at the requested path"
+            )
+        return tune.Tuner.restore(
+            experiment_path, trainable=trainable, resume_errored=True
+        )
     parameter_space = {**settings, "step_size": tune.grid_search(list(SEARCH_VALUES))}
     return tune.Tuner(
         trainable,
@@ -306,7 +316,9 @@ def _initialize_ray(local: bool):
     return ray
 
 
-def _fit_and_export(arguments: argparse.Namespace, settings: dict[str, Any]) -> dict[str, Any]:
+def _fit_and_export(
+    arguments: argparse.Namespace, settings: dict[str, Any]
+) -> dict[str, Any]:
     """Fit or restore the Tune experiment and export its validated result."""
     tuner = _build_tuner(
         settings, arguments.storage_path, arguments.run_name, arguments.restore

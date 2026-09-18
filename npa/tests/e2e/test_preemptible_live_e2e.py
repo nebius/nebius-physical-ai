@@ -59,7 +59,9 @@ def _nebius_json(args: list[str]) -> dict:
     return json.loads(raw) if raw.strip() else {}
 
 
-def test_live_preemptible_lerobot_deploy_and_destroy(live_project_alias, live_workbench_name) -> None:
+def test_live_preemptible_lerobot_deploy_and_destroy(
+    live_project_alias, live_workbench_name
+) -> None:
     env = config_module.resolve_environment(live_project_alias)
     assert env is not None, f"Unknown project alias {live_project_alias!r}"
 

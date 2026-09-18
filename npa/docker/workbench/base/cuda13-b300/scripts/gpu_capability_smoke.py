@@ -145,9 +145,13 @@ def main(argv: list[str] | None = None) -> int:
         out = flash_attn_func(q, k, v)
         torch.cuda.synchronize()
         error = (out.float() - reference).abs().max().item()
-        print(f"flash_attn_func ok {tuple(out.shape)}, max abs error vs SDPA {error:.5f}")
+        print(
+            f"flash_attn_func ok {tuple(out.shape)}, max abs error vs SDPA {error:.5f}"
+        )
         if not (error < 0.05):
-            failures.append(f"flash-attn output diverges from SDPA (max abs error {error})")
+            failures.append(
+                f"flash-attn output diverges from SDPA (max abs error {error})"
+            )
     except Exception as exc:  # noqa: BLE001 - the failure mode is the result
         known_tma_gap = args.allow_no_tma and capability not in TMA_CAPABLE
         detail = f"{type(exc).__name__}: {exc}"

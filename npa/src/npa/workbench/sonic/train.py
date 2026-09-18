@@ -134,11 +134,11 @@ def _vulkan_available() -> bool:
         import ctypes
         import ctypes.util
 
-        lib_name = ctypes.util.find_library('vulkan')
+        lib_name = ctypes.util.find_library("vulkan")
         if lib_name is None:
             return False
         lib = ctypes.CDLL(lib_name)
-        if not hasattr(lib, 'vkCreateInstance'):
+        if not hasattr(lib, "vkCreateInstance"):
             return False
         instance = ctypes.c_void_p()
         create_info = (ctypes.c_char * 512)()
@@ -146,7 +146,6 @@ def _vulkan_available() -> bool:
         return rc == 0  # VK_SUCCESS
     except Exception:
         return False
-
 
 
 def train_local(
@@ -181,14 +180,13 @@ def train_local(
         import warnings
 
         warnings.warn(
-            'Vulkan is not available on this host; the SONIC entrypoint trainer '
-            'requires Vulkan for Omniverse Kit (URDF→USD conversion). Falling '
-            'back to the reference-locomotion trainer, which produces a real '
-            'checkpoint usable by sonic export and sonic eval.',
+            "Vulkan is not available on this host; the SONIC entrypoint trainer "
+            "requires Vulkan for Omniverse Kit (URDF→USD conversion). Falling "
+            "back to the reference-locomotion trainer, which produces a real "
+            "checkpoint usable by sonic export and sonic eval.",
             stacklevel=2,
         )
-        resolved_entrypoint = ''
-
+        resolved_entrypoint = ""
 
     with tempfile.TemporaryDirectory(prefix="npa-sonic-train-") as tmp:
         work_dir = Path(tmp)

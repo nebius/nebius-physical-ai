@@ -18,7 +18,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
-from npa.orchestration.npa_workflow.interpreter import ExecutionPlan, PlanStep, build_plan
+from npa.orchestration.npa_workflow.interpreter import (
+    ExecutionPlan,
+    PlanStep,
+    build_plan,
+)
 from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec, resolve_config_int
 
 WAVE_SERIAL = "serial"
@@ -39,7 +43,11 @@ def split_into_batches(
     items = list(steps)
     if not items:
         return []
-    limit = int(max_concurrency) if max_concurrency and int(max_concurrency) > 0 else len(items)
+    limit = (
+        int(max_concurrency)
+        if max_concurrency and int(max_concurrency) > 0
+        else len(items)
+    )
     if cap and int(cap) > 0:
         limit = min(limit, int(cap))
     limit = max(1, limit)
@@ -58,7 +66,9 @@ class Wave:
 
     @property
     def name(self) -> str:
-        return self.group or (self.steps[0].state if self.steps else f"wave-{self.index}")
+        return self.group or (
+            self.steps[0].state if self.steps else f"wave-{self.index}"
+        )
 
     def batches(self) -> list[list[PlanStep]]:
         """Split the wave into concurrency-bounded batches (submitted in order)."""
@@ -99,7 +109,9 @@ class WavePlan:
             "run_id": self.run_id,
             "assume_decision": self.assume_decision,
             "wave_count": len(self.waves),
-            "parallel_waves": sum(1 for wave in self.waves if wave.kind == WAVE_PARALLEL),
+            "parallel_waves": sum(
+                1 for wave in self.waves if wave.kind == WAVE_PARALLEL
+            ),
             "waves": [wave.to_dict() for wave in self.waves],
         }
 
@@ -137,13 +149,20 @@ def waves_from_steps(spec: NpaWorkflowSpec, steps: Sequence[PlanStep]) -> list[W
                     kind=WAVE_PARALLEL,
                     steps=tuple(buffer),
                     group=buffer_group,
-                    max_concurrency=group_max_concurrency(spec, buffer_group, len(buffer)),
+                    max_concurrency=group_max_concurrency(
+                        spec, buffer_group, len(buffer)
+                    ),
                 )
             )
         else:
             for step in buffer:
                 waves.append(
-                    Wave(index=len(waves), kind=WAVE_SERIAL, steps=(step,), max_concurrency=1)
+                    Wave(
+                        index=len(waves),
+                        kind=WAVE_SERIAL,
+                        steps=(step,),
+                        max_concurrency=1,
+                    )
                 )
         buffer = []
         buffer_group = ""
@@ -163,7 +182,9 @@ def waves_from_steps(spec: NpaWorkflowSpec, steps: Sequence[PlanStep]) -> list[W
     return waves
 
 
-def wave_plan_from_plan(spec: NpaWorkflowSpec, plan: ExecutionPlan, *, run_id: str) -> WavePlan:
+def wave_plan_from_plan(
+    spec: NpaWorkflowSpec, plan: ExecutionPlan, *, run_id: str
+) -> WavePlan:
     return WavePlan(
         workflow=plan.workflow,
         run_id=run_id,

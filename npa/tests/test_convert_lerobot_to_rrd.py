@@ -1,4 +1,5 @@
 """Exercise SDK output routing with a real local dataset and Rerun encoder."""
+
 from __future__ import annotations
 
 import importlib
@@ -15,17 +16,19 @@ from npa.adapter.isaac_lab_lerobot import G1_STATE_DIM
 
 
 def _dataset(root: Path) -> tuple[Path, Path]:
-    dataset = root / 'dataset'
-    data = dataset / 'data' / 'chunk-000' / 'file-000.parquet'
+    dataset = root / "dataset"
+    data = dataset / "data" / "chunk-000" / "file-000.parquet"
     data.parent.mkdir(parents=True)
     states = np.zeros((3, G1_STATE_DIM), dtype=np.float32)
     states[:, 6] = [0.0, 0.1, 0.2]
-    pq.write_table(pa.table({'observation.state': states.tolist(), 'index': [0, 1, 2]}), data)
-    meta = dataset / 'meta' / 'info.json'
+    pq.write_table(
+        pa.table({"observation.state": states.tolist(), "index": [0, 1, 2]}), data
+    )
+    meta = dataset / "meta" / "info.json"
     meta.parent.mkdir()
-    meta.write_text(json.dumps({'fps': 10, 'robot_type': 'unitree_g1'}))
-    predictions = root / 'predictions.json'
-    predictions.write_text(json.dumps({'predicted_actions': states.tolist()}))
+    meta.write_text(json.dumps({"fps": 10, "robot_type": "unitree_g1"}))
+    predictions = root / "predictions.json"
+    predictions.write_text(json.dumps({"predicted_actions": states.tolist()}))
     return dataset, predictions
 
 
@@ -34,16 +37,25 @@ def _assert_recording(path: Path, *, overlay: bool) -> None:
 
     assert path.stat().st_size > 0
     chunks = list(load_recording(path).chunks())
-    roots = ['/world/skeleton'] + (['/world/predictions'] if overlay else [])
+    roots = ["/world/skeleton"] + (["/world/predictions"] if overlay else [])
     for root in roots:
-        assert sum(int(c.num_rows) for c in chunks if str(c.entity_path) == f'{root}/joints' and not c.is_static) == 3
+        assert (
+            sum(
+                int(c.num_rows)
+                for c in chunks
+                if str(c.entity_path) == f"{root}/joints" and not c.is_static
+            )
+            == 3
+        )
 
 
-@pytest.mark.parametrize('overlay', [False, True], ids=['dataset', 'predictions'])
-def test_sdk_rrd_s3_output_uploads_exact_uri(tmp_path: Path, monkeypatch, overlay: bool) -> None:
+@pytest.mark.parametrize("overlay", [False, True], ids=["dataset", "predictions"])
+def test_sdk_rrd_s3_output_uploads_exact_uri(
+    tmp_path: Path, monkeypatch, overlay: bool
+) -> None:
     dataset, predictions = _dataset(tmp_path)
     monkeypatch.chdir(tmp_path)
-    destination = 's3://synthetic-bucket/reports/conversion.rrd'
+    destination = "s3://synthetic-bucket/reports/conversion.rrd"
     uploaded = []
 
     class Storage:
@@ -52,9 +64,9 @@ def test_sdk_rrd_s3_output_uploads_exact_uri(tmp_path: Path, monkeypatch, overla
             uploaded.append(output_uri)
             return output_uri
 
-    for name in ('lerobot_to_rerun', 'groot_predictions_to_rerun'):
-        adapter = importlib.import_module(f'npa.viz.adapters.{name}')
-        monkeypatch.setattr(adapter, '_storage_client', lambda *_args: Storage())
+    for name in ("lerobot_to_rerun", "groot_predictions_to_rerun"):
+        adapter = importlib.import_module(f"npa.viz.adapters.{name}")
+        monkeypatch.setattr(adapter, "_storage_client", lambda *_args: Storage())
 
     result = convert.lerobot_to_rrd(
         input_path=dataset,
@@ -62,16 +74,20 @@ def test_sdk_rrd_s3_output_uploads_exact_uri(tmp_path: Path, monkeypatch, overla
         predictions_path=predictions if overlay else None,
     )
 
-    assert uploaded == [destination], f'SDK returned {result!r}; local s3: directory exists={(tmp_path / "s3:").exists()}'
+    assert uploaded == [destination], (
+        f"SDK returned {result!r}; local s3: directory exists={(tmp_path / 's3:').exists()}"
+    )
     assert result == destination
-    assert not (tmp_path / 's3:').exists()
+    assert not (tmp_path / "s3:").exists()
 
 
-@pytest.mark.parametrize('overlay', [False, True], ids=['dataset', 'predictions'])
-@pytest.mark.parametrize('path_type', [str, Path], ids=['string', 'path'])
-def test_sdk_rrd_local_output_remains_path(tmp_path: Path, overlay: bool, path_type) -> None:
+@pytest.mark.parametrize("overlay", [False, True], ids=["dataset", "predictions"])
+@pytest.mark.parametrize("path_type", [str, Path], ids=["string", "path"])
+def test_sdk_rrd_local_output_remains_path(
+    tmp_path: Path, overlay: bool, path_type
+) -> None:
     dataset, predictions = _dataset(tmp_path)
-    destination = tmp_path / 'reports' / 'conversion.rrd'
+    destination = tmp_path / "reports" / "conversion.rrd"
     result = convert.lerobot_to_rrd(
         input_path=dataset,
         output_path=path_type(destination),
@@ -82,12 +98,14 @@ def test_sdk_rrd_local_output_remains_path(tmp_path: Path, overlay: bool, path_t
     _assert_recording(destination, overlay=overlay)
 
 
-@pytest.mark.parametrize('overlay', [False, True], ids=['dataset', 'predictions'])
-def test_sdk_rrd_s3_upload_failure_propagates(tmp_path: Path, monkeypatch, overlay: bool) -> None:
+@pytest.mark.parametrize("overlay", [False, True], ids=["dataset", "predictions"])
+def test_sdk_rrd_s3_upload_failure_propagates(
+    tmp_path: Path, monkeypatch, overlay: bool
+) -> None:
     dataset, predictions = _dataset(tmp_path)
     monkeypatch.chdir(tmp_path)
-    destination = 's3://synthetic-bucket/reports/conversion.rrd'
-    failure = OSError('synthetic upload failure')
+    destination = "s3://synthetic-bucket/reports/conversion.rrd"
+    failure = OSError("synthetic upload failure")
     uploaded = []
 
     class Storage:
@@ -96,11 +114,11 @@ def test_sdk_rrd_s3_upload_failure_propagates(tmp_path: Path, monkeypatch, overl
             uploaded.append(output_uri)
             raise failure
 
-    name = 'groot_predictions_to_rerun' if overlay else 'lerobot_to_rerun'
-    adapter = importlib.import_module(f'npa.viz.adapters.{name}')
-    monkeypatch.setattr(adapter, '_storage_client', lambda *_args: Storage())
+    name = "groot_predictions_to_rerun" if overlay else "lerobot_to_rerun"
+    adapter = importlib.import_module(f"npa.viz.adapters.{name}")
+    monkeypatch.setattr(adapter, "_storage_client", lambda *_args: Storage())
 
-    with pytest.raises(OSError, match='synthetic upload failure') as caught:
+    with pytest.raises(OSError, match="synthetic upload failure") as caught:
         convert.lerobot_to_rrd(
             input_path=dataset,
             output_path=destination,
@@ -109,4 +127,4 @@ def test_sdk_rrd_s3_upload_failure_propagates(tmp_path: Path, monkeypatch, overl
 
     assert caught.value is failure
     assert uploaded == [destination]
-    assert not (tmp_path / 's3:').exists()
+    assert not (tmp_path / "s3:").exists()

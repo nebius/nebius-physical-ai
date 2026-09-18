@@ -14,10 +14,13 @@ def _voice_manifest(directory):
 
 
 def _voice_record(scene, directory, voice):
-    return {"scene": scene["id"], "voice": voice,
-            "text_sha256": hashlib.sha256(scene["narration"].encode()).hexdigest(),
-            "audio_sha256": _hash(directory / f"{scene['id']}.mp3"),
-            "captions_sha256": _hash(directory / f"{scene['id']}.srt")}
+    return {
+        "scene": scene["id"],
+        "voice": voice,
+        "text_sha256": hashlib.sha256(scene["narration"].encode()).hexdigest(),
+        "audio_sha256": _hash(directory / f"{scene['id']}.mp3"),
+        "captions_sha256": _hash(directory / f"{scene['id']}.srt"),
+    }
 
 
 def _voice_matches(scene, directory, record, voice=None):
@@ -35,8 +38,13 @@ def _voice_matches(scene, directory, record, voice=None):
 
 def _verify_narration(scenes, directory):
     records = _voice_manifest(directory)
-    changed = [scene["id"] for scene in scenes
-               if not _voice_matches(scene, directory, records.get(scene["id"]))]
+    changed = [
+        scene["id"]
+        for scene in scenes
+        if not _voice_matches(scene, directory, records.get(scene["id"]))
+    ]
     if changed:
-        raise ValueError(f"Narration is missing or stale for {', '.join(changed)}. "
-                         "Run narrate.py for changed speech, or use --recorded to register supplied recordings.")
+        raise ValueError(
+            f"Narration is missing or stale for {', '.join(changed)}. "
+            "Run narrate.py for changed speech, or use --recorded to register supplied recordings."
+        )

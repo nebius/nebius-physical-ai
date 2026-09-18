@@ -36,7 +36,9 @@ def check_import_fiftyone() -> CheckResult:
                 False,
                 f"expected version: {EXPECTED_FIFTYONE_VERSION}; found: {version}",
             )
-        return CheckResult("import fiftyone", True, f"module: {module.__name__}; version: {version}")
+        return CheckResult(
+            "import fiftyone", True, f"module: {module.__name__}; version: {version}"
+        )
     except Exception as exc:
         return CheckResult("import fiftyone", False, _format_exception(exc))
 
@@ -44,7 +46,9 @@ def check_import_fiftyone() -> CheckResult:
 def check_cli_help() -> CheckResult:
     cli = shutil.which("fiftyone")
     if cli is None:
-        return CheckResult("check fiftyone CLI help", False, "fiftyone executable not found")
+        return CheckResult(
+            "check fiftyone CLI help", False, "fiftyone executable not found"
+        )
     try:
         result = subprocess.run(
             [cli, "--help"],
@@ -58,7 +62,11 @@ def check_cli_help() -> CheckResult:
         return CheckResult("check fiftyone CLI help", False, _format_exception(exc))
     output = (result.stdout + "\n" + result.stderr).strip()
     if result.returncode != 0 or "usage" not in output.lower():
-        return CheckResult("check fiftyone CLI help", False, f"exit={result.returncode}; output={output[-500:]}")
+        return CheckResult(
+            "check fiftyone CLI help",
+            False,
+            f"exit={result.returncode}; output={output[-500:]}",
+        )
     return CheckResult("check fiftyone CLI help", True, f"executable: {cli}")
 
 
@@ -73,7 +81,9 @@ def check_app_config() -> CheckResult:
             f"database_dir={fo.config.database_dir}",
         )
     except Exception as exc:
-        return CheckResult("check app server configuration", False, _format_exception(exc))
+        return CheckResult(
+            "check app server configuration", False, _format_exception(exc)
+        )
 
 
 def _print_result(result: CheckResult) -> None:

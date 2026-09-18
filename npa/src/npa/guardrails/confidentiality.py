@@ -234,8 +234,12 @@ def scan_git_diff(
     hits = _scan_git_diff_text(result.stdout, denylist, diff_range=diff_range)
     if any(hit.repository_path == REPOSITORY_PATH for hit in hits):
         if not _canonical_diff_matches(repo_root, diff_range):
-            hits = [ScanHit(hit.source, hit.line_number)
-                    if hit.repository_path == REPOSITORY_PATH else hit for hit in hits]
+            hits = [
+                ScanHit(hit.source, hit.line_number)
+                if hit.repository_path == REPOSITORY_PATH
+                else hit
+                for hit in hits
+            ]
     return hits
 
 
@@ -244,11 +248,24 @@ def _canonical_diff_matches(repo_root: Path, diff_range: str) -> bool:
     try:
         notice = _canonical_notice_bytes(repo_root)
         object_id = subprocess.check_output(
-            ["git", "hash-object", "--stdin"], cwd=repo_root, input=notice).strip()
+            ["git", "hash-object", "--stdin"], cwd=repo_root, input=notice
+        ).strip()
         raw = subprocess.check_output(
-            ["git", "diff", "--raw", "--no-abbrev", "--no-renames",
-             "--no-ext-diff", "--no-textconv", "-z", diff_range, "--", REPOSITORY_PATH],
-            cwd=repo_root)
+            [
+                "git",
+                "diff",
+                "--raw",
+                "--no-abbrev",
+                "--no-renames",
+                "--no-ext-diff",
+                "--no-textconv",
+                "-z",
+                diff_range,
+                "--",
+                REPOSITORY_PATH,
+            ],
+            cwd=repo_root,
+        )
         fields = raw.split(b"\0")
         if len(fields) != 3 or fields[1] != REPOSITORY_PATH.encode() or fields[2]:
             return False
@@ -285,7 +302,8 @@ def _canonical_notice_bytes(repo_root: Path) -> bytes:
     records = [record for record in result.stdout.split(b"\0") if record]
     expected = b"100644 " + object_id + b" 0\t" + REPOSITORY_PATH.encode()
     same_objects = [
-        record for record in records
+        record
+        for record in records
         if record.split(b"\t", 1)[0].split()[1] == object_id
     ]
     if expected not in records or same_objects != [expected]:

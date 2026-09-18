@@ -225,7 +225,14 @@ def test_a_pinned_cache_dir_is_still_passed_through(tmp_path: Path) -> None:
 
     from npa.orchestration.npa_workflow.catalog import drop_empty_optional_flags
 
-    argv = ["npa", "workbench", "cosmos3", "text-to-image", "--cache-dir", "/mnt/pinned"]
+    argv = [
+        "npa",
+        "workbench",
+        "cosmos3",
+        "text-to-image",
+        "--cache-dir",
+        "/mnt/pinned",
+    ]
 
     assert drop_empty_optional_flags("workbench.cosmos3.text_to_image", argv) == argv
 

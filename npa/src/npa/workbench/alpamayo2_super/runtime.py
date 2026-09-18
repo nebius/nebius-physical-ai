@@ -184,7 +184,9 @@ def _resolve_model_snapshot(request: Alpamayo2SuperRequest) -> str:
     return resolved
 
 
-def _snapshot_manifest(request: Alpamayo2SuperRequest, local_dir: Path) -> tuple[str, dict]:
+def _snapshot_manifest(
+    request: Alpamayo2SuperRequest, local_dir: Path
+) -> tuple[str, dict]:
     try:
         contents = Path(request.manifest).expanduser().read_bytes()
         document = json.loads(contents)
@@ -192,31 +194,47 @@ def _snapshot_manifest(request: Alpamayo2SuperRequest, local_dir: Path) -> tuple
         if not isinstance(sample["clip_id"], str) or not sample["clip_id"].strip():
             raise ValueError("clip_id must be a non-empty string")
         timestamp = sample["t0_us"]
-        if isinstance(timestamp, bool) or not isinstance(timestamp, int) or timestamp < 0:
+        if (
+            isinstance(timestamp, bool)
+            or not isinstance(timestamp, int)
+            or timestamp < 0
+        ):
             raise ValueError("t0_us must be a non-negative integer")
     except (OSError, ValueError, KeyError, IndexError, TypeError) as exc:
-        raise Alpamayo2SuperError("invalid or unavailable validation manifest/sample") from exc
+        raise Alpamayo2SuperError(
+            "invalid or unavailable validation manifest/sample"
+        ) from exc
     directory = local_dir / "inputs"
     directory.mkdir()
     snapshot = directory / "manifest.json"
     snapshot.write_bytes(contents)
     return str(snapshot), {
-        "clip_id": sample["clip_id"], "t0_us": timestamp,
+        "clip_id": sample["clip_id"],
+        "t0_us": timestamp,
         "manifest_sha256": hashlib.sha256(contents).hexdigest(),
     }
 
 
-def _validate_artifacts(local_dir: Path, request: Alpamayo2SuperRequest, sample: dict) -> dict:
+def _validate_artifacts(
+    local_dir: Path, request: Alpamayo2SuperRequest, sample: dict
+) -> dict:
     from PIL import Image, UnidentifiedImageError
 
     try:
         metadata = json.loads((local_dir / "trajectory.json").read_text())
         if not isinstance(metadata, dict):
             raise ValueError("trajectory metadata must be an object")
-        for key, expected in {"clip_id": sample["clip_id"], "t0_us": sample["t0_us"], "seed": request.seed}.items():
+        for key, expected in {
+            "clip_id": sample["clip_id"],
+            "t0_us": sample["t0_us"],
+            "seed": request.seed,
+        }.items():
             if metadata.get(key) != expected:
                 raise ValueError(f"trajectory metadata does not match requested {key}")
-        if request.require_camera_projection and metadata.get("projection_available") is not True:
+        if (
+            request.require_camera_projection
+            and metadata.get("projection_available") is not True
+        ):
             raise ValueError("required camera projection is missing")
         for name in ("min_ade_m", "min_fde_m", "fde_at_min_ade_m"):
             value = metadata.get(name)
@@ -227,8 +245,12 @@ def _validate_artifacts(local_dir: Path, request: Alpamayo2SuperRequest, sample:
                 raise ValueError("trajectory.png is not a PNG image")
             picture.load()
     except (OSError, ValueError, UnidentifiedImageError) as exc:
-        raise Alpamayo2SuperError(f"invalid required inference artifacts: {exc}") from exc
-    return {key: metadata.get(key) for key in ("min_ade_m", "min_fde_m", "fde_at_min_ade_m")}
+        raise Alpamayo2SuperError(
+            f"invalid required inference artifacts: {exc}"
+        ) from exc
+    return {
+        key: metadata.get(key) for key in ("min_ade_m", "min_fde_m", "fde_at_min_ade_m")
+    }
 
 
 def _provenance(request: Alpamayo2SuperRequest, argv: list[str]) -> dict[str, Any]:
@@ -236,13 +258,15 @@ def _provenance(request: Alpamayo2SuperRequest, argv: list[str]) -> dict[str, An
         "schema": ARTIFACT_SCHEMA,
         "model": {"id": request.model_id, "revision": request.model_revision},
         "dataset": {
-            "id": DEFAULT_DATASET_REPO, "revision": request.dataset_revision,
+            "id": DEFAULT_DATASET_REPO,
+            "revision": request.dataset_revision,
             "operator_runtime_fetch": True,
         },
         "request": asdict(request),
         "runtime": {
             "image": request.runtime_image or os.environ.get("NPA_TASK_IMAGE", ""),
-            "weights_baked": False, "dataset_baked": False,
+            "weights_baked": False,
+            "dataset_baked": False,
             "cache_tier": "node-local-ephemeral",
         },
         "argv": argv,
@@ -251,8 +275,13 @@ def _provenance(request: Alpamayo2SuperRequest, argv: list[str]) -> dict[str, An
 
 def _execute(argv: list[str], request: Alpamayo2SuperRequest, runner: Callable) -> None:
     completed = runner(
-        argv, cwd="/opt/alpamayo2", env=_runtime_env(request), text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
+        argv,
+        cwd="/opt/alpamayo2",
+        env=_runtime_env(request),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
     )
     if completed.returncode != 0:
         tail = "\n".join((completed.stdout or "").splitlines()[-40:])
@@ -263,7 +292,8 @@ def _execute(argv: list[str], request: Alpamayo2SuperRequest, runner: Callable) 
 
 def run_inference(
     request: Alpamayo2SuperRequest,
-    *, runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     model_resolver: Callable[[Alpamayo2SuperRequest], str] = _resolve_model_snapshot,
 ) -> dict[str, Any]:
     """Run upstream inference and publish verified artifacts and provenance.
@@ -285,7 +315,9 @@ def run_inference(
         sample = {}
         if not request.dry_run:
             manifest, sample = _snapshot_manifest(request, local_dir)
-            execution_request = replace(request, manifest=manifest, model_id=model_resolver(request))
+            execution_request = replace(
+                request, manifest=manifest, model_id=model_resolver(request)
+            )
         argv = build_inference_argv(execution_request, local_output=local_dir)
         base = _provenance(request, argv)
         if request.dry_run:

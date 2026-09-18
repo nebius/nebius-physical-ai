@@ -159,9 +159,7 @@ def test_resolve_credentials_nonexistent_project_raises(
 
 
 @pytest.fixture()
-def user_credentials_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> Path:
+def user_credentials_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Empty machine config plus a user ~/.npa/credentials.yaml with S3 keys."""
     cfg = tmp_path / ".npa" / "config.yaml"
     cfg.parent.mkdir(parents=True)
