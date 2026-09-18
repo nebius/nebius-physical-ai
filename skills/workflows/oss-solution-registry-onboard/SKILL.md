@@ -224,7 +224,9 @@ held-out partitions, execute more than zero upstream `Sequential.observe`
 optimizer steps with `BCRNNPolicy`, save and strictly reload an upstream
 checkpoint, and report finite held-out loss plus finite reloaded actions. It
 must run headlessly on exactly one STRICT-bound B200 (`sm_100`) and record the
-Pod-observed immutable private-image digest. Imports, BDDL parsing, dataset
+Pod-observed immutable digest of the qualified candidate, matching the
+anonymously resolved public-development digest; private or historical image
+digests are not qualification evidence. Imports, BDDL parsing, dataset
 inventory, or zero-step training are not acceptance evidence.
 
 The source is MIT and the upstream LIBERO publisher declares its datasets CC BY
