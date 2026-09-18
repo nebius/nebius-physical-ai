@@ -320,6 +320,10 @@ def test_inventory_memory_changed_helpers_are_focused_and_documented():
         "_replace_path",
         "_record_regular_member",
         "_record_member",
+        "_observe_layer_member",
+        "_whiteout_arguments",
+        "_complete_layer",
+        "_scan_layer",
     }
     functions = [
         node
@@ -329,6 +333,125 @@ def test_inventory_memory_changed_helpers_are_focused_and_documented():
     assert len(functions) == len(names)
     assert all(node.end_lineno - node.lineno + 1 < 40 for node in functions)
     assert all(ast.get_docstring(node) for node in functions)
+
+
+def _memory_layer_observation(path, kind):
+    """Return member metadata only; no archive or filesystem is constructed."""
+    member = _memory_member(kind)
+    member.name = path
+    member.size = 0
+    return member
+
+
+def _scan_memory_observations(monkeypatch, state, observations, contract=CONTRACT):
+    """Replace every archive read with inert member and content observations."""
+    payload = b"ordinary current-layer fixture"
+    row = {"sha256": _digest(payload), "size": len(payload), "elf": False}
+    monkeypatch.setattr(H, "_verify_diff_id", Mock())
+    monkeypatch.setattr(H, "_decoded", Mock(return_value=None))
+    monkeypatch.setattr(H.tarfile, "open", lambda **_: nullcontext(observations))
+    reader = Mock(return_value=(row, payload, b"inert native metadata"))
+    monkeypatch.setattr(H, "_read_member", reader)
+    H._scan_layer(-1, {}, 1, contract, state)
+    return reader, payload
+
+
+@pytest.mark.parametrize(
+    "marker", [".wh.sample", "sample/.wh..wh..opq", ".wh..wh..opq"]
+)
+@pytest.mark.parametrize("marker_first", [False, True])
+def test_layer_memory_removal_applies_only_to_completed_layers(
+    monkeypatch, marker, marker_first
+):
+    state = _memory_inventory_state()
+    prior = copy.deepcopy(state)
+    observations = [
+        _memory_layer_observation("sample/new.txt", "file"),
+        _memory_layer_observation(marker, "file"),
+    ]
+    if marker_first:
+        observations.reverse()
+    reader, payload = _scan_memory_observations(monkeypatch, state, observations)
+    H._require_reachable_state(state)
+    for mapping in H._final_state_maps(state):
+        assert "sample/child.txt" not in mapping
+        assert "sample/nested/item.txt" not in mapping
+    assert state.files["sample/new.txt"]["sha256"] == _digest(payload)
+    assert state.tracked["sample/new.txt"] == payload
+    assert state.elf["sample/new.txt"] == b"inert native metadata"
+    assert ("separate.txt" in state.paths) is (marker != ".wh..wh..opq")
+    assert state.events[: len(prior.events)] == prior.events
+    assert [row["path"] for row in state.events[-2:]] == [m.name for m in observations]
+    assert state.source_inventory == prior.source_inventory
+    assert (state.entries, state.regular_files, state.content_bytes) == (
+        2,
+        4,
+        3 + len(payload),
+    )
+    assert reader.call_count == 1
+
+
+@pytest.mark.parametrize("parent_first", [False, True])
+def test_layer_memory_directory_replacement_is_order_independent(
+    monkeypatch, parent_first
+):
+    state = H._ScanState()
+    _memory_inventory_file(state, "sample")
+    observations = [
+        _memory_layer_observation("sample/new.txt", "file"),
+        _memory_layer_observation("sample", "directory"),
+    ]
+    if parent_first:
+        observations.reverse()
+    _scan_memory_observations(monkeypatch, state, observations)
+    assert state.paths == {"sample": "directory", "sample/new.txt": "file"}
+    assert (
+        set(state.files) == set(state.tracked) == set(state.elf) == {"sample/new.txt"}
+    )
+    H._require_reachable_state(state)
+
+
+@pytest.mark.parametrize("parent_first", [False, True])
+def test_layer_memory_inconsistent_current_parent_refused(monkeypatch, parent_first):
+    observations = [
+        _memory_layer_observation("sample/new.txt", "file"),
+        _memory_layer_observation("sample", "file"),
+    ]
+    if parent_first:
+        observations.reverse()
+    with pytest.raises(H.W.ScanError, match="habitat_oci_parent_not_directory"):
+        _scan_memory_observations(monkeypatch, H._ScanState(), observations)
+
+
+def test_layer_memory_implicit_directory_keeps_population_and_payload_evidence(
+    monkeypatch,
+):
+    state = _memory_inventory_state()
+    payload = b"ordinary current-layer fixture"
+    contract = {**CONTRACT, "forbidden_content_sha256": [_digest(payload)]}
+    observations = [_memory_layer_observation("implicit/new.txt", "file")]
+    _scan_memory_observations(monkeypatch, state, observations, contract)
+    assert "implicit" not in state.paths
+    assert len(state.files) == 4 and state.regular_files == 4
+    assert state.findings == [
+        {"code": "forbidden_payload_hash", "layer": 1, "entry": 0}
+    ]
+    assert H._required_path_findings(state.paths, ["/implicit"]) == []
+    H._require_reachable_state(state)
+
+
+def test_layer_memory_duplicate_observation_remains_refused(monkeypatch):
+    observations = [_memory_layer_observation("sample/new.txt", "file")] * 2
+    with pytest.raises(H.W.ScanError, match="habitat_oci_duplicate_layer_path"):
+        _scan_memory_observations(monkeypatch, H._ScanState(), observations)
+
+
+def test_layer_memory_lower_parent_refused_after_current_merge(monkeypatch):
+    state = H._ScanState()
+    _memory_inventory_file(state, "sample")
+    observations = [_memory_layer_observation("sample/new.txt", "file")]
+    with pytest.raises(H.W.ScanError, match="habitat_oci_parent_not_directory"):
+        _scan_memory_observations(monkeypatch, state, observations)
 
 
 def _mock_archive_info():

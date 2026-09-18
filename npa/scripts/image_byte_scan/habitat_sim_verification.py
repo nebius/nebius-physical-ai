@@ -1305,6 +1305,42 @@ def _record_member(
     state.events.append(event)
 
 
+def _observe_layer_member(lower, current, archive, member, path, location, contract):
+    """Apply removals only to lower layers; retain current observations separately."""
+    layer, entry = location
+    if _apply_whiteout(*_whiteout_arguments(lower, path, member)):
+        lower.events.append({"path": path, "layer": layer, "kind": "whiteout"})
+        return
+    if _member_kind(member) != "directory":
+        W.require(
+            not any(name.startswith(path + "/") for name in current.paths),
+            "habitat_oci_parent_not_directory",
+        )
+    _record_member(current, archive, member, path, layer, entry, contract)
+
+
+def _whiteout_arguments(state: _ScanState, path: str, member) -> tuple:
+    """Select all six lower-layer maps without exposing current-layer entries."""
+    paths, *related = _final_state_maps(state)
+    return paths, path, member, *related
+
+
+def _complete_layer(lower: _ScanState, current: _ScanState, seen: set[str]) -> None:
+    """Merge verified observations parent-first, then validate every member parent."""
+    _require_reachable_state(current)
+    for path in sorted(current.paths, key=lambda name: (name.count("/"), name)):
+        _require_directory_ancestors(lower.paths, path)
+        _replace_path(lower, path, current.paths[path])
+        for target, source in zip(_final_state_maps(lower), _final_state_maps(current)):
+            if path in source:
+                target[path] = source[path]
+    for path in seen:
+        _require_directory_ancestors(lower.paths, path)
+    _require_reachable_state(lower)
+    lower.regular_files += current.regular_files
+    lower.content_bytes += current.content_bytes
+
+
 def _scan_layer(
     fd: int,
     row: dict[str, object],
@@ -1312,29 +1348,20 @@ def _scan_layer(
     contract: dict[str, object],
     state: _ScanState,
 ) -> None:
+    """Keep complete-layer inventory separate from a single streamed observation set."""
     _verify_diff_id(fd, row)
     seen: set[str] = set()
+    current = _ScanState(events=state.events, findings=state.findings)
     with tarfile.open(fileobj=_decoded(fd, row), mode="r|") as archive:
         for entry, member in enumerate(archive):
             state.entries += 1
             path = W.safe_name(member.name)
             W.require(path not in seen, "habitat_oci_duplicate_layer_path")
-            _require_directory_ancestors(state.paths, path)
             seen.add(path)
-            state.events.append({"path": path, "layer": layer, "kind": "whiteout"})
-            if _apply_whiteout(
-                state.paths,
-                path,
-                member,
-                state.files,
-                state.links,
-                state.metadata,
-                state.tracked,
-                state.elf,
-            ):
-                continue
-            state.events.pop()
-            _record_member(state, archive, member, path, layer, entry, contract)
+            _observe_layer_member(
+                state, current, archive, member, path, (layer, entry), contract
+            )
+    _complete_layer(state, current, seen)
 
 
 def _required_path_findings(
