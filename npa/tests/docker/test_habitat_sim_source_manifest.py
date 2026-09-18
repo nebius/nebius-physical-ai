@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from contextlib import nullcontext
 import copy
 import hashlib
 import importlib.util
@@ -791,6 +792,98 @@ def _download_item(payload: bytes) -> dict[str, object]:
         "archive_bytes": len(payload),
         "archive_sha256": hashlib.sha256(payload).hexdigest(),
     }
+
+
+def _mock_download_target(monkeypatch, payload=b"inert source bytes"):
+    """Replace path effects and upstream delivery with in-memory observations."""
+    item = _download_item(payload)
+    stream = io.BytesIO()
+    target = Mock(spec=Path)
+    target.open.return_value = nullcontext(stream)
+    contained = Mock(return_value=target)
+    monkeypatch.setattr(PREPARER, "_contained_source_path", contained)
+    response = _Response(payload, str(item["archive_url"]))
+    opener = Mock(return_value=response)
+    directory = Mock(spec=Path)
+    return SimpleNamespace(
+        item=item,
+        stream=stream,
+        target=target,
+        contained=contained,
+        response=response,
+        opener=opener,
+        directory=directory,
+    )
+
+
+def test_mock_download_success_retains_exact_bytes_without_cleanup(monkeypatch):
+    """Successful in-memory verification retains the operation's target."""
+    fixture = _mock_download_target(monkeypatch)
+
+    result = PREPARER._download(fixture.item, fixture.directory, opener=fixture.opener)
+
+    assert result is fixture.target
+    assert fixture.stream.getvalue() == b"inert source bytes"
+    fixture.target.open.assert_called_once_with("xb")
+    fixture.target.unlink.assert_not_called()
+    fixture.contained.assert_called_once_with(
+        fixture.directory, "fixture.tar.gz", "source archive"
+    )
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_mock_download_preserves_primary_identity_and_traceback(
+    monkeypatch, cleanup_fails
+):
+    """Cleanup observations cannot replace the source stream's initiating error."""
+    fixture = _mock_download_target(monkeypatch)
+    primary = OSError("inert stream failure")
+    original_tracebacks = []
+
+    def fail_read(_size):
+        try:
+            raise primary
+        except OSError:
+            original_tracebacks.append(primary.__traceback__)
+            raise
+
+    fixture.response.read = fail_read
+    if cleanup_fails:
+        fixture.target.unlink.side_effect = PermissionError("inert removal refusal")
+    with pytest.raises(OSError) as observed:
+        PREPARER._download(fixture.item, fixture.directory, opener=fixture.opener)
+    assert observed.value is primary
+    frames = []
+    trace = observed.value.__traceback__
+    while trace is not None:
+        frames.append(trace)
+        trace = trace.tb_next
+    assert original_tracebacks[0] in frames
+    fixture.target.unlink.assert_called_once_with(missing_ok=True)
+    expected_notes = (
+        ["source archive cleanup failed: PermissionError: inert removal refusal"]
+        if cleanup_fails
+        else []
+    )
+    assert getattr(primary, "__notes__", []) == expected_notes
+
+
+@pytest.mark.parametrize("failure_stage", ["response", "open"])
+def test_mock_download_never_removes_uncreated_target(monkeypatch, failure_stage):
+    """Only successful exclusive creation establishes this operation's ownership."""
+    fixture = _mock_download_target(monkeypatch)
+    primary = FileExistsError("inert caller-owned target")
+    if failure_stage == "response":
+        fixture.opener.side_effect = primary
+    else:
+        fixture.target.open.side_effect = primary
+
+    with pytest.raises(FileExistsError) as observed:
+        PREPARER._download(fixture.item, fixture.directory, opener=fixture.opener)
+
+    assert observed.value is primary
+    fixture.target.unlink.assert_not_called()
+    assert not getattr(primary, "__notes__", [])
 
 
 @pytest.mark.parametrize("declared_length", ["invalid", "-1", "23"])

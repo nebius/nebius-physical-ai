@@ -201,6 +201,17 @@ def _stream_archive(
         size += len(chunk)
 
 
+def _remove_partial_download(target: Path, primary: Exception) -> None:
+    """Attempt owned-target cleanup without replacing the initiating failure."""
+    try:
+        target.unlink(missing_ok=True)
+    except Exception as cleanup_error:
+        primary.add_note(
+            "source archive cleanup failed: "
+            f"{type(cleanup_error).__name__}: {cleanup_error}"
+        )
+
+
 def _download(
     item: dict[str, object],
     directory: Path,
@@ -219,9 +230,9 @@ def _download(
                 size, digest = _stream_archive(response, stream, expected_bytes)
         if size != expected_bytes or digest != item["archive_sha256"]:
             raise SourceError("source archive size or SHA-256 mismatch")
-    except Exception:
+    except Exception as error:
         if created_target:
-            target.unlink(missing_ok=True)
+            _remove_partial_download(target, error)
         raise
     return target
 
