@@ -13,7 +13,6 @@ import os
 from pathlib import Path
 import re
 import secrets
-import shutil
 import stat
 import subprocess
 import time
@@ -82,6 +81,26 @@ class _ObjectWriteLedger:
     attempted: list[str] = field(default_factory=list)
     owned: list[str] = field(default_factory=list)
     unresolved: list[str] = field(default_factory=list)
+
+
+@dataclass
+class _RuntimeCacheOwnership:
+    """Hold a fresh private namespace for one trusted, non-root run identity.
+
+    The worker must not share its uid or these directories with other writers.
+    Mode-0700 directories exclude other identities, not a compromised same-uid
+    process or root. Descriptor-relative names are not inode-conditional deletes;
+    the exclusive private namespace is part of the ownership contract.
+    """
+
+    output_dir: Path
+    name: str
+    descriptors: dict[str, int] = field(default_factory=dict)
+    identities: dict[str, tuple[int, int]] = field(default_factory=dict)
+    marker_sha256: str = ""
+    created: bool = False
+    cleanup_attempted: bool = False
+    removed: bool = False
 
 
 class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
@@ -1156,78 +1175,247 @@ def _write_termination_receipt(
     path.write_bytes(_json_bytes(payload))
 
 
-def _claim_runtime_cache(cache: Path) -> tuple[int, int, str]:
-    """Create and identify the cache that this invocation may remove."""
-
-    created = False
-    try:
-        cache.mkdir(parents=False, exist_ok=False, mode=0o700)
-        created = True
-        os.chmod(cache, 0o700)
-        identity = cache.stat(follow_symlinks=False)
-        marker = cache / ".npa-run-owner"
-        marker.write_text(secrets.token_hex(32), encoding="ascii")
-        marker.chmod(0o600)
-        return identity.st_dev, identity.st_ino, sha256_file(marker)
-    except FileExistsError as error:
-        raise SmokeFailure("run-owned scene cache path already exists") from error
-    except Exception:
-        if created:
-            shutil.rmtree(cache)
-        raise
+def _private_cache_directory(descriptor: int) -> tuple[int, int]:
+    """Require an owned private directory on the retained descriptor."""
+    observed = os.fstat(descriptor)
+    if (
+        not stat.S_ISDIR(observed.st_mode)
+        or observed.st_uid != os.geteuid()
+        or stat.S_IMODE(observed.st_mode) != 0o700
+        or observed.st_nlink < 2
+    ):
+        raise SmokeFailure("runtime cache directory ownership is unresolved")
+    return observed.st_dev, observed.st_ino
 
 
-def _cache_identity_matches(cache: Path, identity: tuple[int, int, str]) -> bool:
-    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
-    directory_fd = os.open(cache, directory_flags)
-    try:
-        observed = os.fstat(directory_fd)
-        if (
-            (observed.st_dev, observed.st_ino) != identity[:2]
-            or observed.st_uid != os.geteuid()
-            or observed.st_mode & 0o077 != 0
-        ):
-            return False
-        marker_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
-        marker_fd = os.open(".npa-run-owner", marker_flags, dir_fd=directory_fd)
+def _require_cache_directories(owner: _RuntimeCacheOwnership) -> None:
+    """Bind the private parent and cache names to their creation descriptors."""
+    _require_cache_parent(owner)
+    parent = owner.descriptors["parent"]
+    cache = owner.descriptors["cache"]
+    if _private_cache_directory(cache) != owner.identities["cache"]:
+        raise SmokeFailure("runtime cache descriptor identity changed")
+    named_cache = os.stat(owner.name, dir_fd=parent, follow_symlinks=False)
+    if (
+        not stat.S_ISDIR(named_cache.st_mode)
+        or (named_cache.st_dev, named_cache.st_ino) != owner.identities["cache"]
+        or named_cache.st_uid != os.geteuid()
+        or stat.S_IMODE(named_cache.st_mode) != 0o700
+    ):
+        raise SmokeFailure("runtime cache named ownership is unresolved")
+
+
+def _require_cache_parent(owner: _RuntimeCacheOwnership) -> None:
+    """Reject lost output ownership before creating or removing any child."""
+    if (
+        _private_cache_directory(owner.descriptors["parent"])
+        != owner.identities["parent"]
+    ):
+        raise SmokeFailure("runtime cache parent descriptor identity changed")
+    named = os.stat(owner.output_dir, follow_symlinks=False)
+    if (
+        not stat.S_ISDIR(named.st_mode)
+        or (named.st_dev, named.st_ino) != owner.identities["parent"]
+        or named.st_uid != os.geteuid()
+        or stat.S_IMODE(named.st_mode) != 0o700
+    ):
+        raise SmokeFailure("runtime cache parent ownership is unresolved")
+
+
+def _cache_file_fingerprint(observed: os.stat_result) -> tuple[int, ...]:
+    """Exclude access-time updates while binding private regular-file identity."""
+    if (
+        not stat.S_ISREG(observed.st_mode)
+        or observed.st_uid != os.geteuid()
+        or observed.st_mode & 0o077
+        or observed.st_nlink != 1
+    ):
+        raise SmokeFailure("runtime cache contains an unowned or nonregular entry")
+    return (
+        observed.st_dev,
+        observed.st_ino,
+        observed.st_mode,
+        observed.st_uid,
+        observed.st_nlink,
+        observed.st_size,
+        observed.st_mtime_ns,
+        observed.st_ctime_ns,
+    )
+
+
+def _require_cache_ownership(owner: _RuntimeCacheOwnership) -> None:
+    """Verify the held marker bytes without reopening the cache pathname."""
+    _require_cache_directories(owner)
+    marker = owner.descriptors["marker"]
+    before = _cache_file_fingerprint(os.fstat(marker))
+    payload = os.pread(marker, 129, 0)
+    after = _cache_file_fingerprint(os.fstat(marker))
+    named = _cache_file_fingerprint(
+        os.stat(
+            ".npa-run-owner", dir_fd=owner.descriptors["cache"], follow_symlinks=False
+        )
+    )
+    if (
+        before != after
+        or after != named
+        or len(payload) != 64
+        or hashlib.sha256(payload).hexdigest() != owner.marker_sha256
+    ):
+        raise SmokeFailure("runtime cache owner marker identity changed")
+
+
+def _initialize_cache(owner: _RuntimeCacheOwnership) -> None:
+    """Create a no-clobber cache and marker within the fresh private output."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+    owner.descriptors["parent"] = os.open(owner.output_dir, flags)
+    parent = owner.descriptors["parent"]
+    _require_cache_parent(owner)
+    if os.listdir(parent):
+        raise SmokeFailure("runtime cache requires a fresh empty private output")
+    os.mkdir(owner.name, mode=0o700, dir_fd=parent)
+    owner.created = True
+    owner.descriptors["cache"] = os.open(owner.name, flags, dir_fd=parent)
+    cache = owner.descriptors["cache"]
+    owner.identities["cache"] = _private_cache_directory(cache)
+    _require_cache_directories(owner)
+    marker_flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW
+    owner.descriptors["marker"] = os.open(
+        ".npa-run-owner", marker_flags, 0o600, dir_fd=cache
+    )
+    marker = owner.descriptors["marker"]
+    payload = secrets.token_hex(32).encode("ascii")
+    if os.write(marker, payload) != len(payload):
+        raise SmokeFailure("runtime cache owner marker write was incomplete")
+    os.fsync(marker)
+    owner.marker_sha256 = hashlib.sha256(payload).hexdigest()
+    _require_cache_ownership(owner)
+
+
+def _release_cache_descriptors(owner: _RuntimeCacheOwnership) -> list[str]:
+    """Attempt every owned close once, retaining independent failure diagnostics."""
+    diagnostics = []
+    for role in ("marker", "cache", "parent"):
+        descriptor = owner.descriptors.pop(role, None)
+        if descriptor is None:
+            continue
         try:
-            marker = os.fstat(marker_fd)
-            payload = os.read(marker_fd, 129)
-            after = os.fstat(marker_fd)
-            named = os.stat(
-                ".npa-run-owner", dir_fd=directory_fd, follow_symlinks=False
-            )
-            return (
-                stat.S_ISREG(marker.st_mode)
-                and marker.st_uid == os.geteuid()
-                and marker.st_mode & 0o077 == 0
-                and marker.st_size == len(payload) == 64
-                and marker == after == named
-                and hashlib.sha256(payload).hexdigest() == identity[2]
-            )
-        finally:
-            os.close(marker_fd)
-    except OSError:
-        return False
-    finally:
-        os.close(directory_fd)
+            os.close(descriptor)
+        except OSError as error:
+            diagnostics.append(f"{role} descriptor release: {error}")
+    return diagnostics
 
 
-def _remove_runtime_cache(
-    cache: Path, identity: tuple[int, int, str] | None = None
+def _claim_runtime_cache(
+    output_dir: Path, created_identity: tuple[int, int]
+) -> _RuntimeCacheOwnership:
+    """Retain creation authority; a partial claim never authorizes deletion."""
+    owner = _RuntimeCacheOwnership(
+        output_dir,
+        ".habitat-scene-cache-" + secrets.token_hex(16),
+        identities={"parent": created_identity},
+    )
+    try:
+        _initialize_cache(owner)
+    except BaseException as primary:
+        diagnostics = _release_cache_descriptors(owner)
+        primary.add_note(
+            "Runtime cache claim incomplete; namespace preserved, not adopted."
+        )
+        for diagnostic in diagnostics:
+            primary.add_note(diagnostic)
+        raise
+    return owner
+
+
+def _cache_members(owner: _RuntimeCacheOwnership) -> dict[str, tuple[int, ...]]:
+    """Accept only the flat, known files written by this run's asset downloader."""
+    _require_cache_ownership(owner)
+    allowed = {".npa-run-owner", "habitat-test-scenes.zip.part"}
+    allowed.update(MEMBER_SPECS)
+    allowed.update(name + ".part" for name in MEMBER_SPECS)
+    cache = owner.descriptors["cache"]
+    names = os.listdir(cache)
+    if set(names) - allowed or ".npa-run-owner" not in names:
+        raise SmokeFailure("runtime cache has unresolved entries; refusing cleanup")
+    return {
+        name: _cache_file_fingerprint(
+            os.stat(name, dir_fd=cache, follow_symlinks=False)
+        )
+        for name in names
+    }
+
+
+def _clear_cache_members(owner: _RuntimeCacheOwnership, members: dict) -> None:
+    """Remove only observed payload entries while private ownership still holds."""
+    diagnostics = []
+    cache = owner.descriptors["cache"]
+    for name in sorted(set(members) - {".npa-run-owner"}):
+        try:
+            _require_cache_ownership(owner)
+            named = os.stat(name, dir_fd=cache, follow_symlinks=False)
+            if _cache_file_fingerprint(named) != members[name]:
+                raise SmokeFailure("runtime cache member identity changed")
+            os.unlink(name, dir_fd=cache)
+        except (OSError, SmokeFailure) as error:
+            diagnostics.append(f"{name}: {type(error).__name__}: {error}")
+    if diagnostics:
+        failure = SmokeFailure("runtime cache cleanup incomplete; ownership unresolved")
+        for diagnostic in diagnostics:
+            failure.add_note(diagnostic)
+        raise failure
+
+
+def _remove_runtime_cache(owner: _RuntimeCacheOwnership) -> None:
+    """Clean the exclusive private namespace, never a caller-supplied path."""
+    members = _cache_members(owner)
+    _clear_cache_members(owner, members)
+    _require_cache_ownership(owner)
+    cache = owner.descriptors["cache"]
+    if os.listdir(cache) != [".npa-run-owner"]:
+        raise SmokeFailure("runtime cache cleanup has unresolved entries")
+    os.unlink(".npa-run-owner", dir_fd=cache)
+    _require_cache_directories(owner)
+    if os.listdir(cache):
+        raise SmokeFailure("runtime cache is not empty; refusing directory removal")
+    os.rmdir(owner.name, dir_fd=owner.descriptors["parent"])
+    _require_cache_parent(owner)
+    if owner.name in os.listdir(owner.descriptors["parent"]):
+        raise SmokeFailure("runtime cache cleanup did not complete")
+    owner.removed = True
+
+
+def _finish_runtime_cache(
+    owner: _RuntimeCacheOwnership, primary: BaseException | None = None
 ) -> None:
-    """Remove the run-owned scene cache and verify the postcondition."""
-
-    if not os.path.lexists(cache):
-        return
-    if identity is not None and not _cache_identity_matches(cache, identity):
-        raise SmokeFailure("run-owned scene cache identity changed; refusing cleanup")
-    shutil.rmtree(cache)
-    if os.path.lexists(cache):
-        raise SmokeFailure("run-owned scene cache cleanup did not complete")
+    """Preserve a primary failure and report every cleanup/release diagnostic."""
+    failure = None
+    try:
+        if owner.cleanup_attempted:
+            raise SmokeFailure("runtime cache cleanup cannot be retried")
+        owner.cleanup_attempted = True
+        _remove_runtime_cache(owner)
+    except BaseException as error:
+        failure = error
+    diagnostics = _release_cache_descriptors(owner)
+    if not owner.removed:
+        diagnostics.append(
+            "Runtime cache ownership/removal unresolved; publication refused."
+        )
+    target = primary if primary is not None else failure
+    if target is None and diagnostics:
+        target = SmokeFailure("runtime cache descriptor release incomplete")
+    if target is not None:
+        if failure is not None and primary is not None:
+            target.add_note(f"Cache cleanup: {type(failure).__name__}: {failure}")
+            diagnostics.extend(getattr(failure, "__notes__", []))
+        for diagnostic in diagnostics:
+            target.add_note(diagnostic)
+        if primary is None:
+            raise target
 
 
 def _prepare_output(args):
+    """Create private output and retain authority for its ephemeral cache child."""
     output_dir = args.output_dir.resolve()
     configured_output = os.environ.get("NPA_SMOKE_OUTPUT_DIR")
     if configured_output and Path(configured_output).resolve() != output_dir:
@@ -1235,9 +1423,9 @@ def _prepare_output(args):
     os.environ["NPA_SMOKE_OUTPUT_DIR"] = str(output_dir)
     output_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
     os.chmod(output_dir, 0o700)
-    cache = output_dir.parent / f".{output_dir.name}-scene-cache"
-    cache_identity = _claim_runtime_cache(cache)
-    return output_dir, cache, cache_identity
+    created = output_dir.stat(follow_symlinks=False)
+    ownership = _claim_runtime_cache(output_dir, (created.st_dev, created.st_ino))
+    return output_dir, output_dir / ownership.name, ownership
 
 
 def _produce_proof(cache, output_dir, run_id, plan_sha256):
@@ -1275,22 +1463,21 @@ def main(argv: list[str] | None = None) -> int:
     """
     args = build_parser().parse_args(argv)
     run_id, plan_sha256 = _execution_identity(args.run_id, args.plan_sha256)
-    output_dir, cache, cache_identity = _prepare_output(args)
+    output_dir, cache, ownership = _prepare_output(args)
     try:
         proof = _produce_proof(cache, output_dir, run_id, plan_sha256)
-        _remove_runtime_cache(cache, cache_identity)
-        cache_identity = None
-        _upload_directory(
-            output_dir,
-            args.output_uri,
-            after_commit=lambda publication: _write_termination_receipt(
-                publication, proof, Path("/dev/termination-log")
-            ),
-        )
-        return 0
-    finally:
-        if cache_identity is not None:
-            _remove_runtime_cache(cache, cache_identity)
+    except BaseException as primary:
+        _finish_runtime_cache(ownership, primary)
+        raise
+    _finish_runtime_cache(ownership)
+    _upload_directory(
+        output_dir,
+        args.output_uri,
+        after_commit=lambda publication: _write_termination_receipt(
+            publication, proof, Path("/dev/termination-log")
+        ),
+    )
+    return 0
 
 
 if __name__ == "__main__":

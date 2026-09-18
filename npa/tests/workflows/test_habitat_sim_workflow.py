@@ -7,9 +7,10 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import zipfile
 import zlib
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 import yaml
@@ -430,81 +431,315 @@ def test_archive_download_stops_before_exceeding_the_pinned_size(
     assert not destination.exists()
 
 
-def test_runtime_cache_cleanup_is_verified(tmp_path, monkeypatch) -> None:
-    cache = tmp_path / "run-owned-cache"
-    cache.mkdir()
-    (cache / "scene").write_bytes(b"exact")
-    monkeypatch.setattr(H.shutil, "rmtree", lambda _path: None)
+def _cache_stat(inode, *, directory=False, **changes):
+    """Construct inert metadata, never a filesystem entry."""
+    values = dict(
+        st_dev=1,
+        st_ino=inode,
+        st_uid=1000,
+        st_mode=0o40700 if directory else 0o100600,
+        st_nlink=2 if directory else 1,
+        st_size=64,
+        st_mtime_ns=1,
+        st_ctime_ns=1,
+    )
+    return SimpleNamespace(**(values | changes))
 
+
+class _CacheObservations:
+    """Model only named observations; every filesystem operation is a mock."""
+
+    def __init__(self, monkeypatch):
+        self.owner = H._RuntimeCacheOwnership(
+            Path("/fixture/output"),
+            ".cache",
+            descriptors={"parent": 101, "cache": 202, "marker": 303},
+            identities={"parent": (1, 10), "cache": (1, 20)},
+            marker_sha256=hashlib.sha256(b"a" * 64).hexdigest(),
+            created=True,
+        )
+        self.parent = _cache_stat(10, directory=True)
+        self.cache = _cache_stat(20, directory=True)
+        self.entries = {
+            ".npa-run-owner": _cache_stat(30),
+            H.SCENE_NAME: _cache_stat(40),
+        }
+        self.parent_names = [self.owner.name]
+        self.stats = {
+            101: self.parent,
+            202: self.cache,
+            303: self.entries[".npa-run-owner"],
+        }
+        self.os = self._mock_cache_os()
+        monkeypatch.setattr(H, "os", self.os)
+
+    def _mock_cache_os(self):
+        """Keep mock system calls isolated from pytest's own filesystem access."""
+        constants = {
+            k: getattr(H.os, k)
+            for k in (
+                "O_RDONLY",
+                "O_RDWR",
+                "O_DIRECTORY",
+                "O_CLOEXEC",
+                "O_NOFOLLOW",
+                "O_CREAT",
+                "O_EXCL",
+            )
+        }
+        return SimpleNamespace(
+            **constants,
+            environ={},
+            geteuid=Mock(return_value=1000),
+            fstat=Mock(side_effect=self.stats.__getitem__),
+            stat=Mock(side_effect=self._stat),
+            pread=Mock(return_value=b"a" * 64),
+            listdir=Mock(side_effect=self._listdir),
+            unlink=Mock(side_effect=self._unlink),
+            rmdir=Mock(side_effect=self._rmdir),
+            close=Mock(),
+            open=Mock(side_effect=[101, 202, 303]),
+            mkdir=Mock(),
+            write=Mock(return_value=64),
+            fsync=Mock(),
+        )
+
+    def _stat(self, name, *, dir_fd=None, follow_symlinks):
+        assert follow_symlinks is False
+        if name == self.owner.output_dir and dir_fd is None:
+            return self.parent
+        if name == self.owner.name and dir_fd == 101:
+            return self.cache
+        assert dir_fd == 202
+        return self.entries[name]
+
+    def _listdir(self, descriptor):
+        return list(self.parent_names if descriptor == 101 else self.entries)
+
+    def _unlink(self, name, *, dir_fd):
+        assert dir_fd == 202
+        del self.entries[name]
+
+    def _rmdir(self, name, *, dir_fd):
+        assert dir_fd == 101 and not self.entries
+        self.parent_names.remove(name)
+
+
+def test_cache_cleanup_uses_retained_descriptors_only(monkeypatch):
+    fixture = _CacheObservations(monkeypatch)
+    H._finish_runtime_cache(fixture.owner)
+    assert fixture.owner.removed and fixture.owner.descriptors == {}
+    fixture.os.open.assert_not_called()
+    assert fixture.os.unlink.call_args_list == [
+        ((H.SCENE_NAME,), {"dir_fd": 202}),
+        ((".npa-run-owner",), {"dir_fd": 202}),
+    ]
+    fixture.os.rmdir.assert_called_once_with(".cache", dir_fd=101)
+    assert [call.args[0] for call in fixture.os.close.call_args_list] == [303, 202, 101]
+
+
+@pytest.mark.parametrize(
+    "boundary", ["parent_fd", "parent_name", "cache_fd", "cache_name", "marker"]
+)
+def test_cache_ownership_mismatch_refuses_before_removal(monkeypatch, boundary):
+    fixture = _CacheObservations(monkeypatch)
+    if boundary == "parent_fd":
+        fixture.stats[101] = _cache_stat(99, directory=True)
+    elif boundary == "parent_name":
+        fixture.parent = _cache_stat(99, directory=True)
+    elif boundary == "cache_fd":
+        fixture.stats[202] = _cache_stat(99, directory=True)
+    elif boundary == "cache_name":
+        fixture.cache = _cache_stat(99, directory=True)
+    else:
+        fixture.os.pread.return_value = b"b" * 64
+    with pytest.raises(H.SmokeFailure) as raised:
+        H._finish_runtime_cache(fixture.owner)
+    assert "unresolved" in " ".join(raised.value.__notes__)
+    fixture.os.unlink.assert_not_called()
+    fixture.os.rmdir.assert_not_called()
+    assert fixture.os.close.call_count == 3 and not fixture.owner.removed
+
+
+@pytest.mark.parametrize(
+    "changes", [{"st_uid": 2000}, {"st_mode": 0o40755}, {"st_nlink": 0}]
+)
+def test_cache_private_parent_loss_refuses_effects(monkeypatch, changes):
+    fixture = _CacheObservations(monkeypatch)
+    fixture.stats[101] = _cache_stat(10, directory=True, **changes)
+    with pytest.raises(H.SmokeFailure, match="ownership"):
+        H._finish_runtime_cache(fixture.owner)
+    fixture.os.unlink.assert_not_called()
+    fixture.os.rmdir.assert_not_called()
+
+
+@pytest.mark.parametrize("entry", ["unknown", "directory", "nonprivate", "hardlink"])
+def test_cache_unresolved_members_are_never_adopted(monkeypatch, entry):
+    fixture = _CacheObservations(monkeypatch)
+    if entry == "unknown":
+        fixture.entries["unclaimed"] = _cache_stat(50)
+    else:
+        changes = {
+            "directory": {"st_mode": 0o40700},
+            "nonprivate": {"st_mode": 0o100644},
+            "hardlink": {"st_nlink": 2},
+        }[entry]
+        fixture.entries[H.SCENE_NAME] = _cache_stat(40, **changes)
+    with pytest.raises(H.SmokeFailure):
+        H._finish_runtime_cache(fixture.owner)
+    fixture.os.unlink.assert_not_called()
+    fixture.os.rmdir.assert_not_called()
+
+
+def test_cache_cleanup_retains_all_primary_and_release_diagnostics(monkeypatch):
+    fixture = _CacheObservations(monkeypatch)
+    fixture.entries[H.NAVMESH_NAME] = _cache_stat(50)
+    fixture.os.unlink.side_effect = OSError("fixture unlink refused")
+    fixture.os.close.side_effect = OSError("fixture close refused")
+    primary = H.SmokeFailure("fixture fetch failed")
+    H._finish_runtime_cache(fixture.owner, primary)
+    notes = "\n".join(primary.__notes__)
+    assert H.SCENE_NAME in notes and H.NAVMESH_NAME in notes
+    assert "unresolved" in notes and str(primary) == "fixture fetch failed"
+    assert all(
+        role + " descriptor release" in notes for role in ("marker", "cache", "parent")
+    )
+    assert fixture.os.close.call_count == 3 and fixture.owner.descriptors == {}
+    fixture.os.rmdir.assert_not_called()
+    assert fixture.os.unlink.call_count == 2
+
+
+def test_cache_primary_survives_unexpected_cleanup_exception(monkeypatch):
+    fixture = _CacheObservations(monkeypatch)
+    monkeypatch.setattr(
+        H, "_remove_runtime_cache", Mock(side_effect=RuntimeError("fixture bug"))
+    )
+    primary = ValueError("initial failure")
+    H._finish_runtime_cache(fixture.owner, primary)
+    assert "RuntimeError: fixture bug" in " ".join(primary.__notes__)
+    assert fixture.os.close.call_count == 3
+    assert str(primary) == "initial failure" and not fixture.owner.removed
+
+
+def test_cache_release_failure_blocks_success_without_cleanup_retry(monkeypatch):
+    fixture = _CacheObservations(monkeypatch)
+    fixture.os.close.side_effect = [OSError("fixture marker close"), None, None]
+    with pytest.raises(H.SmokeFailure, match="release incomplete"):
+        H._finish_runtime_cache(fixture.owner)
+    assert fixture.owner.removed and fixture.os.close.call_count == 3
+    assert fixture.os.rmdir.call_count == 1
+
+
+def test_cache_cleanup_postcondition_is_verified_inertly(monkeypatch):
+    fixture = _CacheObservations(monkeypatch)
+    fixture.os.rmdir.side_effect = None
     with pytest.raises(H.SmokeFailure, match="cleanup did not complete"):
-        H._remove_runtime_cache(cache)
-
-    assert cache.exists()
-
-
-def test_runtime_cache_cleanup_refuses_preexisting_or_replaced_path(tmp_path) -> None:
-    preexisting = tmp_path / ".outputs-scene-cache"
-    preexisting.mkdir()
-    sentinel = preexisting / "keep"
-    sentinel.write_text("not run owned", encoding="utf-8")
-    with pytest.raises(H.SmokeFailure, match="already exists"):
-        H.main(
-            [
-                "--output-dir",
-                str(tmp_path / "outputs"),
-                "--output-uri",
-                "s3://fixture/output",
-                "--run-id",
-                "fixture-run",
-                "--plan-sha256",
-                "a" * 64,
-            ]
-        )
-    assert sentinel.read_text(encoding="utf-8") == "not run owned"
-
-    owned = tmp_path / "owned-cache"
-    identity = H._claim_runtime_cache(owned)
-    (owned / ".npa-run-owner").unlink()
-    owned.rmdir()
-    owned.mkdir()
-    replacement = owned / "replacement"
-    replacement.write_text("preserve", encoding="utf-8")
-    with pytest.raises(H.SmokeFailure, match="identity changed"):
-        H._remove_runtime_cache(owned, identity)
-    assert replacement.read_text(encoding="utf-8") == "preserve"
+        H._finish_runtime_cache(fixture.owner)
+    assert not fixture.owner.removed and fixture.os.close.call_count == 3
 
 
-def test_main_removes_its_claimed_cache_after_fetch_failure(
-    tmp_path, monkeypatch
-) -> None:
-    output = tmp_path / "outputs"
-    cache = tmp_path / ".outputs-scene-cache"
-    monkeypatch.setenv("NPA_SMOKE_OUTPUT_DIR", str(output))
-    monkeypatch.setattr(H, "_source_provenance", lambda: {})
-    monkeypatch.setattr(H, "_immutable_image", lambda: ("image", "digest"))
-    monkeypatch.setattr(H, "query_gpu", lambda: {})
+def _inert_main(monkeypatch):
+    """Bypass all runtime effects and inject a descriptor-only ownership model."""
+    fixture = _CacheObservations(monkeypatch)
+    owner = fixture.owner
+    monkeypatch.setattr(
+        H, "_execution_identity", lambda *_args: ("fixture-run", "a" * 64)
+    )
+    monkeypatch.setattr(
+        H,
+        "_prepare_output",
+        lambda _args: (owner.output_dir, owner.output_dir / owner.name, owner),
+    )
+    proof = Mock(return_value={"schema_version": "npa.habitat-sim.smoke.v1"})
+    upload = Mock()
+    monkeypatch.setattr(H, "_produce_proof", proof)
+    monkeypatch.setattr(H, "_upload_directory", upload)
+    argv = [
+        "--output-dir",
+        str(owner.output_dir),
+        "--output-uri",
+        "s3://fixture/output",
+        "--run-id",
+        "fixture-run",
+        "--plan-sha256",
+        "a" * 64,
+    ]
+    return fixture, proof, upload, argv
 
-    def fail_fetch(root, _opener=None, *, create_root=True):
-        assert root == cache and create_root is False
-        assert (root / ".npa-run-owner").is_file()
-        (root / "partial").write_bytes(b"partial")
-        raise H.SmokeFailure("fixture fetch failed")
 
-    monkeypatch.setattr(H, "fetch_scene_assets", fail_fetch)
-    with pytest.raises(H.SmokeFailure, match="fixture fetch failed"):
-        H.main(
-            [
-                "--output-dir",
-                str(output),
-                "--output-uri",
-                "s3://fixture/output",
-                "--run-id",
-                "fixture-run",
-                "--plan-sha256",
-                "a" * 64,
-            ]
-        )
-    assert not cache.exists()
+def test_main_preserves_primary_after_inert_cache_cleanup_failure(monkeypatch):
+    fixture, proof, upload, argv = _inert_main(monkeypatch)
+    primary = H.SmokeFailure("fixture fetch failed")
+    proof.side_effect = primary
+    fixture.os.unlink.side_effect = OSError("fixture cleanup failed")
+    with pytest.raises(H.SmokeFailure) as raised:
+        H.main(argv)
+    assert raised.value is primary and "unresolved" in " ".join(primary.__notes__)
+    upload.assert_not_called()
+    assert fixture.os.close.call_count == 3
+
+
+def _inert_cache_claim(monkeypatch):
+    """Observe the proposed creation protocol without creating any entry."""
+    fixture = _CacheObservations(monkeypatch)
+    fixture.owner.name = ".habitat-scene-cache-" + "a" * 32
+    fixture.parent_names.clear()
+    monkeypatch.setattr(H.secrets, "token_hex", lambda size: "a" * (size * 2))
+    return fixture
+
+
+def test_cache_claim_is_private_child_with_held_no_follow_descriptors(monkeypatch):
+    fixture = _inert_cache_claim(monkeypatch)
+    owner = H._claim_runtime_cache(fixture.owner.output_dir, (1, 10))
+    assert owner.output_dir / owner.name == Path("/fixture/output") / fixture.owner.name
+    assert owner.descriptors == {"parent": 101, "cache": 202, "marker": 303}
+    fixture.os.mkdir.assert_called_once_with(owner.name, mode=0o700, dir_fd=101)
+    assert all(
+        call.args[1] & fixture.os.O_NOFOLLOW for call in fixture.os.open.call_args_list
+    )
+    assert fixture.os.open.call_args_list[-1].args[1] & fixture.os.O_EXCL
+    assert fixture.os.open.call_args_list[-1].args[2] == 0o600
+    fixture.os.close.assert_not_called()
+    fixture.os.unlink.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "failure", ["nonempty", "parent_identity", "preexisting", "short_marker"]
+)
+def test_cache_partial_claim_is_preserved_without_adoption(monkeypatch, failure):
+    fixture = _inert_cache_claim(monkeypatch)
+    if failure == "nonempty":
+        fixture.parent_names.append("not-owned")
+    elif failure == "parent_identity":
+        fixture.parent = _cache_stat(99, directory=True)
+    elif failure == "preexisting":
+        fixture.os.mkdir.side_effect = FileExistsError("fixture entry exists")
+    else:
+        fixture.os.write.return_value = 63
+    with pytest.raises((H.SmokeFailure, FileExistsError)) as raised:
+        H._claim_runtime_cache(fixture.owner.output_dir, (1, 10))
+    assert "preserved, not adopted" in " ".join(raised.value.__notes__)
+    fixture.os.unlink.assert_not_called()
+    fixture.os.rmdir.assert_not_called()
+    assert fixture.os.close.call_count == (3 if failure == "short_marker" else 1)
+    if failure in {"nonempty", "parent_identity"}:
+        fixture.os.mkdir.assert_not_called()
+
+
+def test_prepare_output_places_cache_beneath_created_private_output(monkeypatch):
+    fixture = _CacheObservations(monkeypatch)
+    fixture.os.chmod = Mock()
+    output = MagicMock(spec=Path)
+    output.resolve.return_value = output
+    output.stat.return_value = _cache_stat(10, directory=True)
+    claim = Mock(return_value=fixture.owner)
+    monkeypatch.setattr(H, "_claim_runtime_cache", claim)
+    actual_output, cache, owner = H._prepare_output(SimpleNamespace(output_dir=output))
+    output.mkdir.assert_called_once_with(parents=True, exist_ok=False, mode=0o700)
+    claim.assert_called_once_with(output, (1, 10))
+    assert actual_output is output and owner is fixture.owner
+    assert cache is output.__truediv__.return_value
+    output.__truediv__.assert_called_once_with(owner.name)
 
 
 def _live_receipt(tmp_path: Path) -> dict[str, object]:
@@ -1451,58 +1686,27 @@ def test_ambiguous_ready_write_is_reported_without_deleting_shared_marker(
     assert ("fixture-bucket", ready_key) not in storage.deleted
 
 
-def test_main_removes_run_cache_before_publication_commit(
-    tmp_path, monkeypatch
-) -> None:
-    output = tmp_path / "output"
-    cache = tmp_path / ".output-scene-cache"
-    scene = cache / H.SCENE_NAME
-    navmesh = cache / H.NAVMESH_NAME
-    monkeypatch.setenv("NPA_SMOKE_OUTPUT_DIR", str(output))
-    monkeypatch.setattr(
-        H, "_execution_identity", lambda *_args: ("fixture-run", "a" * 64)
-    )
-    monkeypatch.setattr(H, "_source_provenance", lambda: {})
-    monkeypatch.setattr(
-        H,
-        "_immutable_image",
-        lambda: ("image@sha256:" + "b" * 64, "sha256:" + "b" * 64),
-    )
-    monkeypatch.setattr(H, "query_gpu", lambda: {})
+def test_main_removes_run_cache_before_publication_commit(monkeypatch) -> None:
+    fixture, _proof, upload, argv = _inert_main(monkeypatch)
 
-    def fetch(root, *, create_root):
-        assert root == cache and create_root is False
-        scene.write_bytes(b"scene")
-        navmesh.write_bytes(b"navmesh")
-        return scene, navmesh, {}, {}
-
-    monkeypatch.setattr(H, "fetch_scene_assets", fetch)
-    monkeypatch.setattr(H, "_run_traversal", lambda *_args: {})
-    monkeypatch.setattr(
-        H, "_proof", lambda *_args: {"schema_version": "npa.habitat-sim.smoke.v1"}
-    )
-
-    def upload(*_args, **_kwargs):
-        assert not cache.exists()
+    def publication(*_args, **_kwargs):
+        assert fixture.owner.removed and fixture.owner.descriptors == {}
+        assert not fixture.entries and not fixture.parent_names
         return {}
 
-    monkeypatch.setattr(H, "_upload_directory", upload)
-    assert (
-        H.main(
-            [
-                "--output-dir",
-                str(output),
-                "--output-uri",
-                "s3://fixture/run/",
-                "--run-id",
-                "fixture-run",
-                "--plan-sha256",
-                "a" * 64,
-            ]
-        )
-        == 0
-    )
-    assert not cache.exists()
+    upload.side_effect = publication
+    assert H.main(argv) == 0
+    upload.assert_called_once()
+
+
+def test_main_refuses_publication_after_inert_cleanup_failure(monkeypatch):
+    fixture, _proof, upload, argv = _inert_main(monkeypatch)
+    fixture.os.pread.return_value = b"b" * 64
+    with pytest.raises(H.SmokeFailure, match="marker identity"):
+        H.main(argv)
+    upload.assert_not_called()
+    fixture.os.unlink.assert_not_called()
+    assert fixture.os.close.call_count == 3
 
 
 def _mock_publication_stage(monkeypatch):
