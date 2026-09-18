@@ -6233,6 +6233,10 @@ def logs_cmd(
                     if sky_task_id is not None and str(sky_task_id) != ""
                     else selected_stage
                 )
+                if len(steps) == 1 and not runtime_stages and not resolution.runtime_state.get("waves"):
+                    # The one-shot renderer emits one task per planned step.
+                    # Job-level logs need neither its renamed task nor an assumed ID.
+                    live_stage = ""
                 live = tail_live_job_logs(
                     sky_bin=_resolve_sky_bin(sky_bin),
                     job_id=job_id,

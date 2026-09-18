@@ -1,0 +1,104 @@
+{
+  "artifacts": {
+    "export-report.json": "633663ce40d49b744423099aa8a10efa03cef4f633be87acdaf437664067580c",
+    "input/data/chunk-000/file-000.parquet": "3ab038638dc337827039bd116a34bc1578d5c38d0a8efe15b634873ac86515bc",
+    "input/meta/episodes/chunk-000/file-000.parquet": "5fe7aa3c7a2a8fe27963f65a991d0075b8d50bf472c2c6cbd3098dbdba598273",
+    "input/meta/info.json": "bba929d41e76307c2b1875fc5c5a57c28f7a6fe09e3ea5d982f172d508980086",
+    "input/meta/stats.json": "1aff7752969e875cbd29909df854e95c554db2c62abc8369843007f3f495e59d",
+    "input/meta/tasks.parquet": "8703df66cb1d03b2e808ee069cbf816447a91ef59acad8f49e2834a2f4587f89",
+    "input/videos/observation.images.top/chunk-000/file-000.mp4": "702e4dc0f516db755d431c78dcf470a14a307ec4925ff2d29772d4bebb45da76",
+    "input/videos/observation.images.wrist/chunk-000/file-000.mp4": "8023f3734ab7963186347cc3fd7abfef45f9fa2d92edc855beb30dc90478dcea",
+    "labeled-frames.json": "43eb3b7a4d656a6900df833ac8d234496809f9e868bfc3fc4911a7b37a86de21",
+    "lerobot-labeled.mp4": "803cc4e2bbf2260838354f7475ced9ab9417ab54a99ff62d3e4532e51b894a2b",
+    "lerobot-video-subtasks.rrd": "c6ea539976f254eec55da12d7ac2674272c74b06fa676ffd1fdcac8c392e3218",
+    "reviewed/data/chunk-000/file-000.parquet": "3eae523288e6a59f72bff1d0707dea38de88c88fc451af916600597393796aa1",
+    "reviewed/meta/episodes/chunk-000/file-000.parquet": "5fe7aa3c7a2a8fe27963f65a991d0075b8d50bf472c2c6cbd3098dbdba598273",
+    "reviewed/meta/info.json": "0d6ef916a068bc7b08de0444ccfd0efe658562bdaa0b82149c7da303bfab0541",
+    "reviewed/meta/lerobot_annotations.json": "799f9542bac6552eeb2f6702f008c4f8ee916b5a0a5373f2aff541b89c260487",
+    "reviewed/meta/stats.json": "1aff7752969e875cbd29909df854e95c554db2c62abc8369843007f3f495e59d",
+    "reviewed/meta/subtasks.parquet": "536d68807e4ce740a0e7f340b5bf45010036f3920da85726249e28833d321c27",
+    "reviewed/meta/tasks.parquet": "8703df66cb1d03b2e808ee069cbf816447a91ef59acad8f49e2834a2f4587f89",
+    "reviewed/videos/observation.images.top/chunk-000/file-000.mp4": "702e4dc0f516db755d431c78dcf470a14a307ec4925ff2d29772d4bebb45da76",
+    "reviewed/videos/observation.images.wrist/chunk-000/file-000.mp4": "8023f3734ab7963186347cc3fd7abfef45f9fa2d92edc855beb30dc90478dcea",
+    "subtask-proof.json": "34153c9211235045ffed83dfa0246d9dc208e65c9610f39ee1e1f93376d69958",
+    "temporal-tags.json": "b2f57c21722e015daf866a0dc10e3dae0054eba2c0ee3cc378fbe91084483c6a",
+    "workflow-report.json": "472fb02bc2eb717043f97a5d2649936b7333f5aaf7b8deb18932a827ed8516e4",
+    "workflow.yaml": "cd66862dd0e95a2530e3979dff55ad0fa0cc1f2d198d601440fea95508d9f9f9"
+  },
+  "input_unchanged": true,
+  "original_frame_columns_unchanged": true,
+  "provenance": {
+    "duration_seconds": 15.133333333333333,
+    "episode_index": 0,
+    "fps": 30,
+    "frame_count": 454,
+    "limitations": "Real SO-100 camera footage; labels are assistant-authored demonstration annotations visually checked against both cameras, not upstream ground truth or expert-certified labels. Programmatic temporal tags exercise the production FiftyOne tag parser and LeRobot writer; no interactive FiftyOne labeling session, policy training, or NVIDIA inference is claimed.",
+    "modifications": "Episode 0 subset; unchanged AV1 camera packets remuxed into clips; new subtask labels; H.264 two-camera composition with annotation overlays.",
+    "phases": [
+      {
+        "end_frame_exclusive": 80,
+        "label": "ready",
+        "start_frame": 0
+      },
+      {
+        "end_frame_exclusive": 160,
+        "label": "approach",
+        "start_frame": 80
+      },
+      {
+        "end_frame_exclusive": 190,
+        "label": "grasp",
+        "start_frame": 160
+      },
+      {
+        "end_frame_exclusive": 245,
+        "label": "transfer",
+        "start_frame": 190
+      },
+      {
+        "end_frame_exclusive": 279,
+        "label": "place",
+        "start_frame": 245
+      },
+      {
+        "end_frame_exclusive": 300,
+        "label": "release",
+        "start_frame": 279
+      },
+      {
+        "end_frame_exclusive": 360,
+        "label": "retract",
+        "start_frame": 300
+      },
+      {
+        "end_frame_exclusive": 454,
+        "label": "complete",
+        "start_frame": 360
+      }
+    ],
+    "recipe_sha256": {
+      "npa/scripts/record_lerobot_video_subtasks.py": "60e1367783d8900a792fb689476062f509de346620da1ba178c48e72b1f35033",
+      "npa/src/npa/fiftyone_lerobot_subtasks.py": "1f3ea655ca34738fb49507d9da6bea56f322b5d38cf9c9d79108608ad106e7fe",
+      "npa/src/npa/workflows/lerobot_subtask_proof.py": "41e3887daab5fc6daa9f1c4f36c545f9c578294f82160b361e169f109da04c94",
+      "workflows/testing/lerobot-subtask-proof.yaml": "cd66862dd0e95a2530e3979dff55ad0fa0cc1f2d198d601440fea95508d9f9f9"
+    },
+    "run_id": "lerobot-real-video-subtasks-20260916",
+    "source_dataset": "lerobot/svla_so100_pickplace",
+    "source_license": "Apache-2.0",
+    "source_revision": "728583b5eaf9e739a7f119e2def466fa1d552402",
+    "source_sha256": {
+      "data/chunk-000/file-000.parquet": "e74b2786f24bc5bb8d9e6b82f5f16cc4ae921fcaf42cabdcb9bf939ca78767e1",
+      "meta/episodes/chunk-000/file-000.parquet": "c5714dd5018ec013fac6610bd6bc7e97fc9ec79623b898ab8c4adddc3da61260",
+      "meta/info.json": "aec8d0c7bd3d2dc693c160bd58f9fb6aabcbb24d4b28e2f09950a3aa6b246eef",
+      "meta/tasks.parquet": "8703df66cb1d03b2e808ee069cbf816447a91ef59acad8f49e2834a2f4587f89",
+      "videos/observation.images.top/chunk-000/file-000.mp4": "7c7f2674c7af4ac9fde4c0301ad25325ef8c655f0bd455b4b3b8a9ece1965d73",
+      "videos/observation.images.wrist/chunk-000/file-000.mp4": "f605a80ca6d299231aebec49c945768a18a1207f30bd9dce4add0ab535478e7c"
+    },
+    "source_url": "https://huggingface.co/datasets/lerobot/svla_so100_pickplace/tree/728583b5eaf9e739a7f119e2def466fa1d552402",
+    "versions": {
+      "av": "17.1.0",
+      "rerun": "0.31.4"
+    }
+  },
+  "schema": "npa.lerobot.video_subtask_proof.v1"
+}
