@@ -17,6 +17,62 @@
     "sha256": "7cdbfab482b23a4d925d59ff169ab0bc5f8c97ceb0db79f9fd5bf46ef8aa1556",
     "url": "https://github.com/ARISE-Initiative/robomimic/blob/d309eaecc18acf4152a830a895a6984b8ac71b05/LICENSE"
   },
+  "build_installer": {
+    "name": "pip",
+    "version": "26.2.1",
+    "path": "tools/pip-26.2.1-py3-none-any.whl",
+    "url": "https://files.pythonhosted.org/packages/f3/6e/1736e5b4ae2b778ef2f81c47d797de9f891d4d8acb047a24ca37a60294dd/pip-26.2.1-py3-none-any.whl",
+    "size": 1816632,
+    "sha256": "71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e",
+    "requires_python": ">=3.10",
+    "source_revision": "634a6ec1a5d9dcc2433571cdb2f4c58a4bb29caf",
+    "source_url": "https://github.com/pypa/pip/tree/634a6ec1a5d9dcc2433571cdb2f4c58a4bb29caf",
+    "publisher": {
+      "repository": "https://github.com/pypa/pip",
+      "workflow": "release.yml",
+      "ref": "refs/tags/26.2.1",
+      "issuer": "https://token.actions.githubusercontent.com",
+      "provenance_url": "https://pypi.org/integrity/pip/26.2.1/pip-26.2.1-py3-none-any.whl/provenance",
+      "envelope_sha256": "d9e2c581da9f13c9f58d706e622356ca98b9566be654c69a83fd665c3c591238",
+      "verified_statement_sha256": "9d7363d050a3834eacb3870467e3252b673d6b19c0439500b1609caf5f7a73fc",
+      "verification": "standard PyPI-attestations/Sigstore exact-artifact publisher verification retained outside the image; not a reproducible-build assertion"
+    },
+    "members": {
+      "count": 476,
+      "expanded_bytes": 5664531,
+      "inventory_sha256": "7009f553e1349a3754bf26158c2f38a1dd80670bb32678936909e7908c77b10a",
+      "inventory_encoding": "archive-order JSON array of path,type,mode,bytes,sha256; sorted keys, compact separators; regular mode includes type bits",
+      "pe_launchers": [
+        "pip/_vendor/distlib/t32.exe",
+        "pip/_vendor/distlib/t64-arm.exe",
+        "pip/_vendor/distlib/t64.exe",
+        "pip/_vendor/distlib/w32.exe",
+        "pip/_vendor/distlib/w64-arm.exe",
+        "pip/_vendor/distlib/w64.exe"
+      ],
+      "certificate_data": {
+        "path": "pip/_vendor/certifi/cacert.pem",
+        "size": 234354,
+        "sha256": "bbc7e9c01d7551bb8a159b5dedd989b8ee3ce105aff522b68eb1b01bf854cab0",
+        "certificate_count": 118
+      },
+      "notice_files": 42,
+      "license_file_metadata_entries": 22,
+      "vendor_components": 18,
+      "notice_delivery": "retain the complete immutable wheel and all notices as a read-only build input; never install or copy it into an image layer",
+      "license_scope": "MIT top-level only; bundled component notices and MPL certificate-data obligations remain separate; py3-none-any is not binary-free"
+    },
+    "transformation_source": {
+      "pip/_internal/operations/install/wheel.py": "aa11702524a12e6e2ab98f3322cb3fb7e6df7f4615e3d1d334029fbb87d2a627",
+      "pip/_vendor/distlib/scripts.py": "ad59b803e61f1900e9b0e4703b2ec0c1ea724536b2bb2eab73e32768230101c3",
+      "pip/_internal/commands/install.py": "0d11142c0f9319b08a86a0412e4adb0cacedc90e79ed06c37ba649518ba1db29",
+      "pip/_internal/locations/_sysconfig.py": "1e8658435b15403dc8469402a784e975340b36b0c517323dcd18d7ad36272566"
+    },
+    "delivery": "build-only read-only mount; isolated stdlib wrapper; no inherited site pip; no extra installer in final or ancestor layers",
+    "parent_qualification": "UNPROVEN: interpreter, stdlib, sysconfig and all ancestor bytes/notices require independent exact-parent inspection before execution",
+    "source_reproducible_build": "UNPROVEN",
+    "target_installation_and_image": "UNPROVEN"
+  },
   "fetch_policy": {
     "method": "git-fetch-and-canonical-archive",
     "credentialless": true,
