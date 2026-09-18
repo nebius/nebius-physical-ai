@@ -51,6 +51,13 @@ on:
         description: "Exact failed/superseded dev tags to delete without promotion"
         required: false
         default: ""
+  push:
+    branches: [main]
+    paths:
+      - "npa/docker/workbench/**"
+  schedule:
+    # Weekly dev image refresh so dev-<sha> tags track HEAD automatically
+    - cron: "0 6 * * 1"
 
 permissions:
   contents: read
