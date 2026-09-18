@@ -736,7 +736,11 @@ def _video_artifacts(
                 "episode_length"
             ),
         )
-        video, derivation = video_preparer(source)
+        video, derivation = (
+            video_preparer(source)
+            if video_preparer is not None
+            else _denoise_mp4(source, video_profile=request.video_profile)
+        )
         metadata = _probe_mp4(
             video,
             evidence_interval=interval,
@@ -837,7 +841,7 @@ def evaluate(
     graphics_preparer: Callable[
         [Path, dict[str, str]], dict[str, Any]
     ] = _prepare_viewport_graphics,
-    video_preparer: Callable[[Path], tuple[Path, dict[str, Any]]] = _denoise_mp4,
+    video_preparer: Callable[[Path], tuple[Path, dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     """Execute real Arena evaluation and retain truthful scored or failed evidence.
 
@@ -845,7 +849,8 @@ def evaluate(
         request: Scored policy evaluation and optional visual qualification.
         runner: Upstream process executor, injectable for offline contract tests.
         graphics_preparer: Verify or privately prepare native graphics userspace.
-        video_preparer: Create the declared denoised derivative without altering source.
+        video_preparer: Optional test transform; None uses the selected profile's
+            declared evidence filter without altering source.
     Returns:
         Published evaluation manifest with metrics and independently hashed artifacts.
     Raises:

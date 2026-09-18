@@ -13,7 +13,7 @@ from .errors import IsaacArenaError
 from .capture_profiles import capture_profile
 from .task_progress import task_progress_adapter, task_visual_interval
 from .video_evidence import (
-    EVIDENCE_FILTER,
+    evidence_filter,
     EVIDENCE_PLAYBACK_RATE,
     video_acceptance_thresholds,
 )
@@ -375,6 +375,7 @@ def _video_contract(
     evidence: dict | None,
     ground_truth: dict,
     source_mp4_sha256: str,
+    video_profile: str,
 ) -> dict:
     if not isinstance(video, dict):
         raise IsaacArenaError(
@@ -490,7 +491,7 @@ def _video_contract(
         and motion.get("progress_association_radius_pixels") == expected_radius_pixels
         and isinstance(derivation, dict)
         and derivation.get("kind") == "ffmpeg_spatiotemporal_denoise"
-        and derivation.get("filter") == EVIDENCE_FILTER
+        and derivation.get("filter") == evidence_filter(video_profile)
         and derivation.get("playback_rate") == EVIDENCE_PLAYBACK_RATE
         and derivation.get("source_sha256") == source_mp4_sha256
         and derivation.get("changes_simulator_outcome") is False
@@ -672,5 +673,6 @@ def qualify_visual_acceptance(
             evidence,
             ground_truth,
             capture_contract["source_mp4_sha256"],
+            capture_contract["rendering"].get("profile", "standard"),
         ),
     }

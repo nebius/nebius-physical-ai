@@ -82,6 +82,9 @@ actions. Every retained frame still requires native renderer readback and
 unchanged-state evidence; lower resolution or a fallback profile fails
 verification. Higher sampling does not itself establish good visual quality or
 task success: inspect the result and retain the existing acceptance checks.
+The declared evidence derivative scales its Gaussian radius from 3.5 pixels at
+720p to 10.5 pixels at native 4K. Motion thresholds stay unchanged, and the raw
+capture remains untouched for editorial finishing.
 
 `standard` remains the CLI/SDK default. Workflows may set
 `config.video_profile: film`; an omitted selector preserves the old argv for

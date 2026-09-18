@@ -368,6 +368,9 @@ physics, replay actions, and acceptance thresholds remain unchanged. Native
 resolution and profile readback are verified; never call an upscaled standard
 capture a film-profile render. Inspect the actual result before claiming improved
 picture quality.
+The evidence-only Gaussian radius scales from 3.5 pixels at 720p to 10.5 pixels
+at 4K; acceptance verifies that exact profile-specific transform. Keep the raw
+4K capture for editorial finishing, with a separate derivative recipe.
 
 Set `config.video_profile: film` in the existing RTX workflow when using an
 updated runtime. The published r4 image predates the selector: use the explicit

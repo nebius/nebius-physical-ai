@@ -12,7 +12,7 @@ from .identity import (
     CAPABILITIES_SCHEMA,
 )
 from .task_progress import task_progress_capabilities
-from .video_evidence import video_acceptance_thresholds
+from .video_evidence import evidence_filter, video_acceptance_thresholds
 
 _TASK_PROGRESS_CAPABILITIES = task_progress_capabilities()
 _TASK_QUALIFIED_POLICIES = sorted(
@@ -542,6 +542,7 @@ _CAPABILITY_MANIFEST = {
                     ),
                     "minimum_settling_renders": capture_profile(name).settling_renders,
                     "settings": render_settings(capture_profile(name)),
+                    "evidence_filter": evidence_filter(name),
                     "changes_camera_pose_or_physics": False,
                 }
                 for name in ("standard", "film")

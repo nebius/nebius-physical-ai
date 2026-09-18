@@ -33,6 +33,26 @@ EVIDENCE_PLAYBACK_RATE = 0.5
 EVIDENCE_FILTER = f"{DENOISE_FILTER},setpts={1 / EVIDENCE_PLAYBACK_RATE:g}*PTS"
 
 
+def evidence_filter(video_profile: str = "standard") -> str:
+    """Keep the evidence blur's image-relative radius at native film resolution.
+
+    Args:
+        video_profile: Validated capture profile; standard retains its exact filter.
+    Returns:
+        The declared evidence transform, without changing motion thresholds.
+    Raises:
+        IsaacArenaError: The profile is unknown.
+    """
+    profile = capture_profile(video_profile)
+    if profile.resolution is None:
+        return EVIDENCE_FILTER
+    sigma = 3.5 * profile.resolution[1] / 720
+    return (
+        f"hqdn3d=20:16:30:24,gblur=sigma={sigma:g},"
+        f"setpts={1 / EVIDENCE_PLAYBACK_RATE:g}*PTS"
+    )
+
+
 def video_acceptance_thresholds() -> dict[str, Any]:
     """Return the reproducible visual gate advertised by the capability manifest.
 
@@ -761,9 +781,9 @@ def probe_mp4(
     return metadata
 
 
-def _render_denoised_video(source: Path, target: Path) -> None:
+def _render_denoised_video(source: Path, target: Path, filters: str) -> None:
     arguments = ["ffmpeg", "-v", "error", "-i", str(source)]
-    arguments += ["-vf", EVIDENCE_FILTER, "-an", "-vsync", "0"]
+    arguments += ["-vf", filters, "-an", "-vsync", "0"]
     arguments += ["-c:v", "libx264", "-preset", "medium", "-crf", "18"]
     arguments += ["-pix_fmt", "yuv420p", "-movflags", "+faststart", "-y", str(target)]
     try:
@@ -776,21 +796,25 @@ def _render_denoised_video(source: Path, target: Path) -> None:
         raise IsaacArenaError(f"viewport MP4 denoising failed: {source.name}")
 
 
-def denoise_mp4(source: Path) -> tuple[Path, dict[str, Any]]:
+def denoise_mp4(
+    source: Path, *, video_profile: str = "standard"
+) -> tuple[Path, dict[str, Any]]:
     """Create a declared denoised derivative while retaining the upstream MP4.
 
     Args:
         source: Original upstream MP4, preserved unchanged.
+        video_profile: Select the evidence filter's native-resolution scale.
     Returns:
         Derivative path and source hash with the exact FFmpeg filter declaration.
     Raises:
         IsaacArenaError: FFmpeg cannot produce a nonempty derivative.
     """
     target = source.with_name(f"{source.stem}-evidence-denoised.mp4")
-    _render_denoised_video(source, target)
+    filters = evidence_filter(video_profile)
+    _render_denoised_video(source, target, filters)
     return target, {
         "kind": "ffmpeg_spatiotemporal_denoise",
-        "filter": EVIDENCE_FILTER,
+        "filter": filters,
         "playback_rate": EVIDENCE_PLAYBACK_RATE,
         "source_path": source.name,
         "source_sha256": _file_sha256(source),
