@@ -500,7 +500,7 @@ def _component_env(
 
 
 def _run_component_command(
-    command: str,
+    command: str | list[str],
     *,
     cwd: Path,
     env: dict[str, str],
@@ -511,7 +511,7 @@ def _run_component_command(
         command,
         cwd=str(cwd),
         env=env,
-        shell=True,
+        shell=isinstance(command, str),
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
