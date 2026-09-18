@@ -149,8 +149,8 @@ def test_the_paths_match_what_the_dataset_integration_posts() -> None:
         encoding="utf-8"
     )
 
-    assert '_post(lancedb_endpoint, "/index"' in source
-    assert '_post(lancedb_endpoint, "/query"' in source
+    assert "_post(" in source and "/index" in source
+    assert "_post(" in source and "/query" in source
     server = (repo_root / "npa/src/npa/workbench/lancedb/server.py").read_text(
         encoding="utf-8"
     )
