@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import ast
+import copy
 import hashlib
 import importlib.util
 import io
 import json
 import os
 from pathlib import Path
+import stat
 import tarfile
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 from packaging.requirements import Requirement
 import pytest
@@ -55,16 +60,232 @@ def _staging_fixture(monkeypatch, output: Path) -> dict:
         "_verify_internal_vendored",
     ):
         monkeypatch.setattr(PREPARER, name, lambda *_args: None)
+    return _staging_manifest(encoded)
+
+
+def _staging_manifest(encoded: bytes) -> dict:
     return {
-        "source": {"metadata_patches": [], "required_projection_files": []},
+        "schema_version": "npa.habitat-sim.source-manifest.v1",
+        "source": {
+            "license_path": "LICENSE",
+            "metadata_patches": [],
+            "required_projection_files": [],
+            "final_projection": ["source.txt"],
+        },
         "internal_vendored": [],
         "dependencies": [],
+        "dependency_projection": {},
         "forbidden_paths": [],
         "expected_projection": {
             "file_count": 1,
             "inventory_sha256": hashlib.sha256(encoded).hexdigest(),
         },
     }
+
+
+def _forbid_source_effects(monkeypatch):
+    effects = []
+    for owner, names in (
+        (PREPARER, ("_owned_destination", "_download", "_extract")),
+        (PREPARER.tempfile, ("mkdtemp",)),
+        (PREPARER.shutil, ("rmtree",)),
+        (PREPARER.os, ("open",)),
+    ):
+        for name in names:
+            effect = Mock(side_effect=AssertionError("unexpected source side effect"))
+            monkeypatch.setattr(owner, name, effect)
+            effects.append(effect)
+    return effects
+
+
+def _replace_record(manifest, location, value):
+    record = manifest
+    for key in location[:-1]:
+        record = record[key]
+    record[location[-1]] = value
+
+
+_PATH_LOCATIONS = [
+    ("source", "license_path"),
+    ("source", "metadata_patches", 0, "path"),
+    ("source", "required_projection_files", 0, "path"),
+    ("source", "final_projection", 0),
+    ("dependencies", 0, "name"),
+    ("dependencies", 0, "target"),
+    ("dependencies", 0, "license_path"),
+    ("dependency_projection", "assimp", 0),
+    ("internal_vendored", 0, "root"),
+    ("internal_vendored", 0, "files", 0, "path"),
+    ("forbidden_paths", 0),
+]
+
+
+@pytest.mark.parametrize("location", _PATH_LOCATIONS)
+@pytest.mark.parametrize(
+    "value",
+    [
+        "../outside",
+        "/outside",
+        "a/../b",
+        "a//b",
+        "./a",
+        "a/",
+        "a\\b",
+        "",
+        "a\x00b",
+        None,
+    ],
+)
+def test_manifest_paths_refuse_before_any_effect(monkeypatch, location, value):
+    manifest = copy.deepcopy(MANIFEST)
+    _replace_record(manifest, location, value)
+    effects = _forbid_source_effects(monkeypatch)
+    with pytest.raises(PREPARER.SourceError):
+        PREPARER.stage(manifest, Path("unused-output"))
+    assert all(effect.call_count == 0 for effect in effects)
+
+
+@pytest.mark.parametrize("section", ["source", "dependencies"])
+def test_excluded_link_paths_refuse_before_any_effect(monkeypatch, section):
+    manifest = copy.deepcopy(MANIFEST)
+    item = manifest[section][0] if section == "dependencies" else manifest[section]
+    item["excluded_archive_links"] = ["../outside"]
+    effects = _forbid_source_effects(monkeypatch)
+    with pytest.raises(PREPARER.SourceError):
+        PREPARER.stage(manifest, Path("unused-output"))
+    assert all(effect.call_count == 0 for effect in effects)
+
+
+@pytest.mark.parametrize("target", ["src", "src/deps", "src/other/item", "source/item"])
+def test_dependency_target_requires_strict_deps_descendant(monkeypatch, target):
+    manifest = copy.deepcopy(MANIFEST)
+    manifest["dependencies"][0]["target"] = target
+    effects = _forbid_source_effects(monkeypatch)
+    with pytest.raises(PREPARER.SourceError, match="src/deps descendant"):
+        PREPARER.stage(manifest, Path("unused-output"))
+    assert all(effect.call_count == 0 for effect in effects)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("target", "src/deps/assimp"),
+        ("target", "src/deps/assimp/nested"),
+        ("name", "assimp"),
+        ("name", "habitat-sim"),
+    ],
+)
+def test_dependency_aliases_refuse_before_any_effect(monkeypatch, field, value):
+    manifest = copy.deepcopy(MANIFEST)
+    manifest["dependencies"][1][field] = value
+    effects = _forbid_source_effects(monkeypatch)
+    with pytest.raises(PREPARER.SourceError, match="must not overlap"):
+        PREPARER.stage(manifest, Path("unused-output"))
+    assert all(effect.call_count == 0 for effect in effects)
+
+
+def test_checked_in_manifest_paths_are_canonical_without_side_effects(monkeypatch):
+    before = copy.deepcopy(MANIFEST)
+    effects = _forbid_source_effects(monkeypatch)
+    PREPARER._validate_manifest_paths(MANIFEST)
+    assert MANIFEST == before
+    assert all(effect.call_count == 0 for effect in effects)
+
+
+@pytest.mark.parametrize("boundary", ["symlink", "foreign-owner", "shared-write"])
+def test_dependency_containment_refuses_mocked_boundary_before_effects(
+    monkeypatch, boundary
+):
+    root = Path("inert-staging")
+    uid = os.getuid()
+
+    def lstat(path):
+        mode, owner = stat.S_IFDIR | 0o700, uid
+        if path == root / "src":
+            if boundary == "symlink":
+                mode = stat.S_IFLNK | 0o700
+            elif boundary == "foreign-owner":
+                owner += 1
+            else:
+                mode |= 0o020
+        return SimpleNamespace(st_mode=mode, st_uid=owner)
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+    monkeypatch.setattr(Path, "is_dir", lambda _path: True)
+    effects = _forbid_source_effects(monkeypatch)
+    with pytest.raises(PREPARER.SourceError, match="owned and not shared or linked"):
+        PREPARER._materialize_dependency(
+            MANIFEST["dependencies"][0], root, Path("unused"), []
+        )
+    assert all(effect.call_count == 0 for effect in effects)
+
+
+def _mock_staging_metadata(monkeypatch, events):
+    def lstat(path):
+        events.append(("lstat", path))
+        return SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=os.getuid())
+
+    def exists(path):
+        events.append(("exists", path))
+        return True
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+    monkeypatch.setattr(Path, "is_dir", lambda _path: True)
+    monkeypatch.setattr(Path, "resolve", lambda path: path)
+    monkeypatch.setattr(Path, "exists", exists)
+
+
+def _mock_dependency_effects(monkeypatch, events, target):
+    def download(*_args):
+        events.append(("download", target))
+        return Path("inert-archive")
+
+    monkeypatch.setattr(PREPARER, "_download", download)
+    monkeypatch.setattr(
+        PREPARER.shutil, "rmtree", lambda path: events.append(("remove", path))
+    )
+    monkeypatch.setattr(
+        PREPARER,
+        "_extract",
+        lambda _archive, path, _links: events.append(("extract", path)),
+    )
+    monkeypatch.setattr(PREPARER, "_verify_license", lambda *_args: None)
+    monkeypatch.setattr(PREPARER, "_prune_dependency", lambda *_args: None)
+
+
+def test_dependency_checks_containment_before_mocked_remove_and_extract(monkeypatch):
+    events = []
+    root = Path("inert-staging")
+    target = root / "src/deps/assimp"
+    _mock_staging_metadata(monkeypatch, events)
+    _mock_dependency_effects(monkeypatch, events, target)
+    PREPARER._materialize_dependency(
+        MANIFEST["dependencies"][0], root, Path("unused"), []
+    )
+    assert events == [
+        ("lstat", root),
+        ("lstat", root / "src"),
+        ("lstat", root / "src/deps"),
+        ("lstat", target),
+        ("download", target),
+        ("exists", target),
+        ("remove", target),
+        ("extract", target),
+    ]
+
+
+def test_source_preparer_helpers_and_exports_follow_contribution_contract():
+    module = ast.parse((PACKAGE / "prepare_source.py").read_text())
+    functions = [node for node in ast.walk(module) if isinstance(node, ast.FunctionDef)]
+    assert all(node.end_lineno - node.lineno + 1 < 40 for node in functions)
+    for node in module.body:
+        if isinstance(
+            node, (ast.ClassDef, ast.FunctionDef)
+        ) and not node.name.startswith("_"):
+            documentation = ast.get_docstring(node)
+            assert documentation and all(
+                section in documentation for section in ("Args:", "Returns:", "Raises:")
+            )
 
 
 def test_stage_exposes_only_complete_verified_projection(tmp_path, monkeypatch):

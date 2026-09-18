@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import shutil
+import stat
 import sys
 import tarfile
 import tempfile
@@ -20,7 +21,17 @@ import urllib.request
 
 
 class SourceError(ValueError):
-    """An immutable source or projection boundary failed."""
+    """Report an immutable source or projection boundary failure.
+
+    Args:
+        *args: Error details forwarded to ValueError.
+
+    Returns:
+        None.
+
+    Raises:
+        None.
+    """
 
 
 class _RefuseRedirect(urllib.request.HTTPRedirectHandler):
@@ -36,11 +47,111 @@ def _sha(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _download(
-    item: dict[str, object],
-    directory: Path,
-    opener: Callable[..., BinaryIO] | None = None,
-) -> Path:
+def _relative_path(value: object, label: str) -> PurePosixPath:
+    if not isinstance(value, str) or not value:
+        raise SourceError(f"{label} path is unsafe")
+    if "\\" in value or any(ord(character) < 32 for character in value):
+        raise SourceError(f"{label} path is unsafe")
+    if any(part in {"", ".", ".."} for part in value.split("/")):
+        raise SourceError(f"{label} path is unsafe")
+    return PurePosixPath(value)
+
+
+def _component_name(value: object) -> str:
+    relative = _relative_path(value, "source component")
+    if len(relative.parts) != 1:
+        raise SourceError("source component must be one path component")
+    return relative.as_posix()
+
+
+def _dependency_relative(value: object) -> PurePosixPath:
+    relative = _relative_path(value, "dependency target")
+    if relative.parts[:2] != ("src", "deps") or len(relative.parts) < 3:
+        raise SourceError("dependency target must be a src/deps descendant")
+    return relative
+
+
+def _validate_path_list(values: object, label: str) -> None:
+    if not isinstance(values, list):
+        raise SourceError(f"{label} paths must be a list")
+    for value in values:
+        _relative_path(value, label)
+
+
+def _validate_archive_paths(item: dict[str, object]) -> None:
+    _component_name(item.get("name", "habitat-sim"))
+    _relative_path(item["license_path"], "source license")
+    _validate_path_list(item.get("excluded_archive_links", []), "excluded link")
+
+
+def _validate_dependency_paths(manifest: dict[str, object]) -> None:
+    names = {"habitat-sim"}
+    targets: list[PurePosixPath] = []
+    for item in manifest["dependencies"]:
+        _validate_archive_paths(item)
+        name = _component_name(item["name"])
+        target = _dependency_relative(item["target"])
+        if name in names or any(
+            target.is_relative_to(old) or old.is_relative_to(target) for old in targets
+        ):
+            raise SourceError("source dependency names and targets must not overlap")
+        names.add(name)
+        targets.append(target)
+        if name not in manifest["dependency_projection"]:
+            raise SourceError("source dependency projection is missing")
+    for name, selected in manifest["dependency_projection"].items():
+        _component_name(name)
+        _validate_path_list(selected, "dependency projection")
+        for value in selected:
+            _component_name(value)
+
+
+def _validate_manifest_paths(manifest: dict[str, object]) -> None:
+    """Reject untrusted path spellings before opening output or fetching bytes."""
+    try:
+        if manifest["schema_version"] != "npa.habitat-sim.source-manifest.v1":
+            raise SourceError("unsupported source manifest")
+        source = manifest["source"]
+        _validate_archive_paths(source)
+        for item in source["metadata_patches"]:
+            _relative_path(item["path"], "source metadata patch")
+        for item in source["required_projection_files"]:
+            _relative_path(item["path"], "required source projection")
+        _validate_path_list(source["final_projection"], "final projection")
+        _validate_dependency_paths(manifest)
+        for item in manifest["internal_vendored"]:
+            _dependency_relative(item["root"])
+            for member in item["files"]:
+                _relative_path(member["path"], "vendored source member")
+        _validate_path_list(manifest["forbidden_paths"], "forbidden source")
+    except (KeyError, TypeError, AttributeError) as error:
+        raise SourceError("source manifest path records are malformed") from error
+
+
+def _owned_staging_entry(path: Path) -> None:
+    info = path.lstat()
+    if stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
+        raise SourceError("source staging path must be owned and not shared or linked")
+
+
+def _contained_source_path(root: Path, value: object, label: str) -> Path:
+    relative = _relative_path(value, label)
+    _owned_staging_entry(root)
+    if not root.is_dir():
+        raise SourceError("source staging root must be a directory")
+    target = root
+    for part in relative.parts:
+        target = target / part
+        try:
+            _owned_staging_entry(target)
+        except FileNotFoundError:
+            continue
+    if not target.resolve().is_relative_to(root.resolve()):
+        raise SourceError("source staging path escapes the owned root")
+    return target
+
+
+def _archive_request(item: dict[str, object]) -> tuple[urllib.request.Request, int]:
     url = str(item["archive_url"])
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme != "https" or parsed.hostname != "codeload.github.com":
@@ -52,59 +163,70 @@ def _download(
         or expected_bytes <= 0
     ):
         raise SourceError("source archive byte count must be a positive integer")
-    target = directory / f"{item.get('name', 'habitat-sim')}.tar.gz"
     request = urllib.request.Request(
         url, headers={"User-Agent": "npa-source-preparer/1"}
     )
-    open_request = opener or urllib.request.build_opener(_RefuseRedirect()).open
+    return request, expected_bytes
+
+
+def _verify_response(response: BinaryIO, url: str, expected_bytes: int) -> None:
+    if response.geturl() != url:
+        raise SourceError("source archive redirected away from pinned locator")
+    headers = getattr(response, "headers", None)
+    declared_length = headers.get("Content-Length") if headers is not None else None
+    if declared_length is None:
+        return
+    try:
+        declared_bytes = int(declared_length)
+    except (TypeError, ValueError) as error:
+        raise SourceError("source archive Content-Length is invalid") from error
+    if declared_bytes < 0 or declared_bytes != expected_bytes:
+        raise SourceError("source archive Content-Length does not match pinned size")
+
+
+def _stream_archive(
+    response: BinaryIO, stream: BinaryIO, expected: int
+) -> tuple[int, str]:
     digest = hashlib.sha256()
     size = 0
+    while True:
+        remaining = expected - size
+        chunk = response.read(min(1024 * 1024, remaining + 1))
+        if not chunk:
+            return size, digest.hexdigest()
+        if len(chunk) > remaining:
+            raise SourceError("source archive exceeds pinned byte count")
+        digest.update(chunk)
+        stream.write(chunk)
+        size += len(chunk)
+
+
+def _download(
+    item: dict[str, object],
+    directory: Path,
+    opener: Callable[..., BinaryIO] | None = None,
+) -> Path:
+    request, expected_bytes = _archive_request(item)
+    name = _component_name(item.get("name", "habitat-sim"))
+    target = _contained_source_path(directory, f"{name}.tar.gz", "source archive")
+    open_request = opener or urllib.request.build_opener(_RefuseRedirect()).open
     created_target = False
     try:
         with open_request(request, timeout=120) as response:
-            if response.geturl() != url:
-                raise SourceError("source archive redirected away from pinned locator")
-            headers = getattr(response, "headers", None)
-            declared_length = (
-                headers.get("Content-Length") if headers is not None else None
-            )
-            if declared_length is not None:
-                try:
-                    declared_bytes = int(declared_length)
-                except (TypeError, ValueError) as error:
-                    raise SourceError(
-                        "source archive Content-Length is invalid"
-                    ) from error
-                if declared_bytes < 0 or declared_bytes != expected_bytes:
-                    raise SourceError(
-                        "source archive Content-Length does not match pinned size"
-                    )
+            _verify_response(response, request.full_url, expected_bytes)
             with target.open("xb") as stream:
                 created_target = True
-                while True:
-                    remaining = expected_bytes - size
-                    chunk = response.read(min(1024 * 1024, remaining + 1))
-                    if not chunk:
-                        break
-                    if len(chunk) > remaining:
-                        raise SourceError("source archive exceeds pinned byte count")
-                    digest.update(chunk)
-                    stream.write(chunk)
-                    size += len(chunk)
+                size, digest = _stream_archive(response, stream, expected_bytes)
+        if size != expected_bytes or digest != item["archive_sha256"]:
+            raise SourceError("source archive size or SHA-256 mismatch")
     except Exception:
         if created_target:
             target.unlink(missing_ok=True)
         raise
-    if size != expected_bytes or digest.hexdigest() != item["archive_sha256"]:
-        target.unlink(missing_ok=True)
-        raise SourceError("source archive size or SHA-256 mismatch")
     return target
 
 
-def _safe_members(
-    archive: tarfile.TarFile, excluded_links: list[str]
-) -> tuple[str, list[tarfile.TarInfo]]:
-    members = archive.getmembers()
+def _archive_root(members: list[tarfile.TarInfo]) -> str:
     if not members:
         raise SourceError("source archive is empty")
     roots: set[str] = set()
@@ -119,7 +241,14 @@ def _safe_members(
             raise SourceError("source archive contains unsupported member type")
     if len(roots) != 1:
         raise SourceError("source archive must have one top-level directory")
-    root = roots.pop()
+    return roots.pop()
+
+
+def _safe_members(
+    archive: tarfile.TarFile, excluded_links: list[str]
+) -> tuple[str, list[tarfile.TarInfo]]:
+    members = archive.getmembers()
+    root = _archive_root(members)
     excluded = set(excluded_links)
     observed: set[str] = set()
     selected: list[tarfile.TarInfo] = []
@@ -159,7 +288,7 @@ def _extract(
 
 
 def _verify_license(root: Path, item: dict[str, object]) -> None:
-    path = root / str(item["license_path"])
+    path = _contained_source_path(root, item["license_path"], "source license")
     if not path.is_file() or _sha(path) != item["license_sha256"]:
         raise SourceError(
             f"license bytes changed for {item.get('name', 'habitat-sim')}"
@@ -173,10 +302,8 @@ def _verify_required_source_files(
     root: Path, required: list[dict[str, object]]
 ) -> None:
     for item in required:
-        relative = PurePosixPath(str(item["path"]))
-        if relative.is_absolute() or ".." in relative.parts or not relative.parts:
-            raise SourceError("required source projection path is unsafe")
-        path = root.joinpath(*relative.parts)
+        relative = _relative_path(item["path"], "required source projection")
+        path = _contained_source_path(root, item["path"], "required source projection")
         if (
             path.is_symlink()
             or not path.is_file()
@@ -186,43 +313,46 @@ def _verify_required_source_files(
             raise SourceError(f"required source projection file changed: {relative}")
 
 
+def _patched_metadata(original: bytes, patch: dict[str, object]) -> bytes:
+    relative = patch["path"]
+    if (
+        len(original) != patch["upstream_file_bytes"]
+        or hashlib.sha256(original).hexdigest() != patch["upstream_file_sha256"]
+    ):
+        raise SourceError(f"source metadata patch input changed: {relative}")
+    preimage = str(patch["preimage_utf8"]).encode("utf-8")
+    postimage = str(patch["postimage_utf8"]).encode("utf-8")
+    if (
+        not preimage
+        or hashlib.sha256(preimage).hexdigest() != patch["preimage_sha256"]
+        or hashlib.sha256(postimage).hexdigest() != patch["postimage_sha256"]
+    ):
+        raise SourceError(f"source metadata patch bytes changed: {relative}")
+    if patch["expected_match_count"] != 1 or original.count(preimage) != 1:
+        raise SourceError(f"source metadata patch preimage changed: {relative}")
+    patched = original.replace(preimage, postimage)
+    if (
+        len(patched) != patch["patched_file_bytes"]
+        or hashlib.sha256(patched).hexdigest() != patch["patched_file_sha256"]
+    ):
+        raise SourceError(f"source metadata patch result changed: {relative}")
+    return patched
+
+
 def _apply_metadata_patches(root: Path, patches: list[dict[str, object]]) -> None:
     for patch in patches:
-        relative = PurePosixPath(str(patch["path"]))
-        if relative.is_absolute() or ".." in relative.parts or not relative.parts:
-            raise SourceError("source metadata patch path is unsafe")
-        path = root.joinpath(*relative.parts)
-        if path.is_symlink() or not path.is_file():
-            raise SourceError(f"source metadata patch target is invalid: {relative}")
-        original = path.read_bytes()
-        if (
-            len(original) != patch["upstream_file_bytes"]
-            or hashlib.sha256(original).hexdigest() != patch["upstream_file_sha256"]
-        ):
-            raise SourceError(f"source metadata patch input changed: {relative}")
-        preimage = str(patch["preimage_utf8"]).encode("utf-8")
-        postimage = str(patch["postimage_utf8"]).encode("utf-8")
-        if (
-            not preimage
-            or hashlib.sha256(preimage).hexdigest() != patch["preimage_sha256"]
-            or hashlib.sha256(postimage).hexdigest() != patch["postimage_sha256"]
-        ):
-            raise SourceError(f"source metadata patch bytes changed: {relative}")
-        if patch["expected_match_count"] != 1 or original.count(preimage) != 1:
-            raise SourceError(f"source metadata patch preimage changed: {relative}")
-        patched = original.replace(preimage, postimage)
-        if (
-            len(patched) != patch["patched_file_bytes"]
-            or hashlib.sha256(patched).hexdigest() != patch["patched_file_sha256"]
-        ):
-            raise SourceError(f"source metadata patch result changed: {relative}")
-        path.write_bytes(patched)
+        path = _contained_source_path(root, patch["path"], "source metadata patch")
+        if not path.is_file():
+            raise SourceError(
+                f"source metadata patch target is invalid: {patch['path']}"
+            )
+        path.write_bytes(_patched_metadata(path.read_bytes(), patch))
 
 
 def _required_pbr_paths(required: list[dict[str, object]]) -> set[PurePosixPath]:
     selected: set[PurePosixPath] = set()
     for item in required:
-        relative = PurePosixPath(str(item["path"]))
+        relative = _relative_path(item["path"], "required PBR projection")
         try:
             pbr_relative = relative.relative_to("data/pbr")
         except ValueError as error:
@@ -308,7 +438,7 @@ def _prune_dependency(root: Path, allowed: list[str]) -> None:
 
 def _assert_forbidden(root: Path, forbidden: list[str]) -> None:
     for relative in forbidden:
-        if (root / relative).exists():
+        if _contained_source_path(root, relative, "forbidden source").exists():
             raise SourceError(f"forbidden source path survived: {relative}")
     names = "\n".join(
         path.relative_to(root).as_posix().lower() for path in root.rglob("*")
@@ -320,8 +450,14 @@ def _assert_forbidden(root: Path, forbidden: list[str]) -> None:
 
 def _verify_internal_vendored(root: Path, components: list[dict[str, object]]) -> None:
     for component in components:
-        selected_root = root / str(component["root"])
-        expected = {str(row["path"]): str(row["sha256"]) for row in component["files"]}
+        relative = _dependency_relative(component["root"])
+        selected_root = _contained_source_path(root, str(relative), "vendored root")
+        expected = {
+            str(_relative_path(row["path"], "vendored source member")): str(
+                row["sha256"]
+            )
+            for row in component["files"]
+        }
         observed = {
             path.relative_to(selected_root).as_posix(): _sha(path)
             for path in selected_root.rglob("*")
@@ -353,8 +489,7 @@ def _inventory(root: Path) -> dict[str, object]:
     }
 
 
-def _materialize(manifest: dict[str, object], output: Path, temp: Path) -> bytes:
-    """Verify the complete projection in private staging before publication."""
+def _materialize_parent(manifest: dict[str, object], output: Path, temp: Path) -> None:
     source = dict(manifest["source"])
     source["name"] = "habitat-sim"
     parent_archive = _download(source, temp)
@@ -365,15 +500,28 @@ def _materialize(manifest: dict[str, object], output: Path, temp: Path) -> bytes
     _prune_parent(output, source["required_projection_files"])
     _verify_required_source_files(output, source["required_projection_files"])
     _verify_internal_vendored(output, manifest["internal_vendored"])
+
+
+def _materialize_dependency(
+    dependency: dict[str, object], output: Path, temp: Path, selected: list[str]
+) -> None:
+    relative = _dependency_relative(dependency["target"])
+    target = _contained_source_path(output, str(relative), "dependency target")
+    archive = _download(dependency, temp)
+    if target.exists():
+        shutil.rmtree(target)
+    _extract(archive, target, dependency.get("excluded_archive_links", []))
+    _verify_license(target, dependency)
+    _prune_dependency(target, selected)
+
+
+def _materialize(manifest: dict[str, object], output: Path, temp: Path) -> bytes:
+    """Verify the complete projection in private staging before publication."""
+    _validate_manifest_paths(manifest)
+    _materialize_parent(manifest, output, temp)
     for dependency in manifest["dependencies"]:
-        archive = _download(dependency, temp)
-        target = output / dependency["target"]
-        if target.exists():
-            shutil.rmtree(target)
-        _extract(archive, target, dependency.get("excluded_archive_links", []))
-        _verify_license(target, dependency)
-        projections = manifest["dependency_projection"]
-        _prune_dependency(target, projections[dependency["name"]])
+        selected = manifest["dependency_projection"][dependency["name"]]
+        _materialize_dependency(dependency, output, temp, selected)
     _assert_forbidden(output, manifest["forbidden_paths"])
     inventory = _inventory(output)
     inventory_bytes = (json.dumps(inventory, indent=2, sort_keys=True) + "\n").encode()
@@ -437,10 +585,42 @@ def _publish_projection(staged: Path, output: Path, inventory: Path | None) -> N
         raise
 
 
+def _stage_owned_projection(
+    manifest: dict[str, object], output: Path, inventory: Path | None
+) -> None:
+    temp = Path(tempfile.mkdtemp(prefix=".npa-habitat-source-", dir=output.parent))
+    try:
+        staged = temp / "projection"
+        archives = temp / "archives"
+        archives.mkdir(mode=0o700)
+        inventory_bytes = _materialize(manifest, staged, archives)
+        (temp / "inventory.json").write_bytes(inventory_bytes)
+        _publish_projection(staged, output, inventory)
+    finally:
+        try:
+            shutil.rmtree(temp)
+        except OSError:
+            print("warning: temporary source staging cleanup failed", file=sys.stderr)
+
+
 def stage(
     manifest: dict[str, object], output: Path, inventory_output: Path | None = None
 ) -> None:
-    """Expose only a fully verified projection; never replace caller-owned output."""
+    """Expose only a fully verified projection without replacing existing output.
+
+    Args:
+        manifest: Immutable source records with canonical relative member paths.
+        output: New projection directory beneath an owned, non-shared parent.
+        inventory_output: Optional new file for the verified projection inventory.
+
+    Returns:
+        None.
+
+    Raises:
+        SourceError: A manifest, source, staging or projection check fails.
+        OSError: Source access or atomic no-clobber publication fails.
+    """
+    _validate_manifest_paths(manifest)
     with ExitStack() as stack:
         output = _owned_destination(output, stack)
         inventory = (
@@ -448,24 +628,24 @@ def stage(
             if inventory_output is not None
             else None
         )
-        temp = Path(tempfile.mkdtemp(prefix=".npa-habitat-source-", dir=output.parent))
-        try:
-            staged = temp / "projection"
-            archives = temp / "archives"
-            archives.mkdir(mode=0o700)
-            inventory_bytes = _materialize(manifest, staged, archives)
-            (temp / "inventory.json").write_bytes(inventory_bytes)
-            _publish_projection(staged, output, inventory)
-        finally:
-            try:
-                shutil.rmtree(temp)
-            except OSError:
-                print(
-                    "warning: temporary source staging cleanup failed", file=sys.stderr
-                )
+        _stage_owned_projection(manifest, output, inventory)
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Validate the source manifest and publish its verified source projection.
+
+    Args:
+        argv: CLI arguments, or None to read the process arguments.
+
+    Returns:
+        Zero after successful verified publication.
+
+    Raises:
+        SourceError: The manifest or source projection fails validation.
+        OSError: Manifest access, staging or publication fails.
+        ValueError: The manifest is not valid JSON.
+        SystemExit: Argument parsing fails or help is requested.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
