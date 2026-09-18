@@ -191,6 +191,8 @@ failed variant still fails the stage; the batch does not write a new successful
 `manifest.json`. Other completed variants remain available as review evidence.
 Consumers must use the committed manifest, never infer a complete batch by
 listing the prefix. Progress evidence is not a training-data promotion signal.
+Recovery remains at workflow-stage granularity; retaining variants does not
+skip them automatically when a failed stage is retried.
 
 Concurrent generations lease distinct available GPUs. A faster variant can
 release its GPU to the next waiting variant without assigning that work to a GPU

@@ -227,3 +227,71 @@ This is one episode and one seed per task, with sampled visual review. It does
 not establish a universal sampling setting or policy-training benefit. The
 generalized code change exposes and records a native model control; it does not
 change per-dataset behavior, blend source pixels, or relax quality thresholds.
+
+## Measured twelve-scenario fanout
+
+The cup-opening episode produced twelve distinct, complete Cosmos3-Nano videos
+using the [profile example](../examples/paidf-cups-fanout-profiles.json). Each has
+192 frames at 24 fps and an eight-second duration. Two GPUs generated variants
+concurrently. All twelve passed full decoding, timestamp alignment and native
+text/video guardrails, with no source-pixel blending. Completed videos were
+observed in storage while the batch was still running.
+
+The unchanged strict gate accepted **0/12** outputs. The temporal
+column is the source-relative image-acceleration diagnostic, with threshold
+0.8; it is not a contact-physics score. Requested attribute checks require 4/4.
+Lighting and material edits can affect the temporal diagnostic, and overlapping
+attribute answer options can make an individual VLM failure ambiguous. Preserve
+these results alongside direct visual review rather than treating them as a
+ranking of material realism.
+
+| Scenario | Seed | Attributes | Temporal score | Gate |
+| --- | ---: | ---: | ---: | --- |
+| Cool twilight gray | 17 | 4/4 | 0.115510 | Rejected |
+| Brushed aluminum / lab | 18 | 1/4 | 0.109092 | Rejected |
+| Black rubber / softbox | 19 | 2/4 | 0.126789 | Rejected |
+| Walnut / warm studio | 20 | 3/4 | 0.110584 | Rejected |
+| Terracotta / side light | 21 | 4/4 | 0.109223 | Rejected |
+| Warm side-lit gray | 22 | 3/4 | 0.128480 | Rejected |
+| Cork / diffuse daylight | 23 | 4/4 | 0.120458 | Rejected |
+| Green laminate / soft daylight | 24 | 1/4 | 0.109734 | Rejected |
+| Granite / overcast | 25 | 3/4 | 0.106305 | Rejected |
+| Pale oak / daylight | 26 | 2/4 | 0.122940 | Rejected |
+| Stainless steel / cool lab | 27 | 3/4 | 0.110785 | Rejected |
+| White ceramic / bright lab | 28 | 0/4 | 0.123870 | Rejected |
+
+![One cup-opening source and twelve actual appearance scenarios at frame 128](../evidence/paidf-lerobot/cups-fanout.jpg)
+
+The walnut and oak outputs show visible wood grain, granite shows fine speckles,
+and the side-lighting profile changes light direction and robot shadows. Cork
+appears mainly in a lower band with a strong horizontal boundary; ceramic stays
+mostly gray, and stainless steel reads more clearly as cool relighting than a
+specific metal. Across the sampled outputs, small gripper markings and plate
+details change. These are useful appearance experiments, with unresolved task
+fidelity and inconsistent material adherence. Cork received 4/4 attribute
+checks despite the visible boundary, while ceramic received 0/4. Attribute
+verification alone therefore does not establish that the whole requested surface
+changed correctly. All twelve temporal scores were below 0.8; thresholds were
+not relaxed to accept visually appealing examples.
+
+The [eight-second overview video](../evidence/paidf-lerobot/cups-fanout.mp4)
+shows the complete source and twelve outputs together. It uses resized decoded
+frames and static labels, with no scene retouching. Original-resolution videos
+are retained separately.
+
+The [fanout results](../evidence/paidf-lerobot/cups-fanout-results.json) retain all
+twelve hashes, requested profiles, measurements and per-scenario observations.
+Visual review compares actual source/output frames 0, 64, 88, 128, 176 and 191,
+including the two generation joins. The operator's retained gallery includes
+all complete videos, shared playback controls, exact-frame sheets and a full
+source-plus-twelve overview video. Sampled frames do not certify every contact.
+
+The initial attempt encountered a native prompt-guardrail rejection for the
+color description “sage.” The repeated experiment used “muted green,” with
+guardrails still enabled. That failure exposed two general reliability issues:
+completed variants were only published after the whole batch succeeded, and
+index-based GPU assignment could overlap work on a busy GPU. Completed variants
+now publish incrementally with typed progress evidence, and workers lease an
+available GPU. A failed variant still fails the batch and prevents a new
+successful batch manifest. Recovery remains at workflow-stage granularity;
+retained videos do not implement per-variant checkpoint resume.

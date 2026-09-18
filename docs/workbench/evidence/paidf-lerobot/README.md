@@ -1,6 +1,6 @@
 # LeRobot augmentation review evidence
 
-These contact sheets compare actual decoded frames from a prepared LeRobot
+The `cups.jpg`, `coffee.jpg` and `lift.jpg` sheets compare decoded frames from a LeRobot
 episode and two Cosmos3-Nano outputs. Columns are source, native CFG normalization
 disabled, then enabled. Labels contain zero-based frame indices and timestamps.
 Images were resized and arranged for review; no pixels were retouched or blended
@@ -10,6 +10,18 @@ See the [comparison guide](../../guides/paidf-lerobot-realism.md) for controls,
 observations and limitations, and [results.json](results.json) for measurements
 and artifact hashes. Source metadata and downloaded-file hashes are in the
 [source manifest](../../examples/paidf-lerobot-realism-sources.json).
+
+## Twelve-scenario cup fanout
+
+[cups-fanout.jpg](cups-fanout.jpg) shows the prepared cup-opening source and
+twelve actual Cosmos3-Nano outputs at frame 128 (5.333 seconds). Only resizing,
+arrangement and labels were applied. [cups-fanout-results.json](cups-fanout-results.json)
+records the complete videos' hashes, profiles, strict gate results and sampled
+visual observations. [cups-fanout.mp4](cups-fanout.mp4) contains the complete
+eight-second source-plus-twelve overview, with resized decoded frames and static
+labels. Its hash, frame count and dimensions are in the result manifest.
+The cup source attribution and MIT permission below apply
+to these additional source-frame and source-video reproductions as well.
 
 ## Source attribution
 
