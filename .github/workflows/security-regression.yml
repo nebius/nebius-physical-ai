@@ -262,7 +262,8 @@ jobs:
   ci-timing-report:
     name: ci-timing-report
     needs: security-regression
-    if: ${{ always() }}
+    # Failed validation is useful evidence; superseded runs release their runners.
+    if: ${{ !cancelled() }}
     permissions:
       actions: read
       contents: read

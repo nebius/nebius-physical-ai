@@ -225,7 +225,7 @@ def test_timing_report_is_read_only_and_runs_after_the_required_gate() -> None:
     workflow = _load_workflow("security-regression.yml")
     job = workflow["jobs"]["ci-timing-report"]
     assert job["needs"] == "security-regression"
-    assert job["if"] == "${{ always() }}"
+    assert job["if"] == "${{ !cancelled() }}"
     assert job["permissions"] == {"actions": "read", "contents": "read"}
     steps = job["steps"]
     assert steps[0]["with"] == {"persist-credentials": "false"}
