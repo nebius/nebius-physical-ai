@@ -27,6 +27,30 @@ They are not copied into the Antioch project, source bundle, or simulator.
 The training YAML covers step 4 and checkpoint publication; the operator module
 provides the Antioch connection and artifact transfers around it.
 
+## Antioch authentication and Workbench integration
+
+Workbench invokes the installed Antioch CLI from your own Antioch project. It
+reuses that CLI's authentication; there is no separate Workbench Antioch token
+setting. Interactive operators use `antioch auth login`. Headless operators can
+inject a personal access token as `ANTIOCH_TOKEN` through their secret manager.
+For a local client, that variable overrides saved browser authentication;
+managed Antioch workspaces use their managed credentials first. Confirm the
+active identity privately with `antioch auth whoami --json`.
+
+An Antioch token grants access according to its permissions. You also need an
+owned Antioch project, the compatible SDK/engine, simulator capacity, and a
+separately configured NPA project with Nebius and S3 access. Use SDK 0.4.236 for
+this recipe, including the attached evaluation adapter. Never place token
+values in YAML, command arguments, source archives, recordings, or Git.
+
+The operator creates short-lived signed S3 GET/PUT URLs and passes them over
+stdin to Antioch. Antioch downloads inputs or uploads native outputs directly;
+complete readbacks verify hashes. Signed URLs also grant access and must stay
+private. Static S3 keys stay with the operator and Nebius training worker.
+
+Use the [Antioch Workbench skill](../../../skills/workflows/antioch-workbench/SKILL.md)
+for authentication, runtime boundaries, operating steps, and evidence checks.
+
 ## Task and learning contract
 
 Two Franka arms must grasp their respective blocks, lift them above 12 cm,
