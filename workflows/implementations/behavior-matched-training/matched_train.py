@@ -332,6 +332,23 @@ def _learning_rate_schedule(config: dict):
     )
 
 
+def _preserve_frozen_ema(previous, current, traverse_util):
+    """Keep non-action EMA leaves at their exact pre-update values."""
+    if previous.ema_params is None or current.ema_params is None:
+        return current
+    old = traverse_util.flatten_dict(previous.ema_params.to_pure_dict())
+    new = traverse_util.flatten_dict(current.ema_params.to_pure_dict())
+    if set(old) != set(new):
+        raise ValueError("EMA parameter paths changed during update")
+    for path in new:
+        normalized = tuple(str(part) for part in path)
+        if normalized not in EXPECTED_TRAINABLE_PATHS:
+            new[path] = old[path]
+    ema_params = current.ema_params
+    ema_params.replace_by_pure_dict(traverse_util.unflatten_dict(new))
+    return dataclasses.replace(current, ema_params=ema_params)
+
+
 def guarded_update(update):
     """Wrap a native update with finite loss, gradient, and parameter checks.
 
@@ -347,6 +364,7 @@ def guarded_update(update):
 
     import jax
     import numpy as np
+    from flax import traverse_util
 
     def require_finite(*values):
         if not np.isfinite(np.asarray(values)).all():
@@ -354,12 +372,13 @@ def guarded_update(update):
                 "Non-finite RLC training loss, gradient, or parameters"
             )
 
-    def checked(*args):
-        state, metrics = update(*args)
+    def checked(config, rng, state, batch):
+        updated, metrics = update(config, rng, state, batch)
+        updated = _preserve_frozen_ema(state, updated, traverse_util)
         jax.debug.callback(
             require_finite, metrics["loss"], metrics["grad_norm"], metrics["param_norm"]
         )
-        return state, metrics
+        return updated, metrics
 
     return checked
 
@@ -390,7 +409,9 @@ def _changed_paths(jax, jnp, before: dict, after: dict) -> set[tuple[str, ...]]:
     return changed
 
 
-def _write_update_receipt(output: Path, changed: set, metrics: dict) -> None:
+def _write_update_receipt(
+    output: Path, changed: set, changed_ema: set, metrics: dict
+) -> None:
     checked = {
         name: float(metrics[name]) for name in ("loss", "grad_norm", "param_norm")
     }
@@ -400,6 +421,10 @@ def _write_update_receipt(output: Path, changed: set, metrics: dict) -> None:
         "schema": "npa.behavior.matched-stage-real-update.v1",
         "changed_trainable_paths": sorted("/".join(path) for path in changed),
         "frozen_paths_byte_equal": True,
+        "changed_ema_trainable_paths": sorted(
+            "/".join(path) for path in changed_ema
+        ),
+        "frozen_ema_paths_byte_equal": True,
         "metrics": checked,
         "status": "passed",
     }
@@ -433,8 +458,15 @@ def validate_real_update(training, trainer, output: Path) -> None:
     changed = _changed_paths(jax, jnp, before, after)
     if not changed or not changed.issubset(EXPECTED_TRAINABLE_PATHS):
         raise ValueError("Real update did not remain inside the exact action partition")
+    if state.ema_params is None or updated.ema_params is None:
+        raise ValueError("Real update lacks the EMA used for export")
+    ema_before = traverse_util.flatten_dict(state.ema_params.to_pure_dict())
+    ema_after = traverse_util.flatten_dict(updated.ema_params.to_pure_dict())
+    changed_ema = _changed_paths(jax, jnp, ema_before, ema_after)
+    if not changed_ema.issubset(EXPECTED_TRAINABLE_PATHS):
+        raise ValueError("EMA update did not remain inside the exact action partition")
     device_metrics = jax.device_get(metrics)
-    _write_update_receipt(output, changed, device_metrics)
+    _write_update_receipt(output, changed, changed_ema, device_metrics)
 
 
 def _training_provenance(args, config, manifest, revisions, checkpoint_files) -> dict:

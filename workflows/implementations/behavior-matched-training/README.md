@@ -4,6 +4,14 @@ This implementation compares two action-only RLC fine-tunes with identical
 examples and optimizer settings. The `teacher` arm conditions actions on the
 released equal-time stage bin. The `replay` arm conditions them on the frozen
 parent controller's stage after chronological replay of its native filter.
+Replay decisions use the parent's canonical native inference path with batch
+size one and one denoising step; the sampled action is discarded. Direct
+15-way classifier logits are retained only as diagnostics. `PanelDataset`
+wraps the pinned LeRobot v3 selected reader with validated episode boundaries.
+Ordered CPU decoding keeps observations, actions, and batch order unchanged.
+Optional complete-episode shards let two GPUs generate the shared prefix traces;
+`merge_prefix_records.py` verifies their membership before restoring canonical
+order. The optimizer also preserves frozen moving-average parameters explicitly.
 
 Read the [training guide](../../../docs/workbench/behavior-matched-training.md)
 for the complete prefix, training, holdout-selection, and export commands. A

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -22,7 +23,13 @@ from checkpoint_selection import LossRow, select_checkpoint
 from export_selected import export_selected
 from gpu_preflight import _logits_equal, _result
 from generate_prefix_records import _transform_raw_sample
-from panel_data import PanelDataset, ReplanDataset, TaskBalancedSampler
+from matched_train import _preserve_frozen_ema
+from panel_data import (
+    CarryStageLabels,
+    PanelDataset,
+    ReplanDataset,
+    TaskBalancedSampler,
+)
 from stage_conditioning import (
     ApplyStageCondition,
     FilterState,
@@ -45,6 +52,46 @@ def _digests(count: int) -> list[tuple[str, str]]:
     return [(f"{index:064x}", f"{index + 100:064x}") for index in range(count)]
 
 
+def test_ema_updates_only_action_partition() -> None:
+    class PureState:
+        def __init__(self, values):
+            self.values = values
+
+        def to_pure_dict(self):
+            return self.values
+
+        def replace_by_pure_dict(self, values):
+            self.values = values
+
+    class Traverse:
+        @staticmethod
+        def flatten_dict(values):
+            return {
+                (group, name): value
+                for group, leaves in values.items()
+                for name, value in leaves.items()
+            }
+
+        @staticmethod
+        def unflatten_dict(values):
+            result = {}
+            for (group, name), value in values.items():
+                result.setdefault(group, {})[name] = value
+            return result
+
+    @dataclass(frozen=True)
+    class State:
+        ema_params: PureState
+
+    before = State(PureState({"action_in_proj": {"bias": 1}, "frozen": {"bias": 2}}))
+    after = State(PureState({"action_in_proj": {"bias": 3}, "frozen": {"bias": 4}}))
+    preserved = _preserve_frozen_ema(before, after, Traverse)
+    assert preserved.ema_params.to_pure_dict() == {
+        "action_in_proj": {"bias": 3},
+        "frozen": {"bias": 2},
+    }
+
+
 def test_public_package_has_no_campaign_locations() -> None:
     forbidden = ("/task/", "/Users/", "npa-bucket-", "behavior-2026-pr-550")
     for path in IMPLEMENTATION.iterdir():
@@ -65,6 +112,7 @@ def test_replay_uses_pre_update_native_hysteresis() -> None:
         episode_index=7,
         episode_length=80,
         logits=[_scores(1), _scores(0), _scores(1), _scores(2)],
+        served_logits=[_scores(1)[:5], _scores(0)[:5], _scores(1)[:5], _scores(2)[:5]],
         sample_digests=_digests(4),
     )
     assert [row.replay_stage for row in rows] == [0, 0, 0, 1]
@@ -117,12 +165,16 @@ def test_gpu_receipt_uses_real_panel_index_contract() -> None:
         def devices():
             return [Device()]
 
-    receipt = _result(Jax(), panel, finite_logits=15)
-    assert receipt["real_training_sample"] == {
+    sample = {
         "task_id": 0,
         "episode_index": 311,
         "episode_relative_frame": 0,
+        "finite_logits": 5,
+        "argmax": 0,
     }
+    receipt = _result(Jax(), [sample])
+    assert receipt["canonical_batch_one_checks"] == [sample]
+    assert receipt["prefix_decision_batch_size"] == 1
 
 
 def test_prefix_transform_reuses_decoded_sample_with_native_bytes() -> None:
@@ -151,10 +203,28 @@ def test_trace_preserves_raw_argmax_before_native_clamp() -> None:
         episode_index=8,
         episode_length=20,
         logits=[scores],
+        served_logits=[scores[:5]],
         sample_digests=_digests(1),
     )
     assert rows[0].raw_argmax == 14
     assert rows[0].history_after == (2,)
+
+
+def test_replay_filter_uses_only_canonical_served_logits() -> None:
+    auxiliary = _scores(1)
+    served = _scores(3)[:5]
+    rows = replay_episode(
+        task_id=0,
+        episode_index=8,
+        episode_length=20,
+        logits=[auxiliary],
+        served_logits=[served],
+        sample_digests=_digests(1),
+    )
+    assert rows[0].raw_argmax == 1
+    assert rows[0].served_argmax == 3
+    assert rows[0].history_after == (3,)
+    assert rows[0].post_update_stage == 0
 
 
 def test_native_filter_does_not_move_back_from_maximum_stage() -> None:
@@ -172,6 +242,7 @@ def test_trace_rejects_identity_and_duplicate_drift(tmp_path: Path) -> None:
         episode_index=200,
         episode_length=40,
         logits=[_scores(0), _scores(1)],
+        served_logits=[_scores(0)[:6], _scores(1)[:6]],
         sample_digests=_digests(2),
     )
     path = tmp_path / "trace.jsonl"
@@ -203,6 +274,7 @@ def dataclasses_replace(row: ReplayRow, **changes) -> ReplayRow:
 def test_arm_transform_changes_only_condition() -> None:
     source = {
         "tokenized_prompt": np.array([22, 4], dtype=np.int32),
+        "tokenized_prompt_mask": np.array([True, True]),
         "teacher_stage": np.array(4, dtype=np.int32),
         "replay_stage": np.array(2, dtype=np.int32),
         "state": np.arange(32, dtype=np.float32),
@@ -214,6 +286,36 @@ def test_arm_transform_changes_only_condition() -> None:
     assert np.array_equal(teacher["state"], replay["state"])
     with pytest.raises(ValueError, match="equal-time"):
         ApplyStageCondition("replay")({**source, "teacher_stage": np.array(3)})
+
+    native_without_episode_metadata = {
+        **source,
+        "tokenized_prompt": np.array([22], dtype=np.int32),
+        "tokenized_prompt_mask": np.array([True]),
+    }
+    reconstructed = ApplyStageCondition("replay")(native_without_episode_metadata)
+    assert reconstructed["tokenized_prompt"].tolist() == [22, 2]
+    assert reconstructed["tokenized_prompt_mask"].tolist() == [True, True]
+    with pytest.raises(ValueError, match="prompt mask"):
+        ApplyStageCondition("replay")(
+            {**source, "tokenized_prompt_mask": np.array([True])}
+        )
+
+
+def test_native_row_rebuild_carries_only_validated_stage_labels() -> None:
+    class Rebuild:
+        def __call__(self, data):
+            return {"state": data["state"]}
+
+    source = {
+        "state": np.arange(4),
+        "teacher_stage": np.array(3),
+        "replay_stage": np.array(2),
+        "unrelated": "discarded",
+    }
+    transformed = CarryStageLabels(Rebuild())(source)
+    assert set(transformed) == {"state", "teacher_stage", "replay_stage"}
+    assert int(transformed["teacher_stage"]) == 3
+    assert int(transformed["replay_stage"]) == 2
 
 
 def _loss(step: int, task: int, value: float) -> LossRow:
@@ -301,6 +403,8 @@ def test_replan_join_rejects_unmapped_or_holdout_key() -> None:
                 post_update_stage=0,
                 raw_argmax=0,
                 raw_logits=tuple(_scores(0)),
+                served_argmax=0,
+                served_logits=tuple(_scores(0)[: {0: 5, 1: 6, 22: 9}[task_id]]),
                 history_before=(),
                 history_after=(0,),
                 task0_reset_applied=False,
@@ -321,11 +425,13 @@ def test_trace_builder_rejects_noncanonical_episode_order(tmp_path: Path) -> Non
     identities.write_text(json.dumps({"split": "a" * 64}))
     source = tmp_path / "prefix.jsonl"
     record = {
+        "schema": "npa.behavior.rlc-prefix-record.v2",
         "task_id": 0,
         "episode_index": 2,
         "episode_length": 20,
         "frames": [0],
-        "raw_logits": [_scores(0)],
+        "auxiliary_raw_logits": [_scores(0)],
+        "served_valid_logits": [_scores(0)[:5]],
         "sample_identities": [
             {"observation_sha256": "a" * 64, "action_sha256": "b" * 64}
         ],

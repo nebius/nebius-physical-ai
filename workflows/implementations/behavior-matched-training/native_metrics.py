@@ -23,6 +23,17 @@ def predict_stage_logits(model, observation):
     return model.stage_pred_from_vlm(prefix_output[:, base_task_index, :])
 
 
+def mask_stage_logits(logits, observation):
+    """Apply the exact task-specific stage mask used by native serving."""
+    import jax.numpy as jnp
+    from b1k.models.pi_behavior_config import MAX_NUM_STAGES, TASK_NUM_STAGES
+
+    task_ids = observation.tokenized_prompt[:, 0]
+    stage_counts = jnp.asarray(TASK_NUM_STAGES, dtype=jnp.int32)[task_ids]
+    stages = jnp.arange(MAX_NUM_STAGES)
+    return jnp.where(stages[None, :] < stage_counts[:, None], logits, -jnp.inf)
+
+
 def deterministic_batch_metrics(
     model,
     observation,

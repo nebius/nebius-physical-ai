@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 
 TASK_NUM_STAGES = {0: 5, 1: 6, 22: 9}
-TRACE_SCHEMA = "npa.behavior.rlc-stage-replay.v1"
+TRACE_SCHEMA = "npa.behavior.rlc-stage-replay.v2"
 
 
 @dataclasses.dataclass(frozen=True, order=True)
@@ -35,6 +35,8 @@ class ReplayRow:
     post_update_stage: int
     raw_argmax: int
     raw_logits: tuple[float, ...]
+    served_argmax: int
+    served_logits: tuple[float, ...]
     history_before: tuple[int, ...]
     history_after: tuple[int, ...]
     task0_reset_applied: bool
@@ -134,6 +136,7 @@ def replay_episode(
     episode_index: int,
     episode_length: int,
     logits: Sequence[Sequence[float]],
+    served_logits: Sequence[Sequence[float]],
     sample_digests: Sequence[tuple[str, str]],
     stride: int = 20,
 ) -> list[ReplayRow]:
@@ -143,7 +146,8 @@ def replay_episode(
         task_id: Supported BEHAVIOR task ID.
         episode_index: Released episode identifier.
         episode_length: Stored frame count.
-        logits: Raw 15-way logits at each replan frame.
+        logits: Auxiliary raw 15-way logits at each replan frame.
+        served_logits: Canonical batch-one valid-stage logits at each frame.
         sample_digests: Observation and action hashes per frame.
         stride: Replan cadence in frames.
 
@@ -155,18 +159,34 @@ def replay_episode(
     """
 
     frames = list(range(0, episode_length, stride))
-    if len(frames) != len(logits) or len(frames) != len(sample_digests):
+    if (
+        len(frames) != len(logits)
+        or len(frames) != len(served_logits)
+        or len(frames) != len(sample_digests)
+    ):
         raise ValueError(
             "logits and sample digests are required for every replan frame"
         )
     state = FilterState()
     rows: list[ReplayRow] = []
-    for frame, scores, digests in zip(frames, logits, sample_digests, strict=True):
+    for frame, scores, served, digests in zip(
+        frames, logits, served_logits, sample_digests, strict=True
+    ):
         scores = tuple(float(score) for score in scores)
         if len(scores) != 15 or not np.isfinite(scores).all():
             raise ValueError("stage logits must contain 15 finite values")
+        served = tuple(float(score) for score in served)
+        if len(served) != TASK_NUM_STAGES[task_id] or not np.isfinite(served).all():
+            raise ValueError("served logits must contain every valid task stage")
         row, state = _replay_frame(
-            task_id, episode_index, episode_length, frame, scores, digests, state
+            task_id,
+            episode_index,
+            episode_length,
+            frame,
+            scores,
+            served,
+            digests,
+            state,
         )
         rows.append(row)
     return rows
@@ -178,13 +198,14 @@ def _replay_frame(
     episode_length: int,
     frame: int,
     scores: tuple[float, ...],
+    served: tuple[float, ...],
     digests: tuple[str, str],
     state: FilterState,
 ) -> tuple[ReplayRow, FilterState]:
     before = tuple(state.history)
     condition = state.stage
     raw_argmax = int(np.argmax(scores))
-    prediction = int(np.argmax(scores[: TASK_NUM_STAGES[task_id]]))
+    prediction = int(np.argmax(served))
     updated, reset = update_filter(state, prediction, task_id)
     row = ReplayRow(
         key=FrameKey(task_id, episode_index, frame),
@@ -194,6 +215,8 @@ def _replay_frame(
         post_update_stage=updated.stage,
         raw_argmax=raw_argmax,
         raw_logits=scores,
+        served_argmax=prediction,
+        served_logits=served,
         history_before=before,
         history_after=tuple(updated.history),
         task0_reset_applied=reset,
@@ -287,7 +310,12 @@ def load_trace(
     rows = []
     for payload in records[1:]:
         key = FrameKey(**payload.pop("key"))
-        for field in ("raw_logits", "history_before", "history_after"):
+        for field in (
+            "raw_logits",
+            "served_logits",
+            "history_before",
+            "history_after",
+        ):
             payload[field] = tuple(payload[field])
         rows.append(ReplayRow(key=key, **payload))
     _validate_rows(rows)
@@ -326,6 +354,12 @@ def _validate_rows(rows: Sequence[ReplayRow]) -> None:
         if len(row.raw_logits) != 15 or not np.isfinite(row.raw_logits).all():
             raise ValueError(f"invalid logits in replay row: {key}")
         if (
+            len(row.served_logits) != stages
+            or not np.isfinite(row.served_logits).all()
+            or row.served_argmax != int(np.argmax(row.served_logits))
+        ):
+            raise ValueError(f"invalid canonical served logits in replay row: {key}")
+        if (
             row.stage_count != stages
             or abs(row.timestamp - key.episode_relative_frame / 30.0) > 5e-4
         ):
@@ -350,9 +384,27 @@ class ApplyStageCondition:
         if self.arm not in {"teacher", "replay"}:
             raise ValueError(f"unknown stage arm: {self.arm}")
         prompt = np.asarray(data["tokenized_prompt"]).copy()
+        mask = np.asarray(data["tokenized_prompt_mask"])
+        if mask.dtype != np.bool_ or mask.shape != prompt.shape or not mask.all():
+            raise ValueError("native prompt mask differs from the frozen contract")
+        task_id = int(prompt[0])
+        if task_id not in TASK_NUM_STAGES:
+            raise ValueError("native prompt contains an unsupported task ID")
         teacher = int(data["teacher_stage"])
-        if prompt.shape != (2,) or int(prompt[1]) != teacher:
+        replay = int(data["replay_stage"])
+        if (
+            not 0 <= teacher < TASK_NUM_STAGES[task_id]
+            or not 0 <= replay < TASK_NUM_STAGES[task_id]
+        ):
+            raise ValueError("stage label is outside the task stage range")
+        if prompt.shape == (1,):
+            prompt = np.asarray([int(prompt[0]), teacher], dtype=np.int32)
+        elif prompt.shape != (2,) or int(prompt[1]) != teacher:
             raise ValueError("native equal-time stage differs from frozen trace")
-        condition = teacher if self.arm == "teacher" else int(data["replay_stage"])
+        condition = teacher if self.arm == "teacher" else replay
         prompt[1] = condition
-        return {**data, "tokenized_prompt": prompt}
+        return {
+            **data,
+            "tokenized_prompt": prompt,
+            "tokenized_prompt_mask": np.ones(2, dtype=bool),
+        }

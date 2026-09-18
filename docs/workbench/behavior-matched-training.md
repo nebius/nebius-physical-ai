@@ -11,8 +11,9 @@ and parameter partition:
 
 The implementation is in
 [`workflows/implementations/behavior-matched-training`](../../workflows/implementations/behavior-matched-training/).
-It is executable training code, rather than a performance result. Native B200
-validation and rollout evaluation are still pending.
+The native B200 preflight has passed checkpoint restoration, stage-inference
+consistency, and one discarded optimizer update. Full matched training and
+policy-improvement evaluation remain pending.
 
 ## What is trained
 
@@ -67,9 +68,23 @@ $RUNTIME/openpi/.venv/bin/python $IMPL/gpu_preflight.py \
 ```
 
 The preflight requires exactly one B200. It verifies source and checkpoint
-identities, loads a real transformed training sample, compares valid native
-inference logits with direct prefix logits, and confirms that all 23 trainable
-paths exist.
+identities, loads one real training sample for each task, and checks that
+canonical batch-one inference produces identical stage logits with one and 20
+denoising steps. The sampled actions are discarded. It also runs one discarded
+native update, checks that the 23 action paths are the only parameter and EMA
+paths that can change, and verifies that all frozen paths remain byte-equal.
+The training wrapper preserves frozen EMA leaves explicitly: applying the
+native moving-average arithmetic to an unchanged low-precision weight can
+otherwise change its stored value through rounding.
+
+Prefix replay uses those canonical batch-one, one-step stage logits. The
+direct 15-way classifier output is stored as auxiliary diagnostic data and
+never drives the controller. The selected LeRobot v3 reader derives episode
+boundaries from validated metadata and checks episode, frame, task, and
+absolute-row identities before decoding observations.
+CPU workers decode and transform fixed batches in order. Auxiliary classifier
+batches pad their final partial batch and discard the padding. Canonical replay
+decisions still use one original sample per inference call.
 
 Generate prefix records and replay traces for both released splits:
 
@@ -91,6 +106,31 @@ for split in training holdout; do
     --output $RUNTIME/output/$split-trace.jsonl
 done
 ```
+
+### Generate prefixes on two GPUs
+
+Run the generation command on each GPU with `--shard-count 2` and a distinct
+`--shard-index 0` or `--shard-index 1`. Name each output
+`$split-prefix-$SHARD_INDEX.jsonl`. Shards contain alternating complete episodes
+in the frozen split order; they keep every replan frame and the same native
+batch-one inference. No training examples or stage-controller settings change.
+
+After transferring both outputs to the same runtime, merge each split before
+building its replay trace:
+
+```bash
+for split in training holdout; do
+  $RUNTIME/openpi/.venv/bin/python $IMPL/merge_prefix_records.py \
+    --episode-split $RUNTIME/manifests/episode-split.json --split $split \
+    --shard-input $RUNTIME/output/$split-prefix-0.jsonl \
+    --shard-input $RUNTIME/output/$split-prefix-1.jsonl \
+    --output $RUNTIME/output/$split-prefix.jsonl \
+    --receipt $RUNTIME/output/$split-prefix-merge.json
+done
+```
+
+The merger requires exact shard membership and frame order. Its receipt records
+the input and output hashes. Both training arms consume the same merged traces.
 
 Freeze each arm's inputs, then invoke `matched_train.py`. The trainer performs
 one real compiled update before the planned run. That gate requires finite

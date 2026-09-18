@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 from pathlib import Path
@@ -24,6 +25,17 @@ CAMERAS = {
 }
 _STAGE_REPLAY_TRACE: dict[FrameKey, ReplayRow] | None = None
 _STAGE_REPLAY_SPLIT = "training"
+
+
+@dataclasses.dataclass(frozen=True)
+class CarryStageLabels:
+    """Carry validated stage labels through a native transform that rebuilds a row."""
+
+    transform: object
+
+    def __call__(self, data: dict) -> dict:
+        labels = {name: data[name] for name in ("teacher_stage", "replay_stage")}
+        return {**self.transform(data), **labels}
 
 
 def digest(path: Path) -> str:
@@ -81,6 +93,109 @@ def load_split(path: Path) -> dict:
     return split
 
 
+def _frame_metadata_columns(columns: dict) -> dict:
+    """Read scalar integer metadata without decoding images or actions."""
+    values = {}
+    for name in ("episode_index", "frame_index", "task_index", "index"):
+        column = np.asarray(columns[name])
+        if not np.issubdtype(column.dtype, np.integer) or column.ndim not in (1, 2):
+            raise ValueError(f"Native frame metadata must be integer scalars: {name}")
+        if column.ndim == 2 and column.shape[1] != 1:
+            raise ValueError(f"Native frame metadata must be scalar: {name}")
+        values[name] = column.reshape(-1)
+    return values
+
+
+def episode_boundaries(
+    columns: dict, episodes: list[int], metadata: dict, task_id: int
+) -> dict:
+    """Derive relative episode bounds from validated native v3 rows.
+
+    Args:
+        columns: Selected native frame identity columns.
+        episodes: Episode IDs in the frozen split order.
+        metadata: Released episode lengths and absolute dataset bounds.
+        task_id: Task shared by every selected frame.
+
+    Returns:
+        Inclusive starts and exclusive ends within the filtered reader.
+
+    Raises:
+        ValueError: Frame identities disagree with the frozen split or metadata.
+    """
+    values = _frame_metadata_columns(columns)
+    episode_ids = values["episode_index"]
+    if not len(episode_ids) or any(
+        len(value) != len(episode_ids) for value in values.values()
+    ):
+        raise ValueError("Native frame metadata columns have inconsistent lengths")
+    starts = np.concatenate(
+        ([0], np.flatnonzero(episode_ids[1:] != episode_ids[:-1]) + 1)
+    )
+    ends = np.concatenate((starts[1:], [len(episode_ids)]))
+    if episode_ids[starts].tolist() != list(episodes):
+        raise ValueError("Native selected episode order differs from the frozen split")
+    _verify_episode_frame_identity(values, episodes, metadata, task_id, starts, ends)
+    return {"from": starts, "to": ends}
+
+
+def _verify_episode_frame_identity(values, episodes, metadata, task_id, starts, ends):
+    """Check task IDs and relative and absolute positions against episode metadata."""
+    lengths = np.asarray([metadata[episode]["length"] for episode in episodes])
+    if not np.array_equal(ends - starts, lengths):
+        raise ValueError("Native selected episode lengths differ from metadata")
+    frames = np.arange(len(values["episode_index"])) - np.repeat(starts, lengths)
+    if not np.array_equal(values["frame_index"], frames):
+        raise ValueError("Native episode frame indices are not contiguous")
+    if not np.all(values["task_index"] == task_id):
+        raise ValueError("Native selected rows contain a different task")
+    absolute_starts = np.asarray(
+        [metadata[episode]["dataset_from_index"] for episode in episodes]
+    )
+    absolute_ends = np.asarray(
+        [metadata[episode]["dataset_to_index"] for episode in episodes]
+    )
+    if not np.array_equal(absolute_ends - absolute_starts, lengths):
+        raise ValueError("Native absolute episode boundaries differ from metadata")
+    if not np.array_equal(
+        values["index"], np.repeat(absolute_starts, lengths) + frames
+    ):
+        raise ValueError("Native absolute frame indices differ from metadata")
+
+
+class IndexedEpisodes:
+    """Add validated episode bounds to the pinned native LeRobot v3 reader.
+
+    Args:
+        native: Reader whose selected rows follow the frozen episode order.
+        metadata: Released episode lengths and absolute dataset bounds.
+        task_id: Task shared by every selected frame.
+
+    Returns:
+        None.
+
+    Raises:
+        ValueError: Native frame identities or counts disagree with metadata.
+    """
+
+    def __init__(self, native, metadata: dict, task_id: int):
+        self.native = native
+        self.episodes = list(native.episodes)
+        names = ["episode_index", "frame_index", "task_index", "index"]
+        columns = native.reader.hf_dataset.select_columns(names).with_format("numpy")[:]
+        self.episode_data_index = episode_boundaries(
+            columns, self.episodes, metadata, task_id
+        )
+        if int(self.episode_data_index["to"][-1]) != len(native):
+            raise ValueError("Native selected frame count differs from its metadata")
+
+    def __len__(self) -> int:
+        return len(self.native)
+
+    def __getitem__(self, index: int) -> dict:
+        return self.native[index]
+
+
 class PanelDataset:
     """Expose three released task datasets through one stable global index."""
 
@@ -104,14 +219,16 @@ class PanelDataset:
         total = 0
         for task_id in self.task_ids:
             episodes = self.split["tasks"][str(task_id)][split_name]
-            dataset = _task_dataset(self.root, episodes, action_horizon)
-            self.datasets.append(dataset)
-            self.offsets.append(total)
-            total += len(dataset)
             rows = pq.read_table(
                 self.root / f"meta/episodes/chunk-{task_id:03d}/file-000.parquet"
             ).to_pylist()
-            metadata.update({row["episode_index"]: row for row in rows})
+            task_metadata = {int(row["episode_index"]): row for row in rows}
+            native = _task_dataset(self.root, episodes, action_horizon)
+            dataset = IndexedEpisodes(native, task_metadata, task_id)
+            self.datasets.append(dataset)
+            self.offsets.append(total)
+            total += len(dataset)
+            metadata.update(task_metadata)
         self.task_lengths = tuple(len(dataset) for dataset in self.datasets)
         if not all(self.task_lengths):
             raise ValueError("Every panel task must contain training frames")
@@ -161,19 +278,48 @@ class PanelDataset:
         return result
 
     def key_for_index(self, index: int, *, sample: dict | None = None) -> FrameKey:
-        """Map one global panel index to its episode-relative frame key."""
-        sample = self[index] if sample is None else sample
-        task_id = int(sample["task_index"])
-        episode = int(sample["episode_index"])
-        slot = self.task_ids.index(task_id)
-        dataset = self.datasets[slot]
-        episode_slot = list(dataset.episodes).index(episode)
-        local_index = int(index) - self.offsets[slot]
-        start = int(dataset.episode_data_index["from"][episode_slot])
-        end = int(dataset.episode_data_index["to"][episode_slot])
-        if not start <= local_index < end:
+        """Resolve a frame key without decoding camera observations.
+
+        Args:
+            index: Position within the combined panel reader.
+            sample: Optional decoded row whose identity must match the index.
+
+        Returns:
+            Task, episode, and episode-relative frame identity.
+
+        Raises:
+            IndexError: The index falls outside the selected episode bounds.
+            ValueError: The decoded sample has a different task or episode.
+        """
+        index = int(index)
+        if index < 0:
             raise IndexError(index)
-        return FrameKey(task_id, episode, local_index - start)
+        slot = int(np.searchsorted(self.offsets, index, side="right")) - 1
+        if slot < 0:
+            raise IndexError(index)
+        dataset = self.datasets[slot]
+        local_index = index - self.offsets[slot]
+        key = _episode_frame_key(self.task_ids[slot], dataset, local_index)
+        if sample is not None and (
+            int(sample["task_index"]) != key.task_id
+            or int(sample["episode_index"]) != key.episode_index
+        ):
+            raise ValueError("Sample metadata differs from the panel index")
+        return key
+
+
+def _episode_frame_key(task_id: int, dataset, local_index: int) -> FrameKey:
+    """Locate one frame in verified filtered-reader episode bounds."""
+    starts = np.asarray(dataset.episode_data_index["from"])
+    episode_slot = int(np.searchsorted(starts, local_index, side="right")) - 1
+    if not 0 <= episode_slot < len(dataset.episodes):
+        raise IndexError(local_index)
+    start = int(starts[episode_slot])
+    end = int(dataset.episode_data_index["to"][episode_slot])
+    if not start <= local_index < end:
+        raise IndexError(local_index)
+    episode = int(dataset.episodes[episode_slot])
+    return FrameKey(task_id, episode, local_index - start)
 
 
 def _task_dataset(root: Path, episodes: list[int], action_horizon: int):
@@ -404,8 +550,6 @@ def transform_conditioned_dataset(
         Native transformed dataset with the chosen stage token.
     """
 
-    import dataclasses
-
     from openpi import transforms as openpi_transforms
 
     transform = transform or module.transform_dataset
@@ -419,10 +563,17 @@ def transform_conditioned_dataset(
         inputs=(openpi_transforms.RepackTransform(structure),),
         outputs=data_config.repack_transforms.outputs,
     )
+    data_group = openpi_transforms.Group(
+        inputs=(
+            CarryStageLabels(openpi_transforms.compose(data_config.data_transforms.inputs)),
+        ),
+        outputs=data_config.data_transforms.outputs,
+    )
     model_group = data_config.model_transforms.push(inputs=(ApplyStageCondition(arm),))
     configured = dataclasses.replace(
         data_config,
         repack_transforms=repack_group,
+        data_transforms=data_group,
         model_transforms=model_group,
     )
     return transform(dataset, configured, **kwargs)

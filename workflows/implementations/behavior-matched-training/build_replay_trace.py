@@ -19,6 +19,8 @@ def build(
     rows = []
     previous = None
     for record in records:
+        if record.get("schema") != "npa.behavior.rlc-prefix-record.v2":
+            raise ValueError("prefix record schema differs")
         key = (int(record["task_id"]), int(record["episode_index"]))
         if previous is not None and key <= previous:
             raise ValueError(
@@ -34,7 +36,8 @@ def build(
                 task_id=key[0],
                 episode_index=key[1],
                 episode_length=episode_length,
-                logits=record["raw_logits"],
+                logits=record["auxiliary_raw_logits"],
+                served_logits=record["served_valid_logits"],
                 sample_digests=[
                     (item["observation_sha256"], item["action_sha256"])
                     for item in record["sample_identities"]

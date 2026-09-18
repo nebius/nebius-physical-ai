@@ -17,6 +17,7 @@ from matched_train import (
     verify_source,
 )
 from native_metrics import deterministic_batch_metrics
+from ordered_data import OrderedBatches
 from panel_data import PanelDataset, ReplanDataset, transform_conditioned_dataset
 from stage_conditioning import load_trace
 
@@ -112,18 +113,14 @@ def _loss_rows(step, indices, conditioned, metrics) -> list[LossRow]:
     return rows
 
 
-def _score_checkpoint(args, step, model, conditioned, transformed, jax, nnx):
+def _score_checkpoint(args, step, model, conditioned, batches, jax, nnx):
     metric_fn = nnx.jit(
         deterministic_batch_metrics,
         static_argnames=("seed", "flow_draws"),
     )
     rows = []
-    starts = range(0, len(conditioned.flat_indices), args.batch_size)
-    for ordinal, start in enumerate(starts):
-        indices = conditioned.flat_indices[start : start + args.batch_size]
-        observation, actions, teacher = _stack(
-            [transformed[index] for index in indices]
-        )
+    for ordinal, (indices, samples) in enumerate(batches):
+        observation, actions, teacher = _stack(samples)
         metrics = jax.device_get(
             metric_fn(
                 model,
@@ -192,13 +189,20 @@ def _evaluate_checkpoints(args, config_values, trace) -> None:
     initial, manager, expected_steps = _checkpoint_manager(
         args, training, config_values, data_config, jax, sharding, checkpoints
     )
+    indices = [
+        conditioned.flat_indices[start : start + args.batch_size]
+        for start in range(0, len(conditioned.flat_indices), args.batch_size)
+    ]
     all_rows = []
-    for step in expected_steps:
-        state = checkpoints.restore_state(manager, initial, None, step=step)
-        model = _serving_model(state, jax, nnx, nnx_utils)
-        all_rows.extend(
-            _score_checkpoint(args, step, model, conditioned, transformed, jax, nnx)
-        )
+    with OrderedBatches(
+        transformed, indices, workers=config_values["num_workers"]
+    ) as batches:
+        for step in expected_steps:
+            state = checkpoints.restore_state(manager, initial, None, step=step)
+            model = _serving_model(state, jax, nnx, nnx_utils)
+            all_rows.extend(
+                _score_checkpoint(args, step, model, conditioned, batches, jax, nnx)
+            )
     _write_results(args, all_rows)
 
 
