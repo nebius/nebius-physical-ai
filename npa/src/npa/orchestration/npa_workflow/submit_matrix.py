@@ -72,6 +72,14 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "xr1-antioch-finetune.yaml", "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        rotation_skip=True,
+        skip_reason=("Requires an operator-owned Antioch session, physically qualified "
+                     "demonstrations, pinned XR1 assets, and the verified SM120 runtime in S3."),
+        notes="Native eight-RTX-PRO-6000 XR1 fine-tuning; paired Antioch robot evaluation is a separate operator step.",
+    ),
+    SubmitLiveCase(
         "franka-rl-transfer.yaml", "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "NEBIUS_TOKEN_FACTORY_KEY"),
         runtime=True, requires_token_factory=True,

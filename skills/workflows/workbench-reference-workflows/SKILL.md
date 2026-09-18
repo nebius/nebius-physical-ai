@@ -11,11 +11,12 @@ description: Use when working on NPA reference workflow specs, runner scripts, c
 > tool-specific examples or resource profiles, not as workflow authoring
 > surfaces. SkyPilot remains the engine that executes rendered specs.
 
-The catalog has exactly two workflow directories: `workflows/main/` contains
-`sim2real.yaml`, `paidf-cosmos3.yaml`, and `nurec-reconstruct.yaml`;
-`workflows/testing/` contains all other catalog specs.
-Keep catalog documentation in `workflows/README.md` and
-add new reference workflows under `workflows/testing/`.
+The catalog keeps the three principal pipelines in `workflows/main/`:
+`sim2real.yaml`, `paidf-cosmos3.yaml`, and `nurec-reconstruct.yaml`.
+Partner integrations live in `workflows/partners/<partner>/`; general reference
+workflows, component tests, and fixtures live in `workflows/testing/`.
+Keep catalog documentation in `workflows/README.md` and partner runbooks beside
+their specs.
 
 ## When To Use
 
@@ -45,8 +46,8 @@ The retired catalog path is machine-checked by
 cannot quietly reappear there.
 
 No raw SkyPilot templates remain in the retired catalog. Author workflow examples
-as `npa.workflow/v0.0.1` specs under
-`workflows/testing/`.
+as `npa.workflow/v0.0.1` specs under `workflows/testing/` or, for partner
+integrations, `workflows/partners/<partner>/`.
 
 ## Retired Templates
 
