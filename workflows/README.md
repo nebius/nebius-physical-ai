@@ -15,7 +15,7 @@ artifacts. Start with a runbook that matches the result you want.
 | Reconstruct a captured scene | [NuRec](../docs/workbench/guides/neural-reconstruction.md) |
 | Compose the 14-stage robot loop | [Sim2Real](../docs/workbench/guides/sim2real-workflow.md) |
 | Train a GR00T policy | [GR00T N1.7](../docs/workbench/cookbooks/groot-1-7-training.md) |
-| Fine-tune XR1 on Antioch robot demonstrations | [XR1 robot learning](../docs/workbench/cookbooks/xr1-antioch.md) — physical demonstrations, Nebius S3, NPA credential storage, attached evaluation with the pinned Antioch SDK, and measured policy results |
+| Fine-tune XR1 on Antioch robot demonstrations | [Antioch pipeline](partners/antioch/README.md) — physical demonstrations, Nebius S3, NPA credential storage, attached evaluation with the pinned Antioch SDK, and measured policy results |
 | Package your own repository | [BYOF](../docs/workbench/cookbooks/byof-isaac-lab/README.md) |
 
 A catalog entry describes a contract, not a guarantee that every configuration
@@ -76,10 +76,11 @@ explains the full source and image contract.
 | Directory | Contents |
 | --- | --- |
 | `main/` | The three principal pipelines listed below |
-| `testing/` | All other catalog specs, including component tests and fixtures |
+| `testing/` | General reference specs, component tests, and fixtures |
+| `partners/<partner>/` | Partner integration workflows and their runbooks |
 | [`guides/`](guides/README.md) | Setup and operation runbooks |
 
-The CLI, agent, and live-submit matrix discover both YAML directories. Raw
+The CLI, agent, and live-submit matrix discover main, testing, and partner specs. Raw
 SkyPilot tasks are separate tool-specific examples; see the
 [reference-assets index](../npa/workflows/workbench/README.md).
 
@@ -92,6 +93,12 @@ SkyPilot tasks are separate tool-specific examples; see the
 | [`nurec-reconstruct.yaml`](main/nurec-reconstruct.yaml) | Real NCore V4 capture → 3DGUT training on an RT-core GPU → USDZ → rig-offset novel views → Rerun; [guide and measured evidence](../docs/workbench/guides/neural-reconstruction.md#promotion-evidence), [readiness record](main/nurec-reconstruct.readiness.json) |
 | [`paidf-cosmos3.yaml`](main/paidf-cosmos3.yaml) | Generic LeRobot/video input → prepared timeline → guarded Cosmos 3 full-video edge transfer → aligned evaluator gate/refinement → captions for every accepted variant → real Curator + FiftyOne Brain + Rerun ([guide](guides/paidf-cosmos3.md)) |
 | [`sim2real.yaml`](main/sim2real.yaml) | Canonical 14-stage Sim2Real workflow through the standard SkyPilot runtime ([guide](../docs/workbench/guides/sim2real-workflow.md)) |
+
+### Partner workflows
+
+| Spec | Notes |
+| --- | --- |
+| [`xr1-antioch-finetune.yaml`](partners/antioch/xr1-antioch-finetune.yaml) | [Antioch pipeline](partners/antioch/README.md): robot demonstrations → Nebius S3 → native XR1 fine-tuning on eight RTX PRO 6000 GPUs → Antioch held-out evaluation → results and recordings in S3. |
 
 ### Testing and reference workflows
 
@@ -121,7 +128,6 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 
 | Spec | Notes |
 | --- | --- |
-| [`xr1-antioch-finetune.yaml`](testing/xr1-antioch-finetune.yaml) | Native Xiaomi-Robotics-1 5B fine-tuning on eight RTX PRO 6000 GPUs; [Antioch collection, S3 exchange, and held-out robot evaluation](../docs/workbench/cookbooks/xr1-antioch.md). Store the optional PAT as `tokens.ANTIOCH_TOKEN` in `~/.npa/credentials.yaml`; environment `ANTIOCH_TOKEN` overrides it, with native browser login as the fallback. `operator antioch` and `operator exec` supply that credential to native CLI and attached SDK commands. |
 | [`curobo-benchmark.yaml`](testing/curobo-benchmark.yaml) | Complete pinned MotionBenchMaker and MPiNets benchmark in cuRobo V2 kinematic and payload-dynamics modes; image remains publication-quarantined pending image checks and real GPU validation ([guide](../docs/workbench/curobo.md)) |
 | [`groot-1-7-finetune.yaml`](testing/groot-1-7-finetune.yaml) | Real GR00T data → parameterized 1-to-many-GPU optimizer smoke → immutable checkpoint → aligned offline evaluation → outcome classification → RRD/MCAP → inspected S3 publication → NPA agent viewer handoff; no rollout or statistical-learning claim |
 | [`isaac-arena-evaluation-b200.yaml`](testing/isaac-arena-evaluation-b200.yaml) | Four-seed Arena zero-action state regression on B200; completed scored episodes and hash-bound reports, with no visual claim ([guide](../docs/workbench/isaac-arena.md)) |

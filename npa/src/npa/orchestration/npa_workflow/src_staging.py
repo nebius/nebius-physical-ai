@@ -216,9 +216,9 @@ def staged_source_files(root: Path) -> dict[Path, Path]:
     """Map staged package-relative destinations to their local source files.
 
     The supported catalog is a sibling of the Python project in a checkout.
-    Include only its two YAML tiers, mapped to packaged fallback paths, so the
-    worker's editable install remains self-contained. Apply the same secret,
-    symlink, and git-ignore filters as the package source itself.
+    Include main/testing and partner YAMLs at packaged fallback paths so worker
+    editable installs remain self-contained. Apply the same secret, symlink,
+    and git-ignore filters as the package source itself.
     """
 
     files = {relative: root / relative for relative in iter_source_files(root)}
@@ -226,7 +226,7 @@ def staged_source_files(root: Path) -> dict[Path, Path]:
     if (
         catalog.is_dir()
         and not catalog.is_symlink()
-        and any((catalog / tier).is_dir() for tier in ("main", "testing"))
+        and any((catalog / tier).is_dir() for tier in ("main", "testing", "partners"))
     ):
         # Exported checkouts have no git-ignore filtering. Do not upload stale
         # generated copies beside a newer authoritative source catalog.
@@ -237,12 +237,15 @@ def staged_source_files(root: Path) -> dict[Path, Path]:
             not in {
                 ("src", "npa", "workflows", "main"),
                 ("src", "npa", "workflows", "testing"),
+                ("src", "npa", "workflows", "partners"),
             }
         }
         for relative in iter_source_files(catalog):
             if (
-                len(relative.parts) == 2
-                and relative.parts[0] in {"main", "testing"}
+                (
+                    (len(relative.parts) == 2 and relative.parts[0] in {"main", "testing"})
+                    or (len(relative.parts) == 3 and relative.parts[0] == "partners")
+                )
                 and relative.suffix == ".yaml"
                 and _is_safe_regular_source(root.parent, Path("workflows") / relative)
             ):

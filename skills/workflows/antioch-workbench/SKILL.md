@@ -16,7 +16,7 @@ wraps native CLI arguments; `exec` launches attached remote argv through the
 pinned SDK interpreter. Both resolve the NPA credential before launching.
 
 The training stage is the `workflow.xr1.finetune` toolRef in
-`workflows/testing/xr1-antioch-finetune.yaml`. It runs on Nebius and publishes
+`workflows/partners/antioch/xr1-antioch-finetune.yaml`. It runs on Nebius and publishes
 checkpoints to S3. Antioch collection, transfers, and closed-loop evaluation
 are operator CLI/SDK steps around that YAML. Do not describe the entire loop as
 one submitted workflow. The NPA CLI has no separate Antioch subcommand.
@@ -65,7 +65,7 @@ one submitted workflow. The NPA CLI has no separate Antioch subcommand.
    ```bash
    npa/.venv/bin/python -m npa.workflows.xr1_antioch.operator --help
    npa/.venv/bin/python -m npa.cli.main workbench workflow validate-spec \
-     workflows/testing/xr1-antioch-finetune.yaml
+     workflows/partners/antioch/xr1-antioch-finetune.yaml
    ```
 
 2. Seal disjoint training, validation, and test seeds before collecting data.

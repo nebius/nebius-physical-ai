@@ -289,8 +289,8 @@ and runtime proof. Training verifies these artifacts again before use.
 Validate and submit the checked-in training graph:
 
 ```bash
-npa/.venv/bin/npa workbench workflow validate-spec workflows/testing/xr1-antioch-finetune.yaml
-npa/.venv/bin/npa workbench workflow submit workflows/testing/xr1-antioch-finetune.yaml \
+npa/.venv/bin/npa workbench workflow validate-spec workflows/partners/antioch/xr1-antioch-finetune.yaml
+npa/.venv/bin/npa workbench workflow submit workflows/partners/antioch/xr1-antioch-finetune.yaml \
   --project "$XR1_PROJECT" --infra "k8s/$XR1_KUBE_CONTEXT" \
   --run-id '<new-training-run-id>' --runtime --stage-src \
   --var "bucket=$XR1_BUCKET" --var "dataset_uri=$XR1_PREFIX/dataset" \

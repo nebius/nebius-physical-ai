@@ -417,7 +417,7 @@
     "queued_replacement_released": true,
     "original_verified_transfer_receipt_retained_in_s3": true
   },
-  "reference_workflow": "workflows/testing/xr1-antioch-finetune.yaml",
+  "reference_workflow": "workflows/partners/antioch/xr1-antioch-finetune.yaml",
   "reference_workflow_sha256": "d7955bdc2e2aa6bf6fe62b40c691a44e114d6eded1427e5dacb0d2873d811a3c",
   "training": {
     "optimizer_steps": 10000,

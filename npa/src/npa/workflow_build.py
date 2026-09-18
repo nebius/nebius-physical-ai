@@ -9,20 +9,41 @@ from pathlib import Path
 import shutil
 
 
+def catalog_directories(catalog: Path) -> tuple[Path, ...]:
+    """List main, testing, and individual partner workflow directories.
+
+    Args:
+        catalog: Repository or packaged workflow catalog root.
+    Returns:
+        Main/testing paths plus existing immediate partner directories.
+    Raises:
+        ValueError: A catalog directory is a symbolic link.
+    """
+    partners = catalog / "partners"
+    if catalog.is_symlink() or partners.is_symlink():
+        raise ValueError("Workflow catalog directories must not be symbolic links")
+    directories = [catalog / "main", catalog / "testing"]
+    if partners.is_dir():
+        directories.extend(
+            path for path in sorted(partners.iterdir())
+            if path.is_dir() or path.is_symlink()
+        )
+    if any(path.is_symlink() for path in directories):
+        raise ValueError("Workflow catalog directories must not be symbolic links")
+    return tuple(directories)
+
+
 def catalog_files(root: Path) -> dict[Path, Path]:
     """Map tier-relative YAML paths to the complete available source catalog."""
 
     for catalog in (root.parent / "workflows", root / "src/npa/workflows"):
-        if catalog.is_symlink() or any(
-            (catalog / tier).is_symlink() for tier in ("main", "testing")
-        ):
-            raise ValueError("Workflow catalog directories must not be symbolic links")
+        directories = catalog_directories(catalog)
         if not all((catalog / tier).is_dir() for tier in ("main", "testing")):
             continue
         return {
-            Path(tier) / path.name: path
-            for tier in ("main", "testing")
-            for path in sorted((catalog / tier).glob("*.yaml"))
+            path.relative_to(catalog): path
+            for directory in directories
+            for path in sorted(directory.glob("*.yaml"))
             if path.is_file() and not path.is_symlink()
         }
     return {}
@@ -44,17 +65,16 @@ def stage_catalog(package_root: Path) -> int:
         raise ValueError(
             "The generated catalog destination must not be a symbolic link"
         )
-    for tier in ("main", "testing"):
-        if (destination / tier).is_symlink():
-            raise ValueError("Generated catalog tiers must not be symbolic links")
-        (destination / tier).mkdir(parents=True, exist_ok=True)
-        for previous in (destination / tier).glob("*.yaml"):
+    for directory in catalog_directories(destination):
+        directory.mkdir(parents=True, exist_ok=True)
+        for previous in directory.glob("*.yaml"):
             if previous.relative_to(destination) not in files:
                 previous.unlink()
     for relative, source in files.items():
         target = destination / relative
         if target.is_symlink():
             raise ValueError("Generated workflow YAMLs must not be symbolic links")
+        target.parent.mkdir(parents=True, exist_ok=True)
         if source.resolve() != target.resolve():
             shutil.copyfile(source, target)
     return len(files)

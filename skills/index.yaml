@@ -1007,7 +1007,7 @@ skills:
         path: npa/src/npa/clients/antioch.py
       - type: npa_workflow_yaml
         paths:
-          - workflows/testing/xr1-antioch-finetune.yaml
+          - workflows/partners/antioch/xr1-antioch-finetune.yaml
   - name: train-policy
     category: workflows
     when_to_use: "Plan, review, or operate robot policy training across LeRobot, Isaac Lab, SONIC, and workflow YAMLs."
