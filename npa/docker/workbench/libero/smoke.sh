@@ -1,6 +1,10 @@
 #!/bin/sh
 set -eu
 
+# Smoke runs as npa-libero-exec while the supervisor snapshots its outputs.
+# Share only read access with that supervisor; private supervisor artifacts
+# remain explicitly created with tighter modes.
+umask 027
 runtime_root=${LIBERO_RUNTIME_ROOT:?LIBERO_RUNTIME_ROOT is required}
 output_root=${NPA_SMOKE_OUTPUT_DIR:?NPA_SMOKE_OUTPUT_DIR is required}
 test -x "$runtime_root/venv/bin/python"

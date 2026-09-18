@@ -1103,6 +1103,29 @@ def test_mismatched_customer_authorization_refuses_before_cache_mutation(
     assert not Path(args.cache_root).exists()
 
 
+def test_customer_authorization_rejects_empty_profile_digest(
+    tmp_path: Path,
+) -> None:
+    module, args, fixture = _fixture(tmp_path)
+    manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
+    authorization = json.loads(Path(args.authorization).read_text(encoding="utf-8"))
+    authorization["workflow_profile_sha256"] = ""
+    authorization["signature"]["signature_b64"] = module.base64.b64encode(
+        fixture["customer_private_key"].sign(
+            module._customer_authorization_signature_payload(authorization)
+        )
+    ).decode("ascii")
+    authorization_bytes = json.dumps(authorization, sort_keys=True).encode() + b"\n"
+
+    with pytest.raises(module.CustomerAcceptanceRequired, match="authorization wrong scope"):
+        module._validate_customer_authorization_bytes(
+            authorization_bytes,
+            hashlib.sha256(authorization_bytes).hexdigest(),
+            manifest,
+            module.EXPECTED_RUNTIME_MANIFEST_SHA256,
+        )
+
+
 def test_signed_customer_denial_notifies_before_network_or_cache_mutation(
     monkeypatch, tmp_path
 ) -> None:
@@ -2574,6 +2597,58 @@ def test_failed_conditional_output_put_never_claims_or_deletes_existing_object(
         )
 
     assert attempted == {}
+
+
+def test_successful_put_without_identity_headers_is_recovered_for_cleanup(
+    monkeypatch,
+):
+    module = _load_module()
+    attempted: dict[str, dict[str, object]] = {}
+    payload = b"immutable\n"
+    digest = hashlib.sha256(payload).hexdigest()
+    checksum = module.base64.b64encode(bytes.fromhex(digest)).decode()
+    calls: list[str] = []
+    observed_payload = b""
+
+    def request(
+        method,
+        _url,
+        *,
+        payload=b"",
+        extra_headers=None,
+        expected_statuses=frozenset({200}),
+    ):
+        calls.append(method)
+        nonlocal observed_payload
+        if method == "PUT":
+            assert payload == b"immutable\n"
+            observed_payload = payload
+            return 200, {}, b""
+        assert method == "HEAD"
+        return (
+            200,
+            {
+                "content-length": str(len(observed_payload)),
+                "x-amz-checksum-sha256": checksum,
+                "x-amz-version-id": "recovered-version",
+                "etag": '"recovered-etag"',
+            },
+            b"",
+        )
+
+    monkeypatch.setattr(module, "_sigv4_request", request)
+    with pytest.raises(module.BootstrapRefusal, match="immutable creation identity"):
+        module._verified_output_put(
+            endpoint="https://storage.fixture.invalid",
+            bucket="fixture-bucket",
+            object_key="byof/run/artifact.json",
+            name="artifact.json",
+            payload=payload,
+            digest=digest,
+            attempted=attempted,
+        )
+    assert calls == ["PUT", "HEAD"]
+    assert attempted["byof/run/artifact.json"]["version_id"] == "recovered-version"
 
 
 def test_output_cleanup_preserves_replacement_between_head_and_delete(

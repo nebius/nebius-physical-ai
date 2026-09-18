@@ -216,7 +216,7 @@ RUNTIME_EXECUTION_PASSTHROUGH_ENV_NAMES = frozenset(
         "TZ",
     }
 )
-OUTPUT_SIZE_LIMITS = {
+OUTPUT_ARTIFACT_SIZE_LIMITS = {
     "libero-bc-rnn-smoke.pth": 256 * 1024 * 1024,
     "libero-smoke.json": 8 * 1024 * 1024,
     "npa_byof_summary.json": 1024 * 1024,
@@ -227,13 +227,17 @@ OUTPUT_SIZE_LIMITS = {
     "solution_smoke_stderr.log": 16 * 1024 * 1024,
     "solution_smoke_stdout.log": 16 * 1024 * 1024,
 }
+# The commit receipt is deliberately not a workload artifact. Keep the
+# workload allowlist separate so the receipt can only be created after every
+# ordinary artifact has been snapshotted and uploaded.
+OUTPUT_SIZE_LIMITS = OUTPUT_ARTIFACT_SIZE_LIMITS
 FAILURE_OUTPUT_REQUIRED_SIZE_LIMITS = {
     name: limit
-    for name, limit in OUTPUT_SIZE_LIMITS.items()
+    for name, limit in OUTPUT_ARTIFACT_SIZE_LIMITS.items()
     if name not in {"libero-bc-rnn-smoke.pth", "libero-smoke.json"}
 }
 FAILURE_OUTPUT_OPTIONAL_SIZE_LIMITS = {
-    name: OUTPUT_SIZE_LIMITS[name]
+    name: OUTPUT_ARTIFACT_SIZE_LIMITS[name]
     for name in ("libero-bc-rnn-smoke.pth", "libero-smoke.json")
 }
 MAX_OUTPUT_BYTES = 320 * 1024 * 1024
@@ -1495,6 +1499,9 @@ def _validate_customer_authorization_bytes(
         )
         is None
         or authorization.get("runtime_manifest_sha256") != manifest_sha256
+        or re.fullmatch(
+            r"[0-9a-f]{64}", str(authorization.get("workflow_profile_sha256") or "")
+        ) is None
         or authorization.get("workflow_profile_sha256")
         != os.environ.get("NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256")
         or authorization.get("upstream_source_revision")
@@ -2878,6 +2885,20 @@ def _verified_output_put(
     version_id = created_headers.get("x-amz-version-id", "")
     etag = created_headers.get("etag", "")
     if not version_id or re.fullmatch(r'"[^\"]+"', etag) is None:
+        # A successful PUT can omit immutable identity headers. Recover the
+        # object through a bounded HEAD before refusing so rollback can delete
+        # exactly the object that was created.
+        if not _recover_ambiguous_output_put(
+            url=url,
+            payload=payload,
+            digest=digest,
+            checksum=checksum,
+            attempted=attempted,
+            object_key=object_key,
+        ):
+            raise BootstrapRefusal(
+                "output storage did not return immutable creation identity"
+            )
         raise BootstrapRefusal(
             "output storage did not return immutable creation identity"
         )
@@ -3126,7 +3147,7 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
             endpoint=endpoint, bucket=parsed.netloc
         )
         if smoke_exit_code == 0:
-            output_limits = OUTPUT_SIZE_LIMITS
+            output_limits = OUTPUT_ARTIFACT_SIZE_LIMITS
         else:
             observed_names = set(os.listdir(root_fd))
             required_names = set(FAILURE_OUTPUT_REQUIRED_SIZE_LIMITS)
@@ -3589,7 +3610,7 @@ def execute_and_upload() -> int:
                         except OSError:
                             artifact_is_regular = False
                         if (
-                            artifact_name not in OUTPUT_SIZE_LIMITS
+                            artifact_name not in OUTPUT_ARTIFACT_SIZE_LIMITS
                             or not artifact_is_regular
                         ):
                             error_fd = os.open(

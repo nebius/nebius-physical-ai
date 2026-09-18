@@ -164,6 +164,7 @@ test "$(base64 -w 0 < "$2")" = "$(cat "$1")"
 def test_smoke_writes_runtime_configuration_only_under_output_boundary() -> None:
     text = (IMAGE_ROOT / "smoke.sh").read_text(encoding="utf-8")
 
+    assert "umask 027" in text
     assert "output_root=${NPA_SMOKE_OUTPUT_DIR:?" in text
     assert 'LIBERO_CONFIG_PATH="$output_root/.libero-config"' in text
     assert 'LIBERO_CONFIG_PATH="$runtime_root/' not in text
