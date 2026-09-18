@@ -73,6 +73,11 @@ SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
         "runtime_image": "infra",
         "dry_run": "boolean",
     },
+    "isaac-arena/evaluate": {
+        "record_video": "boolean",
+        "runtime_image": "infra",
+        "dry_run": "boolean",
+    },
     "workflow/trigger/run": {
         # Where to watch and what has already been seen: driver state, not a stage input.
         "s3_endpoint": "infra",
@@ -196,6 +201,32 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
                 "require_camera_projection",
                 "--require-camera-projection",
             ),
+            _p("run_id", "run_id", "--run-id"),
+            _p("runtime_image", "runtime_image", "--runtime-image"),
+            _p("dry_run", "dry_run", "--dry-run"),
+        ),
+    ),
+    CapabilityContract(
+        name="isaac-arena/evaluate",
+        cli_module="npa.cli.workbench.isaac_arena",
+        cli_callback="evaluate_cmd",
+        sdk_module="npa.sdk.workbench.isaac_arena",
+        sdk_attr="evaluate",
+        spec_path=SPECS / "isaac-arena-evaluation-b200.yaml",
+        tool_ref="workbench.isaac_arena.evaluate",
+        spec_gap=("record_video", "runtime_image", "dry_run"),
+        params=(
+            _p("output_path", "output_path", "--output-path"),
+            _p("environment", "environment", "--environment"),
+            _p("policy_type", "policy_type", "--policy-type"),
+            _p("input_path", "input_path", "--input-path"),
+            _p("execution_device", "execution_device", "--execution-device"),
+            _p("num_episodes", "num_episodes", "--num-episodes"),
+            _p("num_envs", "num_envs", "--num-envs"),
+            _p("seed", "seed", "--seed"),
+            _p("embodiment", "embodiment", "--embodiment"),
+            _p("object_name", "object_name", "--object"),
+            _p("record_video", "record_video", "--record-video"),
             _p("run_id", "run_id", "--run-id"),
             _p("runtime_image", "runtime_image", "--runtime-image"),
             _p("dry_run", "dry_run", "--dry-run"),
@@ -848,3 +879,25 @@ def test_every_contract_names_a_real_file(contract: CapabilityContract) -> None:
     target = contract.spec_path or contract.yaml_path
     assert target is not None
     assert (REPO_ROOT / target).is_file(), target
+
+
+def test_sim2real_sdk_run_exposes_all_byo_seams() -> None:
+    # The SDK is the seam surface #513 fixed: every config field in
+    # SIM2REAL_SEAMS must be an explicit keyword parameter on
+    # npa.sdk.workbench.sim2real.run so SDK callers get a stable,
+    # discoverable signature instead of **overrides. The sync is
+    # directional — the signature must cover the seams; extra
+    # parameters (run_id, output_dir, upload_artifacts, **overrides)
+    # are fine.
+    import inspect
+
+    from npa.sdk.workbench.sim2real import run as sim2real_sdk_run
+    from npa.workflows.sim2real_health import SIM2REAL_SEAMS
+
+    signature_params = set(inspect.signature(sim2real_sdk_run).parameters)
+    seam_fields = {seam.config_field for seam in SIM2REAL_SEAMS}
+    missing = seam_fields - signature_params
+    assert not missing, (
+        f"npa.sdk.workbench.sim2real.run is missing explicit parameters "
+        f"for BYO seams: {sorted(missing)}"
+    )

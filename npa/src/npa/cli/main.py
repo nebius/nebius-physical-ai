@@ -138,6 +138,26 @@ app.add_typer(viz_app, name="viz", rich_help_panel="Platform utilities")
 app.add_typer(workflow_shim_app, name="workflow", hidden=True)
 
 
+@app.command(
+    "studio", rich_help_panel="Platform utilities",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    add_help_option=False,
+)
+def studio_cmd(ctx: typer.Context) -> None:
+    """Author and render portable local films; use npa studio --help for commands.
+
+    Args:
+        ctx: Arguments forwarded to the project-owned studio renderer.
+    Returns:
+        None.
+    Raises:
+        typer.Exit: Carries the renderer's process status.
+    """
+    from npa.studio import run
+
+    raise typer.Exit(run(ctx.args))
+
+
 @app.command("destroy", rich_help_panel="Platform utilities")
 @intent_boundary(OperationIntent.DESTROY)
 @json_stdout_contract

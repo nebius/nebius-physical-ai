@@ -9,7 +9,13 @@ from pathlib import Path
 import pytest
 import yaml
 
+from npa.deploy.images import DEFAULT_PUBLIC_CONTAINER_REGISTRY, wan_accepted_image_manifest
 
+
+WAN_IMAGE = (
+    f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/npa-wan2-2@"
+    f"{wan_accepted_image_manifest()['oci_digest']}"
+)
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_DIR = ROOT / "workflows" / "testing"
 SKILL_PATH = (
@@ -34,6 +40,42 @@ SOLUTION_SPECS = sorted(
 # Keep in sync with skills/workflows/oss-solution-registry-onboard/SKILL.md
 # and docs/workbench/oss-solution-catalog.md.
 SOLUTION_CAPABILITY_CONTRACTS = {
+    "sam2.1": {
+        "capability_name": "prompted_video_mask_propagation",
+        "smoke_artifact_name": "sam2_1_video_mask_propagation.json",
+        "spec": "byof-sam2.1.yaml",
+        "must_exercise": ["prompted_video_mask_propagation", "decoded_mp4_validation"],
+    },
+    "depth-anything-v2": {
+        "capability_name": "relative_depth_video",
+        "smoke_artifact_name": "depth_anything_v2_relative_depth.json",
+        "spec": "byof-depth-anything-v2.yaml",
+        "must_exercise": ["relative_depth_video", "decoded_mp4_validation"],
+    },
+    "lingbot-world": {
+        "capability_name": "lingbot_world_camera_conditioned_video",
+        "smoke_artifact_name": "lingbot_world_camera_conditioned_video.json",
+        "spec": "byof-lingbot-world.yaml",
+        "must_exercise": ["lingbot_world_camera_conditioned_video", "distributed_rank_validation", "decoded_mp4_validation"],
+    },
+    "mochi-1": {
+        "capability_name": "mochi-1_text_to_video",
+        "smoke_artifact_name": "mochi_1_text_to_video.json",
+        "spec": "byof-mochi-1.yaml",
+        "must_exercise": ["mochi-1_text_to_video", "decoded_mp4_validation"],
+    },
+    "cogvideox-2b": {
+        "capability_name": "cogvideox-2b_text_to_video",
+        "smoke_artifact_name": "cogvideox_2b_text_to_video.json",
+        "spec": "byof-cogvideox-2b.yaml",
+        "must_exercise": ["cogvideox-2b_text_to_video", "decoded_mp4_validation"],
+    },
+    "wan2.1-14b": {
+        "capability_name": "wan2.1-14b_text_to_video",
+        "smoke_artifact_name": "wan2_1_14b_text_to_video.json",
+        "spec": "byof-wan2.1-14b.yaml",
+        "must_exercise": ["wan2.1-14b_text_to_video", "decoded_mp4_validation"],
+    },
     "maniskill": {
         "capability_name": "gymnasium_pickcube_registration",
         "smoke_artifact_name": "maniskill_pickcube_step.json",
@@ -380,7 +422,7 @@ def test_wan22_package_keeps_weights_runtime_only_and_claims_t2v_only() -> None:
 
     assert config["repo_ref"] == "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
     assert config["base_profile"] == "prebuilt"
-    assert config["base_image"] == "tool://wan2-2"
+    assert config["base_image"] == WAN_IMAGE
     assert config["pip_extra"] == "viz"
     assert config["resource_profile_yaml"] == "byof-solution-smoke-wan22-rtxpro-gpu"
     assert config["wait_timeout"] == "-1"
@@ -479,7 +521,7 @@ def test_wan22_multigpu_uses_the_pinned_official_distributed_path() -> None:
     assert config["repo_ref"] == "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
     assert config["resource_profile_yaml"] == "byof-solution-smoke-wan22-b200-4gpu"
     assert config["base_profile"] == "prebuilt"
-    assert config["base_image"] == "tool://wan2-2"
+    assert config["base_image"] == WAN_IMAGE
     assert config["pip_extra"] == "viz"
     assert config["wait_timeout"] == "-1"
     assert "wan-runtime ensure" in smoke

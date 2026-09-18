@@ -259,3 +259,12 @@ for the remaining environment variables and the exact test command.
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full test layout and PR
 conventions (branch → PR → squash, one approval, never self-approve).
+
+## Workbench Studio
+
+`npa studio init --directory ./my-studio` creates a portable local film editor
+using the installed renderer. Create a project from your own media with
+`npa studio create`, author its storyboard, then draft, narrate and render it.
+Install `npa[studio]` for optional speech generation and FFmpeg separately.
+See the [Studio developer flow](../docs/demos/workbench-studio/README.md) for
+configuration, offline narration, artifact search and privacy boundaries.

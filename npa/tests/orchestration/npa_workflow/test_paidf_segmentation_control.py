@@ -265,6 +265,7 @@ def test_submit_capacity_preflight_uses_resolved_paidf_gang_and_free_nodes(
             "selected_nodes": ["gpu-a", "gpu-b"],
             "cpus_per_node": 16.0,
             "memory_bytes_per_node": requested_memory_bytes,
+            "ephemeral_storage_bytes_per_node": 0,
             "allowed_nodes": [],
             "state": "augment",
             "profile": "gpu",

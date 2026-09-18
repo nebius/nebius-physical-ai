@@ -81,9 +81,11 @@ npa workbench genesis eval-teacher --checkpoint ./checkpoints/teacher/model.pt
 
 ## Go bigger
 
-- **Full training runs locally or on a workbench VM.** `train-teacher` (and
-  `generate-demos` / `eval-teacher`) run on your GPU box, or on a Workbench VM
-  when you pass `-p <project> -n <workbench>` (forwarded over SSH).
+- **Scale up on cloud GPUs.** `train-teacher` (and `generate-demos` /
+  `eval-teacher`) run on your local GPU box by default — the Fast path above
+  proves the loop there. For full-scale runs, target a GPU workbench VM by
+  passing `-p <project> -n <workbench>` (forwarded over SSH), or submit to
+  Nebius serverless with `--runtime serverless` (next bullet).
 - **Serverless runs real PPO training.** `train-teacher --runtime serverless`
   submits the same training implementation as a Nebius AI Job and uploads its
   checkpoint and summaries to `--output-path`. It needs `--project-id`, or a
@@ -168,3 +170,16 @@ real:
 - Env source: `npa/src/npa/genesis/env_pick_place.py`
 - Commands: `npa workbench genesis train-teacher | generate-demos | eval-teacher | eval-student | diagnose | tune`
 - Skill: `skills/tools/genesis/SKILL.md`
+
+## Clean up
+
+Idle GPU clusters keep billing after the run finishes. When you are done,
+tear them down:
+
+```bash
+npa destroy --project "<alias>" --all
+```
+
+The plan previews read-only until you pass `--yes`, and the Nebius project
+itself is retained by default. See [teardown](../../teardown.md) for what
+`npa destroy` removes (cloud spend) versus what it keeps.

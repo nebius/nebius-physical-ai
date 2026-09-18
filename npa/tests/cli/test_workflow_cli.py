@@ -348,6 +348,27 @@ def test_stage_src_uses_resolved_project_storage_credentials(
     assert captured["aws_secret_access_key"] == "configured-secret"
 
 
+def test_runtime_source_refresh_preserves_daemon_configuration(monkeypatch, tmp_path):
+    from npa.cli.workbench import workflow as workflow_cli
+
+    config = tmp_path / "config.yaml"
+    config.write_text("workflow:\n  src_s3_uri: s3://bucket/previous/\n")
+    original = config.read_bytes()
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.src_staging.stage_npa_source",
+        lambda **kwargs: "s3://bucket/current/",
+    )
+
+    def persist(uri, project):
+        config.write_text(uri)
+
+    monkeypatch.setattr("npa.clients.config.persist_workflow_src_s3_uri", persist)
+    assert workflow_cli._stage_npa_src_for_submit(
+        {"bucket": "bucket"}, persist=False,
+    ) == "s3://bucket/current/"
+    assert config.read_bytes() == original
+
+
 def test_workbench_workflow_submit_instruments_durable_s3(
     monkeypatch, mocker, tmp_path
 ) -> None:
