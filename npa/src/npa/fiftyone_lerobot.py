@@ -277,18 +277,26 @@ def _prepare_native_lerobot_source(source_root: Path, staging_parent: Path) -> P
     # LeRobot saves task text as the Pandas index; FiftyOne 1.22 expects a column.
     index_columns = (table.schema.pandas_metadata or {}).get("index_columns", [])
     if len(index_columns) != 1 or not isinstance(index_columns[0], str):
-        raise ValueError("LeRobot tasks metadata requires a task column or one named Pandas index")
+        raise ValueError(
+            "LeRobot tasks metadata requires a task column or one named Pandas index"
+        )
     index = index_columns[0]
     if index not in table.column_names or "task_index" not in table.column_names:
-        raise ValueError("LeRobot tasks metadata is missing task_index or its Pandas index")
-    if not pa.types.is_string(table[index].type) and not pa.types.is_large_string(table[index].type):
+        raise ValueError(
+            "LeRobot tasks metadata is missing task_index or its Pandas index"
+        )
+    if not pa.types.is_string(table[index].type) and not pa.types.is_large_string(
+        table[index].type
+    ):
         raise ValueError("LeRobot task names must be strings")
     if staging_parent.resolve().is_relative_to(source_root.resolve()):
         raise ValueError("Native LeRobot staging must be outside the source dataset")
     staging_parent.mkdir(parents=True, exist_ok=True)
     staged = Path(tempfile.mkdtemp(prefix="lerobot-native-", dir=staging_parent))
     shutil.copytree(source_root, staged, dirs_exist_ok=True)
-    pq.write_table(table.append_column("task", table[index]), staged / "meta/tasks.parquet")
+    pq.write_table(
+        table.append_column("task", table[index]), staged / "meta/tasks.parquet"
+    )
     return staged
 
 
@@ -332,7 +340,14 @@ def _import_native_lerobot_dataset(
         "format": "lerobot",
         "samples": len(dataset),
         "media_keys": media_keys,
-        "metadata_fields": ["episode_index", "task", "tasks", "length", "duration", "fps"],
+        "metadata_fields": [
+            "episode_index",
+            "task",
+            "tasks",
+            "length",
+            "duration",
+            "fps",
+        ],
         "seeded_subtask_segments": seeded_segments,
         "native_multimodal": True,
         "warnings": warnings,
@@ -347,8 +362,7 @@ def _seed_native_subtask_tags(dataset: Any, source_root: Path) -> int:
     if not segments:
         return 0
     sample_by_episode = {
-        int(sample["episode_index"]): sample
-        for sample in dataset.iter_samples()
+        int(sample["episode_index"]): sample for sample in dataset.iter_samples()
     }
     tags = []
     for segment in segments:

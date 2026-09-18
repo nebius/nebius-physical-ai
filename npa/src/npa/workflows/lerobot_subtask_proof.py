@@ -56,21 +56,31 @@ def _read_info(root: Path) -> dict[str, Any]:
     try:
         info = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise LeRobotSubtaskProofError("LeRobot meta/info.json is missing or invalid") from exc
+        raise LeRobotSubtaskProofError(
+            "LeRobot meta/info.json is missing or invalid"
+        ) from exc
     if not isinstance(info, dict) or not isinstance(info.get("features"), dict):
-        raise LeRobotSubtaskProofError("LeRobot info.json must contain a features object")
+        raise LeRobotSubtaskProofError(
+            "LeRobot info.json must contain a features object"
+        )
     feature = info["features"].get("subtask_index")
     if not str(info.get("codebase_version", "")).startswith("v3."):
-        raise LeRobotSubtaskProofError("dataset must declare LeRobot codebase_version v3")
+        raise LeRobotSubtaskProofError(
+            "dataset must declare LeRobot codebase_version v3"
+        )
     if not isinstance(feature, dict) or feature.get("dtype") != "int64":
-        raise LeRobotSubtaskProofError("LeRobot info.json must declare int64 subtask_index")
+        raise LeRobotSubtaskProofError(
+            "LeRobot info.json must declare int64 subtask_index"
+        )
     return info
 
 
 def _read_catalog(root: Path) -> dict[int, str]:
     path = root / "meta" / "subtasks.parquet"
     if not path.is_file():
-        raise LeRobotSubtaskProofError("LeRobot dataset is missing meta/subtasks.parquet")
+        raise LeRobotSubtaskProofError(
+            "LeRobot dataset is missing meta/subtasks.parquet"
+        )
     table = pq.read_table(path)
     required = {"subtask", "subtask_index"}
     if not required.issubset(table.column_names):
@@ -83,16 +93,22 @@ def _read_catalog(root: Path) -> dict[int, str]:
             index = int(row["subtask_index"])
             label = str(row["subtask"] or "").strip()
         except (TypeError, ValueError) as exc:
-            raise LeRobotSubtaskProofError("subtask catalog has an invalid entry") from exc
+            raise LeRobotSubtaskProofError(
+                "subtask catalog has an invalid entry"
+            ) from exc
         if index < 0 or not label or index in catalog or label in catalog.values():
-            raise LeRobotSubtaskProofError("subtask catalog has an invalid or duplicate entry")
+            raise LeRobotSubtaskProofError(
+                "subtask catalog has an invalid or duplicate entry"
+            )
         catalog[index] = label
     if not catalog:
         raise LeRobotSubtaskProofError("subtask catalog is empty")
     return catalog
 
 
-def _normalize_frame(row: Mapping[str, Any], source_file: str, digest: str) -> dict[str, Any]:
+def _normalize_frame(
+    row: Mapping[str, Any], source_file: str, digest: str
+) -> dict[str, Any]:
     try:
         normalized = {
             "episode_index": int(row["episode_index"]),
@@ -103,14 +119,22 @@ def _normalize_frame(row: Mapping[str, Any], source_file: str, digest: str) -> d
             "source_parquet_sha256": digest,
         }
     except (KeyError, TypeError, ValueError) as exc:
-        raise LeRobotSubtaskProofError("LeRobot frame has invalid subtask fields") from exc
-    numeric = (normalized["episode_index"], normalized["frame_index"], normalized["timestamp"])
+        raise LeRobotSubtaskProofError(
+            "LeRobot frame has invalid subtask fields"
+        ) from exc
+    numeric = (
+        normalized["episode_index"],
+        normalized["frame_index"],
+        normalized["timestamp"],
+    )
     if (
         any(value < 0 for value in numeric)
         or not math.isfinite(normalized["timestamp"])
         or normalized["subtask_index"] < 0
     ):
-        raise LeRobotSubtaskProofError("every LeRobot frame must have a nonnegative subtask_index")
+        raise LeRobotSubtaskProofError(
+            "every LeRobot frame must have a nonnegative subtask_index"
+        )
     return normalized
 
 
@@ -123,10 +147,14 @@ def _read_frames(root: Path) -> list[dict[str, Any]]:
         schema = pq.read_schema(path)
         if not REQUIRED_FRAME_COLUMNS.issubset(schema.names):
             missing = sorted(REQUIRED_FRAME_COLUMNS.difference(schema.names))
-            raise LeRobotSubtaskProofError(f"LeRobot data parquet is missing columns: {missing}")
+            raise LeRobotSubtaskProofError(
+                f"LeRobot data parquet is missing columns: {missing}"
+            )
         for column in ("episode_index", "frame_index", "subtask_index"):
             if schema.field(column).type != pa.int64():
-                raise LeRobotSubtaskProofError(f"LeRobot frame column {column} must be int64")
+                raise LeRobotSubtaskProofError(
+                    f"LeRobot frame column {column} must be int64"
+                )
         table = pq.read_table(path, columns=sorted(REQUIRED_FRAME_COLUMNS))
         relative = path.relative_to(root).as_posix()
         digest = _sha256(path)
@@ -145,7 +173,9 @@ def _validate_frames(frames: list[dict[str, Any]], catalog: Mapping[int, str]) -
     for row in frames:
         identity = (row["episode_index"], row["frame_index"])
         if identity in identities:
-            raise LeRobotSubtaskProofError(f"duplicate LeRobot frame identity: {identity}")
+            raise LeRobotSubtaskProofError(
+                f"duplicate LeRobot frame identity: {identity}"
+            )
         identities.add(identity)
         if row["subtask_index"] not in catalog:
             raise LeRobotSubtaskProofError(
@@ -153,7 +183,9 @@ def _validate_frames(frames: list[dict[str, Any]], catalog: Mapping[int, str]) -
             )
 
 
-def _summary(frames: list[dict[str, Any]], catalog: Mapping[int, str]) -> dict[str, int]:
+def _summary(
+    frames: list[dict[str, Any]], catalog: Mapping[int, str]
+) -> dict[str, int]:
     segments = 0
     previous: tuple[int, int] | None = None
     for row in frames:
@@ -174,11 +206,17 @@ def _select_proof(
     frames: list[dict[str, Any]], catalog: Mapping[int, str], expected_label: str
 ) -> dict[str, Any]:
     selected = next(
-        (row for row in frames if not expected_label or catalog[row["subtask_index"]] == expected_label),
+        (
+            row
+            for row in frames
+            if not expected_label or catalog[row["subtask_index"]] == expected_label
+        ),
         None,
     )
     if selected is None:
-        raise LeRobotSubtaskProofError(f"expected subtask label was not found: {expected_label}")
+        raise LeRobotSubtaskProofError(
+            f"expected subtask label was not found: {expected_label}"
+        )
     proof = dict(selected)
     proof["subtask"] = catalog[proof["subtask_index"]]
     canonical = json.dumps(proof, sort_keys=True, separators=(",", ":")).encode()
@@ -189,19 +227,33 @@ def _select_proof(
 def _validate_destinations(dataset_uri: str, proof_uri: str) -> None:
     source, destination = urlparse(dataset_uri), urlparse(proof_uri)
     if source.scheme not in ("", "s3") or destination.scheme not in ("", "s3"):
-        raise LeRobotSubtaskProofError("dataset and proof locations must be local paths or S3 URIs")
+        raise LeRobotSubtaskProofError(
+            "dataset and proof locations must be local paths or S3 URIs"
+        )
     if destination.scheme == "s3":
-        if not destination.netloc or not destination.path.strip("/") or proof_uri.endswith("/"):
+        if (
+            not destination.netloc
+            or not destination.path.strip("/")
+            or proof_uri.endswith("/")
+        ):
             raise LeRobotSubtaskProofError("proof_uri must name an exact S3 object")
-        if source.netloc == destination.netloc and destination.path.startswith(source.path.rstrip("/") + "/"):
-            raise LeRobotSubtaskProofError("proof_uri must be outside the source dataset")
+        if source.netloc == destination.netloc and destination.path.startswith(
+            source.path.rstrip("/") + "/"
+        ):
+            raise LeRobotSubtaskProofError(
+                "proof_uri must be outside the source dataset"
+            )
     elif not source.scheme:
         root = Path(dataset_uri).expanduser().resolve()
         if Path(proof_uri).expanduser().resolve().is_relative_to(root):
-            raise LeRobotSubtaskProofError("proof_uri must be outside the source dataset")
+            raise LeRobotSubtaskProofError(
+                "proof_uri must be outside the source dataset"
+            )
 
 
-def _materialize(dataset_uri: str, temporary_root: Path, storage_client: Any | None) -> Path:
+def _materialize(
+    dataset_uri: str, temporary_root: Path, storage_client: Any | None
+) -> Path:
     if not dataset_uri.startswith("s3://"):
         return Path(dataset_uri).expanduser().resolve()
     root = temporary_root / "dataset"
@@ -219,26 +271,40 @@ def _build_proof(root: Path, expected_label: str) -> dict[str, Any]:
     frames = _read_frames(root)
     _validate_frames(frames, catalog)
     summary = _summary(frames, catalog)
-    for declared, measured in (("total_frames", "frame_count"), ("total_episodes", "episode_count")):
+    for declared, measured in (
+        ("total_frames", "frame_count"),
+        ("total_episodes", "episode_count"),
+    ):
         if info.get(declared) != summary[measured]:
-            raise LeRobotSubtaskProofError(f"LeRobot {declared} does not match the observed dataset")
+            raise LeRobotSubtaskProofError(
+                f"LeRobot {declared} does not match the observed dataset"
+            )
     return {
         "schema": PROOF_SCHEMA,
         "status": "verified",
         "source_format": f"lerobot-{info['codebase_version']}",
         "source_catalog_sha256": _sha256(root / "meta" / "subtasks.parquet"),
         "expected_subtask": expected_label or None,
-        "catalog": [{"subtask_index": index, "subtask": catalog[index]} for index in sorted(catalog)],
+        "catalog": [
+            {"subtask_index": index, "subtask": catalog[index]}
+            for index in sorted(catalog)
+        ],
         "summary": summary,
         "proof": _select_proof(frames, catalog, expected_label),
     }
 
 
 def _publish(
-    payload: dict[str, Any], uri: str, *, temporary_root: Path, storage_client: Any | None
+    payload: dict[str, Any],
+    uri: str,
+    *,
+    temporary_root: Path,
+    storage_client: Any | None,
 ) -> str:
     staged = temporary_root / "subtask-proof.json"
-    staged.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    staged.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     if uri.startswith("s3://"):
         return str((storage_client or _storage()).upload_file(str(staged), uri))
     destination = Path(uri).expanduser().resolve()
@@ -275,7 +341,12 @@ def prove_lerobot_subtasks(
         root = _materialize(dataset_uri, temporary_root, storage_client)
         payload = _build_proof(root, expected_label)
         payload.update({"source_dataset_uri": dataset_uri, "artifact_uri": proof_uri})
-        _publish(payload, proof_uri, temporary_root=temporary_root, storage_client=storage_client)
+        _publish(
+            payload,
+            proof_uri,
+            temporary_root=temporary_root,
+            storage_client=storage_client,
+        )
     return payload
 
 

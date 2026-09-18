@@ -615,7 +615,9 @@ def _lerobot_subtask_fixture_objects() -> dict[str, bytes]:
     )
     catalog = pa.table({"subtask": ["approach", "grasp"], "subtask_index": [0, 1]})
     tasks = pa.table({"task_index": [0], "task": ["Pick up the object"]})
-    episodes = pa.table({"episode_index": [0], "length": [4], "tasks": [["Pick up the object"]]})
+    episodes = pa.table(
+        {"episode_index": [0], "length": [4], "tasks": [["Pick up the object"]]}
+    )
     info = {
         "codebase_version": "v3.0",
         "fps": 10,
@@ -647,30 +649,46 @@ def _assert_lerobot_subtask_proof(client: Any, bucket: str, marker: str) -> None
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    with client.get_object(Bucket=bucket, Key=f"{marker}/proof/subtask-proof.json")["Body"] as body:
+    with client.get_object(Bucket=bucket, Key=f"{marker}/proof/subtask-proof.json")[
+        "Body"
+    ] as body:
         payload = json.loads(body.read())
     proof = payload["proof"]
     assert payload["status"] == "verified"
     assert payload["summary"] == {
-        "episode_count": 1, "frame_count": 4, "labeled_frame_count": 4,
-        "unlabeled_frame_count": 0, "subtask_count": 2, "segment_count": 2,
+        "episode_count": 1,
+        "frame_count": 4,
+        "labeled_frame_count": 4,
+        "unlabeled_frame_count": 0,
+        "subtask_count": 2,
+        "segment_count": 2,
     }
     prefix = f"{marker}/reviewed-dataset/"
-    with client.get_object(Bucket=bucket, Key=f"{prefix}data/chunk-000/file-000.parquet")["Body"] as body:
+    with client.get_object(
+        Bucket=bucket, Key=f"{prefix}data/chunk-000/file-000.parquet"
+    )["Body"] as body:
         data = body.read()
-    with client.get_object(Bucket=bucket, Key=f"{prefix}meta/subtasks.parquet")["Body"] as body:
+    with client.get_object(Bucket=bucket, Key=f"{prefix}meta/subtasks.parquet")[
+        "Body"
+    ] as body:
         catalog = body.read()
     assert proof["source_parquet_sha256"] == hashlib.sha256(data).hexdigest()
     assert payload["source_catalog_sha256"] == hashlib.sha256(catalog).hexdigest()
     row = pq.read_table(pa.BufferReader(data)).to_pylist()[2]
-    labels = {item["subtask_index"]: item["subtask"] for item in pq.read_table(pa.BufferReader(catalog)).to_pylist()}
+    labels = {
+        item["subtask_index"]: item["subtask"]
+        for item in pq.read_table(pa.BufferReader(catalog)).to_pylist()
+    }
     for field in ("episode_index", "frame_index", "timestamp", "subtask_index"):
         assert proof[field] == row[field]
     assert proof["subtask"] == labels[row["subtask_index"]] == "grasp"
     recorded_hash = proof.pop("row_sha256")
-    assert recorded_hash == hashlib.sha256(
-        json.dumps(proof, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    assert (
+        recorded_hash
+        == hashlib.sha256(
+            json.dumps(proof, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    )
 
 
 def assert_lerobot_subtask_live_outputs(

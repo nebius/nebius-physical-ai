@@ -104,11 +104,17 @@ def check_lerobot_temporal_api() -> CheckResult:
 
         dataset_type = getattr(fo.types, "LeRobotDataset", None)
         if dataset_type is None:
-            return CheckResult("check LeRobot temporal API", False, "LeRobotDataset is unavailable")
+            return CheckResult(
+                "check LeRobot temporal API", False, "LeRobotDataset is unavailable"
+            )
         tag = TemporalTag("sample-id", start=0, end=1, tag="subtask:smoke")
         if tag.tag != "subtask:smoke" or tag.start != 0 or tag.end != 1:
-            return CheckResult("check LeRobot temporal API", False, "TemporalTag did not round-trip")
-        return CheckResult("check LeRobot temporal API", True, "LeRobotDataset + TemporalTag available")
+            return CheckResult(
+                "check LeRobot temporal API", False, "TemporalTag did not round-trip"
+            )
+        return CheckResult(
+            "check LeRobot temporal API", True, "LeRobotDataset + TemporalTag available"
+        )
     except Exception as exc:
         return CheckResult("check LeRobot temporal API", False, _format_exception(exc))
 
