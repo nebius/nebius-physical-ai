@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
@@ -148,6 +149,19 @@ def scrub_ambient_credential_env(monkeypatch, request):
         return
     for env_var in (*_AMBIENT_CREDENTIAL_ENV_VARS, *_AMBIENT_INFRA_TARGET_ENV_VARS):
         monkeypatch.delenv(env_var, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def isolate_instance_metadata(monkeypatch, request):
+    """Unit tests must not stat the host's mounted credential filesystem."""
+    if any(request.node.get_closest_marker(marker) for marker in _LIVE_MARKERS):
+        return
+    original_is_file = Path.is_file
+    monkeypatch.setattr(
+        Path, "is_file",
+        lambda path: False if str(path) == "/mnt/cloud-metadata/token"
+        else original_is_file(path),
+    )
 
 
 @pytest.fixture(autouse=True)

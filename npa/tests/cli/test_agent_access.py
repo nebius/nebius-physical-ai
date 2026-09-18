@@ -661,6 +661,10 @@ def test_agent_nebius_timeout_is_public_safe_and_bounded(monkeypatch) -> None:
 
     monkeypatch.setattr(runtime.shutil, "which", lambda _name: "/bin/true")
     monkeypatch.setattr(runtime, "_agent_command_env", lambda: {})
+    monkeypatch.setattr(
+        runtime, "_agent_inventory_credential_context",
+        lambda: ({}, "test-profile", "", "configured_profile"),
+    )
     monkeypatch.setattr(runtime.subprocess, "run", timeout_run)
 
     with pytest.raises(AccessProbeError) as exc_info:
@@ -673,8 +677,9 @@ def test_agent_nebius_timeout_is_public_safe_and_bounded(monkeypatch) -> None:
     assert seen["timeout"] == runtime._AGENT_NEBIUS_TIMEOUT_SECONDS
 
 
+@pytest.mark.parametrize("metadata_available", [False, True])
 def test_agent_nebius_inventory_scrubs_tokens_and_pins_profile_config(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, metadata_available
 ) -> None:
     from npa.cli import agent_access_runtime as runtime
 
@@ -696,6 +701,12 @@ def test_agent_nebius_inventory_scrubs_tokens_and_pins_profile_config(
 
     monkeypatch.setenv("NPA_NEBIUS_CONFIG", str(config))
     monkeypatch.setenv("NPA_NEBIUS_PROFILE", "cursor-sa")
+    original_is_file = runtime.Path.is_file
+    monkeypatch.setattr(
+        runtime.Path, "is_file",
+        lambda path: metadata_available
+        if str(path) == "/mnt/cloud-metadata/token" else original_is_file(path),
+    )
     monkeypatch.setattr(runtime.shutil, "which", lambda _name: "/bin/true")
     monkeypatch.setattr(
         runtime,
@@ -725,6 +736,9 @@ def test_agent_nebius_inventory_scrubs_tokens_and_pins_profile_config(
     ]
     assert env["NEBIUS_PROFILE"] == "cursor-sa"
     assert env["HOME"] == str(tmp_path)
+    assert runtime._agent_inventory_credential_context()[3] == (
+        "instance_metadata" if metadata_available else "configured_profile"
+    )
     assert not (runtime._AMBIENT_NEBIUS_TOKEN_KEYS & set(env))
     assert canary not in repr(command)
     assert canary not in repr(env)
