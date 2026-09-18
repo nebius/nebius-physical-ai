@@ -39,7 +39,9 @@ def _load_module():
 
 
 @pytest.mark.parametrize("confidential", (False, True))
-@pytest.mark.parametrize("failure", ("refused", "accepted", "signal", "unverified"))
+@pytest.mark.parametrize(
+    "failure", ("refused", "accepted", "signal", "unverified", "post-return")
+)
 def test_managed_submit_cleanup_ownership_boundary(
     monkeypatch, tmp_path, confidential, failure
 ):
@@ -95,7 +97,6 @@ def test_managed_submit_cleanup_ownership_boundary(
             0,
             kwargs["config_path"],
             active=True,
-            job_id="42",  # Synthetic immutable acknowledgment from this launch.
         )
         handles.append(cleanup)
         kwargs["on_launch_ready"](cleanup)
@@ -103,7 +104,20 @@ def test_managed_submit_cleanup_ownership_boundary(
             handlers[0]()
             assert not mutations
         cleanup.finish_submit(failed=True)
+        if failure == "post-return":
+            return SimpleNamespace(
+                log_paths={
+                    "config": str(kwargs["config_path"]),
+                    "submission_dir": str(workdirs[0]),
+                }
+            )
         raise RuntimeError("synthetic accepted failure")
+
+    def wait(*_a, **_k):
+        assert failure == "post-return"
+        raise RuntimeError("synthetic post-return failure")
+
+    monkeypatch.setattr(module, "_wait_for_terminal", wait)
 
     status = ["RUNNING"]
 
@@ -145,8 +159,10 @@ def test_managed_submit_cleanup_ownership_boundary(
         module._submit_and_wait(
             args, robotwin_submit_context=context, authorized_env={}
         )
-    assert len(mutations) == (1 if failure in {"accepted", "signal"} else 0)
-    assert all(path.exists() == (failure == "unverified") for path in workdirs)
+    assert not mutations and status == ["RUNNING"]
+    assert all(path.exists() == (failure != "refused") for path in workdirs)
+    assert all(not handle.job_id and not handle.verified for handle in handles)
+    assert all(handle.result.errors for handle in handles)
 
 
 def test_submit_cleanup_configuration_refinement_cannot_retarget(tmp_path):

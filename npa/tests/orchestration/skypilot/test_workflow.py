@@ -2227,8 +2227,12 @@ def test_submission_cleanup_retains_unknown_acceptance_with_bound_runtime(
 @pytest.mark.parametrize(
     "scenario", ("before-launch", "receipt-signal", "receipt-exception")
 )
-def test_submission_cleanup_ownership_comes_from_launch_receipt(
-    monkeypatch, tmp_path, confidential, scenario
+@pytest.mark.parametrize("stream", ("stdout", "stderr"))
+@pytest.mark.parametrize(
+    "kind", ("successful", "unacknowledged", "failed", "ambiguous", "foreign-command")
+)
+def test_submission_cleanup_rejects_stale_launch_text_and_same_name_agreement(
+    monkeypatch, tmp_path, confidential, scenario, stream, kind
 ):
     from npa.orchestration.skypilot.launch_transaction import (
         EvidenceState,
@@ -2276,8 +2280,17 @@ def test_submission_cleanup_ownership_comes_from_launch_receipt(
         launches.append(command)
         if scenario == "receipt-signal":
             handles[0].request()
+        # A successful invocation may replay an earlier request's text. Neither
+        # exact argv nor agreement with an unrelated same-name row is ownership.
+        output = "Job submitted, ID: 42\n"
+        if kind == "unacknowledged":
+            output = "Request accepted without a job identity\n"
+        elif kind == "ambiguous":
+            output += "Managed Job ID: 43\n"
         return subprocess.CompletedProcess(
-            command, 0, "Job submitted, ID: 42\n", ""
+            command if kind != "foreign-command" else ["/sky", "jobs", "queue"],
+            int(kind == "failed"),
+            **{stream: output},
         ), []
 
     def reconcile(_name, **kwargs):
@@ -2288,7 +2301,8 @@ def test_submission_cleanup_ownership_comes_from_launch_receipt(
         assert kwargs["env"] == handles[0].environment
         if confidential:
             assert all(key not in kwargs["env"] for key in _robotwin_secret_envs(env))
-        # In the pre-launch case this record belongs to a different invocation.
+        # This active same-name record belongs to a different invocation in ALL
+        # cases, including when its ID agrees with the replayed output above.
         return workflow_module.ReconciliationEvidence(
             workflow_module.ReconciliationState.FOUND,
             job_id="42",
@@ -2329,34 +2343,17 @@ def test_submission_cleanup_ownership_comes_from_launch_receipt(
             launch_lock_root=tmp_path / "locks",
             **options,
         )
-    owned = scenario != "before-launch"
-    assert len(launches) == len(cancellations) == int(owned)
-    assert handles[0].verified == owned
-    if not owned:
-        assert not handles[0].job_id and handles[0].config_path.is_file()
-
-
-@pytest.mark.parametrize(
-    "kind", ("unacknowledged", "failed", "ambiguous", "foreign-command", "inactive")
-)
-def test_submission_cleanup_rejects_nonowning_receipts(tmp_path, kind):
-    handle = workflow_module._SubmissionCleanup(
-        "synthetic", {}, "/sky", None, 0, tmp_path / "config", active=kind != "inactive"
-    )
-    command = ["/sky", "jobs", "launch"]
-    output = "Job submitted, ID: 42\n"
-    if kind == "unacknowledged":
-        output = "Request accepted without a job identity\n"
-    elif kind == "ambiguous":
-        output += "Managed Job ID: 43\n"
-    result = subprocess.CompletedProcess(
-        command if kind != "foreign-command" else ["/sky", "jobs", "queue"],
-        int(kind == "failed"),
-        output,
-        "",
-    )
-    handle.bind_launch_receipt(result, command)
-    assert not handle.job_id
+    assert len(launches) == int(scenario != "before-launch")
+    assert not cancellations and status == ["RUNNING"]
+    handle = handles[0]
+    assert not handle.verified and not handle.job_id
+    assert handle.config_path.is_file()
+    if confidential:
+        assert Path(handle.environment["KUBECONFIG"]).is_file()
+        assert all(key not in handle.environment for key in _robotwin_secret_envs(env))
+    handle.request()
+    assert not cancellations and handle.result.errors
+    assert handle.config_path.is_file()
 
 
 @pytest.mark.parametrize("active_status", ("RUNNING", "UNKNOWN", "CANCELLING"))
@@ -2403,6 +2400,8 @@ def test_submission_cleanup_requires_every_task_terminal(
     ),
 )
 def test_submission_cleanup_preserves_unverified_resources(monkeypatch, tmp_path, mode):
+    # Injected IDs exercise only downstream policy, NOT a supported ownership
+    # producer. Production CLI/queue evidence must leave the identity unset.
     state = workflow_module.ReconciliationState
     observations = []
     calls = []

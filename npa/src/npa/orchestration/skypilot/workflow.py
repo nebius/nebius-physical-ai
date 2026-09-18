@@ -220,7 +220,14 @@ class SkyPilotSubmitError(RuntimeError):
 
 @dataclass(repr=False)
 class _SubmissionCleanup:
-    """Retain the authorized submit runtime until exact-job cleanup converges."""
+    """Retain the authorized runtime unless cleanup ownership is independently proven.
+
+    The current CLI/queue bridge has no invocation-correlated provider receipt.
+    It must leave ``job_id`` unset: launch prose (even on success), local argv,
+    and a same-name queue record cannot grant cancellation authority. Keep the
+    recovery context and report unverified cleanup until a supported producer
+    can independently bind this invocation to an immutable provider identity.
+    """
 
     run_id: str
     environment: dict[str, str]
@@ -323,25 +330,6 @@ class _SubmissionCleanup:
                 commands=[command], errors=["exact managed-job cancellation failed"]
             )
         return self._verify_cancelled(command)
-
-    def bind_launch_receipt(
-        self, result: subprocess.CompletedProcess[str], command: list[str]
-    ) -> None:
-        """Bind only a unique ID acknowledged by this invocation's exact command.
-
-        Queue discovery, attempted launch and local locks do not prove ownership.
-        Missing, failed or ambiguous command receipts must remain non-mutating.
-        """
-        if not self.active or result.returncode != 0 or result.args != command:
-            return
-        identities = set(
-            re.findall(
-                r"(?:Job submitted,\s*ID:|Managed Job ID:)\s*([0-9]+)",
-                f"{result.stdout or ''}\n{result.stderr or ''}",
-            )
-        )
-        if len(identities) == 1:
-            self.job_id = identities.pop()
 
     def _verify_cancelled(self, command: list[str]) -> CleanupResult:
         deadline = time.monotonic() + self.timeout
@@ -1918,8 +1906,6 @@ def submit_workflow(
                 for diagnosis in streamer.diagnoses if streamer is not None else ():
                     message = f"{message}\n{diagnosis.render()}"
                 raise _SkyPilotLaunchCommandError(message) from exc
-            if cleanup_state is not None:
-                cleanup_state.bind_launch_receipt(launch_result, cmd)
             if launch_result.returncode != 0:
                 raise _SkyPilotLaunchCommandError(
                     _format_submit_error(cmd, launch_result, streamed=diagnoses),
