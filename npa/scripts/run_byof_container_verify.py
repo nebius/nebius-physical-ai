@@ -704,6 +704,10 @@ def _submit_and_wait(
     teardown_guard = _SubmitTeardown(cleanup_on_failure=args.cleanup)
     try:
         tmp_path = Path(tmp)
+        isolated_config_dir = args.isolated_config_dir
+        if robotwin_submit_context is not None:
+            isolated_config_dir = tmp_path / "skypilot-state"
+            isolated_config_dir.mkdir(mode=0o700)
         previous_kubeconfig = (
             os.environ.get("KUBECONFIG") if robotwin_submit_context is None else None
         )
@@ -763,7 +767,7 @@ def _submit_and_wait(
                 result = submit_workflow(
                     rendered_yaml,
                     scheduler_run_id,
-                    isolated_config_dir=args.isolated_config_dir,
+                    isolated_config_dir=isolated_config_dir,
                     config_path=submit_config_path,
                     sky_bin=sky_bin,
                     infra=(infra),
@@ -811,7 +815,7 @@ def _submit_and_wait(
                     sky_bin=sky_bin,
                     wait_timeout=args.wait_timeout,
                     poll_interval=args.poll_interval,
-                    isolated_config_dir=args.isolated_config_dir,
+                    isolated_config_dir=isolated_config_dir,
                     config_path=submit_config_path,
                     environment=robotwin_control_env,
                 )

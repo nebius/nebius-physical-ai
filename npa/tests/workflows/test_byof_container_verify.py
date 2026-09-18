@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import yaml
@@ -36,6 +37,195 @@ def _load_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.fixture
+def inert_wrapper(monkeypatch):
+    """Replace every wrapper filesystem, process and resource effect with a mock."""
+    module = _load_module()
+    effects = {}
+    for name, result in {
+        "render_workflow": [{"name": "synthetic"}],
+        "_write_yaml_documents": None,
+        "preflight_output_storage": None,
+        "_ensure_infra_enabled": None,
+        "resolve_sky_bin": "/synthetic/sky",
+        "_bootstrap_robotwin_sky": "/synthetic/sky",
+        "restore_signal_handlers": None,
+        "install_teardown_signal_handlers": {},
+    }.items():
+        effects[name] = Mock(return_value=result)
+        monkeypatch.setattr(module, name, effects[name])
+    monkeypatch.setattr(
+        module, "_normalize_kubeconfig_current_context", lambda _p, values=None: values
+    )
+    for name, target, attribute, result in (
+        ("temp", module.tempfile, "mkdtemp", "/synthetic-private/run"),
+        ("remove", module.shutil, "rmtree", None),
+    ):
+        effects[name] = Mock(return_value=result)
+        monkeypatch.setattr(target, attribute, effects[name])
+    effects["mkdir"] = Mock()
+
+    def mkdir(path, *args, **kwargs):
+        return effects["mkdir"](path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", mkdir)
+    monkeypatch.setattr(
+        module.subprocess, "run", Mock(side_effect=AssertionError("real subprocess"))
+    )
+    return module, effects
+
+
+def _inert_authorized_context(module, monkeypatch):
+    authorization = SimpleNamespace(
+        run_id="synthetic-run",
+        inner_launch_id="robotwin-inner-synthetic",
+        output_root="s3://synthetic-bucket/output",
+        skypilot_config_source="/synthetic-private/authorized-config",
+        kubeconfig_source="/synthetic-private/kubeconfig",
+        kubernetes_context="synthetic-context",
+        project="synthetic-project",
+    )
+    context = SimpleNamespace(authorization=authorization)
+    monkeypatch.setattr(module, "prepare_inner_submit", Mock(return_value=context))
+    environment = {
+        module.CHILD_IMAGE_ENV: "example.invalid/robotwin@sha256:" + "a" * 64,
+        "HOME": "/synthetic-home",
+        "PATH": "/bin",
+        "AWS_ACCESS_KEY_ID": "synthetic-access",
+        "AWS_SECRET_ACCESS_KEY": "synthetic-secret",
+        "NPA_SKYPILOT_ISOLATED_CONFIG_DIR": "/synthetic-shared-state",
+    }
+    return context, environment
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    ("complete", "missing-identity", "changed-identity", "config-change", "signal"),
+)
+def test_authorized_default_wrapper_uses_one_private_native_state(
+    inert_wrapper, monkeypatch, outcome
+):
+    module, effects = inert_wrapper
+    context, environment = _inert_authorized_context(module, monkeypatch)
+    root = Path("/synthetic-private/run")
+    expected = root / "skypilot-state"
+    generated_config = expected / "submissions" / "config.yaml"
+    # This is an inert callback carrier, not a native/provider ownership receipt.
+    cleanup = SimpleNamespace(
+        config_path=generated_config, verified=False, request=Mock(), cwd=expected
+    )
+    calls = []
+
+    def submit(_yaml, run_id, **kwargs):
+        module.prepare_inner_submit.assert_called_once_with(
+            context.authorization, environment
+        )
+        effects["mkdir"].assert_called_once_with(expected, mode=0o700)
+        assert kwargs["isolated_config_dir"] == expected
+        assert isinstance(kwargs["isolated_config_dir"], Path)
+        assert kwargs["robotwin_submit_context"] is context
+        assert run_id == context.authorization.inner_launch_id
+        assert "NPA_SKYPILOT_ISOLATED_CONFIG_DIR" not in kwargs["extra_env"]
+        cleanup.cwd = kwargs["isolated_config_dir"]
+        kwargs["on_launch_ready"](cleanup)
+        calls.append(kwargs)
+        if outcome == "signal":
+            effects["install_teardown_signal_handlers"].call_args.args[0]()
+        if outcome in {"missing-identity", "changed-identity", "signal"}:
+            raise module.SkyPilotConfigError("synthetic native identity unavailable")
+        return SimpleNamespace(
+            log_paths={
+                "config": str(root / "unrelated")
+                if outcome == "config-change"
+                else str(generated_config),
+                "submission_dir": str(expected / "submissions"),
+            }
+        )
+
+    def wait(_run_id, **kwargs):
+        assert kwargs["isolated_config_dir"] is calls[0]["isolated_config_dir"]
+        assert cleanup.cwd is kwargs["isolated_config_dir"]
+        assert kwargs["environment"] == {
+            "HOME": "/synthetic-home",
+            "PATH": "/bin",
+            "KUBECONFIG": context.authorization.kubeconfig_source,
+        }
+        return SimpleNamespace(status="SUCCEEDED", returncode=0), {}
+
+    launch, poll = Mock(side_effect=submit), Mock(side_effect=wait)
+    monkeypatch.setattr(module, "submit_workflow", launch)
+    monkeypatch.setattr(module, "_wait_for_terminal", poll)
+    argv = ["--solution-name", "robotwin"]
+    assert module._parse_args(argv).isolated_config_dir == ""
+    if outcome == "complete":
+        # Mock completion does not prove cleanup; retain the private recovery root.
+        assert (
+            module.run_authorized_robotwin(
+                argv, authorization=context.authorization, environment=environment
+            )
+            == 1
+        )
+        poll.assert_called_once()
+    else:
+        with pytest.raises(module.SkyPilotConfigError):
+            module.run_authorized_robotwin(
+                argv, authorization=context.authorization, environment=environment
+            )
+        poll.assert_not_called()
+    launch.assert_called_once()
+    assert cleanup.cwd is calls[0]["isolated_config_dir"]
+    assert cleanup.config_path == generated_config and not cleanup.verified
+    cleanup.request.assert_called()
+    effects["remove"].assert_not_called()
+    effects["_ensure_infra_enabled"].assert_not_called()
+    module.subprocess.run.assert_not_called()
+
+
+def test_authorized_wrapper_refusal_precedes_isolated_state(inert_wrapper, monkeypatch):
+    module, effects = inert_wrapper
+    context, environment = _inert_authorized_context(module, monkeypatch)
+    module.prepare_inner_submit.side_effect = ValueError("synthetic refusal")
+    with pytest.raises(ValueError, match="synthetic refusal"):
+        module.run_authorized_robotwin(
+            ["--solution-name", "robotwin"],
+            authorization=context.authorization,
+            environment=environment,
+        )
+    for effect in effects.values():
+        effect.assert_not_called()
+    module.subprocess.run.assert_not_called()
+
+
+def test_generic_wrapper_preserves_explicit_isolated_state(inert_wrapper, monkeypatch):
+    module, effects = inert_wrapper
+    selected = "/synthetic-generic-state"
+    launch = Mock(return_value=SimpleNamespace(log_paths={}))
+    poll = Mock(return_value=(SimpleNamespace(status="SUCCEEDED", returncode=0), {}))
+    monkeypatch.setattr(module, "submit_workflow", launch)
+    monkeypatch.setattr(module, "_wait_for_terminal", poll)
+    assert (
+        module.main(
+            [
+                "--run-id",
+                "synthetic",
+                "--no-direct-launch",
+                "--isolated-config-dir",
+                selected,
+                "--config-path",
+                "/synthetic-config",
+            ]
+        )
+        == 0
+    )
+    assert launch.call_args.kwargs["isolated_config_dir"] == selected
+    assert poll.call_args.kwargs["isolated_config_dir"] == selected
+    assert launch.call_args.kwargs["robotwin_submit_context"] is None
+    launch.assert_called_once()
+    effects["mkdir"].assert_not_called()
+    effects["_bootstrap_robotwin_sky"].assert_not_called()
+    module.subprocess.run.assert_not_called()
 
 
 @pytest.mark.parametrize("confidential", (False, True))
