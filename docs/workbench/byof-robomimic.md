@@ -232,9 +232,11 @@ private exact-digest stage must:
    only the declared objects.
 5. Bind the workload to exactly one STRICT-reserved B200. This is an unresolved
    execution prerequisite, not something that `NPA_ROBOMIMIC_STRICT_B200_ATTESTED`
-   or a caller-authored receipt can establish. The current smoke refuses before
-   any workload side effect: its Pod observer has only `get pods` access and
-   cannot independently observe a provider allocation. Completing this path
+   or a caller-authored receipt can establish. The baked `smoke` entrypoint
+   immediately refuses with exit 78, before external runtime snapshot creation,
+   cache mutation, interpreter execution or runtime imports. Its Pod observer
+   has only `get pods` access and cannot independently observe a provider
+   allocation. Completing this path
    requires an authenticated observer that joins the run ID, executing Pod UID,
    scheduled node/provider instance, actual reservation and STRICT allocation
    policy, rejecting missing, expired or mismatched evidence. Do not silently
