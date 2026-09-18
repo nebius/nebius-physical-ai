@@ -227,6 +227,11 @@ OUTPUT_SIZE_LIMITS = {
     "solution_smoke_stderr.log": 16 * 1024 * 1024,
     "solution_smoke_stdout.log": 16 * 1024 * 1024,
 }
+FAILURE_OUTPUT_SIZE_LIMITS = {
+    name: limit
+    for name, limit in OUTPUT_SIZE_LIMITS.items()
+    if name not in {"libero-bc-rnn-smoke.pth", "libero-smoke.json"}
+}
 MAX_OUTPUT_BYTES = 320 * 1024 * 1024
 OUTPUT_RECEIPT_NAME = "npa_upload_receipt.json"
 OUTPUT_RECEIPT_SCHEMA = "npa.libero.s3-upload-readback.v2"
@@ -607,8 +612,7 @@ def wait_for_release() -> dict[str, str]:
         + "/pods/"
         + urllib.parse.quote(name, safe="")
     )
-    deadline = datetime.now(timezone.utc).timestamp() + 600
-    while datetime.now(timezone.utc).timestamp() < deadline:
+    while True:
         connection = http.client.HTTPSConnection(
             host, port, timeout=10, context=context
         )
@@ -647,9 +651,6 @@ def wait_for_release() -> dict[str, str]:
             time.sleep(1)
             continue
         return {"pod_uid_sha256": hashlib.sha256(uid.encode()).hexdigest()}
-    raise BootstrapRefusal("payload release was not granted before the deadline")
-
-
 def _open_https_download(
     url: str, *, terms: bool = False
 ) -> tuple[http.client.HTTPSConnection, http.client.HTTPResponse]:
@@ -1529,6 +1530,20 @@ def _validate_customer_authorization_bytes(
         or expires_at - issued_at > timedelta(hours=24)
     ):
         raise CustomerAcceptanceRequired("authorization_expired_or_replayable")
+    expected_expires_raw = os.environ.get(
+        "NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT", ""
+    )
+    try:
+        expected_expires_at = datetime.fromisoformat(
+            expected_expires_raw.replace("Z", "+00:00")
+        )
+    except (TypeError, ValueError) as exc:
+        raise CustomerAcceptanceRequired("authorization_expected_expiry_invalid") from exc
+    if (
+        expected_expires_at.tzinfo is None
+        or expires_at != expected_expires_at
+    ):
+        raise CustomerAcceptanceRequired("authorization_expected_expiry_mismatch")
     try:
         _verify_customer_authorization_signature(authorization, signature_record)
     except BootstrapRefusal as exc:
@@ -2315,11 +2330,19 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
                             renamed_identity,
                             parent_descriptor=root_fd,
                         )
-                    shutil.rmtree(partial, ignore_errors=True)
-                    if rollback_errors:
+                    partial_errors = _remove_cache_tree(partial)
+                    if partial.exists():
+                        partial_errors.append("partial cache remains")
+                    cleanup_errors = (*rollback_errors, *partial_errors)
+                    if cleanup_errors:
+                        cleanup_kind = (
+                            "runtime cache rollback"
+                            if rollback_errors
+                            else "runtime cache partial cleanup"
+                        )
                         raise BootstrapRefusal(
-                            "runtime cache rollback was incomplete: "
-                            + ", ".join(rollback_errors)
+                            f"{cleanup_kind} was incomplete: "
+                            + ", ".join(dict.fromkeys(cleanup_errors))
                         ) from exc
                     raise
     return {
@@ -2831,12 +2854,23 @@ def _verified_output_put(
 ) -> dict[str, Any]:
     checksum = base64.b64encode(bytes.fromhex(digest)).decode()
     url = _s3_object_url(endpoint, bucket, object_key)
-    _, created_headers, _ = _sigv4_request(
-        "PUT",
-        url,
-        payload=payload,
-        extra_headers={"if-none-match": "*", "x-amz-checksum-sha256": checksum},
-    )
+    try:
+        _, created_headers, _ = _sigv4_request(
+            "PUT",
+            url,
+            payload=payload,
+            extra_headers={"if-none-match": "*", "x-amz-checksum-sha256": checksum},
+        )
+    except Exception:
+        _recover_ambiguous_output_put(
+            url=url,
+            payload=payload,
+            digest=digest,
+            checksum=checksum,
+            attempted=attempted,
+            object_key=object_key,
+        )
+        raise
     version_id = created_headers.get("x-amz-version-id", "")
     etag = created_headers.get("etag", "")
     if not version_id or re.fullmatch(r'"[^\"]+"', etag) is None:
@@ -2884,6 +2918,51 @@ def _cleanup_object_etag(
     if observed_size != size_bytes or re.fullmatch(r'"[^"]+"', etag) is None:
         return ""
     return etag
+
+
+def _recover_ambiguous_output_put(
+    *,
+    url: str,
+    payload: bytes,
+    digest: str,
+    checksum: str,
+    attempted: dict[str, dict[str, Any]],
+    object_key: str,
+) -> bool:
+    """Record an exactly identifiable object after an ambiguous PUT failure."""
+
+    try:
+        status, headers, _ = _sigv4_request(
+            "HEAD",
+            url,
+            extra_headers={"x-amz-checksum-mode": "ENABLED"},
+            expected_statuses=frozenset({200, 404}),
+        )
+    except (BootstrapRefusal, OSError, ValueError):
+        return False
+    if status != 200:
+        return False
+    try:
+        observed_size = int(headers.get("content-length", "-1"))
+    except ValueError:
+        return False
+    version_id = headers.get("x-amz-version-id", "")
+    etag = headers.get("etag", "")
+    if (
+        observed_size != len(payload)
+        or headers.get("x-amz-checksum-sha256") != checksum
+        or not version_id
+        or re.fullmatch(r'"[^\"]+"', etag) is None
+        or hashlib.sha256(payload).hexdigest() != digest
+    ):
+        return False
+    attempted[object_key] = {
+        "size_bytes": len(payload),
+        "checksum": checksum,
+        "etag": etag,
+        "version_id": version_id,
+    }
+    return True
 
 
 def _cleanup_output_attempts(
@@ -3000,9 +3079,6 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
     if endpoint_parts.scheme != "https" or not endpoint_parts.netloc:
         raise BootstrapRefusal("output storage endpoint must be HTTPS")
     storage_authorization = _storage_authorization(output_prefix, run_id, endpoint)
-    lease_key, lease_etag, lease_version_id = _verify_output_lease(
-        endpoint=endpoint, bucket=parsed.netloc
-    )
     root_info = os.fstat(root_fd)
     if (
         not stat.S_ISDIR(root_info.st_mode)
@@ -3037,22 +3113,29 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
     prefix = parsed.path.lstrip("/")
     transaction_id = uuid4().hex
     transaction_prefix = prefix + ".npa-transactions/" + transaction_id + "/"
-    if set(os.listdir(root_fd)) != set(OUTPUT_SIZE_LIMITS):
+    output_limits = (
+        OUTPUT_SIZE_LIMITS if smoke_exit_code == 0 else FAILURE_OUTPUT_SIZE_LIMITS
+    )
+    if set(os.listdir(root_fd)) != set(output_limits):
         raise BootstrapRefusal("output differs from the exact artifact allowlist")
     observed_total = sum(
         os.stat(name, dir_fd=root_fd, follow_symlinks=False).st_size
-        for name in OUTPUT_SIZE_LIMITS
+        for name in output_limits
     )
     if observed_total > MAX_OUTPUT_BYTES:
         raise BootstrapRefusal("output exceeds the aggregate size budget")
     snapshots = []
-    for name, limit in sorted(OUTPUT_SIZE_LIMITS.items()):
+    for name, limit in sorted(output_limits.items()):
         payload, digest = _immutable_output_bytes(root_fd, name, limit)
         snapshots.append((name, payload, digest))
     attempted: dict[str, dict[str, Any]] = {}
     receipts: list[dict[str, Any]] = []
     committed = False
+    lease_released = False
     try:
+        lease_key, lease_etag, lease_version_id = _verify_output_lease(
+            endpoint=endpoint, bucket=parsed.netloc
+        )
         for name, payload, digest in snapshots:
             current_authorization = _storage_authorization(
                 output_prefix, run_id, endpoint
@@ -3136,7 +3219,21 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
             etag=lease_etag,
             version_id=lease_version_id,
         )
+        lease_released = True
     except Exception:
+        if not lease_released and "lease_key" in locals():
+            try:
+                _release_output_lease(
+                    endpoint=endpoint,
+                    bucket=parsed.netloc,
+                    key=lease_key,
+                    etag=lease_etag,
+                    version_id=lease_version_id,
+                )
+            except BootstrapRefusal as lease_exc:
+                raise BootstrapRefusal(
+                    "output transaction lease cleanup is incomplete"
+                ) from lease_exc
         if not committed:
             try:
                 _cleanup_output_attempts(
@@ -3486,6 +3583,12 @@ def execute_and_upload() -> int:
                                     f"missing required smoke artifact: {artifact_name}\n"
                                 )
                             smoke_exit_code = 1
+                        _validate_customer_authorization_bytes(
+                            authorization_bytes,
+                            authorization_sha256,
+                            manifest,
+                            manifest_sha256,
+                        )
                         upload_outputs(smoke_exit_code, root_fd=output_fd)
                         _validate_complete(
                             stable_root,

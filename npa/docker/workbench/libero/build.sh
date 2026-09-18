@@ -2,8 +2,10 @@
 set -euo pipefail
 
 image=${1:?usage: build.sh ghcr.io/nebius/nebius-physical-ai/npa-libero:dev-<full-sha>}
-source_sha=${NPA_SOURCE_SHA:-$(git rev-parse HEAD)}
+head_sha=$(git rev-parse HEAD)
+source_sha=${NPA_SOURCE_SHA:-$head_sha}
 [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+[[ "$source_sha" == "$head_sha" ]]
 [[ "$image" == "ghcr.io/nebius/nebius-physical-ai/npa-libero:dev-$source_sha" ]]
 image_inputs=(
   npa/docker/workbench/libero

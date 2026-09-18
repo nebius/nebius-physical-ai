@@ -258,6 +258,9 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
             "NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256": authorization[
                 "workflow_profile_sha256"
             ],
+            "NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT": authorization[
+                "expires_at"
+            ],
         }
     )
     fixture = {

@@ -326,11 +326,14 @@ def observe_own_pod_image(expected_digest: str) -> dict[str, str]:
     ):
         raise RuntimeError("payload Pod was not placed on the exact allowed node")
     statuses = pod.get("status", {}).get("containerStatuses", [])
-    image_ids = [str(item.get("imageID", "")) for item in statuses]
-    matching = [image_id for image_id in image_ids if expected_digest in image_id]
-    if len(matching) != 1:
+    if len(statuses) != 1:
         raise RuntimeError(
-            f"expected one pod container with image digest {expected_digest}, got {len(matching)}"
+            "expected a single executing workload container for immutable image proof"
+        )
+    matching = [str(statuses[0].get("imageID", ""))]
+    if expected_digest not in matching[0]:
+        raise RuntimeError(
+            f"executing workload container did not use image digest {expected_digest}"
         )
     observed_digests = re.findall(r"sha256:[0-9a-f]{64}", matching[0])
     if observed_digests != [expected_digest]:
