@@ -35,6 +35,7 @@ from npa.orchestration.skypilot._bin import (
     resolve_sky_bin,
 )
 from npa.orchestration.skypilot.cleanup import CleanupResult, sky_environment
+from npa.orchestration.skypilot.local_api import stop_isolated_api
 from npa.orchestration.skypilot.signal_teardown import (
     install_teardown_signal_handlers,
     restore_signal_handlers,
@@ -662,6 +663,18 @@ class _SubmitTeardown:
         )
 
 
+def _stop_owned_robotwin_api(isolated_config_dir: Path) -> bool:
+    """Stop the uniquely allocated local API before removing its state root."""
+
+    try:
+        stop_isolated_api(isolated_config_dir)
+    except Exception:
+        # Keep the complete private root when ownership-safe shutdown cannot be
+        # verified; callers turn this into an unverified cleanup result.
+        return False
+    return True
+
+
 def _native_polling_identity(result: Any, cleanup: Any, logical_id: str) -> str | None:
     """Check the producer's native-result/callback contract without adopting a job."""
     job_id = getattr(result, "job_id", None)
@@ -813,6 +826,7 @@ def _submit_and_wait(
             summary: dict[str, Any] | None = None
             return_code = 1
             confidential_submission_dir: Path | None = None
+            owned_api_stopped = True
             try:
                 submit_config_path = Path(config_path) if config_path else None
                 result = submit_workflow(
@@ -895,13 +909,28 @@ def _submit_and_wait(
                     return_code = 0
             finally:
                 restore_signal_handlers(previous_handlers)
-                if args.cleanup:
-                    teardown_guard.teardown()
+                try:
+                    if args.cleanup:
+                        teardown_guard.teardown()
+                finally:
+                    if (
+                        robotwin_submit_context is not None
+                        and not teardown_guard.pending
+                    ):
+                        owned_api_stopped = _stop_owned_robotwin_api(
+                            isolated_config_dir
+                        )
+                        if not owned_api_stopped:
+                            teardown_guard.retain_context = True
                 if (
                     confidential_submission_dir is not None
                     and not teardown_guard.pending
                 ):
                     shutil.rmtree(confidential_submission_dir, ignore_errors=True)
+            if not owned_api_stopped:
+                return_code = 1
+                if summary is not None:
+                    summary["cleanup"] = "unverified; recovery state retained"
             if args.cleanup and teardown_guard.pending:
                 return_code = 1
                 if summary is not None:

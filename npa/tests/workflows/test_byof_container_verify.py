@@ -923,6 +923,17 @@ def test_robotwin_terminal_summary_never_discloses_destination_or_customer_run(
     monkeypatch.setattr(module, "_robotwin_control_environment", lambda *_args: {})
     monkeypatch.setattr(module, "install_teardown_signal_handlers", lambda *_args: {})
     monkeypatch.setattr(module, "restore_signal_handlers", lambda *_args: None)
+    api_events: list[tuple[str, Path]] = []
+    monkeypatch.setattr(
+        module,
+        "stop_isolated_api",
+        lambda path: api_events.append(("stop", Path(path))),
+    )
+    monkeypatch.setattr(
+        module.shutil,
+        "rmtree",
+        lambda path, **_kwargs: api_events.append(("remove", Path(path))),
+    )
     stop_commands: list[list[str]] = []
 
     def stop_sky_api(
@@ -975,6 +986,7 @@ def test_robotwin_terminal_summary_never_discloses_destination_or_customer_run(
         )
         == expected_rc
     )
+    assert api_events and api_events[0][0] == "stop"
     assert stop_commands == []
     output = capsys.readouterr().out
     payload = json.loads(output)
@@ -986,6 +998,20 @@ def test_robotwin_terminal_summary_never_discloses_destination_or_customer_run(
     assert run_canary not in output
     assert root_canary not in output
     assert "private-destination-canary" not in output
+
+
+def test_robotwin_owned_api_stop_failure_retains_private_root(monkeypatch, tmp_path):
+    module = _load_module()
+    root = tmp_path / "skypilot-state"
+    root.mkdir()
+    monkeypatch.setattr(
+        module,
+        "stop_isolated_api",
+        Mock(side_effect=module.SkyPilotConfigError("synthetic stop refusal")),
+    )
+
+    assert not module._stop_owned_robotwin_api(root)
+    assert root.exists()
 
 
 def _summary_submit_result(module, kwargs, confidential_dir):
