@@ -3091,10 +3091,11 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.cosmos3.generate_variants",
         config_defaults={"structural_control": "", "conditioning_fps": "",
                          "transfer_chunk_frames": "", "control_guidance": "", "transfer_edge_threshold": "", "transfer_rgb_weight": "",
-                         "transfer_first_chunk_conditional_frames": ""},
+                         "transfer_first_chunk_conditional_frames": "", "transfer_cfg_normalization": ""},
         omit_flags_when_empty=("--structural-control", "--conditioning-fps",
                                "--transfer-chunk-frames", "--control-guidance", "--transfer-edge-threshold",
-                               "--transfer-rgb-weight", "--transfer-first-chunk-conditional-frames"),
+                               "--transfer-rgb-weight", "--transfer-first-chunk-conditional-frames",
+                               "--transfer-cfg-normalization"),
         access_capabilities=("cosmos3",),
         description=(
             "Run real Cosmos 3 video2video inference once per PAIDF variant, "
@@ -3162,6 +3163,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.transfer_rgb_weight}}",
             "--transfer-first-chunk-conditional-frames",
             "{{config.transfer_first_chunk_conditional_frames}}",
+            "--transfer-cfg-normalization",
+            "{{config.transfer_cfg_normalization}}",
             "--run-id",
             "{{run.id}}",
         ],

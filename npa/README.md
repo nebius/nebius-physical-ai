@@ -57,6 +57,11 @@ defaults to 1, anchoring the first generation window to the original RGB frame.
 Set it to 0 with edge transfer to allow a new appearance from the first frame;
 complete source edges and generated overlap between later windows remain active.
 This can also reduce object-identity preservation, so review actual paired clips.
+`transfer_cfg_normalization` accepts `disabled` (the compatibility default) or
+`enabled` with edge transfer. It forwards the pinned framework's `normalize_cfg`
+sampling option and records the effective boolean in `transfer.json`. Compare
+matched sources, prompts and seeds before adopting it; this option does not
+establish geometry or contact fidelity.
 The [realistic manipulation guide](../docs/workbench/guides/paidf-realistic-augmentation.md)
 includes the battery dataset, configuration examples and quality review.
 

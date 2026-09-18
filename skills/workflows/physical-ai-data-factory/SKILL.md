@@ -38,7 +38,12 @@ Cosmos 3 `video2video` generation and does not replace or silently change this
 skill's Cosmos Transfer 2.5 blueprint.
 
 For realistic manipulation augmentation, use
-`docs/workbench/guides/paidf-realistic-augmentation.md`. Cosmos3 accepts
+`docs/workbench/guides/paidf-realistic-augmentation.md`.
+`transfer_cfg_normalization` accepts `disabled` (default) or `enabled` with
+edge transfer and forwards native `normalize_cfg` sampling. Compare matched
+sources, captions, profiles and seeds; inspect the receipt's effective boolean
+and the actual generated task details. Do not infer training suitability from
+the option or a more pleasing contrast level. Cosmos3 accepts
 `config.appearance_profiles_json` (empty by default) to replace the starter
 profiles with coherent task/camera-specific edits. Each profile must contain
 exactly `lighting`, `background`, `color_grade` and `surface_finish`; validation

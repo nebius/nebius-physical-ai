@@ -876,6 +876,7 @@ def generate_variants(
     transfer_edge_threshold: str = "medium",
     transfer_rgb_weight: float = 0.0,
     transfer_first_chunk_conditional_frames: int = 1,
+    transfer_cfg_normalization: str = "disabled",
 ) -> dict[str, Any]:
     """Run one real Cosmos 3 video2video inference per configured variant."""
 
@@ -893,13 +894,17 @@ def generate_variants(
         raise PaidfCosmos3Error("transfer_rgb_weight requires structural_control=edge")
     if structural_control == "none" and transfer_first_chunk_conditional_frames != 1:
         raise PaidfCosmos3Error("transfer_first_chunk_conditional_frames requires structural_control=edge")
+    from npa.workbench.cosmos.structural_transfer import cfg_normalization_enabled
+
+    if cfg_normalization_enabled(transfer_cfg_normalization) and structural_control != "edge":
+        raise PaidfCosmos3Error("transfer_cfg_normalization requires structural_control=edge")
     transfer = None
     if structural_control == "edge":
         from npa.workbench.cosmos.structural_transfer import TransferSettings
 
         transfer = TransferSettings(conditioning_fps, transfer_chunk_frames, control_guidance,
                                     transfer_edge_threshold, transfer_rgb_weight,
-                                    transfer_first_chunk_conditional_frames)
+                                    transfer_first_chunk_conditional_frames, transfer_cfg_normalization)
         transfer.validate()
     enabled = str(guardrails).strip().lower() in {"1", "true", "yes", "on"}
     if not enabled:
