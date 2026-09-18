@@ -83,6 +83,11 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
     ):
         assert credential not in text
     assert "ubuntu ALL=(root) NOPASSWD: NPA_SKYPILOT_SSH" in text
+    assert "Cmnd_Alias NPA_SKYPILOT_APT = /usr/local/sbin/apt-get update" in text
+    assert "ubuntu ALL=(root) NOPASSWD: NPA_SKYPILOT_APT" in text
+    assert "trusted_bootstrap_marker_value=skypilot-apt-v1" in (
+        IMAGE_ROOT / "skypilot-bootstrap-guard.sh"
+    ).read_text(encoding="utf-8")
     assert "/usr/local/bin/ssh-keygen -A" in text
     assert "rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub" in text
     assert (

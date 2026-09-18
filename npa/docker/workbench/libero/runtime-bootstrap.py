@@ -27,6 +27,7 @@ import os
 import pwd
 import re
 import shutil
+import signal
 import ssl
 import stat
 import struct
@@ -1838,6 +1839,7 @@ def _install_runtime(
         "-m",
         "pip",
         "install",
+        "--only-binary=:all:",
         "--require-hashes",
         "--no-index",
         "--no-deps",
@@ -2536,6 +2538,7 @@ def execute(
             check=False,
             env=environment,
             pass_fds=(cache_descriptor,),
+            start_new_session=True,
         )
         _validate_complete(
             stable_root,
@@ -3358,6 +3361,93 @@ def _execution_uid_processes() -> list[int]:
         raise BootstrapRefusal("execution process inventory is unavailable") from exc
 
 
+def _execution_process_group_ids(processes: list[int]) -> list[int]:
+    """Read process groups for the exact execution-UID processes we own."""
+
+    groups: set[int] = set()
+    for pid in processes:
+        try:
+            stat_text = (Path("/proc") / str(pid) / "stat").read_text(
+                encoding="utf-8"
+            )
+        except (FileNotFoundError, PermissionError, ProcessLookupError) as exc:
+            raise BootstrapRefusal(
+                "execution process group identity is unavailable"
+            ) from exc
+        closing = stat_text.rfind(")")
+        if closing < 0:
+            raise BootstrapRefusal("execution process group identity is invalid")
+        fields = stat_text[closing + 2 :].split()
+        if len(fields) < 3:
+            raise BootstrapRefusal("execution process group identity is invalid")
+        try:
+            groups.add(int(fields[2]))
+        except ValueError as exc:
+            raise BootstrapRefusal(
+                "execution process group identity is invalid"
+            ) from exc
+    return sorted(groups)
+
+
+def _terminate_execution_processes(processes: list[int]) -> None:
+    """Terminate every owned execution process and its process groups."""
+
+    initial = sorted(set(processes))
+    if not initial:
+        return
+    groups = _execution_process_group_ids(initial)
+    for group in groups:
+        try:
+            os.killpg(group, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except OSError as exc:
+            raise BootstrapRefusal(
+                "runtime execution process-group termination failed"
+            ) from exc
+    for pid in initial:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except OSError as exc:
+            raise BootstrapRefusal(
+                "runtime execution termination failed"
+            ) from exc
+
+    deadline = time.monotonic() + 5.0
+    remaining = _execution_uid_processes()
+    while remaining and time.monotonic() < deadline:
+        time.sleep(0.05)
+        remaining = _execution_uid_processes()
+    if remaining:
+        for group in _execution_process_group_ids(remaining):
+            try:
+                os.killpg(group, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except OSError as exc:
+                raise BootstrapRefusal(
+                    "runtime execution process-group kill failed"
+                ) from exc
+        for pid in remaining:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except OSError as exc:
+                raise BootstrapRefusal("runtime execution kill failed") from exc
+        deadline = time.monotonic() + 5.0
+        while remaining and time.monotonic() < deadline:
+            time.sleep(0.05)
+            remaining = _execution_uid_processes()
+    if remaining:
+        raise BootstrapRefusal(
+            "runtime execution cleanup is incomplete: "
+            + ",".join(str(pid) for pid in remaining)
+        )
+
+
 def _materialize_supervisor_artifact(root_fd: int, name: str, payload: bytes) -> None:
     descriptor = os.open(
         name,
@@ -3530,21 +3620,33 @@ def execute_and_upload() -> int:
                             environment["NPA_LIBERO_BOOTSTRAP_RECEIPT"] = str(
                                 bootstrap_receipt
                             )
-                            completed = subprocess.run(
-                                [
-                                    "/usr/bin/sudo",
-                                    "--close-from",
-                                    str(INHERITED_BOOTSTRAP_LOCK_DESCRIPTOR + 1),
-                                    "--user=npa-libero-exec",
-                                    "/opt/npa/libero/runtime-bootstrap.py",
-                                    "execute",
-                                ],
-                                check=False,
-                                env=environment,
-                                stdout=stdout,
-                                stderr=stderr,
-                                pass_fds=inherited,
-                            )
+                            try:
+                                completed = subprocess.run(
+                                    [
+                                        "/usr/bin/sudo",
+                                        "--close-from",
+                                        str(INHERITED_BOOTSTRAP_LOCK_DESCRIPTOR + 1),
+                                        "--user=npa-libero-exec",
+                                        "/opt/npa/libero/runtime-bootstrap.py",
+                                        "execute",
+                                    ],
+                                    check=False,
+                                    env=environment,
+                                    stdout=stdout,
+                                    stderr=stderr,
+                                    pass_fds=inherited,
+                                    start_new_session=True,
+                                )
+                            finally:
+                                remaining_processes = _execution_uid_processes()
+                                if remaining_processes:
+                                    _terminate_execution_processes(remaining_processes)
+                                    raise BootstrapRefusal(
+                                        "runtime execution left processes behind: "
+                                        + ",".join(
+                                            str(pid) for pid in remaining_processes
+                                        )
+                                    )
                         smoke_exit_code = completed.returncode
                         if smoke_exit_code == 3:
                             # The child emits this code only for a customer-actionable
@@ -3562,12 +3664,6 @@ def execute_and_upload() -> int:
                                 raise
                             raise BootstrapRefusal(
                                 "runtime child reported an inconsistent authorization refusal"
-                            )
-                        remaining_processes = _execution_uid_processes()
-                        if remaining_processes:
-                            raise BootstrapRefusal(
-                                "runtime execution left processes behind: "
-                                + ",".join(str(pid) for pid in remaining_processes)
                             )
                         current_output = output_root.stat(follow_symlinks=False)
                         if not stat.S_ISDIR(current_output.st_mode) or (

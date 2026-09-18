@@ -1237,6 +1237,7 @@ def test_runtime_install_uses_only_hash_locked_no_dependency_commands(
     assert all("--no-index" in command for command in installs)
     assert all("--find-links" in command for command in installs)
     assert all("--no-cache-dir" in command for command in installs)
+    assert all("--only-binary=:all:" in command for command in installs)
     subprocess_environments = [environment for _command, environment in commands]
     subprocess_environments.extend(check_output_environments)
     assert len(subprocess_environments) == 4
@@ -1551,6 +1552,40 @@ def test_execution_process_inventory_requires_runtime_account(
 
     with pytest.raises(module.BootstrapRefusal, match="execution account"):
         module._execution_uid_processes()
+
+
+def test_execution_process_cleanup_terminates_owned_group_and_process(
+    monkeypatch,
+):
+    module = _load_module()
+    signals: list[tuple[str, int, int]] = []
+    remaining = iter([[4321], []])
+
+    monkeypatch.setattr(
+        module, "_execution_process_group_ids", lambda processes: [5432]
+    )
+    monkeypatch.setattr(
+        module,
+        "_execution_uid_processes",
+        lambda: next(remaining),
+    )
+    monkeypatch.setattr(
+        module.os,
+        "killpg",
+        lambda group, signal_number: signals.append(("group", group, signal_number)),
+    )
+    monkeypatch.setattr(
+        module.os,
+        "kill",
+        lambda pid, signal_number: signals.append(("pid", pid, signal_number)),
+    )
+
+    module._terminate_execution_processes([4321])
+
+    assert signals == [
+        ("group", 5432, module.signal.SIGTERM),
+        ("pid", 4321, module.signal.SIGTERM),
+    ]
 
 
 @pytest.mark.parametrize("python_exit", [0, 23])

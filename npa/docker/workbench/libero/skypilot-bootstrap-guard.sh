@@ -9,6 +9,8 @@ guard_owner_uid=0
 guard_state=$guard_runtime_dir/apt.state
 guard_failure=/tmp/npa-skypilot-bootstrap-contract.failed
 sky_failure=/tmp/apt-ssh-setup.failed
+trusted_bootstrap_marker=/tmp/apt_ssh_setup_complete
+trusted_bootstrap_marker_value=skypilot-apt-v1
 
 atomic_replace_text() {
     target=$1
@@ -33,6 +35,29 @@ atomic_replace_text() {
 private_state_failure() {
     contract_failure "unsafe-private-state:$1" 87
     return $?
+}
+
+trusted_bootstrap_mode() {
+    if [ "$(id -u)" -ne "$guard_owner_uid" ]; then
+        contract_failure apt-requires-root 87
+        return $?
+    fi
+    if [ -L "$trusted_bootstrap_marker" ] || [ ! -f "$trusted_bootstrap_marker" ]; then
+        contract_failure trusted-marker-missing 87
+        return $?
+    fi
+    marker_identity="$(stat -c '%u:%a' -- "$trusted_bootstrap_marker" 2>/dev/null)" \
+        || { contract_failure trusted-marker-identity 87; return $?; }
+    if [ "$marker_identity" != "$guard_owner_uid:600" ]; then
+        contract_failure trusted-marker-identity-or-mode 87
+        return $?
+    fi
+    marker_value="$(cat -- "$trusted_bootstrap_marker" 2>/dev/null)" \
+        || { contract_failure trusted-marker-read 87; return $?; }
+    if [ "$marker_value" != "$trusted_bootstrap_marker_value" ]; then
+        contract_failure trusted-marker-value 87
+        return $?
+    fi
 }
 
 prepare_private_state_directory() {
@@ -148,10 +173,7 @@ verify_contract() {
 }
 
 bootstrap_apt_get() {
-    if [ -z "${SKYPILOT_POD_NODE_TYPE:-}" ] \
-        || [ -e /tmp/apt_ssh_setup_complete ]; then
-        exec "$real_apt_get" "$@"
-    fi
+    trusted_bootstrap_mode || exit $?
     verify_contract >/dev/null || exit $?
     prepare_private_state_directory || exit $?
     exec 9>"$guard_runtime_dir/apt.lock" \
@@ -204,10 +226,7 @@ bootstrap_apt_get() {
 }
 
 bootstrap_timeout() {
-    if [ -z "${SKYPILOT_POD_NODE_TYPE:-}" ] \
-        || [ -e /tmp/apt_ssh_setup_complete ]; then
-        exec "$real_timeout" "$@"
-    fi
+    trusted_bootstrap_mode || exit $?
     "$real_timeout" --signal=TERM --kill-after=5s "$@"
     status=$?
     case "$status" in

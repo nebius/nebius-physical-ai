@@ -271,6 +271,8 @@ def test_libero_profile_binds_payload_identity_customer_authorization_and_headle
     assert "MAX_OUTPUT_BYTES" in bootstrap
     assert "STORAGE_SECRET_ENV_NAMES" in bootstrap
     assert "_execution_uid_processes()" in bootstrap
+    assert "_terminate_execution_processes" in bootstrap
+    assert "start_new_session=True" in bootstrap
     assert "os.fchmod(output_fd, 0o700)" in bootstrap
     assert "snapshots.append((name, payload, digest))" in bootstrap
     assert '"PATH": "/usr/bin:/bin"' in bootstrap

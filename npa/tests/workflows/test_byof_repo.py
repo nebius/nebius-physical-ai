@@ -2027,6 +2027,8 @@ def _bootstrap_guard_fixture(tmp_path, module, *, missing: str = ""):
     contract_failure = tmp_path / "bootstrap-contract.failed"
     sky_failure = tmp_path / "apt-ssh-setup.failed"
     apt_complete = tmp_path / "apt-ssh-setup.complete"
+    apt_complete.write_text("skypilot-apt-v1\n", encoding="utf-8")
+    apt_complete.chmod(0o600)
     apt_calls = tmp_path / "real-apt.calls"
     real_apt = tmp_path / "real-apt-get"
     real_apt.write_text(
@@ -2215,7 +2217,8 @@ def test_complete_bootstrap_contract_bypasses_only_skypilot_apt_setup(
     assert retry_update.returncode == retry_install.returncode == 0
     assert not fixture["apt_calls"].exists()
 
-    fixture["apt_complete"].touch()
+    fixture["apt_complete"].write_text("invalid-marker\n", encoding="utf-8")
+    fixture["apt_complete"].chmod(0o600)
     ordinary_apt = subprocess.run(
         [apt_get, "update"],
         env=fixture["env"],
@@ -2223,8 +2226,27 @@ def test_complete_bootstrap_contract_bypasses_only_skypilot_apt_setup(
         text=True,
         check=False,
     )
-    assert ordinary_apt.returncode == 0
-    assert fixture["apt_calls"].read_text(encoding="utf-8") == "update\n"
+    assert ordinary_apt.returncode == 87
+    assert "trusted-marker-value" in ordinary_apt.stderr
+    assert not fixture["apt_calls"].exists()
+
+
+def test_bootstrap_guard_requires_the_root_owned_skyPilot_marker(tmp_path) -> None:
+    module = _load_module()
+    fixture = _bootstrap_guard_fixture(tmp_path, module)
+    fixture["apt_complete"].unlink()
+
+    result = subprocess.run(
+        [fixture["bin_dir"] / "apt-get", "update"],
+        env=fixture["env"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 87
+    assert "trusted-marker-missing" in result.stderr
+    assert not fixture["apt_calls"].exists()
 
 
 @pytest.mark.parametrize(
