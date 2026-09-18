@@ -514,7 +514,9 @@ def _resolve_final_path(
             return current if current in final_paths else None
         kind, target = final_links[link_path]
         suffix = current.removeprefix(link_path).lstrip("/")
-        if kind == "hardlink" or target.startswith("/"):
+        if kind == "hardlink":
+            return current if not suffix and current in final_paths else None
+        if target.startswith("/"):
             replacement = target.lstrip("/")
         else:
             replacement = posixpath.join(posixpath.dirname(link_path), target)
@@ -736,9 +738,7 @@ def _python_record_identity(hash_field, size_field, findings):
         algorithm, encoded = hash_field.split("=", 1)
         if not re.fullmatch(r"[A-Za-z0-9_-]{43}", encoded):
             raise ValueError("non-canonical RECORD hash")
-        expected_bytes = base64.b64decode(
-            encoded + "=", altchars=b"-_", validate=True
-        )
+        expected_bytes = base64.b64decode(encoded + "=", altchars=b"-_", validate=True)
         if algorithm == "sha256" and len(expected_bytes) != 32:
             raise ValueError("invalid sha256 RECORD hash length")
         expected_hash = expected_bytes.hex()
@@ -1234,7 +1234,7 @@ def _require_directory_ancestors(paths: dict[str, str], path: str) -> None:
 
 def _require_reachable_state(state: _ScanState) -> None:
     """Require consistent reachable populations before computing any closure."""
-    files = {path for path, kind in state.paths.items() if kind == "file"}
+    files = {path for path, kind in state.paths.items() if kind in {"file", "hardlink"}}
     links = {
         path for path, kind in state.paths.items() if kind in {"symlink", "hardlink"}
     }
@@ -1279,6 +1279,32 @@ def _record_regular_member(state, archive, member, path, location, contract) -> 
     return str(file_row["sha256"])
 
 
+def _hardlink_target(state: _ScanState, linkname: str) -> str:
+    """Resolve a hardlink target while it still denotes a regular inode."""
+    target_name = W.safe_name(linkname.lstrip("/"))
+    W.require(
+        state.paths.get(target_name) in {"file", "hardlink"},
+        "habitat_oci_hardlink_target",
+    )
+    target = _resolve_final_path(target_name, state.paths, state.links)
+    W.require(
+        target is not None and target in state.files, "habitat_oci_hardlink_target"
+    )
+    return target
+
+
+def _record_hardlink_member(
+    state: _ScanState, member: tarfile.TarInfo, path: str
+) -> None:
+    """Snapshot hardlink bytes and metadata instead of retaining a live pathname."""
+    target = _hardlink_target(state, member.linkname)
+    state.files[path] = dict(state.files[target])
+    if target in state.tracked:
+        state.tracked[path] = state.tracked[target]
+    if target in state.elf:
+        state.elf[path] = state.elf[target]
+
+
 def _record_member(
     state: _ScanState,
     archive: tarfile.TarFile,
@@ -1304,6 +1330,8 @@ def _record_member(
     event = {"path": path, "layer": layer, **metadata}
     if member.issym() or member.islnk():
         state.links[path] = (kind, member.linkname)
+    if member.islnk():
+        _record_hardlink_member(state, member, path)
     if member.isfile():
         event["sha256"] = _record_regular_member(
             state, archive, member, path, {"layer": layer, "entry": entry}, contract

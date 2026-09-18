@@ -237,6 +237,8 @@ def test_inventory_memory_parent_refuses_before_member_effects(kind, monkeypatch
 @pytest.mark.parametrize("kind", ["file", "directory", "symlink", "hardlink"])
 def test_inventory_memory_type_changes_keep_maps_and_layer_history(kind, monkeypatch):
     state = _memory_inventory_state()
+    if kind == "hardlink":
+        _memory_inventory_file(state, "ordinary.txt")
     before = copy.deepcopy(state)
     payload = b"benign replacement observation"
     row = {"sha256": _digest(payload), "size": len(payload), "elf": False}
@@ -246,13 +248,54 @@ def test_inventory_memory_type_changes_keep_maps_and_layer_history(kind, monkeyp
     H._require_reachable_state(state)
     assert state.paths["sample"] == kind
     assert ("sample/child.txt" in state.files) is (kind == "directory")
-    assert ("sample" in state.files) is (kind == "file")
+    assert ("sample" in state.files) is (kind in {"file", "hardlink"})
     assert ("sample" in state.links) is (kind in {"symlink", "hardlink"})
     assert state.events[:-1] == before.events
     assert state.source_inventory == before.source_inventory
     assert state.regular_files == 3 + (kind == "file")
     assert state.content_bytes == 3 + (len(payload) if kind == "file" else 0)
     assert read.call_count == (kind == "file")
+
+
+def test_hardlink_snapshot_survives_target_replacement_and_whiteout(monkeypatch):
+    original = b"original hardlink bytes"
+    replacement = b"replacement target bytes"
+    state = H._ScanState(
+        paths={"target": "file"},
+        files={
+            "target": {"sha256": _digest(original), "size": len(original), "elf": False}
+        },
+        metadata={"target": {"kind": "file", "uid": 0, "gid": 0, "mode": 0o644}},
+        tracked={"target": original},
+    )
+    member = _memory_member("hardlink")
+    member.linkname = "target"
+    H._record_member(state, None, member, "alias", 0, 0, CONTRACT)
+    H._require_reachable_state(state)
+    assert state.files["alias"]["sha256"] == _digest(original)
+    assert state.tracked["alias"] == original
+    assert H._resolve_final_path("alias", state.paths, state.links) == "alias"
+
+    read = Mock(
+        return_value=(
+            {"sha256": _digest(replacement), "size": len(replacement), "elf": False},
+            replacement,
+            None,
+        )
+    )
+    monkeypatch.setattr(H, "_read_member", read)
+    H._record_member(state, None, _memory_member("file"), "target", 1, 0, CONTRACT)
+    assert state.tracked["target"] == replacement
+    assert state.tracked["alias"] == original
+
+    whiteout = _memory_member("file")
+    whiteout.name = ".wh.target"
+    whiteout.size = 0
+    H._apply_whiteout(*H._whiteout_arguments(state, whiteout.name, whiteout))
+    H._require_reachable_state(state)
+    assert "target" not in state.paths
+    assert state.paths["alias"] == "hardlink"
+    assert state.tracked["alias"] == original
 
 
 @pytest.mark.parametrize("mapping", ["files", "links", "metadata", "tracked", "elf"])
@@ -1668,6 +1711,7 @@ def test_report_cleanup_attempts_close_after_unlink_failure(
 
 def test_report_cleanup_diagnostics_cannot_replace_primary_failure(monkeypatch) -> None:
     """A broken diagnostic stream must not mask the initiating exception."""
+
     class BrokenStderr:
         def write(self, _message):
             raise OSError("inert diagnostic refusal")
