@@ -4,8 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import configparser
+import csv
+from email.parser import BytesParser
 import hashlib
-import importlib.metadata
+import io
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -21,6 +25,7 @@ from typing import Any
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 
 
 SOURCE_REVISION = "d309eaecc18acf4152a830a895a6984b8ac71b05"
@@ -35,9 +40,7 @@ SOURCE_ARCHIVE_SHA256 = (
     "8dd695200bba3ca6043693a7db4b15713a740d5d6a91787984d4c0053f77fd8b"
 )
 SOURCE_ARCHIVE_SIZE = 57_907_200
-DEBIAN_LOCK_SHA256 = (
-    "aebaefa21f527584d4a46cba8b22d0c691414a4762acd364252d746e03d3504e"
-)
+DEBIAN_LOCK_SHA256 = "aebaefa21f527584d4a46cba8b22d0c691414a4762acd364252d746e03d3504e"
 DEBIAN_PACKAGE_COUNT = 78
 DEBIAN_PAYLOAD_BYTES = 29_807_672
 BASE_IMAGE = (
@@ -46,6 +49,13 @@ BASE_IMAGE = (
 )
 BAKED_LOCK_SHA256 = "65efcf0065ad4662b348e54e3f2d86996d934a518fcad0e89ecf012399ce1504"
 BAKED_DISTRIBUTION_COUNT = 40
+# Archive parsing and installed-tree enumeration are bounded independently of
+# metadata. Unknown installation layouts refuse; these are not workload limits.
+BAKED_ARCHIVE_MAX_BYTES = 256 * 1024 * 1024
+BAKED_MEMBER_MAX_BYTES = 256 * 1024 * 1024
+BAKED_EXPANDED_MAX_BYTES = 2 * 1024 * 1024 * 1024
+BAKED_ENTRY_MAX_COUNT = 65_536
+BAKED_INSTALLER_EXECUTABLE = "/usr/local/bin/python3"
 RUNTIME_ROOT_DEFAULT = "/opt/npa-runtime/robomimic"
 RUNTIME_REFUSAL_STATUS = 78
 RUNTIME_METADATA_MAX_BYTES = 4 * 1024 * 1024
@@ -188,9 +198,7 @@ def _utc_timestamp(value: Any, *, field: str) -> datetime:
     except ValueError:
         parse_failed = True
     if parse_failed:
-        raise VerificationError(
-            f"customer runtime entitlement {field} is invalid"
-        )
+        raise VerificationError(f"customer runtime entitlement {field} is invalid")
     return parsed
 
 
@@ -227,7 +235,9 @@ def _runtime_entitlement_contract(lock: dict[str, Any]) -> dict[str, Any]:
             raise VerificationError("runtime lock customer term is invalid")
         if not isinstance(term["name"], str) or not term["name"]:
             raise VerificationError("runtime lock customer term name is invalid")
-        _checked_https_url(term["url"], host=urllib.parse.urlsplit(term["url"]).hostname or "")
+        _checked_https_url(
+            term["url"], host=urllib.parse.urlsplit(term["url"]).hostname or ""
+        )
     return contract
 
 
@@ -243,9 +253,9 @@ def _runtime_entitlement_notice_sha256(
         "customer_responsibilities": contract["responsibilities"],
     }
     return hashlib.sha256(
-        json.dumps(
-            notice_identity, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
+        json.dumps(notice_identity, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
     ).hexdigest()
 
 
@@ -268,7 +278,10 @@ def verify_customer_runtime_entitlement(
     ):
         if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
             raise VerificationError(f"expected {label} digest is absent or malformed")
-    if re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", expected_run_id) is None:
+    if (
+        re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", expected_run_id)
+        is None
+    ):
         raise VerificationError("expected run ID is absent or malformed")
 
     record, raw = _bounded_json_object(
@@ -324,10 +337,14 @@ def verify_customer_runtime_entitlement(
     expires_at = _utc_timestamp(record["expires_at"], field="expires_at")
     observed_now = now or datetime.now(timezone.utc)
     if accepted_at > observed_now:
-        raise VerificationError("customer runtime entitlement acceptance is in the future")
+        raise VerificationError(
+            "customer runtime entitlement acceptance is in the future"
+        )
     validity_seconds = int((expires_at - accepted_at).total_seconds())
     if validity_seconds <= 0 or validity_seconds > contract["maximum_validity_seconds"]:
-        raise VerificationError("customer runtime entitlement validity is out of bounds")
+        raise VerificationError(
+            "customer runtime entitlement validity is out of bounds"
+        )
     if observed_now >= expires_at:
         raise VerificationError("customer runtime entitlement has expired")
     return {
@@ -471,9 +488,7 @@ def _checked_debian_source(value: Any) -> dict[str, Any]:
     return value
 
 
-def _checked_debian_package(
-    value: Any, *, source_ids: set[str]
-) -> dict[str, Any]:
+def _checked_debian_package(value: Any, *, source_ids: set[str]) -> dict[str, Any]:
     required = {
         "name",
         "version",
@@ -514,14 +529,16 @@ def _checked_debian_package(
     if value.get("notice_path") != f"/usr/share/doc/{name}/copyright":
         raise VerificationError(f"invalid Debian notice path for {name}")
     dependencies = value.get("depends")
-    if not isinstance(dependencies, list) or len(dependencies) != len(set(dependencies)):
+    if not isinstance(dependencies, list) or len(dependencies) != len(
+        set(dependencies)
+    ):
         raise VerificationError(f"invalid Debian dependency list for {name}")
     if not all(isinstance(item, str) and item for item in dependencies):
         raise VerificationError(f"invalid Debian dependency name for {name}")
     return value
 
 
-def _checked_debian_lock(value: dict[str, Any]) -> dict[str, Any]:
+def _verify_debian_lock_header(value: dict[str, Any]) -> None:
     expected_top = {
         "schema",
         "base_image",
@@ -542,6 +559,9 @@ def _checked_debian_lock(value: dict[str, Any]) -> dict[str, Any]:
         raise VerificationError("Debian lock base or platform mismatch")
     if value.get("snapshot") != "20260906T183022Z":
         raise VerificationError("Debian snapshot mismatch")
+
+
+def _verify_debian_repository_metadata(value: dict[str, Any]) -> None:
     expected_metadata = [
         {
             "id": "debian-bookworm-20260906T183022Z",
@@ -565,6 +585,9 @@ def _checked_debian_lock(value: dict[str, Any]) -> dict[str, Any]:
     ]
     if value.get("repository_metadata") != expected_metadata:
         raise VerificationError("Debian repository metadata closure mismatch")
+
+
+def _debian_source_ids(value: dict[str, Any]) -> set[str]:
     license_policy = {
         "component": "Debian main",
         "authoritative_terms": "each exact installed package copyright file",
@@ -580,10 +603,19 @@ def _checked_debian_lock(value: dict[str, Any]) -> dict[str, Any]:
     source_ids = {item["id"] for item in checked_sources}
     if len(source_ids) != len(checked_sources) or len(source_ids) != 58:
         raise VerificationError("Debian source count or identity uniqueness mismatch")
+    return source_ids
+
+
+def _checked_debian_lock(value: dict[str, Any]) -> dict[str, Any]:
+    _verify_debian_lock_header(value)
+    _verify_debian_repository_metadata(value)
+    source_ids = _debian_source_ids(value)
     packages = value.get("packages")
     if not isinstance(packages, list):
         raise VerificationError("Debian package records must be an array")
-    checked = [_checked_debian_package(item, source_ids=source_ids) for item in packages]
+    checked = [
+        _checked_debian_package(item, source_ids=source_ids) for item in packages
+    ]
     by_name = {item["name"]: item for item in checked}
     if len(by_name) != DEBIAN_PACKAGE_COUNT or len(checked) != DEBIAN_PACKAGE_COUNT:
         raise VerificationError("Debian package count or name uniqueness mismatch")
@@ -743,12 +775,18 @@ def _download_exact_package(package: dict[str, Any], destination: Path) -> None:
                     digest.update(chunk)
                     output.write(chunk)
     except (OSError, urllib.error.URLError) as exc:
-        raise VerificationError(f"failed to fetch Debian package {package['name']}") from exc
+        raise VerificationError(
+            f"failed to fetch Debian package {package['name']}"
+        ) from exc
     if total != package["size"] or digest.hexdigest() != package["sha256"]:
-        raise VerificationError(f"downloaded Debian package mismatch: {package['name']}")
+        raise VerificationError(
+            f"downloaded Debian package mismatch: {package['name']}"
+        )
 
 
-def _git(*args: str, cwd: Path | None = None, output=None) -> subprocess.CompletedProcess:
+def _git(
+    *args: str, cwd: Path | None = None, output=None
+) -> subprocess.CompletedProcess:
     environment = {
         **os.environ,
         "GIT_ASKPASS": "/bin/false",
@@ -852,7 +890,9 @@ def verify_debian_install(
             )
         notice = notice_root / Path(package["notice_path"]).relative_to("/")
         if not notice.is_file() or notice.stat().st_size == 0:
-            raise VerificationError(f"Debian package notice is absent: {package['name']}")
+            raise VerificationError(
+                f"Debian package notice is absent: {package['name']}"
+            )
     return {
         "schema": "npa.robomimic.debian-install-verification.v1",
         "package_count": len(lock["packages"]),
@@ -861,7 +901,7 @@ def verify_debian_install(
     }
 
 
-def _locked_baked_packages(lock_path: Path) -> dict[str, str]:
+def _baked_lock_records(lock_path: Path) -> list[str]:
     raw = lock_path.read_bytes()
     if hashlib.sha256(raw).hexdigest() != BAKED_LOCK_SHA256:
         raise VerificationError("baked dependency lock hash mismatch")
@@ -882,11 +922,15 @@ def _locked_baked_packages(lock_path: Path) -> dict[str, str]:
         raise VerificationError("unterminated baked dependency lock record")
     if len(records) != BAKED_DISTRIBUTION_COUNT:
         raise VerificationError("baked dependency lock count mismatch")
-    packages: dict[str, str] = {}
+    return records
+
+
+def _locked_baked_artifacts(lock_path: Path) -> dict[str, dict[str, Any]]:
+    packages: dict[str, dict[str, Any]] = {}
     pattern = re.compile(
         r"^([A-Za-z0-9_.-]+)==([^ ]+)((?: --hash=sha256:[0-9a-f]{64})+)$"
     )
-    for record in records:
+    for record in _baked_lock_records(lock_path):
         match = pattern.fullmatch(record)
         if match is None:
             raise VerificationError(
@@ -898,8 +942,365 @@ def _locked_baked_packages(lock_path: Path) -> dict[str, str]:
         name = _canonical_name(match.group(1))
         if name in packages:
             raise VerificationError(f"duplicate baked dependency: {name}")
-        packages[name] = match.group(2)
+        packages[name] = {"version": match.group(2), "sha256": set(hashes)}
     return packages
+
+
+def _locked_baked_packages(lock_path: Path) -> dict[str, str]:
+    return {
+        name: entry["version"]
+        for name, entry in _locked_baked_artifacts(lock_path).items()
+    }
+
+
+def _immutable_bytes(path: Path, maximum: int) -> bytes:
+    """Read one regular, non-symlink object; never import installed code."""
+    try:
+        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+        with os.fdopen(os.open(path, flags), "rb") as stream:
+            before = os.fstat(stream.fileno())
+            if not stat.S_ISREG(before.st_mode) or before.st_size > maximum:
+                raise VerificationError("unsupported immutable proof object")
+            raw = stream.read(maximum + 1)
+            after = os.fstat(stream.fileno())
+    except OSError as exc:
+        raise VerificationError("immutable proof object unavailable") from exc
+    if (
+        _immutable_stat_identity(before) != _immutable_stat_identity(after)
+        or len(raw) != before.st_size
+    ):
+        raise VerificationError("immutable proof object changed while reading")
+    return raw
+
+
+def _immutable_stat_identity(details: os.stat_result) -> tuple[int, ...]:
+    return (
+        details.st_dev,
+        details.st_ino,
+        details.st_size,
+        details.st_mtime_ns,
+        details.st_ctime_ns,
+    )
+
+
+def _installed_member_path(value: str) -> str:
+    path = PurePosixPath(value)
+    if (
+        not value
+        or "\\" in value
+        or "\x00" in value
+        or path.is_absolute()
+        or path.as_posix() != value
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
+        raise VerificationError("unsafe installed inventory member")
+    return value
+
+
+def _file_identity(raw: bytes, executable: bool = False) -> dict[str, Any]:
+    return {
+        "type": "file",
+        "size": len(raw),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "executable": executable,
+    }
+
+
+def _add_inventory_member(inventory: dict, name: str, entry: dict) -> None:
+    _installed_member_path(name)
+    if name in inventory:
+        raise VerificationError("duplicate installed inventory member")
+    inventory[name] = entry
+
+
+def _inventory_directories(inventory: dict) -> dict:
+    result = dict(inventory)
+    for name in inventory:
+        for parent in PurePosixPath(name).parents:
+            if parent.as_posix() == ".":
+                continue
+            key = parent.as_posix()
+            if key in result and result[key] != {"type": "directory"}:
+                raise VerificationError("installed inventory file/directory conflict")
+            result[key] = {"type": "directory"}
+    return result
+
+
+def _source_installed_inventory(path: Path, manifest: dict) -> dict:
+    """The pinned archive SHA-256, not an installed manifest, is the authority."""
+    _verify_source_archive(path, manifest)
+    raw = _immutable_bytes(path, BAKED_ARCHIVE_MAX_BYTES)
+    if hashlib.sha256(raw).hexdigest() != manifest["archive"]["sha256"]:
+        raise VerificationError("source archive identity mismatch")
+    inventory = {}
+    with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as archive:
+        for member in archive:
+            if member.isdir():
+                entry = {"type": "directory"}
+            elif member.isreg() and member.size <= BAKED_MEMBER_MAX_BYTES:
+                stream = archive.extractfile(member)
+                if stream is None:
+                    raise VerificationError("source member unavailable")
+                entry = _file_identity(stream.read(), bool(member.mode & 0o111))
+            else:
+                raise VerificationError("unsupported source inventory member")
+            _add_inventory_member(inventory, member.name, entry)
+    return _inventory_directories(inventory)
+
+
+def _installed_tree_inventory(root: Path) -> dict:
+    if not stat.S_ISDIR(root.lstat().st_mode):
+        raise VerificationError("installed tree root is not a directory")
+    inventory, pending, total = {}, [root], 0
+    while pending:
+        parent = pending.pop()
+        for path in parent.iterdir():
+            mode = path.lstat().st_mode
+            name = path.relative_to(root).as_posix()
+            if stat.S_ISDIR(mode):
+                entry = {"type": "directory"}
+                pending.append(path)
+            elif stat.S_ISREG(mode):
+                raw = _immutable_bytes(path, BAKED_MEMBER_MAX_BYTES)
+                total += len(raw)
+                entry = _file_identity(raw, bool(mode & 0o111))
+            else:
+                raise VerificationError("installed tree contains a non-regular object")
+            _add_inventory_member(inventory, name, entry)
+            if (
+                len(inventory) > BAKED_ENTRY_MAX_COUNT
+                or total > BAKED_EXPANDED_MAX_BYTES
+            ):
+                raise VerificationError("installed inventory exceeds bound")
+    return inventory
+
+
+def _inventory_proof(root: Path, expected: dict) -> dict:
+    observed = _installed_tree_inventory(root)
+    if observed != expected:
+        raise VerificationError("installed byte inventory mismatch")
+    raw = json.dumps(expected, sort_keys=True, separators=(",", ":")).encode()
+    return {
+        "inventory_sha256": hashlib.sha256(raw).hexdigest(),
+        "entry_count": len(expected),
+        "file_count": sum(e["type"] == "file" for e in expected.values()),
+    }
+
+
+def _wheel_members(raw: bytes) -> dict[str, tuple[bytes, bool]]:
+    result, names, total = {}, set(), 0
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        if len(archive.infolist()) > BAKED_ENTRY_MAX_COUNT:
+            raise VerificationError("wheel member count exceeds bound")
+        for member in archive.infolist():
+            name = _installed_member_path(member.filename.rstrip("/"))
+            mode = member.external_attr >> 16
+            if name in names or member.flag_bits & 1:
+                raise VerificationError("duplicate or encrypted wheel member")
+            names.add(name)
+            kind = stat.S_IFMT(mode)
+            if kind not in {0, stat.S_IFDIR if member.is_dir() else stat.S_IFREG}:
+                raise VerificationError("wheel contains a non-regular member")
+            if member.is_dir():
+                continue
+            total += member.file_size
+            if (
+                member.file_size > BAKED_MEMBER_MAX_BYTES
+                or total > BAKED_EXPANDED_MAX_BYTES
+            ):
+                raise VerificationError("wheel expanded bytes exceed bound")
+            result[name] = (archive.read(member), bool(mode & 0o111))
+    return result
+
+
+def _wheel_distribution(members: dict, name: str, version: str) -> str:
+    directories = {
+        PurePosixPath(n).parts[0]
+        for n in members
+        if PurePosixPath(n).parts[0].endswith(".dist-info")
+    }
+    if len(directories) != 1:
+        raise VerificationError("wheel distribution identity is ambiguous")
+    directory = directories.pop()
+    expected = f"{name.replace('-', '_')}-{version}.dist-info"
+    if directory != expected:
+        raise VerificationError("wheel distribution directory mismatch")
+    metadata = BytesParser().parsebytes(members[f"{directory}/METADATA"][0])
+    if metadata.get_all("Name") != [metadata.get("Name")] or metadata.get_all(
+        "Version"
+    ) != [version]:
+        raise VerificationError("wheel distribution metadata is ambiguous")
+    if _canonical_name(metadata.get("Name", "")) != name:
+        raise VerificationError("wheel distribution name mismatch")
+    wheel = BytesParser().parsebytes(members[f"{directory}/WHEEL"][0])
+    if wheel.get_all("Wheel-Version") != ["1.0"] or wheel.get_all(
+        "Root-Is-Purelib"
+    ) not in (["true"], ["false"]):
+        raise VerificationError("unsupported wheel installation metadata")
+    return directory
+
+
+def _wheel_target(name: str, directory: str) -> str:
+    parts = PurePosixPath(name).parts
+    if parts[0].endswith(".data"):
+        if (
+            parts[0] != directory.removesuffix(".dist-info") + ".data"
+            or len(parts) < 3
+            or parts[1] not in {"purelib", "platlib"}
+        ):
+            raise VerificationError("unsupported wheel installation scheme")
+        parts = parts[2:]
+    if any(
+        part.endswith((".dist-info", ".egg-info")) and (index != 0 or part != directory)
+        for index, part in enumerate(parts)
+    ):
+        raise VerificationError("wheel adds an undeclared distribution")
+    return PurePosixPath(*parts).as_posix()
+
+
+def _console_script(module: str, function: str) -> bytes:
+    """Exact pip/distlib POSIX template; unfamiliar installers must refuse."""
+    return (
+        f"#!{BAKED_INSTALLER_EXECUTABLE}\n# -*- coding: utf-8 -*-\n"
+        "import re\nimport sys\nif __name__ == '__main__':\n"
+        f"    from {module} import {function.split('.')[0]}\n"
+        "    sys.argv[0] = re.sub(r'(-script\\.pyw|\\.exe)?$', '', sys.argv[0])\n"
+        f"    sys.exit({function}())\n"
+    ).encode()
+
+
+def _wheel_scripts(members: dict, directory: str) -> dict:
+    raw = members.get(f"{directory}/entry_points.txt", (b"", False))[0]
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.optionxform = str
+    parser.read_string(raw.decode("utf-8"))
+    result = {}
+    for section in ("console_scripts", "gui_scripts"):
+        if not parser.has_section(section):
+            continue
+        for name, value in parser.items(section):
+            match = re.fullmatch(
+                r"([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*):([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)(?:\s*\[[A-Za-z0-9_, .-]+\])?",
+                value,
+            )
+            if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", name) or match is None:
+                raise VerificationError("unsupported wheel script entry point")
+            _add_inventory_member(
+                result,
+                "bin/" + name,
+                _file_identity(_console_script(*match.groups()), True),
+            )
+    return result
+
+
+def _record_digest(entry: dict) -> str:
+    return "sha256=" + base64.urlsafe_b64encode(
+        bytes.fromhex(entry["sha256"])
+    ).decode().rstrip("=")
+
+
+def _authenticated_installed_record(
+    path: Path, expected: dict, record_name: str
+) -> dict:
+    """Validate every RECORD row against archive-derived bytes, never vice versa.
+
+    Pip --target relocates its temporary scripts directory to bin/. Its RECORD
+    retains ../../bin/ names. Only this exact, non-dereferenced string mapping
+    is supported. Row order/newline choice is non-executable metadata variation.
+    """
+    raw = _immutable_bytes(path, BAKED_MEMBER_MAX_BYTES)
+    observed = {}
+    for row in csv.reader(io.StringIO(raw.decode("utf-8"), newline=""), strict=True):
+        if len(row) != 3:
+            raise VerificationError("invalid installed RECORD row")
+        name, digest, size = row
+        if name.startswith("../../bin/"):
+            name = name.removeprefix("../../")
+        _installed_member_path(name)
+        if name in observed:
+            raise VerificationError("duplicate installed RECORD row")
+        observed[name] = (digest, size)
+    wanted = {
+        name: (_record_digest(entry), str(entry["size"]))
+        for name, entry in expected.items()
+    }
+    wanted[record_name] = ("", "")
+    if observed != wanted:
+        raise VerificationError("installed RECORD transformation mismatch")
+    return _file_identity(raw)
+
+
+def _wheel_expected_inventory(
+    members: dict, directory: str, installed_root: Path
+) -> dict:
+    record_name = f"{directory}/RECORD"
+    if record_name not in members:
+        raise VerificationError("wheel RECORD is absent")
+    result = {}
+    for name, (raw, executable) in members.items():
+        if name != record_name:
+            _add_inventory_member(
+                result, _wheel_target(name, directory), _file_identity(raw, executable)
+            )
+    for suffix, raw in (("INSTALLER", b"pip\n"), ("REQUESTED", b"")):
+        _add_inventory_member(result, f"{directory}/{suffix}", _file_identity(raw))
+    for name, entry in _wheel_scripts(members, directory).items():
+        _add_inventory_member(result, name, entry)
+    result[record_name] = _authenticated_installed_record(
+        installed_root / record_name, result, record_name
+    )
+    return result
+
+
+def _selected_wheel(path: Path, locked: dict) -> tuple[str, str, bytes]:
+    parts = path.name.removesuffix(".whl").split("-")
+    if path.suffix != ".whl" or len(parts) not in {5, 6}:
+        raise VerificationError("invalid selected wheel filename")
+    name = _canonical_name(parts[0])
+    if name not in locked or parts[1] != locked[name]["version"]:
+        raise VerificationError("selected wheel package/version mismatch")
+    raw = _immutable_bytes(path, BAKED_ARCHIVE_MAX_BYTES)
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest not in locked[name]["sha256"]:
+        raise VerificationError("selected wheel hash is not locked")
+    return name, digest, raw
+
+
+def _baked_dependency_proof(
+    wheel_root: Path, installed_root: Path, lock_path: Path
+) -> dict:
+    locked = _locked_baked_artifacts(lock_path)
+    if not stat.S_ISDIR(wheel_root.lstat().st_mode):
+        raise VerificationError("selected wheel root is not a directory")
+    inventory, selected = {}, {}
+    for path in sorted(wheel_root.iterdir()):
+        name, digest, raw = _selected_wheel(path, locked)
+        if name in selected:
+            raise VerificationError("duplicate selected distribution")
+        members = _wheel_members(raw)
+        directory = _wheel_distribution(members, name, locked[name]["version"])
+        expected = _wheel_expected_inventory(members, directory, installed_root)
+        for member, entry in expected.items():
+            _add_inventory_member(inventory, member, entry)
+        selected[name] = {
+            "filename": path.name,
+            "sha256": digest,
+            "size": len(raw),
+            "version": locked[name]["version"],
+        }
+    if set(selected) != set(locked):
+        raise VerificationError("selected wheel closure mismatch")
+    if any(
+        n in {"torch", "torchvision", "triton"} or n.startswith("nvidia-")
+        for n in selected
+    ):
+        raise VerificationError("forbidden runtime distribution is baked")
+    proof = _inventory_proof(installed_root, _inventory_directories(inventory))
+    return {
+        **proof,
+        "selected_wheels": selected,
+        "installation_policy": "pip-target-no-compile-v1",
+    }
 
 
 def verify_neutral_image(
@@ -909,56 +1310,51 @@ def verify_neutral_image(
     debian_lock_path: Path,
     baked_lock_path: Path,
     baked_deps_path: Path,
+    source_archive_path: Path,
+    selected_wheel_root: Path,
     empty_boundary_paths: tuple[Path, ...],
 ) -> dict[str, Any]:
     metadata = _source_manifest(metadata_path)
+    try:
+        source = _inventory_proof(
+            source_root, _source_installed_inventory(source_archive_path, metadata)
+        )
+        dependencies = _baked_dependency_proof(
+            selected_wheel_root, baked_deps_path, baked_lock_path
+        )
+    except (
+        OSError,
+        KeyError,
+        ValueError,
+        csv.Error,
+        configparser.Error,
+        zipfile.BadZipFile,
+        tarfile.TarError,
+    ) as exc:
+        raise VerificationError("installed-byte proof inputs are invalid") from exc
     debian = verify_debian_install(debian_lock_path=debian_lock_path)
-    if not (source_root / "robomimic" / "__init__.py").is_file():
-        raise VerificationError("robomimic source package is absent")
-    if _sha256(source_root / "LICENSE") != SOURCE_LICENSE_SHA256:
-        raise VerificationError("robomimic source license hash mismatch")
+    _verify_empty_boundaries(empty_boundary_paths)
+    return _neutral_image_proof(metadata, debian, source, dependencies)
 
-    locked = _locked_baked_packages(baked_lock_path)
-    observed = {
-        _canonical_name(distribution.metadata["Name"]): distribution.version
-        for distribution in importlib.metadata.distributions(
-            path=[str(baked_deps_path)]
-        )
-        if distribution.metadata.get("Name")
-    }
-    if observed != locked:
-        missing = sorted(set(locked) - set(observed))
-        extra = sorted(set(observed) - set(locked))
-        mismatched = sorted(
-            name
-            for name in set(locked) & set(observed)
-            if locked[name] != observed[name]
-        )
-        raise VerificationError(
-            f"baked distribution inventory mismatch: missing={missing} extra={extra} "
-            f"version_mismatches={mismatched}"
-        )
-    forbidden = {
-        name
-        for name in observed
-        if name in {"torch", "torchvision", "triton"} or name.startswith("nvidia-")
-    }
-    if forbidden:
-        raise VerificationError(
-            f"forbidden runtime distributions are baked: {sorted(forbidden)}"
-        )
+
+def _verify_empty_boundaries(paths: tuple[Path, ...]) -> None:
     nonempty_boundaries = [
-        str(path)
-        for path in empty_boundary_paths
-        if path.exists() and any(path.iterdir())
+        str(path) for path in paths if path.exists() and any(path.iterdir())
     ]
     if nonempty_boundaries:
         raise VerificationError(
             f"runtime/data/output boundary is populated: {nonempty_boundaries}"
         )
+
+
+def _neutral_image_proof(
+    metadata: dict, debian: dict, source: dict, dependencies: dict
+) -> dict:
     return {
-        "schema": "npa.robomimic.neutral-image-verification.v1",
-        "baked_dependency_count": len(observed),
+        "schema": "npa.robomimic.neutral-image-verification.v2",
+        "baked_dependency_count": len(dependencies["selected_wheels"]),
+        "installed_source": source,
+        "installed_dependencies": dependencies,
         "baked_lock_sha256": BAKED_LOCK_SHA256,
         "debian_lock_sha256": DEBIAN_LOCK_SHA256,
         "debian_package_count": debian["package_count"],
@@ -1027,7 +1423,9 @@ def _checked_payload_entries(
     for path, entry in files.items():
         size = entry["size"]
         if size > RUNTIME_OBJECT_MAX_BYTES:
-            raise VerificationError(f"runtime payload object exceeds size limit: {path}")
+            raise VerificationError(
+                f"runtime payload object exceeds size limit: {path}"
+            )
         if total_bytes > RUNTIME_PAYLOAD_MAX_BYTES - size:
             raise VerificationError("runtime payload aggregate exceeds size limit")
         total_bytes += size
@@ -1093,7 +1491,9 @@ def _verify_declared_runtime_file(
     nofollow = getattr(os, "O_NOFOLLOW", None)
     nonblock = getattr(os, "O_NONBLOCK", None)
     if nofollow is None or nonblock is None:
-        raise VerificationError("runtime payload verification requires safe descriptor flags")
+        raise VerificationError(
+            "runtime payload verification requires safe descriptor flags"
+        )
     flags = os.O_RDONLY | os.O_CLOEXEC | nofollow | nonblock
     open_failed = False
     try:
@@ -1145,13 +1545,13 @@ def _resolved_runtime_path(path: Path) -> Path:
     return resolved
 
 
-def _verify_external_runtime(
+def _runtime_metadata(
     *,
     runtime_root: Path,
     runtime_lock_path: Path,
     expected_inventory_sha256: str,
     require_read_only_mount: bool,
-) -> dict[str, Any]:
+) -> tuple[dict, str, dict, str, bool]:
     if re.fullmatch(r"[0-9a-f]{64}", expected_inventory_sha256) is None:
         raise VerificationError(
             "operator-selected runtime inventory digest is absent or malformed"
@@ -1176,6 +1576,15 @@ def _verify_external_runtime(
         raise VerificationError(
             "runtime inventory does not match the operator-selected digest"
         )
+    _verify_runtime_metadata_bindings(
+        lock, lock_hash, marker, inventory, inventory_sha256
+    )
+    return lock, lock_hash, inventory, inventory_sha256, read_only_mount
+
+
+def _verify_runtime_metadata_bindings(
+    lock: dict, lock_hash: str, marker: dict, inventory: dict, inventory_sha256: str
+) -> None:
     expected_common = {
         "runtime_id": lock.get("runtime_id"),
         "lock_sha256": lock_hash,
@@ -1194,6 +1603,9 @@ def _verify_external_runtime(
         raise VerificationError("runtime ABI inventory mismatch")
     if inventory.get("packages") != lock.get("packages"):
         raise VerificationError("runtime package inventory mismatch")
+
+
+def _runtime_artifact_closure(lock: dict, inventory: dict) -> tuple[dict, int]:
     artifacts, artifact_payload_bytes = _checked_artifacts(inventory.get("artifacts"))
     locked_packages = lock.get("packages")
     if not isinstance(locked_packages, dict):
@@ -1203,8 +1615,12 @@ def _verify_external_runtime(
         for name, version in locked_packages.items()
     ):
         raise VerificationError("runtime artifact closure does not match package lock")
+    return artifacts, artifact_payload_bytes
 
-    files, links, payload_bytes = _checked_payload_entries(inventory)
+
+def _runtime_declared_objects(
+    runtime_root: Path, files: dict, links: dict
+) -> tuple[set[str], set[str]]:
     if set(files) & set(links):
         raise VerificationError("runtime path declared as both file and symlink")
     payload_root = runtime_root / "payload"
@@ -1219,6 +1635,13 @@ def _verify_external_runtime(
             if parent.as_posix() != "."
         )
     allowed_objects = declared | allowed_directories | {".ready.json", "inventory.json"}
+    return allowed_objects, allowed_directories
+
+
+def _verify_runtime_object_types(runtime_root: Path, files: dict, links: dict) -> None:
+    allowed_objects, allowed_directories = _runtime_declared_objects(
+        runtime_root, files, links
+    )
     for path in runtime_root.rglob("*"):
         relative = path.relative_to(runtime_root).as_posix()
         if relative not in allowed_objects:
@@ -1231,6 +1654,11 @@ def _verify_external_runtime(
             not stat.S_ISREG(mode) or path.is_symlink()
         ):
             raise VerificationError(f"runtime metadata is not regular: {relative}")
+    _verify_runtime_observed_members(runtime_root, set(files) | set(links))
+
+
+def _verify_runtime_observed_members(runtime_root: Path, declared: set[str]) -> None:
+    payload_root = runtime_root / "payload"
     observed: set[str] = set()
     for path in payload_root.rglob("*"):
         relative = path.relative_to(runtime_root).as_posix()
@@ -1247,6 +1675,12 @@ def _verify_external_runtime(
             f"runtime payload inventory mismatch: missing={sorted(declared - observed)} "
             f"extra={sorted(observed - declared)}"
         )
+
+
+def _verify_runtime_member_content(
+    runtime_root: Path, files: dict, links: dict
+) -> None:
+    payload_root = runtime_root / "payload"
     payload_resolved = _resolved_runtime_path(payload_root)
     for relative, entry in files.items():
         path = runtime_root / relative
@@ -1267,10 +1701,31 @@ def _verify_external_runtime(
                 f"runtime symlink escapes runtime payload: {relative}"
             ) from exc
     interpreter = payload_root / "bin" / "python"
-    if "payload/bin/python" not in declared or not os.access(interpreter, os.X_OK):
+    if "payload/bin/python" not in (set(files) | set(links)) or not os.access(
+        interpreter, os.X_OK
+    ):
         raise VerificationError(
             "verified runtime interpreter is absent or not executable"
         )
+
+
+def _verify_external_runtime(
+    *,
+    runtime_root: Path,
+    runtime_lock_path: Path,
+    expected_inventory_sha256: str,
+    require_read_only_mount: bool,
+) -> dict[str, Any]:
+    lock, lock_hash, inventory, inventory_sha256, read_only_mount = _runtime_metadata(
+        runtime_root=runtime_root,
+        runtime_lock_path=runtime_lock_path,
+        expected_inventory_sha256=expected_inventory_sha256,
+        require_read_only_mount=require_read_only_mount,
+    )
+    artifacts, artifact_payload_bytes = _runtime_artifact_closure(lock, inventory)
+    files, links, payload_bytes = _checked_payload_entries(inventory)
+    _verify_runtime_object_types(runtime_root, files, links)
+    _verify_runtime_member_content(runtime_root, files, links)
     return {
         "schema": "npa.robomimic.external-runtime-verification.v1",
         "runtime_id": lock["runtime_id"],
@@ -1319,9 +1774,13 @@ def verify_missing_runtime_refusal(
     """Prove that an empty runtime is rejected specifically for its missing marker."""
 
     if not runtime_root.is_dir() or runtime_root.is_symlink():
-        raise VerificationError("missing-runtime refusal probe requires a regular directory")
+        raise VerificationError(
+            "missing-runtime refusal probe requires a regular directory"
+        )
     if any(runtime_root.iterdir()):
-        raise VerificationError("missing-runtime refusal probe requires an empty directory")
+        raise VerificationError(
+            "missing-runtime refusal probe requires an empty directory"
+        )
     sentinel_inventory_sha256 = "0" * 64
     expected = f"required regular file is absent: {runtime_root / '.ready.json'}"
     try:
@@ -1384,16 +1843,19 @@ def _copy_bounded_regular_file(
         if source_stat.st_size != locked_size:
             raise VerificationError(f"runtime snapshot source size changed: {source}")
         if maximum_size is not None and locked_size > maximum_size:
-            raise VerificationError(f"runtime snapshot metadata exceeds limit: {source}")
+            raise VerificationError(
+                f"runtime snapshot metadata exceeds limit: {source}"
+            )
 
         destination_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
         destination_fd = os.open(destination, destination_flags, 0o600)
         try:
             digest = hashlib.sha256()
             remaining = locked_size
-            with os.fdopen(source_fd, "rb", closefd=False) as source_handle, os.fdopen(
-                destination_fd, "wb", closefd=False
-            ) as destination_handle:
+            with (
+                os.fdopen(source_fd, "rb", closefd=False) as source_handle,
+                os.fdopen(destination_fd, "wb", closefd=False) as destination_handle,
+            ):
                 while remaining:
                     chunk = source_handle.read(min(1024 * 1024, remaining))
                     if not chunk:
@@ -1601,9 +2063,7 @@ def materialize_external_runtime(
     }
 
 
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser()
-    subparsers = parser.add_subparsers(dest="mode", required=True)
+def _build_parsers(subparsers: Any) -> None:
     build_inputs = subparsers.add_parser("build-inputs")
     build_inputs.add_argument("--input-root", type=Path, required=True)
     build_inputs.add_argument("--debian-lock", type=Path, required=True)
@@ -1614,7 +2074,12 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--source-manifest", type=Path, required=True)
     debian_install = subparsers.add_parser("debian-install")
     debian_install.add_argument("--debian-lock", type=Path, required=True)
+
+
+def _image_parser(subparsers: Any) -> None:
     image = subparsers.add_parser("image")
+    image.add_argument("--source-archive", type=Path, required=True)
+    image.add_argument("--selected-wheel-root", type=Path, required=True)
     image.add_argument("--source-root", type=Path, default=Path("/opt/robomimic"))
     image.add_argument(
         "--metadata", type=Path, default=Path("/opt/byof/npa_source_metadata.json")
@@ -1630,10 +2095,9 @@ def _parser() -> argparse.ArgumentParser:
         default=Path("/opt/npa/robomimic/baked-requirements.lock"),
     )
     image.add_argument("--baked-deps", type=Path, default=Path("/opt/robomimic-deps"))
-    runtime = subparsers.add_parser("runtime")
-    runtime.add_argument(
-        "--runtime-root", type=Path, default=Path(RUNTIME_ROOT_DEFAULT)
-    )
+
+
+def _entitlement_parser(subparsers: Any) -> None:
     entitlement = subparsers.add_parser("entitlement")
     entitlement.add_argument("--entitlement", type=Path, required=True)
     entitlement.add_argument(
@@ -1655,6 +2119,13 @@ def _parser() -> argparse.ArgumentParser:
     entitlement.add_argument(
         "--expected-inventory-sha256",
         default=os.environ.get("NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256", ""),
+    )
+
+
+def _runtime_parsers(subparsers: Any) -> None:
+    runtime = subparsers.add_parser("runtime")
+    runtime.add_argument(
+        "--runtime-root", type=Path, default=Path(RUNTIME_ROOT_DEFAULT)
     )
     runtime.add_argument(
         "--runtime-lock",
@@ -1686,72 +2157,93 @@ def _parser() -> argparse.ArgumentParser:
         default=os.environ.get("NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256", ""),
     )
     snapshot.add_argument("--destination", type=Path, required=True)
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="mode", required=True)
+    _build_parsers(subparsers)
+    _image_parser(subparsers)
+    _entitlement_parser(subparsers)
+    _runtime_parsers(subparsers)
     return parser
+
+
+def _dispatch_build(args: argparse.Namespace) -> dict:
+    if args.mode == "build-inputs":
+        return verify_build_inputs(
+            input_root=args.input_root,
+            debian_lock_path=args.debian_lock,
+            source_manifest_path=args.source_manifest,
+        )
+    if args.mode == "prepare-build-inputs":
+        return prepare_build_inputs(
+            output_root=args.output_root,
+            debian_lock_path=args.debian_lock,
+            source_manifest_path=args.source_manifest,
+        )
+    if args.mode == "debian-install":
+        return verify_debian_install(debian_lock_path=args.debian_lock)
+    return verify_neutral_image(
+        source_root=args.source_root,
+        metadata_path=args.metadata,
+        debian_lock_path=args.debian_lock,
+        baked_lock_path=args.baked_lock,
+        baked_deps_path=args.baked_deps,
+        source_archive_path=args.source_archive,
+        selected_wheel_root=args.selected_wheel_root,
+        empty_boundary_paths=(
+            Path(RUNTIME_ROOT_DEFAULT),
+            Path("/workspace/byof-inputs"),
+            Path("/workspace/byof-runs"),
+        ),
+    )
+
+
+def _dispatch_runtime(args: argparse.Namespace) -> dict:
+    if args.mode == "runtime":
+        return verify_external_runtime(
+            runtime_root=args.runtime_root,
+            runtime_lock_path=args.runtime_lock,
+            expected_inventory_sha256=args.expected_inventory_sha256,
+            require_read_only_mount=True,
+        )
+    if args.mode == "entitlement":
+        return verify_customer_runtime_entitlement(
+            entitlement_path=args.entitlement,
+            runtime_lock_path=args.runtime_lock,
+            expected_entitlement_sha256=args.expected_entitlement_sha256,
+            expected_customer_binding_sha256=args.expected_customer_binding_sha256,
+            expected_run_id=args.expected_run_id,
+            expected_inventory_sha256=args.expected_inventory_sha256,
+        )
+    if args.mode == "snapshot":
+        return materialize_external_runtime(
+            runtime_root=args.runtime_root,
+            runtime_lock_path=args.runtime_lock,
+            expected_inventory_sha256=args.expected_inventory_sha256,
+            destination=args.destination,
+            require_source_read_only=True,
+        )
+    if args.mode == "assert-missing-runtime":
+        return verify_missing_runtime_refusal(
+            runtime_root=args.runtime_root, runtime_lock_path=args.runtime_lock
+        )
+    raise AssertionError(f"unhandled mode: {args.mode}")
 
 
 def main() -> int:
     args = _parser().parse_args()
     try:
-        if args.mode == "build-inputs":
-            result = verify_build_inputs(
-                input_root=args.input_root,
-                debian_lock_path=args.debian_lock,
-                source_manifest_path=args.source_manifest,
-            )
-        elif args.mode == "prepare-build-inputs":
-            result = prepare_build_inputs(
-                output_root=args.output_root,
-                debian_lock_path=args.debian_lock,
-                source_manifest_path=args.source_manifest,
-            )
-        elif args.mode == "debian-install":
-            result = verify_debian_install(debian_lock_path=args.debian_lock)
-        elif args.mode == "image":
-            result = verify_neutral_image(
-                source_root=args.source_root,
-                metadata_path=args.metadata,
-                debian_lock_path=args.debian_lock,
-                baked_lock_path=args.baked_lock,
-                baked_deps_path=args.baked_deps,
-                empty_boundary_paths=(
-                    Path(RUNTIME_ROOT_DEFAULT),
-                    Path("/workspace/byof-inputs"),
-                    Path("/workspace/byof-runs"),
-                ),
-            )
-        elif args.mode == "runtime":
-            result = verify_external_runtime(
-                runtime_root=args.runtime_root,
-                runtime_lock_path=args.runtime_lock,
-                expected_inventory_sha256=args.expected_inventory_sha256,
-                require_read_only_mount=True,
-            )
-        elif args.mode == "entitlement":
-            result = verify_customer_runtime_entitlement(
-                entitlement_path=args.entitlement,
-                runtime_lock_path=args.runtime_lock,
-                expected_entitlement_sha256=args.expected_entitlement_sha256,
-                expected_customer_binding_sha256=(
-                    args.expected_customer_binding_sha256
-                ),
-                expected_run_id=args.expected_run_id,
-                expected_inventory_sha256=args.expected_inventory_sha256,
-            )
-        elif args.mode == "snapshot":
-            result = materialize_external_runtime(
-                runtime_root=args.runtime_root,
-                runtime_lock_path=args.runtime_lock,
-                expected_inventory_sha256=args.expected_inventory_sha256,
-                destination=args.destination,
-                require_source_read_only=True,
-            )
-        elif args.mode == "assert-missing-runtime":
-            result = verify_missing_runtime_refusal(
-                runtime_root=args.runtime_root,
-                runtime_lock_path=args.runtime_lock,
-            )
+        if args.mode in {
+            "build-inputs",
+            "prepare-build-inputs",
+            "debian-install",
+            "image",
+        }:
+            result = _dispatch_build(args)
         else:
-            raise AssertionError(f"unhandled mode: {args.mode}")
+            result = _dispatch_runtime(args)
     except VerificationError as exc:
         runtime_mode = args.mode in {"runtime", "snapshot", "entitlement"}
         runtime_label = runtime_mode or args.mode == "assert-missing-runtime"
