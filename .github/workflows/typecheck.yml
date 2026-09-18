@@ -1,9 +1,12 @@
-name: Type check (manual)
+name: Type check
 
-# Type checking is advisory while the repository has no clean baseline. Keep it
-# available on demand without spending a runner on every commit for a job whose
-# result cannot block a merge.
+# Type checking runs on PRs against a committed baseline.
+# New mypy errors beyond the baseline fail the check.
+
 on:
+  pull_request:
+    paths:
+      - 'npa/src/**'
   workflow_dispatch:
 
 permissions:
@@ -24,6 +27,19 @@ jobs:
       - name: Install npa and mypy
         run: cd npa && pip install -e ".[full]" mypy
 
-      - name: Mypy (advisory)
-        continue-on-error: true
-        run: cd npa && mypy src/npa --ignore-missing-imports --no-error-summary
+      - name: Mypy
+        id: mypy
+        run: cd npa && mypy src/npa --ignore-missing-imports --no-error-summary 2>&1 | tee mypy-output.txt
+      
+      - name: Check against baseline
+        run: |
+          cd npa
+          grep -v "^#" mypy-baseline.txt | grep -v "^$" | sort > baseline-sorted.txt || true
+          grep "error:" mypy-output.txt | sort > current-sorted.txt || true
+          new_errors=$(comm -13 baseline-sorted.txt current-sorted.txt)
+          if [ -n "$new_errors" ]; then
+            echo "New mypy errors beyond baseline:"
+            echo "$new_errors"
+            exit 1
+          fi
+          echo "No new mypy errors."

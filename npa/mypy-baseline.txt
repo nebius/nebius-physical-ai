@@ -1,0 +1,3 @@
+# Mypy baseline - known errors that are grandfathered in.
+# Format: one error per line, as output by mypy.
+# New errors beyond this baseline will fail CI.
