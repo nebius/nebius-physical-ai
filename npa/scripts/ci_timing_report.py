@@ -35,20 +35,24 @@ def _job_timing(job: dict) -> dict:
         for step in steps
         if step["name"].lower().startswith(("set up ", "install ", "create "))
     )
-    skipped = job.get("conclusion") == "skipped"
+    # GitHub gives never-started cancelled jobs a synthetic started_at value.
+    unstarted = job.get("runner_id") == 0 and not job.get("steps")
+    executed = (
+        job.get("conclusion") != "skipped"
+        and not unstarted
+        and bool(job.get("started_at"))
+    )
     return {
         "id": job["id"],
         "name": job["name"],
         "conclusion": job.get("conclusion"),
         "runner_wait_seconds": None
-        if skipped
+        if not executed
         else _seconds(job.get("created_at"), job.get("started_at")),
         "execution_seconds": None
-        if skipped
+        if not executed
         else _seconds(job.get("started_at"), job.get("completed_at")),
-        "setup_seconds": None
-        if skipped or not job.get("started_at")
-        else round(setup, 3),
+        "setup_seconds": None if not executed else round(setup, 3),
         "steps": steps,
     }
 

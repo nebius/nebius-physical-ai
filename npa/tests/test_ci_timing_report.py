@@ -126,6 +126,24 @@ def test_skipped_jobs_with_synthetic_timestamps_are_excluded() -> None:
     assert report["jobs"][0]["setup_seconds"] is None
 
 
+def test_cancelled_before_allocation_has_no_execution_time() -> None:
+    """Ignore synthetic start timestamps for jobs cancelled while queued.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Runner waiting is mislabeled as test execution.
+    """
+    job = _job()
+    job.update(conclusion="cancelled", runner_id=0, steps=[])
+    report = timing._report(_run(), [{"jobs": [job]}])
+    assert report["jobs"][0]["runner_wait_seconds"] is None
+    assert report["jobs"][0]["execution_seconds"] is None
+    assert report["jobs"][0]["setup_seconds"] is None
+
+
 @pytest.mark.parametrize("end", [None, "2026-09-18T09:59:59Z"])
 def test_invalid_intervals_are_unknown(end: str | None) -> None:
     """Distinguish missing or negative timestamps from actual zero-duration jobs.
