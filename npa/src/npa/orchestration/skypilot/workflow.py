@@ -2592,10 +2592,20 @@ def _reconcile_native_tasks(rows, job_name, job_id, task_ids):
         return ReconciliationEvidence(ReconciliationState.AMBIGUOUS,
                                       error="native job task coverage is incomplete or conflicting")
     statuses = {str(row.get("status", "UNKNOWN")).upper() for row in selected}
-    if all(status == "SUCCEEDED" or is_terminal_failure_job_status(status) for status in statuses):
-        status = "SUCCEEDED" if statuses == {"SUCCEEDED"} else "CANCELLED"
-    elif statuses <= {"PENDING", "STARTING", "RUNNING", "RECOVERING", "CANCELLING", "SUCCEEDED"}:
+    active_statuses = {"PENDING", "STARTING", "RUNNING", "RECOVERING", "CANCELLING"}
+    known_terminal = {
+        status for status in statuses
+        if status == "SUCCEEDED" or is_terminal_failure_job_status(status)
+    }
+    if statuses - active_statuses - known_terminal:
+        status = "UNKNOWN"
+    elif statuses & active_statuses:
+        # A complete snapshot can contain an already-failed task while another
+        # task is still active.  Keep the launch-owned job in normal polling
+        # until every expected task reaches a terminal state.
         status = "RUNNING"
+    elif all(status == "SUCCEEDED" or is_terminal_failure_job_status(status) for status in statuses):
+        status = "SUCCEEDED" if statuses == {"SUCCEEDED"} else "CANCELLED"
     else:
         status = "UNKNOWN"
     return ReconciliationEvidence(ReconciliationState.FOUND, job_id=job_id, status=status)
