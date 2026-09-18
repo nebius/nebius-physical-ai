@@ -178,17 +178,19 @@ image (`public` | `restricted`), enforced by
 The image, model, and configuration surfaces below were audited for local
 `ACCEPT_*` booleans, terms flags, confirmation prompts, empty acceptance
 placeholders, and duplicated model-entitlement switches. The resulting contract
-has three independent mechanisms: Isaac routes use the one public `ACCEPT_EULA`
-variable with unset meaning `Y` and a reliable explicit opt-out; token-gated
-runtime assets use a real upstream access probe with the operator's credential;
-and separate non-token-gated terms require direct customer/run-controlled
-evidence. NPA may authenticate, transport, and validate that customer evidence,
-but a token, local boolean, or control-plane assertion cannot replace it.
+has three independent mechanisms: Isaac routes require an explicit,
+customer/run-controlled `ACCEPT_EULA` value bound to the authenticated
+customer authorization; token-gated runtime assets use a real upstream access
+probe with the operator's credential; and separate non-token-gated terms
+require direct customer/run-controlled evidence. NPA may authenticate,
+transport, and validate that customer evidence, but a token, local boolean, or
+control-plane assertion cannot replace it. An unset value is a refusal for this
+contract: no manager or control-plane default may synthesize acceptance.
 None of these mechanisms grants redistribution rights or enables privacy/telemetry.
 
 | Audited surface | Assets/images covered | Outcome |
 | --- | --- | --- |
-| Isaac runtime images and routes | `isaac-lab`, `sonic`, `groot`, Isaac-backed `sim2real` builders and raw-shell sweep states | No Isaac Sim/Lab wheels or restricted Kit runtime payloads are baked. Resolved-image routing injects canonical `ACCEPT_EULA=Y` by default; empty/negative values opt out, affirmative legacy values normalize, and invalid values fail before pull/provision/scheduling. No second public EULA variable exists. |
+| Isaac runtime images and routes | `isaac-lab`, `sonic`, `groot`, Isaac-backed `sim2real` builders and raw-shell sweep states | No Isaac Sim/Lab wheels or restricted Kit runtime payloads are baked. The customer/run authorization must explicitly provide the canonical `ACCEPT_EULA=Y` value before any pull, provision, scheduling, or download; missing/unset/empty values refuse, affirmative legacy spellings normalize only after that authorization, and invalid values fail closed. No second public EULA variable exists. |
 | GR00T deployment | `nvidia/GR00T-N1.7-3B`, `nvidia/Cosmos-Reason2-2B` | Both runtime dependencies are probed before every deploy/update path. Gated access is determined only by the operator's HF token and actual upstream permission; there is no skip or NPA terms flag. |
 | Cosmos and Physical AI Data Factory | `nvidia/Cosmos-Transfer2.5-2B`, `nvidia/Cosmos-Reason2-2B`, `nvidia/Cosmos-Reason2-8B`, `nvidia/Cosmos-Reason1-7B`, `nvidia/Cosmos3-Nano`, `nvidia/Cosmos-Guardrail1`, `nvidia/Cosmos-1.0-Guardrail`, `nvidia/Cosmos-1.0-Diffusion-7B-Text2World` | Weights stay out of image layers. Public repositories may be fetched anonymously; gated repositories require a successful upstream HF probe with the operator's token. Deploy has no bypass or duplicate consent flag. |
 | Other runtime-fetched NVIDIA assets | `nvidia/GEAR-SONIC`, `nvidia/PhysicalAI-NuRec-PPISP`; NuRec NRE runtime | Public HF assets remain anonymous. NuRec's NGC-hosted NRE runtime requires a real `NGC_API_KEY` repository probe; no local EULA boolean substitutes for vendor access. |
@@ -197,8 +199,9 @@ None of these mechanisms grants redistribution rights or enables privacy/telemet
 | Other non-NVIDIA comparison surfaces | `Wan-AI/Wan2.2-TI2V-5B`, LeRobot, Qwen, self-hosted Llama | No local terms boolean or interactive confirmation duplicates upstream entitlement; external vendor terms still apply at the source. |
 | Separate controls retained | privacy/telemetry, image redistribution classification, third-party dataset delivery | Privacy and telemetry remain independently off by default. Packaging contracts and built-image scans still control redistribution. The public PAIDF starter asset remains `acceptance_required: false`; its generic third-party dataset-license mechanism is separate from NVIDIA image/model access. |
 
-Empty `ACCEPT_EULA` remains meaningful only as the explicit Isaac opt-out. Raw
-Isaac examples now state `Y`; non-Isaac tasks do not receive the variable.
+An unset or empty `ACCEPT_EULA` is a refusal, not implicit consent. Raw Isaac
+examples state `Y` only when they are run under the authenticated
+customer-scoped authorization; non-Isaac tasks do not receive the variable.
 
 ## Runtime-fetched Isaac Sim (why the Isaac images are publishable)
 
@@ -223,14 +226,13 @@ and redistributable client dependencies; that source is not the simulator
 runtime. On first use of `/isaac-sim/python.sh`,
 `npa/docker/workbench/common/isaac_bootstrap.sh`:
 
-1. Applies NPA's non-interactive Isaac default when `ACCEPT_EULA` is unset, then
-   validates the value before download. `Y`, `YES`, `1`, and `TRUE` normalize to
-   acceptance case-insensitively. Empty, `N`, `NO`, `0`, and `FALSE` are explicit
-   opt-outs and exit 78; any other value is reported separately as invalid.
-   The run-scoped default is not baked into image layers. The bootstrap parser
-   enforces the default and explicit opt-out before downloading, while
-   `npa/tests/docker/test_packaging_contract.py` fails the build if an image
-   reintroduces a baked `*_ACCEPT_EULA` marker.
+1. Requires an explicit customer/run-authorized `ACCEPT_EULA` value before
+   download and validates it. `Y`, `YES`, `1`, and `TRUE` normalize to
+   acceptance case-insensitively only after that authorization is bound.
+   Unset, empty, `N`, `NO`, `0`, and `FALSE` refuse with exit 78; any other
+   value is reported separately as invalid. No run-scoped or control-plane
+   default may create acceptance, and `npa/tests/docker/test_packaging_contract.py`
+   fails the build if an image reintroduces a baked `*_ACCEPT_EULA` marker.
 2. Installs the pinned `isaacsim`/`isaaclab` wheels from `https://pypi.nvidia.com` into
    a **cache volume**, not the image layers. Every wheel is pinned to a committed
    `sha256` and installed with `--no-deps --require-hashes` against `--index-url` (not
