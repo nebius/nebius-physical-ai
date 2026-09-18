@@ -326,11 +326,12 @@ pipeline. Key safety notes are condensed below.
   `/bin/bash`; sshd is not enabled by default. SkyPilot may generate ephemeral
   host keys and start SSH inside a submitted task. The packaging contract must
   record this exemption whenever a public image carries `NOPASSWD:ALL`.
-- **`robomimic` Phase A refusal** — the unbuilt neutral candidate runs as uid
-  1000, starts no sshd, and contains no CUDA/PyTorch runtime, data, weights,
-  populated cache, credentials, or outputs. Its `entrypoint-smoke` proves only
-  that an absent external exact-inventory runtime is refused without mutation;
-  it is not capability evidence. The real four-step held-out checkpoint-reload
+- **`robomimic` Phase A refusal** — the unbuilt neutral candidate is intended to
+  run as uid 1000, start no sshd, and contain no CUDA/PyTorch runtime, data,
+  weights, populated cache, credentials, or outputs. Its `entrypoint-smoke` is
+  a planned/static refusal contract; the unbuilt candidate has not executed, so
+  refusal without mutation is not yet execution evidence or capability proof.
+  The real four-step held-out checkpoint-reload
   gate and any public-image claim remain blocked on an authoritative runtime-use
   decision, separate manager transaction authorization, built-byte/security/
   SBOM/provenance checks, and exact-digest one-B200 qualification.
