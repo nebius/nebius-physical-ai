@@ -176,6 +176,44 @@ def test_submit_cleanup_configuration_refinement_cannot_retarget(tmp_path):
     assert guard.cleanup.config_path == tmp_path / "verified"
 
 
+@pytest.mark.parametrize("confidential", (False, True))
+def test_native_wrapper_keeps_context_when_controller_binding_changes(
+    monkeypatch, tmp_path, confidential
+):
+    from npa.orchestration.skypilot import workflow as submit_module
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+
+    module = _load_module()
+    environment = {"KUBECONFIG": str(tmp_path / "synthetic-kubeconfig")}
+    if confidential:
+        environment["SYNTHETIC_PRIVATE_CONTROL"] = "synthetic-private-value"
+    cleanup = submit_module._SubmissionCleanup(
+        "synthetic",
+        environment,
+        "/synthetic-sky",
+        str(tmp_path),
+        0,
+        tmp_path / "config",
+        job_id="41",
+        active=True,
+        submitting=False,
+        native_result=NativeLaunchResult(
+            "attempt", "00000000-0000-4000-8000-000000000001", "41", (0,), "c" * 64
+        ),
+        native_verified=True,
+        context_check=lambda: "d" * 64,
+    )
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_a, **_k: pytest.fail("unrelated mutation")
+    )
+    guard = module._SubmitTeardown(cleanup_on_failure=True)
+    guard.bind(cleanup)
+    guard.refine_config(tmp_path / "config")
+    cleanup.request()
+    assert not cleanup.verified and cleanup.result.errors
+    assert cleanup.environment == environment and tmp_path.exists()
+
+
 def test_render_workflow_injects_solution_smoke_metadata(monkeypatch) -> None:
     module = _load_module()
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")

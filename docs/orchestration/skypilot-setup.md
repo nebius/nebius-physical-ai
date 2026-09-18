@@ -15,6 +15,41 @@ and run state there. The GPU workload still runs on the selected Nebius cluster.
 An unsupported host fails before the isolated API creates state or processes;
 removing isolation does not provide an equivalent supported workflow path.
 
+### Native result boundary for submission cleanup
+
+Submissions with a cleanup callback use a private bridge in the **existing
+isolated SkyPilot interpreter**, pinned to 0.12.2. It loads the complete rendered
+chain or JobGroup and retains the full request ID returned by that invocation
+of `sky.jobs.launch`. Only `sky.get` of that exact ID can supply its successful
+job-ID list and controller handle. Local IPC records transport those observations;
+they are not provider attestations or customer authorization. The older queue
+reconciliation result remains distinct and never grants this cleanup authority.
+
+This narrow path requires an existing verified owned local API and running
+Kubernetes controller, explicitly rendered Kubernetes resources, stable API
+process/configuration/request-store identity and stable controller pod/container
+identity. It refuses other contexts instead of falling back to CLI prose or
+selecting an ambient API. Before cancellation it rechecks the exact job ID and
+complete expected task-ID set; all tasks must be terminal before cleanup is
+verified. It never deletes a shared controller or a name-pattern cluster.
+
+A signal, missing initial request ID, partial IPC, failed or expired request,
+allocation-before-error, malformed result, changed context or incomplete task
+set preserves private recovery state and refuses automatic resubmission and
+cleanup. Never recover ownership by name, timestamp, numeric proximity, latest
+request or a request-ID prefix. SkyPilot's default completed-request retention
+is 24 hours and is configurable; it is not a durable receipt guarantee.
+
+The source contract is pinned to upstream commit
+`158acd60038fb714e70b099038454bb23ce9ade7`. The bridge checks the inspected source
+chain and declared version, but these are not whole-distribution, dependency or
+remote-controller provenance proofs. Upstream's supported internal allocation
+fallback can itself parse controller output; this is not an all-hops-prose-free
+claim. Positive cleanup remains **unqualified** until separately authorized exact
+distribution/controller and native/live compatibility validation. Mock bridge
+tests cannot establish that qualification, and do not qualify RoboTwin's image,
+runtime delivery, rendered capability or RTX workload.
+
 ## Install SkyPilot
 
 Create or reuse the dedicated virtualenv with the validated SkyPilot pin:

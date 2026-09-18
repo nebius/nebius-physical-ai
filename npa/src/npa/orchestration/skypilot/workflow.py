@@ -10,9 +10,11 @@ import fcntl
 import shutil
 import subprocess
 import sys
+import stat
 import tempfile
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -88,6 +90,7 @@ class ControllerExecutionProbe:
     outcome: str
     pod_count: int = 0
     error: str = ""
+    identity: str = field(default="", repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -222,11 +225,10 @@ class SkyPilotSubmitError(RuntimeError):
 class _SubmissionCleanup:
     """Retain the authorized runtime unless cleanup ownership is independently proven.
 
-    The current CLI/queue bridge has no invocation-correlated provider receipt.
-    It must leave ``job_id`` unset: launch prose (even on success), local argv,
-    and a same-name queue record cannot grant cancellation authority. Keep the
-    recovery context and report unverified cleanup until a supported producer
-    can independently bind this invocation to an immutable provider identity.
+    Only the native request/result path can bind ``job_id``. Launch prose,
+    local argv and same-name queue reconciliation never grant cancellation
+    authority. Unknown or interrupted results retain the private context.
+    This does not authorize deleting the shared managed-jobs controller.
     """
 
     run_id: str
@@ -244,6 +246,9 @@ class _SubmissionCleanup:
     verified: bool = False
     busy: bool = False
     result: CleanupResult = field(default_factory=CleanupResult)
+    native_result: Any = field(default=None, repr=False)
+    context_check: Callable[[], str] | None = field(default=None, repr=False)
+    native_verified: bool = False
 
     def request(self) -> CleanupResult:
         self.requested = True
@@ -267,6 +272,9 @@ class _SubmissionCleanup:
             self.request()
 
     def _lookup(self) -> ReconciliationEvidence:
+        if self.native_result is not None:
+            if self.context_check is None or self.context_check() != self.native_result.context:
+                return ReconciliationEvidence(ReconciliationState.AMBIGUOUS)
         return _reconcile_managed_job_env(
             self.run_id,
             env=self.environment,
@@ -274,6 +282,8 @@ class _SubmissionCleanup:
             cwd=self.cwd,
             redactions=self.redactions,
             require_all_terminal=True,
+            expected_job_id=self.job_id if self.native_result is not None else "",
+            expected_task_ids=self.native_result.task_ids if self.native_result is not None else (),
         )
 
     def _same_job(self, evidence: ReconciliationEvidence) -> bool:
@@ -284,6 +294,8 @@ class _SubmissionCleanup:
         )
 
     def _cancel_exact(self) -> CleanupResult:
+        if self.native_result is not None and not self.native_verified:
+            return CleanupResult(errors=["native transaction incomplete; recovery state retained"])
         if not self.job_id.isdigit():
             return CleanupResult(
                 errors=["owned launch receipt unavailable; recovery state retained"]
@@ -1873,6 +1885,8 @@ def submit_workflow(
                 )
 
                 require_customer_authorization_fresh(robotwin_authorization)
+            if cleanup_state is not None and cleanup_state.native_result is not None:
+                return cleanup_state._lookup()
             return _reconcile_managed_job_env(
                 run_id,
                 env=control_env,
@@ -1881,9 +1895,7 @@ def submit_workflow(
                 redactions=private_redactions,
             )
 
-        def _launch() -> tuple[
-            subprocess.CompletedProcess[str], list[SkyPilotDiagnosis]
-        ]:
+        def _launch() -> Any:
             if robotwin_authorization is not None:
                 from npa.orchestration.npa_workflow.robotwin_preflight import (
                     require_customer_authorization_fresh,
@@ -1891,6 +1903,15 @@ def submit_workflow(
 
                 require_customer_authorization_fresh(robotwin_authorization)
             _enable_cleanup()
+            if cleanup_state is not None:
+                return _launch_with_native_cleanup(
+                    cleanup_state, yaml_path=prepared_yaml, run_id=run_id,
+                    isolated_dir=runtime_config.isolated_config_dir,
+                    controller=controller_health.name, context=selected_context,
+                    sky_executable=sky_executable, secret_envs=secret_envs,
+                    environment=env, timeout=timeout, cwd=stable_cwd,
+                    log_dir=submission_dir, controller_backend=controller_backend,
+                )
             try:
                 launch_result, diagnoses = _run_launch(
                     cmd,
@@ -1952,6 +1973,7 @@ def submit_workflow(
                 launch=_launch,
                 reconcile=_reconcile,
                 classify_launch_error=_classify,
+                require_native_result=cleanup_state is not None,
                 recovery_policy=recovery_policy,
                 lock_root=launch_lock_root,
                 clock=transaction_clock,
@@ -1969,6 +1991,9 @@ def submit_workflow(
                 ),
             )
         except LaunchTransactionError as exc:
+            if cleanup_state is not None:
+                cleanup_state.job_id = ""
+                cleanup_state.native_result = None
             exc.result.controller = {
                 **controller_health.to_dict(),
                 "selected_context": selected_context,
@@ -1980,6 +2005,8 @@ def submit_workflow(
                 LaunchState.INTERRUPTED,
             }:
                 exc.result.operator_remedy = (
+                    "Preserve the original private context; do not resubmit or adopt by name."
+                    if cleanup_state is not None else
                     f"Re-run the identical submit arguments with `--resume-run {run_id}` "
                     "for this exact logical launch; do not choose a new run ID or cancel "
                     "by name."
@@ -2008,6 +2035,10 @@ def submit_workflow(
                 raise SkyPilotSubmitError(
                     "launch receipt and transaction identity differ"
                 )
+            if cleanup_state.native_result is not None:
+                if cleanup_state.requested or transaction.identity_source != "native_request_result":
+                    raise SkyPilotSubmitError("native transaction interrupted or unverified; context retained")
+                cleanup_state.native_verified = True
             cleanup_state.finish_submit(failed=False)
             if cleanup_state.requested:
                 raise SkyPilotSubmitError(
@@ -2450,6 +2481,8 @@ def _reconcile_managed_job_env(
     timeout: int = 60,
     redactions: Sequence[str] = (),
     require_all_terminal: bool = False,
+    expected_job_id: str = "",
+    expected_task_ids: Sequence[int] = (),
 ) -> ReconciliationEvidence:
     """Reconcile one exact name through the same SkyPilot runtime as launch."""
 
@@ -2492,6 +2525,8 @@ def _reconcile_managed_job_env(
                 error="SkyPilot queue returned malformed, ambiguous, or schema-invalid JSON",
             )
         rows = parsed_rows
+    if expected_job_id:
+        return _reconcile_native_tasks(rows, job_name, expected_job_id, expected_task_ids)
     matching: set[str] = set()
     statuses: dict[str, str] = {}
     task_statuses: dict[str, set[str]] = {}
@@ -2545,6 +2580,25 @@ def _reconcile_managed_job_env(
         workload_observable=bool(markers),
         workload_evidence=",".join(markers),
     )
+
+
+def _reconcile_native_tasks(rows, job_name, job_id, task_ids):
+    selected = [row for row in rows if str(row.get("job_id", row.get("id", ""))) == job_id]
+    expected = list(task_ids)
+    observed = [row.get("task_id") for row in selected]
+    if (not expected or any(type(value) is not int for value in observed)
+            or sorted(observed) != sorted(expected)
+            or any(row.get("job_name", row.get("name")) != job_name for row in selected)):
+        return ReconciliationEvidence(ReconciliationState.AMBIGUOUS,
+                                      error="native job task coverage is incomplete or conflicting")
+    statuses = {str(row.get("status", "UNKNOWN")).upper() for row in selected}
+    if all(_cleanup_job_terminal(status) for status in statuses):
+        status = "SUCCEEDED" if statuses == {"SUCCEEDED"} else "CANCELLED"
+    elif statuses <= {"PENDING", "STARTING", "RUNNING", "RECOVERING", "CANCELLING", "SUCCEEDED"}:
+        status = "RUNNING"
+    else:
+        status = "UNKNOWN"
+    return ReconciliationEvidence(ReconciliationState.FOUND, job_id=job_id, status=status)
 
 
 def parse_job_ids_by_name(output: str, job_name: str) -> list[str]:
@@ -2812,6 +2866,102 @@ def _read_text(path: Path) -> str:
         return ""
 
 
+def _native_launch_payload(*, yaml_path, run_id, isolated_dir, controller, context,
+                           sky_executable, secret_envs, environment):
+    from npa.orchestration.skypilot._managed_job_api import NativeResultUnavailable
+
+    if isolated_dir is None or not controller:
+        raise NativeResultUnavailable("native launch needs an existing verified owned controller")
+    documents = _load_yaml_documents(yaml_path)
+    header = bool(documents and set(documents[0]) <= {"name", "execution"})
+    task_count = len(documents) - int(header)
+    if task_count < 1:
+        raise NativeResultUnavailable("complete rendered DAG is unavailable")
+    for document in documents[int(header):]:
+        _require_native_kubernetes_resources(document.get("resources"), context)
+    return {
+        "attempt": uuid.uuid4().hex, "name": run_id,
+        "yaml": Path(yaml_path).read_text(encoding="utf-8"), "task_count": task_count,
+        "isolated_dir": str(Path(isolated_dir).absolute()), "controller": controller,
+        "kube_context": context, "sky_executable": sky_executable,
+        "secrets": [name for name in secret_envs or () if environment.get(name)],
+    }
+
+
+def _require_native_kubernetes_resources(resources, context):
+    from npa.orchestration.skypilot._managed_job_api import NativeResultUnavailable
+
+    if not isinstance(resources, dict):
+        raise NativeResultUnavailable("native launch requires explicitly rendered Kubernetes resources")
+    if resources.get("cloud") not in {"kubernetes", "k8s"}:
+        raise NativeResultUnavailable("native launch cannot infer an infra override")
+    if context and resources.get("region") not in {None, context}:
+        raise NativeResultUnavailable("native launch target differs from the verified context")
+    if "any_of" in resources or "ordered" in resources:
+        raise NativeResultUnavailable("native resource alternatives need explicit compatibility proof")
+
+
+def _launch_with_native_cleanup(cleanup, *, controller_backend, **kwargs):
+    from npa.orchestration.skypilot._managed_job_api import NativeResultUnavailable
+
+    if controller_backend != "kubernetes":
+        raise NativeResultUnavailable("native cleanup has no verified non-Kubernetes context")
+    payload_keys = ("yaml_path", "run_id", "isolated_dir", "controller", "context",
+                    "sky_executable", "secret_envs", "environment")
+    payload = _native_launch_payload(**{key: kwargs[key] for key in payload_keys})
+    result, context_check = _run_native_launch(
+        payload, environment=kwargs["environment"], control_environment=cleanup.environment,
+        log_dir=kwargs["log_dir"], timeout=kwargs["timeout"], cwd=kwargs["cwd"],
+    )
+    if cleanup.requested:
+        raise NativeResultUnavailable("interrupted native launch; recovery context retained")
+    cleanup.native_result = result
+    cleanup.context_check = context_check
+    cleanup.job_id = result.job_id
+    return result
+
+
+def _run_native_launch(payload, *, environment, control_environment, log_dir, timeout, cwd):
+    from npa.orchestration.skypilot import _managed_job_api as native
+
+    def context_check():
+        return _native_context_digest(
+            isolated_dir=Path(payload["isolated_dir"]), controller=payload["controller"],
+            context=payload["kube_context"], sky_executable=payload["sky_executable"],
+            environment=control_environment,
+        )
+
+    context = context_check()
+    payload = {**payload, "context": context}
+    path = log_dir / f"native-{payload['attempt']}.jsonl"
+    descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        _invoke_native_bridge({**payload, "descriptor": descriptor}, environment, cwd, timeout)
+        if context_check() != context:
+            raise native.NativeResultUnavailable("native API/controller context changed")
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        data = os.read(descriptor, native.MAX_OBSERVATION_BYTES + 1)
+        observed = native.decode_observation(data, attempt=payload["attempt"],
+                                             context=context, task_count=payload["task_count"])
+        return observed, context_check
+    finally:
+        os.close(descriptor)
+
+
+def _invoke_native_bridge(payload, environment, cwd, timeout):
+    from npa.orchestration.skypilot import _managed_job_api as native
+
+    interpreter = Path(payload["sky_executable"]).absolute().parent / "python"
+    command = [str(interpreter), str(Path(native.__file__).resolve())]
+    completed = subprocess.run(
+        command, input=json.dumps(payload), text=True, env=dict(environment), cwd=cwd,
+        pass_fds=(payload["descriptor"],), stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL, timeout=timeout, check=False,
+    )
+    if completed.returncode:
+        raise native.NativeResultUnavailable("native request did not yield a complete successful result")
+
+
 def _probe_kubernetes_controller_cwd(
     controller_name: str,
     *,
@@ -2972,7 +3122,73 @@ def _probe_kubernetes_controller_cwd(
             pod_count=1,
             error=_redact_private_text(_command_detail(cwd), redactions),
         )
-    return ControllerExecutionProbe(True, "cwd_live", pod_count=1)
+    return ControllerExecutionProbe(
+        True, "cwd_live", pod_count=1, identity=_controller_incarnation(head)
+    )
+
+
+def _controller_incarnation(pod: Mapping[str, Any]) -> str:
+    from npa.orchestration.skypilot._managed_job_api import observation_digest
+
+    metadata = pod.get("metadata", {})
+    statuses = pod.get("status", {}).get("containerStatuses", [])
+    if not metadata.get("uid") or not metadata.get("namespace") or not statuses:
+        return ""
+    containers = []
+    for item in statuses:
+        if not all(item.get(key) for key in ("name", "containerID", "imageID")):
+            return ""
+        if not item.get("state", {}).get("running", {}).get("startedAt"):
+            return ""
+        containers.append({key: item[key] for key in ("name", "containerID", "imageID")})
+    return observation_digest({"uid": metadata["uid"], "namespace": metadata["namespace"],
+                               "containers": sorted(containers, key=lambda row: row["name"])})
+
+
+def _native_context_digest(*, isolated_dir, controller, context, sky_executable, environment):
+    from npa.orchestration.skypilot import local_api
+    from npa.orchestration.skypilot._managed_job_api import NativeResultUnavailable, observation_digest
+
+    root = Path(isolated_dir).absolute() / "local-api"
+    with local_api._locked(root):
+        record = local_api._read(root)
+        if not record or record.get("state") != "ready":
+            raise NativeResultUnavailable("owned API is not verified ready")
+        process = local_api._process(record)
+        if not process or not local_api._listener_owned(record, process):
+            raise NativeResultUnavailable("owned API identity is unavailable")
+        _check_native_environment(record, environment, sky_executable)
+        store = Path(environment["HOME"]) / ".sky/api_server/requests.db"
+        metadata = store.lstat()
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
+            raise NativeResultUnavailable("native request store is not owner-bound")
+        api = {"marker": record["marker"], "process": process,
+               "store": [metadata.st_dev, metadata.st_ino],
+               "config": record["config_sha256"], "files": record.get("identity_files"),
+               "endpoint": local_api._endpoint(record)}
+    probe = _probe_kubernetes_controller_cwd(
+        controller, context=context, env=environment, use_current_context=not context,
+    )
+    if not probe.healthy or not probe.identity:
+        raise NativeResultUnavailable("controller incarnation is unverified; context retained")
+    return observation_digest({"api": api, "controller": probe.identity})
+
+
+def _check_native_environment(record, environment, sky_executable):
+    from npa.orchestration.skypilot._managed_job_api import NativeResultUnavailable
+
+    interpreter = str(Path(sky_executable).absolute().parent / "python")
+    endpoint = f"http://127.0.0.1:{record['port']}"
+    if record.get("interpreter") != interpreter or environment.get("SKYPILOT_API_SERVER_ENDPOINT") != endpoint:
+        raise NativeResultUnavailable("native API selection changed")
+    if environment.get("SKYPILOT_DB_CONNECTION_URI"):
+        raise NativeResultUnavailable("native API cannot use a different request store")
+    config = Path(environment.get("SKYPILOT_GLOBAL_CONFIG", ""))
+    if hashlib.sha256(config.read_bytes()).hexdigest() != record.get("config_sha256"):
+        raise NativeResultUnavailable("native API configuration changed")
+    for key in ("HOME", "SKYPILOT_USER_ID", "KUBECONFIG"):
+        if hashlib.sha256(environment.get(key, "").encode()).hexdigest() != record["environment_binding"].get(key):
+            raise NativeResultUnavailable("native API executing context changed")
 
 
 def _wait_for_healthy_jobs_controller(

@@ -255,6 +255,7 @@ class LaunchTransactionResult:
     existence: str = "indeterminate"
     controller: dict[str, str] = field(default_factory=dict)
     launch_result: Any = field(default=None, repr=False)
+    identity_source: str = "unverified"
 
     @property
     def ok(self) -> bool:
@@ -276,6 +277,7 @@ class LaunchTransactionResult:
             "operator_remedy": self.operator_remedy,
             "existence": self.existence,
             "controller": dict(self.controller),
+            "identity_source": self.identity_source,
         }
 
 
@@ -568,6 +570,7 @@ def run_launch_transaction(
     launch: Callable[[], Any],
     reconcile: Callable[[], ReconciliationEvidence],
     classify_launch_error: Callable[[BaseException], tuple[EvidenceState, FailureCategory]],
+    require_native_result: bool = False,
     recovery_policy: RecoveryPolicy = RecoveryPolicy(),
     lock_root: Path | None = None,
     clock: Callable[[], float] = time.monotonic,
@@ -588,6 +591,12 @@ def run_launch_transaction(
         initial = reconcile()
         transaction.reconciliations.append(initial.to_dict())
         if initial.state is ReconciliationState.FOUND:
+            if require_native_result:
+                transaction.identity_source = "reconciled_not_launch_owned"
+                transaction.recovery_decision = "retain_existing_without_native_invocation"
+                transaction.primary_error = "existing queue record is not this invocation's native result"
+                checkpoint()
+                _raise_result(transaction)
             if is_terminal_failure_job_status(initial.status):
                 # A prior failed/cancelled attempt cannot make progress and must
                 # not be presented to the runtime as a newly submitted job.  The
@@ -621,6 +630,7 @@ def run_launch_transaction(
                     checkpoint()
                     _raise_result(transaction)
                 transaction.state = LaunchState.ADOPTED
+                transaction.identity_source = "reconciled_not_launch_owned"
                 transaction.job_id = initial.job_id
                 transaction.recovery_decision = "adopt_existing"
                 if progress is not None:
@@ -691,6 +701,9 @@ def run_launch_transaction(
                 state, category = classify_launch_error(exc)
                 primary = redact_text(str(exc))
             else:
+                if require_native_result:
+                    _finish_native_transaction(transaction, launch_result, reconcile, checkpoint)
+                    return transaction
                 after_success = reconcile()
                 transaction.reconciliations.append(after_success.to_dict())
                 # `sky jobs launch --async` returns after the API request is
@@ -730,6 +743,7 @@ def run_launch_transaction(
                     transaction.job_id = after_success.job_id
                     transaction.launch_result = launch_result
                     transaction.recovery_decision = "submitted_and_reconciled"
+                    transaction.identity_source = "reconciled_not_launch_owned"
                     if progress is not None:
                         progress(
                             f"launch sequence {transaction.launch_sequence} reconciled "
@@ -753,6 +767,12 @@ def run_launch_transaction(
 
             transaction.primary_error = primary
             transaction.category = category
+            if require_native_result:
+                transaction.state = LaunchState.INDETERMINATE
+                transaction.recovery_decision = "retain_uncertain_native_submission_no_retry"
+                transaction.operator_remedy = "Preserve the original private context; do not resubmit or adopt by name."
+                checkpoint()
+                _raise_result(transaction)
             after_failure = reconcile()
             transaction.reconciliations.append(after_failure.to_dict())
             if after_failure.state is ReconciliationState.FOUND:
@@ -782,6 +802,7 @@ def run_launch_transaction(
                     checkpoint()
                     _raise_result(transaction)
                 transaction.state = LaunchState.ADOPTED
+                transaction.identity_source = "reconciled_not_launch_owned"
                 transaction.recovery_decision = "adopt_after_uncertain_launch"
                 if progress is not None:
                     progress(
@@ -841,3 +862,27 @@ def run_launch_transaction(
                 transaction.recovery_decision = "interrupted_verified_absent"
                 checkpoint()
                 _raise_result(transaction)
+
+
+def _finish_native_transaction(transaction, result, reconcile, checkpoint):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+
+    if not isinstance(result, NativeLaunchResult):
+        transaction.primary_error = "native request/result observation missing"
+        checkpoint()
+        _raise_result(transaction)
+    evidence = reconcile()
+    transaction.reconciliations.append(evidence.to_dict())
+    if (evidence.state is not ReconciliationState.FOUND
+            or evidence.job_id != result.job_id or evidence.status == "UNKNOWN"):
+        transaction.primary_error = "native result and complete current job evidence disagree"
+        transaction.recovery_decision = "retain_native_identity_conflict_no_retry"
+        checkpoint()
+        _raise_result(transaction)
+    transaction.state = LaunchState.SUBMITTED
+    transaction.existence = "found"
+    transaction.job_id = result.job_id
+    transaction.launch_result = result
+    transaction.identity_source = "native_request_result"
+    transaction.recovery_decision = "native_result_and_complete_tasks_verified"
+    checkpoint()

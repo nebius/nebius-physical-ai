@@ -72,6 +72,52 @@ def _transient(exc: BaseException) -> tuple[EvidenceState, FailureCategory]:
     return classify_failure(phase="launch", exception=exc)
 
 
+@pytest.mark.parametrize("observed", ("existing", "lost", "failed", "foreign", "incomplete"))
+def test_native_transaction_never_adopts_or_retries_uncertain_identity(tmp_path, observed):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+
+    launches = []
+    records = []
+
+    def launch():
+        launches.append(True)
+        if observed in {"lost", "failed"}:
+            raise RuntimeError("synthetic transport or allocation-before-error")
+        return NativeLaunchResult("attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64)
+
+    def reconcile():
+        if observed == "existing" or launches:
+            return ReconciliationEvidence(
+                ReconciliationState.AMBIGUOUS if observed == "incomplete" else ReconciliationState.FOUND,
+                job_id="42", status="RUNNING", workload_observable=True,
+            )
+        return ReconciliationEvidence(ReconciliationState.ABSENT)
+
+    with pytest.raises(LaunchTransactionError):
+        run_launch_transaction(logical_id="synthetic", readiness=_stable, launch=launch,
+                               reconcile=reconcile, classify_launch_error=_transient,
+                               require_native_result=True, lock_root=tmp_path, record=records.append)
+    assert len(launches) == (0 if observed == "existing" else 1)
+    assert all(record["state"] not in {"adopted", "submitted"} for record in records)
+
+
+def test_native_transaction_distinguishes_success_from_reconciliation(tmp_path):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+
+    result = NativeLaunchResult("attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64)
+    observations = iter([ReconciliationEvidence(ReconciliationState.ABSENT),
+                         ReconciliationEvidence(ReconciliationState.FOUND, job_id="41", status="RUNNING")])
+    transaction = run_launch_transaction(
+        logical_id="synthetic", readiness=_stable, launch=lambda: result,
+        reconcile=lambda: next(observations), classify_launch_error=_transient,
+        require_native_result=True, lock_root=tmp_path,
+    )
+    assert transaction.state is LaunchState.SUBMITTED
+    assert transaction.launch_result is result
+    assert transaction.identity_source == "native_request_result"
+    assert "request" not in transaction.to_dict() and "context" not in transaction.to_dict()
+
+
 def test_consecutive_readiness_requires_count_and_full_window() -> None:
     clock = FakeClock()
     probe = SequenceProbe(clock, [EvidenceState.READY])
