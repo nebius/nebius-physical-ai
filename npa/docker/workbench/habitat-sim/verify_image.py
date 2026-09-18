@@ -8,9 +8,12 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tarfile
+import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 NPA_ROOT = Path(__file__).resolve().parents[3]
@@ -370,10 +373,184 @@ def _failure_report(code: str) -> dict[str, object]:
     }
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Run the complete Habitat OCI verification command."""
+def _require_private_directory(fd: int) -> None:
+    info = os.fstat(fd)
+    W.require(
+        stat.S_ISDIR(info.st_mode)
+        and info.st_uid == os.geteuid()
+        and not info.st_mode & 0o077,
+        "report_directory_permissions",
+    )
 
-    os.umask(0o077)
+
+def _open_report_parent(analysis_root: Path, output: Path) -> int:
+    root, output = analysis_root.absolute(), output.absolute()
+    W.require(".." not in root.parts + output.parts, "report_parent_component")
+    W.require(
+        output.parent.is_relative_to(root) and not root.is_relative_to(CHECKOUT_ROOT),
+        "report_output_scope",
+    )
+    W.require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", output.name), "report_name")
+    _require_root(root, "analysis_root_missing")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    fd = os.open(root.anchor, flags)
+    try:
+        for component in root.parts[1:]:
+            child = os.open(component, flags, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        _require_private_directory(fd)
+        for component in output.parent.relative_to(root).parts:
+            child = os.open(component, flags, dir_fd=fd)
+            os.close(fd)
+            fd = child
+            _require_private_directory(fd)
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _confirm_report_parent(args: argparse.Namespace, held: int) -> None:
+    current = _open_report_parent(args.analysis_root, args.json)
+    try:
+        expected, observed = os.fstat(held), os.fstat(current)
+        W.require(
+            (expected.st_dev, expected.st_ino) == (observed.st_dev, observed.st_ino),
+            "report_directory_changed",
+        )
+    finally:
+        os.close(current)
+
+
+def _require_report_absent(parent: int, name: str) -> None:
+    try:
+        os.stat(name, dir_fd=parent, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    raise W.ScanError("report_output_exists")
+
+
+def _close_report_descriptor(fd: int) -> None:
+    try:
+        os.close(fd)
+    except OSError:
+        print("Habitat-Sim report descriptor cleanup failed", file=sys.stderr)
+
+
+@contextmanager
+def _report_destination(args: argparse.Namespace):
+    parent = _open_report_parent(args.analysis_root, args.json)
+    try:
+        _require_report_absent(parent, args.json.name)
+        yield parent
+    finally:
+        _close_report_descriptor(parent)
+
+
+def _cleanup_owned_report(parent: int, name: str, held: int) -> None:
+    try:
+        expected = os.fstat(held)
+        observed = os.stat(name, dir_fd=parent, follow_symlinks=False)
+        if (expected.st_dev, expected.st_ino) != (observed.st_dev, observed.st_ino):
+            print("Habitat-Sim report cleanup identity changed", file=sys.stderr)
+            return
+        os.unlink(name, dir_fd=parent)
+    except FileNotFoundError:
+        return
+    except OSError:
+        print("Habitat-Sim owned report cleanup failed", file=sys.stderr)
+
+
+@contextmanager
+def _temporary_report(parent: int):
+    name = f".habitat-report-{uuid.uuid4().hex}.pending"
+    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+    fd = os.open(name, flags, 0o600, dir_fd=parent)
+    try:
+        yield name, fd
+    finally:
+        _cleanup_owned_report(parent, name, fd)
+        _close_report_descriptor(fd)
+
+
+def _write_report_bytes(fd: int, payload: bytes) -> None:
+    remaining = memoryview(payload)
+    while remaining:
+        written = os.write(fd, remaining)
+        W.require(written > 0, "report_short_write")
+        remaining = remaining[written:]
+    os.fsync(fd)
+
+
+def _confirm_report(parent: int, name: str, held: int, payload: bytes) -> None:
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+    fd = os.open(name, flags, dir_fd=parent)
+    try:
+        expected, before = os.fstat(held), os.fstat(fd)
+        W.require(
+            stat.S_ISREG(before.st_mode)
+            and before.st_uid == os.geteuid()
+            and stat.S_IMODE(before.st_mode) == 0o600
+            and before.st_nlink == 2
+            and W.stat_fingerprint(expected) == W.stat_fingerprint(before),
+            "report_identity_changed",
+        )
+        W.require(W.descriptor_bytes(fd) == payload, "report_bytes_changed")
+        after = os.stat(name, dir_fd=parent, follow_symlinks=False)
+        W.require(
+            W.stat_fingerprint(before)
+            == W.stat_fingerprint(os.fstat(fd))
+            == W.stat_fingerprint(after),
+            "report_identity_changed",
+        )
+    finally:
+        _close_report_descriptor(fd)
+
+
+def _publish_report(args: argparse.Namespace, parent: int, report: dict) -> None:
+    payload = (json.dumps(report, indent=2, sort_keys=True) + "\n").encode()
+    _confirm_report_parent(args, parent)
+    with _temporary_report(parent) as (temporary, fd):
+        linked = verified = False
+        try:
+            _write_report_bytes(fd, payload)
+            _confirm_report_parent(args, parent)
+            temporary_info = os.stat(temporary, dir_fd=parent, follow_symlinks=False)
+            W.require(
+                W.stat_fingerprint(temporary_info) == W.stat_fingerprint(os.fstat(fd)),
+                "report_temporary_changed",
+            )
+            os.link(
+                temporary,
+                args.json.name,
+                src_dir_fd=parent,
+                dst_dir_fd=parent,
+                follow_symlinks=False,
+            )
+            linked = True
+            os.fsync(parent)
+            _confirm_report(parent, args.json.name, fd, payload)
+            _confirm_report_parent(args, parent)
+            verified = True
+        finally:
+            if linked and not verified:
+                _cleanup_owned_report(parent, args.json.name, fd)
+
+
+def _verification_report(args: argparse.Namespace) -> dict[str, object]:
+    try:
+        return _verify_archive(args)
+    except W.ScanError as error:
+        return _failure_report(str(error))
+    except W.INPUT_ERRORS as error:
+        report = _failure_report("unreadable_or_incomplete_image_evidence")
+        report["scanner_error_type"] = type(error).__name__
+        print(f"Habitat-Sim scanner failure: {type(error).__name__}", file=sys.stderr)
+        return report
+
+
+def _arguments(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--analysis-root", type=Path, required=True)
     parser.add_argument("--trusted-root", type=Path, required=True)
@@ -385,15 +562,31 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-python-venv-inventory-sha256", required=True)
     parser.add_argument("--expected-native-closure-sha256", required=True)
     parser.add_argument("--json", type=Path, required=True)
-    args = parser.parse_args(argv)
-    report: dict[str, object]
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Verify an OCI archive and publish one owner-scoped, non-overwriting report.
+
+    Args:
+        argv: Command arguments; defaults to the process arguments.
+    Returns:
+        Zero only after valid evidence and verified report publication, else one.
+    Raises:
+        SystemExit: Argument parsing rejects an invalid command line.
+    """
+    os.umask(0o077)
+    args = _arguments(argv)
     try:
-        report = _verify_archive(args)
+        with _report_destination(args) as parent:
+            report = _verification_report(args)
+            _publish_report(args, parent, report)
     except W.ScanError as error:
-        report = _failure_report(str(error))
-    except W.INPUT_ERRORS:
-        report = _failure_report("unreadable_or_incomplete_image_evidence")
-    args.json.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+        print(f"Habitat-Sim report refused: {error}", file=sys.stderr)
+        return 1
+    except W.INPUT_ERRORS as error:
+        print(f"Habitat-Sim report failure: {type(error).__name__}", file=sys.stderr)
+        return 1
     print(
         "Habitat-Sim complete image verification "
         + ("passed" if report["valid"] else "failed")

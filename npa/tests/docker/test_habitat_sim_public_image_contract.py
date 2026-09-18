@@ -60,6 +60,27 @@ def test_habitat_pending_source_closure_agrees_with_catalog_totals() -> None:
     assert "habitat-sim" in images.PENDING_REDISTRIBUTION_TOOLS
 
 
+def test_habitat_capability_metadata_keeps_byte_and_source_qualification_pending() -> (
+    None
+):
+    from npa.smoke.capabilities import GOLDEN_EVAL_CAPABILITIES
+
+    capability = GOLDEN_EVAL_CAPABILITIES["habitat-sim"][0]
+    assert "intended exact-byte and corresponding-source" in capability
+    assert "closure qualification remains pending" in capability
+    assert "complete redistributable dependency closure" not in capability
+    entry = yaml.safe_load((ROOT / "npa/src/npa/smoke/golden_evals.yaml").read_text())[
+        "containers"
+    ]["habitat-sim"]
+    notes = entry["safety"]["notes"]
+    assert "Unvalidated and publication-quarantined" in notes
+    assert "exact-byte redistribution" in notes
+    assert "complete corresponding-source qualification remain pending" in notes
+    assert "not accepted image/live proof" in notes
+    assert entry["golden_eval"]["status"] == "gpu-gated"
+    assert "habitat-sim" in images.PENDING_REDISTRIBUTION_TOOLS
+
+
 def _run_bash(
     script: str,
     *arguments: str,

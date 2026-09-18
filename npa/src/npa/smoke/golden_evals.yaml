@@ -48,10 +48,12 @@ containers:
       network: official Meta scene runtime fetch and operator S3 output
       external_fetch: [official-meta-habitat-test-scene-runtime, s3-runtime]
       notes: >-
-        Unbuilt and publication-quarantined. The image candidate contains pinned
-        MIT source and a redistributable hash-locked runtime, but no scene,
-        cache, credential, output, CUDA, or NVIDIA driver payload. The CC BY 4.0
-        scene is hash-verified and attributed after runtime fetch.
+        Unvalidated and publication-quarantined. The intended candidate uses
+        pinned MIT source and a hash-locked runtime; exact-byte redistribution
+        and complete corresponding-source qualification remain pending. Required
+        scans must prove scene, cache, credential, output, CUDA, and NVIDIA driver
+        payload absence. The CC BY 4.0 scene must be hash-verified and attributed
+        after runtime fetch. These requirements are not accepted image/live proof.
     golden_eval:
       kind: container-smoke
       command: >-

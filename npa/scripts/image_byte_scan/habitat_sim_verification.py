@@ -430,7 +430,7 @@ def _dpkg_file_owners(
                 continue
             try:
                 path = W.safe_name(line.lstrip("/"))
-            except Exception:
+            except W.ScanError:
                 findings.append(
                     {"code": "runtime_package_file_list_invalid", "package": package}
                 )

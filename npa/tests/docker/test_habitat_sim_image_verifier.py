@@ -16,6 +16,8 @@ import subprocess
 import sys
 import tarfile
 import textwrap
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import yaml
@@ -731,7 +733,7 @@ def _run_cli(
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
     wrapper = tmp_path / "invoke-verifier.py"
     _write_cli_wrapper(wrapper)
-    report = tmp_path / "cli-report.json"
+    report = Path(analysis_root or fixture["analysis"]) / "cli-report.json"
     command = _cli_arguments(
         wrapper,
         report,
@@ -741,7 +743,7 @@ def _run_cli(
         archive or fixture["archive"],
     )
     result = subprocess.run(command, text=True, capture_output=True, check=False)
-    return result, json.loads(report.read_text())
+    return result, json.loads(report.read_text()) if report.exists() else {}
 
 
 def _codes(report: dict[str, object]) -> set[str]:
@@ -928,7 +930,11 @@ def test_host_verifier_cli_identifies_missing_root(
         trusted_root=roots["trusted"],
     )
     assert result.returncode == 1
-    assert _codes(report) == {expected_code}
+    if root_name == "analysis":
+        assert report == {}
+        assert expected_code in result.stderr
+    else:
+        assert _codes(report) == {expected_code}
 
 
 def test_host_verifier_cli_refuses_archive_outside_analysis_root(tmp_path) -> None:
@@ -947,13 +953,168 @@ def test_host_verifier_cli_refuses_unsafe_or_wrong_trusted_root(tmp_path) -> Non
     unsafe.chmod(0o755)
     result, report = _run_cli(tmp_path, fixture, analysis_root=unsafe)
     assert result.returncode == 1
-    assert _codes(report) == {"root_permissions"}
+    assert report == {}
+    assert "report_directory_permissions" in result.stderr
 
     wrong_trusted = tmp_path / "wrong-trusted"
     wrong_trusted.mkdir(mode=0o755)
     result, report = _run_cli(tmp_path, fixture, trusted_root=wrong_trusted)
     assert result.returncode == 1
     assert _codes(report) == {"trusted_source_root_mismatch"}
+
+
+def _report_arguments(tmp_path: Path) -> SimpleNamespace:
+    analysis = tmp_path / "analysis"
+    analysis.mkdir(mode=0o700)
+    return SimpleNamespace(analysis_root=analysis, json=analysis / "report.json")
+
+
+def test_report_publication_confirms_owner_identity_and_bytes(
+    tmp_path, monkeypatch
+) -> None:
+    """Publish benign JSON only; archive verification is an inert mock."""
+    args = _report_arguments(tmp_path)
+    report = {"valid": True, "findings": [], "fixture": "inert"}
+    monkeypatch.setattr(VERIFIER, "_arguments", lambda _: args)
+    verifier = Mock(return_value=report)
+    monkeypatch.setattr(VERIFIER, "_verify_archive", verifier)
+    assert VERIFIER.main([]) == 0
+    verifier.assert_called_once_with(args)
+    assert (
+        args.json.read_bytes()
+        == (json.dumps(report, indent=2, sort_keys=True) + "\n").encode()
+    )
+    info = args.json.stat()
+    assert info.st_uid == os.geteuid()
+    assert info.st_mode & 0o777 == 0o600
+    assert info.st_nlink == 1
+    assert list(args.analysis_root.iterdir()) == [args.json]
+
+
+def test_report_existing_owner_output_refused_before_effects(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    args = _report_arguments(tmp_path)
+    args.json.write_bytes(b"existing owner evidence\n")
+    before = args.json.stat()
+    verifier, publisher = Mock(), Mock()
+    monkeypatch.setattr(VERIFIER, "_arguments", lambda _: args)
+    monkeypatch.setattr(VERIFIER, "_verify_archive", verifier)
+    monkeypatch.setattr(VERIFIER, "_publish_report", publisher)
+    assert VERIFIER.main([]) == 1
+    verifier.assert_not_called()
+    publisher.assert_not_called()
+    assert "report_output_exists" in capsys.readouterr().err
+    assert args.json.read_bytes() == b"existing owner evidence\n"
+    assert args.json.stat() == before
+
+
+@pytest.mark.parametrize(
+    "code",
+    ["report_output_scope", "report_parent_component", "report_directory_permissions"],
+)
+def test_report_validation_refusal_precedes_scanner_and_publication(
+    tmp_path, monkeypatch, capsys, code
+) -> None:
+    """Mock rejected destination classification, without executing unsafe paths."""
+    args = _report_arguments(tmp_path)
+    verifier, publisher = Mock(), Mock()
+    monkeypatch.setattr(VERIFIER, "_arguments", lambda _: args)
+    monkeypatch.setattr(
+        VERIFIER, "_open_report_parent", Mock(side_effect=H.W.ScanError(code))
+    )
+    monkeypatch.setattr(VERIFIER, "_verify_archive", verifier)
+    monkeypatch.setattr(VERIFIER, "_publish_report", publisher)
+    assert VERIFIER.main([]) == 1
+    verifier.assert_not_called()
+    publisher.assert_not_called()
+    assert code in capsys.readouterr().err
+    assert list(args.analysis_root.iterdir()) == []
+
+
+@pytest.mark.parametrize("boundary", ["link", "readback", "content"])
+def test_report_publication_failure_cleans_only_created_output(
+    tmp_path, monkeypatch, boundary
+) -> None:
+    """Inject a failure, not a race; only benign task-created files are touched."""
+    args = _report_arguments(tmp_path)
+    marker = args.analysis_root / "owner-marker.txt"
+    marker.write_bytes(b"retained owner marker\n")
+    monkeypatch.setattr(VERIFIER, "_arguments", lambda _: args)
+    monkeypatch.setattr(VERIFIER, "_verify_archive", lambda _: {"valid": True})
+    if boundary == "link":
+        monkeypatch.setattr(
+            VERIFIER.os, "link", Mock(side_effect=OSError("inert refusal"))
+        )
+    elif boundary == "readback":
+        monkeypatch.setattr(
+            VERIFIER,
+            "_confirm_report",
+            Mock(side_effect=H.W.ScanError("report_bytes_changed")),
+        )
+    else:
+        monkeypatch.setattr(
+            VERIFIER.W, "descriptor_bytes", lambda _: b"different inert bytes"
+        )
+    assert VERIFIER.main([]) == 1
+    assert list(args.analysis_root.iterdir()) == [marker]
+    assert marker.read_bytes() == b"retained owner marker\n"
+
+
+@pytest.mark.parametrize("error_type", [H.W.ScanError, RuntimeError, KeyError])
+def test_report_scanner_failure_is_fail_closed_and_diagnostic(
+    tmp_path, monkeypatch, capsys, error_type
+) -> None:
+    args = _report_arguments(tmp_path)
+    monkeypatch.setattr(VERIFIER, "_arguments", lambda _: args)
+    monkeypatch.setattr(
+        VERIFIER, "_verify_archive", Mock(side_effect=error_type("inert_failure"))
+    )
+    assert VERIFIER.main([]) == 1
+    report = json.loads(args.json.read_bytes())
+    assert report["valid"] is False
+    if error_type is H.W.ScanError:
+        assert _codes(report) == {"inert_failure"}
+        assert "scanner_error_type" not in report
+    else:
+        assert _codes(report) == {"unreadable_or_incomplete_image_evidence"}
+        assert report["scanner_error_type"] == error_type.__name__
+        assert error_type.__name__ in capsys.readouterr().err
+
+
+def test_report_cleanup_attempts_close_after_unlink_failure(
+    monkeypatch, capsys
+) -> None:
+    """Mock all filesystem effects; a cleanup error cannot replace the result."""
+    info = SimpleNamespace(st_dev=1, st_ino=2)
+    close = Mock()
+    monkeypatch.setattr(VERIFIER.os, "open", Mock(return_value=42))
+    monkeypatch.setattr(VERIFIER.os, "fstat", Mock(return_value=info))
+    monkeypatch.setattr(VERIFIER.os, "stat", Mock(return_value=info))
+    monkeypatch.setattr(
+        VERIFIER.os, "unlink", Mock(side_effect=OSError("inert cleanup refusal"))
+    )
+    monkeypatch.setattr(VERIFIER.os, "close", close)
+    with pytest.raises(RuntimeError, match="original failure"):
+        with VERIFIER._temporary_report(41):
+            raise RuntimeError("original failure")
+    close.assert_called_once_with(42)
+    assert "owned report cleanup failed" in capsys.readouterr().err
+
+
+def test_report_cleanup_does_not_remove_unmatched_identity(monkeypatch, capsys) -> None:
+    """An inert identity mismatch must never authorize unlink."""
+    unlink = Mock()
+    monkeypatch.setattr(
+        VERIFIER.os, "fstat", Mock(return_value=SimpleNamespace(st_dev=1, st_ino=2))
+    )
+    monkeypatch.setattr(
+        VERIFIER.os, "stat", Mock(return_value=SimpleNamespace(st_dev=1, st_ino=3))
+    )
+    monkeypatch.setattr(VERIFIER.os, "unlink", unlink)
+    VERIFIER._cleanup_owned_report(41, "inert.pending", 42)
+    unlink.assert_not_called()
+    assert "cleanup identity changed" in capsys.readouterr().err
 
 
 def test_complete_runtime_inventory_hashes_are_required(tmp_path) -> None:
@@ -1336,6 +1497,33 @@ def test_source_projection_rejects_undeclared_links(tmp_path) -> None:
     assert "source_projection_population_mismatch" in _codes(
         _verify(tmp_path, [entries])
     )
+
+
+@pytest.mark.parametrize("error_type", [H.W.ScanError, RuntimeError, KeyError])
+def test_package_list_only_classifies_expected_validation_errors(
+    monkeypatch, error_type
+) -> None:
+    """Mock an in-memory package-list parser; no image or filesystem access."""
+    monkeypatch.setattr(
+        H.W, "safe_name", Mock(side_effect=error_type("inert validation boundary"))
+    )
+    findings = []
+    args = (
+        {"var/lib/dpkg/info/fixture.list": b"/usr/lib/fixture.so\n"},
+        {"fixture": {}},
+        {},
+        {},
+        findings,
+    )
+    if error_type is H.W.ScanError:
+        assert H._dpkg_file_owners(*args) == {}
+        assert findings == [
+            {"code": "runtime_package_file_list_invalid", "package": "fixture"}
+        ]
+    else:
+        with pytest.raises(error_type, match="inert validation boundary"):
+            H._dpkg_file_owners(*args)
+        assert findings == []
 
 
 @pytest.mark.parametrize("error_type", [H.W.ScanError, RuntimeError, KeyError])
