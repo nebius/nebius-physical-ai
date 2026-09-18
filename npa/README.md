@@ -231,12 +231,18 @@ The CPU wheel exercises real checkpoint loading without a GPU. See
 [the CI environment](../.github/workflows/test.yml) for the complete coverage
 gate; some optional checks also use Node, tmux, or Docker.
 
-Pull requests receive fast smoke and security feedback. The merge queue runs the
-exact latest-main candidate through browser and focused Python 3.10/3.14 checks
-alongside four duration-balanced Python 3.12 coverage shards, then enforces the
-merged floor. Main pushes run the sharded full suite on all three supported
-versions and publish the measured module-duration profile used to rebalance later
-shards. The focused compatibility check runs before the CPU tensor dependencies
+Pull requests receive smoke, affected subsystem tests, and security feedback.
+Agent/browser changes also run Cypress before queue admission; unknown and
+shared changes receive full Python 3.12 validation. The merge queue runs the
+combined latest-main candidate through one dedicated browser job and focused
+Python 3.10/3.14 checks alongside five duration-balanced Python 3.12 coverage
+shards, then enforces the merged floor. Recognized prose-only edits retain smoke,
+documentation, lint, guardrail, and security checks while skipping runtime suites.
+See the [contributor CI guide](../CONTRIBUTING.md) for the conservative selection
+rules and local inspection command. Scheduled/manual audits run the full suite
+on all three supported versions; the scheduled audit publishes measured module
+durations for later rebalancing. The focused compatibility check runs before the
+CPU tensor dependencies
 are installed, so async cancellation and isolated SkyPilot fixture regressions
 surface before merge. Run it locally with:
 

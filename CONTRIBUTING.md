@@ -480,7 +480,7 @@ cancels the complete superseded gate instead of six independent fragments:
 
 | Workflow | What it runs | Reproduce locally |
 | --- | --- | --- |
-| `.github/workflows/test.yml` | PR smoke feedback; merge-queue browser/compatibility plus `pytest tests/` with `--cov-fail-under=60`; main compatibility audit | `make test` |
+| `.github/workflows/test.yml` | PR smoke and affected subsystem tests; full candidate coverage when needed; scheduled compatibility audit | `make test` |
 | `.github/workflows/lint.yml` | `ruff check .`, and `scripts/build_docs.sh --check` for `docs/cli/` drift | `make lint`, `make docs-check` |
 | `.github/workflows/harness-guardrails.yml` | `pytest npa/tests/guardrails` | `make test-guardrails` |
 | `.github/workflows/confidentiality-scan.yml` | `npa.guardrails.confidentiality` over the diff and tree | needs the denylist secrets; see `skills/atomic/protect-nebius-infra-details/SKILL.md` |
@@ -504,18 +504,47 @@ tree and lets those tests self-skip. Both numbers rise as tests land; the shape 
 the difference, several hundred more collected and skipped in CI, is the part that
 stays true.
 
-Ordinary pull requests run smoke feedback alongside the security and repository
-gates. The merge queue tests the exact candidate against the latest `main`: the
-browser and focused Python 3.10/3.14 compatibility checks run alongside four
-Python 3.12 shards of the complete suite, which merge coverage before enforcing
-the 60% floor. Pushes to `main` retain that four-shard suite on all three supported
-Python versions; `requires-python` is `>=3.10`.
+Pull requests run smoke feedback and the affected subsystem's Python tests
+alongside security, lint, documentation drift, and repository guardrails. Agent
+and browser changes also run the dedicated Cypress job before queue admission.
+CI, dependency, shared configuration, deleted files, and unknown paths trigger
+the full Python 3.12 suite on the PR. Selection is conservative: a source change
+runs its subsystem's tests, not just tests named after the modified module.
+
+The merge queue validates the combined candidate against its current base with
+five Python 3.12 coverage shards, the dedicated browser job, and focused Python
+3.10/3.14 compatibility checks. Coverage is combined before enforcing the 60%
+floor. Cypress runs once in its own job, never inside a pytest shard. Scheduled
+and manual audits retain four shards on each of Python 3.10, 3.12, and 3.14.
+
+A narrow prose-only exception skips the full Python and browser suites on PRs
+and merge candidates while retaining smoke, lint, documentation drift, guardrail,
+and every existing security gate. It applies only to edits of existing regular
+Markdown files in `docs/`, the root/package README and contribution guide, or
+workflow READMEs. Generated CLI references, security documentation, skills, new
+or renamed files, mode changes, and edits to fenced/indented code, inline code,
+frontmatter, or templates keep full validation. Mixed merge groups use the full
+combined diff, so a prose PR cannot hide a preceding code change.
+
+The scope job executes `npa/scripts/ci_test_scope.py` from the trusted base
+commit. A candidate cannot install its own shortcut. Missing base policy keeps
+the full suite; an invalid comparison fails the job. To inspect a selection
+locally with the candidate checked out, pass full commit SHAs:
+
+```bash
+npa/.venv/bin/python npa/scripts/ci_test_scope.py \
+  --base "$(git rev-parse origin/main)" --head "$(git rev-parse HEAD)" \
+  --event pull_request
+```
+
+The command prints the prose/full-suite/browser decisions and selected pytest
+paths as JSON. Use `--event merge_group` to inspect queue eligibility instead.
 
 The internal sharder activates only when `NPA_CI_SHARD_INDEX` and
 `NPA_CI_TOTAL_SHARDS` are both set. The index is one-based and must not exceed
 the total; ordinary local test runs leave both variables unset. It greedily
 balances measured module durations from `npa/tests/ci_test_durations.json`, then
-uses a deterministic default for new tests. Successful Python 3.12 main shards
+uses a deterministic default for new tests. Scheduled Python 3.12 shards
 publish a merged timing profile that can refresh the reviewed manifest.
 
 ## Testing Requirements
