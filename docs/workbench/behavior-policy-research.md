@@ -8,9 +8,10 @@ The current RLC controller already uses a π0.5-derived model. The
 fine-tune and shorter action execution showed no improvement over the campaign's
 stock controls. The [complete 60-rollout follow-up](behavior-followup-results-2026-09-18.md)
 also found a regression for the balanced three-task fine-tune: Q=0.227778 versus
-stock Q=0.404444. The radio press-phase checkpoint remains unevaluated, and
-Meta100 startup validation is in progress. No competitive full-challenge score is
-established.
+stock Q=0.404444. An additional 16 verified Meta100 rollouts scored lower than
+stock on radio and matched stock's mean Q on a six-case trash prefix. Meta's shoe
+task and the radio press-phase checkpoint remain unevaluated. No competitive
+full-challenge score is established.
 
 The earlier September 16 radio comparison remains recorded at RLC Q=0.20 versus
 the official baseline's Q=0.10. The EGR objective described below has no trained

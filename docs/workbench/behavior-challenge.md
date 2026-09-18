@@ -7,11 +7,13 @@ SkyPilot. A separately served policy receives RGB, depth, and robot
 proprioception and returns robot actions over WebSocket. This workflow evaluates
 a fixed policy; policy serving uses pinned upstream implementations.
 
-**Latest complete comparison, September 18:** the
-[60-rollout follow-up](behavior-followup-results-2026-09-18.md) scored the
+**Latest comparison, September 18:** the
+[76-rollout follow-up](behavior-followup-results-2026-09-18.md) scored the
 published RLC controller at Q=0.404444 and the balanced three-task fine-tune at
 Q=0.227778 on the same development panel. The fine-tune improved four cases and
-worsened fifteen. Meta100 startup validation is in progress. The
+worsened fifteen. Meta100 scored Q=0.20 versus stock's Q=0.30 on radio; its
+six-case trash prefix matched stock's mean Q, with two more full successes.
+Meta's shoe task remains unscored and its final publication was incomplete. The
 [earlier 80-rollout experiment](behavior-experiment-results-2026-09-17.md)
 remains separately recorded; the radio press-phase checkpoint is still
 unevaluated. These measurements cover three tasks and do not establish
