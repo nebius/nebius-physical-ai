@@ -1876,15 +1876,15 @@ def submit_workflow(
 
         def _reconcile() -> ReconciliationEvidence:
             nonlocal initial_controller_absent
-            if initial_controller_absent:
-                initial_controller_absent = False
-                return ReconciliationEvidence(ReconciliationState.ABSENT)
             if robotwin_authorization is not None:
                 from npa.orchestration.npa_workflow.robotwin_preflight import (
                     require_customer_authorization_fresh,
                 )
 
                 require_customer_authorization_fresh(robotwin_authorization)
+            if initial_controller_absent:
+                initial_controller_absent = False
+                return ReconciliationEvidence(ReconciliationState.ABSENT)
             if cleanup_state is not None and cleanup_state.native_result is not None:
                 return cleanup_state._lookup()
             return _reconcile_managed_job_env(
