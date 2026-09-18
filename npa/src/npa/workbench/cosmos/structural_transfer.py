@@ -1,4 +1,4 @@
-"""Typed sample and artifact contracts for guarded native Cosmos 3 edge transfer."""
+"""Typed controls and artifacts for guarded native Cosmos 3 edge/RGB transfer."""
 
 from __future__ import annotations
 
@@ -11,6 +11,27 @@ from typing import Any
 from npa.workflows.paidf_cosmos3_media import probe_video, validate_reference
 
 
+EDGE_THRESHOLDS = {
+    "very_low": (20, 50), "low": (50, 100), "medium": (100, 200),
+    "high": (200, 300), "very_high": (300, 400),
+}
+
+
+def edge_thresholds(preset: str) -> tuple[int, int]:
+    """Resolve a pinned native Canny preset before media work.
+
+    Args:
+        preset: One of the native edge threshold names.
+    Returns:
+        Lower and upper Canny thresholds.
+    Raises:
+        ValueError: The preset is unsupported or is not text.
+    """
+    if not isinstance(preset, str) or preset not in EDGE_THRESHOLDS:
+        raise ValueError("transfer_edge_threshold must be " + ", ".join(EDGE_THRESHOLDS))
+    return EDGE_THRESHOLDS[preset]
+
+
 @dataclass(frozen=True)
 class TransferSettings:
     """Sampling controls supported by the pinned native transfer implementation.
@@ -19,6 +40,10 @@ class TransferSettings:
         fps: Prepared and generated frame rate, an integer from 10 through 30.
         chunk_frames: Native 4k+1 generation window, from 9 through 297 frames.
         control_guidance: Native structural guidance, greater than 0 and at most 10.
+        edge_threshold: Native Canny preset; lower thresholds retain weaker edges.
+        rgb_weight: Native RGB hint weight relative to edge weight 1; zero disables it.
+        first_chunk_conditional_frames: Zero releases the source RGB first frame;
+            one retains the existing appearance anchor. Later chunks use generated overlap.
     Returns:
         Immutable settings; call validate before model work.
     Raises:
@@ -28,6 +53,9 @@ class TransferSettings:
     fps: int = 24
     chunk_frames: int = 93
     control_guidance: float = 1.5
+    edge_threshold: str = "medium"
+    rgb_weight: float = 0.0
+    first_chunk_conditional_frames: int = 1
 
     def validate(self) -> None:
         """Validate controls before any model work.
@@ -46,6 +74,12 @@ class TransferSettings:
         if (type(self.control_guidance) not in {int, float}
                 or not math.isfinite(self.control_guidance) or not 0 < self.control_guidance <= 10):
             raise ValueError("control_guidance must be finite, positive and at most 10")
+        edge_thresholds(self.edge_threshold)
+        if (type(self.rgb_weight) not in {int, float}
+                or not math.isfinite(self.rgb_weight) or self.rgb_weight < 0):
+            raise ValueError("transfer_rgb_weight must be finite and nonnegative")
+        if type(self.first_chunk_conditional_frames) is not int or self.first_chunk_conditional_frames not in (0, 1):
+            raise ValueError("transfer_first_chunk_conditional_frames must be 0 or 1")
 
 
 def transfer_sample(base: dict[str, Any], settings: TransferSettings, output: Path, seed: int) -> dict[str, Any]:
@@ -68,15 +102,20 @@ def transfer_sample(base: dict[str, Any], settings: TransferSettings, output: Pa
         raise ValueError("Structural transfer requires video2video mode")
     timeline = probe_video(Path(base["vision_path"]))
     validate_reference(timeline, settings.fps)
-    return {**base, "resolution": "480", "aspect_ratio": "16,9", "fps": settings.fps,
+    sample = {**base, "resolution": "480", "aspect_ratio": "16,9", "fps": settings.fps,
             "num_frames": settings.chunk_frames, "seed": seed, "shift": 10.0,
             "edge": {"control_path": str(output / "controls" / f"{base['name']}.mkv"),
-                     "preset_edge_threshold": "medium"},
+                     "preset_edge_threshold": settings.edge_threshold},
             "control_guidance": settings.control_guidance,
             "num_video_frames_per_chunk": settings.chunk_frames,
-            "num_conditional_frames": 5, "num_first_chunk_conditional_frames": 1,
+            "num_conditional_frames": 5,
+            "num_first_chunk_conditional_frames": settings.first_chunk_conditional_frames,
             "max_frames": timeline["decoded_frames"], "share_vision_temporal_positions": True,
             "show_input": False, "show_control_condition": False}
+    if settings.rgb_weight:
+        sample["blur"] = {"control_path": str(output / "controls" / f"{base['name']}-rgb.mkv"),
+                          "preset_blur_strength": "none", "weight": settings.rgb_weight}
+    return sample
 
 
 def transfer_artifact(sample_dir: Path) -> tuple[Path, dict[str, Any]]:

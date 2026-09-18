@@ -33,6 +33,10 @@ config:
   conditioning_fps: "24"
   transfer_chunk_frames: "93"
   control_guidance: "1.5"
+  transfer_edge_threshold: medium
+  transfer_rgb_weight: 0.0
+  # Zero releases the original first-frame appearance; one retains compatibility.
+  transfer_first_chunk_conditional_frames: "1"
   prompt: "Preserve the source robot motion and scene structure while creating a physically plausible appearance variant."
   negative_prompt: "distorted robot geometry, impossible motion, unsafe content"
   seed: "17"
@@ -42,6 +46,9 @@ config:
   variant_parallelism: "1"
   # Stable starter profiles across run IDs; change for appearance experiments.
   augmentation_seed: "30"
+  # Optional JSON array of coherent task-specific appearance profiles; empty
+  # retains the starter sampler. See the guide for manipulation tuning.
+  appearance_profiles_json: ""
   parallelism_preset: latency
   refinement_iterations: "2"
   retry_seed_stride: "1000"
@@ -77,6 +84,12 @@ config:
   appearance_max_dimension: "256"
   appearance_regions_json: ""
   caption_model: "MiniMaxAI/MiniMax-M3"
+  caption_instruction: >-
+    Describe visible objects, robot parts, and contacts in one or two factual
+    sentences. Task context: {{config.augment_subject}}. Treat this context as
+    a hypothesis, not proof. State uncertainty when small features or object
+    identities are unclear. Do not infer motion or task completion from a
+    single frame.
   vlm_backend: api
   max_images: "8"
   max_tokens: "512"
@@ -164,6 +177,8 @@ states:
         - "false"
         - "{{config.augment_subject}}"
         - "{{config.augmentation_seed}}"
+        - ""  # Optional quality anchor, unused by this recipe.
+        - "{{config.appearance_profiles_json}}"
     outputs:
       - uri: "{{config.configs_uri}}manifest.json"
         schema: npa.data_factory.configs.v1

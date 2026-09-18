@@ -99,8 +99,16 @@ equivalent environment setting; an explicit CLI flag takes precedence.
 
 ## Change the topology
 
+> **Security note: the Kubernetes API endpoint is public by default.**
+> `mk8s_cluster_public_endpoint` defaults to `true` so `kubectl` works out of the
+> box (no VPN/bastion). For production clusters, set
+> `mk8s_cluster_public_endpoint = false` in your `terraform.tfvars` (or
+> `TF_VAR_mk8s_cluster_public_endpoint=false`) to keep the control plane off the
+> public internet.
+
 | Need | Configuration |
 | --- | --- |
+| Private Kubernetes API endpoint | Set `mk8s_cluster_public_endpoint = false`; the default is a public endpoint |
 | More GPUs | Increase `gpu_nodes_count` and select a matching `gpu_nodes_preset`; a multi-GPU task must fit on one node |
 | Multi-node InfiniBand | Set `enable_gpu_cluster = true` and the matching `infiniband_fabric` for a supported topology |
 | Preemptible nodes | Set `gpu_nodes_preemptible = true`; this changes the capacity pool, while disk/IP/instance quotas still apply |
