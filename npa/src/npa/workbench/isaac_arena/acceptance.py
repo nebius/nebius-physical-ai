@@ -10,6 +10,7 @@ from .action_evidence import (
     validate_prepared_action_sequence,
 )
 from .errors import IsaacArenaError
+from .capture_profiles import capture_profile
 from .task_progress import task_progress_adapter, task_visual_interval
 from .video_evidence import (
     EVIDENCE_FILTER,
@@ -337,7 +338,8 @@ def _capture_contract(capture: dict, episode_length: int) -> dict:
         and rendering.get("dlss_execution_mode") == "quality"
         and rendering.get("dl_denoiser_enabled") is True
         and rendering.get("frame_generation_enabled") is False
-        and rendering.get("minimum_settling_renders") == 8
+        and rendering.get("minimum_settling_renders")
+        == capture_profile(rendering.get("profile", "standard")).settling_renders
         and rendering.get("stochastic_accumulation") is False
         and rendering.get("readback_phase") == "after_final_accepted_render"
         and isinstance(comparison, dict)
