@@ -144,7 +144,7 @@ includes a public source-video example and full submission commands.
 | A Franka training and evaluation exercise | [Franka + Genesis](docs/workbench/guides/franka-pick-and-place-genesis.md) | GPU; recorded run did not solve the task |
 | Quadruped reinforcement learning | [Isaac Lab](docs/workbench/guides/quadruped-isaac-lab.md) | RT-core GPU |
 | A G1 locomotion evaluation or training path | [G1 + SONIC](docs/workbench/guides/g1-humanoid-walk-sonic.md) | Runtime-specific GPU and checkpoints |
-| A browser workbench and artifact viewer | [Deploy the agent](docs/agent.md) | Terraform and S3 |
+| A browser workbench and artifact viewer | [Deploy the agent](docs/agent.md) | Terraform, S3, SSH key, Token Factory key |
 
 The [guide index](docs/workbench/guides/README.md) records validation scope.
 [Cookbooks](docs/workbench/cookbooks/README.md) cover longer training and data

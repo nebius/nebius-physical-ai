@@ -297,6 +297,15 @@ def test_job_group_render_emits_parallel_header(parallel_spec) -> None:
     assert "/images/c/" in docs[3]["run"]
 
 
+def test_job_group_rejects_unsupported_model_task_name_before_submission(tmp_path) -> None:
+    spec = load_spec(_write(tmp_path, PARALLEL_SPEC.replace("shard-a", "model.v1")))
+    wave = build_wave_plan(spec, run_id="p1").waves[0]
+    with pytest.raises(NpaWorkflowRenderError, match="only ASCII letters"):
+        render_skypilot_job_group_yaml(
+            spec, wave.steps, run_id="p1", options=_render_options()
+        )
+
+
 def test_job_group_render_rejects_single_task(parallel_spec) -> None:
     wave = build_wave_plan(parallel_spec, run_id="p1").waves[0]
     with pytest.raises(NpaWorkflowRenderError, match="at least two tasks"):

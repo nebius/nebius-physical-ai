@@ -25,14 +25,72 @@ def run(
     run_id: str = "sim2real-sdk",
     output_dir: str | Path | None = None,
     upload_artifacts: bool = False,
+    # Canonical BYO seams (see SIM2REAL_SEAMS in npa.workflows.sim2real_health).
+    # ``None`` means "not set": the value falls back to the environment
+    # variable / default handling in ``build_config_from_env``.
+    s3_endpoint: str | None = None,
+    s3_bucket: str | None = None,
+    s3_prefix: str | None = None,
+    trigger_dataset_uri: str | None = None,
+    trigger_dataset_id: str | None = None,
+    assets_uri: str | None = None,
+    scene_spec_uri: str | None = None,
+    augment_image: str | None = None,
+    policy_image: str | None = None,
+    trainer_image: str | None = None,
+    vlm_image: str | None = None,
+    eval_image: str | None = None,
+    k8s_isaac_cache_pvc: str | None = None,
+    vlm_model: str | None = None,
+    threshold: float | None = None,
+    inner_iterations: int | None = None,
+    outer_iterations: int | None = None,
+    loop_of_loops_iterations: int | None = None,
+    rollout_count: int | None = None,
+    steps_per_rollout: int | None = None,
+    heldout_env_count: int | None = None,
     **overrides: Any,
 ) -> dict[str, Any]:
-    """Run the full Sim2Real Stage 1-13 workflow."""
+    """Run the full Sim2Real Stage 1-13 workflow.
 
+    The BYO seams are explicit keyword parameters, kept in sync with
+    ``SIM2REAL_SEAMS`` by the contract test in
+    ``npa/tests/guardrails/test_three_tier_contract.py``. Anything else can
+    still be passed via ``**overrides`` for forward compatibility.
+    """
+
+    seam_values: dict[str, Any] = {
+        name: value
+        for name, value in (
+            ("s3_endpoint", s3_endpoint),
+            ("s3_bucket", s3_bucket),
+            ("s3_prefix", s3_prefix),
+            ("trigger_dataset_uri", trigger_dataset_uri),
+            ("trigger_dataset_id", trigger_dataset_id),
+            ("assets_uri", assets_uri),
+            ("scene_spec_uri", scene_spec_uri),
+            ("augment_image", augment_image),
+            ("policy_image", policy_image),
+            ("trainer_image", trainer_image),
+            ("vlm_image", vlm_image),
+            ("eval_image", eval_image),
+            ("k8s_isaac_cache_pvc", k8s_isaac_cache_pvc),
+            ("vlm_model", vlm_model),
+            ("threshold", threshold),
+            ("inner_iterations", inner_iterations),
+            ("outer_iterations", outer_iterations),
+            ("loop_of_loops_iterations", loop_of_loops_iterations),
+            ("rollout_count", rollout_count),
+            ("steps_per_rollout", steps_per_rollout),
+            ("heldout_env_count", heldout_env_count),
+        )
+        if value is not None
+    }
     config = build_config_from_env(
         run_id=run_id,
         output_dir=output_dir,
         upload_artifacts=upload_artifacts,
+        **seam_values,
         **overrides,
     )
     return run_full_loop(config)

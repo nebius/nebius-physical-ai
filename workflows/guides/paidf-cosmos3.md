@@ -1769,3 +1769,16 @@ For project or cluster permissions, contact your administrator. For workflow
 behavior and run management, continue with the
 [Cosmos 3 reference guide](../../docs/workbench/guides/paidf-cosmos3.md) and
 [workflow lifecycle](../../docs/run-lifecycle.md).
+
+## Clean up
+
+Idle GPU clusters keep billing after the run finishes. When you are done,
+tear them down:
+
+```bash
+npa destroy --project "<alias>" --all
+```
+
+The plan previews read-only until you pass `--yes`, and the Nebius project
+itself is retained by default. See [teardown](../../docs/teardown.md) for what
+`npa destroy` removes (cloud spend) versus what it keeps.

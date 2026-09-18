@@ -2500,8 +2500,9 @@ def test_explicit_resume_adopts_output_complete_lost_wave_after_driver_interrupt
     )
 
 
+@pytest.mark.parametrize("default_resumes", [0, 1, 2])
 def test_explicit_resume_relaunches_typed_pre_id_transport_failure(
-    tmp_path: Path,
+    tmp_path: Path, default_resumes: int,
 ) -> None:
     from npa.orchestration.skypilot.workflow import ManagedJobEvidence
 
@@ -2546,6 +2547,20 @@ def test_explicit_resume_relaunches_typed_pre_id_transport_failure(
         }
     )
     store.write_runtime_state(state)
+    submitter = FakeSubmitter()
+    for _ in range(default_resumes):
+        safe_options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
+        safe_executor = _executor(
+            spec, run_id="rt-pre-id-transport", submitter=submitter,
+            options=safe_options, store=store,
+            output_checker=lambda uri: uri.endswith("/shared.json"),
+            reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence("absent"),
+        )
+        blocked = run_workflow_runtime(
+            spec, run_id="rt-pre-id-transport", executor=safe_executor, options=safe_options,
+        )
+        assert blocked.status == "failed"
+        assert submitter.calls == []
     options = RuntimeOptions(
         poll_seconds=0,
         max_wait_seconds=60,
@@ -2651,15 +2666,21 @@ def test_recovery_uses_durable_store_credentials_not_process_global_storage(
 
 
 @pytest.mark.parametrize(
-    ("error_category", "persisted_decision"),
+    ("error_category", "persisted_decision", "prior_absence", "fresh_state", "output_present", "expected_success"),
     [
-        ("kubernetes_transport", "resume_block_output_present"),
-        ("kubernetes_transport", "resume_block_output_indeterminate"),
-        ("unknown", "verified_absent_no_retry"),
+        ("kubernetes_transport", "resume_block_output_present", False, "absent", False, True),
+        ("kubernetes_transport", "resume_block_output_indeterminate", False, "absent", False, True),
+        ("unknown", "verified_absent_no_retry", False, "absent", False, True),
+        ("unknown", "resume_block_output_present", True, "absent", False, True),
+        ("unknown", "resume_block_output_indeterminate", True, "absent", False, True),
+        ("unknown", "resume_block_output_indeterminate", False, "absent", False, False),
+        ("unknown", "resume_block_output_indeterminate", True, "indeterminate", False, False),
+        ("unknown", "resume_block_output_indeterminate", True, "absent", True, False),
     ],
 )
-def test_explicit_typed_pre_id_recovery_rechecks_persisted_output_block(
-    tmp_path: Path, error_category: str, persisted_decision: str
+def test_explicit_pre_id_recovery_rechecks_persisted_output_block(
+    tmp_path: Path, error_category: str, persisted_decision: str,
+    prior_absence: bool, fresh_state: str, output_present: bool, expected_success: bool,
 ) -> None:
     from npa.orchestration.skypilot.workflow import ManagedJobEvidence
 
@@ -2686,6 +2707,7 @@ def test_explicit_typed_pre_id_recovery_rechecks_persisted_output_block(
             "launch_sequence": 1,
             "error_category": error_category,
             "recovery_decision": persisted_decision,
+            "reconciliation": [{"state": "absent"}] if prior_absence else [],
         }
     )
     store.write_runtime_state(state)
@@ -2696,19 +2718,28 @@ def test_explicit_typed_pre_id_recovery_rechecks_persisted_output_block(
         retry_absent_in_flight=True,
     )
     submitter = FakeSubmitter()
+    def check_output(uri: str) -> bool:
+        assert uri.startswith("s3://"), "Output schemas must not become storage keys"
+        return output_present or bool(submitter.calls)
+
     executor = _executor(
         spec,
         run_id="rt-recheck-output-block",
         submitter=submitter,
         options=options,
         store=store,
-        output_checker=lambda _uri: bool(submitter.calls),
-        reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence("absent"),
+        output_checker=check_output,
+        reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence(fresh_state),
     )
 
     report = run_workflow_runtime(
         spec, run_id="rt-recheck-output-block", executor=executor, options=options
     )
+
+    if not expected_success:
+        assert report.status == "failed"
+        assert not submitter.calls
+        return
 
     assert report.status == "succeeded"
     assert submitter.calls[0]["job_name"].endswith("-a2")
@@ -3761,3 +3792,15 @@ def test_runtime_persistent_transient_exhausts_finite_policy(
     ]
     assert executor.attempts[-1].infrastructure_recovery_exhausted
     assert executor.attempts[-1].recovery_decision == "cancel_and_terminalize"
+
+
+@pytest.mark.parametrize("declaration", ["s3://example/shared.json", {"uri": "s3://example/shared.json", "schema": "example.v1"}])
+def test_recovery_compares_output_uris_and_retains_invalid_declarations(declaration) -> None:
+    ledger = RuntimeLedger(None, workflow="example", run_id="example")
+    ledger.state.record_wave({"key": "earlier", "status": "succeeded", "outputs": [declaration]})
+    outputs = [
+        {"uri": "s3://example/shared.json", "schema": "example.v2"},
+        {"uri": "s3://example/new", "kind": "directory"},
+        {"schema": "missing-uri"},
+    ]
+    assert ledger.outputs_not_from_succeeded_waves(outputs) == ["s3://example/new/", ""]

@@ -1,0 +1,79 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: byof-mochi-1
+  description: Native mochi-1 GPU text-to-video capability. Uses the qualified public GHCR runtime;
+    weights remain runtime-only.
+config:
+  bucket: example-bucket
+  prompt: A compact autonomous inspection rover drives slowly along a sunlit solar farm aisle. Locked
+    camera, coherent industrial geometry.
+  seed: 42
+  negative_prompt: ''
+  repo_url: https://github.com/huggingface/diffusers.git
+  repo_ref: 275869dcae4ebcfee6a80253fdabc56033335020
+  repo_auth: none
+  repo_token_env: GH_TOKEN
+  base_profile: prebuilt
+  base_image: ghcr.io/nebius/nebius-physical-ai/npa-diffusers@sha256:6422a062a00c9816a945623b0c83a78977fa5d5cec1777a0e6d44d1d746fc42e
+  build_command: ''
+  pip_extra: viz
+  workload: solution-smoke
+  smoke_command: |
+    set -euo pipefail
+    export VIDEO_PROMPT_B64="{{config.prompt|base64}}"
+    export VIDEO_NEGATIVE_B64="{{config.negative_prompt|base64}}"
+    export VIDEO_SEED_B64="{{config.seed|base64}}"
+    model-runtime ensure
+    /opt/byof/.venv/bin/python - <<'PY_VIDEO'
+    import base64
+    import json
+    import os
+    from pathlib import Path
+    from npa.solutions.video_generation import generate_video
+
+    out = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
+    prompt = base64.b64decode(os.environ["VIDEO_PROMPT_B64"], validate=True).decode()
+    seed = int(base64.b64decode(os.environ["VIDEO_SEED_B64"], validate=True).decode())
+    negative = base64.b64decode(os.environ["VIDEO_NEGATIVE_B64"], validate=True).decode()
+    result = generate_video('mochi-1', prompt, seed, out, negative_prompt=negative)
+    assert result["solution"] == 'mochi-1'
+    assert result["capability"] == 'mochi-1_text_to_video'
+    assert {'mochi-1_text_to_video', "decoded_mp4_validation"} <= set(result["capabilities_exercised"])
+    (out / 'mochi_1_text_to_video.json').write_text(json.dumps(result, indent=2) + "\n")
+    PY_VIDEO
+  solution_name: mochi-1
+  capability_name: mochi-1_text_to_video
+  smoke_artifact_name: mochi_1_text_to_video.json
+  resource_profile_yaml: byof-solution-smoke-rtxpro-gpu
+  task: text-to-video
+  iterations: 1
+  num_envs: 1
+  num_demos: 1
+  wait_timeout: '-1'
+  poll_interval: '60'
+  output_root: s3://{{config.bucket}}/oss-solutions/mochi-1
+  summary_uri: s3://{{config.bucket}}/oss-solutions/mochi-1/{{run.id}}/npa_byof_summary.json
+  artifact_uri: s3://{{config.bucket}}/oss-solutions/mochi-1/{{run.id}}/mochi_1_text_to_video.json
+  video_uri: s3://{{config.bucket}}/oss-solutions/mochi-1/{{run.id}}/video.mp4
+resources:
+  gpu:
+    cloud: kubernetes
+    image: '{{config.base_image}}'
+    accelerators: B200:1
+    cpus: 16
+    memory: 200Gi
+    disk_size: 128
+initial: generate
+states:
+  generate:
+    toolRef: workbench.byof.repo
+    resources: gpu
+    outputs:
+    - uri: '{{config.summary_uri}}'
+      schema: npa.workbench.byof.summary.v1
+    - uri: '{{config.artifact_uri}}'
+      schema: npa.workbench.byof.video_generation.v1
+    - uri: '{{config.video_uri}}'
+      schema: video/mp4
+    terminal: true

@@ -1,0 +1,54 @@
+# Vendored copy provenance — update this file on every re-vendor.
+#
+# The k8s-training module tree and shared modules below were vendored from the
+# upstream nebius-solutions-library repository. The wrapper also declares this
+# ref in deploy/cluster/outputs.tf as `k8s_training_ref`.
+
+upstream: https://github.com/nebius/nebius-solutions-library
+revision: 5b058cb99a881e76b57cadc3881ba5e56962782c
+revision_date: 2026-05-23T09:27:45Z
+revision_subject: SCHED-1604 Wait for the controller pod to terminate so it can't recreate the Service before deletion.
+declared_ref: main-v2026-05-25+local-cluster-patches
+
+# How the revision was determined (2026-09-15, re-verified 2026-09-16):
+# - outputs.tf declares the vendored base as main @ 2026-05-25 plus local patches.
+# - 5b058cb99a881e76b57cadc3881ba5e56962782c is the newest commit on upstream
+#   main before 2026-05-26 (no upstream main commits landed 2026-05-24/25).
+#
+# Vendored subset: k8s-training/ and selected modules/ only. Deliberately
+# excluded from the vendor (present upstream, not vendored):
+#   modules/instance, modules/nfs-server, modules/nims,
+#   k8s-training/terraform.tfvars
+#
+# Local patches (would be LOST by a naive re-vendor; re-apply each):
+# New files/directories (no upstream counterpart):
+# - modules/k8s-rbac-bindings/            (whole new module: RBAC access bindings)
+# - k8s-training/rbac_bindings.tf         (wires the RBAC module into the root)
+# - modules/kuberay/files/ray-values-cpu.yaml.tftpl  (CPU-cluster Ray values)
+# - "Kubernetes RBAC access bindings" section in k8s-training/README.md
+# Modified files (~40 across k8s-training/ and modules/):
+# - CPU node-group support: local.create_cpu_node_group gating in
+#   k8s-training/main.tf, k8s-training/variables.tf, k8s-training/locals.tf
+# - Filestore mount tags: local.filestore.mount_tag threading through
+#   k8s-training/main.tf (was hardcoded mount_tag = "data")
+# - GPU node extras: gpu_nodes_driver_preset, gpu_nodes_reservation_policy
+#   variables and reservation_policy blocks in k8s-training/
+# - KubeRay CPU cluster: var.cpu_cluster / var.cpu_platform support,
+#   kubernetes_namespace_v1 + kubernetes_network_policy_v1 resources and
+#   conditional ray-values-cpu templating in modules/kuberay/
+#   (main.tf, variables.tf, versions.tf, README.md)
+# - Further local edits in: modules/cilium-egress-gateway, modules/cloud-init
+#   (*.tftpl), modules/gpu-operator{,-custom}, modules/kuberay/kuberay-tests,
+#   modules/nccl-test, modules/o11y, modules/opa_gatekeeper,
+#   k8s-training/{applications,filesystem,helm,locals,output,provider}.tf,
+#   k8s-training/egress_policy_example.yaml, filesystem-csi-validation/,
+#   k8s-training/tests/
+# - One trailing-whitespace normalization pass.
+#
+# To re-vendor: copy the new upstream tree over this directory, then
+# 1. re-apply every patch listed above (the new-module additions first),
+# 2. update `revision`, `revision_date`, `revision_subject`, and
+#    `declared_ref` above, plus the `k8s_training_ref` output in
+#    deploy/cluster/outputs.tf,
+# 3. re-run: diff -r <upstream@revision>/{k8s-training,modules} #      deploy/cluster/vendor/nebius-solutions-library/{k8s-training,modules}
+#    and reconcile any unexpected delta before committing.
