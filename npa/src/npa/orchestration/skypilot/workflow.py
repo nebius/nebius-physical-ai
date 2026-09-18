@@ -191,16 +191,29 @@ def _managed_job_workload_markers(row: Mapping[str, Any]) -> set[str]:
 
 
 class SkyPilotSubmitError(RuntimeError):
-    """Raised when a SkyPilot workflow cannot be submitted."""
+    """A workflow submission failure with optional proof of launch activity.
+
+    Args:
+        message: Submission failure description.
+        transaction: Authoritative launch reconciliation, when available.
+        launch_attempted: False for a verified preflight failure; None is unknown.
+            Transaction evidence takes precedence over this hint.
+    Returns:
+        None.
+    Raises:
+        None.
+    """
 
     def __init__(
         self,
         message: str,
         *,
         transaction: LaunchTransactionResult | None = None,
+        launch_attempted: bool | None = None,
     ) -> None:
         super().__init__(message)
         self.transaction = transaction
+        self.launch_attempted = launch_attempted
 
 
 @dataclass(frozen=True)
@@ -836,7 +849,7 @@ def _preflight_prepared_submission(prepared, *, project, infra, extra_env, targe
             cwd=_stable_sky_cwd(prepared.runtime_config.isolated_config_dir),
         )
     except (ExecutionPreflightError, ValueError) as exc:
-        raise SkyPilotSubmitError(str(exc)) from exc
+        raise SkyPilotSubmitError(str(exc), launch_attempted=False) from exc
     env.update(injected)
     if selected is not None:
         env["NPA_SKYPILOT_PROJECT"] = selected.project

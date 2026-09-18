@@ -43,6 +43,7 @@ CONTAINER_IMAGE_NAMES = {
     "lerobot-policy": "npa-lerobot-policy",
     "genesis": "npa-genesis",
     "isaac-lab": "npa-isaac-lab",
+    "isaac-arena": "npa-isaac-arena",
     "openarm": "npa-openarm",
     "leisaac": "npa-leisaac",
     "cosmos": "npa-cosmos",
@@ -71,6 +72,9 @@ CONTAINER_IMAGE_NAMES = {
     "lancedb": "npa-lancedb",
     "detection-training": "npa-detection-training",
     "wan2-2": "npa-wan2-2",
+    "diffusers": "npa-diffusers",
+    "lingbot-world": "npa-lingbot-world",
+    "sam2": "npa-sam2",
     "ltx2": "npa-ltx2",
     "alpamayo2-super": "npa-alpamayo2-super",
     "curobo": "npa-curobo",
@@ -96,6 +100,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "fiftyone",
         "groot",
         "isaac-lab",
+        "isaac-arena",
         "openarm",
         "rerun-viewer",
         "sim2real-control",
@@ -148,7 +153,9 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi", "curobo", "ncore"})
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
+    {"openpi", "curobo", "ncore"}
+)
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa"})
 # Compatibility view used by publication callers and public imports. Derive it
 # from the two canonical validation-state inventories; never maintain it
@@ -173,9 +180,25 @@ PUBLIC_RELEASE_TAG_OVERRIDES: dict[str, str] = {
 # whose filesystem/layers were scanned and whose advertised GPU capability ran.
 # A newly built dev tag must earn fresh evidence before this mapping changes.
 GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES: dict[str, dict[str, str]] = {
+    "isaac-arena": {
+        "development_sha": "ae5adea6ab895660996f513f14160c89d06f47e5",
+        "oci_digest": "sha256:9c6a417672d6f87499680ba337c90488c2a33d41ac9f7b5452eb5d97d00e097e",
+    },
     "alpamayo2-super": {
         "development_sha": "5b693476c113c833e9d9d4f8c7aa492492a27505",
         "oci_digest": "sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07",
+    },
+    "diffusers": {
+        "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3",
+        "oci_digest": "sha256:6422a062a00c9816a945623b0c83a78977fa5d5cec1777a0e6d44d1d746fc42e",
+    },
+    "lingbot-world": {
+        "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3",
+        "oci_digest": "sha256:5e2a3998bf7d54987d0916f7c249b4963ef87f489e9e893ec8d94da196286277",
+    },
+    "sam2": {
+        "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3",
+        "oci_digest": "sha256:fbe20454e97452e447e00f79260a267b552deef5538e3bbbc8c3567a3c576f16",
     },
     "cosmos3": {
         "development_sha": "1925834f29983dd9a16659eb3dd350a7f5d13d99",
@@ -231,6 +254,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "lerobot-policy": "0.1.1",
     "genesis": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "isaac-lab": "3.0.0b2.post1-sim2real-coherent-20260904",
+    "isaac-arena": "0.3.0-isaaclab3-20260917-r4",
     "openarm": "2.2.0-isaac0.1.0-rtfetch",
     "leisaac": "0.4.0-20260817T231825Z",
     "cosmos": "cu128-torch27-sm100-1.0.9-20260803T002017Z",
@@ -265,6 +289,9 @@ SUPPORTED_TOOL_VERSIONS = {
     "detection-training": "runtime-v1-20260905",
     # Public-eligible Wan source/CPU base; CUDA torch is operator-gated runtime fetch.
     "wan2-2": "2.2-ti2v5b-rtfetch-cu130-20260817",
+    "diffusers": "0.38.0-rtfetch-20260916",
+    "lingbot-world": "a43bec7-rtfetch-20260916",
+    "sam2": "2.1-rtfetch-20260916",
     # LTX source and weights remain operator-entitled runtime fetches. This tag
     # resolves only to the zero-payload digest recorded in ltx2_image_manifest.json.
     "ltx2": "2.5-rtfetch-20260817",

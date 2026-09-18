@@ -1,0 +1,51 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "9a4aabc402e2b67e2568525936f2a2da879926e529d66a59d1096a5411478a39",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec succeeded; 121 frames, 50 steps, and seed 42 resolve to the real BYOF generation stage.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/byof-wan2.2.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/byof-wan2.2.yaml --run-id wan22-generation-controls --var frames=121 --var steps=50 --var seed=42 --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Worker-shell tests prove exact integer handoff and rejection before runtime fetch. Planner/renderer tests require the allocated task and BYOF verifier to share the accepted immutable image digest. Rerun tests fully decode longer video and reject request/output count mismatch.",
+      "evidence": [
+        "npa/tests/workflows/test_wan_generation_controls.py: 33 passed",
+        "npa/tests/workflows/test_wan_rerun.py: 48 passed"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Set bucket to owned writable project storage; the checked-in bucket is a placeholder.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "Public model and tokenizer use pinned runtime-fetch revisions; worker network reachability has not been checked for this revision.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Operator project/storage configuration and optional Hugging Face credentials must be checked for the selected runtime.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "Both the allocated worker image and BYOF verification argument pin the accepted public OCI digest. Planning and rendering agree; no target image pull was performed during this authoring check.",
+      "evidence": [
+        "npa/tests/workflows/test_wan_generation_controls.py::test_worker_image_and_byof_verifier_share_the_accepted_digest"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The existing GPU and runtime gates are retained. The new longer-generation path has not been executed on a GPU during this authoring check.",
+      "evidence": []
+    }
+  }
+}

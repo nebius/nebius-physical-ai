@@ -157,6 +157,24 @@ def _declared_output_uri(output: Any) -> str:
     return str(output or "").strip()
 
 
+
+def _verified_absent_pre_id_attempt(attempt: WaveAttempt, record: Mapping[str, Any]) -> bool:
+    """Preserve verified launch absence across a later storage-read block."""
+    if attempt.job_id:
+        return False
+    if attempt.recovery_decision == "verified_absent_no_retry":
+        return True
+    if attempt.recovery_decision not in {
+        "resume_block_output_present", "resume_block_output_indeterminate",
+    }:
+        return False
+    return any(
+        item.get("state") == "absent"
+        for item in record.get("reconciliation") or []
+        if isinstance(item, Mapping)
+    )
+
+
 def _workflow_identity(spec: NpaWorkflowSpec) -> str:
     """Recompute the current immutable workflow identity from the loaded spec."""
 
@@ -1144,13 +1162,15 @@ class SkyPilotWaveExecutor:
                 and attempt.recovery_decision
                 in {
                     "block_indeterminate",
+                    # A prior default resume records absence without authorizing
+                    # retry; it must not erase the typed transport failure.
+                    "resume_block_terminal_or_legacy_absence",
                     "resume_block_output_present",
                     "resume_block_output_indeterminate",
                 }
             )
-            verified_pre_id_launch_failure = (
-                not job_id
-                and attempt.recovery_decision == "verified_absent_no_retry"
+            verified_pre_id_launch_failure = _verified_absent_pre_id_attempt(
+                attempt, record
             )
             explicit_retry = (
                 self.options.retry_absent_in_flight
@@ -2184,7 +2204,7 @@ class RuntimeLedger:
     def latest_wave(self, key: str) -> dict[str, Any] | None:
         return self.state.latest_wave(key)
 
-    def outputs_not_from_succeeded_waves(self, outputs: Sequence[str]) -> list[str]:
+    def outputs_not_from_succeeded_waves(self, outputs: Sequence[Any]) -> list[str]:
         """Return outputs that are not already attributed to completed waves.
 
         Looping workflows may intentionally rewrite a shared component record while
@@ -2199,10 +2219,11 @@ class RuntimeLedger:
             if str(wave.get("status") or "") != "succeeded":
                 continue
             for output in wave.get("outputs") or []:
-                uri = output.get("uri") if isinstance(output, Mapping) else output
-                if str(uri or ""):
-                    previously_succeeded.add(str(uri))
-        return [str(uri) for uri in outputs if str(uri) not in previously_succeeded]
+                uri = _declared_output_uri(output)
+                if uri:
+                    previously_succeeded.add(uri)
+        remaining = [_declared_output_uri(output) for output in outputs]
+        return [uri for uri in remaining if uri not in previously_succeeded]
 
     def record(self, attempt: WaveAttempt) -> None:
         self.state.record_wave(attempt.to_dict())

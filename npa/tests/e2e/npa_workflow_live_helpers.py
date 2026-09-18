@@ -44,6 +44,9 @@ NUREC_COLMAP_DATASET = "nvidia/PhysicalAI-NuRec-PPISP"
 NUREC_COLMAP_REVISION = "2521064a3af6ab1c1caa2ba1b01ddde7eecded69"
 NUREC_COLMAP_MEMBER = "colmap/struktur28_colmap.zip"
 NUREC_COLMAP_SHA256 = "cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d"
+ISAAC_ARENA_REPLAY_REVISION = "ed0fd12be862078be316c73eb7cf423ba9b1c5cd"
+ISAAC_ARENA_REPLAY_SHA256 = "154ebea7839ec53e6ac441e18f1404b3fe140c3f004ad7e309519ba37274fa50"
+ISAAC_ARENA_REPLAY_MEMBER = "isaaclab_arena/tests/test_data/test_demo_gr1_open_microwave.hdf5"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SPECS_DIR = REPO_ROOT / "workflows"
 # A tiny, valid 64x64 H.264/MP4 clip generated from ffmpeg's deterministic
@@ -259,6 +262,10 @@ def seed_live_workflow_inputs(
 
     marker = f"{_live_s3_root(run_id)}/{spec_name.replace('.yaml', '')}"
     client = s3_client_for_project(e2e_project, allow_host_creds=True)
+
+    if spec_name == "isaac-arena-evaluation-rtxpro.yaml":
+        _seed_isaac_arena_replay(client, bucket=bucket, prefix=marker)
+        return
 
     if spec_name == "nurec-colmap-reconstruct.yaml":
         _seed_nurec_colmap_source(client, bucket=bucket, prefix=marker)
@@ -923,6 +930,61 @@ def _seed_vlm_benchmark_dataset(client, *, bucket: str, marker: str) -> None:
     )
 
 
+def _download_isaac_arena_replay(destination: Path) -> None:
+    """Fetch the unchanged pinned public replay without operator credentials."""
+    from npa._public_https import download_public_https
+
+    url = (
+        "https://media.githubusercontent.com/media/isaac-sim/IsaacLab-Arena/"
+        f"{ISAAC_ARENA_REPLAY_REVISION}/{ISAAC_ARENA_REPLAY_MEMBER}"
+    )
+    with destination.open("wb") as output:
+        download_public_https(
+            url,
+            output,
+            allowed_hosts=frozenset({"media.githubusercontent.com"}),
+        )
+
+
+def _verify_isaac_arena_replay(path: Path) -> None:
+    """Reject changed or incomplete replay bytes before any storage write."""
+    import hashlib
+
+    import h5py
+    import numpy as np
+
+    if hashlib.sha256(path.read_bytes()).hexdigest() != ISAAC_ARENA_REPLAY_SHA256:
+        pytest.fail("Arena replay differs from the pinned upstream fixture")
+    with h5py.File(path, "r") as dataset:
+        episodes = dataset.get("data")
+        if not isinstance(episodes, h5py.Group) or len(episodes) != 1:
+            pytest.fail("Arena replay must contain exactly one recorded episode")
+        episode = episodes[next(iter(episodes))]
+        if "actions" not in episode or "initial_state" not in episode:
+            pytest.fail("Arena replay is missing actions or its recorded initial state")
+        actions = np.asarray(episode["actions"])
+        if actions.ndim != 2 or actions.shape[0] < 2 or not np.isfinite(actions).all():
+            pytest.fail("Arena replay actions must be a finite multi-step tensor")
+
+
+def _seed_isaac_arena_replay(client: Any, *, bucket: str, prefix: str) -> None:
+    """Stage the verified replay in this invocation's prefix and verify readback."""
+    import hashlib
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="npa-arena-replay-source-") as directory:
+        replay = Path(directory) / "gr1-open-microwave.hdf5"
+        replay.touch(mode=0o600)
+        _download_isaac_arena_replay(replay)
+        _verify_isaac_arena_replay(replay)
+        key = f"{prefix}/input/gr1-open-microwave.hdf5"
+        client.upload_file(str(replay), bucket, key)
+        with client.get_object(Bucket=bucket, Key=key)["Body"] as body:
+            stored_sha256 = hashlib.sha256(body.read()).hexdigest()
+        if stored_sha256 != ISAAC_ARENA_REPLAY_SHA256:
+            pytest.fail("Arena replay readback differs from the pinned upstream fixture")
+
+
 def _download_nurec_colmap_archive(destination: Path) -> None:
     """Fetch the complete public source at an immutable dataset revision."""
     from npa._public_https import download_public_https
@@ -1422,6 +1484,16 @@ def materialize_live_spec(
         text,
         count=1,
     )
+    if name == "isaac-arena-evaluation-rtxpro.yaml":
+        text = re.sub(
+            r'(input_uri:\s*")[^"]*(")',
+            lambda match: (
+                f'{match.group(1)}s3://{{{{config.bucket}}}}/{{{{config.prefix}}}}/'
+                f'input/gr1-open-microwave.hdf5{match.group(2)}'
+            ),
+            text,
+            count=1,
+        )
     # Optional bdd100k smoke knobs: synthesize rows so the pipeline runs without
     # a real BDD100K dataset, and shrink training epochs to keep the live run
     # bounded. Both are pure config toggles (synthetic_rows=0 -> real source).

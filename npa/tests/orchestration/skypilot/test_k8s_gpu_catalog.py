@@ -146,13 +146,11 @@ def test_two_gpus_per_task_is_rejected_on_single_gpu_nodes() -> None:
     )
 
 
-def test_a_non_offered_quantity_lists_what_is_offered() -> None:
+@pytest.mark.parametrize("count", range(1, 9))
+def test_integer_gpu_requests_fit_within_catalog_node_capacity(count) -> None:
     catalog = parse_kubernetes_gpu_catalog(LIVE_OUTPUT, context="npa-rtxpro-mk8s")
-
-    with pytest.raises(UnsatisfiableAcceleratorError) as excinfo:
-        resolve_kubernetes_accelerator("RTXPRO6000:3", catalog=catalog)
-
-    assert "it offers 1, 2, 4, 8 per node" in str(excinfo.value)
+    resolution = resolve_kubernetes_accelerator(f"RTXPRO6000:{count}", catalog=catalog)
+    assert resolution.resolved == f"RTXPRO-6000-BLACKWELL-SERVER-EDITION:{count}"
 
 
 def test_an_unknown_accelerator_lists_the_available_ones() -> None:
@@ -849,6 +847,7 @@ def test_live_inventory_uses_exact_context_and_subtracts_active_pods() -> None:
                         "nvidia.com/gpu": "2",
                         "cpu": "32",
                         "memory": "64Gi",
+                        "ephemeral-storage": "950G",
                         "pods": "110",
                     },
                 },
@@ -867,6 +866,7 @@ def test_live_inventory_uses_exact_context_and_subtracts_active_pods() -> None:
                                     "nvidia.com/gpu": "1",
                                     "cpu": "8",
                                     "memory": "16Gi",
+                                    "ephemeral-storage": "100G",
                                 }
                             }
                         }
@@ -874,12 +874,12 @@ def test_live_inventory_uses_exact_context_and_subtracts_active_pods() -> None:
                     "initContainers": [
                         {
                             "resources": {
-                                "requests": {"cpu": "12", "memory": "32Gi"},
+                                "requests": {"cpu": "12", "memory": "32Gi", "ephemeral-storage": "200G"},
                                 "limits": {"nvidia.com/gpu": "2"},
                             }
                         }
                     ],
-                    "overhead": {"cpu": "1", "memory": "1Gi"},
+                    "overhead": {"cpu": "1", "memory": "1Gi", "ephemeral-storage": "1G"},
                 },
                 "status": {"phase": "Running"},
             },
@@ -933,6 +933,8 @@ def test_live_inventory_uses_exact_context_and_subtracts_active_pods() -> None:
     assert inventory.nodes[0].free_cpu_millis == 19_000
     assert inventory.nodes[0].committed_memory_bytes == 33 * 1024**3
     assert inventory.nodes[0].free_memory_bytes == 31 * 1024**3
+    assert inventory.nodes[0].committed_ephemeral_storage_bytes == 201 * 10**9
+    assert inventory.nodes[0].free_ephemeral_storage_bytes == 749 * 10**9
     assert inventory.nodes[0].committed_pods == 1
     assert inventory.nodes[0].free_pod_slots == 109
     assert inventory.unbound_pending_gpu_pods == 1
@@ -973,9 +975,8 @@ def test_live_inventory_pins_explicit_kubeconfig_for_nodes_and_pods(
     ]
 
 
-def test_gang_capacity_fails_unknown_for_unbound_pending_gpu_demand() -> None:
+def test_gang_capacity_waits_for_unbound_pending_gpu_demand() -> None:
     from npa.orchestration.skypilot.k8s_gpu_catalog import PendingGpuPlacementError
-
     inventory = KubernetesGpuInventory(
         context="exact-context",
         ready_nodes=2,

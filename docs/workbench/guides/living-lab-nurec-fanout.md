@@ -177,3 +177,16 @@ sanitized diagnostic errors (counts / reasons only).
 - Parameterization changes topology size (zone count, expected device count,
   parallel member count) only; it does not change the per-shard NRE pipeline or
   the proof semantics.
+
+## Clean up
+
+Idle GPU clusters keep billing after the run finishes. When you are done,
+tear them down:
+
+```bash
+npa destroy --project "<alias>" --all
+```
+
+The plan previews read-only until you pass `--yes`, and the Nebius project
+itself is retained by default. See [teardown](../../teardown.md) for what
+`npa destroy` removes (cloud spend) versus what it keeps.
