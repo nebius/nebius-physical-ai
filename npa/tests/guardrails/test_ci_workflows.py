@@ -97,26 +97,31 @@ def test_merge_queue_suite_is_sharded_and_scheduled_audit_keeps_compatibility() 
     workflow = _load_workflow("test.yml")
     job = workflow["jobs"]["test"]
     python_matrix = job["strategy"]["matrix"]["python-version"]
-    assert "github.event_name == 'merge_group'" in python_matrix
+    assert '["pull_request", "merge_group"]' in python_matrix
     assert '["3.12"]' in python_matrix
     assert '["3.10", "3.12", "3.14"]' in python_matrix
     shard_matrix = job["strategy"]["matrix"]["shard"]
-    assert "github.event_name == 'merge_group'" in shard_matrix
+    assert '["pull_request", "merge_group"]' in shard_matrix
     assert "[1, 2, 3, 4]" in shard_matrix
     assert "[1, 2, 3, 4, 5]" in shard_matrix
-    assert job["strategy"]["fail-fast"] == "${{ github.event_name == 'merge_group' }}"
-    assert job["if"] == "github.event_name != 'pull_request'"
+    assert job["strategy"]["fail-fast"] == (
+        "${{ github.event_name == 'merge_group' || github.event_name == 'pull_request' }}"
+    )
+    assert job["needs"] == "scope"
+    assert job["if"] == "needs.scope.outputs.full_suite != 'false'"
     assert "continue-on-error" not in job
     assert workflow["on"]["workflow_call"] == ""
 
     smoke = workflow["jobs"]["pr-smoke"]
-    assert smoke["if"] == "github.event_name == 'pull_request'"
+    assert smoke["if"] == (
+        "github.event_name == 'pull_request' || needs.scope.outputs.prose_only == 'true'"
+    )
     commands = "\n".join(step.get("run", "") for step in smoke["steps"])
     assert "npa/tests/smoke" in commands
     assert "test_ci_workflows.py" in commands
 
     assert workflow["jobs"]["browser-mocked"]["if"] == (
-        "github.event_name != 'pull_request'"
+        "needs.scope.outputs.browser != 'false'"
     )
     browser_steps = workflow["jobs"]["browser-mocked"]["steps"]
     browser_step_names = {step["name"] for step in browser_steps}
@@ -163,22 +168,92 @@ def test_coverage_shards_are_parallel_and_merged_before_enforcement() -> None:
         "NPA_E2E_PROJECT_ID": "project-test-00000000",
         "NPA_E2E_GROOT_BUCKET": "test-bucket-00000000",
         "NPA_CI_SHARD_INDEX": "${{ matrix.shard }}",
-        "NPA_CI_TOTAL_SHARDS": "${{ github.event_name == 'merge_group' && 5 || 4 }}",
+        "NPA_CI_TOTAL_SHARDS": "${{ contains(fromJSON('[\"pull_request\", \"merge_group\"]'), github.event_name) && 5 || 4 }}",
         "COVERAGE_FILE": ".coverage.${{ matrix.python-version }}.${{ matrix.shard }}",
         "NPA_CI_TIMING_OUTPUT": "ci-timings-${{ matrix.python-version }}-${{ matrix.shard }}.json",
         "NPA_REQUIRE_FFMPEG": "1",
     }
 
     coverage = workflow["jobs"]["coverage"]
-    assert coverage["needs"] == "test"
+    assert coverage["needs"] == ["scope", "test"]
     assert coverage["if"] == (
-        "${{ always() && github.event_name != 'pull_request' }}"
+        "${{ always() && needs.scope.outputs.full_suite != 'false' }}"
     )
     report = _step("test.yml", "coverage", "merged coverage floor")["run"]
     assert "coverage combine" in report
     assert "--fail-under=60" in report
     profile = _step("test.yml", "coverage", "Merge scheduled duration")["run"]
     assert "merge_ci_test_timings.py" in profile
+
+
+def test_browser_execution_has_one_owner_and_remains_blocking() -> None:
+    """Keep real browser coverage without nesting a second run inside pytest.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Browser coverage is duplicated or made optional.
+    """
+    browser = _load_workflow("test.yml")["jobs"]["browser-mocked"]
+    steps = [step for step in browser["steps"] if "cy:mock" in step.get("run", "")]
+    assert len(steps) == 1
+    assert "if" not in steps[0] and "continue-on-error" not in steps[0]
+    assert "continue-on-error" not in browser
+    assert browser["needs"] == "scope"
+    source = (REPO_ROOT / "npa/tests/cli/test_agent_foxglove.py").read_text()
+    assert "def test_ci_executes_mocked_agent_cypress" not in source
+
+
+def test_test_scope_is_trusted_and_does_not_filter_required_security_jobs() -> None:
+    """Keep test shortcuts independent from always-required security and docs gates.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Selection trusts candidate policy or removes required gates.
+    """
+    scope = _load_workflow("test.yml")["jobs"]["scope"]
+    assert scope["steps"][0]["with"]["fetch-depth"] == "0"
+    command = scope["steps"][-1]["run"]
+    assert 'git show "${BASE_SHA}:${policy}"' in command
+    assert '"${RUNNER_TEMP}/ci_test_scope.py"' in command
+    assert "echo 'full_suite=true'" in command
+    assert "echo 'browser=true'" in command
+    parent = _load_workflow("security-regression.yml")
+    for event in ("pull_request", "merge_group"):
+        assert parent["on"][event] == ""
+    for job in ("test-gate", "lint-gate", "guardrails-gate", "gitleaks", "scan"):
+        assert parent["jobs"][job]["if"] == "github.event_name != 'push'"
+    for job in ("security-scanners", "security-runtime", "image-security"):
+        assert "if" not in parent["jobs"][job]
+
+
+def test_affected_tests_fail_the_candidate_and_use_json_arguments() -> None:
+    """Require selected PR tests without treating repository paths as shell code.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Affected tests become optional or bypass subprocess checking.
+    """
+    job = _load_workflow("test.yml")["jobs"]["affected-tests"]
+    assert job["needs"] == "scope"
+    assert job["if"] == (
+        "github.event_name == 'pull_request' && needs.scope.outputs.full_suite == 'false' "
+        "&& needs.scope.outputs.test_paths != '[]'"
+    )
+    assert "continue-on-error" not in job
+    step = job["steps"][-1]
+    assert step["env"]["TEST_PATHS"] == "${{ needs.scope.outputs.test_paths }}"
+    assert "${{" not in step["run"]
+    assert "check=True" in step["run"]
+    assert '"-n", "auto"' in step["run"]
 
 
 def _make_recipe(target: str) -> list[str]:
