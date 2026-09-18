@@ -26,6 +26,7 @@ from npa.workflows import habitat_sim_smoke as H
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / "workflows/testing/habitat-sim-smoke.yaml"
 READINESS = WORKFLOW.with_suffix(".readiness.json")
+FIXTURE_IMAGE = "registry.invalid/run-owned/habitat-sim@sha256:" + "a" * 64
 LIVE_SPEC = importlib.util.spec_from_file_location(
     "habitat_live_selector", ROOT / "npa/tests/e2e/test_habitat_sim_image_live_e2e.py"
 )
@@ -150,7 +151,8 @@ def test_renderer_preserves_the_exact_one_rtx_habitat_placement() -> None:
         build_plan(spec, run_id="habitat-placement"),
         run_id="habitat-placement",
         options=SkypilotRenderOptions(
-            registry="registry.invalid/run-owned", materialize_registry_secrets=False
+            image_overrides={"workflow.habitat_sim.smoke": FIXTURE_IMAGE},
+            materialize_registry_secrets=False,
         ),
     )
     assert "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1" in rendered
@@ -165,7 +167,8 @@ def test_renderer_uses_only_the_baked_habitat_runtime(monkeypatch) -> None:
         build_plan(spec, run_id="habitat-baked-runtime"),
         run_id="habitat-baked-runtime",
         options=SkypilotRenderOptions(
-            registry="registry.invalid/run-owned", materialize_registry_secrets=False
+            image_overrides={"workflow.habitat_sim.smoke": FIXTURE_IMAGE},
+            materialize_registry_secrets=False,
         ),
     )
     task = list(yaml.safe_load_all(rendered))[1]
@@ -187,7 +190,7 @@ def test_renderer_refuses_habitat_dependency_or_source_overlays(field) -> None:
             build_plan(spec, run_id="habitat-overlay-refusal"),
             run_id="habitat-overlay-refusal",
             options=SkypilotRenderOptions(
-                registry="registry.invalid/run-owned",
+                image_overrides={"workflow.habitat_sim.smoke": FIXTURE_IMAGE},
                 materialize_registry_secrets=False,
             ),
         )
@@ -220,7 +223,8 @@ def test_renderer_refuses_non_exact_habitat_accelerator_overrides(
         )
 
 
-def test_renderer_refuses_submit_time_habitat_accelerator_remap() -> None:
+@pytest.mark.parametrize("remap", ["B200:1", "H100:1", "RTXPRO6000:1"])
+def test_renderer_refuses_submit_time_habitat_accelerator_remap(remap) -> None:
     spec = load_spec(WORKFLOW)
     declared = "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
 
@@ -233,10 +237,65 @@ def test_renderer_refuses_submit_time_habitat_accelerator_remap() -> None:
             build_plan(spec, run_id="habitat-hostile-remap"),
             run_id="habitat-hostile-remap",
             options=SkypilotRenderOptions(
-                gpu_accelerator_overrides={declared: "B200:1"},
+                gpu_accelerator_overrides={declared: remap},
                 materialize_registry_secrets=False,
             ),
         )
+
+
+@pytest.mark.parametrize("require_baked", [None, False, "false", True])
+@pytest.mark.parametrize(
+    "image",
+    [
+        "",
+        "registry.invalid/run-owned/habitat-sim:latest",
+        "habitat-sim@sha256:" + "a" * 64,
+        "namespace/habitat-sim@sha256:" + "a" * 64,
+        "registry.invalid/habitat-sim@sha256:incomplete",
+    ],
+)
+def test_habitat_image_requires_registry_digest_independently_of_baked_flag(
+    require_baked, image
+) -> None:
+    spec = load_spec(WORKFLOW)
+    if require_baked is not None:
+        spec.config["require_baked_npa"] = require_baked
+    with pytest.raises(
+        NpaWorkflowRenderError, match="registry-qualified immutable image"
+    ):
+        render_skypilot_yaml(
+            spec,
+            build_plan(spec, run_id="habitat-image-refusal"),
+            run_id="habitat-image-refusal",
+            options=SkypilotRenderOptions(
+                image_overrides={"workflow.habitat_sim.smoke": image},
+                materialize_registry_secrets=False,
+            ),
+        )
+
+
+@pytest.mark.parametrize("require_baked", [None, False, True])
+def test_habitat_accepts_inert_digest_and_identity_only_accelerator_map(
+    require_baked,
+) -> None:
+    spec = load_spec(WORKFLOW)
+    if require_baked is not None:
+        spec.config["require_baked_npa"] = require_baked
+    spec.config["source_sha"] = "a" * 40
+    declared = "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="habitat-image-identity"),
+        run_id="habitat-image-identity",
+        options=SkypilotRenderOptions(
+            image_overrides={"workflow.habitat_sim.smoke": FIXTURE_IMAGE},
+            gpu_accelerator_overrides={declared: declared},
+            materialize_registry_secrets=False,
+        ),
+    )
+    task = list(yaml.safe_load_all(rendered))[1]
+    assert task["resources"]["image_id"] == "docker:" + FIXTURE_IMAGE
+    assert task["resources"]["accelerators"] == declared
 
 
 def test_readiness_binds_exact_workflow_and_records_unbuilt_blocker() -> None:

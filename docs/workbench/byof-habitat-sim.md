@@ -158,18 +158,30 @@ npa/.venv/bin/npa workbench workflow validate-spec \
   workflows/testing/habitat-sim-smoke.yaml --json
 npa/.venv/bin/npa workbench workflow plan-spec \
   workflows/testing/habitat-sim-smoke.yaml --run-id habitat-sim-plan --json
-npa/.venv/bin/npa workbench workflow submit \
-  workflows/testing/habitat-sim-smoke.yaml --run-id habitat-sim-plan --plan-only
+npa/.venv/bin/npa workbench workflow run-spec \
+  workflows/testing/habitat-sim-smoke.yaml --run-id habitat-sim-plan \
+  --plan-only --scheduler-plan --json
 ```
 
-All three commands succeed without submission in Phase A. The plan renders the
-quarantined `-unbuilt` reference; it is not a pullability or capability claim.
-A real run must override it with a later reviewed exact image digest.
+These structural planning commands do not submit or qualify an image. The
+quarantined `-unbuilt` reference is not runnable: SkyPilot task rendering refuses
+it until an explicit registry-qualified immutable image digest is supplied.
+A real run requires a later reviewed and byte-qualified exact image digest.
 
 The spec has one `workflow.habitat_sim.smoke` state, selects
 `tool://habitat-sim`, and requests exactly
 `RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`. Habitat-Sim is a renderer: use a
 manager-proven STRICT RTX PRO 6000 Blackwell target, never B200.
+
+The renderer checks that exact accelerator literal and count after normalization.
+An identity mapping is supported; a remap to `RTXPRO6000:1`, B200, H100, or a
+different count is refused. No independently verified short-alias mapping is
+currently bound to this workflow, so scheduler-alias support is deferred. Neither
+the literal nor successful rendering proves hardware identity or placement:
+the separately authorized live gate must prove STRICT binding to exactly one
+RTX PRO 6000 Blackwell. Rendered Habitat tasks also require an explicit
+registry-qualified SHA-256 image reference, even with `require_baked_npa` unset
+or false; unresolved tags are not runnable-image evidence.
 
 The required local proof is `$NPA_SMOKE_OUTPUT_DIR/habitat-sim-smoke.json`.
 Before submission, the operator must hash a mode-restricted immutable rendered-plan

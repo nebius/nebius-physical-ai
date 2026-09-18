@@ -249,7 +249,7 @@ def _source_projection_findings(
         relative = str(row.get("path", ""))
         try:
             safe = W.safe_name(relative)
-        except Exception:
+        except W.ScanError:
             findings.append({"code": "source_projection_unsafe_path"})
             continue
         target = f"{root}/{safe}"

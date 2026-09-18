@@ -2011,26 +2011,34 @@ def build_skypilot_task_doc(
         "on",
     }
     expected_source_sha = str(spec.config.get("source_sha") or "").strip().lower()
-    if require_baked:
+    if require_baked or immutable_narrow_image:
         from npa.orchestration.skypilot.image_bootstrap_contract import (
             ImageBootstrapContractError,
             parse_oci_reference,
         )
 
+        reason = (
+            "Habitat-Sim requires an immutable runtime"
+            if immutable_narrow_image
+            else "config.require_baked_npa is enabled"
+        )
+        image_error = (
+            f"planned step {scheduler_task['name']!r} requires a "
+            f"registry-qualified immutable image because {reason}"
+        )
         try:
             parsed_image = parse_oci_reference(image)
         except ImageBootstrapContractError as exc:
-            raise NpaWorkflowRenderError(
-                f"planned step {scheduler_task['name']!r} requires a "
-                "registry-qualified immutable image because "
-                "config.require_baked_npa is enabled"
-            ) from exc
+            raise NpaWorkflowRenderError(image_error) from exc
         if not parsed_image.digest:
-            raise NpaWorkflowRenderError(
-                f"planned step {scheduler_task['name']!r} requires a "
-                "registry-qualified immutable image because "
-                "config.require_baked_npa is enabled"
-            )
+            raise NpaWorkflowRenderError(image_error)
+        if immutable_narrow_image and not (
+            parsed_image.registry == "localhost"
+            or "." in parsed_image.registry
+            or ":" in parsed_image.registry
+        ):
+            # An unqualified namespace is not an explicit registry authority.
+            raise NpaWorkflowRenderError(image_error)
     if require_baked and (
         len(expected_source_sha) != 40
         or any(char not in "0123456789abcdef" for char in expected_source_sha)

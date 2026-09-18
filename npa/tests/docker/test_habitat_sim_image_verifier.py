@@ -1338,6 +1338,49 @@ def test_source_projection_rejects_undeclared_links(tmp_path) -> None:
     )
 
 
+@pytest.mark.parametrize("error_type", [H.W.ScanError, RuntimeError, KeyError])
+def test_projection_path_validation_only_classifies_expected_errors(
+    monkeypatch, error_type
+) -> None:
+    """Mock the parser boundary; never extract or touch a filesystem path."""
+    inventory = js(
+        {
+            "schema_version": "npa.habitat-sim.source-projection.v1",
+            "files": [{"path": "inert.txt", "bytes": 0, "sha256": "a" * 64}],
+        }
+    )
+    tracked = {
+        "manifest.json": js(
+            {
+                "expected_projection": {
+                    "inventory_sha256": _digest(inventory),
+                    "file_count": 1,
+                }
+            }
+        ),
+        "inventory.json": inventory,
+    }
+    contract = {
+        "source_projection": {
+            "manifest_path": "/manifest.json",
+            "inventory_path": "/inventory.json",
+            "source_root": "/usr/src/habitat-sim",
+        }
+    }
+
+    def refuse(_path):
+        raise error_type("inert validation boundary")
+
+    monkeypatch.setattr(H.W, "safe_name", refuse)
+    if error_type is H.W.ScanError:
+        findings, count = H._source_projection_findings({}, {}, tracked, contract)
+        assert findings == [{"code": "source_projection_unsafe_path"}]
+        assert count == 0
+    else:
+        with pytest.raises(error_type, match="inert validation boundary"):
+            H._source_projection_findings({}, {}, tracked, contract)
+
+
 @pytest.mark.parametrize(
     "target",
     [

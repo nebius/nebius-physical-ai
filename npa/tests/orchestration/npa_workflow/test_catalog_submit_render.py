@@ -27,6 +27,10 @@ def _prepare_catalog_workflow(spec_path):
         "on",
     }
     image_overrides = {"*": TEST_BAKED_IMAGE} if requires_baked_image else {}
+    if spec_path.name == "habitat-sim-smoke.yaml":
+        # Habitat requires a digest independently of the optional baked flag.
+        # This inert render-only identity is not a published or pullable image.
+        image_overrides["workflow.habitat_sim.smoke"] = TEST_BAKED_IMAGE
     if spec_path.name == "nurec-colmap-reconstruct.yaml":
         # Exercise the documented immutable validation override while default
         # production selection remains fail-closed on unaccepted NCore bytes.
