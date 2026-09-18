@@ -369,7 +369,9 @@ def test_streaming_encoder_reports_real_ffmpeg_failure_and_broken_pipe(tmp_path,
     command = ["ffmpeg", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
                "-s", "64x64", "-i", "pipe:", "-c:v", "npa_missing_codec", str(tmp_path / "bad.mp4")]
 
-    with pytest.raises(IsaacLabLeRobotError, match="ffmpeg failed.*npa_missing_codec"):
+    # `(?s)`: real ffmpeg stderr is multi-line, and a host whose dynamic linker
+    # warns puts those warnings ahead of the encoder error.
+    with pytest.raises(IsaacLabLeRobotError, match=r"(?s)ffmpeg failed.*npa_missing_codec"):
         adapter._run_video_encoder(command, frames, timeout=10)
 
     assert any(isinstance(error, BrokenPipeError) for error in write_errors)
