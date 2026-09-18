@@ -1,6 +1,6 @@
 ---
 name: find-artifacts
-description: Use when discovering or loading run artifacts in npa agent without workflow/type/path allowlists.
+description: Use when searching selected or accessible S3 buckets through npa studio, or discovering and loading run artifacts in the npa agent without workflow/type/path allowlists.
 ---
 
 # Find Artifacts (artifact-first)
@@ -22,6 +22,29 @@ Artifact-first means:
 4. Never hide unknown formats; degrade to download.
 
 No workflow registry, path allowlist, or known-type gate is required.
+
+## Local NPA search
+
+Use `npa studio search` without initializing a film project. Repeat `--bucket`
+for explicitly selected buckets; omit it to enumerate credential-visible buckets.
+Use repeated `--project` aliases or `--all-projects` for configured contexts.
+`--discover-tenant` inventories the selected tenant and tests each discovered
+bucket with the appropriate external credential context. It does not grant access.
+
+```bash
+npa studio search --project "<project-alias>" \
+  --bucket "<artifact-bucket>" --prefix "runs/" --kind video \
+  --read-metadata > artifact-search.json
+```
+
+Inspect `complete`, `discovery`, and every `sources` row. Exit 1 preserves results
+but means listing or discovery was incomplete. Metadata failure is separate from
+listing coverage. Tool/model metadata is declared provenance; verify the original
+run manifest and file hash before attributing an output. `--query` searches object
+keys, not media contents or model metadata. Keep source tuples and search output
+private. No recurring poller belongs in this skill or the reusable framework.
+
+Human guide: [Find artifacts](../../../docs/workbench/cookbooks/find-artifacts.md).
 
 ## Agent API flow
 

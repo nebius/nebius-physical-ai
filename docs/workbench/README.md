@@ -15,7 +15,7 @@ Python and HTTP access follow each tool's documented contract.
 | Prepare the runtime | [Workbench setup](getting-started.md) · [Kubernetes](kubernetes.md) · [direct runtime modes](runtime-modes.md) |
 | Author and submit | [Workflow guide](npa-workflow-guide.md) · [toolRef catalog](npa-workflow-tool-catalog.md) |
 | Integrate from Python or HTTP | [CLI / SDK walkthrough](cli-sdk-yaml-walkthrough.md) · [SDK errors](../sdk/errors.md) |
-| Inspect or recover | [Run lifecycle](../run-lifecycle.md) · [troubleshooting](troubleshooting/known-footguns.md) · [CLI errors](../cli-errors.md) |
+| Inspect or recover | [Run lifecycle](../run-lifecycle.md) · [controller recovery](controller-recovery.md) · [troubleshooting](troubleshooting/known-footguns.md) · [CLI errors](../cli-errors.md) |
 | Finish | [Teardown](../teardown.md) |
 
 ## Generation and scenes
@@ -44,6 +44,7 @@ Python and HTTP access follow each tool's documented contract.
 | Motion planning | [cuRobo](curobo.md) |
 | OpenArm simulation and RL | [OpenArm with MuJoCo and Isaac Lab](openarm.md) |
 | Isaac Lab versions | [Isaac Lab 3](isaac-lab-3.md) |
+| Policy evaluation in Isaac Lab | [Isaac Arena](isaac-arena.md) |
 
 ## Data and evaluation
 
@@ -51,7 +52,8 @@ Python and HTTP access follow each tool's documented contract.
 | --- | --- |
 | Curation, vector search, and detection training | [BDD100K pipeline](cookbooks/bdd100k-pipeline.md) · [LanceDB search](cookbooks/lancedb-vector-search.md) · [LanceDB deployment](cookbooks/lancedb-deploy-runbook.md) |
 | Hosted captioning, generation, and reasoning | [Token Factory](token-factory.md) · [cloud composition](composing-cloud-and-token-factory.md) |
-| Evaluate rollouts with a VLM | [VLM evaluation loop](cookbooks/vlm-eval-loop-runbook.md) |
+| Evaluate rollouts and verify VLM model provenance | [VLM evaluation loop and live endpoint check](cookbooks/vlm-eval-loop-runbook.md) |
+| Find artifacts across selected or accessible buckets | [Artifact discovery guide](cookbooks/find-artifacts.md) |
 | View and share artifacts | [Rerun](rerun-sharing.md) · [Foxglove / MCAP](foxglove-export.md) · [browser workbench](../agent.md) |
 | Autonomous-driving inference | [Alpamayo 2 Super](alpamayo2-super.md) |
 | Native Ray jobs, training, and serving | [Ray](ray.md) |

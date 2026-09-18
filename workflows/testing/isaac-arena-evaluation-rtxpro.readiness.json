@@ -1,0 +1,74 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "36a93ba4154eb3eb026c723d947d2466ff0af50e9fcc7e70a92f474c36e8bd0f",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The source workflow and owner-instantiated configuration passed validate-spec and plan-spec on 2026-09-17; the fresh workflow completed on the exact requested hardware.",
+      "evidence": [
+        "workflows/testing/isaac-arena-evaluation-rtxpro.yaml",
+        "arena-rtx-reconcile-ae5adea6-20260917-r3"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Fresh gr1_open_microwave replay executed actions 1-43 exactly once through native terminal with zero padding and success=1.0. Door openness increased 0.200 to 0.815; four coherent frame pairs overlapped and spatially matched native progress. All 44 capture physics bindings and action evidence match the preceding rejected visual run; native lighting quality changed, with every acceptance threshold retained.",
+      "evidence": [
+        "arena-rtx-reconcile-ae5adea6-20260917-r3",
+        "npa.isaac-arena.visual-acceptance.v1",
+        "arena.open-door.revolute-joint.v1",
+        "6bd5894a6803ae08c48c7d59bca2e78a0f611720e2f094c9fd9427e4c213744e"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "Owner-bound storage passed preflight. Independent retrieval verified 24 objects / 4,978,517 bytes, including every declared artifact hash; anonymous reads were denied. Raw evidence remains access-controlled.",
+      "evidence": [
+        "arena-rtx-reconcile-ae5adea6-20260917-r3"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "The unchanged 103-action operator replay was hash-verified and applied under its declared XYZW state/target contract. Its exact 43-action prefix reached native terminal; 60 source actions remain unexecuted after termination. No synthetic action or state padding occurred; the optional object selector matches the recorded scene.",
+      "evidence": [
+        "2437d0af03954a0ce98afc91373efc1bc696b5f2deb0e46d2f2b41e2a021ed8c",
+        "ca8b72c8363ea6757e4e5dfb5408d5d6db761e069ff0949948c45240d37a9499",
+        "001d8a2fdefdaae7b4a85a37bca91527618a888eb5604286f94110f94ff60d8f"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Fresh Nebius/storage, caller identity, accelerator and existing run-scoped runtime-access preflights passed. Private configuration hashes remained unchanged; no hardware substitution or identity-gate bypass occurred.",
+      "evidence": [
+        "arena-rtx-reconcile-ae5adea6-20260917-r3"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "Trusted public build 35211514544 passed source/license, complete-byte security, bootstrap, SBOM and provenance gates. Independent anonymous full pull, source hashes and signatures passed. Corrected independent scans verified all 42 layers / 127,560 paths, plus the 126,146-path registry filesystem and history. The earlier outer-archive probe is explicitly non-qualifying.",
+      "evidence": [
+        "ghcr.io/nebius/nebius-physical-ai/npa-isaac-arena:dev-ae5adea6ab895660996f513f14160c89d06f47e5",
+        "sha256:9c6a417672d6f87499680ba337c90488c2a33d41ac9f7b5452eb5d97d00e097e",
+        "35211514544",
+        "7b6dc47b183855907f1421e66a897ebe18cb02730f62a9245d77a2b9456fa2f7",
+        "39b90e7426879adc802f817fb23362df79f87b8248c8b6ac2ad11e8a063cf09e"
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "Exact RTX PRO 6000 capability 12.0 produced native JSONL/HDF5, linked HTML, initial/terminal PNGs and raw/evidence 1280x720 H.264 MP4s. Both videos independently decoded all 43 frames. The phase journal proves 43 ordered policy/env steps and 172 native substeps with closed nesting. A factual post-download RRD preserves initial capture plus 43 raw-video frames and 44 native metric samples; full pixel/metric decode equality and private upload read-back passed. Native controller SUCCEEDED; zero active workers; controller and shared capacity retained.",
+      "evidence": [
+        "arena-rtx-reconcile-ae5adea6-20260917-r3",
+        "a6122cb24de2471e7b528e62f0ac94b1232371ec8cb50fd62c71ab5d384ff79a",
+        "579f9a93316575aa0721897a6a9fd84796683d835c9f5188ae0abcd85bdc8a11",
+        "a2e4afbc5456ab693eaa4c65b8d5a5d312549147c8bd77e36dd16c8afc02c29d",
+        "bf52efc51552f8ad2a685b38d503eb67ac3f505166af828484ae226c3338a9e4",
+        "fd4390bdb1e3a66454efc4375abd628327b528286c24c978e790915e3ae84893",
+        "f274b5657d944a2f8f7f764c5a6507c02e4e12b005650f1f7284b9fce445c993",
+        "9afccdbd5a8df2f409b02aae573ae89d7839d0f964b265c9d1744a1131646f9d"
+      ]
+    }
+  }
+}

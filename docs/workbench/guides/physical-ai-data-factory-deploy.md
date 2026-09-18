@@ -902,7 +902,8 @@ How the nodes divide the work and rejoin:
 - Every pod runs the same augment command and reads the same
   `configs/manifest.json`. Node `k` of `N` renders variants `k, k+N, k+2N, …`
   (striding, so the nodes stay within one variant of each other) and pins each of
-  its own concurrent renders to a local GPU starting at 0.
+  its own concurrent renders to one of the pod's cloud GPUs (CUDA device
+  indices starting at 0).
 - Variant indices are global, so clip names (`aug-<run-id>-<i>`) stay disjoint.
   Every scheduler-managed wave attempt, including the one-node default, writes only below
   `cosmos_augmented/_attempts/<attempt-id>/`, and every clip dir there is written

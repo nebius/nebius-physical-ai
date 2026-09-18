@@ -24,6 +24,7 @@ validation scope. Dated measurements apply to the versions and hardware recorded
 
 | Recipe | Purpose |
 | --- | --- |
+| [Find artifacts](find-artifacts.md) | Search selected buckets, configured projects, or tenant inventory; inspect coverage and provenance |
 | [BDD100K pipeline](bdd100k-pipeline.md) | Ingest, curate, train, and evaluate detectors |
 | [LanceDB deployment](lancedb-deploy-runbook.md) | Deploy the service and load data |
 | [LanceDB vector search](lancedb-vector-search.md) | Build and query embeddings |

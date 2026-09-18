@@ -6,6 +6,22 @@ This runbook runs the sim-to-real VLM-eval loop on the self-hosted serving path:
 serve a VLM with vLLM, score rollout directories with `vlm-eval`, and write a
 task-success report.
 
+Each evaluation records the requested `model` and the endpoint's returned
+`served_model`. Self-hosted servers that omit the model identity leave
+`served_model` null; NPA does not infer it from the requested alias. A supplied
+identity must be a nonempty string. Retain the serving deployment's checkpoint
+revision separately: a model name alone does not identify its weight bytes.
+
+To verify this against your existing GPU endpoint, set
+`NPA_INTEGRATION_E2E=1` and point `NPA_VLM_PROVENANCE_LIVE_CONFIG` at a private
+JSON file containing `input_path`, `output_path` (a local JSON filename),
+`endpoint_url`, `model`, `expected_served_model`, and `task`. Supply credentials
+through the environment variable named by `api_key_env` (default
+`VLM_EVAL_API_KEY`). Run
+`npa/.venv/bin/python -m pytest npa/tests/e2e/test_vlm_served_model_live.py -q`.
+The test calls the real endpoint and retains its verdict; it provisions and
+destroys no resources.
+
 ## Prerequisites
 
 - `npa` is installed from this repository.

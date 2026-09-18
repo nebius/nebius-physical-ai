@@ -336,9 +336,9 @@ rather than the argument.
 **Wrong answer #1: "the source is Apache-2.0, so the image is fine."** The decisive layer
 is the baked runtime, and publishing an image distributes every byte in it.
 
-**Wrong answer #2: "Isaac Lab's repo is BSD-3, so we can bake that half and only
-runtime-fetch Isaac Sim."** This is the trap worth memorising, because it looks like
-diligence. Read the *package metadata*, not the repo badge:
+**Wrong answer #2 for the historical Lab 2 wheel: "Isaac Lab's repo is BSD-3, so
+we can bake that half and only runtime-fetch Isaac Sim."** Read the exact
+*package metadata*, not the repo badge:
 
 ```
 $ curl -sL https://pypi.nvidia.com/isaaclab/isaaclab-2.3.2.post1-cp311-none-manylinux_2_35_x86_64.whl -o w.whl
@@ -353,18 +353,31 @@ express license agreement from NVIDIA CORPORATION is strictly prohibited"*. The 
 is a differently-licensed repackaging of the BSD-3 **repo**. Same project, same version,
 two licences, and only one of them is on the artefact you would ship.
 
+That example concerns `isaaclab==2.3.2.post1`. The Arena-selected
+`isaaclab==3.0.0b2.post1` wheel instead declares BSD-3-Clause, as recorded in
+[Arena's notices](../../../npa/docker/workbench/isaac-arena/THIRD_PARTY_NOTICES.md).
+Its exact wheel hash is in the [runtime lock](../../../npa/docker/workbench/common/isaac3-nvidia-wheels.txt).
+The exact wheel has no standalone license member; Arena's machine-readable
+license evidence records the wheel and `METADATA` hashes, and the runtime
+bootstrap rejects a changed installed `License` field.
+Do not transfer the older wheel's classification to this version, or extend
+the Lab wheel's BSD grant to Isaac Sim 6.0.1.0 and its proprietary dependencies.
+Arena still fetches the complete simulator runtime closure at run time; its
+baked Apache-2.0 Arena application source is a separate artifact.
+
 **Also wrong: "gate the image behind a runtime token."** A token gates a *download*. If
 the bytes are already in the layers, a token protects nothing — you have just added a
 speed bump in front of a redistribution you have already performed. Any proposal of the
 form "we keep baking it but add an access control" is answering the wrong question.
 
 **The answer that worked: move the vendor's delivery to the customer — for the whole
-SDK, not just the weights.** The images were re-architected to contain **no NVIDIA Isaac
-bytes at all**. On first run they download Isaac Sim and Isaac Lab from
+SDK, not just the weights.** The images were re-architected to exclude the
+Isaac Sim/Lab wheels and restricted Kit runtime payloads. On first run they
+download Isaac Sim and Isaac Lab from
 `https://pypi.nvidia.com` into a cache volume. NPA defaults NVIDIA's documented
 `ACCEPT_EULA=Y` for these non-interactive workloads and preserves an explicit opt-out.
-NVIDIA still delivers the runtime directly to each operator; we redistribute no Isaac
-bytes, so the redistribution conclusion does not depend on the EULA UX default.
+NVIDIA still delivers those runtime wheels directly to each operator; they are
+absent from public image layers, independently of the EULA UX default.
 The clean runtime-fetch `isaac-lab`, `sonic`, and `groot` images may therefore be
 classified `redistribution: public`. Historical SONIC L40S and inherited MuJoCo
 artifacts contain restricted payload; replacing them does not make those old
@@ -384,7 +397,7 @@ solution should expect to produce all three:
    must run non-interactively. Empty, `N`, `NO`, `0`, and `FALSE` must refuse
    before downloading; `Y`, `YES`, `1`, and `TRUE` normalize to acceptance;
    unrecognized values fail separately as invalid. The public-image control
-   remains the verified absence of Isaac bytes.
+   remains the verified absence of restricted simulator runtime payloads.
 2. **The absence is verified on the artefact.** `npa/scripts/scan_image_omniverse_payload.py`
    streams the built image's filesystem and layer history and fails on Kit payload
    signatures. Reading the Dockerfile is not evidence — the claim is about bytes in

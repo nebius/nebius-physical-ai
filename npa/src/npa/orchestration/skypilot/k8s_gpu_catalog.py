@@ -60,6 +60,18 @@ class PermanentlyUnsatisfiableAcceleratorError(UnsatisfiableAcceleratorError):
     """Raised when more discovery time cannot make the request schedulable."""
 
 
+class TemporarilyUnavailableAcceleratorError(UnsatisfiableAcceleratorError):
+    """A supported shape must wait for existing cluster capacity.
+
+    Args:
+        None. Inherits the exception message constructor.
+    Returns:
+        None.
+    Raises:
+        None.
+    """
+
+
 Kubeconfig = str | os.PathLike[str] | None
 
 
@@ -235,6 +247,9 @@ class KubernetesGpuNode:
     committed_pods: int = 0
     free_pod_slots: int = 0
     labels: tuple[tuple[str, str], ...] = ()
+    allocatable_ephemeral_storage_bytes: int = 0
+    committed_ephemeral_storage_bytes: int = 0
+    free_ephemeral_storage_bytes: int = 0
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -257,6 +272,9 @@ class KubernetesGpuNode:
             "committed_pods": self.committed_pods,
             "free_pod_slots": self.free_pod_slots,
             "labels": dict(self.labels),
+            "allocatable_ephemeral_storage_bytes": self.allocatable_ephemeral_storage_bytes,
+            "committed_ephemeral_storage_bytes": self.committed_ephemeral_storage_bytes,
+            "free_ephemeral_storage_bytes": self.free_ephemeral_storage_bytes,
         }
 
 
@@ -382,15 +400,15 @@ def _container_request(container: object, resource: str) -> int:
     return _cpu_millis(raw) if resource == "cpu" else _memory_bytes(raw)
 
 
-def _pod_commitment(pod: object) -> tuple[str, int, int, int, int]:
+def _pod_commitment(pod: object) -> tuple[str, int, int, int, int, int]:
     if not isinstance(pod, dict):
-        return "", 0, 0, 0, 0
+        return "", 0, 0, 0, 0, 0
     spec = pod.get("spec") or {}
     status = pod.get("status") or {}
     if not isinstance(spec, dict) or not isinstance(status, dict):
-        return "", 0, 0, 0, 0
+        return "", 0, 0, 0, 0, 0
     if str(status.get("phase") or "") in {"Succeeded", "Failed"}:
-        return "", 0, 0, 0, 0
+        return "", 0, 0, 0, 0, 0
     node_name = str(spec.get("nodeName") or "").strip()
     containers = spec.get("containers") or []
     init_containers = spec.get("initContainers") or []
@@ -399,28 +417,23 @@ def _pod_commitment(pod: object) -> tuple[str, int, int, int, int]:
         (_gpu_quantity(item) for item in spec.get("initContainers") or []),
         default=0,
     )
-    regular_cpu = sum(_container_request(item, "cpu") for item in containers)
-    init_cpu = max(
-        (_container_request(item, "cpu") for item in init_containers), default=0
-    )
-    regular_memory = sum(_container_request(item, "memory") for item in containers)
-    init_memory = max(
-        (_container_request(item, "memory") for item in init_containers), default=0
-    )
     overhead = spec.get("overhead") or {}
-    overhead_cpu = (
-        _cpu_millis(overhead.get("cpu", 0)) if isinstance(overhead, dict) else 0
-    )
-    overhead_memory = (
-        _memory_bytes(overhead.get("memory", 0)) if isinstance(overhead, dict) else 0
-    )
     return (
         node_name,
         max(regular_gpu, init_gpu),
-        max(regular_cpu, init_cpu) + overhead_cpu,
-        max(regular_memory, init_memory) + overhead_memory,
+        _pod_resource_commitment(containers, init_containers, overhead, "cpu"),
+        _pod_resource_commitment(containers, init_containers, overhead, "memory"),
         1,
+        _pod_resource_commitment(containers, init_containers, overhead, "ephemeral-storage"),
     )
+
+
+def _pod_resource_commitment(containers, init_containers, overhead, resource):
+    regular = sum(_container_request(item, resource) for item in containers)
+    initial = max((_container_request(item, resource) for item in init_containers), default=0)
+    raw_overhead = overhead.get(resource, 0) if isinstance(overhead, dict) else 0
+    extra = _cpu_millis(raw_overhead) if resource == "cpu" else _memory_bytes(raw_overhead)
+    return max(regular, initial) + extra
 
 
 def discover_kubernetes_gpu_inventory(
@@ -496,18 +509,19 @@ def discover_kubernetes_gpu_inventory(
                 "kubectl pod inventory failed; free shared GPU capacity is unknown",
             )
         pod_payload = json.loads(pod_result.stdout or "{}")
-        committed_by_node: dict[str, tuple[int, int, int, int]] = {}
+        committed_by_node: dict[str, tuple[int, int, int, int, int]] = {}
         unbound_pending_gpu_pods = 0
         unbound_pending_gpu_requests = 0
         for pod in pod_payload.get("items", []):
-            node_name, gpu, cpu, memory, pod_slots = _pod_commitment(pod)
+            node_name, gpu, cpu, memory, pod_slots, storage = _pod_commitment(pod)
             if node_name:
-                prior = committed_by_node.get(node_name, (0, 0, 0, 0))
+                prior = committed_by_node.get(node_name, (0, 0, 0, 0, 0))
                 committed_by_node[node_name] = (
                     prior[0] + gpu,
                     prior[1] + cpu,
                     prior[2] + memory,
                     prior[3] + pod_slots,
+                    prior[4] + storage,
                 )
             elif gpu > 0:
                 # An unbound active GPU pod has already made a claim on shared
@@ -561,6 +575,7 @@ def discover_kubernetes_gpu_inventory(
         node_capacity = int((status.get("capacity") or {}).get("nvidia.com/gpu", 0))
         node_cpu = _cpu_millis((status.get("allocatable") or {}).get("cpu", 0))
         node_memory = _memory_bytes((status.get("allocatable") or {}).get("memory", 0))
+        node_storage = _memory_bytes((status.get("allocatable") or {}).get("ephemeral-storage", 0))
         try:
             node_pods = max(0, int((status.get("allocatable") or {}).get("pods", 0)))
         except (TypeError, ValueError):
@@ -593,8 +608,8 @@ def discover_kubernetes_gpu_inventory(
             ):
                 if value:
                     node_products.add(value)
-        committed, committed_cpu, committed_memory, committed_pods = (
-            committed_by_node.get(name, (0, 0, 0, 0))
+        committed, committed_cpu, committed_memory, committed_pods, committed_storage = (
+            committed_by_node.get(name, (0, 0, 0, 0, 0))
         )
         free = max(0, node_allocatable - committed)
         free_cpu = max(0, node_cpu - committed_cpu)
@@ -631,6 +646,9 @@ def discover_kubernetes_gpu_inventory(
                     committed_pods=committed_pods,
                     free_pod_slots=free_pods,
                     labels=tuple(sorted(all_labels.items())),
+                    allocatable_ephemeral_storage_bytes=node_storage,
+                    committed_ephemeral_storage_bytes=committed_storage,
+                    free_ephemeral_storage_bytes=max(0, node_storage - committed_storage),
                 )
             )
         if ready and not blocked and node_allocatable > 0:
@@ -771,20 +789,67 @@ def _node_matches_pod_spec(
     return False
 
 
-def preflight_kubernetes_gpu_gang(
-    inventory: KubernetesGpuInventory,
-    *,
-    accelerator: str,
-    node_count: int,
-    cpus: object = 0,
-    memory: object = 0,
-    allowed_nodes: tuple[str, ...] | list[str] | None = None,
-    pod_spec: Mapping[str, object] | None = None,
-) -> dict[str, object]:
-    """Require N distinct compatible nodes with enough currently free GPUs."""
+@dataclass(frozen=True)
+class _GangRequirements:
+    accelerator: AcceleratorRequest
+    nodes: int
+    cpu: int
+    memory: int
+    storage: int
+    allowed: frozenset[str]
+    pod_spec: Mapping[str, object]
 
-    if inventory.error:
-        raise KubernetesGpuCatalogError(inventory.error)
+
+def _gang_requirements(accelerator, node_count, cpus, memory, ephemeral_storage, allowed_nodes, pod_spec):
+    expected = int(node_count)
+    if expected < 1:
+        raise ValueError("node_count must be positive")
+    selected = pod_spec or {}
+    if not isinstance(selected, Mapping):
+        raise KubernetesGpuCatalogError("resource-profile pod spec must be a mapping")
+    if selected.get("topologySpreadConstraints"):
+        raise KubernetesGpuCatalogError(
+            "existing-capacity preflight cannot authoritatively evaluate topology "
+            "spread constraints"
+        )
+    allowed = frozenset(str(name).strip() for name in (allowed_nodes or ()) if str(name).strip())
+    return _GangRequirements(parse_accelerator_request(accelerator), expected,
+                             _cpu_millis(cpus), _memory_bytes(memory),
+                             _memory_bytes(ephemeral_storage), allowed, selected)
+
+
+def _compatible_gang_nodes(inventory: KubernetesGpuInventory, shape: _GangRequirements):
+    wanted = _normalize(shape.accelerator.name)
+    aliases = next((group for group in _EXPLICIT_ACCELERATOR_ALIASES if wanted in group),
+                   frozenset({wanted}))
+    return [node for node in inventory.nodes
+            if (not shape.allowed or node.name in shape.allowed)
+            and _node_matches_pod_spec(node, shape.pod_spec)
+            and any(_normalize(product) in aliases for product in node.products)
+            and node.allocatable >= shape.accelerator.quantity
+            and node.allocatable_cpu_millis >= shape.cpu
+            and node.allocatable_memory_bytes >= shape.memory
+            and node.allocatable_ephemeral_storage_bytes >= shape.storage
+            and node.allocatable_pods >= 1]
+
+
+def _require_free_gang(inventory, shape, compatible_nodes, candidates):
+    if len(candidates) < shape.nodes:
+        error = (TemporarilyUnavailableAcceleratorError
+                 if len(compatible_nodes) >= shape.nodes
+                 else PermanentlyUnsatisfiableAcceleratorError)
+        raise error(
+            f"Kubernetes context {inventory.context or '<current>'} has "
+            f"{len(candidates)} distinct compatible schedulable node(s) with at "
+            f"least {shape.accelerator.quantity} free {shape.accelerator.name} GPU(s), "
+            f"but the gang requires {shape.nodes}. Active pod GPU commitments are subtracted; "
+            f"each rank also requires {shape.cpu / 1000:g} CPU and "
+            f"{shape.memory} memory bytes and {shape.storage} ephemeral-storage bytes. "
+            "Active pod GPU/CPU/memory/ephemeral-storage requests "
+            "and allocatable pod slots are checked. SkyPilot allowed_nodes affinity "
+            f"is applied ({sorted(shape.allowed) if shape.allowed else 'unrestricted'}); "
+            "aggregate capacity on one node cannot satisfy multiple gang ranks."
+        )
     if inventory.unbound_pending_gpu_pods:
         raise PendingGpuPlacementError(
             "free shared GPU capacity is indeterminate: Kubernetes has "
@@ -792,66 +857,50 @@ def preflight_kubernetes_gpu_gang(
             f"requesting {inventory.unbound_pending_gpu_requests} GPU(s); wait for "
             "authoritative placement or remove only the owned pending workload"
         )
-    request = parse_accelerator_request(accelerator)
-    expected = int(node_count)
-    if expected < 1:
-        raise ValueError("node_count must be positive")
-    wanted = _normalize(request.name)
-    requested_cpu = _cpu_millis(cpus)
-    requested_memory = _memory_bytes(memory)
-    allowed = {str(name).strip() for name in (allowed_nodes or ()) if str(name).strip()}
-    selected_pod_spec = pod_spec or {}
-    if not isinstance(selected_pod_spec, Mapping):
-        raise KubernetesGpuCatalogError("resource-profile pod spec must be a mapping")
-    if selected_pod_spec.get("topologySpreadConstraints"):
-        raise KubernetesGpuCatalogError(
-            "existing-capacity preflight cannot authoritatively evaluate topology "
-            "spread constraints"
-        )
-    alias_group = next(
-        (group for group in _EXPLICIT_ACCELERATOR_ALIASES if wanted in group),
-        frozenset({wanted}),
-    )
 
-    def compatible(node: KubernetesGpuNode) -> bool:
-        return any(_normalize(product) in alias_group for product in node.products)
 
-    candidates = [
-        node
-        for node in inventory.nodes
-        if node.ready
-        and node.schedulable
-        and (not allowed or node.name in allowed)
-        and _node_matches_pod_spec(node, selected_pod_spec)
-        and compatible(node)
-        and node.free >= request.quantity
-        and node.free_cpu_millis >= requested_cpu
-        and node.free_memory_bytes >= requested_memory
-        and node.free_pod_slots >= 1
-    ]
-    if len(candidates) < expected:
-        raise UnsatisfiableAcceleratorError(
-            f"Kubernetes context {inventory.context or '<current>'} has "
-            f"{len(candidates)} distinct compatible schedulable node(s) with at "
-            f"least {request.quantity} free {request.name} GPU(s), but the gang "
-            f"requires {expected}. Active pod GPU commitments are subtracted; "
-            f"each rank also requires {requested_cpu / 1000:g} CPU and "
-            f"{requested_memory} memory bytes. Active pod GPU/CPU/memory requests "
-            "and allocatable pod slots are checked. SkyPilot allowed_nodes affinity "
-            f"is applied ({sorted(allowed) if allowed else 'unrestricted'}); "
-            "aggregate capacity on one node cannot satisfy "
-            "multiple gang ranks."
-        )
-    return {
-        "context": inventory.context,
-        "accelerator": request.spec,
-        "node_count": expected,
-        "compatible_free_nodes": len(candidates),
-        "selected_nodes": [node.name for node in candidates[:expected]],
-        "cpus_per_node": requested_cpu / 1000,
-        "memory_bytes_per_node": requested_memory,
-        "allowed_nodes": sorted(allowed),
-    }
+def preflight_kubernetes_gpu_gang(
+    inventory: KubernetesGpuInventory, *, accelerator: str, node_count: int,
+    cpus: object = 0, memory: object = 0, ephemeral_storage: object = 0,
+    allowed_nodes: tuple[str, ...] | list[str] | None = None,
+    pod_spec: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """Require distinct compatible nodes with enough currently free resources.
+
+    Args:
+        inventory: Live node and pod commitments in the selected context.
+        accelerator: GPU product and quantity required on each node.
+        node_count: Number of distinct nodes required.
+        cpus: CPU request per node.
+        memory: Memory request per node.
+        ephemeral_storage: Ephemeral storage request per node, in Kubernetes units.
+        allowed_nodes: Optional SkyPilot node allowlist.
+        pod_spec: Optional Kubernetes placement constraints.
+    Returns:
+        Fit evidence; it does not reserve capacity.
+    Raises:
+        KubernetesGpuCatalogError: Inventory or constraints cannot be verified.
+        PendingGpuPlacementError: Active GPU pods still await authoritative placement.
+        TemporarilyUnavailableAcceleratorError: A supported shape is occupied or unavailable.
+        PermanentlyUnsatisfiableAcceleratorError: No existing nodes can fit the shape.
+        ValueError: The requested shape is invalid.
+    """
+    if inventory.error:
+        raise KubernetesGpuCatalogError(inventory.error)
+    shape = _gang_requirements(accelerator, node_count, cpus, memory, ephemeral_storage, allowed_nodes, pod_spec)
+    compatible = _compatible_gang_nodes(inventory, shape)
+    candidates = [node for node in compatible if node.ready and node.schedulable
+                  and node.free >= shape.accelerator.quantity
+                  and node.free_cpu_millis >= shape.cpu
+                  and node.free_memory_bytes >= shape.memory
+                  and node.free_ephemeral_storage_bytes >= shape.storage and node.free_pod_slots >= 1]
+    _require_free_gang(inventory, shape, compatible, candidates)
+    return {"context": inventory.context, "accelerator": shape.accelerator.spec,
+            "node_count": shape.nodes, "compatible_free_nodes": len(candidates),
+            "selected_nodes": [node.name for node in candidates[:shape.nodes]],
+            "cpus_per_node": shape.cpu / 1000, "memory_bytes_per_node": shape.memory,
+            "ephemeral_storage_bytes_per_node": shape.storage,
+            "allowed_nodes": sorted(shape.allowed)}
 
 
 @dataclass(frozen=True)
@@ -1383,22 +1432,17 @@ def resolve_kubernetes_accelerator(
             "with the exact name you want."
         )
     resolved_name = matches[0]
-    allowed = catalog.quantities_by_accelerator[resolved_name]
-    if request.quantity not in allowed:
-        max_per_node = catalog.max_per_node(resolved_name)
-        if request.quantity > max_per_node:
-            raise PermanentlyUnsatisfiableAcceleratorError(
-                f"{resolved_name}:{request.quantity} cannot be scheduled: this cluster's "
-                f"nodes offer at most {max_per_node} of that GPU each, and SkyPilot places "
-                "all GPUs of one task on a single node. Adding nodes does not help. "
-                f"Suggested action: export NPA_WORKFLOW_GPU_ACCELERATOR={resolved_name}:{max_per_node} "
-                "and let the workflow fan out across steps instead of across GPUs."
-            )
-        offered = ", ".join(str(value) for value in sorted(allowed))
+    # SkyPilot summarizes Kubernetes offerings as powers of two. Those are
+    # catalog display sizes, not a restriction on integer GPU pod requests.
+    # Exact free GPU/CPU/memory/affinity fit is checked by gang preflight.
+    max_per_node = catalog.max_per_node(resolved_name)
+    if request.quantity > max_per_node:
         raise PermanentlyUnsatisfiableAcceleratorError(
-            f"{resolved_name}:{request.quantity} is not a requestable quantity on this "
-            f"cluster (it offers {offered} per node). Suggested action: export "
-            f"NPA_WORKFLOW_GPU_ACCELERATOR={resolved_name}:<one of {offered}>."
+            f"{resolved_name}:{request.quantity} cannot be scheduled: this cluster's "
+            f"nodes offer at most {max_per_node} of that GPU each, and SkyPilot places "
+            "all GPUs of one task on a single node. Adding nodes does not help. "
+            f"Suggested action: export NPA_WORKFLOW_GPU_ACCELERATOR={resolved_name}:{max_per_node} "
+            "and let the workflow fan out across steps instead of across GPUs."
         )
     resolved = f"{resolved_name}:{request.quantity}"
     return AcceleratorResolution(

@@ -14,6 +14,7 @@ import sys
 
 _VERSION_FLAGS = frozenset({"--version", "-V"})
 _COSMOS2_TRANSFER_PREFIX = ("workbench", "cosmos2", "transfer")
+_ISAAC_ARENA_PREFIX = ("workbench", "isaac-arena")
 _OPENARM_PREFIX = ("workbench", "openarm")
 
 
@@ -32,6 +33,10 @@ def _is_cosmos2_request(argv: list[str]) -> bool:
     return tuple(argv[:3]) == _COSMOS2_TRANSFER_PREFIX
 
 
+def _is_isaac_arena_request(argv: list[str]) -> bool:
+    """True only for the dependency-minimal Arena worker command."""
+
+    return tuple(argv[:2]) == _ISAAC_ARENA_PREFIX
 def _is_openarm_image_request(argv: list[str]) -> bool:
     """True only for OpenArm commands inside its dependency-minimal image."""
 
@@ -68,6 +73,10 @@ def main() -> None:
     if _is_bare_version_request(sys.argv[1:]):
         _print_version()
         return
+    if sys.argv[1:2] == ["studio"]:
+        from npa.studio import run
+
+        raise SystemExit(run(sys.argv[2:]))
     if _is_cosmos2_request(sys.argv[1:]):
         # Do not initialize the full platform/workbench command tree here. The
         # Cosmos image deliberately carries only its inference stack and the
@@ -81,6 +90,18 @@ def main() -> None:
         cosmos2_app(
             args=cosmos2_args,
             prog_name="npa workbench cosmos2 transfer",
+        )
+        return
+    if _is_isaac_arena_request(sys.argv[1:]):
+        # The public Arena image intentionally carries the small CLI closure
+        # needed by this evaluator, not the unrelated platform command tree.
+        # Keep this route ahead of ``npa.cli.main`` so a staged worker uses the
+        # same dependency-minimal contract as the image's build-time probe.
+        from npa.cli.workbench.isaac_arena import app as isaac_arena_app
+
+        isaac_arena_app(
+            args=sys.argv[3:],
+            prog_name="npa workbench isaac-arena",
         )
         return
     if _is_openarm_image_request(sys.argv[1:]):
