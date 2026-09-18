@@ -29,13 +29,41 @@ provides the Antioch connection and artifact transfers around it.
 
 ## Antioch authentication and Workbench integration
 
-Workbench invokes the installed Antioch CLI from your own Antioch project. It
-reuses that CLI's authentication; there is no separate Workbench Antioch token
-setting. Interactive operators use `antioch auth login`. Headless operators can
-inject a personal access token as `ANTIOCH_TOKEN` through their secret manager.
-For a local client, that variable overrides saved browser authentication;
-managed Antioch workspaces use their managed credentials first. Confirm the
-active identity privately with `antioch auth whoami --json`.
+Workbench invokes the installed Antioch CLI from your own Antioch project. Store
+an Antioch **personal access token** in the standard private NPA credential file,
+`~/.npa/credentials.yaml` (or `$NPA_CONFIG_DIR/credentials.yaml`):
+
+```yaml
+tokens:
+  ANTIOCH_TOKEN: "<your-antioch-personal-access-token>"
+```
+
+Protect the file with `chmod 600 ~/.npa/credentials.yaml`. If your secret manager
+already supplies `ANTIOCH_TOKEN`, `npa configure --save-env-credentials` persists
+supported environment credentials with an atomic 0600 write and reports names
+only. It can also save other supported credentials present in that environment.
+Do not put the token value in shell arguments or history.
+
+The Workbench operator resolves `ANTIOCH_TOKEN` from the environment first, then
+`tokens.ANTIOCH_TOKEN` from the NPA file. It injects the result only into local
+Antioch CLI/SDK client processes; the saved token is excluded from generic
+Workbench credential exports and training workflow parameters. If neither is
+configured, the CLI can reuse an existing `antioch auth login` browser session.
+Browser access/refresh credentials stay in Antioch's own store; do not copy
+them into the personal-access-token field. Managed Antioch workspaces retain
+the SDK's managed-credential precedence.
+
+Use the operator wrapper when a native CLI command needs the NPA-stored token:
+
+```bash
+npa/.venv/bin/python -m npa.workflows.xr1_antioch.operator antioch \
+  --antioch-project "$XR1_ANTIOCH_PROJECT" -- auth whoami --json
+```
+
+Run identity checks privately because they print user and organization details.
+A bare `antioch` invocation does not read NPA's credential file. The `exec`
+operator command below supplies the same credentials to the pinned SDK adapter
+for evaluation.
 
 An Antioch token grants access according to its permissions. You also need an
 owned Antioch project, the compatible SDK/engine, simulator capacity, and a
@@ -324,11 +352,13 @@ Use the pinned SDK attachment adapter below to wait until the cohort finishes.
 It retains the client's managed process cleanup and operator interruption;
 it does not detach the simulator or impose a workload deadline.
 
-Run the complete base cohort from the owning Antioch project:
+Run the complete base cohort through the Workbench operator, which selects the
+owning Antioch project and resolves its client credential:
 
 ```bash
-cd "$XR1_ANTIOCH_PROJECT"
-"$XR1_ANTIOCH_PYTHON" "$XR1_WORKBENCH/npa/src/npa/workflows/xr1_antioch/attached_exec.py" -- \
+npa/.venv/bin/python -m npa.workflows.xr1_antioch.operator exec \
+  --antioch-project "$XR1_ANTIOCH_PROJECT" \
+  --antioch-python "$XR1_ANTIOCH_PYTHON" -- \
 env OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 \
   PYTHONPATH=/workspace/project/xr1-source/source \
   python -u -m npa.workflows.xr1_antioch.evaluate \
@@ -339,7 +369,6 @@ env OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 \
   --checkpoint-sha256 94d55a79122050a654b379664b644e874ff90d64ccd30a6a633f816555bcecf7 \
   --statistics /workspace/project/xr1-statistics/normalization.json \
   --split-manifest /workspace/project/xr1-source/source/recipe/split-manifest.json
-cd "$XR1_WORKBENCH"
 ```
 
 Fetch `candidate/model_states.pt` from `$XR1_PREFIX/training` with

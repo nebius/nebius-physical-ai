@@ -8,6 +8,7 @@ from pathlib import Path, PurePosixPath
 import subprocess
 from urllib.parse import urlsplit
 
+from npa.clients.antioch import antioch_environment
 from npa.clients.storage import StorageClient
 
 
@@ -18,6 +19,7 @@ def _worker(project: Path, request: dict) -> dict:
     ]
     result = subprocess.run(
         command, cwd=project, input=json.dumps(request), text=True, capture_output=True,
+        env=antioch_environment(),
     )
     if result.returncode:
         raise RuntimeError(f"Antioch artifact worker failed with exit {result.returncode}")
@@ -128,6 +130,7 @@ def fetch_inputs(project: Path, remote_root: str, source: str, manifest: dict,
     result = subprocess.run(
         ["antioch", "service", "exec", "--no-stream", "--no-tty", "--", "python", "-c", code],
         cwd=project, input=json.dumps(request), text=True, capture_output=True,
+        env=antioch_environment(),
     )
     if result.returncode:
         raise RuntimeError(f"Antioch input verification failed with exit {result.returncode}")

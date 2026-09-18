@@ -7,8 +7,10 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import zipfile
 
+from npa.clients.antioch import antioch_environment
 from npa.clients.project_credentials import storage_client_for_project, storage_env_for_project
 
 from .assets import SOURCE_REVISION, fetch_checkpoint, fetch_processor
@@ -65,6 +67,7 @@ def _parser() -> argparse.ArgumentParser:
     comparison = commands.add_parser("compare")
     for option in ("baseline", "candidate", "split-manifest", "output-path"):
         comparison.add_argument(f"--{option}", type=Path, required=True)
+    _antioch_commands(commands)
     for name in ("assets", "runtime", "source", "collect", "fetch", "publish"):
         command = commands.add_parser(name)
         command.add_argument("--s3-uri", required=True)
@@ -80,6 +83,32 @@ def _parser() -> argparse.ArgumentParser:
             command.add_argument("--manifest", default="manifest.json")
             command.add_argument("--include", action="append", help="Exact file names; default is every manifest entry")
     return parser
+
+
+def _antioch_commands(commands) -> None:
+    for name in ("antioch", "exec"):
+        command = commands.add_parser(name, help="Run the Antioch CLI or attached remote argv with NPA credentials")
+        command.add_argument("--antioch-project", type=Path, required=True)
+        if name == "exec":
+            command.add_argument("--antioch-python", type=Path, required=True,
+                                 help="Interpreter with antioch-sim==0.4.236")
+        command.add_argument("argv", nargs=argparse.REMAINDER, help="Literal arguments after --")
+
+
+def _run_antioch(args) -> int:
+    command = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
+    if not command:
+        raise ValueError("Antioch command arguments are required after --")
+    if args.command == "exec":
+        launcher = [str(args.antioch_python.resolve()),
+                    str(Path(__file__).with_name("attached_exec.py")), "--"]
+    else:
+        launcher = ["antioch"]
+    try:
+        return subprocess.run(launcher + command, cwd=args.antioch_project,
+                              env=antioch_environment()).returncode
+    except KeyboardInterrupt:
+        return 130
 
 
 def _compare(args) -> None:
@@ -106,6 +135,8 @@ def _main() -> None:
     if args.command == "compare":
         _compare(args)
         return
+    if args.command in ("antioch", "exec"):
+        raise SystemExit(_run_antioch(args))
     if not args.project:
         parser.error("--project is required for S3 operations")
     storage = storage_client_for_project(args.project, allow_host_creds=True)
@@ -129,6 +160,10 @@ def _main() -> None:
         if args.include:
             manifest = {name: manifest[name] for name in args.include}
         result = fetch_inputs(args.antioch_project, args.remote_root, args.s3_uri, manifest, storage)
+    _write_result(args, result)
+
+
+def _write_result(args, result: dict) -> None:
     target = args.output_path / "receipt.json" if args.command in ("assets", "source") else args.output_path
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(result, indent=2))

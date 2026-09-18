@@ -11,7 +11,9 @@ Use the [XR1 cookbook](../../../docs/workbench/cookbooks/xr1-antioch.md) for the
 executable procedure and pinned inputs. The operator module at
 `npa/src/npa/workflows/xr1_antioch/operator.py` invokes the installed Antioch CLI
 from an operator-owned Antioch project. Its commands are `assets`, `runtime`,
-`source`, `collect`, `fetch`, `publish`, and `compare`.
+`source`, `collect`, `fetch`, `publish`, and `compare`. The `antioch` command
+wraps native CLI arguments; `exec` launches attached remote argv through the
+pinned SDK interpreter. Both resolve the NPA credential before launching.
 
 The training stage is the `workflow.xr1.finetune` toolRef in
 `workflows/testing/xr1-antioch-finetune.yaml`. It runs on Nebius and publishes
@@ -21,23 +23,31 @@ one submitted workflow. The NPA CLI has no separate Antioch subcommand.
 
 ## Authentication
 
-1. Inspect the installed CLI/SDK version and run `antioch auth whoami --json`
+1. Inspect the installed CLI/SDK version and run the cookbook's
+   `operator antioch --antioch-project <owned-directory> -- auth whoami --json`
    privately. This reports identity and credential source without printing the
    token, but organization, API, and user details still belong outside Git and
    public recordings. The tested XR1 adapter requires `antioch-sim==0.4.236`.
-2. Reuse the operator's authenticated CLI. Interactive operators can use
-   `antioch auth login`, which prints a browser confirmation URL and saves the
-   session outside the project. Headless operators can inject a personal access
-   token as `ANTIOCH_TOKEN` through their secret manager or private environment.
+2. Store a personal access token as `tokens.ANTIOCH_TOKEN` in
+   `~/.npa/credentials.yaml`, honoring `NPA_CONFIG_DIR` when configured. Use the
+   existing atomic 0600 credential writer. A secret-injected `ANTIOCH_TOKEN`
+   can be saved through `npa configure --save-env-credentials`; this imports all
+   supported credentials present in the environment and reports names only.
    Never request the token in chat or put its value in command arguments,
    shell history, committed files, workflow parameters, or recordings.
-3. For an ordinary local client, `ANTIOCH_TOKEN` overrides the saved browser
-   session; login, logout, and organization switching refuse while it is set.
+3. Resolve environment `ANTIOCH_TOKEN` before the NPA file value. With neither,
+   retain the native CLI browser-login fallback (`antioch auth login`). Browser
+   access and refresh credentials stay in Antioch's own auth store; never copy
+   them into the personal-access-token field. When a personal access token is
+   supplied, native login, logout, and organization switching refuse.
    Managed Antioch workspaces use their managed credentials first. If the
    identity is wrong, resolve the intended account before operating; do not
    silently switch organizations or remove credentials.
-4. Workbench does not have a separate Antioch token setting. Its subprocess
-   inherits the operator environment and uses the CLI's normal authentication.
+4. Use `npa/src/npa/clients/antioch.py` to supply the resolved credential only
+   to local Antioch client subprocesses. The saved token is excluded from the
+   generic token map, process-wide credential export, and shared worker env.
+   Bare Antioch commands do not read the NPA store; use the operator wrapper
+   when that stored token is required. Never add it to training YAML or S3.
    Verify access to the intended Antioch organization and project, an owned
    `antioch.yaml`, a compatible engine, and available simulator capacity.
    A token authenticates the caller; it does not provision these prerequisites.
@@ -89,8 +99,9 @@ one submitted workflow. The NPA CLI has no separate Antioch subcommand.
 ## Long runs and evidence
 
 The ordinary Antioch CLI execution deadline interrupted the measured evaluation.
-For a full cohort, use the cookbook's attached SDK adapter at
-`npa/src/npa/workflows/xr1_antioch/attached_exec.py` with the pinned interpreter.
+For a full cohort, use the cookbook's `operator exec` command with the pinned
+interpreter. It supplies NPA credentials to the attached SDK adapter at
+`npa/src/npa/workflows/xr1_antioch/attached_exec.py`.
 It removes the overall execution deadline while retaining cancellation and the
 remote exit code. Do not silently upgrade the SDK: the adapter uses versioned
 CLI internals. Resume only missing trials after verifying retained outputs and
@@ -118,11 +129,14 @@ Nebius compute. Retain the requested durable S3 evidence.
 
 ```bash
 npa/.venv/bin/python -m pytest \
+  npa/tests/clients/test_antioch.py \
   npa/tests/guardrails/test_skills_index.py \
   npa/tests/guardrails/test_develop_skills.py -q
 ```
 
-The registry verifies the operator/transport files and parses the training
+The client tests verify credential precedence, private persistence, isolation
+from worker exports, CLI/SDK invocation, and collection/transfer delivery. The
+registry verifies the operator/transport files and parses the training
 workflow. For implementation changes, also run the XR1 tests under
 `npa/tests/workflows/` and the applicable live validation; do not substitute
 this documentation smoke for execution evidence.

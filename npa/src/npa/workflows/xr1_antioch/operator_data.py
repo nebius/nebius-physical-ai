@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import subprocess
 
+from npa.clients.antioch import antioch_environment
+
 from .dataset import validate_episode, validate_splits, verify_video
 from .storage import _relative, _sha256
 from .transport import _destination, _readback, publish_artifacts
@@ -42,7 +44,9 @@ def _collect_one(args, entry: dict, split: str, storage, bucket: str, prefix: st
         return result
     base = ["antioch", "service", "exec", "--no-tty", "--no-stream", "--"]
     probe = base + ["python", "-c", "from pathlib import Path; print(Path(" + repr(remote + "/episode.json") + ").is_file())"]
-    exists = subprocess.check_output(probe, cwd=args.antioch_project, stdin=subprocess.DEVNULL, text=True).strip()
+    environment = antioch_environment()
+    exists = subprocess.check_output(probe, cwd=args.antioch_project, stdin=subprocess.DEVNULL,
+                                     text=True, env=environment).strip()
     if exists != "True":
         command = base + ["env", "OPENBLAS_NUM_THREADS=1", "OMP_NUM_THREADS=1",
                           f"PYTHONPATH={args.source_root}", "python", "-u", "-m",
@@ -50,7 +54,7 @@ def _collect_one(args, entry: dict, split: str, storage, bucket: str, prefix: st
                           "--seed", str(entry["seed"]), "--split", split]
         with (local / "collection.log").open("w") as log:
             subprocess.run(command, cwd=args.antioch_project, stdin=subprocess.DEVNULL,
-                           stdout=log, stderr=subprocess.STDOUT, check=True)
+                           stdout=log, stderr=subprocess.STDOUT, check=True, env=environment)
     transfer = publish_artifacts(args.antioch_project, remote,
                                  f"s3://{bucket}/{prefix}/episodes/{name}", storage)
     return _receipt(local, entry, split, storage, bucket, prefix, transfer)
