@@ -8,6 +8,7 @@ import http.client
 import json
 import math
 import os
+from collections.abc import Callable
 from pathlib import Path
 import re
 import ssl
@@ -91,6 +92,7 @@ def _open_allowed_https(
     allowed_hosts: tuple[str, ...],
     allow_hf_redirects: bool = False,
     context: ssl.SSLContext | None = None,
+    before_request: Callable[[], object] | None = None,
 ) -> tuple[http.client.HTTPSConnection, http.client.HTTPResponse]:
     """Open a tightly scoped HTTPS GET without urllib's multi-scheme opener."""
     current_url = url
@@ -115,6 +117,8 @@ def _open_allowed_https(
         ):
             raise RuntimeError("refusing URL outside the approved HTTPS origins")
         target = _approved_request_target(parsed)
+        if before_request is not None:
+            before_request()
         connection = http.client.HTTPSConnection(
             hostname,
             port=port,
@@ -306,15 +310,39 @@ def _hardware() -> dict[str, object]:
         "architecture_family": "NVIDIA Blackwell",
         "compute_capability": compute_capability,
         "nvidia_smi_rows": smi_rows,
-        "strict_reserved_capacity_attested": True,
     }
+
+
+def _require_strict_capacity_observation() -> None:
+    """Refuse qualification until an authenticated allocation observer is wired.
+
+    Pod GET access and local GPU observations cannot establish the provider's
+    allocation policy. Neither an environment assertion nor a caller-authored
+    receipt is an independent observation. A future observer must bind the run,
+    Pod UID, scheduled node and actual provider allocation to STRICT capacity;
+    this neutral candidate has no such observer and cannot emit a success proof.
+    """
+    raise RuntimeError(
+        "STRICT capacity qualification deferred: authenticated run/Pod-bound "
+        "provider allocation observation is unavailable"
+    )
 
 
 def _download_dataset(
     input_dir: Path,
+    *,
+    entitlement_arguments: dict[str, object],
 ) -> tuple[Path, list[str], dict[str, int], float, float]:
+    # Freeze the exact expected hashes/run once; reread and verify the bound
+    # record at each side-effect boundary, including redirected requests.
+    bound_arguments = dict(entitlement_arguments)
+
+    def authorize() -> dict[str, object]:
+        return _value_free_customer_entitlement(**bound_arguments)
+
     partial = input_dir / "lift_ph_lowdim_v15.download"
     dataset = input_dir / "lift_ph_lowdim_v15.hdf5"
+    authorize()
     try:
         input_dir.mkdir(parents=True, exist_ok=False)
     except FileExistsError:
@@ -341,6 +369,7 @@ def _download_dataset(
                 or partial_details.st_nlink != 1
             ):
                 raise RuntimeError("refusing an unsafe stale dataset partial")
+            authorize()
             partial.unlink()
     url = (
         "https://huggingface.co/datasets/robomimic/robomimic_datasets/resolve/"
@@ -349,22 +378,27 @@ def _download_dataset(
     digest = hashlib.sha256()
     byte_count = 0
     try:
+        authorize()
         connection, response = _open_allowed_https(
             url,
             headers={"User-Agent": "npa-robomimic-smoke/1"},
             allowed_hosts=("huggingface.co",),
             allow_hf_redirects=True,
+            before_request=authorize,
         )
         try:
+            authorize()
             with response, partial.open("xb") as handle:
                 for chunk in iter(lambda: response.read(1024 * 1024), b""):
                     next_byte_count = byte_count + len(chunk)
                     if next_byte_count > DATASET_BYTES:
                         raise RuntimeError("dataset exceeds its locked byte count")
+                    authorize()
                     handle.write(chunk)
                     digest.update(chunk)
                     byte_count = next_byte_count
         finally:
+            response.close()
             connection.close()
         if digest.hexdigest() != DATASET_SHA256 or byte_count != DATASET_BYTES:
             raise RuntimeError(
@@ -384,6 +418,7 @@ def _download_dataset(
             )
         if len(demo_keys) != 200 or sum(sample_counts.values()) <= 0:
             raise RuntimeError("official Lift PH trajectory/sample inventory mismatch")
+        authorize()
         partial.replace(dataset)
         return dataset, demo_keys, sample_counts, action_min, action_max
     except BaseException:
@@ -392,10 +427,9 @@ def _download_dataset(
 
 
 def main() -> None:
+    _require_strict_capacity_observation()
     output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
     output_dir.mkdir(parents=True, exist_ok=True)
-    if os.environ.get("NPA_ROBOMIMIC_STRICT_B200_ATTESTED") != "1":
-        raise RuntimeError("operator must attest STRICT reserved B200 capacity")
     runtime_image = os.environ.get("BYOF_IMAGE", "")
     match = re.fullmatch(r".+@(sha256:[0-9a-f]{64})", runtime_image)
     if match is None:
@@ -446,7 +480,7 @@ def main() -> None:
         raise RuntimeError(
             "runtime inventory does not match the operator-selected digest"
         )
-    entitlement = _value_free_customer_entitlement(
+    entitlement_arguments = dict(
         entitlement_path=Path(os.environ["NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE"]),
         runtime_lock_path=runtime_lock,
         expected_entitlement_sha256=os.environ.get(
@@ -458,6 +492,7 @@ def main() -> None:
         expected_run_id=os.environ.get("NPA_BYOF_RUN_ID", "").strip(),
         expected_inventory_sha256=expected_runtime_inventory,
     )
+    entitlement = _value_free_customer_entitlement(**entitlement_arguments)
 
     pod = _pod_identity(runtime_image, match.group(1), runtime_mount_root)
     runtime_mount_proof = pod.get("runtime_mount")
@@ -465,7 +500,8 @@ def main() -> None:
         raise RuntimeError("runtime mount observation is absent")
     hardware = _hardware()
     dataset, demo_keys, sample_counts, action_min, action_max = _download_dataset(
-        Path("/workspace/byof-inputs") / output_dir.name
+        Path("/workspace/byof-inputs") / output_dir.name,
+        entitlement_arguments=entitlement_arguments,
     )
 
     split_script = source_root / "robomimic" / "scripts" / "split_train_val.py"

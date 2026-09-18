@@ -230,14 +230,28 @@ private exact-digest stage must:
    read-only, and prove missing/corrupt/extra inventory refusal independently.
    Before execution, atomically publish and reverify a run-private snapshot of
    only the declared objects.
-5. Bind the workload to exactly one STRICT-reserved B200; create a run-owned
-   service account with only `get pods`; verify the executing pod's exact image
-   digest, service account, one B200 model, and `sm_100` architecture before the
-   dataset fetch.
+5. Bind the workload to exactly one STRICT-reserved B200. This is an unresolved
+   execution prerequisite, not something that `NPA_ROBOMIMIC_STRICT_B200_ATTESTED`
+   or a caller-authored receipt can establish. The current smoke refuses before
+   any workload side effect: its Pod observer has only `get pods` access and
+   cannot independently observe a provider allocation. Completing this path
+   requires an authenticated observer that joins the run ID, executing Pod UID,
+   scheduled node/provider instance, actual reservation and STRICT allocation
+   policy, rejecting missing, expired or mismatched evidence. Do not silently
+   broaden the workload service account or treat synthetic interface tests as
+   real capacity qualification. Pod image-digest/service-account checks and
+   local one-B200/`sm_100` observations remain necessary but insufficient.
 6. Fetch and hash the official HDF5, produce nonempty disjoint train/held-out
    masks, run upstream `robomimic/scripts/train.py` for exactly four serialized
    Adam optimizer steps and two validation forward steps, and require finite
    train/validation loss.
+   The dataset helper revalidates the same byte-bound customer/run/runtime
+   record before creating or changing input-cache objects, before each HTTPS
+   request (including redirects), and before writing or publishing input bytes.
+   Expiry or binding mismatch refuses without private values in diagnostics;
+   partial bytes are cleaned. This record concerns the separate non-token-gated
+   runtime terms; public MIT Lift data does not acquire a new license gate, and
+   genuinely token-gated assets still use vendor-side entitlement alone.
 7. Save and hash the genuine epoch checkpoint, reload it through
    `policy_from_checkpoint`, and infer exactly one held-out action of shape
    `[7]` whose values are finite and within `[-1, 1]`.
