@@ -139,7 +139,7 @@ image (`public` | `restricted` | `unvalidated`), enforced by
   **runtime** by the operator, never baked into the image. These may be published
   to a public/anonymous registry.
 
-  - **`unvalidated`** — The intended packaging shape is recorded, but complete
+- **`unvalidated`** — The intended packaging shape is recorded, but complete
   corresponding-source closure, built-byte verification, or both remain
   unproved. An `unvalidated` image is not eligible for public publication or
   anonymous pull claims; keep it quarantined until the missing evidence passes.
