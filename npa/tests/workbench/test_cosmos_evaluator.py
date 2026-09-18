@@ -660,6 +660,38 @@ def test_attribute_verifier_builds_begin_middle_end_contact_sheet(
         assert image.size == (192, 48)
 
 
+def test_source_relative_change_crop_excludes_source_restored_foreground() -> None:
+    from PIL import Image
+
+    reference = Image.new("RGB", (128, 96), color=(190, 190, 190))
+    generated = reference.copy()
+    generated.paste((225, 45, 20), (4, 4, 82, 92))
+
+    crop = av._source_relative_change_crop(
+        generated=generated,
+        reference=reference,
+        np=np,
+    )
+    pixels = np.asarray(crop)
+
+    assert crop.width < generated.width
+    assert crop.width * crop.height < generated.width * generated.height
+    assert float(pixels[:, :, 0].mean()) > 200.0
+    assert float(pixels[:, :, 1].mean()) < 80.0
+
+
+def test_source_relative_change_crop_fails_when_no_material_change_exists() -> None:
+    from PIL import Image
+
+    reference = Image.new("RGB", (128, 96), color=(190, 190, 190))
+    with pytest.raises(CosmosEvaluatorError, match="too small"):
+        av._source_relative_change_crop(
+            generated=reference.copy(),
+            reference=reference,
+            np=np,
+        )
+
+
 class FakeTokenFactory:
     """Records requests and replays scripted replies."""
 
@@ -850,6 +882,53 @@ def test_verify_attributes_scores_a_matching_answer(tmp_path: Path, threshold: f
     assert result.passed is passed
     assert result.to_dict()["threshold"] == threshold
     assert [check.variable for check in result.checks] == ["cloth_color", "lighting"]
+
+
+def test_verify_attributes_requires_reference_for_source_relative_change(
+    tmp_path: Path,
+) -> None:
+    video = tmp_path / "generated.mp4"
+    video.write_bytes(b"not-decoded-before-validation")
+
+    with pytest.raises(CosmosEvaluatorError, match="reference videos"):
+        av.verify_attributes(
+            clip_id="clip-0",
+            video=video,
+            selected_variables={"background": "terracotta"},
+            evidence_mode="source-relative-change",
+        )
+
+
+def test_verify_attributes_records_a_per_variable_vlm_override(tmp_path: Path) -> None:
+    frame = tmp_path / "frame.png"
+    frame.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    client = FakeTokenFactory(
+        [
+            _question_json("cloth_color", "blue", "red"),
+            "A",
+            _question_json("lighting", "warm lamp light", "bright daylight"),
+            "A",
+        ]
+    )
+
+    result = av.verify_attributes(
+        clip_id="clip-0",
+        frame=frame,
+        selected_variables={"cloth_color": "blue", "lighting": "warm lamp light"},
+        variable_options=APPEARANCE_OPTIONS,
+        client=client,
+        vlm_model="surface-vlm",
+        variable_vlm_models={"lighting": "lighting-vlm"},
+    )
+
+    assert result.passed is True
+    assert result.variable_vlm_models == {"lighting": "lighting-vlm"}
+    assert [check.vlm_model for check in result.checks] == [
+        "surface-vlm",
+        "lighting-vlm",
+    ]
+    assert client.requests[1]["model"] == "surface-vlm"
+    assert client.requests[3]["model"] == "lighting-vlm"
 
 
 def test_verify_attributes_records_a_failing_check_without_dropping_the_batch(
@@ -1457,6 +1536,43 @@ def test_input_conditioned_variant_without_a_source_fails_closed(
     assert result.passed is False
     assert result.clips[0].score == 0.0
     assert any("source clip" in reason for reason in result.clips[0].skipped)
+
+
+def test_evaluate_run_routes_the_lighting_vlm_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import npa.workbench.cosmos_evaluator.evaluate as evaluator
+
+    augment = tmp_path / "cosmos_augmented"
+    _write_variant(augment, "clip-a", {"lighting": "bright"}, conditioned=False)
+    attribute = av.AttributeVerificationResult(
+        clip_id="clip-a",
+        passed=True,
+        total_checks=1,
+        passed_checks=1,
+        failed_checks=0,
+        score=1.0,
+        question_model="llm",
+        vlm_model="surface-vlm",
+    )
+    captured: dict[str, Any] = {}
+
+    def fake_verify_attributes(**kwargs: Any) -> av.AttributeVerificationResult:
+        captured.update(kwargs)
+        return attribute
+
+    monkeypatch.setattr(evaluator, "verify_attributes", fake_verify_attributes)
+    result = evaluator.evaluate_run(
+        augment_uri=str(augment),
+        output_uri=str(tmp_path / "grade"),
+        vlm_model="surface-vlm",
+        attribute_lighting_vlm_model="lighting-vlm",
+        storage=object(),
+    )
+
+    assert result.attribute_lighting_vlm_model == "lighting-vlm"
+    assert captured["vlm_model"] == "surface-vlm"
+    assert captured["variable_vlm_models"] == {"lighting": "lighting-vlm"}
 
 
 def test_required_appearance_failure_rejects_an_input_conditioned_variant(

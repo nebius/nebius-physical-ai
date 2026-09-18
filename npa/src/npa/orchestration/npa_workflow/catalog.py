@@ -1150,8 +1150,17 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.cosmos_evaluator.evaluate": ToolEntry(
         name="workbench.cosmos_evaluator.evaluate",
-        config_defaults={"alignment_mode": "", "attribute_threshold": ""},
-        omit_flags_when_empty=("--alignment-mode", "--attribute-threshold"),
+        config_defaults={
+            "alignment_mode": "",
+            "attribute_threshold": "",
+            "attribute_evidence_mode": "full-frame",
+            "attribute_lighting_vlm_model": "",
+        },
+        omit_flags_when_empty=(
+            "--alignment-mode",
+            "--attribute-threshold",
+            "--attribute-lighting-vlm-model",
+        ),
         description=(
             "Grade augmented variants with the REAL NVIDIA Cosmos Evaluator checks "
             "(hallucination + VLM attribute verification, Apache-2.0) plus the "
@@ -1210,6 +1219,10 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.caption_model}}",
             "--attribute-sample-policy",
             "{{config.attribute_sample_policy}}",
+            "--attribute-evidence-mode",
+            "{{config.attribute_evidence_mode}}",
+            "--attribute-lighting-vlm-model",
+            "{{config.attribute_lighting_vlm_model}}",
             "--output",
             "json",
         ],

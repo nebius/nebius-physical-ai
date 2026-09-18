@@ -420,6 +420,13 @@ evaluate` runs two of upstream's checks per augmented variant and writes
   through a configurable OpenAI-compatible endpoint. The sampled combo is
   upstream's `selected_variables` and `APPEARANCE_VARIABLES` is its
   `variable_options`, so a variant that ignored its prompt fails.
+  `nvidia-paidf-vda-cosmos-transfer25` uses the account-verified
+  `google/gemma-3-27b-it` VLM and `source-relative-change` evidence. Background,
+  palette, and finish questions receive a deterministic changed-surface crop
+  derived from the exact conditioning video; lighting remains full-frame and may
+  use a separately recorded VLM override. Missing, misaligned, or too-small
+  changes fail closed. Other workflows default to the upstream full-frame evidence
+  shape.
 - *hallucination* — per-frame dynamic-mask comparison of the source clip against
   the variant. CPU only. It delegates to upstream's own `HallucinationProcessor`
   when a checkout is importable (`NPA_COSMOS_EVALUATOR_SRC`, else
@@ -521,7 +528,8 @@ submits. All three Cosmos images install
 covers the entrypoint contract: a bare `ENTRYPOINT ["/bin/bash"]` swallows the args
 Kubernetes passes, so an entrypoint must exec its arguments.
 
-Verified Token Factory model roles: `MiniMaxAI/MiniMax-M3` (VLM),
+Verified Token Factory model roles: `MiniMaxAI/MiniMax-M3` (generic VLM),
+`google/gemma-3-27b-it` (NVIDIA VDA attribute VLM),
 `nvidia/Nemotron-3_5-Lightning` (LLM), `MiniMaxAI/MiniMax-M3`
 (hosted reasoning critic). Cosmos Transfer 2.5 is the GPU augment engine, not a
 Token Factory model.

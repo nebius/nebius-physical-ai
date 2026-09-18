@@ -420,6 +420,11 @@ Three NVIDIA components in that table are the real open-source projects:
   `appearance_fidelity_mode: required` when base colours/material identity are
   invariants, and optionally supply normalized `appearance_regions_json` for the
   protected areas. Empty regions use the generic full frame plus a 2x2 grid.
+  The NVIDIA VDA spec uses `source-relative-change` attribute evidence: surface
+  questions receive a deterministic crop of a material chroma change relative to
+  the exact conditioning video, while lighting remains full-frame and may use a
+  separately recorded VLM override. A missing, misaligned, or too-small change
+  fails closed. Generic workflows retain upstream's full-frame evidence by default.
 - **[Cosmos Curator](https://github.com/nvidia-cosmos/cosmos-curate)**
   (Apache-2.0) curates. The `cosmos-curate` stage drives upstream's own stages —
   `VideoDownloader` → `FixedStrideExtractorStage` → `ClipTranscodingStage` →
@@ -433,6 +438,7 @@ where NPA substitutes its own endpoint.
 **Model roles** (verify against the current key-scoped Token Factory catalog):
 
 - VLM captioning + the evaluator's attribute answering: `MiniMaxAI/MiniMax-M3`
+- NVIDIA VDA attribute answering override: `google/gemma-3-27b-it`
 - Hosted reasoning critic: `MiniMaxAI/MiniMax-M3`
 - Prompt / MCQ LLM: `nvidia/Nemotron-3_5-Lightning`
 

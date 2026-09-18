@@ -173,6 +173,14 @@ config:
   # Ranking and final validation use deterministic, disjoint frame samples. The
   # selected evaluator state overrides this to holdout after hard-pass selection.
   attribute_sample_policy: ranking
+  # Surface attributes are judged on a deterministic source-relative crop of
+  # pixels the augmentation actually changed; lighting remains full-frame.
+  # Missing or too-small changed regions fail closed rather than falling back.
+  attribute_evidence_mode: source-relative-change
+  # Gemma judges surface appearance from the changed-region crop. MiniMax is
+  # retained for the full-frame lighting question, where it reliably separates
+  # directional shadow structure from the terracotta material colour.
+  attribute_lighting_vlm_model: "MiniMaxAI/MiniMax-M3"
   # Retain the established first-pass control weight of 1.0. A retry must not
   # replay identical inference settings: the default schedule lowers guidance;
   # custom baselines below the ceiling may also increase structure control.
@@ -239,7 +247,7 @@ config:
   fiftyone_dedup_threshold: "0.10"
 
   # --- Models (verified available on Nebius Token Factory) ---
-  caption_model: "MiniMaxAI/MiniMax-M3"
+  caption_model: "google/gemma-3-27b-it"
   vlm_backend: api
   max_images: "8"
   max_tokens: "512"
@@ -559,6 +567,12 @@ states:
       workflows that intentionally recolour materials are not silently blocked;
       deployments that promise stable base colours may set it to required and
       optionally restrict it to normalized protected regions.
+      This VDA workflow presents background/palette/finish questions to a real
+      vision model using a deterministic source-relative crop of the changed work
+      surface, so source-restored foreground pixels cannot masquerade as the
+      requested surface. The lighting question uses the full contact sheet and a
+      separately recorded lighting VLM. Missing or too-small changed regions fail
+      closed.
     params:
       rollouts_uri: "{{config.augment_uri}}iteration-{{loop.grade}}/"
       scores_uri: "{{config.scores_uri}}iteration-{{loop.grade}}/ranking/"

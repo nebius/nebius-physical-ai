@@ -279,6 +279,8 @@ def test_evaluate_runs_the_real_cosmos_evaluator() -> None:
         "--appearance-blur-ksize",
         "--appearance-max-dimension",
         "--attribute-sample-policy",
+        "--attribute-evidence-mode",
+        "--attribute-lighting-vlm-model",
     ):
         assert option in argv
 
@@ -321,6 +323,9 @@ def test_evaluate_runs_the_real_cosmos_evaluator() -> None:
     assert _spec()["config"]["temporal_consistency_mode"] == "advisory"
     assert float(_spec()["config"]["appearance_fidelity_threshold"]) >= 0.8
     assert _spec()["config"]["appearance_fidelity_mode"] == "advisory"
+    assert _spec()["config"]["attribute_evidence_mode"] == "source-relative-change"
+    assert _spec()["config"]["caption_model"] == "google/gemma-3-27b-it"
+    assert _spec()["config"]["attribute_lighting_vlm_model"] == "MiniMaxAI/MiniMax-M3"
     assert "protected_chroma_regions_json" in _spec()["config"]
     assert _spec()["config"]["protected_luma_max_delta"] == "32"
     assert _spec()["config"]["protected_feather_pixels"] == "12"
