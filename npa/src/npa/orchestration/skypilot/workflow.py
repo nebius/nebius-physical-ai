@@ -2592,7 +2592,7 @@ def _reconcile_native_tasks(rows, job_name, job_id, task_ids):
         return ReconciliationEvidence(ReconciliationState.AMBIGUOUS,
                                       error="native job task coverage is incomplete or conflicting")
     statuses = {str(row.get("status", "UNKNOWN")).upper() for row in selected}
-    if all(_cleanup_job_terminal(status) for status in statuses):
+    if all(status == "SUCCEEDED" or is_terminal_failure_job_status(status) for status in statuses):
         status = "SUCCEEDED" if statuses == {"SUCCEEDED"} else "CANCELLED"
     elif statuses <= {"PENDING", "STARTING", "RUNNING", "RECOVERING", "CANCELLING", "SUCCEEDED"}:
         status = "RUNNING"

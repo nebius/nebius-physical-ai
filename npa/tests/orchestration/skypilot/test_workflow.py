@@ -177,13 +177,16 @@ def _terminal_native_boundaries(monkeypatch, sky, statuses, handles):
 
 
 @pytest.mark.parametrize("confidential", (False, True))
-@pytest.mark.parametrize("statuses", (
-    ("FAILED", "FAILED"), ("CANCELLED", "CANCELLED"),
-    ("SUCCEEDED", "FAILED_SETUP"), ("SUCCEEDED", "CANCELLED"),
+@pytest.mark.parametrize("mixed_success", (False, True))
+@pytest.mark.parametrize("failure", (
+    "FAILED", "FAIL", "FAILED_PRECHECKS", "FAILED_SETUP", "FAILED_RUNTIME",
+    "FAILED_CONTROLLER", "FAILED_NO_RESOURCE", "CANCELLED", "CANCELED", "STOPPED",
+    "FAILED_SYNTHETIC_VARIANT", "failed_runtime",
 ))
-def test_native_terminal_tasks_fail_submit_without_cleanup_authority(monkeypatch, tmp_path, confidential, statuses):
+def test_native_terminal_tasks_fail_submit_without_cleanup_authority(monkeypatch, tmp_path, confidential, failure, mixed_success):
     from npa.orchestration.skypilot.launch_transaction import EvidenceState, ProbeObservation, StabilityPolicy
 
+    statuses = ("SUCCEEDED" if mixed_success else failure, failure)
     path, options = _terminal_native_submit_options(monkeypatch, tmp_path, confidential)
     sky, handles, records = _fake_sky(tmp_path), [], []
     native, launches, queue_calls = _terminal_native_boundaries(monkeypatch, sky, statuses, handles)
@@ -203,6 +206,7 @@ def test_native_terminal_tasks_fail_submit_without_cleanup_authority(monkeypatch
         )
     transaction, cleanup = caught.value.transaction, handles[0]
     assert transaction.state is LaunchState.TERMINAL_FAILURE and not transaction.ok
+    assert transaction.category is FailureCategory.WORKLOAD
     assert transaction.launch_result is native and transaction.job_id == "41"
     assert transaction.reconciliations[-1]["status"] == "CANCELLED"
     assert launches == [native] and len(queue_calls) == 2
@@ -211,6 +215,56 @@ def test_native_terminal_tasks_fail_submit_without_cleanup_authority(monkeypatch
     assert not cleanup.request().verified
     assert len(queue_calls) == 2 and cleanup.config_path.is_file()
     assert all(record["state"] not in {"submitted", "adopted"} for record in records)
+
+
+@pytest.mark.parametrize("statuses,task_ids,expected_status,expected_state", (
+    (("SUCCEEDED", "SUCCEEDED"), (0, 1), "SUCCEEDED", LaunchState.SUBMITTED),
+    (("SUCCEEDED", "RUNNING"), (0, 1), "RUNNING", LaunchState.SUBMITTED),
+    (("PENDING", "STARTING"), (0, 1), "RUNNING", LaunchState.SUBMITTED),
+    (("RECOVERING", "CANCELLING"), (0, 1), "RUNNING", LaunchState.SUBMITTED),
+    (("FAILED_RUNTIME", "RUNNING"), (0, 1), "UNKNOWN", LaunchState.INDETERMINATE),
+    (("SUCCEEDED", "UNKNOWN"), (0, 1), "UNKNOWN", LaunchState.INDETERMINATE),
+    (("FAILED_NO_RESOURCE", "UNKNOWN"), (0, 1), "UNKNOWN", LaunchState.INDETERMINATE),
+    (("SUCCEEDED", "UNRECOGNIZED"), (0, 1), "UNKNOWN", LaunchState.INDETERMINATE),
+    (("FAILED_RUNTIME",), (0,), "", LaunchState.INDETERMINATE),
+    (("STOPPED", "STOPPED"), (0, 2), "", LaunchState.INDETERMINATE),
+    (("CANCELED", "CANCELED"), (0, 0), "", LaunchState.INDETERMINATE),
+))
+def test_native_task_mapping_finalizer_controls(monkeypatch, tmp_path, statuses, task_ids, expected_status, expected_state):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+    from npa.orchestration.skypilot.launch_transaction import EvidenceState, StabilityResult
+
+    native = NativeLaunchResult("attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64)
+    rows = [{"job_id": 41, "job_name": "synthetic", "task_id": task, "status": status}
+            for task, status in zip(task_ids, statuses, strict=True)]
+    launches, records = [], []
+
+    def launch():
+        launches.append(native)
+        return native
+
+    def reconcile():
+        if not launches:
+            return workflow_module.ReconciliationEvidence(workflow_module.ReconciliationState.ABSENT)
+        return workflow_module._reconcile_native_tasks(rows, "synthetic", native.job_id, native.task_ids)
+
+    monkeypatch.setattr(subprocess, "run", lambda *_a, **_k: pytest.fail("external command reached"))
+    try:
+        result = _REAL_RUN_LAUNCH_TRANSACTION(
+            logical_id="synthetic", readiness=lambda: StabilityResult(EvidenceState.READY, FailureCategory.NONE),
+            launch=launch, reconcile=reconcile, classify_launch_error=lambda _e: pytest.fail("retry reached"),
+            require_native_result=True, lock_root=tmp_path, record=records.append,
+        )
+    except LaunchTransactionError as error:
+        result = error.result
+    assert launches == [native] and result.state is expected_state
+    assert result.reconciliations[-1]["status"] == expected_status
+    assert all(record["state"] != "adopted" for record in records)
+    assert "request" not in result.to_dict() and "context" not in result.to_dict()
+    if expected_state is LaunchState.SUBMITTED:
+        assert result.launch_result is native and result.job_id == "41"
+    else:
+        assert not result.ok and all(record["state"] != "submitted" for record in records)
 
 
 def _robotwin_bridge_fixture(
