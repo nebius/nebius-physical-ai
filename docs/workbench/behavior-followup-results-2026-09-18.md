@@ -81,9 +81,13 @@ The corrected bootstrap assigns the two restored runtime directories to the
 worker; the checkpoint, normalization, policy code, cases, and evaluator remain
 fixed. Workbench resumed that failed run under the same run ID. The subsequent
 three workflows passed the frozen runtime, package, checkpoint, and source
-checks, then stopped because their rendered jobs omitted the existing Gemma
-acceptance environment flag. They produced no evaluation artifacts. The
-environment binding requires correction before a GPU serving claim.
+checks, then stopped without uploading evaluation artifacts. The initial
+diagnosis incorrectly inferred that the Gemma acceptance flag was missing by
+looking only at the rendered YAML's `envs` field. The flag was present in
+SkyPilot's separate `secrets` field and survived task deserialization. This
+does not establish an environment-propagation bug. Worker-local smoke receipts
+and logs are needed to identify where startup failed; absent uploaded artifacts
+alone do not establish that no GPU work occurred.
 
 No Meta100 rollout result or 24 GB serving claim is established by that startup
 correction. Its completed measurements will be recorded separately from the
