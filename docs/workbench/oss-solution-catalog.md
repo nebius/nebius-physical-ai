@@ -34,7 +34,7 @@ unique and must be tested with its own upstream-named capabilities.
 
 | Solution | Capability | Live status | Run / evidence |
 | --- | --- | --- | --- |
-| Habitat-Sim | `skokloster_castle_rgb_depth_bullet_traversal` / `headless_nvidia_egl_rgb_depth_render` / `bullet_physics_world_step` / `greedy_geodesic_agent_traversal` | **unbuilt; pending exact-digest live qualification** | Static public-byte closure and workflow only. Private-stage and any later trusted public rebuild each require their own complete scans and exactly one STRICT-bound RTX PRO 6000 Blackwell run. |
+| Habitat-Sim | `skokloster_castle_rgb_depth_bullet_traversal` / `headless_nvidia_egl_rgb_depth_render` / `bullet_physics_world_step` / `greedy_geodesic_agent_traversal` | **unbuilt; pending exact-digest live qualification** | Static closure contract/design only; corresponding-source delivery and built-byte closure unproved. Private-stage and any later trusted public rebuild each require their own complete scans and exactly one STRICT-bound RTX PRO 6000 Blackwell run. |
 | ManiSkill | `gymnasium_pickcube_registration` | **accepted** | `defcap-maniskill-20260708-230227` (81 `-v1` envs) |
 | ManiSkill | `pickcube_cpu_step` / `pickcube_parallel_envs` / `pickcube_gpu_rgb_render` | **accepted** | `defcap11-maniskill-20260709-043408` (sapien 3.0.3 on CUDA Ubuntu22.04/py3.10; Blackwell render OK) |
 | MuJoCo Playground | `mjx_cartpole_step` | **accepted** | `defcap8-mujoco-playground-20260709-024455` (+ prior `…-005745`) |
