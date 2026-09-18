@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).parent
-_COMMANDS = {"brief", "scenes", "narrate", "preview", "final", "draft", "watch"}
+_COMMANDS = {"brief", "scenes", "narrate", "preview", "final", "draft", "watch", "review"}
 
 
 def _projects(path):
@@ -31,6 +31,8 @@ def _command(project, command, options):
         raise ValueError(f"Choose a studio command: {', '.join(sorted(_COMMANDS))}")
     if any(option == "--project" or option.startswith("--project=") for option in options):
         raise ValueError("Studio selects --project from the registry; choose the film name instead")
+    if command == "review":
+        return [sys.executable, str(_ROOT / "film_review.py"), "--project", str(project), *options]
     if command in {"draft", "watch"}:
         script = "film_draft.py" if command == "draft" else "film_watch.py"
         return [sys.executable, str(_ROOT / script), "--project", str(project), *options]
@@ -40,7 +42,7 @@ def _command(project, command, options):
 def _main():
     parser = argparse.ArgumentParser(description=__doc__, add_help=False)
     parser.add_argument("film", nargs="?", help="Film name from the registry, or list to show projects.")
-    parser.add_argument("command", nargs="?", help="brief, scenes, narrate, draft, watch, preview or final")
+    parser.add_argument("command", nargs="?", help="brief, scenes, narrate, draft, watch, preview, final or review")
     parser.add_argument("--registry", type=Path, default=Path("studio.json"))
     parser.add_argument("--help", "-h", action="store_true", help="Show studio or selected command help.")
     args, options = parser.parse_known_args()

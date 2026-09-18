@@ -392,6 +392,8 @@ def _manifest(target, storyboard, storyboard_path, assets, directory, probe):
                                   "crop": asset.get("crop"),
                                   "playback": asset.get("playback", "loop") if asset["kind"] == "video" else None,
                                   "provenance": asset.get("provenance")} for role, asset in assets.items()},
+                "validation_scope": "render_integrity_only",
+                "semantic_alignment": "not_reviewed_by_renderer",
                 "editorial": "Separate saved run outputs; editorial assembly applies crops, configured loops or final-frame holds, and presentation zooms."}
 
 
@@ -536,7 +538,7 @@ def _render_film(args, storyboard, assets, environment):
               "assembly_reused": assembly_reused, "elapsed_seconds": round(time.perf_counter() - started, 3)}
     (destination / "render-timing.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report), flush=True)
-    print(f"Verified film: {destination / 'film.mp4'}")
+    print(f"Render integrity verified: {destination / 'film.mp4'}; use studio review for narration/picture alignment.")
 
 
 def _main():
