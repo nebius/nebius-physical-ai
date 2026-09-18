@@ -124,6 +124,27 @@ def test_libero_workflow_uses_only_quarantined_prebuilt_managed_path() -> None:
     assert state["terminal"] is True
 
 
+def test_libero_toolref_forwards_customer_authorization_inputs() -> None:
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    entry = TOOL_CATALOG["workbench.byof.repo"]
+    for flag, config_key in (
+        (
+            "--libero-customer-runtime-authorization-file",
+            "libero_customer_runtime_authorization_file",
+        ),
+        (
+            "--libero-authenticated-caller-identity-file",
+            "libero_authenticated_caller_identity_file",
+        ),
+    ):
+        assert flag in entry.argv_template
+        assert entry.config_defaults[config_key] == ""
+        index = entry.argv_template.index(flag)
+        assert entry.argv_template[index + 1] == "{{config." + config_key + "}}"
+        assert flag in entry.omit_flags_when_empty
+
+
 def test_publication_workflow_binds_anonymous_tag_to_pushed_digest() -> None:
     workflow = PUBLICATION_WORKFLOW_PATH.read_text(encoding="utf-8")
     anonymous = workflow[workflow.index('anonymous_config="$(mktemp -d)"') :]
