@@ -913,6 +913,27 @@ def _refresh_workflow_preflight(yaml_path, run_id, **kwargs):
             _cleanup_owned_submission_dir(prepared.submission_dir)
 
 
+def _validate_gymnasium_submission_input(yaml_path, config_path, secret_envs):
+    """Validate selected configuration/secret names before submission side effects."""
+    from npa.execution_preflight import (
+        ExecutionPreflightError, validate_gymnasium_task_configuration,
+    )
+
+    documents = _load_yaml_documents(yaml_path)
+    try:
+        if not validate_gymnasium_task_configuration(documents, secret_envs=secret_envs or ()):
+            return
+        if config_path is not None and not Path(config_path).is_file():
+            raise ExecutionPreflightError(
+                "gymnasium_credential_isolation", "explicit SkyPilot configuration is unavailable"
+            )
+        validate_gymnasium_task_configuration(
+            documents, global_config=_load_base_config(config_path), secret_envs=secret_envs or (),
+        )
+    except ExecutionPreflightError as exc:
+        raise SkyPilotSubmitError(str(exc), launch_attempted=False) from exc
+
+
 def submit_workflow(
     yaml_path: Path,
     run_id: str,
@@ -950,6 +971,7 @@ def submit_workflow(
     prepared_yaml: Path | None = None
     streamer: _LaunchStreamer | None = None
     try:
+        _validate_gymnasium_submission_input(yaml_path, config_path, secret_envs)
         prepared = _prepare_workflow_submission(
             yaml_path, run_id, isolated_config_dir=isolated_config_dir,
             config_path=config_path, sky_bin=sky_bin,

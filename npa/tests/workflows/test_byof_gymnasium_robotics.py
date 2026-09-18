@@ -9,9 +9,15 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
+
+from npa.execution_preflight import (
+    ExecutionPreflightError,
+    validate_gymnasium_task_configuration,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / "workflows/testing/byof-gymnasium-robotics.yaml"
@@ -676,3 +682,216 @@ def test_documentation_keeps_neutral_and_historical_evidence_separate() -> None:
         "RTX PRO 6000 Blackwell",
     ):
         assert token in text
+
+
+def _configuration_task(**pod_overrides: object) -> dict:
+    return {
+        "name": "gymnasium-robotics",
+        "config": {"kubernetes": {"pod_config": {"spec": {
+            "automountServiceAccountToken": False, **pod_overrides,
+        }}}},
+    }
+
+
+def test_gymnasium_configuration_is_explicit_in_both_task_shapes() -> None:
+    profile = list(yaml.safe_load_all(PROFILE.read_text(encoding="utf-8")))
+    assert validate_gymnasium_task_configuration(profile)
+    resources = _workflow()["resources"]["gpu"]
+    assert resources["kubernetes"]["pod_config"]["spec"]["automountServiceAccountToken"] is False
+    assert validate_gymnasium_task_configuration([{
+        "name": "gymnasium-robotics", "resources": resources,
+    }])
+
+
+def test_gymnasium_configuration_survives_allocated_task_rendering() -> None:
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions, render_skypilot_yaml,
+    )
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    spec = load_spec(WORKFLOW)
+    rendered = render_skypilot_yaml(
+        spec, build_plan(spec, run_id="synthetic-configuration"),
+        run_id="synthetic-configuration",
+        options=SkypilotRenderOptions(
+            registry="registry.example", materialize_registry_secrets=False,
+        ),
+    )
+    documents = [doc for doc in yaml.safe_load_all(rendered) if doc]
+    assert documents[-1]["config"]["kubernetes"]["pod_config"]["spec"]["automountServiceAccountToken"] is False
+    assert validate_gymnasium_task_configuration(documents)
+
+
+@pytest.mark.parametrize("automount", [None, True, "false", 0, 1, {}])
+def test_gymnasium_configuration_requires_literal_no_automount(automount: object) -> None:
+    with pytest.raises(ExecutionPreflightError, match="explicitly disable"):
+        validate_gymnasium_task_configuration([
+            _configuration_task(automountServiceAccountToken=automount)
+        ])
+
+
+def test_gymnasium_configuration_refuses_missing_automount() -> None:
+    with pytest.raises(ExecutionPreflightError, match="explicitly disable"):
+        validate_gymnasium_task_configuration([{"name": "gymnasium-robotics"}])
+
+
+@pytest.mark.parametrize("kind", [
+    "projected", "secret", "hostPath", "persistentVolumeClaim", "csi", "configMap",
+])
+def test_gymnasium_configuration_refuses_unapproved_volume_types(kind: str) -> None:
+    # Configuration-only fixtures; no mounted files, tokens, or cluster are accessed.
+    with pytest.raises(ExecutionPreflightError, match="only emptyDir and downwardAPI"):
+        validate_gymnasium_task_configuration([
+            _configuration_task(volumes=[{"name": "synthetic-volume", kind: {}}])
+        ])
+
+
+@pytest.mark.parametrize("pod_override", [
+    {"volumes": [{"name": "synthetic", "projected": {
+        "sources": [{"serviceAccountToken": {"path": "synthetic-token"}}],
+    }}]},
+    {"automountServiceAccountToken": True},
+    {"hostPID": True},
+    {"hostNetwork": True},
+    {"shareProcessNamespace": True},
+    {"initContainers": [{"name": "synthetic-init"}]},
+    {"ephemeralContainers": [{"name": "synthetic-debug"}]},
+    {"containers": [{"name": "synthetic", "envFrom": [{"secretRef": {"name": "synthetic"}}]}]},
+    {"containers": [{"name": "synthetic", "env": [{
+        "name": "SYNTHETIC_VALUE", "valueFrom": {"secretKeyRef": {"name": "synthetic", "key": "value"}},
+    }]}]},
+    {"containers": [{"name": "synthetic", "securityContext": {"privileged": True}}]},
+    {"containers": [{"name": "synthetic", "securityContext": {"privileged": 0}}]},
+    {"containers": [{"name": "synthetic", "volumeMounts": [{"mountPropagation": "Bidirectional"}]}]},
+])
+def test_gymnasium_configuration_refuses_global_overrides(pod_override: dict) -> None:
+    with pytest.raises(ExecutionPreflightError):
+        validate_gymnasium_task_configuration(
+            [_configuration_task()],
+            global_config={"kubernetes": {"pod_config": {"spec": pod_override}}},
+        )
+
+
+@pytest.mark.parametrize("extra", [
+    {"envs": {"SYNTHETIC_API_KEY": "not-a-credential"}},
+    {"file_mounts": {"/synthetic/mount": "synthetic-local-input"}},
+    {"workdir": "synthetic-local-input"},
+])
+def test_gymnasium_configuration_refuses_unnecessary_task_inputs(extra: dict) -> None:
+    with pytest.raises(ExecutionPreflightError):
+        validate_gymnasium_task_configuration([{**_configuration_task(), **extra}])
+
+
+def test_gymnasium_configuration_preserves_storage_channel_and_pure_inputs() -> None:
+    task = _configuration_task(
+        imagePullSecrets=[{"name": "synthetic-pull-secret"}],
+        volumes=[{"name": "scratch", "emptyDir": {}}, {"name": "metadata", "downwardAPI": {}}],
+    )
+    before = json.dumps(task, sort_keys=True)
+    assert validate_gymnasium_task_configuration(
+        [task], secret_envs=["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"]
+    )
+    assert json.dumps(task, sort_keys=True) == before
+    with pytest.raises(ExecutionPreflightError, match="only storage task-secret"):
+        validate_gymnasium_task_configuration([task], secret_envs=["SYNTHETIC_API_KEY"])
+
+
+def test_gymnasium_configuration_leaves_other_tools_unchanged() -> None:
+    task = {"name": "unrelated-tool", "config": {"kubernetes": {
+        "pod_config": {"spec": {"automountServiceAccountToken": True}},
+    }}}
+    before = json.dumps(task, sort_keys=True)
+    assert not validate_gymnasium_task_configuration([task], secret_envs=["SYNTHETIC_API_KEY"])
+    assert json.dumps(task, sort_keys=True) == before
+
+
+def test_gymnasium_configuration_refuses_before_shared_credential_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import npa.execution_preflight as preflight
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("credential resolution must not precede configuration refusal")
+
+    monkeypatch.setattr(preflight, "resolve_submit_credentials", forbidden)
+    with pytest.raises(ExecutionPreflightError, match="explicitly disable"):
+        preflight.preflight_skypilot_submission([{"name": "gymnasium-robotics"}])
+
+
+@pytest.mark.parametrize("route", ["render", "direct", "submit"])
+def test_gymnasium_direct_routes_refuse_before_runtime_operations(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, route: str,
+) -> None:
+    runner = runpy.run_path(str(ROOT / "npa/scripts/run_byof_container_verify.py"))
+    fixture = tmp_path / "synthetic.yaml"
+    fixture.write_text("name: gymnasium-robotics\n", encoding="utf-8")
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("runtime operation must not precede configuration refusal")
+
+    for name in ("_resolved_storage_env", "sky_environment", "_normalize_output_root"):
+        monkeypatch.setitem(runner["_direct_launch"].__globals__, name, forbidden)
+    with pytest.raises(ExecutionPreflightError, match="explicitly disable"):
+        if route == "render":
+            runner["render_workflow"](fixture, run_id="synthetic-run")
+        elif route == "direct":
+            runner["_direct_launch"](
+                rendered_yaml=fixture, run_id="synthetic-run", outputs={}, sky_bin="synthetic-sky", infra="",
+            )
+        else:
+            runner["_submit_and_wait"](SimpleNamespace(
+                yaml_path=fixture, solution_name="gymnasium-robotics", config_path="", secret_env=None,
+            ))
+
+
+@pytest.mark.parametrize("unsafe", ["secret-name", "automount", "global-projection"])
+def test_gymnasium_managed_route_refuses_before_submission_preparation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unsafe: str,
+) -> None:
+    from npa.orchestration.skypilot import workflow as managed
+
+    task = _configuration_task()
+    if unsafe == "automount":
+        task = _configuration_task(automountServiceAccountToken=True)
+    fixture = tmp_path / "synthetic-task.yaml"
+    fixture.write_text(yaml.safe_dump(task), encoding="utf-8")
+    config = tmp_path / "synthetic-config.yaml"
+    config.write_text(yaml.safe_dump({"kubernetes": {"pod_config": {"spec": {
+        "volumes": [{"name": "synthetic", "projected": {}}],
+    }}}}), encoding="utf-8")
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("submission preparation must not precede configuration refusal")
+
+    monkeypatch.setattr(managed, "_prepare_workflow_submission", forbidden)
+    with pytest.raises(managed.SkyPilotSubmitError, match="gymnasium_credential_isolation"):
+        managed.submit_workflow(
+            fixture, "synthetic-run",
+            config_path=config if unsafe == "global-projection" else None,
+            secret_envs=["SYNTHETIC_API_KEY"] if unsafe == "secret-name" else [],
+        )
+
+
+@pytest.mark.parametrize("gymnasium", [True, False])
+def test_gymnasium_managed_route_preserves_allowed_and_other_tool_preparation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, gymnasium: bool,
+) -> None:
+    from npa.orchestration.skypilot import workflow as managed
+
+    class PreparedOnly(Exception):
+        pass
+
+    task = _configuration_task() if gymnasium else {"name": "unrelated-tool"}
+    fixture = tmp_path / "synthetic-task.yaml"
+    fixture.write_text(yaml.safe_dump(task), encoding="utf-8")
+
+    def prepared_only(*_args: object, **_kwargs: object) -> None:
+        raise PreparedOnly
+
+    monkeypatch.setattr(managed, "_prepare_workflow_submission", prepared_only)
+    with pytest.raises(PreparedOnly):
+        managed.submit_workflow(
+            fixture, "synthetic-run", secret_envs=["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]
+            if gymnasium else ["SYNTHETIC_API_KEY"],
+        )
