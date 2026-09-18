@@ -21,6 +21,14 @@ STORAGE_ENDPOINT_ENV_NAMES = (
     "S3_ENDPOINT_URL",
 )
 
+PROCESS_ENVIRONMENT_CREDENTIAL_NAMES = frozenset(
+    {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+    }
+)
+
 
 def storage_endpoint_from_environment(environ: Mapping[str, str]) -> str:
     """Honor the service-specific boto endpoint before generic aliases."""
@@ -87,6 +95,15 @@ def resolve_submit_credentials(
         ) != storage_endpoint_url(environment_endpoint):
             raise ValueError(
                 "Explicit storage endpoint differs from control-plane-authorized environment"
+            )
+        requested_names = {
+            str(name or "").strip() for name in requested if str(name or "").strip()
+        }
+        unauthorized = requested_names - PROCESS_ENVIRONMENT_CREDENTIAL_NAMES
+        if unauthorized:
+            raise ValueError(
+                "Control-plane-authorized storage credentials may expose only the "
+                "process-environment storage credential triplet"
             )
         requested_values = {
             name: str(process_env.get(name) or "")

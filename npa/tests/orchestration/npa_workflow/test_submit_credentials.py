@@ -1,3 +1,4 @@
+# npa: publication-enforcement=libero
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -173,3 +174,39 @@ def test_control_plane_authorized_triplet_never_reads_or_mixes_saved_credentials
     assert context.endpoint_url == "https://storage.example"
     assert "control-plane-session" not in repr(context)
     assert "hostile-workflow" not in repr(context)
+
+
+@pytest.mark.parametrize(
+    "requested",
+    [
+        ("NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64",),
+        ("NPA_LIBERO_AUTHENTICATED_CALLER_B64",),
+        ("NPA_LIBERO_CUSTOMER_TERMS_ACK",),
+    ],
+)
+def test_control_plane_triplet_rejects_customer_evidence_requests(
+    requested, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.submit_credentials.resolve_project_storage",
+        lambda *_args, **_kwargs: pytest.fail("saved project storage was accessed"),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.submit_credentials.load_credentials",
+        lambda **_kwargs: pytest.fail("configured credentials were accessed"),
+    )
+
+    with pytest.raises(
+        ValueError, match="only the process-environment storage credential triplet"
+    ):
+        resolve_submit_credentials(
+            environ={
+                "AWS_ACCESS_KEY_ID": "control-plane-access",
+                "AWS_SECRET_ACCESS_KEY": "control-plane-secret",
+                "AWS_SESSION_TOKEN": "control-plane-session",
+                "AWS_ENDPOINT_URL": "https://storage.example",
+                requested[0]: "customer-evidence",
+            },
+            requested=requested,
+            require_process_environment_triplet=True,
+        )
