@@ -230,7 +230,6 @@ class _SubmissionCleanup:
     config_path: Path
     redactions: Sequence[str] = ()
     job_id: str = ""
-    prior_terminal_id: str = ""
     active: bool = False
     submitting: bool = True
     requested: bool = False
@@ -278,13 +277,15 @@ class _SubmissionCleanup:
         )
 
     def _cancel_exact(self) -> CleanupResult:
+        if not self.job_id.isdigit():
+            return CleanupResult(
+                errors=["owned launch receipt unavailable; recovery state retained"]
+            )
         evidence = self._lookup()
         if evidence.state is not ReconciliationState.FOUND:
             return CleanupResult(
                 errors=["exact job identity unavailable; recovery state retained"]
             )
-        if not self.job_id and evidence.job_id != self.prior_terminal_id:
-            self.job_id = evidence.job_id
         if not self._same_job(evidence):
             return CleanupResult(
                 errors=["managed-job identity conflict; recovery state retained"]
@@ -322,6 +323,25 @@ class _SubmissionCleanup:
                 commands=[command], errors=["exact managed-job cancellation failed"]
             )
         return self._verify_cancelled(command)
+
+    def bind_launch_receipt(
+        self, result: subprocess.CompletedProcess[str], command: list[str]
+    ) -> None:
+        """Bind only a unique ID acknowledged by this invocation's exact command.
+
+        Queue discovery, attempted launch and local locks do not prove ownership.
+        Missing, failed or ambiguous command receipts must remain non-mutating.
+        """
+        if not self.active or result.returncode != 0 or result.args != command:
+            return
+        identities = set(
+            re.findall(
+                r"(?:Job submitted,\s*ID:|Managed Job ID:)\s*([0-9]+)",
+                f"{result.stdout or ''}\n{result.stderr or ''}",
+            )
+        )
+        if len(identities) == 1:
+            self.job_id = identities.pop()
 
     def _verify_cancelled(self, command: list[str]) -> CleanupResult:
         deadline = time.monotonic() + self.timeout
@@ -1865,23 +1885,13 @@ def submit_workflow(
                 )
 
                 require_customer_authorization_fresh(robotwin_authorization)
-            evidence = _reconcile_managed_job_env(
+            return _reconcile_managed_job_env(
                 run_id,
                 env=control_env,
                 sky_executable=sky_executable,
                 cwd=stable_cwd,
                 redactions=private_redactions,
             )
-            if (
-                cleanup_state is not None
-                and evidence.state is ReconciliationState.FOUND
-            ):
-                if not cleanup_state.active and _cleanup_job_terminal(evidence.status):
-                    cleanup_state.prior_terminal_id = evidence.job_id
-                elif cleanup_state.active and not cleanup_state.job_id:
-                    if evidence.job_id != cleanup_state.prior_terminal_id:
-                        cleanup_state.job_id = evidence.job_id
-            return evidence
 
         def _launch() -> tuple[
             subprocess.CompletedProcess[str], list[SkyPilotDiagnosis]
@@ -1908,6 +1918,8 @@ def submit_workflow(
                 for diagnosis in streamer.diagnoses if streamer is not None else ():
                     message = f"{message}\n{diagnosis.render()}"
                 raise _SkyPilotLaunchCommandError(message) from exc
+            if cleanup_state is not None:
+                cleanup_state.bind_launch_receipt(launch_result, cmd)
             if launch_result.returncode != 0:
                 raise _SkyPilotLaunchCommandError(
                     _format_submit_error(cmd, launch_result, streamed=diagnoses),
@@ -2006,7 +2018,10 @@ def submit_workflow(
 
                 require_customer_authorization_fresh(robotwin_authorization)
             _enable_cleanup()
-            cleanup_state.job_id = job_id
+            if cleanup_state.job_id and cleanup_state.job_id != job_id:
+                raise SkyPilotSubmitError(
+                    "launch receipt and transaction identity differ"
+                )
             cleanup_state.finish_submit(failed=False)
             if cleanup_state.requested:
                 raise SkyPilotSubmitError(

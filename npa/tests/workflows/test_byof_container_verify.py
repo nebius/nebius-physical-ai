@@ -95,6 +95,7 @@ def test_managed_submit_cleanup_ownership_boundary(
             0,
             kwargs["config_path"],
             active=True,
+            job_id="42",  # Synthetic immutable acknowledgment from this launch.
         )
         handles.append(cleanup)
         kwargs["on_launch_ready"](cleanup)

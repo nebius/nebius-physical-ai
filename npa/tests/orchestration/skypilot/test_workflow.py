@@ -2106,7 +2106,7 @@ def test_robotwin_confidential_submit_bridge_refuses_before_side_effects(
 @pytest.mark.parametrize("confidential", (False, True))
 @pytest.mark.parametrize("failure", ("signal", "timeout", "indeterminate"))
 @pytest.mark.parametrize("real_transaction", (False, True))
-def test_submission_cleanup_covers_accepted_failure_with_bound_runtime(
+def test_submission_cleanup_retains_unknown_acceptance_with_bound_runtime(
     monkeypatch, tmp_path, confidential, failure, real_transaction
 ) -> None:
     options = {}
@@ -2216,10 +2216,147 @@ def test_submission_cleanup_covers_accepted_failure_with_bound_runtime(
             **options,
         )
     assert order[:2] == ["armed", "accepted"]
-    assert len(calls) == 1 and handles[0].verified
+    assert not calls and not handles[0].verified and not handles[0].job_id
+    assert handles[0].config_path.is_file()
     handles[0].request()
-    assert len(calls) == 1
+    assert not calls
     assert all("down" not in command and "api" not in command for command in calls)
+
+
+@pytest.mark.parametrize("confidential", (False, True))
+@pytest.mark.parametrize(
+    "scenario", ("before-launch", "receipt-signal", "receipt-exception")
+)
+def test_submission_cleanup_ownership_comes_from_launch_receipt(
+    monkeypatch, tmp_path, confidential, scenario
+):
+    from npa.orchestration.skypilot.launch_transaction import (
+        EvidenceState,
+        ProbeObservation,
+        StabilityPolicy,
+    )
+
+    options = {}
+    if confidential:
+        path, bridge, target, report, env = _robotwin_bridge_fixture(
+            monkeypatch, tmp_path
+        )
+        authorization = bridge.authorization
+
+        def preflight(documents, **_kwargs):
+            documents[1]["resources"]["region"] = authorization.kubernetes_context
+            return target, report, {}
+
+        monkeypatch.setattr(workflow_module, "_execution_preflight", preflight)
+        options.update(
+            robotwin_submit_context=bridge,
+            extra_env=env,
+            config_path=Path(authorization.skypilot_config_source),
+            infra=f"k8s/{authorization.kubernetes_context}",
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report=report,
+            secret_envs=_robotwin_secret_envs(env),
+        )
+    else:
+        path = tmp_path / "workflow.yaml"
+        path.write_text("name: synthetic\nresources:\n  cloud: kubernetes\n")
+    handles, launches, cancellations = [], [], []
+    status = ["RUNNING"]
+
+    def ready(handle):
+        handles.append(handle)
+        handle.cleanup_on_failure = True
+        if scenario == "before-launch":
+            handle.request()
+            raise SystemExit(130)
+
+    def launch(command, **_kwargs):
+        assert scenario != "before-launch", "refusal must never invoke launch"
+        launches.append(command)
+        if scenario == "receipt-signal":
+            handles[0].request()
+        return subprocess.CompletedProcess(
+            command, 0, "Job submitted, ID: 42\n", ""
+        ), []
+
+    def reconcile(_name, **kwargs):
+        if not handles:
+            return workflow_module.ReconciliationEvidence(
+                workflow_module.ReconciliationState.ABSENT
+            )
+        assert kwargs["env"] == handles[0].environment
+        if confidential:
+            assert all(key not in kwargs["env"] for key in _robotwin_secret_envs(env))
+        # In the pre-launch case this record belongs to a different invocation.
+        return workflow_module.ReconciliationEvidence(
+            workflow_module.ReconciliationState.FOUND,
+            job_id="42",
+            status=status[0],
+            workload_observable=True,
+        )
+
+    def record(payload):
+        if scenario == "receipt-exception" and payload["job_id"] == "42":
+            raise RuntimeError("synthetic post-acknowledgment failure")
+
+    def command_run(command, **kwargs):
+        if _is_status_cmd(command):
+            return _healthy_status(command)
+        assert command == [str(sky), "jobs", "cancel", "--yes", "42"]
+        assert kwargs["env"] == handles[0].environment
+        cancellations.append(command)
+        status[0] = "CANCELLED"
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    sky = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        workflow_module, "run_launch_transaction", _REAL_RUN_LAUNCH_TRANSACTION
+    )
+    monkeypatch.setattr(workflow_module, "_run_launch", launch)
+    monkeypatch.setattr(workflow_module, "_reconcile_managed_job_env", reconcile)
+    monkeypatch.setattr(subprocess, "run", command_run)
+    with pytest.raises(RuntimeError):
+        submit_workflow(
+            path,
+            "synthetic-owned-receipt",
+            sky_bin=sky,
+            isolated_config_dir=tmp_path / "sky-state",
+            on_launch_ready=ready,
+            transaction_recorder=record,
+            stability_probe=lambda: ProbeObservation(EvidenceState.READY),
+            stability_policy=StabilityPolicy(2, 0, 0, 1),
+            launch_lock_root=tmp_path / "locks",
+            **options,
+        )
+    owned = scenario != "before-launch"
+    assert len(launches) == len(cancellations) == int(owned)
+    assert handles[0].verified == owned
+    if not owned:
+        assert not handles[0].job_id and handles[0].config_path.is_file()
+
+
+@pytest.mark.parametrize(
+    "kind", ("unacknowledged", "failed", "ambiguous", "foreign-command", "inactive")
+)
+def test_submission_cleanup_rejects_nonowning_receipts(tmp_path, kind):
+    handle = workflow_module._SubmissionCleanup(
+        "synthetic", {}, "/sky", None, 0, tmp_path / "config", active=kind != "inactive"
+    )
+    command = ["/sky", "jobs", "launch"]
+    output = "Job submitted, ID: 42\n"
+    if kind == "unacknowledged":
+        output = "Request accepted without a job identity\n"
+    elif kind == "ambiguous":
+        output += "Managed Job ID: 43\n"
+    result = subprocess.CompletedProcess(
+        command if kind != "foreign-command" else ["/sky", "jobs", "queue"],
+        int(kind == "failed"),
+        output,
+        "",
+    )
+    handle.bind_launch_receipt(result, command)
+    assert not handle.job_id
 
 
 @pytest.mark.parametrize("active_status", ("RUNNING", "UNKNOWN", "CANCELLING"))
@@ -2260,7 +2397,7 @@ def test_submission_cleanup_requires_every_task_terminal(
         "unavailable",
         "changed-id",
         "unknown",
-        "prior-terminal",
+        "missing-receipt",
         "cancel-failed",
         "not-terminal",
     ),
@@ -2278,8 +2415,7 @@ def test_submission_cleanup_preserves_unverified_resources(monkeypatch, tmp_path
         tmp_path / "config",
         active=True,
         submitting=False,
-        job_id="42" if mode == "changed-id" else "",
-        prior_terminal_id="42" if mode == "prior-terminal" else "",
+        job_id="" if mode == "missing-receipt" else "42",
     )
 
     def lookup(*_args, **_kwargs):
@@ -2295,7 +2431,7 @@ def test_submission_cleanup_preserves_unverified_resources(monkeypatch, tmp_path
             status="UNKNOWN"
             if mode == "unknown"
             else "FAILED"
-            if mode == "prior-terminal"
+            if mode == "missing-receipt"
             else "RUNNING",
         )
 
@@ -2309,7 +2445,8 @@ def test_submission_cleanup_preserves_unverified_resources(monkeypatch, tmp_path
     monkeypatch.setattr(workflow_module, "_reconcile_managed_job_env", lookup)
     monkeypatch.setattr(subprocess, "run", run)
     result = cleanup.request()
-    assert observations and result.errors and not result.verified
+    assert bool(observations) == (mode != "missing-receipt")
+    assert result.errors and not result.verified
     assert len(calls) == (1 if mode in {"cancel-failed", "not-terminal"} else 0)
     assert "private-canary" not in str(result)
 
