@@ -1,0 +1,59 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "d7955bdc2e2aa6bf6fe62b40c691a44e114d6eded1427e5dacb0d2873d811a3c",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec pass; one native fine-tuning wave.",
+      "evidence": [
+        "npa workbench workflow validate-spec",
+        "npa workbench workflow plan-spec --waves"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Actual three-camera robot demonstrations drive native XR1 action-policy updates; disjoint validation selects the checkpoint and a sealed paired test cohort measures physical task completion.",
+      "evidence": [
+        "docs/workbench/evidence/xr1-antioch-rtxpro.json",
+        "npa/tests/workflows/test_xr1_antioch.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "Dataset, model, optimizer checkpoints, policy rollouts, and recordings were published to dedicated Nebius S3 and fully read back.",
+      "evidence": [
+        "docs/workbench/evidence/xr1-antioch-rtxpro.json"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "Pinned XR1 assets and 60 successful training demonstrations passed hashes, complete camera decoding, timing, action, and split qualification; 16 disjoint validation demonstrations were retained.",
+      "evidence": [
+        "docs/workbench/evidence/xr1-antioch-rtxpro.json"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Nebius and storage preflights passed; exact ungated model and processor payload access was verified under the operator credential.",
+      "evidence": [
+        "Private operator preflight and bounded use-scope evidence"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "The digest-pinned PyTorch image executed with the recorded staged source archive. Subsequent checkpoint-loading and transfer restrictions were validated separately on actual artifacts.",
+      "evidence": [
+        "docs/workbench/evidence/xr1-antioch-rtxpro.json"
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "Eight RTX PRO 6000 GPUs completed 10,000 native XR1 steps. The validation-selected policy improved paired simulated task completion from 0/32 to 8/32; all 192 native policy camera videos passed full decoding and timing checks. The low absolute success rate does not qualify the policy for robot deployment.",
+      "evidence": [
+        "docs/workbench/evidence/xr1-antioch-rtxpro.json"
+      ]
+    }
+  }
+}

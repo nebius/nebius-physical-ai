@@ -3,6 +3,8 @@
 from copy import deepcopy
 from io import BytesIO
 import hashlib
+import sys
+from types import SimpleNamespace
 
 from botocore.response import StreamingBody
 import numpy as np
@@ -13,6 +15,38 @@ from npa.workflows.xr1_antioch.dataset import (
     ACTION_WIDTHS, CAMERAS, STATE_WIDTHS, native_annotation, validate_episode, validate_splits,
 )
 from npa.workflows.xr1_antioch.transport import _destination, _readback
+
+
+@pytest.mark.parametrize("interrupted, remote_exit, expected", [(False, 0, 0), (False, 7, 7), (True, 0, 130)])
+def test_attached_evaluation_has_no_deadline_and_preserves_exit(monkeypatch, interrupted, remote_exit, expected):
+    from npa.workflows.xr1_antioch import attached_exec
+
+    monkeypatch.setattr(attached_exec, "version", lambda name: "0.4.236")
+    calls = []
+
+    def execute(session, service, command, **options):
+        calls.append((session, service, command, options))
+        return interrupted, remote_exit
+
+    monkeypatch.setitem(sys.modules, "antioch.cli.commands.service", SimpleNamespace(
+        run_door_session=lambda profiles: "owned-session",
+        default_service=lambda session, service, **options: "simulator",
+        run_service_command=execute,
+    ))
+    monkeypatch.setitem(sys.modules, "antioch.cli.options", SimpleNamespace(StreamMode=SimpleNamespace(OFF="off")))
+    argv = ["python", "-c", "print('literal $(not-a-shell)')"]
+    assert attached_exec.run(argv) == expected
+    assert calls == [("owned-session", "simulator", argv, {"stream": "off", "timeout_s": None, "tty": False})]
+
+
+def test_attached_evaluation_rejects_empty_command_and_unverified_sdk(monkeypatch):
+    from npa.workflows.xr1_antioch import attached_exec
+
+    with pytest.raises(ValueError, match="command"):
+        attached_exec.run([])
+    monkeypatch.setattr(attached_exec, "version", lambda name: "different-version")
+    with pytest.raises(ValueError, match="0.4.236"):
+        attached_exec.run(["python", "-c", "print(1)"])
 
 
 @pytest.fixture

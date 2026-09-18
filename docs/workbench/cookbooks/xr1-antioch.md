@@ -53,6 +53,57 @@ GPUs, two samples per GPU, and its learning-rate schedule. It disables XR1's
 asynchronous-action training mode to match this synchronous simulator. It
 fine-tunes the native model, retaining upstream's frozen input embeddings.
 
+## Measured RTX PRO 6000 run
+
+The recorded run completed 10,000 native optimizer steps on eight RTX PRO 6000
+GPUs. Of 64 training demonstrations, 60 passed the physical success checks and
+were used for behavior cloning; all 16 disjoint validation demonstrations
+passed. The minimum held-out loss selected step 9,000 (0.220131), compared with
+6.915094 for the base model and 0.227057 at step 10,000. Test outcomes did not
+choose the checkpoint.
+
+| Policy | Complete task successes | Success rate | Wilson 95% interval |
+| --- | --- | --- | --- |
+| Pinned XR1 base | 0/32 | 0% | 0–10.72% |
+| Selected step-9,000 XR1 | 8/32 | 25% | 13.25–42.11% |
+
+The paired comparison has eight wins and zero losses (exact two-sided McNemar
+p = 0.0078125). Fifteen candidate episodes request an out-of-workspace target;
+nine further episodes miss the physical task criteria by the simulation
+horizon. All 24 failures remain in the report. This supports improvement on
+these held-out scenes, while the absolute success rate remains low.
+
+Antioch's default command deadline interrupted evaluation after 25 completed
+trials. Their native artifacts were retained and hash checked unchanged; only
+the seven unfinished trials were executed through the attached SDK adapter.
+The interrupted partial attempt is retained separately, and prediction noise
+still uses each rollout's original request seed.
+
+The complete measured record, including every paired test outcome, checkpoint
+identity, validation history, and video hashes, is in
+[the execution evidence](../evidence/xr1-antioch-rtxpro.json).
+All 192 native policy camera videos were downloaded from S3, hash checked, and
+fully decoded; their frame counts and 20 Hz simulation timestamps match the
+rollout reports. The selected checkpoint and native optimizer states were also
+published to S3 and completely read back.
+
+This is one training run on a narrow simulated task. The policy is not ready
+for robot deployment, and no physical robot was tested. Inference pauses the
+simulator. The retained operational recording shows real S3 reads, the original
+verified Antioch checkpoint receipt, the complete paired results, and actual camera
+playback. The displayed rollout is selected as the first successful sealed
+seed; it does not replace the full-cohort result.
+
+The original Antioch session lost its backing machine after evaluation and S3
+publication completed. The final recording reads the durable results and
+original transfer receipt from S3; it does not claim a fresh live simulator
+probe. Earlier connection recordings preserve the actual transfers and execution.
+
+The execution evidence records the exact training source archive. Subsequent
+checkpoint-loader and HTTPS restrictions were verified separately against the
+actual artifacts, including identical predictions with restricted decoding;
+the full optimizer execution used the recorded archive.
+
 ## Prerequisites and immutable inputs
 
 Use your own Linux operator checkout and configured NPA project. Complete
@@ -86,6 +137,8 @@ export XR1_BUCKET='<your-bucket>'
 export XR1_PREFIX="s3://$XR1_BUCKET/<new-run-prefix>"
 export XR1_RUN_DIR='<absolute-private-directory>'
 export XR1_ANTIOCH_PROJECT='<absolute-own-antioch-project>'
+export XR1_ANTIOCH_PYTHON='<python-in-the-antioch-sim-0.4.236-environment>'
+export XR1_WORKBENCH='<absolute-own-workbench-checkout>'
 export XR1_KUBE_CONTEXT='<owned-cluster-context>'
 mkdir -p "$XR1_RUN_DIR"
 chmod 700 "$XR1_RUN_DIR"
@@ -241,10 +294,17 @@ PYTHONPATH=/workspace/project/xr1-source/source \
 ```
 
 The simulator keeps its engine interpreter. The policy runs in its own
-interpreter over a private Unix socket. Run the complete base cohort through
-an **attached** `antioch service exec --no-tty --no-stream --` invocation of:
+interpreter over a private Unix socket. The installed Antioch CLI defaults to
+a 900-second command deadline, which can interrupt a complete evaluation.
+Use the pinned SDK attachment adapter below to wait until the cohort finishes.
+It retains the client's managed process cleanup and operator interruption;
+it does not detach the simulator or impose a workload deadline.
+
+Run the complete base cohort from the owning Antioch project:
 
 ```bash
+cd "$XR1_ANTIOCH_PROJECT"
+"$XR1_ANTIOCH_PYTHON" "$XR1_WORKBENCH/npa/src/npa/workflows/xr1_antioch/attached_exec.py" -- \
 env OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 \
   PYTHONPATH=/workspace/project/xr1-source/source \
   python -u -m npa.workflows.xr1_antioch.evaluate \
@@ -255,6 +315,7 @@ env OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 \
   --checkpoint-sha256 94d55a79122050a654b379664b644e874ff90d64ccd30a6a633f816555bcecf7 \
   --statistics /workspace/project/xr1-statistics/normalization.json \
   --split-manifest /workspace/project/xr1-source/source/recipe/split-manifest.json
+cd "$XR1_WORKBENCH"
 ```
 
 Fetch `candidate/model_states.pt` from `$XR1_PREFIX/training` with
