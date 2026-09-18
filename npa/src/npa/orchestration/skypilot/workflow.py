@@ -2555,8 +2555,17 @@ def _submission_dir(run_id: str, isolated_config_dir: Path | None) -> Path:
         # remove it via _cleanup_owned_submission_dir.
         root = Path(tempfile.mkdtemp(prefix=f"npa-skypilot-{run_id}-"))
     else:
-        root = Path(isolated_config_dir) / "submissions" / run_id
-        root.mkdir(parents=True, exist_ok=True)
+        # Keep each attempt immutable.  LIBERO submissions are tightened to
+        # mode 0400 after preparation, so reusing ``submissions/<run_id>``
+        # would make an exact-run resume fail while overwriting its evidence.
+        attempts_root = Path(isolated_config_dir) / "submissions"
+        attempts_root.mkdir(parents=True, exist_ok=True)
+        first_attempt = attempts_root / run_id
+        try:
+            first_attempt.mkdir(mode=0o700)
+            root = first_attempt
+        except FileExistsError:
+            root = Path(tempfile.mkdtemp(prefix=f"{run_id}-retry-", dir=attempts_root))
     root.mkdir(parents=True, exist_ok=True)
     _chmod_owner_only(root, is_dir=True)
     return root

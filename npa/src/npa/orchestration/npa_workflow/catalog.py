@@ -1237,6 +1237,12 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "RL, datagen, container-verify, or solution smoke."
         ),
         argv_template=_BYOF_REPO_ARGV,
+        omit_flags_when_empty=(
+            "--source-prune-path",
+            "--libero-qualified-candidate-image",
+            "--libero-customer-runtime-authorization-file",
+            "--libero-authenticated-caller-identity-file",
+        ),
         config_defaults=dict(_BYOF_REPO_CONFIG_DEFAULTS),
     ),
     "workbench.openpi.prepare_data": ToolEntry(
@@ -1544,6 +1550,12 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.isaac_lab.byof_repo",
         description="Compatibility alias for workbench.byof.repo.",
         argv_template=_BYOF_REPO_ARGV,
+        omit_flags_when_empty=(
+            "--source-prune-path",
+            "--libero-qualified-candidate-image",
+            "--libero-customer-runtime-authorization-file",
+            "--libero-authenticated-caller-identity-file",
+        ),
         config_defaults=dict(_BYOF_REPO_CONFIG_DEFAULTS),
     ),
     "workbench.rl.policy_train": ToolEntry(
