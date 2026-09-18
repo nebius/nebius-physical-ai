@@ -2,19 +2,44 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 import re
 import subprocess
 
+import pytest
 import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
 PACKAGE = ROOT / "npa/docker/workbench/habitat-sim"
+APT_VERIFIER = PACKAGE / "verify_apt_artifacts.sh"
 
 
 def _lock(name: str) -> dict[str, object]:
     return yaml.safe_load((PACKAGE / name).read_text(encoding="utf-8"))
+
+
+def _run_apt_verifier(command: str, *args: object) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", str(APT_VERIFIER), command, *(str(arg) for arg in args)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _write_direct_lock(path: Path, rows: list[tuple[str, str, str]]) -> None:
+    packages = "\n".join(
+        f"  - {{binary: {name}, version: {version}, source: {name}, sha256: {digest}}}"
+        for name, version, digest in rows
+    )
+    path.write_text(
+        "schema_version: npa.habitat-sim.apt-lock.v1\n"
+        f"packages:\n{packages}\n"
+        "transitive_contract: signed snapshot\n",
+        encoding="utf-8",
+    )
 
 
 def test_locks_share_exact_base_snapshot_signature_and_components() -> None:
@@ -37,15 +62,162 @@ def test_every_direct_package_has_exact_version_source_and_hash() -> None:
             assert re.fullmatch(r"[0-9a-f]{64}", row["sha256"])
 
 
-def test_dockerfile_direct_installs_equal_lock_versions() -> None:
+def test_dockerfile_direct_installs_use_all_lock_records(tmp_path: Path) -> None:
     dockerfile = (PACKAGE / "Dockerfile").read_text(encoding="utf-8")
     build_stage, runtime_stage = dockerfile.split("FROM ${BASE_IMAGE} AS runtime", 1)
-    for lock, stage in (
-        (_lock("apt-build.lock"), build_stage),
-        (_lock("apt-runtime.lock"), runtime_stage),
+    for filename, stage, records_name in (
+        ("apt-build.lock", build_stage, "npa-build-direct-packages"),
+        ("apt-runtime.lock", runtime_stage, "npa-runtime-direct-packages"),
     ):
-        for row in lock["packages"]:
-            assert f"{row['binary']}={row['version']}" in stage
+        records = tmp_path / records_name
+        result = _run_apt_verifier("direct-records", PACKAGE / filename, records)
+        assert result.returncode == 0, result.stdout + result.stderr
+        expected = {
+            f"{row['binary']}|{row['version']}|{row['sha256']}"
+            for row in _lock(filename)["packages"]
+        }
+        assert set(records.read_text(encoding="utf-8").splitlines()) == expected
+        invocation = stage.rindex("npa-habitat-verify-apt verify-direct")
+        install = stage.index("apt-get install -y --no-install-recommends")
+        assert invocation < install
+        assert str(Path("/", "tmp", records_name)) in stage
+
+    assert dockerfile.count("npa-habitat-verify-apt direct-records") == 2
+    assert dockerfile.count("npa-habitat-verify-apt verify-direct") == 2
+
+
+def _assert_verifier_mount_in_consuming_run(dockerfile: str) -> None:
+    stages = dockerfile.split("FROM ${BASE_IMAGE} AS runtime", 1)
+    sources = (
+        "from=npa-source-provenance,source=/inputs/docker/workbench/habitat-sim/",
+        "from=build,source=/opt/npa-source-provenance/inputs/docker/workbench/habitat-sim/",
+    )
+    for stage, source in zip(stages, sources, strict=True):
+        consumers = [
+            line
+            for line in stage.replace("\\\n", "").splitlines()
+            if line.startswith("RUN ")
+            and "bash /usr/local/libexec/npa-habitat-verify-apt " in line
+        ]
+        assert len(consumers) == 1
+        mount = (
+            f"--mount={source}verify_apt_artifacts.sh,"
+            "target=/usr/local/libexec/npa-habitat-verify-apt,ro"
+        )
+        assert consumers[0].startswith(f"RUN {mount} "), (
+            "APT verifier must be mounted in its consuming RUN"
+        )
+
+
+def test_apt_verifier_is_mounted_in_each_consuming_run() -> None:
+    _assert_verifier_mount_in_consuming_run((PACKAGE / "Dockerfile").read_text())
+
+
+@pytest.mark.parametrize("stage_index", [0, 1])
+def test_apt_verifier_mount_in_previous_run_is_rejected(stage_index: int) -> None:
+    stages = (
+        (PACKAGE / "Dockerfile").read_text().split("FROM ${BASE_IMAGE} AS runtime", 1)
+    )
+    stage = stages[stage_index]
+    mounted = re.search(r"RUN (--mount=[^\n]+npa-habitat-verify-apt,ro) \\\n", stage)
+    assert mounted is not None
+    mount = mounted.group(1)
+    # A successful earlier RUN cannot make a BuildKit bind mount persistent.
+    stages[stage_index] = stage.replace(
+        f"RUN {mount} \\\n", f"RUN {mount} true\nRUN \\\n", 1
+    )
+    with pytest.raises(AssertionError, match="mounted in its consuming RUN"):
+        _assert_verifier_mount_in_consuming_run(
+            "FROM ${BASE_IMAGE} AS runtime".join(stages)
+        )
+
+
+def test_direct_package_verifier_rejects_a_lock_hash_mutation(tmp_path: Path) -> None:
+    archives = tmp_path / "archives"
+    archives.mkdir()
+    first = _build_fixture_deb(archives, "first-package", "1.0-1")
+    second = _build_fixture_deb(archives, "second-package", "2.0-1")
+    rows = [
+        ("first-package", "1.0-1", hashlib.sha256(first.read_bytes()).hexdigest()),
+        (
+            "second-package",
+            "2.0-1",
+            hashlib.sha256(second.read_bytes()).hexdigest(),
+        ),
+    ]
+    lock = tmp_path / "apt.lock"
+    records = tmp_path / "records"
+    _write_direct_lock(lock, rows)
+
+    emitted = _run_apt_verifier("direct-records", lock, records)
+    assert emitted.returncode == 0, emitted.stdout + emitted.stderr
+    accepted = _run_apt_verifier("verify-direct", records, archives)
+    assert accepted.returncode == 0, accepted.stdout + accepted.stderr
+
+    hostile_digest = "0" * 64
+    if rows[0][2] == hostile_digest:
+        hostile_digest = "1" * 64
+    _write_direct_lock(lock, [(rows[0][0], rows[0][1], hostile_digest), rows[1]])
+    hostile_emitted = _run_apt_verifier("direct-records", lock, records)
+    assert hostile_emitted.returncode == 0
+    rejected = _run_apt_verifier("verify-direct", records, archives)
+    assert rejected.returncode != 0
+
+
+def test_signed_source_index_verifier_rejects_hash_and_size_mutations(
+    tmp_path: Path,
+) -> None:
+    payload = b"signed compressed source index fixture"
+    source_index = tmp_path / "Sources.xz"
+    source_index.write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
+    lock = tmp_path / "apt-runtime.lock"
+    record = tmp_path / "source-index-record"
+
+    def write_lock(*, declared_bytes: int, declared_digest: str) -> None:
+        lock.write_text(
+            "corresponding_sources:\n"
+            "  - binary: rsync\n"
+            "    signed_index:\n"
+            "      suite: jammy-updates\n"
+            "      path: dists/jammy-updates/main/source/Sources.xz\n"
+            f"      bytes: {declared_bytes}\n"
+            f"      sha256: {declared_digest}\n"
+            "    artifacts:\n"
+            "      - {filename: fixture}\n",
+            encoding="utf-8",
+        )
+
+    def verify() -> subprocess.CompletedProcess[str]:
+        emitted = _run_apt_verifier("source-index-record", lock, record)
+        assert emitted.returncode == 0, emitted.stdout + emitted.stderr
+        _suite, _path, bytes_value, digest_value = (
+            record.read_text(encoding="utf-8").strip().split("|")
+        )
+        return _run_apt_verifier("verify-file", source_index, bytes_value, digest_value)
+
+    write_lock(declared_bytes=len(payload), declared_digest=digest)
+    accepted = verify()
+    assert accepted.returncode == 0, accepted.stdout + accepted.stderr
+
+    write_lock(declared_bytes=len(payload) + 1, declared_digest=digest)
+    wrong_size = verify()
+    assert wrong_size.returncode != 0
+
+    wrong_digest = "0" * 64 if digest != "0" * 64 else "1" * 64
+    write_lock(declared_bytes=len(payload), declared_digest=wrong_digest)
+    wrong_hash = verify()
+    assert wrong_hash.returncode != 0
+
+
+def test_source_index_verification_precedes_source_artifact_acceptance() -> None:
+    dockerfile = (PACKAGE / "Dockerfile").read_text(encoding="utf-8")
+    build_stage = dockerfile.split("FROM ${BASE_IMAGE} AS runtime", 1)[0]
+    verify = build_stage.rindex("npa-habitat-verify-apt verify-file")
+    source_download = build_stage.index(
+        "apt-get source --download-only rsync=3.2.7-0ubuntu0.22.04.7"
+    )
+    assert verify < source_download
 
 
 def test_ca_bootstrap_is_bound_to_same_snapshot_and_exact_hash() -> None:
@@ -319,9 +491,7 @@ def test_apt_resolver_accepts_exact_family_and_rejects_old_mixed_family(
 def test_executed_candidate_gate_rejects_mixed_or_drifting_family() -> None:
     dockerfile = (PACKAGE / "Dockerfile").read_text(encoding="utf-8")
     start = dockerfile.index("npa_require_python_family()")
-    end = dockerfile.index(
-        "    npa_require_python_family '3.10.6-1~22.04.1'", start
-    )
+    end = dockerfile.index("    npa_require_python_family '3.10.6-1~22.04.1'", start)
     function = dockerfile[start:end].replace("\\\n", "\n")
 
     def run(candidates: dict[str, str]) -> subprocess.CompletedProcess[str]:

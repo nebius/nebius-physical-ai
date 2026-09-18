@@ -25,9 +25,13 @@ The GPL-3.0+ `rsync` binary needed by SkyPilot is accompanied under
 `/usr/share/doc/npa-habitat-sim/ubuntu-sources/rsync` by its exact upstream tar,
 signature, Ubuntu packaging delta, and `.dsc`. The same signed immutable Ubuntu
 snapshot supplies those four source artifacts; `apt-runtime.lock` pins their
-source version, signed metadata index, sizes, and SHA-256 values, and the final
-OCI verifier requires each exact source byte. This is accompanying corresponding
-source, not a mutable third-party link or an invented written offer.
+source version, signed metadata index, sizes, and SHA-256 values. The compressed
+index is size/hash verified before those source artifacts are accepted, and the
+final OCI verifier requires each exact source byte. Every direct Ubuntu package
+is likewise downloaded and lock-hash verified before its local `.deb` is passed
+to APT; transitive dependencies remain governed by the signed snapshot and final
+package inventory. This is accompanying corresponding source, not a mutable
+third-party link or an invented written offer.
 
 Before HTTPS is available, one isolated trust stage raw-extracts checksum-pinned
 CA, OpenSSL CLI, and libssl packages from that same timestamped snapshot. It

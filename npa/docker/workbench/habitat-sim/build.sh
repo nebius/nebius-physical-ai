@@ -47,6 +47,11 @@ if [[ ! "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
   echo "A full Git SHA is required" >&2
   exit 2
 fi
+readonly build_platform="linux/amd64"
+if [[ "$build_platform" != "linux/amd64" ]]; then
+  echo "refusing non-canonical Habitat build platform" >&2
+  exit 2
+fi
 
 # Every repository-owned file copied by the Dockerfile is projected from the
 # committed object database. Keep this list identical to verify_image.py.
@@ -64,6 +69,7 @@ readonly source_paths=(
   docker/workbench/habitat-sim/requirements-runtime.lock
   docker/workbench/habitat-sim/runtime-payload.json
   docker/workbench/habitat-sim/source-manifest.json
+  docker/workbench/habitat-sim/verify_apt_artifacts.sh
   docker/workbench/habitat-sim/verify_image.py
   docker/workbench/packaging-contract.yaml
   src/npa/__init__.py
@@ -108,6 +114,7 @@ if [[ -e "$output" ]]; then
   exit 2
 fi
 docker buildx build \
+  --platform="$build_platform" \
   --build-arg "NPA_SOURCE_SHA=$source_sha" \
   --build-arg "NPA_SOURCE_MANIFEST_SHA256=$manifest_sha256" \
   --build-context "npa-source-provenance=$projection" \

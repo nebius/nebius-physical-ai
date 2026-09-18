@@ -27,6 +27,7 @@ SOURCE_PATHS = (
     "docker/workbench/habitat-sim/requirements-runtime.lock",
     "docker/workbench/habitat-sim/runtime-payload.json",
     "docker/workbench/habitat-sim/source-manifest.json",
+    "docker/workbench/habitat-sim/verify_apt_artifacts.sh",
     "docker/workbench/habitat-sim/verify_image.py",
     "docker/workbench/packaging-contract.yaml",
     "src/npa/__init__.py",
@@ -202,6 +203,7 @@ def test_builder_passes_exact_git_sha_to_local_attested_oci_export(
         ["git", "rev-parse", "--verify", "HEAD"], cwd=repository, text=True
     ).strip()
     assert argv[:2] == ["buildx", "build"]
+    assert argv.count("--platform=linux/amd64") == 1
     assert f"NPA_SOURCE_SHA={revision}" in argv
     manifest = capture / "npa-source-manifest.sha256"
     manifest_digest = subprocess.check_output(
@@ -233,6 +235,42 @@ def test_builder_passes_exact_git_sha_to_local_attested_oci_export(
             ["git", "-C", str(repository), "show", f"HEAD:npa/{path}"]
         )
         assert (capture / "inputs" / path).read_bytes() == committed
+
+
+def test_builder_refuses_a_committed_noncanonical_platform(tmp_path: Path) -> None:
+    repository, script = _committed_fixture(tmp_path)
+    env, log, _capture = _stubbed_environment(tmp_path)
+    content = script.read_text(encoding="utf-8")
+    hostile = content.replace(
+        'readonly build_platform="linux/amd64"',
+        'readonly build_platform="linux/arm64"',
+    )
+    assert hostile != content
+    script.write_text(hostile, encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "npa"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repository),
+            "-c",
+            "user.name=Habitat test",
+            "-c",
+            "user.email=habitat@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "hostile platform fixture",
+        ],
+        check=True,
+    )
+
+    result = _run(tmp_path / "refused.oci.tar", env=env, script=script)
+
+    assert result.returncode == 2
+    assert "refusing non-canonical Habitat build platform" in result.stderr
+    assert not log.exists()
 
 
 @pytest.mark.parametrize("mutation", ["modified", "staged", "untracked"])

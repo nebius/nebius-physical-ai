@@ -700,12 +700,16 @@ def test_openexr_fetchcontent_is_bound_to_local_exact_imath_source() -> None:
 
 def test_final_stage_is_non_root_and_skypilot_bootstrap_capable() -> None:
     final = _runtime_stage(DOCKERFILE)
+    runtime_lock = yaml.safe_load((PACKAGE / "apt-runtime.lock").read_text())
+    locked_packages = {row["binary"] for row in runtime_lock["packages"]}
     assert final.rstrip().endswith(
         'CMD ["python3", "-m", "npa.workflows.habitat_sim_smoke", "--help"]'
     )
     assert "USER ubuntu" in final
-    for package in ("netcat-openbsd=", "openssh-server=", "rsync=", "sudo="):
-        assert package in final
+    assert {"netcat-openbsd", "openssh-server", "rsync", "sudo"} <= locked_packages
+    assert "npa-habitat-verify-apt verify-direct" in final
+    assert "apt-get install -y --no-install-recommends " in final
+    assert str(Path("/", "tmp", "npa-runtime-direct-debs", "*.deb")) in final
     assert "ubuntu ALL=(ALL) NOPASSWD:ALL" in final
     assert "rm -f /etc/ssh/ssh_host_*" in final
     assert "PasswordAuthentication no" in final

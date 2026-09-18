@@ -76,7 +76,26 @@ ARG NPA_SOURCE_MANIFEST_SHA256
 USER root
 COPY --from=npa-ca-trust /etc/ca-certificates.conf /etc/ca-certificates.conf
 COPY --from=npa-ca-trust /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=npa-source-provenance / /opt/npa-source-provenance/
 RUN test -n "${NPA_SOURCE_SHA}" && printf '%s' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$' && \
+    test -n "${NPA_SOURCE_MANIFEST_SHA256}" && \
+    printf '%s' "${NPA_SOURCE_MANIFEST_SHA256}" | grep -Eq '^[0-9a-f]{64}$' && \
+    printf '%s  %s\n' "${NPA_SOURCE_MANIFEST_SHA256}" \
+      /opt/npa-source-provenance/npa-source-manifest.sha256 | sha256sum -c - && \
+    cd /opt/npa-source-provenance && \
+    sha256sum -c npa-source-manifest.sha256 && \
+    sed -n 's/^[0-9a-f]\{64\}  //p' npa-source-manifest.sha256 | \
+      LC_ALL=C sort -u > /tmp/npa-source-expected-paths && \
+    find inputs -type f -printf '%p\n' | LC_ALL=C sort -u \
+      > /tmp/npa-source-observed-paths && \
+    test -s /tmp/npa-source-expected-paths && \
+    cmp /tmp/npa-source-expected-paths /tmp/npa-source-observed-paths && \
+    printf '{"manifest_sha256":"%s","schema_version":"npa.source-provenance.v1","source_revision":"%s"}\n' \
+      "${NPA_SOURCE_MANIFEST_SHA256}" "${NPA_SOURCE_SHA}" \
+      > /opt/npa-source-provenance/npa-source-provenance.json && \
+    rm -f /tmp/npa-source-expected-paths /tmp/npa-source-observed-paths
+RUN --mount=from=npa-source-provenance,source=/inputs/docker/workbench/habitat-sim/verify_apt_artifacts.sh,target=/usr/local/libexec/npa-habitat-verify-apt,ro \
+    test -n "${NPA_SOURCE_SHA}" && printf '%s' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$' && \
     test "$(wc -l < /etc/ca-certificates.conf)" -eq "${CA_CERT_COUNT}" && \
     test "$(stat -c %s /etc/ca-certificates.conf)" -eq "${CA_CONFIG_BYTES}" && \
     printf '%s  %s\n' "${CA_CONFIG_SHA256}" /etc/ca-certificates.conf | sha256sum -c - && \
@@ -108,22 +127,26 @@ RUN test -n "${NPA_SOURCE_SHA}" && printf '%s' "${NPA_SOURCE_SHA}" | grep -Eq '^
     }; \
     npa_require_python_family '3.10.6-1~22.04.1' \
       python3 libpython3-dev python3-dev python3-venv && \
-    apt-get install -y --no-install-recommends \
-      build-essential=12.9ubuntu3 \
-      ca-certificates=20260601~22.04.1 \
-      libegl1=1.4.0-1 \
-      libegl1-mesa-dev=23.2.1-1ubuntu3.1~22.04.4 \
-      libgl1=1.4.0-1 \
-      libgl1-mesa-dev=23.2.1-1ubuntu3.1~22.04.4 \
-      libglm-dev=0.9.9.8+ds-2 \
-      libglvnd-dev=1.4.0-1 \
-      libjpeg-dev=8c-2ubuntu10 \
-      libpython3-dev=3.10.6-1~22.04.1 \
-      libomp-dev=1:14.0-55~exp2 \
-      pkg-config=0.29.2-1ubuntu3 \
-      python3=3.10.6-1~22.04.1 \
-      python3-dev=3.10.6-1~22.04.1 \
-      python3-venv=3.10.6-1~22.04.1 && \
+    bash /usr/local/libexec/npa-habitat-verify-apt direct-records \
+      /opt/npa-source-provenance/inputs/docker/workbench/habitat-sim/apt-build.lock \
+      /tmp/npa-build-direct-packages && \
+    install -d -m 0700 /tmp/npa-build-direct-debs && \
+    while IFS='|' read -r package version _digest; do \
+      (cd /tmp/npa-build-direct-debs && apt-get download "$package=$version") || exit 1; \
+    done < /tmp/npa-build-direct-packages && \
+    bash /usr/local/libexec/npa-habitat-verify-apt verify-direct \
+      /tmp/npa-build-direct-packages /tmp/npa-build-direct-debs && \
+    apt-get install -y --no-install-recommends /tmp/npa-build-direct-debs/*.deb && \
+    bash /usr/local/libexec/npa-habitat-verify-apt source-index-record \
+      /opt/npa-source-provenance/inputs/docker/workbench/habitat-sim/apt-runtime.lock \
+      /tmp/npa-runtime-source-index && \
+    IFS='|' read -r source_suite source_path source_bytes source_digest \
+      < /tmp/npa-runtime-source-index && \
+    source_url="https://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/${source_path}" && \
+    /usr/bin/python3 -c 'import sys, urllib.request; url=sys.argv[1]; target=sys.argv[2]; expected=int(sys.argv[3]); response=urllib.request.urlopen(url); final=response.geturl(); payload=response.read(expected + 1); response.close(); final == url or sys.exit("source index redirected"); len(payload) == expected or sys.exit("source index size mismatch"); open(target, "xb").write(payload)' \
+      "$source_url" /tmp/npa-runtime-Sources.xz "$source_bytes" && \
+    bash /usr/local/libexec/npa-habitat-verify-apt verify-file \
+      /tmp/npa-runtime-Sources.xz "$source_bytes" "$source_digest" && \
     install -d -m 0755 /opt/rsync-source && \
     cd /opt/rsync-source && \
     apt-get source --download-only rsync=3.2.7-0ubuntu0.22.04.7 && \
@@ -139,27 +162,11 @@ RUN test -n "${NPA_SOURCE_SHA}" && printf '%s' "${NPA_SOURCE_SHA}" | grep -Eq '^
       5e6e79695b709ce1606ddbb63f5c28c7cdc304f857f42e317bd53e753b8ca15d rsync_3.2.7-0ubuntu0.22.04.7.dsc | \
       sha256sum -c - && \
     ! grep -R -nE '^[[:space:]]*URIs:[[:space:]]*http://' /etc/apt/sources.list.d && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /tmp/npa-build-direct-debs /tmp/npa-build-direct-packages \
+      /tmp/npa-runtime-source-index /tmp/npa-runtime-Sources.xz \
+      /var/lib/apt/lists/*
 
 WORKDIR /opt/npa-build
-COPY --from=npa-source-provenance / /opt/npa-source-provenance/
-RUN test -n "${NPA_SOURCE_SHA}" && printf '%s' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$' && \
-    test -n "${NPA_SOURCE_MANIFEST_SHA256}" && \
-    printf '%s' "${NPA_SOURCE_MANIFEST_SHA256}" | grep -Eq '^[0-9a-f]{64}$' && \
-    printf '%s  %s\n' "${NPA_SOURCE_MANIFEST_SHA256}" \
-      /opt/npa-source-provenance/npa-source-manifest.sha256 | sha256sum -c - && \
-    cd /opt/npa-source-provenance && \
-    sha256sum -c npa-source-manifest.sha256 && \
-    sed -n 's/^[0-9a-f]\{64\}  //p' npa-source-manifest.sha256 | \
-      LC_ALL=C sort -u > /tmp/npa-source-expected-paths && \
-    find inputs -type f -printf '%p\n' | LC_ALL=C sort -u \
-      > /tmp/npa-source-observed-paths && \
-    test -s /tmp/npa-source-expected-paths && \
-    cmp /tmp/npa-source-expected-paths /tmp/npa-source-observed-paths && \
-    printf '{"manifest_sha256":"%s","schema_version":"npa.source-provenance.v1","source_revision":"%s"}\n' \
-      "${NPA_SOURCE_MANIFEST_SHA256}" "${NPA_SOURCE_SHA}" \
-      > /opt/npa-source-provenance/npa-source-provenance.json && \
-    rm -f /tmp/npa-source-expected-paths /tmp/npa-source-observed-paths
 COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/source-manifest.json source-manifest.json
 COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/licenses.json licenses.json
 COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/apt-build.lock apt-build.lock
@@ -230,7 +237,9 @@ ARG NPA_SOURCE_MANIFEST_SHA256
 USER root
 COPY --from=npa-ca-trust /etc/ca-certificates.conf /etc/ca-certificates.conf
 COPY --from=npa-ca-trust /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-RUN test "$(wc -l < /etc/ca-certificates.conf)" -eq "${CA_CERT_COUNT}" && \
+COPY --from=build /opt/npa-build/apt-runtime.lock /tmp/npa-apt-runtime.lock
+RUN --mount=from=build,source=/opt/npa-source-provenance/inputs/docker/workbench/habitat-sim/verify_apt_artifacts.sh,target=/usr/local/libexec/npa-habitat-verify-apt,ro \
+    test "$(wc -l < /etc/ca-certificates.conf)" -eq "${CA_CERT_COUNT}" && \
     test "$(stat -c %s /etc/ca-certificates.conf)" -eq "${CA_CONFIG_BYTES}" && \
     printf '%s  %s\n' "${CA_CONFIG_SHA256}" /etc/ca-certificates.conf | sha256sum -c - && \
     test "$(stat -c %s /etc/ssl/certs/ca-certificates.crt)" -eq "${CA_BUNDLE_BYTES}" && \
@@ -251,21 +260,19 @@ RUN test "$(wc -l < /etc/ca-certificates.conf)" -eq "${CA_CERT_COUNT}" && \
     test "$installed_perl" = '5.34.0-3ubuntu1.8' && \
     test "$installed_perl" = "$candidate_perl_base" && \
     test "$installed_perl" = "$candidate_perl" && \
-    apt-get install -y --no-install-recommends \
-      ca-certificates=20260601~22.04.1 \
-      libegl1=1.4.0-1 \
-      libgl1=1.4.0-1 \
-      libglvnd0=1.4.0-1 \
-      libjpeg-turbo8=2.1.2-0ubuntu1 \
-      libomp5-14=1:14.0.0-1ubuntu1.1 \
-      netcat-openbsd=1.218-4ubuntu1 \
-      openssh-client=1:8.9p1-3ubuntu0.16 \
-      openssh-server=1:8.9p1-3ubuntu0.16 \
-      python3=3.10.6-1~22.04.1 \
-      rsync=3.2.7-0ubuntu0.22.04.7 \
-      sudo=1.9.9-1ubuntu2.6 && \
+    bash /usr/local/libexec/npa-habitat-verify-apt direct-records \
+      /tmp/npa-apt-runtime.lock /tmp/npa-runtime-direct-packages && \
+    install -d -m 0700 /tmp/npa-runtime-direct-debs && \
+    while IFS='|' read -r package version _digest; do \
+      (cd /tmp/npa-runtime-direct-debs && apt-get download "$package=$version") || exit 1; \
+    done < /tmp/npa-runtime-direct-packages && \
+    bash /usr/local/libexec/npa-habitat-verify-apt verify-direct \
+      /tmp/npa-runtime-direct-packages /tmp/npa-runtime-direct-debs && \
+    apt-get install -y --no-install-recommends /tmp/npa-runtime-direct-debs/*.deb && \
     ! grep -R -nE '^[[:space:]]*URIs:[[:space:]]*http://' /etc/apt/sources.list.d && \
-    rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/cache/debconf/* && \
+    rm -rf /tmp/npa-apt-runtime.lock /tmp/npa-runtime-direct-debs \
+      /tmp/npa-runtime-direct-packages /var/lib/apt/lists/* \
+      /var/cache/apt/* /var/cache/debconf/* && \
     rm -f /etc/ssh/ssh_host_* && \
     groupadd --gid 1000 ubuntu && \
     useradd --uid 1000 --gid 1000 --create-home --home-dir /home/ubuntu \
