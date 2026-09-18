@@ -2060,6 +2060,9 @@ def test_robotwin_expiry_is_rechecked_at_each_final_scheduler_effect(
             execution_preflight_report=report,
             robotwin_submit_context=submit_context,
             transaction_recorder=records.append,
+            on_launch_ready=lambda _cleanup: pytest.fail(
+                "stale authority armed cleanup"
+            ),
         )
 
     assert events == [f"transaction-{effect}", "freshness"]
@@ -2094,9 +2097,259 @@ def test_robotwin_confidential_submit_bridge_refuses_before_side_effects(
             execution_target=target,
             execution_preflight_report={},
             robotwin_submit_context=submit_context,
+            on_launch_ready=lambda _cleanup: pytest.fail("refusal enabled cleanup"),
         )
     assert exc_info.value.__cause__ is None
     assert exc_info.value.__context__ is None
+
+
+@pytest.mark.parametrize("confidential", (False, True))
+@pytest.mark.parametrize("failure", ("signal", "timeout", "indeterminate"))
+@pytest.mark.parametrize("real_transaction", (False, True))
+def test_submission_cleanup_covers_accepted_failure_with_bound_runtime(
+    monkeypatch, tmp_path, confidential, failure, real_transaction
+) -> None:
+    options = {}
+    if confidential:
+        path, bridge, target, report, env = _robotwin_bridge_fixture(
+            monkeypatch, tmp_path
+        )
+        authorization = bridge.authorization
+
+        def preflight(documents, **_kwargs):
+            documents[1]["resources"]["region"] = authorization.kubernetes_context
+            return target, report, {}
+
+        monkeypatch.setattr(workflow_module, "_execution_preflight", preflight)
+        options = dict(
+            robotwin_submit_context=bridge,
+            extra_env=env,
+            config_path=Path(authorization.skypilot_config_source),
+            infra=f"k8s/{authorization.kubernetes_context}",
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report=report,
+            secret_envs=_robotwin_secret_envs(env),
+        )
+    else:
+        path = tmp_path / "workflow.yaml"
+        path.write_text("name: synthetic\nresources:\n  cloud: kubernetes\n")
+    handles, calls, order = [], [], []
+    status = ["RUNNING"]
+
+    def ready(handle):
+        assert handle.active and handle.submitting
+        handle.cleanup_on_failure = True
+        assert handle.config_path.is_file()
+        handles.append(handle)
+        order.append("armed")
+
+    def launch(*_args, **_kwargs):
+        assert len(handles) == 1
+        order.append("accepted")
+        if failure == "signal":
+            handles[0].request()
+            assert not calls
+            raise SystemExit(130)
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired("synthetic launch", 1)
+        raise RuntimeError("synthetic indeterminate acceptance")
+
+    def reconcile(name, **kwargs):
+        assert name == "synthetic-owned-submit"
+        if not handles:
+            assert real_transaction
+            return workflow_module.ReconciliationEvidence(
+                workflow_module.ReconciliationState.ABSENT
+            )
+        assert handles and kwargs["env"] == handles[0].environment
+        assert Path(kwargs["env"]["SKYPILOT_GLOBAL_CONFIG"]).is_file()
+        if confidential:
+            assert Path(kwargs["env"]["KUBECONFIG"]).is_file()
+            assert not any(
+                value in kwargs["env"].values() for value in bridge.private_values
+            )
+            assert all(key not in kwargs["env"] for key in _robotwin_secret_envs(env))
+        order.append("reconcile")
+        return workflow_module.ReconciliationEvidence(
+            workflow_module.ReconciliationState.FOUND,
+            job_id="42",
+            status=status[0],
+        )
+
+    def run(command, **kwargs):
+        if _is_status_cmd(command):
+            return _healthy_status(command)
+        assert command == [str(sky), "jobs", "cancel", "--yes", "42"]
+        assert kwargs["env"] == handles[0].environment
+        assert order[-2:] == ["reconcile", "reconcile"]
+        calls.append(command)
+        status[0] = "CANCELLED"
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    sky = _fake_sky(tmp_path)
+    monkeypatch.setattr(workflow_module, "_run_launch", launch)
+    monkeypatch.setattr(workflow_module, "_reconcile_managed_job_env", reconcile)
+    monkeypatch.setattr(subprocess, "run", run)
+    if real_transaction:
+        from npa.orchestration.skypilot.launch_transaction import (
+            EvidenceState,
+            ProbeObservation,
+            StabilityPolicy,
+        )
+
+        options.update(
+            stability_probe=lambda: ProbeObservation(EvidenceState.READY),
+            stability_policy=StabilityPolicy(2, 0, 0, 1),
+            launch_lock_root=tmp_path / "launch-locks",
+        )
+        monkeypatch.setattr(
+            workflow_module, "run_launch_transaction", _REAL_RUN_LAUNCH_TRANSACTION
+        )
+    with pytest.raises(SkyPilotSubmitError):
+        submit_workflow(
+            path,
+            "synthetic-owned-submit",
+            sky_bin=sky,
+            isolated_config_dir=tmp_path / "state",
+            on_launch_ready=ready,
+            **options,
+        )
+    assert order[:2] == ["armed", "accepted"]
+    assert len(calls) == 1 and handles[0].verified
+    handles[0].request()
+    assert len(calls) == 1
+    assert all("down" not in command and "api" not in command for command in calls)
+
+
+@pytest.mark.parametrize("active_status", ("RUNNING", "UNKNOWN", "CANCELLING"))
+@pytest.mark.parametrize("reverse", (False, True))
+def test_submission_cleanup_requires_every_task_terminal(
+    monkeypatch, active_status, reverse
+):
+    rows = [
+        {"job_name": "synthetic", "job_id": "42", "status": active_status},
+        {"job_name": "synthetic", "job_id": "42", "status": "SUCCEEDED"},
+    ]
+    if reverse:
+        rows.reverse()
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command, 0, json.dumps(rows), ""
+        ),
+    )
+    evidence = workflow_module._reconcile_managed_job_env(
+        "synthetic",
+        env={},
+        sky_executable="/sky",
+        cwd=None,
+        require_all_terminal=True,
+    )
+    assert evidence.job_id == "42"
+    assert not workflow_module._cleanup_job_terminal(evidence.status)
+    assert evidence.status == ("UNKNOWN" if active_status == "UNKNOWN" else "RUNNING")
+
+
+@pytest.mark.parametrize(
+    "mode",
+    (
+        "absent",
+        "ambiguous",
+        "unavailable",
+        "changed-id",
+        "unknown",
+        "prior-terminal",
+        "cancel-failed",
+        "not-terminal",
+    ),
+)
+def test_submission_cleanup_preserves_unverified_resources(monkeypatch, tmp_path, mode):
+    state = workflow_module.ReconciliationState
+    observations = []
+    calls = []
+    cleanup = workflow_module._SubmissionCleanup(
+        "synthetic-owned",
+        {"KUBECONFIG": str(tmp_path / "kube")},
+        "/synthetic-sky",
+        str(tmp_path),
+        0,
+        tmp_path / "config",
+        active=True,
+        submitting=False,
+        job_id="42" if mode == "changed-id" else "",
+        prior_terminal_id="42" if mode == "prior-terminal" else "",
+    )
+
+    def lookup(*_args, **_kwargs):
+        observations.append(mode)
+        selected = {
+            "absent": state.ABSENT,
+            "ambiguous": state.AMBIGUOUS,
+            "unavailable": state.UNAVAILABLE,
+        }.get(mode, state.FOUND)
+        return workflow_module.ReconciliationEvidence(
+            selected,
+            job_id="43" if mode == "changed-id" else "42",
+            status="UNKNOWN"
+            if mode == "unknown"
+            else "FAILED"
+            if mode == "prior-terminal"
+            else "RUNNING",
+        )
+
+    def run(command, **_kwargs):
+        calls.append(command)
+        assert command == ["/synthetic-sky", "jobs", "cancel", "--yes", "42"]
+        return subprocess.CompletedProcess(
+            command, int(mode == "cancel-failed"), "", "private-canary"
+        )
+
+    monkeypatch.setattr(workflow_module, "_reconcile_managed_job_env", lookup)
+    monkeypatch.setattr(subprocess, "run", run)
+    result = cleanup.request()
+    assert observations and result.errors and not result.verified
+    assert len(calls) == (1 if mode in {"cancel-failed", "not-terminal"} else 0)
+    assert "private-canary" not in str(result)
+
+
+def test_submission_cleanup_stays_inert_before_authorized_launch(monkeypatch, tmp_path):
+    cleanup = workflow_module._SubmissionCleanup(
+        "synthetic", {}, "/sky", None, 1, tmp_path / "config"
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "_reconcile_managed_job_env",
+        lambda *_a, **_k: pytest.fail("inactive cleanup queried provider"),
+    )
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_a, **_k: pytest.fail("inactive cleanup ran command")
+    )
+    cleanup.request()
+    cleanup.finish_submit(failed=True)
+    assert not cleanup.active and not cleanup.verified
+
+
+def test_submission_cleanup_retains_private_context_on_unverified_failure(
+    monkeypatch, tmp_path
+):
+    owned = tmp_path / "owned-submission"
+    owned.mkdir(mode=0o700)
+    marker = owned / "private-config"
+    marker.write_text("synthetic private input")
+    cleanup = workflow_module._SubmissionCleanup(
+        "synthetic", {}, "/sky", None, 1, marker, active=True, cleanup_on_failure=True
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "_reconcile_managed_job_env",
+        lambda *_a, **_k: workflow_module.ReconciliationEvidence(
+            workflow_module.ReconciliationState.UNAVAILABLE
+        ),
+    )
+    workflow_module._finish_failed_submission(owned, cleanup)
+    assert marker.is_file() and cleanup.result.errors and not cleanup.verified
 
 
 @pytest.mark.parametrize(

@@ -30,9 +30,8 @@ from npa.orchestration.skypilot._bin import (
     SkyPilotVersionError,
     resolve_sky_bin,
 )
-from npa.orchestration.skypilot.cleanup import sky_environment
+from npa.orchestration.skypilot.cleanup import CleanupResult, sky_environment
 from npa.orchestration.skypilot.signal_teardown import (
-    SignalTeardown,
     install_teardown_signal_handlers,
     restore_signal_handlers,
 )
@@ -616,27 +615,33 @@ def _bootstrap_robotwin_sky(
     return completed.stdout.strip().splitlines()[-1]
 
 
-class _RobotwinSignalTeardown(SignalTeardown):
-    """Signal teardown whose subprocesses use only one run's environment."""
+class _SubmitTeardown:
+    """Request exact-job cleanup without racing an in-flight launch POST."""
 
-    def __init__(self, *, environment: Mapping[str, str], **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._environment = dict(environment)
+    def __init__(self, *, cleanup_on_failure: bool) -> None:
+        self.cleanup_on_failure = cleanup_on_failure
+        self.cleanup = None
+        self.requested = False
 
-    def _run(
-        self, cmd: list[str], *, timeout: float
-    ) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            cmd,
-            env=sky_environment(
-                self.isolated_config_dir, environment=self._environment
-            ),
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=timeout,
-            check=False,
-        )
+    def bind(self, cleanup) -> None:
+        cleanup.cleanup_on_failure = self.cleanup_on_failure
+        self.cleanup = cleanup
+        if self.requested:
+            cleanup.request()
+
+    def teardown(self) -> CleanupResult:
+        self.requested = True
+        if self.cleanup is None:
+            return CleanupResult(no_op=True)
+        return self.cleanup.request()
+
+    def refine_config(self, path: Path | None) -> None:
+        if self.cleanup is not None and path != self.cleanup.config_path:
+            raise SkyPilotConfigError("submission cleanup configuration mismatch")
+
+    @property
+    def pending(self) -> bool:
+        return self.cleanup is not None and not self.cleanup.verified
 
 
 def _submit_and_wait(
@@ -695,9 +700,9 @@ def _submit_and_wait(
     else:
         preflight_output_storage(output_root=output_root, run_id=run_id)
 
-    with tempfile.TemporaryDirectory(
-        prefix=f"npa-byof-container-{scheduler_run_id}-"
-    ) as tmp:
+    tmp = tempfile.mkdtemp(prefix=f"npa-byof-container-{scheduler_run_id}-")
+    teardown_guard = _SubmitTeardown(cleanup_on_failure=args.cleanup)
+    try:
         tmp_path = Path(tmp)
         previous_kubeconfig = (
             os.environ.get("KUBECONFIG") if robotwin_submit_context is None else None
@@ -747,19 +752,6 @@ def _submit_and_wait(
                         args.secret_env, solution_name=args.solution_name
                     ),
                 )
-            teardown_kwargs = {
-                "run_id": scheduler_run_id,
-                "isolated_config_dir": args.isolated_config_dir,
-                "sky_bin": sky_bin,
-                "poll_interval": max(float(args.poll_interval), 0.0),
-            }
-            teardown_guard = (
-                _RobotwinSignalTeardown(
-                    environment=robotwin_control_env or {}, **teardown_kwargs
-                )
-                if robotwin_submit_context is not None
-                else SignalTeardown(**teardown_kwargs)
-            )
             previous_handlers = install_teardown_signal_handlers(
                 teardown_guard.teardown
             )
@@ -793,8 +785,8 @@ def _submit_and_wait(
                     logical_launch_id=(
                         scheduler_run_id if robotwin_submit_context is not None else ""
                     ),
+                    on_launch_ready=teardown_guard.bind,
                 )
-                teardown_guard.mark_launched()
                 submitted_config_path = (
                     Path(result.log_paths["config"])
                     if result.log_paths.get("config")
@@ -804,7 +796,7 @@ def _submit_and_wait(
                     confidential_submission_dir = Path(
                         result.log_paths["submission_dir"]
                     )
-                teardown_guard.mark_launched(config_path=submitted_config_path)
+                teardown_guard.refine_config(submitted_config_path)
                 summary = (
                     {"launch_id": scheduler_run_id, "status": "submitted"}
                     if robotwin_submit_context is not None
@@ -840,8 +832,15 @@ def _submit_and_wait(
                 restore_signal_handlers(previous_handlers)
                 if args.cleanup:
                     teardown_guard.teardown()
-                if confidential_submission_dir is not None:
+                if (
+                    confidential_submission_dir is not None
+                    and not teardown_guard.pending
+                ):
                     shutil.rmtree(confidential_submission_dir, ignore_errors=True)
+            if args.cleanup and teardown_guard.pending:
+                return_code = 1
+                if summary is not None:
+                    summary["cleanup"] = "unverified; recovery state retained"
             fallback = (
                 {"launch_id": scheduler_run_id, "status": "failed"}
                 if robotwin_submit_context is not None
@@ -855,28 +854,11 @@ def _submit_and_wait(
                     os.environ.pop("KUBECONFIG", None)
                 else:
                     os.environ["KUBECONFIG"] = previous_kubeconfig
-            if (
-                robotwin_submit_context is not None
-                or os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") != "0"
-            ):
-                subprocess.run(
-                    [sky_bin, "api", "stop"],
-                    env=(
-                        sky_environment(
-                            None,
-                            environment=_robotwin_control_environment(
-                                robotwin_submit_context,
-                                robotwin_control_env or {},
-                            ),
-                        )
-                        if robotwin_submit_context is not None
-                        else sky_environment(None)
-                    ),
-                    text=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    check=False,
-                )
+            # A submit does not own the entire API/controller. Its separate
+            # receipt-checked shutdown must wait until every client has exited.
+    finally:
+        if not teardown_guard.pending:
+            shutil.rmtree(tmp)
 
 
 def _direct_launch(

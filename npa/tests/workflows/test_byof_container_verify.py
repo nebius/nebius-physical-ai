@@ -38,6 +38,127 @@ def _load_module():
     return module
 
 
+@pytest.mark.parametrize("confidential", (False, True))
+@pytest.mark.parametrize("failure", ("refused", "accepted", "signal", "unverified"))
+def test_managed_submit_cleanup_ownership_boundary(
+    monkeypatch, tmp_path, confidential, failure
+):
+    from npa.orchestration.skypilot import workflow as submit_module
+
+    module = _load_module()
+    context = (
+        SimpleNamespace(
+            authorization=SimpleNamespace(
+                inner_launch_id="robotwin-inner-synthetic",
+                project="synthetic-project",
+                kubeconfig_source=str(tmp_path / "kubeconfig"),
+            )
+        )
+        if confidential
+        else None
+    )
+    monkeypatch.setattr(
+        module, "render_workflow", lambda *_a, **_k: [{"name": "synthetic"}]
+    )
+    monkeypatch.setattr(module, "_write_yaml_documents", lambda *_a: None)
+    monkeypatch.setattr(module, "preflight_output_storage", lambda **_k: None)
+    monkeypatch.setattr(module, "_ensure_infra_enabled", lambda **_k: None)
+    monkeypatch.setattr(module, "resolve_sky_bin", lambda *_a: "/synthetic-sky")
+    monkeypatch.setattr(module, "_bootstrap_robotwin_sky", lambda *_a: "/synthetic-sky")
+    monkeypatch.setattr(
+        module, "_normalize_kubeconfig_current_context", lambda _p, values=None: values
+    )
+    monkeypatch.setattr(module, "restore_signal_handlers", lambda *_a: None)
+    handlers, handles, workdirs, mutations = [], [], [], []
+    monkeypatch.setattr(
+        module,
+        "install_teardown_signal_handlers",
+        lambda callback: handlers.append(callback) or {},
+    )
+    create = module.tempfile.mkdtemp
+
+    def private_temp(**kwargs):
+        directory = create(dir=tmp_path, **kwargs)
+        workdirs.append(Path(directory))
+        return directory
+
+    monkeypatch.setattr(module.tempfile, "mkdtemp", private_temp)
+
+    def submit(_yaml, _run_id, **kwargs):
+        if failure == "refused":
+            raise RuntimeError("synthetic authorization refusal")
+        cleanup = submit_module._SubmissionCleanup(
+            _run_id,
+            {"KUBECONFIG": str(tmp_path / "kubeconfig")},
+            "/synthetic-sky",
+            str(tmp_path),
+            0,
+            kwargs["config_path"],
+            active=True,
+        )
+        handles.append(cleanup)
+        kwargs["on_launch_ready"](cleanup)
+        if failure == "signal":
+            handlers[0]()
+            assert not mutations
+        cleanup.finish_submit(failed=True)
+        raise RuntimeError("synthetic accepted failure")
+
+    status = ["RUNNING"]
+
+    def lookup(*_a, **_k):
+        state = submit_module.ReconciliationState
+        return submit_module.ReconciliationEvidence(
+            state.UNAVAILABLE if failure == "unverified" else state.FOUND,
+            job_id="42",
+            status=status[0],
+        )
+
+    def run(command, **kwargs):
+        assert command == ["/synthetic-sky", "jobs", "cancel", "--yes", "42"]
+        assert kwargs["env"] == handles[0].environment
+        mutations.append(command)
+        status[0] = "CANCELLED"
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(module, "submit_workflow", submit)
+    monkeypatch.setattr(submit_module, "_reconcile_managed_job_env", lookup)
+    monkeypatch.setattr(subprocess, "run", run)
+    args = module._parse_args(
+        [
+            "--yaml",
+            str(YAML_PATH),
+            "--solution-name",
+            "robotwin" if confidential else "synthetic",
+            "--run-id",
+            "synthetic-owned",
+            "--output-root",
+            "s3://synthetic-bucket/output",
+            "--config-path",
+            str(tmp_path / "config"),
+            "--no-direct-launch",
+            "--cleanup",
+        ]
+    )
+    with pytest.raises(RuntimeError, match="synthetic"):
+        module._submit_and_wait(
+            args, robotwin_submit_context=context, authorized_env={}
+        )
+    assert len(mutations) == (1 if failure in {"accepted", "signal"} else 0)
+    assert all(path.exists() == (failure == "unverified") for path in workdirs)
+
+
+def test_submit_cleanup_configuration_refinement_cannot_retarget(tmp_path):
+    module = _load_module()
+    cleanup = SimpleNamespace(config_path=tmp_path / "verified", verified=False)
+    guard = module._SubmitTeardown(cleanup_on_failure=True)
+    guard.bind(cleanup)
+    guard.refine_config(tmp_path / "verified")
+    with pytest.raises(module.SkyPilotConfigError, match="configuration mismatch"):
+        guard.refine_config(tmp_path / "unrelated")
+    assert guard.cleanup.config_path == tmp_path / "verified"
+
+
 def test_render_workflow_injects_solution_smoke_metadata(monkeypatch) -> None:
     module = _load_module()
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")
@@ -425,17 +546,6 @@ def test_robotwin_terminal_summary_never_discloses_destination_or_customer_run(
 
     monkeypatch.setattr(module.subprocess, "run", stop_sky_api)
 
-    class Teardown:
-        def __init__(self, **_kwargs):
-            pass
-
-        def mark_launched(self, **_kwargs):
-            pass
-
-        def teardown(self):
-            pass
-
-    monkeypatch.setattr(module, "_RobotwinSignalTeardown", Teardown)
     monkeypatch.setattr(
         module,
         "submit_workflow",
@@ -477,7 +587,7 @@ def test_robotwin_terminal_summary_never_discloses_destination_or_customer_run(
         )
         == expected_rc
     )
-    assert stop_commands == [["/sky", "api", "stop"]]
+    assert stop_commands == []
     output = capsys.readouterr().out
     payload = json.loads(output)
     assert payload == {
@@ -1170,4 +1280,5 @@ def test_submit_and_wait_restores_kubeconfig_after_direct_launch(
     )
     assert module._submit_and_wait(args) == 0
     assert os.environ.get("KUBECONFIG") == original
-    assert ["/opt/sky", "api", "stop"] in seen_cmds
+    # Restoring this wrapper's environment does not grant ownership of the API.
+    assert seen_cmds == []

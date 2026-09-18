@@ -30,7 +30,7 @@ from npa.orchestration.skypilot._bin import (
     ensure_skypilot_version,
     resolve_config,
 )
-from npa.orchestration.skypilot.cleanup import sky_environment
+from npa.orchestration.skypilot.cleanup import CleanupResult, sky_environment
 from npa.orchestration.skypilot.controller import (
     DEFAULT_CONTROLLER_BACKEND,
     ControllerBackend,
@@ -216,6 +216,148 @@ class SkyPilotSubmitError(RuntimeError):
         super().__init__(message)
         self.transaction = transaction
         self.launch_attempted = launch_attempted
+
+
+@dataclass(repr=False)
+class _SubmissionCleanup:
+    """Retain the authorized submit runtime until exact-job cleanup converges."""
+
+    run_id: str
+    environment: dict[str, str]
+    sky_executable: str
+    cwd: str | None
+    timeout: float
+    config_path: Path
+    redactions: Sequence[str] = ()
+    job_id: str = ""
+    prior_terminal_id: str = ""
+    active: bool = False
+    submitting: bool = True
+    requested: bool = False
+    cleanup_on_failure: bool = False
+    verified: bool = False
+    busy: bool = False
+    result: CleanupResult = field(default_factory=CleanupResult)
+
+    def request(self) -> CleanupResult:
+        self.requested = True
+        # Signal handlers must not cancel while a launch POST can still land.
+        if self.active and not self.submitting and not self.busy and not self.verified:
+            self.busy = True
+            try:
+                self.result = self._cancel_exact()
+                self.verified = self.result.verified
+            except Exception:  # Cleanup cannot replace the original failure.
+                self.result = CleanupResult(
+                    errors=["exact managed-job cleanup unavailable"]
+                )
+            finally:
+                self.busy = False
+        return self.result
+
+    def finish_submit(self, *, failed: bool) -> None:
+        self.submitting = False
+        if self.requested or (failed and self.cleanup_on_failure):
+            self.request()
+
+    def _lookup(self) -> ReconciliationEvidence:
+        return _reconcile_managed_job_env(
+            self.run_id,
+            env=self.environment,
+            sky_executable=self.sky_executable,
+            cwd=self.cwd,
+            redactions=self.redactions,
+            require_all_terminal=True,
+        )
+
+    def _same_job(self, evidence: ReconciliationEvidence) -> bool:
+        return (
+            evidence.state is ReconciliationState.FOUND
+            and evidence.job_id == self.job_id
+            and str(evidence.job_id).isdigit()
+        )
+
+    def _cancel_exact(self) -> CleanupResult:
+        evidence = self._lookup()
+        if evidence.state is not ReconciliationState.FOUND:
+            return CleanupResult(
+                errors=["exact job identity unavailable; recovery state retained"]
+            )
+        if not self.job_id and evidence.job_id != self.prior_terminal_id:
+            self.job_id = evidence.job_id
+        if not self._same_job(evidence):
+            return CleanupResult(
+                errors=["managed-job identity conflict; recovery state retained"]
+            )
+        if _cleanup_job_terminal(evidence.status):
+            return CleanupResult(verified=True, no_op=True)
+        if evidence.status.upper() not in {
+            "PENDING",
+            "STARTING",
+            "RUNNING",
+            "RECOVERING",
+            "CANCELLING",
+        }:
+            return CleanupResult(
+                errors=["managed-job status unknown; recovery state retained"]
+            )
+        # Recheck the immutable ID immediately before mutation; never cancel by name.
+        if not self._same_job(self._lookup()):
+            return CleanupResult(
+                errors=["managed-job identity changed before cancellation"]
+            )
+        command = [self.sky_executable, "jobs", "cancel", "--yes", self.job_id]
+        cancelled = subprocess.run(
+            command,
+            env=dict(self.environment),
+            cwd=self.cwd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=self.timeout,
+            check=False,
+        )
+        if cancelled.returncode:
+            return CleanupResult(
+                commands=[command], errors=["exact managed-job cancellation failed"]
+            )
+        return self._verify_cancelled(command)
+
+    def _verify_cancelled(self, command: list[str]) -> CleanupResult:
+        deadline = time.monotonic() + self.timeout
+        while True:
+            evidence = self._lookup()
+            if self._same_job(evidence) and _cleanup_job_terminal(evidence.status):
+                # Managed-job cancellation owns worker destruction. Never down a
+                # name-pattern cluster or shared controller from this wrapper.
+                return CleanupResult(commands=[command], verified=True)
+            if not self._same_job(evidence) or time.monotonic() >= deadline:
+                return CleanupResult(
+                    commands=[command],
+                    errors=["cancellation not verified; recovery state retained"],
+                )
+            time.sleep(min(10.0, max(0.0, deadline - time.monotonic())))
+
+
+def _cleanup_job_terminal(status: str) -> bool:
+    return status.upper() in {
+        "SUCCEEDED",
+        "CANCELLED",
+        "FAILED",
+        "FAILED_SETUP",
+        "FAILED_PRECHECKS",
+        "FAILED_CONTROLLER",
+    }
+
+
+def _finish_failed_submission(
+    path: Path | None, cleanup: _SubmissionCleanup | None
+) -> None:
+    if cleanup is not None:
+        cleanup.finish_submit(failed=True)
+        if cleanup.active and not cleanup.verified:
+            return
+    _cleanup_owned_submission_dir(path)
 
 
 @dataclass(frozen=True)
@@ -1285,8 +1427,14 @@ def submit_workflow(
     execution_target: Any | None = None,
     execution_preflight_report: Mapping[str, Any] | None = None,
     robotwin_submit_context: Any | None = None,
+    on_launch_ready: Callable[[_SubmissionCleanup], None] | None = None,
 ) -> WorkflowResult:
-    """Submit a SkyPilot YAML through NPA's controller convention."""
+    """Submit a SkyPilot YAML through NPA's controller convention.
+
+    ``on_launch_ready`` optionally receives an in-memory cleanup handle after
+    authorization and immediately before a launch attempt (or verified adoption).
+    It must not persist its private environment or grant name-only deletion.
+    """
 
     yaml_path = Path(yaml_path)
     robotwin_authorization = None
@@ -1342,6 +1490,7 @@ def submit_workflow(
     prepared_yaml: Path | None = None
     streamer: _LaunchStreamer | None = None
     private_redactions: tuple[str, ...] = ()
+    cleanup_state: _SubmissionCleanup | None = None
     if robotwin_authorization is not None:
         private_redactions = tuple(
             dict.fromkeys(
@@ -1688,6 +1837,22 @@ def submit_workflow(
         initial_controller_absent = (
             getattr(controller_health, "state", None) is ControllerState.ABSENT
         )
+        if on_launch_ready is not None:
+            cleanup_state = _SubmissionCleanup(
+                run_id,
+                dict(control_env),
+                sky_executable,
+                stable_cwd,
+                float(timeout),
+                generated_config_path,
+                private_redactions,
+            )
+
+        def _enable_cleanup() -> None:
+            if cleanup_state is not None and not cleanup_state.active:
+                cleanup_state.active = True
+                assert on_launch_ready is not None
+                on_launch_ready(cleanup_state)
 
         def _reconcile() -> ReconciliationEvidence:
             nonlocal initial_controller_absent
@@ -1700,13 +1865,23 @@ def submit_workflow(
                 )
 
                 require_customer_authorization_fresh(robotwin_authorization)
-            return _reconcile_managed_job_env(
+            evidence = _reconcile_managed_job_env(
                 run_id,
                 env=control_env,
                 sky_executable=sky_executable,
                 cwd=stable_cwd,
                 redactions=private_redactions,
             )
+            if (
+                cleanup_state is not None
+                and evidence.state is ReconciliationState.FOUND
+            ):
+                if not cleanup_state.active and _cleanup_job_terminal(evidence.status):
+                    cleanup_state.prior_terminal_id = evidence.job_id
+                elif cleanup_state.active and not cleanup_state.job_id:
+                    if evidence.job_id != cleanup_state.prior_terminal_id:
+                        cleanup_state.job_id = evidence.job_id
+            return evidence
 
         def _launch() -> tuple[
             subprocess.CompletedProcess[str], list[SkyPilotDiagnosis]
@@ -1717,6 +1892,7 @@ def submit_workflow(
                 )
 
                 require_customer_authorization_fresh(robotwin_authorization)
+            _enable_cleanup()
             try:
                 launch_result, diagnoses = _run_launch(
                     cmd,
@@ -1822,6 +1998,21 @@ def submit_workflow(
         launch_pair = transaction.launch_result
         result = launch_pair[0] if isinstance(launch_pair, tuple) else None
         job_id = transaction.job_id
+        if cleanup_state is not None:
+            if robotwin_authorization is not None:
+                from npa.orchestration.npa_workflow.robotwin_preflight import (
+                    require_customer_authorization_fresh,
+                )
+
+                require_customer_authorization_fresh(robotwin_authorization)
+            _enable_cleanup()
+            cleanup_state.job_id = job_id
+            cleanup_state.finish_submit(failed=False)
+            if cleanup_state.requested:
+                raise SkyPilotSubmitError(
+                    "submission interrupted; exact-job cleanup requested",
+                    transaction=transaction,
+                )
         result_log_paths = {
             "submission_dir": str(submission_dir),
             "config": str(generated_config_path),
@@ -1848,7 +2039,7 @@ def submit_workflow(
             launch_transaction=transaction.to_dict(),
         )
     except SkyPilotSubmitError as exc:
-        _cleanup_owned_submission_dir(owned_submission_dir)
+        _finish_failed_submission(owned_submission_dir, cleanup_state)
         if robotwin_authorization is not None:
             _raise_sanitized_submit_error(
                 _redact_private_text(str(exc), private_redactions),
@@ -1863,18 +2054,21 @@ def submit_workflow(
         SkyPilotNotInstalledError,
         SkyPilotVersionError,
     ) as exc:
-        _cleanup_owned_submission_dir(owned_submission_dir)
+        _finish_failed_submission(owned_submission_dir, cleanup_state)
         message = f"SkyPilot workflow submission failed: {exc}"
         if robotwin_authorization is not None:
             message = _redact_private_text(message, private_redactions)
             _raise_sanitized_submit_error(message)
         raise SkyPilotSubmitError(message) from exc
     except Exception as exc:
-        _cleanup_owned_submission_dir(owned_submission_dir)
+        _finish_failed_submission(owned_submission_dir, cleanup_state)
         if robotwin_authorization is not None:
             _raise_sanitized_submit_error(
                 _redact_private_text(str(exc), private_redactions)
             )
+        raise
+    except BaseException:
+        _finish_failed_submission(owned_submission_dir, cleanup_state)
         raise
 
 
@@ -2254,6 +2448,7 @@ def _reconcile_managed_job_env(
     cwd: str | None,
     timeout: int = 60,
     redactions: Sequence[str] = (),
+    require_all_terminal: bool = False,
 ) -> ReconciliationEvidence:
     """Reconcile one exact name through the same SkyPilot runtime as launch."""
 
@@ -2298,6 +2493,7 @@ def _reconcile_managed_job_env(
         rows = parsed_rows
     matching: set[str] = set()
     statuses: dict[str, str] = {}
+    task_statuses: dict[str, set[str]] = {}
     workload_markers: dict[str, set[str]] = {}
     for row in rows:
         if not isinstance(row, Mapping):
@@ -2308,11 +2504,19 @@ def _reconcile_managed_job_env(
         if job_id.isdigit():
             matching.add(job_id)
             statuses[job_id] = str(row.get("status") or "UNKNOWN").upper()
+            task_statuses.setdefault(job_id, set()).add(statuses[job_id])
             workload_markers.setdefault(job_id, set()).update(
                 _managed_job_workload_markers(row)
             )
     if not matching:
         return ReconciliationEvidence(ReconciliationState.ABSENT)
+    if require_all_terminal:
+        for job_id, observed in task_statuses.items():
+            active = observed - {s for s in observed if _cleanup_job_terminal(s)}
+            if active:
+                # One unfinished/unknown task keeps the complete job nonterminal.
+                known = {"PENDING", "STARTING", "RUNNING", "RECOVERING", "CANCELLING"}
+                statuses[job_id] = "RUNNING" if active <= known else "UNKNOWN"
     # Historical cancelled/failed attempts retain the same deterministic name
     # in SkyPilot's all-jobs queue.  Once a viable replacement exists, those
     # terminal rows must not make exact-name reconciliation ambiguous.
