@@ -280,8 +280,8 @@ def test_libero_profile_binds_payload_identity_customer_authorization_and_headle
         ROOT / "npa/src/npa/orchestration/skypilot/workflow.py"
     ).read_text(encoding="utf-8")
     assert "if libero_submission:" in workflow_source
-    assert "generated_config_path.chmod(0o400)" in workflow_source
-    assert "prepared_yaml.chmod(0o400)" in workflow_source
+    assert "generated.chmod(0o400)" in workflow_source
+    assert "rendered.chmod(0o400)" in workflow_source
     assert profile.count("unset NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64") == 2
     assert (
         "/usr/local/bin/python /opt/npa/libero/runtime-bootstrap.py execute-and-upload"

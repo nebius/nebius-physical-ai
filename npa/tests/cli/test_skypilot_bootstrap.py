@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import base64
+import csv
+import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import zipfile
 
 import pytest
 from typer.testing import CliRunner
@@ -92,11 +97,15 @@ def test_skypilot_failed_upgrade_preserves_existing_version_byte_for_byte(
     assert after == before
 
 
-def test_skypilot_path_can_come_from_flag_or_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_skypilot_path_can_come_from_flag_or_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     flag_venv = _fake_installed_venv(tmp_path / "flag-venv")
     env_venv = _fake_installed_venv(tmp_path / "env-venv")
 
-    flag_result = runner.invoke(app, ["skypilot", "status", "--path", str(flag_venv), "--bin-path"])
+    flag_result = runner.invoke(
+        app, ["skypilot", "status", "--path", str(flag_venv), "--bin-path"]
+    )
     monkeypatch.setenv(skypilot_cli.VENV_PATH_ENV, str(env_venv))
     env_result = runner.invoke(app, ["skypilot", "status", "--bin-path"])
 
@@ -140,7 +149,9 @@ def test_skypilot_bootstrap_reports_network_failure_from_pip(
 
     def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         if cmd[1:4] == ["-m", "pip", "install"]:
-            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="Temporary failure in name resolution")
+            return subprocess.CompletedProcess(
+                cmd, 1, stdout="", stderr="Temporary failure in name resolution"
+            )
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(skypilot_cli.subprocess, "run", fake_run)
@@ -170,61 +181,179 @@ def test_skypilot_install_package_pins_runtime_dependencies_after_install(
     skypilot_cli._install_package(state, "skypilot==0.12.2")
 
     assert any(cmd[-1] == "click>=8.1,<8.2" for cmd in installs), installs
-    assert any(cmd[-1] == skypilot_cli.KUBERNETES_CLIENT_SPEC for cmd in installs), installs
+    assert any(cmd[-1] == skypilot_cli.KUBERNETES_CLIENT_SPEC for cmd in installs), (
+        installs
+    )
+
+
+def _wheel_record(members: dict[str, str], record_path: str) -> str:
+    record = io.StringIO(newline="")
+    writer = csv.writer(record, lineterminator="\n")
+    for name, text in sorted(members.items()):
+        data = text.encode("utf-8")
+        digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=")
+        writer.writerow((name, "sha256=" + digest.decode("ascii"), len(data)))
+    writer.writerow((record_path, "", ""))
+    return record.getvalue()
+
+
+def _write_synthetic_wheel(
+    directory: Path,
+    name: str,
+    version: str,
+    modules: dict[str, str],
+    *,
+    console: str = "",
+) -> Path:
+    """Create test-only package metadata, never a vendor-capability substitute."""
+    metadata_dir = f"{name}-{version}.dist-info"
+    members = {
+        **modules,
+        f"{metadata_dir}/METADATA": (
+            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+            "Summary: Synthetic NPA test fixture; no vendor capability\n\n"
+        ),
+        f"{metadata_dir}/WHEEL": (
+            "Wheel-Version: 1.0\nGenerator: npa-test-fixture\n"
+            "Root-Is-Purelib: true\nTag: py3-none-any\n"
+        ),
+    }
+    if console:
+        members[f"{metadata_dir}/entry_points.txt"] = (
+            "[console_scripts]\n" + console + "\n"
+        )
+    record_path = f"{metadata_dir}/RECORD"
+    members[record_path] = _wheel_record(members, record_path)
+    wheel = directory / f"{name}-{version}-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        for member, text in sorted(members.items()):
+            archive.writestr(member, text)
+    return wheel
+
+
+@pytest.fixture
+def offline_bootstrap_wheel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    wheelhouse = tmp_path / "synthetic-wheels"
+    wheelhouse.mkdir()
+    # Real pip must select compatible versions rather than the newer alternatives.
+    for name, versions in [
+        ("click", ("8.1.8", "8.2.0")),
+        ("kubernetes", ("30.1.0", "32.0.0", "36.0.0")),
+    ]:
+        for version in versions:
+            _write_synthetic_wheel(
+                wheelhouse,
+                name,
+                version,
+                {f"{name}/__init__.py": f"__version__ = '{version}'\n"},
+            )
+    for name in list(os.environ):
+        if name.startswith("PIP_"):
+            monkeypatch.delenv(name)
+    monkeypatch.setenv("PIP_CONFIG_FILE", os.devnull)
+    monkeypatch.setenv("PIP_NO_INDEX", "1")
+    monkeypatch.setenv("PIP_FIND_LINKS", str(wheelhouse))
+    monkeypatch.setenv("PIP_NO_CACHE_DIR", "1")
+    monkeypatch.setenv("PIP_DISABLE_PIP_VERSION_CHECK", "1")
+    # Interpreter support is tested separately; this exercises install mechanics
+    # on every CI Python, including interpreters outside vendor support.
+    monkeypatch.setattr(skypilot_cli, "_is_supported_python", lambda _v: True)
+    return _write_synthetic_wheel(
+        wheelhouse,
+        "fake_skypilot",
+        "0.12.2",
+        {
+            "sky/__init__.py": "__version__ = '0.12.2'\n",
+            "sky/cli.py": "import sys\ndef main():\n    print('SkyPilot 0.12.2' if '--version' in sys.argv else 'checks passed')\n",
+        },
+        console="sky=sky.cli:main",
+    )
+
+
+def _assert_real_fixture_runtime(
+    result: skypilot_cli.BootstrapResult, wheel: Path
+) -> None:
+    state = skypilot_cli.inspect_venv(result.path)
+    assert state.has_python and state.has_pip and state.importable and state.installed
+    assert state.version == "0.12.2"
+    assert state.kubernetes_compatible and state.kubernetes_version == "30.1.0"
+    probe = subprocess.run(
+        [
+            str(state.python_bin),
+            "-c",
+            "import importlib.metadata as m; print(m.version('click'), m.version('kubernetes'))",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert probe.stdout.strip() == "8.1.8 30.1.0"
+    console = subprocess.run(
+        [str(result.sky_bin), "check"], check=True, capture_output=True, text=True
+    )
+    assert console.stdout.strip() == "checks passed"
+    marker = json.loads(result.marker_path.read_text(encoding="utf-8"))
+    assert marker["version"] == "0.12.2"
+    assert marker["extras"] == ["test"]
+    assert marker["package"] == str(wheel)
+    assert marker["sky_bin"] == str(result.sky_bin)
+    assert marker["reused_existing_venv"] is False
+    assert marker["kubernetes_client"] == "30.1.0"
+    assert marker["kubernetes_client_spec"] == skypilot_cli.KUBERNETES_CLIENT_SPEC
 
 
 def test_skypilot_bootstrap_can_install_local_tiny_package(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, offline_bootstrap_wheel: Path
 ) -> None:
-    # Exercises venv-creation + install mechanics with the test interpreter; the
-    # SkyPilot Python-support policy is out of scope here (and the CI matrix runs
-    # this on Python versions outside SkyPilot's supported range), so treat the
-    # interpreter as supported.
-    monkeypatch.setattr(skypilot_cli, "_is_supported_python", lambda _v: True)
-    package_dir = tmp_path / "fake-skypilot"
-    sky_pkg = package_dir / "sky"
-    sky_pkg.mkdir(parents=True)
-    (package_dir / "setup.py").write_text(
-        "\n".join(
-            [
-                "from setuptools import setup",
-                "setup(",
-                "    name='fake-skypilot',",
-                "    version='0.12.2',",
-                "    packages=['sky'],",
-                "    entry_points={'console_scripts': ['sky=sky.cli:main']},",
-                ")",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (sky_pkg / "__init__.py").write_text("__version__ = '0.12.2'\n", encoding="utf-8")
-    (sky_pkg / "cli.py").write_text(
-        "\n".join(
-            [
-                "def main():",
-                "    import sys",
-                "    if '--version' in sys.argv:",
-                "        print('SkyPilot 0.12.2')",
-                "    elif len(sys.argv) > 1 and sys.argv[1] == 'check':",
-                "        print('checks passed')",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    original_run = skypilot_cli._run_no_raise
+    installs: list[str] = []
+
+    def observe_install(command, **kwargs):
+        if command[1:4] == ["-m", "pip", "install"]:
+            installs.append(command[-1])
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(skypilot_cli, "_run_no_raise", observe_install)
 
     result = skypilot_cli.bootstrap_skypilot(
         venv_path=tmp_path / "sky-venv",
         python_bin=sys.executable,
-        package_spec=os.fspath(package_dir),
+        package_spec=os.fspath(offline_bootstrap_wheel),
         extras=("test",),
     )
 
     assert result.installed is True
     assert result.reused is False
     assert result.sky_bin.is_file()
-    assert '"extras": [\n    "test"\n  ]' in result.marker_path.read_text(encoding="utf-8")
+    assert '"extras": [\n    "test"\n  ]' in result.marker_path.read_text(
+        encoding="utf-8"
+    )
+    assert installs == [
+        str(offline_bootstrap_wheel),
+        "click>=8.1,<8.2",
+        skypilot_cli.KUBERNETES_CLIENT_SPEC,
+    ]
+    _assert_real_fixture_runtime(result, offline_bootstrap_wheel)
+
+
+def test_skypilot_offline_fixture_refuses_external_resolution(
+    tmp_path: Path, offline_bootstrap_wheel: Path
+) -> None:
+    venv = tmp_path / "refused-venv"
+    missing = "npa-offline-fixture-unavailable==0.0.0"
+    with pytest.raises(
+        skypilot_cli.SkyPilotBootstrapError, match="No matching distribution found"
+    ) as refusal:
+        skypilot_cli.bootstrap_skypilot(
+            venv_path=venv, python_bin=sys.executable, package_spec=missing
+        )
+    assert missing in str(refusal.value)
+    assert "from versions: none" in str(refusal.value)
+    assert "Retrying" not in str(refusal.value)
+    assert "https://" not in str(refusal.value)
+    assert not venv.exists()
+    assert not (venv / skypilot_cli.MARKER_FILE).exists()
+    assert offline_bootstrap_wheel.is_file()
 
 
 @pytest.fixture
@@ -320,7 +449,10 @@ def test_verify_rejects_zero_exit_when_kubernetes_is_disabled(
     def fake_run(cmd, *, env=None, cwd=None):  # noqa: ANN001
         if cmd[-1] == "check":
             return subprocess.CompletedProcess(
-                cmd, 0, stdout="Kubernetes: disabled\nNo infra to check/enabled.", stderr=""
+                cmd,
+                0,
+                stdout="Kubernetes: disabled\nNo infra to check/enabled.",
+                stderr="",
             )
         return original(cmd, env=env, cwd=cwd)
 
@@ -528,7 +660,9 @@ def test_is_supported_python_range() -> None:
     assert skypilot_cli._is_supported_python(None) is False
 
 
-def test_resolve_python_bin_rejects_explicit_unsupported(monkeypatch, tmp_path: Path) -> None:
+def test_resolve_python_bin_rejects_explicit_unsupported(
+    monkeypatch, tmp_path: Path
+) -> None:
     fake = _write_executable(tmp_path / "py314", '#!/bin/sh\necho "3 14"\n')
     with pytest.raises(skypilot_cli.SkyPilotBootstrapError) as exc:
         skypilot_cli._resolve_python_bin(str(fake))
@@ -536,7 +670,9 @@ def test_resolve_python_bin_rejects_explicit_unsupported(monkeypatch, tmp_path: 
     assert "supported range" in str(exc.value)
 
 
-def test_resolve_python_bin_autoselects_supported_when_default_too_new(monkeypatch) -> None:
+def test_resolve_python_bin_autoselects_supported_when_default_too_new(
+    monkeypatch,
+) -> None:
     # Default interpreter reports 3.14; a supported python3.12 is on PATH.
     def fake_detect(executable):
         return (3, 14) if str(executable) == sys.executable else (3, 12)
@@ -671,9 +807,9 @@ def test_skypilot_install_package_pins_kubernetes_client(
 
     skypilot_cli._install_package(state, "skypilot==0.12.2")
 
-    assert any(
-        cmd[-1] == skypilot_cli.KUBERNETES_CLIENT_SPEC for cmd in installs
-    ), installs
+    assert any(cmd[-1] == skypilot_cli.KUBERNETES_CLIENT_SPEC for cmd in installs), (
+        installs
+    )
     assert "<36" in skypilot_cli.KUBERNETES_CLIENT_SPEC
 
 
@@ -710,7 +846,9 @@ def test_skypilot_uninstall_removes_venv_and_clears_saved_bin(tmp_path: Path) ->
     boot = runner.invoke(app, ["skypilot", "bootstrap", "--path", str(venv)])
     assert boot.exit_code == 0, boot.output
     assert venv.exists()
-    assert yaml.safe_load(_config_path().read_text(encoding="utf-8"))["skypilot"]["sky_bin"]
+    assert yaml.safe_load(_config_path().read_text(encoding="utf-8"))["skypilot"][
+        "sky_bin"
+    ]
 
     result = runner.invoke(app, ["skypilot", "uninstall", "--path", str(venv), "--yes"])
 
@@ -739,8 +877,10 @@ def test_skypilot_controller_cleanup_requires_confirmation_and_is_npa_only(
     calls: list[object] = []
     monkeypatch.setattr(
         "npa.orchestration.skypilot.cleanup.cleanup_jobs_controller",
-        lambda **kwargs: calls.append(kwargs)
-        or SimpleNamespace(ok=True, resources_removed=[], errors=[], commands=[]),
+        lambda **kwargs: (
+            calls.append(kwargs)
+            or SimpleNamespace(ok=True, resources_removed=[], errors=[], commands=[])
+        ),
     )
 
     plan = runner.invoke(app, ["skypilot", "cleanup-controller", "--json"])
@@ -772,9 +912,7 @@ def test_skypilot_controller_cleanup_requires_confirmation_and_is_npa_only(
         "npa.orchestration.skypilot.cleanup.cleanup_jobs_controller",
         lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("controller unavailable")),
     )
-    failed = runner.invoke(
-        app, ["skypilot", "cleanup-controller", "--yes", "--json"]
-    )
+    failed = runner.invoke(app, ["skypilot", "cleanup-controller", "--yes", "--json"])
     assert failed.exit_code == 2
     assert json.loads(failed.output)["outcome"] == "verification_failed"
 
@@ -787,8 +925,10 @@ def test_skypilot_controller_cleanup_forwards_explicit_orphan_recovery_attestati
     calls: list[dict[str, object]] = []
     monkeypatch.setattr(
         "npa.orchestration.skypilot.cleanup.cleanup_jobs_controller",
-        lambda **kwargs: calls.append(kwargs)
-        or SimpleNamespace(ok=True, resources_removed=[], errors=[], commands=[]),
+        lambda **kwargs: (
+            calls.append(kwargs)
+            or SimpleNamespace(ok=True, resources_removed=[], errors=[], commands=[])
+        ),
     )
 
     result = runner.invoke(
@@ -920,7 +1060,11 @@ def test_bootstrap_recovers_interrupted_exchange(tmp_path: Path) -> None:
     _fake_installed_venv(previous)
     skypilot_cli._write_bootstrap_journal(
         journal,
-        {"target": str(target), "staging": ".sky.staging-dead", "previous": previous.name},
+        {
+            "target": str(target),
+            "staging": ".sky.staging-dead",
+            "previous": previous.name,
+        },
     )
 
     result = runner.invoke(

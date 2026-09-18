@@ -322,7 +322,8 @@ def verify_execution_scope(
 def _run_gpu_check(gpu_check: Callable[[], Any]) -> None:
     """Preserve actionable failure categories without publishing provider text."""
     from npa.orchestration.skypilot.k8s_gpu_catalog import (
-        PendingGpuPlacementError, UnsatisfiableAcceleratorError,
+        PendingGpuPlacementError,
+        UnsatisfiableAcceleratorError,
     )
 
     try:
@@ -331,19 +332,22 @@ def _run_gpu_check(gpu_check: Callable[[], Any]) -> None:
         raise
     except PendingGpuPlacementError as exc:
         raise ExecutionPreflightError(
-            "gpu", "shared GPU capacity is indeterminate because active GPU pods await placement; "
+            "gpu",
+            "shared GPU capacity is indeterminate because active GPU pods await placement; "
             "wait for scheduling or cancel only pending workloads you own, then recheck capacity",
             status="unknown",
         ) from exc
     except UnsatisfiableAcceleratorError as exc:
         raise ExecutionPreflightError(
-            "gpu", "requested GPU task has no compatible free placement; recheck GPU product/count, "
+            "gpu",
+            "requested GPU task has no compatible free placement; recheck GPU product/count, "
             "CPU/memory, placement rules, and active workloads",
             status="unknown",
         ) from exc
     except Exception as exc:
         raise ExecutionPreflightError(
-            "gpu", "requested product/shape/capacity is unsupported or could not be verified",
+            "gpu",
+            "requested product/shape/capacity is unsupported or could not be verified",
             status="unknown",
         ) from exc
 

@@ -75,8 +75,14 @@ hard gate before any supported release or public catalog claim.
 The first package visibility transition requires exactly the independently qualified,
 repository-bound package-version digest set for one OCI index. Every version
 starts untagged; the index contains the accepted linux/amd64 manifest plus the
-exact embedded provenance and SBOM manifests. The trusted workflow adds only
-`dev-<accepted-sha>` to the accepted root, then re-reads the complete package
-version set and every accepted graph byte immediately before making the package
-public. A failed private publication deletes the exact run-owned graph before
-retry.
+exact embedded provenance and SBOM manifests. The trusted workflow re-reads the
+complete untagged package version set and every accepted graph byte immediately
+before making the package public. It then proves anonymous exact-digest access,
+adds only `dev-<accepted-sha>` to the accepted root, re-reads the complete graph,
+and proves anonymous tag identity. A failure before the visibility transition
+retains the private qualified evidence for recovery. A failure after public
+disclosure revalidates and deletes only the exact qualified root and referrer
+version identities, then proves those versions absent without attempting to
+make the public package private. Deletion cannot revoke downloads. Public
+disclosure does not lift the candidate's release quarantine or replace the
+separately required exact-digest B200 acceptance.

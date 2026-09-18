@@ -182,8 +182,7 @@ def _scan(
         expected_image_inventory_sha256=inventory.sha256,
         expected_config_digest="sha256:" + "2" * 64,
         expected_canonical_build_metadata_sha256=(
-            expected_canonical_build_metadata_sha256
-            or canonical_metadata_sha256
+            expected_canonical_build_metadata_sha256 or canonical_metadata_sha256
         ),
         expected_base_provenance_sha256=(
             expected_base_provenance_sha256
@@ -203,9 +202,7 @@ def test_scanner_accepts_only_neutral_bytes_and_independent_lineage(tmp_path) ->
     assert _scan(module, [first, second], _config(module), _metadata(module)) == []
 
 
-def _build_oci_archive(
-    path: Path, *, mutation: str = ""
-) -> tuple[Path, str]:
+def _build_oci_archive(path: Path, *, mutation: str = "") -> tuple[Path, str]:
     config = b"{}"
     runtime_layer = b"runtime layer fixture"
     config_descriptor = _descriptor(config, "application/vnd.oci.image.config.v1+json")
@@ -297,9 +294,7 @@ def test_build_oci_archive_binds_required_attestations_to_runtime(
     metadata = _metadata(module)
     metadata["containerimage.config.digest"] = config_digest
 
-    findings, evidence = module._build_oci_attestation_findings(
-        archive, metadata
-    )
+    findings, evidence = module._build_oci_attestation_findings(archive, metadata)
 
     assert findings == []
     assert evidence["config_digest"] == config_digest

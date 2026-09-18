@@ -808,7 +808,6 @@ def _selected_kube_context(
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
-
 @dataclass
 class _PreparedWorkflowSubmission:
     runtime_config: Any
@@ -825,13 +824,16 @@ class _PreparedWorkflowSubmission:
 def _submission_global_config(runtime, controller_backend, infra):
     config = _controller_config_for_execution(
         _load_base_config(runtime.global_config_path),
-        controller_backend=controller_backend, infra=infra,
+        controller_backend=controller_backend,
+        infra=infra,
     )
     context = _controller_region_from_infra(infra, controller_backend)
     if context:
         kubernetes = config.setdefault("kubernetes", {})
         if not isinstance(kubernetes, dict):
-            raise ValueError("SkyPilot global config kubernetes section must be a mapping")
+            raise ValueError(
+                "SkyPilot global config kubernetes section must be a mapping"
+            )
         # The selected workload and controller share this exact context; other
         # operator settings, including pod configuration, retain their values.
         kubernetes["allowed_contexts"] = [context]
@@ -839,8 +841,17 @@ def _submission_global_config(runtime, controller_backend, infra):
 
 
 def _preflight_prepared_submission(
-    runtime, docs, global_config, sky_executable, run_id, submission_backend,
-    *, project, infra, extra_env, target,
+    runtime,
+    docs,
+    global_config,
+    sky_executable,
+    run_id,
+    submission_backend,
+    *,
+    project,
+    infra,
+    extra_env,
+    target,
 ):
     from npa.execution_preflight import (
         ExecutionPreflightError,
@@ -854,8 +865,12 @@ def _preflight_prepared_submission(
             env[key] = value
     try:
         selected, _report, injected = _execution_preflight(
-            docs, project=project, infra=infra, extra_env=env,
-            target=target, global_config=global_config,
+            docs,
+            project=project,
+            infra=infra,
+            extra_env=env,
+            target=target,
+            global_config=global_config,
             submission_backend=submission_backend,
             run_id=run_id,
             executable_profile_sha256=executable_profile_sha256,
@@ -864,32 +879,54 @@ def _preflight_prepared_submission(
         )
     except (ExecutionPreflightError, ValueError) as exc:
         raise SkyPilotSubmitError(str(exc), launch_attempted=False) from exc
-    libero_submission = (
-        (_report.get("checks") or {}).get("libero_authorization") == "pass"
-    )
+    libero_submission = (_report.get("checks") or {}).get(
+        "libero_authorization"
+    ) == "pass"
     env.update(injected)
     if selected is not None:
         env["NPA_SKYPILOT_PROJECT"] = selected.project
-    if libero_submission and libero_executable_profile_sha256(docs) != executable_profile_sha256:
+    if (
+        libero_submission
+        and libero_executable_profile_sha256(docs) != executable_profile_sha256
+    ):
         raise SkyPilotSubmitError("LIBERO executable profile changed after preflight")
     return env, libero_submission
 
 
 def _prepare_workflow_submission(
-    yaml_path, run_id, *, isolated_config_dir=None, config_path=None, sky_bin=None,
-    controller_backend=DEFAULT_CONTROLLER_BACKEND, infra="", extra_env=None,
-    project="", execution_target=None,
+    yaml_path,
+    run_id,
+    *,
+    isolated_config_dir=None,
+    config_path=None,
+    sky_bin=None,
+    controller_backend=DEFAULT_CONTROLLER_BACKEND,
+    infra="",
+    extra_env=None,
+    project="",
+    execution_target=None,
 ):
-    runtime = resolve_config(sky_bin=sky_bin, global_config_path=config_path,
-                             isolated_config_dir=isolated_config_dir)
+    runtime = resolve_config(
+        sky_bin=sky_bin,
+        global_config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+    )
     _, docs = _load_yaml_documents(Path(yaml_path))
     if not docs:
         raise ValueError("SkyPilot YAML is empty")
     executable = str(ensure_skypilot_version(runtime.sky_bin))
     global_config = _submission_global_config(runtime, controller_backend, infra)
     env, libero_submission = _preflight_prepared_submission(
-        runtime, docs, global_config, executable, run_id, controller_backend,
-        project=project, infra=infra, extra_env=extra_env, target=execution_target,
+        runtime,
+        docs,
+        global_config,
+        executable,
+        run_id,
+        controller_backend,
+        project=project,
+        infra=infra,
+        extra_env=extra_env,
+        target=execution_target,
     )
     # Refuse and sanitize before any submission artifact exists.
     directory = _submission_dir(run_id, runtime.isolated_config_dir)
@@ -898,15 +935,24 @@ def _prepare_workflow_submission(
         rendered.write_bytes(yaml.safe_dump_all(docs, sort_keys=False).encode())
         _chmod_owner_only(rendered)
         generated = directory / "skypilot-config.yaml"
-        generated.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")
+        generated.write_text(
+            yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8"
+        )
         _chmod_owner_only(generated)
         env["SKYPILOT_GLOBAL_CONFIG"] = str(generated)
         if libero_submission:
             generated.chmod(0o400)
             rendered.chmod(0o400)
         return _PreparedWorkflowSubmission(
-            runtime, docs, directory, rendered, generated, executable, global_config,
-            libero_submission=libero_submission, env=env,
+            runtime,
+            docs,
+            directory,
+            rendered,
+            generated,
+            executable,
+            global_config,
+            libero_submission=libero_submission,
+            env=env,
         )
     except BaseException:
         if runtime.isolated_config_dir is None:
@@ -967,20 +1013,29 @@ def submit_workflow(
     streamer: _LaunchStreamer | None = None
     try:
         prepared = _prepare_workflow_submission(
-            yaml_path, run_id, isolated_config_dir=isolated_config_dir,
-            config_path=config_path, sky_bin=sky_bin,
-            controller_backend=controller_backend, infra=infra,
-            extra_env=extra_env, project=project, execution_target=execution_target,
+            yaml_path,
+            run_id,
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
+            sky_bin=sky_bin,
+            controller_backend=controller_backend,
+            infra=infra,
+            extra_env=extra_env,
+            project=project,
+            execution_target=execution_target,
         )
         runtime_config = prepared.runtime_config
         docs, env = prepared.docs, prepared.env
         submission_dir, prepared_yaml = prepared.submission_dir, prepared.yaml_path
         generated_config_path = prepared.config_path
         sky_executable = prepared.sky_executable
-        owned_submission_dir = submission_dir if runtime_config.isolated_config_dir is None else None
+        owned_submission_dir = (
+            submission_dir if runtime_config.isolated_config_dir is None else None
+        )
         from npa.execution_preflight import (
             LIBERO_SKYPILOT_SECRET_ENV_NAMES,
         )
+
         libero_submission = prepared.libero_submission
         workflow_identity = _private_file_identity(prepared_yaml)
         config_identity = _private_file_identity(generated_config_path)
@@ -2578,7 +2633,9 @@ def _cleanup_owned_submission_dir(path: Path | None) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
-def _submit_failure_prefix(result: subprocess.CompletedProcess[str], detail: str) -> str:
+def _submit_failure_prefix(
+    result: subprocess.CompletedProcess[str], detail: str
+) -> str:
     state, _category = classify_failure(
         phase="launch", stdout=result.stdout or "", stderr=result.stderr or ""
     )

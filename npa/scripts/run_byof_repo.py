@@ -1400,8 +1400,12 @@ def _postprocess_solution(
 
 
 def _run_worker(
-    args: argparse.Namespace, summary: dict[str, Any], *, image: str,
-    base_profile: str, postprocess_key: str | None,
+    args: argparse.Namespace,
+    summary: dict[str, Any],
+    *,
+    image: str,
+    base_profile: str,
+    postprocess_key: str | None,
 ) -> int:
     if base_profile != "prebuilt" or args.workload != "solution-smoke" or args.skip_run:
         raise ValueError(
@@ -1409,18 +1413,20 @@ def _run_worker(
             "build and launch other workloads from the operator host"
         )
     summary["build"] = {"ok": True, "skipped": True}
-    summary["run"] = run_prebuilt_smoke(WorkerSmoke(
-        run_id=args.run_id,
-        image=image,
-        repo_url=args.repo_url,
-        repo_ref=args.repo_ref,
-        output_root=args.output_root,
-        command=args.smoke_command,
-        solution=args.solution_name,
-        capability=args.capability_name,
-        artifact_name=args.smoke_artifact_name,
-        repo_root=Path(BYOF_REPO_MOUNT),
-    ))
+    summary["run"] = run_prebuilt_smoke(
+        WorkerSmoke(
+            run_id=args.run_id,
+            image=image,
+            repo_url=args.repo_url,
+            repo_ref=args.repo_ref,
+            output_root=args.output_root,
+            command=args.smoke_command,
+            solution=args.solution_name,
+            capability=args.capability_name,
+            artifact_name=args.smoke_artifact_name,
+            repo_root=Path(BYOF_REPO_MOUNT),
+        )
+    )
     _postprocess_solution(args, postprocess_key, summary)
     summary["status"] = "ok"
     print(json.dumps(summary, indent=2, sort_keys=True))
@@ -1462,7 +1468,10 @@ def _run_byof(
             )
         if in_workflow_worker():
             return _run_worker(
-                args, summary, image=image, base_profile=base_profile,
+                args,
+                summary,
+                image=image,
+                base_profile=base_profile,
                 postprocess_key=postprocess_key,
             )
         if not skip_build:

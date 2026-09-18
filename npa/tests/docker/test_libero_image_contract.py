@@ -594,11 +594,14 @@ def test_publication_workflow_uses_dedicated_scanner_and_published_base_provenan
     assert re.search(r"^\s*uses:\s*[^#\n]+@v[0-9]+\s*$", text, re.MULTILINE) is None
     assert 'visibility="$(gh api "$package_api" --jq .visibility)"' in text
     final_inventory = text.index("libero-final-package-versions.json")
-    visibility_change = text.index(
-        'gh api --method PATCH "$package_api" -f visibility=public',
-        final_inventory,
+    visibility_refusal = text.index(
+        "Public visibility transition is deferred", final_inventory
     )
-    assert final_inventory < visibility_change
+    assert final_inventory < visibility_refusal
+    assert "visibility=public" not in text
+    assert "no registry-enforced exclusive-writer or atomic compare-and-set" in text
+    assert "no visibility PATCH was attempted" in text
+    assert "Repository-local workflow concurrency cannot exclude another" in text
     assert "${TOOL}-public-package-versions.json" in text
     assert "NPA_FIRST_PUBLICATION_REQUIRED=1" in text
     assert "reject every unexpected tag" in text
@@ -692,21 +695,31 @@ def test_libero_requested_cleanup_executes_complete_exact_graph_or_refuses(
     gh.write_text(
         f"#!{sys.executable}\n"
         "import json,os,sys\n"
+        "from pathlib import Path\n"
         "args=sys.argv[1:]\n"
+        "state=Path(os.environ['FIXTURE_STATE'])\n"
+        "if not state.exists(): state.write_text(os.environ['FIXTURE_VERSIONS'])\n"
+        "versions=json.loads(state.read_text())\n"
         "if '--paginate' in args:\n"
-        " print(json.dumps([json.loads(os.environ['FIXTURE_VERSIONS'])])); raise SystemExit(0)\n"
+        " print(json.dumps([versions])); raise SystemExit(0)\n"
         "if '--method' in args and 'DELETE' in args:\n"
-        " open(os.environ['DELETE_RECORD'],'a').write(args[-1]+'\\n'); raise SystemExit(0)\n"
+        " target=args[-1]\n"
+        " if '/versions/' not in target: raise SystemExit('package-wide delete refused')\n"
+        " version_id=int(target.rsplit('/',1)[1])\n"
+        " if sum(item['id'] == version_id for item in versions) != 1: raise SystemExit('unknown version')\n"
+        " state.write_text(json.dumps([item for item in versions if item['id'] != version_id]))\n"
+        " open(os.environ['DELETE_RECORD'],'a').write(target+'\\n'); raise SystemExit(0)\n"
         "if '-i' in args:\n"
         " print('HTTP/2.0 404 Not Found'); raise SystemExit(1)\n"
-        "query=args[args.index('--jq')+1] if '--jq' in args else ''\n"
-        "print('public' if query == '.visibility' else os.environ['GITHUB_REPOSITORY'])\n",
+        "print(json.dumps({'visibility':'public','repository':{'full_name':os.environ['GITHUB_REPOSITORY']},'name':'nebius-physical-ai/npa-libero'}))\n",
         encoding="utf-8",
     )
     gh.chmod(0o700)
     crane = bin_dir / "crane"
     crane.write_text(
-        f"#!{sys.executable}\nimport os\nprint(os.environ['LIBERO_QUALIFIED_OCI_DIGEST'])\n",
+        f"#!{sys.executable}\nimport os,sys\n"
+        "reference=sys.argv[2]\n"
+        "print(reference.rsplit('@',1)[1] if '@' in reference else os.environ['LIBERO_QUALIFIED_OCI_DIGEST'])\n",
         encoding="utf-8",
     )
     crane.chmod(0o700)
@@ -724,30 +737,54 @@ def test_libero_requested_cleanup_executes_complete_exact_graph_or_refuses(
         "DELETE_RECORD": str(delete_record),
     }
     exact_versions = [
-        {"name": root, "metadata": {"container": {"tags": [f"dev-{sha}"]}}},
-        {"name": platform, "metadata": {"container": {"tags": []}}},
-        {"name": attestation, "metadata": {"container": {"tags": []}}},
+        {
+            "id": 101,
+            "name": root,
+            "metadata": {"container": {"tags": [f"dev-{sha}"]}},
+        },
+        {"id": 102, "name": platform, "metadata": {"container": {"tags": []}}},
+        {
+            "id": 103,
+            "name": attestation,
+            "metadata": {"container": {"tags": []}},
+        },
     ]
+    exact_state = tmp_path / "exact-versions.json"
     completed = subprocess.run(
         ["bash", "-euo", "pipefail", "-c", script],
-        env={**common, "FIXTURE_VERSIONS": json.dumps(exact_versions)},
+        env={
+            **common,
+            "FIXTURE_VERSIONS": json.dumps(exact_versions),
+            "FIXTURE_STATE": str(exact_state),
+        },
         capture_output=True,
         text=True,
         check=False,
     )
     assert completed.returncode == 0, completed.stderr
     assert delete_record.read_text(encoding="utf-8").splitlines() == [
-        "/orgs/nebius/packages/container/nebius-physical-ai%2Fnpa-libero"
+        "/orgs/nebius/packages/container/nebius-physical-ai%2Fnpa-libero/versions/102",
+        "/orgs/nebius/packages/container/nebius-physical-ai%2Fnpa-libero/versions/103",
+        "/orgs/nebius/packages/container/nebius-physical-ai%2Fnpa-libero/versions/101",
     ]
 
     delete_record.unlink()
     unrelated = [
         *exact_versions,
-        {"name": "sha256:" + "d" * 64, "metadata": {"container": {"tags": []}}},
+        {
+            "id": 104,
+            "name": "sha256:" + "d" * 64,
+            "metadata": {"container": {"tags": []}},
+        },
     ]
+    unrelated_state = tmp_path / "unrelated-versions.json"
     refused = subprocess.run(
         ["bash", "-euo", "pipefail", "-c", script],
-        env={**common, "FIXTURE_VERSIONS": json.dumps(unrelated)},
+        env={
+            **common,
+            "FIXTURE_VERSIONS": json.dumps(unrelated),
+            "FIXTURE_STATE": str(unrelated_state),
+        },
         capture_output=True,
         text=True,
         check=False,
@@ -897,15 +934,114 @@ def test_failed_libero_cleanup_removes_only_qualified_versions_under_graph_drift
         encoding="utf-8",
     )
     gh.chmod(0o700)
+    repository = "ghcr.io/nebius/nebius-physical-ai/npa-libero"
+    predicate_type = "https://slsa.dev/provenance/v1"
+    config_blob = b"{}\n"
+    config_digest = "sha256:" + hashlib.sha256(config_blob).hexdigest()
+    layer_blob = (
+        json.dumps(
+            {
+                "_type": "https://in-toto.io/Statement/v1",
+                "predicateType": predicate_type,
+                "subject": [
+                    {
+                        "name": repository,
+                        "digest": {"sha256": platform.removeprefix("sha256:")},
+                    }
+                ],
+                "predicate": {},
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+        + b"\n"
+    )
+    layer_digest = "sha256:" + hashlib.sha256(layer_blob).hexdigest()
+    root_manifest = json.dumps(
+        {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "manifests": [
+                {
+                    "digest": platform,
+                    "platform": {"architecture": "amd64", "os": "linux"},
+                },
+                {
+                    "digest": attestation,
+                    "annotations": {
+                        "vnd.docker.reference.digest": platform,
+                        "vnd.docker.reference.type": "attestation-manifest",
+                    },
+                },
+            ],
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    attestation_manifest = json.dumps(
+        {
+            "schemaVersion": 2,
+            "config": {"digest": config_digest, "size": len(config_blob)},
+            "layers": [
+                {
+                    "digest": layer_digest,
+                    "size": len(layer_blob),
+                    "annotations": {"in-toto.io/predicate-type": predicate_type},
+                }
+            ],
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    crane = bin_dir / "crane"
+    crane.write_text(
+        f"#!{sys.executable}\n"
+        "import os,sys\n"
+        "args=sys.argv[1:]\n"
+        "repository=os.environ['CRANE_REPOSITORY']\n"
+        "root=os.environ['ROOT_DIGEST']\n"
+        "attestation=os.environ['ATTESTATION_DIGEST']\n"
+        "config=os.environ['CONFIG_DIGEST']\n"
+        "layer=os.environ['LAYER_DIGEST']\n"
+        "if args == ['digest', f'{repository}@{root}']:\n"
+        " print(root)\n"
+        "elif args == ['manifest', f'{repository}@{root}']:\n"
+        " print(os.environ['ROOT_MANIFEST'])\n"
+        "elif args == ['digest', f'{repository}@{attestation}']:\n"
+        " print(attestation)\n"
+        "elif args == ['manifest', f'{repository}@{attestation}']:\n"
+        " print(os.environ['ATTESTATION_MANIFEST'])\n"
+        "elif args == ['blob', repository, config]:\n"
+        " sys.stdout.buffer.write(bytes.fromhex(os.environ['CONFIG_BLOB_HEX']))\n"
+        "elif args == ['blob', repository, layer]:\n"
+        " sys.stdout.buffer.write(bytes.fromhex(os.environ['LAYER_BLOB_HEX']))\n"
+        "else:\n"
+        " print(f'refused unexpected crane invocation: {args!r}', file=sys.stderr)\n"
+        " raise SystemExit(64)\n",
+        encoding="utf-8",
+    )
+    crane.chmod(0o700)
 
     completed = subprocess.run(
         ["bash", "-euo", "pipefail", "-c", script],
         env={
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
-            "IMAGE": "ghcr.io/nebius/nebius-physical-ai/npa-libero:" + tag,
+            "IMAGE": repository + ":" + tag,
             "TOOL": "libero",
             "LIBERO_QUALIFIED_OCI_DIGEST": root,
+            "LIBERO_QUALIFIED_PLATFORM_MANIFEST_DIGEST": platform,
+            "LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST": attestation,
+            "LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST": config_digest,
+            "LIBERO_QUALIFIED_ATTESTATION_LAYERS": json.dumps(
+                [
+                    {
+                        "predicate_type": predicate_type,
+                        "digest": layer_digest,
+                        "size_bytes": len(layer_blob),
+                    }
+                ]
+            ),
             "LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS": json.dumps(
                 sorted([root, platform, attestation])
             ),
@@ -914,6 +1050,15 @@ def test_failed_libero_cleanup_removes_only_qualified_versions_under_graph_drift
             "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
             "VERSION_STATE": str(state_path),
             "DELETE_RECORD": str(delete_record),
+            "CRANE_REPOSITORY": repository,
+            "ROOT_DIGEST": root,
+            "ATTESTATION_DIGEST": attestation,
+            "CONFIG_DIGEST": config_digest,
+            "LAYER_DIGEST": layer_digest,
+            "ROOT_MANIFEST": root_manifest,
+            "ATTESTATION_MANIFEST": attestation_manifest,
+            "CONFIG_BLOB_HEX": config_blob.hex(),
+            "LAYER_BLOB_HEX": layer_blob.hex(),
         },
         capture_output=True,
         text=True,
@@ -990,16 +1135,15 @@ def test_failed_libero_cleanup_makes_exact_graph_private_before_package_delete(
         "if '-i' in args:\n"
         " print('HTTP/2.0 404 Not Found' if state['deleted'] else 'HTTP/2.0 200 OK')\n"
         " raise SystemExit(1 if state['deleted'] else 0)\n"
-        "if '--method' in args and args[args.index('--method')+1] == 'PATCH':\n"
-        " state['visibility']='private'; json.dump(state,open(path,'w'))\n"
-        " open(os.environ['OPERATIONS'],'a').write('patch-private\\n')\n"
-        " raise SystemExit(0)\n"
         "if '--method' in args and args[args.index('--method')+1] == 'DELETE':\n"
-        " assert state['visibility'] == 'private'\n"
-        " assert args[-1].endswith('npa-libero')\n"
-        " state['deleted']=True; state['versions']=[]\n"
+        " assert state['visibility'] == 'public'\n"
+        " version_id=args[-1].rsplit('/',1)[-1]\n"
+        " removed=[row for row in state['versions'] if str(row['id']) == version_id]\n"
+        " assert len(removed) == 1\n"
+        " state['versions']=[row for row in state['versions'] if str(row['id']) != version_id]\n"
+        " state['deleted']=not state['versions']\n"
         " json.dump(state,open(path,'w'))\n"
-        " open(os.environ['OPERATIONS'],'a').write('delete-package\\n')\n"
+        " open(os.environ['OPERATIONS'],'a').write('delete-version-'+version_id+'\\n')\n"
         " raise SystemExit(0)\n"
         "if '--jq' in args:\n"
         " query=args[args.index('--jq')+1]\n"
@@ -1010,15 +1154,114 @@ def test_failed_libero_cleanup_makes_exact_graph_private_before_package_delete(
         encoding="utf-8",
     )
     gh.chmod(0o700)
+    repository = "ghcr.io/nebius/nebius-physical-ai/npa-libero"
+    predicate_type = "https://slsa.dev/provenance/v1"
+    config_blob = b"{}\n"
+    config_digest = "sha256:" + hashlib.sha256(config_blob).hexdigest()
+    layer_blob = (
+        json.dumps(
+            {
+                "_type": "https://in-toto.io/Statement/v1",
+                "predicateType": predicate_type,
+                "subject": [
+                    {
+                        "name": repository,
+                        "digest": {"sha256": platform.removeprefix("sha256:")},
+                    }
+                ],
+                "predicate": {},
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+        + b"\n"
+    )
+    layer_digest = "sha256:" + hashlib.sha256(layer_blob).hexdigest()
+    root_manifest = json.dumps(
+        {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "manifests": [
+                {
+                    "digest": platform,
+                    "platform": {"architecture": "amd64", "os": "linux"},
+                },
+                {
+                    "digest": attestation,
+                    "annotations": {
+                        "vnd.docker.reference.digest": platform,
+                        "vnd.docker.reference.type": "attestation-manifest",
+                    },
+                },
+            ],
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    attestation_manifest = json.dumps(
+        {
+            "schemaVersion": 2,
+            "config": {"digest": config_digest, "size": len(config_blob)},
+            "layers": [
+                {
+                    "digest": layer_digest,
+                    "size": len(layer_blob),
+                    "annotations": {"in-toto.io/predicate-type": predicate_type},
+                }
+            ],
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    crane = bin_dir / "crane"
+    crane.write_text(
+        f"#!{sys.executable}\n"
+        "import os,sys\n"
+        "args=sys.argv[1:]\n"
+        "repository=os.environ['CRANE_REPOSITORY']\n"
+        "root=os.environ['ROOT_DIGEST']\n"
+        "attestation=os.environ['ATTESTATION_DIGEST']\n"
+        "config=os.environ['CONFIG_DIGEST']\n"
+        "layer=os.environ['LAYER_DIGEST']\n"
+        "if args == ['digest', f'{repository}@{root}']:\n"
+        " print(root)\n"
+        "elif args == ['manifest', f'{repository}@{root}']:\n"
+        " print(os.environ['ROOT_MANIFEST'])\n"
+        "elif args == ['digest', f'{repository}@{attestation}']:\n"
+        " print(attestation)\n"
+        "elif args == ['manifest', f'{repository}@{attestation}']:\n"
+        " print(os.environ['ATTESTATION_MANIFEST'])\n"
+        "elif args == ['blob', repository, config]:\n"
+        " sys.stdout.buffer.write(bytes.fromhex(os.environ['CONFIG_BLOB_HEX']))\n"
+        "elif args == ['blob', repository, layer]:\n"
+        " sys.stdout.buffer.write(bytes.fromhex(os.environ['LAYER_BLOB_HEX']))\n"
+        "else:\n"
+        " print(f'refused unexpected crane invocation: {args!r}', file=sys.stderr)\n"
+        " raise SystemExit(64)\n",
+        encoding="utf-8",
+    )
+    crane.chmod(0o700)
 
     completed = subprocess.run(
         ["bash", "-euo", "pipefail", "-c", script],
         env={
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
-            "IMAGE": "ghcr.io/nebius/nebius-physical-ai/npa-libero:" + tag,
+            "IMAGE": repository + ":" + tag,
             "TOOL": "libero",
             "LIBERO_QUALIFIED_OCI_DIGEST": root,
+            "LIBERO_QUALIFIED_PLATFORM_MANIFEST_DIGEST": platform,
+            "LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST": attestation,
+            "LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST": config_digest,
+            "LIBERO_QUALIFIED_ATTESTATION_LAYERS": json.dumps(
+                [
+                    {
+                        "predicate_type": predicate_type,
+                        "digest": layer_digest,
+                        "size_bytes": len(layer_blob),
+                    }
+                ]
+            ),
             "LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS": json.dumps(
                 sorted([root, platform, attestation])
             ),
@@ -1027,6 +1270,15 @@ def test_failed_libero_cleanup_makes_exact_graph_private_before_package_delete(
             "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
             "PACKAGE_STATE": str(state_path),
             "OPERATIONS": str(operations),
+            "CRANE_REPOSITORY": repository,
+            "ROOT_DIGEST": root,
+            "ATTESTATION_DIGEST": attestation,
+            "CONFIG_DIGEST": config_digest,
+            "LAYER_DIGEST": layer_digest,
+            "ROOT_MANIFEST": root_manifest,
+            "ATTESTATION_MANIFEST": attestation_manifest,
+            "CONFIG_BLOB_HEX": config_blob.hex(),
+            "LAYER_BLOB_HEX": layer_blob.hex(),
         },
         capture_output=True,
         text=True,
@@ -1035,10 +1287,13 @@ def test_failed_libero_cleanup_makes_exact_graph_private_before_package_delete(
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert operations.read_text(encoding="utf-8").splitlines() == [
-        "patch-private",
-        "delete-package",
+        "delete-version-2",
+        "delete-version-3",
+        "delete-version-1",
     ]
-    assert json.loads(state_path.read_text(encoding="utf-8"))["deleted"] is True
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["visibility"] == "public"
+    assert state["deleted"] is True
     assert "Deleted the complete exact failed public LIBERO OCI graph" in (
         tmp_path / "summary"
     ).read_text(encoding="utf-8")

@@ -530,6 +530,18 @@ jobs:
             --source-sha "$DEVELOPMENT_SHA" --analysis-root "$root" \
             --keyring "$root/keyring/debian-archive-keyring.gpg"
 
+      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+
+      # Some public workbench Dockerfiles inherit other immutable public NPA
+      # packages. This minimum read authentication also precedes retained-graph
+      # reconciliation because a retained candidate may still be private.
+      - name: Authenticate immutable public base pulls
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Prove destination cannot expose unvalidated tagged bytes
         if: matrix.tool != 'ncore'
         env:
@@ -753,8 +765,6 @@ jobs:
 
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
-
       - name: Fetch immutable LIBERO base provenance metadata
         if: matrix.tool == 'libero'
         run: |
@@ -773,17 +783,6 @@ jobs:
           echo \
             'b290dbd3087fc5d2cf4af106f1d253c417a26080b70bdcf440ff96314a12c2bb  '"$RUNNER_TEMP/libero-base-sbom.intoto.json" | \
             sha256sum --check --strict
-
-      # Some public workbench Dockerfiles inherit other immutable public NPA
-      # packages. Authenticate pulls here because setup-crane installs an
-      # intentionally invalid placeholder credential; no registry write occurs
-      # until the separately gated push step below.
-      - name: Authenticate immutable public base pulls
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify exact qualified private LIBERO candidate lineage
         if: matrix.tool == 'libero'
@@ -1475,17 +1474,25 @@ jobs:
               all(.[]; .name == $root and (.metadata.container.tags // []) == [$tag])
             ' "$versions" >/dev/null
           fi
-          if [ "$(gh api "$package_api" --jq .visibility)" != public ]; then
-            test "$(gh api "$package_api" --jq .visibility)" = private
+          require_existing_public_visibility() {
+            local visibility
+            visibility="$(gh api "$package_api" --jq .visibility)"
+            if [ "$visibility" = public ]; then
+              return 0
+            fi
+            if [ "$visibility" != private ]; then
+              echo "::error::Unsupported package visibility: $visibility"
+              return 1
+            fi
             test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
               "$GITHUB_REPOSITORY"
-            adjacent_versions="$RUNNER_TEMP/${TOOL}-adjacent-package-versions.json"
-            gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$adjacent_versions"
-            test "$(jq -Sc '[.[] | {id:(.id|tostring),name,tags:(.metadata.container.tags // [])}] | sort_by(.id)' "$versions")" = \
-              "$(jq -Sc '[.[] | {id:(.id|tostring),name,tags:(.metadata.container.tags // [])}] | sort_by(.id)' "$adjacent_versions")"
-            gh api --method PATCH "$package_api" -f visibility=public >/dev/null
-          fi
-          test "$(gh api "$package_api" --jq .visibility)" = public
+            # Repository-local workflow concurrency cannot exclude another
+            # registry writer and is not a registry-enforced publication lock.
+            echo "::error::Public visibility transition is deferred: GHCR provides no registry-enforced exclusive-writer or atomic compare-and-set boundary."
+            echo "Publication deferred with the package private; no visibility PATCH was attempted." >> "$GITHUB_STEP_SUMMARY"
+            return 1
+          }
+          require_existing_public_visibility
           if [ "$TOOL" = libero ] || [ "$NPA_FIRST_PUBLICATION_REQUIRED" = 1 ]; then
             post_versions="$RUNNER_TEMP/${TOOL}-public-package-versions.json"
             gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$post_versions"
@@ -1576,10 +1583,12 @@ jobs:
           package_and_tag="${path#*/}"
           package="${package_and_tag%:*}"
           tag="${package_and_tag##*:}"
+          repository="${IMAGE%:*}"
           encoded="${package//\//%2F}"
           package_api="/orgs/${owner}/packages/container/${encoded}"
+          version_pages="$(mktemp)"
           versions="$(mktemp)"
-          if ! gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"; then
+          if ! gh api --paginate --slurp "${package_api}/versions?per_page=100" > "$version_pages"; then
             response="$(mktemp)"
             if gh api -i "$package_api" >"$response" 2>&1; then
               echo "::error::Package exists but its versions could not be verified"
@@ -1591,14 +1600,27 @@ jobs:
             echo "::error::Requested-cleanup package absence is unverified"
             exit 1
           fi
-          if [ "$TOOL" = libero ]; then
-            visibility="$(gh api "$package_api" --jq .visibility)"
-            test "$visibility" = public || {
-              echo "::error::Refusing requested cleanup of retained private LIBERO evidence"
+          jq -e 'type == "array" and length > 0 and all(.[]; type == "array")' \
+            "$version_pages" >/dev/null || {
+              echo "::error::Requested-cleanup pagination is incomplete or malformed"
               exit 1
             }
-            test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
-              "$LIBERO_PACKAGE_WRITER_REPOSITORY"
+          jq -S 'add | sort_by(.id | tostring)' "$version_pages" > "$versions"
+          jq -e '
+            all(.[];
+              (.id | type) == "number" and .id > 0 and
+              (.name | type) == "string" and
+              (.name | test("^sha256:[0-9a-f]{64}$")) and
+              ((.metadata.container.tags // []) | type) == "array" and
+              all((.metadata.container.tags // [])[]; type == "string")
+            ) and
+            ([.[].id | tostring] | length) == ([.[].id | tostring] | unique | length) and
+            ([.[].name] | length) == ([.[].name] | unique | length)
+          ' "$versions" >/dev/null || {
+            echo "::error::Requested-cleanup version graph is ambiguous or malformed"
+            exit 1
+          }
+          if [ "$TOOL" = libero ]; then
             test "$LIBERO_PACKAGE_WRITER_REPOSITORY" = "$GITHUB_REPOSITORY"
             test "$(crane digest "$IMAGE")" = "$LIBERO_QUALIFIED_OCI_DIGEST"
             jq -e --arg root "$LIBERO_QUALIFIED_OCI_DIGEST" \
@@ -1612,19 +1634,101 @@ jobs:
                 else (.metadata.container.tags // []) == []
                 end)
             ' "$versions" >/dev/null
-            # LIBERO's platform and attestation versions are deliberately
-            # untagged. Package-wide deletion is the only complete public
-            # cleanup once exact signed ownership and graph equality hold.
-            gh api --method DELETE "$package_api"
-            response="$(mktemp)"
-            if gh api -i "$package_api" >"$response" 2>&1; then
-              echo "::error::Requested LIBERO package still exists after deletion"
-              exit 1
-            elif ! grep -q '^HTTP/.* 404 ' "$response"; then
-              echo "::error::Requested LIBERO package absence is unverified"
-              exit 1
+            expected_versions="$(mktemp)"
+            observed_versions="$(mktemp)"
+            cleanup_rows="$(mktemp)"
+            cp "$versions" "$expected_versions"
+            jq -r --arg root "$LIBERO_QUALIFIED_OCI_DIGEST" '
+              sort_by(.name == $root)[] |
+              [.id, .name, ((.metadata.container.tags // []) | join(","))] | @tsv
+            ' "$expected_versions" > "$cleanup_rows"
+
+            require_complete_requested_libero_graph() {
+              package_metadata="$(mktemp)"
+              current_pages="$(mktemp)"
+              gh api "$package_api" > "$package_metadata"
+              jq -e --arg repository "$LIBERO_PACKAGE_WRITER_REPOSITORY" \
+                --arg package "$package" '
+                .visibility == "public" and
+                (.repository.full_name // "") == $repository and
+                .name == $package
+              ' "$package_metadata" >/dev/null || {
+                echo "::error::Requested LIBERO package identity changed during cleanup"
+                exit 1
+              }
+              gh api --paginate --slurp "${package_api}/versions?per_page=100" > "$current_pages"
+              jq -e 'type == "array" and length > 0 and all(.[]; type == "array")' \
+                "$current_pages" >/dev/null || {
+                  echo "::error::Requested LIBERO pagination is incomplete or malformed"
+                  exit 1
+                }
+              jq -S 'add | sort_by(.id | tostring)' "$current_pages" > "$observed_versions"
+              jq -e '
+                all(.[];
+                  (.id | type) == "number" and .id > 0 and
+                  (.name | type) == "string" and
+                  (.name | test("^sha256:[0-9a-f]{64}$")) and
+                  ((.metadata.container.tags // []) | type) == "array" and
+                  all((.metadata.container.tags // [])[]; type == "string")
+                ) and
+                ([.[].id | tostring] | length) == ([.[].id | tostring] | unique | length) and
+                ([.[].name] | length) == ([.[].name] | unique | length)
+              ' "$observed_versions" >/dev/null || {
+                echo "::error::Requested LIBERO version graph is ambiguous or malformed"
+                exit 1
+              }
+              cmp -s "$expected_versions" "$observed_versions" || {
+                echo "::error::Requested LIBERO package graph changed during cleanup"
+                exit 1
+              }
+            }
+
+            forget_requested_libero_version() {
+              local deleted_id="$1"
+              jq -S --arg id "$deleted_id" \
+                '[.[] | select((.id | tostring) != $id)] | sort_by(.id | tostring)' \
+                "$expected_versions" > "${expected_versions}.next"
+              mv "${expected_versions}.next" "$expected_versions"
+            }
+
+            while IFS=$'\t' read -r version_id digest tags; do
+              test "$(crane digest "$repository@$digest")" = "$digest"
+              require_complete_requested_libero_graph
+              jq -e --arg id "$version_id" --arg digest "$digest" --arg tags "$tags" '
+                [.[] | select(
+                  (.id | tostring) == $id and
+                  .name == $digest and
+                  ((.metadata.container.tags // []) | join(",")) == $tags
+                )] | length == 1
+              ' "$observed_versions" >/dev/null || {
+                echo "::error::Requested LIBERO cleanup target identity changed"
+                exit 1
+              }
+              gh api --method DELETE "${package_api}/versions/${version_id}"
+              forget_requested_libero_version "$version_id"
+            done < "$cleanup_rows"
+            test "$(jq length "$expected_versions")" = 0
+            final_pages="$(mktemp)"
+            if gh api --paginate --slurp "${package_api}/versions?per_page=100" > "$final_pages"; then
+              jq -e '
+                type == "array" and length > 0 and
+                all(.[]; type == "array") and
+                ([.[][]] | length) == 0
+              ' "$final_pages" >/dev/null || {
+                echo "::error::Requested LIBERO versions remain after cleanup"
+                exit 1
+              }
+            else
+              response="$(mktemp)"
+              if gh api -i "$package_api" >"$response" 2>&1; then
+                echo "::error::Requested LIBERO package remains but versions are unreadable"
+                exit 1
+              elif ! grep -q '^HTTP/.* 404 ' "$response"; then
+                echo "::error::Requested LIBERO cleanup state is unverified"
+                exit 1
+              fi
             fi
-            echo "Deleted the complete exact requested public LIBERO OCI graph." >> "$GITHUB_STEP_SUMMARY"
+            echo "Deleted the complete exact requested public LIBERO OCI graph by immutable version identity." >> "$GITHUB_STEP_SUMMARY"
             echo "Deletion does not revoke downloads made while the package was public." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -1643,14 +1747,23 @@ jobs:
           version_id="$(jq -r '.[0].id' <<<"$matches")"
           digest="$(jq -r '.[0].name' <<<"$matches")"
           test "$digest" = "$(crane digest "$IMAGE")"
-          if [ "$(jq length "$versions")" = 1 ]; then
-            # GHCR refuses deletion of a package's last tagged version. The
-            # package itself is exact and run-owned only after proving it has
-            # this one version and this one dev tag.
-            gh api --method DELETE "$package_api"
-          else
-            gh api --method DELETE "${package_api}/versions/${version_id}"
-          fi
+          current_pages="$(mktemp)"
+          current_versions="$(mktemp)"
+          gh api --paginate --slurp "${package_api}/versions?per_page=100" > "$current_pages"
+          jq -e 'type == "array" and length > 0 and all(.[]; type == "array")' \
+            "$current_pages" >/dev/null
+          jq -S 'add | sort_by(.id | tostring)' "$current_pages" > "$current_versions"
+          cmp -s "$versions" "$current_versions" || {
+            echo "::error::Requested-cleanup package graph changed before deletion"
+            exit 1
+          }
+          jq -e --arg id "$version_id" --arg digest "$digest" --arg tag "$tag" '
+            [.[] | select(
+              (.id | tostring) == $id and .name == $digest and
+              (.metadata.container.tags // []) == [$tag]
+            )] | length == 1
+          ' "$current_versions" >/dev/null
+          gh api --method DELETE "${package_api}/versions/${version_id}"
           echo "Deleted exact development tag $tag at $digest." >> "$GITHUB_STEP_SUMMARY"
           echo "Deletion does not revoke downloads made while the public tag existed." >> "$GITHUB_STEP_SUMMARY"
 
@@ -1713,6 +1826,10 @@ jobs:
           IMAGE: ${{ matrix.image }}
           TOOL: ${{ matrix.tool }}
           LIBERO_QUALIFIED_OCI_DIGEST: ${{ matrix.libero_qualified_oci_digest }}
+          LIBERO_QUALIFIED_PLATFORM_MANIFEST_DIGEST: ${{ matrix.libero_qualified_platform_manifest_digest }}
+          LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST: ${{ matrix.libero_qualified_attestation_manifest_digest }}
+          LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST: ${{ matrix.libero_qualified_attestation_config_digest }}
+          LIBERO_QUALIFIED_ATTESTATION_LAYERS: ${{ matrix.libero_qualified_attestation_layers }}
           LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS: ${{ matrix.libero_qualified_package_version_digests }}
           LIBERO_PACKAGE_WRITER_REPOSITORY: ${{ matrix.libero_package_writer_repository }}
         run: |
@@ -1791,35 +1908,120 @@ jobs:
               echo "::error::Unsupported failed LIBERO package visibility: $visibility"
               exit 1
             }
+            # Re-prove the complete qualified OCI graph before deleting any
+            # public version. Package-version names alone are not sufficient:
+            # the root index, runtime descriptor, attestation descriptor, and
+            # every attestation payload must still match the sealed candidate.
+            root_manifest="$(mktemp)"
+            test "$(crane digest "$repository@$LIBERO_QUALIFIED_OCI_DIGEST")" = \
+              "$LIBERO_QUALIFIED_OCI_DIGEST"
+            crane manifest "$repository@$LIBERO_QUALIFIED_OCI_DIGEST" > "$root_manifest"
+            jq -e --arg runtime "$LIBERO_QUALIFIED_PLATFORM_MANIFEST_DIGEST" \
+              --arg attestation "$LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST" '
+              .mediaType == "application/vnd.oci.image.index.v1+json" and
+              (.manifests | length) == 2 and
+              ([.manifests[] | select(
+                .digest == $runtime and
+                .platform == {"architecture":"amd64","os":"linux"}
+              )] | length) == 1 and
+              ([.manifests[] | select(
+                .digest == $attestation and
+                .annotations["vnd.docker.reference.digest"] == $runtime and
+                .annotations["vnd.docker.reference.type"] == "attestation-manifest"
+              )] | length) == 1
+            ' "$root_manifest" >/dev/null
+            attestation_manifest="$(mktemp)"
+            test "$(crane digest "$repository@$LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST")" = \
+              "$LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST"
+            crane manifest \
+              "$repository@$LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST" > \
+              "$attestation_manifest"
+            test "$(jq -r '.config.digest' "$attestation_manifest")" = \
+              "$LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST"
+            config_blob="$(mktemp)"
+            crane blob "$repository" "$LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST" > \
+              "$config_blob"
+            test "sha256:$(sha256sum "$config_blob" | cut -d ' ' -f 1)" = \
+              "$LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST"
+            expected_layers="$(mktemp)"
+            printf '%s' "$LIBERO_QUALIFIED_ATTESTATION_LAYERS" > "$expected_layers"
+            test "$(jq '.layers | length' "$attestation_manifest")" = \
+              "$(jq 'length' "$expected_layers")"
+            while IFS= read -r index; do
+              expected="$(jq -c ".[${index}]" "$expected_layers")"
+              jq -e --argjson expected "$expected" \
+                ".layers[$index] | {predicate_type:.annotations[\"in-toto.io/predicate-type\"],digest,size_bytes:.size} == \$expected" \
+                "$attestation_manifest" >/dev/null
+              layer_digest="$(jq -r '.digest' <<<"$expected")"
+              layer_size="$(jq -r '.size_bytes' <<<"$expected")"
+              predicate_type="$(jq -r '.predicate_type' <<<"$expected")"
+              layer="$(mktemp)"
+              crane blob "$repository" "$layer_digest" > "$layer"
+              test "$(wc -c < "$layer")" = "$layer_size"
+              test "sha256:$(sha256sum "$layer" | cut -d ' ' -f 1)" = \
+                "$layer_digest"
+              jq -e --arg predicate "$predicate_type" \
+                --arg subject "${LIBERO_QUALIFIED_PLATFORM_MANIFEST_DIGEST#sha256:}" '
+                .predicateType == $predicate and
+                any(.subject[]; .digest.sha256 == $subject)
+              ' "$layer" >/dev/null
+            done < <(jq -r 'keys[]' "$expected_layers")
             unrelated_before="$(mktemp)"
             jq --argjson expected "$LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS" '
               [.[] | select(.name as $name | $expected | index($name) | not) |
                 {id:(.id | tostring), name,
                  tags:(.metadata.container.tags // [])}] | sort_by(.id)
             ' "$versions" > "$unrelated_before"
-            if jq -e 'length == 0' "$unrelated_before" >/dev/null; then
-              # The package-wide fallback is lawful only for the complete signed
-              # graph, with no unrelated version, after access is private again.
-              gh api --method PATCH "$package_api" -f visibility=private >/dev/null
-              test "$(gh api "$package_api" --jq .visibility)" = private
-              test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
-                "$LIBERO_PACKAGE_WRITER_REPOSITORY"
-              current_versions="$(mktemp)"
+            expected_versions="$(mktemp)"
+            jq -S 'sort_by(.id | tostring)' "$versions" > "$expected_versions"
+            require_complete_libero_graph() {
+              local observed
+              observed="$(mktemp)"
               gh api --paginate --slurp "${package_api}/versions?per_page=100" |
-                jq 'add' > "$current_versions"
-              jq -e --arg root "$LIBERO_QUALIFIED_OCI_DIGEST" \
-                --arg tag "$tag" \
+                jq -S 'add | sort_by(.id | tostring)' > "$observed"
+              cmp -s "$expected_versions" "$observed" || {
+                echo "::error::Refusing cleanup: complete LIBERO package graph changed"
+                exit 1
+              }
+            }
+            forget_libero_version() {
+              local deleted_id="$1"
+              local next
+              next="$(mktemp)"
+              jq -S --arg id "$deleted_id" \
+                'map(select((.id | tostring) != $id))' "$expected_versions" > "$next"
+              mv "$next" "$expected_versions"
+            }
+            while IFS=$'\t' read -r version_id digest expected_tags; do
+              require_complete_libero_graph
+              jq -e --arg id "$version_id" --arg digest "$digest" \
+                --argjson tags "$expected_tags" '
+                [.[] | select((.id | tostring) == $id and .name == $digest and
+                  (.metadata.container.tags // []) == $tags)] | length == 1
+              ' "$expected_versions" >/dev/null || {
+                echo "::error::Qualified LIBERO version identity changed during cleanup"
+                exit 1
+              }
+              gh api --method DELETE "${package_api}/versions/${version_id}"
+              forget_libero_version "$version_id"
+            done < <(jq -r '.[] | [.id, .name, (.tags | tojson)] | @tsv' "$qualified_rows")
+            post_versions="$(mktemp)"
+            if gh api --paginate --slurp "${package_api}/versions?per_page=100" |
+              jq -S 'add | sort_by(.id | tostring)' > "$post_versions"; then
+              jq -e --slurpfile before "$unrelated_before" \
                 --argjson expected "$LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS" '
-                ([.[].name] | sort) == $expected and
-                ([.[] | select(.name == $root)] | length) == 1 and
-                all(.[];
-                  if .name == $root
-                  then ((.metadata.container.tags // []) == [] or
-                        (.metadata.container.tags // []) == [$tag])
-                  else (.metadata.container.tags // []) == []
-                  end)
-              ' "$current_versions" >/dev/null
-              gh api --method DELETE "$package_api"
+                all(.[]; (.name as $name | $expected | index($name) | not)) and
+                ([.[] | {id:(.id | tostring), name,
+                  tags:(.metadata.container.tags // [])}] | sort_by(.id)) == $before[0]
+              ' "$post_versions" >/dev/null || {
+                echo "::error::Failed or unrelated LIBERO versions changed during cleanup"
+                exit 1
+              }
+            else
+              jq -e 'length == 0' "$unrelated_before" >/dev/null || {
+                echo "::error::Unrelated LIBERO graph became unreadable during cleanup"
+                exit 1
+              }
               response="$(mktemp)"
               if gh api -i "$package_api" >"$response" 2>&1; then
                 echo "::error::Failed LIBERO candidate package still exists after cleanup"
@@ -1828,44 +2030,10 @@ jobs:
                 echo "::error::Failed LIBERO candidate package absence is unverified"
                 exit 1
               fi
-              echo "Deleted the complete exact failed public LIBERO OCI graph after restoring private visibility." >> "$GITHUB_STEP_SUMMARY"
-              echo "Deletion does not revoke downloads made while the package was public." >> "$GITHUB_STEP_SUMMARY"
-              exit 0
             fi
-            while IFS=$'\t' read -r version_id digest expected_tags; do
-              current_versions="$(mktemp)"
-              gh api --paginate --slurp "${package_api}/versions?per_page=100" |
-                jq 'add' > "$current_versions"
-              jq -e --arg id "$version_id" --arg digest "$digest" \
-                --argjson tags "$expected_tags" '
-                [.[] | select((.id | tostring) == $id and .name == $digest and
-                  (.metadata.container.tags // []) == $tags)] | length == 1
-              ' "$current_versions" >/dev/null || {
-                echo "::error::Qualified LIBERO version identity changed during cleanup"
-                exit 1
-              }
-              gh api --method DELETE "${package_api}/versions/${version_id}"
-            done < <(jq -r '.[] | [.id, .name, (.tags | tojson)] | @tsv' "$qualified_rows")
-            post_versions="$(mktemp)"
-            gh api --paginate --slurp "${package_api}/versions?per_page=100" |
-              jq 'add' > "$post_versions"
-            jq -e --argjson expected "$LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS" '
-              all(.[]; (.name as $name | $expected | index($name) | not))
-            ' "$post_versions" >/dev/null || {
-              echo "::error::Failed LIBERO candidate versions remain after cleanup"
-              exit 1
-            }
-            jq -e --slurpfile before "$unrelated_before" \
-              --argjson expected "$LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS" '
-              ([.[] | select(.name as $name | $expected | index($name) | not) |
-                {id:(.id | tostring), name,
-                 tags:(.metadata.container.tags // [])}] | . as $after |
-                all($before[0][]; . as $prior |
-                  any($after[]; . == $prior)))
-            ' "$post_versions" >/dev/null || {
-              echo "::error::Unrelated LIBERO package versions changed during cleanup"
-              exit 1
-            }
+            test "$(jq length "$expected_versions")" = \
+              "$(jq length "$unrelated_before")"
+            echo "Deleted the complete exact failed public LIBERO OCI graph by exact version identity." >> "$GITHUB_STEP_SUMMARY"
             echo "Deleted only the exact qualified failed public LIBERO OCI versions." >> "$GITHUB_STEP_SUMMARY"
             echo "Deletion does not revoke downloads made while the package was public." >> "$GITHUB_STEP_SUMMARY"
             exit 0
@@ -1916,10 +2084,11 @@ jobs:
             if length < 1 or length > 3 or
                ([.[] | select((.metadata.container.tags // []) == [$tag])] | length) != 1 or
                any(.[];
-                 (.id | tostring | test("^[1-9][0-9]*$")) | not or
-                 (.name | test("^sha256:[0-9a-f]{64}$")) | not or
-                 (((.metadata.container.tags // []) == [$tag] or
-                   (.metadata.container.tags // []) == []) | not))
+                 ((.id | tostring | test("^[1-9][0-9]*$")) | not) or
+                 ((.name | test("^sha256:[0-9a-f]{64}$")) | not) or
+                 ((((.metadata.container.tags // []) == [$tag] or
+                    (.metadata.container.tags // []) == [])) | not)
+               )
             then error("failed-publication current-run delta is malformed")
             else {
               root:(.[] | select((.metadata.container.tags // []) == [$tag]) |
@@ -1984,17 +2153,16 @@ jobs:
               (.metadata.container.tags // []) == [$tag])] | length == 1
           ' "$expected_graph" >/dev/null
           referrer_count="$(jq '.referrers | length' "$owned")"
+          package_was_absent=false
           if jq -e '.package.state == "absent"' \
             "$NPA_FAILED_PUBLICATION_PRE_GRAPH" >/dev/null; then
+            package_was_absent=true
             test "$(jq length "$expected_graph")" = 1
-            if [ "$visibility" = public ]; then
-              gh api --method PATCH "$package_api" -f visibility=private >/dev/null
-            fi
-            test "$(gh api "$package_api" --jq .visibility)" = private
-            test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
-              "$GITHUB_REPOSITORY"
-            require_complete_graph
-            gh api --method DELETE "$package_api"
+          fi
+          gh api --method DELETE "${package_api}/versions/${root_id}"
+          forget_owned_version "$root_id"
+          if [ "$package_was_absent" = true ]; then
+            test "$(jq length "$expected_graph")" = 0
             response="$(mktemp)"
             if gh api -i "$package_api" >"$response" 2>&1; then
               echo "::error::Failed-build candidate package still exists after cleanup"
@@ -2004,8 +2172,6 @@ jobs:
               exit 1
             fi
           else
-            gh api --method DELETE "${package_api}/versions/${root_id}"
-            forget_owned_version "$root_id"
             post_versions="$(mktemp)"
             gh api --paginate --slurp "${package_api}/versions?per_page=100" |
               jq -S 'add | sort_by(.id | tostring)' > "$post_versions"

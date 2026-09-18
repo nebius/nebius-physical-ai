@@ -33,8 +33,11 @@ NVIDIA software, and cuDNN terms sources are runtime refusal inputs only; none
 of their fetched bytes is retained in this image or treated as acceptance.
 All 135 runtime artifacts now have a reviewed positive size and license
 classification, and the image manifest binds the owner review report. Runtime
-use remains disabled until an authenticated NPA customer/control-plane surface
-issues a short-lived authorization bound to the customer, run, exact terms,
-runtime manifest, and immutable qualified candidate when one exists. HF/NGC
+use remains disabled until the customer directly signs a short-lived
+authorization with a customer-controlled key, bound to the customer, run,
+exact terms, runtime manifest, and immutable qualified candidate when one
+exists. NPA may authenticate the caller, transport the signed evidence, and
+validate it, but neither the manager nor the control plane accepts, acknowledges,
+signs, issues, or invents customer terms evidence. HF/NGC
 credentials prove upstream access only; metadata review and download success
 are not consent or authorization to download.

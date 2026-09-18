@@ -32,7 +32,6 @@ def _assert_pinned(uses: object, action: str) -> None:
     assert uses.startswith(action + "@")
 
 
-
 def _runs(path: Path) -> str:
     spec = _spec(path)
     return "\n".join(
@@ -40,6 +39,31 @@ def _runs(path: Path) -> str:
         for job in spec["jobs"].values()
         for step in job["steps"]
     )
+
+
+def _verify_pushed_bytes_script() -> str:
+    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
+    return next(
+        step["run"]
+        for step in steps
+        if step.get("name", "").startswith("Verify pushed bytes")
+    )
+
+
+def _cleanup_requested_script() -> str:
+    steps = _spec(PUBLISH)["jobs"]["cleanup-requested"]["steps"]
+    return next(
+        step["run"]
+        for step in steps
+        if step.get("name", "").startswith("Delete only the exact")
+    )
+
+
+def _shell_function_call(script: str, name: str) -> str:
+    start = script.index(f"{name}() {{")
+    call = f"\n{name}\n"
+    end = script.index(call, start) + len(call)
+    return script[start:end]
 
 
 def test_public_only_workflows_exist_without_a_private_candidate_workflow() -> None:
@@ -169,7 +193,16 @@ def test_public_base_pull_authentication_precedes_local_build() -> None:
     spec = _spec(PUBLISH)
     steps = spec["jobs"]["build-development"]["steps"]
     names = [str(step.get("name") or "") for step in steps]
+    crane = next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("uses")
+        == "imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e"
+    )
     auth = names.index("Authenticate immutable public base pulls")
+    destination = names.index(
+        "Prove destination cannot expose unvalidated tagged bytes"
+    )
     build = names.index("Build immutable development image locally")
     push = names.index("Push only after every pre-publication gate passes")
     _assert_pinned(steps[auth]["uses"], "docker/login-action")
@@ -178,7 +211,11 @@ def test_public_base_pull_authentication_precedes_local_build() -> None:
     )
     assert names.count("Authenticate immutable public base pulls") == 1
     assert "Authenticate immutable LIBERO base pulls" not in names
-    assert auth < build < push
+    assert (
+        sum("imjasonh/setup-crane@" in str(step.get("uses") or "") for step in steps)
+        == 1
+    )
+    assert crane < auth < destination < build < push
 
 
 def test_large_image_scan_reclaims_only_disposable_build_cache_and_tar() -> None:
@@ -245,7 +282,7 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
         assert re.search(rf"{re.escape(action)}@[0-9a-f]{{40}}", text), (
             f"{action} must be digest-pinned"
         )
-    visibility = text.index('gh api --method PATCH "$package_api" -f visibility=public')
+    visibility = text.index("require_existing_public_visibility")
     anonymous = text.index('DOCKER_CONFIG="$anonymous_config" crane manifest')
     pushed_scan = text.index(
         "scan_image_cosmos3_ray_serve_payload.py", text.index("Verify pushed bytes")
@@ -310,18 +347,82 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     first_publication = verify[
         verify.index('elif [ "$NPA_FIRST_PUBLICATION_REQUIRED" = 1 ]') :
     ]
-    visibility = first_publication.index(
-        'gh api --method PATCH "$package_api" -f visibility=public'
-    )
+    visibility = first_publication.index("require_existing_public_visibility")
     assert "length == 1" in first_publication[:visibility]
     assert "all(.[]; .name == $root" in first_publication[:visibility]
-    assert "adjacent-package-versions.json" in first_publication[:visibility]
-    assert "sort_by(.id)" in first_publication[:visibility]
+    assert "adjacent-package-versions.json" not in first_publication
+    assert (
+        "no registry-enforced exclusive-writer or atomic compare-and-set"
+        in (first_publication[visibility:])
+    )
     assert "pushed-payload-attempt-${payload_attempt}.log" in verify
     assert "anonymous-manifest-attempt-${anonymous_attempt}.log" in verify
     assert verify.count("TOOMANYREQUESTS|429 Too Many Requests") == 2
     assert verify.count("while true; do") >= 2
     assert "if ! grep -Eq" in verify
+
+
+def test_hostile_graph_mutation_before_visibility_gate_cannot_disclose(
+    tmp_path: Path,
+) -> None:
+    import os
+    import subprocess
+    import sys
+
+    script = _verify_pushed_bytes_script()
+    gate = _shell_function_call(script, "require_existing_public_visibility")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    operations = tmp_path / "operations"
+    operations.write_text("hostile-graph-mutation\n", encoding="utf-8")
+    summary = tmp_path / "summary"
+    gh = bin_dir / "gh"
+    gh.write_text(
+        f"#!{sys.executable}\n"
+        "import os,sys\n"
+        "args=sys.argv[1:]\n"
+        "with open(os.environ['OPERATIONS'],'a') as stream: stream.write(' '.join(args)+'\\n')\n"
+        "query=args[args.index('--jq')+1]\n"
+        "print('private' if query == '.visibility' else os.environ['GITHUB_REPOSITORY'])\n",
+        encoding="utf-8",
+    )
+    gh.chmod(0o700)
+    completed = subprocess.run(
+        ["bash", "-c", "set -euo pipefail\n" + gate],
+        check=False,
+        capture_output=True,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "OPERATIONS": str(operations),
+            "GITHUB_REPOSITORY": "nebius/nebius-physical-ai",
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "package_api": "/orgs/nebius/packages/container/npa-libero",
+        },
+        text=True,
+    )
+
+    assert completed.returncode == 1
+    assert (
+        "no registry-enforced exclusive-writer or atomic compare-and-set"
+        in completed.stdout
+    )
+    operation_log = operations.read_text(encoding="utf-8")
+    assert operation_log.startswith("hostile-graph-mutation\n")
+    assert "PATCH" not in operation_log
+    assert "no visibility PATCH was attempted" in summary.read_text(encoding="utf-8")
+
+
+def test_repository_concurrency_never_authorizes_public_visibility() -> None:
+    spec = _spec(PUBLISH)
+    script = _verify_pushed_bytes_script()
+    final_graph = script.index("libero-final-package-versions.json")
+    refusal = script.index("Public visibility transition is deferred", final_graph)
+
+    assert spec["concurrency"]["group"] == "public-image-registry-mutation"
+    assert "Repository-local workflow concurrency cannot exclude another" in script
+    assert "visibility=public" not in script
+    assert final_graph < refusal
 
 
 def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
@@ -369,16 +470,9 @@ def test_failed_development_cleanup_is_exact_and_refuses_shared_digest() -> None
         for step in failed_cleanup["steps"]
         if str(step.get("name") or "").startswith("Remove an exact run-owned")
     )
-    assert 'gh api --method DELETE "$package_api"' in script
-    assert 'gh api --method PATCH "$package_api" -f visibility=private' in script
+    assert 'gh api --method DELETE "$package_api"' not in script
+    assert 'gh api --method PATCH "$package_api" -f visibility=private' not in script
     assert "candidate package absence is unverified" in script
-    package_delete = script.index('gh api --method DELETE "$package_api"')
-    private_recheck = script.rindex(
-        'test "$(gh api "$package_api" --jq .visibility)" = private',
-        0,
-        package_delete,
-    )
-    assert private_recheck < package_delete
     assert 'gh api -i "$package_api"' in script
     assert "grep -q '^HTTP/.* 404 '" in script
     assert "Failed-build package absence is unverified" in script
@@ -388,7 +482,236 @@ def test_failed_development_cleanup_is_exact_and_refuses_shared_digest() -> None
     assert "Run-created attestation version is not bound" in script
     assert "require_complete_graph" in script
     assert 'cmp -s "$before_versions" "$post_versions"' in script
+    assert "require_complete_libero_graph" in script
+    assert 'crane manifest "$repository@$LIBERO_QUALIFIED_OCI_DIGEST"' in script
+    assert "$repository@$LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST" in script
+    assert "vnd.docker.reference.digest" in script
+    assert 'gh api --method DELETE "${package_api}/versions/${version_id}"' in script
+    assert "Failed LIBERO candidate package absence is unverified" in script
+    assert "Deleted the complete exact failed public LIBERO OCI graph" in script
     assert "subprocess.check_output" not in script
+
+
+def test_requested_libero_cleanup_revalidates_each_immutable_version() -> None:
+    script = _cleanup_requested_script()
+
+    assert 'gh api --method DELETE "$package_api"' not in script
+    assert "require_complete_requested_libero_graph()" in script
+    assert "Requested LIBERO pagination is incomplete or malformed" in script
+    assert "Requested LIBERO package identity changed during cleanup" in script
+    assert "Requested LIBERO package graph changed during cleanup" in script
+    assert "sort_by(.name == $root)" in script
+    loop = script.index("while IFS=$'\\t' read -r version_id digest tags; do")
+    loop_end = script.index('done < "$cleanup_rows"', loop)
+    body = script[loop:loop_end]
+    immutable_digest = body.index('crane digest "$repository@$digest"')
+    graph_readback = body.index("require_complete_requested_libero_graph")
+    identity = body.index('jq -e --arg id "$version_id"')
+    delete = body.index(
+        'gh api --method DELETE "${package_api}/versions/${version_id}"'
+    )
+    forget = body.index('forget_requested_libero_version "$version_id"')
+    assert immutable_digest < graph_readback < identity < delete < forget
+    assert "by immutable version identity" in script
+
+
+def test_requested_libero_cleanup_refuses_hostile_graph_changes(tmp_path: Path) -> None:
+    import json
+    import os
+    import subprocess
+
+    script = _cleanup_requested_script()
+    root_digest = "sha256:" + "1" * 64
+    referrer_digests = ["sha256:" + "2" * 64, "sha256:" + "3" * 64]
+    tag = "dev-" + "a" * 40
+    image = f"ghcr.io/nebius/nebius-physical-ai/npa-libero:{tag}"
+    graph = [
+        {
+            "id": 11,
+            "name": root_digest,
+            "metadata": {"container": {"tags": [tag]}},
+        },
+        *[
+            {
+                "id": 12 + index,
+                "name": digest,
+                "metadata": {"container": {"tags": []}},
+            }
+            for index, digest in enumerate(referrer_digests)
+        ],
+    ]
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    gh = fake_bin / "gh"
+    gh.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+import sys
+
+args = sys.argv[1:]
+log = Path(os.environ["FAKE_GH_LOG"])
+with log.open("a", encoding="utf-8") as stream:
+    stream.write(json.dumps(args, separators=(",", ":")) + "\\n")
+if args[:3] == ["api", "--paginate", "--slurp"]:
+    count_path = Path(os.environ["FAKE_GH_COUNT"])
+    count = int(count_path.read_text(encoding="utf-8")) if count_path.exists() else 0
+    count_path.write_text(str(count + 1), encoding="utf-8")
+    graph = json.loads(os.environ["FAKE_GH_GRAPH"])
+    if count:
+        mode = os.environ["HOSTILE_MUTATION"]
+        if mode == "unrelated":
+            graph.append({"id": 99, "name": "sha256:" + "4" * 64,
+                          "metadata": {"container": {"tags": []}}})
+        elif mode == "retag":
+            graph[0]["metadata"]["container"]["tags"].append("latest")
+        elif mode == "digest":
+            graph[0]["name"] = "sha256:" + "9" * 64
+        elif mode == "identity":
+            graph[0]["id"] = 101
+        elif mode == "pages":
+            print(json.dumps([graph, {"partial": True}]))
+            raise SystemExit(0)
+    print(json.dumps([graph]))
+elif args[:1] == ["api"] and "--method" not in args and "-i" not in args:
+    print(json.dumps({"visibility": "public",
+                      "repository": {"full_name": os.environ["GITHUB_REPOSITORY"]},
+                      "name": "nebius-physical-ai/npa-libero"}))
+elif args[:3] == ["api", "--method", "DELETE"]:
+    print("{}")
+else:
+    raise SystemExit(f"unexpected gh arguments: {args!r}")
+""",
+        encoding="utf-8",
+    )
+    gh.chmod(0o700)
+    crane = fake_bin / "crane"
+    crane.write_text(
+        """#!/usr/bin/env python3
+import os
+import sys
+
+if sys.argv[1] != "digest":
+    raise SystemExit(f"unexpected crane arguments: {sys.argv[1:]!r}")
+reference = sys.argv[2]
+print(reference.rsplit("@", 1)[1] if "@" in reference else os.environ["ROOT_DIGEST"])
+""",
+        encoding="utf-8",
+    )
+    crane.chmod(0o700)
+
+    for mutation in ("unrelated", "retag", "digest", "identity", "pages"):
+        run_dir = tmp_path / mutation
+        run_dir.mkdir()
+        log = run_dir / "gh.jsonl"
+        summary = run_dir / "summary.md"
+        env = {
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "IMAGE": image,
+            "TOOL": "libero",
+            "LIBERO_QUALIFIED_OCI_DIGEST": root_digest,
+            "LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS": json.dumps(
+                sorted([root_digest, *referrer_digests])
+            ),
+            "LIBERO_PACKAGE_WRITER_REPOSITORY": "nebius/nebius-physical-ai",
+            "GITHUB_REPOSITORY": "nebius/nebius-physical-ai",
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "ROOT_DIGEST": root_digest,
+            "FAKE_GH_GRAPH": json.dumps(graph),
+            "FAKE_GH_LOG": str(log),
+            "FAKE_GH_COUNT": str(run_dir / "count"),
+            "HOSTILE_MUTATION": mutation,
+        }
+        completed = subprocess.run(
+            ["bash", "-c", script],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert completed.returncode != 0, mutation
+        calls = [
+            json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()
+        ]
+        assert not any("--method" in call and "DELETE" in call for call in calls), (
+            mutation,
+            completed.stdout,
+            completed.stderr,
+        )
+
+
+def test_failed_publication_current_run_delta_accepts_zero_one_or_two_referrers() -> (
+    None
+):
+    import json
+    import subprocess
+
+    cleanup = _spec(PUBLISH)["jobs"]["cleanup-failed-build"]
+    script = next(
+        step["run"]
+        for step in cleanup["steps"]
+        if str(step.get("name") or "").startswith("Remove an exact run-owned")
+    )
+    command = script.index("jq -S --argjson before_ids")
+    program_start = script.index("'\n", command) + 2
+    closing_command = '\' "$current_versions" > "$owned"'
+    offset = program_start
+    for line in script[program_start:].splitlines(keepends=True):
+        if line.strip() == closing_command:
+            program_end = offset - 1
+            break
+        offset += len(line)
+    else:
+        raise AssertionError("exact closing jq command is absent")
+    program = script[program_start:program_end]
+    tag = "dev-" + "a" * 40
+    prior = {
+        "id": 1,
+        "name": "sha256:" + "1" * 64,
+        "metadata": {"container": {"tags": ["stable"]}},
+    }
+
+    for referrer_count in range(3):
+        root = {
+            "id": 2,
+            "name": "sha256:" + "2" * 64,
+            "metadata": {"container": {"tags": [tag]}},
+        }
+        referrers = [
+            {
+                "id": 3 + index,
+                "name": "sha256:" + str(3 + index) * 64,
+                "metadata": {"container": {"tags": []}},
+            }
+            for index in range(referrer_count)
+        ]
+        completed = subprocess.run(
+            [
+                "jq",
+                "-S",
+                "--argjson",
+                "before_ids",
+                '["1"]',
+                "--arg",
+                "tag",
+                tag,
+                program,
+            ],
+            input=json.dumps([prior, root, *referrers]),
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        owned = json.loads(completed.stdout)
+        assert owned["root"] == {
+            "id": "2",
+            "name": root["name"],
+            "tags": [tag],
+        }
+        assert len(owned["referrers"]) == referrer_count
 
 
 def test_failed_publication_cleanup_seals_failure_cancellation_and_concurrency_state() -> (
@@ -441,7 +764,39 @@ def test_failed_publication_cleanup_deletes_adjacent_referrers_before_root() -> 
         'gh api --method DELETE "${package_api}/versions/${root_id}"'
     )
     assert delta < subject < referrer_delete < root_delete
-    assert script.count("require_complete_graph") >= 4
+    assert script.count("require_complete_graph() {") == 1
+    helper = script.index("require_complete_graph() {")
+    referrer_loop = script.index(
+        "while IFS=$'\\t' read -r referrer_id referrer_digest; do", helper
+    )
+    referrer_loop_end = script.index(
+        "done < <(jq -r '.referrers[] | [.id,.name] | @tsv' \"$owned\")",
+        referrer_loop,
+    )
+    referrer_body = script[referrer_loop:referrer_loop_end]
+    assert referrer_body.count("require_complete_graph") == 1
+    assert (
+        referrer_body.index("require_complete_graph")
+        < referrer_body.index('jq -e --arg id "$referrer_id"')
+        < referrer_body.index(
+            'gh api --method DELETE "${package_api}/versions/${referrer_id}"'
+        )
+        < referrer_body.index('forget_owned_version "$referrer_id"')
+    )
+    root_check = script.index("\nrequire_complete_graph\n", referrer_loop_end)
+    root_identity = script.index('jq -e --arg id "$root_id"', root_check)
+    assert referrer_loop_end < root_check < root_identity < root_delete
+    forget_root = script.index('forget_owned_version "$root_id"', root_delete)
+    absent_state = script.index(
+        'test "$(jq length "$expected_graph")" = 0', forget_root
+    )
+    absence_readback = script.index('gh api -i "$package_api"', absent_state)
+    absence_404 = script.index("grep -q '^HTTP/.* 404 '", absence_readback)
+    unrelated_readback = script.index(
+        'cmp -s "$before_versions" "$post_versions"', forget_root
+    )
+    assert root_delete < forget_root < absent_state < absence_readback < absence_404
+    assert root_delete < forget_root < unrelated_readback
     assert "Unrelated package graph changed during cleanup" in script
     assert "the sealed unrelated graph is unchanged" in script
 
