@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -274,6 +275,7 @@ fi
 if [[ "${1:-}" == "-" && "${2:-}" == "receipt-link" ]]; then
   [[ "${3}" == "9" ]] || exit 78
   if [[ "${FAKE_RECEIPT_LINK_FAILURE:-0}" == "1" \
+    && "${5}" != *.tag-terminal.json \
     && ! -e "${FAKE_RECEIPT_LINK_FAILURE_MARKER}" ]]; then
     : > "${FAKE_RECEIPT_LINK_FAILURE_MARKER}"
     exit 77
@@ -288,7 +290,8 @@ if [[ "${1:-}" == "-" && "${2:-}" == "receipt-link" ]]; then
         + """ "$@" 9<&9 || status=$?
   [[ "${status}" -eq 0 ]] || exit "${status}"
   if [[ "${5}" == npa-robomimic-context.*.json \
-    && "${5}" != *.cleanup*.json && "${5}" != *.failure*.json ]]; then
+    && "${5}" != *.cleanup*.json && "${5}" != *.failure*.json \
+    && "${5}" != *.tag-terminal.json ]]; then
     if [[ -n "${FAKE_POST_PUBLICATION_SIGNAL:-}" ]]; then
       kill -"${FAKE_POST_PUBLICATION_SIGNAL}" "$PPID"
     fi
@@ -327,6 +330,7 @@ PY
     && "${5}" == *.json \
     && "${5}" != *.failure.json \
     && "${5}" != *.failure-recovery.json \
+    && "${5}" != *.tag-terminal.json \
     && ! -e "${FAKE_FINAL_TARGET_REPLACEMENT_MARKER}" ]]; then
         """
         + shlex.quote(sys.executable)
@@ -363,7 +367,7 @@ if [[ "${FAKE_TERMINAL_RECEIPT_FAILURE:-0}" == "1" \
   exit 97
 fi
 if [[ "${FAKE_RECEIPT_FAILURE:-0}" == "1" \
-  && "${1:-}" == "-" && "${2:-}" != "receipt-link" ]]; then
+  && "${1:-}" == "-" && "${2:-}" =~ ^[0-9a-f]{40}$ ]]; then
   exit 97
 fi
 exec """
@@ -389,6 +393,9 @@ replace_receipt_directory() {
 action="$1"
 shift
 case "${action}" in
+  info)
+    printf '%s\\n' 'synthetic-daemon-identity'
+    ;;
   build)
     iidfile=""
     context=""
@@ -636,6 +643,225 @@ def _run_fake_build(environment: dict[str, str]) -> subprocess.CompletedProcess[
     )
 
 
+def _tag_terminal_module(tmp_path: Path) -> ModuleType:
+    program = BUILD_SCRIPT.read_text().split(
+        "tag_terminal_program=\"$(cat <<'PY'\n", 1
+    )[1]
+    program = program.split("\nPY\n)", 1)[0]
+    path = tmp_path / "terminal_program.py"
+    path.write_text(program)
+    spec = importlib.util.spec_from_file_location("robomimic_tag_terminal_test", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _absent_owner_process(pid: int) -> str:
+    raise FileNotFoundError
+
+
+def _terminal_record(module: ModuleType) -> dict:
+    return dict(
+        schema=module.SCHEMA,
+        phase="no-further-tag-writes",
+        host=module.host_identity(),
+        uid=os.geteuid(),
+        pid=424242,
+        start_ticks="12345",
+        daemon="synthetic-daemon-identity",
+        revision="a" * 40,
+        transaction="npa-robomimic-context.abcdefgh",
+        lock_id="b" * 64,
+        tag="local.invalid/npa-robomimic:dev-" + "a" * 40,
+        image="sha256:" + "c" * 64,
+    )
+
+
+def _terminal_case(tmp_path: Path) -> tuple[ModuleType, Path, dict, dict, list]:
+    module = _tag_terminal_module(tmp_path)
+    module.host_identity = lambda: ["synthetic-boot", "synthetic-pid-namespace"]
+    module.process_start = _absent_owner_process
+    record = _terminal_record(module)
+    transaction = record["transaction"]
+    path = tmp_path / (transaction + ".tag-terminal.json")
+    path.write_text(json.dumps(record))
+    path.chmod(0o600)
+    name = (
+        "npa-robomimic-tag-lock-" + hashlib.sha256(record["tag"].encode()).hexdigest()
+    )
+    state = dict(
+        daemon=record["daemon"],
+        lock_id=record["lock_id"],
+        transaction=transaction,
+        image=record["image"],
+        tag=record["image"],
+        running="false",
+        name="/" + name,
+        reads=0,
+    )
+    removed = []
+    module.daemon_output = lambda *args: _terminal_daemon_read(state, args)
+    module.subprocess = SimpleNamespace(
+        DEVNULL=subprocess.DEVNULL,
+        run=lambda args, **kwargs: removed.append(args),
+    )
+    return module, path, record, state, removed
+
+
+def _terminal_daemon_read(state: dict, args: tuple) -> str:
+    state["reads"] += 1
+    if state.get("change_on_second_probe") and state["reads"] == 4:
+        state["transaction"] = "npa-robomimic-context.successor"
+    if args[0] == "info":
+        return state["daemon"]
+    if args[:2] == ("container", "inspect"):
+        return "|".join(
+            state[key] for key in ("lock_id", "transaction", "image", "running", "name")
+        )
+    assert args[:2] == ("image", "inspect")
+    return state["tag"]
+
+
+def test_terminal_fence_reconciliation_recovers_only_exact_dead_owner(
+    tmp_path: Path,
+) -> None:
+    module, path, record, state, removed = _terminal_case(tmp_path)
+    original = path.read_bytes()
+
+    module.reconcile(path, record["revision"], record["tag"])
+
+    assert state["reads"] == 6
+    assert removed == [["docker", "container", "rm", record["lock_id"]]]
+    assert path.read_bytes() == original
+    state["lock_id"] = "d" * 64
+    with pytest.raises(ValueError, match="lock changed"):
+        module.reconcile(path, record["revision"], record["tag"])
+    assert len(removed) == 1
+
+
+@pytest.mark.parametrize("start", ("12345", "67890"), ids=("live-owner", "pid-reused"))
+def test_terminal_fence_refuses_live_owner_and_pid_reuse(
+    tmp_path: Path, start: str
+) -> None:
+    module, path, record, state, removed = _terminal_case(tmp_path)
+    module.process_start = lambda pid: start
+    with pytest.raises(ValueError, match="owner live, unreaped, or PID reused"):
+        module.reconcile(path, record["revision"], record["tag"])
+    assert state["reads"] == 0
+    assert removed == []
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("host", ["foreign-boot", "synthetic-pid-namespace"]),
+        ("host", ["synthetic-boot", "foreign-pid-namespace"]),
+        ("uid", -1),
+        ("phase", "tag-operation-in-flight"),
+        ("revision", "d" * 40),
+        ("tag", "local.invalid/other:tag"),
+        ("transaction", "other-transaction"),
+        ("start_ticks", "ambiguous"),
+        ("pid", True),
+    ],
+)
+def test_terminal_fence_refuses_ambiguous_or_foreign_owner(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    module, path, record, state, removed = _terminal_case(tmp_path)
+    changed = {**record, field: value}
+    path.write_text(json.dumps(changed))
+    with pytest.raises(ValueError):
+        module.reconcile(path, record["revision"], record["tag"])
+    assert state["reads"] == 0
+    assert removed == []
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("daemon", "different-daemon"),
+        ("lock_id", "d" * 64),
+        ("transaction", "npa-robomimic-context.foreign1"),
+        ("image", "sha256:" + "e" * 64),
+        ("tag", "sha256:" + "f" * 64),
+        ("running", "true"),
+        ("name", "/foreign-lock"),
+        ("change_on_second_probe", True),
+    ],
+)
+def test_terminal_fence_refuses_changed_daemon_tag_transaction(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    module, path, record, state, removed = _terminal_case(tmp_path)
+    state[field] = value
+    with pytest.raises(ValueError):
+        module.reconcile(path, record["revision"], record["tag"])
+    assert removed == []
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("symlink", "hardlink", "permissive", "duplicate", "absent", "parent-symlink"),
+)
+def test_terminal_fence_refuses_untrusted_or_absent_evidence(
+    tmp_path: Path, mutation: str
+) -> None:
+    module, path, record, state, removed = _terminal_case(tmp_path)
+    if mutation == "symlink":
+        retained = path.with_suffix(".retained")
+        path.rename(retained)
+        path.symlink_to(retained)
+    elif mutation == "hardlink":
+        os.link(path, path.with_suffix(".link"))
+    elif mutation == "permissive":
+        path.chmod(0o644)
+    elif mutation == "duplicate":
+        path.write_text(path.read_text()[:-1] + ',"pid":424242}')
+    elif mutation == "absent":
+        path.rename(path.with_suffix(".retained"))
+    else:
+        alias = tmp_path / "alias"
+        alias.symlink_to(tmp_path, target_is_directory=True)
+        path = alias / path.name
+    with pytest.raises((OSError, ValueError)):
+        module.reconcile(path, record["revision"], record["tag"])
+    assert state["reads"] == 0
+    assert removed == []
+
+
+def test_terminal_fence_refuses_inaccessible_owner(tmp_path: Path) -> None:
+    module, path, record, state, removed = _terminal_case(tmp_path)
+
+    def inaccessible(pid: int) -> str:
+        raise PermissionError
+
+    module.process_start = inaccessible
+    with pytest.raises(PermissionError):
+        module.reconcile(path, record["revision"], record["tag"])
+    assert state["reads"] == 0
+    assert removed == []
+
+
+def test_terminal_fence_refuses_receipt_replacement_during_probe(
+    tmp_path: Path,
+) -> None:
+    module, path, record, state, removed = _terminal_case(tmp_path)
+
+    def replace_receipt(*args: str) -> str:
+        if state["reads"] == 0:
+            path.rename(path.with_suffix(".retained"))
+            path.write_text(json.dumps(record))
+            path.chmod(0o600)
+        return _terminal_daemon_read(state, args)
+
+    module.daemon_output = replace_receipt
+    with pytest.raises(ValueError, match="receipt changed"):
+        module.reconcile(path, record["revision"], record["tag"])
+    assert removed == []
+
+
 def _receipt_records(receipt_dir: Path) -> list[tuple[Path, dict[str, object]]]:
     return [
         (path, json.loads(path.read_text(encoding="utf-8")))
@@ -770,8 +996,11 @@ def test_build_helper_records_immutable_id_in_owner_only_receipt(
         "directory:ok",
         "regular:ok",
         "directory:ok",
+        "regular:ok",
+        "directory:ok",
     ]
     assert (tmp_path / "lifecycle-actions").read_text().splitlines() == [
+        f"published:{receipt['transaction_id']}.tag-terminal.json",
         f"published:{receipt['transaction_id']}.json",
         f"published:{journal['transaction_id']}.cleanup-journal.json",
         "context-delete",
@@ -949,7 +1178,9 @@ def test_build_helper_serializes_distinct_uid_namespaces_in_one_daemon(
     winner = tag_state.read_text(encoding="utf-8").strip()
     assert winner in {"sha256:" + "4" * 64, "sha256:" + "5" * 64}
     records = _receipt_records(receipt_dir)
-    assert len(records) == 4
+    assert len(records) == 5
+    fences = _records_with_schema(receipt_dir, "npa.robomimic.tag-terminal.v1")
+    assert len(fences) == 1 and fences[0][1]["image"] == winner
     assert sorted(record["status"] for _, record in records if "status" in record) == [
         "completed",
         "failure",
@@ -1105,7 +1336,9 @@ def test_build_helper_receipt_generation_failure_retains_staged_evidence(
 
     assert result.returncode == 97
     assert tag_state.read_text(encoding="utf-8").strip() == image_id
-    assert _receipt_records(receipt_dir) == []
+    fences = _records_with_schema(receipt_dir, "npa.robomimic.tag-terminal.v1")
+    assert len(fences) == 1 and fences[0][1]["image"] == image_id
+    assert _receipt_records(receipt_dir) == fences
     assert len(list(receipt_dir.glob(".*.receipt.*"))) == 1
     assert len(list(temp_root.glob("npa-robomimic-context.*"))) == 1
     assert _docker_actions(tmp_path) == ["tag"]
@@ -1161,6 +1394,7 @@ def test_build_helper_refuses_receipt_fsync_failure_without_deleting_evidence(
     image_id = "sha256:" + "e" * 64
     environment["FAKE_DOCKER_IMAGE_ID"] = image_id
     environment["FAKE_FSYNC_FAILURE_KIND"] = failure_kind
+    environment["FAKE_FSYNC_FAILURE_ORDINAL"] = "2"
 
     result = _run_fake_build(environment)
 
@@ -1177,7 +1411,9 @@ def test_build_helper_refuses_receipt_fsync_failure_without_deleting_evidence(
         sum("consumer_image_ref" in record for _, record in records) == expected_builds
     )
     fsync_actions = (tmp_path / "fsync-actions").read_text().splitlines()
-    expected_fsync = ["regular:ok"] if failure_kind == "directory" else []
+    expected_fsync = ["regular:ok", "directory:ok"]
+    if failure_kind == "directory":
+        expected_fsync.append("regular:ok")
     expected_fsync.append(f"{failure_kind}:failed")
     if failure_kind == "directory":
         # A visible success outcome is never reversed by failed durability
@@ -1208,7 +1444,9 @@ def test_build_helper_receipt_link_failure_retains_staged_evidence(
     assert result.returncode != 0
     assert (tmp_path / "link-failure-marker").is_file()
     assert tag_state.read_text(encoding="utf-8").strip() == image_id
-    assert _receipt_records(receipt_dir) == []
+    fences = _records_with_schema(receipt_dir, "npa.robomimic.tag-terminal.v1")
+    assert len(fences) == 1 and fences[0][1]["image"] == image_id
+    assert _receipt_records(receipt_dir) == fences
     assert len(list(receipt_dir.glob(".*.receipt.*"))) == 1
     assert len(list(temp_root.glob("npa-robomimic-context.*"))) == 1
     assert _docker_actions(tmp_path) == ["tag"]
@@ -1267,7 +1505,7 @@ def test_build_helper_preserves_cleanup_journal_on_terminal_publication_failure(
     else:
         assert failure_kind is not None
         environment["FAKE_FSYNC_FAILURE_KIND"] = failure_kind
-        environment["FAKE_FSYNC_FAILURE_ORDINAL"] = "3"
+        environment["FAKE_FSYNC_FAILURE_ORDINAL"] = "4"
 
     result = _run_fake_build(environment)
 
