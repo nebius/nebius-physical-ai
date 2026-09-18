@@ -25,6 +25,9 @@ from npa.clients.project_credentials import (
 )
 from npa.orchestration.skypilot import submit_workflow, workflow_status
 from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+from npa.orchestration.skypilot.launch_transaction import (
+    is_terminal_failure_job_status,
+)
 from npa.orchestration.skypilot._bin import (
     SkyPilotConfigError,
     SkyPilotNotInstalledError,
@@ -181,15 +184,12 @@ DEFAULT_BUCKET = (
 DEFAULT_OUTPUT_ROOT = _normalize_output_root(
     os.environ.get("NPA_BYOF_OUTPUT_ROOT", ""), default_prefix="byof"
 )
-TERMINAL_STATUSES = {
-    "SUCCEEDED",
-    "CANCELLED",
-    "FAILED",
-    "FAILED_SETUP",
-    "FAILED_PRECHECKS",
-    "FAILED_NO_RESOURCE",
-    "FAILED_CONTROLLER",
-}
+
+
+def _is_terminal_status(status: str) -> bool:
+    """Return whether a managed job has reached any canonical terminal state."""
+
+    return status == "SUCCEEDED" or is_terminal_failure_job_status(status)
 
 
 def render_workflow(
@@ -515,7 +515,7 @@ def _wait_for_terminal(
     statuses.append(final.status)
     polls = 1
     while (
-        final.status not in TERMINAL_STATUSES
+        not _is_terminal_status(final.status)
         and wait_timeout != 0
         and (deadline is None or time.time() < deadline)
     ):
@@ -533,10 +533,10 @@ def _wait_for_terminal(
         "mode": mode,
         "polls": polls,
         "statuses": statuses,
-        "terminal": final.status in TERMINAL_STATUSES,
+        "terminal": _is_terminal_status(final.status),
         "deadline_exhausted": bool(
             wait_timeout > 0
-            and final.status not in TERMINAL_STATUSES
+            and not _is_terminal_status(final.status)
             and deadline is not None
             and time.time() >= deadline
         ),

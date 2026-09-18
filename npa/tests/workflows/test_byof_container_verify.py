@@ -1312,6 +1312,38 @@ def test_negative_one_waits_until_terminal(monkeypatch) -> None:
     assert diagnostics["terminal"] is True
 
 
+@pytest.mark.parametrize(
+    "terminal_status",
+    ["FAILED_RUNTIME", "FAILED_NO_RESOURCE", "CANCELED", "STOPPED", "FAILED_CUSTOM"],
+)
+def test_wait_for_terminal_recognizes_canonical_failure_variants(
+    monkeypatch, terminal_status: str
+) -> None:
+    module = _load_module()
+    calls: list[str] = []
+    monkeypatch.setattr(
+        module,
+        "workflow_status",
+        lambda *_args, **_kwargs: (
+            calls.append("status") or type("Status", (), {"status": terminal_status})()
+        ),
+    )
+    monkeypatch.setattr(
+        module.time,
+        "sleep",
+        lambda _seconds: (_ for _ in ()).throw(AssertionError("slept")),
+    )
+
+    final, diagnostics = module._wait_for_terminal(
+        "run", sky_bin="sky", wait_timeout=-1, poll_interval=1
+    )
+
+    assert final.status == terminal_status
+    assert calls == ["status"]
+    assert diagnostics["terminal"] is True
+    assert diagnostics["polls"] == 1
+
+
 def test_wait_timeout_less_than_negative_one_is_rejected() -> None:
     module = _load_module()
     with pytest.raises(ValueError, match="must be -1"):
