@@ -236,9 +236,22 @@ def test_source_fidelity_prompt_policy_is_deterministic_and_fail_mode_specific(
         }
         assert combo["surface_finish"] in {
             "satin softly reflective work-surface finish",
-            "fine canvas-textured work-surface finish",
+            "matte low-gloss work-surface finish",
         }
         assert "blue" not in combo["prompt"].lower()
+
+    corrected_quality_seed = dfs.generate_configs(
+        str(tmp_path / "corrected-quality-seed.json"),
+        n_augmentations=2,
+        augmentation_seed="4",
+        prompt_policy=dfs.SOURCE_FIDELITY_PROMPT_POLICY,
+    )
+    assert corrected_quality_seed["augmentations"][1]["surface_finish"] == (
+        "matte low-gloss work-surface finish"
+    )
+    assert "matte low-gloss work-surface finish" in (
+        corrected_quality_seed["augmentations"][1]["prompt"]
+    )
 
 
 def test_source_fidelity_v2_prompt_policy_remains_replay_compatible(

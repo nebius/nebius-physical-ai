@@ -455,7 +455,7 @@ an unsupported modality now fails closed instead.
 Example:
 
 ```bash
-npa workbench workflow submit nvidia-paidf-vda-cosmos-transfer25.yaml --run-id <id> \
+npa workbench workflow submit workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml --run-id <id> \
   --var augment_control=seg \
   --var augment_control_prompt="robot arm, conveyor, bin" \
   --var augment_mask_prompt="robot arm"

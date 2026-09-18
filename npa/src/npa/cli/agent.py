@@ -926,17 +926,14 @@ def _bootstrap_agent_stack(
         name=agent_name,
         require_clean=False,
     )
-    # This check runs before staging source, writing manifests, or restarting
-    # services. A stale/missing local record cannot authorize overwriting a VM
-    # that is still advertising a different immutable owner.
+    # Refuse a stale deployment owner before staging source or restarting services.
     installed = assert_remote_owner_if_present(
         ssh, deployment, backend_port=backend_port
     )
     if resume_services and installed.get("bootstrap_timestamp"):
-        deployment = {
-            **deployment,
-            "bootstrap_timestamp": installed["bootstrap_timestamp"],
-        }
+        deployment = dict(
+            deployment, bootstrap_timestamp=installed["bootstrap_timestamp"]
+        )
     deployment_json = json.dumps(deployment, sort_keys=True)
     deployment_b64 = base64.b64encode(deployment_json.encode("utf-8")).decode("ascii")
     preload_stock_demo_value = "1" if preload_stock_demo else "0"

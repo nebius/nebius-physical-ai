@@ -227,7 +227,7 @@ SOURCE_FIDELITY_APPEARANCE_PROFILES: tuple[dict[str, str], ...] = (
         "lighting": "bright directional daylight with clear side shadows",
         "background": "solid terracotta work surface beneath the manipulation",
         "color_grade": "warm earth-tone work-surface palette",
-        "surface_finish": "fine canvas-textured work-surface finish",
+        "surface_finish": "matte low-gloss work-surface finish",
     },
     {
         "lighting": "balanced overhead studio illumination",
@@ -1267,8 +1267,8 @@ def generate_configs(
     augment_subject: str = "",
     augmentation_seed: str = "",
     quality_anchor_uri: str = "",
-    prompt_policy: str = "",
     appearance_profiles_json: str = "",
+    prompt_policy: str = "",
 ) -> dict[str, Any]:
     """Sample appearance-only augmentation combos and write a real config manifest.
 
@@ -1294,8 +1294,8 @@ def generate_configs(
         augment_subject: Source scene/task description.
         augmentation_seed: Reproducible appearance sampling seed.
         quality_anchor_uri: Optional prior accepted appearance selection.
-        prompt_policy: Optional source-fidelity prompt contract.
         appearance_profiles_json: Optional JSON profiles, incompatible with anchors.
+        prompt_policy: Optional source-fidelity prompt contract.
     Returns:
         Published configuration manifest, including its destination.
     Raises:

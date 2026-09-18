@@ -663,9 +663,15 @@ def test_attribute_verifier_builds_begin_middle_end_contact_sheet(
 def test_source_relative_change_crop_excludes_source_restored_foreground() -> None:
     from PIL import Image
 
-    reference = Image.new("RGB", (128, 96), color=(190, 190, 190))
-    generated = reference.copy()
-    generated.paste((225, 45, 20), (4, 4, 82, 92))
+    size = (160, 120)
+    source_surface = (190, 190, 190)
+    changed_surface = (225, 45, 20)
+    source_foreground = (35, 125, 65)
+    protected_foreground = (52, 30, 108, 90)
+    reference = Image.new("RGB", size, color=source_surface)
+    reference.paste(source_foreground, protected_foreground)
+    generated = Image.new("RGB", size, color=changed_surface)
+    generated.paste(source_foreground, protected_foreground)
 
     crop = av._source_relative_change_crop(
         generated=generated,
@@ -674,10 +680,11 @@ def test_source_relative_change_crop_excludes_source_restored_foreground() -> No
     )
     pixels = np.asarray(crop)
 
-    assert crop.width < generated.width
+    # The largest verified rectangle may sit on any side of the protected
+    # source-derived foreground, but it must contain only the changed surface.
+    assert crop.width < generated.width or crop.height < generated.height
     assert crop.width * crop.height < generated.width * generated.height
-    assert float(pixels[:, :, 0].mean()) > 200.0
-    assert float(pixels[:, :, 1].mean()) < 80.0
+    assert np.all(pixels == np.asarray(changed_surface))
 
 
 def test_source_relative_change_crop_fails_when_no_material_change_exists() -> None:

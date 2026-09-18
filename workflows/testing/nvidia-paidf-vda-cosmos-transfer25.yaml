@@ -419,6 +419,7 @@ states:
         - "{{config.augment_subject}}"
         - "{{config.augmentation_seed}}"
         - "{{config.quality_anchor_uri}}"
+        - ""  # Keep the reviewed source-fidelity appearance profile table.
         - "{{config.prompt_policy}}"
     outputs:
       - uri: "{{config.configs_uri}}manifest.json"
