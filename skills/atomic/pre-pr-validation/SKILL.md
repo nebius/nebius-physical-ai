@@ -7,10 +7,15 @@ description: Use before pushing an npa change to pick which gates apply and run 
 
 Every pull request has one automatic candidate workflow. It runs lint, docs
 drift, guardrails, smoke feedback, security regressions, secret scanning, and
-confidentiality scanning. The merge queue additionally runs browser and focused
+confidentiality scanning. Recognized subsystem changes also run affected Python
+tests, with Cypress for agent/browser changes. Unknown or shared changes receive
+the full suite before queue admission. The merge queue runs browser and focused
 compatibility checks alongside the complete five-shard Python 3.12 coverage suite
-against the latest `main`; a daily audit covers all supported Python versions
-without competing with the next merge-queue candidate after every merge.
+against the latest `main`, except for narrowly recognized prose edits. Those keep
+smoke and every documentation, repository, and security gate. See
+`CONTRIBUTING.md` for the trusted-base selector and conservative exception rules.
+A daily audit covers all supported Python versions without competing with the
+next merge-queue candidate after every merge.
 `Security regression / security-regression` requires
 every candidate component and the reusable image-security workflow.
 The required workflows have no top-level path filters. Image scope is classified

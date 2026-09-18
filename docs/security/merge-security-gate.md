@@ -5,9 +5,14 @@ runs **Security regression / security-regression**. It is the only automatic PR
 workflow and atomically owns test, lint, guardrail, gitleaks, confidentiality,
 source-scanner, image-security, and hostile-input jobs. A superseding PR commit
 cancels that complete gate rather than leaving work in six workflow queues.
-Ordinary PRs receive fast smoke feedback; merge-queue candidates run browser and
-compatibility checks alongside the full duration-balanced coverage suite against
-the latest `main` before merging. The full three-interpreter test audit runs
+PRs receive smoke and affected subsystem tests, with browser coverage for
+agent/UI changes and full tests for unknown/shared changes. Merge-queue candidates
+run browser and compatibility checks alongside the full duration-balanced
+coverage suite against the latest `main`. The narrow prose-only exception
+described in [the contributor CI guide](../../CONTRIBUTING.md) retains smoke,
+documentation, lint, guardrails, and every security gate. The test selector comes
+from the trusted base commit; missing policy keeps full validation and invalid
+comparisons fail. The full three-interpreter test audit runs
 daily instead of immediately after each merge, so it cannot consume the hosted
 runner slots needed by the next queue candidate.
 
