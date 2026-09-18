@@ -89,6 +89,9 @@ existing images. The published r4 image predates this option. Use source staging
 with `config.source_overlay: true` on the pinned image, or a newer image that
 contains this implementation. Record the source fingerprint separately from
 the image digest; the r4 release qualification does not qualify a source overlay.
+For subsequent submissions, pin that exact content-addressed source URI in
+`NPA_SRC_S3_URI` and use a fresh isolated runtime directory. A shared project's
+saved source default can change when another operator stages a package.
 
 ```bash
 npa workbench isaac-arena capabilities
