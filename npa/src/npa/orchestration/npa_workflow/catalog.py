@@ -2639,6 +2639,18 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.save_total_limit}}",
         ],
     ),
+    "workflow.xr1.finetune": ToolEntry(
+        name="workflow.xr1.finetune",
+        description="Fine-tune pinned Xiaomi XR1 on verified physical Antioch demonstrations.",
+        argv_template=[
+            "python3", "-m", "npa.workflows.xr1_antioch.training", "run",
+            "--input-path", "{{config.dataset_uri}}",
+            "--assets-path", "{{config.assets_uri}}",
+            "--runtime-path", "{{config.runtime_uri}}",
+            "--output-path", "{{config.training_uri}}",
+            "--work-path", "/tmp/xr1-finetune",
+        ],
+    ),
     "workflow.groot.preflight_rigor": ToolEntry(
         name="workflow.groot.preflight_rigor",
         description="Fail before GPU scheduling when the declared learning contract is incoherent.",

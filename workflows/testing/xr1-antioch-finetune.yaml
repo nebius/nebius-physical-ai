@@ -1,0 +1,39 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: xr1-antioch-finetune
+  description: >
+    Fine-tune Xiaomi-Robotics-1 5B on synchronized Antioch camera, proprioception,
+    and issued Cartesian action demonstrations. Select weights with disjoint
+    validation episodes and publish verified checkpoints to Nebius S3. The
+    operator-side Antioch connection performs separate closed-loop evaluation.
+config:
+  bucket: example-bucket
+  dataset_uri: s3://{{config.bucket}}/xr1-antioch/dataset
+  assets_uri: s3://{{config.bucket}}/xr1-antioch/assets
+  runtime_uri: s3://{{config.bucket}}/xr1-antioch/runtime
+  training_uri: s3://{{config.bucket}}/xr1-antioch/{{run.id}}/training
+  source_overlay: true
+resources:
+  trainer:
+    cloud: kubernetes
+    image: pytorch/pytorch@sha256:a7103283ea7113e10ae5d014bd2342acebda0bc53164b2f7b1dd6eb7a766bdb6
+    accelerators: RTXPRO6000:8
+    cpus: 128
+    memory: 1024Gi
+initial: finetune
+states:
+  finetune:
+    description: Native XR1 flow and action-choice losses, train-only statistics, and held-out checkpoint selection.
+    toolRef: workflow.xr1.finetune
+    resources: trainer
+    inputs:
+      - {uri: "{{config.dataset_uri}}/split-manifest.json", schema: npa.xr1-antioch.split.v1}
+      - {uri: "{{config.assets_uri}}/checksums.json", schema: npa.artifact.sha256.v1}
+      - {uri: "{{config.runtime_uri}}/manifest.json", schema: npa.xr1-antioch.runtime.v1}
+    outputs:
+      - {uri: "{{config.training_uri}}/candidate/model_states.pt", schema: xiaomi.xr1.checkpoint.v1}
+      - {uri: "{{config.training_uri}}/candidate/training.json", schema: npa.xr1-antioch.training.v1}
+      - {uri: "{{config.training_uri}}/validation.jsonl", schema: npa.xr1-antioch.validation.v1}
+      - {uri: "{{config.training_uri}}/manifest.json", schema: npa.artifact.sha256.v1}
+    terminal: true

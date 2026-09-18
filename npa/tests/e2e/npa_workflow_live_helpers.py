@@ -260,6 +260,12 @@ def seed_live_workflow_inputs(
 
     from npa.clients.project_credentials import s3_client_for_project
 
+    if spec_name == "xr1-antioch-finetune.yaml":
+        pytest.skip(
+            "XR1 requires an operator-collected, sealed Antioch dataset, pinned model assets, "
+            "and a verified SM120 runtime. Follow docs/workbench/cookbooks/xr1-antioch.md."
+        )
+
     marker = f"{_live_s3_root(run_id)}/{spec_name.replace('.yaml', '')}"
     client = s3_client_for_project(e2e_project, allow_host_creds=True)
 
