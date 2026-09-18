@@ -227,10 +227,14 @@ OUTPUT_SIZE_LIMITS = {
     "solution_smoke_stderr.log": 16 * 1024 * 1024,
     "solution_smoke_stdout.log": 16 * 1024 * 1024,
 }
-FAILURE_OUTPUT_SIZE_LIMITS = {
+FAILURE_OUTPUT_REQUIRED_SIZE_LIMITS = {
     name: limit
     for name, limit in OUTPUT_SIZE_LIMITS.items()
     if name not in {"libero-bc-rnn-smoke.pth", "libero-smoke.json"}
+}
+FAILURE_OUTPUT_OPTIONAL_SIZE_LIMITS = {
+    name: OUTPUT_SIZE_LIMITS[name]
+    for name in ("libero-bc-rnn-smoke.pth", "libero-smoke.json")
 }
 MAX_OUTPUT_BYTES = 320 * 1024 * 1024
 OUTPUT_RECEIPT_NAME = "npa_upload_receipt.json"
@@ -3113,21 +3117,6 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
     prefix = parsed.path.lstrip("/")
     transaction_id = uuid4().hex
     transaction_prefix = prefix + ".npa-transactions/" + transaction_id + "/"
-    output_limits = (
-        OUTPUT_SIZE_LIMITS if smoke_exit_code == 0 else FAILURE_OUTPUT_SIZE_LIMITS
-    )
-    if set(os.listdir(root_fd)) != set(output_limits):
-        raise BootstrapRefusal("output differs from the exact artifact allowlist")
-    observed_total = sum(
-        os.stat(name, dir_fd=root_fd, follow_symlinks=False).st_size
-        for name in output_limits
-    )
-    if observed_total > MAX_OUTPUT_BYTES:
-        raise BootstrapRefusal("output exceeds the aggregate size budget")
-    snapshots = []
-    for name, limit in sorted(output_limits.items()):
-        payload, digest = _immutable_output_bytes(root_fd, name, limit)
-        snapshots.append((name, payload, digest))
     attempted: dict[str, dict[str, Any]] = {}
     receipts: list[dict[str, Any]] = []
     committed = False
@@ -3136,6 +3125,35 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
         lease_key, lease_etag, lease_version_id = _verify_output_lease(
             endpoint=endpoint, bucket=parsed.netloc
         )
+        if smoke_exit_code == 0:
+            output_limits = OUTPUT_SIZE_LIMITS
+        else:
+            observed_names = set(os.listdir(root_fd))
+            required_names = set(FAILURE_OUTPUT_REQUIRED_SIZE_LIMITS)
+            optional_names = set(FAILURE_OUTPUT_OPTIONAL_SIZE_LIMITS)
+            if not required_names <= observed_names or not observed_names <= (
+                required_names | optional_names
+            ):
+                raise BootstrapRefusal(
+                    "output differs from the exact failure artifact allowlist"
+                )
+            output_limits = {
+                **FAILURE_OUTPUT_REQUIRED_SIZE_LIMITS,
+                **{
+                    name: FAILURE_OUTPUT_OPTIONAL_SIZE_LIMITS[name]
+                    for name in sorted(optional_names & observed_names)
+                },
+            }
+        observed_total = sum(
+            os.stat(name, dir_fd=root_fd, follow_symlinks=False).st_size
+            for name in output_limits
+        )
+        if observed_total > MAX_OUTPUT_BYTES:
+            raise BootstrapRefusal("output exceeds the aggregate size budget")
+        snapshots = []
+        for name, limit in sorted(output_limits.items()):
+            payload, digest = _immutable_output_bytes(root_fd, name, limit)
+            snapshots.append((name, payload, digest))
         for name, payload, digest in snapshots:
             current_authorization = _storage_authorization(
                 output_prefix, run_id, endpoint
@@ -3210,7 +3228,6 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
             digest=receipt_sha256,
             attempted=attempted,
         )
-        committed = True
         _verify_output_lease(endpoint=endpoint, bucket=parsed.netloc)
         _release_output_lease(
             endpoint=endpoint,
@@ -3220,7 +3237,16 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
             version_id=lease_version_id,
         )
         lease_released = True
-    except Exception:
+        committed = True
+    except Exception as exc:
+        cleanup_errors: list[str] = []
+        if not committed:
+            try:
+                _cleanup_output_attempts(
+                    endpoint=endpoint, bucket=parsed.netloc, attempted=attempted
+                )
+            except BootstrapRefusal as cleanup_exc:
+                cleanup_errors.append(str(cleanup_exc))
         if not lease_released and "lease_key" in locals():
             try:
                 _release_output_lease(
@@ -3231,19 +3257,12 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
                     version_id=lease_version_id,
                 )
             except BootstrapRefusal as lease_exc:
-                raise BootstrapRefusal(
-                    "output transaction lease cleanup is incomplete"
-                ) from lease_exc
-        if not committed:
-            try:
-                _cleanup_output_attempts(
-                    endpoint=endpoint, bucket=parsed.netloc, attempted=attempted
-                )
-            except BootstrapRefusal as cleanup_exc:
-                raise BootstrapRefusal(
-                    "output transaction failed and exact-object cleanup is incomplete; "
-                    "retry the same run to reconcile uncommitted outputs"
-                ) from cleanup_exc
+                cleanup_errors.append(str(lease_exc))
+        if cleanup_errors:
+            raise BootstrapRefusal(
+                "output transaction cleanup is incomplete: "
+                + "; ".join(cleanup_errors)
+            ) from exc
         raise
     return {
         "schema": "npa.libero.output-upload.v2",

@@ -266,7 +266,8 @@ def test_libero_profile_binds_payload_identity_customer_authorization_and_headle
     assert 'OUTPUT_RECEIPT_SCHEMA = "npa.libero.s3-upload-readback.v2"' in bootstrap
     assert 'OUTPUT_RECEIPT_NAME = "npa_upload_receipt.json"' in bootstrap
     assert "current_authorization = _storage_authorization" in bootstrap
-    assert "set(os.listdir(root_fd)) != set(output_limits)" in bootstrap
+    assert "FAILURE_OUTPUT_REQUIRED_SIZE_LIMITS" in bootstrap
+    assert "FAILURE_OUTPUT_OPTIONAL_SIZE_LIMITS" in bootstrap
     assert "MAX_OUTPUT_BYTES" in bootstrap
     assert "STORAGE_SECRET_ENV_NAMES" in bootstrap
     assert "_execution_uid_processes()" in bootstrap
