@@ -23,7 +23,7 @@ unique and must be tested with its own upstream-named capabilities.
 | MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_task_registration` | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
 | Enactic OpenArm (**public image; Isaac runtime qualification pending customer authorization**) | `enactic/openarm_mujoco` `2.2.0` + `enactic/openarm_isaac_lab` `bad82e…` | `openarm_mujoco_bimanual_rollout` + `Isaac-Reach-OpenArm-v0` | MuJoCo/retained Isaac observations and RSL-RL checkpoint | `openarm-simulators.yaml` |
-| OpenPI (qualification pending) | `Physical-Intelligence/openpi` `15a9616a…` | connected direct / cross-pod serve / LoRA optimizer smoke / held-out evaluation (not runnable until direct customer-controlled terms evidence is bound) | retained reports are historical only; `openpi_pi05_droid_jointpos_polaris_inference.json` remains the artifact name, but no checkpoint or capability is qualified for build/download | `byof-openpi.yaml` → `openpi-pi05-four-mode.yaml`; workflow remains refusal-only until customer-run authorization |
+| OpenPI (qualification pending) | `Physical-Intelligence/openpi` `15a9616a…` | connected direct / cross-pod serve / LoRA optimizer smoke / held-out evaluation (refusal-only until direct customer-controlled terms evidence is bound) | retained reports are historical only; `openpi_pi05_droid_jointpos_polaris_inference.json` remains the artifact name, but no checkpoint or capability is qualified for download or execution; the payload-free image may be built and scanned | `byof-openpi.yaml` → `openpi-pi05-four-mode.yaml`; workflow remains refusal-only for checkpoint/runtime use until customer-run authorization |
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
 | Open Dreamer (world model, **2-GPU min**) | `next-state/open-dreamer` `2b10640` | `dreamer4_tokenizer_train_two_gpu` | `open_dreamer_world_model_2gpu.json` | `byof-open-dreamer.yaml` |
 | Alibaba Wan 2.2 TI2V-5B | `Wan-Video/Wan2.2` `42bf4cf…` | `wan2.2_ti2v_5b_text_to_video` | capability JSON + runtime inventory + MP4 | `byof-wan2.2.yaml` |
@@ -47,7 +47,7 @@ unique and must be tested with its own upstream-named capabilities.
 | Enactic OpenArm | `openarm_mujoco_bimanual_rollout` | **accepted** | exact public development digest: 500 real `mj_step` calls, finite joint/command/energy trace, and fully decoded 100-frame H.264 render |
 | Enactic OpenArm | `Isaac-Reach-OpenArm-v0` rollout | **historical; qualification pending customer authorization** | retained digest on RTX PRO 6000: 64 environments × 100 PhysX/CUDA observations with finite rewards and policy observations |
 | Enactic OpenArm | `Isaac-Reach-OpenArm-v0` RSL-RL training | **historical; qualification pending customer authorization** | retained digest: upstream trainer completed one iteration and emitted an independently validated serialized Torch checkpoint |
-| OpenPI | `pi05_droid_jointpos_polaris_checkpoint_download` | **qualification pending** | Historical B200 evidence retained only; direct customer-controlled terms evidence is required before any build/download and the legacy boolean is not acceptance evidence |
+| OpenPI | `pi05_droid_jointpos_polaris_checkpoint_download` | **qualification pending** | Historical B200 evidence retained only; direct customer-controlled terms evidence is required before checkpoint download/use; a payload-free image may be built and scanned, and the legacy boolean is not acceptance evidence |
 | OpenPI | `pi05_droid_jointpos_polaris_direct_infer` | **qualification pending** | Historical digest-pinned result retained only; capability remains unqualified pending the customer-run authorization |
 | OpenPI | `pi05_droid_jointpos_polaris_served_infer` | **qualification pending** | Historical builder regression retained only; no current acceptance claim |
 | OpenPI | `pi05_droid_jointpos_polaris_cross_pod_serve` | **qualification pending** | Historical connected result retained only; no current acceptance claim |
@@ -176,7 +176,7 @@ not establish that authorization. See [OpenArm](openarm.md) and
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
-| `pi05_droid_jointpos_polaris_checkpoint_download` | qualification pending | historical live evidence retained only; direct customer-controlled terms evidence required before any build/download |
+| `pi05_droid_jointpos_polaris_checkpoint_download` | qualification pending | historical live evidence retained only; direct customer-controlled terms evidence required before checkpoint download/use; a payload-free image may be built and scanned |
 | `pi05_droid_jointpos_polaris_direct_infer` | qualification pending | historical live evidence retained only; capability is not currently qualified |
 | `pi05_droid_jointpos_polaris_served_infer` | qualification pending | historical live evidence retained only; capability is not currently qualified |
 | `pi05_droid_jointpos_polaris_cross_pod_serve` | qualification pending | historical live evidence retained only; capability is not currently qualified |

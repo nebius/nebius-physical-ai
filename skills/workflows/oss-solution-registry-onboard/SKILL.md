@@ -241,9 +241,10 @@ customer-controlled key, bound to the customer, run, exact terms, runtime
 manifest, and immutable qualified image when available, before any cache or
 network mutation. The manager/control plane may authenticate, transport, and
 validate that evidence but never accept, acknowledge, issue, or sign the
-customer's terms decision. The signer public key is transported owner-private
-and must byte-match the customer-signed evidence; no customer signer trust root
-or fingerprint is baked into the neutral image. Keep the payload on its
+customer's terms decision. An optional transported copy of the signer public key
+is owner-private; when supplied, it must byte-match the customer-signed evidence.
+The authenticated caller assertion remains the required signer-fingerprint binding.
+No customer signer trust root or fingerprint is baked into the neutral image. Keep the payload on its
 pods/get-only account and require the separately precreated, non-wildcard
 controller Role to pass exact namespaced and no-ClusterRoleBinding checks
 before submission.
@@ -327,8 +328,9 @@ This checkpoint contains Gemma-derived material. The existing
 and compatibility wiring; it is never customer acceptance evidence. Before any
 accepted checkpoint, a future customer-run authorization must bind direct,
 customer-controlled terms evidence. Until that migration is complete, every
-OpenPI checkpoint and capability remains unqualified and must not build or
-download. If a separately authorized customer-run checkpoint gate is used,
+OpenPI checkpoint and capability remains unqualified and must not download, load,
+or execute. The payload-free OpenPI image may still be built and scanned without
+terms evidence; it must contain no checkpoint bytes. If a separately authorized customer-run checkpoint gate is used,
 forward the marker only through the secret channel and never bake or persist it
 (`Forward it only as a runtime secret`). The image contains the pinned
 Apache-2.0 source and CUDA/JAX runtime, not checkpoint bytes. A tiny
