@@ -7,6 +7,10 @@ generated video against the complete source before using it as training data.
 The starter's exploratory acceptance thresholds establish neither contact
 correctness nor task success.
 
+The [LeRobot comparison](paidf-lerobot-realism.md) applies the review to pinned
+cup-opening, coffee-preparation and simulated cube-lift episodes, with a matched
+native sampling experiment for each task.
+
 ## Define the edit before generation
 
 Inspect the selected episode and camera. Name the objects, small task features,
