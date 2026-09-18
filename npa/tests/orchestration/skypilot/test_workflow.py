@@ -120,6 +120,99 @@ def _fake_sky(tmp_path: Path) -> Path:
     return sky
 
 
+def _terminal_native_submit_options(monkeypatch, tmp_path, confidential):
+    options = {}
+    if confidential:
+        path, bridge, target, report, env = _robotwin_bridge_fixture(monkeypatch, tmp_path)
+        authorization = bridge.authorization
+
+        def preflight(documents, **_kwargs):
+            documents[1]["resources"]["region"] = authorization.kubernetes_context
+            return target, report, {}
+
+        monkeypatch.setattr(workflow_module, "_execution_preflight", preflight)
+        options.update(
+            robotwin_submit_context=bridge, extra_env=env,
+            config_path=Path(authorization.skypilot_config_source),
+            infra=f"k8s/{authorization.kubernetes_context}", project=authorization.project,
+            execution_target=target, execution_preflight_report=report,
+            secret_envs=_robotwin_secret_envs(env),
+        )
+    else:
+        path = tmp_path / "workflow.yaml"
+        path.write_text("name: synthetic\nresources:\n  cloud: kubernetes\n")
+    return path, options
+
+
+def _terminal_native_boundaries(monkeypatch, sky, statuses, handles):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+
+    native = NativeLaunchResult("attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64)
+    launches, queue_calls = [], []
+
+    def launch(*_args, **_kwargs):
+        assert handles[0].active and handles[0].submitting
+        launches.append(native)
+        return native, lambda: native.context
+
+    def command_run(command, **kwargs):
+        if _is_status_cmd(command):
+            return _healthy_status(command)
+        assert command == [str(sky), "jobs", "queue", "--all", "--output", "json"]
+        rows = []
+        if launches:
+            assert kwargs["env"] == handles[0].environment
+            rows = [{"job_id": 41, "job_name": "synthetic-terminal", "task_id": task,
+                     "status": status} for task, status in enumerate(statuses)]
+        queue_calls.append(rows)
+        return subprocess.CompletedProcess(command, 0, json.dumps(rows), "")
+
+    monkeypatch.setattr(workflow_module, "run_launch_transaction", _REAL_RUN_LAUNCH_TRANSACTION)
+    monkeypatch.setattr(workflow_module, "_run_native_launch", launch)
+    monkeypatch.setattr(workflow_module, "_wait_for_healthy_jobs_controller", lambda *_a, **_k:
+                        workflow_module.ControllerHealthResult(workflow_module.ControllerState.UP,
+                                                               "synthetic-controller"))
+    monkeypatch.setattr(subprocess, "run", command_run)
+    return native, launches, queue_calls
+
+
+@pytest.mark.parametrize("confidential", (False, True))
+@pytest.mark.parametrize("statuses", (
+    ("FAILED", "FAILED"), ("CANCELLED", "CANCELLED"),
+    ("SUCCEEDED", "FAILED_SETUP"), ("SUCCEEDED", "CANCELLED"),
+))
+def test_native_terminal_tasks_fail_submit_without_cleanup_authority(monkeypatch, tmp_path, confidential, statuses):
+    from npa.orchestration.skypilot.launch_transaction import EvidenceState, ProbeObservation, StabilityPolicy
+
+    path, options = _terminal_native_submit_options(monkeypatch, tmp_path, confidential)
+    sky, handles, records = _fake_sky(tmp_path), [], []
+    native, launches, queue_calls = _terminal_native_boundaries(monkeypatch, sky, statuses, handles)
+
+    def ready(handle):
+        handle.cleanup_on_failure = True
+        handles.append(handle)
+
+    with pytest.raises(SkyPilotSubmitError, match="terminally failed or cancelled") as caught:
+        submit_workflow(
+            path, "synthetic-terminal", sky_bin=sky,
+            isolated_config_dir=tmp_path / "sky-state", on_launch_ready=ready,
+            transaction_recorder=records.append,
+            stability_probe=lambda: ProbeObservation(EvidenceState.READY),
+            stability_policy=StabilityPolicy(2, 0, 0, 1),
+            launch_lock_root=tmp_path / "locks", **options,
+        )
+    transaction, cleanup = caught.value.transaction, handles[0]
+    assert transaction.state is LaunchState.TERMINAL_FAILURE and not transaction.ok
+    assert transaction.launch_result is native and transaction.job_id == "41"
+    assert transaction.reconciliations[-1]["status"] == "CANCELLED"
+    assert launches == [native] and len(queue_calls) == 2
+    assert not cleanup.native_verified and not cleanup.verified and not cleanup.job_id
+    assert cleanup.native_result is None and cleanup.config_path.is_file()
+    assert not cleanup.request().verified
+    assert len(queue_calls) == 2 and cleanup.config_path.is_file()
+    assert all(record["state"] not in {"submitted", "adopted"} for record in records)
+
+
 def _robotwin_bridge_fixture(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> tuple[Path, object, object, dict[str, object], dict[str, str]]:

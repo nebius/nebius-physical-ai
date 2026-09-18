@@ -101,12 +101,13 @@ def test_native_transaction_never_adopts_or_retries_uncertain_identity(tmp_path,
     assert all(record["state"] not in {"adopted", "submitted"} for record in records)
 
 
-def test_native_transaction_distinguishes_success_from_reconciliation(tmp_path):
+@pytest.mark.parametrize("status", ("RUNNING", "SUCCEEDED"))
+def test_native_transaction_distinguishes_success_from_reconciliation(tmp_path, status):
     from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
 
     result = NativeLaunchResult("attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64)
     observations = iter([ReconciliationEvidence(ReconciliationState.ABSENT),
-                         ReconciliationEvidence(ReconciliationState.FOUND, job_id="41", status="RUNNING")])
+                         ReconciliationEvidence(ReconciliationState.FOUND, job_id="41", status=status)])
     transaction = run_launch_transaction(
         logical_id="synthetic", readiness=_stable, launch=lambda: result,
         reconcile=lambda: next(observations), classify_launch_error=_transient,
@@ -116,6 +117,44 @@ def test_native_transaction_distinguishes_success_from_reconciliation(tmp_path):
     assert transaction.launch_result is result
     assert transaction.identity_source == "native_request_result"
     assert "request" not in transaction.to_dict() and "context" not in transaction.to_dict()
+    assert transaction.reconciliations[-1]["status"] == status
+
+
+@pytest.mark.parametrize("status", (
+    "FAILED", "CANCELLED", "FAILED_SETUP", "FAILED_PRECHECKS",
+    "FAILED_CONTROLLER", "CANCELED", "STOPPED", "failed_runtime",
+))
+def test_native_terminal_failure_retains_identity_without_retry(tmp_path, status):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+
+    native = NativeLaunchResult("attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64)
+    launches, records = [], []
+    observations = iter([
+        ReconciliationEvidence(ReconciliationState.ABSENT),
+        ReconciliationEvidence(ReconciliationState.FOUND, job_id="41", status=status),
+    ])
+
+    def launch():
+        launches.append(native)
+        return native
+
+    with pytest.raises(LaunchTransactionError, match="terminally failed or cancelled") as caught:
+        run_launch_transaction(
+            logical_id="synthetic", readiness=_stable, launch=launch,
+            reconcile=lambda: next(observations), classify_launch_error=_transient,
+            require_native_result=True, lock_root=tmp_path, record=records.append,
+            sleeper=lambda _delay: pytest.fail("failed native job must not retry"),
+        )
+    transaction = caught.value.result
+    assert transaction.state is LaunchState.TERMINAL_FAILURE and not transaction.ok
+    assert transaction.category is FailureCategory.WORKLOAD
+    assert transaction.launch_result is native and transaction.job_id == native.job_id
+    assert transaction.identity_source == "native_request_result"
+    assert transaction.existence == "found" and transaction.launch_sequence == 1
+    assert launches == [native]
+    assert all(record["state"] not in {"submitted", "adopted"} for record in records)
+    assert records[-1]["recovery_decision"] == "retain_native_terminal_failure_no_retry"
+    assert native.request_id not in str(records) and native.context not in str(records)
 
 
 def test_consecutive_readiness_requires_count_and_full_window() -> None:

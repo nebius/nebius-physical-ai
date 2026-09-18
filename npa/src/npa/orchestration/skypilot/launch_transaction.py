@@ -879,10 +879,26 @@ def _finish_native_transaction(transaction, result, reconcile, checkpoint):
         transaction.recovery_decision = "retain_native_identity_conflict_no_retry"
         checkpoint()
         _raise_result(transaction)
-    transaction.state = LaunchState.SUBMITTED
     transaction.existence = "found"
     transaction.job_id = result.job_id
     transaction.launch_result = result
     transaction.identity_source = "native_request_result"
+    if is_terminal_failure_job_status(evidence.status):
+        _fail_native_terminal_transaction(transaction, checkpoint)
+    transaction.state = LaunchState.SUBMITTED
     transaction.recovery_decision = "native_result_and_complete_tasks_verified"
     checkpoint()
+
+
+def _fail_native_terminal_transaction(transaction, checkpoint):
+    # A successful API request does not turn a failed workload into a submission.
+    transaction.state = LaunchState.TERMINAL_FAILURE
+    transaction.category = FailureCategory.WORKLOAD
+    transaction.primary_error = "native managed job is terminally failed or cancelled"
+    transaction.recovery_decision = "retain_native_terminal_failure_no_retry"
+    transaction.operator_remedy = (
+        "Preserve the original private context; this failed transaction grants no "
+        "cleanup authority. Do not resubmit or adopt by name."
+    )
+    checkpoint()
+    _raise_result(transaction)
