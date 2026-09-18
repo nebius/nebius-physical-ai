@@ -55,7 +55,7 @@ and makes no newer-maintenance claim.
 | Baked runtime | Public delivery is the objective, not accepted eligibility. Exact inherited and installed copyleft/source delivery, native wheel closure, all layers, notices, and built-byte verification remain pending. |
 | Weights | None. Any model, checkpoint, or weight path is forbidden. |
 | Data/assets | The image contains no scene. The smoke runtime-fetches only the official Meta archive and verifies the entire archive plus the exact Skokloster GLB/navmesh members. |
-| Runtime cache | Unique, mode-restricted, bounded, and ephemeral. Partial/archive bytes are removed on every outcome, and unrelated archive members are never extracted. |
+| Runtime cache | Unique, mode-restricted, bounded, and ephemeral. Cleanup of partial/archive bytes is attempted on every outcome; failures are reported without masking the initiating error, and operators must verify the cache location is clear. Unrelated archive members are never extracted. |
 | Outputs | Operator-owned RGB/depth and JSON artifacts preserve title, creator, scan credit, CC BY link, original asset URL, modification notice, source/image identity, and archive/member hashes. They are never image inputs or public CI artifacts. |
 
 Runtime fetch changes delivery only. It does not create permission, terms

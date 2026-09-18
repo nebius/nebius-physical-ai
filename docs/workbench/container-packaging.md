@@ -126,7 +126,7 @@ Strongly recommended for `service` images:
 
 The workbench is open source, and images should be pullable widely — but "widely"
 has a license boundary that the contract encodes in a `redistribution` field per
-image (`public` | `restricted`), enforced by
+image (`public` | `restricted` | `unvalidated`), enforced by
 `npa/tests/docker/test_packaging_contract.py`.
 
 - **`public`** — Every shipped component has reviewed permission for public
@@ -137,6 +137,11 @@ image (`public` | `restricted`), enforced by
   Cosmos Reason1, and Cosmos3 Nano assets work anonymously; gated Cosmos assets require a token at
   **runtime** by the operator, never baked into the image. These may be published
   to a public/anonymous registry.
+
+  **`unvalidated`** — The intended packaging shape is recorded, but complete
+  corresponding-source closure, built-byte verification, or both remain
+  unproved. An `unvalidated` image is not eligible for public publication or
+  anonymous pull claims; keep it quarantined until the missing evidence passes.
 
   Public registry availability alone is not a grant for every component. For
   example, the current cuDNN supplement identifies runtime `.so` and `.dll`
