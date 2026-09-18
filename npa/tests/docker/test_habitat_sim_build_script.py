@@ -359,6 +359,15 @@ def test_cleanup_attempts_every_owned_target_preserving_original_exit(
         assert output.read_bytes() == b"synthetic OCI bytes\n"
 
 
+def test_cleanup_diagnostics_are_best_effort_and_status_preserving() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert "cleanup_warning() {" in source
+    assert "printf '%s\\n' \"$message\" >&2 || true" in source
+    cleanup = source.split("cleanup() {", 1)[1].split("trap cleanup", 1)[0]
+    assert cleanup.count("cleanup_warning") == 3
+    assert 'return "$original_status"' in cleanup
+
+
 def test_builder_refuses_a_committed_noncanonical_platform(tmp_path: Path) -> None:
     repository, script = _committed_fixture(tmp_path)
     env, log, _capture = _stubbed_environment(tmp_path)

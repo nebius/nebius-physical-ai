@@ -94,17 +94,21 @@ readonly source_paths=(
 projection="$(mktemp -d "${TMPDIR:-/tmp}/npa-habitat-source.XXXXXX")"
 chmod 0700 "$projection"
 output_temporary=
+cleanup_warning() {
+  local message="$1"
+  printf '%s\n' "$message" >&2 || true
+}
 cleanup() {
   local original_status=$?
   if ! rm -rf -- "$projection"; then
-    echo "warning: source projection cleanup failed" >&2
+    cleanup_warning "warning: source projection cleanup failed"
   fi
   if [[ -n "$output_temporary" ]]; then
     if ! rm -f -- "$output_temporary/candidate.oci.tar"; then
-      echo "warning: temporary OCI file cleanup failed" >&2
+      cleanup_warning "warning: temporary OCI file cleanup failed"
     fi
     if ! rmdir -- "$output_temporary"; then
-      echo "warning: temporary OCI directory cleanup failed" >&2
+      cleanup_warning "warning: temporary OCI directory cleanup failed"
     fi
   fi
   return "$original_status"
