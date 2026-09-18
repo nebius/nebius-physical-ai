@@ -61,8 +61,10 @@ Override Ubuntu default: `NPA_BYOF_UBUNTU_BASE_IMAGE` or `--base-image ubuntu:24
 The `isaac-lab` profile is not a generic runnable BYOF path. It used to bake NVIDIA
 Omniverse Kit, and the current image instead fetches Isaac Sim / Isaac Lab at first run
 under customer authorization. Until a generic customer/run-bound authorization channel
-is implemented and validated, all generic Isaac profile/build/run/publish claims are
-refusal-only; do not classify or promote them as a public capability.
+is implemented and validated, generic Isaac runtime-fetch, execution, live-validation,
+and runtime-qualification claims are refusal-only; payload-clean image builds, byte
+scans, and publication checks may proceed under the ordinary licensing and security
+gates without fetching or executing Isaac.
 
 Two consequences worth knowing when your BYOF solution runs on the `isaac-lab` base:
 
@@ -78,20 +80,24 @@ Two consequences worth knowing when your BYOF solution runs on the `isaac-lab` b
 
 The generic BYOF CLI and toolRef currently expose no generic customer-terms
 authorization-file input. Consequently every generic `isaac-lab`, LeIsaac, RL, and
-datagen BYOF path is refusal-only and cannot qualify a runtime until that owner-private,
-customer/run-bound input is added and validated. Do not work around the missing channel
-by setting `Y` directly; the LIBERO authorization-file option is scoped to LIBERO and is
-not a generic Isaac acceptance mechanism. The Isaac cache-warming manifest is disabled
-for this path: do not pre-warm or share its cache, and do not perform a first-start
-fetch, until a dedicated customer/run-bound authorization channel and fresh cache-scope
-validation exist.
+datagen runtime-fetch, execution, and live-qualification path is refusal-only until
+that owner-private, customer/run-bound input is added and validated. Payload-clean
+build, scan, and publication work remains allowed when it does not fetch, cache, or
+execute Isaac. Do not work around the missing channel by setting `Y` directly; the
+LIBERO authorization-file option is scoped to LIBERO and is not a generic Isaac
+acceptance mechanism. The Isaac cache-warming manifest is disabled for this path: do
+not pre-warm or share its cache, and do not perform a first-start fetch until a
+dedicated customer/run-bound authorization channel and fresh cache-scope validation
+exist.
 
 Every checked-in `byof*.yaml` declares `resources.*.image` from its own
 `config.base_image`. This preserves each solution's intended CUDA, Ubuntu, or
-tool image after removal of generic BYOF-to-Isaac image routing. Generic Isaac runs
-are refusal-only; do not set `base_profile=isaac-lab` or
-`base_image=tool://isaac-lab` through this generic path. Generic non-Isaac runs default
-to `ubuntu:22.04` and do not receive Isaac EULA environment variables.
+tool image after removal of generic BYOF-to-Isaac image routing. Generic Isaac runtime
+runs are refusal-only; payload-clean build and scan paths may still inspect an
+explicitly selected image without starting Isaac. Do not dispatch
+`base_profile=isaac-lab` or `base_image=tool://isaac-lab` through this generic runtime
+path. Generic non-Isaac runs default to `ubuntu:22.04` and do not receive Isaac EULA
+environment variables.
 
 ## Operator Entrypoint
 

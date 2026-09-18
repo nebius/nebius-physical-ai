@@ -29,10 +29,11 @@ Isaac Arena and OpenArm. The earlier 2026-09-12 audit covered 44 table reference
 re-audited on September 17. Capability results below remain tied to their
 original exact-digest evidence.
 
-For every Isaac-backed entry, those runtime observations are historical evidence
+For every Isaac-backed entry, Isaac runtime observations are historical evidence
 only until a new run binds direct customer-controlled authorization for the
-applicable NVIDIA terms. Digest, payload, and anonymous-pull checks remain
-publication evidence; they do not establish customer acceptance.
+applicable NVIDIA terms. Digest, payload, anonymous-pull, and non-Isaac
+capability checks remain independently valid publication evidence; none of them
+establishes customer acceptance or substitutes for runtime authorization.
 
 **Built** is the UTC build date of the newest listed variant, read from OCI
 `created`, or from the immutable timestamp/`npa.build_ts` when a reproducible
@@ -342,7 +343,7 @@ and populated caches remain absent from the public image.
 | Diffusers native generation and depth | `npa-diffusers` | `0.38.0-rtfetch-20260916` | 2026-09-16 | Pinned OSS runtime for Mochi 1, CogVideoX-2B, Wan 2.1 14B and Depth Anything V2 Small. All four native capabilities qualified on B200 at the exact public digest; CUDA and checkpoints fetched at runtime. |
 | LingBot World v1 | `npa-lingbot-world` | `a43bec7-rtfetch-20260916` | 2026-09-16 | Camera-conditioned video generation, qualified on four B200s with positive attention/all-to-all execution on every rank and 161 decoded frames. Authored camera poses; no robot-action or calibrated-geometry claim. |
 | SAM 2.1 Small | `npa-sam2` | `2.1-rtfetch-20260916` | 2026-09-16 | Native CUDA video-mask propagation from a first-frame box; raw arrays and color-preserving visualization qualified on B200. Predicted masks are not ground truth. |
-| Enactic OpenArm | `npa-openarm` | `2.2.0-isaac0.1.0-rtfetch` | 2026-09-15 | OpenArm v2 bimanual MuJoCo simulation plus retained upstream OpenArm Isaac Lab reach and RSL-RL observations. Apache-2.0 OpenArm source and simulator assets are baked; Isaac Sim/Lab are exact runtime fetches only after direct customer/run authorization. The digest and RTX observations remain historical pending that authorization. See [OpenArm](openarm.md). |
+| Enactic OpenArm | `npa-openarm` | `2.2.0-isaac0.1.0-rtfetch` | 2026-09-15 | OpenArm v2 bimanual MuJoCo simulation plus retained upstream OpenArm Isaac Lab reach and RSL-RL observations. Apache-2.0 OpenArm source and simulator assets are baked; Isaac Sim/Lab are exact runtime fetches only after direct customer/run authorization. The exact digest, byte/supply-chain evidence, and MuJoCo rollout remain current; only the Isaac runtime observations are historical pending that authorization. See [OpenArm](openarm.md). |
 
 The supported FiftyOne release uses loopback access through verified SSH or
 Kubernetes port-forwarding. Redeploy older versions to replace public listeners
