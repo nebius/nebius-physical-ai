@@ -55,6 +55,8 @@ ALLOWLIST: dict[tuple[str, ...], str] = {
     ("workflow", "pod"): "prose: 'npa workflow pod' (a Kubernetes pod)",
     # Deliberate negative example: the doc says not to invent this tool.
     ("workbench", "data-factory"): "negative example in physical-ai-data-factory/SKILL.md",
+    # Passthrough subcommands: `npa studio` forwards to npa.studio.run's argparse dispatcher (search/create), invisible to the Typer tree walk.
+    ("studio", "search"): "passthrough dispatched by npa.studio.run",
     # Known-stale references tracked by their own issues; remove the entry
     # when the referenced issue lands.
     ("workbench", "retargeting", "workflow"): "stale command; #520 tracks fixing the docs",
