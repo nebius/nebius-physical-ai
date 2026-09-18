@@ -650,6 +650,7 @@ def generate_configs(
     augment_subject: str = "",
     augmentation_seed: str = "",
     quality_anchor_uri: str = "",
+    appearance_profiles_json: str = "",
 ) -> dict[str, Any]:
     """Sample appearance-only augmentation combos and write a real config manifest.
 
@@ -662,7 +663,34 @@ def generate_configs(
 
     ``augmentation_seed`` optionally decouples appearance sampling from the run
     ID so controlled baseline/component comparisons receive identical prompts.
+    ``appearance_profiles_json`` optionally selects coherent task-specific profiles
+    and records their values in the evaluator option table; empty keeps defaults.
+
+    Args:
+        configs_uri: Destination manifest URI or directory.
+        n_augmentations: Number of sampled variants.
+        seed: Run identity used when augmentation_seed is absent.
+        input_uri: Prepared source artifact prefix.
+        seed_default_input: Compatibility alias for seed_fixture.
+        seed_fixture: Explicit opt-in to synthetic test input creation.
+        augment_subject: Source scene/task description.
+        augmentation_seed: Reproducible appearance sampling seed.
+        quality_anchor_uri: Optional prior accepted appearance selection.
+        appearance_profiles_json: Optional JSON profiles, incompatible with anchors.
+    Returns:
+        Published configuration manifest, including its destination.
+    Raises:
+        ValueError: Custom profiles are invalid or combined with an anchor.
+        RuntimeError: Requested fixture creation or artifact publication fails.
     """
+    from npa.workflows.data_factory_appearance import (
+        appearance_prompt, parse_appearance_profiles,
+    )
+
+    custom_profiles = parse_appearance_profiles(appearance_profiles_json)
+    if custom_profiles and quality_anchor_uri:
+        raise ValueError("custom appearance profiles cannot be combined with a quality anchor")
+    selected_profiles = custom_profiles or APPEARANCE_PROFILES
     try:
         n = int(n_augmentations)
     except (TypeError, ValueError):
@@ -677,6 +705,10 @@ def generate_configs(
     )
     anchor = _derive_quality_anchor(quality_anchor_uri)
     variables = {key: list(values) for key, values in APPEARANCE_VARIABLES.items()}
+    for profile in custom_profiles or []:
+        for key, value in profile.items():
+            if value not in variables[key]:
+                variables[key].append(value)
     if anchor:
         for key, value in anchor["variables"].items():
             if value not in variables[key]:
@@ -688,7 +720,7 @@ def generate_configs(
     if anchor:
         profiles.append(dict(anchor["variables"]))
     while len(profiles) < max(1, n):
-        cycle = [dict(profile) for profile in APPEARANCE_PROFILES]
+        cycle = [dict(profile) for profile in selected_profiles]
         rng.shuffle(cycle)
         profiles.extend(cycle)
     for profile_index, profile in enumerate(profiles[: max(1, n)]):
@@ -702,13 +734,18 @@ def generate_configs(
         )
         # The prompt is what actually conditions the Cosmos Transfer augmentation,
         # so the sampled appearance drives the pixels (not just a Rerun label).
-        combo["prompt"] = prompt_from_combo(combo, scene=subject)
+        combo["prompt"] = (
+            appearance_prompt(profile, subject) if custom_profiles
+            else prompt_from_combo(combo, scene=subject)
+        )
         combos.append(combo)
     manifest = {
         "schema": "npa.data_factory.configs.v1",
         "scene": subject,
         "n_augmentations": len(combos),
         "augmentation_seed": effective_augmentation_seed,
+        "appearance_profile_source": "custom" if custom_profiles else "default",
+        "appearance_profiles": [dict(profile) for profile in selected_profiles],
         "variables": variables,
         "augmentations": combos,
         "quality_anchor": (

@@ -1617,6 +1617,12 @@ def _run_interactive_configure(
     # Interactive configure offers storage by default because agent and workbench
     # data paths need it, but the user can decline before any storage mutation.
     if discovered_selection and provision:
+        typer.echo(
+            "  Creating object storage requires Nebius project-admin permissions. "
+            "If you do not have them, answer 'n' here (or re-run with "
+            "`npa configure --no-provision`) — a project admin can provision "
+            "storage separately."
+        )
         want_storage = ask(
             "Set up object storage (S3 bucket + access key) now? "
             "The agent VM, workflow submits (`stage-src`) and the Physical AI "
@@ -1956,6 +1962,13 @@ def _run_interactive_configure(
         f"Summary: mode={'provision' if provision else 'project-only'}; "
         f"project={alias or 'not set'}; storage={storage_disposition}; "
         "configuration=saved."
+    )
+    preflight_cmd = "npa workbench health preflight --checks nebius"
+    if alias:
+        preflight_cmd += f" --project {alias}"
+    typer.echo(
+        "Validate the setup (project, Nebius CLI auth, S3 reachability) with: "
+        f"`{preflight_cmd}`"
     )
     typer.echo(
         _skipped_model_access_note()
