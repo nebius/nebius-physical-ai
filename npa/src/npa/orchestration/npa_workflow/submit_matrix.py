@@ -307,6 +307,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "lerobot-subtask-proof.yaml",
+        "cpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes=(
+            "CPU-only post-review gate over real LeRobot v3 Parquet rows. The "
+            "harness seeds complete approach/grasp labels; the workflow publishes "
+            "a grasp proof bound to the source data-file digest."
+        ),
+    ),
+    SubmitLiveCase(
         "dataset-of-record-smoke.yaml",
         "cpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

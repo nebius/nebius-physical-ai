@@ -988,6 +988,28 @@ as shown in the R3a audit, then require **one passed test**, not a skip:
 )
 ```
 
+### R3c. Tune realistic manipulation augmentation
+
+For `lerobot/aloha_static_battery` or another manipulation task, follow the
+[realistic augmentation guide](../../docs/workbench/guides/paidf-realistic-augmentation.md).
+It provides a pinned battery input, configurable coherent appearance profiles,
+strict evaluation settings, controlled comparisons and contact-level review.
+The proposed sampling controls are an unqualified experiment; input preparation
+and unit tests do not establish generated-data quality.
+
+Set `appearance_profiles_json` through `--var` or a YAML multiline string to
+replace the starter appearance sampler for a run. Leave it empty to retain the
+starter profiles. Each JSON profile requires `lighting`, `background`,
+`color_grade` and `surface_finish`; validation rejects malformed or duplicate
+profiles. The config manifest records the exact profiles and evaluator options.
+Keep the same overrides in plan and submit, and reserve a fresh run ID for each
+experiment. Use R7 for owned cleanup after each run.
+
+`caption_instruction` supplies `augment_subject` as context for source captioning
+while requiring uncertainty and forbidding unsupported claims of motion or task
+completion from a still frame. Override it for camera-specific terminology and
+review the captions; task context does not establish what an image actually shows.
+
 ### R4. Monitor and recover
 
 In another terminal, restore the same project, run ID, and other R1 variables,
@@ -1101,9 +1123,12 @@ Use a fresh run ID after changing inputs or settings.
 | `conditioning_fps` | `24` | Preparation and generation frame rate, an integer from 10 through 30. Source duration is preserved within one output frame. |
 | `transfer_chunk_frames` | `93` | Native generation window, `4k+1` frames from 9 through 297. Longer videos use overlapping windows and retain complete source coverage. |
 | `control_guidance` | `1.5` | Native structural-control strength, greater than 0 and at most 10. |
+| `transfer_edge_threshold` | `medium` | Native Canny preset: `very_low`, `low`, `medium`, `high`, or `very_high`. Lower thresholds preserve weaker source edges but may retain noise; inspect controls and generated task details. |
+| `transfer_rgb_weight` | `0.0` | Optional native RGB conditioning weight relative to edge weight 1. Finite and nonnegative; 0 disables it. Requires edge transfer. Uses the native `blur` hint with preset `none`, retaining complete source RGB pixels as conditioning, never blending them into output. |
 | `prompt`, `negative_prompt`, `augment_subject` | See YAML | Generation intent and appearance sampling. Each effective prompt also includes source captions and the sampled appearance profile. |
 | `seed`, `guidance`, `steps` | `17`, `5.0`, `24` | Generation sampling. |
 | `variant_count`, `variant_parallelism` | `2`, `1` | Number of variants and concurrent generation workers, limited by visible GPUs. |
+| `appearance_profiles_json` | Empty | Optional JSON array of coherent task-specific profiles; see R3c. |
 | `augmentation_seed` | `30` | Fixed appearance profiles across fresh run IDs; change it for new appearance experiments. An empty value restores run-ID sampling. |
 | `refinement_iterations` | `2` | Maximum total generation/evaluation passes, including the initial pass. |
 | `retry_seed_stride`, `retry_guidance_delta`, `retry_steps_delta` | `1000`, `-0.5`, `4` | Changes per retry. The second pass starts at seed `1017`, guidance `4.5`, and `28` steps. |
@@ -1111,6 +1136,7 @@ Use a fresh run ID after changing inputs or settings.
 | `attribute_threshold` | `0.25` | Minimum fraction of requested appearance attributes correctly recognized per variant: at least 1 of the default 4 attributes. Every question must have a valid answer. |
 | `alignment_mode` | `required` | Decode and verify matching source/output timelines and generation hashes before quality scoring. |
 | `caption_model` | `MiniMaxAI/MiniMax-M3` | Hosted captioning model and evaluator visual-answer model; R1 selects an available model. |
+| `caption_instruction` | Task-aware factual description | Source captioning instructions; resolves `augment_subject` as context and asks for uncertainty about unclear features. |
 | `attribute_sample_policy` | `ranking` | Evaluator attribute-observation policy. |
 | `temporal_consistency_mode`, `temporal_consistency_threshold` | `advisory`, `0.8` | Source-relative temporal diagnostic. Related `temporal_*` keys configure regions, noise floor, and blur. |
 | `appearance_fidelity_mode`, `appearance_fidelity_threshold` | `advisory`, `0.8` | Protected-appearance diagnostic. Related `appearance_*` keys configure regions and tolerances. |

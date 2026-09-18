@@ -18,8 +18,10 @@ from npa.cli.fiftyone import (
     FIFTYONE_HEALTH_RETRIES,
     FIFTYONE_HEALTH_BACKOFF_SEC,
     FIFTYONE_VERSION,
+    _lerobot_importer_source,
     _run_fiftyone_command,
 )
+from npa.cli.fiftyone.subtasks import _subtask_export_python_script
 from npa.cli.main import app
 from npa.clients.ssh import SSHError
 from npa.clients import config as config_module
@@ -70,6 +72,7 @@ def _active_endpoint(url: str):
         "launch",
         "curate",
         "eval",
+        "export-lerobot-subtasks",
         "load-dataset",
         "restart",
         "open",
@@ -101,6 +104,73 @@ def test_fiftyone_load_dataset_help_includes_format_flag() -> None:
     assert result.exit_code == 0
     assert "--format" in output
     assert "lerobot" in output
+
+
+def test_fiftyone_export_lerobot_subtasks_requires_s3_output(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "export-lerobot-subtasks",
+            "--dataset-name",
+            "review",
+            "--output-path",
+            str(tmp_path / "derived"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--output-path must be an s3:// URI" in result.output
+
+
+def test_fiftyone_export_lerobot_subtasks_returns_remote_report(mocker) -> None:
+    ssh = mocker.Mock()
+    ssh.run.return_value = (
+        0,
+        json.dumps(
+            {
+                "status": "exported",
+                "dataset_name": "review",
+                "segment_count": 3,
+                "output_path": "s3://bucket/derived/",
+            }
+        ),
+        "",
+    )
+    mocker.patch("npa.cli.fiftyone._get_ssh_config", return_value=_cfg())
+    mocker.patch("npa.cli.fiftyone.SSHClient", return_value=ssh)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "export-lerobot-subtasks",
+            "--dataset-name",
+            "review",
+            "--output-path",
+            "s3://bucket/derived/",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["segment_count"] == 3
+    remote_command = ssh.run.call_args.args[0]
+    assert "export_fiftyone_subtasks_to_s3" in remote_command
+    assert "subtask:" in remote_command
+
+
+def test_fiftyone_subtask_export_embedded_python_compiles() -> None:
+    script = _subtask_export_python_script("review", "s3://bucket/derived/")
+
+    compile(script, "<fiftyone-subtask-export>", "exec")
+
+
+def test_fiftyone_bundled_lerobot_importer_compiles() -> None:
+    compile(_lerobot_importer_source(), "<fiftyone-lerobot-importer>", "exec")
 
 
 def test_fiftyone_deploy_defaults_to_cpu_without_gpu_flags(
@@ -1382,7 +1452,9 @@ def test_fiftyone_load_dataset_lerobot_format_uses_remote_importer(
     assert f'SOURCE = "{source}"' in cmd
     assert 'FORMAT = "lerobot"' in cmd
     assert "npa_fiftyone_lerobot_importer.py" in cmd
+    assert "_npa_fiftyone_lerobot_subtasks" in cmd
     assert "def import_lerobot_dataset(" in cmd
+    assert "def existing_subtask_segments(" in cmd
     assert "stale estimatedDocumentCount" in cmd
     assert "import_lerobot_dataset(NAME, SOURCE, DATASETS_DIR)" in cmd
 

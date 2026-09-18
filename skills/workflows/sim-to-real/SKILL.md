@@ -24,7 +24,7 @@ iteration without customer-specific names or infrastructure baked into source.
 
 ## Three-Tier Contract
 
-- CLI: use `npa workbench workflow`, `npa workbench trigger`, and tool commands
+- CLI: use `npa workbench workflow` and tool commands
   such as Genesis, LeRobot, SONIC, MJLab, Retargeting, LanceDB, Cosmos, and
   VLM-eval.
 - SDK: keep workflow submission and config materialization in shared helpers so

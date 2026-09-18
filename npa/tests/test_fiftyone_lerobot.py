@@ -3,11 +3,15 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from npa.fiftyone_lerobot import (
+    _prepare_native_lerobot_source,
+    _supports_native_lerobot,
     build_lerobot_import_plan,
     materialize_lerobot_source,
 )
@@ -153,3 +157,59 @@ def test_materialize_lerobot_source_detects_local_s3_and_hf(
         hf_target,
         "huggingface",
     )
+
+
+def test_native_lerobot_requires_fiftyone_dataset_type_and_v3() -> None:
+    native = SimpleNamespace(types=SimpleNamespace(LeRobotDataset=object()))
+    legacy = SimpleNamespace(types=SimpleNamespace())
+
+    assert _supports_native_lerobot(native, {"codebase_version": "v3.0"})
+    assert not _supports_native_lerobot(native, {"codebase_version": "v2.1"})
+    assert not _supports_native_lerobot(legacy, {"codebase_version": "v3.0"})
+
+
+def test_native_task_normalization_preserves_source_and_every_other_file(tmp_path):
+    import pandas as pd
+
+    root = _write_image_lerobot_dataset(tmp_path / "source")
+    tasks = pa.Table.from_pandas(pd.DataFrame({"task_index": [0]}, index=["push cube"]))
+    pq.write_table(tasks, root / "meta/tasks.parquet")
+    original = {path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    staged = _prepare_native_lerobot_source(root, tmp_path / "staging")
+    assert staged != root
+    for relative, contents in original.items():
+        assert (root / relative).read_bytes() == contents
+        if relative != Path("meta/tasks.parquet"):
+            assert (staged / relative).read_bytes() == contents
+    normalized = pq.read_table(staged / "meta/tasks.parquet")
+    assert normalized.select(tasks.column_names).equals(tasks, check_metadata=True)
+    assert normalized["task"].to_pylist() == ["push cube"]
+
+
+def test_native_task_column_does_not_require_a_staging_copy(tmp_path):
+    root = _write_image_lerobot_dataset(tmp_path / "source")
+    assert _prepare_native_lerobot_source(root, tmp_path / "staging") == root
+    assert not (tmp_path / "staging").exists()
+
+
+def test_native_task_normalization_rejects_ambiguous_catalog_before_copy(tmp_path):
+    root = _write_image_lerobot_dataset(tmp_path / "source")
+    pq.write_table(pa.table({"task_index": [0], "unknown": ["push cube"]}), root / "meta/tasks.parquet")
+    with pytest.raises(ValueError, match="task column or one named Pandas index"):
+        _prepare_native_lerobot_source(root, tmp_path / "staging")
+    assert not (tmp_path / "staging").exists()
+
+
+def test_native_import_uses_normalized_staging_copy(tmp_path, monkeypatch):
+    import sys
+    import pandas as pd
+    from npa import fiftyone_lerobot
+
+    root = _write_image_lerobot_dataset(tmp_path / "source")
+    pq.write_table(pa.Table.from_pandas(pd.DataFrame({"task_index": [0]}, index=["push cube"])), root / "meta/tasks.parquet")
+    monkeypatch.setitem(sys.modules, "fiftyone", SimpleNamespace(types=SimpleNamespace(LeRobotDataset=object())))
+    monkeypatch.setattr(fiftyone_lerobot, "_import_native_lerobot_dataset", lambda fo, **kwargs: kwargs)
+    report = fiftyone_lerobot.import_lerobot_dataset("review", str(root), tmp_path / "datasets")
+    assert report["source_root"] != root
+    assert pq.read_table(report["source_root"] / "meta/tasks.parquet")["task"].to_pylist() == ["push cube"]
+    assert "task" not in pq.read_table(root / "meta/tasks.parquet").column_names

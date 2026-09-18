@@ -525,11 +525,17 @@ def _normalize_video(
 
 
 def _extract_frames(video: Path, destination: Path, count: int = 8) -> list[Path]:
+    from npa.workflows.paidf_cosmos3_media import probe_video
+
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise PaidfCosmos3Error(
             "ffmpeg is required to extract caption/evaluator frames"
         )
+    total = probe_video(video)["decoded_frames"]
+    samples = min(total, max(1, count))
+    indices = [round(index * (total - 1) / max(1, samples - 1)) for index in range(samples)]
+    selection = "+".join(f"eq(n,{index})" for index in indices)
     destination.mkdir(parents=True, exist_ok=True)
     argv = [
         ffmpeg,
@@ -539,14 +545,16 @@ def _extract_frames(video: Path, destination: Path, count: int = 8) -> list[Path
         "-i",
         str(video),
         "-vf",
-        "fps=1,scale='min(1280,iw)':-2",
+        f"select='{selection}',scale='min(1280,iw)':-2",
+        "-vsync",
+        "0",
         "-frames:v",
-        str(max(1, count)),
+        str(samples),
         str(destination / "frame-%05d.png"),
     ]
     completed = subprocess.run(argv, capture_output=True, text=True, check=False)
     frames = sorted(destination.glob("frame-*.png"))
-    if completed.returncode or not frames:
+    if completed.returncode or len(frames) != samples:
         raise PaidfCosmos3Error(
             "selected video did not produce caption/evaluator frames"
         )
@@ -745,7 +753,11 @@ def _caption_text(payload: Any) -> str:
     captions = [item for item in captions if item]
     if not captions:
         raise PaidfCosmos3Error("original caption report contains no captions")
-    return " ".join(captions[:4])
+    # Include the end of the action as well as its setup when captioning sampled
+    # more frames than the generation prompt needs.
+    count = min(4, len(captions))
+    indices = [round(index * (len(captions) - 1) / max(1, count - 1)) for index in range(count)]
+    return " ".join(captions[index] for index in indices)
 
 
 def _variant_metadata(
@@ -861,6 +873,9 @@ def generate_variants(
     conditioning_fps: int = 24,
     transfer_chunk_frames: int = 93,
     control_guidance: float = 1.5,
+    transfer_edge_threshold: str = "medium",
+    transfer_rgb_weight: float = 0.0,
+    transfer_first_chunk_conditional_frames: int = 1,
 ) -> dict[str, Any]:
     """Run one real Cosmos 3 video2video inference per configured variant."""
 
@@ -872,11 +887,19 @@ def generate_variants(
         raise PaidfCosmos3Error("PAIDF Cosmos 3 generation must use video2video")
     if structural_control not in {"none", "edge"}:
         raise PaidfCosmos3Error("structural_control must be none or edge")
+    if structural_control == "none" and transfer_edge_threshold != "medium":
+        raise PaidfCosmos3Error("transfer_edge_threshold requires structural_control=edge")
+    if structural_control == "none" and transfer_rgb_weight != 0:
+        raise PaidfCosmos3Error("transfer_rgb_weight requires structural_control=edge")
+    if structural_control == "none" and transfer_first_chunk_conditional_frames != 1:
+        raise PaidfCosmos3Error("transfer_first_chunk_conditional_frames requires structural_control=edge")
     transfer = None
     if structural_control == "edge":
         from npa.workbench.cosmos.structural_transfer import TransferSettings
 
-        transfer = TransferSettings(conditioning_fps, transfer_chunk_frames, control_guidance)
+        transfer = TransferSettings(conditioning_fps, transfer_chunk_frames, control_guidance,
+                                    transfer_edge_threshold, transfer_rgb_weight,
+                                    transfer_first_chunk_conditional_frames)
         transfer.validate()
     enabled = str(guardrails).strip().lower() in {"1", "true", "yes", "on"}
     if not enabled:
@@ -943,13 +966,15 @@ def generate_variants(
         materialize_vision_input,
     )
 
+    from npa.workflows.data_factory_appearance import generation_prompt
+
     run_generate = generator or generate_and_publish
     local_input = materialize_vision_input(input_video_uri)
     work_root = Path(tempfile.mkdtemp(prefix="npa-paidf-c3-generate-"))
 
     def run_one(index: int) -> tuple[int, dict[str, Any], dict[str, Any], str]:
         combo = dict(combos[index])
-        variant_prompt = f"{str(prompt).strip()} Source understanding: {caption}. {str(combo.get('prompt') or '').strip()}"
+        variant_prompt = generation_prompt(prompt, caption, str(combo.get("prompt") or ""))
         variant_seed = base_seed + attempt * seed_stride + index
         env = dict(environ if environ is not None else os.environ)
         env["CUDA_VISIBLE_DEVICES"] = gpu_ids[index % concurrency]

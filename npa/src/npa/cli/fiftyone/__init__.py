@@ -25,6 +25,7 @@ from rich.console import Console
 from npa.clients.env import load_env_file_script, render_docker_env_file
 from npa.cli.fiftyone.forward import _wait_for_kubernetes_forward
 from npa.cli.fiftyone.review import register_review_augmented
+from npa.cli.fiftyone.subtasks import bundle_lerobot_importer, register_lerobot_subtask_export
 from npa.cli.ingress import (
     register_byovm_alias,
     world_open_ack_option,
@@ -132,7 +133,7 @@ console = Console(stderr=True)
 _project_alias: str = ""
 _workbench_name: str = ""
 
-FIFTYONE_VERSION = "1.21.0"
+FIFTYONE_VERSION = "1.22.0"
 FIFTYONE_MONGODB_VERSION = "7.0.40"
 FIFTYONE_MONGODB_SHA256 = "e4b3d7a11818f983d897ec9fcbf25779a6e122f0e7b7e25fa4ab8ac5d78a5a89"
 FIFTYONE_MONGOD_SHA256 = "3c9271a5dbcaa2adf7cebd7de65d524a780b463e5a9085106adcd140930fc696"
@@ -1114,7 +1115,8 @@ def register_byovm_cmd(
 
 
 def _lerobot_importer_source() -> str:
-    return resources.files("npa").joinpath("fiftyone_lerobot.py").read_text()
+    source = resources.files("npa").joinpath("fiftyone_lerobot.py").read_text()
+    return bundle_lerobot_importer(source)
 
 
 def _apply_saved_terraform_state(
@@ -3728,6 +3730,14 @@ def curate_augmented_cmd(
 register_review_augmented(
     app,
     output_format=OutputFormat,
+    fail=_fail,
+    emit=_output,
+)
+
+
+register_lerobot_subtask_export(
+    app,
+    output_format_type=OutputFormat,
     fail=_fail,
     emit=_output,
 )

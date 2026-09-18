@@ -50,6 +50,7 @@ from .npa_workflow_live_argv import (
 from .npa_workflow_live_helpers import (
     SUBMIT_LIVE_MATRIX,
     SubmitLiveCase,
+    assert_lerobot_subtask_live_outputs,
     assert_no_credential_leakage,
     assert_nurec_colmap_live_outputs,
     assume_decision_for,
@@ -342,6 +343,10 @@ def test_npa_workflow_submit_live_reaches_terminal(
                 extra_forbidden=forbidden_markers,
             )
             if last_status in TERMINAL_OK:
+                if case.spec == "lerobot-subtask-proof.yaml":
+                    assert_lerobot_subtask_live_outputs(
+                        bucket=bucket, run_id=run_id, e2e_project=e2e_project
+                    )
                 if case.spec == "nurec-colmap-reconstruct.yaml":
                     assert_nurec_colmap_live_outputs(
                         bucket=bucket, run_id=run_id, e2e_project=e2e_project

@@ -16,6 +16,7 @@ checks the declaration; each guide states what its live validation actually prov
 | Run a small LeRobot transfer experiment | [LeRobot transfer](lerobot-transfer.md); pinned PushT demonstrations | Matched ACT training, paired closed-loop stress tests, and a next-expert-demo queue. Physical transfer remains unverified. |
 | Train and stress-test an embodied Franka policy | [Franka PPO](franka-rl-transfer.md); native Isaac Lab cube-lift task | Randomized physics training, validation-selected weights, paired held-out tests, and actual RTX rollouts exported to LeRobot and Rerun. |
 | Train a Reachy 2 policy | [Reachy 2 / LeRobot](reachy2-lerobot-policy.md); a dataset with matching observation/action schemas | GPU policy training; validate compatibility before substituting a dataset. |
+| Label LeRobot subtasks | [LeRobot + FiftyOne](lerobot-subtask-labeling.md); a LeRobot v3 dataset | Manual review and labeled export; includes a reproducible real SO-100 example with eight labels, YAML verification, MP4, and RRD. |
 | Train or evaluate Unitree G1 locomotion | [G1 / SONIC](g1-humanoid-walk-sonic.md); compatible motion/checkpoint inputs | RTX PRO 6000 training; B200 MuJoCo evaluation is a separate capability. |
 | Train an ANYmal quadruped | [Quadruped / Isaac Lab](quadruped-isaac-lab.md); built-in simulator task | L40S or RTX PRO 6000; Isaac requires RT cores. |
 | Reconstruct a scene capture | [NuRec / NRE](neural-reconstruction.md); compatible NCore capture | RTX PRO 6000 or L40S; inspect USDZ, renders, and Rerun outputs. |

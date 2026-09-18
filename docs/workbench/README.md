@@ -35,7 +35,7 @@ Python and HTTP access follow each tool's documented contract.
 
 | Capability | Guide |
 | --- | --- |
-| Robot policy walkthroughs | [Franka / Genesis](guides/franka-pick-and-place-genesis.md) · [PushT SDK smoke](guides/pusht-sim-to-real.md) · [Reachy 2 / LeRobot](guides/reachy2-lerobot-policy.md) |
+| Robot policy walkthroughs | [Franka / Genesis](guides/franka-pick-and-place-genesis.md) · [PushT SDK smoke](guides/pusht-sim-to-real.md) · [Reachy 2 / LeRobot](guides/reachy2-lerobot-policy.md) · [subtask labeling](guides/lerobot-subtask-labeling.md) |
 | Locomotion | [G1 / SONIC](guides/g1-humanoid-walk-sonic.md) · [quadruped / Isaac Lab](guides/quadruped-isaac-lab.md) |
 | GR00T fine-tuning | [GR00T N1.7](cookbooks/groot-1-7-training.md) |
 | OpenPI policy training | [Pi0.5 / Polaris](openpi-pi05-polaris.md) |
