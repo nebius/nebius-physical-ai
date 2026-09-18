@@ -1785,7 +1785,8 @@ def test_sky_resource_units_preserve_exact_gpu_capacity_checks(
                 free_cpu_millis=8000 - int(shortfall == "cpu"),
                 free_memory_bytes=32 * 10**9 - int(shortfall == "memory"),
                 free_pod_slots=1,
-                allocatable_cpu_millis=8000, allocatable_memory_bytes=32 * 10**9,
+                allocatable_cpu_millis=8000,
+                allocatable_memory_bytes=32 * 10**9,
                 allocatable_pods=1,
                 allocatable_ephemeral_storage_bytes=100 * 10**9,
                 free_ephemeral_storage_bytes=100 * 10**9 - int(shortfall == "storage"),
@@ -1796,8 +1797,13 @@ def test_sky_resource_units_preserve_exact_gpu_capacity_checks(
         "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory",
         lambda **kwargs: inventory,
     )
-    profile = {"cloud": "kubernetes", "accelerators": "B200:1", "cpus": 8, "memory": 32,
-               "disk_size": 100}
+    profile = {
+        "cloud": "kubernetes",
+        "accelerators": "B200:1",
+        "cpus": 8,
+        "memory": 32,
+        "disk_size": 100,
+    }
     document = raw_task()
     document["resources"].update(normalize_resources(profile))
     spec = SimpleNamespace(
@@ -1857,6 +1863,9 @@ def test_sky_gpu_preflight_accepts_skypilot_allowed_node_names_shape(
                 free_cpu_millis=8000,
                 free_memory_bytes=32 * 10**9,
                 free_pod_slots=1,
+                allocatable_cpu_millis=8000,
+                allocatable_memory_bytes=32 * 10**9,
+                allocatable_pods=1,
             ),
         ),
     )
@@ -1951,7 +1960,8 @@ def test_rendered_gpu_wave_respects_placement_and_gang_size(
                 free_memory_bytes=16 * 10**9,
                 free_pod_slots=1,
                 labels=(("pool", "available"),),
-                allocatable_cpu_millis=4000, allocatable_memory_bytes=16 * 10**9,
+                allocatable_cpu_millis=4000,
+                allocatable_memory_bytes=16 * 10**9,
                 allocatable_pods=1,
             ),
         ),

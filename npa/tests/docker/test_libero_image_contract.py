@@ -69,6 +69,7 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
         if "Defaults!NPA_LIBERO_EXEC env_keep" in line
     )
     assert exec_environment.count("NPA_LIBERO_BOOTSTRAP_RECEIPT") == 1
+    assert exec_environment.count("NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256") == 1
     assert (
         exec_environment.count("NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT")
         == 1

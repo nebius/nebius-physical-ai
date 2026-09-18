@@ -9,7 +9,7 @@
     "resource_profile": "54ed5a71a6ecb78c88efe603ec15dc1673e69e1f8ca4ce518904a33e4d1fe968",
     "runtime_manifest": "a319f5ac5fbd0eeb1390940eeda62828d621cd7dd0dd828789182024562c5b44",
     "runtime_requirements": "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99",
-    "runtime_bootstrap": "24488d6cb4c711c7c56037fc78bbc9ba02c2a78d6de3cfa9a3c7fe5ca5aec8ad",
+    "runtime_bootstrap": "3aebd5dd92b151e2c68cdb9dacfbd466848f3164d5c308df6235708c65d1149f",
     "smoke": "8cda6a6b4090b3b48f81f4a37bc3c4d26394b2360632cf7bdf22deed2297e774",
     "image_manifest": "e5bfcd001564c80d9dcf20cd054b159c1f44f7ceabfdc9c2bde34de72a767c07"
   },

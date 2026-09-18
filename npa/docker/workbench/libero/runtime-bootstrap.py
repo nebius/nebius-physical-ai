@@ -2633,6 +2633,31 @@ def _storage_authorization(
     return authorization
 
 
+def _output_version_query(method: str, query: str) -> str:
+    """Permit only one canonical immutable-version selector for object reads/deletes."""
+
+    if not query:
+        return ""
+    name, separator, encoded = query.partition("=")
+    if method not in {"GET", "HEAD", "DELETE"} or name != "versionId" or not separator:
+        raise BootstrapRefusal("output storage version query is not allowed")
+    try:
+        version_id = urllib.parse.unquote(encoded, errors="strict")
+    except UnicodeError as exc:
+        raise BootstrapRefusal("output storage version query is not canonical") from exc
+    if (
+        not version_id
+        or version_id == "null"
+        or len(version_id.encode()) > 1024
+        or any(ord(character) < 32 or ord(character) == 127 for character in version_id)
+    ):
+        raise BootstrapRefusal("output storage immutable version identity is invalid")
+    canonical = "versionId=" + urllib.parse.quote(version_id, safe="-_.~")
+    if query != canonical:
+        raise BootstrapRefusal("output storage version query is not canonical")
+    return canonical
+
+
 def _sigv4_request(
     method: str,
     url: str,
@@ -2651,10 +2676,12 @@ def _sigv4_request(
         or not parsed.hostname
         or parsed.username is not None
         or parsed.password is not None
-        or parsed.query
         or parsed.fragment
     ):
-        raise BootstrapRefusal("output storage endpoint must be a query-free HTTPS URL")
+        raise BootstrapRefusal(
+            "output storage endpoint must be a credential-free HTTPS URL"
+        )
+    canonical_query = _output_version_query(method, parsed.query)
     now = datetime.now(timezone.utc)
     amz_date = now.strftime("%Y%m%dT%H%M%SZ")
     date_stamp = now.strftime("%Y%m%d")
@@ -2677,7 +2704,7 @@ def _sigv4_request(
         (
             method,
             canonical_uri,
-            "",
+            canonical_query,
             canonical_headers,
             signed_names,
             payload_sha256,
@@ -2713,7 +2740,9 @@ def _sigv4_request(
     connection = http.client.HTTPSConnection(
         parsed.hostname, parsed.port or 443, timeout=120
     )
-    target = urllib.parse.urlunsplit(("", "", canonical_uri or "/", "", ""))
+    target = urllib.parse.urlunsplit(
+        ("", "", canonical_uri or "/", canonical_query, "")
+    )
     try:
         connection.request(
             method,

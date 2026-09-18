@@ -493,12 +493,195 @@ def test_sigv4_storage_request_uses_a_direct_tls_connection(
     assert "authorization" in observed["headers"]
     assert observed["response_closed"] is True
     assert observed["connection_closed"] is True
-    with pytest.raises(module.BootstrapRefusal, match="query-free HTTPS"):
+    with pytest.raises(module.BootstrapRefusal, match="credential-free HTTPS"):
         module._sigv4_request("GET", "https://user@storage.example/bucket/object")
     with pytest.raises(module.BootstrapRefusal, match="not canonical"):
         module._sigv4_request(
             "GET", "https://storage.example/fixture-bucket/byof%2Frun/artifact"
         )
+
+
+def _assert_storage_signature_matches_botocore(method, target, payload, headers):
+    """Check the real stdlib signer against the installed AWS SDK without I/O."""
+    from botocore.auth import S3SigV4Auth
+    from botocore.awsrequest import AWSRequest
+    from botocore.credentials import Credentials
+
+    request = AWSRequest(
+        method=method,
+        url="https://storage.example" + target,
+        data=payload or b"",
+        headers={
+            name: value for name, value in headers.items() if name != "authorization"
+        },
+    )
+    request.context["timestamp"] = headers["x-amz-date"]
+    signer = S3SigV4Auth(
+        Credentials("temporary-access", "temporary-secret", "temporary-session"),
+        "s3",
+        "fixture-region",
+    )
+    canonical = signer.canonical_request(request)
+    expected = signer.signature(signer.string_to_sign(request, canonical), request)
+    assert headers["authorization"].endswith("Signature=" + expected)
+    assert canonical.splitlines()[2] == target.partition("?")[2]
+
+
+def test_version_bound_put_readback_and_cleanup_use_the_real_signer(monkeypatch):
+    module = _load_module()
+    for name, value in {
+        "AWS_ACCESS_KEY_ID": "temporary-access",
+        "AWS_SECRET_ACCESS_KEY": "temporary-secret",
+        "AWS_SESSION_TOKEN": "temporary-session",
+        "AWS_DEFAULT_REGION": "fixture-region",
+    }.items():
+        monkeypatch.setenv(name, value)
+    payload = b"immutable fixture snapshot"
+    version = "opaque+/=%2F"
+    digest = _sha(payload)
+    response_headers = {
+        "x-amz-version-id": version,
+        "etag": '"fixture-etag"',
+        "x-amz-checksum-sha256": module.base64.b64encode(
+            bytes.fromhex(digest)
+        ).decode(),
+        "content-length": str(len(payload)),
+    }
+    responses = iter([(200, b""), (200, payload), (200, b""), (204, b""), (404, b"")])
+    calls = []
+
+    class Response:
+        def __init__(self):
+            self.status, self.body = next(responses)
+
+        def read(self, _limit):
+            return self.body
+
+        def getheaders(self):
+            return list(response_headers.items())
+
+        def close(self):
+            pass
+
+    class Connection:
+        def __init__(self, hostname, port, timeout):
+            assert (hostname, port, timeout) == ("storage.example", 443, 120)
+
+        def request(self, method, target, *, body, headers):
+            _assert_storage_signature_matches_botocore(method, target, body, headers)
+            calls.append((method, target, body, headers))
+
+        def getresponse(self):
+            return Response()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(module.http.client, "HTTPSConnection", Connection)
+    attempted = {}
+    record = module._verified_output_put(
+        endpoint="https://storage.example",
+        bucket="fixture-bucket",
+        object_key="owned-run/artifact.json",
+        name="artifact.json",
+        payload=payload,
+        digest=digest,
+        attempted=attempted,
+    )
+    assert record["version_id"] == version and record["sha256"] == digest
+    module._cleanup_output_attempts(
+        endpoint="https://storage.example", bucket="fixture-bucket", attempted=attempted
+    )
+    assert [call[0] for call in calls] == ["PUT", "GET", "HEAD", "DELETE", "HEAD"]
+    assert calls[0][1] == "/fixture-bucket/owned-run/artifact.json"
+    assert calls[0][2] == payload and calls[0][3]["if-none-match"] == "*"
+    assert calls[1][3]["x-amz-checksum-mode"] == "ENABLED"
+    assert calls[3][3]["if-match"] == '"fixture-etag"'
+    for _, target, body, _ in calls[1:]:
+        assert target == calls[0][1] + "?versionId=opaque%2B%2F%3D%252F"
+        assert body is None
+
+
+@pytest.mark.parametrize(
+    "method,query",
+    [
+        ("PUT", "versionId=version"),
+        ("GET", "other=version"),
+        ("GET", "versionId=one&versionId=two"),
+        ("GET", "versionId=one&other=two"),
+        ("GET", "versionId"),
+        ("GET", "versionId="),
+        ("GET", "versionId=null"),
+        ("HEAD", "versionId=a+b"),
+        ("DELETE", "versionId=a%2fb"),
+        ("GET", "versionId=%FF"),
+        ("GET", "versionId=%00"),
+        ("GET", "versionId=%ZZ"),
+        ("GET", "versionId=" + "a" * 1025),
+    ],
+)
+def test_storage_version_query_refuses_ambiguity_before_transport(
+    monkeypatch, method, query
+):
+    module = _load_module()
+    for name in module.STORAGE_SECRET_ENV_NAMES:
+        monkeypatch.setenv(name, "fixture-only")
+    monkeypatch.setattr(
+        module.http.client,
+        "HTTPSConnection",
+        lambda *_args, **_kwargs: pytest.fail(
+            "invalid version query reached transport"
+        ),
+    )
+    with pytest.raises(module.BootstrapRefusal, match="version"):
+        module._sigv4_request(method, "https://storage.example/bucket/object?" + query)
+
+
+@pytest.mark.parametrize("profile_state", ["bound", "missing", "wrong"])
+def test_sudo_allowlist_preserves_real_profile_bound_signature_validation(
+    monkeypatch, tmp_path, profile_state
+):
+    module, args, _ = _fixture(tmp_path)
+    manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
+    authorization_bytes = Path(args.authorization).read_bytes()
+    dockerfile = (SCRIPT.parent / "Dockerfile").read_text(encoding="utf-8")
+    line = next(
+        line
+        for line in dockerfile.splitlines()
+        if "Defaults!NPA_LIBERO_EXEC env_keep" in line
+    )
+    keep = set(line.split('env_keep += "', 1)[1].split('"', 1)[0].split())
+    environment = module._runtime_execution_environment(Path(args.cache_root))
+    filtered = {name: value for name, value in environment.items() if name in keep}
+    assert filtered["NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256"] == "a" * 64
+    assert module.STORAGE_SECRET_ENV_NAMES.isdisjoint(filtered)
+    for name in tuple(os.environ):
+        monkeypatch.delenv(name)
+    for name, value in filtered.items():
+        monkeypatch.setenv(name, value)
+    if profile_state == "missing":
+        monkeypatch.delenv("NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256")
+    elif profile_state == "wrong":
+        monkeypatch.setenv("NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256", "b" * 64)
+    if profile_state != "bound":
+        with pytest.raises(
+            module.CustomerAcceptanceRequired, match="authorization wrong scope"
+        ):
+            module._validate_customer_authorization_bytes(
+                authorization_bytes,
+                args.authorization_sha256,
+                manifest,
+                module.EXPECTED_RUNTIME_MANIFEST_SHA256,
+            )
+        return
+    observed, observed_sha = module._validate_customer_authorization_bytes(
+        authorization_bytes,
+        args.authorization_sha256,
+        manifest,
+        module.EXPECTED_RUNTIME_MANIFEST_SHA256,
+    )
+    assert observed["workflow_profile_sha256"] == "a" * 64
+    assert observed_sha == args.authorization_sha256
 
 
 @pytest.mark.parametrize(

@@ -174,7 +174,9 @@ def test_submit_workflow_loads_yaml_applies_controller_and_calls_subprocess(
 
 def test_submit_capacity_preflight_proves_no_launch(monkeypatch, tmp_path) -> None:
     from npa.execution_preflight import ExecutionPreflightError
-    from npa.orchestration.skypilot.k8s_gpu_catalog import TemporarilyUnavailableAcceleratorError
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        TemporarilyUnavailableAcceleratorError,
+    )
 
     yaml_path = tmp_path / "workflow.yaml"
     yaml_path.write_text("name: demo\nresources: {cloud: kubernetes}\n")
@@ -184,11 +186,18 @@ def test_submit_capacity_preflight_proves_no_launch(monkeypatch, tmp_path) -> No
         raise ExecutionPreflightError("gpu", "capacity occupied") from capacity
 
     monkeypatch.setattr(workflow_module, "_execution_preflight", reject)
-    monkeypatch.setattr(workflow_module, "run_launch_transaction",
-                        lambda **kwargs: pytest.fail("must not start a provider launch"))
+    monkeypatch.setattr(
+        workflow_module,
+        "run_launch_transaction",
+        lambda **kwargs: pytest.fail("must not start a provider launch"),
+    )
     with pytest.raises(SkyPilotSubmitError) as caught:
-        submit_workflow(yaml_path, "capacity-unit", sky_bin=_fake_sky(tmp_path),
-                        isolated_config_dir=tmp_path / "sky-state")
+        submit_workflow(
+            yaml_path,
+            "capacity-unit",
+            sky_bin=_fake_sky(tmp_path),
+            isolated_config_dir=tmp_path / "sky-state",
+        )
 
     assert caught.value.launch_attempted is False
     assert caught.value.transaction is None
