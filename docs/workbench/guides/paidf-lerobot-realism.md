@@ -53,6 +53,43 @@ Stage the pinned README, metadata and selected camera video while preserving
 their directory layout. Supply the exact selected storage bucket and endpoint;
 generic credential health does not prove the eventual output destination.
 
+## Fan out several appearance scenarios
+
+The blue tabletop is an experiment profile, not a pipeline restriction.
+`appearance_profiles_json` accepts coherent lighting, background, color-grade,
+and surface-finish instructions. The [twelve-profile example](../examples/paidf-cups-fanout-profiles.json)
+requests oak, walnut, aluminum, stainless steel, granite, terracotta, rubber,
+cork, ceramic, green laminate, warm side lighting and cool twilight lighting on
+the cup-opening source. Material changes apply to the existing tabletop;
+foreground identities and the task remain explicit invariants.
+
+Set `variant_count=12` and supply all twelve profiles through
+`appearance_profiles_json`. The sampler shuffles the profiles using
+`augmentation_seed`, then generates one video per selected profile. Read each
+variant's recorded `variables` to identify its scenario; JSON array order is
+not output order. With the existing `seed=17` and no refinement, actual diffusion
+seeds are 17 through 28. More variants than profiles repeats the profile cycle
+with different seeds, which is seed diversity rather than new scenarios.
+
+`variant_parallelism` controls GPU concurrency independently of scenario count.
+Use one for sequential execution or request multiple visible GPUs for
+concurrent variants. The implementation caps concurrency by the variant count
+and visible GPUs, leases an available GPU for each generation, and records
+the effective value in the augmentation manifest.
+
+For another fanout using a retained source, reuse its `input_uri`, `images_uri`,
+`conditioning_video_uri`, `input_provenance_uri` and `captions_uri`. Keep
+`configs_uri` under the new run prefix because the appearance manifest must be
+regenerated. Use the five-stage graph `generate-configs → generate-variants →
+evaluate → quality-disposition → visualize-quality-evidence`, ending at the
+review recording. Replace a color-specific preservation prompt with one that
+permits the selected appearance profiles while retaining objects, geometry,
+contacts, camera, trajectories and timing. Keep model settings and strict
+thresholds from the controlled comparison unchanged.
+
+This is appearance scenario fanout: it does not generate validated new actions,
+object arrangements or physics. Evaluate each output and retain failures.
+
 ## Compare one sampling change at a time
 
 The baseline uses low Canny thresholds, native RGB hint weight 0.25, zero
