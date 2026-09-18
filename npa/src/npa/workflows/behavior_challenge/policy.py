@@ -20,6 +20,7 @@ from .protocol import file_digest, stream_digest
 OPENPI_COMMIT = "0cc8e355f7bac0976db1cc3139b1ff0379feea60"
 CHECKPOINT_PREFIX = "pi05_turn_on_the_radio/"
 POLICY_FIELDS = ("policy_root", "policy_python", "policy_checkpoint", "policy_archive")
+_POLICY_STARTUP_TIMEOUT_SECONDS = 600
 
 
 def _verify_source(root: Path) -> None:
@@ -108,11 +109,26 @@ def _healthy(port: int) -> bool:
         connection.close()
 
 
-def _wait_for_policy(process: subprocess.Popen, port: int) -> None:
+def _wait_for_policy(
+    process: subprocess.Popen,
+    port: int,
+    *,
+    timeout_seconds: float | None = None,
+) -> None:
+    if timeout_seconds is None:
+        timeout_seconds = _POLICY_STARTUP_TIMEOUT_SECONDS
+    deadline = time.monotonic() + timeout_seconds
     while process.poll() is None:
-        if _healthy(port):
+        ready = _healthy(port)
+        remaining = deadline - time.monotonic()
+        if ready and remaining >= 0:
             return
-        time.sleep(1)
+        if remaining <= 0:
+            raise RuntimeError(
+                f"Official policy did not become ready within {timeout_seconds:g} "
+                "seconds; inspect policy.log"
+            )
+        time.sleep(min(1, remaining))
     raise RuntimeError("Official policy exited before readiness; inspect policy.log")
 
 
@@ -191,7 +207,7 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
         Context manager that stops its policy process on success or failure.
     Raises:
         ValueError: Consent, source, checkpoint, task, or endpoint validation fails.
-        RuntimeError: The policy process exits before becoming ready.
+        RuntimeError: The policy exits or exceeds its startup deadline.
         OSError: Files or the policy interpreter are unavailable.
     """
     selected = [bool(getattr(args, field, None)) for field in POLICY_FIELDS]

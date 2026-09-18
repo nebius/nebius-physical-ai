@@ -268,6 +268,12 @@ completed cases. The default command still connects to an independently served
 policy. Provision sufficient simulator and policy resources; this convenience
 does not establish compliance with the challenge's 24 GB model requirement.
 
+Managed policy startup has a ten-minute deadline, checked after each bounded
+health probe. A process that remains alive without a timely successful
+`/healthz` response raises a startup error pointing to `policy.log` and is
+terminated before any evaluation case begins. This applies to both managed
+official and RLC policies.
+
 ## Freeze the evaluation selection
 
 Prepare `recipe.json` privately. Set `policy_checkpoint_sha256` to the SHA-256

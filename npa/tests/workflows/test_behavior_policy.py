@@ -248,6 +248,57 @@ def test_policy_startup_exit_is_not_readiness():
         policy._wait_for_policy(process, 8000)
 
 
+def test_policy_startup_times_out_while_process_remains_alive(monkeypatch):
+    process = Mock()
+    process.poll.return_value = None
+    monkeypatch.setattr(policy, "_healthy", lambda port: False)
+    monkeypatch.setattr(policy.time, "monotonic", Mock(side_effect=[10, 12]))
+    with pytest.raises(RuntimeError, match="within 2 seconds"):
+        policy._wait_for_policy(process, 8000, timeout_seconds=2)
+
+
+def test_policy_startup_returns_when_process_becomes_ready(monkeypatch):
+    process = Mock()
+    process.poll.return_value = None
+    monkeypatch.setattr(policy, "_healthy", lambda port: True)
+    monkeypatch.setattr(policy.time, "monotonic", lambda: 10)
+    policy._wait_for_policy(process, 8000, timeout_seconds=2)
+
+
+def test_policy_startup_rejects_health_response_after_deadline(monkeypatch):
+    process = Mock()
+    process.poll.return_value = None
+    monkeypatch.setattr(policy, "_healthy", lambda port: True)
+    monkeypatch.setattr(policy.time, "monotonic", Mock(side_effect=[10, 13]))
+    with pytest.raises(RuntimeError, match="within 2 seconds"):
+        policy._wait_for_policy(process, 8000, timeout_seconds=2)
+
+
+def test_policy_startup_sleep_does_not_exceed_remaining_time(monkeypatch):
+    process = Mock()
+    process.poll.return_value = None
+    monkeypatch.setattr(policy, "_healthy", lambda port: False)
+    monkeypatch.setattr(policy.time, "monotonic", Mock(side_effect=[10, 11.75, 12]))
+    sleep = Mock()
+    monkeypatch.setattr(policy.time, "sleep", sleep)
+    with pytest.raises(RuntimeError, match="within 2 seconds"):
+        policy._wait_for_policy(process, 8000, timeout_seconds=2)
+    sleep.assert_called_once_with(0.25)
+
+
+def test_policy_startup_timeout_stops_managed_process(prepared, monkeypatch):
+    args, plan, output = prepared
+    process = Mock()
+    process.poll.return_value = None
+    monkeypatch.setattr(policy.subprocess, "Popen", Mock(return_value=process))
+    monkeypatch.setattr(policy, "_healthy", lambda port: False)
+    monkeypatch.setattr(policy, "_POLICY_STARTUP_TIMEOUT_SECONDS", 0)
+    with pytest.raises(RuntimeError, match="within 0 seconds"):
+        with policy.managed_policy(args, plan, output):
+            pytest.fail("must not evaluate before policy readiness")
+    process.terminate.assert_called_once()
+
+
 def test_stuck_policy_is_killed_during_cleanup():
     process = Mock()
     process.poll.return_value = None
