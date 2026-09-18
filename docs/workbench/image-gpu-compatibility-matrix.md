@@ -7,6 +7,10 @@ Every Workbench container image against every Nebius GPU platform, and — separ
 **Last measured:** see the dated runs and exact-digest records below.
 **Publication/evidence reconciliation:** 2026-09-16; includes the exact OpenArm
 release and the corrected Alpamayo 2 Super release evidence.
+Isaac-backed runtime observations in this matrix are historical and unqualified
+for current customer runs until direct customer/run authorization for the
+applicable terms is bound. Image digest and payload evidence do not establish
+that authorization.
 
 Two things are deliberately kept apart here, because conflating them is how "Blackwell ready" claims go wrong:
 
@@ -71,7 +75,7 @@ The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/tor
 
 The detection-training stack row and detector GPU results [7] and [28]–[31] describe the historical `bdd100k-golden-eval-smoke-20260614T210000Z` image. The current default `runtime-v1-20260905` (digest `sha256:a09126491bd660f314b8f412df7238746dc2b063e5d5b7ca87bba7596dafcb0d`) passed real detector evaluation on RTX PRO 6000 on 2026-09-05, using generated validation data, with mAP 1.0 and mAP@50 1.0; these are synthetic-data plumbing checks, not BDD100K accuracy results. Authenticated readiness, artifact integrity, and completed status after restart also passed. Training was not repeated for image acceptance. B200, B300, and Hopper results for this release remain unmeasured; the historical GPU results below retain their original image identity.
 
-### Current OpenArm runtime evidence
+### Retained OpenArm runtime evidence (current qualification pending)
 
 The `npa-openarm:2.2.0-isaac0.1.0-rtfetch` release resolves to exact digest
 `sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a`.
@@ -80,6 +84,8 @@ fully decoded 100-frame render, 100 CUDA/PhysX steps across 64 upstream OpenArm
 reach environments, one real upstream RSL-RL training iteration with a valid
 Torch checkpoint, and independent artifact qualification on RTX PRO 6000.
 L40S has the required RT hardware but remains unmeasured for this digest.
+These runtime observations are retained historical evidence; requalify after
+direct customer/run authorization is bound.
 H100/H200/B200/B300 have no RT cores and are not supported by the complete
 qualification path; no result is inferred from MuJoCo's CPU-capable stage alone.
 
@@ -103,7 +109,7 @@ likewise predates its current coherent release.
 | `npa-lancedb` | supported | **verified** [26] | **verified** [27] | **verified** [24] | **verified** [25] |
 | `npa-detection-training` | supported | **historical evidence** [29] | **verified** [current release evidence](#current-detection-runtime-evidence) | **historical evidence** [28] | **historical evidence** [31] |
 | `npa-robocasa` | supported (cu124) | supported (cu124) | blocked (needs cu130) | blocked (needs cu130) | blocked (needs cu130) |
-| `npa-openarm` | supported (RT cores; unmeasured) | blocked (no RT cores) | **verified** [79] | blocked (no RT cores) | blocked (no RT cores) |
+| `npa-openarm` | historical/unqualified (RT cores; unmeasured) | blocked (no RT cores) | historical evidence [79]; authorization pending | blocked (no RT cores) | blocked (no RT cores) |
 | `npa-cosmos3` | supported | supported | **verified** [accepted records](#accepted-release-evidence) (r7, effective guardrails attested) | supported | supported |
 | `npa-cosmos3-serving` (public zero-payload bootstrap) | blocked (8-GPU memory floor) | historical predecessor only; current digest unverified | unverified (8 GPUs) | **verified** [accepted records](#accepted-release-evidence) (8 GPUs) | unverified (8 GPUs) |
 | `npa-cosmos3-super-benchmark` (operator-private) | blocked (8-GPU benchmark contract) | supported (8 GPUs) | supported (8 GPUs) | **verified** [private benchmark record](#accepted-release-evidence) | supported (8 GPUs) |
@@ -127,9 +133,9 @@ likewise predates its current coherent release.
 | `npa-reference-policy` | supported | **verified** [52] | **verified** [16] | **verified** [50] | **verified** [51] |
 | `npa-loop-eval` | supported | **verified** [58] | **verified** [18] | **verified** [56] | **verified** [57] |
 | `npa-lerobot-vlm-rl` | supported | **verified** [55] | **verified** [17] | **verified** [53] | **verified** [54] |
-| `npa-isaac-lab` | supported | supported (headless) | **verified** [current release evidence](container-image-catalog.md#2026-09-04-coherent-sim2real-publication) | blocked | blocked |
-| `npa-isaac-arena` | unverified | unverified | **verified** [76] | **verified** [75] (state-only) | unverified |
-| `npa-leisaac` | not routed or validated by the current launcher | blocked (no RT cores) | supported (current hard-selected target) | blocked (no RT cores) | blocked (no RT cores) |
+| `npa-isaac-lab` | historical/unqualified | historical/unqualified (headless) | historical evidence [current release evidence](container-image-catalog.md#2026-09-04-coherent-sim2real-publication); authorization pending | blocked | blocked |
+| `npa-isaac-arena` | unverified | unverified | historical evidence [76]; authorization pending | historical evidence [75]; authorization pending | unverified |
+| `npa-leisaac` | not routed or validated by the current launcher | blocked (no RT cores) | historical/unqualified (current hard-selected target) | blocked (no RT cores) | blocked (no RT cores) |
 | `npa-sonic` | supported | supported (headless) | supported | blocked | blocked |
 | `npa-sonic-mujoco` | unverified | unverified (headless) | **verified** [accepted records](#accepted-release-evidence) | **verified** [accepted records](#accepted-release-evidence) | unverified |
 | `npa-groot` | supported | supported | **verified** [accepted records](#accepted-release-evidence) (inference) | unverified | unverified |
@@ -256,6 +262,11 @@ Managed-Kubernetes nodes were placed successfully for both B200 in us-central1 a
 | 79 | 2026-09-15 | `npa-openarm:2.2.0-isaac0.1.0-rtfetch` (`sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a`) | NVIDIA RTX PRO 6000 Blackwell Server Edition (`sm_120`) | exact accepted bytes ran 500 real MuJoCo steps with render, 64-environment × 100-step upstream Isaac reach rollout on CUDA/PhysX, one iteration of upstream RSL-RL training, and fail-closed qualification | PASS; finite traces, fully decoded 100-frame H.264 video, serialized Torch checkpoint, and four matching artifact hashes |
 | 80 | 2026-09-17 | `npa-isaac-arena:dev-ae5adea6ab895660996f513f14160c89d06f47e5` (`sha256:9c6a417672d6f87499680ba337c90488c2a33d41ac9f7b5452eb5d97d00e097e`) | NVIDIA B200 (`sm_100`) | fresh `arena-b200-reconcile-ae5adea6-20260917-r3` completed seeds 42–45; independent native JSONL/HDF5, HTML, ordered phases and artifact hashes agree | PASS; four × 1,050 native state-only steps, success 0.0 retained; 60 objects / 51,006,097 bytes; all four native jobs SUCCEEDED, zero active workers, controller retained |
 | 81 | 2026-09-17 | same exact recovery/quality digest | NVIDIA RTX PRO 6000 (`sm_120`) | fresh `arena-rtx-reconcile-ae5adea6-20260917-r3` executed exact replay through native terminal with unchanged acceptance gates; both MP4s independently fully decoded; factual RRD pixel/metric equality verified | PASS; 43 actions/frames, zero padding, success 1.0, door openness 0.200→0.815, four spatially bound progress-overlap pairs; evidence MP4 SHA-256 `fd4390bdb1e3a66454efc4375abd628327b528286c24c978e790915e3ae84893`; 24 objects / 4,978,517 bytes plus separate 44-capture RRD; SUCCEEDED, zero active workers, controller retained |
+
+Rows 70–76 and 79–81 are retained Isaac runtime observations, not current
+customer capability qualifications. They must not be dispatched or presented
+as accepted until the exact run carries direct customer-controlled authorization
+for the applicable NVIDIA terms.
 
 ## Measured failures and negative controls
 

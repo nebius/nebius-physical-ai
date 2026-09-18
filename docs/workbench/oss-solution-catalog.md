@@ -22,7 +22,7 @@ unique and must be tested with its own upstream-named capabilities.
 | ManiSkill | `mani-skill/ManiSkill` `v3.0.1` | `gymnasium_pickcube_registration` | `maniskill_pickcube_step.json` | `byof-maniskill.yaml` |
 | MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_task_registration` | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
-| Enactic OpenArm (**accepted public image; Isaac runtime fetch**) | `enactic/openarm_mujoco` `2.2.0` + `enactic/openarm_isaac_lab` `bad82e…` | `openarm_mujoco_bimanual_rollout` + `Isaac-Reach-OpenArm-v0` | MuJoCo/Isaac trajectories and RSL-RL checkpoint | `openarm-simulators.yaml` |
+| Enactic OpenArm (**public image; Isaac runtime qualification pending customer authorization**) | `enactic/openarm_mujoco` `2.2.0` + `enactic/openarm_isaac_lab` `bad82e…` | `openarm_mujoco_bimanual_rollout` + `Isaac-Reach-OpenArm-v0` | MuJoCo/retained Isaac observations and RSL-RL checkpoint | `openarm-simulators.yaml` |
 | OpenPI (qualification pending) | `Physical-Intelligence/openpi` `15a9616a…` | connected direct / cross-pod serve / LoRA optimizer smoke / held-out evaluation (not runnable until direct customer-controlled terms evidence is bound) | retained reports are historical only; `openpi_pi05_droid_jointpos_polaris_inference.json` remains the artifact name, but no checkpoint or capability is qualified for build/download | `byof-openpi.yaml` → `openpi-pi05-four-mode.yaml`; workflow remains refusal-only until customer-run authorization |
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
 | Open Dreamer (world model, **2-GPU min**) | `next-state/open-dreamer` `2b10640` | `dreamer4_tokenizer_train_two_gpu` | `open_dreamer_world_model_2gpu.json` | `byof-open-dreamer.yaml` |
@@ -45,8 +45,8 @@ unique and must be tested with its own upstream-named capabilities.
 | RoboCasa | `kitchen_egl_env_reset` | **accepted** | `defcap17-robocasa-20260709-060243` (post-download subprocess; 58 lightwheel cats; obs dict) |
 | RoboCasa | `kitchen_random_rollout` | **accepted** | `defcap20-robocasa-20260710-032142` (`run_random_rollouts` + mp4 `22150` bytes; `gymnasium==0.29.1` + `env.sim` bind) |
 | Enactic OpenArm | `openarm_mujoco_bimanual_rollout` | **accepted** | exact public development digest: 500 real `mj_step` calls, finite joint/command/energy trace, and fully decoded 100-frame H.264 render |
-| Enactic OpenArm | `Isaac-Reach-OpenArm-v0` rollout | **accepted** | same digest on RTX PRO 6000: 64 environments × 100 real PhysX/CUDA steps with finite rewards and policy observations |
-| Enactic OpenArm | `Isaac-Reach-OpenArm-v0` RSL-RL training | **accepted** | same digest: upstream trainer completed one iteration and emitted an independently validated serialized Torch checkpoint |
+| Enactic OpenArm | `Isaac-Reach-OpenArm-v0` rollout | **historical; qualification pending customer authorization** | retained digest on RTX PRO 6000: 64 environments × 100 PhysX/CUDA observations with finite rewards and policy observations |
+| Enactic OpenArm | `Isaac-Reach-OpenArm-v0` RSL-RL training | **historical; qualification pending customer authorization** | retained digest: upstream trainer completed one iteration and emitted an independently validated serialized Torch checkpoint |
 | OpenPI | `pi05_droid_jointpos_polaris_checkpoint_download` | **qualification pending** | Historical B200 evidence retained only; direct customer-controlled terms evidence is required before any build/download and the legacy boolean is not acceptance evidence |
 | OpenPI | `pi05_droid_jointpos_polaris_direct_infer` | **qualification pending** | Historical digest-pinned result retained only; capability remains unqualified pending the customer-run authorization |
 | OpenPI | `pi05_droid_jointpos_polaris_served_infer` | **qualification pending** | Historical builder regression retained only; no current acceptance claim |
@@ -162,13 +162,14 @@ repository is not an image input and no rights for it are inferred.
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
 | `openarm_mujoco_bimanual_rollout` | accepted (live) | `openarm_mujoco.v2.openarm_demo_xml`, `JointResolver`, 500 real `mj_step` calls, finite joint/command/energy NPZ, and 100-frame H.264 render |
-| `Isaac-Reach-OpenArm-v0` rollout | accepted (live) | upstream registered Isaac Lab environment, 64 vectorized environments × 100 real PhysX/CUDA steps, finite reward and policy-observation trace on RTX PRO 6000 |
-| `Isaac-Reach-OpenArm-v0` RSL-RL training | accepted (live) | pinned upstream `scripts/reinforcement_learning/rsl_rl/train.py`, one completed iteration, and independently validated serialized Torch checkpoint |
+| `Isaac-Reach-OpenArm-v0` rollout | historical; qualification pending customer authorization | retained upstream registered Isaac Lab environment, 64 vectorized environments × 100 PhysX/CUDA observations, finite reward and policy-observation trace on RTX PRO 6000 |
+| `Isaac-Reach-OpenArm-v0` RSL-RL training | historical; qualification pending customer authorization | retained pinned upstream `scripts/reinforcement_learning/rsl_rl/train.py` observation, one completed iteration, and independently validated serialized Torch checkpoint |
 
 The public `npa-openarm` image contains the Apache-2.0 OpenArm sources and
 MuJoCo closure, but no Isaac Sim, Isaac Lab, or Omniverse Kit bytes. Isaac is
-hash-pinned and fetched into the operator's runtime cache through the shared
-acceptance/refusal bootstrap. See [OpenArm](openarm.md) and
+hash-pinned and may be fetched into the operator's runtime cache only after
+direct customer/run authorization; the retained runtime observations above do
+not establish that authorization. See [OpenArm](openarm.md) and
 `workflows/testing/openarm-simulators.yaml`.
 
 ### OpenPI

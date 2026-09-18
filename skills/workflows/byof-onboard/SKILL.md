@@ -75,9 +75,16 @@ Two consequences worth knowing when your BYOF solution runs on the `isaac-lab` b
   authenticated customer/run authorization. An unset or empty value is a
   refusal; no NPA product, manager, or control-plane default may synthesize
   acceptance. Use `--no-accept-eula` for an explicit opt-out, which exits 78
-  before download. Isaac BYOF profiles may state `Y` only when dispatched under
-  that customer-scoped authorization.
-  First start downloads ~4.5 GB and
+ before download. Isaac BYOF profiles may state `Y` only when dispatched under
+ that customer-scoped authorization.
+
+The generic BYOF CLI and toolRef currently expose no generic customer-terms
+authorization-file input. Consequently the `isaac-lab` BYOF path is
+refusal-only and cannot qualify a runtime until that owner-private,
+customer/run-bound input is added and validated. Do not work around the
+missing channel by setting `Y` directly; the LIBERO authorization-file option
+is scoped to LIBERO and is not a generic Isaac acceptance mechanism.
+ First start downloads ~4.5 GB and
   materialises ~10 GiB of cache; pre-warm it with
   `npa/docker/workbench/common/warm-isaac-cache.yaml` if you are iterating.
 
