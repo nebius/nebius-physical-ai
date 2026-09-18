@@ -466,11 +466,21 @@ def _require_report_absent(parent: int, name: str) -> None:
     raise W.ScanError("report_output_exists")
 
 
+def _report_cleanup_warning(message: str) -> None:
+    """Best-effort cleanup diagnostics must never replace the primary error."""
+    try:
+        rendered = str(message)
+        sys.stderr.write(rendered + "\n")
+        sys.stderr.flush()
+    except BaseException:
+        return
+
+
 def _close_report_descriptor(fd: int) -> None:
     try:
         os.close(fd)
     except OSError:
-        print("Habitat-Sim report descriptor cleanup failed", file=sys.stderr)
+        _report_cleanup_warning("Habitat-Sim report descriptor cleanup failed")
 
 
 @contextmanager
@@ -488,13 +498,13 @@ def _cleanup_owned_report(parent: int, name: str, held: int) -> None:
         expected = os.fstat(held)
         observed = os.stat(name, dir_fd=parent, follow_symlinks=False)
         if (expected.st_dev, expected.st_ino) != (observed.st_dev, observed.st_ino):
-            print("Habitat-Sim report cleanup identity changed", file=sys.stderr)
+            _report_cleanup_warning("Habitat-Sim report cleanup identity changed")
             return
         os.unlink(name, dir_fd=parent)
     except FileNotFoundError:
         return
     except OSError:
-        print("Habitat-Sim owned report cleanup failed", file=sys.stderr)
+        _report_cleanup_warning("Habitat-Sim owned report cleanup failed")
 
 
 @contextmanager

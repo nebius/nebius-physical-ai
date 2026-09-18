@@ -1659,6 +1659,29 @@ def test_report_cleanup_attempts_close_after_unlink_failure(
     assert "owned report cleanup failed" in capsys.readouterr().err
 
 
+def test_report_cleanup_diagnostics_cannot_replace_primary_failure(monkeypatch) -> None:
+    """A broken diagnostic stream must not mask the initiating exception."""
+    class BrokenStderr:
+        def write(self, _message):
+            raise OSError("inert diagnostic refusal")
+
+        def flush(self):
+            raise OSError("inert diagnostic refusal")
+
+    info = SimpleNamespace(st_dev=1, st_ino=2)
+    monkeypatch.setattr(VERIFIER.sys, "stderr", BrokenStderr())
+    monkeypatch.setattr(VERIFIER.os, "open", Mock(return_value=42))
+    monkeypatch.setattr(VERIFIER.os, "fstat", Mock(return_value=info))
+    monkeypatch.setattr(VERIFIER.os, "stat", Mock(return_value=info))
+    monkeypatch.setattr(
+        VERIFIER.os, "unlink", Mock(side_effect=OSError("inert cleanup refusal"))
+    )
+    monkeypatch.setattr(VERIFIER.os, "close", Mock())
+    with pytest.raises(RuntimeError, match="original failure"):
+        with VERIFIER._temporary_report(41):
+            raise RuntimeError("original failure")
+
+
 def test_report_cleanup_does_not_remove_unmatched_identity(monkeypatch, capsys) -> None:
     """An inert identity mismatch must never authorize unlink."""
     unlink = Mock()
