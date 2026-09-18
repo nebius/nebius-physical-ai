@@ -61,6 +61,10 @@ def _p(
 #               the ones worth closing, tool by tool, with a live run each.
 #
 SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
+    "flex-pi/infer": {
+        "runtime_image": "infra",
+        "dry_run": "boolean",
+    },
     "cosmos3/super-benchmark": {
         "dry_run": "boolean",
     },
@@ -158,6 +162,29 @@ VALID_GAP_CATEGORIES = frozenset({"boolean", "infra", "knob"})
 
 
 CONTRACTS: tuple[CapabilityContract, ...] = (
+    CapabilityContract(
+        name="flex-pi/infer",
+        cli_module="npa.cli.workbench.flex_pi",
+        cli_callback="infer_cmd",
+        sdk_module="npa.sdk.workbench.flex_pi",
+        sdk_attr="infer",
+        spec_path=SPECS / "flex-pi-rtxpro-inference.yaml",
+        tool_ref="workbench.flex_pi.infer",
+        spec_gap=("runtime_image", "dry_run"),
+        params=(
+            _p("input_path", "input_path", "--input-path"),
+            _p("output_path", "output_path", "--output-path"),
+            _p("checkpoint_id", "checkpoint_id", "--checkpoint-id"),
+            _p("checkpoint_revision", "checkpoint_revision", "--checkpoint-revision"),
+            _p("num_inference_steps", "num_inference_steps", "--num-inference-steps"),
+            _p("seed", "seed", "--seed"),
+            _p("torch_compile", "torch_compile", "--torch-compile"),
+            _p("expected_gpu", "expected_gpu", "--expected-gpu"),
+            _p("run_id", "run_id", "--run-id"),
+            _p("runtime_image", "runtime_image", "--runtime-image"),
+            _p("dry_run", "dry_run", "--dry-run"),
+        ),
+    ),
     CapabilityContract(
         name="curobo/benchmark",
         cli_module="npa.cli.workbench.curobo",

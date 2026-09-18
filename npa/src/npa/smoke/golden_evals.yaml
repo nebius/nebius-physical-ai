@@ -1135,6 +1135,32 @@ containers:
       timeout_seconds: 3600
       status: gpu-gated
 
+  flex-pi:
+    image: npa-flex-pi
+    dockerfile: npa/docker/workbench/flex-pi/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Flex-pi 6B multi-stream world-action policy predicts a 32-step bimanual
+        action chunk from three cameras, robot state, and language instruction.
+    safety:
+      runs_as: ubuntu
+      base_image: pytorch/pytorch:2.7.1-cuda12.8-cudnn9-devel (digest pinned)
+      network: runtime-only Hugging Face/ModelScope fetch and S3 artifact upload
+      external_fetch: [huggingface-public-model, huggingface-authorized-public-input, modelscope, s3]
+      notes: >-
+        Ships pinned MIT source/runtime, but no weights, observation media,
+        credentials, or populated cache. The input dataset card has no declared
+        license and is fetched only for the operator's authorized run.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_flex_pi_functional
+      command: python -m npa.smoke.test_flex_pi_functional
+      serverless_gpu: rtx6000
+      gpu: required
+      timeout_seconds: unlimited
+      status: ready
+
   sim2real-control:
     image: npa-sim2real-control
     default_tag: 0.1.2

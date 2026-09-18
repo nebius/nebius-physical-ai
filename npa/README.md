@@ -12,6 +12,10 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+[flex-pi inference](../docs/workbench/flex-pi.md#cli-and-sdk) emits one JSON
+document on stdout (`--output-format json`, the default); runtime diagnostics
+go to stderr.
+
 The package also provides project provisioning, storage, artifact conversion,
 viewers, and an agent interface. Python access includes typed clients, shared
 implementation functions, and wrappers around CLI callbacks; available imports

@@ -55,6 +55,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.lancedb": "lancedb",
     "workbench.detection_training": "detection-training",
     "workbench.alpamayo2_super": "alpamayo2-super",
+    "workbench.flex_pi": "flex-pi",
     "workbench.curobo": "curobo",
     "workbench.fiftyone": "fiftyone",
     "workbench.rl": "isaac-lab",
@@ -86,6 +87,10 @@ OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workbench.openpi": (OPENPI_TERMS_ENV,),
+    # The released flex-pi checkpoint is public, but its multi-shard runtime
+    # fetch can exceed the anonymous Hub rate limit. Forward an operator token
+    # only through the workflow secret channel when one is available.
+    "workbench.flex_pi": ("HF_TOKEN",),
     "workbench.token_factory": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval": (),
     # Attribute verification generates and answers its questions on Token Factory.

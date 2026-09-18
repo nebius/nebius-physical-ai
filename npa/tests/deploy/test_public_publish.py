@@ -315,6 +315,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
         "detection-training",
         "isaac-arena",
         "openarm",
+        "flex-pi",
         "sonic-mujoco",
     }
 
@@ -428,8 +429,8 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
     }
     assert accepted_shas
     # Five Sim2Real roles share a source, as do the three native model images.
-    # Arena and the other accepted images retain their distinct exact sources.
-    assert len(set(accepted_shas.values())) == 13
+    # Arena, flex-pi, and the other accepted images retain distinct exact sources.
+    assert len(set(accepted_shas.values())) == 14
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
         target_image = item.target_ref.rsplit("/", 1)[-1]
@@ -461,6 +462,7 @@ def test_accepted_images_use_distinct_exact_development_sources_and_digests() ->
         "sam2",
         "openarm",
         "alpamayo2-super",
+        "flex-pi",
     ):
         entry = manifest[tool]
         assert by_tool[tool].source_ref.endswith(

@@ -1826,6 +1826,8 @@ def submit_cmd(
             _runtime_submit_environment(
                 merged_npa_spec, run_id=resolved_run_id,
                 secret_env_values=extra_env, endpoint=render_endpoint,
+                isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
             )
             if runtime and not plan_only else None
         )
@@ -2562,7 +2564,13 @@ def _workflow_submission_receipt(spec, steps, run_id: str) -> dict[str, object]:
 
 
 def _runtime_submit_environment(
-    spec, *, run_id: str, secret_env_values: Mapping[str, str], endpoint: str,
+    spec,
+    *,
+    run_id: str,
+    secret_env_values: Mapping[str, str],
+    endpoint: str,
+    isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
 ) -> dict[str, str]:
     """Resolve the same private environment before API readiness and runtime."""
     from npa.orchestration.npa_workflow.interpreter import _make_context
@@ -2575,6 +2583,14 @@ def _runtime_submit_environment(
             environment[f"NPA_S3_{key.upper()}"] = str(resolved_config[key] or "")
     if endpoint.strip():
         environment.update(dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, endpoint.strip()))
+    if isolated_config_dir is not None:
+        environment["NPA_SKYPILOT_ISOLATED_CONFIG_DIR"] = str(
+            Path(isolated_config_dir).expanduser().resolve()
+        )
+    if config_path is not None:
+        environment["SKYPILOT_GLOBAL_CONFIG"] = str(
+            Path(config_path).expanduser().resolve()
+        )
     return environment
 
 
@@ -2707,6 +2723,8 @@ def _run_npa_workflow_runtime(
     runtime_env = _runtime_submit_environment(
         spec, run_id=run_id, secret_env_values=secret_env_values,
         endpoint=str(getattr(render_options, "aws_endpoint_url", "") or "").strip(),
+        isolated_config_dir=isolated_config_dir,
+        config_path=config_path,
     )
     with _temporary_runtime_environment(runtime_env):
         # Record entry into the runtime before it can launch a wave. A runtime
@@ -3354,7 +3372,22 @@ def _resolve_submit_accelerators(
     if not requested:
         return {}
 
-    with _temporary_runtime_environment(environment):
+    # GPU discovery calls into k8s_gpu_catalog, which resolves its isolated
+    # directory and base config from the process environment.  Bind the same
+    # explicit CLI selections used by ensure_local_api_daemon_health; otherwise
+    # a saved directory can win during catalog discovery and be rejected as a
+    # different executing identity.
+    readiness_environment = dict(environment or {})
+    if isolated_config_dir is not None:
+        readiness_environment["NPA_SKYPILOT_ISOLATED_CONFIG_DIR"] = str(
+            Path(isolated_config_dir).expanduser().resolve()
+        )
+    if config_path is not None:
+        readiness_environment["SKYPILOT_GLOBAL_CONFIG"] = str(
+            Path(config_path).expanduser().resolve()
+        )
+
+    with _temporary_runtime_environment(readiness_environment):
         try:
             ensure_local_api_daemon_health(
                 sky_bin=sky_bin or None,

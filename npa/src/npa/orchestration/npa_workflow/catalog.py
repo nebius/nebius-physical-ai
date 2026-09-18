@@ -339,6 +339,26 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--run-id", "{{run.id}}",
         ],
     ),
+    "workbench.flex_pi.infer": ToolEntry(
+        name="workbench.flex_pi.infer",
+        description=(
+            "Run flex-pi's genuine action-only policy inference on a pinned "
+            "public RoboTwin observation. Model and observation bytes are "
+            "fetched at runtime and validated before artifact publication."
+        ),
+        argv_template=[
+            "npa", "workbench", "flex-pi", "infer",
+            "--input-path", "{{config.input_uri}}",
+            "--output-path", "{{config.output_uri}}",
+            "--checkpoint-id", "{{config.checkpoint_id}}",
+            "--checkpoint-revision", "{{config.checkpoint_revision}}",
+            "--num-inference-steps", "{{config.num_inference_steps}}",
+            "--seed", "{{config.seed}}",
+            "--torch-compile",
+            "--expected-gpu", "{{config.expected_gpu}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
     "infra.fleet.deploy": ToolEntry(
         name="infra.fleet.deploy",
         description=(

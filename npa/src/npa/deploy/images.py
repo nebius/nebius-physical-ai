@@ -77,6 +77,7 @@ CONTAINER_IMAGE_NAMES = {
     "sam2": "npa-sam2",
     "ltx2": "npa-ltx2",
     "alpamayo2-super": "npa-alpamayo2-super",
+    "flex-pi": "npa-flex-pi",
     "curobo": "npa-curobo",
     "content-agents": "npa-content-agents",
     "ncore": "npa-ncore",
@@ -224,6 +225,10 @@ GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES: dict[str, dict[str, str]] = {
         "development_sha": "01fbf3a554cb7b15066283fd171c5b81f6207eda",
         "oci_digest": "sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a",
     },
+    "flex-pi": {
+        "development_sha": "8904daf36d0cc9152193b0e87a687bce7e6fca46",
+        "oci_digest": "sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6",
+    },
 }
 GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS: dict[str, str] = {
     tool: source["oci_digest"]
@@ -296,6 +301,7 @@ SUPPORTED_TOOL_VERSIONS = {
     # resolves only to the zero-payload digest recorded in ltx2_image_manifest.json.
     "ltx2": "2.5-rtfetch-20260817",
     "alpamayo2-super": "0.1.0-cu128-r3",
+    "flex-pi": "0.1.0-cu128-r2",
     "curobo": "0.8.0-cuda13-b300-unbuilt",
     "content-agents": "0.5.2-npa2",
     # Source packaging inventory only; no accepted public NCore release exists.
