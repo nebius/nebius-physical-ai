@@ -21,6 +21,10 @@ import yaml
 from npa.cli.main import app
 from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import s3_client_for_project
+from npa.execution_preflight import (
+    ExecutionPreflightError,
+    validate_gymnasium_task_configuration,
+)
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.workflows.byof.live import (
     byof_ubuntu_validation_repo,
@@ -1054,6 +1058,96 @@ def _gymnasium_sky_cluster_absent(
     return not any(item.get("name") == run_id for item in clusters)
 
 
+def _gymnasium_admitted_pod_identity(
+    pod: dict[str, object], *, namespace: str, run_id: str
+) -> dict[str, object]:
+    assert pod.get("apiVersion") == "v1" and pod.get("kind") == "Pod", (
+        "admitted workload must be a v1 Pod"
+    )
+    metadata = pod.get("metadata")
+    assert isinstance(metadata, dict), "admitted Pod metadata must be an object"
+    for key in ("name", "uid", "resourceVersion"):
+        value = metadata.get(key)
+        assert isinstance(value, str) and value and value == value.strip(), (
+            "admitted Pod requires exact name, UID and resource version"
+        )
+    assert metadata.get("namespace") == namespace, "unexpected admitted Pod namespace"
+    assert not metadata.get("deletionTimestamp"), "admitted Pod is terminating"
+    assert metadata.get("labels", {}).get("parent") == "skypilot"
+    assert metadata.get("annotations", {}).get("skypilot-cluster-name") == run_id
+    return {
+        key: metadata[key] for key in ("name", "uid", "namespace", "resourceVersion")
+    }
+
+
+def _gymnasium_admitted_volumes(spec: dict[str, object]) -> dict[str, object]:
+    # The only approved mount is anonymous memory for local IPC. Anything else
+    # needs its own reviewed configuration, never an inferred admission allowance.
+    volumes = spec.get("volumes", [])
+    mounts = spec["containers"][0].get("volumeMounts", [])
+    assert isinstance(volumes, list) and isinstance(mounts, list), (
+        "admitted Pod volume and mount populations must be lists"
+    )
+    if not volumes:
+        assert mounts == [], "admitted Pod has an unapproved mount"
+        return {"volumes": [], "mounts": []}
+    assert volumes == [{"name": "dshm", "emptyDir": {"medium": "Memory"}}], (
+        "admitted Pod has an unapproved volume population"
+    )
+    assert len(mounts) == 1 and isinstance(mounts[0], dict)
+    mount = dict(mounts[0])
+    if "readOnly" in mount:
+        assert mount.pop("readOnly") is False, "unexpected shared-memory mount mode"
+    if "mountPropagation" in mount:
+        assert mount.pop("mountPropagation") == "None", "mount propagation forbidden"
+    assert mount == {"name": "dshm", "mountPath": "/dev/shm"}, (
+        "admitted Pod has an unapproved mount population"
+    )
+    return {"volumes": volumes, "mounts": mounts}
+
+
+def _gymnasium_admitted_pod_policy(
+    pod: dict[str, object], *, namespace: str, run_id: str
+) -> dict[str, object]:
+    identity = _gymnasium_admitted_pod_identity(pod, namespace=namespace, run_id=run_id)
+    spec = pod.get("spec")
+    assert isinstance(spec, dict), "admitted Pod spec must be an object"
+    assert spec.get("serviceAccountName") in {"default", "skypilot-service-account"}, (
+        "admitted Pod service account is missing or unapproved"
+    )
+    if "serviceAccount" in spec:
+        assert spec["serviceAccount"] == spec["serviceAccountName"]
+    for key in ("initContainers", "ephemeralContainers"):
+        assert key not in spec or spec[key] == [], (
+            "admitted Pod has injected containers"
+        )
+    documents = [{"config": {"kubernetes": {"pod_config": {"spec": spec}}}}]
+    try:
+        selected = validate_gymnasium_task_configuration(
+            documents, solution_name="gymnasium-robotics"
+        )
+    except ExecutionPreflightError as exc:
+        raise AssertionError(
+            "admitted Pod violates Gymnasium isolation policy"
+        ) from exc
+    assert selected, "admitted Pod isolation policy was not applied"
+    populations = _gymnasium_admitted_volumes(spec)
+    container = spec["containers"][0]
+    return {
+        "policy": "gymnasium-admitted-pod.v1",
+        "identity": identity,
+        "service_account": spec["serviceAccountName"],
+        "automount_service_account_token": spec["automountServiceAccountToken"],
+        "container_names": [container["name"]],
+        **populations,
+        "pod_security_context": spec["securityContext"],
+        "container_security_context": container["securityContext"],
+        "spec_sha256": hashlib.sha256(
+            json.dumps(spec, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+    }
+
+
 def _gymnasium_pod_image_receipt(
     proc: subprocess.Popen[str],
     *,
@@ -1120,6 +1214,9 @@ def _gymnasium_pod_image_receipt(
             for item in other_containers
             for kind in ("requests", "limits")
         ), "only the exact task container may request the one GPU"
+        admitted_policy = _gymnasium_admitted_pod_policy(
+            pod, namespace=namespace, run_id=run_id
+        )
         statuses = {
             item.get("name"): item
             for item in pod.get("status", {}).get("containerStatuses", [])
@@ -1155,6 +1252,7 @@ def _gymnasium_pod_image_receipt(
             "expected_digest": expected_digest,
             "observed_digest": observed_digests.pop(),
             "observed_unix": round(time.time(), 3),
+            "admitted_pod_policy": admitted_policy,
         }
         assert receipt["pod_name"] and receipt["pod_uid"]
         assert receipt["pod_namespace"] == namespace

@@ -1,3 +1,5 @@
+"""Inert configuration and mocked owner-receipt checks, not live containment proof."""
+
 from __future__ import annotations
 
 import importlib
@@ -37,19 +39,34 @@ class _RunningProcess:
 
 def _pod(*, image_id: str) -> dict[str, object]:
     return {
+        "apiVersion": "v1",
+        "kind": "Pod",
         "metadata": {
             "name": "sky-gymnasium-unit",
             "namespace": NAMESPACE,
             "uid": "unit-pod-uid",
+            "resourceVersion": "1",
             "labels": {"parent": "skypilot"},
             "annotations": {"skypilot-cluster-name": RUN_ID},
         },
         "spec": {
             "nodeName": NODE_NAME,
+            "serviceAccountName": "skypilot-service-account",
+            "automountServiceAccountToken": False,
+            "securityContext": {
+                "runAsNonRoot": True,
+                "seccompProfile": {"type": "RuntimeDefault"},
+            },
             "containers": [
                 {
-                    "name": "task",
+                    "name": "ray-node",
                     "image": IMAGE,
+                    "securityContext": {
+                        "runAsNonRoot": True,
+                        "privileged": False,
+                        "allowPrivilegeEscalation": False,
+                        "capabilities": {"drop": ["ALL"]},
+                    },
                     "resources": {
                         "requests": {"nvidia.com/gpu": "1"},
                         "limits": {"nvidia.com/gpu": "1"},
@@ -61,7 +78,7 @@ def _pod(*, image_id: str) -> dict[str, object]:
             "phase": "Running",
             "containerStatuses": [
                 {
-                    "name": "task",
+                    "name": "ray-node",
                     "imageID": image_id,
                     "state": {"running": {"startedAt": "2026-09-11T00:00:00Z"}},
                 }
@@ -77,6 +94,165 @@ def _receipt_env(evidence: Path) -> dict[str, str]:
     }
 
 
+@pytest.mark.parametrize("service_account", ["default", "skypilot-service-account"])
+@pytest.mark.parametrize("shared_memory", [False, True])
+def test_admitted_policy_accepts_only_reviewed_ipc_population(
+    service_account: str, shared_memory: bool
+) -> None:
+    pod = _pod(image_id=f"containerd://{DIGEST}")
+    spec = pod["spec"]
+    spec["serviceAccountName"] = service_account
+    if shared_memory:
+        spec["volumes"] = [{"name": "dshm", "emptyDir": {"medium": "Memory"}}]
+        spec["containers"][0]["volumeMounts"] = [
+            {"name": "dshm", "mountPath": "/dev/shm", "readOnly": False}
+        ]
+    facts = live._gymnasium_admitted_pod_policy(pod, namespace=NAMESPACE, run_id=RUN_ID)
+    assert facts["service_account"] == service_account
+    assert facts["volumes"] == spec.get("volumes", [])
+    assert facts["mounts"] == spec["containers"][0].get("volumeMounts", [])
+    assert len(facts["spec_sha256"]) == 64
+
+
+@pytest.mark.parametrize(
+    ("target", "key", "value"),
+    [
+        ("pod", "apiVersion", None),
+        ("pod", "kind", "Job"),
+        ("metadata", "uid", ""),
+        ("metadata", "resourceVersion", None),
+        ("metadata", "name", " "),
+        ("spec", "automountServiceAccountToken", None),
+        ("spec", "automountServiceAccountToken", True),
+        ("spec", "automountServiceAccountToken", "false"),
+        ("spec", "serviceAccountName", None),
+        ("spec", "serviceAccountName", "unapproved-account"),
+        ("spec", "serviceAccount", "different-account"),
+        ("spec", "initContainers", [{"name": "injected"}]),
+        ("spec", "ephemeralContainers", [{"name": "injected"}]),
+        ("spec", "initContainers", None),
+        ("spec", "hostNetwork", True),
+        ("spec", "hostPID", True),
+        ("spec", "hostIPC", True),
+        ("spec", "shareProcessNamespace", True),
+        ("spec", "securityContext", {}),
+        ("spec", "volumes", None),
+        ("spec", "volumes", [{"name": "injected", "emptyDir": {}}]),
+        ("container", "name", "changed-name"),
+        ("container", "securityContext", {}),
+        ("container", "volumeDevices", [{"name": "injected"}]),
+        ("container", "volumeMounts", [{"name": "missing", "mountPath": "/data"}]),
+        ("container", "envFrom", [{"secretRef": {"name": "synthetic"}}]),
+        ("container", "env", [{"name": "UNRELATED_TOKEN", "value": "SYNTHETIC"}]),
+        (
+            "container",
+            "env",
+            [
+                {
+                    "name": "CONFIG",
+                    "valueFrom": {
+                        "secretKeyRef": {"name": "synthetic", "key": "value"}
+                    },
+                }
+            ],
+        ),
+    ],
+)
+def test_admission_change_refuses_before_receipt_injection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    target: str,
+    key: str,
+    value: object,
+) -> None:
+    pod = _pod(image_id=f"containerd://{DIGEST}")
+    targets = {
+        "pod": pod,
+        "metadata": pod["metadata"],
+        "spec": pod["spec"],
+        "container": pod["spec"]["containers"][0],
+    }
+    targets[target][key] = value
+    _assert_admitted_refusal_before_effects(monkeypatch, tmp_path, pod)
+
+
+def _assert_admitted_refusal_before_effects(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pod: dict[str, object]
+) -> None:
+    evidence = tmp_path / "evidence"
+    evidence.mkdir(mode=0o700)
+    calls = []
+
+    def lookup(_env, _namespace, *args, stdin=None):
+        calls.append(args)
+        assert args[:2] == ("get", "pods"), "no receipt injection is allowed"
+        assert stdin is None
+        return subprocess.CompletedProcess(args, 0, json.dumps({"items": [pod]}), "")
+
+    monkeypatch.setattr(live, "_gymnasium_kubectl", lookup)
+    with pytest.raises(AssertionError):
+        live._gymnasium_pod_image_receipt(
+            _RunningProcess(),
+            env=_receipt_env(evidence),
+            namespace=NAMESPACE,
+            run_id=RUN_ID,
+            image=IMAGE,
+        )
+    assert len(calls) == 1
+    assert list(evidence.iterdir()) == []
+
+
+def test_admitted_policy_refuses_terminating_identity() -> None:
+    pod = _pod(image_id=f"containerd://{DIGEST}")
+    pod["metadata"]["deletionTimestamp"] = "synthetic-termination"
+    with pytest.raises(AssertionError, match="terminating"):
+        live._gymnasium_admitted_pod_policy(pod, namespace=NAMESPACE, run_id=RUN_ID)
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "projected",
+        "secret",
+        "configMap",
+        "csi",
+        "hostPath",
+        "persistentVolumeClaim",
+        "downwardAPI",
+    ],
+)
+def test_admission_volume_sources_are_not_implicitly_approved(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, kind: str
+) -> None:
+    pod = _pod(image_id=f"containerd://{DIGEST}")
+    pod["spec"]["volumes"] = [{"name": "injected", kind: {}}]
+    _assert_admitted_refusal_before_effects(monkeypatch, tmp_path, pod)
+
+
+@pytest.mark.parametrize(
+    "mutation", ["sidecar", "duplicate-volume", "subpath", "path", "propagation"]
+)
+def test_admission_population_and_mount_changes_are_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mutation: str
+) -> None:
+    pod = _pod(image_id=f"containerd://{DIGEST}")
+    spec = pod["spec"]
+    spec["volumes"] = [{"name": "dshm", "emptyDir": {"medium": "Memory"}}]
+    mount = {"name": "dshm", "mountPath": "/dev/shm"}
+    spec["containers"][0]["volumeMounts"] = [mount]
+    if mutation == "sidecar":
+        spec["containers"].append({"name": "injected", "image": IMAGE})
+    elif mutation == "duplicate-volume":
+        spec["volumes"].append(dict(spec["volumes"][0]))
+    elif mutation == "subpath":
+        mount["subPath"] = "nested"
+    elif mutation == "path":
+        mount["mountPath"] = "/data"
+    else:
+        mount["mountPropagation"] = "Bidirectional"
+    _assert_admitted_refusal_before_effects(monkeypatch, tmp_path, pod)
+
+
 def _profile_receipt_validator() -> str:
     documents = [
         document
@@ -84,8 +260,183 @@ def _profile_receipt_validator() -> str:
         if document is not None
     ]
     run = str(documents[1]["run"])
-    marker = 'export NPA_BYOF_POD_IMAGE_ID="$(/usr/bin/python3 -I -B - <<\'PY\'\n'
+    marker = "export NPA_BYOF_POD_IMAGE_ID=\"$(/usr/bin/python3 -I -B - <<'PY'\n"
     return run.split(marker, 1)[1].split('\nPY\n)"', 1)[0]
+
+
+def _synthetic_profile_receipt() -> dict[str, object]:
+    pod = _pod(image_id=f"containerd://{DIGEST}")
+    return {
+        "schema_version": "npa.byof.pod-image-receipt.v1",
+        "source": "owner-side-kubernetes-status",
+        "run_id": RUN_ID,
+        "pod_name": pod["metadata"]["name"],
+        "pod_namespace": NAMESPACE,
+        "pod_uid": pod["metadata"]["uid"],
+        "node_name": NODE_NAME,
+        "container_name": "ray-node",
+        "spec_image": IMAGE,
+        "image_id": f"containerd://{DIGEST}",
+        "expected_digest": DIGEST,
+        "observed_digest": DIGEST,
+        "observed_unix": 1,
+        "admitted_pod_policy": live._gymnasium_admitted_pod_policy(
+            pod, namespace=NAMESPACE, run_id=RUN_ID
+        ),
+    }
+
+
+def _validate_synthetic_receipt(tmp_path: Path, receipt: object):
+    (tmp_path / "npa_pod_image_receipt.json").write_text(json.dumps(receipt))
+    return subprocess.run(
+        [sys.executable, "-I", "-B", "-c", _profile_receipt_validator()],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            "BYOF_IMAGE": IMAGE,
+            "NPA_SMOKE_OUTPUT_DIR": str(tmp_path),
+            "NPA_BYOF_RUN_ID": RUN_ID,
+        },
+    )
+
+
+@pytest.mark.parametrize("service_account", ["default", "skypilot-service-account"])
+@pytest.mark.parametrize("shared_memory", [False, True])
+def test_profile_accepts_closed_admitted_policy(
+    tmp_path: Path, service_account: str, shared_memory: bool
+) -> None:
+    receipt = _synthetic_profile_receipt()
+    policy = receipt["admitted_pod_policy"]
+    policy["service_account"] = service_account
+    if shared_memory:
+        policy["volumes"] = [{"name": "dshm", "emptyDir": {"medium": "Memory"}}]
+        policy["mounts"] = [{"name": "dshm", "mountPath": "/dev/shm"}]
+    result = _validate_synthetic_receipt(tmp_path, receipt)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == f"containerd://{DIGEST}"
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "policy",
+        "identity",
+        "service_account",
+        "automount_service_account_token",
+        "container_names",
+        "volumes",
+        "mounts",
+        "pod_security_context",
+        "container_security_context",
+        "spec_sha256",
+    ],
+)
+def test_profile_requires_every_admitted_policy_fact(tmp_path: Path, key: str) -> None:
+    receipt = _synthetic_profile_receipt()
+    del receipt["admitted_pod_policy"][key]
+    result = _validate_synthetic_receipt(tmp_path, receipt)
+    assert result.returncode != 0
+    assert "unexpected admitted-policy schema" in result.stderr
+    assert result.stdout == "", "no runtime-release digest on refused policy"
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        ("policy", "gymnasium-admitted-pod.v2"),
+        ("unknown", False),
+        ("identity", None),
+        ("identity.name", "another-pod"),
+        ("identity.namespace", "another-namespace"),
+        ("identity.uid", "another-uid"),
+        ("identity.resourceVersion", ""),
+        ("identity.extra", "unapproved"),
+        ("service_account", "unapproved"),
+        ("service_account", None),
+        ("automount_service_account_token", True),
+        ("automount_service_account_token", "false"),
+        ("automount_service_account_token", 0),
+        ("container_names", ["ray-node", "injected"]),
+        ("container_names", ["another-container"]),
+        ("pod_security_context", {}),
+        ("pod_security_context.runAsNonRoot", 1),
+        ("pod_security_context.seccompProfile", {"type": "Unconfined"}),
+        ("pod_security_context.runAsUser", 0),
+        ("container_security_context", {}),
+        ("container_security_context.privileged", True),
+        ("container_security_context.allowPrivilegeEscalation", True),
+        ("container_security_context.capabilities", {"drop": []}),
+        ("volumes", [{"name": "injected", "secret": {"secretName": "synthetic"}}]),
+        ("volumes", None),
+        ("mounts", [{"name": "injected", "mountPath": "/data"}]),
+        ("spec_sha256", "not-a-digest"),
+    ],
+)
+def test_profile_refuses_changed_policy_facts(
+    tmp_path: Path, path: str, value: object
+) -> None:
+    receipt = _synthetic_profile_receipt()
+    target = receipt["admitted_pod_policy"]
+    keys = path.split(".")
+    for key in keys[:-1]:
+        target = target[key]
+    target[keys[-1]] = value
+    result = _validate_synthetic_receipt(tmp_path, receipt)
+    assert result.returncode != 0
+    assert "Pod policy receipt" in result.stderr
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("admitted_pod_policy", None),
+        ("unexpected", "synthetic"),
+        ("run_id", "another-run"),
+        ("source", "unapproved-source"),
+        ("schema_version", "unapproved-version"),
+        ("pod_uid", "another-uid"),
+        ("pod_name", "another-pod"),
+        ("pod_namespace", "another-namespace"),
+        ("container_name", "another-container"),
+        ("spec_image", "another-image"),
+        ("expected_digest", "sha256:" + "2" * 64),
+        ("observed_digest", "sha256:" + "2" * 64),
+        ("image_id", "containerd://sha256:" + "2" * 64),
+    ],
+)
+def test_profile_retains_image_and_run_correlations(
+    tmp_path: Path, key: str, value: object
+) -> None:
+    receipt = _synthetic_profile_receipt()
+    receipt[key] = value
+    result = _validate_synthetic_receipt(tmp_path, receipt)
+    assert result.returncode != 0
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("readOnly", 0),
+        ("mountPropagation", "Bidirectional"),
+        ("subPath", "nested"),
+        ("mountPath", "/data"),
+        ("name", "unapproved"),
+    ],
+)
+def test_profile_refuses_unapproved_ipc_mount_options(
+    tmp_path: Path, key: str, value: object
+) -> None:
+    receipt = _synthetic_profile_receipt()
+    policy = receipt["admitted_pod_policy"]
+    policy["volumes"] = [{"name": "dshm", "emptyDir": {"medium": "Memory"}}]
+    policy["mounts"] = [{"name": "dshm", "mountPath": "/dev/shm", key: value}]
+    result = _validate_synthetic_receipt(tmp_path, receipt)
+    assert result.returncode != 0
+    assert "Pod policy receipt" in result.stderr
+    assert result.stdout == ""
 
 
 def test_owner_receipt_binds_exact_running_pod_and_writes_private_evidence(
@@ -94,6 +445,8 @@ def test_owner_receipt_binds_exact_running_pod_and_writes_private_evidence(
     evidence = tmp_path / "evidence"
     evidence.mkdir(mode=0o700)
     env = _receipt_env(evidence)
+    # Storage transport stays with the trusted coordinator, not Pod projections.
+    env["AWS_SECRET_ACCESS_KEY"] = "SYNTHETIC-STORAGE-VALUE"
     calls: list[tuple[tuple[str, ...], str | None]] = []
 
     def fake_kubectl(
@@ -105,9 +458,6 @@ def test_owner_receipt_binds_exact_running_pod_and_writes_private_evidence(
         calls.append((args, stdin))
         if args[:2] == ("get", "pods"):
             pod = _pod(image_id=f"containerd://{DIGEST}")
-            pod["spec"]["containers"].append(
-                {"name": "same-image-helper", "image": IMAGE, "resources": {}}
-            )
             payload = {"items": [pod]}
             return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
         assert args[0] == "exec"
@@ -125,8 +475,15 @@ def test_owner_receipt_binds_exact_running_pod_and_writes_private_evidence(
     assert receipt["expected_digest"] == DIGEST
     assert receipt["observed_digest"] == DIGEST
     assert receipt["node_name"] == NODE_NAME
+    policy = receipt["admitted_pod_policy"]
+    assert policy["identity"]["uid"] == receipt["pod_uid"]
+    assert policy["identity"]["name"] == receipt["pod_name"]
+    assert policy["identity"]["resourceVersion"] == "1"
+    assert policy["automount_service_account_token"] is False
+    assert policy["container_names"] == ["ray-node"]
     assert calls[1][0][0] == "exec"
     assert json.loads(calls[1][1] or "{}") == receipt
+    assert "SYNTHETIC-STORAGE-VALUE" not in json.dumps(receipt)
     receipt_path = evidence / f"{RUN_ID}-pod-image-receipt.json"
     assert json.loads(receipt_path.read_text(encoding="utf-8")) == receipt
     assert receipt_path.stat().st_mode & 0o077 == 0
@@ -730,9 +1087,7 @@ def test_cleanup_retries_with_a_distinct_attempt_receipt(
 ) -> None:
     attempts: list[int] = []
 
-    def fake_cleanup(
-        *args: object, cleanup_attempt: int, **kwargs: object
-    ) -> None:
+    def fake_cleanup(*args: object, cleanup_attempt: int, **kwargs: object) -> None:
         del args, kwargs
         attempts.append(cleanup_attempt)
         if cleanup_attempt == 1:

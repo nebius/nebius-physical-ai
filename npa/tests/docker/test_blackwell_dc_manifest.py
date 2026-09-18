@@ -50,7 +50,8 @@ def test_manifest_format_and_target(manifest: dict) -> None:
     assert gpus["B200"]["compute_capability"] == "10.0"
     assert gpus["B300 (Blackwell Ultra)"]["sm"] == "sm_103"
     assert gpus["B300 (Blackwell Ultra)"]["compute_capability"] == "10.3"
-    # Datacenter Blackwell has no RT cores, so rendering must never route here.
+    # RT-core absence describes hardware, not EGL raster incompatibility.
+    # Per-workload qualification and operator placement exclusions still apply.
     assert target["rt_cores"] is False
 
 

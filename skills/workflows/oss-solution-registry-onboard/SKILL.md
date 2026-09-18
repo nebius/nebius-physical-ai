@@ -246,7 +246,13 @@ pre-registration publication quarantine. Historical private evidence never
 qualifies redesigned or public bytes. This is not a first-class tool. It uses
 no model, external dataset, gated asset, or terms acceptance. RL sweeps, expert
 scores, other environment families, and physical-robot transfer remain
-deferred. Never route it to B200.
+deferred. The operator qualification contract requires exactly one strictly
+reserved RTX PRO 6000 Blackwell; never route this task to B200. Other hardware,
+including B200/B300, is unqualified/deferred for this capability, not proven
+incapable solely by the absence of RT cores. MuJoCo's EGL raster rendering is
+distinct from ray tracing; any future qualification needs exact driver/EGL,
+image and real-workload evidence. This rationale does not relax placement or
+publication exclusions and makes no new hardware-support claim.
 
 ### RoboCasa (`byof-robocasa.yaml`)
 

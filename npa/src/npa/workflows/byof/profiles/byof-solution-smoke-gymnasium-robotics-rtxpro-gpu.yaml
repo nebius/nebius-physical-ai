@@ -141,6 +141,70 @@ run: |
   import re
   from pathlib import Path
 
+  def require_keys(value, keys, label):
+      if not isinstance(value, dict) or set(value) != set(keys):
+          raise SystemExit(f"Pod policy receipt has an unexpected {label} schema")
+
+  def same_facts(actual, expected):
+      # JSON preserves the distinction between booleans and numeric lookalikes.
+      return json.dumps(actual, sort_keys=True) == json.dumps(expected, sort_keys=True)
+
+  def validate_ipc(policy):
+      volumes, mounts = policy["volumes"], policy["mounts"]
+      if volumes == [] and mounts == []:
+          return
+      approved = [{"name": "dshm", "emptyDir": {"medium": "Memory"}}]
+      if not same_facts(volumes, approved) or not isinstance(mounts, list) or len(mounts) != 1:
+          raise SystemExit("Pod policy receipt has unapproved volumes or mounts")
+      mount = mounts[0]
+      if not isinstance(mount, dict):
+          raise SystemExit("Pod policy receipt has a malformed IPC mount")
+      mount = dict(mount)
+      if mount.pop("readOnly", False) is not False or mount.pop("mountPropagation", "None") != "None":
+          raise SystemExit("Pod policy receipt has unapproved IPC mount options")
+      if mount != {"name": "dshm", "mountPath": "/dev/shm"}:
+          raise SystemExit("Pod policy receipt has an unapproved IPC mount")
+
+  def validate_identity(policy, receipt):
+      identity = policy["identity"]
+      require_keys(identity, ("name", "namespace", "uid", "resourceVersion"), "identity")
+      for value in identity.values():
+          if not isinstance(value, str) or not value or value != value.strip():
+              raise SystemExit("Pod policy receipt has a missing identity fact")
+      for key in ("name", "namespace", "uid"):
+          if identity[key] != receipt["pod_" + key]:
+              raise SystemExit("Pod policy receipt identity differs from the image receipt")
+      if receipt["container_name"] != "ray-node" or policy["container_names"] != ["ray-node"]:
+          raise SystemExit("Pod policy receipt has an unapproved container population")
+
+  def validate_policy(receipt):
+      policy = receipt["admitted_pod_policy"]
+      require_keys(policy, (
+          "policy", "identity", "service_account", "automount_service_account_token",
+          "container_names", "volumes", "mounts", "pod_security_context",
+          "container_security_context", "spec_sha256",
+      ), "admitted-policy")
+      if policy["policy"] != "gymnasium-admitted-pod.v1":
+          raise SystemExit("Pod policy receipt has an unapproved policy version")
+      if policy["service_account"] not in ("default", "skypilot-service-account"):
+          raise SystemExit("Pod policy receipt has an unapproved service account")
+      if policy["automount_service_account_token"] is not False:
+          raise SystemExit("Pod policy receipt must explicitly disable service-account automount")
+      pod_security = {"runAsNonRoot": True, "seccompProfile": {"type": "RuntimeDefault"}}
+      container_security = {
+          "runAsNonRoot": True, "privileged": False, "allowPrivilegeEscalation": False,
+          "capabilities": {"drop": ["ALL"]},
+      }
+      if not same_facts(policy["pod_security_context"], pod_security):
+          raise SystemExit("Pod policy receipt has unapproved Pod security facts")
+      if not same_facts(policy["container_security_context"], container_security):
+          raise SystemExit("Pod policy receipt has unapproved container security facts")
+      digest = policy["spec_sha256"]
+      if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+          raise SystemExit("Pod policy receipt is missing its checked spec digest")
+      validate_identity(policy, receipt)
+      validate_ipc(policy)
+
   expected = os.environ["BYOF_IMAGE"]
   match = re.search(r"sha256:[0-9a-f]{64}$", expected)
   if match is None:
@@ -162,8 +226,9 @@ run: |
       "expected_digest",
       "observed_digest",
       "observed_unix",
+      "admitted_pod_policy",
   }
-  if set(payload) != required:
+  if not isinstance(payload, dict) or set(payload) != required:
       raise SystemExit("owner-side Pod image receipt has an unexpected schema")
   if payload["schema_version"] != "npa.byof.pod-image-receipt.v1":
       raise SystemExit("owner-side Pod image receipt has an unexpected version")
@@ -189,6 +254,7 @@ run: |
   ):
       if not isinstance(payload[key], str) or not payload[key]:
           raise SystemExit(f"Pod image receipt is missing {key}")
+  validate_policy(payload)
   print(image_id)
   PY
   )"
