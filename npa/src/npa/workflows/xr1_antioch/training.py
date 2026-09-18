@@ -90,7 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _isolate(args) -> None:
-    args.work_path.mkdir(parents=True, exist_ok=False)
+    args.work_path.mkdir(parents=True, exist_ok=False, mode=0o700)
     environment = args.work_path / "vendor-venv"
     subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", str(environment)], check=True)
     interpreter = environment / "bin/python"

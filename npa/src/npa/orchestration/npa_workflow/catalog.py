@@ -2648,7 +2648,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--assets-path", "{{config.assets_uri}}",
             "--runtime-path", "{{config.runtime_uri}}",
             "--output-path", "{{config.training_uri}}",
-            "--work-path", "/tmp/xr1-finetune",
+            "--work-path", "/var/lib/npa/xr1-finetune",
         ],
     ),
     "workflow.groot.preflight_rigor": ToolEntry(

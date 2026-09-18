@@ -23,6 +23,7 @@ from mibot.utils.io import (
     recover_action, resize_image, validate_quantiles, validate_stats,
 )
 
+from .assets import PROCESSOR_REVISION
 from .storage import _sha256
 
 
@@ -31,11 +32,12 @@ class _Policy:
         if _sha256(checkpoint) != expected:
             raise ValueError("Policy checkpoint differs from its verified S3 receipt")
         self.model = MIMODEL.build({"type": "xr1", "async_train": False}).to(torch.bfloat16)
-        weights = torch.load(checkpoint, map_location="cpu", mmap=True, weights_only=False)["module"]
+        weights = torch.load(checkpoint, map_location="cpu", mmap=True, weights_only=True)["module"]
         state = {name.removeprefix("model."): value for name, value in weights.items()}
         self.model.load_state_dict(state, strict=True)
         self.model.eval().to("cuda")
-        self.processor = AutoProcessor.from_pretrained(str(processor), local_files_only=True)
+        self.processor = AutoProcessor.from_pretrained(str(processor), local_files_only=True,
+                                                       revision=PROCESSOR_REVISION)
         stats = json.loads(statistics.read_text())
         self.mean, self.std = validate_stats(stats["mean"], stats["std"], 30)
         self.q01, self.q99 = validate_quantiles(stats["q01"], stats["q99"])

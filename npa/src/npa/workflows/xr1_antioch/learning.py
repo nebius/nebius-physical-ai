@@ -112,9 +112,9 @@ def _fit(configuration_path: Path) -> None:
 
 def _export(checkpoint, configuration: Config, output: Path, steps: int) -> None:
     state_path = Path(checkpoint.best_model_path) / "checkpoint/mp_rank_00_model_states.pt"
-    candidate = torch.load(state_path, map_location="cpu", mmap=True, weights_only=False)["module"]
+    candidate = torch.load(state_path, map_location="cpu", mmap=True, weights_only=True)["module"]
     baseline = torch.load(configuration.model.params.pretrained, map_location="cpu",
-                          mmap=True, weights_only=False)["module"]
+                          mmap=True, weights_only=True)["module"]
     if set(candidate) != set(baseline):
         raise ValueError("Trained checkpoint keys differ from the exact baseline model")
     changed, total = 0, 0

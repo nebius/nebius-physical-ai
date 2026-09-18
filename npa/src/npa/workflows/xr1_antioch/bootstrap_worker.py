@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import closing
+from http.client import HTTPException, HTTPSConnection
 import json
 from pathlib import Path, PurePosixPath
 import stat
 import sys
-from urllib.error import URLError
-from urllib.request import urlopen
+from urllib.parse import urlsplit
 import zipfile
 
 
@@ -19,21 +20,34 @@ def _relative(name: str) -> PurePosixPath:
     return path
 
 
+def _receive_file(response, path: Path) -> tuple[str, int]:
+    if response.status != 200:
+        raise RuntimeError("Signed artifact download did not return success")
+    digest, size = hashlib.sha256(), 0
+    with path.open("xb") as output:
+        for block in iter(lambda: response.read(8 * 1024 * 1024), b""):
+            output.write(block)
+            digest.update(block)
+            size += len(block)
+    return digest.hexdigest(), size
+
+
 def _download(root: Path, name: str, entry: dict) -> dict:
     path = root / _relative(name)
     path.parent.mkdir(parents=True, exist_ok=True)
-    digest, size = hashlib.sha256(), 0
+    url = urlsplit(entry["url"])
+    if url.scheme != "https" or not url.hostname or url.username or url.password or url.fragment:
+        raise ValueError("Signed downloads require HTTPS without user information or fragments")
     try:
-        with urlopen(entry["url"], timeout=120) as response, path.open("xb") as output:
-            for block in iter(lambda: response.read(8 * 1024 * 1024), b""):
-                output.write(block)
-                digest.update(block)
-                size += len(block)
-    except URLError as error:
+        with closing(HTTPSConnection(url.hostname, url.port, timeout=120)) as connection:
+            connection.request("GET", url.path + ("?" + url.query if url.query else ""))
+            with connection.getresponse() as response:
+                digest, size = _receive_file(response, path)
+    except (HTTPException, OSError) as error:
         raise RuntimeError(f"Signed artifact download failed: {type(error).__name__}") from None
-    if digest.hexdigest() != entry["sha256"] or size != entry["bytes"]:
+    if digest != entry["sha256"] or size != entry["bytes"]:
         raise ValueError(f"S3 input differs from its approved identity: {name}")
-    return {"sha256": digest.hexdigest(), "bytes": size}
+    return {"sha256": digest, "bytes": size}
 
 
 def _extract(root: Path, name: str) -> None:

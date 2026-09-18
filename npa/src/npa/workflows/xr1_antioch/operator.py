@@ -53,7 +53,7 @@ def _runtime_recipe(args) -> None:
         "envs": {"AWS_ENDPOINT_URL": os.environ["AWS_ENDPOINT_URL"], "XR1_RUNTIME_URI": args.s3_uri,
                  "WANDB_MODE": "disabled", "HF_HUB_DISABLE_TELEMETRY": "1", "MAX_JOBS": "16",
                  "NPA_EXECUTION_OUTPUTS": json.dumps([{"uri": args.s3_uri, "kind": "directory"}])},
-        "run": 'python runtime.py --work-path /tmp/xr1-runtime --output-path "$XR1_RUNTIME_URI"'}
+        "run": 'python runtime.py --work-path /var/lib/npa/xr1-runtime --output-path "$XR1_RUNTIME_URI"'}
     (root / "runtime.yaml").write_text(yaml.safe_dump(spec, sort_keys=False))
     print(json.dumps({"recipe": str(root / "runtime.yaml")}), flush=True)
 

@@ -113,7 +113,7 @@ def _main() -> None:
     parser.add_argument("--output-path", required=True)
     parser.add_argument("--work-path", type=Path, required=True)
     args = parser.parse_args()
-    args.work_path.mkdir(parents=True, exist_ok=False)
+    args.work_path.mkdir(parents=True, exist_ok=False, mode=0o700)
     _install(args.work_path)
     proof = {"source_revision": SOURCE_REVISION, **_cuda_proof()}
     (args.work_path / "runtime-proof.json").write_text(json.dumps(proof, indent=2))

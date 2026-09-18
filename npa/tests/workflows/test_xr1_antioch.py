@@ -262,3 +262,51 @@ def test_collection_resume_repairs_interrupted_receipt_publication(tmp_path):
     objects["run/receipts/train-1.json"] = b"{}"
     with pytest.raises(ValueError, match="receipt differs"):
         _collect_one(args, entry, "train", storage, "example-bucket", "run")
+
+
+@pytest.mark.parametrize("url", ["http://example.test/object", "file:///example", "https://user:pass@example.test/object"])
+def test_signed_workers_reject_non_https_or_embedded_credentials(tmp_path, url):
+    from npa.workflows.xr1_antioch.artifact_worker import _upload
+    from npa.workflows.xr1_antioch.bootstrap_worker import _download
+
+    payload = b"robot observation"
+    (tmp_path / "episode.json").write_bytes(payload)
+    entry = {"url": url, "sha256": hashlib.sha256(payload).hexdigest(), "bytes": len(payload)}
+    with pytest.raises(ValueError, match="require HTTPS"):
+        _download(tmp_path, "download.json", entry)
+    with pytest.raises(ValueError, match="require HTTPS"):
+        _upload(tmp_path, {"episode.json": entry})
+
+
+def test_signed_download_rejects_redirect_without_following_it(tmp_path, monkeypatch):
+    from npa.workflows.xr1_antioch import bootstrap_worker
+
+    class Redirect:
+        status = 307
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    class Connection:
+        requests = []
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def request(self, method, target):
+            self.requests.append((method, target))
+
+        def getresponse(self):
+            return Redirect()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(bootstrap_worker, "HTTPSConnection", Connection)
+    with pytest.raises(RuntimeError, match="did not return success"):
+        bootstrap_worker._download(tmp_path, "episode.json", {"url": "https://example.test/object?signature=example"})
+    assert Connection.requests == [("GET", "/object?signature=example")]
+    assert not (tmp_path / "episode.json").exists()

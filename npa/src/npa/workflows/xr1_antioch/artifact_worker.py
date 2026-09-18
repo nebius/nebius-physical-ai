@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import closing
+from http.client import HTTPException, HTTPSConnection
 import json
 from pathlib import Path
 import sys
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
 
 
 def _digest(path: Path) -> str:
@@ -40,14 +41,16 @@ def _upload(root: Path, transfers: dict) -> dict:
             raise ValueError("Upload path must be a file inside the artifact directory")
         if _digest(path) != transfer["sha256"]:
             raise ValueError("Artifact changed after its transfer manifest was sealed")
-        with path.open("rb") as stream:
-            request = Request(transfer["url"], data=stream, method="PUT", headers={
+        url = urlsplit(transfer["url"])
+        if url.scheme != "https" or not url.hostname or url.username or url.password or url.fragment:
+            raise ValueError("Signed uploads require HTTPS without user information or fragments")
+        with closing(HTTPSConnection(url.hostname, url.port, timeout=120)) as connection, path.open("rb") as stream:
+            connection.request("PUT", url.path + ("?" + url.query if url.query else ""), body=stream, headers={
                 "Content-Length": str(path.stat().st_size),
                 "x-amz-meta-sha256": transfer["sha256"],
             })
-            with urlopen(request, timeout=120) as response:
-                if response.status != 200:
-                    raise RuntimeError("Artifact upload did not return success")
+            if connection.getresponse().status != 200:
+                raise RuntimeError("Artifact upload did not return success")
         completed.append(relative)
     return {"uploaded": completed}
 
@@ -64,8 +67,8 @@ def _main() -> None:
             result = _upload(root, request["transfers"])
         else:
             raise ValueError("Unsupported artifact operation")
-    except (HTTPError, URLError) as error:
-        # A presigned URL is a credential, including in urllib exception messages.
+    except (HTTPException, OSError) as error:
+        # Signed requests contain credentials, which must not enter error logs.
         raise RuntimeError(f"Artifact request failed ({type(error).__name__})") from None
     print(json.dumps(result, allow_nan=False), flush=True)
 
