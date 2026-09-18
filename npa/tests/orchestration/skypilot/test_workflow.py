@@ -1690,8 +1690,9 @@ def test_robotwin_confidential_submit_bridge_hides_context_after_preflight(
     assert captured_files["kubeconfig_mode"] == 0o600
 
 
+@pytest.mark.parametrize("session_token", ("", "inner-session-token-canary"))
 def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, session_token: str
 ) -> None:
     from npa.orchestration.npa_workflow.robotwin_preflight import (
         CHILD_BUCKET_ENV,
@@ -1736,6 +1737,8 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
         "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256": "b" * 64,
         "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES": "2",
     }
+    if session_token:
+        environment["AWS_SESSION_TOKEN"] = session_token
     inner_context = prepare_inner_submit(authorization, environment)
     script = (
         Path(__file__).resolve().parents[3] / "scripts/run_byof_container_verify.py"
@@ -1772,6 +1775,7 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
         environment["AWS_ACCESS_KEY_ID"],
         environment["AWS_SECRET_ACCESS_KEY"],
         endpoint,
+        *((session_token,) if session_token else ()),
     )
     calls: list[tuple[list[str], dict[str, object]]] = []
     records: list[dict[str, object]] = []
@@ -1811,6 +1815,7 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
                 "Job submitted, ID: 43\n"
                 f"context={authorization.kubernetes_context}\n"
                 f"output={authorization.summary_uri}\n"
+                f"session={session_token}\n"
             ),
             stderr="",
         )
@@ -1879,6 +1884,7 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
         == environment[CHILD_OUTPUT_PREFIX_ENV]
     )
     assert launch_kwargs["env"]["AWS_ENDPOINT_URL"] == endpoint
+    assert launch_kwargs["env"].get("AWS_SESSION_TOKEN", "") == session_token
     prepared = Path(result.submitted_yaml_path).read_text(encoding="utf-8")
     assert all(private not in prepared for private in private_values)
     assert "region:" not in prepared
@@ -1886,6 +1892,15 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
     prepared_document = list(yaml.safe_load_all(prepared))[1]
     assert prepared_document["envs"]["AWS_ENDPOINT_URL"] == "${AWS_ENDPOINT_URL}"
     assert prepared_document["envs"]["NEBIUS_S3_ENDPOINT"] == ("${NEBIUS_S3_ENDPOINT}")
+    if session_token:
+        assert prepared_document["envs"]["AWS_SESSION_TOKEN"] == "${AWS_SESSION_TOKEN}"
+    else:
+        assert "AWS_SESSION_TOKEN" not in prepared_document["envs"]
+    assert all(private not in result.stdout + result.stderr for private in private_values)
+    # Confidential launches deliberately disable persisted/streamed raw logs.
+    for name in ("sky-launch.stdout.log", "sky-launch.stderr.log"):
+        log_path = Path(result.log_paths["submission_dir"]) / name
+        assert not log_path.exists()
     assert "AWS_ENDPOINT_URL_S3" not in prepared_document["envs"]
     assert "NPA_STORAGE_ENDPOINT" not in prepared_document["envs"]
     assert "S3_ENDPOINT_URL" not in prepared_document["envs"]
@@ -1904,6 +1919,7 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
     assert not {
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
         "AWS_ENDPOINT_URL",
         "NPA_SRC_S3_URI",
     } & set(kubectl_environments[0])
@@ -1916,6 +1932,66 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
     assert all(
         private not in json.dumps(records, sort_keys=True) for private in private_values
     )
+
+
+def _robotwin_inner_storage_preflight_fixture(authorization):
+    endpoint = "https://storage.eu-north1.nebius.cloud"
+    task = {
+        "resources": {"accelerators": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"},
+        "envs": {
+            "NPA_EXECUTION_OUTPUTS": json.dumps(
+                [{"uri": authorization.summary_uri, "kind": "file"}]
+            ),
+            "AWS_ENDPOINT_URL": "${AWS_ENDPOINT_URL}",
+            "NEBIUS_S3_ENDPOINT": "${NEBIUS_S3_ENDPOINT}",
+        },
+    }
+    environment = {
+        "AWS_ACCESS_KEY_ID": "inner-access-canary",
+        "AWS_SECRET_ACCESS_KEY": "inner-secret-canary",
+        "AWS_ENDPOINT_URL": endpoint,
+        "NEBIUS_S3_ENDPOINT": endpoint,
+    }
+    return [{"name": "robotwin"}, task], environment
+
+
+@pytest.mark.parametrize(
+    ("bound_token", "observed_token", "legacy_token"),
+    (
+        ("bound-session", "changed-session", ""),
+        ("bound-session", "", ""),
+        ("", "unbound-session", ""),
+        ("bound-session", "bound-session", "legacy-session"),
+    ),
+)
+def test_robotwin_inner_session_drift_refuses_before_gpu_discovery(
+    monkeypatch, tmp_path, bound_token, observed_token, legacy_token
+):
+    from npa.execution_preflight import ExecutionPreflightError
+    from npa.orchestration.skypilot import k8s_gpu_catalog
+
+    _yaml, context, _target, _report, _extra = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    authorization = context.authorization
+    documents, environment = _robotwin_inner_storage_preflight_fixture(authorization)
+    environment["AWS_SESSION_TOKEN"] = observed_token
+    environment["AWS_SECURITY_TOKEN"] = legacy_token
+    monkeypatch.setattr(
+        k8s_gpu_catalog,
+        "discover_kubernetes_gpu_inventory",
+        lambda **_kwargs: pytest.fail("unbound session reached GPU discovery"),
+    )
+    with pytest.raises(ExecutionPreflightError, match="storage principal changed"):
+        workflow_module._preflight_confidential_robotwin_inner(
+            documents,
+            authorization=authorization,
+            environment=environment,
+            bound_environment={"AWS_SESSION_TOKEN": bound_token},
+            global_config={
+                "kubernetes": {"allowed_contexts": [authorization.kubernetes_context]}
+            },
+        )
 
 
 @pytest.mark.parametrize("effect", ("launch", "reconcile"))

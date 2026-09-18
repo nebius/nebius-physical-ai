@@ -1047,6 +1047,7 @@ def _preflight_confidential_robotwin_inner(
     *,
     authorization: Any,
     environment: Mapping[str, str],
+    bound_environment: Mapping[str, str],
     global_config: Mapping[str, Any],
 ) -> dict[str, str]:
     """Recheck the trusted inner boundary without owner-host NPA state.
@@ -1100,11 +1101,12 @@ def _preflight_confidential_robotwin_inner(
         )
     access = str(environment.get("AWS_ACCESS_KEY_ID") or "")
     secret = str(environment.get("AWS_SECRET_ACCESS_KEY") or "")
+    session_token = str(environment.get("AWS_SESSION_TOKEN") or "")
     endpoint = str(environment.get("AWS_ENDPOINT_URL") or "")
     if (
         not access
         or not secret
-        or environment.get("AWS_SESSION_TOKEN")
+        or session_token != str(bound_environment.get("AWS_SESSION_TOKEN") or "")
         or environment.get("AWS_SECURITY_TOKEN")
         or task_environment.get("AWS_ENDPOINT_URL") != "${AWS_ENDPOINT_URL}"
         or task_environment.get("NEBIUS_S3_ENDPOINT") != "${NEBIUS_S3_ENDPOINT}"
@@ -1172,6 +1174,8 @@ def _preflight_confidential_robotwin_inner(
         "AWS_SECRET_ACCESS_KEY": secret,
         **dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, endpoint),
     }
+    if session_token:
+        injected["AWS_SESSION_TOKEN"] = session_token
     task_environment.update({name: value for name, value in injected.items() if value})
     return {name: value for name, value in injected.items() if value}
 
@@ -1508,6 +1512,9 @@ def submit_workflow(
                         docs,
                         authorization=robotwin_authorization,
                         environment=control_env,
+                        bound_environment=dict(
+                            robotwin_submit_context.private_environment
+                        ),
                         global_config=global_config,
                     )
                 else:
@@ -1546,7 +1553,12 @@ def submit_workflow(
                     secret_placeholders=(
                         {
                             name: f"${{{name}}}"
-                            for name in ("AWS_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT")
+                            for name in (
+                                "AWS_ENDPOINT_URL",
+                                "NEBIUS_S3_ENDPOINT",
+                                "AWS_SESSION_TOKEN",
+                            )
+                            if injected.get(name)
                         }
                         if robotwin_submit_context.layer == "inner"
                         else None
