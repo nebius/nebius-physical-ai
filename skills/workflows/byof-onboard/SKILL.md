@@ -83,10 +83,11 @@ authorization-file input. Consequently the `isaac-lab` BYOF path is
 refusal-only and cannot qualify a runtime until that owner-private,
 customer/run-bound input is added and validated. Do not work around the
 missing channel by setting `Y` directly; the LIBERO authorization-file option
-is scoped to LIBERO and is not a generic Isaac acceptance mechanism.
- First start downloads ~4.5 GB and
-  materialises ~10 GiB of cache; pre-warm it with
-  `npa/docker/workbench/common/warm-isaac-cache.yaml` if you are iterating.
+is scoped to LIBERO and is not a generic Isaac acceptance mechanism. The
+Isaac cache-warming manifest is therefore disabled for this path: do not
+pre-warm or share its cache until a dedicated customer/run-bound authorization
+channel and fresh cache-scope validation exist. A first-start fetch remains a
+qualified future operation only, never an instruction to bypass the refusal.
 
 Every checked-in `byof*.yaml` declares `resources.*.image` from its own
 `config.base_image`. This preserves each solution's intended CUDA, Ubuntu, or
