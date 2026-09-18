@@ -109,6 +109,35 @@ def root(request, helpers, monkeypatch):
     return f"npa-workflow-e2e/{RUN_ID}"
 
 
+@pytest.mark.parametrize("tamper", ["", "subtask", "source_parquet_sha256"])
+def test_subtask_live_readback_resolves_real_source_bytes(helpers, storage, root, tmp_path, tamper):
+    from npa.workflows.lerobot_subtask_proof import prove_lerobot_subtasks
+
+    client, _ = storage
+    helpers.seed_live_workflow_inputs(
+        spec_name="lerobot-subtask-proof.yaml", bucket=BUCKET, run_id=RUN_ID,
+    )
+    marker = f"{root}/lerobot-subtask-proof"
+    prefix = f"{marker}/reviewed-dataset/"
+    dataset = tmp_path / "reviewed"
+    for key, body in client.objects.items():
+        path = dataset / key.removeprefix(prefix)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(body)
+    proof = prove_lerobot_subtasks(str(dataset), str(tmp_path / "proof.json"), expected_label="grasp")
+    if tamper:
+        proof["proof"][tamper] = "incorrect"
+    client.put_object(
+        Bucket=BUCKET, Key=f"{marker}/proof/subtask-proof.json", Body=json.dumps(proof).encode(),
+    )
+    if tamper:
+        with pytest.raises(AssertionError):
+            helpers.assert_lerobot_subtask_live_outputs(bucket=BUCKET, run_id=RUN_ID)
+    else:
+        helpers.assert_lerobot_subtask_live_outputs(bucket=BUCKET, run_id=RUN_ID)
+    assert all(key.startswith(marker + "/") for key in client.reads)
+
+
 @pytest.fixture
 def source_archive(helpers, monkeypatch, tmp_path):
     # Synthetic unit archive, not NVIDIA data or evidence of a valid conversion.

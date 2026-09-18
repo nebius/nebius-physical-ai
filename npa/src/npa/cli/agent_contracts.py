@@ -45,11 +45,11 @@ AGENT_MEDIA_PREVIEW_CONTRACT = (
     'id="artifactPreviewHost"',
     'id="viewerPaneMedia"',
     "URL.createObjectURL(blob)",
-    # Single braces: both routes live in agent_artifact_content.py, which is real
+    # Single braces: these routes live in agent_artifact_content.py, which is real
     # Python embedded into the backend, not the brace-escaped f-string template.
     # Pinning the doubled form tracked a copy in agent.py that never served.
-    '@app.api_route("/artifacts/file/{filename}", methods=["GET", "HEAD"])',
-    '@app.api_route("/artifacts/content", methods=["GET", "HEAD"])',
+    '@app.get("/artifacts/file/{filename}", operation_id="artifact_file_get")',
+    '@app.get("/artifacts/content", operation_id="artifacts_content_get")',
     "parse_http_byte_range",
     "X-Content-Type-Options",
     "artifact_media_type(",

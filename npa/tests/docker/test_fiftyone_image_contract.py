@@ -39,3 +39,12 @@ def test_fiftyone_keeps_bundled_database_and_brain_smoke() -> None:
     assert "MONGODB_VERSION=" in text
     assert 'cp "/tmp/mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}/bin/mongod"' in text
     assert "smoke_functional.py" in text
+
+
+def test_fiftyone_pins_native_lerobot_temporal_release() -> None:
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    smoke = (DOCKERFILE.parent / "smoke_env.py").read_text(encoding="utf-8")
+
+    assert "ARG FIFTYONE_VERSION=1.22.0" in dockerfile
+    assert 'getattr(fo.types, "LeRobotDataset", None)' in smoke
+    assert "TemporalTag" in smoke

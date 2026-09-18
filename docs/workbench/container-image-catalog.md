@@ -359,6 +359,12 @@ closure with the maintained Google Cloud Storage SDK and verifies object
 generations, checksums and destination paths during dataset preparation.
 This source change does not qualify or republish an existing image digest.
 
+The source candidate updates FiftyOne to 1.22.0 with native LeRobot v3 multimodal
+playback and temporal-tag review, retaining MongoDB 7.0.40 and its source annex.
+This does not promote the candidate over the accepted 1.21 release above. Use
+verified SSH or Kubernetes port-forward access; see the
+[FiftyOne access guidance](../../skills/tools/fiftyone/SKILL.md).
+
 The source security candidates update the SONIC MuJoCo evaluator to the
 hash-locked Torch 2.13 closure
 on a patched Python base. The Cosmos3 native Ray candidate selects the pinned

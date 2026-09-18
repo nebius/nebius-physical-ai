@@ -16,6 +16,7 @@ config:
   prefix: "robocasa-data-policy/{{run.id}}"
 
   robocasa_endpoint: http://npa-robocasa.workbench.svc.cluster.local:8791
+  robocasa_token_env: ROBOCASA_TOKEN
   train_env_ids: >-
     robocasa/PickPlaceCounterToCabinet,robocasa/PickPlaceCabinetToCounter,robocasa/PickPlaceCounterToSink
   heldout_env_ids: >-

@@ -263,6 +263,10 @@ def seed_live_workflow_inputs(
     marker = f"{_live_s3_root(run_id)}/{spec_name.replace('.yaml', '')}"
     client = s3_client_for_project(e2e_project, allow_host_creds=True)
 
+    if spec_name == "lerobot-subtask-proof.yaml":
+        _seed_lerobot_subtask_dataset(client, bucket=bucket, marker=marker)
+        return
+
     if spec_name == "isaac-arena-evaluation-rtxpro.yaml":
         _seed_isaac_arena_replay(client, bucket=bucket, prefix=marker)
         return
@@ -577,6 +581,115 @@ def _seed_images(client, *, bucket: str, prefix: str, count: int = 2) -> None:
             Body=buf.getvalue(),
             ContentType="image/png",
         )
+
+
+def _parquet_bytes(table: Any) -> bytes:
+    """Serialize one deterministic Arrow table for a live S3 fixture."""
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    sink = pa.BufferOutputStream()
+    pq.write_table(table, sink, compression="snappy")
+    return sink.getvalue().to_pybytes()
+
+
+def _lerobot_subtask_fixture_objects() -> dict[str, bytes]:
+    """Build synthetic LeRobot v3 Parquet data with known subtask rows."""
+
+    import pyarrow as pa
+
+    rows = pa.table(
+        {
+            "episode_index": [0, 0, 0, 0],
+            "frame_index": [0, 1, 2, 3],
+            "timestamp": [0.0, 0.1, 0.2, 0.3],
+            "subtask_index": [0, 0, 1, 1],
+            "action": [[0.0], [0.1], [0.2], [0.3]],
+            "task_index": [0, 0, 0, 0],
+        }
+    )
+    catalog = pa.table({"subtask": ["approach", "grasp"], "subtask_index": [0, 1]})
+    tasks = pa.table({"task_index": [0], "task": ["Pick up the object"]})
+    episodes = pa.table({"episode_index": [0], "length": [4], "tasks": [["Pick up the object"]]})
+    info = {
+        "codebase_version": "v3.0",
+        "fps": 10,
+        "total_episodes": 1,
+        "total_frames": 4,
+        "features": {"subtask_index": {"dtype": "int64", "shape": [1], "names": None}},
+    }
+    return {
+        "data/chunk-000/file-000.parquet": _parquet_bytes(rows),
+        "meta/subtasks.parquet": _parquet_bytes(catalog),
+        "meta/tasks.parquet": _parquet_bytes(tasks),
+        "meta/episodes/chunk-000/file-000.parquet": _parquet_bytes(episodes),
+        "meta/info.json": json.dumps(info, sort_keys=True).encode(),
+    }
+
+
+def _seed_lerobot_subtask_dataset(client, *, bucket: str, marker: str) -> None:
+    """Upload the reviewed LeRobot subtask fixture under one run prefix."""
+
+    prefix = f"{marker}/reviewed-dataset/"
+    objects = _lerobot_subtask_fixture_objects()
+    for relative, body in objects.items():
+        client.put_object(Bucket=bucket, Key=f"{prefix}{relative}", Body=body)
+
+
+def _assert_lerobot_subtask_proof(client: Any, bucket: str, marker: str) -> None:
+    import hashlib
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    with client.get_object(Bucket=bucket, Key=f"{marker}/proof/subtask-proof.json")["Body"] as body:
+        payload = json.loads(body.read())
+    proof = payload["proof"]
+    assert payload["status"] == "verified"
+    assert payload["summary"] == {
+        "episode_count": 1, "frame_count": 4, "labeled_frame_count": 4,
+        "unlabeled_frame_count": 0, "subtask_count": 2, "segment_count": 2,
+    }
+    prefix = f"{marker}/reviewed-dataset/"
+    with client.get_object(Bucket=bucket, Key=f"{prefix}data/chunk-000/file-000.parquet")["Body"] as body:
+        data = body.read()
+    with client.get_object(Bucket=bucket, Key=f"{prefix}meta/subtasks.parquet")["Body"] as body:
+        catalog = body.read()
+    assert proof["source_parquet_sha256"] == hashlib.sha256(data).hexdigest()
+    assert payload["source_catalog_sha256"] == hashlib.sha256(catalog).hexdigest()
+    row = pq.read_table(pa.BufferReader(data)).to_pylist()[2]
+    labels = {item["subtask_index"]: item["subtask"] for item in pq.read_table(pa.BufferReader(catalog)).to_pylist()}
+    for field in ("episode_index", "frame_index", "timestamp", "subtask_index"):
+        assert proof[field] == row[field]
+    assert proof["subtask"] == labels[row["subtask_index"]] == "grasp"
+    recorded_hash = proof.pop("row_sha256")
+    assert recorded_hash == hashlib.sha256(
+        json.dumps(proof, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def assert_lerobot_subtask_live_outputs(
+    *, bucket: str, run_id: str, e2e_project: str | None = None
+) -> None:
+    """Read the published proof and independently resolve its source Parquet row.
+
+    Args:
+        bucket: Selected test bucket.
+        run_id: Workflow run identifier used to resolve the seeded prefix.
+        e2e_project: Optional selected project for S3 credentials.
+
+    Returns:
+        None.
+
+    Raises:
+        AssertionError: The proof disagrees with the actual dataset objects.
+    """
+    from npa.clients.project_credentials import s3_client_for_project
+
+    marker = f"{_live_s3_root(run_id)}/lerobot-subtask-proof"
+    client = s3_client_for_project(e2e_project, allow_host_creds=True)
+    _assert_lerobot_subtask_proof(client, bucket, marker)
 
 
 def _seed_input_video(client, *, bucket: str, prefix: str) -> None:

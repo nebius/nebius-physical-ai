@@ -101,6 +101,26 @@ def test_cancellable_default_stream_is_also_redacted(capsys) -> None:
     assert "<redacted-private-key>" in emitted
 
 
+def test_cancellable_failed_stream_retains_redacted_diagnostic() -> None:
+    env = {**os.environ, "TF_VAR_iam_token": "cancellable-failure-secret"}
+    with pytest.raises(BackendCommandError) as raised:
+        run_stream(
+            [
+                "/bin/sh",
+                "-c",
+                "printf '%s: provider rejected request\\n' \"$TF_VAR_iam_token\" >&2; exit 7",
+            ],
+            env=env,
+            cancel=lambda: None,
+            capture_output=True,
+        )
+
+    message = str(raised.value)
+    assert "cancellable-failure-secret" not in message
+    assert "<redacted>" in message
+    assert "provider rejected request" in message
+
+
 def test_capture_normalizes_launch_and_timeout_errors(tmp_path: Path) -> None:
     with pytest.raises(BackendCommandError, match="Could not start executable"):
         run_capture([str(tmp_path / "absent")])

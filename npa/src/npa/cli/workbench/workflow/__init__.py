@@ -1435,6 +1435,26 @@ def submit_cmd(
                 _fail_missing_prerequisites(yaml_path, missing)
                 return
 
+        # For an existing PAIDF target, prove placement before the shared
+        # execution preflight writes its temporary storage probe or performs
+        # any provider/model/image work.  Static prerequisites deliberately
+        # remain first: they are local and give a cold-start user the complete
+        # actionable report without needing cluster access.  A deployIfAbsent
+        # target cannot be placement-checked until it exists.
+        if (
+            is_paidf_spec
+            and not plan_only
+            and not skip_preflight
+            and not deploy_if_absent
+        ):
+            placement_missing = _paidf_kubernetes_prerequisites_for_submit(
+                infra_context
+            )
+            if placement_missing:
+                _fail_missing_prerequisites(yaml_path, placement_missing)
+                return
+            paidf_placement_prechecked = True
+
         if not plan_only:
             # Scope and denied output-prefix access must fail before image
             # bootstrap or deployIfAbsent creates compute. This identity gate
@@ -1455,26 +1475,6 @@ def submit_cmd(
             except (RuntimeError, ValueError) as exc:
                 _fail(str(exc), code=_submit_failure_code(exc))
                 return
-
-        # An existing target can prove that PAIDF has nowhere schedulable to run
-        # without any provider or model call.  Preserve that cheapest failure
-        # ordering, then verify the exact modality-specific checkpoint before
-        # image work, provisioning, or launch.  A deployIfAbsent target cannot
-        # be placement-checked until it exists, so its checkpoint fence remains
-        # ahead of provisioning below.
-        if (
-            is_paidf_spec
-            and not plan_only
-            and not skip_preflight
-            and not deploy_if_absent
-        ):
-            placement_missing = _paidf_kubernetes_prerequisites_for_submit(
-                infra_context
-            )
-            if placement_missing:
-                _fail_missing_prerequisites(yaml_path, placement_missing)
-                return
-            paidf_placement_prechecked = True
 
         if not plan_only:
             # Cosmos Transfer already has the stronger state-local pinned-file
@@ -2344,16 +2344,20 @@ def submit_cmd(
                     alias,
                 ],
             )
-            with operation_context(operation):
-                operation.transition("mutating")
-                try:
-                    submitted = submit()
-                except BaseException as exc:
-                    _record_workflow_submit_failure(operation, exc)
-                    raise
-                operation.transition("state-durable")
-                operation.commit()
-                return submitted
+            try:
+                with operation_context(operation):
+                    operation.transition("mutating")
+                    try:
+                        submitted = submit()
+                    except BaseException as exc:
+                        _record_workflow_submit_failure(operation, exc)
+                        raise
+                    operation.transition("state-durable")
+                    operation.commit()
+                    return submitted
+            except BaseException as exc:
+                _record_unentered_workflow_submit_failure(operation, exc)
+                raise
 
         if prepared_npa is not None:
             from npa.orchestration.npa_workflow.submission_state import (
@@ -2914,6 +2918,7 @@ def _plan_requires_npa_source(
     from npa.orchestration.npa_workflow.skypilot_render import (
         build_scheduler_task,
         resolve_task_image,
+        tool_requires_staged_npa_source,
     )
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
@@ -2925,6 +2930,8 @@ def _plan_requires_npa_source(
     plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
     for step in plan.steps:
         task = build_scheduler_task(spec, step, run_id=run_id)
+        if tool_requires_staged_npa_source(str(task.get("tool_ref") or "")):
+            return True
         if not resolve_task_image(
             str(task.get("tool_ref") or ""),
             task.get("resources") or {},
@@ -3579,11 +3586,16 @@ def _record_workflow_submit_failure(operation, exc: BaseException) -> None:  # n
     project operations forever, even though no mutation occurred.
     """
 
-    transaction = getattr(exc, "transaction", None)
-    launch_sequence = getattr(transaction, "launch_sequence", None)
+    # Execution preflight completes before SkyPilot's launch transaction exists.
+    # It is therefore just as certain as a transaction with launch_sequence=0:
+    # no managed job can have been created.  Keeping its lifecycle journal in
+    # recovery-required would block later, safe workflow submissions forever.
+    from npa.execution_preflight import ExecutionPreflightError
     from npa.orchestration.skypilot.workflow import SkyPilotSubmitError
 
-    preflight_failed = (
+    transaction = getattr(exc, "transaction", None)
+    launch_sequence = getattr(transaction, "launch_sequence", None)
+    preflight_failed = isinstance(exc, ExecutionPreflightError) or (
         transaction is None
         and isinstance(exc, SkyPilotSubmitError)
         and exc.launch_attempted is False
@@ -3603,6 +3615,42 @@ def _record_workflow_submit_failure(operation, exc: BaseException) -> None:  # n
         )
         return
     operation.transition("recovery-required", error=str(exc))
+
+
+def _record_unentered_workflow_submit_failure(
+    operation, exc: BaseException
+) -> None:  # noqa: ANN001
+    """Finalize a submit journal that never entered its mutation window.
+
+    ``operation_context`` can reject a new submit because another project
+    operation holds the lifecycle lease.  That happens before ``submit`` can
+    invoke SkyPilot, but the prepared operation journal already exists.  Leaving
+    that empty record nonterminal would turn one safe rejection into a chain of
+    future lease conflicts.
+    """
+
+    payload = operation.read()
+    if (
+        str(payload.get("phase") or "") != "prepared"
+        or bool(payload.get("resources") or [])
+    ):
+        return
+    operation.record_rollback(
+        attempted=False,
+        completed=True,
+        removed=[],
+        preserved=[],
+        outcomes=[],
+    )
+    operation.transition(
+        "rolled-back",
+        error=str(exc),
+        details={
+            "error_type": type(exc).__name__,
+            "launch_attempted": False,
+            "context_acquired": False,
+        },
+    )
 
 
 def _parse_submit_vars(var: list[str]) -> dict[str, str]:
@@ -6103,6 +6151,10 @@ def logs_cmd(
                     if sky_task_id is not None and str(sky_task_id) != ""
                     else selected_stage
                 )
+                if len(steps) == 1 and not runtime_stages and not resolution.runtime_state.get("waves"):
+                    # The one-shot renderer emits one task per planned step.
+                    # Job-level logs need neither its renamed task nor an assumed ID.
+                    live_stage = ""
                 live = tail_live_job_logs(
                     sky_bin=_resolve_sky_bin(sky_bin),
                     job_id=job_id,

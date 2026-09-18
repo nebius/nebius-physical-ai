@@ -12,7 +12,7 @@ from importlib import metadata
 from typing import Callable
 
 
-EXPECTED_FIFTYONE_VERSION = os.environ.get("FIFTYONE_VERSION", "1.21.0")
+EXPECTED_FIFTYONE_VERSION = os.environ.get("FIFTYONE_VERSION", "1.22.0")
 
 
 @dataclass
@@ -76,6 +76,33 @@ def check_app_config() -> CheckResult:
         return CheckResult("check app server configuration", False, _format_exception(exc))
 
 
+def check_lerobot_temporal_api() -> CheckResult:
+    """Verify the LeRobot dataset type and temporal-tag API are usable.
+
+    Args:
+        None.
+
+    Returns:
+        The environment check result.
+
+    Raises:
+        None. Import and API failures are returned in the result.
+    """
+    try:
+        import fiftyone as fo
+        from fiftyone.core.tags import TemporalTag
+
+        dataset_type = getattr(fo.types, "LeRobotDataset", None)
+        if dataset_type is None:
+            return CheckResult("check LeRobot temporal API", False, "LeRobotDataset is unavailable")
+        tag = TemporalTag("sample-id", start=0, end=1, tag="subtask:smoke")
+        if tag.tag != "subtask:smoke" or tag.start != 0 or tag.end != 1:
+            return CheckResult("check LeRobot temporal API", False, "TemporalTag did not round-trip")
+        return CheckResult("check LeRobot temporal API", True, "LeRobotDataset + TemporalTag available")
+    except Exception as exc:
+        return CheckResult("check LeRobot temporal API", False, _format_exception(exc))
+
+
 def _print_result(result: CheckResult) -> None:
     status = "PASS" if result.ok else "FAIL"
     print(f"{status}: {result.name}")
@@ -88,6 +115,7 @@ def main() -> int:
         check_import_fiftyone,
         check_cli_help,
         check_app_config,
+        check_lerobot_temporal_api,
     ]
     results = []
     for check in checks:

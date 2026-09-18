@@ -22,6 +22,7 @@ _TEMPLATES = (
     "loop-gate",
     "vlm-rl-loop",
     "token-factory-gate",
+    "token-factory-deployment-review",
     "byof",
     "rl-policy-success",
     "physical-ai-data-factory",
@@ -79,6 +80,9 @@ _TEMPLATE_ALIASES: dict[str, str] = {
     "token_factory_gate": "token-factory-gate",
     "gate": "token-factory-gate",
     "tokenfactory": "token-factory-gate",
+    "deployment_review": "token-factory-deployment-review",
+    "deployment-readiness": "token-factory-deployment-review",
+    "deployment-review": "token-factory-deployment-review",
     "loop_gate": "loop-gate",
     "loop": "loop-gate",
     "isaac_byof": "byof",
@@ -141,6 +145,14 @@ _TEMPLATE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "reason scene",
         "quality gate",
         "cosmos gate",
+    ),
+    "token-factory-deployment-review": (
+        "deployment readiness",
+        "deployment review",
+        "infrastructure review",
+        "kubernetes review",
+        "delivery review",
+        "readiness review",
     ),
     "vlm-rl-loop": (
         "vlm",
@@ -876,6 +888,126 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                                     {
                                         "uri": "{{config.finalize_report_uri}}",
                                         "schema": "npa.sim2real.e2e_report.v1",
+                                    }
+                                )
+                            ],
+                            "terminal": True,
+                        }
+                    ),
+                }
+            ),
+        },
+        "token-factory-deployment-review": {
+            "name": "token-factory-deployment-review",
+            "description": (
+                "Generate infrastructure delivery recommendations, then have a second "
+                "hosted model triage the generated artifact into an actionable review."
+            ),
+            "config_runtime": OrderedDict(
+                {
+                    "prefix": "token-factory-deployment-review/{{run.id}}",
+                    "workflow_name": "token-factory-deployment-review",
+                    "generate_model": "nvidia/Nemotron-3_5-Lightning",
+                    "max_tokens": "900",
+                    "triage_job_name": "token-factory-deployment-review",
+                    "triage_model": "nvidia/Nemotron-3_5-Lightning",
+                    "triage_max_tokens": "900",
+                }
+            ),
+            "config_uri": OrderedDict(
+                {
+                    "prompts_uri": "s3://{{config.bucket}}/{{config.prefix}}/input/prompts.jsonl",
+                    "generations_uri": "s3://{{config.bucket}}/{{config.prefix}}/generated/generations.jsonl",
+                    "artifacts_uri": "s3://{{config.bucket}}/{{config.prefix}}/",
+                    "triage_uri": "s3://{{config.bucket}}/{{config.prefix}}/review/",
+                }
+            ),
+            "resources": OrderedDict(
+                {
+                    "cpu": OrderedDict(
+                        {"cloud": "kubernetes", "cpus": 1, "memory": "4Gi"}
+                    ),
+                }
+            ),
+            "initial": "prepare-prompts",
+            "states": OrderedDict(
+                {
+                    "prepare-prompts": OrderedDict(
+                        {
+                            "description": (
+                                "Create the concrete, run-scoped prompt JSONL that the "
+                                "hosted recommendation stage consumes."
+                            ),
+                            "run": OrderedDict(
+                                {
+                                    "shell": (
+                                        "python3 -m npa.workflows.token_factory_deployment_input "
+                                        "--output-uri '{{config.prompts_uri}}'"
+                                    )
+                                }
+                            ),
+                            "resources": "cpu",
+                            "outputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.prompts_uri}}",
+                                        "schema": "npa.token_factory.prompts.v1",
+                                    }
+                                )
+                            ],
+                            "next": "generate-recommendations",
+                        }
+                    ),
+                    "generate-recommendations": OrderedDict(
+                        {
+                            "description": (
+                                "Generate concrete delivery recommendations from the "
+                                "run-scoped infrastructure prompts."
+                            ),
+                            "toolRef": "workbench.token_factory.generate",
+                            "needs": ["prepare-prompts"],
+                            "resources": "cpu",
+                            "inputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.prompts_uri}}",
+                                        "schema": "npa.token_factory.prompts.v1",
+                                    }
+                                )
+                            ],
+                            "outputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.generations_uri}}",
+                                        "schema": "npa.token_factory.generations.v1",
+                                    }
+                                )
+                            ],
+                            "next": "triage-recommendations",
+                        }
+                    ),
+                    "triage-recommendations": OrderedDict(
+                        {
+                            "description": (
+                                "Read the generated recommendations and write a separate "
+                                "risk, dependency, and next-action review."
+                            ),
+                            "needs": ["generate-recommendations"],
+                            "toolRef": "workbench.token_factory.triage",
+                            "resources": "cpu",
+                            "inputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.artifacts_uri}}",
+                                        "schema": "npa.token_factory.generations.v1",
+                                    }
+                                )
+                            ],
+                            "outputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.triage_uri}}generations.jsonl",
+                                        "schema": "npa.token_factory.generations.v1",
                                     }
                                 )
                             ],
@@ -2004,6 +2136,21 @@ def choose_workflow_template(
         scores["byof"] += 10
     if "outer loop" in text and "inner loop" in text:
         scores["vlm-rl-loop"] += 5
+    if any(
+        phrase in text
+        for phrase in (
+            "deployment readiness",
+            "deployment review",
+            "infrastructure review",
+            "kubernetes review",
+            "delivery review",
+            "readiness review",
+        )
+    ):
+        # A deployment review is a self-contained text-artifact workflow, not
+        # the GPU Cosmos quality-gate template that happens to share Token
+        # Factory vocabulary. Give the explicit operator goal precedence.
+        scores["token-factory-deployment-review"] += 6
     data_factory_explicit = any(
         token in text
         for token in (
@@ -2595,6 +2742,20 @@ def _apply_workflow_infrastructure(
     infrastructure: dict[str, Any] | None,
 ) -> dict[str, str]:
     resolved = resolve_workflow_infrastructure(infrastructure)
+    context = str(resolved.get("context") or "").strip()
+    # An authored workflow must carry its selected Kubernetes context. Runtime
+    # preflight deliberately rejects an ambient current-context because it is
+    # not execution evidence. Apply the discovered context to every Kubernetes
+    # resource, including CPU-only Token Factory workflows.
+    if context:
+        for resource in resources.values():
+            if not isinstance(resource, dict):
+                continue
+            if str(resource.get("cloud") or "").strip().lower() in {
+                "k8s",
+                "kubernetes",
+            }:
+                resource["infra"] = f"k8s/{context}"
     gpu = resources.get("gpu")
     if not isinstance(gpu, dict):
         return resolved
@@ -2621,7 +2782,6 @@ def _apply_workflow_infrastructure(
         )
         gpu["accelerators"] = f"{placeholder}:{count}"
     cluster_name = str(resolved.get("cluster_name") or "").strip()
-    context = str(resolved.get("context") or "").strip()
     project = str(resolved.get("project") or "").strip()
     if cluster_name or context:
         directive: OrderedDict[str, Any] = OrderedDict()
@@ -3880,9 +4040,9 @@ def format_workflow_chat_reply(
         f"- **plan steps**: `{plan_step_count}`",
         f"- **states**: `{state_label or 'n/a'}`",
         "",
-        "Edit in the **Workflow YAML** panel, then **Validate**, **Plan**, or **Submit**.",
-        "- **Submit** on the agent = scheduler **plan-only** (does not execute tool steps on K8s).",
-        "- Real execute: `npa workbench workflow run-spec <spec.yaml> --execute` on the operator machine.",
+        "Edit in the **Workflow YAML** panel, then **Validate**, **Plan**, or **Prepare run**.",
+        "- **Prepare run** validates and plans first; the separate confirmation button is required before Kubernetes execution starts.",
+        "- Direct operator execution: `npa workbench workflow submit <spec.yaml> --runtime`.",
         "",
         "```yaml",
         yaml_text.rstrip(),

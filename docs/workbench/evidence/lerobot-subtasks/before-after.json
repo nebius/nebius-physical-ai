@@ -1,0 +1,194 @@
+[
+  {
+    "input": {
+      "action": [
+        0.0
+      ],
+      "episode_index": 0,
+      "frame_index": 0,
+      "index": 0,
+      "task_index": 0,
+      "timestamp": 0.0
+    },
+    "reviewed": {
+      "action": [
+        0.0
+      ],
+      "episode_index": 0,
+      "frame_index": 0,
+      "index": 0,
+      "subtask_index": 1,
+      "task_index": 0,
+      "timestamp": 0.0
+    },
+    "subtask": "approach"
+  },
+  {
+    "input": {
+      "action": [
+        0.1
+      ],
+      "episode_index": 0,
+      "frame_index": 1,
+      "index": 1,
+      "task_index": 0,
+      "timestamp": 0.1
+    },
+    "reviewed": {
+      "action": [
+        0.1
+      ],
+      "episode_index": 0,
+      "frame_index": 1,
+      "index": 1,
+      "subtask_index": 1,
+      "task_index": 0,
+      "timestamp": 0.1
+    },
+    "subtask": "approach"
+  },
+  {
+    "input": {
+      "action": [
+        0.2
+      ],
+      "episode_index": 0,
+      "frame_index": 2,
+      "index": 2,
+      "task_index": 0,
+      "timestamp": 0.2
+    },
+    "reviewed": {
+      "action": [
+        0.2
+      ],
+      "episode_index": 0,
+      "frame_index": 2,
+      "index": 2,
+      "subtask_index": 2,
+      "task_index": 0,
+      "timestamp": 0.2
+    },
+    "subtask": "grasp"
+  },
+  {
+    "input": {
+      "action": [
+        0.3
+      ],
+      "episode_index": 0,
+      "frame_index": 3,
+      "index": 3,
+      "task_index": 0,
+      "timestamp": 0.3
+    },
+    "reviewed": {
+      "action": [
+        0.3
+      ],
+      "episode_index": 0,
+      "frame_index": 3,
+      "index": 3,
+      "subtask_index": 2,
+      "task_index": 0,
+      "timestamp": 0.3
+    },
+    "subtask": "grasp"
+  },
+  {
+    "input": {
+      "action": [
+        1.0
+      ],
+      "episode_index": 1,
+      "frame_index": 0,
+      "index": 4,
+      "task_index": 0,
+      "timestamp": 0.0
+    },
+    "reviewed": {
+      "action": [
+        1.0
+      ],
+      "episode_index": 1,
+      "frame_index": 0,
+      "index": 4,
+      "subtask_index": 0,
+      "task_index": 0,
+      "timestamp": 0.0
+    },
+    "subtask": "align"
+  },
+  {
+    "input": {
+      "action": [
+        1.1
+      ],
+      "episode_index": 1,
+      "frame_index": 1,
+      "index": 5,
+      "task_index": 0,
+      "timestamp": 0.1
+    },
+    "reviewed": {
+      "action": [
+        1.1
+      ],
+      "episode_index": 1,
+      "frame_index": 1,
+      "index": 5,
+      "subtask_index": 3,
+      "task_index": 0,
+      "timestamp": 0.1
+    },
+    "subtask": "place"
+  },
+  {
+    "input": {
+      "action": [
+        1.2
+      ],
+      "episode_index": 1,
+      "frame_index": 2,
+      "index": 6,
+      "task_index": 0,
+      "timestamp": 0.2
+    },
+    "reviewed": {
+      "action": [
+        1.2
+      ],
+      "episode_index": 1,
+      "frame_index": 2,
+      "index": 6,
+      "subtask_index": 3,
+      "task_index": 0,
+      "timestamp": 0.2
+    },
+    "subtask": "place"
+  },
+  {
+    "input": {
+      "action": [
+        1.3
+      ],
+      "episode_index": 1,
+      "frame_index": 3,
+      "index": 7,
+      "task_index": 0,
+      "timestamp": 0.3
+    },
+    "reviewed": {
+      "action": [
+        1.3
+      ],
+      "episode_index": 1,
+      "frame_index": 3,
+      "index": 7,
+      "subtask_index": 3,
+      "task_index": 0,
+      "timestamp": 0.3
+    },
+    "subtask": "place"
+  }
+]

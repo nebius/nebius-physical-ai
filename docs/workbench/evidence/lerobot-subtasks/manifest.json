@@ -1,0 +1,119 @@
+{
+  "artifacts": {
+    "before-after.json": "78a970d7042582aeb80af9abd548da2d637be4c0c9d240477e9be4f91abff1c9",
+    "export-report.json": "af7261cfe31cc2bef730d6ecea8e3178c17d1a95561754c3eda05ffbd6203820",
+    "input/data/chunk-000/file-000.parquet": "aa4c3d1f566410716d96b6edafdee0bc289f46cef0324929f8cdcc72a05491ac",
+    "input/meta/episodes/chunk-000/file-000.parquet": "5ab1f755defee08d745199fee4e77e678a6e8d4bef49e77fae28978a865f3229",
+    "input/meta/info.json": "59b4c6158b62469c3f875ba08543906f7731585ca6ce706756a5fbe7a808bb18",
+    "input/meta/tasks.parquet": "7cede67a60fbb65d05e8460e75b5680044e69d13ba2354faa8b2bfb5ede0755d",
+    "lerobot-subtasks.rrd": "a9a3c049743d1bb6297b7a22377512f1979c7720a4d10278d97092f84f91c760",
+    "reviewed/data/chunk-000/file-000.parquet": "6d5147c5e438ae3870e5ff3cc590bea6bcf88b2febbc68ac84f12bdb19be1ce3",
+    "reviewed/meta/episodes/chunk-000/file-000.parquet": "5ab1f755defee08d745199fee4e77e678a6e8d4bef49e77fae28978a865f3229",
+    "reviewed/meta/info.json": "5e3fb66c2b001871c34a950998c4da177e43f8c5cb3073c2166188ff70c00ef2",
+    "reviewed/meta/lerobot_annotations.json": "043d122e02a0562746616c29b7f7a7c676c08e9ba225baddf6fb26e3417574e8",
+    "reviewed/meta/subtasks.parquet": "027cb6f8f779f08c930d9a405121b7b8eb2006da356895bb4e0d50f1338b26fd",
+    "reviewed/meta/tasks.parquet": "7cede67a60fbb65d05e8460e75b5680044e69d13ba2354faa8b2bfb5ede0755d",
+    "subtask-proof.json": "96b76a3b3c2687986f0c2d05cc48c83cbbf44bac0b25f5ec1e08cecaa46b7a86",
+    "temporal-tags.json": "d2d726befcf84884a31e3a7fd8527b5894d40497cb9445aa09924acf0b6d8336",
+    "workflow-report.json": "b5b1d86d31ee8efab2a532c7f2b92fa915622bfc9939e784d7752515fece748a",
+    "workflow.yaml": "cd66862dd0e95a2530e3979dff55ad0fa0cc1f2d198d601440fea95508d9f9f9"
+  },
+  "input_unchanged": true,
+  "original_frame_columns_unchanged": true,
+  "provenance": {
+    "checkout_base_revision": "edd8d02b68573feb78becfa1e1e06012dd5df402",
+    "input_sha256": {
+      "data/chunk-000/file-000.parquet": "aa4c3d1f566410716d96b6edafdee0bc289f46cef0324929f8cdcc72a05491ac",
+      "meta/episodes/chunk-000/file-000.parquet": "5ab1f755defee08d745199fee4e77e678a6e8d4bef49e77fae28978a865f3229",
+      "meta/info.json": "59b4c6158b62469c3f875ba08543906f7731585ca6ce706756a5fbe7a808bb18",
+      "meta/tasks.parquet": "7cede67a60fbb65d05e8460e75b5680044e69d13ba2354faa8b2bfb5ede0755d"
+    },
+    "limitations": "Synthetic numeric LeRobot-format fixture, not captured robot data. Temporal tags are supplied programmatically to the production label parser; this is not a recording of FiftyOne UI interaction or native dataset export. No camera footage, model inference, policy training, or cloud execution is claimed.",
+    "producer": "npa/scripts/record_lerobot_subtask_proof.py",
+    "proof": {
+      "artifact_uri": "subtask-proof.json",
+      "catalog": [
+        {
+          "subtask": "align",
+          "subtask_index": 0
+        },
+        {
+          "subtask": "approach",
+          "subtask_index": 1
+        },
+        {
+          "subtask": "grasp",
+          "subtask_index": 2
+        },
+        {
+          "subtask": "place",
+          "subtask_index": 3
+        }
+      ],
+      "expected_subtask": "grasp",
+      "proof": {
+        "episode_index": 0,
+        "frame_index": 2,
+        "row_sha256": "66fe074ecdf90002373a5882adc18f377aa91671258ab0927802a49228d5fc62",
+        "source_data_file": "data/chunk-000/file-000.parquet",
+        "source_parquet_sha256": "6d5147c5e438ae3870e5ff3cc590bea6bcf88b2febbc68ac84f12bdb19be1ce3",
+        "subtask": "grasp",
+        "subtask_index": 2,
+        "timestamp": 0.2
+      },
+      "schema": "npa.lerobot.subtask_proof.v1",
+      "source_catalog_sha256": "027cb6f8f779f08c930d9a405121b7b8eb2006da356895bb4e0d50f1338b26fd",
+      "source_dataset_uri": "reviewed",
+      "source_format": "lerobot-v3.0",
+      "status": "verified",
+      "summary": {
+        "episode_count": 2,
+        "frame_count": 8,
+        "labeled_frame_count": 8,
+        "segment_count": 4,
+        "subtask_count": 4,
+        "unlabeled_frame_count": 0
+      }
+    },
+    "recipe_sha256": {
+      "npa/scripts/record_lerobot_subtask_proof.py": "7525ae9aa3aaba25b7125b62934f57092f047be25511d51948b237e3ec201bee",
+      "npa/src/npa/fiftyone_lerobot_subtasks.py": "1f3ea655ca34738fb49507d9da6bea56f322b5d38cf9c9d79108608ad106e7fe",
+      "npa/src/npa/workflows/lerobot_subtask_proof.py": "41e3887daab5fc6daa9f1c4f36c545f9c578294f82160b361e169f109da04c94",
+      "workflows/testing/lerobot-subtask-proof.yaml": "cd66862dd0e95a2530e3979dff55ad0fa0cc1f2d198d601440fea95508d9f9f9"
+    },
+    "run_id": "lerobot-subtask-recorded-proof",
+    "timeline": "dataset_row is a row ordinal, not elapsed capture or execution time",
+    "versions": {
+      "pyarrow": "25.0.1",
+      "rerun": "0.31.4"
+    }
+  },
+  "recording": {
+    "application_id": "npa-lerobot-subtask-proof",
+    "bytes": 77474,
+    "recording_id": "lerobot-subtask-recorded-proof",
+    "row_ordinals": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "rrd_print_sha256": "cdd6385917d6cb5ec7fb2082a209db62c252c837dc27afe4c46946e39e03b849",
+    "rrd_verify": "1 file verified without error.",
+    "samples_per_entity": {
+      "/input/action_0": 8,
+      "/input/frame": 8,
+      "/reviewed/frame": 8,
+      "/subtasks/index": 8
+    },
+    "sha256": "a9a3c049743d1bb6297b7a22377512f1979c7720a4d10278d97092f84f91c760",
+    "status": "verified",
+    "timeline": "dataset_row"
+  },
+  "schema": "npa.lerobot.subtask_recording.v1",
+  "status": "verified"
+}

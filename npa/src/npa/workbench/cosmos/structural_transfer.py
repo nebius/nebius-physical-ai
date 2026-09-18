@@ -17,6 +17,21 @@ EDGE_THRESHOLDS = {
 }
 
 
+def cfg_normalization_enabled(value: str) -> bool:
+    """Resolve the explicit native classifier-free guidance normalization mode.
+
+    Args:
+        value: ``disabled`` or ``enabled``; no truthiness coercion is accepted.
+    Returns:
+        Whether the native sampler should normalize its guided prediction.
+    Raises:
+        ValueError: The mode is not one of the supported strings.
+    """
+    if not isinstance(value, str) or value not in ("disabled", "enabled"):
+        raise ValueError("transfer_cfg_normalization must be disabled or enabled")
+    return value == "enabled"
+
+
 def edge_thresholds(preset: str) -> tuple[int, int]:
     """Resolve a pinned native Canny preset before media work.
 
@@ -44,6 +59,7 @@ class TransferSettings:
         rgb_weight: Native RGB hint weight relative to edge weight 1; zero disables it.
         first_chunk_conditional_frames: Zero releases the source RGB first frame;
             one retains the existing appearance anchor. Later chunks use generated overlap.
+        cfg_normalization: Native guided-prediction normalization, disabled by default.
     Returns:
         Immutable settings; call validate before model work.
     Raises:
@@ -56,6 +72,7 @@ class TransferSettings:
     edge_threshold: str = "medium"
     rgb_weight: float = 0.0
     first_chunk_conditional_frames: int = 1
+    cfg_normalization: str = "disabled"
 
     def validate(self) -> None:
         """Validate controls before any model work.
@@ -75,6 +92,7 @@ class TransferSettings:
                 or not math.isfinite(self.control_guidance) or not 0 < self.control_guidance <= 10):
             raise ValueError("control_guidance must be finite, positive and at most 10")
         edge_thresholds(self.edge_threshold)
+        cfg_normalization_enabled(self.cfg_normalization)
         if (type(self.rgb_weight) not in {int, float}
                 or not math.isfinite(self.rgb_weight) or self.rgb_weight < 0):
             raise ValueError("transfer_rgb_weight must be finite and nonnegative")
@@ -104,6 +122,7 @@ def transfer_sample(base: dict[str, Any], settings: TransferSettings, output: Pa
     validate_reference(timeline, settings.fps)
     sample = {**base, "resolution": "480", "aspect_ratio": "16,9", "fps": settings.fps,
             "num_frames": settings.chunk_frames, "seed": seed, "shift": 10.0,
+            "normalize_cfg": cfg_normalization_enabled(settings.cfg_normalization),
             "edge": {"control_path": str(output / "controls" / f"{base['name']}.mkv"),
                      "preset_edge_threshold": settings.edge_threshold},
             "control_guidance": settings.control_guidance,

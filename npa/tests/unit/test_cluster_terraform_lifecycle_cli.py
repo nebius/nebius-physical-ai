@@ -64,6 +64,32 @@ def _completed(
     )
 
 
+def test_cluster_name_collision_is_classified_without_provider_details() -> None:
+    error = RuntimeError("service create RPC AlreadyExists: provider-specific-detail")
+
+    assert tf_mod._is_cluster_name_collision(error) is True
+    assert tf_mod._is_cluster_name_collision(RuntimeError("quota exhausted")) is False
+
+
+def test_terraform_collision_runner_retains_output_for_classification(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    observed: dict[str, object] = {}
+
+    def fake_runner(args: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        observed.update(args=args, capture_output=kwargs.get("capture_output"))
+        return _completed()
+
+    monkeypatch.setattr(tf_mod, "_run_stream", fake_runner)
+
+    tf_mod._run_stream_with_captured_output(
+        ["terraform", "apply"], cwd=tmp_path, env={}, timeout=60
+    )
+
+    assert observed["args"] == ["terraform", "apply"]
+    assert observed["capture_output"] is True
+
+
 @pytest.fixture(autouse=True)
 def _node_group_ssh_key(tmp_path_factory, monkeypatch) -> Path:
     """The vendored module rejects a node-group key path that does not exist.
@@ -2768,6 +2794,36 @@ def test_up_pins_an_existing_ssh_public_key(monkeypatch, tmp_path: Path) -> None
     assert f'ssh_public_key={{path="{key}"}}' in apply_call
 
 
+def test_resolve_shared_ssh_public_key_accepts_json_path_from_older_agent(
+    tmp_path: Path,
+) -> None:
+    """Preserve provisioning compatibility with agents deployed before HCL output."""
+    key = tmp_path / "id_ed25519.pub"
+    key.write_text("ssh-ed25519 AAAAC3Nz older-agent@example\n", encoding="utf-8")
+
+    resolved = tf_mod._resolve_shared_ssh_public_key(
+        {}, {"TF_VAR_ssh_public_key": json.dumps({"path": str(key)})}
+    )
+
+    assert resolved == "ssh-ed25519 AAAAC3Nz older-agent@example"
+
+
+def test_shared_ssh_key_uses_first_authorized_keys_entry(monkeypatch, tmp_path: Path) -> None:
+    """A service account can reuse its login key without a separate .pub file."""
+    authorized_keys = tmp_path / "authorized_keys"
+    authorized_keys.write_text(
+        "# managed by cloud-init\nssh-ed25519 AAAAC3Nz agent@example\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NPA_SSH_PUBLIC_KEY", str(authorized_keys))
+
+    assert tf_mod._resolve_shared_ssh_public_key({}, {}) == "ssh-ed25519 AAAAC3Nz agent@example"
+    assert tf_mod._ssh_public_key_var_args({}, {}) == [
+        "-var",
+        'ssh_public_key={key="ssh-ed25519 AAAAC3Nz agent@example"}',
+    ]
+
+
 def test_up_keeps_an_explicit_ssh_public_key_from_tfvars(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -3046,6 +3102,40 @@ def test_fresh_shared_up_resolves_subnet_and_uses_id_backed_project(
     assert preflight_requests[0].provider_preflight is True
     assert network_calls[0]["network_state_path"].name == ".npa-fleet-network.json"
     assert events == ["preflight", "ensure-subnet", "apply"]
+
+    # provision-if-absent has already supplied an immutable, mutation-ready
+    # whole-path plan. Re-querying tenant-wide quotas here would make a
+    # project-scoped service account fail after that authoritative gate passed.
+    from npa.provisioning_preflight import (
+        WholePathPreflightPlan,
+        resolve_topology,
+        resolved_plan_context,
+    )
+
+    inherited = WholePathPreflightPlan(
+        project_alias="project-alias",
+        project_id="project-test",
+        tenant_id="tenant-test",
+        region="region-test",
+        topology=resolve_topology(
+            cluster_name="fresh",
+            cpu_nodes=1,
+            cpu_platform="cpu-d3",
+            cpu_preset="8vcpu-32gb",
+            gpu_nodes=0,
+            gpu_platform="gpu-rtx6000",
+            gpu_preset="1gpu-24vcpu-218gb",
+        ),
+        decision="ready",
+    )
+    with resolved_plan_context(inherited):
+        inherited_result = runner.invoke(
+            app,
+            ["up", "--terraform-dir", str(tf_dir), "--skip-sky-smoke"],
+        )
+
+    assert inherited_result.exit_code == 0, inherited_result.output
+    assert preflight_requests[-1].provider_preflight is False
 
     skipped = runner.invoke(
         app,

@@ -13,6 +13,7 @@ import yaml
 
 from npa.cli.main import app
 from npa.cli.workbench import workflow as workflow_cli
+from npa.execution_preflight import ExecutionPreflightError
 from npa.orchestration.npa_workflow.submit import load_spec_for_submit
 from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
 from npa.orchestration.skypilot.image_bootstrap_contract import (
@@ -24,6 +25,7 @@ from npa.orchestration.skypilot.image_bootstrap_contract import (
 from npa.orchestration.skypilot.k8s_gpu_catalog import KubernetesGpuCatalog
 from npa.orchestration.skypilot.registry_preflight import ImagePullCheck
 from npa.orchestration.skypilot.workflow import SkyPilotSubmitError
+from npa.provisioning_journal import OperationJournalError
 
 
 runner = CliRunner()
@@ -70,6 +72,11 @@ class _RecordingOperation:
         self.transitions.append((phase, kwargs))
 
 
+class _PreparedRecordingOperation(_RecordingOperation):
+    def read(self) -> dict[str, object]:
+        return {"phase": "prepared", "resources": []}
+
+
 def test_prelaunch_reconciliation_failure_does_not_leave_recovery_blocker() -> None:
     operation = _RecordingOperation()
     transaction = type("Transaction", (), {"launch_sequence": 0})()
@@ -86,6 +93,28 @@ def test_prelaunch_reconciliation_failure_does_not_leave_recovery_blocker() -> N
     }
     assert operation.transitions[0][0] == "rolled-back"
     assert operation.transitions[0][1]["details"]["launch_attempted"] is False
+
+
+def test_execution_preflight_failure_does_not_leave_recovery_blocker() -> None:
+    operation = _RecordingOperation()
+
+    workflow_cli._record_workflow_submit_failure(
+        operation,
+        ExecutionPreflightError("storage_mount", "static profile is unavailable"),
+    )
+
+    assert operation.rollback == {
+        "attempted": False,
+        "completed": True,
+        "removed": [],
+        "preserved": [],
+        "outcomes": [],
+    }
+    assert operation.transitions[0][0] == "rolled-back"
+    assert operation.transitions[0][1]["details"] == {
+        "error_type": "ExecutionPreflightError",
+        "launch_attempted": False,
+    }
 
 
 def test_verified_preflight_failure_releases_lifecycle_lock() -> None:
@@ -120,6 +149,28 @@ def test_postlaunch_failure_preserves_recovery_blocker(launch_attempted) -> None
     assert operation.transitions == [
         ("recovery-required", {"error": "launch indeterminate"})
     ]
+
+
+def test_context_rejection_finalizes_unentered_submit_operation() -> None:
+    operation = _PreparedRecordingOperation()
+
+    workflow_cli._record_unentered_workflow_submit_failure(
+        operation, OperationJournalError("another lifecycle operation is active")
+    )
+
+    assert operation.rollback == {
+        "attempted": False,
+        "completed": True,
+        "removed": [],
+        "preserved": [],
+        "outcomes": [],
+    }
+    assert operation.transitions[0][0] == "rolled-back"
+    assert operation.transitions[0][1]["details"] == {
+        "error_type": "OperationJournalError",
+        "launch_attempted": False,
+        "context_acquired": False,
+    }
 
 
 @pytest.fixture()

@@ -28,6 +28,7 @@ CLI:
 npa workbench fiftyone deploy
 npa workbench fiftyone launch
 npa workbench fiftyone load-dataset
+npa workbench fiftyone export-lerobot-subtasks
 npa workbench fiftyone curate-augmented   # real FiftyOne Brain curation of a paidf run
 npa workbench fiftyone status
 npa workbench fiftyone system-info
@@ -110,5 +111,28 @@ methods also accept precomputed `embeddings=` (no model / GPU) — that is how t
 paidf `curate-augmented` path runs uniqueness/similarity/visualization CPU-only.
 
 FiftyOne supports custom field schemas. Do not assume generic auto-extracted fields are required.
+
+FiftyOne 1.22 loads LeRobot v3 datasets as synchronized multimodal episodes.
+For manual subtask labeling, Shift-drag a timeline interval in the App and name
+the temporal tag `subtask:<label>`. Export only after every frame is covered:
+
+```bash
+npa workbench fiftyone export-lerobot-subtasks \
+  --dataset-name <dataset> \
+  --output-path s3://<bucket>/<derived-dataset>/
+```
+
+The export writes a new self-contained LeRobot dataset with per-frame
+`subtask_index`, `meta/subtasks.parquet`, and resumable
+`meta/lerobot_annotations.json`. It rejects overlaps, gaps, non-duration tags,
+unknown samples, and nonempty output prefixes. The original LeRobot dataset is
+not modified. Existing LeRobot subtask indexes are seeded back into FiftyOne
+temporal tags when the dataset is loaded.
+
+After review, use `workflows/testing/lerobot-subtask-proof.yaml` as the
+repeatable gate. It reads the derived LeRobot Parquet, requires complete catalog
+resolution, and publishes a concrete frame/subtask proof bound to the source
+Parquet digest. YAML verifies the reviewed result; it does not replace the human
+timeline edit.
 
 Open the selected BDD100K demo dataset through the same authenticated local route.

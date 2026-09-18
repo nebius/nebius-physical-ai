@@ -101,6 +101,35 @@ def test_audit_script_renders_and_reports_a_healthy_surface(audit, tmp_path) -> 
     )
 
 
+def test_rendered_openapi_media_operation_ids_are_unique(audit, tmp_path) -> None:
+    """Keep the generated media API usable by OpenAPI clients."""
+    body = audit.render_backend_body()
+    app, _globals = audit.load_backend_app(body, tmp_path)
+    operations = {
+        operation["operationId"]: f"{method.upper()} {path}"
+        for path, path_item in app.openapi()["paths"].items()
+        for method, operation in path_item.items()
+        if isinstance(operation, dict) and operation.get("operationId")
+    }
+    expected = {
+        "artifacts_content_get": "GET /artifacts/content",
+        "artifacts_content_head": "HEAD /artifacts/content",
+        "artifact_file_get": "GET /artifacts/file/{filename}",
+        "artifact_file_head": "HEAD /artifacts/file/{filename}",
+        "artifacts_download_get": "GET /artifacts/download",
+        "artifacts_download_head": "HEAD /artifacts/download",
+        "sim_viz_rrd_blob_get": "GET /sim-viz/rrd-blob",
+        "sim_viz_rrd_blob_head": "HEAD /sim-viz/rrd-blob",
+    }
+    assert expected.items() <= operations.items()
+    assert len(operations) == sum(
+        1
+        for path_item in app.openapi()["paths"].values()
+        for operation in path_item.values()
+        if isinstance(operation, dict) and operation.get("operationId")
+    )
+
+
 def test_audit_script_confirms_every_chat_intent_still_routes(audit) -> None:
     probes = audit.probe_chat_router()
     assert len(probes) > 30, f"intent probe list shrank unexpectedly: {len(probes)}"

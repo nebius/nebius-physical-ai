@@ -22,7 +22,7 @@ class StoragePreconditionFailed(StorageError):
 def _parse_bucket_uri(uri: str) -> tuple[str, str]:
     """Parse s3://bucket/prefix into (bucket, prefix)."""
     parsed = urlparse(uri)
-    if parsed.scheme != "s3":
+    if parsed.scheme != "s3" or not parsed.netloc or parsed.query or parsed.fragment:
         raise StorageError(f"Expected s3:// URI, got: {uri}")
     bucket = parsed.netloc
     prefix = parsed.path.lstrip("/")
@@ -180,24 +180,43 @@ class StorageClient:
         return results
 
     def upload_directory(
-        self, local_dir: str, bucket_uri: str, *, remote_prefix: str = ""
+        self, local_dir: str, bucket_uri: str, *, remote_prefix: str = "",
+        require_empty: bool = False,
     ) -> str:
-        """Upload a local directory to S3. Returns the destination URI."""
-        import os
+        """Upload a local directory through the shared retry-configured client.
 
+        Args:
+            local_dir: Directory whose files to upload.
+            bucket_uri: Destination S3 directory URI.
+            remote_prefix: Optional directory suffix under the destination.
+            require_empty: Reject existing objects before uploading. This is a
+                preflight check, not a lock against concurrent writers.
+
+        Returns:
+            The destination directory URI.
+
+        Raises:
+            StorageError: The URI is invalid or a required-empty prefix is occupied.
+        """
         bucket, base_prefix = _parse_bucket_uri(bucket_uri)
         if remote_prefix:
-            base_prefix = base_prefix.rstrip("/") + "/" + remote_prefix.strip("/")
-        base_prefix = base_prefix.rstrip("/") + "/"
+            base_prefix = "/".join(part for part in (base_prefix.rstrip("/"), remote_prefix.strip("/")) if part)
+        base_prefix = base_prefix.rstrip("/") + "/" if base_prefix else ""
+        if require_empty:
+            existing = self._s3.list_objects_v2(Bucket=bucket, Prefix=base_prefix, MaxKeys=1)
+            if existing.get("Contents"):
+                raise StorageError(f"Output S3 prefix must be empty: {bucket_uri}")
 
+        self._upload_directory_files(local_dir, bucket, base_prefix)
+        return f"s3://{bucket}/{base_prefix}"
+
+    def _upload_directory_files(self, local_dir: str, bucket: str, prefix: str) -> None:
         for root, _dirs, files in os.walk(local_dir):
             for fname in files:
                 local_path = os.path.join(root, fname)
                 rel_path = os.path.relpath(local_path, local_dir)
-                s3_key = base_prefix + rel_path
+                s3_key = prefix + Path(rel_path).as_posix()
                 self._s3.upload_file(local_path, bucket, s3_key)
-
-        return f"s3://{bucket}/{base_prefix}"
 
     def upload_file(self, local_file: str, bucket_uri: str) -> str:
         """Upload a local file to S3. Returns the destination URI."""

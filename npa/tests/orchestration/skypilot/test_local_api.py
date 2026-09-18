@@ -16,6 +16,12 @@ from npa.orchestration.skypilot import local_api as api
 from npa.orchestration.skypilot import _bin, cleanup, workflow_state
 
 
+@pytest.fixture(autouse=True)
+def _allow_fake_local_api_host(monkeypatch):
+    """Keep fake-daemon identity tests portable; host policy is separate."""
+    monkeypatch.setattr(api, "_require_linux_host", lambda: None)
+
+
 @pytest.mark.parametrize("contents", [
     b"tokens: {}\ntokens: {}\n",
     b"tokens: {principal: {token: first, token: second}}\n",
@@ -32,8 +38,188 @@ def test_strict_credential_yaml_accepts_plain_safe_mapping():
     assert api._strict_mapping(b"tokens: {}\n") == {"tokens": {}}
 
 
+def test_isolated_api_canonicalizes_equivalent_symlinked_roots(tmp_path):
+    target = tmp_path / "actual-isolated-state"
+    target.mkdir()
+    alias = tmp_path / "isolated-state-alias"
+    alias.symlink_to(target, target_is_directory=True)
+
+    through_alias = api.isolated_api_environment(alias, {})
+    through_target = api.isolated_api_environment(target, {})
+
+    assert through_alias["SKYPILOT_API_SERVER_ENDPOINT"] == through_target[
+        "SKYPILOT_API_SERVER_ENDPOINT"
+    ]
+    assert through_alias["NPA_SKYPILOT_ISOLATED_API_DIR"] == str(target.resolve())
+    record = json.loads((target / "local-api" / "daemon.json").read_text())
+    assert record["root"] == str((target / "local-api").resolve())
+
+
+def test_darwin_owned_listener_uses_pid_fingerprint_and_lsof(monkeypatch):
+    monkeypatch.setattr(api.sys, "platform", "darwin")
+    record = {"pid": 731, "port": 43127}
+    calls: list[list[str]] = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        if argv[0] == "ps" and any("lstart=,command=" in part for part in argv):
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                "731 Sun Sep 14 16:00:00 2026 python -m sky.server.server --port 43127\n",
+                "",
+            )
+        if argv[0] == "ps" and "pgid=" in argv:
+            return subprocess.CompletedProcess(argv, 0, "731\n", "")
+        assert argv[0] == "lsof"
+        return subprocess.CompletedProcess(argv, 0, "731\n", "")
+
+    monkeypatch.setattr(api.subprocess, "run", run)
+
+    process = api._process(record)
+
+    assert process == {"pid": 731, "start_ticks": record["darwin_process_fingerprint"]}
+    assert api._listener_owned(record, process)
+    assert [call[0] for call in calls] == ["ps", "lsof", "ps"]
+
+
+@pytest.mark.parametrize("legacy_receipt", [False, True])
+def test_darwin_framework_exec_preserves_lifetime(monkeypatch, tmp_path, legacy_receipt):
+    framework = tmp_path / "Python.framework" / "Versions" / "3.12"
+    launcher = framework / "bin" / "python3.12"
+    application = framework / "Resources" / "Python.app" / "Contents" / "MacOS" / "Python"
+    for executable in (launcher, application):
+        executable.parent.mkdir(parents=True, exist_ok=True)
+        executable.touch()
+    interpreter = tmp_path / "environment with spaces" / "python"
+    interpreter.parent.mkdir()
+    interpreter.symlink_to(launcher)
+    prefix = "731 Sun Sep 14 16:00:00 2026 "
+    arguments = " -m sky.server.server --port 43127"
+    launched = prefix + str(interpreter) + arguments
+    running = prefix + str(application) + arguments
+    record = {"pid": 731, "port": 43127, "interpreter": str(interpreter)}
+    if legacy_receipt:
+        record["darwin_process_fingerprint"] = hashlib.sha256(running.encode()).hexdigest()
+    lines = iter([running if legacy_receipt else launched, running,
+                  running.replace("16:00:00", "16:00:01")])
+    monkeypatch.setattr(api.sys, "platform", "darwin")
+    monkeypatch.setattr(api.subprocess, "run", lambda argv, **kwargs:
+                        subprocess.CompletedProcess(argv, 0, next(lines) + "\n", ""))
+
+    original = api._process(record)
+    assert api._process(record) == original
+    with pytest.raises(api.IsolatedApiError, match="lifetime disagrees"):
+        api._process(record)
+
+
+def test_darwin_fingerprint_rejects_an_unrelated_executable(tmp_path):
+    interpreter = tmp_path / "python"
+    interpreter.touch()
+    record = {"interpreter": str(interpreter)}
+    prefix = "731 Sun Sep 14 16:00:00 2026 "
+    arguments = " -m sky.server.server --port 43127"
+    record["darwin_process_fingerprint"] = api._darwin_process_fingerprint(
+        prefix + str(interpreter) + arguments, record,
+    )
+
+    with pytest.raises(api.IsolatedApiError, match="executable disagrees"):
+        api._darwin_process_fingerprint(prefix + "/unrelated/python" + arguments, record)
+
+
+def test_darwin_process_refuses_changed_saved_fingerprint(monkeypatch):
+    monkeypatch.setattr(api.sys, "platform", "darwin")
+    record = {"pid": 731, "port": 43127, "darwin_process_fingerprint": "different"}
+    monkeypatch.setattr(
+        api.subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(
+            argv,
+            0,
+            "731 Sun Sep 14 16:00:00 2026 python -m sky.server.server --port 43127\n",
+            "",
+        ),
+    )
+
+    with pytest.raises(api.IsolatedApiError, match="lifetime disagrees"):
+        api._process(record)
+
+
+def test_darwin_process_does_not_adopt_a_reused_nonserver_pid(monkeypatch):
+    monkeypatch.setattr(api.sys, "platform", "darwin")
+    record = {"pid": 731, "port": 43127}
+    monkeypatch.setattr(
+        api.subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(
+            argv, 0, "731 Sun Sep 14 16:00:00 2026 unrelated-process\n", ""
+        ),
+    )
+
+    assert api._process(record) is None
+
+
+def test_darwin_session_keeps_owned_queue_listener_after_leader_exit(monkeypatch):
+    monkeypatch.setattr(api.sys, "platform", "darwin")
+    record = {"pid": 731, "port": 43127, "metrics_port": 43128, "queue_port": 43129}
+
+    def run(argv, **kwargs):
+        if argv[0] == "ps" and any("lstart=,command=" in part for part in argv):
+            return subprocess.CompletedProcess(argv, 0, "731 retired-process\n", "")
+        if argv[0] == "lsof":
+            return subprocess.CompletedProcess(
+                argv,
+                0 if "-iTCP:43129" in argv else 1,
+                "844\n" if "-iTCP:43129" in argv else "",
+                "",
+            )
+        assert argv == ["ps", "-p", "844", "-o", "pgid="]
+        return subprocess.CompletedProcess(argv, 0, "731\n", "")
+
+    monkeypatch.setattr(api.subprocess, "run", run)
+
+    assert api._session_members(record) == [844]
+
+
+def test_stop_does_not_kill_process_group_after_darwin_pid_reuse(monkeypatch, tmp_path):
+    monkeypatch.setattr(api.sys, "platform", "darwin")
+    isolated = tmp_path / "isolated"
+    root = api._isolated_api_root(isolated)
+    root.mkdir(parents=True)
+    record = {
+        "schema_version": 1,
+        "root": str(root),
+        "port": 43127,
+        "metrics_port": 43128,
+        "queue_port": 43129,
+        "marker": "fixture-marker",
+        "interpreter": "/fixture/python",
+        "environment_binding": {"AWS_ACCESS_KEY_ID": "hashed"},
+        "config_sha256": "fixture-config",
+        "identity_files": {"/fixture/credential": "hashed"},
+        "runtime_settings": {"storage_bucket": "fixture"},
+        "pid": 731,
+        "state": "ready",
+    }
+    api._write(root / "daemon.json", record)
+    calls: list[tuple[str, int]] = []
+    outcomes = iter(({"pid": 731, "start_ticks": "first"}, None, None, None))
+    monkeypatch.setattr(api, "_process", lambda *args, **kwargs: next(outcomes))
+    monkeypatch.setattr(api.os, "kill", lambda pid, _signal: calls.append(("kill", pid)))
+    monkeypatch.setattr(api.os, "killpg", lambda pid, _signal: calls.append(("killpg", pid)))
+
+    api.stop_isolated_api(isolated)
+
+    assert calls == [("kill", 731)]
+    stopped = json.loads((root / "daemon.json").read_text())
+    assert stopped["state"] == "stopped"
+    assert not {"environment_binding", "config_sha256", "identity_files"} & set(stopped)
+    assert stopped["interpreter"] == "/fixture/python"
+    assert stopped["runtime_settings"] == {"storage_bucket": "fixture"}
+
+
 @pytest.fixture
-def local_runtime(tmp_path):
+def local_runtime(tmp_path, monkeypatch):
     package = tmp_path / "modules" / "sky" / "server"
     package.mkdir(parents=True)
     (package.parent / "__init__.py").touch()
@@ -270,7 +456,7 @@ def test_same_path_mutated_kubeconfig_is_not_same_identity(local_runtime):
 
 @pytest.mark.parametrize("setting", [
     "AWS_ENDPOINT_URL_S3", "AWS_REGION", "NEBIUS_PROFILE", "NPA_SKYPILOT_PROJECT",
-    "NPA_S3_PREFIX", "NPA_S3_BUCKET", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
 ])
 def test_all_effective_provider_settings_checked_on_adoption(local_runtime, setting):
     api.ensure_isolated_api(**local_runtime)
@@ -280,6 +466,27 @@ def test_all_effective_provider_settings_checked_on_adoption(local_runtime, sett
         api.ensure_isolated_api(**local_runtime)
     assert _record(local_runtime) == original
     assert api._process(original)["pid"] == original["pid"]
+
+
+def test_run_scoped_storage_does_not_change_control_plane_identity(local_runtime):
+    local_runtime["environment"].update(
+        NPA_S3_BUCKET="first-task-bucket",
+        NPA_S3_PREFIX="first/task-prefix",
+    )
+    api.ensure_isolated_api(**local_runtime)
+    original = _record(local_runtime)
+    local_runtime["environment"].update(
+        NPA_S3_BUCKET="second-task-bucket",
+        NPA_S3_PREFIX="second/task-prefix",
+    )
+
+    assert api.ensure_isolated_api(**local_runtime)["healthy"]
+
+    current = _record(local_runtime)
+    assert current["pid"] == original["pid"]
+    assert current["environment_binding"] == original["environment_binding"]
+    assert current["runtime_settings"]["storage_bucket"] == "second-task-bucket"
+    assert current["runtime_settings"]["storage_prefix"] == "second/task-prefix"
 
 
 def test_surviving_queue_child_blocks_duplicate_server_then_owned_cleanup(local_runtime):
@@ -332,7 +539,11 @@ def test_fresh_workflow_status_restores_submit_only_resolved_storage_settings(lo
         sky_bin=Path(local_runtime["sky_executable"]), isolated_config_dir=local_runtime["isolated_dir"], global_config_path=None))
     monkeypatch.setattr(workflow, "ensure_skypilot_version", lambda value: value)
     monkeypatch.setattr(workflow, "sky_environment", lambda root: api.isolated_api_environment(root, fresh))
+    original_run = subprocess.run
+
     def queue(argv, **kwargs):
+        if argv[1:3] != ["jobs", "queue"]:
+            return original_run(argv, **kwargs)
         assert argv[1:3] == ["jobs", "queue"]
         assert kwargs["env"]["NPA_S3_BUCKET"] == "fixture-task-bucket"
         assert kwargs["env"]["NPA_S3_PREFIX"] == "fixture/task-prefix"
@@ -672,6 +883,113 @@ def service_account_runtime(local_runtime, request):
     if provider != cache.parent:
         _select_nebius_exec(local_runtime, ["--config", str(provider / "config.yaml")])
     return local_runtime, provider, key, cache
+
+
+@pytest.fixture
+def metadata_token_runtime(local_runtime, monkeypatch):
+    import yaml
+
+    home = Path(local_runtime["environment"]["HOME"])
+    provider = home / ".nebius"
+    provider.mkdir()
+    metadata_root = home / "cloud-metadata"
+    metadata_root.mkdir()
+    token_file = metadata_root / "token"
+    token_file.write_text("fixture-initial-metadata-token")
+    profile = {
+        "endpoint": "fixture.invalid:443",
+        "parent-id": "fixture-project",
+        "token-file": str(token_file),
+    }
+    (provider / "config.yaml").write_text(yaml.safe_dump({"default": "metadata", "profiles": {"metadata": profile}}))
+    cache = provider / "credentials.yaml"
+    cache.write_text("tokens:\n  service-account/fixture-account/fixture-key:\n    token: fixture-old-token\n    expires_at: 100\n")
+    monkeypatch.setattr(api, "_METADATA_TOKEN_ROOT", metadata_root)
+    local_runtime["environment"].update(
+        NEBIUS_CONFIG_DIR=str(provider), NPA_CONFIG_DIR=str(home / ".npa"),
+        NPA_NEBIUS_CREDENTIAL_SOURCE="instance_metadata",
+    )
+    _select_nebius_exec(local_runtime, ["mk8s", "get-token", "--format", "json"])
+    return local_runtime, provider, token_file, cache
+
+
+@pytest.mark.parametrize("initial_cache", ["populated", "absent", "empty"])
+def test_metadata_token_cache_rotation_preserves_owned_api(metadata_token_runtime, initial_cache):
+    runtime, provider, token_file, cache = metadata_token_runtime
+    if initial_cache == "absent":
+        cache.unlink()
+    elif initial_cache == "empty":
+        cache.write_text("tokens: {}\n")
+
+    api.ensure_isolated_api(**runtime)
+    original = _record(runtime)
+    token_file.write_text("fixture-refreshed-metadata-token")
+    cache.write_text("tokens:\n  service-account/fixture-account/fixture-key:\n    token: fixture-refreshed-token\n    expires_at: 200\n")
+
+    assert api.ensure_isolated_api(**runtime)["healthy"]
+    record = _record(runtime)
+    assert record["pid"] == original["pid"]
+    assert record["identity_files"][str(token_file)].startswith("derived-nebius-metadata-source-v1:")
+    assert record["identity_files"][str(cache)].startswith("derived-nebius-metadata-cache-v1:")
+    assert "fixture-refreshed" not in json.dumps(record)
+
+
+@pytest.mark.parametrize("change", ["credential-source", "parent-id", "token-file"])
+def test_metadata_token_identity_change_cannot_adopt_owned_api(metadata_token_runtime, change):
+    import yaml
+
+    runtime, provider, token_file, _ = metadata_token_runtime
+    api.ensure_isolated_api(**runtime)
+    original = _record(runtime)
+    if change == "credential-source":
+        runtime["environment"]["NPA_NEBIUS_CREDENTIAL_SOURCE"] = "configured_profile"
+    else:
+        config = provider / "config.yaml"
+        data = yaml.safe_load(config.read_text())
+        if change == "parent-id":
+            data["profiles"]["metadata"]["parent-id"] = "different-fixture-project"
+        else:
+            replacement = token_file.with_name("replacement-token")
+            replacement.write_text("fixture-replacement-token")
+            data["profiles"]["metadata"]["token-file"] = str(replacement)
+        config.write_text(yaml.safe_dump(data))
+
+    with pytest.raises(api.IsolatedApiError, match="credential configuration changed|different executing identity"):
+        api.ensure_isolated_api(**runtime)
+    assert _record(runtime)["pid"] == original["pid"]
+
+
+def test_non_metadata_token_file_keeps_cache_byte_strict(metadata_token_runtime):
+    import yaml
+
+    runtime, provider, _, cache = metadata_token_runtime
+    outside = runtime["isolated_dir"] / "untrusted-token"
+    outside.write_text("fixture-untrusted-token")
+    config = provider / "config.yaml"
+    data = yaml.safe_load(config.read_text())
+    data["profiles"]["metadata"]["token-file"] = str(outside)
+    config.write_text(yaml.safe_dump(data))
+
+    before = api._identity_files(runtime["environment"])
+    assert before[str(cache)] == hashlib.sha256(cache.read_bytes()).hexdigest()
+    cache.write_text("tokens: {}\n")
+    assert api._identity_files(runtime["environment"]) != before
+
+
+def test_extended_metadata_profile_preserves_cache_identity(metadata_token_runtime):
+    import yaml
+
+    runtime, provider, _, cache = metadata_token_runtime
+    config = provider / "config.yaml"
+    data = yaml.safe_load(config.read_text())
+    data["profiles"]["metadata"].update(
+        {"token-endpoint": "fixture.invalid:443/token", "virtual": True}
+    )
+    config.write_text(yaml.safe_dump(data))
+
+    before = api._identity_files(runtime["environment"])
+    cache.write_text("tokens: {}\n")
+    assert api._identity_files(runtime["environment"]) == before
 
 
 @pytest.mark.parametrize("initial_cache", ["populated", "absent", "empty"])

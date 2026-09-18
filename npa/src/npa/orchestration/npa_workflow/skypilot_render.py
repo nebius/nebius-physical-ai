@@ -75,6 +75,13 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.groot": "groot",
 }
 
+# Runtime-fetch images intentionally carry the tool runtime but not the NPA CLI
+# distribution.  Their generated setup installs NPA from the operator's
+# content-addressed source copy before invoking a toolRef.  This is an image
+# capability, not a tenant workaround: a changed image can retire an entry only
+# when it genuinely bakes a compatible NPA CLI.
+IMAGE_TOOLS_REQUIRING_STAGED_NPA_SOURCE = frozenset({"sonic"})
+
 OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
@@ -664,6 +671,18 @@ def tool_image_key(tool_ref: str) -> str | None:
             if len(prefix) > len(best):
                 best = prefix
     return TOOL_REF_IMAGE_TOOL.get(best)
+
+
+def tool_requires_staged_npa_source(tool_ref: str) -> bool:
+    """Return whether a tool's selected runtime image needs staged NPA source.
+
+    A non-empty image reference alone does not prove it includes the NPA CLI.
+    Runtime-fetch images deliberately omit that distribution to keep their
+    published payload narrow, so the submit preflight must stage source even
+    though image routing itself succeeds.
+    """
+
+    return tool_image_key(tool_ref) in IMAGE_TOOLS_REQUIRING_STAGED_NPA_SOURCE
 
 
 def resolve_task_image(
@@ -1263,7 +1282,16 @@ def default_npa_setup() -> str:
         "  fi\n"
         "}\n"
         "if ! command -v npa >/dev/null 2>&1; then\n"
-        "  if [ -d /opt/nebius-physical-ai/npa ]; then\n"
+        # The active runtime-fetch images intentionally ship the installable
+        # project under /opt/npa but not a shell-visible `npa` launcher. Recording
+        # that tree alone is insufficient: the first task then skips the legacy
+        # branch, has no staged source URI, and exits before its GPU command runs.
+        # Install from the image-local source before falling back to the legacy
+        # layout or external source staging.
+        "  if [ -f /opt/npa/pyproject.toml ] && [ -d /opt/npa/src/npa ]; then\n"
+        "    npa_pip_install -e /opt/npa\n"
+        "    npa_record_src_root /opt/npa\n"
+        "  elif [ -d /opt/nebius-physical-ai/npa ]; then\n"
         "    npa_pip_install -e /opt/nebius-physical-ai/npa\n"
         "    npa_record_src_root /opt/nebius-physical-ai/npa\n"
         "  else\n"
@@ -1779,6 +1807,18 @@ def secret_env_hints_for_plan(steps: Sequence[PlanStep]) -> tuple[str, ...]:
             if name not in seen:
                 seen.add(name)
                 hints.append(name)
+        # RoboCasa endpoints use a bearer token whose variable name is part of
+        # the workflow config.  Read the already-resolved argv rather than
+        # guessing a fixed variable name, so a deployment can use a scoped
+        # token without silently dropping it at submit time.
+        if tool_ref == "workbench.robocasa" or tool_ref.startswith("workbench.robocasa."):
+            for index, arg in enumerate(step.argv[:-1]):
+                if arg != "--token-env":
+                    continue
+                name = step.argv[index + 1]
+                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) and name not in seen:
+                    seen.add(name)
+                    hints.append(name)
     return tuple(hints)
 
 

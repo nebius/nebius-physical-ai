@@ -19,7 +19,7 @@ from types import SimpleNamespace
 from botocore.exceptions import ClientError, EndpointConnectionError
 import pytest
 
-from npa.clients.storage import StoragePreconditionFailed
+from npa.clients.storage import StorageError, StoragePreconditionFailed
 
 PREFIX = "s3://test-bucket/clip-test"
 
@@ -351,7 +351,8 @@ def test_url_ambiguous_source_names_are_rejected_before_upload(modules, source, 
     from npa.clients.storage import _parse_bucket_uri
 
     archive, _ = modules
-    assert _parse_bucket_uri(f"{PREFIX}/files/preview.png{suffix}") == _parse_bucket_uri(f"{PREFIX}/files/preview.png")
+    with pytest.raises(StorageError, match="Expected s3:// URI"):
+        _parse_bucket_uri(f"{PREFIX}/files/preview.png{suffix}")
     (source / ("preview.png" + suffix)).write_bytes((source / "preview.png").read_bytes())
     _checksums(source)
     with pytest.raises(ValueError, match="Unsafe"):
