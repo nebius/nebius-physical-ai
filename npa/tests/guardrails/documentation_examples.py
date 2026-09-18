@@ -246,7 +246,7 @@ def _studio_parser(command: str):
     renderer = Path(__file__).resolve().parents[2] / "src/npa/studio_renderer"
     sys.path.insert(0, str(renderer))
     try:
-        module = {"draft": "film_draft", "watch": "film_watch"}.get(command, "edit")
+        module = {"draft": "film_draft", "watch": "film_watch", "review": "film_review"}.get(command, "edit")
         return importlib.import_module(module)._parser()
     finally:
         sys.path.remove(str(renderer))
@@ -267,7 +267,7 @@ def _studio_error(arguments: list[str]) -> str:
     else:
         command = arguments[1] if len(arguments) > 1 else ""
         options = arguments[2:]
-        if command not in {"brief", "scenes", "narrate", "draft", "watch", "preview", "final"}:
+        if command not in {"brief", "scenes", "narrate", "draft", "watch", "preview", "final", "review"}:
             return f"npa studio: unknown film command {command}"
     return _argparse_option_error(_studio_parser(command), options, f"npa studio {command}")
 
