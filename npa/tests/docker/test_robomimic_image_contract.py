@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import base64
+import csv
 import hashlib
 import importlib.util
 import io
@@ -13,6 +15,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+import zipfile
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -1818,3 +1821,310 @@ def test_source_archive_parser_rejects_byte_mutation(tmp_path: Path) -> None:
     manifest["archive"]["sha256"] = "0" * 64
     with pytest.raises(VERIFIER.VerificationError, match="identity mismatch"):
         VERIFIER._verify_source_archive(path, manifest)
+
+
+def _inert_wheel_members() -> dict[str, bytes]:
+    """Harmless non-executable content; not production wheel evidence."""
+    return {
+        "inertpkg/__init__.py": b"inert fixture bytes, never import\n",
+        "inertpkg-1.0.dist-info/METADATA": b"Name: inertpkg\nVersion: 1.0\n",
+        "inertpkg-1.0.dist-info/WHEEL": b"Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+        "inertpkg-1.0.dist-info/RECORD": b"",
+        "inertpkg-1.0.dist-info/entry_points.txt": b"[console_scripts]\ninert-script = inertpkg:unused\n",
+        "inertpkg-1.0.data/purelib/inert_data.txt": b"inert relocated data\n",
+    }
+
+
+def _write_inert_wheel(path: Path, members: dict[str, bytes]) -> None:
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, raw in members.items():
+            info = zipfile.ZipInfo(name)
+            info.external_attr = (stat.S_IFREG | 0o644) << 16
+            archive.writestr(info, raw)
+
+
+def _inert_install(root: Path, members: dict[str, bytes]) -> None:
+    record = "inertpkg-1.0.dist-info/RECORD"
+    installed = {
+        name.removeprefix("inertpkg-1.0.data/purelib/"): raw
+        for name, raw in members.items()
+        if name != record
+    }
+    installed["inertpkg-1.0.dist-info/INSTALLER"] = b"pip\n"
+    installed["inertpkg-1.0.dist-info/REQUESTED"] = b""
+    installed["bin/inert-script"] = (
+        b"#!/usr/local/bin/python3\n# -*- coding: utf-8 -*-\n"
+        b"import re\nimport sys\nif __name__ == '__main__':\n"
+        b"    from inertpkg import unused\n"
+        b"    sys.argv[0] = re.sub(r'(-script\\.pyw|\\.exe)?$', '', sys.argv[0])\n"
+        b"    sys.exit(unused())\n"
+    )
+    rows = []
+    for name, raw in installed.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(raw)
+        path.chmod(0o755 if name.startswith("bin/") else 0o644)
+        digest = (
+            base64.urlsafe_b64encode(hashlib.sha256(raw).digest()).decode().rstrip("=")
+        )
+        rows.append(
+            (
+                "../../" + name if name.startswith("bin/") else name,
+                "sha256=" + digest,
+                str(len(raw)),
+            )
+        )
+    with (root / record).open("w", newline="") as stream:
+        csv.writer(stream).writerows([*sorted(rows), (record, "", "")])
+
+
+def _inert_installed_source(tmp_path: Path) -> tuple[Path, Path, dict]:
+    source_members = {
+        "LICENSE": b"MIT\n",
+        "robomimic/__init__.py": b"inert source bytes\n",
+    }
+    archive, manifest = _source_archive(tmp_path, source_members)
+    manifest["git_tree_sha1"] = "0" * 40
+    source = tmp_path / "source"
+    for name, raw in source_members.items():
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(raw)
+    return source, archive, manifest
+
+
+@pytest.fixture
+def inert_installed_image(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
+    """Synthetic trust roots exercise interfaces, never production acceptance."""
+    source, archive, manifest = _inert_installed_source(tmp_path)
+    deps, wheels = (tmp_path / name for name in ("deps", "wheels"))
+    wheels.mkdir()
+    wheel = wheels / "inertpkg-1.0-py3-none-any.whl"
+    members = _inert_wheel_members()
+    _write_inert_wheel(wheel, members)
+    _inert_install(deps, members)
+    lock = tmp_path / "baked.lock"
+    lock.write_text(
+        "inertpkg==1.0 --hash=sha256:"
+        + hashlib.sha256(wheel.read_bytes()).hexdigest()
+        + "\n"
+    )
+    monkeypatch.setattr(
+        VERIFIER, "BAKED_LOCK_SHA256", hashlib.sha256(lock.read_bytes()).hexdigest()
+    )
+    monkeypatch.setattr(VERIFIER, "BAKED_DISTRIBUTION_COUNT", 1)
+    monkeypatch.setattr(VERIFIER, "SOURCE_REVISION", "0" * 40)
+    monkeypatch.setattr(VERIFIER, "_source_manifest", lambda _: manifest)
+    monkeypatch.setattr(
+        VERIFIER, "verify_debian_install", lambda **_: {"package_count": 0}
+    )
+    return dict(
+        source_root=source,
+        metadata_path=tmp_path / "inert-manifest",
+        debian_lock_path=tmp_path / "inert-debian",
+        baked_lock_path=lock,
+        baked_deps_path=deps,
+        source_archive_path=archive,
+        selected_wheel_root=wheels,
+        empty_boundary_paths=(),
+    )
+
+
+def test_installed_byte_proof_binds_archive_wheels_and_inventories(
+    inert_installed_image: dict,
+) -> None:
+    proof = VERIFIER.verify_neutral_image(**inert_installed_image)
+    assert proof["schema"] == "npa.robomimic.neutral-image-verification.v2"
+    assert proof["source_revision"] == "0" * 40  # deliberately synthetic
+    assert proof["installed_source"]["file_count"] == 2
+    selected = proof["installed_dependencies"]["selected_wheels"]
+    wheel = (
+        inert_installed_image["selected_wheel_root"] / selected["inertpkg"]["filename"]
+    )
+    assert (
+        selected["inertpkg"]["sha256"] == hashlib.sha256(wheel.read_bytes()).hexdigest()
+    )
+    assert (
+        proof["source_archive_sha256"]
+        == hashlib.sha256(
+            inert_installed_image["source_archive_path"].read_bytes()
+        ).hexdigest()
+    )
+    assert (
+        proof["installed_dependencies"]["installation_policy"]
+        == "pip-target-no-compile-v1"
+    )
+
+
+@pytest.mark.parametrize(
+    "root_key,relative",
+    [
+        ("source_root", "robomimic/__init__.py"),
+        ("baked_deps_path", "inertpkg/__init__.py"),
+        ("baked_deps_path", "inertpkg-1.0.dist-info/METADATA"),
+        ("baked_deps_path", "bin/inert-script"),
+        ("baked_deps_path", "inert_data.txt"),
+    ],
+)
+def test_installed_byte_proof_rejects_changed_bytes(
+    inert_installed_image: dict, root_key: str, relative: str
+) -> None:
+    (inert_installed_image[root_key] / relative).write_bytes(
+        b"changed harmless fixture\n"
+    )
+    with pytest.raises(VERIFIER.VerificationError, match="inventory mismatch"):
+        VERIFIER.verify_neutral_image(**inert_installed_image)
+
+
+@pytest.mark.parametrize("root_key", ["source_root", "baked_deps_path"])
+@pytest.mark.parametrize(
+    "mutation", ["missing", "extra", "extra-directory", "duplicate-distribution"]
+)
+def test_installed_byte_proof_rejects_closure_mutations(
+    inert_installed_image: dict, root_key: str, mutation: str
+) -> None:
+    root = inert_installed_image[root_key]
+    if mutation == "missing":
+        # Move, do not delete, the inert fixture; nothing is executed.
+        path = next(p for p in root.rglob("*") if p.is_file() and p.name != "RECORD")
+        path.rename(root.parent / "retained-missing-member")
+    elif mutation == "extra-directory":
+        (root / "extra-directory").mkdir()
+    elif mutation == "duplicate-distribution":
+        directory = root / "inertpkg-duplicate.dist-info"
+        directory.mkdir()
+        (directory / "METADATA").write_bytes(b"Name: inertpkg\nVersion: 1.0\n")
+    else:
+        (root / "extra-member").write_bytes(b"inert extra\n")
+    with pytest.raises(VERIFIER.VerificationError):
+        VERIFIER.verify_neutral_image(**inert_installed_image)
+
+
+@pytest.mark.parametrize("key", ["source_archive_path", "selected_wheel_root"])
+def test_installed_byte_proof_requires_independent_inputs(
+    inert_installed_image: dict, key: str
+) -> None:
+    inert_installed_image[key] = inert_installed_image[key].parent / "absent"
+    with pytest.raises(VERIFIER.VerificationError):
+        VERIFIER.verify_neutral_image(**inert_installed_image)
+
+
+@pytest.mark.parametrize(
+    "mutation", ["wheel", "archive", "lock", "record", "duplicate-wheel"]
+)
+def test_installed_byte_proof_rejects_trust_root_mutation(
+    inert_installed_image: dict, mutation: str
+) -> None:
+    paths = {
+        "wheel": next(inert_installed_image["selected_wheel_root"].iterdir()),
+        "archive": inert_installed_image["source_archive_path"],
+        "lock": inert_installed_image["baked_lock_path"],
+        "record": inert_installed_image["baked_deps_path"]
+        / "inertpkg-1.0.dist-info/RECORD",
+    }
+    if mutation == "duplicate-wheel":
+        (paths["wheel"].parent / "inertpkg-1.0-1-py3-none-any.whl").write_bytes(
+            paths["wheel"].read_bytes()
+        )
+    else:
+        paths[mutation].write_bytes(
+            paths[mutation].read_bytes() + b"inert changed bytes\n"
+        )
+    with pytest.raises(VERIFIER.VerificationError):
+        VERIFIER.verify_neutral_image(**inert_installed_image)
+
+
+def test_installed_byte_proof_rejects_symlink_type_without_following(
+    inert_installed_image: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = inert_installed_image["source_root"] / "robomimic/__init__.py"
+    original = Path.lstat
+
+    def observed(path: Path):
+        return (
+            SimpleNamespace(st_mode=stat.S_IFLNK | 0o777)
+            if path == target
+            else original(path)
+        )
+
+    monkeypatch.setattr(Path, "lstat", observed)
+    with pytest.raises(VERIFIER.VerificationError, match="non-regular"):
+        VERIFIER.verify_neutral_image(**inert_installed_image)
+
+
+def test_dockerfile_authenticates_installed_bytes_before_discarding_proof_inputs() -> (
+    None
+):
+    text = DOCKERFILE.read_text()
+    python_commands = re.findall(r"python3 [^\n]+", text)
+    assert python_commands and all(
+        command.startswith("python3 -I ") for command in python_commands
+    )
+    assert "--no-compile --no-index --find-links /tmp/robomimic-identity-wheels" in text
+    assert (
+        text.index("pip download")
+        < text.index("pip install")
+        < text.index("verify_image.py image")
+    )
+    assert "--source-archive /mnt/robomimic-build-inputs/source/robomimic.tar" in text
+    assert "--selected-wheel-root /tmp/robomimic-identity-wheels" in text
+    assert text.index("verify_image.py image") < text.index(
+        "rm -r /tmp/robomimic-identity-wheels"
+    )
+
+
+def test_installed_byte_proof_does_not_trust_self_consistent_installed_record(
+    inert_installed_image: dict,
+) -> None:
+    root = inert_installed_image["baked_deps_path"]
+    changed = b"changed inert bytes with a matching installed record\n"
+    (root / "inertpkg/__init__.py").write_bytes(changed)
+    record = root / "inertpkg-1.0.dist-info/RECORD"
+    rows = list(csv.reader(io.StringIO(record.read_text())))
+    for row in rows:
+        if row[0] == "inertpkg/__init__.py":
+            digest = base64.urlsafe_b64encode(hashlib.sha256(changed).digest())
+            row[1:] = ["sha256=" + digest.decode().rstrip("="), str(len(changed))]
+    with record.open("w", newline="") as stream:
+        csv.writer(stream).writerows(rows)
+    with pytest.raises(VERIFIER.VerificationError, match="RECORD transformation"):
+        VERIFIER.verify_neutral_image(**inert_installed_image)
+
+
+@pytest.mark.parametrize("object_kind", [stat.S_IFLNK, stat.S_IFIFO])
+def test_wheel_inventory_refuses_non_regular_metadata_without_extraction(
+    object_kind: int,
+) -> None:
+    raw = io.BytesIO()
+    with zipfile.ZipFile(raw, "w") as archive:
+        member = zipfile.ZipInfo("inert-member")
+        member.external_attr = (object_kind | 0o644) << 16
+        archive.writestr(member, b"harmless inert bytes")
+    with pytest.raises(VERIFIER.VerificationError, match="non-regular"):
+        VERIFIER._wheel_members(raw.getvalue())
+
+
+def test_wheel_inventory_refuses_duplicate_members_without_extraction() -> None:
+    raw = io.BytesIO()
+    with zipfile.ZipFile(raw, "w") as archive:
+        archive.writestr("inert-member", b"harmless")
+        with pytest.warns(UserWarning, match="Duplicate name"):
+            archive.writestr("inert-member", b"harmless duplicate")
+    with pytest.raises(VERIFIER.VerificationError, match="duplicate"):
+        VERIFIER._wheel_members(raw.getvalue())
+
+
+def test_wheel_inventory_refuses_unknown_installation_transformation() -> None:
+    with pytest.raises(VERIFIER.VerificationError, match="installation scheme"):
+        VERIFIER._wheel_target(
+            "inertpkg-1.0.data/scripts/inert", "inertpkg-1.0.dist-info"
+        )
+
+
+def test_wheel_inventory_refuses_relocated_duplicate_distribution() -> None:
+    with pytest.raises(VERIFIER.VerificationError, match="undeclared distribution"):
+        VERIFIER._wheel_target(
+            "inertpkg-1.0.data/purelib/other-1.0.dist-info/METADATA",
+            "inertpkg-1.0.dist-info",
+        )

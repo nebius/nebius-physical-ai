@@ -15,7 +15,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Exact lock roots: ca-certificates openssh-server procps rsync sudo.
 COPY debian-packages.lock source-manifest.json verify_image.py /opt/npa/robomimic/
 RUN --mount=type=bind,source=build-inputs,target=/mnt/robomimic-build-inputs,readonly \
-    python3 /opt/npa/robomimic/verify_image.py build-inputs \
+    python3 -I /opt/npa/robomimic/verify_image.py build-inputs \
         --input-root /mnt/robomimic-build-inputs \
         --debian-lock /opt/npa/robomimic/debian-packages.lock \
         --source-manifest /opt/npa/robomimic/source-manifest.json \
@@ -27,7 +27,7 @@ RUN --mount=type=bind,source=build-inputs,target=/mnt/robomimic-build-inputs,rea
         /opt/byof/npa_source_metadata.json \
     && dpkg --unpack /mnt/robomimic-build-inputs/debian/*.deb \
     && DEBIAN_FRONTEND=noninteractive dpkg --configure --pending \
-    && python3 /opt/npa/robomimic/verify_image.py debian-install \
+    && python3 -I /opt/npa/robomimic/verify_image.py debian-install \
         --debian-lock /opt/npa/robomimic/debian-packages.lock \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
     && useradd --create-home --uid 1000 --shell /bin/bash ubuntu \
@@ -36,10 +36,23 @@ RUN --mount=type=bind,source=build-inputs,target=/mnt/robomimic-build-inputs,rea
     && rm -f /etc/ssh/ssh_host_*
 
 COPY baked-requirements.lock /opt/npa/robomimic/baked-requirements.lock
-RUN python3 -m pip install --disable-pip-version-check --no-cache-dir \
+# Proof inputs are build-only. Later audits must supply these same independently
+# hashed archives read-only; an installed RECORD or saved report is not a root.
+# Isolated base Python must ignore the not-yet-authenticated PYTHONPATH trees.
+RUN --mount=type=bind,source=build-inputs,target=/mnt/robomimic-build-inputs,readonly \
+    python3 -I -m pip download --disable-pip-version-check --no-cache-dir \
         --only-binary=:all: --no-deps --require-hashes \
+        --dest /tmp/robomimic-identity-wheels \
+        --requirement /opt/npa/robomimic/baked-requirements.lock \
+    && python3 -I -m pip install --disable-pip-version-check --no-cache-dir \
+        --only-binary=:all: --no-deps --require-hashes \
+        --no-compile --no-index --find-links /tmp/robomimic-identity-wheels \
         --target /opt/robomimic-deps \
-        --requirement /opt/npa/robomimic/baked-requirements.lock
+        --requirement /opt/npa/robomimic/baked-requirements.lock \
+    && python3 -I /opt/npa/robomimic/verify_image.py image \
+        --source-archive /mnt/robomimic-build-inputs/source/robomimic.tar \
+        --selected-wheel-root /tmp/robomimic-identity-wheels \
+    && rm -r /tmp/robomimic-identity-wheels
 
 COPY runtime-requirements.lock runtime_bootstrap.sh entrypoint.sh smoke.py \
      REDISTRIBUTION.md THIRD_PARTY_NOTICES.md /opt/npa/robomimic/
@@ -48,7 +61,6 @@ RUN chmod 0555 /opt/npa/robomimic/runtime_bootstrap.sh \
         /opt/npa/robomimic/verify_image.py \
     && ln -s /opt/npa/robomimic/runtime_bootstrap.sh /usr/local/bin/robomimic-runtime \
     && ln -s /opt/npa/robomimic/entrypoint.sh /usr/local/bin/robomimic-entrypoint \
-    && python3 /opt/npa/robomimic/verify_image.py image \
     && su ubuntu --command 'robomimic-runtime assert-refusal' \
     && chmod -R a-w /opt/byof /opt/robomimic /opt/robomimic-deps /opt/npa/robomimic \
     && chown -R ubuntu:ubuntu /opt/npa-runtime /workspace
