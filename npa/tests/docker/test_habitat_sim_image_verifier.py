@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import ast
 import copy
 import gzip
 import hashlib
@@ -144,6 +145,60 @@ def test_current_image_contract_remains_source_delivery_quarantined() -> None:
 
 def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def test_verifier_exported_contracts_have_structured_documentation() -> None:
+    for function in (H.inspect, H.bind, H.verify):
+        assert function.__doc__
+        for heading in ("Args:", "Returns:", "Raises:"):
+            assert heading in function.__doc__
+    # Public validation stays a narrow orchestration boundary, not a second parser.
+    source = ast.parse(Path(H.__file__).read_text())
+    exported = {
+        node.name
+        for node in source.body
+        if isinstance(node, ast.FunctionDef) and not node.name.startswith("_")
+    }
+    assert exported == {"inspect", "bind", "verify"}
+
+
+def test_refactored_elf_metadata_preserves_complete_benign_identity() -> None:
+    payload = _elf64(
+        needed=("libfixture.so",),
+        soname="libexample.so",
+        rpath="/lib",
+        runpath="$ORIGIN:/usr/lib",
+    )
+    assert H._elf_metadata(payload) == {
+        "class": 2,
+        "machine": 62,
+        "needed": ["libfixture.so"],
+        "soname": "libexample.so",
+        "rpath": ["/lib"],
+        "runpath": ["$ORIGIN", "/usr/lib"],
+    }
+
+
+def test_refactored_record_parser_preserves_exact_counts_and_diagnostics() -> None:
+    root = "opt/venv/lib/python3.10/site-packages"
+    record = root + "/fixture-1.0.dist-info/RECORD"
+    target = root + "/fixture/data.txt"
+    payload = b"benign parser fixture\n"
+    files = {target: {"sha256": _digest(payload), "size": len(payload)}, record: {}}
+    records = [
+        (
+            record,
+            f"fixture/data.txt,{_record_hash(payload)},{len(payload)}\n"
+            f"fixture-1.0.dist-info/RECORD,,\n".encode(),
+        )
+    ]
+    contract = {"allowed_missing_python_record_patterns": []}
+    findings = []
+    assert H._python_records(records, files, contract, findings) == ({target}, 1, 0)
+    assert findings == []
+    files[target]["size"] += 1
+    assert H._python_records(records, files, contract, findings) == (set(), 0, 0)
+    assert findings == [{"code": "python_record_hash_mismatch", "path": target}]
 
 
 def _layer_tar(entries: list[tuple]) -> bytes:

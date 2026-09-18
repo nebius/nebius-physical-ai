@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import zipfile
 import zlib
+from unittest.mock import Mock
 
 import pytest
 import yaml
@@ -1502,3 +1503,141 @@ def test_main_removes_run_cache_before_publication_commit(
         == 0
     )
     assert not cache.exists()
+
+
+def _mock_publication_stage(monkeypatch):
+    """Stage inert bytes through a memory-only client; never contact storage."""
+
+    def stage(client, bucket, prefix, manifest_key, output_dir, ledger):
+        del output_dir
+        proof_key = prefix + "/habitat-sim-smoke.json"
+        payload = b"{}\n"
+        for key in (proof_key, manifest_key):
+            H._put_owned_object(
+                client,
+                bucket,
+                key,
+                payload,
+                "application/json",
+                key,
+                ledger,
+                exclusive_key=True,
+            )
+        return [
+            H._object_record(
+                "habitat-sim-smoke.json", proof_key, payload, "application/json"
+            )
+        ], payload
+
+    monkeypatch.setattr(H, "_stage_publication", stage)
+
+
+def test_success_callback_follows_exact_ready_marker_readback(tmp_path, monkeypatch):
+    _mock_publication_stage(monkeypatch)
+    storage = Storage()
+    verified = []
+    original = H._verify_object
+
+    def verify(client, bucket, key, payload, label):
+        original(client, bucket, key, payload, label)
+        verified.append(key)
+
+    monkeypatch.setattr(H, "_verify_object", verify)
+    receipts = []
+
+    def acknowledge(publication):
+        assert verified[-1] == publication["ready_key"]
+        actual = storage.objects[("fixture-bucket", publication["ready_key"])]
+        assert hashlib.sha256(actual).hexdigest() == publication["ready_sha256"]
+        receipts.append(publication)
+
+    result = H._upload_directory(
+        tmp_path,
+        "s3://fixture-bucket/run-owned/",
+        client=storage,
+        stage_token="5" * 32,
+        after_commit=acknowledge,
+    )
+    assert receipts == [result]
+    assert storage.deleted == []
+
+
+@pytest.mark.parametrize("boundary", ["put", "head", "readback"])
+def test_failed_ready_commit_never_emits_success_receipt(
+    tmp_path, monkeypatch, boundary
+):
+    _mock_publication_stage(monkeypatch)
+    storage = Storage()
+    method = {"put": "put_object", "head": "head_object", "readback": "get_object"}[
+        boundary
+    ]
+    original = getattr(storage, method)
+    failure = OSError("fixture ready " + boundary + " unavailable")
+
+    def refuse(**kwargs):
+        if kwargs["Key"].endswith("/" + H.READY_MARKER_NAME):
+            raise failure
+        return original(**kwargs)
+
+    monkeypatch.setattr(storage, method, refuse)
+    acknowledge = Mock()
+    with pytest.raises((H.SmokeFailure, OSError)) as raised:
+        H._upload_directory(
+            tmp_path,
+            "s3://fixture-bucket/run-owned/",
+            client=storage,
+            stage_token="5" * 32,
+            after_commit=acknowledge,
+        )
+    assert raised.value is failure or raised.value.__cause__ is failure
+    acknowledge.assert_not_called()
+    assert storage.objects == {}
+
+
+def test_cleanup_aggregates_all_diagnostics_and_unresolved_ownership(monkeypatch):
+    client = Mock()
+    client.delete_object.side_effect = [OSError("second delete failed"), None]
+    client.list_objects_v2.side_effect = [
+        OSError("first verify failed"),
+        {
+            "Contents": [{"Key": "owned/second"}],
+            "IsTruncated": False,
+        },
+    ]
+    ledger = H._ObjectWriteLedger(
+        owned=["owned/first", "owned/second"], unresolved=["unresolved/ready"]
+    )
+    initiating = RuntimeError("fixture publication interrupted")
+    with pytest.raises(H.SmokeFailure) as raised:
+        H._publication_failure(client, "fixture-bucket", ledger, initiating)
+    assert raised.value.__cause__ is initiating
+    for diagnostic in (
+        "RuntimeError: fixture publication interrupted",
+        "delete owned/second: OSError: second delete failed",
+        "verify owned/first: OSError: first verify failed",
+        "verify owned/second: object remains",
+        "unresolved object ownership after failed write: unresolved/ready",
+    ):
+        assert diagnostic in str(raised.value)
+    assert [call.kwargs["Key"] for call in client.delete_object.call_args_list] == [
+        "owned/second",
+        "owned/first",
+    ]
+    assert [
+        call.kwargs["Prefix"] for call in client.list_objects_v2.call_args_list
+    ] == [
+        "owned/first",
+        "owned/second",
+    ]
+
+
+def test_successful_cleanup_preserves_the_original_publication_exception(monkeypatch):
+    client = Mock()
+    client.list_objects_v2.return_value = {"Contents": [], "IsTruncated": False}
+    initiating = ValueError("fixture publication failure")
+    ledger = H._ObjectWriteLedger(owned=["owned/only"])
+    # No secondary failure is manufactured: the caller re-raises its original error.
+    assert H._publication_failure(client, "fixture-bucket", ledger, initiating) is None
+    client.delete_object.assert_called_once_with(
+        Bucket="fixture-bucket", Key="owned/only"
+    )

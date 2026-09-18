@@ -64,7 +64,17 @@ MEMBER_SPECS = {
 
 
 class SmokeFailure(RuntimeError):
-    """The exact live capability contract was not satisfied."""
+    """Signal that the exact live capability contract was not satisfied.
+
+    Args:
+        *args: Failure details passed to RuntimeError.
+
+    Returns:
+        None.
+
+    Raises:
+        None.
+    """
 
 
 @dataclass
@@ -83,6 +93,17 @@ class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
 
 
 def sha256_file(path: Path) -> str:
+    """Hash a file without loading its complete contents into memory.
+
+    Args:
+        path: File whose bytes are measured.
+
+    Returns:
+        Lowercase SHA-256 hex digest.
+
+    Raises:
+        OSError: The file cannot be opened or read.
+    """
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
@@ -90,10 +111,7 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _download(
-    destination: Path,
-    opener: Callable[..., BinaryIO] | None = None,
-) -> dict[str, object]:
+def _archive_request():
     parsed = urllib.parse.urlsplit(ARCHIVE_URL)
     if (
         parsed.scheme != "https"
@@ -105,43 +123,53 @@ def _download(
         or parsed.fragment
     ):
         raise SmokeFailure("official archive URL is not the pinned HTTPS origin")
-    if opener is None:
-        opener = urllib.request.build_opener(_RefuseRedirects()).open
-    request = urllib.request.Request(
+    return urllib.request.Request(
         ARCHIVE_URL, headers={"User-Agent": "npa-habitat-sim-smoke/2"}
     )
+
+
+def _stream_archive(response, stream):
+    final_url = str(getattr(response, "geturl", lambda: ARCHIVE_URL)())
+    if final_url != ARCHIVE_URL:
+        raise SmokeFailure("official archive redirected away from the pinned HTTPS URL")
+    headers = getattr(response, "headers", {})
+    content_length = headers.get("Content-Length")
+    if content_length is not None and int(content_length) > ARCHIVE_BYTES:
+        raise SmokeFailure(
+            "official archive exceeds its pinned Content-Length boundary"
+        )
     digest = hashlib.sha256()
     size = 0
+    while chunk := response.read(min(1024 * 1024, ARCHIVE_BYTES - size + 1)):
+        if size + len(chunk) > ARCHIVE_BYTES:
+            raise SmokeFailure("official archive exceeded its pinned byte boundary")
+        digest.update(chunk)
+        stream.write(chunk)
+        size += len(chunk)
+    return (
+        size,
+        digest.hexdigest(),
+        {
+            "status": getattr(response, "status", None),
+            "content_length": headers.get("Content-Length"),
+            "content_type": headers.get("Content-Type"),
+            "etag": headers.get("ETag"),
+            "last_modified": headers.get("Last-Modified"),
+        },
+    )
+
+
+def _download(
+    destination: Path,
+    opener: Callable[..., BinaryIO] | None = None,
+) -> dict[str, object]:
+    request = _archive_request()
+    if opener is None:
+        opener = urllib.request.build_opener(_RefuseRedirects()).open
     try:
         with opener(request, timeout=120) as response, destination.open("xb") as stream:
-            final_url = str(getattr(response, "geturl", lambda: ARCHIVE_URL)())
-            if final_url != ARCHIVE_URL:
-                raise SmokeFailure(
-                    "official archive redirected away from the pinned HTTPS URL"
-                )
-            headers = getattr(response, "headers", {})
-            content_length = headers.get("Content-Length")
-            if content_length is not None and int(content_length) > ARCHIVE_BYTES:
-                raise SmokeFailure(
-                    "official archive exceeds its pinned Content-Length boundary"
-                )
-            while chunk := response.read(min(1024 * 1024, ARCHIVE_BYTES - size + 1)):
-                if size + len(chunk) > ARCHIVE_BYTES:
-                    raise SmokeFailure(
-                        "official archive exceeded its pinned byte boundary"
-                    )
-                digest.update(chunk)
-                stream.write(chunk)
-                size += len(chunk)
-            response_metadata = {
-                "status": getattr(response, "status", None),
-                "content_length": headers.get("Content-Length"),
-                "content_type": headers.get("Content-Type"),
-                "etag": headers.get("ETag"),
-                "last_modified": headers.get("Last-Modified"),
-            }
+            size, actual, response_metadata = _stream_archive(response, stream)
         os.chmod(destination, 0o600)
-        actual = digest.hexdigest()
         if size != ARCHIVE_BYTES or actual != ARCHIVE_SHA256:
             raise SmokeFailure(
                 f"official archive identity mismatch: bytes={size}, sha256={actual}"
@@ -204,7 +232,11 @@ def _extract_member(
     except Exception:
         temporary.unlink(missing_ok=True)
         raise
-    return destination, {
+    return destination, _member_record(member, actual)
+
+
+def _member_record(member: zipfile.ZipInfo, actual: str) -> dict[str, object]:
+    return {
         "name": member.filename,
         "bytes": member.file_size,
         "compressed_bytes": member.compress_size,
@@ -244,6 +276,20 @@ def fetch_scene_assets(
     *,
     create_root: bool = True,
 ) -> tuple[Path, Path, dict[str, object], dict[str, dict[str, object]]]:
+    """Fetch and verify only the pinned scene members into the owned cache.
+
+    Args:
+        root: Run-owned cache directory.
+        opener: Optional HTTP opener, allowing inert fixture transport.
+        create_root: Whether this invocation must create the cache directory.
+
+    Returns:
+        Scene path, navmesh path, archive identity and member identities.
+
+    Raises:
+        SmokeFailure: The archive, cache or selected members fail verification.
+        OSError: Transport or local filesystem access fails.
+    """
     if create_root:
         root.mkdir(parents=True, exist_ok=False, mode=0o700)
     elif not root.is_dir() or root.is_symlink():
@@ -258,6 +304,10 @@ def fetch_scene_assets(
         archive_path.unlink(missing_ok=True)
     if archive is None:
         raise SmokeFailure("official archive acquisition did not complete")
+    return _fetched_assets(root, archive_path, archive, records)
+
+
+def _fetched_assets(root, archive_path, archive, records):
     archive.update(
         {
             "url_is_mutable": True,
@@ -270,17 +320,30 @@ def fetch_scene_assets(
 
 
 def query_gpu() -> dict[str, object]:
+    """Require exactly one locally observed RTX PRO 6000 Blackwell GPU.
+
+    Args:
+        None.
+
+    Returns:
+        Observed model, architecture, compute capability and count.
+
+    Raises:
+        SmokeFailure: GPU count, model or compute capability does not match.
+        subprocess.CalledProcessError: The local observation command fails.
+        OSError: The local observation command cannot be started.
+    """
     completed = subprocess.run(
         ["nvidia-smi", "--query-gpu=name,compute_cap", "--format=csv,noheader,nounits"],
         check=True,
         capture_output=True,
         text=True,
     )
-    rows = [
-        line.strip().rsplit(",", 1)
-        for line in completed.stdout.splitlines()
-        if line.strip()
-    ]
+    return _observed_gpu(completed.stdout)
+
+
+def _observed_gpu(stdout: str) -> dict[str, object]:
+    rows = [line.strip().rsplit(",", 1) for line in stdout.splitlines() if line.strip()]
     if len(rows) != 1:
         raise SmokeFailure(
             f"Habitat-Sim requires exactly one visible GPU, observed {len(rows)}"
@@ -418,30 +481,38 @@ def _save_frame(
     preview[~np.isfinite(preview)] = 0.0
     Image.fromarray((preview * 255.0).astype(np.uint8), mode="L").save(preview_path)
     return (
-        {
-            "index": index,
-            "action": str(action),
-            "rgb_shape": list(rgb.shape),
-            "rgb_raw_sha256": hashlib.sha256(rgb_bytes).hexdigest(),
-            "rgb_png_path": str(rgb_path.relative_to(output_dir)),
-            "rgb_png_media_type": "image/png",
-            "rgb_png_bytes": rgb_path.stat().st_size,
-            "rgb_png_sha256": sha256_file(rgb_path),
-            "depth_shape": list(depth.shape),
-            "depth_raw_sha256": hashlib.sha256(depth_bytes).hexdigest(),
-            "depth_npy_path": str(depth_path.relative_to(output_dir)),
-            "depth_npy_media_type": "application/x-npy",
-            "depth_npy_bytes": depth_path.stat().st_size,
-            "depth_npy_sha256": sha256_file(depth_path),
-            "depth_preview_png_path": str(preview_path.relative_to(output_dir)),
-            "depth_preview_png_media_type": "image/png",
-            "depth_preview_png_bytes": preview_path.stat().st_size,
-            "depth_preview_png_sha256": sha256_file(preview_path),
-        },
+        _frame_record(
+            output_dir, index, action, rgb, depth, rgb_path, depth_path, preview_path
+        ),
         finite.astype(np.float64, copy=False),
         rgb_bytes,
         depth_bytes,
     )
+
+
+def _frame_record(
+    output_dir, index, action, rgb, depth, rgb_path, depth_path, preview_path
+):
+    return {
+        "index": index,
+        "action": str(action),
+        "rgb_shape": list(rgb.shape),
+        "rgb_raw_sha256": hashlib.sha256(rgb.tobytes(order="C")).hexdigest(),
+        "rgb_png_path": str(rgb_path.relative_to(output_dir)),
+        "rgb_png_media_type": "image/png",
+        "rgb_png_bytes": rgb_path.stat().st_size,
+        "rgb_png_sha256": sha256_file(rgb_path),
+        "depth_shape": list(depth.shape),
+        "depth_raw_sha256": hashlib.sha256(depth.tobytes(order="C")).hexdigest(),
+        "depth_npy_path": str(depth_path.relative_to(output_dir)),
+        "depth_npy_media_type": "application/x-npy",
+        "depth_npy_bytes": depth_path.stat().st_size,
+        "depth_npy_sha256": sha256_file(depth_path),
+        "depth_preview_png_path": str(preview_path.relative_to(output_dir)),
+        "depth_preview_png_media_type": "image/png",
+        "depth_preview_png_bytes": preview_path.stat().st_size,
+        "depth_preview_png_sha256": sha256_file(preview_path),
+    }
 
 
 def _run_traversal(scene: Path, output_dir: Path) -> dict[str, object]:
@@ -473,10 +544,36 @@ def _run_traversal(scene: Path, output_dir: Path) -> dict[str, object]:
     return _simulate(habitat_sim, np, configuration, output_dir)
 
 
-def _simulate(habitat_sim: object, np: object, configuration: object, output_dir: Path):
+def _observe_traversal(simulator, np, planned, output_dir):
     records, depth_chunks, actions = [], [], []
     rgb_hash, depth_hash = hashlib.sha256(), hashlib.sha256()
     collisions = 0
+    started = time.perf_counter()
+    for index, action in enumerate(planned):
+        observation = simulator.step(action, dt=1.0 / 60.0)
+        rgb = np.ascontiguousarray(observation["color_sensor"])
+        depth = np.ascontiguousarray(observation["depth_sensor"], dtype=np.float32)
+        if (
+            list(rgb.shape) != EXPECTED_RGB_SHAPE
+            or list(depth.shape) != EXPECTED_DEPTH_SHAPE
+        ):
+            raise SmokeFailure("rendered RGB/depth shape mismatch")
+        if not np.isfinite(depth).any():
+            raise SmokeFailure(f"depth frame {index} has no finite samples")
+        record, finite, rgb_bytes, depth_bytes = _save_frame(
+            output_dir, index, action, rgb, depth
+        )
+        records.append(record)
+        depth_chunks.append(finite)
+        rgb_hash.update(rgb_bytes)
+        depth_hash.update(depth_bytes)
+        actions.append(str(action))
+        collisions += int(bool(observation.get("collided", False)))
+    elapsed = time.perf_counter() - started
+    return records, depth_chunks, actions, rgb_hash, depth_hash, collisions, elapsed
+
+
+def _simulate(habitat_sim: object, np: object, configuration: object, output_dir: Path):
     with habitat_sim.Simulator(configuration) as simulator:
         if not simulator.pathfinder.is_loaded:
             raise SmokeFailure("the immutable Skokloster Castle navmesh did not load")
@@ -484,28 +581,9 @@ def _simulate(habitat_sim: object, np: object, configuration: object, output_dir
         _, goal, geodesic, planned = _choose_path(simulator, agent, habitat_sim, np)
         start_state = np.asarray(agent.get_state().position, dtype=np.float64)
         physics_start = float(simulator.get_world_time())
-        started = time.perf_counter()
-        for index, action in enumerate(planned):
-            observation = simulator.step(action, dt=1.0 / 60.0)
-            rgb = np.ascontiguousarray(observation["color_sensor"])
-            depth = np.ascontiguousarray(observation["depth_sensor"], dtype=np.float32)
-            if (
-                list(rgb.shape) != EXPECTED_RGB_SHAPE
-                or list(depth.shape) != EXPECTED_DEPTH_SHAPE
-            ):
-                raise SmokeFailure("rendered RGB/depth shape mismatch")
-            if not np.isfinite(depth).any():
-                raise SmokeFailure(f"depth frame {index} has no finite samples")
-            record, finite, rgb_bytes, depth_bytes = _save_frame(
-                output_dir, index, action, rgb, depth
-            )
-            records.append(record)
-            depth_chunks.append(finite)
-            rgb_hash.update(rgb_bytes)
-            depth_hash.update(depth_bytes)
-            actions.append(str(action))
-            collisions += int(bool(observation.get("collided", False)))
-        elapsed = time.perf_counter() - started
+        records, depth_chunks, actions, rgb_hash, depth_hash, collisions, elapsed = (
+            _observe_traversal(simulator, np, planned, output_dir)
+        )
         result = {
             "start": start_state,
             "end": np.asarray(agent.get_state().position, dtype=np.float64),
@@ -591,10 +669,7 @@ def _proof(
     run_id: str,
     plan_sha256: str,
 ) -> dict[str, object]:
-    import numpy as np
-
     count = traversal["count"]
-    finite = traversal["finite_depth"]
     return {
         "schema_version": "npa.habitat-sim.smoke.v1",
         "solution": "habitat-sim",
@@ -605,13 +680,7 @@ def _proof(
             "bullet_physics_world_step",
             "greedy_geodesic_agent_traversal",
         ],
-        "execution_binding": {
-            "workflow_name": WORKFLOW_NAME,
-            "run_id": run_id,
-            "rendered_plan_sha256": plan_sha256,
-            "runtime_uid": os.geteuid(),
-            "runtime_gid": os.getegid(),
-        },
+        "execution_binding": _execution_binding(run_id, plan_sha256),
         "source_revision": SOURCE_REVISION,
         "source": source,
         "scene_id": "habitat_test_scenes/skokloster-castle.glb",
@@ -620,6 +689,31 @@ def _proof(
         "scene": _asset_proof(archive, records),
         "rendered_rgb_frame_count": count,
         "rendered_depth_frame_count": count,
+        **_render_proof(traversal),
+        **_motion_proof(traversal),
+        "measured_fps": traversal["fps"],
+        "renderer_egl_evidence": traversal["egl"],
+        **_runtime_proof(gpu, image, digest),
+        "exit_status": 0,
+    }
+
+
+def _execution_binding(run_id, plan_sha256):
+    return {
+        "workflow_name": WORKFLOW_NAME,
+        "run_id": run_id,
+        "rendered_plan_sha256": plan_sha256,
+        "runtime_uid": os.geteuid(),
+        "runtime_gid": os.getegid(),
+    }
+
+
+def _render_proof(traversal):
+    import numpy as np
+
+    count = traversal["count"]
+    finite = traversal["finite_depth"]
+    return {
         "rendered_observations": {
             "rgb": {
                 "frame_count": count,
@@ -643,6 +737,12 @@ def _proof(
             "mean": float(np.mean(finite)),
             "standard_deviation": float(np.std(finite)),
         },
+    }
+
+
+def _motion_proof(traversal):
+    count = traversal["count"]
+    return {
         "agent": {
             "start": traversal["start"].tolist(),
             "end": traversal["end"].tolist(),
@@ -663,8 +763,11 @@ def _proof(
             "world_time_end": traversal["physics_end"],
         },
         "bullet_step_count": count,
-        "measured_fps": traversal["fps"],
-        "renderer_egl_evidence": traversal["egl"],
+    }
+
+
+def _runtime_proof(gpu, image, digest):
+    return {
         "observed_gpu": gpu,
         "observed_rtx_gpu_model": gpu["model"],
         "observed_rtx_gpu_architecture": gpu["architecture"],
@@ -672,7 +775,6 @@ def _proof(
         "pod_observed_immutable_image": image,
         "pod_observed_image_digest": digest,
         "image_observation_source": "NPA_TASK_IMAGE set from the submitted exact digest",
-        "exit_status": 0,
     }
 
 
@@ -751,24 +853,36 @@ def _listed_exact_keys(client: object, bucket: str, prefix: str) -> set[str]:
         token = str(response["NextContinuationToken"])
 
 
-def _cleanup_exact_objects(client: object, bucket: str, keys: list[str]) -> None:
+def _cleanup_exact_objects(client: object, bucket: str, keys: list[str]) -> list[str]:
     failures: list[str] = []
     for key in reversed(keys):
         try:
             client.delete_object(Bucket=bucket, Key=key)
-        except Exception:
-            failures.append(key)
+        except Exception as error:
+            failures.append(f"delete {key}: {type(error).__name__}: {error}")
     for key in keys:
         try:
             if key in _listed_exact_keys(client, bucket, key):
-                failures.append(key)
-        except Exception:
-            failures.append(key)
-    if failures:
-        raise SmokeFailure(
-            "exact staged-object cleanup failed for: "
-            + ", ".join(sorted(set(failures)))
+                failures.append(f"verify {key}: object remains")
+        except Exception as error:
+            failures.append(f"verify {key}: {type(error).__name__}: {error}")
+    return failures
+
+
+def _publication_failure(
+    client: object, bucket: str, ledger: _ObjectWriteLedger, error: Exception
+) -> None:
+    diagnostics = _cleanup_exact_objects(client, bucket, ledger.owned)
+    if ledger.unresolved:
+        diagnostics.append(
+            "unresolved object ownership after failed write: "
+            + ", ".join(ledger.unresolved)
         )
+    if diagnostics:
+        raise SmokeFailure(
+            f"publication failed: {type(error).__name__}: {error}; "
+            + "; ".join(diagnostics)
+        ) from error
 
 
 def _publication_provenance(proof: dict[str, object]) -> dict[str, object]:
@@ -833,15 +947,19 @@ def _stage_output_files(
             exclusive_key=True,
         )
         inventory.append(
-            {
-                "path": relative,
-                "key": key,
-                "bytes": len(payload),
-                "sha256": hashlib.sha256(payload).hexdigest(),
-                "media_type": media_types[path.suffix],
-            }
+            _object_record(relative, key, payload, media_types[path.suffix])
         )
     return inventory
+
+
+def _object_record(relative, key, payload, media_type):
+    return {
+        "path": relative,
+        "key": key,
+        "bytes": len(payload),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "media_type": media_type,
+    }
 
 
 def _stage_publication_manifest(
@@ -924,23 +1042,10 @@ def _commit_ready_marker(
     )
 
 
-def _upload_directory(
-    output_dir: Path,
-    output_uri: str,
-    *,
-    client: object | None = None,
-    stage_token: str | None = None,
-    before_commit: Callable[[dict[str, object]], None] | None = None,
-) -> dict[str, object]:
-    import boto3
-
+def _publication_destination(output_uri: str, stage_token: str | None):
     bucket, separator, prefix = output_uri.removeprefix("s3://").partition("/")
     if not output_uri.startswith("s3://") or not separator or not bucket or not prefix:
         raise SmokeFailure("output URI requires an s3:// bucket and run-owned prefix")
-    if client is None:
-        client = boto3.client(
-            "s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL_S3") or None
-        )
     token = stage_token or secrets.token_hex(16)
     if re.fullmatch(r"[0-9a-f]{32}", token) is None:
         raise SmokeFailure("staging token must be an exact 128-bit lowercase hex value")
@@ -948,42 +1053,71 @@ def _upload_directory(
     stage_prefix = f"{final_prefix}/.staging/{token}"
     ready_key = f"{final_prefix}/{READY_MARKER_NAME}"
     manifest_key = f"{stage_prefix}/{PUBLICATION_MANIFEST_NAME}"
+    return bucket, stage_prefix, ready_key, manifest_key
+
+
+def _stage_publication(client, bucket, stage_prefix, manifest_key, output_dir, ledger):
+    proof = _load_named_proof(output_dir)
+    inventory = _stage_output_files(client, bucket, stage_prefix, output_dir, ledger)
+    manifest = _stage_publication_manifest(
+        client, bucket, manifest_key, proof, inventory, ledger
+    )
+    expected = {row["key"] for row in inventory} | {manifest_key}
+    if _listed_exact_keys(client, bucket, stage_prefix + "/") != expected:
+        raise SmokeFailure("staged artifact inventory is incomplete or contains extras")
+    return inventory, manifest
+
+
+def _upload_directory(
+    output_dir: Path,
+    output_uri: str,
+    *,
+    client: object | None = None,
+    stage_token: str | None = None,
+    after_commit: Callable[[dict[str, object]], None] | None = None,
+) -> dict[str, object]:
+    import boto3
+
+    bucket, stage_prefix, ready_key, manifest_key = _publication_destination(
+        output_uri, stage_token
+    )
+    if client is None:
+        client = boto3.client(
+            "s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL_S3") or None
+        )
     if _listed_exact_keys(client, bucket, stage_prefix + "/"):
         raise SmokeFailure("run-owned staging prefix is not empty")
     if ready_key in _listed_exact_keys(client, bucket, ready_key):
         raise SmokeFailure("immutable publication ready marker already exists")
-    proof = _load_named_proof(output_dir)
     ledger = _ObjectWriteLedger()
     try:
-        inventory = _stage_output_files(
-            client, bucket, stage_prefix, output_dir, ledger
+        inventory, manifest = _stage_publication(
+            client, bucket, stage_prefix, manifest_key, output_dir, ledger
         )
-        manifest = _stage_publication_manifest(
-            client, bucket, manifest_key, proof, inventory, ledger
-        )
-        expected = {row["key"] for row in inventory} | {manifest_key}
-        if _listed_exact_keys(client, bucket, stage_prefix + "/") != expected:
-            raise SmokeFailure(
-                "staged artifact inventory is incomplete or contains extras"
-            )
         publication, ready_bytes = _publication_receipt(
             stage_prefix, manifest_key, manifest, ready_key, inventory
         )
-        if before_commit is not None:
-            before_commit(publication)
         _commit_ready_marker(client, bucket, ready_key, ready_bytes, ledger)
+        if after_commit is not None:
+            after_commit(publication)
         return publication
     except Exception as error:
-        _cleanup_exact_objects(client, bucket, ledger.owned)
-        if ledger.unresolved:
-            raise SmokeFailure(
-                "unresolved object ownership after failed write: "
-                + ", ".join(ledger.unresolved)
-            ) from error
+        _publication_failure(client, bucket, ledger, error)
         raise
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Construct the runtime qualification command parser.
+
+    Args:
+        None.
+
+    Returns:
+        Parser requiring explicit output and execution identities.
+
+    Raises:
+        None.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--output-uri", required=True)
@@ -1093,9 +1227,7 @@ def _remove_runtime_cache(
         raise SmokeFailure("run-owned scene cache cleanup did not complete")
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    run_id, plan_sha256 = _execution_identity(args.run_id, args.plan_sha256)
+def _prepare_output(args):
     output_dir = args.output_dir.resolve()
     configured_output = os.environ.get("NPA_SMOKE_OUTPUT_DIR")
     if configured_output and Path(configured_output).resolve() != output_dir:
@@ -1105,39 +1237,53 @@ def main(argv: list[str] | None = None) -> int:
     os.chmod(output_dir, 0o700)
     cache = output_dir.parent / f".{output_dir.name}-scene-cache"
     cache_identity = _claim_runtime_cache(cache)
+    return output_dir, cache, cache_identity
+
+
+def _produce_proof(cache, output_dir, run_id, plan_sha256):
+    source = _source_provenance()
+    image, digest = _immutable_image()
+    gpu = query_gpu()
+    scene, navmesh, archive, records = fetch_scene_assets(cache, create_root=False)
+    if scene.with_suffix(".navmesh") != navmesh:
+        raise SmokeFailure("scene and navmesh names do not satisfy auto-load contract")
+    traversal = _run_traversal(scene, output_dir)
+    proof = _proof(
+        source, image, digest, gpu, archive, records, traversal, run_id, plan_sha256
+    )
+    proof_path = output_dir / "habitat-sim-smoke.json"
+    proof_path.write_text(
+        json.dumps(proof, allow_nan=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(proof_path, 0o600)
+    return proof
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run qualification and acknowledge only a verified immutable publication.
+
+    Args:
+        argv: Explicit arguments, or None to parse the process arguments.
+
+    Returns:
+        Zero after verified publication and termination-receipt writing.
+
+    Raises:
+        SmokeFailure: A qualification, publication or cleanup gate fails.
+        Exception: An underlying runtime, transport or filesystem operation fails.
+    """
+    args = build_parser().parse_args(argv)
+    run_id, plan_sha256 = _execution_identity(args.run_id, args.plan_sha256)
+    output_dir, cache, cache_identity = _prepare_output(args)
     try:
-        source = _source_provenance()
-        image, digest = _immutable_image()
-        gpu = query_gpu()
-        scene, navmesh, archive, records = fetch_scene_assets(cache, create_root=False)
-        if scene.with_suffix(".navmesh") != navmesh:
-            raise SmokeFailure(
-                "scene and navmesh names do not satisfy auto-load contract"
-            )
-        traversal = _run_traversal(scene, output_dir)
-        proof = _proof(
-            source,
-            image,
-            digest,
-            gpu,
-            archive,
-            records,
-            traversal,
-            run_id,
-            plan_sha256,
-        )
-        proof_path = output_dir / "habitat-sim-smoke.json"
-        proof_path.write_text(
-            json.dumps(proof, allow_nan=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        os.chmod(proof_path, 0o600)
+        proof = _produce_proof(cache, output_dir, run_id, plan_sha256)
         _remove_runtime_cache(cache, cache_identity)
         cache_identity = None
         _upload_directory(
             output_dir,
             args.output_uri,
-            before_commit=lambda publication: _write_termination_receipt(
+            after_commit=lambda publication: _write_termination_receipt(
                 publication, proof, Path("/dev/termination-log")
             ),
         )

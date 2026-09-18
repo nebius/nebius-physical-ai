@@ -25,7 +25,20 @@ PLATFORM = {"os": "linux", "architecture": "amd64"}
 
 
 def inspect(fd: int, length: int, expected_id: str) -> dict[str, object]:
-    """Inspect the exact single-platform OCI graph."""
+    """Inspect the exact single-platform OCI graph.
+
+    Args:
+        fd: Open descriptor for the saved OCI archive.
+        length: Exact archive byte length.
+        expected_id: Immutable OCI index digest.
+
+    Returns:
+        Verified graph identities and ordered layer descriptors.
+
+    Raises:
+        W.ScanError: Graph bytes or identities violate the OCI contract.
+        OSError: Archive bytes cannot be read.
+    """
 
     return G.inspect(fd, length, expected_id, platform=PLATFORM)
 
@@ -33,7 +46,21 @@ def inspect(fd: int, length: int, expected_id: str) -> dict[str, object]:
 def bind(
     result: dict[str, object], verification: dict[str, object], expected_id: str
 ) -> None:
-    """Bind a prior Habitat verifier receipt to freshly inspected graph bytes."""
+    """Bind a prior Habitat verifier receipt to freshly inspected graph bytes.
+
+    Args:
+        result: Fresh graph inspection.
+        verification: Prior full-byte verifier receipt.
+        expected_id: Required immutable OCI index digest.
+
+    Returns:
+        None.
+
+    Raises:
+        W.ScanError: Any receipt identity or closure binding differs.
+        KeyError: A required receipt field is missing.
+        TypeError: A receipt value has an invalid type.
+    """
 
     W.require(verification["valid"] is True, "habitat_oci_verifier_not_valid")
     W.require(
@@ -53,6 +80,10 @@ def bind(
         == verification["verified_layer_diff_ids"],
         "habitat_oci_verifier_layer_binding",
     )
+    _bind_runtime_receipt(verification)
+
+
+def _bind_runtime_receipt(verification):
     for key in ("regular_files_read", "content_bytes_read"):
         W.require(
             type(verification[key]) is int and verification[key] >= 0,
@@ -243,6 +274,10 @@ def _source_projection_findings(
     ):
         findings.append({"code": "source_projection_inventory_schema"})
         return findings, 0
+    return _projected_file_findings(spec, rows, final_paths, final_files, findings)
+
+
+def _projected_file_findings(spec, rows, final_paths, final_files, findings):
     root = spec["source_root"].strip("/")
     declared: set[str] = set()
     for row in rows:
@@ -341,6 +376,20 @@ def _dpkg_findings(
     installed = _dpkg_records(tracked.get("var/lib/dpkg/status", b""))
     lock_path = contract["apt_runtime_lock_path"].lstrip("/")
     rows = _apt_lock_rows(tracked.get(lock_path, b""))
+    _apt_identity_findings(installed, rows, findings)
+    list_bindings = _package_list_bindings(tracked, installed)
+    inventory = _package_inventory(
+        installed, list_bindings, final_paths, final_links, final_files, findings
+    )
+    serialized = json.dumps(inventory, sort_keys=True, separators=(",", ":"))
+    inventory_sha256 = hashlib.sha256(serialized.encode()).hexdigest()
+    if inventory_sha256 != expected_inventory_sha256:
+        findings.append({"code": "runtime_dpkg_inventory_lock_mismatch"})
+    owners = _dpkg_file_owners(tracked, installed, final_paths, final_links, findings)
+    return findings, installed, owners, len(rows), inventory_sha256, inventory
+
+
+def _apt_identity_findings(installed, rows, findings):
     locked_names: set[str] = set()
     for row in rows:
         if row["binary"] in locked_names:
@@ -355,6 +404,9 @@ def _dpkg_findings(
             findings.append(
                 {"code": "runtime_apt_lock_mismatch", "package": row["binary"]}
             )
+
+
+def _package_list_bindings(tracked, installed):
     list_bindings: dict[str, list[dict[str, str]]] = {
         package: [] for package in installed
     }
@@ -372,6 +424,12 @@ def _dpkg_findings(
                     "sha256": hashlib.sha256(payload).hexdigest(),
                 }
             )
+    return list_bindings
+
+
+def _package_inventory(
+    installed, list_bindings, final_paths, final_links, final_files, findings
+):
     inventory: dict[str, dict[str, object]] = {}
     for package, identity in installed.items():
         package_lists = sorted(list_bindings[package], key=lambda row: row["path"])
@@ -397,12 +455,7 @@ def _dpkg_findings(
             "copyright_path": resolved_copyright or "",
             "copyright_sha256": copyright_sha256 or "",
         }
-    serialized = json.dumps(inventory, sort_keys=True, separators=(",", ":"))
-    inventory_sha256 = hashlib.sha256(serialized.encode()).hexdigest()
-    if inventory_sha256 != expected_inventory_sha256:
-        findings.append({"code": "runtime_dpkg_inventory_lock_mismatch"})
-    owners = _dpkg_file_owners(tracked, installed, final_paths, final_links, findings)
-    return findings, installed, owners, len(rows), inventory_sha256, inventory
+    return inventory
 
 
 def _dpkg_file_owners(
@@ -549,6 +602,53 @@ def _python_findings(
     str,
 ]:
     findings: list[dict[str, object]] = []
+    observed, records = _python_metadata_population(tracked, findings)
+    _python_distribution_findings(tracked, contract, observed, findings)
+    covered, verified, allowed_missing = _python_records(
+        records, final_files, contract, findings
+    )
+    _python_coverage_findings(final_files, contract, covered, allowed_missing, findings)
+    inventory, inventory_sha256 = _python_venv_inventory(
+        final_paths, final_files, final_links
+    )
+    if inventory_sha256 != expected_inventory_sha256:
+        findings.append({"code": "python_venv_inventory_lock_mismatch"})
+    return (
+        findings,
+        len(observed),
+        verified,
+        allowed_missing,
+        covered,
+        inventory,
+        inventory_sha256,
+    )
+
+
+def _python_distribution_findings(tracked, contract, observed, findings):
+    lock_path = contract["python_runtime_lock_path"].lstrip("/")
+    expected = _python_lock(tracked.get(lock_path, b""))
+    local = contract["locally_built_python_distribution"]
+    expected[_normalize_distribution(local["name"])] = local["version"]
+    expected.update(contract["bootstrap_python_distributions"])
+    if observed != expected:
+        findings.append({"code": "python_distribution_lock_mismatch"})
+
+
+def _python_coverage_findings(
+    final_files, contract, covered, allowed_missing, findings
+):
+    native = {
+        path
+        for path, row in final_files.items()
+        if path.startswith("opt/venv/") and row.get("elf") is True
+    }
+    if native - covered:
+        findings.append({"code": "native_elf_not_bound_to_wheel_record"})
+    if allowed_missing != contract["expected_missing_python_record_count"]:
+        findings.append({"code": "python_record_allowed_missing_population"})
+
+
+def _python_metadata_population(tracked, findings):
     observed: dict[str, str] = {}
     metadata_roots: set[str] = set()
     records: list[tuple[str, bytes]] = []
@@ -571,13 +671,10 @@ def _python_findings(
             records.append((path, payload))
     if metadata_roots != record_roots:
         findings.append({"code": "python_record_population_invalid"})
-    lock_path = contract["python_runtime_lock_path"].lstrip("/")
-    expected = _python_lock(tracked.get(lock_path, b""))
-    local = contract["locally_built_python_distribution"]
-    expected[_normalize_distribution(local["name"])] = local["version"]
-    expected.update(contract["bootstrap_python_distributions"])
-    if observed != expected:
-        findings.append({"code": "python_distribution_lock_mismatch"})
+    return observed, records
+
+
+def _python_records(records, final_files, contract, findings):
     covered: set[str] = set()
     verified = 0
     allowed_missing = 0
@@ -586,69 +683,64 @@ def _python_findings(
         for pattern in contract["allowed_missing_python_record_patterns"]
     ]
     for record_path, payload in records:
-        record_entries: set[str] = set()
-        for relative, hash_field, size_field in csv.reader(
-            io.StringIO(payload.decode("utf-8", errors="strict"))
+        count, missing = _python_record_file(
+            record_path, payload, final_files, missing_patterns, covered, findings
+        )
+        verified += count
+        allowed_missing += missing
+    return covered, verified, allowed_missing
+
+
+def _python_record_file(
+    record_path, payload, final_files, missing_patterns, covered, findings
+):
+    verified = 0
+    allowed_missing = 0
+    record_entries: set[str] = set()
+    for relative, hash_field, size_field in csv.reader(
+        io.StringIO(payload.decode("utf-8", errors="strict"))
+    ):
+        target = _record_target(record_path, relative)
+        if target in record_entries:
+            findings.append({"code": "python_record_entry_duplicate", "path": target})
+            continue
+        record_entries.add(target)
+        if not hash_field:
+            if size_field or target not in final_files:
+                findings.append({"code": "python_record_entry_unbound", "path": target})
+            continue
+        identity = _python_record_identity(hash_field, size_field, findings)
+        if identity is None:
+            continue
+        algorithm, expected_hash, expected_size = identity
+        actual = final_files.get(target, {})
+        if not actual and any(
+            pattern.fullmatch(target) for pattern in missing_patterns
         ):
-            target = _record_target(record_path, relative)
-            if target in record_entries:
-                findings.append(
-                    {"code": "python_record_entry_duplicate", "path": target}
-                )
-                continue
-            record_entries.add(target)
-            if not hash_field:
-                if size_field or target not in final_files:
-                    findings.append(
-                        {"code": "python_record_entry_unbound", "path": target}
-                    )
-                continue
-            try:
-                algorithm, encoded = hash_field.split("=", 1)
-                padding = "=" * (-len(encoded) % 4)
-                expected_hash = base64.urlsafe_b64decode(encoded + padding).hex()
-                expected_size = int(size_field)
-            except (TypeError, ValueError):
-                findings.append({"code": "python_record_entry_invalid"})
-                continue
-            actual = final_files.get(target, {})
-            if not actual and any(
-                pattern.fullmatch(target) for pattern in missing_patterns
-            ):
-                allowed_missing += 1
-                continue
-            if (
-                algorithm != "sha256"
-                or actual.get("sha256") != expected_hash
-                or actual.get("size") != expected_size
-            ):
-                findings.append({"code": "python_record_hash_mismatch", "path": target})
-            else:
-                covered.add(target)
-                verified += 1
-    native = {
-        path
-        for path, row in final_files.items()
-        if path.startswith("opt/venv/") and row.get("elf") is True
-    }
-    if native - covered:
-        findings.append({"code": "native_elf_not_bound_to_wheel_record"})
-    if allowed_missing != contract["expected_missing_python_record_count"]:
-        findings.append({"code": "python_record_allowed_missing_population"})
-    inventory, inventory_sha256 = _python_venv_inventory(
-        final_paths, final_files, final_links
-    )
-    if inventory_sha256 != expected_inventory_sha256:
-        findings.append({"code": "python_venv_inventory_lock_mismatch"})
-    return (
-        findings,
-        len(observed),
-        verified,
-        allowed_missing,
-        covered,
-        inventory,
-        inventory_sha256,
-    )
+            allowed_missing += 1
+            continue
+        if (
+            algorithm != "sha256"
+            or actual.get("sha256") != expected_hash
+            or actual.get("size") != expected_size
+        ):
+            findings.append({"code": "python_record_hash_mismatch", "path": target})
+        else:
+            covered.add(target)
+            verified += 1
+    return verified, allowed_missing
+
+
+def _python_record_identity(hash_field, size_field, findings):
+    try:
+        algorithm, encoded = hash_field.split("=", 1)
+        padding = "=" * (-len(encoded) % 4)
+        expected_hash = base64.urlsafe_b64decode(encoded + padding).hex()
+        expected_size = int(size_field)
+        return algorithm, expected_hash, expected_size
+    except (TypeError, ValueError):
+        findings.append({"code": "python_record_entry_invalid"})
+        return None
 
 
 def _elf_strings(
@@ -681,6 +773,26 @@ def _elf_metadata(payload: bytes) -> dict[str, object]:
     expected_ph_size = struct.calcsize(ph_format)
     W.require(phentsize == expected_ph_size, "habitat_elf_program_header_size")
     W.require(phoff + phentsize * phnum <= len(payload), "habitat_elf_program_headers")
+    loads, dynamic = _elf_segments(
+        payload, elf_class, phoff, phentsize, phnum, ph_format
+    )
+    metadata: dict[str, object] = {
+        "class": elf_class,
+        "machine": machine,
+        "needed": [],
+        "soname": "",
+        "rpath": [],
+        "runpath": [],
+    }
+    if dynamic is None:
+        return metadata
+    tags, string_offset, string_size = _elf_dynamic_strings(
+        payload, loads, dynamic, dynamic_format
+    )
+    return _elf_string_metadata(payload, metadata, tags, string_offset, string_size)
+
+
+def _elf_segments(payload, elf_class, phoff, phentsize, phnum, ph_format):
     loads: list[tuple[int, int, int]] = []
     dynamic: tuple[int, int] | None = None
     for index in range(phnum):
@@ -695,16 +807,10 @@ def _elf_metadata(payload: bytes) -> dict[str, object]:
         elif kind == 2:
             W.require(dynamic is None, "habitat_elf_dynamic_segment")
             dynamic = (offset, filesz)
-    metadata: dict[str, object] = {
-        "class": elf_class,
-        "machine": machine,
-        "needed": [],
-        "soname": "",
-        "rpath": [],
-        "runpath": [],
-    }
-    if dynamic is None:
-        return metadata
+    return loads, dynamic
+
+
+def _elf_dynamic_strings(payload, loads, dynamic, dynamic_format):
     entry_size = struct.calcsize(dynamic_format)
     W.require(dynamic[1] % entry_size == 0, "habitat_elf_dynamic_size")
     tags: dict[int, list[int]] = {}
@@ -726,6 +832,10 @@ def _elf_metadata(payload: bytes) -> dict[str, object]:
     ]
     W.require(len(string_offsets) == 1, "habitat_elf_string_table_mapping")
     string_offset = string_offsets[0]
+    return tags, string_offset, string_size
+
+
+def _elf_string_metadata(payload, metadata, tags, string_offset, string_size):
     metadata["needed"] = _elf_strings(
         payload, tags.get(1, []), string_offset, string_size
     )
@@ -849,59 +959,90 @@ def _native_findings(
             findings.append({"code": "native_elf_parse_failed", "path": path})
     closure: list[dict[str, object]] = []
     for path, row in sorted(metadata.items()):
-        owners = sorted(dpkg_owners.get(path, set()))
-        if path in python_covered:
-            owners.append("python-wheel-record")
-        if not owners:
-            findings.append({"code": "native_elf_unowned", "path": path})
-        resolved: dict[str, str] = {}
-        resolution: dict[str, dict[str, object]] = {}
-        search = _runtime_library_dirs(path, row["rpath"], row["runpath"])
-        for needed in row["needed"]:
-            W.require(
-                needed == posixpath.basename(needed) and needed not in {"", ".", ".."},
-                "habitat_elf_needed_name",
-            )
-            binding, failure = _needed_binding(
-                needed,
+        closure.append(
+            _native_closure_row(
+                path,
                 row,
-                search,
                 metadata,
                 final_paths,
                 final_links,
+                final_files,
+                dpkg_owners,
+                python_covered,
+                findings,
             )
-            if failure is not None:
-                findings.append(
-                    {
-                        "code": failure,
-                        "path": path,
-                        "needed": needed,
-                    }
-                )
-                continue
-            W.require(binding is not None, "habitat_elf_dependency_binding")
-            resolved[needed] = str(binding["path"])
-            resolution[needed] = binding
-        closure.append(
-            {
-                "path": path,
-                "sha256": final_files[path]["sha256"],
-                "class": row["class"],
-                "machine": row["machine"],
-                "soname": row["soname"],
-                "rpath": row["rpath"],
-                "runpath": row["runpath"],
-                "effective_search_path": search,
-                "needed": resolved,
-                "needed_resolution": resolution,
-                "owners": owners,
-            }
         )
     serialized = json.dumps(closure, sort_keys=True, separators=(",", ":"))
     closure_sha256 = hashlib.sha256(serialized.encode()).hexdigest()
     if closure_sha256 != expected_closure_sha256:
         findings.append({"code": "native_elf_closure_lock_mismatch"})
     return findings, closure_sha256, closure
+
+
+def _native_closure_row(
+    path,
+    row,
+    metadata,
+    final_paths,
+    final_links,
+    final_files,
+    dpkg_owners,
+    python_covered,
+    findings,
+):
+    owners = sorted(dpkg_owners.get(path, set()))
+    if path in python_covered:
+        owners.append("python-wheel-record")
+    if not owners:
+        findings.append({"code": "native_elf_unowned", "path": path})
+    search = _runtime_library_dirs(path, row["rpath"], row["runpath"])
+    resolved, resolution = _native_needed(
+        path, row, search, metadata, final_paths, final_links, findings
+    )
+    return {
+        "path": path,
+        "sha256": final_files[path]["sha256"],
+        "class": row["class"],
+        "machine": row["machine"],
+        "soname": row["soname"],
+        "rpath": row["rpath"],
+        "runpath": row["runpath"],
+        "effective_search_path": search,
+        "needed": resolved,
+        "needed_resolution": resolution,
+        "owners": owners,
+    }
+
+
+def _native_needed(path, row, search, metadata, final_paths, final_links, findings):
+    resolved: dict[str, str] = {}
+    resolution: dict[str, dict[str, object]] = {}
+    for needed in row["needed"]:
+        W.require(
+            needed == posixpath.basename(needed) and needed not in {"", ".", ".."},
+            "habitat_elf_needed_name",
+        )
+        binding, failure = _needed_binding(
+            needed,
+            row,
+            search,
+            metadata,
+            final_paths,
+            final_links,
+        )
+        if failure is not None:
+            findings.append(
+                {
+                    "code": failure,
+                    "path": path,
+                    "needed": needed,
+                }
+            )
+            continue
+        W.require(binding is not None, "habitat_elf_dependency_binding")
+        resolved[needed] = str(binding["path"])
+        resolution[needed] = binding
+    return resolved, resolution
 
 
 @dataclass
@@ -1411,30 +1552,73 @@ def verify(
     expected_python_venv_inventory_sha256: str,
     expected_native_closure_sha256: str,
 ) -> dict[str, object]:
-    """Verify graph, layer population, payload policy, and final OCI config."""
+    """Verify the complete saved OCI bytes against the Habitat contract.
 
+    Args:
+        fd: Descriptor for the immutable archive.
+        length: Exact archive byte length.
+        expected_id: Required OCI index digest.
+        contract: Byte, path, source and runtime policy.
+        archive_sha256: Caller-bound archive hash.
+        expected_source_revision: Required source commit.
+        expected_dpkg_inventory_sha256: Bound package inventory hash.
+        expected_python_venv_inventory_sha256: Bound Python inventory hash.
+        expected_native_closure_sha256: Bound native closure hash.
+
+    Returns:
+        Graph, population, closure and policy findings; valid only if none exist.
+
+    Raises:
+        W.ScanError: Archive, parser or identity validation fails.
+        OSError: The archive cannot be read.
+        ValueError: Embedded control data is malformed.
+    """
+
+    expected = (
+        expected_dpkg_inventory_sha256,
+        expected_python_venv_inventory_sha256,
+        expected_native_closure_sha256,
+    )
+    _verify_expected_identities(expected_source_revision, expected)
+    result = inspect(fd, length, expected_id)
+    return _verified_report(
+        fd,
+        expected_id,
+        contract,
+        archive_sha256,
+        expected_source_revision,
+        expected,
+        result,
+    )
+
+
+def _verify_expected_identities(expected_source_revision, expected):
     W.require(
         re.fullmatch(r"[0-9a-f]{40}", expected_source_revision) is not None,
         "habitat_oci_expected_source_revision",
     )
-    for value in (
-        expected_dpkg_inventory_sha256,
-        expected_python_venv_inventory_sha256,
-        expected_native_closure_sha256,
-    ):
+    for value in expected:
         W.require(
             re.fullmatch(r"[0-9a-f]{64}", value) is not None,
             "habitat_oci_expected_runtime_closure",
         )
-    result = inspect(fd, length, expected_id)
+
+
+def _verified_report(
+    fd,
+    expected_id,
+    contract,
+    archive_sha256,
+    expected_source_revision,
+    expected,
+    result,
+):
     layers = result["layers"]
     payload = _scan_layers(
         fd,
         layers,
         contract,
-        expected_dpkg_inventory_sha256,
-        expected_python_venv_inventory_sha256,
-        expected_native_closure_sha256,
+        *expected,
     )
     config = _config(fd, result["image_config_digest"])
     findings = [
