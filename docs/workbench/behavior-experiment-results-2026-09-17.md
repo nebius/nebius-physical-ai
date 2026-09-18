@@ -9,6 +9,10 @@ submission. See [BEHAVIOR challenge evaluation](behavior-challenge.md) for the
 protocol and [policy research](behavior-policy-research.md) for the earlier
 research review.
 
+The [September 18 follow-up](behavior-followup-results-2026-09-18.md) completes
+the later stock-versus-balanced comparison. The measurements and unevaluated
+statuses below describe the first experiment at its close.
+
 ## Protocol
 
 Every evaluated cell used the unchanged BEHAVIOR-1K v3.9.2 evaluator, official

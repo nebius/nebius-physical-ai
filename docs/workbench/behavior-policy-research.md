@@ -6,9 +6,11 @@ The current RLC controller already uses a π0.5-derived model. The
 [September 17 experiment](behavior-experiment-results-2026-09-17.md) completed
 80 development rollouts and three 6,000-update fine-tunes. The evaluated
 fine-tune and shorter action execution showed no improvement over the campaign's
-stock controls. At that window's close, two trained candidates and a newer public
-100-task checkpoint had no rollout evaluation. Follow-up measurements are in
-progress. No competitive full-challenge score is established.
+stock controls. The [complete 60-rollout follow-up](behavior-followup-results-2026-09-18.md)
+also found a regression for the balanced three-task fine-tune: Q=0.227778 versus
+stock Q=0.404444. The radio press-phase checkpoint remains unevaluated, and
+Meta100 startup validation is in progress. No competitive full-challenge score is
+established.
 
 The earlier September 16 radio comparison remains recorded at RLC Q=0.20 versus
 the official baseline's Q=0.10. The EGR objective described below has no trained
@@ -181,11 +183,57 @@ uniform radio fine-tune failed to improve its matched control.
 
 A prospective fine-tune should retain intermediate checkpoints and select them
 with a deterministic loss pass over the reserved training-distribution holdout.
-Matched, predeclared ablations should then test a narrower trainable parameter
-set, more flow draws, a larger effective batch through gradient accumulation,
-and reduced reliance on teacher-forced stages. Keep the released split,
-normalization, evaluator, and matched stock control fixed. This rationale proposes measurements; it makes
-no claim that any adjustment will improve rollout performance.
+The following audits make two proposed ablations concrete. Neither has been
+trained, and neither establishes a performance gain.
+
+### Separate action adaptation from task and stage adaptation
+
+The completed balanced run used `use_knowledge_insulation=False`. Its action
+loss could therefore propagate through the prefix cache into task and
+stage-fusion modules, while stage cross-entropy trained the stage head. A CPU
+partial restore of the actual parent and adapted checkpoints confirmed changes
+in the stage head and task-embedding rows 0, 1, and 22. These are real parameter
+changes; their effect on the rollout failures has not been isolated.
+
+A narrower prospective partition contains 23 parameter leaves and 430,108,328
+scalars: the action expert, action input/output projections, time MLPs, and
+`kv_transform`. Enabling knowledge insulation stops action gradients at the
+prefix cache, while gradients still reach `kv_transform`. Freezing the task and
+stage modules enforces their invariance and removes their optimizer state.
+The partition and gradient-routing checks used CPU abstract graphs and small
+optimizer sentinels. They did not perform full-model GPU training.
+
+The first matched pair would use that partition, knowledge insulation, and zero
+stage/FAST auxiliary loss weights. Arm T supplies native equal-time stage bins.
+Arm P replays frozen parent predictions chronologically through the native
+three-prediction history and transition filter. It supplies the stage used for
+the current action chunk, before that observation's prediction updates the
+filter. Raw classifier argmax is not equivalent to this serving behavior.
+Images, proprioception, actions, frame order, optimizer, schedule, flow draws,
+seed, and evaluation cases remain matched. This isolates the training condition
+supplied to the action model. Replaying frozen parent predictions is still an
+offline approximation to the observations a new policy will encounter.
+
+### Test semantic phase sampling with a matched control
+
+A training-only audit also checked 180 trash and 180 shoe annotations. It found
+540 `place in` intervals for trash and 720 for shoes, all ordered,
+nonoverlapping, and within the released valid-duration bounds. Their median
+durations were 214.5 and 391 frames, respectively, at 30 Hz. A decoded review
+used four training episodes, 48 images from the left wrist and head-mounted ZED
+cameras, and the corresponding action records. Together with the radio audit,
+these support broad semantic phase labels. They do not identify exact physical
+contact, insertion completion, or release frames.
+
+A prepared three-task sampler would draw half of each task's starting positions
+uniformly from stored training frames and half from `press` (radio) or `place in`
+(trash and shoes) intervals. Its matched control uses two independent uniform
+streams. Both use the same repeating task/stream order, share the corresponding
+uniform draws, and retain 32,000 starts per task over 6,000 updates. All downstream
+RGB, state, action, normalization, and stage-label transforms remain identical.
+The prototypes passed sampler and source-identity checks; neither arm has been
+trained. The earlier radio-only press-weighted checkpoint is a different
+experiment and cannot substitute for this control.
 
 ## Next candidate: give π0.5 recent observation history
 
