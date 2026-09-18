@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import json
+from pathlib import Path
 import subprocess
 
 import pytest
+import yaml
 
+import npa.orchestration.skypilot.k8s_gpu_catalog as gpu_catalog
 from npa.orchestration.skypilot.k8s_gpu_catalog import (
     KubernetesGpuCatalog,
     KubernetesGpuCatalogError,
@@ -17,6 +21,7 @@ from npa.orchestration.skypilot.k8s_gpu_catalog import (
     label_known_kubernetes_gpus_for_skypilot,
     parse_kubernetes_gpu_catalog,
     preflight_kubernetes_gpu_gang,
+    _recover_idle_validation_scope,
     resolve_kubernetes_accelerator,
     spec_accelerators,
     wait_for_kubernetes_accelerators,
@@ -1106,3 +1111,207 @@ def test_nvidia_noexecute_taint_is_not_covered_by_skypilot_toleration() -> None:
     inventory = discover_kubernetes_gpu_inventory(context="exact", runner=runner)
     assert inventory.nodes[0].schedulable is False
     assert inventory.nodes[0].exclusion == "cordoned-or-unsupported-taint"
+
+
+def test_idle_validation_scope_recovery_archives_only_after_two_empty_pod_probes(
+    tmp_path
+) -> None:
+    scope = tmp_path / "cluster-validation" / ("a" * 24)
+    scope.mkdir(parents=True)
+    for name in ("home", "sky-runtime", "local-api"):
+        (scope / name).mkdir()
+    (scope / "client-config.yaml").write_text("allowed_clouds: [nebius]\n", encoding="utf-8")
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    calls: list[list[str]] = []
+    stopped: list[Path] = []
+
+    def runner(command, **_kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(
+            command, 0, stdout=json.dumps({"items": []}), stderr=""
+        )
+
+    assert _recover_idle_validation_scope(
+        scope,
+        context="exact-context",
+        kubeconfig_path=kubeconfig,
+        user_id="npa-validation",
+        runner=runner,
+        stop_api=stopped.append,
+    )
+
+    assert len(calls) == 2
+    assert all("skypilot-cluster-name=sky-jobs-controller-npa-validation" in call for call in calls)
+    assert stopped == [scope]
+    assert not any(
+        (scope / name).exists()
+        for name in ("home", "sky-runtime", "local-api", "client-config.yaml")
+    )
+    archives = [path for path in scope.iterdir() if path.name.startswith("retired-")]
+    assert len(archives) == 1
+    assert all((archives[0] / name).is_dir() for name in ("home", "sky-runtime", "local-api"))
+    assert (archives[0] / "client-config.yaml").is_file()
+
+
+def test_idle_validation_scope_recovery_refuses_a_live_controller(tmp_path) -> None:
+    scope = tmp_path / "cluster-validation" / ("b" * 24)
+    scope.mkdir(parents=True)
+    (scope / "home").mkdir()
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    stopped: list[Path] = []
+
+    def runner(command, **_kwargs):
+        return subprocess.CompletedProcess(
+            command, 0, stdout=json.dumps({"items": [{"metadata": {"name": "live"}}]}), stderr=""
+        )
+
+    assert not _recover_idle_validation_scope(
+        scope,
+        context="exact-context",
+        kubeconfig_path=kubeconfig,
+        user_id="npa-validation",
+        runner=runner,
+        stop_api=stopped.append,
+    )
+    assert stopped == []
+    assert (scope / "home").is_dir()
+
+
+@pytest.mark.parametrize("message", [
+    "isolated SkyPilot API process lifetime disagrees with its ownership record",
+    "isolated SkyPilot API port is held by an unowned process",
+    "isolated SkyPilot API belongs to another network namespace",
+])
+def test_stale_validation_recovery_refuses_unproven_api_ownership(message: str) -> None:
+    from npa.orchestration.skypilot import local_api
+
+    assert not gpu_catalog._is_stale_validation_api_error(
+        local_api.IsolatedApiError(message)
+    )
+
+
+@pytest.mark.parametrize("failure_message", [
+    "isolated SkyPilot API recovery requires the original executing identity and credential configuration",
+    "running isolated SkyPilot API has a different executing identity or changed credential configuration",
+    "isolated SkyPilot API credential configuration changed after verification",
+    "isolated SkyPilot API recovery requires the original selected NPA configuration",
+    "running isolated SkyPilot API has a different verified configuration; preserve its jobs before restarting",
+    "isolated SkyPilot API verified configuration changed on disk",
+    "isolated SkyPilot API process environment disagrees with its ownership record",
+])
+def test_validation_environment_recovers_stale_identity_raised_before_api_ensure(
+    failure_message: str,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A stale receipt can fail while ``sky_environment`` establishes intent.
+
+    That failure happens before the explicit ``ensure_isolated_api`` call, so
+    the narrow controller-absence recovery must cover both operations and both
+    stopped and running stale daemon receipts.
+    """
+
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    isolated_root = tmp_path / "isolated"
+    monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(isolated_root))
+    monkeypatch.delenv("SKYPILOT_USER_ID", raising=False)
+    calls: list[str] = []
+    recovered: list[dict[str, str]] = []
+    client_configs: list[dict] = []
+
+    from npa.orchestration.skypilot import local_api
+    from npa.orchestration.skypilot import cleanup
+
+    def fake_sky_environment(scope: Path, *, environment: dict[str, str]) -> dict[str, str]:
+        calls.append("environment")
+        client_configs.append(
+            yaml.safe_load(
+                Path(environment["SKYPILOT_GLOBAL_CONFIG"]).read_text(encoding="utf-8")
+            )
+        )
+        if calls.count("environment") == 1:
+            raise local_api.IsolatedApiError(failure_message)
+        return {**environment, "SKYPILOT_USER_ID": "npa-test-validation"}
+
+    def fake_recover(scope: Path, **kwargs: object) -> bool:
+        recovered.append({"scope": str(scope), "user_id": str(kwargs["user_id"])})
+        return True
+
+    monkeypatch.setattr(cleanup, "sky_environment", fake_sky_environment)
+    monkeypatch.setattr(
+        local_api,
+        "ensure_isolated_api",
+        lambda **_kwargs: calls.append("ensure"),
+    )
+    monkeypatch.setattr(gpu_catalog, "_recover_idle_validation_scope", fake_recover)
+
+    env = gpu_catalog.kubernetes_sky_environment(
+        context="exact-context",
+        kubeconfig=kubeconfig,
+        sky_executable="/opt/sky/bin/sky",
+    )
+
+    assert calls == ["environment", "environment", "ensure"]
+    assert env["SKYPILOT_USER_ID"] == "npa-test-validation"
+    assert all(config["allowed_clouds"] == ["kubernetes"] for config in client_configs)
+    assert len(recovered) == 1
+    expected_scope = isolated_root / "cluster-validation" / (
+        hashlib.sha256(
+            f"{kubeconfig.resolve()}\0exact-context".encode()
+        ).hexdigest()[:24]
+    )
+    assert recovered == [{
+        "scope": str(expected_scope),
+        "user_id": "npa-" + hashlib.sha256(
+            str(expected_scope.resolve()).encode()
+        ).hexdigest()[:12],
+    }]
+
+
+def test_validation_environment_migrates_changed_config_only_after_safe_recovery(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A changed validation config is archived, never overwritten in place."""
+
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    isolated_root = tmp_path / "isolated"
+    context = "exact-context"
+    scope = isolated_root / "cluster-validation" / hashlib.sha256(
+        f"{kubeconfig.resolve()}\0{context}".encode()
+    ).hexdigest()[:24]
+    scope.mkdir(parents=True)
+    stale_config = scope / "client-config.yaml"
+    stale_config.write_text("allowed_clouds: [nebius]\n", encoding="utf-8")
+    monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(isolated_root))
+    monkeypatch.delenv("SKYPILOT_USER_ID", raising=False)
+    recovered: list[str] = []
+
+    from npa.orchestration.skypilot import cleanup, local_api
+
+    def fake_recover(recovery_scope: Path, **_kwargs: object) -> bool:
+        recovered.append(str(recovery_scope))
+        stale_config.unlink()
+        return True
+
+    def fake_sky_environment(
+        _scope: Path, *, environment: dict[str, str]
+    ) -> dict[str, str]:
+        return dict(environment)
+
+    monkeypatch.setattr(gpu_catalog, "_recover_idle_validation_scope", fake_recover)
+    monkeypatch.setattr(cleanup, "sky_environment", fake_sky_environment)
+    monkeypatch.setattr(local_api, "ensure_isolated_api", lambda **_kwargs: None)
+
+    gpu_catalog.kubernetes_sky_environment(
+        context=context,
+        kubeconfig=kubeconfig,
+        sky_executable="/opt/sky/bin/sky",
+    )
+
+    assert recovered == [str(scope)]
+    assert yaml.safe_load(stale_config.read_text(encoding="utf-8"))[
+        "allowed_clouds"
+    ] == ["kubernetes"]

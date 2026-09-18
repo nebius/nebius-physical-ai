@@ -118,6 +118,16 @@ def test_foxglove_viewer_reports_its_grounded_apis() -> None:
     assert "foxglove/status" in apis_for_intent("foxglove_viewer")
 
 
+def test_live_runtime_evidence_routes_to_safe_artifact_loading() -> None:
+    from npa.cli.agent_chat import apis_for_intent
+
+    assert (
+        match_chat_intent("show live cloud evidence and a real RRD artifact")
+        == "live_runtime_evidence"
+    )
+    assert "sim-viz/load-artifact" in apis_for_intent("live_runtime_evidence")
+
+
 def test_tool_capability_questions_route_consistently() -> None:
     """"what can <tool> do" reaches the tool's own grounded reply.
 

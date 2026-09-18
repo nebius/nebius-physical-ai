@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -187,6 +188,20 @@ def import_lerobot_dataset(name: str, source: str, datasets_dir: Path) -> dict[s
 
     datasets_dir = datasets_dir.expanduser().resolve()
     source_root, source_type = materialize_lerobot_source(source, name, datasets_dir)
+    warnings: list[str] = []
+    info = _read_info_json(source_root, warnings)
+    if _supports_native_lerobot(fo, info):
+        source_root = _prepare_native_lerobot_source(source_root, datasets_dir / name)
+        return _import_native_lerobot_dataset(
+            fo,
+            name=name,
+            source=source,
+            source_type=source_type,
+            source_root=source_root,
+            info=info,
+            warnings=warnings,
+        )
+
     output_dir = datasets_dir / name / "lerobot_frames"
     plan = build_lerobot_import_plan(source_root, output_dir)
 
@@ -219,6 +234,123 @@ def import_lerobot_dataset(name: str, source: str, datasets_dir: Path) -> dict[s
         "metadata_fields": plan.metadata_fields,
         "warnings": plan.warnings,
     }
+
+
+def _prepare_native_lerobot_source(source_root: Path, staging_parent: Path) -> Path:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    tasks_path = source_root / "meta/tasks.parquet"
+    if not tasks_path.exists():
+        return source_root
+    table = pq.read_table(tasks_path)
+    if "task" in table.column_names:
+        return source_root
+    # LeRobot saves task text as the Pandas index; FiftyOne 1.22 expects a column.
+    index_columns = (table.schema.pandas_metadata or {}).get("index_columns", [])
+    if len(index_columns) != 1 or not isinstance(index_columns[0], str):
+        raise ValueError("LeRobot tasks metadata requires a task column or one named Pandas index")
+    index = index_columns[0]
+    if index not in table.column_names or "task_index" not in table.column_names:
+        raise ValueError("LeRobot tasks metadata is missing task_index or its Pandas index")
+    if not pa.types.is_string(table[index].type) and not pa.types.is_large_string(table[index].type):
+        raise ValueError("LeRobot task names must be strings")
+    if staging_parent.resolve().is_relative_to(source_root.resolve()):
+        raise ValueError("Native LeRobot staging must be outside the source dataset")
+    staging_parent.mkdir(parents=True, exist_ok=True)
+    staged = Path(tempfile.mkdtemp(prefix="lerobot-native-", dir=staging_parent))
+    shutil.copytree(source_root, staged, dirs_exist_ok=True)
+    pq.write_table(table.append_column("task", table[index]), staged / "meta/tasks.parquet")
+    return staged
+
+
+def _supports_native_lerobot(fo: Any, info: dict[str, Any]) -> bool:
+    dataset_type = getattr(getattr(fo, "types", None), "LeRobotDataset", None)
+    version = str(info.get("codebase_version") or "").removeprefix("v")
+    return dataset_type is not None and version.split(".", 1)[0] == "3"
+
+
+def _import_native_lerobot_dataset(
+    fo: Any,
+    *,
+    name: str,
+    source: str,
+    source_type: str,
+    source_root: Path,
+    info: dict[str, Any],
+    warnings: list[str],
+) -> dict[str, Any]:
+    if name in fo.list_datasets():
+        fo.delete_dataset(name)
+    dataset = fo.Dataset.from_dir(
+        dataset_dir=str(source_root.resolve()),
+        dataset_type=fo.types.LeRobotDataset,
+        name=name,
+    )
+    dataset.persistent = True
+    dataset.save()
+    seeded_segments = _seed_native_subtask_tags(dataset, source_root)
+    _refresh_fiftyone_collection_stats(dataset)
+    media_keys = sorted(
+        key
+        for key, feature in (info.get("features") or {}).items()
+        if feature.get("dtype") in {"image", "video"}
+    )
+    return {
+        "status": "loaded",
+        "name": dataset.name,
+        "source": source,
+        "source_type": source_type,
+        "format": "lerobot",
+        "samples": len(dataset),
+        "media_keys": media_keys,
+        "metadata_fields": ["episode_index", "task", "tasks", "length", "duration", "fps"],
+        "seeded_subtask_segments": seeded_segments,
+        "native_multimodal": True,
+        "warnings": warnings,
+    }
+
+
+def _seed_native_subtask_tags(dataset: Any, source_root: Path) -> int:
+    import fiftyone.core.tags as fota
+
+    existing_subtask_segments, tag_prefix = _subtask_seed_bindings()
+    segments = existing_subtask_segments(source_root)
+    if not segments:
+        return 0
+    sample_by_episode = {
+        int(sample["episode_index"]): sample
+        for sample in dataset.iter_samples()
+    }
+    tags = []
+    for segment in segments:
+        sample = sample_by_episode.get(segment.episode_index)
+        if sample is None:
+            continue
+        tags.append(
+            fota.TemporalTag(
+                sample.id,
+                start=segment.start_ns,
+                end=segment.end_ns,
+                tag=f"{tag_prefix}{segment.label}",
+            )
+        )
+    dataset.temporal_tags.add(tags)
+    return len(tags)
+
+
+def _subtask_seed_bindings():
+    try:
+        from npa.fiftyone_lerobot_subtasks import (
+            SUBTASK_TAG_PREFIX,
+            existing_subtask_segments,
+        )
+    except ModuleNotFoundError:
+        from _npa_fiftyone_lerobot_subtasks import (  # type: ignore[import-not-found]
+            SUBTASK_TAG_PREFIX,
+            existing_subtask_segments,
+        )
+    return existing_subtask_segments, SUBTASK_TAG_PREFIX
 
 
 def _download_s3_source(uri: str, name: str, datasets_dir: Path) -> Path:

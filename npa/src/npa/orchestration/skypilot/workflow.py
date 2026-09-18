@@ -830,6 +830,7 @@ def _submission_global_config(runtime, controller_backend, infra):
         # The selected workload and controller share this exact context; other
         # operator settings, including pod configuration, retain their values.
         kubernetes["allowed_contexts"] = [context]
+        config["allowed_clouds"] = ["kubernetes"]
     return config
 
 
@@ -840,6 +841,12 @@ def _preflight_prepared_submission(prepared, *, project, infra, extra_env, targe
     for key, value in (extra_env or {}).items():
         if value or key in {"NPA_S3_BUCKET", "NPA_S3_PREFIX"}:
             env[key] = value
+    isolated_endpoint = str(env.get("SKYPILOT_API_SERVER_ENDPOINT") or "").strip()
+    if env.get("NPA_SKYPILOT_ISOLATED_API_DIR") and isolated_endpoint:
+        api_server = prepared.global_config.setdefault("api_server", {})
+        if not isinstance(api_server, dict):
+            raise ValueError("SkyPilot global config api_server section must be a mapping")
+        api_server["endpoint"] = isolated_endpoint
     env["SKYPILOT_GLOBAL_CONFIG"] = str(prepared.config_path)
     try:
         selected, _report, injected = _execution_preflight(
@@ -1041,7 +1048,20 @@ def submit_workflow(
                 progress=echo or _default_launch_echo,
             )
 
+        # A verified absent controller proves that this isolated SkyPilot scope
+        # cannot contain a live managed job. Do not issue the initial queue
+        # query in that state: SkyPilot can create an empty INIT controller
+        # record for that query, then reject the launch that should create its
+        # first pod. Later reconciliations still query the exact job name.
+        initial_controller_absent = (
+            getattr(controller_health, "state", None) is ControllerState.ABSENT
+        )
+
         def _reconcile() -> ReconciliationEvidence:
+            nonlocal initial_controller_absent
+            if initial_controller_absent:
+                initial_controller_absent = False
+                return ReconciliationEvidence(ReconciliationState.ABSENT)
             return _reconcile_managed_job_env(
                 run_id,
                 env=env,
@@ -2090,6 +2110,28 @@ def _wait_for_healthy_jobs_controller(
     deadline = time.monotonic() + max(timeout, 0)
     last_summary = "no jobs-controller found" if require_existing else ""
     unhealthy: list[tuple[str, str]] = []
+    # An exact zero-pod result is stronger than SkyPilot's cached status. In a
+    # new isolated scope it avoids materializing the no-pod INIT record whose
+    # existence prevents the first managed launch from creating a controller.
+    if execution_probe is not None and not require_existing:
+        user_id = str(env.get("SKYPILOT_USER_ID") or "").strip()
+        expected_name = (
+            f"{JOBS_CONTROLLER_PREFIX}{user_id}"
+            if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", user_id)
+            else ""
+        )
+        if expected_name:
+            initial_probe = execution_probe(expected_name)
+            if (
+                not initial_probe.healthy
+                and initial_probe.outcome == "head_pod_ambiguous"
+                and initial_probe.pod_count == 0
+            ):
+                return ControllerHealthResult(
+                    ControllerState.ABSENT,
+                    expected_name,
+                    ControllerExecutionProbe(True, "controller_absent", pod_count=0),
+                )
     while True:
         # Kubernetes has a stronger source of truth below: the exact controller
         # pod is selected and its readiness/cwd are probed directly.  Avoid a
@@ -2140,6 +2182,35 @@ def _wait_for_healthy_jobs_controller(
                 + _controller_health_remedy(detail)
             )
         controllers = _jobs_controller_statuses(result.stdout)
+        # A prior queue read can create exactly one INIT row before a controller
+        # pod exists. Treat that exact isolated row as absent so its first
+        # launch can create the pod; all other INIT rows remain unhealthy.
+        if execution_probe is not None and len(controllers) == 1:
+            init_name, init_status = controllers[0]
+            user_id = str(env.get("SKYPILOT_USER_ID") or "").strip()
+            expected_init_name = (
+                f"{JOBS_CONTROLLER_PREFIX}{user_id}"
+                if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", user_id)
+                else ""
+            )
+            if (
+                init_status.upper() == "INIT"
+                and expected_init_name
+                and init_name == expected_init_name
+            ):
+                init_probe = execution_probe(init_name)
+                if (
+                    not init_probe.healthy
+                    and init_probe.outcome == "head_pod_ambiguous"
+                    and init_probe.pod_count == 0
+                ):
+                    return ControllerHealthResult(
+                        ControllerState.ABSENT,
+                        init_name,
+                        ControllerExecutionProbe(
+                            True, "controller_absent", pod_count=0
+                        ),
+                    )
         if require_existing and not controllers:
             last_summary = "no jobs-controller found"
             unhealthy = []
@@ -2180,6 +2251,17 @@ def _wait_for_healthy_jobs_controller(
                             "SKYPILOT_USER_ID selects one. Refusing to probe or launch."
                         )
                 probe_result = checked_execution_probe(state, expected_name)
+                if (
+                    state in {ControllerState.UP, ControllerState.STOPPED}
+                    and probe_result is not None
+                    and probe_result.outcome == "controller_absent"
+                ):
+                    # A cached UP/STOPPED row with no execution pod is absent
+                    # for the first launch. Returning its cached state would
+                    # issue the queue query that causes the INIT deadlock.
+                    return ControllerHealthResult(
+                        ControllerState.ABSENT, expected_name, probe_result
+                    )
                 if probe_result is None or probe_result.healthy:
                     return ControllerHealthResult(state, expected_name, probe_result)
                 last_summary = (

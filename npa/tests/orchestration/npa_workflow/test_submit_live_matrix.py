@@ -533,6 +533,40 @@ def test_paidf_evg_seed_rejects_non_https_fixture_transport(monkeypatch) -> None
     assert writes == []
 
 
+def test_lerobot_subtask_proof_seeds_real_parquet_rows(monkeypatch) -> None:
+    helpers = _load_live_helpers()
+    writes: list[dict[str, object]] = []
+
+    class _S3:
+        def put_object(self, **kwargs) -> None:
+            writes.append(kwargs)
+
+    monkeypatch.setattr(
+        "npa.clients.project_credentials.s3_client_for_project",
+        lambda *_args, **_kwargs: _S3(),
+    )
+    helpers.seed_live_workflow_inputs(
+        spec_name="lerobot-subtask-proof.yaml",
+        bucket="unit-bucket",
+        run_id="seed-run",
+    )
+
+    by_key = {str(item["Key"]): bytes(item["Body"]) for item in writes}
+    prefix = "npa-workflow-e2e/seed-run/lerobot-subtask-proof/reviewed-dataset/"
+    data = by_key[prefix + "data/chunk-000/file-000.parquet"]
+    catalog = by_key[prefix + "meta/subtasks.parquet"]
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    frames = pq.read_table(pa.BufferReader(data)).to_pylist()
+    subtasks = pq.read_table(pa.BufferReader(catalog)).to_pylist()
+    assert [row["subtask_index"] for row in frames] == [0, 0, 1, 1]
+    assert subtasks == [
+        {"subtask": "approach", "subtask_index": 0},
+        {"subtask": "grasp", "subtask_index": 1},
+    ]
+
+
 def test_matrix_cases_declare_every_secret_the_renderer_hints_at() -> None:
     """A missing secret_env makes the CLI print an advisory line before its JSON.
 
@@ -733,6 +767,15 @@ def test_wan_submit_cases_need_storage_but_not_hf_or_runtime_consent(spec: str) 
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
     }
+
+
+def test_robocasa_data_policy_submit_case_forwards_its_service_token() -> None:
+    case = _case("robocasa-data-policy.yaml")
+
+    assert case is not None
+    assert {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "ROBOCASA_TOKEN"} <= set(
+        case.secret_envs
+    )
 
 
 # --------------------------------------------------------------- runtime cases

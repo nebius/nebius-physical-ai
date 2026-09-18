@@ -1062,6 +1062,72 @@ def _put_workflow_log_waves(fake_s3: FakeWorkflowS3, waves: list[dict]) -> str:
     return f"s3://bucket/{prefix}/manifest.json"
 
 
+def _put_root_job_logs(fake_s3, states, runtime):
+    prefix = "single-job/npa-workflow"
+    manifest = {
+        "schema_version": "npa.workflow.run.v1", "workflow": "unit-video",
+        "api_version": "npa.workflow/v0.0.1", "run_id": "single-job",
+        "run_prefix_uri": "s3://bucket/single-job", "status": "RUNNING",
+        "sky_job_id": "42",
+        "steps": [{"state": state, "status": "RUNNING"} for state in states],
+    }
+    fake_s3.put_object(
+        Bucket="bucket", Key=f"{prefix}/manifest.json",
+        Body=json.dumps(manifest).encode(),
+    )
+    if runtime:
+        fake_s3.put_object(
+            Bucket="bucket", Key=f"{prefix}/runtime.json",
+            Body=json.dumps({"run_id": "single-job", "waves": [], **runtime}).encode(),
+        )
+    return f"s3://bucket/{prefix}/manifest.json"
+
+
+@pytest.mark.parametrize(("states", "runtime", "selector"), [
+    (["generate"], {}, []),
+    (["generate", "review"], {}, ["generate"]),
+    (["generate"], {"stages": [{
+        "stage": "generate", "managed_job_id": "42", "sky_task_id": "7",
+    }]}, ["7"]),
+    (["generate"], {"stages": [{
+        "stage": "generate", "managed_job_id": "42",
+    }]}, ["generate"]),
+    (["generate"], {"waves": [{
+        "states": ["generate"], "job_id": "42",
+    }]}, ["generate"]),
+])
+@pytest.mark.parametrize("follow", [False, True])
+@pytest.mark.parametrize("stage_args", [[], ["--stage", "generate"]])
+def test_workflow_logs_single_step_job_needs_no_task_selector(
+    tmp_path, monkeypatch, states, runtime, selector, follow, stage_args,
+):
+    import sys
+    from npa.orchestration.skypilot import _bin
+
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    uri = _put_root_job_logs(fake_s3, states, runtime)
+    executable = tmp_path / "sky"
+    executable.write_text(
+        f"#!{sys.executable}\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n"
+    )
+    executable.chmod(0o700)
+    monkeypatch.setattr(_bin, "CONFIG_PATH", tmp_path / "absent.yaml")
+    monkeypatch.setattr(_bin, "ensure_skypilot_version", lambda value: value)
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._resolve_sky_bin", lambda value: str(executable),
+    )
+    mode = "--follow" if follow else "--no-follow"
+    result = runner.invoke(app, [
+        "workbench", "workflow", "logs", uri, *stage_args, "--json", mode,
+    ])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["stage"] == "generate"
+    assert payload["managed_job_id"] == "42"
+    assert json.loads(payload["log"]) == ["jobs", "logs", "42", *selector, mode]
+
+
 @pytest.mark.parametrize(
     ("kind", "states", "tasks", "duplicate_wave", "expected_task"),
     [

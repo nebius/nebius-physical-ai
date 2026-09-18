@@ -83,6 +83,15 @@ per-blueprint CLI is required; stage the exact source with `submit --stage-src`.
 
 Input format is `LeRobotDataset` in Hugging Face format. Use the SimToLeRobot adapter to convert Genesis or other simulation outputs.
 
+For manual System 1 subtask labels, load LeRobot v3 into FiftyOne 1.22, create
+complete non-overlapping `subtask:<label>` temporal tags, and run
+`npa workbench fiftyone export-lerobot-subtasks`. The derived dataset retains
+the episode task instruction and adds per-frame `subtask_index`,
+`meta/subtasks.parquet`, and resumable annotation metadata. FiftyOne is the
+review UI; LeRobot remains the durable training format. The source dataset is
+immutable. Run `workflows/testing/lerobot-subtask-proof.yaml` after export when
+the result needs a reproducible coverage gate and a row-level LeRobot proof.
+
 Output is a policy checkpoint on S3.
 
 ## Validation

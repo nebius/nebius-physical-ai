@@ -307,6 +307,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "lerobot-subtask-proof.yaml",
+        "cpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes=(
+            "CPU-only post-review gate over real LeRobot v3 Parquet rows. The "
+            "harness seeds complete approach/grasp labels; the workflow publishes "
+            "a grasp proof bound to the source data-file digest."
+        ),
+    ),
+    SubmitLiveCase(
         "dataset-of-record-smoke.yaml",
         "cpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
@@ -1081,6 +1091,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "robocasa-smoke.yaml",
         "gpu",
+        secret_envs=("ROBOCASA_TOKEN",),
         plan_only=True,
         plan_only_justification="npa-robocasa is a validation candidate; its image is not yet built or GPU-validated, so the native RoboCasa smoke cannot submit until the accepted digest and GPU evidence are recorded",
         notes="Native RoboCasa workbench smoke: task registration, asset availability, EGL reset, random rollout.",
@@ -1088,7 +1099,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "robocasa-data-policy.yaml",
         "gpu",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "ROBOCASA_TOKEN"),
         notes="Production PandaOmron RoboCasa data->policy pipeline: multi-task trajectory export, LeRobotDataset materialization, real ACT training, disjoint RoboCasa exact-checkpoint evaluation, insights lineage.",
     ),
     SubmitLiveCase(

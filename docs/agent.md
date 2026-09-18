@@ -66,6 +66,40 @@ npa agent fresh-setup --project "<alias>" \
 `fresh-setup` provisions the VM with Terraform. `npa agent bootstrap` refreshes
 only the UI/backend/nginx layer on an existing VM, without touching infra.
 
+### Shared public IPv4 pools
+
+If a tenant routes public addresses through an existing shared VPC pool, select
+it explicitly at deploy time with `--ipv4-public-pool-id <pool-id>`. The value
+is optional: omitting it preserves the provider's default public-pool behavior.
+NPA applies it only to the VPC network it creates for the agent; it does not
+embed a tenant-specific pool in code or project configuration.
+
+`bootstrap` only refreshes services on an existing VM. If a prior deployment
+created a VM without a reachable public address, use `fresh-setup` with the
+same pool option after reviewing the replacement/teardown scope; bootstrap
+cannot allocate that missing address.
+
+If the operator's egress address changes after deployment, bootstrap can repair
+only the explicitly named SSH and application CIDRs before it opens its remote
+session. This does not change the deployment's Terraform defaults or select a
+pool:
+
+```bash
+npa agent bootstrap --project <alias> --name <agent-name> \
+  --ssh-cidr-block <operator-address>/32 \
+  --application-cidr-block <operator-address>/32
+```
+
+The optional `--allow-world-open-ssh` and
+`--allow-world-open-application` flags are required independently when either
+source is intentionally `/0`.
+
+When a pre-identity agent record belongs to an existing VM from the same
+repository, project alias, and agent name but was originally deployed from a
+different branch, bootstrap refuses to overwrite it by default. After verifying
+that exact owner, opt in once with `--adopt-remote-identity`; NPA retains the
+remote deployment namespace while recording the current committed source revision.
+
 For one custom OpenAI-compatible provider, keep its settings outside the
 checkout in a mode-`0600` JSON file. The API key stays in a separate mode-`0600`
 file and is never passed on the command line:
