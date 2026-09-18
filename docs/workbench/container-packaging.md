@@ -258,18 +258,14 @@ runtime-delivery boundary, with provider access checked separately.
 **What it costs.** Runtime size and cold-bootstrap cost are version-specific.
 Do not apply the old Isaac Lab 2 / Isaac Sim 5 cache measurements to the Isaac
 Lab 3 / Isaac Sim 6 runtime. The current paired measurements and exact method
-are in [Isaac Lab 3 workbench](isaac-lab-3.md). A per-pod `emptyDir` makes every
-pod pay its generation's cold fetch. Warm a **shared** volume once instead:
-
-```bash
-kubectl apply -f npa/docker/workbench/common/warm-isaac-cache.yaml
-kubectl wait --for=condition=complete job/npa-warm-isaac-cache --timeout=30m
-```
-
-Then run workload pods against the same volume with `NPA_ISAAC_CACHE_READONLY=1`, so the
-runtime user never needs write access to the cache at all. Other knobs:
-`NPA_ISAAC_CACHE_DIR`, `NPA_ISAAC_INDEX_URL` (point it at an internal mirror; the wheels
-are sha256-pinned, so a mirror is verifiable), `NPA_ISAAC_BOOTSTRAP_OFFLINE=1`.
+are in [Isaac Lab 3 workbench](isaac-lab-3.md). The generic Isaac cache-warming
+manifest is disabled: do not apply it, pre-warm a shared volume, or reuse an
+existing Isaac cache until a dedicated customer/run-bound authorization channel
+and fresh cache-scope validation exist. A future authorized operation must
+revalidate cache ownership, scope, and immutable wheel digests at the run boundary;
+this packaging guide grants no kubectl, live workload, or runtime-fetch authority.
+`NPA_ISAAC_CACHE_DIR`, `NPA_ISAAC_INDEX_URL`, and `NPA_ISAAC_BOOTSTRAP_OFFLINE`
+are documented only for that future authorized path.
 
 **Why the published image is not "Isaac Sim with Omniverse Kit".** Because it does not
 contain Isaac Sim. That is verified mechanically against the *built* image, not by
