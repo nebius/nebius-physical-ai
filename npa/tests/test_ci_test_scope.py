@@ -343,7 +343,7 @@ def test_missing_comparison_fails_and_empty_diff_keeps_full_validation(compariso
 
 def _run_scope_step(repo: Path, base: str, head: str) -> list[str]:
     workflow_path = Path(__file__).resolve().parents[2] / ".github/workflows/test.yml"
-    workflow = yaml.load(workflow_path.read_text(), Loader=yaml.BaseLoader)
+    workflow = yaml.safe_load(workflow_path.read_text())
     command = workflow["jobs"]["scope"]["steps"][-1]["run"]
     output = repo / "scope-output"
     environment = dict(
