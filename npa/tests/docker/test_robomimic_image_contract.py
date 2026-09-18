@@ -1825,7 +1825,7 @@ def test_source_archive_parser_rejects_byte_mutation(tmp_path: Path) -> None:
 
 def _inert_wheel_members() -> dict[str, bytes]:
     """Harmless non-executable content; not production wheel evidence."""
-    return {
+    members = {
         "inertpkg/__init__.py": b"inert fixture bytes, never import\n",
         "inertpkg-1.0.dist-info/METADATA": b"Name: inertpkg\nVersion: 1.0\n",
         "inertpkg-1.0.dist-info/WHEEL": b"Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
@@ -1833,6 +1833,17 @@ def _inert_wheel_members() -> dict[str, bytes]:
         "inertpkg-1.0.dist-info/entry_points.txt": b"[console_scripts]\ninert-script = inertpkg:unused\n",
         "inertpkg-1.0.data/purelib/inert_data.txt": b"inert relocated data\n",
     }
+    rows = []
+    for name, raw in members.items():
+        if name.endswith("/RECORD"):
+            rows.append((name, "", ""))
+        else:
+            digest = base64.urlsafe_b64encode(hashlib.sha256(raw).digest())
+            rows.append((name, "sha256=" + digest.decode().rstrip("="), str(len(raw))))
+    output = io.StringIO(newline="")
+    csv.writer(output).writerows(sorted(rows))
+    members["inertpkg-1.0.dist-info/RECORD"] = output.getvalue().encode()
+    return members
 
 
 def _write_inert_wheel(path: Path, members: dict[str, bytes]) -> None:
@@ -1853,10 +1864,9 @@ def _inert_install(root: Path, members: dict[str, bytes]) -> None:
     installed["inertpkg-1.0.dist-info/INSTALLER"] = b"pip\n"
     installed["inertpkg-1.0.dist-info/REQUESTED"] = b""
     installed["bin/inert-script"] = (
-        b"#!/usr/local/bin/python3\n# -*- coding: utf-8 -*-\n"
-        b"import re\nimport sys\nif __name__ == '__main__':\n"
-        b"    from inertpkg import unused\n"
-        b"    sys.argv[0] = re.sub(r'(-script\\.pyw|\\.exe)?$', '', sys.argv[0])\n"
+        b"#!/usr/local/bin/python3\nimport sys\n"
+        b"from inertpkg import unused\nif __name__ == '__main__':\n"
+        b"    sys.argv[0] = sys.argv[0].removesuffix('.exe')\n"
         b"    sys.exit(unused())\n"
     )
     rows = []
@@ -1876,7 +1886,10 @@ def _inert_install(root: Path, members: dict[str, bytes]) -> None:
             )
         )
     with (root / record).open("w", newline="") as stream:
-        csv.writer(stream).writerows([*sorted(rows), (record, "", "")])
+        csv.writer(stream).writerows(sorted([*rows, (record, "", "")]))
+    (root / record).chmod(0o644)
+    for directory in (root, *(p for p in root.rglob("*") if p.is_dir())):
+        directory.chmod(0o755)
 
 
 def _inert_installed_source(tmp_path: Path) -> tuple[Path, Path, dict]:
@@ -1891,6 +1904,8 @@ def _inert_installed_source(tmp_path: Path) -> tuple[Path, Path, dict]:
         path = source / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(raw)
+        path.chmod(0o644)
+        path.parent.chmod(0o755)
     return source, archive, manifest
 
 
@@ -1919,6 +1934,7 @@ def inert_installed_image(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> di
     monkeypatch.setattr(
         VERIFIER, "verify_debian_install", lambda **_: {"package_count": 0}
     )
+    monkeypatch.setattr(VERIFIER, "_verified_installer", _inert_installer_identity)
     return dict(
         source_root=source,
         metadata_path=tmp_path / "inert-manifest",
@@ -1928,7 +1944,17 @@ def inert_installed_image(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> di
         source_archive_path=archive,
         selected_wheel_root=wheels,
         empty_boundary_paths=(),
+        installer_input_root=tmp_path / "inert-build-input",
     )
+
+
+def _inert_installer_identity(*_) -> dict:
+    return {
+        "sha256": "0" * 64,
+        "members": {"inventory_sha256": "0" * 64},
+        "source_revision": "0" * 40,
+        "publisher": {"verified_statement_sha256": "0" * 64},
+    }
 
 
 def test_installed_byte_proof_binds_archive_wheels_and_inventories(
@@ -1953,7 +1979,7 @@ def test_installed_byte_proof_binds_archive_wheels_and_inventories(
     )
     assert (
         proof["installed_dependencies"]["installation_policy"]
-        == "pip-target-no-compile-v1"
+        == "pip-26.2.1-posix-home-target-no-compile-v2"
     )
 
 
@@ -2059,18 +2085,19 @@ def test_dockerfile_authenticates_installed_bytes_before_discarding_proof_inputs
     text = DOCKERFILE.read_text()
     python_commands = re.findall(r"python3 [^\n]+", text)
     assert python_commands and all(
-        command.startswith("python3 -I ") for command in python_commands
+        command.startswith("python3 -I -S -B ") for command in python_commands
     )
-    assert "--no-compile --no-index --find-links /tmp/robomimic-identity-wheels" in text
+    assert "-m pip" not in text
     assert (
-        text.index("pip download")
-        < text.index("pip install")
+        text.index("installer download")
+        < text.index("installer install")
         < text.index("verify_image.py image")
     )
     assert "--source-archive /mnt/robomimic-build-inputs/source/robomimic.tar" in text
-    assert "--selected-wheel-root /tmp/robomimic-identity-wheels" in text
+    assert "--selected-wheel-root /opt/npa/robomimic/installer-wheels" in text
+    assert "--installer-input-root /mnt/robomimic-build-inputs" in text
     assert text.index("verify_image.py image") < text.index(
-        "rm -r /tmp/robomimic-identity-wheels"
+        "rm -r /opt/npa/robomimic/installer-wheels"
     )
 
 
@@ -2128,3 +2155,231 @@ def test_wheel_inventory_refuses_relocated_duplicate_distribution() -> None:
             "inertpkg-1.0.data/purelib/other-1.0.dist-info/METADATA",
             "inertpkg-1.0.dist-info",
         )
+
+
+def test_deterministic_installer_script_matches_independent_pip_source() -> None:
+    # Literal from the independently authenticated PipScriptMaker source,
+    # never produced by invoking/importing the candidate installer.
+    expected = (
+        b"#!/usr/local/bin/python3\nimport sys\n"
+        b"from example.cli import Runner\n"
+        b"if __name__ == '__main__':\n"
+        b"    sys.argv[0] = sys.argv[0].removesuffix('.exe')\n"
+        b"    sys.exit(Runner.main())\n"
+    )
+    assert VERIFIER._console_script("example.cli", "Runner.main") == expected
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "tool = example:run [extra]",
+        "tool = example",
+        "pip = example:run",
+        "easy_install = example:run",
+        "tool = example:run --option",
+        "tool = class:run",
+        "tool = example:while",
+    ],
+)
+def test_deterministic_installer_refuses_unmodeled_entrypoints(declaration) -> None:
+    members = {
+        "inert.dist-info/entry_points.txt": (
+            ("[console_scripts]\n" + declaration + "\n").encode(),
+            False,
+        )
+    }
+    with pytest.raises(VERIFIER.VerificationError, match="unsupported"):
+        VERIFIER._wheel_scripts(members, "inert.dist-info")
+
+
+def test_deterministic_installer_requires_exact_metadata_and_build_input() -> None:
+    manifest = VERIFIER._source_manifest(IMAGE_ROOT / "source-manifest.json")
+    installer = manifest["build_installer"]
+    assert installer["version"] == "26.2.1"
+    assert installer["members"]["count"] == 476
+    assert len(installer["members"]["pe_launchers"]) == 6
+    assert installer["members"]["notice_files"] == 42
+    expected = VERIFIER._expected_build_input_objects({"packages": []}, manifest)
+    assert expected == {
+        "debian",
+        "source",
+        "source/robomimic.tar",
+        "tools",
+        "tools/pip-26.2.1-py3-none-any.whl",
+    }
+    for key, value in (
+        ("version", "unknown"),
+        ("sha256", "0" * 64),
+        ("source_revision", "0" * 40),
+        ("parent_qualification", "PASS"),
+    ):
+        with pytest.raises(VERIFIER.VerificationError):
+            VERIFIER._checked_installer({**installer, key: value})
+
+
+@pytest.mark.parametrize("raw", [b"", b"harmless incomplete archive"])
+def test_deterministic_installer_refuses_bytes_before_archive_parsing(raw) -> None:
+    with pytest.raises(VERIFIER.VerificationError, match="bytes mismatch"):
+        VERIFIER._checked_installer_bytes(raw)
+
+
+def test_deterministic_installer_record_order_and_modes_are_exact() -> None:
+    digest = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    entry = {"sha256": digest, "size": 3}
+    assert VERIFIER._installed_record_bytes(
+        {"bin/tool": entry, "inert": entry}, "inert.dist-info/RECORD"
+    ) == (
+        b"../../bin/tool,sha256=ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0,3\r\n"
+        b"inert,sha256=ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0,3\r\n"
+        b"inert.dist-info/RECORD,,\r\n"
+    )
+    assert VERIFIER._file_identity(b"abc")["mode"] == 0o644
+    assert VERIFIER._file_identity(b"abc", True)["mode"] == 0o755
+
+
+def test_deterministic_installer_arguments_do_not_inherit_configuration() -> None:
+    wheels = Path("/opt/npa/robomimic/installer-wheels")
+    lock = Path("/opt/npa/robomimic/baked-requirements.lock")
+    common = [
+        "--isolated",
+        "install",
+        "--disable-pip-version-check",
+        "--no-cache-dir",
+        "--only-binary=:all:",
+        "--no-deps",
+        "--require-hashes",
+        "--requirement",
+        str(lock),
+    ]
+    assert VERIFIER._installer_arguments("install", wheels, lock) == common + [
+        "--no-compile",
+        "--no-index",
+        "--find-links",
+        str(wheels),
+        "--target",
+        "/opt/robomimic-deps",
+    ]
+    assert VERIFIER._installer_environment(Path("/inert-owned-scratch")) == {
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "HOME": "/inert-owned-scratch",
+        "TMPDIR": "/inert-owned-scratch",
+        "PIP_CONFIG_FILE": "/dev/null",
+        "XDG_CACHE_HOME": "/inert-owned-scratch",
+    }
+    with pytest.raises(VERIFIER.VerificationError, match="unsupported"):
+        VERIFIER._installer_arguments("arbitrary", wheels, lock)
+
+
+def test_deterministic_installer_unknown_platform_has_no_side_effects(
+    monkeypatch,
+) -> None:
+    def refused():
+        raise VERIFIER.VerificationError("unsupported inert platform")
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("side effect before interpreter refusal")
+
+    monkeypatch.setattr(VERIFIER, "_require_installer_platform", refused)
+    monkeypatch.setattr(VERIFIER, "_source_manifest", unexpected)
+    monkeypatch.setattr(VERIFIER, "_execute_build_installer", unexpected)
+    with pytest.raises(VERIFIER.VerificationError, match="unsupported inert"):
+        VERIFIER.run_build_installer(
+            action="install",
+            input_root=Path("/inert"),
+            wheels=Path("/opt/npa/robomimic/installer-wheels"),
+        )
+
+
+def _inert_installer_call_arguments() -> tuple:
+    return (
+        Path("/inert"),
+        {"path": "tools/inert.whl", "sha256": "0" * 64},
+        "install",
+        ["--isolated", "install"],
+    )
+
+
+@pytest.mark.parametrize("returncode", [0, 1])
+def test_deterministic_installer_mocked_execution_owns_scratch(
+    monkeypatch, returncode
+) -> None:
+    events = []
+
+    class Scratch:
+        def __init__(self, **kwargs):
+            assert kwargs == {"prefix": "installer-scratch-", "dir": "/inert-parent"}
+
+        def __enter__(self):
+            events.append("enter")
+            return "/inert-owned-scratch"
+
+        def __exit__(self, *args):
+            events.append("exit")
+
+    def execute(command, **kwargs):
+        events.append("mock-call")
+        assert command[:5] == ["/usr/local/bin/python3", "-I", "-S", "-B", "-c"]
+        assert "sys.path.insert(0,sys.argv.pop(1))" in command[5]
+        assert kwargs["umask"] == 0o022
+        assert kwargs["env"]["TMPDIR"] == str(kwargs["cwd"]) == "/inert-owned-scratch"
+        return SimpleNamespace(returncode=returncode)
+
+    monkeypatch.setattr(VERIFIER.tempfile, "TemporaryDirectory", Scratch)
+    monkeypatch.setattr(
+        VERIFIER, "_installer_workspace_parent", lambda: Path("/inert-parent")
+    )
+    monkeypatch.setattr(VERIFIER.subprocess, "run", execute)
+    args = _inert_installer_call_arguments()
+    if returncode:
+        with pytest.raises(VERIFIER.VerificationError, match="installer refused"):
+            VERIFIER._execute_build_installer(*args)
+    else:
+        assert not VERIFIER._execute_build_installer(*args)["image_qualified"]
+    assert events == ["enter", "mock-call", "exit"]
+
+
+@pytest.mark.parametrize("fault", ["preferred", "override", "layout"])
+def test_deterministic_installer_unknown_scheme_refuses(monkeypatch, fault) -> None:
+    monkeypatch.setattr(
+        VERIFIER.sysconfig,
+        "get_preferred_scheme",
+        lambda _: "unknown" if fault == "preferred" else "posix_home",
+    )
+    monkeypatch.setattr(
+        VERIFIER.sysconfig, "_PIP_USE_SYSCONFIG", fault != "override", raising=False
+    )
+    paths = {
+        "purelib": "/npa-scheme-probe/lib/python",
+        "platlib": "/npa-scheme-probe/lib/python",
+        "scripts": "/npa-scheme-probe/bin",
+        "data": "/npa-scheme-probe",
+    }
+    if fault == "layout":
+        paths["scripts"] = "/inert-unsupported-bin"
+    monkeypatch.setattr(VERIFIER.sysconfig, "get_paths", lambda **_: paths)
+    with pytest.raises(VERIFIER.VerificationError, match="unsupported installer"):
+        VERIFIER._require_installer_scheme()
+
+
+@pytest.mark.parametrize(
+    ("mode", "owner", "euid"),
+    [
+        (stat.S_IFLNK | 0o755, 0, 0),
+        (stat.S_IFDIR | 0o777, 0, 0),
+        (stat.S_IFDIR | 0o755, 1000, 0),
+        (stat.S_IFDIR | 0o755, 0, 1000),
+    ],
+)
+def test_deterministic_installer_workspace_refuses_unowned_metadata(
+    monkeypatch, mode, owner, euid
+) -> None:
+    # Inert metadata only: no filesystem object, ownership change or race.
+    monkeypatch.setattr(
+        Path, "lstat", lambda _: SimpleNamespace(st_mode=mode, st_uid=owner)
+    )
+    monkeypatch.setattr(VERIFIER.os, "geteuid", lambda: euid)
+    with pytest.raises(VERIFIER.VerificationError, match="root-owned"):
+        VERIFIER._installer_workspace_parent()

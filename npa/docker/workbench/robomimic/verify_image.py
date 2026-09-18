@@ -11,6 +11,7 @@ from email.parser import BytesParser
 import hashlib
 import io
 import json
+import keyword
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -18,6 +19,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import sysconfig
 import tarfile
 import tempfile
 from datetime import datetime, timezone
@@ -33,7 +35,7 @@ SOURCE_LICENSE_SHA256 = (
     "7cdbfab482b23a4d925d59ff169ab0bc5f8c97ceb0db79f9fd5bf46ef8aa1556"
 )
 SOURCE_MANIFEST_SHA256 = (
-    "3ca2c54cc61080c7548a598bfb5184f278d4178635b375ab623e5f1f7429cd69"
+    "878634c85bf2f3b73ec4ce8f01472305cea0665d0458785dbb771d8f6ee46a9f"
 )
 SOURCE_TREE_SHA1 = "4c8ebe35dbef16126dadf59cf8b771b9203753ab"
 SOURCE_ARCHIVE_SHA256 = (
@@ -56,6 +58,11 @@ BAKED_MEMBER_MAX_BYTES = 256 * 1024 * 1024
 BAKED_EXPANDED_MAX_BYTES = 2 * 1024 * 1024 * 1024
 BAKED_ENTRY_MAX_COUNT = 65_536
 BAKED_INSTALLER_EXECUTABLE = "/usr/local/bin/python3"
+INSTALLER_WHEEL_SHA256 = (
+    "71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e"
+)
+INSTALLER_WHEEL_SIZE = 1_816_632
+INSTALLER_POLICY = "pip-26.2.1-posix-home-target-no-compile-v2"
 RUNTIME_ROOT_DEFAULT = "/opt/npa-runtime/robomimic"
 RUNTIME_REFUSAL_STATUS = 78
 RUNTIME_METADATA_MAX_BYTES = 4 * 1024 * 1024
@@ -417,8 +424,31 @@ def _checked_source_manifest(value: dict[str, Any]) -> dict[str, Any]:
             "lfs": False,
         },
     }
-    if value != expected:
+    if {
+        key: item for key, item in value.items() if key != "build_installer"
+    } != expected:
         raise VerificationError("source manifest does not match the reviewed closure")
+    _checked_installer(value.get("build_installer"))
+    return value
+
+
+def _checked_installer(value: Any) -> dict:
+    if (
+        not isinstance(value, dict)
+        or value.get("name") != "pip"
+        or value.get("version") != "26.2.1"
+        or value.get("path") != "tools/pip-26.2.1-py3-none-any.whl"
+        or value.get("size") != INSTALLER_WHEEL_SIZE
+        or value.get("sha256") != INSTALLER_WHEEL_SHA256
+        or value.get("source_revision") != "634a6ec1a5d9dcc2433571cdb2f4c58a4bb29caf"
+    ):
+        raise VerificationError("unsupported build installer identity")
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    if hashlib.sha256(encoded).hexdigest() != (
+        "10d2341e000fc9db85d2bce23025bb6c68cccea82d55ee49140dd3d75472b062"
+    ):
+        raise VerificationError("build installer metadata mismatch")
+    _checked_https_url(value.get("url"), host="files.pythonhosted.org")
     return value
 
 
@@ -712,6 +742,8 @@ def _expected_build_input_objects(
     return {
         "debian",
         "source",
+        "tools",
+        manifest["build_installer"]["path"],
         manifest["archive"]["path"],
         *(item["artifact"] for item in lock["packages"]),
     }
@@ -743,6 +775,7 @@ def verify_build_inputs(
             digest=package["sha256"],
         )
     _verify_source_archive(input_root / manifest["archive"]["path"], manifest)
+    installer = _verified_installer(input_root, manifest)
     return {
         "schema": "npa.robomimic.build-input-verification.v1",
         "debian_package_count": len(lock["packages"]),
@@ -752,6 +785,7 @@ def verify_build_inputs(
         "source_manifest_sha256": SOURCE_MANIFEST_SHA256,
         "source_revision": SOURCE_REVISION,
         "source_tree_sha1": SOURCE_TREE_SHA1,
+        "build_installer_sha256": installer["sha256"],
     }
 
 
@@ -847,6 +881,7 @@ def prepare_build_inputs(
         tempfile.mkdtemp(prefix=f".{output_root.name}.staging-", dir=output_root.parent)
     )
     try:
+        _prepare_installer(manifest, staging)
         (staging / "debian").mkdir()
         for package in lock["packages"]:
             _download_exact_package(package, staging / package["artifact"])
@@ -861,6 +896,227 @@ def prepare_build_inputs(
         shutil.rmtree(staging, ignore_errors=True)
         raise
     return proof
+
+
+class _NoInstallerRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, new_url):
+        raise VerificationError("build installer redirect refused")
+
+
+def _prepare_installer(manifest: dict, staging: Path) -> None:
+    installer = _checked_installer(manifest["build_installer"])
+    destination = staging / installer["path"]
+    destination.parent.mkdir(mode=0o700)
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}), _NoInstallerRedirect()
+    )
+    with opener.open(installer["url"], timeout=60) as response:
+        if response.status != 200 or response.url != installer["url"]:
+            raise VerificationError("build installer response refused")
+        raw = response.read(INSTALLER_WHEEL_SIZE + 1)
+    _checked_installer_bytes(raw)
+    with destination.open("xb") as stream:
+        stream.write(raw)
+    destination.chmod(0o444)
+
+
+def _checked_installer_bytes(raw: bytes) -> None:
+    if (
+        len(raw) != INSTALLER_WHEEL_SIZE
+        or hashlib.sha256(raw).hexdigest() != INSTALLER_WHEEL_SHA256
+    ):
+        raise VerificationError("build installer bytes mismatch")
+
+
+def _verified_installer(input_root: Path, manifest: dict) -> dict:
+    installer = _checked_installer(manifest["build_installer"])
+    path = input_root / installer["path"]
+    raw = _immutable_bytes(path, INSTALLER_WHEEL_SIZE)
+    _checked_installer_bytes(raw)
+    if path.stat().st_mode & 0o222:
+        raise VerificationError("build installer must be read-only")
+    return installer
+
+
+def _installer_environment(scratch: Path) -> dict[str, str]:
+    return {
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "HOME": str(scratch),
+        "TMPDIR": str(scratch),
+        "PIP_CONFIG_FILE": "/dev/null",
+        "XDG_CACHE_HOME": str(scratch),
+    }
+
+
+def _require_installer_platform() -> None:
+    """Check supported layout, not independently qualified parent-image bytes."""
+    if (
+        sys.version_info[:3] != (3, 11, 16)
+        or sys.implementation.name != "cpython"
+        or sys.platform != "linux"
+        or os.uname().machine != "x86_64"
+        or sys.executable != BAKED_INSTALLER_EXECUTABLE
+        or not sys.flags.isolated
+        or not sys.flags.no_site
+        or not sys.dont_write_bytecode
+        or sys.prefix != sys.base_prefix
+    ):
+        raise VerificationError("unsupported installer interpreter or isolation")
+    allowed = {
+        "/usr/local/lib/python311.zip",
+        "/usr/local/lib/python3.11",
+        "/usr/local/lib/python3.11/lib-dynload",
+    }
+    if set(sys.path) != allowed or "pip" in sys.modules:
+        raise VerificationError("installer import path is not isolated stdlib")
+    _require_installer_scheme()
+
+
+def _require_installer_scheme() -> None:
+    if (
+        sysconfig.get_preferred_scheme("home") != "posix_home"
+        or getattr(sysconfig, "_PIP_USE_SYSCONFIG", True) is not True
+    ):
+        raise VerificationError("unsupported installer home scheme")
+    variables = dict.fromkeys(
+        (
+            "installed_base",
+            "base",
+            "installed_platbase",
+            "platbase",
+            "prefix",
+            "exec_prefix",
+            "userbase",
+        ),
+        "/npa-scheme-probe",
+    )
+    paths = sysconfig.get_paths(scheme="posix_home", vars=variables)
+    expected = {
+        "purelib": "/npa-scheme-probe/lib/python",
+        "platlib": "/npa-scheme-probe/lib/python",
+        "scripts": "/npa-scheme-probe/bin",
+        "data": "/npa-scheme-probe",
+    }
+    if any(paths[key] != value for key, value in expected.items()):
+        raise VerificationError("unsupported installer target layout")
+
+
+def _installer_arguments(action: str, wheels: Path, lock: Path) -> list[str]:
+    common = [
+        "--isolated",
+        action,
+        "--disable-pip-version-check",
+        "--no-cache-dir",
+        "--only-binary=:all:",
+        "--no-deps",
+        "--require-hashes",
+        "--requirement",
+        str(lock),
+    ]
+    if action == "download":
+        return common + [
+            "--index-url",
+            "https://pypi.org/simple",
+            "--dest",
+            str(wheels),
+        ]
+    if action == "install":
+        return common + [
+            "--no-compile",
+            "--no-index",
+            "--find-links",
+            str(wheels),
+            "--target",
+            "/opt/robomimic-deps",
+        ]
+    raise VerificationError("unsupported installer action")
+
+
+def run_build_installer(*, action: str, input_root: Path, wheels: Path) -> dict:
+    """Use the exact build-only wheel; parent-byte qualification remains external.
+
+    Args:
+        action: One of the two fixed download/install operations.
+        input_root: Verified read-only build-input mount.
+        wheels: Dedicated build-only solution wheel directory.
+    Returns:
+        Exact installer identity and executed operation, not image acceptance.
+    Raises:
+        VerificationError: Unsupported inputs, environment, output or operation.
+    """
+    _require_installer_platform()
+    manifest = _source_manifest(Path("/opt/npa/robomimic/source-manifest.json"))
+    installer = _verified_installer(input_root, manifest)
+    if not os.statvfs(input_root).f_flag & os.ST_RDONLY:
+        raise VerificationError("installer input mount must be read-only")
+    lock = Path("/opt/npa/robomimic/baked-requirements.lock")
+    _locked_baked_artifacts(lock)
+    arguments = _installer_arguments(action, wheels, lock)
+    _require_fresh_installer_destination(action, wheels)
+    return _execute_build_installer(input_root, installer, action, arguments)
+
+
+def _execute_build_installer(
+    input_root: Path, installer: dict, action: str, arguments: list[str]
+) -> dict:
+    with tempfile.TemporaryDirectory(
+        prefix="installer-scratch-", dir=str(_installer_workspace_parent())
+    ) as temporary:
+        scratch = Path(temporary)
+        command = [
+            BAKED_INSTALLER_EXECUTABLE,
+            "-I",
+            "-S",
+            "-B",
+            "-c",
+            "import runpy,sys;sys.path.insert(0,sys.argv.pop(1));"
+            "runpy.run_module('pip',run_name='__main__',alter_sys=True)",
+            str(input_root / installer["path"]),
+            *arguments,
+        ]
+        result = subprocess.run(
+            command,
+            env=_installer_environment(scratch),
+            cwd=scratch,
+            umask=0o022,
+            check=False,
+        )
+    if result.returncode:
+        raise VerificationError("exact build installer refused")
+    return {
+        "installer_sha256": installer["sha256"],
+        "action": action,
+        "installation_policy": INSTALLER_POLICY,
+        "image_qualified": False,
+    }
+
+
+def _require_fresh_installer_destination(action: str, wheels: Path) -> None:
+    if wheels != _installer_workspace_parent() / "installer-wheels":
+        raise VerificationError("unsupported build wheel destination")
+    if action == "download":
+        if wheels.exists() or wheels.is_symlink():
+            raise VerificationError("build wheel destination already exists")
+    else:
+        target = Path("/opt/robomimic-deps")
+        if target.is_symlink() or not target.is_dir() or any(target.iterdir()):
+            raise VerificationError("dependency install target must be empty")
+
+
+def _installer_workspace_parent() -> Path:
+    """Use the root-owned build directory, never a shared temporary namespace."""
+    parent = Path("/opt/npa/robomimic")
+    observed = parent.lstat()
+    if (
+        not stat.S_ISDIR(observed.st_mode)
+        or observed.st_uid != 0
+        or observed.st_mode & 0o022
+        or os.geteuid() != 0
+    ):
+        raise VerificationError("installer workspace parent is not root-owned")
+    return parent
 
 
 def verify_debian_install(
@@ -1003,6 +1259,7 @@ def _file_identity(raw: bytes, executable: bool = False) -> dict[str, Any]:
         "size": len(raw),
         "sha256": hashlib.sha256(raw).hexdigest(),
         "executable": executable,
+        "mode": 0o755 if executable else 0o644,
     }
 
 
@@ -1020,9 +1277,9 @@ def _inventory_directories(inventory: dict) -> dict:
             if parent.as_posix() == ".":
                 continue
             key = parent.as_posix()
-            if key in result and result[key] != {"type": "directory"}:
+            if key in result and result[key] != {"type": "directory", "mode": 0o755}:
                 raise VerificationError("installed inventory file/directory conflict")
-            result[key] = {"type": "directory"}
+            result[key] = {"type": "directory", "mode": 0o755}
     return result
 
 
@@ -1036,12 +1293,13 @@ def _source_installed_inventory(path: Path, manifest: dict) -> dict:
     with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as archive:
         for member in archive:
             if member.isdir():
-                entry = {"type": "directory"}
+                entry = {"type": "directory", "mode": member.mode & ~0o022}
             elif member.isreg() and member.size <= BAKED_MEMBER_MAX_BYTES:
                 stream = archive.extractfile(member)
                 if stream is None:
                     raise VerificationError("source member unavailable")
                 entry = _file_identity(stream.read(), bool(member.mode & 0o111))
+                entry["mode"] = member.mode & ~0o022
             else:
                 raise VerificationError("unsupported source inventory member")
             _add_inventory_member(inventory, member.name, entry)
@@ -1058,12 +1316,13 @@ def _installed_tree_inventory(root: Path) -> dict:
             mode = path.lstat().st_mode
             name = path.relative_to(root).as_posix()
             if stat.S_ISDIR(mode):
-                entry = {"type": "directory"}
+                entry = {"type": "directory", "mode": stat.S_IMODE(mode)}
                 pending.append(path)
             elif stat.S_ISREG(mode):
                 raw = _immutable_bytes(path, BAKED_MEMBER_MAX_BYTES)
                 total += len(raw)
                 entry = _file_identity(raw, bool(mode & 0o111))
+                entry["mode"] = stat.S_IMODE(mode)
             else:
                 raise VerificationError("installed tree contains a non-regular object")
             _add_inventory_member(inventory, name, entry)
@@ -1075,7 +1334,12 @@ def _installed_tree_inventory(root: Path) -> dict:
     return inventory
 
 
-def _inventory_proof(root: Path, expected: dict) -> dict:
+def _inventory_proof(root: Path, expected: dict, *, read_only: bool = False) -> dict:
+    if read_only:
+        expected = {
+            name: {**entry, "mode": entry["mode"] & ~0o222}
+            for name, entry in expected.items()
+        }
     observed = _installed_tree_inventory(root)
     if observed != expected:
         raise VerificationError("installed byte inventory mismatch")
@@ -1159,12 +1423,12 @@ def _wheel_target(name: str, directory: str) -> str:
 
 
 def _console_script(module: str, function: str) -> bytes:
-    """Exact pip/distlib POSIX template; unfamiliar installers must refuse."""
+    """Pip 26.2.1 PipScriptMaker, independently matched to pinned source bytes."""
     return (
-        f"#!{BAKED_INSTALLER_EXECUTABLE}\n# -*- coding: utf-8 -*-\n"
-        "import re\nimport sys\nif __name__ == '__main__':\n"
-        f"    from {module} import {function.split('.')[0]}\n"
-        "    sys.argv[0] = re.sub(r'(-script\\.pyw|\\.exe)?$', '', sys.argv[0])\n"
+        f"#!{BAKED_INSTALLER_EXECUTABLE}\nimport sys\n"
+        f"from {module} import {function.split('.')[0]}\n"
+        "if __name__ == '__main__':\n"
+        "    sys.argv[0] = sys.argv[0].removesuffix('.exe')\n"
         f"    sys.exit({function}())\n"
     ).encode()
 
@@ -1174,16 +1438,28 @@ def _wheel_scripts(members: dict, directory: str) -> dict:
     parser = configparser.ConfigParser(interpolation=None)
     parser.optionxform = str
     parser.read_string(raw.decode("utf-8"))
+    if parser.defaults():
+        raise VerificationError("unsupported entry point defaults")
     result = {}
     for section in ("console_scripts", "gui_scripts"):
         if not parser.has_section(section):
             continue
         for name, value in parser.items(section):
             match = re.fullmatch(
-                r"([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*):([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)(?:\s*\[[A-Za-z0-9_, .-]+\])?",
+                r"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*):"
+                r"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)",
                 value,
             )
-            if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", name) or match is None:
+            if (
+                not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", name)
+                or re.fullmatch(r"pip(?:[0-9.]+)?|easy_install(?:-[0-9.]+)?", name)
+                or match is None
+                or any(
+                    keyword.iskeyword(part)
+                    for group in match.groups()
+                    for part in group.split(".")
+                )
+            ):
                 raise VerificationError("unsupported wheel script entry point")
             _add_inventory_member(
                 result,
@@ -1202,32 +1478,45 @@ def _record_digest(entry: dict) -> str:
 def _authenticated_installed_record(
     path: Path, expected: dict, record_name: str
 ) -> dict:
-    """Validate every RECORD row against archive-derived bytes, never vice versa.
-
-    Pip --target relocates its temporary scripts directory to bin/. Its RECORD
-    retains ../../bin/ names. Only this exact, non-dereferenced string mapping
-    is supported. Row order/newline choice is non-executable metadata variation.
-    """
+    """Require pinned pip's exact sorted CSV, independently derived from inputs."""
     raw = _immutable_bytes(path, BAKED_MEMBER_MAX_BYTES)
-    observed = {}
-    for row in csv.reader(io.StringIO(raw.decode("utf-8"), newline=""), strict=True):
-        if len(row) != 3:
-            raise VerificationError("invalid installed RECORD row")
-        name, digest, size = row
-        if name.startswith("../../bin/"):
-            name = name.removeprefix("../../")
-        _installed_member_path(name)
-        if name in observed:
-            raise VerificationError("duplicate installed RECORD row")
-        observed[name] = (digest, size)
-    wanted = {
-        name: (_record_digest(entry), str(entry["size"]))
+    if raw != _installed_record_bytes(expected, record_name):
+        raise VerificationError("installed RECORD transformation mismatch")
+    return _file_identity(raw)
+
+
+def _installed_record_bytes(expected: dict, record_name: str) -> bytes:
+    # posix_home lib/python -> bin is exactly ../../bin before --target moves.
+    rows = [
+        (
+            "../../" + name if name.startswith("bin/") else name,
+            _record_digest(entry),
+            str(entry["size"]),
+        )
         for name, entry in expected.items()
+    ]
+    rows.append((record_name, "", ""))
+    output = io.StringIO(newline="")
+    csv.writer(output).writerows(sorted(rows))
+    return output.getvalue().encode("utf-8")
+
+
+def _verify_wheel_record(members: dict, record_name: str) -> None:
+    raw = members[record_name][0]
+    rows = list(csv.reader(io.StringIO(raw.decode("utf-8")), strict=True))
+    observed = {}
+    for row in rows:
+        if len(row) != 3 or row[0] in observed:
+            raise VerificationError("unsupported wheel RECORD")
+        observed[row[0]] = tuple(row[1:])
+    wanted = {
+        name: (_record_digest(_file_identity(raw)), str(len(raw)))
+        for name, (raw, _) in members.items()
+        if name != record_name
     }
     wanted[record_name] = ("", "")
     if observed != wanted:
-        raise VerificationError("installed RECORD transformation mismatch")
-    return _file_identity(raw)
+        raise VerificationError("wheel RECORD does not match authenticated members")
 
 
 def _wheel_expected_inventory(
@@ -1236,12 +1525,14 @@ def _wheel_expected_inventory(
     record_name = f"{directory}/RECORD"
     if record_name not in members:
         raise VerificationError("wheel RECORD is absent")
+    _verify_wheel_record(members, record_name)
     result = {}
     for name, (raw, executable) in members.items():
         if name != record_name:
-            _add_inventory_member(
-                result, _wheel_target(name, directory), _file_identity(raw, executable)
-            )
+            target = _wheel_target(name, directory)
+            if target == "bin" or target.startswith("bin/"):
+                raise VerificationError("wheel reserves generated script directory")
+            _add_inventory_member(result, target, _file_identity(raw, executable))
     for suffix, raw in (("INSTALLER", b"pip\n"), ("REQUESTED", b"")):
         _add_inventory_member(result, f"{directory}/{suffix}", _file_identity(raw))
     for name, entry in _wheel_scripts(members, directory).items():
@@ -1267,7 +1558,7 @@ def _selected_wheel(path: Path, locked: dict) -> tuple[str, str, bytes]:
 
 
 def _baked_dependency_proof(
-    wheel_root: Path, installed_root: Path, lock_path: Path
+    wheel_root: Path, installed_root: Path, lock_path: Path, *, read_only: bool = False
 ) -> dict:
     locked = _locked_baked_artifacts(lock_path)
     if not stat.S_ISDIR(wheel_root.lstat().st_mode):
@@ -1295,11 +1586,13 @@ def _baked_dependency_proof(
         for n in selected
     ):
         raise VerificationError("forbidden runtime distribution is baked")
-    proof = _inventory_proof(installed_root, _inventory_directories(inventory))
+    proof = _inventory_proof(
+        installed_root, _inventory_directories(inventory), read_only=read_only
+    )
     return {
         **proof,
         "selected_wheels": selected,
-        "installation_policy": "pip-target-no-compile-v1",
+        "installation_policy": INSTALLER_POLICY,
     }
 
 
@@ -1313,15 +1606,47 @@ def verify_neutral_image(
     source_archive_path: Path,
     selected_wheel_root: Path,
     empty_boundary_paths: tuple[Path, ...],
+    installer_input_root: Path,
+    read_only: bool = False,
 ) -> dict[str, Any]:
+    """Authenticate installed trees using independent immutable build inputs.
+
+    Tree paths are compared without imports against the archive, wheel and lock
+    inputs. Runtime/data/output boundaries must be empty. ``read_only`` models
+    only the Dockerfile's final removal of write permissions.
+    Returns: Byte inventories/provenance, not parent/image or live qualification.
+    Raises:
+        VerificationError: Any input, installed member or boundary differs.
+    """
     metadata = _source_manifest(metadata_path)
+    installer = _verified_installer(installer_input_root, metadata)
+    source, dependencies = _image_byte_proofs(
+        source_root,
+        source_archive_path,
+        metadata,
+        selected_wheel_root,
+        baked_deps_path,
+        baked_lock_path,
+        read_only,
+    )
+    debian = verify_debian_install(debian_lock_path=debian_lock_path)
+    _verify_empty_boundaries(empty_boundary_paths)
+    return {
+        **_neutral_image_proof(metadata, debian, source, dependencies),
+        **_installer_proof_fields(installer),
+    }
+
+
+def _image_byte_proofs(
+    source_root, source_archive, metadata, wheels, deps, lock, read_only
+):
     try:
         source = _inventory_proof(
-            source_root, _source_installed_inventory(source_archive_path, metadata)
+            source_root,
+            _source_installed_inventory(source_archive, metadata),
+            read_only=read_only,
         )
-        dependencies = _baked_dependency_proof(
-            selected_wheel_root, baked_deps_path, baked_lock_path
-        )
+        dependencies = _baked_dependency_proof(wheels, deps, lock, read_only=read_only)
     except (
         OSError,
         KeyError,
@@ -1332,9 +1657,19 @@ def verify_neutral_image(
         tarfile.TarError,
     ) as exc:
         raise VerificationError("installed-byte proof inputs are invalid") from exc
-    debian = verify_debian_install(debian_lock_path=debian_lock_path)
-    _verify_empty_boundaries(empty_boundary_paths)
-    return _neutral_image_proof(metadata, debian, source, dependencies)
+    return source, dependencies
+
+
+def _installer_proof_fields(installer: dict) -> dict:
+    return {
+        "installer_input_sha256": installer["sha256"],
+        "installer_member_inventory_sha256": installer["members"]["inventory_sha256"],
+        "installer_source_revision": installer["source_revision"],
+        "installer_publisher_statement_sha256": installer["publisher"][
+            "verified_statement_sha256"
+        ],
+        "parent_byte_qualification": "not-established-by-installed-tree-proof",
+    }
 
 
 def _verify_empty_boundaries(paths: tuple[Path, ...]) -> None:
@@ -2074,12 +2409,18 @@ def _build_parsers(subparsers: Any) -> None:
     prepare.add_argument("--source-manifest", type=Path, required=True)
     debian_install = subparsers.add_parser("debian-install")
     debian_install.add_argument("--debian-lock", type=Path, required=True)
+    installer = subparsers.add_parser("installer")
+    installer.add_argument("action", choices=("download", "install"))
+    installer.add_argument("--input-root", type=Path, required=True)
+    installer.add_argument("--wheel-root", type=Path, required=True)
 
 
 def _image_parser(subparsers: Any) -> None:
     image = subparsers.add_parser("image")
     image.add_argument("--source-archive", type=Path, required=True)
     image.add_argument("--selected-wheel-root", type=Path, required=True)
+    image.add_argument("--installer-input-root", type=Path, required=True)
+    image.add_argument("--read-only-tree", action="store_true")
     image.add_argument("--source-root", type=Path, default=Path("/opt/robomimic"))
     image.add_argument(
         "--metadata", type=Path, default=Path("/opt/byof/npa_source_metadata.json")
@@ -2170,6 +2511,10 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _dispatch_build(args: argparse.Namespace) -> dict:
+    if args.mode == "installer":
+        return run_build_installer(
+            action=args.action, input_root=args.input_root, wheels=args.wheel_root
+        )
     if args.mode == "build-inputs":
         return verify_build_inputs(
             input_root=args.input_root,
@@ -2192,6 +2537,8 @@ def _dispatch_build(args: argparse.Namespace) -> dict:
         baked_deps_path=args.baked_deps,
         source_archive_path=args.source_archive,
         selected_wheel_root=args.selected_wheel_root,
+        installer_input_root=args.installer_input_root,
+        read_only=args.read_only_tree,
         empty_boundary_paths=(
             Path(RUNTIME_ROOT_DEFAULT),
             Path("/workspace/byof-inputs"),
@@ -2240,6 +2587,7 @@ def main() -> int:
             "prepare-build-inputs",
             "debian-install",
             "image",
+            "installer",
         }:
             result = _dispatch_build(args)
         else:
