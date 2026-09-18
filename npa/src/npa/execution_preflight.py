@@ -381,6 +381,9 @@ def _validate_gymnasium_security_context(context: Any, *, required: bool = False
             _gymnasium_configuration_error("task must explicitly drop ALL container capabilities")
 
 
+_GYMNASIUM_VOLUME_KINDS = frozenset(("emptyDir", "downwardAPI"))
+
+
 def _validate_gymnasium_volumes(pod: Mapping[str, Any]) -> None:
     names = set()
     for volume in _gymnasium_entries(pod.get("volumes", [])):
@@ -389,7 +392,7 @@ def _validate_gymnasium_volumes(pod: Mapping[str, Any]) -> None:
             _gymnasium_configuration_error("volume identities must be unique names")
         names.add(name)
         kinds = set(volume) - {"name"}
-        if len(kinds) != 1 or not kinds <= {"emptyDir", "downwardAPI"}:
+        if len(kinds) != 1 or not kinds <= _GYMNASIUM_VOLUME_KINDS:
             _gymnasium_configuration_error("only emptyDir and downwardAPI pod volumes are permitted")
         _gymnasium_mapping(volume[next(iter(kinds))])
 

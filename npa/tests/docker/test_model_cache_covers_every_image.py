@@ -10,6 +10,7 @@ new cache-shaped variable has to be either redirected or explicitly excused.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -130,17 +131,35 @@ EXCUSED_EMPTY_DIRS = {
 SRC_ROOT = Path(__file__).resolve().parents[2] / "src" / "npa"
 
 
+def _declared_empty_dir_volumes(source: Path) -> dict[str, str]:
+    """Find literal pod-volume dictionaries without treating policy vocabulary as one."""
+
+    tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+    found: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        literal_keys = {
+            key.value: value
+            for key, value in zip(node.keys, node.values)
+            if isinstance(key, ast.Constant) and isinstance(key.value, str)
+        }
+        if "emptyDir" not in literal_keys:
+            continue
+        name = literal_keys.get("name")
+        volume_name = name.value if isinstance(name, ast.Constant) and isinstance(name.value, str) else None
+        key = volume_name or f"<unnamed in {source.name}>"
+        found[key] = source.relative_to(SRC_ROOT).as_posix()
+    return found
+
+
 def test_no_new_pod_local_cache_volume_appears_unnoticed() -> None:
-    named = re.compile(r'\{\s*"name":\s*"([\w.-]+)",\s*\n?\s*"emptyDir"', re.M)
     found: dict[str, str] = {}
     for source in SRC_ROOT.rglob("*.py"):
         text = source.read_text(encoding="utf-8")
         if '"emptyDir"' not in text:
             continue
-        for name in named.findall(text):
-            found[name] = source.relative_to(SRC_ROOT).as_posix()
-        if not named.findall(text):
-            found[f"<unnamed in {source.name}>"] = source.relative_to(SRC_ROOT).as_posix()
+        found.update(_declared_empty_dir_volumes(source))
 
     unaccounted = {
         name: where for name, where in found.items() if name not in EXCUSED_EMPTY_DIRS
