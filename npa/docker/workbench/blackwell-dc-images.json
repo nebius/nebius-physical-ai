@@ -547,6 +547,29 @@
       "notes": "Isaac Sim is fetched at first run under the operator's own EULA acceptance rather than baked, so the image is redistributable. Keep render workloads on L40S / RTX PRO 6000 regardless of what CUDA the vendor ships."
     },
     {
+      "name": "npa-isaac-arena",
+      "dockerfile": "isaac-arena/Dockerfile",
+      "build_script": "isaac-arena/build.sh",
+      "redistribution": "public",
+      "verdict": "ready",
+      "validation": "validated",
+      "torch": "2.11.0+cu128 inherited from the exact accepted npa-isaac-lab runtime-fetch base",
+      "source_compiled_extensions": [],
+      "smoke": "Complete real state evaluation on B200; RTX visual qualification additionally requires current-run task success, simulator-ground-truth progress, and coherent denoised viewport motion.",
+      "notes": "The exact recovery candidate passed trusted source/license, complete-payload, security, SBOM, provenance, bootstrap, and anonymous-pull gates. Fresh B200 seeds 42-45 each completed 1,050 native state-only steps with success_rate=0.0 and no video. Fresh RTX replay executed its exact 43-action native terminal prefix with zero padding, success_rate=1.0, door openness 0.200 to 0.815, and four spatially bound motion pairs overlapping native progress. Native lighting samples are pinned and read back at 32/32/16; all 44 physics bindings and native actions match the preceding rejected visual run. Both new workflows are independently verified SUCCEEDED with zero active workers; controllers and shared capacity are retained. Historical rejected visual runs remain rejected. Isaac runtime and provider-controlled assets remain runtime fetches; upstream Arena remains alpha.",
+      "validated_tag": "dev-ae5adea6ab895660996f513f14160c89d06f47e5",
+      "validated_digest": "sha256:9c6a417672d6f87499680ba337c90488c2a33d41ac9f7b5452eb5d97d00e097e",
+      "published_tag": "0.3.0-isaaclab3-20260917-r4",
+      "published_digest": "sha256:9c6a417672d6f87499680ba337c90488c2a33d41ac9f7b5452eb5d97d00e097e",
+      "publication_model": "exact-digest-promoted",
+      "published_registries": [
+        "public-development",
+        "public-release"
+      ],
+      "validation_scope": "B200 four-seed state-only evaluation plus successful RTX task/progress/visual evaluation on the exact accepted digest.",
+      "candidate_validation": "qualified"
+    },
+    {
       "name": "npa-leisaac",
       "dockerfile": "leisaac/Dockerfile",
       "verdict": "blocked",
@@ -1031,6 +1054,35 @@
     }
   ],
   "validation_evidence": {
+    "npa-isaac-arena": {
+      "built": true,
+      "payload_scan": "Public build workflow 35211514544 verified the exact development digest through source/license policy, complete built-image filesystem/layer/history and secret scans, vulnerability policy, SBOM generation, digest-bound provenance and SBOM attestations, bootstrap, and anonymous registry resolution. Independent anonymous full pull and packaged-source hashes were also verified.",
+      "hardware_run": "Fresh runs arena-b200-reconcile-ae5adea6-20260917-r3 and arena-rtx-reconcile-ae5adea6-20260917-r3 qualified this exact digest. B200 completed four 1,050-step state-only seeds with success_rate=0.0; independent retrieval verified 60 objects / 51,006,097 bytes. RTX completed 43 exact replay actions through native terminal with zero padding, success_rate=1.0 and door openness 0.200 to 0.815; independent retrieval verified 24 objects / 4,978,517 bytes and fully decoded both 43-frame MP4s. Evidence MP4 SHA-256: fd4390bdb1e3a66454efc4375abd628327b528286c24c978e790915e3ae84893. A separate factual post-download RRD contains 44 verified captures and native metrics: f274b5657d944a2f8f7f764c5a6507c02e4e12b005650f1f7284b9fce445c993. Native controllers report SUCCEEDED with zero active workers; controllers and shared infrastructure are retained.",
+      "validated_gpus": {
+        "B200": {
+          "platform": "gpu-b200-sxm",
+          "capability": "10.0",
+          "result": "REAL_ISAAC_ARENA_STATE_EVALUATION_PASSED"
+        },
+        "RTX PRO 6000": {
+          "platform": "gpu-rtx6000",
+          "capability": "12.0",
+          "result": "REAL_ISAAC_ARENA_TASK_VISUAL_EVALUATION_PASSED"
+        }
+      },
+      "validated_tag": "dev-ae5adea6ab895660996f513f14160c89d06f47e5",
+      "validated_digest": "sha256:9c6a417672d6f87499680ba337c90488c2a33d41ac9f7b5452eb5d97d00e097e",
+      "validated_registry_scope": "public-development",
+      "rejected_visual_evidence": {
+        "RTX PRO 6000": {
+          "platform": "gpu-rtx6000",
+          "capability": "12.0",
+          "result": "REJECTED_NOISE_SENSITIVE_VIDEO_ACCEPTANCE",
+          "success_rate": 0.0
+        }
+      },
+      "candidate_validation": "qualified"
+    },
     "npa-cosmos3": {
       "built": true,
       "payload_scan": "passed all built-image filesystem, layer, history, secret, vulnerability, licensing, SBOM, provenance, and anonymous-pull publication gates",

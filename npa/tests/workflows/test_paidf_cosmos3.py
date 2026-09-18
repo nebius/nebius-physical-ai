@@ -269,6 +269,10 @@ def test_generate_variants_runs_real_runner_contract_and_changes_retry(
             "s3://example-bucket/run/cosmos_augmented/variant-0000/metadata.json"
         ]
     )
+    first_call = next(call for call in calls if call["name"] == "variant-0000")
+    assert metadata["prompt"] == first_call["prompt"]
+    assert "The source video is authoritative" in calls[0]["prompt"]
+    assert "Requested appearance edit:" in calls[0]["prompt"]
     assert metadata["engine"] == c3.ENGINE
     assert metadata["conditioned_input"] == "source.mp4"
     assert metadata["weights_baked"] is False

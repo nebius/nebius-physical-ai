@@ -331,6 +331,47 @@ containers:
       timeout_seconds: 1800
       status: gpu-gated
 
+  isaac-arena:
+    image: npa-isaac-arena
+    dockerfile: npa/docker/workbench/isaac-arena/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Isaac Lab-Arena completed-episode policy evaluation with raw episode
+        journals, an upstream HTML report, optional viewport video, and an NPA
+        artifact/hash manifest.
+    safety:
+      runs_as: ubuntu
+      base_image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6
+      network: >-
+        Runtime-fetched Isaac, the pinned public replay, authorized Lightwheel
+        registry assets, optional exact-driver Ubuntu graphics package, and S3.
+      external_fetch:
+        - "pypi.nvidia.com (operator EULA)"
+        - "GitHub (pinned Apache-2.0 Arena replay)"
+        - "Lightwheel registry (operator authorization)"
+        - "Ubuntu signed archive (exact-driver graphics package when needed)"
+        - s3
+      notes: >-
+        Bakes the pinned Apache-2.0 Arena source, Apache-2.0 Lightwheel SDK,
+        and hash-locked open-source evaluation dependencies. Isaac Sim/Lab,
+        registry assets, graphics fallback packages, and operator policy inputs
+        remain runtime-only. Captured upstream logs are
+        produced without cloud/model credentials in the subprocess environment.
+        The golden smoke downloads the pinned upstream Apache-2.0 GR1
+        open-microwave replay fixture, verifies its Git LFS SHA-256, and requires
+        upstream task success plus denoised viewport motion bound to the
+        current-run simulator door trace. The historical r2 image's grain-based
+        visual qualification is rejected; the corrected candidate needs fresh
+        image and workload qualification before this entry becomes ready.
+    golden_eval:
+      kind: container-smoke
+      command: bash /opt/npa/docker/workbench/isaac-arena/smoke_functional.sh
+      serverless_gpu: rtx6000
+      gpu: required
+      timeout_seconds: 1800
+      status: needs-image-update
+
   leisaac:
     image: npa-leisaac
     dockerfile: npa/docker/workbench/leisaac/Dockerfile

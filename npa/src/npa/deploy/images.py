@@ -43,6 +43,7 @@ CONTAINER_IMAGE_NAMES = {
     "lerobot-policy": "npa-lerobot-policy",
     "genesis": "npa-genesis",
     "isaac-lab": "npa-isaac-lab",
+    "isaac-arena": "npa-isaac-arena",
     "openarm": "npa-openarm",
     "leisaac": "npa-leisaac",
     "cosmos": "npa-cosmos",
@@ -106,6 +107,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "fiftyone",
         "groot",
         "isaac-lab",
+        "isaac-arena",
         "openarm",
         "rerun-viewer",
         "sim2real-control",
@@ -194,6 +196,10 @@ PUBLIC_RELEASE_TAG_OVERRIDES: dict[str, str] = {
 # whose filesystem/layers were scanned and whose advertised GPU capability ran.
 # A newly built dev tag must earn fresh evidence before this mapping changes.
 GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES: dict[str, dict[str, str]] = {
+    "isaac-arena": {
+        "development_sha": "ae5adea6ab895660996f513f14160c89d06f47e5",
+        "oci_digest": "sha256:9c6a417672d6f87499680ba337c90488c2a33d41ac9f7b5452eb5d97d00e097e",
+    },
     "alpamayo2-super": {
         "development_sha": "5b693476c113c833e9d9d4f8c7aa492492a27505",
         "oci_digest": "sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07",
@@ -264,6 +270,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "lerobot-policy": "0.1.1",
     "genesis": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "isaac-lab": "3.0.0b2.post1-sim2real-coherent-20260904",
+    "isaac-arena": "0.3.0-isaaclab3-20260917-r4",
     "openarm": "2.2.0-isaac0.1.0-rtfetch",
     "leisaac": "0.4.0-20260817T231825Z",
     "cosmos": "cu128-torch27-sm100-1.0.9-20260803T002017Z",

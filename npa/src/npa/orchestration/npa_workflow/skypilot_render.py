@@ -59,6 +59,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.fiftyone": "fiftyone",
     "workbench.rl": "isaac-lab",
     "workbench.isaac_lab": "isaac-lab",
+    "workbench.isaac_arena": "isaac-arena",
     "workbench.openarm": "openarm",
     "workbench.lerobot": "lerobot",
     "workbench.sonic": "sonic",
@@ -111,6 +112,9 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     # Alpamayo2-Super fetches both its OpenMDW checkpoint and the separately
     # gated PhysicalAI-AV sample under the operator's accepted HF identity.
     "workbench.alpamayo2_super": ("HF_TOKEN",),
+    # Isaac is fetched after non-secret run-scoped ACCEPT_EULA; policy inputs
+    # and output storage use the standard workflow S3 credential contract.
+    "workbench.isaac_arena": (),
     # The default GEAR-SONIC and GR00T-N1.7 assets are public. Callers may still
     # pass HF_TOKEN for rate limits or private overrides, but it is not a preflight.
     "workbench.sonic": (),
@@ -1140,7 +1144,7 @@ def self_hosted_vlm_model(config: Mapping[str, Any]) -> str:
 #: NVIDIA's documented, run-scoped gate on Isaac acquisition/use.
 ISAAC_EULA_ENV = "ACCEPT_EULA"
 #: Image keys in TOOL_REF_IMAGE_TOOL that resolve to an Isaac-based image.
-ISAAC_IMAGE_TOOLS = frozenset({"isaac-lab", "sonic"})
+ISAAC_IMAGE_TOOLS = frozenset({"isaac-lab", "isaac-arena", "sonic"})
 
 
 def routes_at_an_isaac_image(
@@ -1181,7 +1185,7 @@ def routes_at_an_isaac_image(
     raw = resources or {}
     image = str(resolved_image or raw.get("image") or raw.get("image_id") or "").lower()
     image = image.removeprefix("docker:")
-    if "isaac-lab" in image or "npa-sonic" in image:
+    if any(name in image for name in ("isaac-lab", "npa-isaac-arena", "npa-sonic")):
         return True
     pod = ((raw.get("kubernetes") or {}).get("pod_config") or {}).get("spec") or {}
     for container in pod.get("containers") or []:

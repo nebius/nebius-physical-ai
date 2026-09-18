@@ -1,5 +1,6 @@
 """Exercise real media correspondence and fail-closed native transfer integration."""
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -57,6 +58,32 @@ def test_normalization_preserves_complete_duration_and_provenance(prepared):
     assert evidence["visual_quality_evaluated"] is False
 
 
+@pytest.mark.parametrize("frames,count,indices", [
+    (288, 8, [0, 41, 82, 123, 164, 205, 246, 287]),
+    (3, 8, [0, 1, 2]),
+    (24, 1, [0]),
+])
+def test_caption_frames_cover_complete_video_without_repetition(tmp_path, frames, count, indices):
+    from PIL import Image
+    from npa.workflows.paidf_cosmos3 import _extract_frames
+
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("real frame extraction requires ffmpeg and ffprobe")
+    source = tmp_path / "frame-coded.mkv"
+    colors = np.array([[index % 256, index // 256, 127] for index in range(frames)], dtype=np.uint8)
+    pixels = np.broadcast_to(colors[:, None, None, :], (frames, 48, 64, 3)).tobytes()
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
+                    "-s", "64x48", "-r", "24", "-i", "pipe:0", "-c:v", "ffv1",
+                    "-pix_fmt", "bgr0", str(source)], input=pixels, check=True)
+    extracted = _extract_frames(source, tmp_path / "captions", count=count)
+    assert len(extracted) == len(indices)
+    for path, index in zip(extracted, indices, strict=True):
+        with Image.open(path) as image:
+            actual = np.asarray(image.convert("RGB"))
+        assert actual.shape == (48, 64, 3)
+        assert np.all(actual == colors[index])
+
+
 @pytest.mark.parametrize("fps,frames,size", [(24, 80, "832x480"), (25, 81, "832x480"), (24, 81, "640x480")])
 def test_mismatched_output_never_passes_alignment(prepared, tmp_path, fps, frames, size):
     _, source, _ = prepared
@@ -73,24 +100,117 @@ def test_invalid_media_refused_before_generation(tmp_path, content):
         media.probe_video(path)
 
 
-def test_native_sample_uses_all_source_controls_and_explicit_seed(prepared, tmp_path):
+@pytest.mark.parametrize("preset", ["very_low", "low", "medium", "high", "very_high"])
+@pytest.mark.parametrize("rgb_weight", [0.0, 0.5])
+@pytest.mark.parametrize("first_frames", [0, 1])
+def test_native_sample_uses_all_source_controls_and_explicit_seed(prepared, tmp_path, preset, rgb_weight, first_frames):
     _, source, _ = prepared
     sample = transfer.transfer_sample({"name": "sample", "model_mode": "video2video",
-                                       "vision_path": str(source)}, transfer.TransferSettings(), tmp_path, 17)
+                                       "vision_path": str(source)}, transfer.TransferSettings(edge_threshold=preset, rgb_weight=rgb_weight,
+                                                                                             first_chunk_conditional_frames=first_frames), tmp_path, 17)
     assert sample["max_frames"] == 81
     assert sample["seed"] == 17
     assert sample["fps"] == 24
     assert sample["num_video_frames_per_chunk"] == 93
-    assert sample["edge"]["preset_edge_threshold"] == "medium"
+    assert sample["edge"]["preset_edge_threshold"] == preset
+    assert sample["num_first_chunk_conditional_frames"] == first_frames
+    assert sample["num_conditional_frames"] == 5
     assert sample["show_input"] is sample["show_control_condition"] is False
+    if rgb_weight:
+        assert sample["blur"] == {"control_path": str(tmp_path / "controls/sample-rgb.mkv"),
+                                  "preset_blur_strength": "none", "weight": rgb_weight}
+    else:
+        assert "blur" not in sample
 
 
 @pytest.mark.parametrize("values", [{"fps": 50}, {"fps": True}, {"chunk_frames": 94},
                                     {"control_guidance": float("nan")}, {"control_guidance": 10.1},
-                                    {"control_guidance": "1.5"}, {"control_guidance": False}])
+                                    {"control_guidance": "1.5"}, {"control_guidance": False},
+                                    {"edge_threshold": "auto"}, {"edge_threshold": None},
+                                    {"edge_threshold": []}, {"rgb_weight": -0.1},
+                                    {"rgb_weight": float("nan")}, {"rgb_weight": float("inf")},
+                                    {"rgb_weight": True}, {"rgb_weight": "0.5"},
+                                    {"first_chunk_conditional_frames": -1}, {"first_chunk_conditional_frames": 2},
+                                    {"first_chunk_conditional_frames": True}, {"first_chunk_conditional_frames": 0.0},
+                                    {"first_chunk_conditional_frames": "0"}])
 def test_unsupported_native_controls_are_rejected(values):
     with pytest.raises(ValueError):
         transfer.TransferSettings(**values).validate()
+
+
+@pytest.mark.parametrize("preset,thresholds", [("very_low", (20, 50)), ("low", (50, 100)),
+                                             ("medium", (100, 200)), ("high", (200, 300)),
+                                             ("very_high", (300, 400))])
+def test_real_edge_video_retains_exact_preset_pixels(prepared, tmp_path, preset, thresholds):
+    cv2 = pytest.importorskip("cv2")
+    _, source, _ = prepared
+    destination = tmp_path / "control.mkv"
+    count, digest = native._write_edges(source, destination, 24, preset)
+    original, control = cv2.VideoCapture(str(source)), cv2.VideoCapture(str(destination))
+    expected_hash = hashlib.sha256()
+    decoded = 0
+    try:
+        while True:
+            ok, frame = original.read()
+            read, actual = control.read()
+            assert ok == read
+            if not ok:
+                break
+            expected = cv2.Canny(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), *thresholds)
+            assert np.array_equal(actual, np.repeat(expected[:, :, None], 3, axis=2))
+            expected_hash.update(expected.tobytes())
+            decoded += 1
+    finally:
+        original.release()
+        control.release()
+    assert decoded == count == 81
+    assert digest == expected_hash.hexdigest()
+
+
+def test_rgb_control_retains_all_source_colors_and_frames(tmp_path):
+    cv2 = pytest.importorskip("cv2")
+    source = _video(tmp_path / "source.mp4", fps=24, frames=9, size="832x480")
+    destination = tmp_path / "rgb.mkv"
+    count, digest = native._write_rgb(source, destination, 24)
+    original, control = cv2.VideoCapture(str(source)), cv2.VideoCapture(str(destination))
+    expected_hash = hashlib.sha256()
+    decoded = 0
+    try:
+        while True:
+            ok, frame = original.read()
+            read, actual = control.read()
+            assert ok == read
+            if not ok:
+                break
+            assert np.array_equal(actual, frame)
+            expected_hash.update(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB).tobytes())
+            decoded += 1
+    finally:
+        original.release()
+        control.release()
+    assert decoded == count == 9
+    assert digest == expected_hash.hexdigest()
+    media.validate_reference(media.probe_video(destination), 24)
+
+
+def test_native_rgb_verification_rejects_changed_pixels(monkeypatch, tmp_path):
+    torch = pytest.importorskip("torch")
+    pixels = np.zeros((9, 480, 832, 3), dtype=np.uint8)
+    pixels[..., 0], pixels[..., 1], pixels[..., 2] = 13, 97, 211
+    frames = torch.from_numpy(pixels).permute(3, 0, 1, 2)
+    control_path = tmp_path / "rgb.mkv"
+    control_path.write_bytes(b"native-loader-seam")
+    control = SimpleNamespace(control_path=control_path, preset_blur_strength="none", weight=0.5)
+    sample = SimpleNamespace(transfer_hints={"blur": control}, resolution="480", aspect_ratio="16,9", max_frames=9)
+    monkeypatch.setitem(sys.modules, "cosmos_framework.inference.args", SimpleNamespace(TransferHintKey=SimpleNamespace(BLUR="blur")))
+    monkeypatch.setitem(sys.modules, "cosmos_framework.inference.transfer", SimpleNamespace(load_transfer_control_frames=lambda **kw: frames))
+    digest = hashlib.sha256(pixels.tobytes()).hexdigest()
+    evidence = native._verify_rgb(sample, 9, digest)
+    assert evidence["weight"] == 0.5 and evidence["control_loader_verified"] is True
+    assert evidence["output_pixel_blending"] is False
+    pixels[0, 0, 0, 0] += 1
+    with pytest.raises(ValueError, match="RGB control pixels"):
+        native._verify_rgb(sample, 9, digest)
 
 
 def test_effective_prompt_is_checked_before_each_native_chunk():
@@ -149,6 +269,7 @@ def test_saved_output_is_guardrail_postprocessed_tensor(monkeypatch, tmp_path):
     processed = np.zeros((3, 6, 480, 832), dtype=np.float32)
     pipe = SimpleNamespace(guardrails=object(), _run_video_guardrail=lambda *a: processed)
     sample = SimpleNamespace(name="sample", fps=24, output_dir=tmp_path, video_save_quality=5,
+                             num_first_chunk_conditional_frames=0, num_conditional_frames=5,
                              model_dump=lambda **kw: {})
     generated = SimpleNamespace(output_video=np.ones((1, 3, 6, 480, 832), dtype=np.float32).view(_Video), fps=24)
     native._save_guarded_output(pipe, sample, generated, ["checked"], {"source_frames": 6})
@@ -157,21 +278,37 @@ def test_saved_output_is_guardrail_postprocessed_tensor(monkeypatch, tmp_path):
     assert evidence["guardrail_postprocessing_applied"] is True
     assert evidence["native_chunks"] == 1
     assert evidence["native_torch_compile"] is False
+    assert evidence["first_chunk_conditional_frames"] == 0
+    assert evidence["overlap_conditional_frames"] == 5
 
 
-def test_native_parser_sees_real_control_created_first(monkeypatch, tmp_path):
+@pytest.mark.parametrize("include_rgb", [False, True])
+def test_native_parser_sees_real_control_created_first(monkeypatch, tmp_path, include_rgb):
     input_file = tmp_path / "sample.json"
     control = tmp_path / "edges.mkv"
-    input_file.write_text(json.dumps({"name": "sample", "vision_path": "source.mp4", "fps": 24,
-                                     "edge": {"control_path": str(control), "preset_edge_threshold": "medium"}}))
+    rgb = tmp_path / "rgb.mkv"
+    fields = {"name": "sample", "vision_path": "source.mp4", "fps": 24,
+              "edge": {"control_path": str(control), "preset_edge_threshold": "low"}}
+    if include_rgb:
+        fields["blur"] = {"control_path": str(rgb), "preset_blur_strength": "none", "weight": 0.5}
+    input_file.write_text(json.dumps(fields))
 
-    def edges(source, destination, fps):
+    def edges(source, destination, fps, preset):
+        assert preset == "low"
         destination.write_bytes(b"real-control-seam")
         return 81, "digest"
 
     def parse(*args, **kwargs):
         assert control.read_bytes() == b"real-control-seam"
+        if include_rgb:
+            assert rgb.read_bytes() == b"rgb-control-seam"
         raise RuntimeError("reached native parser after preprocessing")
+
+    def colors(source, destination, fps):
+        destination.write_bytes(b"rgb-control-seam")
+        return 81, "rgb-digest"
+
+    monkeypatch.setattr(native, "_write_rgb", colors)
 
     setup = SimpleNamespace(guardrails=True, sample_overrides={}, get_sample_overrides_cls=lambda: SimpleNamespace(from_files=parse))
     def build_setup():
@@ -256,7 +393,7 @@ def test_captions_use_fresh_frames_from_verified_video(prepared, tmp_path):
         return SimpleNamespace(status="completed", captions=[CaptionItem(frame.name, "robot frame") for frame in frames])
 
     record, captions = _caption_variant(variant, str(tmp_path / "output"), "model", 8, 512, None, captioner)
-    assert record["image_count"] == len(captions) == 3
+    assert record["image_count"] == len(captions) == 8
     assert all(item["image"].startswith("variant/") for item in captions)
 
 

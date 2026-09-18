@@ -101,7 +101,6 @@ def test_token_factory_setup_requires_the_api_key_and_serves_nothing(spec_name: 
 #: tool's own defaults apply. Pinned so the gap is visible and can only shrink; see the
 #: `spec_gap` discussion in npa/src/npa/guardrails/three_tier.py.
 TEMPLATE_ONLY_FLAGS = {
-    "token-factory-caption.yaml": ("--instruction",),
     "token-factory-generate.yaml": ("--system-prompt", "--max-prompts"),
     "token-factory-cosmos-reason.yaml": ("--task", "--max-images"),
     "vlm-eval-token-factory.yaml": (

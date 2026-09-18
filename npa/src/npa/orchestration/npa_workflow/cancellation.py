@@ -127,6 +127,11 @@ def assess_run_cancellation(
         if not isinstance(wave, dict):
             errors.append(f"runtime wave {index} is malformed")
     runtime_waves = [item for item in raw_runtime_waves if isinstance(item, dict)]
+    failed_cancellations = {
+        str(wave.get("job_id") or wave.get("sky_job_id") or "")
+        for wave in runtime_waves
+        if (wave.get("cancellation") or {}).get("state") == "failed"
+    }
 
     def add_job(
         job_id: object,
@@ -323,6 +328,7 @@ def assess_run_cancellation(
             record.terminal_in_durable_state
             and not force_live_lookup
             and not cached_live
+            and record.job_id not in failed_cancellations
         ):
             record.live_outcome = "durable_terminal"
             record.live_status = _aggregate_terminal_states(record.persisted_states)
@@ -339,6 +345,11 @@ def assess_run_cancellation(
         record.live_error = evidence.error
         if evidence.outcome == "absent":
             absent.append(record)
+            if record.job_id in failed_cancellations:
+                errors.append(
+                    "original controller absence is unverified after failed cancellation; "
+                    "recover the original caller state or use reconcile-controller"
+                )
         elif evidence.outcome == "unavailable":
             errors.append(
                 f"managed job {record.job_id} ({record.job_name or resolution.run_id}) "
