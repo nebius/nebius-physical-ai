@@ -2285,6 +2285,8 @@ def test_lock_source_record_and_reviewed_revision_mismatches_fail(tmp_path) -> N
 def test_runtime_payload_hashes_bind_the_repository_lock_and_notice_bytes() -> None:
     expected = CONTRACT["required_final_file_sha256"]
     repository_mappings = {
+        "/opt/npa-runtime/npa/workflows/habitat_sim_smoke.py": ROOT
+        / "npa/src/npa/workflows/habitat_sim_smoke.py",
         "/usr/share/doc/npa-habitat-sim/source-manifest.json": PACKAGE
         / "source-manifest.json",
         "/usr/share/doc/npa-habitat-sim/licenses.json": PACKAGE / "licenses.json",
@@ -2312,10 +2314,7 @@ def test_runtime_payload_hashes_bind_the_repository_lock_and_notice_bytes() -> N
         ][0]["artifacts"]
     }
     assert set(expected) == (
-        set(repository_mappings)
-        | {"/opt/npa-runtime/npa/workflows/habitat_sim_smoke.py"}
-        | set(projected_source)
-        | set(source_artifacts)
+        set(repository_mappings) | set(projected_source) | set(source_artifacts)
     )
     for image_path, source_path in repository_mappings.items():
         assert expected[image_path] == _digest(source_path.read_bytes())
