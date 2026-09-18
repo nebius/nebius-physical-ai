@@ -9,7 +9,10 @@ import typer
 
 from npa.clients.project_credential_store import project_credential_record
 from npa.cli.agent_access import normalize_configured_artifact_sources
-from npa.cli.agent_env_files import _load_agent_artifact_sources_file
+from npa.cli.agent_env_files import (
+    _load_agent_artifact_sources_file,
+    _write_agent_artifact_sources_env,
+)
 
 
 class AgentStorageCredentialError(RuntimeError):
@@ -48,6 +51,30 @@ class ArtifactStorageCredentialResolution:
         }
 
 
+def write_artifact_sources_env(
+    ssh: Any,
+    artifact_sources: tuple[dict[str, str], ...] | list[dict[str, str]],
+    resolution: ArtifactStorageCredentialResolution | None,
+    region: str,
+) -> None:
+    """Stage the resolved read identity without expanding it in the CLI module."""
+
+    credentials = (
+        resolution.credentials if resolution else ("", "", "", "", "", "")
+    )
+    bucket, _prefix, endpoint, access_key, secret_key, _service_account = credentials
+    _write_agent_artifact_sources_env(
+        ssh,
+        artifact_sources=artifact_sources,
+        bucket=bucket,
+        endpoint=endpoint,
+        access_key=access_key,
+        secret_key=secret_key,
+        region=region,
+        credential_mode=resolution.mode if resolution else "unconfigured",
+    )
+
+
 def artifact_credential_summary(
     mode: str, *, sources_configured: bool
 ) -> dict[str, str]:
@@ -68,6 +95,34 @@ def artifact_credential_record_summary(record: dict[str, Any]) -> dict[str, str]
         str(record.get("artifact_credential_mode") or "unconfigured"),
         sources_configured=bool(record.get("artifact_sources")),
     )
+
+
+def validate_live_artifact_credentials(
+    record: dict[str, Any], payload: dict[str, Any]
+) -> None:
+    """Require live artifact-read status to match the persisted bootstrap mode."""
+
+    credentials = payload.get("artifact_credentials")
+    if not isinstance(credentials, dict):
+        raise AgentStorageCredentialError(
+            "agent access endpoint did not report artifact credential separation"
+        )
+    expected_mode = str(record.get("artifact_credential_mode") or "unconfigured")
+    if credentials.get("mode") != expected_mode:
+        raise AgentStorageCredentialError(
+            "agent artifact credential mode differs from bootstrap state"
+        )
+    if record.get("artifact_sources") and credentials.get("status") not in {
+        "ready",
+        "warning",
+    }:
+        raise AgentStorageCredentialError(
+            "configured artifact source has no usable artifact read identity"
+        )
+    if expected_mode == "isolated-read" and credentials.get("status") != "ready":
+        raise AgentStorageCredentialError(
+            "isolated artifact read identity is not ready"
+        )
 
 
 def emit_artifact_migration_warning(

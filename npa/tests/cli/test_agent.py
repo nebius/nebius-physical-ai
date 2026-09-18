@@ -7316,17 +7316,9 @@ def test_bootstrap_refresh_stages_artifact_reads_without_replacing_deployment_wr
         )
         == refreshed_tuple
     )
-    assert tuple(
-        staged[key]
-        for key in (
-            "artifact_s3_bucket",
-            "artifact_s3_endpoint",
-            "artifact_s3_access_key",
-            "artifact_s3_secret_key",
-        )
-    ) == (exact_tuple[0], *exact_tuple[2:5])
     assert staged["artifact_sources"] == (source,)
-    assert staged["artifact_credential_mode"] == "isolated-read"
+    assert staged["artifact_storage"].credentials == exact_tuple
+    assert staged["artifact_storage"].mode == "isolated-read"
 
 
 def test_bootstrap_recovery_preserves_owner_artifact_source_file(
