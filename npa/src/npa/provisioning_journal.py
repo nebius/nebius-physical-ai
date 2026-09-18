@@ -447,6 +447,32 @@ def _lease_with_current_operation(lease: Mapping[str, Any]) -> dict[str, Any]:
     return current
 
 
+def _is_empty_provider_collision(payload: Mapping[str, Any]) -> bool:
+    """Return whether a failed operation safely records a rejected create."""
+    if str(payload.get("phase") or "") != "recovery-required":
+        return False
+    if any(payload.get(key) for key in ("resources", "local_state_copies", "config_mutations")):
+        return False
+    rollback = payload.get("rollback")
+    if isinstance(rollback, Mapping) and rollback.get("attempted"):
+        return False
+    failure = str(payload.get("last_error") or "").lower()
+    return "alreadyexists" in failure or "already exists" in failure
+
+
+def _terminalize_empty_provider_collision(operation: "ProvisioningOperation") -> None:
+    """Close a provider-rejected create that made no recorded mutation."""
+    reason = "provider rejected a colliding create before NPA recorded any owned resource"
+    operation.record_rollback(
+        attempted=False,
+        completed=True,
+        removed=[],
+        preserved=[],
+        error=reason,
+    )
+    operation.transition("rolled-back", error=reason)
+
+
 @contextmanager
 def _locked_project_execution(
     operation: "ProvisioningOperation",
@@ -514,6 +540,14 @@ def _locked_project_execution(
                 )
             except OperationJournalError:
                 prior = lease
+            if _is_empty_provider_collision(prior):
+                # The provider denied creation before NPA received an owned resource
+                # or durable state. Releasing only this receipt lets an explicitly
+                # different target proceed without adopting or deleting anything.
+                _terminalize_empty_provider_collision(
+                    ProvisioningOperation(prior_operation_id)
+                )
+                prior = ProvisioningOperation(prior_operation_id).read()
             prior_phase = str(prior.get("phase") or lease.get("phase") or "")
             if prior_phase not in TERMINAL_PHASES:
                 raise OperationJournalError(

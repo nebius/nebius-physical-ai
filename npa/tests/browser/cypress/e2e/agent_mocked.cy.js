@@ -1,4 +1,5 @@
 import {
+  ASSETS,
   ARTIFACT_ONLY_RUN_ID,
   COMPLEX_WORKFLOW_YAML,
   DF_INPUT_ONLY_RUN_ID,
@@ -8,6 +9,7 @@ import {
   NON_STOCK_RUN_ID,
   SIM_VIZ,
   STATIC_BUTTON_IDS,
+  WORKFLOW_VALIDATION,
   WORKFLOW_YAML,
 } from "../support/e2e";
 
@@ -669,7 +671,7 @@ describe("NPA agent UI with mocked APIs", () => {
       cy.get(`#${id}`).should("exist");
     }
     cy.get("#workflowYaml").should("contain.value", "apiVersion: npa.workflow/v0.0.1");
-    cy.get("#workflowSubmitHint").should("contain.text", "plan-only");
+    cy.get("#workflowSubmitHint").should("contain.text", "single-use confirmation");
     cy.get("#tabMain").should("have.attr", "aria-selected", "true");
     cy.get("#tabRerun").click();
     cy.get("#tabRerun").should("have.attr", "aria-selected", "true");
@@ -1424,6 +1426,54 @@ describe("NPA agent UI with mocked APIs", () => {
     });
   }
 
+  it("waits for initial session hydration before sending the first chat", () => {
+    let releaseSession;
+    let chatRequests = 0;
+    cy.intercept({ method: "GET", url: "/api/session", times: 1 }, (request) =>
+      new Cypress.Promise((resolve) => {
+        releaseSession = () => {
+          request.reply({ statusCode: 200, body: {
+            selection: ASSETS.selection,
+            sim_viz: SIM_VIZ,
+            latest_submit: { run_id: "mock-run" },
+            camera_selection: ["workspace"],
+            chat_history: [],
+            active_chat_session_id: "session-two",
+            chat_sessions: [{ id: "session-two", title: "Restored chat" }],
+            llm: { model: "mock/model", models: ["mock/model"] },
+            workflow_draft: { yaml: WORKFLOW_YAML, validation: WORKFLOW_VALIDATION },
+          } });
+          resolve();
+        };
+      }),
+    ).as("delayedInitialSession");
+    cy.intercept("POST", "/api/chat", (request) => {
+      chatRequests += 1;
+      expect(request.body.session_id).to.eq("session-two");
+      request.reply({ statusCode: 200, body: {
+        ok: true,
+        session_id: "session-two",
+        model: "mock/model",
+        reply: "The hydrated first reply remains visible.",
+      } });
+    }).as("hydratedFirstChat");
+
+    cy.reload();
+    cy.get("#chatInput").type("Send after hydration.");
+    cy.get("#chatSend").click();
+    cy.wrap(null).should(() => expect(releaseSession).to.be.a("function"));
+    cy.then(() => {
+      expect(chatRequests, "chat before session hydration").to.eq(0);
+      releaseSession();
+    });
+    cy.wait("@delayedInitialSession");
+    cy.wait("@hydratedFirstChat");
+    cy.get("#chatSessionSelect").should("have.value", "session-two");
+    cy.get("#chatLog .msg-row.assistant").should(
+      "contain.text", "The hydrated first reply remains visible."
+    );
+  });
+
   it("serializes overlapping chat mutations so fresh discovery keeps the newest session", () => {
     let releaseFirst;
     let serverActive = "default";
@@ -1551,8 +1601,14 @@ describe("NPA agent UI with mocked APIs", () => {
 
     cy.get("#workflowSubmitYaml").click();
     cy.wait("@workflowSubmitYaml");
-    cy.get("#chatLog").should("contain.text", "Submitted npa.workflow");
-    cy.get("#chatLog").should("contain.text", "plan");
+    cy.get("#workflowExecutionConfirm").should("be.visible");
+    cy.get("#workflowExecutionConfirm").should("contain.text", "Confirm workflow execution");
+    cy.get("#workflowExecutionConfirm button").click();
+    cy.wait("@workflowSubmitYaml");
+    cy.get("#chatLog").should("contain.text", "Completed workflow run");
+    cy.get("#chatLog").should("contain.text", "SUCCEEDED");
+    cy.get("#workflowExecutionStatus").should("contain.text", "Durable workflow status");
+    cy.get("#workflowExecutionStatus").should("contain.text", "SUCCEEDED");
   });
 
   it("covers Stages panel, Rerun buttons, and run-data loading", () => {

@@ -218,12 +218,17 @@ def test_persistent_env_install_uses_real_atomic_coreutils_and_cleans_up(
     tmp_path, failure
 ):
     """Run the actual destination-filesystem installation shell locally."""
-    import getpass
     import shlex
     import subprocess
     import tempfile
     from contextlib import contextmanager
     from npa.deploy.configurator import write_remote_env_file
+
+    # Production execution is SSHed to a Linux VM. This fixture intentionally
+    # executes the remote command verbatim, so BSD mv on a macOS workstation is
+    # not a valid stand-in for the GNU mv -T contract.
+    if subprocess.run(["mv", "--version"], capture_output=True).returncode:
+        pytest.skip("the remote installer contract requires GNU mv")
 
     commands = []
     staging = []
@@ -259,7 +264,10 @@ def test_persistent_env_install_uses_real_atomic_coreutils_and_cleans_up(
     target = tmp_path / "destination" / "config"
     target.parent.mkdir()
     target.write_text("original")
-    options = {"owner": "npa-no-such-user-fixture" if failure else getpass.getuser()}
+    options = {
+        "owner": "npa-no-such-user-fixture" if failure else str(os.getuid()),
+        "group": str(os.getgid()),
+    }
     if failure:
         with pytest.raises(SSHError, match="install failure"):
             write_remote_env_file(
@@ -272,7 +280,8 @@ def test_persistent_env_install_uses_real_atomic_coreutils_and_cleans_up(
         )
         assert target.read_text() == "HF_TOKEN='synthetic-value'\n"
         assert stat.S_IMODE(target.stat().st_mode) == 0o600
-        assert "mv -fT" in shlex.split(commands[-1])[-1]
+        script = shlex.split(commands[-1])[-1]
+        assert "mv -fT -- " in script
     assert all("synthetic-value" not in command for command in commands)
     assert not any(path.exists() for path in staging)
     assert list(target.parent.iterdir()) == [target]

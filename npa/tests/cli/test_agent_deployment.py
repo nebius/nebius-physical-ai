@@ -11,6 +11,7 @@ from npa.cli.agent import _auth_secret_path
 from npa.cli.agent_deployment import (
     AgentConfig,
     DeploymentIdentityError,
+    adopt_legacy_remote_identity,
     agent_lifecycle_lock,
     assert_live_deployment,
     assert_remote_owner_if_present,
@@ -179,6 +180,31 @@ def test_existing_remote_owner_is_checked_before_bootstrap(source_repo: Path) ->
 
     with pytest.raises(DeploymentIdentityError, match="owner mismatch.*branch"):
         assert_remote_owner_if_present(FakeSsh(), expected)
+
+
+def test_adopt_legacy_remote_identity_keeps_matching_remote_namespace(
+    source_repo: Path,
+) -> None:
+    expected = _manifest(source_repo)
+    remote = dict(expected)
+    remote["branch"] = "release/previous-agent"
+    remote["deployment_id"] = "npa-agent-legacy-identity"
+
+    adopted = adopt_legacy_remote_identity(expected, remote)
+
+    assert adopted["branch"] == "release/previous-agent"
+    assert adopted["deployment_id"] == "npa-agent-legacy-identity"
+    assert adopted["commit"] == expected["commit"]
+    assert adopted["source_tree"] == expected["source_tree"]
+
+
+def test_adopt_legacy_remote_identity_rejects_another_agent_name(source_repo: Path) -> None:
+    expected = _manifest(source_repo)
+    remote = dict(expected)
+    remote["deployment_name"] = "another-agent"
+
+    with pytest.raises(DeploymentIdentityError, match="agent name"):
+        adopt_legacy_remote_identity(expected, remote)
 
 
 def test_backend_down_still_checks_persisted_manifest(source_repo: Path) -> None:

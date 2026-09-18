@@ -7,6 +7,7 @@ import pytest
 
 from npa.cluster.identity import ClusterIdentityError
 from npa.orchestration.skypilot import cleanup as controller
+from npa.orchestration.skypilot import local_api
 from npa.orchestration.skypilot.cleanup import CleanupResult
 from npa import teardown_receipts
 
@@ -42,6 +43,9 @@ def identity_fixture(monkeypatch, tmp_path: Path):  # noqa: ANN001
         lambda **kwargs: identity,
     )
     monkeypatch.setattr(controller, "_nonterminal_job_ids", lambda **kwargs: [])
+    # This is a cloned-state control-flow fixture. Host-policy rejection has
+    # dedicated coverage and is not part of its remote-deletion contract.
+    monkeypatch.setattr(local_api, "_require_linux_host", lambda: None)
     return identity
 
 

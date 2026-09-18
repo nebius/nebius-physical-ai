@@ -387,6 +387,135 @@ def test_agent_operator_profile_privately_stages_remote_kubeconfig(
     )
 
 
+def test_agent_profile_adopts_one_project_owned_kubeconfig(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Bootstrap can stage the normal NPA cluster cache without guessing."""
+
+    from npa.cli import agent_env_files
+    from npa.cluster import state as cluster_state
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "projects:\n  demo:\n    project_id: project-unit\n", encoding="utf-8"
+    )
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\nclusters: []\n", encoding="utf-8")
+    monkeypatch.setattr(agent_env_files, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(
+        cluster_state,
+        "list_local_clusters",
+        lambda: [
+            SimpleNamespace(
+                name="unit-context",
+                project_id="project-unit",
+                last_seen_state="RUNNING",
+                endpoint="https://cluster.example",
+                node_count=1,
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        cluster_state,
+        "existing_kubeconfig",
+        lambda name: kubeconfig if name == "unit-context" else None,
+    )
+
+    placement, content = agent_env_files._remote_kubernetes_config("demo")
+
+    assert placement == {"cluster_name": "unit-context", "context": "unit-context"}
+    assert content == "apiVersion: v1\nclusters: []\n"
+
+
+def test_agent_profile_rejects_ambiguous_adopted_kubeconfigs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli import agent_env_files
+    from npa.cluster import state as cluster_state
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "projects:\n  demo:\n    project_id: project-unit\n", encoding="utf-8"
+    )
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\nclusters: []\n", encoding="utf-8")
+    monkeypatch.setattr(agent_env_files, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(
+        cluster_state,
+        "list_local_clusters",
+        lambda: [
+            SimpleNamespace(
+                name="first-context",
+                project_id="project-unit",
+                last_seen_state="RUNNING",
+                endpoint="https://first.example",
+                node_count=1,
+            ),
+            SimpleNamespace(
+                name="second-context",
+                project_id="project-unit",
+                last_seen_state="RUNNING",
+                endpoint="https://second.example",
+                node_count=1,
+            ),
+        ],
+    )
+    monkeypatch.setattr(cluster_state, "existing_kubeconfig", lambda _name: kubeconfig)
+
+    assert agent_env_files._remote_kubernetes_config("demo") == ({}, "")
+
+
+def test_agent_staged_kubeconfig_uses_its_attached_nebius_profile() -> None:
+    from npa.cli import agent_env_files
+
+    staged = agent_env_files._agent_kubeconfig_without_operator_profile(
+        """apiVersion: v1
+users:
+  - name: cluster-user
+    user:
+      exec:
+        command: /operator/private/.nebius/bin/nebius
+        args: [mk8s, kubeconfig, exec, --profile, operator-only, --format, json]
+contexts: []
+"""
+    )
+
+    document = yaml.safe_load(staged)
+    executable = document["users"][0]["user"]["exec"]
+    args = executable["args"]
+    assert executable["command"] == "nebius"
+    assert args == ["mk8s", "kubeconfig", "exec", "--format", "json"]
+
+
+def test_agent_stages_a_valid_local_cluster_identity_record(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli import agent_env_files
+    from npa.cluster import state as cluster_state
+
+    state_path = tmp_path / "cluster.json"
+    state_path.write_text(
+        json.dumps({"name": "agent-context", "project_id": "project-unit"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cluster_state,
+        "state_file",
+        lambda name: state_path if name == "agent-context" else tmp_path / "missing",
+    )
+
+    content = agent_env_files._remote_cluster_state_content(
+        "agent-context", remote_kubeconfig_path="/home/agent/.npa/clusters/agent-context/kubeconfig"
+    )
+
+    assert json.loads(content) == {
+        "name": "agent-context",
+        "project_id": "project-unit",
+        "kubeconfig_path": "/home/agent/.npa/clusters/agent-context/kubeconfig",
+    }
+    assert agent_env_files._remote_cluster_state_content("../unsafe") == ""
+
+
 def test_agent_operator_profile_stages_exact_project_credentials() -> None:
     from npa.cli import agent_env_files
 
@@ -1411,6 +1540,103 @@ def test_public_ingress_excludes_internal_backend_port() -> None:
     assert 8787 not in ports
 
 
+def test_bootstrap_explicit_ingress_recovery_uses_only_supplied_cidrs(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "npa.cli.agent.ensure_ingress", lambda **kwargs: calls.append(kwargs)
+    )
+
+    agent_module._ensure_bootstrap_ingress(
+        instance_id="instance-synthetic",
+        ssh_cidr_block="203.0.113.50/32",
+        application_cidr_block="203.0.113.50/32",
+        allow_world_open_ssh=False,
+        allow_world_open_application=False,
+        agent_port=8088,
+        rerun_port=9090,
+        public_https=True,
+    )
+
+    assert calls == [
+        {
+            "vm_id": "instance-synthetic",
+            "ports": (22,),
+            "source": "203.0.113.50/32",
+            "allow_world_open": False,
+            "tool": "agent-bootstrap",
+        },
+        {
+            "vm_id": "instance-synthetic",
+            "ports": (443, 8088, 9090),
+            "source": "203.0.113.50/32",
+            "allow_world_open": False,
+            "tool": "agent-bootstrap",
+        },
+    ]
+
+
+def test_bootstrap_explicit_ingress_recovery_is_noop_without_cidrs(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "npa.cli.agent.ensure_ingress",
+        lambda **_kwargs: pytest.fail("bootstrap changed ingress without an explicit CIDR"),
+    )
+
+    agent_module._ensure_bootstrap_ingress(
+        instance_id="",
+        ssh_cidr_block="",
+        application_cidr_block="",
+        allow_world_open_ssh=False,
+        allow_world_open_application=False,
+        agent_port=8088,
+        rerun_port=9090,
+        public_https=True,
+    )
+
+
+def test_bootstrap_exposes_explicit_ingress_recovery_options() -> None:
+    result = runner.invoke(app, ["bootstrap", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "--ssh-cidr-block" in result.output
+    assert "--application-cidr-block" in result.output
+    assert "--allow-world-open-ssh" in result.output
+    assert "--allow-world-open-application" in result.output
+    assert "--adopt-remote-identity" in result.output
+
+
+def test_bootstrap_refreshes_local_source_after_an_interrupted_prior_attempt() -> None:
+    import inspect
+
+    source = inspect.getsource(agent_module.bootstrap_cmd)
+
+    assert "A prior interrupted" in source
+    assert "resuming=False" in source
+
+
+def test_agent_ui_treats_restricted_tenant_listing_as_partial_access_notice() -> None:
+    ui = Path(agent_module.__file__).with_name("agent_ui.html").read_text(
+        encoding="utf-8"
+    )
+
+    assert ".access-errors.is-notice" in ui
+    assert "const tenantListingOnly" in ui
+    assert "Tenant-wide project listing is restricted." in ui
+    assert "errorsHost.classList.toggle(\"is-notice\", limitedDiscovery)" in ui
+
+
+def test_agent_ui_opens_view_after_live_evidence_chat_action() -> None:
+    ui = Path(agent_module.__file__).with_name("agent_ui.html").read_text(
+        encoding="utf-8"
+    )
+
+    assert "async function applyLiveEvidence(evidence)" in ui
+    assert "await applyLiveEvidence(data.live_evidence);" in ui
+    assert "await activateMainTab(\"rerun\");" in ui
+    assert "await waitForRerunSuccess(String((simViz && simViz.camera) || \"workspace\"), {" in ui
+
+
 def test_existing_agent_bootstrap_fails_closed_when_https_ingress_cannot_be_ensured() -> (
     None
 ):
@@ -1988,6 +2214,18 @@ def test_bootstrap_embeds_cameras_panel() -> None:
     assert "cameras-panel" not in source
     assert "cameraCards" not in source
     assert "Preview in Rerun" not in source
+
+
+def test_workflow_execution_polling_defers_to_the_durable_runtime() -> None:
+    source = _agent_ui_bundle()
+    poll = source.split("async function waitForWorkflowExecution", 1)[1].split(
+        "function showWorkflowExecutionConfirmation", 1
+    )[0]
+
+    assert "while (true)" in poll
+    assert "15 * 60 * 1000" not in poll
+    assert "Workflow execution is still running" not in poll
+    assert "safe runtime category" in source
     assert '@app.get("/sim-assets/cameras")' in source
     assert '@app.post("/sim-viz/camera-preview")' in source
     assert "world/cameras/" in source
@@ -2287,7 +2525,8 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert '@app.post("/sim-viz/load-artifact")' in source
     # Every artifact must be directly downloadable: streaming download endpoint
     # + a per-artifact Download button wired to it.
-    assert '@app.api_route("/artifacts/download", methods=["GET", "HEAD"])' in source
+    assert '@app.get("/artifacts/download", operation_id="artifacts_download_get")' in source
+    assert '@app.head("/artifacts/download", operation_id="artifacts_download_head")' in source
     assert (
         'data-action="download-artifact"' in source
         or "data-action='download-artifact'" in source
@@ -2600,6 +2839,14 @@ def test_bootstrap_visualize_run_selector_lists_discovered_runs() -> None:
     # The run selector is a UNION of known + discovered runs (does not clobber).
     assert "mergeRunsLatestFirst(knownAvailableRuns, discoveredArtifactRuns)" in source
     assert 'fillRunSelectOptionsRich(document.getElementById("runIdSelect")' in source
+
+
+def test_bootstrap_rerun_uses_published_recording_url_when_available() -> None:
+    """The embedded viewer receives the published RRD instead of its welcome page."""
+    source = _agent_ui_bundle()
+    assert '"/rerun/?url=" +' in source
+    assert '"&hide_welcome_screen=1&theme=dark&camera=" +' in source
+    assert "return fullHref;" in source
 
 
 def test_bootstrap_run_history_uses_run_id_index() -> None:
@@ -3547,7 +3794,7 @@ def test_bootstrap_emitted_ui_script_is_valid_javascript(monkeypatch) -> None:
     agent_module._bootstrap_agent_stack(
         host="203.0.113.50",
         ssh_user="ubuntu",
-        ssh_key_path="/tmp/key",
+        ssh_key_path=str(Path.cwd() / "unit-test-ssh-key"),
         project_alias="smoke",
         project_id="project-id",
         tenant_id="tenant-id",
@@ -3645,6 +3892,61 @@ def test_bootstrap_uses_unique_remote_setup_script_path() -> None:
     paths = [call.args[1] for call in ssh.upload_private_text.call_args_list]
     assert len(set(paths)) == 2
     assert all(path.startswith("./.npa-agent-bootstrap-") for path in paths)
+
+
+def test_bootstrap_pins_nebius_cli_for_the_root_backend() -> None:
+    """Agent quota planning must use the tested CLI, not a stale VM install."""
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert 'supported_tool_version("nebius-cli", __file__)' in source
+    assert 'NEBIUS_CLI_VERSION="$NEBIUS_REQUIRED_VERSION" bash' in source
+    assert 'sudo install -m 0755 "$NEBIUS_USER_BIN" /usr/local/bin/nebius' in source
+
+
+def test_bootstrap_reuses_verified_previously_adopted_remote_owner(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A safe initial adoption must not make all later refreshes impossible."""
+    from types import SimpleNamespace
+
+    from npa.cli import agent as agent_module
+
+    persisted = {
+        "deployment_id": "npa-agent-adopted",
+        "deployment_name": "agent",
+        "project_alias": "demo",
+        "runtime_namespace": "demo/agent",
+        "repository": "owner/repository",
+        "branch": "release/stable",
+        "commit": "old-commit",
+        "source_tree": "old-tree",
+        "short_commit": "old-commit",
+        "workspace_label": "NPA Workbench",
+        "bootstrap_timestamp": "2026-01-01T00:00:00Z",
+    }
+    expected = {**persisted, "commit": "new-commit", "source_tree": "new-tree", "short_commit": "new-commit"}
+
+    monkeypatch.setattr(agent_module, "SSHClient", lambda **_kwargs: object())
+    monkeypatch.setattr(
+        agent_module, "resolve_ssh_config", lambda **_kwargs: SimpleNamespace(ssh={})
+    )
+    monkeypatch.setattr(agent_module, "read_remote_owner_if_present", lambda *_args, **_kwargs: dict(persisted))
+    monkeypatch.setattr(agent_module, "build_deployment_manifest", lambda **_kwargs: expected)
+
+    adopted = agent_module._adopt_legacy_bootstrap_identity(
+        record={"deployment": persisted},
+        host="203.0.113.50",
+        ssh_user="ubuntu",
+        ssh_key_path=str(tmp_path / "key"),
+        project_alias="demo",
+        agent_name="agent",
+        backend_port=8787,
+    )
+
+    assert adopted["deployment_id"] == persisted["deployment_id"]
+    assert adopted["branch"] == persisted["branch"]
+    assert adopted["commit"] == "new-commit"
 
 
 def test_rrd_publish_uses_request_unique_atomic_temp_path() -> None:
@@ -4671,6 +4973,8 @@ def test_agent_setup_picks_configured_project(monkeypatch, tmp_path) -> None:
             "ssh_cidr_block=203.0.113.50/32",
             "--tf-var",
             "application_cidr_block=203.0.113.50/32",
+            "--tf-var",
+            "public_ipv4_pool_id=vpcpool-test",
         ],
     )
 
@@ -4679,6 +4983,7 @@ def test_agent_setup_picks_configured_project(monkeypatch, tmp_path) -> None:
     assert captured["project_id"] == "project-dev"
     assert captured["tenant_id"] == "tenant-a"
     assert captured["region"] == "us-central1"
+    assert captured["tf_var"][-1] == "public_ipv4_pool_id=vpcpool-test"
 
     # Interactive: pressing Enter accepts the default_project (prod).
     captured.clear()
@@ -4755,6 +5060,8 @@ def test_agent_setup_passes_concrete_defaults_to_deploy(monkeypatch, tmp_path) -
             "ssh_cidr_block=203.0.113.50/32",
             "--tf-var",
             "application_cidr_block=203.0.113.50/32",
+            "--ipv4-public-pool-id",
+            "vpcpool-synthetic",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -4770,6 +5077,7 @@ def test_agent_setup_passes_concrete_defaults_to_deploy(monkeypatch, tmp_path) -
     assert captured["agent_port"] == DEFAULT_AGENT_PORT
     assert captured["backend_port"] == DEFAULT_BACKEND_PORT
     assert captured["rerun_port"] == DEFAULT_RERUN_PORT
+    assert captured["ipv4_public_pool_id"] == "vpcpool-synthetic"
     assert captured["tf_var"] == [
         "ssh_cidr_block=203.0.113.50/32",
         "application_cidr_block=203.0.113.50/32",
@@ -4901,6 +5209,8 @@ def test_agent_setup_renders_string_terraform_vars(monkeypatch, tmp_path) -> Non
             "ssh_cidr_block=203.0.113.50/32",
             "--tf-var",
             "application_cidr_block=203.0.113.50/32",
+            "--ipv4-public-pool-id",
+            "vpcpool-synthetic",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -4909,6 +5219,7 @@ def test_agent_setup_renders_string_terraform_vars(monkeypatch, tmp_path) -> Non
     assert merged_vars["server_port"] == "8088"
     assert merged_vars["ssh_user"] == "ubuntu"
     assert merged_vars["extra_ingress_ports"] == "[443,9090]"
+    assert merged_vars["ipv4_public_pool_id"] == "vpcpool-synthetic"
     assert not any("OptionInfo" in str(value) for value in merged_vars.values()), (
         f"OptionInfo leaked into terraform vars: {merged_vars}"
     )
@@ -4919,6 +5230,16 @@ def test_agent_setup_renders_string_terraform_vars(monkeypatch, tmp_path) -> Non
         "s3_bucket": "npa-agent-state",
         "s3_endpoint": "https://storage.us-central1.nebius.cloud",
     }
+
+
+def test_agent_terraform_exposes_optional_public_ipv4_pool() -> None:
+    terraform_dir = Path(__file__).resolve().parents[2] / "src" / "npa" / "deploy" / "terraform"
+    main_tf = (terraform_dir / "main.tf").read_text(encoding="utf-8")
+    variables_tf = (terraform_dir / "variables.tf").read_text(encoding="utf-8")
+
+    assert 'variable "ipv4_public_pool_id"' in variables_tf
+    assert "ipv4_public_pools = trimspace(var.ipv4_public_pool_id)" in main_tf
+    assert "pools = [{ id = trimspace(var.ipv4_public_pool_id) }]" in main_tf
 
 
 def test_agent_deploy_keeps_s3_sentinels_out_of_terraform_and_agent_record(
@@ -6341,6 +6662,11 @@ def test_bootstrap_recovery_preserves_owner_artifact_source_file(
             "test-agent",
             "--artifact-source-file",
             str(source_file),
+            "--ssh-cidr-block",
+            "203.0.113.50/32",
+            "--application-cidr-block",
+            "203.0.113.50/32",
+            "--adopt-remote-identity",
         ],
     )
 
@@ -6349,6 +6675,11 @@ def test_bootstrap_recovery_preserves_owner_artifact_source_file(
     resume_argv = json.loads(journal.read_text())["recovery_commands"]["resume_argv"]
     option = resume_argv.index("--artifact-source-file")
     assert resume_argv[option + 1] == str(source_file)
+    ssh_option = resume_argv.index("--ssh-cidr-block")
+    assert resume_argv[ssh_option + 1] == "203.0.113.50/32"
+    application_option = resume_argv.index("--application-cidr-block")
+    assert resume_argv[application_option + 1] == "203.0.113.50/32"
+    assert "--adopt-remote-identity" in resume_argv
 
 
 def test_resolve_project_alias_prefers_the_only_configured_project(monkeypatch) -> None:
@@ -6548,12 +6879,33 @@ def test_ui_script_calls_no_undefined_local_helper() -> None:
     assert not undefined, f"UI script calls undefined helper(s): {undefined}"
 
 
+def test_workflow_execution_status_keeps_the_browser_usable() -> None:
+    """Active workflow execution must update a visible status without blocking the UI."""
+    ui = rendered_agent_ui_html()
+
+    assert 'id="workflowExecutionStatus"' in ui
+    assert "function monitorWorkflowExecution(runId)" in ui
+    assert "function restoreWorkflowExecutionStatus(executions)" in ui
+    assert "void monitorWorkflowExecution(executionRunId);" in ui
+    assert "restoreWorkflowExecutionStatus(session.workflow_executions);" in ui
+    assert "its status remains visible while the browser stays usable" in ui
+
+
 def test_artifact_role_summary_uses_the_declared_role() -> None:
     """Guard the conflict-prone semantic-role/artifact-role UI merge."""
 
     script = rendered_agent_ui_html().split("<script>")[-1].split("</script>")[0]
     assert "acc[artifactRole] = (acc[artifactRole] || 0) + 1" in script
     assert "acc[role] = (acc[role] || 0) + 1" not in script
+
+
+def test_artifact_ui_explains_background_discovery() -> None:
+    """A cold S3 scan must leave the browser with a clear retryable state."""
+    script = rendered_agent_ui_html().split("<script>")[-1].split("</script>")[0]
+    assert 'code === "artifact_access_pending"' in script
+    assert 'code === "artifact_discovery_pending"' in script
+    assert "checking storage in background; refresh shortly" in script
+    assert "retry_after_seconds" in script
 
 
 def test_boot_rerun_mount_preserves_a_newer_operator_media_preview() -> None:

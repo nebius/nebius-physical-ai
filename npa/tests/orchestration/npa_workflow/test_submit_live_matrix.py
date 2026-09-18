@@ -589,6 +589,15 @@ def test_wan_submit_cases_need_storage_but_not_hf_or_runtime_consent(spec: str) 
     }
 
 
+def test_robocasa_data_policy_submit_case_forwards_its_service_token() -> None:
+    case = _case("robocasa-data-policy.yaml")
+
+    assert case is not None
+    assert {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "ROBOCASA_TOKEN"} <= set(
+        case.secret_envs
+    )
+
+
 # --------------------------------------------------------------- runtime cases
 
 
