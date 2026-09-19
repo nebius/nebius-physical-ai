@@ -6,6 +6,7 @@ from pathlib import Path
 
 import re
 
+import pytest
 import yaml
 
 
@@ -388,8 +389,9 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     assert "if ! grep -Eq" in verify
 
 
+@pytest.mark.parametrize("visibility", ["private", "public"])
 def test_hostile_graph_mutation_before_visibility_gate_cannot_disclose(
-    tmp_path: Path,
+    tmp_path: Path, visibility: str
 ) -> None:
     import os
     import subprocess
@@ -409,7 +411,7 @@ def test_hostile_graph_mutation_before_visibility_gate_cannot_disclose(
         "args=sys.argv[1:]\n"
         "with open(os.environ['OPERATIONS'],'a') as stream: stream.write(' '.join(args)+'\\n')\n"
         "query=args[args.index('--jq')+1]\n"
-        "print('private' if query == '.visibility' else os.environ['GITHUB_REPOSITORY'])\n",
+        "print(os.environ['VISIBILITY'] if query == '.visibility' else os.environ['GITHUB_REPOSITORY'])\n",
         encoding="utf-8",
     )
     gh.chmod(0o700)
@@ -421,6 +423,8 @@ def test_hostile_graph_mutation_before_visibility_gate_cannot_disclose(
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "OPERATIONS": str(operations),
+            "TOOL": "libero",
+            "VISIBILITY": visibility,
             "GITHUB_REPOSITORY": "nebius/nebius-physical-ai",
             "GITHUB_STEP_SUMMARY": str(summary),
             "package_api": "/orgs/nebius/packages/container/npa-libero",
@@ -429,14 +433,22 @@ def test_hostile_graph_mutation_before_visibility_gate_cannot_disclose(
     )
 
     assert completed.returncode == 1
-    assert (
-        "no registry-enforced exclusive-writer or atomic compare-and-set"
-        in completed.stdout
-    )
+    if visibility == "public":
+        assert "visibility changed concurrently" in completed.stdout
+    else:
+        assert (
+            "no registry-enforced exclusive-writer or atomic compare-and-set"
+            in completed.stdout
+        )
     operation_log = operations.read_text(encoding="utf-8")
     assert operation_log.startswith("hostile-graph-mutation\n")
     assert "PATCH" not in operation_log
-    assert "no visibility PATCH was attempted" in summary.read_text(encoding="utf-8")
+    if visibility == "private":
+        assert "no visibility PATCH was attempted" in summary.read_text(
+            encoding="utf-8"
+        )
+    else:
+        assert not summary.exists()
 
 
 def test_repository_concurrency_never_authorizes_public_visibility() -> None:

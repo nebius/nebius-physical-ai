@@ -1387,6 +1387,23 @@ jobs:
           require_existing_public_visibility() {
             local visibility
             visibility="$(gh api "$package_api" --jq .visibility)"
+            if [ "$TOOL" = libero ]; then
+              if [ "$visibility" = public ]; then
+                echo "::error::LIBERO visibility changed concurrently; refusing publication without a registry-atomic gate"
+                return 1
+              fi
+              if [ "$visibility" != private ]; then
+                echo "::error::Unsupported LIBERO package visibility: $visibility"
+                return 1
+              fi
+              test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
+                "$GITHUB_REPOSITORY"
+              # Repository-local workflow concurrency cannot exclude another
+              # registry writer and is not a registry-enforced publication lock.
+              echo "::error::Public visibility transition is deferred: GHCR provides no registry-enforced exclusive-writer or atomic compare-and-set boundary."
+              echo "Publication deferred with the package private; no visibility PATCH was attempted." >> "$GITHUB_STEP_SUMMARY"
+              return 1
+            fi
             if [ "$visibility" = public ]; then
               return 0
             fi
