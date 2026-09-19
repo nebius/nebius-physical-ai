@@ -25,16 +25,20 @@ and verifies all 78 installed versions and notices. Applicable copyleft source
 delivery remains a separate public-publication gate; the lock does not claim
 that an upstream URL alone discharges NPA's source-conveyance obligations.
 
-`baked-requirements.lock` remains byte-identical and identifies all 40 Python
-distributions intended for the customer-owned runtime fetch through 214 accepted
-artifact hashes. The public image carries this lock as metadata only. At runtime,
-the customer supplies the complete inventory, exact official wheel URLs and
-credential; the bootstrap downloads into a private temporary wheelhouse, verifies
-each hash and size, installs with no dependency resolution, and checks every
-installed `RECORD` before publication into the runtime cache. A future authorized
-build must still generate and review the complete base, selected wheel, package,
-and license inventory. These source records do not themselves establish
-redistribution eligibility for resulting built bytes.
+`baked-requirements.lock` remains byte-identical and identifies the 40
+hash-locked non-CUDA Python distributions baked into `/opt/robomimic-deps`.
+Their selected wheel bytes, licenses, notices, and source-delivery duties are
+part of the built-image publication review; this unvalidated candidate does not
+assert redistribution eligibility. The restricted CUDA/PyTorch runtime is
+separate: the customer supplies its complete inventory, exact official wheel
+URLs and credential; the bootstrap downloads into a private temporary
+wheelhouse, sends credentials only to their bound vendor origin, revalidates
+entitlement before every request/install/publish, verifies each hash and size,
+installs with no dependency resolution, and checks every installed `RECORD`
+before publication into the runtime cache. A future authorized build must still
+generate and review the complete base, selected wheel, package, and license
+inventory. These source records do not themselves establish redistribution
+eligibility for resulting built bytes.
 
 PyTorch, torchvision, Triton, and the NVIDIA CUDA/cuDNN/NCCL distributions named
 by `runtime-requirements.lock` are not included in the candidate. That lock is a
