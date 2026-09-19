@@ -1320,9 +1320,11 @@ def _layer_contract_owners(
     owners: set[str] = set()
     tracked = tracked or {}
     actual_sha, _ = _payload_identity(state, path, payload, tracked)
-    expected = state.contract.get("required_final_file_sha256", {})
-    if expected.get("/" + path) == actual_sha:
-        owners.add("source:habitat-sim:contract")
+    dpkg_control_path = path == "var/lib/dpkg/status" or path.startswith(
+        "var/lib/dpkg/info/"
+    )
+    dpkg_control_bound = False
+    required = state.contract.get("required_final_file_sha256", {})
     binding = state.contract.get("executable_source_bindings", {}).get("/" + path)
     if isinstance(binding, dict) and binding.get("sha256") == actual_sha:
         owners.add("source:habitat-sim:executable")
@@ -1341,6 +1343,11 @@ def _layer_contract_owners(
                 and expected.get("size") == actual_size
             ):
                 owners.add(identity)
+                dpkg_control_bound = True
+    if required.get("/" + path) == actual_sha and (
+        not dpkg_control_path or dpkg_control_bound
+    ):
+        owners.add("source:habitat-sim:contract")
     if path in {
         "usr/local/bin/npa-habitat-entrypoint",
         "etc/passwd",

@@ -416,6 +416,16 @@ def test_dpkg_database_owner_rejects_undeclared_control_payload() -> None:
     ) == {"fixture"}
 
 
+def test_dpkg_control_contract_digest_cannot_bypass_inventory_binding() -> None:
+    payload = b"opaque control payload"
+    path = "var/lib/dpkg/info/opaque.blob"
+    state = H._ScanState(
+        files={path: {"sha256": _digest(payload), "size": len(payload)}},
+        contract={"required_final_file_sha256": {f"/{path}": _digest(payload)}},
+    )
+    assert H._layer_contract_owners(state, path, tracked={}) == set()
+
+
 def test_debian_epoch_filename_is_bound_to_normalized_source_identity() -> None:
     row = {
         "ecosystem": "dpkg",
