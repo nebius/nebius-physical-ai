@@ -392,6 +392,9 @@ def test_debian_epoch_filename_is_bound_to_normalized_source_identity() -> None:
     assert H._source_artifact_binding(row, base + "fixture_2.3-4.tar.lzma")
     assert H._source_artifact_binding(row, base + "fixture_2.3-4.orig.tar.lzma")
     assert H._source_artifact_binding(row, base + "fixture_2.3-4.debian.tar.lzma")
+    assert H._source_artifact_binding(row, base + "fixture_2.3-4.debian.tar.gz")
+    assert H._source_artifact_binding(row, base + "fixture_2.3-4.debian.tar.bz2")
+    assert H._source_artifact_binding(row, base + "fixture_2.3-4.diff.gz")
     assert not H._source_artifact_binding(row, base + "fixture_1:2.3-4.dsc")
     assert not H._source_artifact_binding(row, base + "other_2.3-4.dsc")
     python_row = {"ecosystem": "python", "name": "fixture", "version": "1.0"}

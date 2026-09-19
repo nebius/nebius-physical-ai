@@ -1652,9 +1652,11 @@ def _debian_artifact_filename_matches(source: str, version: str, name: str) -> b
         return False
     basename = name.removeprefix(f"{source}_")
     suffixes = (
-        ".orig.tar.gz", ".debian.tar.xz", ".debian.tar.lzma", ".orig.tar.xz",
-        ".orig.tar.bz2", ".orig.tar.lzma", ".orig.tar", ".tar.xz", ".tar.gz",
-        ".tar.bz2", ".tar.zst", ".tar.lz", ".tar.lzma",
+        ".orig.tar.gz", ".orig.tar.xz", ".orig.tar.bz2", ".orig.tar.lzma",
+        ".orig.tar.zst", ".orig.tar.lz", ".debian.tar.gz", ".debian.tar.xz",
+        ".debian.tar.bz2", ".debian.tar.lzma", ".debian.tar.zst", ".debian.tar.lz",
+        ".diff.gz", ".diff.xz", ".diff.bz2", ".diff.lzma", ".diff.zst", ".diff.lz",
+        ".orig.tar", ".tar.xz", ".tar.gz", ".tar.bz2", ".tar.zst", ".tar.lz", ".tar.lzma",
         ".dsc", ".asc",
     )
     for suffix in suffixes:
