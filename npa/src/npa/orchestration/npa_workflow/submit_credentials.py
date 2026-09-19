@@ -28,6 +28,9 @@ PROCESS_ENVIRONMENT_CREDENTIAL_NAMES = frozenset(
         "AWS_SESSION_TOKEN",
     }
 )
+PROCESS_ENVIRONMENT_REQUEST_NAMES = (
+    PROCESS_ENVIRONMENT_CREDENTIAL_NAMES | frozenset(STORAGE_ENDPOINT_ENV_NAMES)
+)
 
 
 def storage_endpoint_from_environment(environ: Mapping[str, str]) -> str:
@@ -103,7 +106,7 @@ def resolve_submit_credentials(
                 if str(name or "").strip()
             )
         )
-        unauthorized = set(requested_names) - PROCESS_ENVIRONMENT_CREDENTIAL_NAMES
+        unauthorized = set(requested_names) - PROCESS_ENVIRONMENT_REQUEST_NAMES
         if unauthorized:
             raise ValueError(
                 "Control-plane-authorized storage credentials may expose only the "
