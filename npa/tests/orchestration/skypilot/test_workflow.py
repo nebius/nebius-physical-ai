@@ -2526,6 +2526,40 @@ def test_libero_owner_ledger_binding_reconciles_without_queue_profile_field(
     assert evidence.workload_observable is True
 
 
+def test_libero_launch_binding_reconciles_without_optional_queue_profile_field(
+    monkeypatch,
+) -> None:
+    row = {
+        "job_id": 126,
+        "job_name": "exact-run",
+        "status": "PENDING",
+        "schedule_state": "WAITING",
+        "controller_pid": 4321,
+    }
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=""
+        ),
+    )
+
+    evidence = workflow_module._reconcile_managed_job_env(
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        expected_job_id="126",
+        require_owner_binding=True,
+        allow_omitted_profile=True,
+    )
+
+    assert evidence.state is workflow_module.ReconciliationState.FOUND
+    assert evidence.job_id == "126"
+    assert evidence.workload_observable is True
+
+
 def test_libero_owner_ledger_binding_validates_run_and_digest(monkeypatch) -> None:
     from npa.orchestration.npa_workflow import submission_state
 
@@ -2934,6 +2968,43 @@ def test_libero_launch_binding_accepts_omitted_optional_queue_profile(
         )
         == ""
     )
+
+
+def test_libero_launch_binding_groups_task_rows_by_unique_job_id(monkeypatch) -> None:
+    rows = [
+        {
+            "job_id": 126,
+            "job_name": "exact-run",
+            "task_id": "task-0",
+            "status": "PENDING",
+        },
+        {
+            "job_id": 126,
+            "job_name": "exact-run",
+            "task_id": "task-1",
+            "status": "STARTING",
+        },
+    ]
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(rows), stderr=""
+        ),
+    )
+
+    verified, plausible, error = workflow_module._libero_launch_binding_candidates(
+        "126",
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+    )
+
+    assert verified == "126"
+    assert plausible == ()
+    assert error == ""
 
 
 def test_libero_launch_binding_rejects_mismatched_optional_queue_profile(

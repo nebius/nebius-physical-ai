@@ -1215,6 +1215,9 @@ def submit_workflow(
                 expected_job_id=expected_job_id,
                 require_owner_binding=libero_submission,
                 owner_ledger_binding=owner_ledger_binding,
+                allow_omitted_profile=(
+                    bool(bound_libero_job_id) and not owner_ledger_binding
+                ),
             )
             preserved = _preserve_unverified_libero_candidate(
                 evidence,
@@ -1892,6 +1895,7 @@ def _reconcile_managed_job_env(
     expected_job_id: str = "",
     require_owner_binding: bool = False,
     owner_ledger_binding: bool = False,
+    allow_omitted_profile: bool = False,
     timeout: int = 60,
 ) -> ReconciliationEvidence:
     """Reconcile one exact name through the same SkyPilot runtime as launch."""
@@ -1999,7 +2003,7 @@ def _reconcile_managed_job_env(
         if row not in matching_rows:
             continue
         if expected_profile_sha256:
-            if owner_ledger_binding:
+            if owner_ledger_binding or allow_omitted_profile:
                 # The profile digest was atomically persisted with the immutable
                 # candidate ID before reconciliation.  SkyPilot's queue schema
                 # does not promise a custom digest field, so exact ID + name
@@ -2010,6 +2014,18 @@ def _reconcile_managed_job_env(
                         error=(
                             "LIBERO owner-ledger binding has no immutable job ID; "
                             "refusing adoption"
+                        ),
+                    )
+                observed_profile_values = _managed_job_profile_values(row)
+                if any(
+                    value != expected_profile_sha256
+                    for value in observed_profile_values
+                ):
+                    return ReconciliationEvidence(
+                        ReconciliationState.UNAVAILABLE,
+                        error=(
+                            "existing LIBERO managed job exposes a conflicting "
+                            "executable profile digest; refusing adoption"
                         ),
                     )
             else:
@@ -2081,10 +2097,10 @@ def _libero_launch_binding_candidates(
 
     SkyPilot's all-jobs queue retains historical rows under a deterministic
     name.  A numeric launch result is therefore only authoritative when the
-    queue has exactly one viable same-name row, its immutable ID is the
-    returned ID, and any optional provider profile field agrees with the
-    locally preflighted digest.  The local digest is the authoritative
-    launch contract; an omitted provider field is not evidence of failure.
+    queue has exactly one viable same-name immutable ID, every row for that ID
+    is consistent, and its ID is the returned ID.  Any optional provider
+    profile field must agree with the locally preflighted digest when present;
+    an omitted provider field is not evidence of failure.
     All other plausible IDs are retained as indeterminate evidence rather than
     silently adopting one.
     """
@@ -2146,13 +2162,20 @@ def _libero_launch_binding_candidates(
     profile_conflicts = tuple(
         row
         for row in named_rows
-        if _managed_job_profile_values(row)
-        and _managed_job_profile_digest(row) != expected_profile_sha256
+        if any(
+            value != expected_profile_sha256
+            for value in _managed_job_profile_values(row)
+        )
     )
+    candidate_rows = [
+        row
+        for row in named_rows
+        if str(row.get("job_id") or row.get("id") or "") == parsed_id
+    ]
     if (
         parsed_id
-        and len(named_rows) == 1
         and candidate_ids == (parsed_id,)
+        and candidate_rows
         and re.fullmatch(r"[0-9a-f]{64}", expected_profile_sha256)
         and not profile_conflicts
     ):
@@ -2170,7 +2193,7 @@ def _libero_launch_binding_candidates(
             "indeterminate state and refusing retry until exact ID/name/profile "
             "binding is verified or the operator resolves it"
         )
-    elif len(named_rows) != 1:
+    elif len(candidate_ids) != 1 or candidate_ids != (parsed_id,):
         error = (
             "LIBERO launch returned success with multiple or missing viable "
             "same-name queue IDs; preserving plausible candidates as indeterminate "
