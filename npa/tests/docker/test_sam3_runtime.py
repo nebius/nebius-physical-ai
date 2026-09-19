@@ -214,13 +214,13 @@ def test_compatibility_patch_resolves_the_same_tokenizer(tmp_path, monkeypatch):
     )
     runtime._patch_builder(tmp_path)
     monkeypatch.syspath_prepend(str(tmp_path))
-    namespace = {}
-    exec(
-        compile((package / "model_builder.py").read_text(), "model_builder.py", "exec"),
-        namespace,
+    spec = importlib.util.spec_from_file_location(
+        "patched_builder", package / "model_builder.py"
     )
+    patched = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(patched)
     assert all(
-        Path(namespace[f"asset{i}"]).read_bytes() == b"tokenizer fixture"
+        Path(getattr(patched, f"asset{i}")).read_bytes() == b"tokenizer fixture"
         for i in range(3)
     )
     sys.modules.pop("sam3", None)

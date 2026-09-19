@@ -2,6 +2,7 @@
 
 import importlib.util
 import io
+import json
 from pathlib import Path
 import sys
 import tarfile
@@ -65,3 +66,23 @@ def test_publication_scans_both_local_and_pushed_bytes():
     assert workflow.count("npa/scripts/scan_image_sam3_payload.py") == 2
     assert '"$RUNNER_TEMP/${TOOL}-sam3-payload.json"' in workflow
     assert '"$RUNNER_TEMP/${TOOL}-pushed-sam3-payload.json"' in workflow
+
+
+def test_libssh2_identity_matches_reviewed_debian_package():
+    lock = json.loads(
+        (ROOT / "npa/docker/workbench/ncore/native-bootstrap-lock.json").read_text()
+    )
+    package = next(
+        item for item in lock["debian_binaries"] if item["name"] == "libssh2-1"
+    )
+    library = package["elf_files"][0]
+    assert scanner.AUDITED_SECRET_FILES[library["path"]] == library["sha256"]
+
+
+def test_libssh2_exception_rejects_other_bytes(tmp_path):
+    path = "usr/lib/x86_64-linux-gnu/libssh2.so.1.0.1"
+    archive = _tar(tmp_path / "changed.tar", {path: b"changed library bytes"})
+    assert any(
+        item.kind == "audited_literal_byte_drift"
+        for item in scanner._scan([archive], {})
+    )

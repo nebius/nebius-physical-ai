@@ -15,6 +15,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import scan_image_ltx_payload as neutral  # noqa: E402
 import scan_image_wan_payload as walker  # noqa: E402
 
+# Debian's security-fixed libssh2 contains key-format strings, not a private key.
+# These exact bytes also match the reviewed ncore/native-bootstrap-lock.json.
+AUDITED_SECRET_FILES = {
+    **neutral.AUDITED_SECRET_LITERAL_FILE_SHA256,
+    "usr/lib/x86_64-linux-gnu/libssh2.so.1.0.1": "e481655791a9b75f4d5957e40101d7d0b5d9c13a18d1ca233731d03365ad0aec",
+}
+
 SAM_PATHS = (
     (
         "sam_source",
@@ -44,7 +51,7 @@ def _scan(tars: list[Path], config: dict) -> list:
     with walker.payload_policy(
         forbidden_paths=neutral.FORBIDDEN_PATHS + SAM_PATHS,
         forbidden_history=neutral.FORBIDDEN_HISTORY + SAM_HISTORY,
-        audited_secret_files=neutral.AUDITED_SECRET_LITERAL_FILE_SHA256,
+        audited_secret_files=AUDITED_SECRET_FILES,
         audited_libraries=neutral.AUDITED_LITERAL_LIBRARY_SHA256,
     ):
         return walker.scan_tars(tars, config)

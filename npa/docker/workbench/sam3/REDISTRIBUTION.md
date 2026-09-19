@@ -25,3 +25,13 @@ Mandatory build gates inspect every layer for SAM source, weights, package
 caches, CUDA payload and secrets. This classification is independent of GPU
 acceptance: SAM 3.1 remains excluded from supported release promotion until the
 exact public digest has passed a real video segmentation workload.
+
+The SAM image scanner recognizes the exact Debian security update
+`libssh2-1` `1.10.0-3+deb12u1` (amd64). Its key-format literals are parser strings,
+not private keys. The independently fetched Debian package SHA-256 is
+`fff72a194e493f88e100a2567e22472bb4ab828d429c2956965c6f2f134f1b3a`;
+`usr/lib/x86_64-linux-gnu/libssh2.so.1.0.1` is 260,552 bytes with SHA-256
+`e481655791a9b75f4d5957e40101d7d0b5d9c13a18d1ca233731d03365ad0aec`.
+Both match the existing reviewed [native bootstrap lock](../ncore/native-bootstrap-lock.json).
+The Debian changelog identifies the security fixes. Other bytes at that path
+still fail the scan; no filename-only exception is added.
