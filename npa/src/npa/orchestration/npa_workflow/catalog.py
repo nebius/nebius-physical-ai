@@ -129,6 +129,7 @@ _OPENPI_FULL_DROID_PIPELINE = [
     "-m",
     "npa.workflows.byof.openpi_full_droid",
 ]
+_OPENVLA_PIPELINE = ["python3", "-m", "npa.workflows.byof.openvla_pipeline"]
 
 _CONTENT_AGENTS_PIPELINE = [
     "python3",
@@ -1526,6 +1527,44 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.gpu_count}}",
             "--expected-compute-capability",
             "{{config.expected_compute_capability}}",
+        ],
+    ),
+    "workbench.openvla.train": ToolEntry(
+        name="workbench.openvla.train",
+        description="Fine-tune an OpenVLA policy with OpenVLA-OFT.",
+        argv_template=[
+            *_OPENVLA_PIPELINE,
+            "train",
+            "--model-id",
+            "{{config.model_id}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+            "--output-dir",
+            "{{config.training_uri}}",
+        ],
+    ),
+    "workbench.openvla.serve": ToolEntry(
+        name="workbench.openvla.serve",
+        description="Serve an OpenVLA checkpoint with the upstream deploy script.",
+        argv_template=[
+            *_OPENVLA_PIPELINE,
+            "serve",
+            "--checkpoint",
+            "{{config.trained_checkpoint_uri}}",
+        ],
+    ),
+    "workbench.openvla.eval": ToolEntry(
+        name="workbench.openvla.eval",
+        description="Evaluate an OpenVLA policy (plan-only: rollout execution not implemented).",
+        argv_template=[
+            *_OPENVLA_PIPELINE,
+            "eval",
+            "--checkpoint",
+            "{{config.trained_checkpoint_uri}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+            "--output-uri",
+            "{{config.evaluation_uri}}",
         ],
     ),
     "workbench.isaac_lab.byof_repo": ToolEntry(
