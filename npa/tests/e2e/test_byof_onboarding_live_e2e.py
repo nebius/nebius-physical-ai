@@ -1106,8 +1106,27 @@ def _gymnasium_admitted_volumes(spec: dict[str, object]) -> dict[str, object]:
     return {"volumes": volumes, "mounts": mounts}
 
 
+def _gymnasium_reviewed_pod_environment(
+    env: dict[str, str], *, run_id: str,
+) -> dict[str, str]:
+    """Build the reviewed task environment used to validate an admitted Pod."""
+    names = {
+        "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+        "AWS_ENDPOINT_URL_S3", "AWS_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT",
+        "NPA_STORAGE_ENDPOINT", "S3_ENDPOINT_URL", "NPA_OUTPUT_PATH",
+        "NPA_OUTPUT_URI", "S3_OUTPUT_PATH", "NPA_WORKFLOW_RUN_PREFIX_URI",
+        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+    }
+    expected = {name: env[name] for name in names if env.get(name)}
+    output_root = env.get("NPA_BYOF_GYMNASIUM_ROBOTICS_OUTPUT_ROOT", "").strip()
+    if output_root:
+        expected["S3_OUTPUT_PREFIX"] = output_root.rstrip("/") + f"/{run_id}/"
+    return expected
+
+
 def _gymnasium_admitted_pod_policy(
-    pod: dict[str, object], *, namespace: str, run_id: str
+    pod: dict[str, object], *, namespace: str, run_id: str,
+    expected_environment: dict[str, str],
 ) -> dict[str, object]:
     identity = _gymnasium_admitted_pod_identity(pod, namespace=namespace, run_id=run_id)
     spec = pod.get("spec")
@@ -1121,10 +1140,14 @@ def _gymnasium_admitted_pod_policy(
         assert key not in spec or spec[key] == [], (
             "admitted Pod has injected containers"
         )
-    documents = [{"config": {"kubernetes": {"pod_config": {"spec": spec}}}}]
+    documents = [{
+        "envs": expected_environment,
+        "config": {"kubernetes": {"pod_config": {"spec": spec}}},
+    }]
     try:
         selected = validate_gymnasium_task_configuration(
-            documents, solution_name="gymnasium-robotics"
+            documents, solution_name="gymnasium-robotics",
+            resolved_environment=expected_environment,
         )
     except ExecutionPreflightError as exc:
         raise AssertionError(
@@ -1215,7 +1238,8 @@ def _gymnasium_pod_image_receipt(
             for kind in ("requests", "limits")
         ), "only the exact task container may request the one GPU"
         admitted_policy = _gymnasium_admitted_pod_policy(
-            pod, namespace=namespace, run_id=run_id
+            pod, namespace=namespace, run_id=run_id,
+            expected_environment=_gymnasium_reviewed_pod_environment(env, run_id=run_id),
         )
         statuses = {
             item.get("name"): item
