@@ -1211,7 +1211,8 @@ def submit_workflow(
                 )
                 from npa.execution_preflight import libero_executable_profile_sha256
 
-                bound_libero_job_id = _verified_libero_job_id(
+                bound_libero_job_id = parsed_job_id if parsed_job_id.isdigit() else ""
+                verified_job_id = _verified_libero_job_id(
                     parsed_job_id,
                     run_id,
                     env=env,
@@ -1219,6 +1220,8 @@ def submit_workflow(
                     cwd=stable_cwd,
                     expected_profile_sha256=libero_executable_profile_sha256(docs),
                 )
+                if verified_job_id:
+                    bound_libero_job_id = verified_job_id
             return launch_result, diagnoses
 
         def _classify(exc: BaseException) -> tuple[EvidenceState, FailureCategory]:
@@ -1250,6 +1253,8 @@ def submit_workflow(
                 from npa.execution_preflight import libero_executable_profile_sha256
 
                 enriched["libero_profile_sha256"] = libero_executable_profile_sha256(docs)
+                if bound_libero_job_id:
+                    enriched["libero_candidate_job_id"] = bound_libero_job_id
             enriched["controller"] = {
                 **controller_health.to_dict(),
                 "selected_context": selected_context,
@@ -1897,7 +1902,9 @@ def _load_libero_bound_job_id(
         launch = payload.get("launch")
         if not isinstance(launch, Mapping):
             return "", ""
-        job_id = str(launch.get("job_id") or "").strip()
+        job_id = str(
+            launch.get("job_id") or launch.get("libero_candidate_job_id") or ""
+        ).strip()
         digest = str(launch.get("libero_profile_sha256") or "").strip()
         if not job_id.isdigit() or not re.fullmatch(r"[0-9a-f]{64}", digest):
             return "", "existing LIBERO launch ledger has no valid profile binding"
