@@ -711,6 +711,11 @@ def test_oss_tools_resolve_from_the_public_release_normally() -> None:
     assert ref.startswith(DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-lerobot:")
 
 
+def test_robotwin_quarantine_blocks_implicit_public_image_resolution() -> None:
+    with pytest.raises(ValueError, match="robotwin.*no accepted release image"):
+        container_image_for_tool("robotwin", registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY)
+
+
 # --------------------------------------------------------------------------------------
 # Anonymous pullability
 #
