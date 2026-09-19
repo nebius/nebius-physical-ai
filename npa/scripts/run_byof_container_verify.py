@@ -33,6 +33,7 @@ from npa.deploy.images import (
 )
 from npa.execution_preflight import (
     SKYPILOT_ENGINE_SERVICE_ACCOUNT,
+    libero_executable_profile_bytes,
     is_libero_official_image_reference,
     skypilot_task_documents,
     verify_solution_payload_service_accounts,
@@ -1109,6 +1110,9 @@ def _bind_libero_runtime_contract(
     from npa.execution_preflight import libero_executable_profile_sha256
 
     executable_profile_sha256 = libero_executable_profile_sha256(documents)
+    executable_profile_b64 = base64.b64encode(
+        libero_executable_profile_bytes(documents)
+    ).decode("ascii")
     if args.solution_name.strip().lower() != LIBERO_SOLUTION_NAME:
         raise ValueError("the LIBERO profile requires --solution-name libero")
     if args.direct_launch:
@@ -1300,6 +1304,7 @@ def _bind_libero_runtime_contract(
         envs["NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256"] = (
             executable_profile_sha256
         )
+        envs["NPA_LIBERO_EXECUTABLE_PROFILE_B64"] = executable_profile_b64
         envs["NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256"] = str(
             caller["customer_signer_public_key_sha256"]
         )

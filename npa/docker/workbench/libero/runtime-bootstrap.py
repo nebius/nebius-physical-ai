@@ -173,6 +173,8 @@ SOURCE_BUILD_CHROOT = Path("/usr/sbin/chroot")
 RUNTIME_EXECUTION_GROUP = "npa-libero-exec"
 RUNTIME_EXECUTION_USER = "npa-libero-exec"
 RUNTIME_SUPERVISOR_USER = "ubuntu"
+EXECUTABLE_PROFILE_ROOT = Path("/workspace/byof-runs")
+EXECUTABLE_PROFILE_NAME = ".npa-executable-profile.json"
 STORAGE_SECRET_ENV_NAMES = frozenset(
     {
         "AWS_ACCESS_KEY_ID",
@@ -213,6 +215,7 @@ RUNTIME_EXECUTION_PASSTHROUGH_ENV_NAMES = frozenset(
         "LC_CTYPE",
         "NPA_BYOF_RUN_ID",
         "NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT",
+        "NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256",
         "NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256",
         "NPA_LIBERO_EXPECTED_ALLOWED_NODE_SHA256",
         "NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256",
@@ -700,10 +703,11 @@ def wait_for_release() -> dict[str, str]:
             continue
         return {"pod_uid_sha256": hashlib.sha256(uid.encode()).hexdigest()}
 def _open_https_download(
-    url: str, *, terms: bool = False
+    url: str, *, terms: bool = False, deadline: datetime | None = None
 ) -> tuple[http.client.HTTPSConnection, http.client.HTTPResponse]:
     current_url = url
     for _ in range(6):
+        _ensure_deadline(deadline)
         parsed = _validate_redirect_url(current_url, terms=terms)
         connection = http.client.HTTPSConnection(
             parsed.hostname, parsed.port or 443, timeout=60
@@ -1347,6 +1351,48 @@ def _authenticated_caller_binding_from_environment() -> tuple[bytes, bytes, str]
     return caller_bytes, trusted_public_key, signer_sha256
 
 
+def _executable_profile_path() -> Path:
+    run_id = os.environ.get("NPA_BYOF_RUN_ID", "").strip()
+    if re.fullmatch(r"[a-z0-9][a-z0-9-]{15,62}", run_id) is None:
+        raise BootstrapRefusal("executable profile run identity is invalid")
+    return EXECUTABLE_PROFILE_ROOT / run_id / EXECUTABLE_PROFILE_NAME
+
+
+def _validate_executable_profile_digest(expected_sha256: str) -> None:
+    """Hash the stable owner-private profile bytes, never an environment claim."""
+
+    path = _executable_profile_path()
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        before = os.fstat(descriptor)
+        expected_group = grp.getgrnam(RUNTIME_EXECUTION_GROUP).gr_gid
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != pwd.getpwnam(RUNTIME_SUPERVISOR_USER).pw_uid
+            or before.st_gid != expected_group
+            or before.st_nlink != 1
+            or stat.S_IMODE(before.st_mode) != 0o440
+            or before.st_size <= 0
+            or before.st_size > 1024 * 1024
+        ):
+            raise BootstrapRefusal("executable profile file is invalid")
+        payload = os.read(descriptor, before.st_size + 1)
+        after = os.fstat(descriptor)
+    except OSError as exc:
+        raise BootstrapRefusal("executable profile file is unavailable") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    if (
+        len(payload) != before.st_size
+        or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+        or not hmac.compare_digest(hashlib.sha256(payload).hexdigest(), expected_sha256)
+    ):
+        raise BootstrapRefusal("executable profile bytes differ from authorization")
+
+
 def _trusted_public_key(path: Path, *, owner_uid: int, label: str) -> bytes:
     """Load one immutable image-baked Ed25519 verification key."""
 
@@ -1723,6 +1769,13 @@ def _validate_customer_authorization_bytes(
         is None
     ):
         raise CustomerAcceptanceRequired("authorization_wrong_scope")
+    expected_signer = os.environ.get(
+        "NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256", ""
+    )
+    if not _is_hex(expected_signer, 64) or not hmac.compare_digest(
+        expected_signer, authenticated_signer_sha256
+    ):
+        raise CustomerAcceptanceRequired("authorization_signer_binding_differs")
     try:
         acknowledged_at = datetime.fromisoformat(
             str(authorization["acknowledged_at"]).replace("Z", "+00:00")
@@ -1781,6 +1834,11 @@ def _validate_customer_authorization_bytes(
     return authorization, observed_sha256
 
 
+def _ensure_deadline(deadline: datetime | None) -> None:
+    if deadline is not None and datetime.now(timezone.utc) >= deadline:
+        raise CustomerAcceptanceRequired("authorization_expired_or_replayable")
+
+
 def _download_verified(
     destination: Path,
     *,
@@ -1788,7 +1846,9 @@ def _download_verified(
     sha256: str,
     size: int,
     terms: bool = False,
+    deadline: datetime | None = None,
 ) -> None:
+    _ensure_deadline(deadline)
     if size <= 0 or size > MAX_RUNTIME_CACHE_DOWNLOAD_BYTES:
         raise BootstrapRefusal("runtime download has no valid expected size")
     (_validate_terms_url if terms else _validate_download_url)(url)
@@ -1800,7 +1860,7 @@ def _download_verified(
     connection: http.client.HTTPSConnection | None = None
     response: http.client.HTTPResponse | None = None
     try:
-        connection, response = _open_https_download(url, terms=terms)
+        connection, response = _open_https_download(url, terms=terms, deadline=deadline)
         content_length = response.getheader("Content-Length")
         if content_length is not None and (
             not content_length.isdigit() or int(content_length) != size
@@ -1815,6 +1875,7 @@ def _download_verified(
         )
         with os.fdopen(descriptor, "wb") as stream:
             while True:
+                _ensure_deadline(deadline)
                 chunk = response.read(1024 * 1024)
                 if not chunk:
                     break
@@ -1856,7 +1917,9 @@ def _governing_terms_identity(manifest: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _verify_governing_terms(manifest: dict[str, Any]) -> str:
+def _verify_governing_terms(
+    manifest: dict[str, Any], *, deadline: datetime | None = None
+) -> str:
     """Resolve and hash every governing terms source before cold cache mutation."""
 
     with tempfile.TemporaryDirectory(prefix="npa-libero-terms-") as temporary:
@@ -1869,6 +1932,7 @@ def _verify_governing_terms(manifest: dict[str, Any]) -> str:
                 sha256=term["sha256"],
                 size=int(term["size_bytes"]),
                 terms=True,
+                deadline=deadline,
             )
     return _governing_terms_identity(manifest)
 
@@ -1878,16 +1942,49 @@ def _run(
     *,
     cwd: Path | None = None,
     environment: dict[str, str] | None = None,
+    deadline: datetime | None = None,
 ) -> None:
     selected_environment = dict(os.environ if environment is None else environment)
     selected_environment["GIT_TERMINAL_PROMPT"] = "0"
-    subprocess.run(
+    _ensure_deadline(deadline)
+    if deadline is None:
+        subprocess.run(
+            command,
+            cwd=cwd,
+            check=True,
+            env=selected_environment,
+            stdout=sys.stderr,
+        )
+        return
+    child = _Popen(
         command,
         cwd=cwd,
-        check=True,
         env=selected_environment,
         stdout=sys.stderr,
+        start_new_session=True,
     )
+    while child.poll() is None:
+        remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
+        if remaining <= 0:
+            try:
+                os.killpg(child.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                child.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                child.wait(timeout=5.0)
+            raise CustomerAcceptanceRequired("authorization_expired_or_replayable")
+        try:
+            child.wait(timeout=min(remaining, 1.0))
+        except subprocess.TimeoutExpired:
+            continue
+    if child.returncode:
+        raise subprocess.CalledProcessError(child.returncode, command)
 
 
 def _runtime_materialization_environment(root: Path) -> dict[str, str]:
@@ -2037,6 +2134,7 @@ def _build_source_wheels(
     wheelhouse: Path,
     build_wheelhouse: Path,
     environment: dict[str, str],
+    deadline: datetime | None = None,
 ) -> list[str]:
     """Build reviewed source archives into identity-checked local wheels."""
 
@@ -2146,7 +2244,7 @@ def _build_source_wheels(
         script,
     ]
     try:
-        _run(sandbox_command, environment=environment)
+        _run(sandbox_command, environment=environment, deadline=deadline)
     finally:
         shutil.rmtree(sandbox_root, ignore_errors=False)
     wheels = sorted(path for path in build_wheelhouse.iterdir() if path.is_file())
@@ -2180,6 +2278,7 @@ def _install_runtime(
     requirement_lines: list[str],
     *,
     published_root: Path,
+    deadline: datetime | None = None,
 ) -> None:
     materialization_environment = _runtime_materialization_environment(root)
     wheelhouse = root / "downloads"
@@ -2194,11 +2293,13 @@ def _install_runtime(
             url=item["url"],
             sha256=item["sha256"],
             size=int(item["size_bytes"]),
+            deadline=deadline,
         )
     venv = root / "venv"
     _run(
         [sys.executable, "-m", "venv", "--copies", str(venv)],
         environment=materialization_environment,
+        deadline=deadline,
     )
     bootstrap_names = {"pip", "setuptools", "wheel"}
     bootstrap_lock = root / ".bootstrap-requirements.txt"
@@ -2241,6 +2342,7 @@ def _install_runtime(
     _run(
         [*common, "-r", str(bootstrap_lock)],
         environment=materialization_environment,
+        deadline=deadline,
     )
     generated_source_lines = _build_source_wheels(
         pip,
@@ -2249,6 +2351,7 @@ def _install_runtime(
         wheelhouse,
         build_wheelhouse,
         materialization_environment,
+        deadline,
     )
     runtime_lock.write_text(
         "\n".join([line for line, _item in wheel_entries] + generated_source_lines)
@@ -2265,7 +2368,9 @@ def _install_runtime(
             str(runtime_lock),
         ],
         environment=materialization_environment,
+        deadline=deadline,
     )
+    _ensure_deadline(deadline)
     site_packages = subprocess.check_output(
         [pip, "-c", "import site; print(site.getsitepackages()[0])"],
         text=True,
@@ -2285,13 +2390,16 @@ def _install_runtime(
     runtime_lock.unlink()
 
 
-def _fetch_inputs(root: Path, manifest: dict[str, Any]) -> None:
+def _fetch_inputs(
+    root: Path, manifest: dict[str, Any], *, deadline: datetime | None = None
+) -> None:
     demonstration = manifest["demonstration"]
     _download_verified(
         root / "data" / demonstration["filename"],
         url=demonstration["url"],
         sha256=demonstration["sha256"],
         size=int(demonstration["size_bytes"]),
+        deadline=deadline,
     )
     model = manifest["language_model"]
     model_root = root / "models" / f"bert-base-cased-{model['revision']}"
@@ -2302,6 +2410,7 @@ def _fetch_inputs(root: Path, manifest: dict[str, Any]) -> None:
             url=url,
             sha256=item["sha256"],
             size=int(item["size_bytes"]),
+            deadline=deadline,
         )
     model_record = {
         "repository": model["repository"],
@@ -2627,8 +2736,12 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
     authorization, authorization_sha256 = _validate_customer_authorization(
         Path(args.authorization), args.authorization_sha256, manifest, manifest_sha256
     )
+    _validate_executable_profile_digest(authorization["workflow_profile_sha256"])
     customer_identity_sha256 = authorization["customer_identity_sha256"]
     run_id = authorization["run_id"]
+    authorization_expires_at = _parse_utc(
+        authorization["expires_at"], "customer authorization expires_at"
+    )
     requirement_lines, requirements_sha256 = _validate_requirements(
         Path(args.requirements), manifest
     )
@@ -2677,7 +2790,9 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
     def verify_terms_before_cache_creation(_parent_descriptor: int, _name: str) -> None:
         nonlocal cache_root_created, governing_terms_sha256
         revalidate_authorization()
-        governing_terms_sha256 = _verify_governing_terms(manifest)
+        governing_terms_sha256 = _verify_governing_terms(
+            manifest, deadline=authorization_expires_at
+        )
         cache_root_created = True
 
     with _open_cache_root_descriptor(
@@ -2692,7 +2807,9 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
             governing_terms_sha256 = _governing_terms_identity(manifest)
         elif governing_terms_sha256 is None:
             revalidate_authorization()
-            governing_terms_sha256 = _verify_governing_terms(manifest)
+            governing_terms_sha256 = _verify_governing_terms(
+                manifest, deadline=authorization_expires_at
+            )
         try:
             group_id = grp.getgrnam(RUNTIME_EXECUTION_GROUP).gr_gid
         except KeyError as exc:
@@ -2742,9 +2859,10 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
                         manifest["runtime_artifacts"],
                         requirement_lines,
                         published_root=display_final,
+                        deadline=authorization_expires_at,
                     )
                     revalidate_authorization()
-                    _fetch_inputs(partial, manifest)
+                    _fetch_inputs(partial, manifest, deadline=authorization_expires_at)
                     record = _complete_record(
                         partial,
                         manifest,
@@ -3024,6 +3142,7 @@ def execute(
         manifest_sha256,
         authenticated_signer_sha256=caller_signer_sha256,
     )
+    _validate_executable_profile_digest(authorization["workflow_profile_sha256"])
     customer_identity_sha256 = authorization["customer_identity_sha256"]
     run_id = authorization["run_id"]
     if customer_identity_sha256 != expected_customer or run_id != expected_run:

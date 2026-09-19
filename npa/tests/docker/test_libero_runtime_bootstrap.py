@@ -175,6 +175,7 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
     manifest_path = tmp_path / "runtime-manifest.json"
     manifest_sha = _write_json(manifest_path, manifest)
     module.EXPECTED_RUNTIME_MANIFEST_SHA256 = manifest_sha
+    module.EXECUTABLE_PROFILE_ROOT = tmp_path / "byof-runs"
     requirements_path = tmp_path / "runtime-requirements.txt"
     requirements_path.write_text(
         "\n".join(
@@ -195,7 +196,7 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
         "candidate_image": "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:"
         + "9" * 64,
         "runtime_manifest_sha256": manifest_sha,
-        "workflow_profile_sha256": "a" * 64,
+        "workflow_profile_sha256": "",
         "upstream_source_revision": manifest["source"]["revision"],
         "terms": [
             {"id": term["id"], "version": term["version"]}
@@ -277,6 +278,15 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
     caller_assertion_path.write_bytes(caller_bytes)
     caller_assertion_path.chmod(0o600)
     authorization_path = tmp_path / "customer-authorization.json"
+    profile_bytes = b'{"fixture":"libero-executable-profile"}'
+    profile_path = module.EXECUTABLE_PROFILE_ROOT / authorization["run_id"] / module.EXECUTABLE_PROFILE_NAME
+    profile_path.parent.mkdir(mode=0o770, parents=True)
+    profile_path.write_bytes(profile_bytes)
+    profile_path.chmod(0o440)
+    authorization["workflow_profile_sha256"] = _sha(profile_bytes)
+    authorization["signature"]["signature_b64"] = module.base64.b64encode(
+        customer_key.sign(module._customer_authorization_signature_payload(authorization))
+    ).decode("ascii")
     authorization_sha256 = _write_json(authorization_path, authorization)
     args = argparse.Namespace(
         manifest=str(manifest_path),
@@ -320,6 +330,7 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
         "demonstration": demonstration_bytes,
         "model": model_bytes,
         "manifest_sha": manifest_sha,
+        "profile_sha256": _sha(profile_bytes),
         "scope_sha": module._runtime_cache_scope_sha256(
             manifest_sha,
             authorization["customer_identity_sha256"],
@@ -723,7 +734,7 @@ def test_sudo_allowlist_preserves_real_profile_bound_signature_validation(
     keep = set(line.split('env_keep += "', 1)[1].split('"', 1)[0].split())
     environment = module._runtime_execution_environment(Path(args.cache_root))
     filtered = {name: value for name, value in environment.items() if name in keep}
-    assert filtered["NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256"] == "a" * 64
+    assert filtered["NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256"] == fixture["profile_sha256"]
     assert module.STORAGE_SECRET_ENV_NAMES.isdisjoint(filtered)
     for name in tuple(os.environ):
         monkeypatch.delenv(name)
@@ -752,7 +763,7 @@ def test_sudo_allowlist_preserves_real_profile_bound_signature_validation(
         module.EXPECTED_RUNTIME_MANIFEST_SHA256,
         authenticated_signer_sha256=fixture["customer_signer_sha256"],
     )
-    assert observed["workflow_profile_sha256"] == "a" * 64
+    assert observed["workflow_profile_sha256"] == fixture["profile_sha256"]
     assert observed_sha == args.authorization_sha256
 
 
@@ -793,7 +804,9 @@ def _install_fake_materializers(
         _requirements: list[str],
         *,
         published_root: Path,
+        deadline=None,
     ) -> None:
+        del deadline
         python = root / "venv" / "bin" / "python"
         python.parent.mkdir(parents=True)
         python.write_text(
@@ -808,7 +821,8 @@ def _install_fake_materializers(
             str(published_root / "source") + "\n", encoding="utf-8"
         )
 
-    def fetch_inputs(root: Path, manifest: dict[str, object]) -> None:
+    def fetch_inputs(root: Path, manifest: dict[str, object], *, deadline=None) -> None:
+        del deadline
         demo = manifest["demonstration"]
         data = root / "data" / demo["filename"]
         data.parent.mkdir(parents=True)
@@ -825,7 +839,7 @@ def _install_fake_materializers(
     monkeypatch.setattr(
         module,
         "_verify_governing_terms",
-        lambda manifest: module._governing_terms_identity(manifest),
+        lambda manifest, **_kwargs: module._governing_terms_identity(manifest),
     )
 
 
@@ -1230,6 +1244,53 @@ def test_customer_authorization_rejects_empty_profile_digest(
         )
 
 
+def test_executable_profile_bytes_are_verified_before_cache_effect(
+    monkeypatch, tmp_path
+) -> None:
+    module, args, fixture = _fixture(tmp_path)
+    profile = module._executable_profile_path()
+    profile.chmod(0o600)
+    profile.write_bytes(b'{"tampered":true}')
+    profile.chmod(0o440)
+    monkeypatch.setattr(
+        module,
+        "_verify_governing_terms",
+        lambda *_args, **_kwargs: pytest.fail("cache effect began after profile drift"),
+    )
+    with pytest.raises(module.BootstrapRefusal, match="profile bytes differ"):
+        module.ensure(args)
+    assert not Path(args.cache_root).exists()
+
+
+def test_customer_signer_environment_binding_is_required(monkeypatch, tmp_path) -> None:
+    module, args, fixture = _fixture(tmp_path)
+    monkeypatch.setenv("NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256", "0" * 64)
+    with pytest.raises(module.CustomerAcceptanceRequired, match="signer binding"):
+        module._validate_customer_authorization(
+            Path(args.authorization),
+            args.authorization_sha256,
+            module._validate_manifest(Path(args.manifest))[0],
+            module.EXPECTED_RUNTIME_MANIFEST_SHA256,
+        )
+
+
+def test_download_deadline_refuses_before_transport(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "_open_https_download",
+        lambda *_args, **_kwargs: pytest.fail("expired authorization reached transport"),
+    )
+    with pytest.raises(module.CustomerAcceptanceRequired, match="expired or replayable"):
+        module._download_verified(
+            tmp_path / "artifact",
+            url="https://files.pythonhosted.org/artifact.whl",
+            sha256="0" * 64,
+            size=1,
+            deadline=datetime.now(timezone.utc) - timedelta(seconds=1),
+        )
+
+
 def test_signed_customer_denial_notifies_before_network_or_cache_mutation(
     monkeypatch, tmp_path
 ) -> None:
@@ -1258,7 +1319,7 @@ def test_terms_resolution_refuses_before_cache_mutation(monkeypatch, tmp_path) -
     monkeypatch.setattr(
         module,
         "_verify_governing_terms",
-        lambda _manifest: (_ for _ in ()).throw(
+        lambda _manifest, **_kwargs: (_ for _ in ()).throw(
             module.BootstrapRefusal("governing terms source no longer resolves")
         ),
     )
@@ -2146,7 +2207,7 @@ def test_failed_materialization_removes_partial_cache(monkeypatch, tmp_path) -> 
     monkeypatch.setattr(
         module,
         "_fetch_inputs",
-        lambda *_args: (_ for _ in ()).throw(RuntimeError("fixture failure")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("fixture failure")),
     )
 
     with pytest.raises(RuntimeError, match="fixture failure"):

@@ -366,7 +366,10 @@ def test_libero_runtime_binding_refuses_disabled_api_lifecycle(monkeypatch) -> N
 def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context(
     monkeypatch, tmp_path
 ) -> None:
-    from npa.execution_preflight import libero_executable_profile_sha256
+    from npa.execution_preflight import (
+        libero_executable_profile_bytes,
+        libero_executable_profile_sha256,
+    )
 
     module = _load_module()
     run_id = "libero-runtime-binding"
@@ -651,6 +654,9 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
             "NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256": libero_executable_profile_sha256(
                 documents
             ),
+            "NPA_LIBERO_EXECUTABLE_PROFILE_B64": module.base64.b64encode(
+                libero_executable_profile_bytes(documents)
+            ).decode("ascii"),
         }
     )
 

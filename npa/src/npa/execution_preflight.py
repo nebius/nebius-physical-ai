@@ -65,6 +65,14 @@ def libero_executable_profile_sha256(
 ) -> str:
     """Return the customer-signable digest of the complete executable profile."""
 
+    return hashlib.sha256(libero_executable_profile_bytes(documents)).hexdigest()
+
+
+def libero_executable_profile_bytes(
+    documents: Sequence[Mapping[str, Any]],
+) -> bytes:
+    """Return canonical profile bytes with transport-only fields neutralized."""
+
     normalized = copy.deepcopy(list(documents))
     for document in normalized:
         if not isinstance(document, dict):
@@ -77,11 +85,11 @@ def libero_executable_profile_sha256(
         envs = document.get("envs")
         if isinstance(envs, dict):
             for name in tuple(envs):
-                if str(name).startswith("NPA_LIBERO_EXPECTED_"):
+                if str(name).startswith("NPA_LIBERO_EXPECTED_") or name == (
+                    "NPA_LIBERO_EXECUTABLE_PROFILE_B64"
+                ):
                     envs[name] = ""
-    return hashlib.sha256(
-        json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    return json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode()
 
 
 def is_libero_official_image_reference(value: object) -> bool:
