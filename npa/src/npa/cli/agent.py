@@ -129,11 +129,7 @@ from npa.cli.agent_public import (
 )
 from npa.agent_backend.shipping import render_shipped_backend_install
 from npa.cli import agent_resources
-from npa.cli.agent_access import (
-    ACCESS_SCHEMA,
-    ACCESS_STATES,
-    consistent_agent_service_account_id,
-)
+from npa.cli.agent_access import consistent_agent_service_account_id
 from npa.cli.agent_contracts import (  # noqa: F401 - public compatibility exports
     AGENT_CHAT_QUEUE_CONTRACT,
     AGENT_FOXGLOVE_CONTRACT,
@@ -13442,19 +13438,8 @@ def verify_live_cmd(
         access_payload = access_resp.json()
     except Exception as exc:  # noqa: BLE001
         _fail(f"agent access endpoint failed: {exc}")
-    if (
-        not isinstance(access_payload, dict)
-        or access_payload.get("apiVersion") != ACCESS_SCHEMA
-    ):
-        _fail("agent access endpoint returned an invalid schema")
-    if access_payload.get("status") not in ACCESS_STATES:
-        _fail("agent access endpoint returned an invalid status")
-    if not isinstance(access_payload.get("projects"), list):
-        _fail("agent access endpoint did not return a projects list")
     try:
-        agent_artifact_options.validate_live_artifact_credentials(
-            record, access_payload
-        )
+        agent_artifact_options.validate_live_access_payload(record, access_payload)
     except AgentStorageCredentialError as exc:
         _fail(str(exc))
 

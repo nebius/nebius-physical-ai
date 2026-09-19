@@ -8,7 +8,11 @@ from typing import Any, Callable
 import typer
 
 from npa.clients.project_credential_store import project_credential_record
-from npa.cli.agent_access import normalize_configured_artifact_sources
+from npa.cli.agent_access import (
+    ACCESS_SCHEMA,
+    ACCESS_STATES,
+    normalize_configured_artifact_sources,
+)
 from npa.cli.agent_env_files import (
     _load_agent_artifact_sources_file,
     _write_agent_artifact_sources_env,
@@ -121,6 +125,27 @@ def validate_live_artifact_credentials(
         raise AgentStorageCredentialError(
             "isolated artifact read identity is not ready"
         )
+
+
+def validate_live_access_payload(
+    record: dict[str, Any], payload: Any
+) -> dict[str, Any]:
+    """Validate the access endpoint schema and its artifact-read identity."""
+
+    if not isinstance(payload, dict) or payload.get("apiVersion") != ACCESS_SCHEMA:
+        raise AgentStorageCredentialError(
+            "agent access endpoint returned an invalid schema"
+        )
+    if payload.get("status") not in ACCESS_STATES:
+        raise AgentStorageCredentialError(
+            "agent access endpoint returned an invalid status"
+        )
+    if not isinstance(payload.get("projects"), list):
+        raise AgentStorageCredentialError(
+            "agent access endpoint did not return a projects list"
+        )
+    validate_live_artifact_credentials(record, payload)
+    return payload
 
 
 def emit_artifact_migration_warning(
