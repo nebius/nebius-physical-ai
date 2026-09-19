@@ -611,9 +611,24 @@ CI jobs, and helper scripts such as `npa/scripts/start_golden_evals_tmux.sh` and
 you must then point the tooling at it — `make test PYTHON=...`,
 `NPA_BIN=.../bin/npa`, `GOLDEN_EVAL_PYTHON=.../bin/python`.
 
+If you keep multiple checkouts of this repo (for example `git worktree add`, or
+several agent sandboxes on one machine) and share one `npa/.venv` across them —
+by symlinking it, rather than running its own `pip install -e` in each — the
+venv's editable install still resolves `npa` from whichever checkout last ran
+that install. `pytest` then collects test files from the checkout you are
+standing in but imports production code from a *different* checkout, silently,
+with no error or non-zero exit. `make test`/`test-smoke`/`test-guardrails`/
+`test-e2e` all run `make check-env` first specifically to catch this: it fails
+fast with the exact `export PYTHONPATH=...` fix (or the option to give the
+checkout its own venv) instead of letting you spend minutes on a run whose
+result is meaningless. Run it standalone any time you are unsure which
+checkout your interpreter is really resolving `npa` from: `make check-env`.
+
 Then use the `make` targets from the repo root:
 
 ```bash
+make check-env        # fails fast if $PYTHON would import npa from another checkout
+make test-prereqs     # non-blocking: reports full-suite/CI-parity gaps (ffmpeg, kubectl, ...) and temp-disk headroom
 make check            # local subset: lint, docs-check, unit tests
 make test             # full unit suite, live/GPU markers deselected
 make test-smoke       # quickest: onboarding CLI smoke tests only
@@ -623,6 +638,21 @@ make docs             # regenerate docs/cli/ after any CLI change
 make docs-check       # the docs/cli/ drift gate
 make test-e2e         # opt-in: real Nebius infrastructure, NPA_INTEGRATION_E2E=1
 ```
+
+Run `make test-prereqs` once per environment before trusting a green `make
+test` for full parity with CI: missing optional tools (ffmpeg/ffprobe, a CPU
+checkpoint runtime, kubectl, Docker, tmux, Node) make the affected tests
+self-skip rather than fail, so local coverage can quietly be lower than CI's.
+The same command also reports free space and stale run directories under the
+temp root pytest will use. That root (`$TMPDIR/pytest-of-<user>` by default)
+is shared by every process you run, not scoped to one checkout, so concurrent
+work across worktrees on one machine competes for the same disk; a large
+suite in one checkout can exhaust space for a test in another with no
+per-checkout attribution. Point a large or parallel run at a directory you
+own instead of the shared default — `pytest --basetemp=<owned-dir> ...` — and
+clean up only that directory yourself when done. Never delete another
+`pytest-of-<user>/pytest-N` directory by hand without first confirming it is
+not `pytest-current` for a run still in progress.
 
 `docs/cli/` is generated from live `npa --help` and drift-gated in CI, so
 `make docs` and a commit of its output are part of any change to a command, flag,
