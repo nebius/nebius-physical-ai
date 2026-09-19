@@ -19,7 +19,7 @@ from npa.workflows import paidf_evg_tokenizer as tokenizer
 from npa.workflows.paidf_guardrails import PaidfGuardrailError
 
 
-SYNTHETIC_SOURCE = b'''class AutoTokenizer:
+SYNTHETIC_SOURCE = b"""class AutoTokenizer:
     @staticmethod
     def from_pretrained(model_path, **kwargs):
         if kwargs.get("tokenizer_type") != "qwen2":
@@ -35,7 +35,7 @@ class SyntheticPipeline:
             subfolder="text_tokenizer",
             local_files_only=local_files_only,
         )
-'''
+"""
 SYNTHETIC_PATCHED = SYNTHETIC_SOURCE.replace(
     b'            subfolder="text_tokenizer",\n',
     b'            tokenizer_type="qwen2",\n            subfolder="text_tokenizer",\n',
@@ -101,7 +101,9 @@ def test_patch_changes_only_the_explicit_tokenizer_keyword(synthetic_runtime):
     assert adaptation["model_config_sha256"] == _sha(SYNTHETIC_CONFIG)
 
 
-@pytest.mark.parametrize("mutation", ["source", "patched", "missing-anchor", "duplicate-anchor"])
+@pytest.mark.parametrize(
+    "mutation", ["source", "patched", "missing-anchor", "duplicate-anchor"]
+)
 def test_source_patch_rejects_drift(synthetic_runtime, monkeypatch, mutation):
     source = SYNTHETIC_SOURCE
     if mutation == "source":
@@ -138,7 +140,12 @@ assert value == {'model': 'synthetic-pinned-model', 'tokenizer_type': 'qwen2',
                  'subfolder': 'text_tokenizer', 'local_files_only': True}
 """
     result = subprocess.run(
-        [sys.executable, "-c", script, str(overlay / "vllm_omni" / tokenizer.PIPELINE_PATH)],
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(overlay / "vllm_omni" / tokenizer.PIPELINE_PATH),
+        ],
         env=environment,
         capture_output=True,
         check=False,
@@ -146,11 +153,15 @@ assert value == {'model': 'synthetic-pinned-model', 'tokenizer_type': 'qwen2',
     assert result.returncode == 0
     assert _prepare(synthetic_runtime) == overlay
     assert before == tokenizer._package_files(package, installed=True)
-    assert (overlay / "vllm_omni" / tokenizer.PIPELINE_PATH).read_bytes() == SYNTHETIC_PATCHED
+    assert (
+        overlay / "vllm_omni" / tokenizer.PIPELINE_PATH
+    ).read_bytes() == SYNTHETIC_PATCHED
     assert not list(overlay.rglob("*.pyc"))
 
 
-@pytest.mark.parametrize("mutation", ["missing", "malformed", "array", "changed-class", "changed-bytes"])
+@pytest.mark.parametrize(
+    "mutation", ["missing", "malformed", "array", "changed-class", "changed-bytes"]
+)
 def test_configuration_must_match_the_pinned_class_and_bytes(
     synthetic_runtime, monkeypatch, mutation
 ):
@@ -179,7 +190,9 @@ def test_incomplete_vendor_package_refuses(synthetic_runtime, missing):
         _prepare(synthetic_runtime)
 
 
-@pytest.mark.parametrize("location", ["package", "source-file", "home", "root", "destination"])
+@pytest.mark.parametrize(
+    "location", ["package", "source-file", "home", "root", "destination"]
+)
 def test_directory_and_source_redirects_refuse(synthetic_runtime, tmp_path, location):
     home, hub, config, package = synthetic_runtime
     outside = tmp_path / "outside"
@@ -206,13 +219,17 @@ def test_directory_and_source_redirects_refuse(synthetic_runtime, tmp_path, loca
             root.symlink_to(outside, target_is_directory=True)
         else:
             root.mkdir()
-            (root / tokenizer.PIPELINE_PATCHED_SHA256).symlink_to(outside, target_is_directory=True)
+            (root / tokenizer.PIPELINE_PATCHED_SHA256).symlink_to(
+                outside, target_is_directory=True
+            )
     with pytest.raises(PaidfGuardrailError, match="redirect"):
         _prepare((home, hub, config, package))
     assert marker.read_bytes() == b"untouched"
 
 
-@pytest.mark.parametrize("mutation", ["pipeline", "extra-file", "extra-root", "bytecode", "vendor-change"])
+@pytest.mark.parametrize(
+    "mutation", ["pipeline", "extra-file", "extra-root", "bytecode", "vendor-change"]
+)
 def test_overlay_reuse_rejects_mutation(synthetic_runtime, mutation):
     overlay = _prepare(synthetic_runtime)
     if mutation == "pipeline":
@@ -234,7 +251,9 @@ def test_overlay_reuse_rejects_mutation(synthetic_runtime, mutation):
 
 
 @pytest.mark.parametrize("location", ["vendor", "overlay"])
-def test_special_package_files_refuse_without_reading(synthetic_runtime, monkeypatch, location):
+def test_special_package_files_refuse_without_reading(
+    synthetic_runtime, monkeypatch, location
+):
     package = synthetic_runtime[3]
     if location == "overlay":
         package = _prepare(synthetic_runtime) / "vllm_omni"
@@ -264,7 +283,9 @@ def test_normal_hf_snapshot_link_uses_the_same_model_blob(synthetic_runtime):
     assert blob.read_bytes() == SYNTHETIC_CONFIG
 
 
-@pytest.mark.parametrize("mutation", ["outside", "other-model", "directory", "fifo", "cycle", "ancestor"])
+@pytest.mark.parametrize(
+    "mutation", ["outside", "other-model", "directory", "fifo", "cycle", "ancestor"]
+)
 def test_config_redirects_and_special_targets_fail_before_read(
     synthetic_runtime, tmp_path, monkeypatch, mutation
 ):
@@ -294,7 +315,9 @@ def test_config_redirects_and_special_targets_fail_before_read(
     read_bytes = Path.read_bytes
 
     def guarded_read(path):
-        assert path.name != "tokenizer_config.json", "unsafe configuration reached content read"
+        assert path.name != "tokenizer_config.json", (
+            "unsafe configuration reached content read"
+        )
         return read_bytes(path)
 
     monkeypatch.setattr(Path, "read_bytes", guarded_read)

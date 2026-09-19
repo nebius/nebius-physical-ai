@@ -898,9 +898,7 @@ def test_publish_marks_real_gpu_mode_and_conditioning(
     assert manifest["conditioning_clip_uri"] == "s3://bkt/run1/input/conditioning.mp4"
     assert manifest["control"] == "edge"
     assert manifest["negative_prompt"] == "cyan cast, warped objects"
-    assert manifest["variants"][0]["negative_prompt"] == (
-        "cyan cast, warped objects"
-    )
+    assert manifest["variants"][0]["negative_prompt"] == ("cyan cast, warped objects")
     assert manifest["content_guardrails_enabled"] is False
     meta = json.loads(recorded["metadata"])
     assert meta["mode"] == "cosmos_transfer2.5_gpu"

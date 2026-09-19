@@ -70,7 +70,10 @@ _PAIDF_EXECUTOR_PATCHED_SHA256 = (
     "0a28db07ba1fc9703659e5e94d8a867be9ae05d8276c691778289a3506c7fa59"
 )
 _EVG_LABEL_STAGES = (
-    "detection", "captioning", "visual-qa-anomaly", "visual-qa-person",
+    "detection",
+    "captioning",
+    "visual-qa-anomaly",
+    "visual-qa-person",
     "person-attribute-search",
 )
 _EVG_VQA_MEDIA_SOURCE_PATH = "packages/tasks/visual_qa/src/visual_qa/media.py"
@@ -96,8 +99,18 @@ def _evg_vqa_request_media_contract(stage: str) -> dict[str, Any]:
     """Use the vendor's existing sampler within this hosted endpoint's capacity."""
 
     controls = {
-        "visual-qa-anomaly": ("--max-frames", 16, "_sample_frame_ids", "candidate-frame-ids"),
-        "visual-qa-person": ("--max-crops-per-track", 12, "_sample_even", "track-crop-list"),
+        "visual-qa-anomaly": (
+            "--max-frames",
+            16,
+            "_sample_frame_ids",
+            "candidate-frame-ids",
+        ),
+        "visual-qa-person": (
+            "--max-crops-per-track",
+            12,
+            "_sample_even",
+            "track-crop-list",
+        ),
     }
     if stage not in controls:
         raise PaidfNativeError("request media contract requires an EVG VQA stage")
@@ -123,9 +136,9 @@ def _evg_vqa_request_media_contract(stage: str) -> dict[str, Any]:
 def _require_evg_vqa_request_media_contract(payload: dict[str, Any]) -> None:
     expected = _evg_vqa_request_media_contract(payload.get("stage", ""))
     actual = payload.get("request_media_contract")
-    if (
-        actual != expected
-        or any(type(actual.get(key)) is not int for key in ("value", "upstream_value", "hosted_max_images"))
+    if actual != expected or any(
+        type(actual.get(key)) is not int
+        for key in ("value", "upstream_value", "hosted_max_images")
     ):
         raise PaidfNativeError("EVG VQA request media contract is missing or changed")
 
@@ -195,34 +208,54 @@ def _validate_local_generation_endpoint(
     role = "image_edit" if workflow == "iaa" else "image2video"
     matches = [item for item in endpoints or [] if item.get("role") == role]
     if len(matches) != 1:
-        raise PaidfNativeError("direct generation requires exactly one local model endpoint")
+        raise PaidfNativeError(
+            "direct generation requires exactly one local model endpoint"
+        )
     endpoint = matches[0]
     parsed = urlparse(str(endpoint.get("url") or ""))
     try:
         actual_port = parsed.port
     except ValueError as exc:
-        raise PaidfNativeError("direct generation endpoint has an invalid port") from exc
+        raise PaidfNativeError(
+            "direct generation endpoint has an invalid port"
+        ) from exc
     if (
-        parsed.scheme != "http" or parsed.hostname != "127.0.0.1"
-        or actual_port is None or (port is not None and actual_port != port)
-        or parsed.path.rstrip("/") != "/v1" or parsed.query or parsed.fragment
-        or parsed.username or parsed.password
+        parsed.scheme != "http"
+        or parsed.hostname != "127.0.0.1"
+        or actual_port is None
+        or (port is not None and actual_port != port)
+        or parsed.path.rstrip("/") != "/v1"
+        or parsed.query
+        or parsed.fragment
+        or parsed.username
+        or parsed.password
         or endpoint.get("api_key_env") != "GENERATION_API_KEY"
     ):
-        raise PaidfNativeError("direct generation endpoint must name its local model service")
+        raise PaidfNativeError(
+            "direct generation endpoint must name its local model service"
+        )
     _require_direct_generation_model(workflow, str(endpoint.get("model") or ""))
-    if any(item.get("api_key_env") == "GENERATION_API_KEY" and item is not endpoint for item in endpoints):
-        raise PaidfNativeError("generation credential alias may only name the local model service")
+    if any(
+        item.get("api_key_env") == "GENERATION_API_KEY" and item is not endpoint
+        for item in endpoints
+    ):
+        raise PaidfNativeError(
+            "generation credential alias may only name the local model service"
+        )
     if workflow == "evg":
         _require_evg_request_guardrails(config)
 
 
 def _require_evg_request_guardrails(config: Any) -> None:
     augmentation = config.get("augmentation") if isinstance(config, dict) else None
-    parameters = augmentation.get("parameters") if isinstance(augmentation, dict) else None
+    parameters = (
+        augmentation.get("parameters") if isinstance(augmentation, dict) else None
+    )
     extra = parameters.get("extra_params") if isinstance(parameters, dict) else None
     if not isinstance(extra, dict) or extra.get("guardrails") is not True:
-        raise PaidfNativeError("EVG requires explicit enabled guardrails in every executed request")
+        raise PaidfNativeError(
+            "EVG requires explicit enabled guardrails in every executed request"
+        )
 
 
 def _run_component(
@@ -564,16 +597,30 @@ def _producer_descriptor(uri: str, payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "uri": uri,
         "document_sha256": hashlib.sha256(encoded).hexdigest(),
-        **{key: payload[key] for key in (
-            "schema", "run_id", "workflow", "stage", "runtime_image",
-            "upstream_revision", "component", "source_adaptation", "generation_runtime",
-            "request_media_contract",
-        ) if key in payload},
+        **{
+            key: payload[key]
+            for key in (
+                "schema",
+                "run_id",
+                "workflow",
+                "stage",
+                "runtime_image",
+                "upstream_revision",
+                "component",
+                "source_adaptation",
+                "generation_runtime",
+                "request_media_contract",
+            )
+            if key in payload
+        },
     }
 
 
 def _require_evg_generation_runtime(payload: dict[str, Any]) -> None:
-    from npa.workflows.paidf_guardrails import PaidfGuardrailError, require_evg_generation_runtime
+    from npa.workflows.paidf_guardrails import (
+        PaidfGuardrailError,
+        require_evg_generation_runtime,
+    )
 
     try:
         require_evg_generation_runtime(payload.get("generation_runtime"))
@@ -603,25 +650,41 @@ def _verified_producers(
         document = _read_run_artifact(descriptor["uri"], kind, run_id, workflow)
         if descriptor != _producer_descriptor(descriptor["uri"], document):
             raise PaidfNativeError("producer document changed after its handoff")
-        if "-auto-label-" in kind and document.get("stage") != kind.split("-auto-label-", 1)[1]:
+        if (
+            "-auto-label-" in kind
+            and document.get("stage") != kind.split("-auto-label-", 1)[1]
+        ):
             raise PaidfNativeError("producer stage identity does not match its schema")
-        if kind in {"evg-auto-label-visual-qa-anomaly", "evg-auto-label-visual-qa-person"}:
+        if kind in {
+            "evg-auto-label-visual-qa-anomaly",
+            "evg-auto-label-visual-qa-person",
+        }:
             _require_evg_vqa_request_media_contract(document)
-        if document.get("producers", []) != descriptors[:len(documents)]:
-            raise PaidfNativeError("producer lineage does not preserve its predecessors")
+        if document.get("producers", []) != descriptors[: len(documents)]:
+            raise PaidfNativeError(
+                "producer lineage does not preserve its predecessors"
+            )
         if kind.endswith("-augmentation"):
             _require_paidf_image_output_adaptation(document.get("source_adaptation"))
             if workflow == "evg":
                 _require_evg_generation_runtime(document)
             outputs = document.get("outputs")
             if not isinstance(outputs, list) or not outputs:
-                raise PaidfNativeError("augmentation producer has no completed artifacts")
+                raise PaidfNativeError(
+                    "augmentation producer has no completed artifacts"
+                )
             for output in outputs:
                 _verify_fingerprints(output.get("artifacts"))
                 if workflow == "evg":
-                    with tempfile.TemporaryDirectory(prefix="npa-paidf-guardrail-lineage-") as tmp:
-                        config = _materialize(output["config_uri"], Path(tmp) / "config.yaml")
-                        _require_evg_request_guardrails(yaml.safe_load(config.read_text(encoding="utf-8")))
+                    with tempfile.TemporaryDirectory(
+                        prefix="npa-paidf-guardrail-lineage-"
+                    ) as tmp:
+                        config = _materialize(
+                            output["config_uri"], Path(tmp) / "config.yaml"
+                        )
+                        _require_evg_request_guardrails(
+                            yaml.safe_load(config.read_text(encoding="utf-8"))
+                        )
         documents.append(document)
     return documents
 
@@ -633,7 +696,11 @@ def _artifact_fingerprints(uris: dict[str, str]) -> dict[str, Any]:
             local = _materialize(uri, Path(tmp) / str(index))
             if not local.is_file() or not local.stat().st_size:
                 raise PaidfNativeError("producer omitted a required nonempty artifact")
-            records[name] = {"uri": uri, "sha256": _sha256(local), "size_bytes": local.stat().st_size}
+            records[name] = {
+                "uri": uri,
+                "sha256": _sha256(local),
+                "size_bytes": local.stat().st_size,
+            }
     return records
 
 
@@ -641,9 +708,13 @@ def _verify_fingerprints(records: Any) -> None:
     if not isinstance(records, dict) or not records:
         raise PaidfNativeError("producer has no artifact content manifest")
     try:
-        actual = _artifact_fingerprints({name: record["uri"] for name, record in records.items()})
+        actual = _artifact_fingerprints(
+            {name: record["uri"] for name, record in records.items()}
+        )
     except (KeyError, TypeError, OSError) as exc:
-        raise PaidfNativeError("producer artifact content manifest is malformed or its bytes are missing") from exc
+        raise PaidfNativeError(
+            "producer artifact content manifest is malformed or its bytes are missing"
+        ) from exc
     if actual != records:
         raise PaidfNativeError("producer artifact bytes changed after their handoff")
 
@@ -651,7 +722,9 @@ def _verify_fingerprints(records: Any) -> None:
 def _token_factory_child_env() -> dict[str, str]:
     token = os.environ.get("NEBIUS_TOKEN_FACTORY_KEY", "").strip()
     if not token:
-        raise PaidfNativeError("NEBIUS_TOKEN_FACTORY_KEY is required by the upstream protocol")
+        raise PaidfNativeError(
+            "NEBIUS_TOKEN_FACTORY_KEY is required by the upstream protocol"
+        )
     return {
         **os.environ,
         **dict.fromkeys(("VLM_API_KEY", "LLM_API_KEY", "NVIDIA_API_KEY"), token),
@@ -660,10 +733,14 @@ def _token_factory_child_env() -> dict[str, str]:
 
 
 def _verify_label_handoffs(
-    documents: list[dict[str, Any]], accepted: list[dict[str, Any]],
+    documents: list[dict[str, Any]],
+    accepted: list[dict[str, Any]],
     auto_label_root_uri: str | None = None,
 ) -> None:
-    expected = {f"{item['input_key']}_aug{item['augmentation_index']}": item for item in accepted}
+    expected = {
+        f"{item['input_key']}_aug{item['augmentation_index']}": item
+        for item in accepted
+    }
     if len(expected) != len(accepted):
         raise PaidfNativeError("validated media contains duplicate scene identities")
     scene_paths: dict[str, str] = {}
@@ -675,24 +752,42 @@ def _verify_label_handoffs(
             raise PaidfNativeError("labeling producer has an invalid output count")
         actual = {item.get("key"): item for item in outputs}
         if len(actual) != len(outputs) or actual.keys() != expected.keys():
-            raise PaidfNativeError("labeling producer scene set differs from validated media")
+            raise PaidfNativeError(
+                "labeling producer scene set differs from validated media"
+            )
         for key, output in actual.items():
             item = expected[key]
             path = output.get("data_path")
             if not path or output.get("media_uri") != item["media_uri"]:
-                raise PaidfNativeError("labeling producer names foreign media or no scene")
-            if auto_label_root_uri is not None and path != f"{auto_label_root_uri.rstrip('/')}/{item['input_key']}/{item['augmentation_index']}":
+                raise PaidfNativeError(
+                    "labeling producer names foreign media or no scene"
+                )
+            if (
+                auto_label_root_uri is not None
+                and path
+                != f"{auto_label_root_uri.rstrip('/')}/{item['input_key']}/{item['augmentation_index']}"
+            ):
                 raise PaidfNativeError("labeling producer names another scene root")
             if key in scene_paths and scene_paths[key] != path:
                 raise PaidfNativeError("labeling producers disagree on the scene path")
             scene_paths[key] = path
             records = output.get("artifacts")
             if records:
-                if any(record.get("uri") != f"{path}/{name}" for name, record in records.items()):
-                    raise PaidfNativeError("labeling content manifest names a foreign scene")
+                if any(
+                    record.get("uri") != f"{path}/{name}"
+                    for name, record in records.items()
+                ):
+                    raise PaidfNativeError(
+                        "labeling content manifest names a foreign scene"
+                    )
                 _verify_fingerprints(records)
-            elif not (document.get("stage") == "person-attribute-search" and output.get("trackless") is True):
-                raise PaidfNativeError("labeling producer has no output content manifest")
+            elif not (
+                document.get("stage") == "person-attribute-search"
+                and output.get("trackless") is True
+            ):
+                raise PaidfNativeError(
+                    "labeling producer has no output content manifest"
+                )
 
 
 def _require_artifact_identity(
@@ -847,7 +942,9 @@ def build_augmentation_configs(
                 else:
                     parameters["seed"] = seed + len(configs)
                     if not isinstance(parameters.get("extra_params"), dict):
-                        raise PaidfNativeError("upstream EVG config has no extra_params object")
+                        raise PaidfNativeError(
+                            "upstream EVG config has no extra_params object"
+                        )
                     parameters["extra_params"]["guardrails"] = True
                     _require_evg_request_guardrails(config)
                 local = root / f"{input_key}-{augmentation_index}.yaml"
@@ -918,11 +1015,14 @@ def _paidf_image_output_patch_bytes(original: bytes) -> bytes:
     import_anchor = "import multistorageclient as msc\n"
     media_anchor = '_MEDIA_KINDS = frozenset({"image", "video", "control"})\n\n\n'
     write_anchor = (
-        '        if result.media_bytes is not None:\n'
+        "        if result.media_bytes is not None:\n"
         '            with msc.open(output_path, "wb") as f:\n'
-        '                f.write(result.media_bytes)\n'
+        "                f.write(result.media_bytes)\n"
     )
-    if any(text.count(anchor) != 1 for anchor in (import_anchor, media_anchor, write_anchor)):
+    if any(
+        text.count(anchor) != 1
+        for anchor in (import_anchor, media_anchor, write_anchor)
+    ):
         raise PaidfNativeError(
             "pinned PAIDF executor no longer has the reviewed MIME patch anchors"
         )
@@ -962,10 +1062,10 @@ def _media_bytes_for_output(media_bytes: bytes, output_path: str) -> bytes:
     )
     text = text.replace(
         write_anchor,
-        '        if result.media_bytes is not None:\n'
-        '            payload = _media_bytes_for_output(result.media_bytes, output_path)\n'
+        "        if result.media_bytes is not None:\n"
+        "            payload = _media_bytes_for_output(result.media_bytes, output_path)\n"
         '            with msc.open(output_path, "wb") as f:\n'
-        '                f.write(payload)\n',
+        "                f.write(payload)\n",
         1,
     )
     return text.encode("utf-8")
@@ -1024,8 +1124,12 @@ def _patch_paidf_image_output_contract(source: Path) -> dict[str, Any]:
 
 
 def run_augmentation(
-    config_manifest_uri: str, result_uri: str, run_id: str,
-    *, generation_port: int | None = None, generation_runtime: dict[str, Any] | None = None,
+    config_manifest_uri: str,
+    result_uri: str,
+    run_id: str,
+    *,
+    generation_port: int | None = None,
+    generation_runtime: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Invoke the real paidf-augmentation CLI once for every rendered config."""
 
@@ -1088,10 +1192,20 @@ def run_augmentation(
         failed: list[dict[str, Any]] = []
         for item, local in zip(configs, local_configs, strict=True):
             try:
-                _run_component([*command_prefix, "--config", str(local)], env=component_env)
-                content = _artifact_fingerprints({
-                    field: item[field] for field in ("config_uri", "media_uri", "caption_uri", "metadata_uri")
-                })
+                _run_component(
+                    [*command_prefix, "--config", str(local)], env=component_env
+                )
+                content = _artifact_fingerprints(
+                    {
+                        field: item[field]
+                        for field in (
+                            "config_uri",
+                            "media_uri",
+                            "caption_uri",
+                            "metadata_uri",
+                        )
+                    }
+                )
             except (subprocess.CalledProcessError, PaidfNativeError, OSError) as exc:
                 # IAA's mapped join retains successful siblings after exhausted
                 # component retries. EVG requires every expected augmentation.
@@ -1103,7 +1217,9 @@ def run_augmentation(
                         "input_key": item["input_key"],
                         "augmentation_index": item["augmentation_index"],
                         "exit_code": getattr(exc, "returncode", None),
-                        "reason": "component_retries_exhausted" if isinstance(exc, subprocess.CalledProcessError) else "component_output_missing_or_empty",
+                        "reason": "component_retries_exhausted"
+                        if isinstance(exc, subprocess.CalledProcessError)
+                        else "component_output_missing_or_empty",
                     }
                 )
                 continue
@@ -1204,7 +1320,9 @@ def run_local_augmentation(
         ]
     elif service_kind == "image2video":
         if parallel_size not in {1, 2}:
-            raise PaidfNativeError("the installed Cosmos3 CFG protocol supports parallel_size 1 or 2")
+            raise PaidfNativeError(
+                "the installed Cosmos3 CFG protocol supports parallel_size 1 or 2"
+            )
         command = [
             "vllm",
             "serve",
@@ -1257,7 +1375,9 @@ def run_local_augmentation(
         batch_options: dict[str, Any] = {"generation_port": port}
         if generation_runtime is not None:
             batch_options["generation_runtime"] = generation_runtime
-        return run_augmentation(config_manifest_uri, result_uri, run_id, **batch_options)
+        return run_augmentation(
+            config_manifest_uri, result_uri, run_id, **batch_options
+        )
     finally:
         service.terminate()
         try:
@@ -1268,7 +1388,9 @@ def run_local_augmentation(
 
 
 def validate_augmentation(
-    config_manifest_uri: str, validation_uri: str, run_id: str,
+    config_manifest_uri: str,
+    validation_uri: str,
+    run_id: str,
     augmentation_result_uri: str,
 ) -> dict[str, Any]:
     """Require decodable media plus non-empty caption and metadata for each output."""
@@ -1277,21 +1399,28 @@ def validate_augmentation(
     workflow = manifest.get("workflow")
     if workflow not in {"iaa", "evg"}:
         raise PaidfNativeError("augmentation config manifest has no supported workflow")
-    producer = _read_run_artifact(augmentation_result_uri, f"{workflow}-augmentation", run_id, workflow)
+    producer = _read_run_artifact(
+        augmentation_result_uri, f"{workflow}-augmentation", run_id, workflow
+    )
     _require_paidf_image_output_adaptation(producer.get("source_adaptation"))
     if workflow == "evg":
         _require_evg_generation_runtime(producer)
     configs = manifest.get("configs")
     outputs = producer.get("outputs")
     failed = producer.get("failed")
-    if not isinstance(configs, list) or not isinstance(outputs, list) or not isinstance(failed, list):
+    if (
+        not isinstance(configs, list)
+        or not isinstance(outputs, list)
+        or not isinstance(failed, list)
+    ):
         raise PaidfNativeError("augmentation producer has no completed/failed set")
     configured = {item["config_uri"]: item for item in configs}
     completed = {item["config_uri"]: item for item in outputs}
     failed_by_config = {item["config_uri"]: item for item in failed}
     if (
         producer.get("config_manifest_uri") != config_manifest_uri
-        or len(configured) != len(configs) or len(completed) != len(outputs)
+        or len(configured) != len(configs)
+        or len(completed) != len(outputs)
         or len(failed_by_config) != len(failed)
         or completed.keys() & failed_by_config.keys()
         or completed.keys() | failed_by_config.keys() != configured.keys()
@@ -1300,15 +1429,26 @@ def validate_augmentation(
         or producer.get("attempted_count") != len(configs)
         or (workflow == "evg" and failed)
     ):
-        raise PaidfNativeError("augmentation producer completed set does not match the configured batch")
+        raise PaidfNativeError(
+            "augmentation producer completed set does not match the configured batch"
+        )
     for uri, output in completed.items():
         if any(output.get(field) != value for field, value in configured[uri].items()):
             raise PaidfNativeError("augmentation producer changed a configured output")
         records = output.get("artifacts")
-        if not isinstance(records, dict) or set(records) != {"config_uri", "media_uri", "caption_uri", "metadata_uri"}:
-            raise PaidfNativeError("augmentation producer lacks its full content manifest")
+        if not isinstance(records, dict) or set(records) != {
+            "config_uri",
+            "media_uri",
+            "caption_uri",
+            "metadata_uri",
+        }:
+            raise PaidfNativeError(
+                "augmentation producer lacks its full content manifest"
+            )
         if any(record.get("uri") != output[field] for field, record in records.items()):
-            raise PaidfNativeError("augmentation producer content manifest names another output")
+            raise PaidfNativeError(
+                "augmentation producer content manifest names another output"
+            )
         _verify_fingerprints(records)
     accepted: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = [dict(item) for item in failed]
@@ -1435,7 +1575,9 @@ def postprocess_iaa(
         *(str(value) for item in accepted for value in item.values()),
     )
     component_env = _token_factory_child_env()
-    _verified_producers(validation.get("producers"), ["iaa-augmentation"], run_id, "iaa")
+    _verified_producers(
+        validation.get("producers"), ["iaa-augmentation"], run_id, "iaa"
+    )
 
     outputs: list[dict[str, Any]] = []
     skipped = [dict(item) for item in validation.get("skipped", [])]
@@ -1580,7 +1722,10 @@ def postprocess_iaa(
         "skipped": skipped,
         "component": "NVIDIA paidf-augmentation create_attribute_augmented_dataset.py",
         "upstream_revision": PAIDF_AUGMENTATION_REVISION,
-        "producers": [*validation["producers"], _producer_descriptor(validation_uri, validation)],
+        "producers": [
+            *validation["producers"],
+            _producer_descriptor(validation_uri, validation),
+        ],
     }
     return _write_json(payload, result_uri)
 
@@ -1687,21 +1832,32 @@ def run_auto_label(
     component_env = _token_factory_child_env()
     kinds = _lineage_kinds(workflow)
     current_kind = f"{workflow}-auto-label-{stage}"
-    expected_kinds = kinds[:kinds.index(current_kind)]
+    expected_kinds = kinds[: kinds.index(current_kind)]
     previous = validation
     previous_uri = validation_uri
     if workflow == "evg" and stage != "detection":
         if not previous_result_uri:
-            raise PaidfNativeError("EVG labeling requires its preceding producer result")
+            raise PaidfNativeError(
+                "EVG labeling requires its preceding producer result"
+            )
         previous_uri = previous_result_uri
-        previous = _read_run_artifact(previous_uri, expected_kinds[-1], run_id, workflow)
+        previous = _read_run_artifact(
+            previous_uri, expected_kinds[-1], run_id, workflow
+        )
     elif previous_result_uri and previous_result_uri != validation_uri:
-        raise PaidfNativeError("first labeling stage must consume its validation producer")
-    producers = [*previous.get("producers", []), _producer_descriptor(previous_uri, previous)]
+        raise PaidfNativeError(
+            "first labeling stage must consume its validation producer"
+        )
+    producers = [
+        *previous.get("producers", []),
+        _producer_descriptor(previous_uri, previous),
+    ]
     documents = _verified_producers(producers, expected_kinds, run_id, workflow)
     validation_index = expected_kinds.index(validation_kind)
     if producers[validation_index] != _producer_descriptor(validation_uri, validation):
-        raise PaidfNativeError("labeling producer consumed a different validation artifact")
+        raise PaidfNativeError(
+            "labeling producer consumed a different validation artifact"
+        )
     _verify_label_handoffs(documents, accepted, auto_label_root_uri)
 
     with tempfile.TemporaryDirectory(prefix="npa-paidf-label-") as tmp:
@@ -1949,11 +2105,20 @@ def run_auto_label(
             if workflow == "iaa":
                 _validate_iaa_labels(data_path)
             content_paths = list(required)
-            if stage == "detection" and _uri_is_file(f"{data_path}/sidecars/detection_and_tracking/tracks.json"):
+            if stage == "detection" and _uri_is_file(
+                f"{data_path}/sidecars/detection_and_tracking/tracks.json"
+            ):
                 content_paths.append("sidecars/detection_and_tracking/tracks.json")
             completed.append(
                 {
-                    "artifacts": _artifact_fingerprints({relative: f"{data_path}/{relative}" for relative in content_paths}) if content_paths else {},
+                    "artifacts": _artifact_fingerprints(
+                        {
+                            relative: f"{data_path}/{relative}"
+                            for relative in content_paths
+                        }
+                    )
+                    if content_paths
+                    else {},
                     "key": key,
                     "data_path": data_path,
                     "media_uri": item["media_uri"],
@@ -2010,8 +2175,12 @@ def finalize_dataset(
     producers = [*labels.get("producers", []), _producer_descriptor(labels_uri, labels)]
     kinds = _lineage_kinds(workflow)
     documents = _verified_producers(producers, kinds, run_id, workflow)
-    if producers[kinds.index(validation_kind)] != _producer_descriptor(validation_uri, validation):
-        raise PaidfNativeError("final labeling producer consumed a different validation artifact")
+    if producers[kinds.index(validation_kind)] != _producer_descriptor(
+        validation_uri, validation
+    ):
+        raise PaidfNativeError(
+            "final labeling producer consumed a different validation artifact"
+        )
     _verify_label_handoffs(documents, accepted)
     label_outputs = labels.get("outputs")
     if not isinstance(label_outputs, list):
@@ -2234,17 +2403,26 @@ def validate_dataset(dataset_uri: str, report_uri: str, run_id: str) -> dict[str
     lineage = dataset.get("lineage")
     if not isinstance(lineage, dict):
         raise PaidfNativeError("terminal dataset has no producer lineage")
-    documents = _verified_producers(lineage.get("producers"), _lineage_kinds(workflow), run_id, workflow)
+    documents = _verified_producers(
+        lineage.get("producers"), _lineage_kinds(workflow), run_id, workflow
+    )
     validation_kind = "iaa-postprocess" if workflow == "iaa" else "evg-validation"
     validated = documents[_lineage_kinds(workflow).index(validation_kind)]
     _verify_label_handoffs(documents, validated["accepted"])
     missing = []
     for entry in entries:
         records = entry.get("scene_content")
-        if not isinstance(records, dict) or set(records) != set(entry.get("scene_artifacts", [])):
+        if not isinstance(records, dict) or set(records) != set(
+            entry.get("scene_artifacts", [])
+        ):
             raise PaidfNativeError("assembled scene has no complete content manifest")
-        if any(record.get("uri") != f"{entry['scene_path']}/{name}" for name, record in records.items()):
-            raise PaidfNativeError("assembled scene content manifest names another scene")
+        if any(
+            record.get("uri") != f"{entry['scene_path']}/{name}"
+            for name, record in records.items()
+        ):
+            raise PaidfNativeError(
+                "assembled scene content manifest names another scene"
+            )
         _verify_fingerprints(records)
         for field in ("media", "caption", "metadata"):
             value = str(entry.get(field) or "")
@@ -2354,7 +2532,9 @@ def _dig_pretrained_content_manifest(
     """Create or verify the complete published pretrained byte closure."""
 
     if not run_id.strip():
-        raise PaidfNativeError("DIG pretrained content requires the workflow run identity")
+        raise PaidfNativeError(
+            "DIG pretrained content requires the workflow run identity"
+        )
     if not pretrained.is_dir():
         raise PaidfNativeError("DIG pretrained content is not a directory")
     root = pretrained.resolve()
@@ -2396,7 +2576,9 @@ def _dig_pretrained_content_manifest(
         try:
             expected = json.loads(recorded.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            raise PaidfNativeError("DIG pretrained content manifest is unreadable") from exc
+            raise PaidfNativeError(
+                "DIG pretrained content manifest is unreadable"
+            ) from exc
         _require_artifact_identity(
             expected,
             f"{SCHEMA_PREFIX}.dig-pretrained-content.v1",
@@ -2422,7 +2604,12 @@ def _dig_offline_environment(pretrained: Path, run_id: str) -> dict[str, str]:
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",
     }
-    for name in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_HUB_TOKEN", "HF_TOKEN_PATH"):
+    for name in (
+        "HF_TOKEN",
+        "HUGGING_FACE_HUB_TOKEN",
+        "HUGGINGFACE_HUB_TOKEN",
+        "HF_TOKEN_PATH",
+    ):
         environment.pop(name, None)
     return environment
 
@@ -2548,15 +2735,17 @@ def _dig_edge_converter_config(environment: dict[str, str]) -> str:
             or not config.is_file()
             or _sha256(config) != DIG_EDGE_CONVERTER_CONFIG_SHA256
         ):
-            raise PaidfNativeError("DIG Edge generator configuration is missing or changed")
+            raise PaidfNativeError(
+                "DIG Edge generator configuration is missing or changed"
+            )
     except (OSError, subprocess.CalledProcessError) as exc:
-        raise PaidfNativeError("DIG Edge generator configuration could not be resolved") from exc
+        raise PaidfNativeError(
+            "DIG Edge generator configuration could not be resolved"
+        ) from exc
     return str(config)
 
 
-def _dig_downloader_copy(
-    workspace: Path, destination: Path
-) -> tuple[Path, str, str]:
+def _dig_downloader_copy(workspace: Path, destination: Path) -> tuple[Path, str, str]:
     """Copy the real downloader without its host-specific DCP byte record.
 
     NVIDIA commits two different integrity manifests. The Hub manifest contains
@@ -2584,9 +2773,7 @@ def _dig_downloader_copy(
     return script, _sha256(hub_source), _sha256(converted_source)
 
 
-def _verify_dig_converted_manifest(
-    pretrained: Path, manifest: Path
-) -> dict[str, Any]:
+def _verify_dig_converted_manifest(pretrained: Path, manifest: Path) -> dict[str, Any]:
     """Require an exact, complete sha256sum record for every generated DCP shard."""
 
     if not manifest.is_file() or manifest.is_symlink():
@@ -2678,7 +2865,9 @@ def prepare_dig_pretrained(
                 command.insert(4, probe)
             _run_component(command, env=env)
         _dig_cache_manifest(output, run_id, initialize=True)
-        edge_config = _dig_edge_converter_config(_dig_offline_environment(output, run_id))
+        edge_config = _dig_edge_converter_config(
+            _dig_offline_environment(output, run_id)
+        )
         # The pinned upstream converter's named models resolve revision=main.
         # Fetch approved revisions first and give that real converter local
         # snapshots; the original downloader then sees completed DCP outputs.
@@ -2794,11 +2983,9 @@ def _verify_dig_finetune_handoff(
         raise PaidfNativeError(
             "DIG embedded checkpoint record disagrees with the finetune result"
         )
-    if (
-        checkpoint_record.get("status") != "completed"
-        or str(checkpoint_record.get("output_uri") or "").rstrip("/")
-        != checkpoint_uri.rstrip("/")
-    ):
+    if checkpoint_record.get("status") != "completed" or str(
+        checkpoint_record.get("output_uri") or ""
+    ).rstrip("/") != checkpoint_uri.rstrip("/"):
         raise PaidfNativeError("DIG checkpoint handoff is not completed")
     selected_value = str(checkpoint_record.get("selected_checkpoint") or "")
     selected_relative = PurePosixPath(selected_value)
@@ -2913,8 +3100,13 @@ def run_dig_inference(
         except PaidfGuardrailError as exc:
             raise PaidfNativeError(str(exc)) from exc
         _run_component(
-            [DIG_VENDOR_PYTHON, "-c", DIG_IMPORT_PROBE,
-             str(overlay / DIG_QWEN_PATH), DIG_QWEN_PATCHED_SHA256],
+            [
+                DIG_VENDOR_PYTHON,
+                "-c",
+                DIG_IMPORT_PROBE,
+                str(overlay / DIG_QWEN_PATH),
+                DIG_QWEN_PATCHED_SHA256,
+            ],
             env=env,
         )
         _run_component(["bash", str(script)], env=env)
@@ -3005,7 +3197,12 @@ def build_parser() -> argparse.ArgumentParser:
     local_augment.add_argument("--parallel-size", type=int, choices=(1, 2), default=1)
 
     validate = subparsers.add_parser("validate-augmentation")
-    for name in ("config-manifest-uri", "augmentation-result-uri", "validation-uri", "run-id"):
+    for name in (
+        "config-manifest-uri",
+        "augmentation-result-uri",
+        "validation-uri",
+        "run-id",
+    ):
         validate.add_argument(f"--{name}", required=True)
 
     label = subparsers.add_parser("run-auto-label")

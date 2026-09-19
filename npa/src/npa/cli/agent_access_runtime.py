@@ -1503,16 +1503,14 @@ def _load_scoped_legacy_run_artifacts(
             selected_project = _authorized_artifact_parent_project(
                 report, selected_bucket, selected_prefix
             )
-            exact_ref = encode_run_ref(
-                selected_bucket, selected_prefix, normalized_run
-            )
+            exact_ref = encode_run_ref(selected_bucket, selected_prefix, normalized_run)
         else:
             candidates: dict[tuple[str, str, str], list[Any]] = {}
             for source in _configured_agent_artifact_sources():
                 bucket = str(source.get("bucket") or "").strip()
-                source_prefix = str(
-                    source.get("resolved_prefix") or ""
-                ).strip().strip("/")
+                source_prefix = (
+                    str(source.get("resolved_prefix") or "").strip().strip("/")
+                )
                 project = str(source.get("project_id") or "").strip()
                 artifacts = list_artifacts(
                     bucket, normalized_run, prefix=source_prefix, s3=s3
@@ -1574,9 +1572,7 @@ def _load_scoped_legacy_run_artifacts(
             (selected_bucket, selected_project, selected_prefix), _ = next(
                 iter(candidates.items())
             )
-            exact_ref = encode_run_ref(
-                selected_bucket, selected_prefix, normalized_run
-            )
+            exact_ref = encode_run_ref(selected_bucket, selected_prefix, normalized_run)
 
         _authorize_exact_run_ref_source(
             s3=s3,

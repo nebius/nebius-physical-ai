@@ -181,8 +181,14 @@ def test_runtime_handoff_requires_exact_complete_enabled_contract(mutation):
         value["guardrails_enabled"] = False
     elif mutation == "tokenizer":
         value["tokenizer_source_adaptation"]["tokenizer_type"] = "unreviewed"
-        value["tokenizer_source_adaptation"]["patch_sha256"] = guardrails._digest_document(
-            {k: v for k, v in value["tokenizer_source_adaptation"].items() if k != "patch_sha256"}
+        value["tokenizer_source_adaptation"]["patch_sha256"] = (
+            guardrails._digest_document(
+                {
+                    k: v
+                    for k, v in value["tokenizer_source_adaptation"].items()
+                    if k != "patch_sha256"
+                }
+            )
         )
     elif mutation == "linked_nltk":
         value["nltk_data"]["regular_files"] = False
@@ -370,9 +376,7 @@ def test_snapshot_manifest_rejects_non_exact_transport_identity(
         "get",
         lambda *_args, **_kwargs: pytest.fail("network reached"),
     )
-    with pytest.raises(
-        guardrails.PaidfGuardrailError, match="not an exact revision"
-    ):
+    with pytest.raises(guardrails.PaidfGuardrailError, match="not an exact revision"):
         guardrails._load_snapshot_manifest(repository, revision, ())
 
 
@@ -472,7 +476,9 @@ def test_runtime_stages_exact_cli_revisions_and_regular_nltk_offline(
         guardrails, "_prepare_qwen_guardrail_overlay", lambda *_: tmp_path / "overlay"
     )
     monkeypatch.setattr(
-        tokenizer, "prepare_evg_tokenizer_overlay", lambda *_: tmp_path / "tokenizer-overlay"
+        tokenizer,
+        "prepare_evg_tokenizer_overlay",
+        lambda *_: tmp_path / "tokenizer-overlay",
     )
     if tamper_nltk:
         original_prepare = guardrails.prepare_guardrail_nltk_data
@@ -521,7 +527,8 @@ def test_runtime_stages_exact_cli_revisions_and_regular_nltk_offline(
     assert not any(name in environment for name in ("HF_TOKEN", *aliases))
     assert os.environ["HF_TOKEN"] == token
     assert environment["PYTHONPATH"].split(os.pathsep)[:2] == [
-        str(tmp_path / "tokenizer-overlay"), str(tmp_path / "overlay")
+        str(tmp_path / "tokenizer-overlay"),
+        str(tmp_path / "overlay"),
     ]
     assert environment["HF_HOME"] != str(tmp_path)
     assert environment["HF_ENDPOINT"] == "https://huggingface.co"
@@ -530,7 +537,10 @@ def test_runtime_stages_exact_cli_revisions_and_regular_nltk_offline(
         manifest["guardrail_source_adaptation"]
         == guardrails.qwen_guardrail_source_adaptation()
     )
-    assert manifest["tokenizer_source_adaptation"] == tokenizer.tokenizer_source_adaptation()
+    assert (
+        manifest["tokenizer_source_adaptation"]
+        == tokenizer.tokenizer_source_adaptation()
+    )
     nltk = Path(environment["NLTK_DATA"])
     assert not any(path.is_symlink() for path in nltk.rglob("*"))
     assert (

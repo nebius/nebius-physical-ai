@@ -1770,17 +1770,17 @@ def test_legacy_prefix_loader_never_broadens_a_configured_exact_source(
 
     artifact = SimpleNamespace(key="authorized/runs/run-one/report.rrd")
     authorized: list[dict[str, str]] = []
-    monkeypatch.setattr(
-        runtime, "list_artifacts", lambda *_args, **_kwargs: [artifact]
-    )
+    monkeypatch.setattr(runtime, "list_artifacts", lambda *_args, **_kwargs: [artifact])
     monkeypatch.setattr(
         runtime,
         "_authorize_exact_run_ref_source",
-        lambda **kwargs: authorized.append(kwargs)
-        or (
-            kwargs["resource_bucket"],
-            kwargs["project_id"],
-            kwargs["resolved_prefix"],
+        lambda **kwargs: (
+            authorized.append(kwargs)
+            or (
+                kwargs["resource_bucket"],
+                kwargs["project_id"],
+                kwargs["resolved_prefix"],
+            )
         ),
     )
     loaded = runtime._load_scoped_legacy_run_artifacts(

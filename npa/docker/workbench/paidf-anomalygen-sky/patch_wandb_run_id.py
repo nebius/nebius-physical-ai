@@ -41,8 +41,15 @@ def transform(source: bytes) -> bytes:
 
 def identity(info: os.stat_result) -> tuple[int, ...]:
     return (
-        info.st_dev, info.st_ino, info.st_mode, info.st_nlink, info.st_uid,
-        info.st_gid, info.st_size, info.st_mtime_ns, info.st_ctime_ns,
+        info.st_dev,
+        info.st_ino,
+        info.st_mode,
+        info.st_nlink,
+        info.st_uid,
+        info.st_gid,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
     )
 
 
@@ -50,7 +57,9 @@ def read_regular(path: Path) -> tuple[bytes, os.stat_result]:
     before = path.lstat()
     if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
         raise ValueError("Patch input must be a regular file with one link")
-    with open(path, "rb", opener=lambda name, flags: os.open(name, flags | os.O_NOFOLLOW)) as stream:
+    with open(
+        path, "rb", opener=lambda name, flags: os.open(name, flags | os.O_NOFOLLOW)
+    ) as stream:
         opened = os.fstat(stream.fileno())
         if identity(before) != identity(opened):
             raise ValueError("Patch input changed before reading")
@@ -67,7 +76,10 @@ def read_regular(path: Path) -> tuple[bytes, os.stat_result]:
 
 def replace_regular(path: Path, original_stat: os.stat_result, data: bytes) -> None:
     current, current_stat = read_regular(path)
-    if identity(current_stat) != identity(original_stat) or digest(current) != ORIGINAL_SHA256:
+    if (
+        identity(current_stat) != identity(original_stat)
+        or digest(current) != ORIGINAL_SHA256
+    ):
         raise ValueError("Patch target changed before replacement")
     if digest(data) != PATCHED_SHA256:
         raise ValueError("Unreviewed replacement bytes")
@@ -102,7 +114,10 @@ def verify_dependencies() -> None:
             requirement = Requirement(declaration)
             if requirement.marker and not requirement.marker.evaluate({"extra": ""}):
                 continue
-            if requirement.url or metadata.version(requirement.name) not in requirement.specifier:
+            if (
+                requirement.url
+                or metadata.version(requirement.name) not in requirement.specifier
+            ):
                 raise ValueError("Unsatisfied W&B runtime dependency")
 
 

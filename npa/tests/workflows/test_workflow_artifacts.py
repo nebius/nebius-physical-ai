@@ -1433,9 +1433,10 @@ def test_staging_merge_deduplicates_same_source_and_preserves_started_at() -> No
         "",
         "groot-1-7-finetune",
     }
-    assert next(
-        item for item in merged_summaries if item.resolved_prefix == ""
-    ).started_at == primary.started_at
+    assert (
+        next(item for item in merged_summaries if item.resolved_prefix == "").started_at
+        == primary.started_at
+    )
 
 
 def test_staging_resolution_conflicts_remain_fail_closed() -> None:

@@ -209,9 +209,7 @@ def test_paidf_umbrella_probes_every_ngc_artifact() -> None:
         gated_only=True,
     )
 
-    expected = {
-        asset.repo for asset in assets_for(["paidf"]) if asset.provider == NGC
-    }
+    expected = {asset.repo for asset in assets_for(["paidf"]) if asset.provider == NGC}
     assert expected
     assert set(observed) == expected
     assert len(observed) == len(expected)

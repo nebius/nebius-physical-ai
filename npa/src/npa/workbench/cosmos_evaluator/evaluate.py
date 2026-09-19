@@ -845,8 +845,7 @@ def _list_clip_targets(augment_uri: str, *, store: Any) -> list[tuple[str, str]]
             raise CosmosEvaluatorError(str(exc)) from exc
         if (
             not variants
-            and manifest.get("selection_policy")
-            == "independent-hard-pass-only"
+            and manifest.get("selection_policy") == "independent-hard-pass-only"
             and manifest.get("variant_count") == 0
             and manifest.get("variants") == []
         ):

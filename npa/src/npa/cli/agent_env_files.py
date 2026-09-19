@@ -367,13 +367,19 @@ def _write_agent_artifact_sources_env(
     """Stage exact read selectors and an explicit artifact identity mode."""
     normalized_sources = normalize_configured_artifact_sources(artifact_sources)
     complete_credentials = bool(
-        bucket.strip() and endpoint.strip() and access_key.strip() and secret_key.strip()
+        bucket.strip()
+        and endpoint.strip()
+        and access_key.strip()
+        and secret_key.strip()
     )
-    partial_credentials = any(
-        value.strip() for value in (bucket, endpoint, access_key, secret_key)
-    ) and not complete_credentials
+    partial_credentials = (
+        any(value.strip() for value in (bucket, endpoint, access_key, secret_key))
+        and not complete_credentials
+    )
     mode = str(credential_mode or "").strip() or (
-        "isolated-read" if normalized_sources and complete_credentials else "unconfigured"
+        "isolated-read"
+        if normalized_sources and complete_credentials
+        else "unconfigured"
     )
     if mode not in _ARTIFACT_CREDENTIAL_MODES:
         raise ValueError("unsupported artifact credential mode")
@@ -381,7 +387,9 @@ def _write_agent_artifact_sources_env(
         raise ValueError("artifact read credentials must be complete")
     source_buckets = {item["bucket"] for item in normalized_sources}
     if complete_credentials and source_buckets and bucket.strip() not in source_buckets:
-        raise ValueError("artifact read credential bucket does not match its source scope")
+        raise ValueError(
+            "artifact read credential bucket does not match its source scope"
+        )
     if mode in {"isolated-read", "deployment-write-migration"} and (
         not normalized_sources or not complete_credentials
     ):
@@ -394,8 +402,7 @@ def _write_agent_artifact_sources_env(
     env_lines: list[str] = [f"NPA_AGENT_ARTIFACT_CREDENTIAL_MODE={mode}"]
     if mode == "deployment-write-migration":
         env_lines.append(
-            "NPA_AGENT_ARTIFACT_CREDENTIAL_MIGRATION="
-            "deployment-write-exact-source-v1"
+            "NPA_AGENT_ARTIFACT_CREDENTIAL_MIGRATION=deployment-write-exact-source-v1"
         )
     if normalized_sources:
         encoded_sources = base64.urlsafe_b64encode(

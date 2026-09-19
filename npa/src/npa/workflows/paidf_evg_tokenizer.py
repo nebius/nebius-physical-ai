@@ -16,8 +16,12 @@ from npa.workflows.paidf_upstream import (
 )
 
 PIPELINE_PATH = "diffusion/models/cosmos3/pipeline_cosmos3.py"
-PIPELINE_SOURCE_SHA256 = "8a70b5d446315d2f6281bfacb4c332dac17cf256f813cbd26c4e01a105d41f49"
-PIPELINE_PATCHED_SHA256 = "e0cfe2d60c44900d38bcae930740944cf3a23772cefab97328c372687bb0b262"
+PIPELINE_SOURCE_SHA256 = (
+    "8a70b5d446315d2f6281bfacb4c332dac17cf256f813cbd26c4e01a105d41f49"
+)
+PIPELINE_PATCHED_SHA256 = (
+    "e0cfe2d60c44900d38bcae930740944cf3a23772cefab97328c372687bb0b262"
+)
 MODEL_CONFIG_SHA256 = "355f2b4e5bad7b01f11ef6cb68ebc176f61b95c3276092ea225b1bea0e01e95c"
 VENDOR_PACKAGE = Path("/usr/local/lib/python3.12/dist-packages/vllm_omni")
 TOKENIZER_CALL = (
@@ -51,7 +55,9 @@ def tokenizer_source_adaptation() -> dict[str, Any]:
 
 def patch_pipeline_source(original: bytes) -> bytes:
     if hashlib.sha256(original).hexdigest() != PIPELINE_SOURCE_SHA256:
-        raise PaidfGuardrailError("EVG tokenizer pipeline differs from the reviewed image")
+        raise PaidfGuardrailError(
+            "EVG tokenizer pipeline differs from the reviewed image"
+        )
     source = original.decode("utf-8")
     if source.count(TOKENIZER_CALL) != 1:
         raise PaidfGuardrailError("EVG tokenizer pipeline lacks its reviewed call")
@@ -62,12 +68,17 @@ def patch_pipeline_source(original: bytes) -> bytes:
     )
     patched = source.replace(TOKENIZER_CALL, replacement, 1).encode()
     if hashlib.sha256(patched).hexdigest() != PIPELINE_PATCHED_SHA256:
-        raise PaidfGuardrailError("EVG tokenizer adaptation differs from its reviewed bytes")
+        raise PaidfGuardrailError(
+            "EVG tokenizer adaptation differs from its reviewed bytes"
+        )
     return patched
 
 
 def _package_files(package: Path, *, installed: bool = False) -> dict[str, bytes]:
-    if any(path.is_symlink() for path in (package, *package.parents)) or not package.is_dir():
+    if (
+        any(path.is_symlink() for path in (package, *package.parents))
+        or not package.is_dir()
+    ):
         raise PaidfGuardrailError("EVG tokenizer package is missing or redirected")
     files = {}
     for path in package.rglob("*"):
@@ -75,11 +86,15 @@ def _package_files(package: Path, *, installed: bool = False) -> dict[str, bytes
         if installed and ("__pycache__" in relative.parts or path.suffix == ".pyc"):
             continue
         if path.is_symlink():
-            raise PaidfGuardrailError("EVG tokenizer package contains a source redirect")
+            raise PaidfGuardrailError(
+                "EVG tokenizer package contains a source redirect"
+            )
         if path.is_dir():
             continue
         if not path.is_file():
-            raise PaidfGuardrailError("EVG tokenizer package contains a non-regular file")
+            raise PaidfGuardrailError(
+                "EVG tokenizer package contains a non-regular file"
+            )
         files[relative.as_posix()] = path.read_bytes()
     if "__init__.py" not in files or PIPELINE_PATH not in files:
         raise PaidfGuardrailError("EVG tokenizer package is incomplete")
@@ -101,24 +116,32 @@ def prepare_evg_tokenizer_overlay(
     config = snapshot / "text_tokenizer/tokenizer_config.json"
     try:
         if any(path.is_symlink() for path in (config.parent, *config.parent.parents)):
-            raise PaidfGuardrailError("EVG tokenizer configuration has a directory redirect")
+            raise PaidfGuardrailError(
+                "EVG tokenizer configuration has a directory redirect"
+            )
         resolved = config.resolve(strict=True)
         if not resolved.is_file() or not (
             resolved.is_relative_to(snapshot) or resolved.parent == package / "blobs"
         ):
-            raise PaidfGuardrailError("EVG tokenizer configuration has an unsafe cache target")
+            raise PaidfGuardrailError(
+                "EVG tokenizer configuration has an unsafe cache target"
+            )
         payload = config.read_bytes()
         configuration = json.loads(payload)
     except PaidfGuardrailError:
         raise
     except (OSError, ValueError, RuntimeError) as exc:
-        raise PaidfGuardrailError("EVG tokenizer configuration is missing or malformed") from exc
+        raise PaidfGuardrailError(
+            "EVG tokenizer configuration is missing or malformed"
+        ) from exc
     if (
         hashlib.sha256(payload).hexdigest() != MODEL_CONFIG_SHA256
         or not isinstance(configuration, dict)
         or configuration.get("tokenizer_class") != "Qwen2Tokenizer"
     ):
-        raise PaidfGuardrailError("EVG tokenizer configuration differs from its reviewed model")
+        raise PaidfGuardrailError(
+            "EVG tokenizer configuration differs from its reviewed model"
+        )
     original = _package_files(source_package, installed=True)
     files = dict(original)
     files[PIPELINE_PATH] = patch_pipeline_source(files[PIPELINE_PATH])
@@ -144,5 +167,7 @@ def prepare_evg_tokenizer_overlay(
         or _package_files(destination / "vllm_omni") != files
         or _package_files(source_package, installed=True) != original
     ):
-        raise PaidfGuardrailError("EVG tokenizer overlay differs from the reviewed adaptation")
+        raise PaidfGuardrailError(
+            "EVG tokenizer overlay differs from the reviewed adaptation"
+        )
     return destination

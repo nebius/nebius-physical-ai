@@ -3593,9 +3593,7 @@ def verify_agent_ui_handoff(
                 "agent artifact pagination changed the selected run source"
             )
         artifacts.extend(
-            item
-            for item in inventory.get("artifacts") or []
-            if isinstance(item, dict)
+            item for item in inventory.get("artifacts") or [] if isinstance(item, dict)
         )
         cursor = str(inventory.get("next_cursor") or "")
         if not cursor:
@@ -3619,8 +3617,7 @@ def verify_agent_ui_handoff(
             }
         )
         inventory = request_json(
-            "/api/artifacts/run/"
-            f"{urllib.parse.quote(run_ref, safe='')}?{query}"
+            f"/api/artifacts/run/{urllib.parse.quote(run_ref, safe='')}?{query}"
         )
     required = {
         "report": report_uri,
@@ -3663,8 +3660,7 @@ def verify_agent_ui_handoff(
         )
         exact_loaded_source = bool(
             str(sim_viz.get("run_id") or "") == run_id
-            and str(sim_viz.get("artifact_key") or "")
-            == str(item.get("key") or "")
+            and str(sim_viz.get("artifact_key") or "") == str(item.get("key") or "")
             and str(sim_viz.get("artifact_run_ref") or "") == run_ref
             and str(sim_viz.get("project_id") or "") == project_id
             and str(sim_viz.get("bucket") or "") == resource_bucket

@@ -118,7 +118,10 @@ def test_load_discovers_exact_source_then_posts_strict_v3_and_persists(
             return Response(200, _inventory(artifact))
         if method == "POST":
             return Response(200, {"ok": True, "sim_viz": _ready_status(artifact)})
-        if len([item for item in requests if item[1].endswith("/api/sim-viz/status")]) == 1:
+        if (
+            len([item for item in requests if item[1].endswith("/api/sim-viz/status")])
+            == 1
+        ):
             return Response(200, {"artifact_uri": "", "rerun_ready": False})
         return Response(200, _ready_status(artifact))
 

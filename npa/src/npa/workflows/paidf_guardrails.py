@@ -197,10 +197,14 @@ def _load_snapshot_manifest(
     repository: str, revision: str, patterns: tuple[str, ...]
 ) -> dict:
     """Read the official exact-revision path/hash/size map without credentials."""
-    if re.fullmatch(
-        r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*",
-        repository,
-    ) is None or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+    if (
+        re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*",
+            repository,
+        )
+        is None
+        or re.fullmatch(r"[0-9a-f]{40}", revision) is None
+    ):
         raise PaidfGuardrailError("model metadata identity is not an exact revision")
     url = httpx.URL(
         scheme="https",
@@ -594,7 +598,9 @@ def prepare_evg_generation_environment() -> tuple[dict[str, str], dict[str, Any]
             }
         )
     tokenizer_overlay = prepare_evg_tokenizer_overlay(home, hub)
-    environment["PYTHONPATH"] = str(tokenizer_overlay) + os.pathsep + environment["PYTHONPATH"]
+    environment["PYTHONPATH"] = (
+        str(tokenizer_overlay) + os.pathsep + environment["PYTHONPATH"]
+    )
     guardrail_snapshot = (
         hub
         / ("models--" + COSMOS_GUARDRAIL_MODEL.replace("/", "--"))
@@ -622,7 +628,12 @@ def prepare_evg_generation_environment() -> tuple[dict[str, str], dict[str, Any]
         HF_HUB_OFFLINE="1",
         TRANSFORMERS_OFFLINE="1",
     )
-    for name in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_HUB_TOKEN", "HF_TOKEN_PATH"):
+    for name in (
+        "HF_TOKEN",
+        "HUGGING_FACE_HUB_TOKEN",
+        "HUGGINGFACE_HUB_TOKEN",
+        "HF_TOKEN_PATH",
+    ):
         environment.pop(name, None)
     manifest = {
         "schema": "npa.paidf.evg-generation-runtime.v1",

@@ -417,7 +417,9 @@ def _build_paidf_blueprint(rrb: Any, evidence: dict[str, Any], roles: list[str])
     }
     default_timeline = (
         "media_time"
-        if any((artifacts.get(role) or {}).get("media_type") == "video" for role in roles)
+        if any(
+            (artifacts.get(role) or {}).get("media_type") == "video" for role in roles
+        )
         else "source_frame"
     )
     media_views = [

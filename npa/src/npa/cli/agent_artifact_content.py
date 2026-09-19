@@ -664,13 +664,25 @@ class _ArtifactDownloadSelection:
     """Carry one download request through the contained route boundary."""
 
     __slots__ = (
-        "run_id", "run_ref", "key", "s3_uri", "project_id",
-        "resource_bucket", "resolved_prefix", "source_selected",
+        "run_id",
+        "run_ref",
+        "key",
+        "s3_uri",
+        "project_id",
+        "resource_bucket",
+        "resolved_prefix",
+        "source_selected",
     )
 
     def __init__(
-        self, run_id: str, run_ref: str, key: str, s3_uri: str,
-        project_id: str, resource_bucket: str, resolved_prefix: str | None,
+        self,
+        run_id: str,
+        run_ref: str,
+        key: str,
+        s3_uri: str,
+        project_id: str,
+        resource_bucket: str,
+        resolved_prefix: str | None,
         source_selected: bool,
     ) -> None:
         self.run_id = run_id
@@ -683,7 +695,9 @@ class _ArtifactDownloadSelection:
         self.source_selected = source_selected
 
 
-def _authorized_artifact_download(request: Request, selected: _ArtifactDownloadSelection):
+def _authorized_artifact_download(
+    request: Request, selected: _ArtifactDownloadSelection
+):
     requested_uri = str(selected.s3_uri or "").strip()
     if requested_uri:
         raise HTTPException(
@@ -757,7 +771,13 @@ def artifacts_download(
         HTTPException: If request fields or source authorization are invalid.
     """
     selected = _ArtifactDownloadSelection(
-        run_id, run_ref, key, s3_uri, project_id, resource_bucket,
-        resolved_prefix, source_selected,
+        run_id,
+        run_ref,
+        key,
+        s3_uri,
+        project_id,
+        resource_bucket,
+        resolved_prefix,
+        source_selected,
     )
     return _artifact_download_response(request, selected)

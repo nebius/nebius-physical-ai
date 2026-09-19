@@ -355,9 +355,7 @@ def test_retry_accepts_degraded_evaluator_as_fail_closed_decision(
         json.dumps({"schema": c3.ATTEMPT_SCHEMA, "attempt": 0}), encoding="utf-8"
     )
     (paths["scores"] / "cosmos_evaluator.json").write_text(
-        json.dumps(
-            {"status": "degraded", "passed": False, "score": 0.4}
-        ),
+        json.dumps({"status": "degraded", "passed": False, "score": 0.4}),
         encoding="utf-8",
     )
 

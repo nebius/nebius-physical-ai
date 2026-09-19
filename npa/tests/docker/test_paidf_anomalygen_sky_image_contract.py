@@ -16,7 +16,7 @@ def test_paidf_anomalygen_sky_parent_and_runtime_are_fixed() -> None:
     assert "nvidia/cuda:13.2.1-cudnn-devel-ubuntu24.04@sha256:" in text
     assert "nvidia/cuda:13.2.1-base-ubuntu24.04@sha256:" in text
     assert "USER ubuntu" in text
-    assert "ENTRYPOINT [\"/usr/local/bin/npa-sky-entrypoint\"]" in text
+    assert 'ENTRYPOINT ["/usr/local/bin/npa-sky-entrypoint"]' in text
     assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in text
     assert "git -C /src fetch -q --depth 1 origin" in text
     assert "bash /tmp/build_wheels.sh --in-container" in text
@@ -73,12 +73,14 @@ def test_paidf_anomalygen_security_patch_preserves_the_wheel_build() -> None:
     assert "nltk" not in builder
     assert "nltk-3.10.3-py3-none-any.whl#sha256=" in runtime
     assert "ff9598a8e20518ee0d557745890cc4435b9578489e2dcbc69c4f81fa060caf7c" in runtime
-    assert runtime.index("uv pip install -r /tmp/requirements-nodeps.txt") < runtime.index(
-        "nltk-3.10.3-py3-none-any.whl#sha256="
-    )
+    assert runtime.index(
+        "uv pip install -r /tmp/requirements-nodeps.txt"
+    ) < runtime.index("nltk-3.10.3-py3-none-any.whl#sha256=")
 
 
-def test_paidf_wandb_security_update_includes_the_framework_compatibility_patch() -> None:
+def test_paidf_wandb_security_update_includes_the_framework_compatibility_patch() -> (
+    None
+):
     text = DOCKERFILE.read_text(encoding="utf-8")
     builder, runtime = text.split("FROM ${CUDA_RUNTIME_IMAGE} AS runtime", 1)
     assert "wandb" not in builder
@@ -86,14 +88,17 @@ def test_paidf_wandb_security_update_includes_the_framework_compatibility_patch(
     assert "1db698d107871c66b2dcbb0cf4dc2af1ddb159ba94e957e890158ec60ab2de54" in runtime
     assert "COPY paidf-anomalygen-sky/patch_wandb_run_id.py " in runtime
     patch = "python /usr/local/lib/npa/patch_wandb_run_id.py"
-    assert runtime.index("uv pip install -r /tmp/requirements-nodeps.txt") < runtime.index(wheel)
+    assert runtime.index(
+        "uv pip install -r /tmp/requirements-nodeps.txt"
+    ) < runtime.index(wheel)
     assert runtime.index(wheel) < runtime.index(patch)
     assert runtime.index(patch) < runtime.index("uv pip install -e . --no-deps")
     instructions = re.split(r"(?m)^(?=[A-Z]+\s)", runtime)
     requirement_layers = [
         instruction
         for instruction in instructions
-        if instruction.startswith("RUN ") and "uv pip install -r /tmp/requirements.txt" in instruction
+        if instruction.startswith("RUN ")
+        and "uv pip install -r /tmp/requirements.txt" in instruction
     ]
     assert len(requirement_layers) == 1
     assert wheel in requirement_layers[0]

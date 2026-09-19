@@ -188,9 +188,7 @@ def load_published_sam2_masks(
         or not math.isfinite(frames_per_second)
         or frames_per_second <= 0.0
         or motion.get("engine") != SAM2_MOTION_ENGINE
-        or motion.get("sample_count") != min(
-            frame_count, SAM2_MOTION_SAMPLE_COUNT
-        )
+        or motion.get("sample_count") != min(frame_count, SAM2_MOTION_SAMPLE_COUNT)
         or motion.get("threshold") != SAM2_MOTION_THRESHOLD
         or motion.get("dilation_pixels") != SAM2_MOTION_DILATION
         or not math.isfinite(motion_coverage)
@@ -508,9 +506,7 @@ def _select_automatic_boxes(
     # objects and their union could protect almost the whole scene. Penalize
     # distance from the midpoint symmetrically instead: neither a barely eligible
     # speckle nor a broad background region should win on area alone.
-    preferred_area_fraction = math.sqrt(
-        min_area_fraction * max_area_fraction
-    )
+    preferred_area_fraction = math.sqrt(min_area_fraction * max_area_fraction)
     for proposal in proposals:
         try:
             area_fraction = float(proposal["area"]) / frame_area
@@ -575,17 +571,15 @@ def _temporal_motion_support(
     )
     sample_count = len(samples)
     stack = np.stack(samples, axis=0)
-    temporal_range = stack.max(axis=0).astype(np.int16) - stack.min(
-        axis=0
-    ).astype(np.int16)
+    temporal_range = stack.max(axis=0).astype(np.int16) - stack.min(axis=0).astype(
+        np.int16
+    )
     mask = temporal_range.max(axis=2) >= SAM2_MOTION_THRESHOLD
     if mask.any() and SAM2_MOTION_DILATION > 1:
         mask_image = Image.fromarray(mask.astype(np.uint8) * 255)
         mask = (
             np.asarray(
-                mask_image.filter(
-                    ImageFilter.MaxFilter(size=SAM2_MOTION_DILATION)
-                )
+                mask_image.filter(ImageFilter.MaxFilter(size=SAM2_MOTION_DILATION))
             )
             > 127
         )
@@ -625,9 +619,7 @@ def _load_motion_samples(
         with image_module.open(frame_paths[index]) as opened:
             image = opened.convert("RGB")
             if image.size != (width, height):
-                image = image.resize(
-                    (width, height), image_module.Resampling.BILINEAR
-                )
+                image = image.resize((width, height), image_module.Resampling.BILINEAR)
             samples.append(np.asarray(image, dtype=np.uint8))
     return samples
 

@@ -42,7 +42,9 @@ def _load_live_argv():
     return mod
 
 
-@pytest.mark.parametrize("variant", ["image-attribute-augmentation", "event-video-generation"])
+@pytest.mark.parametrize(
+    "variant", ["image-attribute-augmentation", "event-video-generation"]
+)
 def test_paidf_live_materializer_requires_labeling_digests(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, variant: str
 ) -> None:
@@ -51,7 +53,9 @@ def test_paidf_live_materializer_requires_labeling_digests(
     for name in ("NPA_E2E_PAIDF_IAA_IMAGE", "NPA_E2E_PAIDF_EVG_IMAGE"):
         monkeypatch.setenv(name, image)
     monkeypatch.delenv("NPA_E2E_PAIDF_ATTRIBUTE_SEARCH_IMAGE", raising=False)
-    with pytest.raises(pytest.fail.Exception, match="NPA_E2E_PAIDF_ATTRIBUTE_SEARCH_IMAGE"):
+    with pytest.raises(
+        pytest.fail.Exception, match="NPA_E2E_PAIDF_ATTRIBUTE_SEARCH_IMAGE"
+    ):
         helpers.materialize_live_spec(
             tmp_path, f"paidf-{variant}.yaml", bucket="example-bucket", run_id="fixture"
         )
@@ -75,7 +79,10 @@ def test_paidf_live_materializer_routes_each_exact_labeling_image(
         )
         monkeypatch.setenv(environment_key, expected[config_key])
     path = helpers.materialize_live_spec(
-        tmp_path, "paidf-event-video-generation.yaml", bucket="example-bucket", run_id="fixture"
+        tmp_path,
+        "paidf-event-video-generation.yaml",
+        bucket="example-bucket",
+        run_id="fixture",
     )
     spec = yaml.safe_load(path.read_text())
     assert {key: spec["config"][key] for key in expected} == expected
@@ -450,7 +457,8 @@ def test_paidf_evg_seed_verifies_source_before_writing(monkeypatch) -> None:
     )
     helpers.seed_live_workflow_inputs(
         spec_name="paidf-event-video-generation.yaml",
-        bucket="unit-bucket", run_id="seed-run",
+        bucket="unit-bucket",
+        run_id="seed-run",
     )
     assert requests == [helpers.httpx.URL(helpers._PAIDF_CAMERA_URL)]
     assert writes[0]["Body"] == source
@@ -496,7 +504,8 @@ def test_paidf_evg_seed_never_uploads_unverified_input(monkeypatch, failure) -> 
     with pytest.raises((OSError, pytest.fail.Exception)):
         helpers.seed_live_workflow_inputs(
             spec_name="paidf-event-video-generation.yaml",
-            bucket="unit-bucket", run_id="seed-run",
+            bucket="unit-bucket",
+            run_id="seed-run",
         )
     assert writes == []
 

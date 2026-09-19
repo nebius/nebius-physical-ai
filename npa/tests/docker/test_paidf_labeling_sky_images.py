@@ -18,16 +18,18 @@ CASES = (
     ("paidf-captioning-sky", "captioning", "captioning", "appuser"),
     ("paidf-visual-qa-sky", "visual_qa", "visual-qa", "appuser"),
     (
-        "paidf-attribute-search-sky", "attribute_search",
-        "event-and-person-attribute-search", "appuser",
+        "paidf-attribute-search-sky",
+        "attribute_search",
+        "event-and-person-attribute-search",
+        "appuser",
     ),
 )
 
 
-def test_detection_worker_removes_only_unused_training_and_development_packages() -> None:
-    source = (
-        ROOT / "npa/docker/workbench/paidf-detection-sky/Dockerfile"
-    ).read_text()
+def test_detection_worker_removes_only_unused_training_and_development_packages() -> (
+    None
+):
+    source = (ROOT / "npa/docker/workbench/paidf-detection-sky/Dockerfile").read_text()
     assert "/usr/bin/python3 -m pip uninstall -y wandb torchtitan" in source
     assert "apt-get purge -y linux-libc-dev" in source
     assert 'importlib.util.find_spec("wandb") is None' in source
@@ -65,8 +67,7 @@ def test_labeling_wrapper_preserves_vendor_boundary(
     assert label in source
     assert image in RESTRICTED_PUBLICATION_TOOLS
     spec = yaml.safe_load(
-        (ROOT / "workflows/testing/paidf-event-video-generation.yaml")
-        .read_text()
+        (ROOT / "workflows/testing/paidf-event-video-generation.yaml").read_text()
     )
     assert spec["config"][config_key + "_image"] == (
         f"registry.example.invalid/npa-{image}@sha256:" + "0" * 64
@@ -88,8 +89,15 @@ def test_labeling_entrypoint_does_not_reparse_worker_arguments(
     entrypoint = ROOT / "npa/docker/workbench" / image / "entrypoint.sh"
     literal = "two words; $HOME $(printf unexpected)"
     result = subprocess.run(
-        ["/bin/sh", str(entrypoint), "/bin/sh", "-c",
-         'printf "%s" "$1"; exit 17', "worker", literal],
+        [
+            "/bin/sh",
+            str(entrypoint),
+            "/bin/sh",
+            "-c",
+            'printf "%s" "$1"; exit 17',
+            "worker",
+            literal,
+        ],
         capture_output=True,
         text=True,
         check=False,

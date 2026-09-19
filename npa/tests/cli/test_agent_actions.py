@@ -1037,7 +1037,9 @@ def test_oversized_non_record_observation_still_falls_back_to_preview():
 
 
 def test_oversized_factual_tool_catalog_is_preserved_intact():
-    observation = {"tool_refs": [f"workbench.example.tool_{index:04d}" for index in range(300)]}
+    observation = {
+        "tool_refs": [f"workbench.example.tool_{index:04d}" for index in range(300)]
+    }
     assert len(json.dumps(observation)) > 4000
     assert A._observe(observation) is observation
 

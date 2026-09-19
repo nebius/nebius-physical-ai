@@ -119,7 +119,9 @@ def _write_postprocess_output(argv: list[str]) -> None:
                         "hard": ["Person wearing blue jacket."],
                     },
                     "attribute_verification": {"passed": True},
-                    "images": [f"{output.name}/augmented_imgs/person_aug{index}/person.jpg"],
+                    "images": [
+                        f"{output.name}/augmented_imgs/person_aug{index}/person.jpg"
+                    ],
                 }
             ]
         },
@@ -128,7 +130,9 @@ def _write_postprocess_output(argv: list[str]) -> None:
 
 def _install_runtime_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_KEY", "test-token")
-    monkeypatch.setattr(native, "_runtime_fetch", lambda _r, _v, destination: destination)
+    monkeypatch.setattr(
+        native, "_runtime_fetch", lambda _r, _v, destination: destination
+    )
     monkeypatch.setattr(native.subprocess, "run", lambda *_a, **_k: None)
 
 

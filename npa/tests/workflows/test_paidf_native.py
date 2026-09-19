@@ -34,7 +34,9 @@ def _generation_endpoint(workflow: str) -> dict:
     return {
         "role": "image_edit" if workflow == "iaa" else "image2video",
         "url": "http://127.0.0.1:8000/v1",
-        "model": QWEN_IMAGE_EDIT_MODEL if workflow == "iaa" else COSMOS3_SUPER_IMAGE2VIDEO_MODEL,
+        "model": QWEN_IMAGE_EDIT_MODEL
+        if workflow == "iaa"
+        else COSMOS3_SUPER_IMAGE2VIDEO_MODEL,
         "api_key_env": "GENERATION_API_KEY",
     }
 
@@ -67,13 +69,24 @@ def test_detection_custom_cache_cannot_skip_published_hash(
 def test_detection_rejects_a_different_model_digest_before_materialization(monkeypatch):
     monkeypatch.setenv("RFDETR_MODEL_SHA256", "f" * 64)
     monkeypatch.setattr(
-        paidf_native, "_read_run_artifact",
-        lambda *_args: pytest.fail("must reject unsupported weights before reading input"),
+        paidf_native,
+        "_read_run_artifact",
+        lambda *_args: pytest.fail(
+            "must reject unsupported weights before reading input"
+        ),
     )
     with pytest.raises(paidf_native.PaidfNativeError, match="published RF-DETR"):
         paidf_native.run_auto_label(
-            "evg", "detection", "unused", "unused", "unused",
-            TOKEN_FACTORY_ENDPOINT, "vlm", TOKEN_FACTORY_ENDPOINT, "llm", "unit-run",
+            "evg",
+            "detection",
+            "unused",
+            "unused",
+            "unused",
+            TOKEN_FACTORY_ENDPOINT,
+            "vlm",
+            TOKEN_FACTORY_ENDPOINT,
+            "llm",
+            "unit-run",
         )
 
 
@@ -82,16 +95,16 @@ def _native_identity(kind: str, workflow: str | None = None) -> dict:
     if workflow is not None:
         identity["workflow"] = workflow
     if kind.endswith("-augmentation"):
-        identity["source_adaptation"] = (
-            paidf_native._paidf_image_output_adaptation()
-        )
+        identity["source_adaptation"] = paidf_native._paidf_image_output_adaptation()
         if workflow == "evg":
             identity["generation_runtime"] = json.loads(
                 (Path(__file__).parent / "fixtures/paidf-evg-runtime.json").read_text()
             )
     if kind in {"evg-auto-label-visual-qa-anomaly", "evg-auto-label-visual-qa-person"}:
-        identity["request_media_contract"] = paidf_native._evg_vqa_request_media_contract(
-            kind.split("-auto-label-", 1)[1]
+        identity["request_media_contract"] = (
+            paidf_native._evg_vqa_request_media_contract(
+                kind.split("-auto-label-", 1)[1]
+            )
         )
     return identity
 
@@ -199,7 +212,8 @@ def test_evg_local_service_preserves_upstream_two_way_hsdp(
     runtime_environment = {"HF_HUB_OFFLINE": "1", "NLTK_DATA": "/verified-regular-data"}
     runtime_manifest = {"schema": "npa.paidf.evg-generation-runtime.v1"}
     monkeypatch.setattr(
-        paidf_guardrails, "prepare_evg_generation_environment",
+        paidf_guardrails,
+        "prepare_evg_generation_environment",
         lambda: (runtime_environment, runtime_manifest),
     )
 
@@ -224,9 +238,8 @@ def test_evg_local_service_preserves_upstream_two_way_hsdp(
         return Service()
 
     monkeypatch.setattr(paidf_native.subprocess, "Popen", popen)
-    monkeypatch.setattr(
-        paidf_native.httpx, "get", lambda *_a, **_k: Response()
-    )
+    monkeypatch.setattr(paidf_native.httpx, "get", lambda *_a, **_k: Response())
+
     def augmentation(*_args, **kwargs):
         assert kwargs["generation_runtime"] == runtime_manifest
         return {"schema": "npa.paidf.native.evg-augmentation.v1"}
@@ -234,13 +247,20 @@ def test_evg_local_service_preserves_upstream_two_way_hsdp(
     monkeypatch.setattr(paidf_native, "run_augmentation", augmentation)
 
     config = tmp_path / "service.yaml"
-    config.write_text(yaml.safe_dump({
-        "endpoints": [_generation_endpoint("evg")],
-        "augmentation": {"parameters": {"extra_params": {"guardrails": True}}},
-    }))
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "endpoints": [_generation_endpoint("evg")],
+                "augmentation": {"parameters": {"extra_params": {"guardrails": True}}},
+            }
+        )
+    )
     manifest = _write_fixture_json(
         tmp_path / "configs.json",
-        {**_native_identity("evg-configs", "evg"), "configs": [{"config_uri": str(config)}]},
+        {
+            **_native_identity("evg-configs", "evg"),
+            "configs": [{"config_uri": str(config)}],
+        },
     )
     paidf_native.run_local_augmentation(
         str(manifest),
@@ -344,7 +364,7 @@ def test_augmentation_revalidates_rendered_credential_endpoint(
                         "role": "vlm",
                         "url": "https://credentials.invalid/v1",
                         "api_key_env": "VLM_API_KEY",
-                    }
+                    },
                 ]
             }
         ),
@@ -380,8 +400,6 @@ def test_augmentation_revalidates_rendered_credential_endpoint(
         paidf_native.run_augmentation(
             str(manifest), str(tmp_path / "result.json"), "unit-run"
         )
-
-
 
 
 def test_prepare_images_writes_verified_pane_metadata(tmp_path: Path) -> None:
@@ -436,7 +454,11 @@ def test_build_configs_mutates_pinned_upstream_protocol_without_replacing_it(
     )
 
     def fake_fetch(_repository: str, _revision: str, destination: Path) -> Path:
-        directory = "image_attribute_augmentation_dag" if workflow == "iaa" else "event_video_generation_dag"
+        directory = (
+            "image_attribute_augmentation_dag"
+            if workflow == "iaa"
+            else "event_video_generation_dag"
+        )
         config = (
             destination
             / f"airflow/dags/workflows/{directory}/configs/cosmos_config.yaml"
@@ -451,7 +473,9 @@ def test_build_configs_mutates_pinned_upstream_protocol_without_replacing_it(
                         {"id": "llm", "role": "llm", "url": "<>", "model": "<>"},
                         {
                             "id": "image_edit" if workflow == "iaa" else "image2video",
-                            "role": "image_edit" if workflow == "iaa" else "image2video",
+                            "role": "image_edit"
+                            if workflow == "iaa"
+                            else "image2video",
                             "url": "<>",
                             "model": "<>",
                             "adapter": "openai.chat.completions",
@@ -465,7 +489,12 @@ def test_build_configs_mutates_pinned_upstream_protocol_without_replacing_it(
                             "verification_options": {"top_outer_color": ["blue"]},
                         }
                     },
-                    "augmentation": {"parameters": {"extra_body": {"seed": None}, "extra_params": {"guardrails": False}}},
+                    "augmentation": {
+                        "parameters": {
+                            "extra_body": {"seed": None},
+                            "extra_params": {"guardrails": False},
+                        }
+                    },
                     "evaluators": [{"attribute_verification": {"enabled": True}}],
                 },
                 sort_keys=False,
@@ -502,7 +531,9 @@ def test_build_configs_mutates_pinned_upstream_protocol_without_replacing_it(
         assert config["augmentation"]["parameters"]["extra_body"]["seed"] == 7
     else:
         assert config["augmentation"]["parameters"]["seed"] == 7
-        assert config["augmentation"]["parameters"]["extra_params"]["guardrails"] is True
+        assert (
+            config["augmentation"]["parameters"]["extra_params"]["guardrails"] is True
+        )
     assert config["data"][0]["output"]["metadata"].endswith("output_metadata.json")
 
 
@@ -515,7 +546,10 @@ def test_evg_finalize_and_terminal_validation_require_published_sidecars(
     for path in (media, caption, metadata):
         path.write_text("real-artifact", encoding="utf-8")
     config = tmp_path / "config.yaml"
-    config.write_text("pipeline: {}\naugmentation:\n  parameters:\n    extra_params:\n      guardrails: true\n", encoding="utf-8")
+    config.write_text(
+        "pipeline: {}\naugmentation:\n  parameters:\n    extra_params:\n      guardrails: true\n",
+        encoding="utf-8",
+    )
     data_path = tmp_path / "auto_labeling/input-0000/0"
     required = (
         "contextual/objects.json",
@@ -593,7 +627,6 @@ def test_evg_finalize_and_terminal_validation_require_published_sidecars(
     assert len(report["dataset_manifest_sha256"]) == 64
 
 
-
 def test_evg_finalize_fails_closed_when_a_required_sidecar_is_missing(
     tmp_path: Path,
 ) -> None:
@@ -637,9 +670,7 @@ def test_evg_finalize_fails_closed_when_a_required_sidecar_is_missing(
     )
 
     _link_label_fixtures(validation, labels)
-    with pytest.raises(
-        paidf_native.PaidfNativeError, match="output content manifest"
-    ):
+    with pytest.raises(paidf_native.PaidfNativeError, match="output content manifest"):
         paidf_native.finalize_dataset(
             "evg",
             str(validation),
@@ -648,7 +679,6 @@ def test_evg_finalize_fails_closed_when_a_required_sidecar_is_missing(
             str(tmp_path / "dataset.json"),
             "unit-run",
         )
-
 
 
 def _write_fixture_json(path: Path, value: dict) -> Path:
@@ -664,10 +694,17 @@ def _write_augmentation_producer(manifest: Path) -> Path:
     outputs = [
         {
             **item,
-            "artifacts": paidf_native._artifact_fingerprints({
-                field: item[field]
-                for field in ("config_uri", "media_uri", "caption_uri", "metadata_uri")
-            }),
+            "artifacts": paidf_native._artifact_fingerprints(
+                {
+                    field: item[field]
+                    for field in (
+                        "config_uri",
+                        "media_uri",
+                        "caption_uri",
+                        "metadata_uri",
+                    )
+                }
+            ),
         }
         for item in payload["configs"]
     ]
@@ -697,11 +734,24 @@ def _link_validation_fixture(validation: Path) -> None:
             media.parent.mkdir(parents=True, exist_ok=True)
             Image.new("RGB", (96, 96), "blue").save(media, format="BMP")
         for field, suffix, content in (
-            ("config_uri", ".yaml", "evaluators: []\n" + ("augmentation:\n  parameters:\n    extra_params:\n      guardrails: true\n" if workflow == "evg" else "")),
+            (
+                "config_uri",
+                ".yaml",
+                "evaluators: []\n"
+                + (
+                    "augmentation:\n  parameters:\n    extra_params:\n      guardrails: true\n"
+                    if workflow == "evg"
+                    else ""
+                ),
+            ),
             ("caption_uri", ".txt", "A person wearing blue."),
             ("metadata_uri", ".json", "{}"),
         ):
-            path = Path(item.setdefault(field, str(validation.parent / f"fixture-{index}-{field}{suffix}")))
+            path = Path(
+                item.setdefault(
+                    field, str(validation.parent / f"fixture-{index}-{field}{suffix}")
+                )
+            )
             if not path.exists():
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(content)
@@ -715,7 +765,11 @@ def _link_validation_fixture(validation: Path) -> None:
         },
     )
     producer = _write_augmentation_producer(configs)
-    producers = [paidf_native._producer_descriptor(str(producer), json.loads(producer.read_text()))]
+    producers = [
+        paidf_native._producer_descriptor(
+            str(producer), json.loads(producer.read_text())
+        )
+    ]
     if document["schema"].endswith("iaa-postprocess.v1"):
         checked = _write_fixture_json(
             validation.with_name(validation.stem + "-generation-validation.json"),
@@ -728,7 +782,12 @@ def _link_validation_fixture(validation: Path) -> None:
                 "producers": producers,
             },
         )
-        producers = [*producers, paidf_native._producer_descriptor(str(checked), json.loads(checked.read_text()))]
+        producers = [
+            *producers,
+            paidf_native._producer_descriptor(
+                str(checked), json.loads(checked.read_text())
+            ),
+        ]
     document.update(producers=producers, accepted_count=len(document["accepted"]))
     _write_fixture_json(validation, document)
 
@@ -739,15 +798,25 @@ def _link_label_fixtures(validation: Path, labels: Path) -> None:
     checked = json.loads(validation.read_text())
     original = json.loads(labels.read_text())
     workflow = checked["workflow"]
-    by_key = {f"{item['input_key']}_aug{item['augmentation_index']}": item for item in checked["accepted"]}
-    producers = [*checked["producers"], paidf_native._producer_descriptor(str(validation), checked)]
+    by_key = {
+        f"{item['input_key']}_aug{item['augmentation_index']}": item
+        for item in checked["accepted"]
+    }
+    producers = [
+        *checked["producers"],
+        paidf_native._producer_descriptor(str(validation), checked),
+    ]
     stages = (
         {"person-attribute-search": paidf_native.IAA_LABEL_ARTIFACTS}
-        if workflow == "iaa" else {
+        if workflow == "iaa"
+        else {
             "detection": ("contextual/objects.json", "contextual/instances.json"),
             "captioning": ("sidecars/captioning/video_captions.json",),
             "visual-qa-anomaly": ("sidecars/visual_qa_anomaly/items.json",),
-            "visual-qa-person": ("sidecars/visual_qa_per_track/items.json", "sidecars/visual_qa_per_track/windows.normalized.json"),
+            "visual-qa-person": (
+                "sidecars/visual_qa_per_track/items.json",
+                "sidecars/visual_qa_per_track/windows.normalized.json",
+            ),
             "person-attribute-search": (),
         }
     )
@@ -755,18 +824,32 @@ def _link_label_fixtures(validation: Path, labels: Path) -> None:
         outputs = []
         for output in original["outputs"]:
             item = by_key[output["key"]]
-            existing = {name: f"{output['data_path']}/{name}" for name in required if Path(output["data_path"], name).is_file()}
-            outputs.append({
-                **output, "media_uri": item["media_uri"],
-                "required_artifacts": list(required),
-                "artifacts": paidf_native._artifact_fingerprints(existing),
-                "trackless": stage == "person-attribute-search" and not required,
-            })
-        path = labels if stage == "person-attribute-search" else labels.with_name(f"{stage}.json")
+            existing = {
+                name: f"{output['data_path']}/{name}"
+                for name in required
+                if Path(output["data_path"], name).is_file()
+            }
+            outputs.append(
+                {
+                    **output,
+                    "media_uri": item["media_uri"],
+                    "required_artifacts": list(required),
+                    "artifacts": paidf_native._artifact_fingerprints(existing),
+                    "trackless": stage == "person-attribute-search" and not required,
+                }
+            )
+        path = (
+            labels
+            if stage == "person-attribute-search"
+            else labels.with_name(f"{stage}.json")
+        )
         payload = {
             **_native_identity(f"{workflow}-auto-label-{stage}", workflow),
-            "stage": stage, "count": len(outputs), "outputs": outputs,
-            "producers": producers, "validation_uri": str(validation),
+            "stage": stage,
+            "count": len(outputs),
+            "outputs": outputs,
+            "producers": producers,
+            "validation_uri": str(validation),
             "component": "NVIDIA paidf-auto-labeling 1.1.0",
             "upstream_revision": paidf_native.PAIDF_AUTO_LABELING_REVISION,
         }
@@ -905,7 +988,6 @@ def test_iaa_labeling_consumes_postprocessing_and_stages_query_prompt(
         assert not (tmp_path / "result.json").exists()
 
 
-
 @pytest.mark.parametrize(
     "defect", ["empty", "count", "identity", "query", "attributes"]
 )
@@ -983,7 +1065,10 @@ def test_iaa_postprocessing_records_actual_split_image_bytes(
         assert argv[:3] == ["uv", "run", "--project"]
         assert argv[3] == sync_commands[0][3]
         assert argv[4:8] == [
-            "--no-sync", "--python", paidf_native.sys.executable, "python"
+            "--no-sync",
+            "--python",
+            paidf_native.sys.executable,
+            "python",
         ]
         output = Path(argv[argv.index("--output-dir") + 1])
         media = output / "augmented_imgs/person_aug0/person.jpg"
@@ -1030,10 +1115,7 @@ def test_iaa_postprocessing_records_actual_split_image_bytes(
     assert item["generation_media_uri"] == str(original)
     assert len(sync_commands) == 1
     assert sync_commands[0][:3] == ["uv", "sync", "--project"]
-    assert sync_commands[0][4:] == [
-        "--frozen", "--python", paidf_native.sys.executable
-    ]
-
+    assert sync_commands[0][4:] == ["--frozen", "--python", paidf_native.sys.executable]
 
 
 @pytest.mark.parametrize("workflow", ["iaa", "evg"])
@@ -1044,10 +1126,17 @@ def test_augmentation_batch_preserves_workflow_specific_partial_failure_policy(
     configs = []
     for index in range(2):
         config = tmp_path / f"config-{index}.yaml"
-        config.write_text(yaml.safe_dump({
-            "index": index, "endpoints": [_generation_endpoint(workflow)],
-            "augmentation": {"parameters": {"extra_params": {"guardrails": True}}},
-        }))
+        config.write_text(
+            yaml.safe_dump(
+                {
+                    "index": index,
+                    "endpoints": [_generation_endpoint(workflow)],
+                    "augmentation": {
+                        "parameters": {"extra_params": {"guardrails": True}}
+                    },
+                }
+            )
+        )
         configs.append(
             {
                 "config_uri": str(config),
@@ -1091,7 +1180,10 @@ def test_augmentation_batch_preserves_workflow_specific_partial_failure_policy(
         assert argv[:3] == ["uv", "run", "--project"]
         assert argv[3] == sync_commands[0][3]
         assert argv[4:8] == [
-            "--no-sync", "--python", paidf_native.sys.executable, "python"
+            "--no-sync",
+            "--python",
+            paidf_native.sys.executable,
+            "python",
         ]
         index = yaml.safe_load(Path(argv[-1]).read_text())["index"]
         attempted.append(index)
@@ -1099,7 +1191,10 @@ def test_augmentation_batch_preserves_workflow_specific_partial_failure_policy(
             raise subprocess.CalledProcessError(1, argv)
         Image.new("RGB", (96, 96), "blue").save(configs[index]["media_uri"])
         Path(configs[index]["caption_uri"]).write_text("A person wearing blue.")
-        _write_fixture_json(Path(configs[index]["metadata_uri"]), {"attribute_verification": {"passed": True}})
+        _write_fixture_json(
+            Path(configs[index]["metadata_uri"]),
+            {"attribute_verification": {"passed": True}},
+        )
 
     monkeypatch.setattr(paidf_native, "_run_component", component)
     if workflow == "evg":
@@ -1120,11 +1215,7 @@ def test_augmentation_batch_preserves_workflow_specific_partial_failure_policy(
         assert result["source_adaptation"] == adaptation
     assert len(sync_commands) == 1
     assert sync_commands[0][:3] == ["uv", "sync", "--project"]
-    assert sync_commands[0][4:] == [
-        "--frozen", "--python", paidf_native.sys.executable
-    ]
-
-
+    assert sync_commands[0][4:] == ["--frozen", "--python", paidf_native.sys.executable]
 
 
 @pytest.mark.parametrize("workflow", ["iaa", "evg"])
@@ -1146,7 +1237,11 @@ def test_output_validation_rejects_explicit_evaluator_failure(
         config = tmp_path / f"config-{index}.yaml"
         config.write_text(
             "evaluators:\n  - attribute_verification:\n      enabled: true\n"
-            + ("augmentation:\n  parameters:\n    extra_params:\n      guardrails: true\n" if workflow == "evg" else ""),
+            + (
+                "augmentation:\n  parameters:\n    extra_params:\n      guardrails: true\n"
+                if workflow == "evg"
+                else ""
+            ),
             encoding="utf-8",
         )
         configs.append(
@@ -1186,7 +1281,6 @@ def test_output_validation_rejects_explicit_evaluator_failure(
             result["skipped"][0]["reason"]
             == "attribute_verification did not affirmatively pass"
         )
-
 
 
 def test_all_failed_iaa_batch_records_failure_without_promoting_empty_outputs(
@@ -1238,8 +1332,6 @@ def test_all_failed_iaa_batch_records_failure_without_promoting_empty_outputs(
     assert failed["outputs"] == []
     assert failed["failed_count"] == 1
     assert failed["failed"][0]["exit_code"] == 7
-
-
 
 
 def test_iaa_terminal_validation_reopens_bundles_after_dataset_assembly(
@@ -1338,7 +1430,6 @@ def test_iaa_terminal_validation_reopens_bundles_after_dataset_assembly(
     assert not report.exists()
 
 
-
 def test_native_reports_record_executed_image_without_polluting_upstream_protocol(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1381,7 +1472,12 @@ def test_dig_runtime_uses_only_verified_preflight_pinned_cache(
     manifest = paidf_native._dig_cache_manifest(tmp_path, "unit-run", initialize=True)
     monkeypatch.setenv("HF_HUB_CACHE", "/unrelated/cache")
     monkeypatch.setenv("HF_HUB_OFFLINE", "0")
-    credentials = ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_HUB_TOKEN", "HF_TOKEN_PATH")
+    credentials = (
+        "HF_TOKEN",
+        "HUGGING_FACE_HUB_TOKEN",
+        "HUGGINGFACE_HUB_TOKEN",
+        "HF_TOKEN_PATH",
+    )
     for name in credentials:
         monkeypatch.setenv(name, "synthetic-private-access")
     monkeypatch.setenv("CKPT_DIR", "/unrelated/checkpoints")
@@ -1508,8 +1604,11 @@ def test_dig_training_and_inference_children_use_the_vendor_environment(
                 "selected_checkpoint": "training/model/checkpoint-10.pt",
                 "selected_checkpoint_sha256": "b" * 64,
                 "pretrained_content_manifest_sha256": (
-                    None if failure == "missing_pretrained"
-                    else "c" * 64 if failure == "different_pretrained" else "a" * 64
+                    None
+                    if failure == "missing_pretrained"
+                    else "c" * 64
+                    if failure == "different_pretrained"
+                    else "a" * 64
                 ),
             },
             selected,
@@ -1536,7 +1635,9 @@ def test_dig_training_and_inference_children_use_the_vendor_environment(
         "overlay_tree_sha256": "b" * 64,
         "package_file_count": 5,
     }
-    monkeypatch.setattr(dig, "prepare_dig_guardrail_overlay", lambda _path, env: (env, source_record))
+    monkeypatch.setattr(
+        dig, "prepare_dig_guardrail_overlay", lambda _path, env: (env, source_record)
+    )
     monkeypatch.setattr(dig, "verify_dig_guardrail_overlay", lambda *_args: None)
     child_envs = []
 
@@ -1568,11 +1669,17 @@ def test_dig_training_and_inference_children_use_the_vendor_environment(
                 "text_guardrail_enforcing": True,
                 "image_guardrail_enforcing": False,
             }
-            (generated / "timing_summary.json").write_text(json.dumps({
-                **flags, "world_size": 1, "generated_images_total": 1,
-                "guardrail_blocked_total": 0,
-                "rank_timings": [{**flags, "generated_images": 1}],
-            }))
+            (generated / "timing_summary.json").write_text(
+                json.dumps(
+                    {
+                        **flags,
+                        "world_size": 1,
+                        "generated_images_total": 1,
+                        "guardrail_blocked_total": 0,
+                        "rank_timings": [{**flags, "generated_images": 1}],
+                    }
+                )
+            )
 
     monkeypatch.setattr(paidf_native, "_run_component", component)
 
@@ -1597,7 +1704,11 @@ def test_dig_training_and_inference_children_use_the_vendor_environment(
     if failure:
         published_before = len(published)
         children_before = len(child_envs)
-        expected = subprocess.CalledProcessError if failure == "import" else paidf_native.PaidfNativeError
+        expected = (
+            subprocess.CalledProcessError
+            if failure == "import"
+            else paidf_native.PaidfNativeError
+        )
         with pytest.raises(expected):
             paidf_native.run_dig_inference(*arguments)
         assert len(published) == published_before
@@ -1636,9 +1747,10 @@ def test_dig_pretrained_content_manifest_covers_the_complete_published_tree(
 
     assert manifest["file_count"] == len(manifest["files"])
     assert len(manifest_sha256) == 64
-    assert {
-        record["path"] for record in manifest["files"]
-    } >= {"runtime-hf-snapshots.json", "Cosmos3-Nano/model/weights.bin"}
+    assert {record["path"] for record in manifest["files"]} >= {
+        "runtime-hf-snapshots.json",
+        "Cosmos3-Nano/model/weights.bin",
+    }
     paidf_native._dig_pretrained_content_manifest(tmp_path, "unit-run")
 
     if mutation == "changed":
@@ -1727,7 +1839,9 @@ def test_dig_finetune_handoff_fails_closed_on_identity_or_content_drift(
         )
 
 
-def test_dig_inference_toolref_consumes_the_finetune_result_without_step_override() -> None:
+def test_dig_inference_toolref_consumes_the_finetune_result_without_step_override() -> (
+    None
+):
     from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 
     argv = TOOL_CATALOG["workflow.paidf.dig_infer"].argv_template
@@ -1744,7 +1858,9 @@ def test_dig_inference_toolref_consumes_the_finetune_result_without_step_overrid
     assert "checkpoint_step" not in workflow["config"]
 
 
-@pytest.mark.parametrize("case", ["valid", "missing", "changed", "relative", "unavailable"])
+@pytest.mark.parametrize(
+    "case", ["valid", "missing", "changed", "relative", "unavailable"]
+)
 def test_dig_edge_converter_config_uses_vendor_package_and_refuses_drift(
     tmp_path: Path, monkeypatch, case: str
 ) -> None:
@@ -1780,7 +1896,9 @@ def test_dig_edge_converter_config_uses_vendor_package_and_refuses_drift(
         assert paidf_native._dig_edge_converter_config(environment) == str(config)
         assert config.read_bytes() == authored_config
     else:
-        with pytest.raises(paidf_native.PaidfNativeError, match="generator configuration"):
+        with pytest.raises(
+            paidf_native.PaidfNativeError, match="generator configuration"
+        ):
             paidf_native._dig_edge_converter_config(environment)
 
 
@@ -1802,7 +1920,9 @@ def test_dig_downloader_copy_preserves_hub_manifest_and_omits_host_dcp_record(
     )
 
     assert copied.read_bytes() == script.read_bytes()
-    assert (copied.parent.parent / "assets/checkpoint_manifest.sha256").read_bytes() == hub.read_bytes()
+    assert (
+        copied.parent.parent / "assets/checkpoint_manifest.sha256"
+    ).read_bytes() == hub.read_bytes()
     assert not (copied.parent.parent / converted.relative_to(workspace)).exists()
     assert hub_hash == hashlib.sha256(hub.read_bytes()).hexdigest()
     assert source_hash == hashlib.sha256(converted.read_bytes()).hexdigest()
@@ -1906,7 +2026,8 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
     edge_config.parent.mkdir()
     edge_config.write_text(yaml.safe_dump(generator_config), encoding="utf-8")
     monkeypatch.setattr(
-        paidf_native, "DIG_EDGE_CONVERTER_CONFIG_SHA256",
+        paidf_native,
+        "DIG_EDGE_CONVERTER_CONFIG_SHA256",
         hashlib.sha256(edge_config.read_bytes()).hexdigest(),
         raising=False,
     )
@@ -2012,7 +2133,8 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
             target.mkdir(parents=True)
             _write_fixture_json(
                 target / "config.json",
-                generator_config if argv[3] == "nvidia/Cosmos3-Nano"
+                generator_config
+                if argv[3] == "nvidia/Cosmos3-Nano"
                 else {"model_type": "nemotron3_dense_vl"},
             )
         elif argv[0] == "python":
@@ -2083,10 +2205,12 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
                 shard = pretrained / relative
                 shard.parent.mkdir(parents=True, exist_ok=True)
                 shard.write_bytes(f"converted-{index}".encode())
-                lines.append(f"{hashlib.sha256(shard.read_bytes()).hexdigest()}  {relative}")
-            (
-                copied_root / "assets/checkpoint_manifest_converted.sha256"
-            ).write_text("\n".join(lines) + "\n", encoding="utf-8")
+                lines.append(
+                    f"{hashlib.sha256(shard.read_bytes()).hexdigest()}  {relative}"
+                )
+            (copied_root / "assets/checkpoint_manifest_converted.sha256").write_text(
+                "\n".join(lines) + "\n", encoding="utf-8"
+            )
 
     monkeypatch.setattr(paidf_native, "_run_component", component)
     monkeypatch.setenv(
@@ -2173,12 +2297,14 @@ def test_dig_preparation_pins_real_converter_and_original_downloader(
     } in cache_manifest["models"]
     assert len(result["content_manifest_sha256"]) == 64
     assert result["converted_file_count"] == 8
-    assert result["source_hub_manifest_sha256"] == hashlib.sha256(
-        b"synthetic-fixture"
-    ).hexdigest()
-    assert result["source_converted_manifest_sha256"] == hashlib.sha256(
-        b"synthetic-fixture"
-    ).hexdigest()
+    assert (
+        result["source_hub_manifest_sha256"]
+        == hashlib.sha256(b"synthetic-fixture").hexdigest()
+    )
+    assert (
+        result["source_converted_manifest_sha256"]
+        == hashlib.sha256(b"synthetic-fixture").hexdigest()
+    )
     assert result["status"] == "completed"
 
 
@@ -2196,7 +2322,10 @@ def test_iaa_generation_service_binds_only_to_loopback(
     config.write_text(yaml.safe_dump({"endpoints": [_generation_endpoint("iaa")]}))
     manifest = _write_fixture_json(
         tmp_path / "configs.json",
-        {**_native_identity("iaa-configs", "iaa"), "configs": [{"config_uri": str(config)}]},
+        {
+            **_native_identity("iaa-configs", "iaa"),
+            "configs": [{"config_uri": str(config)}],
+        },
     )
     with pytest.raises(RuntimeError, match="inspected launch"):
         paidf_native.run_local_augmentation(
@@ -2302,7 +2431,6 @@ def test_enabled_attribute_verification_requires_an_affirmative_boolean_verdict(
         assert not (tmp_path / "result.json").exists()
 
 
-
 @pytest.mark.parametrize(
     "consumer",
     ["configs", "augment", "validate", "postprocess", "label", "finalize", "terminal"],
@@ -2375,7 +2503,6 @@ def test_native_consumers_reject_foreign_artifact_identity_before_execution(
     with pytest.raises(paidf_native.PaidfNativeError, match="identity|workflow"):
         calls[consumer]()
     assert not Path(output).exists()
-
 
 
 @pytest.mark.parametrize("artifact", ["upstream", "labels"])

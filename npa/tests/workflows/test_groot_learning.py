@@ -1432,7 +1432,9 @@ def test_agent_ui_handoff_preserves_ambiguous_run_failure(
         lambda *_args, **_kwargs: pytest.fail("ambiguous run must not be published"),
     )
 
-    with pytest.raises(learning.GrootVisualizationError, match="agent API request failed"):
+    with pytest.raises(
+        learning.GrootVisualizationError, match="agent API request failed"
+    ):
         learning.verify_agent_ui_handoff(
             "https://agent.invalid",
             "s3://bucket/runs/groot-run/report.json",

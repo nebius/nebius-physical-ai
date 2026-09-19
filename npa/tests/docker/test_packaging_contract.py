@@ -862,7 +862,8 @@ def _assert_restricted_nvcr_parent(
         "components"
     ]["reference_runtime_images"]
     expected = next(
-        ref for ref in parents
+        ref
+        for ref in parents
         if ref.startswith(f"nvcr.io/nvidia/paidf-{roles[image_name]}-service@")
     )
     assert re.fullmatch(r"nvcr\.io/[^@]+@sha256:[0-9a-f]{64}", expected)
@@ -878,13 +879,16 @@ def test_nvcr_parents_require_exact_restricted_contract(image_name: str) -> None
         encoding="utf-8"
     )
     _assert_restricted_nvcr_parent(
-        image_name, contract["images"][image_name],
+        image_name,
+        contract["images"][image_name],
         _base_image_refs(_normalize_dockerfile(text)),
     )
 
 
 @pytest.mark.parametrize("mutation", ["wrong-digest", "public", "missing-inventory"])
-def test_restricted_nvcr_parent_rejects_unsafe_contract_mutations(mutation: str) -> None:
+def test_restricted_nvcr_parent_rejects_unsafe_contract_mutations(
+    mutation: str,
+) -> None:
     name = "paidf-detection-sky"
     entry = deepcopy(_load_contract()["images"][name])
     bases = [entry["restricted_parent_image"]]

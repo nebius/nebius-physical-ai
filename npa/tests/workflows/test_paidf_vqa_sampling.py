@@ -22,7 +22,9 @@ STAGES = ("visual-qa-anomaly", "visual-qa-person")
 @pytest.fixture
 def sampling_oracle():
     return json.loads(
-        (Path(__file__).parents[1] / "fixtures/paidf_vqa_sampling_vectors.json").read_text()
+        (
+            Path(__file__).parents[1] / "fixtures/paidf_vqa_sampling_vectors.json"
+        ).read_text()
     )
 
 
@@ -34,7 +36,12 @@ def test_vqa_contract_binds_reviewed_published_sampling(stage, sampling_oracle):
         assert contract[f"upstream_{field}"] == source[field]
     for field in ("path", "sha256"):
         assert contract[f"source_{field}"] == source[field]
-    assert contract["value"] == contract["hosted_max_images"] == sampling_oracle["hosted_max_images"] == 10
+    assert (
+        contract["value"]
+        == contract["hosted_max_images"]
+        == sampling_oracle["hosted_max_images"]
+        == 10
+    )
     assert contract["sampling_strategy"] == "endpoint-inclusive-even-subsampling"
     if stage == "visual-qa-anomaly":
         assert contract["control"] == "--max-frames"
@@ -48,7 +55,11 @@ def test_vqa_contract_binds_reviewed_published_sampling(stage, sampling_oracle):
         assert contract["sampling_scope"] == "track-crop-list"
     # These are outputs of the hash-verified published functions, not an NPA
     # sampling implementation. The real vendor CLI continues to own sampling.
-    vectors = [v for v in sampling_oracle["cases"] if v["function"] == contract["sampling_function"]]
+    vectors = [
+        v
+        for v in sampling_oracle["cases"]
+        if v["function"] == contract["sampling_function"]
+    ]
     assert vectors
     for vector in vectors:
         indices = vector["expected"]
@@ -80,10 +91,13 @@ def label_history(tmp_path):
         tmp_path / "validation.json",
         {
             **_native_identity("evg-validation", "evg"),
-            "accepted": [{
-                "input_key": "person", "augmentation_index": 0,
-                "media_uri": str(tmp_path / "media.bmp"),
-            }],
+            "accepted": [
+                {
+                    "input_key": "person",
+                    "augmentation_index": 0,
+                    "media_uri": str(tmp_path / "media.bmp"),
+                }
+            ],
         },
     )
     labels = _write_fixture_json(
@@ -105,16 +119,28 @@ def test_vqa_actual_adapter_argv_and_report_share_the_hosted_cap(
     monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_KEY", "synthetic-test-token")
     source = tmp_path / "orchestration"
     configs = source / "airflow/dags/workflows/event_video_generation_dag/configs"
-    for name in ("question_bank.person_attributes.json", "question_bank.anomaly_tags.json"):
+    for name in (
+        "question_bank.person_attributes.json",
+        "question_bank.anomaly_tags.json",
+    ):
         _write_fixture_json(configs / name, {})
     monkeypatch.setattr(paidf_native, "_runtime_fetch", lambda *_args: source)
     commands = []
-    monkeypatch.setattr(paidf_native, "_run_component", lambda argv, **_kwargs: commands.append(argv))
+    monkeypatch.setattr(
+        paidf_native, "_run_component", lambda argv, **_kwargs: commands.append(argv)
+    )
     previous = "captioning" if stage == "visual-qa-anomaly" else "visual-qa-anomaly"
     result = paidf_native.run_auto_label(
-        "evg", stage, str(validation), str(data.parents[1]),
-        str(tmp_path / "result.json"), TOKEN_FACTORY_ENDPOINT, "vlm-model",
-        TOKEN_FACTORY_ENDPOINT, "llm-model", "unit-run",
+        "evg",
+        stage,
+        str(validation),
+        str(data.parents[1]),
+        str(tmp_path / "result.json"),
+        TOKEN_FACTORY_ENDPOINT,
+        "vlm-model",
+        TOKEN_FACTORY_ENDPOINT,
+        "llm-model",
+        "unit-run",
         str(tmp_path / f"{previous}.json"),
     )
     assert len(commands) == 1 and commands[0][0] == "/app/.venv/bin/main"
@@ -127,19 +153,40 @@ def test_vqa_actual_adapter_argv_and_report_share_the_hosted_cap(
         assert "--single-window" in argv
         assert argv[argv.index("--sampling-fps") + 1] == "3.0"
     else:
-        assert argv[argv.index("--track-crops-sidecar") + 1] == "detection_and_tracking/tracks.json"
-    descriptor = paidf_native._producer_descriptor(str(tmp_path / "result.json"), result)
+        assert (
+            argv[argv.index("--track-crops-sidecar") + 1]
+            == "detection_and_tracking/tracks.json"
+        )
+    descriptor = paidf_native._producer_descriptor(
+        str(tmp_path / "result.json"), result
+    )
     assert descriptor["request_media_contract"] == contract
     documents = paidf_native._verified_producers(
         [*result["producers"], descriptor],
-        paidf_native._lineage_kinds("evg")[:paidf_native._lineage_kinds("evg").index(f"evg-auto-label-{stage}") + 1],
-        "unit-run", "evg",
+        paidf_native._lineage_kinds("evg")[
+            : paidf_native._lineage_kinds("evg").index(f"evg-auto-label-{stage}") + 1
+        ],
+        "unit-run",
+        "evg",
     )
     assert documents[-1] == result
 
 
 @pytest.mark.parametrize("stage", STAGES)
-@pytest.mark.parametrize("mutation", ["missing", "source_sha256", "upstream_revision", "control", "value", "hosted_max_images", "sampling_strategy", "upstream_value", "floating_value"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing",
+        "source_sha256",
+        "upstream_revision",
+        "control",
+        "value",
+        "hosted_max_images",
+        "sampling_strategy",
+        "upstream_value",
+        "floating_value",
+    ],
+)
 def test_vqa_lineage_rejects_missing_or_rebound_request_media_contract(
     tmp_path, stage, mutation
 ):
@@ -151,7 +198,9 @@ def test_vqa_lineage_rejects_missing_or_rebound_request_media_contract(
         payload["request_media_contract"]["value"] = 10.0
     else:
         old = payload["request_media_contract"][mutation]
-        payload["request_media_contract"][mutation] = 11 if isinstance(old, int) else "changed"
+        payload["request_media_contract"][mutation] = (
+            11 if isinstance(old, int) else "changed"
+        )
     path = _write_fixture_json(tmp_path / "producer.json", payload)
     # Recompute the descriptor so this proves exact contract enforcement even
     # when the modified document and its declared lineage hash agree.

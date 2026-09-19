@@ -309,7 +309,8 @@ def test_rerun_viewer_exact_source_image_selects_one_light_cli() -> None:
     ).read_text(encoding="utf-8")
     assert "NPA_SKIP_EAGER_IMPORTS=1" in dockerfile
     selectors = [
-        token for token in dockerfile.split()
+        token
+        for token in dockerfile.split()
         if token.startswith("NPA_LIGHT_WORKBENCH_TOOL=")
     ]
     assert selectors == ["NPA_LIGHT_WORKBENCH_TOOL=rerun-viewer"]

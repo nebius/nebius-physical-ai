@@ -999,7 +999,9 @@ def test_source_fidelity_conditioning_preserves_channels_timeline_and_shape(
     assert marker_positions[0] == pytest.approx(160, abs=12)
     assert marker_positions[46] == pytest.approx(640, abs=12)
     assert marker_positions[-1] == pytest.approx(1119, abs=12)
-    assert all(right >= left - 4 for left, right in zip(marker_positions, marker_positions[1:]))
+    assert all(
+        right >= left - 4 for left, right in zip(marker_positions, marker_positions[1:])
+    )
 
     aligned = tmp_path / "aligned"
     aligned.mkdir()
@@ -1014,15 +1016,16 @@ def test_source_fidelity_conditioning_preserves_channels_timeline_and_shape(
         round((position - 160) * (source_count - 1) / 959)
         for position in marker_positions
     ]
-    expected_source_indices = [
-        item["source_index"] for item in alignment["frame_map"]
-    ]
-    assert max(
-        abs(observed - expected)
-        for observed, expected in zip(
-            inferred_source_indices, expected_source_indices
+    expected_source_indices = [item["source_index"] for item in alignment["frame_map"]]
+    assert (
+        max(
+            abs(observed - expected)
+            for observed, expected in zip(
+                inferred_source_indices, expected_source_indices
+            )
         )
-    ) <= 1
+        <= 1
+    )
 
 
 def test_source_fidelity_alignment_uses_decoded_vfr_timestamps() -> None:

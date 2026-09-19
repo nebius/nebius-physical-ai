@@ -314,9 +314,7 @@ def prepare_paidf_input(
             "PAIDF input preparation requires the real object-storage bucket; "
             "pass --var bucket=<bucket>"
         )
-    input_prefix = _paidf_input_prefix(
-        clean_run_id, artifact_prefix=artifact_prefix
-    )
+    input_prefix = _paidf_input_prefix(clean_run_id, artifact_prefix=artifact_prefix)
     base_uri = f"s3://{clean_bucket}/{input_prefix}/input/"
 
     if storage_client is None:
@@ -757,7 +755,9 @@ def _source_fidelity_v2_time_scale(media: dict[str, Any]) -> float:
     target_span = (CONDITIONING_FRAME_COUNT - 1) / CONDITIONING_FPS
     scale = target_span / source_span
     if not math.isfinite(scale) or scale <= 0:
-        raise PaidfInputError("source-fidelity conditioning produced an invalid time scale")
+        raise PaidfInputError(
+            "source-fidelity conditioning produced an invalid time scale"
+        )
     return scale
 
 
@@ -952,7 +952,9 @@ def _source_fidelity_time_scale(timestamps: list[float]) -> float:
     target_span = (CONDITIONING_FRAME_COUNT - 1) / CONDITIONING_FPS
     scale = target_span / source_span
     if not math.isfinite(scale) or scale <= 0:
-        raise PaidfInputError("source-fidelity conditioning produced an invalid time scale")
+        raise PaidfInputError(
+            "source-fidelity conditioning produced an invalid time scale"
+        )
     return scale
 
 
@@ -990,8 +992,7 @@ def _source_color_conversion(media: dict[str, Any]) -> dict[str, Any]:
     if (
         transfer in {"smpte2084", "arib-std-b67"}
         or primaries in {"bt2020", "2020"}
-        or color_space
-        in {"bt2020nc", "bt2020c", "bt2020ncl", "2020_ncl", "2020_cl"}
+        or color_space in {"bt2020nc", "bt2020c", "bt2020ncl", "2020_ncl", "2020_cl"}
     ):
         raise PaidfInputError(
             "source-fidelity conditioning does not silently retag HDR/BT.2020 input; "
@@ -1039,9 +1040,7 @@ def _source_color_conversion(media: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _source_fidelity_filter(
-    media: dict[str, Any], timestamps: list[float]
-) -> str:
+def _source_fidelity_filter(media: dict[str, Any], timestamps: list[float]) -> str:
     scale = _source_fidelity_time_scale(timestamps)
     color = _source_color_filter(media)
     return (
@@ -1094,9 +1093,7 @@ def _derive_source_fidelity_conditioning(
     return {
         "name": "ffmpeg",
         "version": _ffmpeg_version(),
-        "arguments": _source_fidelity_conditioning_arguments(
-            media, decoded_timestamps
-        ),
+        "arguments": _source_fidelity_conditioning_arguments(media, decoded_timestamps),
     }
 
 
@@ -1149,10 +1146,7 @@ def _source_fidelity_alignment(
             max(
                 0,
                 math.floor(
-                    (timestamp - first_timestamp)
-                    * scale
-                    * CONDITIONING_FPS
-                    + 0.5
+                    (timestamp - first_timestamp) * scale * CONDITIONING_FPS + 0.5
                 ),
             ),
         )

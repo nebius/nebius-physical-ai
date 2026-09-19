@@ -953,7 +953,9 @@ def _assert_paidf_live_artifacts(
             if isinstance(source, dict)
         }
         assert (
-            sources["https://github.com/NVIDIA/physical-ai-data-factory"].get("revision")
+            sources["https://github.com/NVIDIA/physical-ai-data-factory"].get(
+                "revision"
+            )
             == PHYSICAL_AI_DATA_FACTORY_REVISION
         )
         assert (
@@ -1200,7 +1202,7 @@ def _assert_paidf_native_live_artifacts(
             ):
                 for item in page.get("Contents", []):
                     assert item["Key"].startswith(prefix + relative)
-                    keys.append(item["Key"][len(prefix):])
+                    keys.append(item["Key"][len(prefix) :])
             return keys
 
         def hash_file(relative):
@@ -1217,7 +1219,9 @@ def _assert_paidf_native_live_artifacts(
             return value.hexdigest(), size
 
         assert_dig_live_artifacts(
-            read_bytes=lambda relative: read_artifact(f"s3://{bucket}/{prefix}{relative}"),
+            read_bytes=lambda relative: read_artifact(
+                f"s3://{bucket}/{prefix}{relative}"
+            ),
             list_keys=list_keys,
             hash_file=hash_file,
             run_id=run_id,

@@ -59,9 +59,7 @@ def write_artifact_sources_env(
 ) -> None:
     """Stage the resolved read identity without expanding it in the CLI module."""
 
-    credentials = (
-        resolution.credentials if resolution else ("", "", "", "", "", "")
-    )
+    credentials = resolution.credentials if resolution else ("", "", "", "", "", "")
     bucket, _prefix, endpoint, access_key, secret_key, _service_account = credentials
     _write_agent_artifact_sources_env(
         ssh,

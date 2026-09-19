@@ -22,7 +22,8 @@ def test_generation_wrapper_preserves_reviewed_parent(image: str, variant: str) 
     source = recipe.read_text()
     components = upstream_contract(variant)["npa_integration"]["components"]
     parent = components.get("selected_generation_parent") or next(
-        item for item in components["reference_runtime_images"]
+        item
+        for item in components["reference_runtime_images"]
         if item.startswith("docker.io/vllm/")
     )
     if variant == "image-attribute-augmentation":
@@ -49,8 +50,7 @@ def test_generation_wrapper_preserves_reviewed_parent(image: str, variant: str) 
     label = 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"'
     assert label in source
     spec = yaml.safe_load(
-        (ROOT / "workflows/testing" / f"paidf-{variant}.yaml")
-        .read_text()
+        (ROOT / "workflows/testing" / f"paidf-{variant}.yaml").read_text()
     )
     assert spec["config"]["generation_image"].startswith(
         f"registry.example.invalid/npa-{image}@sha256:"
@@ -62,11 +62,20 @@ def test_generation_wrapper_preserves_reviewed_parent(image: str, variant: str) 
 
 
 @pytest.mark.parametrize("image,variant", CASES)
-def test_generation_entrypoint_preserves_arguments_and_exit(image: str, variant: str) -> None:
+def test_generation_entrypoint_preserves_arguments_and_exit(
+    image: str, variant: str
+) -> None:
     entrypoint = ROOT / "npa/docker/workbench" / image / "entrypoint.sh"
     result = subprocess.run(
-        ["/bin/sh", str(entrypoint), "/bin/sh", "-c", 'printf "%s" "$1"; exit 17',
-         "command", "two words"],
+        [
+            "/bin/sh",
+            str(entrypoint),
+            "/bin/sh",
+            "-c",
+            'printf "%s" "$1"; exit 17',
+            "command",
+            "two words",
+        ],
         capture_output=True,
         text=True,
         check=False,

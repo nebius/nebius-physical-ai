@@ -15,7 +15,7 @@ from npa.workflows import paidf_native as native
 
 
 def _executor_fixture() -> bytes:
-    return b'''from __future__ import annotations
+    return b"""from __future__ import annotations
 
 import os
 import multistorageclient as msc
@@ -28,7 +28,7 @@ class Executor:
         if result.media_bytes is not None:
             with msc.open(output_path, "wb") as f:
                 f.write(result.media_bytes)
-'''
+"""
 
 
 def _png_bytes() -> bytes:
@@ -42,8 +42,7 @@ def _patched_encoder(source: bytes, tmp_path: Path):
     function = next(
         node
         for node in tree.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "_media_bytes_for_output"
+        if isinstance(node, ast.FunctionDef) and node.name == "_media_bytes_for_output"
     )
 
     def decode(value, _mode):
@@ -105,7 +104,9 @@ def test_paidf_executor_patch_manifest_binds_original_and_patched_bytes(
     target = tmp_path / native._PAIDF_EXECUTOR_PATH
     target.parent.mkdir(parents=True)
     target.write_bytes(original)
-    monkeypatch.setattr(native, "_PAIDF_EXECUTOR_SHA256", hashlib.sha256(original).hexdigest())
+    monkeypatch.setattr(
+        native, "_PAIDF_EXECUTOR_SHA256", hashlib.sha256(original).hexdigest()
+    )
     monkeypatch.setattr(
         native, "_PAIDF_EXECUTOR_PATCHED_SHA256", hashlib.sha256(patched).hexdigest()
     )

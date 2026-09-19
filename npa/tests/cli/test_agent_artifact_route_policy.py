@@ -418,9 +418,7 @@ def test_rendered_backend_imports_and_calls_the_shipped_policy(
     sys.modules[spec.name] = module
     try:
         spec.loader.exec_module(module)
-        assert module.ARTIFACT_ROUTE_POLICY_CONTRACT == (
-            ARTIFACT_ROUTE_POLICY_CONTRACT
-        )
+        assert module.ARTIFACT_ROUTE_POLICY_CONTRACT == (ARTIFACT_ROUTE_POLICY_CONTRACT)
         assert expected <= set(vars(module))
     finally:
         sys.modules.pop(spec.name, None)

@@ -13452,7 +13452,9 @@ def verify_live_cmd(
     if not isinstance(access_payload.get("projects"), list):
         _fail("agent access endpoint did not return a projects list")
     try:
-        agent_artifact_options.validate_live_artifact_credentials(record, access_payload)
+        agent_artifact_options.validate_live_artifact_credentials(
+            record, access_payload
+        )
     except AgentStorageCredentialError as exc:
         _fail(str(exc))
 

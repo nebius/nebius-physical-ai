@@ -22,30 +22,61 @@ def generation(tmp_path: Path, workflow: str = "iaa") -> tuple[str, str, dict]:
     media = tmp_path / "image.bmp"
     Image.new("RGB", (96, 96), "blue").save(media)
     (tmp_path / "caption.txt").write_text("A person wearing blue.")
-    (tmp_path / "metadata.json").write_text('{"attribute_verification":{"passed":true}}')
+    (tmp_path / "metadata.json").write_text(
+        '{"attribute_verification":{"passed":true}}'
+    )
     (tmp_path / "config.yaml").write_text(
         "evaluators:\n- attribute_verification:\n    enabled: true\n"
-        + ("augmentation:\n  parameters:\n    extra_params:\n      guardrails: true\n" if workflow == "evg" else "")
+        + (
+            "augmentation:\n  parameters:\n    extra_params:\n      guardrails: true\n"
+            if workflow == "evg"
+            else ""
+        )
     )
     item = {
-        "input_key": "person", "augmentation_index": 0,
-        "media_uri": str(media), "caption_uri": str(tmp_path / "caption.txt"),
+        "input_key": "person",
+        "augmentation_index": 0,
+        "media_uri": str(media),
+        "caption_uri": str(tmp_path / "caption.txt"),
         "metadata_uri": str(tmp_path / "metadata.json"),
         "config_uri": str(tmp_path / "config.yaml"),
     }
-    manifest = write(tmp_path / "configs.json", {
-        "schema": f"npa.paidf.native.{workflow}-configs.v1", "workflow": workflow,
-        "run_id": "lineage-run", "configs": [item],
-    })
+    manifest = write(
+        tmp_path / "configs.json",
+        {
+            "schema": f"npa.paidf.native.{workflow}-configs.v1",
+            "workflow": workflow,
+            "run_id": "lineage-run",
+            "configs": [item],
+        },
+    )
     payload = {
-        "schema": f"npa.paidf.native.{workflow}-augmentation.v1", "workflow": workflow,
-        "run_id": "lineage-run", "runtime_image": "example.test/worker@sha256:" + "a" * 64,
+        "schema": f"npa.paidf.native.{workflow}-augmentation.v1",
+        "workflow": workflow,
+        "run_id": "lineage-run",
+        "runtime_image": "example.test/worker@sha256:" + "a" * 64,
         "source_adaptation": native._paidf_image_output_adaptation(),
-        "count": 1, "attempted_count": 1, "failed_count": 0, "failed": [],
+        "count": 1,
+        "attempted_count": 1,
+        "failed_count": 0,
+        "failed": [],
         "config_manifest_uri": manifest,
-        "outputs": [{**item, "artifacts": native._artifact_fingerprints({
-            field: item[field] for field in ("media_uri", "config_uri", "caption_uri", "metadata_uri")
-        })}],
+        "outputs": [
+            {
+                **item,
+                "artifacts": native._artifact_fingerprints(
+                    {
+                        field: item[field]
+                        for field in (
+                            "media_uri",
+                            "config_uri",
+                            "caption_uri",
+                            "metadata_uri",
+                        )
+                    }
+                ),
+            }
+        ],
     }
     if workflow == "evg":
         payload["generation_runtime"] = json.loads(
@@ -55,7 +86,9 @@ def generation(tmp_path: Path, workflow: str = "iaa") -> tuple[str, str, dict]:
 
 
 @pytest.mark.parametrize("terminal", [False, True])
-def test_evg_handoff_rejects_missing_guardrail_runtime(tmp_path: Path, terminal: bool) -> None:
+def test_evg_handoff_rejects_missing_guardrail_runtime(
+    tmp_path: Path, terminal: bool
+) -> None:
     manifest, producer_uri, producer = generation(tmp_path, "evg")
     producer.pop("generation_runtime")
     write(Path(producer_uri), producer)
@@ -63,14 +96,20 @@ def test_evg_handoff_rejects_missing_guardrail_runtime(tmp_path: Path, terminal:
         if terminal:
             native._verified_producers(
                 [native._producer_descriptor(producer_uri, producer)],
-                ["evg-augmentation"], "lineage-run", "evg",
+                ["evg-augmentation"],
+                "lineage-run",
+                "evg",
             )
         else:
-            native.validate_augmentation(manifest, str(tmp_path / "validation.json"), "lineage-run", producer_uri)
+            native.validate_augmentation(
+                manifest, str(tmp_path / "validation.json"), "lineage-run", producer_uri
+            )
 
 
 @pytest.mark.parametrize("setting", [False, None, "true", 1, {}])
-def test_evg_terminal_rejects_self_consistent_disabled_request(tmp_path: Path, setting) -> None:
+def test_evg_terminal_rejects_self_consistent_disabled_request(
+    tmp_path: Path, setting
+) -> None:
     import yaml
 
     _manifest, producer_uri, producer = generation(tmp_path, "evg")
@@ -78,18 +117,27 @@ def test_evg_terminal_rejects_self_consistent_disabled_request(tmp_path: Path, s
     value = yaml.safe_load(config.read_text())
     value["augmentation"]["parameters"]["extra_params"]["guardrails"] = setting
     config.write_text(yaml.safe_dump(value))
-    producer["outputs"][0]["artifacts"] = native._artifact_fingerprints({
-        field: producer["outputs"][0][field]
-        for field in ("media_uri", "config_uri", "caption_uri", "metadata_uri")
-    })
+    producer["outputs"][0]["artifacts"] = native._artifact_fingerprints(
+        {
+            field: producer["outputs"][0][field]
+            for field in ("media_uri", "config_uri", "caption_uri", "metadata_uri")
+        }
+    )
     write(Path(producer_uri), producer)
     with pytest.raises(native.PaidfNativeError, match="explicit enabled guardrails"):
-        native._verified_producers([native._producer_descriptor(producer_uri, producer)], ["evg-augmentation"], "lineage-run", "evg")
+        native._verified_producers(
+            [native._producer_descriptor(producer_uri, producer)],
+            ["evg-augmentation"],
+            "lineage-run",
+            "evg",
+        )
 
 
 def test_validation_preserves_executed_generation_identity(tmp_path: Path) -> None:
     manifest, producer_uri, producer = generation(tmp_path)
-    result = native.validate_augmentation(manifest, str(tmp_path / "validation.json"), "lineage-run", producer_uri)
+    result = native.validate_augmentation(
+        manifest, str(tmp_path / "validation.json"), "lineage-run", producer_uri
+    )
     assert result["accepted_count"] == 1
     assert result["producers"] == [native._producer_descriptor(producer_uri, producer)]
     assert result["producers"][0]["runtime_image"] == producer["runtime_image"]
@@ -98,11 +146,24 @@ def test_validation_preserves_executed_generation_identity(tmp_path: Path) -> No
     )
 
 
-@pytest.mark.parametrize("mutation", [
-    "run", "schema", "missing", "duplicate", "foreign-config", "foreign-media",
-    "stale-bytes", "no-content-manifest", "missing-adaptation", "changed-adaptation",
-])
-def test_validation_rejects_unbound_generation_outputs(tmp_path: Path, mutation: str) -> None:
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "run",
+        "schema",
+        "missing",
+        "duplicate",
+        "foreign-config",
+        "foreign-media",
+        "stale-bytes",
+        "no-content-manifest",
+        "missing-adaptation",
+        "changed-adaptation",
+    ],
+)
+def test_validation_rejects_unbound_generation_outputs(
+    tmp_path: Path, mutation: str
+) -> None:
     manifest, producer_uri, producer = generation(tmp_path)
     if mutation == "run":
         producer["run_id"] = "prior-run"
@@ -126,7 +187,9 @@ def test_validation_rejects_unbound_generation_outputs(tmp_path: Path, mutation:
         producer["source_adaptation"]["patched_sha256"] = "f" * 64
     write(Path(producer_uri), producer)
     with pytest.raises(native.PaidfNativeError):
-        native.validate_augmentation(manifest, str(tmp_path / "validation.json"), "lineage-run", producer_uri)
+        native.validate_augmentation(
+            manifest, str(tmp_path / "validation.json"), "lineage-run", producer_uri
+        )
     assert not (tmp_path / "validation.json").exists()
 
 
@@ -144,15 +207,27 @@ def test_terminal_lineage_rejects_self_consistent_unreviewed_adaptation(
         )
 
 
-@pytest.mark.parametrize("mutation", ["runtime", "run", "missing", "stage", "broken-predecessor"])
-def test_producer_chain_rejects_missing_or_replaced_stage(tmp_path: Path, mutation: str) -> None:
+@pytest.mark.parametrize(
+    "mutation", ["runtime", "run", "missing", "stage", "broken-predecessor"]
+)
+def test_producer_chain_rejects_missing_or_replaced_stage(
+    tmp_path: Path, mutation: str
+) -> None:
     manifest, producer_uri, producer = generation(tmp_path, "evg")
     validation_uri = str(tmp_path / "validation.json")
-    validation = native.validate_augmentation(manifest, validation_uri, "lineage-run", producer_uri)
-    descriptors = [native._producer_descriptor(producer_uri, producer), native._producer_descriptor(validation_uri, validation)]
+    validation = native.validate_augmentation(
+        manifest, validation_uri, "lineage-run", producer_uri
+    )
+    descriptors = [
+        native._producer_descriptor(producer_uri, producer),
+        native._producer_descriptor(validation_uri, validation),
+    ]
     label = {
-        "schema": "npa.paidf.native.evg-auto-label-detection.v1", "workflow": "evg",
-        "run_id": "lineage-run", "stage": "detection", "producers": descriptors[:],
+        "schema": "npa.paidf.native.evg-auto-label-detection.v1",
+        "workflow": "evg",
+        "run_id": "lineage-run",
+        "stage": "detection",
+        "producers": descriptors[:],
     }
     label_uri = write(tmp_path / "detection.json", label)
     descriptors.append(native._producer_descriptor(label_uri, label))
@@ -173,21 +248,42 @@ def test_producer_chain_rejects_missing_or_replaced_stage(tmp_path: Path, mutati
         write(Path(label_uri), label)
         descriptors[-1] = native._producer_descriptor(label_uri, label)
     with pytest.raises(native.PaidfNativeError):
-        native._verified_producers(descriptors, native._lineage_kinds("evg")[:3], "lineage-run", "evg")
+        native._verified_producers(
+            descriptors, native._lineage_kinds("evg")[:3], "lineage-run", "evg"
+        )
 
 
-@pytest.mark.parametrize("mutation", ["extra", "missing", "duplicate", "foreign-media", "foreign-root", "changed-sidecar"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "extra",
+        "missing",
+        "duplicate",
+        "foreign-media",
+        "foreign-root",
+        "changed-sidecar",
+    ],
+)
 def test_label_join_binds_scene_set_and_content(tmp_path: Path, mutation: str) -> None:
     scene = tmp_path / "labels/person/0"
     scene.mkdir(parents=True)
     sidecar = scene / "objects.json"
     sidecar.write_text('{"objects":[]}')
-    accepted = [{"input_key": "person", "augmentation_index": 0, "media_uri": "image.bmp"}]
+    accepted = [
+        {"input_key": "person", "augmentation_index": 0, "media_uri": "image.bmp"}
+    ]
     output = {
-        "key": "person_aug0", "media_uri": "image.bmp", "data_path": str(scene),
+        "key": "person_aug0",
+        "media_uri": "image.bmp",
+        "data_path": str(scene),
         "artifacts": native._artifact_fingerprints({"objects.json": str(sidecar)}),
     }
-    document = {"schema": "npa.paidf.native.evg-auto-label-detection.v1", "stage": "detection", "count": 1, "outputs": [output]}
+    document = {
+        "schema": "npa.paidf.native.evg-auto-label-detection.v1",
+        "stage": "detection",
+        "count": 1,
+        "outputs": [output],
+    }
     if mutation == "extra":
         document["outputs"].append({**output, "key": "foreign_aug0"})
     elif mutation == "missing":
@@ -205,7 +301,9 @@ def test_label_join_binds_scene_set_and_content(tmp_path: Path, mutation: str) -
         native._verify_label_handoffs([document], accepted, str(tmp_path / "labels"))
 
 
-def test_vendor_credentials_are_bound_to_validated_token_in_child_only(monkeypatch) -> None:
+def test_vendor_credentials_are_bound_to_validated_token_in_child_only(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_KEY", "approved-token")
     for key in ("VLM_API_KEY", "LLM_API_KEY", "NVIDIA_API_KEY"):
         monkeypatch.setenv(key, "unrelated-token")
@@ -225,11 +323,26 @@ def test_vendor_credentials_require_the_validated_source(monkeypatch) -> None:
         native._token_factory_child_env()
 
 
-@pytest.mark.parametrize("mutation", ["foreign-origin", "wrong-port", "wrong-model", "wrong-key", "duplicate", "missing", "foreign-alias"])
-def test_local_service_cannot_be_replaced_by_another_generation_endpoint(mutation: str) -> None:
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "foreign-origin",
+        "wrong-port",
+        "wrong-model",
+        "wrong-key",
+        "duplicate",
+        "missing",
+        "foreign-alias",
+    ],
+)
+def test_local_service_cannot_be_replaced_by_another_generation_endpoint(
+    mutation: str,
+) -> None:
     endpoint = {
-        "role": "image_edit", "url": "http://127.0.0.1:8000/v1",
-        "model": QWEN_IMAGE_EDIT_MODEL, "api_key_env": "GENERATION_API_KEY",
+        "role": "image_edit",
+        "url": "http://127.0.0.1:8000/v1",
+        "model": QWEN_IMAGE_EDIT_MODEL,
+        "api_key_env": "GENERATION_API_KEY",
     }
     config = {"endpoints": [endpoint]}
     if mutation == "foreign-origin":
@@ -245,29 +358,67 @@ def test_local_service_cannot_be_replaced_by_another_generation_endpoint(mutatio
     elif mutation == "missing":
         config["endpoints"] = []
     else:
-        config["endpoints"].append({"role": "vlm", "url": "https://foreign.example.test/v1", "api_key_env": "GENERATION_API_KEY"})
+        config["endpoints"].append(
+            {
+                "role": "vlm",
+                "url": "https://foreign.example.test/v1",
+                "api_key_env": "GENERATION_API_KEY",
+            }
+        )
     with pytest.raises(native.PaidfNativeError):
         native._validate_local_generation_endpoint(config, "iaa", 8000)
 
 
-def test_foreign_generation_endpoint_fails_before_starting_model_server(tmp_path: Path, monkeypatch) -> None:
+def test_foreign_generation_endpoint_fails_before_starting_model_server(
+    tmp_path: Path, monkeypatch
+) -> None:
     from npa.workflows.paidf_upstream import QWEN_IMAGE_EDIT_REVISION
 
-    config = write(tmp_path / "config.yaml", {"augmentation": {"parameters": {"extra_params": {"guardrails": True}}}, "endpoints": [{
-        "role": "image_edit", "url": "https://foreign.example.test/v1",
-        "model": QWEN_IMAGE_EDIT_MODEL, "api_key_env": "GENERATION_API_KEY",
-    }]})
-    manifest = write(tmp_path / "configs.json", {
-        "schema": "npa.paidf.native.iaa-configs.v1", "run_id": "lineage-run",
-        "workflow": "iaa", "configs": [{"config_uri": config}],
-    })
-    monkeypatch.setattr(native.subprocess, "Popen", lambda *_a, **_k: pytest.fail("foreign endpoint started a model server"))
+    config = write(
+        tmp_path / "config.yaml",
+        {
+            "augmentation": {"parameters": {"extra_params": {"guardrails": True}}},
+            "endpoints": [
+                {
+                    "role": "image_edit",
+                    "url": "https://foreign.example.test/v1",
+                    "model": QWEN_IMAGE_EDIT_MODEL,
+                    "api_key_env": "GENERATION_API_KEY",
+                }
+            ],
+        },
+    )
+    manifest = write(
+        tmp_path / "configs.json",
+        {
+            "schema": "npa.paidf.native.iaa-configs.v1",
+            "run_id": "lineage-run",
+            "workflow": "iaa",
+            "configs": [{"config_uri": config}],
+        },
+    )
+    monkeypatch.setattr(
+        native.subprocess,
+        "Popen",
+        lambda *_a, **_k: pytest.fail("foreign endpoint started a model server"),
+    )
     with pytest.raises(native.PaidfNativeError, match="local model service"):
-        native.run_local_augmentation(manifest, "unused", QWEN_IMAGE_EDIT_MODEL, QWEN_IMAGE_EDIT_REVISION, "image-edit", 8000, 1, "lineage-run")
+        native.run_local_augmentation(
+            manifest,
+            "unused",
+            QWEN_IMAGE_EDIT_MODEL,
+            QWEN_IMAGE_EDIT_REVISION,
+            "image-edit",
+            8000,
+            1,
+            "lineage-run",
+        )
 
 
 @pytest.mark.parametrize("workflow", ["iaa", "evg"])
-def test_missing_output_after_successful_cli_obeys_upstream_join(tmp_path: Path, monkeypatch, workflow: str) -> None:
+def test_missing_output_after_successful_cli_obeys_upstream_join(
+    tmp_path: Path, monkeypatch, workflow: str
+) -> None:
     from npa.workflows.paidf_upstream import COSMOS3_SUPER_IMAGE2VIDEO_MODEL
 
     items = []
@@ -277,19 +428,36 @@ def test_missing_output_after_successful_cli_obeys_upstream_join(tmp_path: Path,
         manifest, _, _ = generation(root, workflow)
         item = json.loads(Path(manifest).read_text())["configs"][0]
         item["augmentation_index"] = index
-        write(Path(item["config_uri"]), {"endpoints": [{
-            "role": "image_edit" if workflow == "iaa" else "image2video",
-            "url": "http://127.0.0.1:8000/v1", "api_key_env": "GENERATION_API_KEY",
-            "model": QWEN_IMAGE_EDIT_MODEL if workflow == "iaa" else COSMOS3_SUPER_IMAGE2VIDEO_MODEL,
-        }]})
+        write(
+            Path(item["config_uri"]),
+            {
+                "endpoints": [
+                    {
+                        "role": "image_edit" if workflow == "iaa" else "image2video",
+                        "url": "http://127.0.0.1:8000/v1",
+                        "api_key_env": "GENERATION_API_KEY",
+                        "model": QWEN_IMAGE_EDIT_MODEL
+                        if workflow == "iaa"
+                        else COSMOS3_SUPER_IMAGE2VIDEO_MODEL,
+                    }
+                ]
+            },
+        )
         items.append(item)
     Path(items[0]["media_uri"]).unlink()
-    manifest = write(tmp_path / "batch.json", {
-        "schema": f"npa.paidf.native.{workflow}-configs.v1", "workflow": workflow,
-        "run_id": "lineage-run", "configs": items,
-    })
+    manifest = write(
+        tmp_path / "batch.json",
+        {
+            "schema": f"npa.paidf.native.{workflow}-configs.v1",
+            "workflow": workflow,
+            "run_id": "lineage-run",
+            "configs": items,
+        },
+    )
     monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_KEY", "test-token")
-    monkeypatch.setattr(native, "_runtime_fetch", lambda _r, _v, destination: destination)
+    monkeypatch.setattr(
+        native, "_runtime_fetch", lambda _r, _v, destination: destination
+    )
     monkeypatch.setattr(
         native,
         "_patch_paidf_image_output_contract",
@@ -302,9 +470,13 @@ def test_missing_output_after_successful_cli_obeys_upstream_join(tmp_path: Path,
     monkeypatch.setattr(native, "_run_component", lambda *_a, **_k: None)
     if workflow == "evg":
         with pytest.raises(native.PaidfNativeError):
-            native.run_augmentation(manifest, str(tmp_path / "result.json"), "lineage-run")
+            native.run_augmentation(
+                manifest, str(tmp_path / "result.json"), "lineage-run"
+            )
     else:
-        result = native.run_augmentation(manifest, str(tmp_path / "result.json"), "lineage-run")
+        result = native.run_augmentation(
+            manifest, str(tmp_path / "result.json"), "lineage-run"
+        )
         assert result["count"] == 1
         assert result["failed_count"] == 1
         assert result["failed"][0]["reason"] == "component_output_missing_or_empty"
@@ -312,19 +484,52 @@ def test_missing_output_after_successful_cli_obeys_upstream_join(tmp_path: Path,
 
 
 @pytest.mark.parametrize("parallel_size", [0, 3, 4])
-def test_unsupported_cfg_override_fails_before_model_start(tmp_path: Path, monkeypatch, parallel_size: int) -> None:
+def test_unsupported_cfg_override_fails_before_model_start(
+    tmp_path: Path, monkeypatch, parallel_size: int
+) -> None:
     from npa.workflows.paidf_upstream import (
-        COSMOS3_SUPER_IMAGE2VIDEO_MODEL, COSMOS3_SUPER_IMAGE2VIDEO_REVISION,
+        COSMOS3_SUPER_IMAGE2VIDEO_MODEL,
+        COSMOS3_SUPER_IMAGE2VIDEO_REVISION,
     )
 
-    config = write(tmp_path / "config.yaml", {"augmentation": {"parameters": {"extra_params": {"guardrails": True}}}, "endpoints": [{
-        "role": "image2video", "url": "http://127.0.0.1:8000/v1",
-        "model": COSMOS3_SUPER_IMAGE2VIDEO_MODEL, "api_key_env": "GENERATION_API_KEY",
-    }]})
-    manifest = write(tmp_path / "configs.json", {
-        "schema": "npa.paidf.native.evg-configs.v1", "run_id": "lineage-run",
-        "workflow": "evg", "configs": [{"config_uri": config}],
-    })
-    monkeypatch.setattr(native.subprocess, "Popen", lambda *_a, **_k: pytest.fail("unsupported CFG override started a model server"))
+    config = write(
+        tmp_path / "config.yaml",
+        {
+            "augmentation": {"parameters": {"extra_params": {"guardrails": True}}},
+            "endpoints": [
+                {
+                    "role": "image2video",
+                    "url": "http://127.0.0.1:8000/v1",
+                    "model": COSMOS3_SUPER_IMAGE2VIDEO_MODEL,
+                    "api_key_env": "GENERATION_API_KEY",
+                }
+            ],
+        },
+    )
+    manifest = write(
+        tmp_path / "configs.json",
+        {
+            "schema": "npa.paidf.native.evg-configs.v1",
+            "run_id": "lineage-run",
+            "workflow": "evg",
+            "configs": [{"config_uri": config}],
+        },
+    )
+    monkeypatch.setattr(
+        native.subprocess,
+        "Popen",
+        lambda *_a, **_k: pytest.fail(
+            "unsupported CFG override started a model server"
+        ),
+    )
     with pytest.raises(native.PaidfNativeError, match="parallel_size 1 or 2"):
-        native.run_local_augmentation(manifest, "unused", COSMOS3_SUPER_IMAGE2VIDEO_MODEL, COSMOS3_SUPER_IMAGE2VIDEO_REVISION, "image2video", 8000, parallel_size, "lineage-run")
+        native.run_local_augmentation(
+            manifest,
+            "unused",
+            COSMOS3_SUPER_IMAGE2VIDEO_MODEL,
+            COSMOS3_SUPER_IMAGE2VIDEO_REVISION,
+            "image2video",
+            8000,
+            parallel_size,
+            "lineage-run",
+        )

@@ -61,7 +61,9 @@ _PAIDF_CAMERA_URL = (
     "https://raw.githubusercontent.com/scikit-image/scikit-image/"
     f"{_PAIDF_CAMERA_REVISION}/skimage/data/camera.png"
 )
-_PAIDF_CAMERA_SHA256 = "b0793d2adda0fa6ae899c03989482bff9a42d3d5690fc7e3648f2795d730c23a"
+_PAIDF_CAMERA_SHA256 = (
+    "b0793d2adda0fa6ae899c03989482bff9a42d3d5690fc7e3648f2795d730c23a"
+)
 # A tiny, valid 64x64 H.264/MP4 clip generated from ffmpeg's deterministic
 # testsrc2 source. Keeping the bytes in the test harness makes input seeding
 # independent of an operator host's ffmpeg installation while the live worker
@@ -160,8 +162,7 @@ def _fetch_paidf_camera_fixture() -> bytes:
 
     parsed = urlparse(_PAIDF_CAMERA_URL)
     expected_path = (
-        f"/scikit-image/scikit-image/{_PAIDF_CAMERA_REVISION}"
-        "/skimage/data/camera.png"
+        f"/scikit-image/scikit-image/{_PAIDF_CAMERA_REVISION}/skimage/data/camera.png"
     )
     if (
         parsed.scheme != "https"
@@ -338,15 +339,18 @@ def seed_live_workflow_inputs(
         client.put_object(
             Bucket=bucket,
             Key=f"{marker}/fixture-source.json",
-            Body=json.dumps({
-                "schema": "npa.paidf.fixture-source.v1",
-                "source_url": _PAIDF_CAMERA_URL,
-                "source_revision": _PAIDF_CAMERA_REVISION,
-                "sha256": _PAIDF_CAMERA_SHA256,
-                "bytes": len(image_bytes),
-                "license": "CC0-1.0",
-                "author": "Lav Varshney",
-            }, sort_keys=True).encode(),
+            Body=json.dumps(
+                {
+                    "schema": "npa.paidf.fixture-source.v1",
+                    "source_url": _PAIDF_CAMERA_URL,
+                    "source_revision": _PAIDF_CAMERA_REVISION,
+                    "sha256": _PAIDF_CAMERA_SHA256,
+                    "bytes": len(image_bytes),
+                    "license": "CC0-1.0",
+                    "author": "Lav Varshney",
+                },
+                sort_keys=True,
+            ).encode(),
             ContentType="application/json",
         )
         return
@@ -1801,7 +1805,9 @@ def materialize_live_spec(
             count=1,
         )
         image_variable = (
-            "NPA_E2E_PAIDF_IAA_IMAGE" if "attribute" in name else "NPA_E2E_PAIDF_EVG_IMAGE"
+            "NPA_E2E_PAIDF_IAA_IMAGE"
+            if "attribute" in name
+            else "NPA_E2E_PAIDF_EVG_IMAGE"
         )
         generation_image = os.environ.get(image_variable, "").strip()
         if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", generation_image):
@@ -1845,9 +1851,7 @@ def materialize_live_spec(
             count=1,
         )
         text = text.replace("usecase: pcb", "usecase: metal_surface", 1)
-        anomalygen_image = os.environ.get(
-            "NPA_E2E_PAIDF_ANOMALYGEN_IMAGE", ""
-        ).strip()
+        anomalygen_image = os.environ.get("NPA_E2E_PAIDF_ANOMALYGEN_IMAGE", "").strip()
         if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", anomalygen_image):
             pytest.fail(
                 "NPA_E2E_PAIDF_ANOMALYGEN_IMAGE must name the operator-built "

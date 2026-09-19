@@ -177,7 +177,10 @@ def test_write_upstream_contract_accepts_reviewed_direct_generation_model(
     )
     components = result["npa_integration"]["components"]
     assert components["models"][model] == revision
-    assert components["models"] == upstream_contract(variant)["npa_integration"]["components"]["models"]
+    assert (
+        components["models"]
+        == upstream_contract(variant)["npa_integration"]["components"]["models"]
+    )
     assert "runtime_images" not in components
     assert (
         "renderer-selected runtime_image"
@@ -325,8 +328,7 @@ def test_native_iaa_preserves_postprocess_and_attribute_search_boundaries() -> N
     repo_root = Path(__file__).resolve().parents[3]
     workflow = yaml.safe_load(
         (
-            repo_root
-            / "workflows/testing/paidf-image-attribute-augmentation.yaml"
+            repo_root / "workflows/testing/paidf-image-attribute-augmentation.yaml"
         ).read_text(encoding="utf-8")
     )
 
@@ -356,10 +358,9 @@ def test_native_iaa_preserves_postprocess_and_attribute_search_boundaries() -> N
 def test_native_evg_preserves_published_sequential_labeling_chain() -> None:
     repo_root = Path(__file__).resolve().parents[3]
     workflow = yaml.safe_load(
-        (
-            repo_root
-            / "workflows/testing/paidf-event-video-generation.yaml"
-        ).read_text(encoding="utf-8")
+        (repo_root / "workflows/testing/paidf-event-video-generation.yaml").read_text(
+            encoding="utf-8"
+        )
     )
 
     states = workflow["states"]
