@@ -129,6 +129,11 @@ _OPENPI_FULL_DROID_PIPELINE = [
     "-m",
     "npa.workflows.byof.openpi_full_droid",
 ]
+_GEMINI_ROBOTICS_PIPELINE = [
+    "python3",
+    "-m",
+    "npa.workflows.byof.gemini_robotics_pipeline",
+]
 
 _CONTENT_AGENTS_PIPELINE = [
     "python3",
@@ -1526,6 +1531,70 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.gpu_count}}",
             "--expected-compute-capability",
             "{{config.expected_compute_capability}}",
+        ],
+    ),
+    "workbench.gemini_robotics.plan": ToolEntry(
+        name="workbench.gemini_robotics.plan",
+        description=(
+            "Run ER embodied-reasoning planning via the Gemini API "
+            "(provisional adapter: API base URL and model id must be supplied "
+            "explicitly; no live access has been validated)."
+        ),
+        argv_template=[
+            *_GEMINI_ROBOTICS_PIPELINE,
+            "--api-base-url",
+            "{{config.api_base_url}}",
+            "plan",
+            "--task",
+            "{{config.task}}",
+            "--model",
+            "{{config.model_id}}",
+            "--output-dir",
+            "{{config.output_dir}}",
+        ],
+    ),
+    "workbench.gemini_robotics.adapt": ToolEntry(
+        name="workbench.gemini_robotics.adapt",
+        description=(
+            "Submit an on-device adaptation job via the Gemini API "
+            "(provisional adapter: API base URL and model id must be supplied "
+            "explicitly; no live access has been validated)."
+        ),
+        argv_template=[
+            *_GEMINI_ROBOTICS_PIPELINE,
+            "--api-base-url",
+            "{{config.api_base_url}}",
+            "adapt",
+            "--dataset-path",
+            "{{config.dataset_path}}",
+            "--display-name",
+            "{{config.adaptation_display_name}}",
+            "--base-model",
+            "{{config.model_id}}",
+            "--output-dir",
+            "{{config.output_dir}}",
+        ],
+    ),
+    "workbench.gemini_robotics.eval": ToolEntry(
+        name="workbench.gemini_robotics.eval",
+        description=(
+            "Evaluate a plan against a rubric via the Gemini API "
+            "(provisional adapter: API base URL and model id must be supplied "
+            "explicitly; no live access has been validated)."
+        ),
+        argv_template=[
+            *_GEMINI_ROBOTICS_PIPELINE,
+            "--api-base-url",
+            "{{config.api_base_url}}",
+            "eval",
+            "--plan-path",
+            "{{config.plan_path}}",
+            "--rubric-path",
+            "{{config.rubric_path}}",
+            "--model",
+            "{{config.model_id}}",
+            "--output-dir",
+            "{{config.output_dir}}",
         ],
     ),
     "workbench.isaac_lab.byof_repo": ToolEntry(
