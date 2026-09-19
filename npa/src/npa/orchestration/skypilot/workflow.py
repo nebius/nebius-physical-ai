@@ -3828,12 +3828,24 @@ def _status_from_queue_payload(output: str, job_id: str) -> str:
                 statuses.append(status)
     if not statuses:
         return ""
-    for status in statuses:
-        if is_terminal_failure_job_status(status):
+    active_statuses = ("RUNNING", "RECOVERING", "STARTING", "PENDING", "CANCELLING")
+    if any(
+        status != "SUCCEEDED"
+        and status not in active_statuses
+        and not is_terminal_failure_job_status(status)
+        for status in statuses
+    ):
+        return "UNKNOWN"
+    for status in active_statuses:
+        if status in statuses:
             return status
     if all(status == "SUCCEEDED" for status in statuses):
         return "SUCCEEDED"
-    for status in ("RUNNING", "RECOVERING", "STARTING", "PENDING", "CANCELLING"):
-        if status in statuses:
-            return status
-    return statuses[0]
+    if all(
+        status == "SUCCEEDED" or is_terminal_failure_job_status(status)
+        for status in statuses
+    ):
+        return next(
+            status for status in statuses if is_terminal_failure_job_status(status)
+        )
+    return "UNKNOWN"

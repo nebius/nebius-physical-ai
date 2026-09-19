@@ -3470,14 +3470,37 @@ def test_status_from_queue_payload_reports_success_after_all_dag_tasks() -> None
     assert _status_from_queue_payload(json.dumps(payload), "1") == "SUCCEEDED"
 
 
-def test_status_from_queue_payload_failure_wins() -> None:
+def test_status_from_queue_payload_waits_for_active_sibling() -> None:
     payload = [
         {"job_id": 1, "task_id": 0, "status": "SUCCEEDED"},
         {"job_id": 1, "task_id": 1, "status": "FAILED"},
         {"job_id": 1, "task_id": 2, "status": "PENDING"},
     ]
 
-    assert _status_from_queue_payload(json.dumps(payload), "1") == "FAILED"
+    assert _status_from_queue_payload(json.dumps(payload), "1") == "PENDING"
+
+
+@pytest.mark.parametrize(
+    "active", ("RUNNING", "RECOVERING", "STARTING", "PENDING", "CANCELLING")
+)
+def test_status_from_queue_payload_never_finishes_while_sibling_is_active(
+    active: str,
+) -> None:
+    payload = [
+        {"job_id": 1, "task_id": 0, "status": "STOPPED"},
+        {"job_id": 1, "task_id": 1, "status": active},
+    ]
+
+    assert _status_from_queue_payload(json.dumps(payload), "1") == active
+
+
+def test_status_from_queue_payload_rejects_unknown_with_terminal_sibling() -> None:
+    payload = [
+        {"job_id": 1, "task_id": 0, "status": "FAILED_RUNTIME"},
+        {"job_id": 1, "task_id": 1, "status": "UNKNOWN"},
+    ]
+
+    assert _status_from_queue_payload(json.dumps(payload), "1") == "UNKNOWN"
 
 
 @pytest.mark.parametrize("failure", ("CANCELED", "STOPPED", "FAILED_CUSTOM"))
