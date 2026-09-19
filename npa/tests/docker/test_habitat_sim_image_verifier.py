@@ -20,6 +20,7 @@ import tarfile
 import textwrap
 from types import SimpleNamespace
 from unittest.mock import Mock, call
+import zipfile
 
 import pytest
 import yaml
@@ -236,6 +237,35 @@ def test_python_source_distribution_identity_and_content_are_bound() -> None:
     assert H._delivered_source_matches(state, row, [artifact])
     state.tracked[path] = b"unrelated source bytes"
     assert not H._delivered_source_matches(state, row, [artifact])
+
+
+def test_python_source_archive_rejects_ambiguous_metadata_and_unsafe_names() -> None:
+    row = {"ecosystem": "python", "name": "fixture", "version": "1.0"}
+    payload = io.BytesIO()
+    with gzip.GzipFile(fileobj=payload, mode="wb", mtime=0) as compressed:
+        with tarfile.open(fileobj=compressed, mode="w") as archive:
+            for name in ("fixture-1.0/PKG-INFO", "fixture-1.0/METADATA"):
+                metadata = b"Name: fixture\nVersion: 1.0\n"
+                member = tarfile.TarInfo(name)
+                member.size = len(metadata)
+                archive.addfile(member, io.BytesIO(metadata))
+    assert H._python_source_matches(row, payload.getvalue()) is False
+
+    unsafe = io.BytesIO()
+    with tarfile.open(fileobj=unsafe, mode="w") as archive:
+        member = tarfile.TarInfo("../fixture-1.0/PKG-INFO")
+        member.size = 0
+        archive.addfile(member, io.BytesIO())
+    assert H._python_source_matches(row, unsafe.getvalue()) is False
+
+
+def test_python_source_archive_rejects_bounded_expansion_ratio() -> None:
+    row = {"ecosystem": "python", "name": "fixture", "version": "1.0"}
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("fixture-1.0/PKG-INFO", b"Name: fixture\nVersion: 1.0\n")
+        archive.writestr("fixture-1.0/repetitive.bin", b"0" * 2_000_000)
+    assert H._python_source_matches(row, payload.getvalue()) is False
 
 
 def test_current_image_contract_remains_source_delivery_quarantined() -> None:

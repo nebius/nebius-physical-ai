@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -80,6 +81,40 @@ def test_habitat_report_requires_an_independently_clean_verdict(tmp_path):
     archive = {"sha256": "0" * 64}
     with pytest.raises(W.ScanError, match="habitat_verifier_findings"):
         P._verify_habitat_report(args, archive, report)
+
+
+def test_habitat_contract_binding_uses_committed_blob_and_rejects_drift(tmp_path):
+    root = tmp_path / "checkout"
+    contract_path = root / P.HABITAT_CONTRACT
+    contract_path.parent.mkdir(parents=True)
+    contract_path.write_bytes(b'{"source":"committed"}\n')
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "add", P.HABITAT_CONTRACT], check=True
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+    )
+    revision = P._trusted_revision(root)
+    contract, binding = P._trusted_contract(root, revision)
+    assert contract == {"source": "committed"}
+    assert binding["revision"] == revision
+    assert len(binding["git_blob"]) == 40
+    contract_path.write_bytes(b'{"source":"drifted"}\n')
+    with pytest.raises(W.ScanError, match="trusted_contract_worktree_mismatch"):
+        P._trusted_contract(root, revision)
 
 
 def test_invalid_cli_never_echoes_value(capsys):

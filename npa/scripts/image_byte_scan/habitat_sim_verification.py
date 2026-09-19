@@ -23,6 +23,11 @@ from . import oci_graph as G
 
 SCHEMA = "npa.habitat-sim.oci-verification.v1"
 PLATFORM = {"os": "linux", "architecture": "amd64"}
+SOURCE_ARCHIVE_MAX_MEMBERS = 65_536
+SOURCE_ARCHIVE_MAX_MEMBER_BYTES = 256 * 1024 * 1024
+SOURCE_ARCHIVE_MAX_EXPANDED_BYTES = 512 * 1024 * 1024
+SOURCE_ARCHIVE_MAX_COMPRESSION_RATIO = 1_000
+SOURCE_ARCHIVE_MAX_METADATA_BYTES = 1 * 1024 * 1024
 
 
 def inspect(fd: int, length: int, expected_id: str) -> dict[str, object]:
@@ -1353,52 +1358,99 @@ def _dsc_content_matches(state, dsc_path, files, checksums):
     return True
 
 
-def _archive_metadata(payload: bytes) -> bytes | None:
-    metadata = _tar_archive_metadata(payload)
-    return metadata if metadata is not None else _zip_archive_metadata(payload)
-
-
 def _safe_archive_name(name: str) -> bool:
-    return bool(name) and not name.startswith(("/", "\\")) and all(
+    return bool(name) and "\\" not in name and not name.startswith(("/", "\\")) and all(
         part not in {"", ".", ".."} for part in PurePosixPath(name).parts
     )
 
 
-def _tar_archive_metadata(payload: bytes) -> bytes | None:
+def _archive_limits(payload: bytes) -> tuple[int, int, int]:
+    return (
+        SOURCE_ARCHIVE_MAX_MEMBERS,
+        SOURCE_ARCHIVE_MAX_MEMBER_BYTES,
+        min(SOURCE_ARCHIVE_MAX_EXPANDED_BYTES, max(1, len(payload)) * SOURCE_ARCHIVE_MAX_COMPRESSION_RATIO),
+    )
+
+
+def _canonical_metadata_name(row: dict[str, object], name: str) -> bool:
+    root = f"{_normalize_distribution(str(row.get('name', '')))}-{row.get('version', '')}"
+    parts = PurePosixPath(name).parts
+    return len(parts) == 2 and parts[0] == root and parts[1] in {"PKG-INFO", "METADATA"}
+
+
+def _read_metadata(stream) -> bytes | None:
+    metadata = stream.read(SOURCE_ARCHIVE_MAX_METADATA_BYTES + 1)
+    return metadata if len(metadata) <= SOURCE_ARCHIVE_MAX_METADATA_BYTES else None
+
+
+def _tar_archive_metadata(row: dict[str, object], payload: bytes) -> bytes | None:
     try:
+        member_limit, max_member_bytes, expanded_limit = _archive_limits(payload)
         with tarfile.open(fileobj=io.BytesIO(payload), mode="r:*") as archive:
             metadata = None
-            regular_files = 0
-            members = archive.getmembers()
-            if not members:
-                return None
-            for member in members:
+            names: set[str] = set()
+            total = 0
+            for count, member in enumerate(archive, 1):
+                if count > member_limit:
+                    return None
                 if not _safe_archive_name(member.name) or member.issym() or member.islnk():
                     return None
+                if member.name in names or member.size > max_member_bytes or total + member.size > expanded_limit:
+                    return None
+                names.add(member.name)
+                total += member.size
                 if member.isdir():
                     continue
                 if not member.isfile():
                     return None
-                regular_files += 1
                 if PurePosixPath(member.name).name in {"PKG-INFO", "METADATA"}:
-                    metadata = archive.extractfile(member).read()  # type: ignore[union-attr]
-            return metadata if regular_files else None
+                    if not _canonical_metadata_name(row, member.name) or metadata is not None:
+                        return None
+                    stream = archive.extractfile(member)
+                    if stream is None:
+                        return None
+                    metadata = _read_metadata(stream)
+                    if metadata is None:
+                        return None
+            return metadata
     except (OSError, tarfile.TarError):
         return None
 
 
-def _zip_archive_metadata(payload: bytes) -> bytes | None:
+def _zip_archive_metadata(row: dict[str, object], payload: bytes) -> bytes | None:
     try:
+        member_limit, max_member_bytes, expanded_limit = _archive_limits(payload)
         with zipfile.ZipFile(io.BytesIO(payload)) as archive:
             metadata = None
-            names = archive.namelist()
-            if not names:
+            infos = archive.infolist()
+            if not infos or len(infos) > member_limit:
                 return None
-            for name in names:
-                if not _safe_archive_name(name) or name.endswith("/"):
+            names: set[str] = set()
+            total = 0
+            for info in infos:
+                name = info.filename
+                if not _safe_archive_name(name) or name in names:
+                    return None
+                names.add(name)
+                if info.is_dir() or name.endswith("/"):
+                    if info.file_size or info.compress_size:
+                        return None
                     continue
+                if info.file_size > max_member_bytes or total + info.file_size > expanded_limit:
+                    return None
+                if info.file_size and (
+                    not info.compress_size
+                    or info.file_size > info.compress_size * SOURCE_ARCHIVE_MAX_COMPRESSION_RATIO
+                ):
+                    return None
+                total += info.file_size
                 if PurePosixPath(name).name in {"PKG-INFO", "METADATA"}:
-                    metadata = archive.read(name)
+                    if not _canonical_metadata_name(row, name) or metadata is not None:
+                        return None
+                    with archive.open(info) as stream:
+                        metadata = _read_metadata(stream)
+                    if metadata is None:
+                        return None
             return metadata
     except (OSError, zipfile.BadZipFile):
         return None
@@ -1407,7 +1459,11 @@ def _zip_archive_metadata(payload: bytes) -> bytes | None:
 def _python_source_matches(row: dict[str, object], payload: bytes | None) -> bool:
     if payload is None:
         return False
-    metadata = _archive_metadata(payload)
+    if len(payload) > SOURCE_ARCHIVE_MAX_MEMBER_BYTES:
+        return False
+    metadata = _tar_archive_metadata(row, payload)
+    if metadata is None:
+        metadata = _zip_archive_metadata(row, payload)
     if metadata is None:
         return False
     fields = _debian_source_fields(metadata)

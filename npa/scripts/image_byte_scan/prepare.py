@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import urllib.request
@@ -19,6 +20,7 @@ else:
     from . import core as W
 
 WHEEL_URL = "https://files.pythonhosted.org/packages/a1/f2/d13807476195e4ec5999a78f22db592a64da54229c9183438f3165105779/pyahocorasick-2.3.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+HABITAT_CONTRACT = "npa/docker/workbench/habitat-sim/runtime-payload.json"
 
 
 def binding(path, *, secret=True):
@@ -124,7 +126,40 @@ def _trusted_revision(root: Path) -> str:
     return revision
 
 
-def _verify_habitat_report(args, archive, report) -> None:
+def _trusted_contract(root: Path, revision: str) -> tuple[dict, dict[str, object]]:
+    """Read the Habitat contract from the committed Git blob and bind its bytes."""
+    spec = f"{revision}:{HABITAT_CONTRACT}"
+    oid = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", spec],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    W.require(oid.returncode == 0, "trusted_contract_blob_unreadable")
+    blob_oid = oid.stdout.strip()
+    W.require(re.fullmatch(r"[0-9a-f]{40}", blob_oid) is not None, "trusted_contract_blob_invalid")
+    blob = subprocess.run(
+        ["git", "-C", str(root), "cat-file", "blob", spec],
+        check=False,
+        capture_output=True,
+    )
+    W.require(blob.returncode == 0, "trusted_contract_blob_unreadable")
+    committed = blob.stdout
+    path = root / HABITAT_CONTRACT
+    W.require(path.is_file() and not path.is_symlink(), "trusted_contract_worktree_missing")
+    W.require(path.read_bytes() == committed, "trusted_contract_worktree_mismatch")
+    contract = json.loads(committed)
+    W.require(isinstance(contract, dict), "trusted_contract_schema")
+    return contract, {
+        "path": HABITAT_CONTRACT,
+        "revision": revision,
+        "git_blob": blob_oid,
+        "bytes": len(committed),
+        "sha256": W.sha(committed),
+    }
+
+
+def _verify_habitat_report(args, archive, report) -> dict[str, object]:
     """Re-run Habitat verification against the exact held archive descriptor."""
     if __package__ in {None, ""}:
         from image_byte_scan import habitat_sim_verification as verifier
@@ -140,10 +175,7 @@ def _verify_habitat_report(args, archive, report) -> None:
         report.get("expected_source_revision") == source_revision,
         "habitat_source_revision_binding",
     )
-    contract_path = (
-        args.trusted_root / "npa/docker/workbench/habitat-sim/runtime-payload.json"
-    )
-    contract = json.loads(contract_path.read_bytes())
+    contract, contract_binding = _trusted_contract(args.trusted_root, source_revision)
     expected = tuple(
         report[key]
         for key in (
@@ -186,6 +218,7 @@ def _verify_habitat_report(args, archive, report) -> None:
         W.require(
             report.get(key) == verified.get(key), "habitat_verifier_receipt_mismatch"
         )
+    return contract_binding
 
 
 def authorize(args, directory):
@@ -203,8 +236,9 @@ def authorize(args, directory):
         ),
         "accepted_graph_report_required",
     )
+    trusted_contract = None
     if report["schema_version"] == "npa.habitat-sim.oci-verification.v1":
-        _verify_habitat_report(args, archive, report)
+        trusted_contract = _verify_habitat_report(args, archive, report)
     W.require(
         W.verification_archive_digest(report) == archive["sha256"]
         and report.get("expected_image_id") == args.expected_image_id,
@@ -225,6 +259,8 @@ def authorize(args, directory):
         "literal_engine": engine,
         "tools_receipt": binding(args.tools_receipt),
     }
+    if trusted_contract is not None:
+        authorization["trusted_contract"] = trusted_contract
     if args.policy_mode == "ci-regex":
         policy = {
             "customer_pattern": os.environ.get("CUSTOMER_DENYLIST"),
