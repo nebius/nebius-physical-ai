@@ -1257,7 +1257,11 @@ def _layer_owner_rows(
     owners.update(
         _layer_python_owners(source_inventory, tracked, path, state=state, payload=payload)
     )
-    owners.update(_layer_contract_owners(state, path, payload, tracked))
+    owners.update(
+        _layer_contract_owners(
+            state, path, payload, tracked, source_inventory=source_inventory
+        )
+    )
     return owners
 
 
@@ -1310,6 +1314,8 @@ def _layer_contract_owners(
     path: str,
     payload: dict[str, object] | None = None,
     tracked: dict[str, bytes] | None = None,
+    *,
+    source_inventory: dict[str, dict[str, object]] | None = None,
 ) -> set[str]:
     owners: set[str] = set()
     tracked = tracked or {}
@@ -1322,8 +1328,19 @@ def _layer_contract_owners(
         owners.add("source:habitat-sim:executable")
     if _source_projection_owner(state, path, payload, tracked):
         owners.add("source:habitat-sim:projection")
-    if path in {"var/lib/dpkg/status"} or path.startswith("var/lib/dpkg/info/"):
-        owners.add("dpkg:database")
+    if path == "var/lib/dpkg/status" or (
+        path.startswith("var/lib/dpkg/info/") and path.endswith(".list")
+    ):
+        actual_sha, actual_size = _payload_identity(state, path, payload, tracked)
+        for identity, row in (source_inventory or {}).items():
+            contents = row.get("file_contents")
+            expected = contents.get(path) if isinstance(contents, dict) else None
+            if (
+                isinstance(expected, dict)
+                and expected.get("sha256") == actual_sha
+                and expected.get("size") == actual_size
+            ):
+                owners.add(identity)
     if path in {
         "usr/local/bin/npa-habitat-entrypoint",
         "etc/passwd",
@@ -1595,6 +1612,13 @@ def _record_source_population(state: _ScanState) -> None:
 def _dpkg_file_contents(state: _ScanState, package: str) -> dict[str, dict[str, object]]:
     """Bind each listed package path to the observed bytes in this layer state."""
     contents: dict[str, dict[str, object]] = {}
+    status_path = "var/lib/dpkg/status"
+    status = state.files.get(status_path, {})
+    if isinstance(status.get("sha256"), str) and isinstance(status.get("size"), int):
+        contents[status_path] = {
+            "sha256": status["sha256"],
+            "size": status["size"],
+        }
     prefix = "var/lib/dpkg/info/"
     for list_path, payload in state.tracked.items():
         if not list_path.startswith(prefix) or not list_path.endswith(".list"):
@@ -1602,6 +1626,14 @@ def _dpkg_file_contents(state: _ScanState, package: str) -> dict[str, dict[str, 
         listed_package = list_path.removeprefix(prefix).removesuffix(".list")
         if listed_package.split(":", 1)[0] != package:
             continue
+        observed_list = state.files.get(list_path, {})
+        if isinstance(observed_list.get("sha256"), str) and isinstance(
+            observed_list.get("size"), int
+        ):
+            contents[list_path] = {
+                "sha256": observed_list["sha256"],
+                "size": observed_list["size"],
+            }
         for line in payload.decode("utf-8", errors="ignore").splitlines():
             if not line.startswith("/"):
                 continue

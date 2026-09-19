@@ -377,6 +377,45 @@ def test_source_ownership_requires_content_bound_dpkg_payload() -> None:
     assert H._layer_dpkg_owners({"id": row}, tracked, "usr/bin/fixture") == set()
 
 
+def test_dpkg_database_owner_rejects_undeclared_control_payload() -> None:
+    state = H._ScanState(
+        files={
+            "var/lib/dpkg/status": {"sha256": _digest(b"status"), "size": 6},
+            "var/lib/dpkg/info/fixture.list": {
+                "sha256": _digest(b"/usr/bin/fixture\n"),
+                "size": 18,
+            },
+            "var/lib/dpkg/info/opaque.blob": {
+                "sha256": _digest(b"opaque"),
+                "size": 6,
+            },
+        }
+    )
+    row = {
+        "ecosystem": "dpkg",
+        "name": "fixture",
+        "file_contents": {
+            "var/lib/dpkg/status": {"sha256": _digest(b"status"), "size": 6},
+            "var/lib/dpkg/info/fixture.list": {
+                "sha256": _digest(b"/usr/bin/fixture\n"),
+                "size": 18,
+            },
+        },
+    }
+    assert H._layer_contract_owners(
+        state,
+        "var/lib/dpkg/info/opaque.blob",
+        tracked={},
+        source_inventory={"fixture": row},
+    ) == set()
+    assert H._layer_contract_owners(
+        state,
+        "var/lib/dpkg/info/fixture.list",
+        tracked={},
+        source_inventory={"fixture": row},
+    ) == {"fixture"}
+
+
 def test_debian_epoch_filename_is_bound_to_normalized_source_identity() -> None:
     row = {
         "ecosystem": "dpkg",
