@@ -41,7 +41,14 @@ def _png(width: int, height: int, *, pad: int = 4096) -> bytes:
 
 def _jpeg(width: int, height: int, *, pad: int = 4096) -> bytes:
     sof = b"\xff\xc0" + struct.pack(">HBHHB", 17, 8, height, width, 3) + b"\x00" * 9
-    return b"\xff\xd8" + sof + b"\xff\xdb" + struct.pack(">H", 2 + pad) + b"\x00" * pad + b"\xff\xd9"
+    return (
+        b"\xff\xd8"
+        + sof
+        + b"\xff\xdb"
+        + struct.pack(">H", 2 + pad)
+        + b"\x00" * pad
+        + b"\xff\xd9"
+    )
 
 
 def test_reads_png_dimensions(tmp_path: Path) -> None:
@@ -107,7 +114,9 @@ def test_inference_argv_is_an_argv_not_a_string(tmp_path: Path) -> None:
     assert "--seed=7" in argv
     assert argv[argv.index("--checkpoint-path") + 1] == "Cosmos3-Nano"
     # No shell interpolation anywhere: every element is a discrete token.
-    assert all(" " not in part or part.startswith("/") or "tmp" in part for part in argv)
+    assert all(
+        " " not in part or part.startswith("/") or "tmp" in part for part in argv
+    )
 
 
 def test_guardrails_flag_is_opt_in(tmp_path: Path) -> None:
@@ -121,7 +130,9 @@ def test_guardrails_flag_is_opt_in(tmp_path: Path) -> None:
     assert "--no-guardrails" not in argv
 
 
-def test_publish_writes_the_manifest_and_uploads_both(tmp_path: Path, monkeypatch) -> None:
+def test_publish_writes_the_manifest_and_uploads_both(
+    tmp_path: Path, monkeypatch
+) -> None:
     uploads: list[tuple[str, str]] = []
 
     class _Client:
@@ -182,7 +193,9 @@ def test_the_spec_declares_the_manifest_the_tool_writes() -> None:
 
     spec_path = (
         Path(__file__).resolve().parents[3]
-        / "workflows" / "testing" / "cosmos3-text-to-image.yaml"
+        / "workflows"
+        / "testing"
+        / "cosmos3-text-to-image.yaml"
     )
     spec = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
     declared = spec["states"]["text-to-image"]["outputs"][0]["uri"]
@@ -227,7 +240,9 @@ def test_generate_reports_a_failed_fetch_instead_of_a_confusing_attribute_error(
         )
 
 
-def test_generate_uses_the_field_the_fetch_result_actually_has(tmp_path: Path, monkeypatch) -> None:
+def test_generate_uses_the_field_the_fetch_result_actually_has(
+    tmp_path: Path, monkeypatch
+) -> None:
     from npa.workbench.cosmos.cosmos3 import Cosmos3AccessConfig, Cosmos3FetchResult
 
     source = tmp_path / "source"
@@ -271,7 +286,9 @@ def test_generate_uses_the_field_the_fetch_result_actually_has(tmp_path: Path, m
     assert ran[0][:2] == ["uv", "sync"]
 
 
-def test_hf_cli_falls_back_to_the_module_when_the_script_is_not_on_path(monkeypatch) -> None:
+def test_hf_cli_falls_back_to_the_module_when_the_script_is_not_on_path(
+    monkeypatch,
+) -> None:
     """Live job 290: `No such file or directory: 'huggingface-cli'`, moments after installing it.
 
     Console scripts land in whichever scripts directory pip chose; under a PEP 668 `--user`
@@ -285,7 +302,9 @@ def test_hf_cli_falls_back_to_the_module_when_the_script_is_not_on_path(monkeypa
 
     monkeypatch.setattr(cosmos3_module.shutil, "which", lambda _name: None)
     monkeypatch.setattr(
-        cosmos3_module.importlib.util, "find_spec", lambda name: object() if name else None
+        cosmos3_module.importlib.util,
+        "find_spec",
+        lambda name: object() if name else None,
     )
     argv = cosmos3_module._huggingface_cli()
 
@@ -306,7 +325,9 @@ def test_hf_cli_keeps_the_plain_name_when_neither_is_available(monkeypatch) -> N
 def test_hf_cli_prefers_a_real_executable(monkeypatch) -> None:
     from npa.workbench.cosmos import cosmos3 as cosmos3_module
 
-    monkeypatch.setattr(cosmos3_module.shutil, "which", lambda _name: "/usr/bin/huggingface-cli")
+    monkeypatch.setattr(
+        cosmos3_module.shutil, "which", lambda _name: "/usr/bin/huggingface-cli"
+    )
 
     assert cosmos3_module._huggingface_cli() == ["/usr/bin/huggingface-cli"]
 
@@ -318,7 +339,9 @@ def test_uv_argv_prefers_the_module(monkeypatch) -> None:
     import shutil
     import sys
 
-    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object() if name == "uv" else None)
+    monkeypatch.setattr(
+        importlib.util, "find_spec", lambda name: object() if name == "uv" else None
+    )
     monkeypatch.setattr(shutil, "which", lambda _name: "/somewhere/else/uv")
 
     assert t2i.uv_argv() == [sys.executable, "-m", "uv"]
@@ -335,7 +358,9 @@ def test_uv_argv_says_what_is_missing(monkeypatch) -> None:
         t2i.uv_argv()
 
 
-def test_runtime_library_dir_picks_a_libstdcxx_that_exports_the_symbol(tmp_path: Path) -> None:
+def test_runtime_library_dir_picks_a_libstdcxx_that_exports_the_symbol(
+    tmp_path: Path,
+) -> None:
     """Live job 296: `version GLIBCXX_3.4.29 not found` for transformer_engine.
 
     The check reads the library rather than trusting a path or a distro version, because that is
@@ -373,16 +398,22 @@ def test_only_libstdcxx_is_put_on_the_loader_path(tmp_path: Path, monkeypatch) -
     (source_dir / "libcudnn.so.9").write_bytes(b"an older cudnn")
 
     monkeypatch.setattr(t2i, "runtime_library_dir", lambda: str(source_dir))
-    monkeypatch.setattr(t2i, "_has_required_glibcxx", lambda path: "conda-lib" in str(path))
+    monkeypatch.setattr(
+        t2i, "_has_required_glibcxx", lambda path: "conda-lib" in str(path)
+    )
 
     shim = t2i.link_runtime_library(tmp_path / "shim")
 
     assert shim == str(tmp_path / "shim")
     assert sorted(p.name for p in (tmp_path / "shim").iterdir()) == ["libstdc++.so.6"]
-    assert (tmp_path / "shim" / "libstdc++.so.6").resolve() == source_dir / "libstdc++.so.6"
+    assert (
+        tmp_path / "shim" / "libstdc++.so.6"
+    ).resolve() == source_dir / "libstdc++.so.6"
 
 
-def test_nothing_is_added_when_the_host_libstdcxx_is_already_new_enough(tmp_path: Path, monkeypatch) -> None:
+def test_nothing_is_added_when_the_host_libstdcxx_is_already_new_enough(
+    tmp_path: Path, monkeypatch
+) -> None:
     """Adding to the loader path when the host is fine is pure risk."""
 
     monkeypatch.setattr(t2i, "runtime_library_dir", lambda: "/opt/conda/lib")

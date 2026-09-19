@@ -45,7 +45,15 @@ def _job_json(state: str = "SUCCEEDED") -> str:
 
 
 def _create_job(client: ServerlessClient, **kwargs):
-    defaults = {"project_id": "project-1", "name": "cosmos-train", "image": "registry/cosmos:cuda12", "command": "bash -lc train", "gpu_type": "gpu-h200-sxm", "gpu_count": 1, "output_path": "s3://bucket/jobs/cosmos-train/"}
+    defaults = {
+        "project_id": "project-1",
+        "name": "cosmos-train",
+        "image": "registry/cosmos:cuda12",
+        "command": "bash -lc train",
+        "gpu_type": "gpu-h200-sxm",
+        "gpu_count": 1,
+        "output_path": "s3://bucket/jobs/cosmos-train/",
+    }
     return client.create_job(**(defaults | kwargs))
 
 
@@ -246,7 +254,9 @@ def test_create_endpoint_resolves_by_name_when_cli_returns_progress_only() -> No
 
 
 def test_create_endpoint_requires_image() -> None:
-    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=lambda *a, **k: None)
+    client = ServerlessClient(
+        nebius_bin="nebius", subprocess_runner=lambda *a, **k: None
+    )
     spec = EndpointSpec(
         name="cosmos",
         project_id="project-1",
@@ -259,9 +269,13 @@ def test_create_endpoint_requires_image() -> None:
         client.create_endpoint(spec)
 
 
-@pytest.mark.parametrize("key", ["HF_TOKEN", "NGC_API_KEY", "PASSWORD", "AWS_SECRET_ACCESS_KEY"])
+@pytest.mark.parametrize(
+    "key", ["HF_TOKEN", "NGC_API_KEY", "PASSWORD", "AWS_SECRET_ACCESS_KEY"]
+)
 def test_create_endpoint_refuses_secret_like_env_vars(key: str) -> None:
-    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=lambda *a, **k: None)
+    client = ServerlessClient(
+        nebius_bin="nebius", subprocess_runner=lambda *a, **k: None
+    )
     spec = EndpointSpec(
         name="cosmos",
         project_id="project-1",
@@ -281,7 +295,10 @@ def test_create_endpoint_refuses_secret_like_env_vars(key: str) -> None:
         ("permission denied for project", AuthError),
         ("403 forbidden", AuthError),
         ("endpoint not found", EndpointNotFoundError),
-        ("rpc error: code = NotFound desc = not found request = 3649f403-e540", EndpointNotFoundError),
+        (
+            "rpc error: code = NotFound desc = not found request = 3649f403-e540",
+            EndpointNotFoundError,
+        ),
         ("404 resource does not exist", EndpointNotFoundError),
         ("quota exceeded: max endpoints reached", QuotaError),
         ("some other failure", ServerlessClientError),
@@ -423,27 +440,42 @@ def test_str_returns_just_message_for_backward_compat() -> None:
 
 
 def test_classify_queue_state_running_returns_running() -> None:
-    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=lambda *a, **k: None)
+    client = ServerlessClient(
+        nebius_bin="nebius", subprocess_runner=lambda *a, **k: None
+    )
 
-    assert client.classify_queue_state(JobInfo("job-1", "train", "project-1", status="running")) == "running"
+    assert (
+        client.classify_queue_state(
+            JobInfo("job-1", "train", "project-1", status="running")
+        )
+        == "running"
+    )
 
 
 def test_classify_queue_state_recently_queued_returns_scheduled() -> None:
-    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=lambda *a, **k: None)
+    client = ServerlessClient(
+        nebius_bin="nebius", subprocess_runner=lambda *a, **k: None
+    )
     job = JobInfo("job-1", "train", "project-1", status="queued", queued_for_seconds=30)
 
     assert client.classify_queue_state(job) == "scheduled"
 
 
 def test_classify_queue_state_long_queued_returns_waiting_for_capacity() -> None:
-    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=lambda *a, **k: None)
-    job = JobInfo("job-1", "train", "project-1", status="queued", queued_for_seconds=600)
+    client = ServerlessClient(
+        nebius_bin="nebius", subprocess_runner=lambda *a, **k: None
+    )
+    job = JobInfo(
+        "job-1", "train", "project-1", status="queued", queued_for_seconds=600
+    )
 
     assert client.classify_queue_state(job) == "waiting_for_capacity"
 
 
 def test_classify_queue_state_with_explicit_scheduling_state() -> None:
-    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=lambda *a, **k: None)
+    client = ServerlessClient(
+        nebius_bin="nebius", subprocess_runner=lambda *a, **k: None
+    )
     job = JobInfo(
         "job-1",
         "train",
@@ -456,10 +488,14 @@ def test_classify_queue_state_with_explicit_scheduling_state() -> None:
 
 
 def test_classify_queue_state_respects_threshold_override() -> None:
-    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=lambda *a, **k: None)
+    client = ServerlessClient(
+        nebius_bin="nebius", subprocess_runner=lambda *a, **k: None
+    )
     job = JobInfo("job-1", "train", "project-1", status="queued", queued_for_seconds=11)
 
-    assert client.classify_queue_state(job, threshold_seconds=10) == "waiting_for_capacity"
+    assert (
+        client.classify_queue_state(job, threshold_seconds=10) == "waiting_for_capacity"
+    )
 
 
 def test_job_parser_derives_queue_metadata() -> None:
@@ -469,7 +505,9 @@ def test_job_parser_derives_queue_metadata() -> None:
         '"spec": {"platform": "gpu-h200-sxm", "preset": "8gpu-128vcpu-1600gb"}, '
         '"status": {"state": "QUEUED", "schedulingState": "accepted"}}'
     )
-    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=lambda *a, **k: None)
+    client = ServerlessClient(
+        nebius_bin="nebius", subprocess_runner=lambda *a, **k: None
+    )
 
     info = client._parse_job_info(raw, project_id="project-1")
 
@@ -532,7 +570,15 @@ def test_get_endpoint_falls_back_to_get_by_id() -> None:
     info = client.get_endpoint("project-1", "endpoint-2")
 
     assert info.id == "endpoint-2"
-    assert calls[1][1:] == ["ai", "endpoint", "get", "--id", "endpoint-2", "--format", "json"]
+    assert calls[1][1:] == [
+        "ai",
+        "endpoint",
+        "get",
+        "--id",
+        "endpoint-2",
+        "--format",
+        "json",
+    ]
 
 
 def test_get_endpoint_not_found_raises() -> None:
@@ -579,7 +625,9 @@ def test_delete_endpoint_is_idempotent_for_missing_endpoint() -> None:
     assert len(calls) == 2
 
 
-@pytest.mark.parametrize("method,command", [("stop_endpoint", "stop"), ("start_endpoint", "start")])
+@pytest.mark.parametrize(
+    "method,command", [("stop_endpoint", "stop"), ("start_endpoint", "start")]
+)
 def test_start_stop_endpoint(method: str, command: str) -> None:
     calls: list[list[str]] = []
 
@@ -587,13 +635,23 @@ def test_start_stop_endpoint(method: str, command: str) -> None:
         calls.append(args)
         if args[3] == "list":
             return _result(args, 0, '{"items": [' + _endpoint_json() + "]}")
-        return _result(args, 0, _endpoint_json(state="STOPPED" if command == "stop" else "RUNNING"))
+        return _result(
+            args, 0, _endpoint_json(state="STOPPED" if command == "stop" else "RUNNING")
+        )
 
     client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
 
     info = getattr(client, method)("project-1", "cosmos")
 
-    assert calls[-1][1:] == ["ai", "endpoint", command, "--id", "endpoint-1", "--format", "json"]
+    assert calls[-1][1:] == [
+        "ai",
+        "endpoint",
+        command,
+        "--id",
+        "endpoint-1",
+        "--format",
+        "json",
+    ]
     assert info.id == "endpoint-1"
 
 
@@ -648,7 +706,16 @@ def test_get_endpoint_logs_uses_resolved_id() -> None:
     logs = client.get_endpoint_logs("project-1", "cosmos", tail=20, since="10m")
 
     assert logs == "line 1\nline 2\n"
-    assert calls[-1][1:] == ["ai", "endpoint", "logs", "endpoint-1", "--tail", "20", "--since", "10m"]
+    assert calls[-1][1:] == [
+        "ai",
+        "endpoint",
+        "logs",
+        "endpoint-1",
+        "--tail",
+        "20",
+        "--since",
+        "10m",
+    ]
 
 
 def test_get_job_logs_uses_resolved_id() -> None:
@@ -714,7 +781,9 @@ def test_wait_for_running_times_out() -> None:
         client.wait_for_running("project-1", "cosmos", timeout=0, poll_interval=0)
 
 
-def test_subprocess_env_is_sanitized_and_not_used_for_nonsecret_args(monkeypatch) -> None:
+def test_subprocess_env_is_sanitized_and_not_used_for_nonsecret_args(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("NEBIUS_IAM_TOKEN", "stale-token")
     monkeypatch.delenv("NPA_REUSE_IAM_TOKEN", raising=False)
     observed_kwargs = {}
@@ -839,9 +908,10 @@ def test_stale_registry_username_preserves_anonymous_public_ghcr(
     monkeypatch.delenv("NPA_REGISTRY_PASSWORD", raising=False)
     client = ServerlessClient(nebius_bin="nebius")
 
-    assert client._registry_auth_args(
-        "ghcr.io/nebius/nebius-physical-ai/npa-cosmos:1.0.0"
-    ) == []
+    assert (
+        client._registry_auth_args("ghcr.io/nebius/nebius-physical-ai/npa-cosmos:1.0.0")
+        == []
+    )
 
 
 def test_public_image_ignores_complete_unrelated_private_registry_auth(
@@ -852,9 +922,10 @@ def test_public_image_ignores_complete_unrelated_private_registry_auth(
     monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "private-token")
     client = ServerlessClient(nebius_bin="nebius")
 
-    assert client._registry_auth_args(
-        "ghcr.io/nebius/nebius-physical-ai/npa-cosmos:1.0.0"
-    ) == []
+    assert (
+        client._registry_auth_args("ghcr.io/nebius/nebius-physical-ai/npa-cosmos:1.0.0")
+        == []
+    )
 
 
 def test_private_image_with_mismatched_complete_registry_auth_still_fails(
@@ -866,9 +937,7 @@ def test_private_image_with_mismatched_complete_registry_auth_still_fails(
     client = ServerlessClient(nebius_bin="nebius")
 
     with pytest.raises(ServerlessClientError, match="does not match"):
-        client._registry_auth_args(
-            "registry-other.example/example/npa-cosmos:1.0.0"
-        )
+        client._registry_auth_args("registry-other.example/example/npa-cosmos:1.0.0")
 
 
 def test_intentional_partial_registry_auth_still_fails_closed(monkeypatch) -> None:
@@ -945,7 +1014,9 @@ def test_job_state_cancel_idempotency_and_poll() -> None:
     assert client.cancel_job("job-1", "project-1").status == "succeeded"
     assert [call[3] for call in calls] == ["get"]
 
-    states = iter([ServerlessClientError("temporary"), _job_json(state="RUNNING"), _job_json()])
+    states = iter(
+        [ServerlessClientError("temporary"), _job_json(state="RUNNING"), _job_json()]
+    )
 
     def fake_runner(args, **kwargs):
         value = next(states)
@@ -953,10 +1024,21 @@ def test_job_state_cancel_idempotency_and_poll() -> None:
             return _result(args, 1, stderr="temporary")
         return _result(args, 0, value)
 
-    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner, sleep=lambda seconds: None)
-    assert client.poll_job("job-1", "project-1", interval_s=0, ceiling_s=10).status == "succeeded"
+    client = ServerlessClient(
+        nebius_bin="nebius", subprocess_runner=fake_runner, sleep=lambda seconds: None
+    )
+    assert (
+        client.poll_job("job-1", "project-1", interval_s=0, ceiling_s=10).status
+        == "succeeded"
+    )
 
-    running = ServerlessClient(nebius_bin="nebius", subprocess_runner=lambda args, **kwargs: _result(args, 0, _job_json(state="RUNNING")), sleep=lambda seconds: None)
+    running = ServerlessClient(
+        nebius_bin="nebius",
+        subprocess_runner=lambda args, **kwargs: _result(
+            args, 0, _job_json(state="RUNNING")
+        ),
+        sleep=lambda seconds: None,
+    )
     with pytest.raises(TimeoutError, match="did not finish"):
         running.poll_job("job-1", "project-1", interval_s=0, ceiling_s=0)
 
@@ -964,9 +1046,15 @@ def test_job_state_cancel_idempotency_and_poll() -> None:
 
     def interrupted_runner(args, **kwargs):
         interrupt_calls.append(args)
-        return _result(args, 0, _job_json(state="RUNNING" if args[3] == "get" else "CANCELLED"))
+        return _result(
+            args, 0, _job_json(state="RUNNING" if args[3] == "get" else "CANCELLED")
+        )
 
-    interrupted = ServerlessClient(nebius_bin="nebius", subprocess_runner=interrupted_runner, sleep=lambda seconds: (_ for _ in ()).throw(KeyboardInterrupt))
+    interrupted = ServerlessClient(
+        nebius_bin="nebius",
+        subprocess_runner=interrupted_runner,
+        sleep=lambda seconds: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
     with pytest.raises(KeyboardInterrupt):
         interrupted.poll_job("job-1", "project-1", interval_s=1, ceiling_s=10)
     assert any(call[3] == "cancel" for call in interrupt_calls)

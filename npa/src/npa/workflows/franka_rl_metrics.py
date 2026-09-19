@@ -44,9 +44,16 @@ class PlacementMetrics:
         Raises:
             ValueError: Geometry is nonfinite, negative, or has a wrong shape.
         """
-        distance, speed, height = [np.asarray(x, dtype=float) for x in (distance, speed, height)]
-        if any(x.shape != self.active.shape or not np.isfinite(x).all() for x in (distance, speed, height)):
-            raise ValueError("Franka geometry must be finite and match the environment batch")
+        distance, speed, height = [
+            np.asarray(x, dtype=float) for x in (distance, speed, height)
+        ]
+        if any(
+            x.shape != self.active.shape or not np.isfinite(x).all()
+            for x in (distance, speed, height)
+        ):
+            raise ValueError(
+                "Franka geometry must be finite and match the environment batch"
+            )
         if (distance < 0).any() or (speed < 0).any():
             raise ValueError("Distance and speed cannot be negative")
         done = np.asarray(done, dtype=bool)
@@ -54,12 +61,18 @@ class PlacementMetrics:
             raise ValueError("Reset flags must match the environment batch")
         self._domain_failures(domain_exit)
         self.active &= ~done
-        stable = ((distance < self.recipe["success_distance_m"])
-                  & (speed < self.recipe["maximum_object_speed_m_s"])
-                  & (height > self.recipe["minimum_object_height_m"]))
-        self.streak = np.where(self.active, np.where(stable, self.streak + 1, 0), self.streak)
+        stable = (
+            (distance < self.recipe["success_distance_m"])
+            & (speed < self.recipe["maximum_object_speed_m_s"])
+            & (height > self.recipe["minimum_object_height_m"])
+        )
+        self.streak = np.where(
+            self.active, np.where(stable, self.streak + 1, 0), self.streak
+        )
         self.longest = np.maximum(self.longest, self.streak)
-        self.closest = np.where(self.active, np.minimum(self.closest, distance), self.closest)
+        self.closest = np.where(
+            self.active, np.minimum(self.closest, distance), self.closest
+        )
         self.lifted |= self.active & (height > self.recipe["minimum_object_height_m"])
         self.success |= self.active & (self.streak >= self.recipe["stable_steps"])
         self.steps += self.active
@@ -94,5 +107,8 @@ def rank_checkpoint(rows: list[dict]) -> tuple[float, float, int]:
     distances = [float(row["closest_distance_m"]) for row in rows]
     if any(not math.isfinite(value) or value < 0 for value in distances):
         raise ValueError("Validation distances must be finite and nonnegative")
-    return (sum(row["success"] for row in rows) / len(rows),
-            -sum(distances) / len(rows), -int(rows[0]["iteration"]))
+    return (
+        sum(row["success"] for row in rows) / len(rows),
+        -sum(distances) / len(rows),
+        -int(rows[0]["iteration"]),
+    )

@@ -273,7 +273,10 @@ def test_ssh_connect_uses_paramiko_config(mocker) -> None:
     paramiko_client.set_missing_host_key_policy.assert_called_once()
     import paramiko
 
-    assert isinstance(paramiko_client.set_missing_host_key_policy.call_args.args[0], paramiko.RejectPolicy)
+    assert isinstance(
+        paramiko_client.set_missing_host_key_policy.call_args.args[0],
+        paramiko.RejectPolicy,
+    )
     paramiko_client.load_system_host_keys.assert_called_once_with()
     paramiko_client.connect.assert_called_once_with(
         hostname="host",
@@ -284,12 +287,16 @@ def test_ssh_connect_uses_paramiko_config(mocker) -> None:
     )
 
 
-def test_ssh_explicit_known_hosts_takes_precedence_over_ambient(mocker, monkeypatch, tmp_path):
+def test_ssh_explicit_known_hosts_takes_precedence_over_ambient(
+    mocker, monkeypatch, tmp_path
+):
     client = mocker.MagicMock()
     mocker.patch("paramiko.SSHClient", return_value=client)
     monkeypatch.setenv("NPA_SSH_KNOWN_HOSTS", str(tmp_path / "ambient"))
     pinned = str(tmp_path / "verified")
-    SSHClient(SSHConfig(host="host", user="ubuntu", key_path="~/key"), known_hosts=pinned)._connect()
+    SSHClient(
+        SSHConfig(host="host", user="ubuntu", key_path="~/key"), known_hosts=pinned
+    )._connect()
     client.load_host_keys.assert_called_once_with(pinned)
     client.load_system_host_keys.assert_not_called()
 
@@ -300,7 +307,14 @@ def test_ssh_refuses_changed_host_before_credentials_are_staged(mocker):
     client = mocker.MagicMock()
     client.connect.side_effect = paramiko.SSHException("host key mismatch")
     mocker.patch("paramiko.SSHClient", return_value=client)
-    ssh = SSHClient(SSHConfig(host="host", user="ubuntu", key_path="~/key", tokens={"HF_TOKEN": "test-token"}))
+    ssh = SSHClient(
+        SSHConfig(
+            host="host",
+            user="ubuntu",
+            key_path="~/key",
+            tokens={"HF_TOKEN": "test-token"},
+        )
+    )
     with pytest.raises(SSHError, match="Unknown or changed host keys are refused"):
         ssh.run("true")
     client.open_sftp.assert_not_called()
@@ -682,13 +696,16 @@ def test_nebius_cli_compatibility_error_keeps_existing_token_fallbacks(
         "npa.clients.nebius._env_iam_token",
         return_value=sentinel if source == "environment" else "",
     )
-    mocker.patch("npa.clients.nebius._candidate_iam_token_files", return_value=["/token"])
+    mocker.patch(
+        "npa.clients.nebius._candidate_iam_token_files", return_value=["/token"]
+    )
     file = mocker.patch(
         "npa.clients.nebius._read_iam_token_file",
         return_value=sentinel if source == "file" else "",
     )
     metadata = mocker.patch(
-        "npa.clients.nebius._metadata_iam_token", return_value=sentinel,
+        "npa.clients.nebius._metadata_iam_token",
+        return_value=sentinel,
     )
 
     assert nebius.get_iam_token() == sentinel
@@ -1396,7 +1413,9 @@ def test_nebius_agent_bootstrap_reuses_verified_storage_without_access_key_iam(
     assert service_account.call_args.kwargs["allow_saved_fallback"] is False
     assert result["agent_iam_scope_id"] == "project"
     assert project_grant.call_args.kwargs["project_id"] == "project"
-    assert project_grant.call_args.kwargs["service_account_id"] == "serviceaccount-agent"
+    assert (
+        project_grant.call_args.kwargs["service_account_id"] == "serviceaccount-agent"
+    )
     tenant_grant.assert_not_called()
     full_bootstrap.assert_not_called()
     list_keys.assert_not_called()
@@ -1703,9 +1722,7 @@ def test_is_permission_denied_matches_access_denied() -> None:
 def test_nebius_bucket_exact_lookup_does_not_enumerate_project(mocker) -> None:
     run_json = mocker.patch(
         "npa.clients.nebius._run_json",
-        return_value={
-            "metadata": {"name": "npa-bucket-abc", "parent_id": "project"}
-        },
+        return_value={"metadata": {"name": "npa-bucket-abc", "parent_id": "project"}},
     )
 
     assert nebius.bucket_exists("project", "npa-bucket-abc") is True
@@ -1764,9 +1781,7 @@ def test_nebius_ensure_bucket_refuses_generated_name_create_race(mocker) -> None
     )
     mocker.patch(
         "npa.clients.nebius.get_bucket_by_name",
-        return_value={
-            "metadata": {"name": "npa-bucket-abc", "parent_id": "project"}
-        },
+        return_value={"metadata": {"name": "npa-bucket-abc", "parent_id": "project"}},
     )
 
     with pytest.raises(nebius.NebiusError, match="refusing to adopt"):
@@ -2132,9 +2147,7 @@ def test_nebius_quota_reads_omit_profile_flag_when_unset(mocker, monkeypatch) ->
 
 
 def test_nebius_quota_allowances_accept_project_parent(mocker) -> None:
-    run_json = mocker.patch(
-        "npa.clients.nebius._run_json", return_value={"items": []}
-    )
+    run_json = mocker.patch("npa.clients.nebius._run_json", return_value={"items": []})
 
     nebius.list_quota_allowances("project-test")
 

@@ -301,18 +301,32 @@ def test_sonic_eval_container_render_rejects_h100_misroute(tmp_path) -> None:
     assert "h100" in result.output.lower()
 
 
-@pytest.mark.parametrize("selection", [
-    ["--container-gpu-target", "gpu-b200"],
-    ["--container-gpu-target", "NVIDIA B200 Blackwell"],
-    ["--container-image-variant", "sonic-mujoco-runtime-fetch"],
-    ["--container-image-variant", "mujoco"],
-])
-def test_sonic_onnx_eval_rejects_mujoco_image_before_evaluation(mocker, selection) -> None:
+@pytest.mark.parametrize(
+    "selection",
+    [
+        ["--container-gpu-target", "gpu-b200"],
+        ["--container-gpu-target", "NVIDIA B200 Blackwell"],
+        ["--container-image-variant", "sonic-mujoco-runtime-fetch"],
+        ["--container-image-variant", "mujoco"],
+    ],
+)
+def test_sonic_onnx_eval_rejects_mujoco_image_before_evaluation(
+    mocker, selection
+) -> None:
     evaluate = mocker.patch("npa.cli.workbench.sonic.eval.evaluate_onnx_policy")
-    result = runner.invoke(app, [
-        "workbench", "sonic", "eval", "--onnx", "policy.onnx",
-        "--backend", "container", *selection,
-    ])
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "eval",
+            "--onnx",
+            "policy.onnx",
+            "--backend",
+            "container",
+            *selection,
+        ],
+    )
     assert result.exit_code == 1
     assert "isaac-render" in result.output
     assert "mujoco" in result.output
@@ -321,12 +335,25 @@ def test_sonic_onnx_eval_rejects_mujoco_image_before_evaluation(mocker, selectio
 
 def test_sonic_onnx_eval_resolves_render_manifest_image(mocker) -> None:
     evaluate = mocker.patch(
-        "npa.cli.workbench.sonic.eval.evaluate_onnx_policy", return_value={"status": "completed"}
+        "npa.cli.workbench.sonic.eval.evaluate_onnx_policy",
+        return_value={"status": "completed"},
     )
-    result = runner.invoke(app, [
-        "workbench", "sonic", "eval", "--onnx", "policy.onnx", "--backend", "container",
-        "--container-gpu-target", "gpu-rtx6000", "--output-format", "json",
-    ])
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "eval",
+            "--onnx",
+            "policy.onnx",
+            "--backend",
+            "container",
+            "--container-gpu-target",
+            "gpu-rtx6000",
+            "--output-format",
+            "json",
+        ],
+    )
     assert result.exit_code == 0, result.output
     assert evaluate.call_args.kwargs["container_image"] == container_image_for_tool(
         "sonic", gpu_target="gpu-rtx6000", workload="isaac-render"
@@ -608,7 +635,10 @@ def test_sonic_train_b300_prepares_state_only_urdf(mocker) -> None:
     command = client.create_job.call_args.kwargs["command"]
     command_body = shlex.split(command)[2]
     assert "NPA_SONIC_B300_STATE_ONLY_URDF" in command
-    assert "export SONIC_CHECKPOINT='nvidia/GEAR-SONIC:sonic_release/last.pt'" in command_body
+    assert (
+        "export SONIC_CHECKPOINT='nvidia/GEAR-SONIC:sonic_release/last.pt'"
+        in command_body
+    )
     assert "export SONIC_CHECKPOINT_PATH='sonic_release/last.pt'" in command_body
     assert "mesh references behind" in command
     assert 'source_root.rglob("*.urdf")' in command
@@ -800,7 +830,9 @@ def test_sonic_container_image_name_resolves() -> None:
 def test_sonic_container_build_script_uses_supported_version() -> None:
     dockerfile = (PACKAGE_ROOT / "docker/workbench/sonic/Dockerfile").read_text()
     build_script = (PACKAGE_ROOT / "docker/workbench/sonic/build.sh").read_text()
-    requirements = (PACKAGE_ROOT / "docker/workbench/sonic/requirements.txt").read_text()
+    requirements = (
+        PACKAGE_ROOT / "docker/workbench/sonic/requirements.txt"
+    ).read_text()
 
     assert "ARG SONIC_VERSION=0.1.2" in dockerfile
     assert "ARG BASE_IMAGE=" in dockerfile
@@ -831,10 +863,12 @@ def test_sonic_container_build_script_uses_supported_version() -> None:
     assert "open3d>=0.19,<0.20" in requirements
     assert '"vector_quantize_pytorch"' in dockerfile
     assert "vector-quantize-pytorch==1.31.1" in requirements
-    assert 'find "${SONIC_HOME}/gear_sonic" -type f -name \'*.urdf\'' in dockerfile
+    assert "find \"${SONIC_HOME}/gear_sonic\" -type f -name '*.urdf'" in dockerfile
     assert '-exec chown "${NPA_RUNTIME_USER}:${NPA_RUNTIME_USER}" {} +' in dockerfile
     assert "COPY docker/workbench/sonic/entrypoint.sh" in dockerfile
-    assert 'git clone --filter=blob:none --no-checkout "${SONIC_REPO_URL}"' in dockerfile
+    assert (
+        'git clone --filter=blob:none --no-checkout "${SONIC_REPO_URL}"' in dockerfile
+    )
     assert "git sparse-checkout set" in dockerfile
     assert '"/gear_sonic/**"' in dockerfile
     assert 'rm -rf "${SONIC_HOME}/.git"' in dockerfile
@@ -845,7 +879,7 @@ def test_sonic_container_build_script_uses_supported_version() -> None:
     assert "--base-image" in build_script
     assert "cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest" in build_script
     assert 'TAG_SUFFIX="-k8s-runtime"' in build_script
-    assert 'REQUIRE_TORCH_SM120=1' in build_script
+    assert "REQUIRE_TORCH_SM120=1" in build_script
     assert 'TORCH_INDEX_URL="https://download.pytorch.org/whl/cu130"' in build_script
     assert "NPA_BUILDX_BUILDER" in build_script
     assert "--driver docker-container" in build_script
@@ -867,5 +901,8 @@ def test_sonic_container_build_script_uses_supported_version() -> None:
     assert 'IMAGE_NAME="npa-sonic"' in build_script
     assert 'IMAGE_NAME="npa-sonic-mujoco"' in build_script
     assert 'LOCAL_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"' in build_script
-    assert 'docker build "${BUILD_ARGS[@]}" "${LOCAL_BUILD_TAGS[@]}" "$NPA_ROOT"' in build_script
+    assert (
+        'docker build "${BUILD_ARGS[@]}" "${LOCAL_BUILD_TAGS[@]}" "$NPA_ROOT"'
+        in build_script
+    )
     assert 'REGISTRY_IMAGE="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"' in build_script

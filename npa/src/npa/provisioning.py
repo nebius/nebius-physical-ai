@@ -174,9 +174,7 @@ def _transactional_provision(function):
             cpu_preset=str(bound.arguments.get("cpu_preset") or ""),
             gpu_platform=str(bound.arguments.get("gpu_platform") or ""),
             gpu_preset=str(bound.arguments.get("gpu_preset") or ""),
-            capacity_block_group=str(
-                bound.arguments.get("capacity_block_group") or ""
-            ),
+            capacity_block_group=str(bound.arguments.get("capacity_block_group") or ""),
             preemptible=bound.arguments.get("preemptible"),
         )
         kwargs["_resolved_plan"] = plan
@@ -730,7 +728,9 @@ def provision_if_absent(
                 f"controller:bound {owner.project_alias}/{owner.context}/{owner.cluster_id}"
             )
 
-            from npa.orchestration.skypilot.cluster_validation import cluster_validation_session
+            from npa.orchestration.skypilot.cluster_validation import (
+                cluster_validation_session,
+            )
 
             with cluster_validation_session(Path(kubeconfig_path), context):
                 _check_skypilot_kubernetes(
@@ -740,7 +740,9 @@ def provision_if_absent(
                 )
                 actions.append("skypilot:kubernetes-enabled")
                 if sky_smoke:
-                    _recover_skypilot_smoke(Path(kubeconfig_path), context, cluster_name, sky_bin=sky_bin)
+                    _recover_skypilot_smoke(
+                        Path(kubeconfig_path), context, cluster_name, sky_bin=sky_bin
+                    )
 
                 def report_gpu_status(message: str) -> None:
                     actions.append(f"gpu:{message}")

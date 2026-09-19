@@ -73,11 +73,19 @@ def wheel(tmp_path: Path) -> Path:
 
     for module, symbol, _ in audit_mod.IMPORT_SURFACE:
         rel = module.replace(".", "/")
-        target = root / rel / "__init__.py" if module == "lerobot.datasets" else root / f"{rel}.py"
+        target = (
+            root / rel / "__init__.py"
+            if module == "lerobot.datasets"
+            else root / f"{rel}.py"
+        )
         existing = target.read_text(encoding="utf-8") if target.exists() else ""
         if symbol and symbol not in existing:
             kind = "class" if symbol[0].isupper() else "def"
-            body = f"{kind} {symbol}: ...\n" if kind == "class" else f"def {symbol}(*args, **kwargs): ...\n"
+            body = (
+                f"{kind} {symbol}: ...\n"
+                if kind == "class"
+                else f"def {symbol}(*args, **kwargs): ...\n"
+            )
             _write(target, existing + body)
 
     # Callables whose parameter names the script asserts on.
@@ -95,7 +103,10 @@ def wheel(tmp_path: Path) -> Path:
         "class LeRobotDataset:\n"
         "    def __init__(self, repo_id, root=None, episodes=None, revision=None): ...\n",
     )
-    _write(root / "lerobot/optim/factory.py", "def make_optimizer_and_scheduler(cfg, policy): ...\n")
+    _write(
+        root / "lerobot/optim/factory.py",
+        "def make_optimizer_and_scheduler(cfg, policy): ...\n",
+    )
 
     _write(root / "lerobot/datasets/dataset_metadata.py", 'CODEBASE_VERSION = "v3.0"\n')
     _write(
@@ -178,12 +189,9 @@ def test_symbol_nested_inside_a_function_is_not_a_module_export(monkeypatch, whe
                 reason="except* syntax requires Python 3.11",
             ),
         ),
-        "with import_context():\n"
-        "    from backend import get_safe_torch_device\n",
-        "for backend in backends:\n"
-        "    from backend import get_safe_torch_device\n",
-        "while select_backend():\n"
-        "    from backend import get_safe_torch_device\n",
+        "with import_context():\n    from backend import get_safe_torch_device\n",
+        "for backend in backends:\n    from backend import get_safe_torch_device\n",
+        "while select_backend():\n    from backend import get_safe_torch_device\n",
         "match backend_name:\n"
         "    case _:\n"
         "        from backend import get_safe_torch_device\n",
@@ -263,7 +271,8 @@ def test_dataset_format_bump_is_caught(monkeypatch, wheel):
 
 def test_renamed_train_flag_is_caught(monkeypatch, wheel):
     (wheel / "lerobot/configs/train.py").write_text(
-        "class TrainPipelineConfig:\n    validation_cadence: int = 1\n", encoding="utf-8"
+        "class TrainPipelineConfig:\n    validation_cadence: int = 1\n",
+        encoding="utf-8",
     )
     report = _run(monkeypatch, wheel)
     assert _status(report, "train-env-eval-flag") == "FAIL"
@@ -317,9 +326,7 @@ def test_marker_gated_requirement_is_not_applied_unconditionally(monkeypatch, wh
     assert _status(report, "b300-image torch stack") == "PASS"
 
 
-def test_marker_evaluation_uses_x86_64_linux_image_not_aarch64_host(
-    monkeypatch, wheel
-):
+def test_marker_evaluation_uses_x86_64_linux_image_not_aarch64_host(monkeypatch, wheel):
     metadata = wheel / "lerobot-9.9.9.dist-info" / "METADATA"
     metadata.write_text(
         metadata.read_text(encoding="utf-8").replace(
@@ -419,7 +426,9 @@ def test_policy_extra_missing_from_manifest_is_caught(monkeypatch, wheel):
     # The module still imports; only construction fails. Checking the import
     # surface cannot see this, which is exactly how it shipped in 0.6.0.
     _gate_diffusion_on_diffusers(wheel)
-    report = _run(monkeypatch, wheel, manifest={"pip_extras": "training,evaluation,pusht,libero"})
+    report = _run(
+        monkeypatch, wheel, manifest={"pip_extras": "training,evaluation,pusht,libero"}
+    )
     assert _status(report, "import-surface") == "PASS"
     assert _status(report, "policy-extras") == "FAIL"
 
@@ -494,7 +503,9 @@ def test_lazy_warning_json_stdout_is_pure_and_summary_is_on_stderr(
     assert audit_mod.main(["9.9.9", "--offline", "--json"]) == 0
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
-    import_check = next(c for c in payload[0]["checks"] if c["check"] == "import-surface")
+    import_check = next(
+        c for c in payload[0]["checks"] if c["check"] == "import-surface"
+    )
     assert import_check["status"] == "WARN"
     assert "WARN: 1 non-blocking unverifiable finding(s)" in captured.err
     assert "PASS: lerobot 9.9.9 satisfies" not in captured.err
@@ -513,11 +524,15 @@ def test_import_surface_covers_every_static_lerobot_import():
         for path in root.rglob("*.py"):
             relative = path.relative_to(REPO_ROOT).as_posix()
             for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-                if isinstance(node, ast.ImportFrom) and node.module and (
-                    node.module == "lerobot" or node.module.startswith("lerobot.")
+                if (
+                    isinstance(node, ast.ImportFrom)
+                    and node.module
+                    and (node.module == "lerobot" or node.module.startswith("lerobot."))
                 ):
                     for alias in node.names:
-                        imports.setdefault((node.module, alias.name), set()).add(relative)
+                        imports.setdefault((node.module, alias.name), set()).add(
+                            relative
+                        )
                 elif isinstance(node, ast.Import):
                     for alias in node.names:
                         if alias.name == "lerobot" or alias.name.startswith("lerobot."):
@@ -552,9 +567,15 @@ def test_repo_manifest_versions_are_all_auditable():
     """Every version this repo claims to support must be described well enough to check."""
 
     manifest = json.loads(
-        (REPO_ROOT / "npa/src/npa/deploy/lerobot_version_manifest.json").read_text(encoding="utf-8")
+        (REPO_ROOT / "npa/src/npa/deploy/lerobot_version_manifest.json").read_text(
+            encoding="utf-8"
+        )
     )
     for version in manifest["supported_versions"]:
         entry = audit_mod.load_manifest_entry(version)
-        assert entry is not None, f"{version} listed as supported but has no manifest entry"
-        assert entry.get("train_env_eval_flag"), f"{version} declares no train_env_eval_flag"
+        assert entry is not None, (
+            f"{version} listed as supported but has no manifest entry"
+        )
+        assert entry.get("train_env_eval_flag"), (
+            f"{version} declares no train_env_eval_flag"
+        )

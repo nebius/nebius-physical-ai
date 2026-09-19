@@ -125,7 +125,9 @@ def test_parallel_group_parses(parallel_spec) -> None:
         ("parallel: [shard-a, join]", "cannot be terminal"),
     ],
 )
-def test_parallel_validation_errors(tmp_path: Path, mutation: str, message: str) -> None:
+def test_parallel_validation_errors(
+    tmp_path: Path, mutation: str, message: str
+) -> None:
     text = PARALLEL_SPEC.replace("parallel: [shard-a, shard-b, shard-c]", mutation)
     with pytest.raises(NpaWorkflowError, match=message):
         load_spec(_write(tmp_path, text))
@@ -151,7 +153,7 @@ def test_parallel_and_sequence_are_exclusive(tmp_path: Path) -> None:
 
 def test_loop_on_parallel_group_rejected(tmp_path: Path) -> None:
     text = PARALLEL_SPEC.replace(
-        "    maxConcurrency: \"{{config.max_concurrency}}\"",
+        '    maxConcurrency: "{{config.max_concurrency}}"',
         "    loop:\n      max: 2",
     )
     with pytest.raises(NpaWorkflowError, match="loop is not supported directly"):
@@ -163,7 +165,9 @@ def test_max_concurrency_requires_parallel(tmp_path: Path) -> None:
         "  join:\n    description: Barrier",
         "  join:\n    maxConcurrency: 2\n    description: Barrier",
     )
-    with pytest.raises(NpaWorkflowError, match="maxConcurrency requires a parallel group"):
+    with pytest.raises(
+        NpaWorkflowError, match="maxConcurrency requires a parallel group"
+    ):
         load_spec(_write(tmp_path, text))
 
 
@@ -179,9 +183,12 @@ def test_bad_params_token_fails_validation(tmp_path: Path) -> None:
 def test_trigger_requires_work_on_the_same_state(tmp_path: Path) -> None:
     text = PARALLEL_SPEC.replace(
         "  join:\n    description: Barrier — aggregate every shard.",
-        "  join:\n    trigger:\n      uri: \"s3://{{config.bucket}}/inbox/\"\n"
+        '  join:\n    trigger:\n      uri: "s3://{{config.bucket}}/inbox/"\n'
         "    description: Barrier — aggregate every shard.",
-    ).replace("    toolRef: workbench.insights.ingest_run\n    resources: cpu\n    terminal: true", "    terminal: true")
+    ).replace(
+        "    toolRef: workbench.insights.ingest_run\n    resources: cpu\n    terminal: true",
+        "    terminal: true",
+    )
     with pytest.raises(NpaWorkflowError, match="trigger requires run or toolRef"):
         load_spec(_write(tmp_path, text))
 
@@ -189,7 +196,7 @@ def test_trigger_requires_work_on_the_same_state(tmp_path: Path) -> None:
 def test_trigger_parses_with_defaults(tmp_path: Path) -> None:
     text = PARALLEL_SPEC.replace(
         "  join:\n    description: Barrier — aggregate every shard.",
-        "  join:\n    trigger:\n      uri: \"s3://{{config.bucket}}/inbox/\"\n"
+        '  join:\n    trigger:\n      uri: "s3://{{config.bucket}}/inbox/"\n'
         "      pollSeconds: 5\n      maxPolls: 3\n"
         "    description: Barrier — aggregate every shard.",
     )
@@ -254,7 +261,9 @@ def test_wave_plan_groups_parallel_members(parallel_spec) -> None:
 
 
 def test_wave_plan_defaults_concurrency_to_group_size(tmp_path: Path) -> None:
-    text = PARALLEL_SPEC.replace('    maxConcurrency: "{{config.max_concurrency}}"\n', "")
+    text = PARALLEL_SPEC.replace(
+        '    maxConcurrency: "{{config.max_concurrency}}"\n', ""
+    )
     spec = load_spec(_write(tmp_path, text))
     wave = build_wave_plan(spec, run_id="p1").waves[0]
     assert wave.max_concurrency == 3
@@ -263,9 +272,7 @@ def test_wave_plan_defaults_concurrency_to_group_size(tmp_path: Path) -> None:
 
 def test_wave_plan_of_serial_spec_is_all_serial() -> None:
     repo_root = Path(__file__).resolve().parents[4]
-    spec = load_spec(
-        repo_root / "workflows" / "testing" / "bdd100k-pipeline.yaml"
-    )
+    spec = load_spec(repo_root / "workflows" / "testing" / "bdd100k-pipeline.yaml")
     wave_plan = build_wave_plan(spec, run_id="serial-1")
     assert {wave.kind for wave in wave_plan.waves} == {WAVE_SERIAL}
     assert all(len(wave.steps) == 1 for wave in wave_plan.waves)
@@ -297,7 +304,9 @@ def test_job_group_render_emits_parallel_header(parallel_spec) -> None:
     assert "/images/c/" in docs[3]["run"]
 
 
-def test_job_group_rejects_unsupported_model_task_name_before_submission(tmp_path) -> None:
+def test_job_group_rejects_unsupported_model_task_name_before_submission(
+    tmp_path,
+) -> None:
     spec = load_spec(_write(tmp_path, PARALLEL_SPEC.replace("shard-a", "model.v1")))
     wave = build_wave_plan(spec, run_id="p1").waves[0]
     with pytest.raises(NpaWorkflowRenderError, match="only ASCII letters"):
@@ -408,7 +417,7 @@ def test_non_mapping_trigger_is_rejected(tmp_path: Path) -> None:
 def test_trigger_numeric_fields_are_validated(tmp_path: Path, value: str) -> None:
     text = PARALLEL_SPEC.replace(
         "  join:\n    description: Barrier — aggregate every shard.",
-        "  join:\n    trigger:\n      uri: \"s3://{{config.bucket}}/inbox/\"\n"
+        '  join:\n    trigger:\n      uri: "s3://{{config.bucket}}/inbox/"\n'
         f"      {value}\n"
         "    description: Barrier — aggregate every shard.",
     )
@@ -502,7 +511,9 @@ def test_shipped_specs_render_without_placeholders(
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
     spec = load_spec(SHIPPED / name)
     plan = build_plan(spec, run_id="render-1", assume_decision="promote_checkpoint")
-    text = render_skypilot_yaml(spec, plan, run_id="render-1", options=_render_options())
+    text = render_skypilot_yaml(
+        spec, plan, run_id="render-1", options=_render_options()
+    )
     assert_no_unresolved_placeholders(text)
     docs = [doc for doc in yaml.safe_load_all(text) if doc is not None]
     assert docs[0]["execution"] == "serial"
@@ -510,11 +521,17 @@ def test_shipped_specs_render_without_placeholders(
     assert all(doc["run"].strip() for doc in docs[1:])
 
     # The parallel waves of the same plan render as a JobGroup.
-    for wave in build_wave_plan(spec, run_id="render-1", assume_decision="promote_checkpoint").waves:
+    for wave in build_wave_plan(
+        spec, run_id="render-1", assume_decision="promote_checkpoint"
+    ).waves:
         if wave.kind != WAVE_PARALLEL:
             continue
         group_text = render_skypilot_job_group_yaml(
-            spec, wave.steps, run_id="render-1", options=_render_options(), name=wave.name
+            spec,
+            wave.steps,
+            run_id="render-1",
+            options=_render_options(),
+            name=wave.name,
         )
         assert_no_unresolved_placeholders(group_text)
         group_docs = [doc for doc in yaml.safe_load_all(group_text) if doc is not None]
@@ -569,7 +586,9 @@ def test_stage_shell_gets_the_right_interpreter(parallel_spec) -> None:
     assert "${" not in run_script  # rendered YAML must stay placeholder-clean
 
 
-def test_staged_source_is_not_published_as_pythonpath(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_staged_source_is_not_published_as_pythonpath(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """PYTHONPATH must NOT be pre-set for staged source.
 
     Doing so was actively harmful on real GPUs: it let an interpreter without npa's
@@ -583,7 +602,10 @@ def test_staged_source_is_not_published_as_pythonpath(monkeypatch: pytest.Monkey
     spec = load_spec(SHIPPED / "token-factory-parallel-fanout.yaml")
     plan = build_plan(spec, run_id="env-1")
     text = render_skypilot_yaml(
-        spec, plan, run_id="env-1", options=SkypilotRenderOptions(image_overrides={"*": ""})
+        spec,
+        plan,
+        run_id="env-1",
+        options=SkypilotRenderOptions(image_overrides={"*": ""}),
     )
     docs = [doc for doc in yaml.safe_load_all(text) if doc is not None]
     for task in docs[1:]:

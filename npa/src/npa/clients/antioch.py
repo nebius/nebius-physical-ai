@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import os
 
-from npa.clients.credentials import ANTIOCH_TOKEN_KEY, CredentialStoreError, load_credentials
+from npa.clients.credentials import (
+    ANTIOCH_TOKEN_KEY,
+    CredentialStoreError,
+    load_credentials,
+)
 
 
 def antioch_environment() -> dict[str, str]:

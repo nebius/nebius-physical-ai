@@ -77,9 +77,9 @@
       }
     ],
     "recipe_sha256": {
-      "npa/scripts/record_lerobot_video_subtasks.py": "60e1367783d8900a792fb689476062f509de346620da1ba178c48e72b1f35033",
+      "npa/scripts/record_lerobot_video_subtasks.py": "e26814df6c030bc0d3e6bbf9421c3350404471a9ccdfe3f9781a3c98027e32c6",
       "npa/src/npa/fiftyone_lerobot_subtasks.py": "1f3ea655ca34738fb49507d9da6bea56f322b5d38cf9c9d79108608ad106e7fe",
-      "npa/src/npa/workflows/lerobot_subtask_proof.py": "41e3887daab5fc6daa9f1c4f36c545f9c578294f82160b361e169f109da04c94",
+      "npa/src/npa/workflows/lerobot_subtask_proof.py": "938c7bdda3d2e3c6aede83efa1f64ada1b03e896d21cd2d57b340ebdf9dad6aa",
       "workflows/testing/lerobot-subtask-proof.yaml": "cd66862dd0e95a2530e3979dff55ad0fa0cc1f2d198d601440fea95508d9f9f9"
     },
     "run_id": "lerobot-real-video-subtasks-20260916",

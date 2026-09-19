@@ -235,7 +235,10 @@ def test_remote_delete_uses_cloned_state_then_verifies_then_mutates_real_state(
     monkeypatch.setattr(controller, "_down_jobs_controller", down)
 
     result = controller.cleanup_jobs_controller(
-        project="demo", context="verified-context", isolated_config_dir=selected_root, sky_bin=sky_bin
+        project="demo",
+        context="verified-context",
+        isolated_config_dir=selected_root,
+        sky_bin=sky_bin,
     )
 
     assert result.ok

@@ -48,7 +48,9 @@ from npa.cluster.gpu_health import (
 )
 from npa.cluster.gpu_workload_profile import resolve_gpu_workload_profile
 from npa.cluster_backends.kuberay import (
-    KubeRaySpec, kuberay_spec_from_mapping, validate_kuberay,
+    KubeRaySpec,
+    kuberay_spec_from_mapping,
+    validate_kuberay,
 )
 from npa.fleet.mig import (
     MIG_KUBERNETES_VERSION,
@@ -353,11 +355,14 @@ class ClusterSpec:
                 f"cluster name must be a lowercase DNS-1123 label: {self.name!r}"
             )
         mig_enabled = bool(self.mig and self.mig.enabled)
-        from npa.cluster.gpu_workload_profile import validate_driver_package_repositories
+        from npa.cluster.gpu_workload_profile import (
+            validate_driver_package_repositories,
+        )
 
         try:
             validate_driver_package_repositories(
-                self.gpu_driver_package_repositories, profile=self.gpu_workload_profile,
+                self.gpu_driver_package_repositories,
+                profile=self.gpu_workload_profile,
             )
         except ValueError as exc:
             raise FleetSpecError(str(exc)) from exc

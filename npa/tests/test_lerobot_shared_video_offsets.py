@@ -293,7 +293,9 @@ def _write_video(path: Path, colors: list[np.ndarray]) -> None:
         stream.options = {"crf": "0"}
         for color in colors:
             pixels = np.broadcast_to(color, (24, 32, 3)).astype(np.uint8).copy()
-            for packet in stream.encode(av.VideoFrame.from_ndarray(pixels, format="rgb24")):
+            for packet in stream.encode(
+                av.VideoFrame.from_ndarray(pixels, format="rgb24")
+            ):
                 container.mux(packet)
         for packet in stream.encode():
             container.mux(packet)
@@ -303,11 +305,15 @@ def _write_alignment_dataset(tmp_path: Path, *, shared: bool) -> tuple[Path, dic
     dataset = tmp_path / "synthetic-lerobot"
     (dataset / "meta" / "episodes" / "chunk-000").mkdir(parents=True)
     (dataset / "data" / "chunk-000").mkdir(parents=True)
-    (dataset / "meta" / "info.json").write_text(json.dumps({
-        "fps": FPS,
-        "features": {key: {"dtype": "video"} for key in CAMERAS},
-        "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4",
-    }))
+    (dataset / "meta" / "info.json").write_text(
+        json.dumps(
+            {
+                "fps": FPS,
+                "features": {key: {"dtype": "video"} for key in CAMERAS},
+                "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4",
+            }
+        )
+    )
     rows, episodes, expected = [], [], {}
     for episode in range(3):
         metadata = {"episode_index": episode}
@@ -321,14 +327,19 @@ def _write_alignment_dataset(tmp_path: Path, *, shared: bool) -> tuple[Path, dic
             metadata[f"videos/{key}/file_index"] = file_index
             metadata[f"videos/{key}/from_timestamp"] = offset if shared else None
         episodes.append(metadata)
-        rows.extend({
-            "episode_index": episode,
-            "frame_index": frame,
-            "timestamp": frame / FPS,
-            "observation.state": [episode * 10 + frame, episode * 10 + frame + 0.5],
-            "action": [-episode * 10 - frame, episode + frame * 0.25],
-        } for frame in range(FRAME_COUNT))
-    pq.write_table(pa.Table.from_pylist(rows), dataset / "data" / "chunk-000" / "file-000.parquet")
+        rows.extend(
+            {
+                "episode_index": episode,
+                "frame_index": frame,
+                "timestamp": frame / FPS,
+                "observation.state": [episode * 10 + frame, episode * 10 + frame + 0.5],
+                "action": [-episode * 10 - frame, episode + frame * 0.25],
+            }
+            for frame in range(FRAME_COUNT)
+        )
+    pq.write_table(
+        pa.Table.from_pylist(rows), dataset / "data" / "chunk-000" / "file-000.parquet"
+    )
     pq.write_table(
         pa.Table.from_pylist(episodes),
         dataset / "meta" / "episodes" / "chunk-000" / "file-000.parquet",
@@ -339,7 +350,9 @@ def _write_alignment_dataset(tmp_path: Path, *, shared: bool) -> tuple[Path, dic
             path, offset = expected[episode, key]
             first = round(offset * FPS)
             colors = videos.setdefault(path, [])
-            colors.extend([np.array([255, 0, 255])] * (first + FRAME_COUNT - len(colors)))
+            colors.extend(
+                [np.array([255, 0, 255])] * (first + FRAME_COUNT - len(colors))
+            )
             for frame in range(FRAME_COUNT):
                 colors[first + frame] = _color(episode, camera, frame)
         for path, colors in videos.items():
@@ -347,7 +360,9 @@ def _write_alignment_dataset(tmp_path: Path, *, shared: bool) -> tuple[Path, dic
     return dataset, expected
 
 
-def _dynamic_rows(chunks: list, entity: str, component: str) -> list[tuple[int, object]]:
+def _dynamic_rows(
+    chunks: list, entity: str, component: str
+) -> list[tuple[int, object]]:
     rows = []
     for chunk in chunks:
         if str(chunk.entity_path) != entity or chunk.is_static:
@@ -369,7 +384,9 @@ def _video_bytes(chunks: list, entity: str) -> bytes:
     return bytes(blobs[0])
 
 
-def _assert_media_signal_alignment(tmp_path: Path, *, shared: bool, frames: list[int]) -> None:
+def _assert_media_signal_alignment(
+    tmp_path: Path, *, shared: bool, frames: list[int]
+) -> None:
     dataset, expected = _write_alignment_dataset(tmp_path, shared=shared)
     output = tmp_path / "synthetic-episodes.rrd"
     adapter.lerobot_dataset_logical_to_rerun(
@@ -392,23 +409,28 @@ def _assert_media_signal_alignment(tmp_path: Path, *, shared: bool, frames: list
                 entity = f"{root}/camera/{entity_key}"
                 video_entity = f"videos/episode_{episode:06d}/{entity_key}"
                 path, offset = expected[episode, key]
-                references = _dynamic_rows(chunks, entity, "VideoFrameReference:timestamp")
+                references = _dynamic_rows(
+                    chunks, entity, "VideoFrameReference:timestamp"
+                )
                 assert [time for time, _ in references] == timeline
-                assert _dynamic_rows(chunks, entity, "VideoFrameReference:video_reference") == [
-                    (time, video_entity) for time in timeline
-                ]
+                assert _dynamic_rows(
+                    chunks, entity, "VideoFrameReference:video_reference"
+                ) == [(time, video_entity) for time in timeline]
                 payload = _video_bytes(chunks, "/" + video_entity)
                 assert payload == path.read_bytes()
                 with av.open(io.BytesIO(payload)) as container:
                     decoded = {
-                        round(float(frame.pts * frame.time_base) * 1e9):
-                        frame.to_ndarray(format="rgb24").mean(axis=(0, 1))
+                        round(
+                            float(frame.pts * frame.time_base) * 1e9
+                        ): frame.to_ndarray(format="rgb24").mean(axis=(0, 1))
                         for frame in container.decode(video=0)
                     }
                 for (_, media_time), frame in zip(references, frames, strict=True):
                     # Decode the embedded asset at the actual reference, independently
                     # of the adapter's metadata arithmetic, to catch wrong episode pixels.
-                    np.testing.assert_allclose(decoded[media_time], _color(episode, camera, frame), atol=2)
+                    np.testing.assert_allclose(
+                        decoded[media_time], _color(episode, camera, frame), atol=2
+                    )
                 assert [value for _, value in references] == [
                     round((offset + frame / FPS) * 1e9) for frame in frames
                 ]
@@ -419,10 +441,12 @@ def _assert_media_signal_alignment(tmp_path: Path, *, shared: bool, frames: list
                 "actions/dim_01": [episode + frame * 0.25 for frame in frames],
             }
             for signal, values in expected_signals.items():
-                assert _dynamic_rows(chunks, f"{root}/{signal}", "Scalars:scalars") == list(
-                    zip(timeline, values, strict=True)
-                )
-            assert _dynamic_rows(chunks, f"{root}/state/transform", "Transform3D:translation") == [
+                assert _dynamic_rows(
+                    chunks, f"{root}/{signal}", "Scalars:scalars"
+                ) == list(zip(timeline, values, strict=True))
+            assert _dynamic_rows(
+                chunks, f"{root}/state/transform", "Transform3D:translation"
+            ) == [
                 (time, [episode * 10 + frame, episode * 10 + frame + 0.5, 0.0])
                 for time, frame in zip(timeline, frames, strict=True)
             ]
@@ -434,4 +458,6 @@ def test_sampled_shared_videos_align_embedded_media_and_signals(tmp_path: Path) 
 
 
 def test_null_video_offsets_align_embedded_media_and_signals(tmp_path: Path) -> None:
-    _assert_media_signal_alignment(tmp_path, shared=False, frames=list(range(FRAME_COUNT)))
+    _assert_media_signal_alignment(
+        tmp_path, shared=False, frames=list(range(FRAME_COUNT))
+    )

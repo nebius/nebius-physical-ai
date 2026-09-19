@@ -58,7 +58,9 @@ def test_native_exception_is_identical_and_its_contents_never_enter_journal(tmp_
 
 
 @pytest.mark.parametrize("fail_operation", [False, True])
-def test_unwritable_journal_never_changes_result_or_masks_exception(tmp_path, fail_operation):
+def test_unwritable_journal_never_changes_result_or_masks_exception(
+    tmp_path, fail_operation
+):
     target = tmp_path / "unrelated.txt"
     target.write_text("preserve")
     (tmp_path / "simulator-phases-rank0.jsonl").symlink_to(target)
@@ -88,9 +90,12 @@ def _pink_environment(controller):
     term_type.__module__ = "isaaclab.envs.mdp.actions.pink_task_space_actions"
     term = term_type()
     term._ik_controllers = [controller]
-    return SimpleNamespace(action_manager=SimpleNamespace(
-        active_terms=["arms"], get_term=lambda name: term,
-    ))
+    return SimpleNamespace(
+        action_manager=SimpleNamespace(
+            active_terms=["arms"],
+            get_term=lambda name: term,
+        )
+    )
 
 
 def test_pink_wrapper_preserves_each_call_arguments_result_and_exception(tmp_path):
@@ -120,7 +125,10 @@ def test_pink_wrapper_preserves_each_call_arguments_result_and_exception(tmp_pat
     assert "compute" not in other.__dict__
     rows = _rows(tmp_path)
     assert [row["event"] for row in rows if row["phase"] == "pink_ik"] == [
-        "begin", "end", "begin", "failed"
+        "begin",
+        "end",
+        "begin",
+        "failed",
     ]
     assert all(row["action_step"] == 5 for row in rows)
     assert "private" not in json.dumps(rows)
@@ -134,10 +142,15 @@ def test_other_controller_contracts_are_not_wrapped(tmp_path):
     assert controller.compute is original
 
 
-@pytest.mark.parametrize("field,value", [
-    ("phase", "private input location"), ("action_step", True), ("render_call", -1),
-    ("render_call", 0),
-])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("phase", "private input location"),
+        ("action_step", True),
+        ("render_call", -1),
+        ("render_call", 0),
+    ],
+)
 def test_phase_rejects_arbitrary_text_and_invalid_counters(tmp_path, field, value):
     env = SimpleNamespace()
     phases.configure_phase_journal(env, tmp_path)
@@ -153,7 +166,11 @@ def test_readiness_records_only_observed_boolean_or_null_flags(tmp_path):
     env = SimpleNamespace()
     phases.configure_phase_journal(env, tmp_path)
     phases.record_readiness(
-        env, 1, stage_ready=False, annotator_ready=None, nonblack_rgb=None,
+        env,
+        1,
+        stage_ready=False,
+        annotator_ready=None,
+        nonblack_rgb=None,
     )
     row = _rows(tmp_path)[0]
     assert row["stage_ready"] is False and row["annotator_ready"] is None
@@ -162,22 +179,38 @@ def test_readiness_records_only_observed_boolean_or_null_flags(tmp_path):
     assert len(_rows(tmp_path)) == 1
 
 
-@pytest.mark.parametrize("phase,event,fields", [
-    ("private phase", "begin", {}),
-    ("env_step", "private error", {}),
-    ("env_step", "failed", {"exception": "private exception content"}),
-    ("env_step", "begin", {"render_call": "private value"}),
-    ("capture", "unavailable", {}),
-    ("physics_step", "unavailable", {"reason": "private binding details"}),
-    ("capture_readiness", "observed", {
-        "render_call": 1, "stage_ready": True, "annotator_ready": True,
-        "nonblack_rgb": "private image contents",
-    }),
-    ("capture_readiness", "observed", {
-        "render_call": 1, "stage_ready": True, "annotator_ready": True,
-        "nonblack_rgb": True, "asset_path": "private location",
-    }),
-])
+@pytest.mark.parametrize(
+    "phase,event,fields",
+    [
+        ("private phase", "begin", {}),
+        ("env_step", "private error", {}),
+        ("env_step", "failed", {"exception": "private exception content"}),
+        ("env_step", "begin", {"render_call": "private value"}),
+        ("capture", "unavailable", {}),
+        ("physics_step", "unavailable", {"reason": "private binding details"}),
+        (
+            "capture_readiness",
+            "observed",
+            {
+                "render_call": 1,
+                "stage_ready": True,
+                "annotator_ready": True,
+                "nonblack_rgb": "private image contents",
+            },
+        ),
+        (
+            "capture_readiness",
+            "observed",
+            {
+                "render_call": 1,
+                "stage_ready": True,
+                "annotator_ready": True,
+                "nonblack_rgb": True,
+                "asset_path": "private location",
+            },
+        ),
+    ],
+)
 def test_write_sink_rejects_unapproved_fields_even_from_internal_callers(
     tmp_path, phase, event, fields
 ):
@@ -214,7 +247,9 @@ def _stepping_environment(block):
             update=lambda dt: calls.append(("update", dt)),
         ),
         sim=SimpleNamespace(
-            physics_manager=Physics, step=step, render=lambda: calls.append("render"),
+            physics_manager=Physics,
+            step=step,
+            render=lambda: calls.append("render"),
         ),
     )
     return env, calls
@@ -245,12 +280,27 @@ def test_native_step_boundary_is_visible_before_the_blocked_call_returns(tmp_pat
         release.set()
         thread.join()
         phases.finalize_phase_journal(env)
-    assert calls == ["action", "write", ("simulation", False), "wait", "physics",
-                     "render", ("update", 0.005)]
+    assert calls == [
+        "action",
+        "write",
+        ("simulation", False),
+        "wait",
+        "physics",
+        "render",
+        ("update", 0.005),
+    ]
     rows = _rows(tmp_path)
     entered_phases = [row["phase"] for row in rows if row["event"] == "begin"]
-    assert entered_phases == ["env_step", "action_apply", "scene_write", "simulation_step",
-                              "physics_wait", "physics_step", "simulation_render", "scene_update"]
+    assert entered_phases == [
+        "env_step",
+        "action_apply",
+        "scene_write",
+        "simulation_step",
+        "physics_wait",
+        "physics_step",
+        "simulation_render",
+        "scene_update",
+    ]
     assert len(rows) == 2 * len(entered_phases)
 
 
@@ -273,12 +323,16 @@ def _physics_hierarchy(calls, result, error):
 
 
 @pytest.mark.parametrize("inherited", [False, True])
-def test_native_classmethod_binding_and_exception_survive_observation(tmp_path, inherited):
+def test_native_classmethod_binding_and_exception_survive_observation(
+    tmp_path, inherited
+):
     calls, result, argument = [], object(), object()
     error = RuntimeError("private native state")
     base, concrete, derived = _physics_hierarchy(calls, result, error)
     original = inspect.getattr_static(base, "step")
-    env = SimpleNamespace(sim=SimpleNamespace(physics_manager=concrete if inherited else base))
+    env = SimpleNamespace(
+        sim=SimpleNamespace(physics_manager=concrete if inherited else base)
+    )
     phases.configure_phase_journal(env, tmp_path)
     try:
         with phases.phase_scope(env, "env_step", 3):
@@ -290,7 +344,9 @@ def test_native_classmethod_binding_and_exception_survive_observation(tmp_path, 
     finally:
         phases.finalize_phase_journal(env)
     assert calls == [(concrete, argument, False)] * 2 + [
-        (derived, argument, False), (derived, argument, False), (derived, argument, True),
+        (derived, argument, False),
+        (derived, argument, False),
+        (derived, argument, True),
     ]
     assert "step" not in vars(concrete)
     assert inspect.getattr_static(base, "step") is original
@@ -300,7 +356,9 @@ def test_native_classmethod_binding_and_exception_survive_observation(tmp_path, 
 
 
 @pytest.mark.parametrize("relationship", ["same", "ancestor", "descendant"])
-def test_overlapping_class_owner_is_rejected_and_released_on_teardown(tmp_path, relationship):
+def test_overlapping_class_owner_is_rejected_and_released_on_teardown(
+    tmp_path, relationship
+):
     base, concrete, derived = _physics_hierarchy([], object(), RuntimeError())
     first = SimpleNamespace(sim=SimpleNamespace(physics_manager=concrete))
     target = {"same": concrete, "ancestor": base, "descendant": derived}[relationship]
@@ -348,7 +406,9 @@ def test_retained_foreign_wrapper_chain_survives_teardown_and_same_env_reuse(tmp
     assert calls.count(("simulation", False)) == 3
 
 
-def test_restore_failure_preserves_native_exception_and_ownership_until_retry(tmp_path, monkeypatch):
+def test_restore_failure_preserves_native_exception_and_ownership_until_retry(
+    tmp_path, monkeypatch
+):
     env, _calls = _stepping_environment(lambda: None)
     phases.configure_phase_journal(env, tmp_path)
     journal = env._npa_phase_journal
@@ -443,7 +503,9 @@ def _immutable_physics(binding, calls, result, error):
 
 @pytest.mark.parametrize("binding", ["slotted", "read_only"])
 @pytest.mark.parametrize("fail", [False, True])
-def test_immutable_native_binding_never_blocks_or_changes_rollout(tmp_path, binding, fail):
+def test_immutable_native_binding_never_blocks_or_changes_rollout(
+    tmp_path, binding, fail
+):
     calls, result, argument = [], object(), object()
     error = RuntimeError("private native failure")
     physics = _immutable_physics(binding, calls, result, error)
@@ -476,11 +538,14 @@ def _assert_immutable_rollout(directory, env, physics, original, step, fail):
     assert not hasattr(env, "_npa_phase_journal")
     rows = _rows(directory)
     assert [(row["phase"], row["event"]) for row in rows[:2]] == [
-        ("physics_wait", "unavailable"), ("physics_step", "unavailable"),
+        ("physics_wait", "unavailable"),
+        ("physics_step", "unavailable"),
     ]
     assert all(row["action_step"] == 0 for row in rows[:2])
     assert [(row["phase"], row["event"]) for row in rows[2:]] == [
-        ("env_step", "begin"), ("simulation_step", "begin"),
-        ("simulation_step", "failed" if fail else "end"), ("env_step", "end"),
+        ("env_step", "begin"),
+        ("simulation_step", "begin"),
+        ("simulation_step", "failed" if fail else "end"),
+        ("env_step", "end"),
     ]
     assert "private" not in json.dumps(rows)

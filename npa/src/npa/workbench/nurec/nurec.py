@@ -1512,7 +1512,10 @@ def validate_fetch_provenance(
         errors.append(
             f"variant observed={observed_variant!r} != requested={requested_variant!r}"
         )
-    if requested_dataset_id and str(fetched.get("dataset_id") or "") != requested_dataset_id:
+    if (
+        requested_dataset_id
+        and str(fetched.get("dataset_id") or "") != requested_dataset_id
+    ):
         errors.append("dataset_id mismatch")
     return (not errors), errors
 
@@ -1870,7 +1873,9 @@ def parse_metrics_yaml(path: Path | str) -> dict[str, float]:
                 for name, entry in aggregated.items():
                     if isinstance(entry, dict):
                         value = entry.get("value")
-                        if isinstance(value, (int, float)) and not isinstance(value, bool):
+                        if isinstance(value, (int, float)) and not isinstance(
+                            value, bool
+                        ):
                             metrics[str(name)] = float(value)
             return metrics
     except ImportError:

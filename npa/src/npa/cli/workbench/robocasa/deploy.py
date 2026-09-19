@@ -20,7 +20,9 @@ from npa.workbench.robocasa.schemas import DEFAULT_PORT, DEFAULT_TOKEN_ENV
 
 from npa.cli.workbench.robocasa.helpers import OutputFormat, emit, fail
 
-DEFAULT_IMAGE = container_image_for_tool("robocasa", registry=DEFAULT_CONTAINER_REGISTRY)
+DEFAULT_IMAGE = container_image_for_tool(
+    "robocasa", registry=DEFAULT_CONTAINER_REGISTRY
+)
 DEFAULT_NAME = "npa-robocasa"
 DEFAULT_NAMESPACE = "default"
 
@@ -33,32 +35,70 @@ GPU_NODE_SELECTORS = {
 
 
 def deploy_cmd(
-    project: str = typer.Option("", "--project", "-p", help="Project alias used to resolve container_registry."),
+    project: str = typer.Option(
+        "", "--project", "-p", help="Project alias used to resolve container_registry."
+    ),
     cluster_name: str = typer.Option(
         "",
         "--cluster-name",
         help="NPA cluster profile whose cached kubeconfig to use. Empty (the default) uses the ambient kubeconfig.",
     ),
-    kubeconfig: str = typer.Option("", "--kubeconfig", help="Kubeconfig path override."),
-    image: str = typer.Option("", "--image", help=f"Container image to deploy. Defaults to {DEFAULT_IMAGE}."),
-    name: str = typer.Option(DEFAULT_NAME, "--name", help="Kubernetes deployment/service name."),
-    namespace: str = typer.Option(DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."),
+    kubeconfig: str = typer.Option(
+        "", "--kubeconfig", help="Kubeconfig path override."
+    ),
+    image: str = typer.Option(
+        "", "--image", help=f"Container image to deploy. Defaults to {DEFAULT_IMAGE}."
+    ),
+    name: str = typer.Option(
+        DEFAULT_NAME, "--name", help="Kubernetes deployment/service name."
+    ),
+    namespace: str = typer.Option(
+        DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."
+    ),
     port: int = typer.Option(DEFAULT_PORT, "--port", help="Service port."),
     output_path: str = typer.Option("", "--output-path", help="Default S3 output URI."),
-    gpu_type: str = typer.Option("rtxpro6000", "--gpu-type", help="GPU type: h100, l40s, rtx6000, or rtxpro6000."),
-    node_selector_key: str = typer.Option("node.kubernetes.io/instance-type", "--node-selector-key", help="GPU node selector label key."),
-    node_selector_value: str = typer.Option("", "--node-selector-value", help="GPU node selector label value override."),
-    image_pull_secret: str = typer.Option("", "--image-pull-secret", help="Existing operator-managed Kubernetes imagePullSecret for a private registry."),
-    token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
-    auth_mode: str = typer.Option("token", "--auth-mode", help="Auth mode: none or token. Defaults to token (secure)."),
+    gpu_type: str = typer.Option(
+        "rtxpro6000", "--gpu-type", help="GPU type: h100, l40s, rtx6000, or rtxpro6000."
+    ),
+    node_selector_key: str = typer.Option(
+        "node.kubernetes.io/instance-type",
+        "--node-selector-key",
+        help="GPU node selector label key.",
+    ),
+    node_selector_value: str = typer.Option(
+        "", "--node-selector-value", help="GPU node selector label value override."
+    ),
+    image_pull_secret: str = typer.Option(
+        "",
+        "--image-pull-secret",
+        help="Existing operator-managed Kubernetes imagePullSecret for a private registry.",
+    ),
+    token_env: str = typer.Option(
+        DEFAULT_TOKEN_ENV,
+        "--token-env",
+        help="Environment variable containing service token.",
+    ),
+    auth_mode: str = typer.Option(
+        "token",
+        "--auth-mode",
+        help="Auth mode: none or token. Defaults to token (secure).",
+    ),
     insecure_no_auth: bool = typer.Option(
         False,
         "--insecure-no-auth",
         help="Explicitly deploy without token auth (overrides --auth-mode to none). Not recommended.",
     ),
-    destroy: bool = typer.Option(False, "--destroy", help="Delete the Kubernetes service, deployment, and secret."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Print Kubernetes manifest without applying it."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    destroy: bool = typer.Option(
+        False,
+        "--destroy",
+        help="Delete the Kubernetes service, deployment, and secret.",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print Kubernetes manifest without applying it."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Deploy the RoboCasa service to an NPA Workbench Kubernetes cluster."""
     if port < 1024 or port > 65535:
@@ -67,16 +107,39 @@ def deploy_cmd(
         auth_mode = "none"
     if auth_mode not in {"none", "token"}:
         fail("--auth-mode must be none or token")
-    resolved_kubeconfig = _resolve_kubeconfig(cluster_name=cluster_name, kubeconfig=kubeconfig)
+    resolved_kubeconfig = _resolve_kubeconfig(
+        cluster_name=cluster_name, kubeconfig=kubeconfig
+    )
     if destroy:
-        _kubectl(["delete", "service", name, "-n", namespace, "--ignore-not-found=true"], dry_run=dry_run, kubeconfig=resolved_kubeconfig)
-        _kubectl(["delete", "deployment", name, "-n", namespace, "--ignore-not-found=true"], dry_run=dry_run, kubeconfig=resolved_kubeconfig)
-        _kubectl(["delete", "secret", f"{name}-env", "-n", namespace, "--ignore-not-found=true"], dry_run=dry_run, kubeconfig=resolved_kubeconfig)
+        _kubectl(
+            ["delete", "service", name, "-n", namespace, "--ignore-not-found=true"],
+            dry_run=dry_run,
+            kubeconfig=resolved_kubeconfig,
+        )
+        _kubectl(
+            ["delete", "deployment", name, "-n", namespace, "--ignore-not-found=true"],
+            dry_run=dry_run,
+            kubeconfig=resolved_kubeconfig,
+        )
+        _kubectl(
+            [
+                "delete",
+                "secret",
+                f"{name}-env",
+                "-n",
+                namespace,
+                "--ignore-not-found=true",
+            ],
+            dry_run=dry_run,
+            kubeconfig=resolved_kubeconfig,
+        )
 
         emit({"status": "deleted", "name": name, "namespace": namespace}, output=output)
         return
 
-    selector_value = node_selector_value.strip() or GPU_NODE_SELECTORS.get(gpu_type.strip().lower())
+    selector_value = node_selector_value.strip() or GPU_NODE_SELECTORS.get(
+        gpu_type.strip().lower()
+    )
     if not selector_value:
         fail(
             "--gpu-type must be one of "
@@ -110,8 +173,13 @@ def deploy_cmd(
             "Use --auth-mode token with ROBOCASA_TOKEN set.",
             err=True,
         )
-    _kubectl(["apply", "-f", "-"], stdin=json.dumps(manifest), kubeconfig=resolved_kubeconfig)
-    _kubectl(["rollout", "status", f"deployment/{name}", "-n", namespace, "--timeout=900s"], kubeconfig=resolved_kubeconfig)
+    _kubectl(
+        ["apply", "-f", "-"], stdin=json.dumps(manifest), kubeconfig=resolved_kubeconfig
+    )
+    _kubectl(
+        ["rollout", "status", f"deployment/{name}", "-n", namespace, "--timeout=900s"],
+        kubeconfig=resolved_kubeconfig,
+    )
     endpoint = f"http://{name}.{namespace}.svc.cluster.local:{port}"
     emit(
         {
@@ -160,16 +228,21 @@ def _kubernetes_manifest(
                 "kind": "Secret",
                 "metadata": {"name": f"{name}-env", "namespace": namespace},
                 "type": "Opaque",
-                "data": {key: base64.b64encode(value.encode("utf-8")).decode("ascii") for key, value in env.items()},
+                "data": {
+                    key: base64.b64encode(value.encode("utf-8")).decode("ascii")
+                    for key, value in env.items()
+                },
             },
-
             {
                 "apiVersion": "apps/v1",
                 "kind": "Deployment",
                 "metadata": {
                     "name": name,
                     "namespace": namespace,
-                    "labels": {"app.kubernetes.io/name": "npa-robocasa", "app.kubernetes.io/instance": name},
+                    "labels": {
+                        "app.kubernetes.io/name": "npa-robocasa",
+                        "app.kubernetes.io/instance": name,
+                    },
                 },
                 "spec": {
                     "replicas": 1,
@@ -187,9 +260,22 @@ def _kubernetes_manifest(
                         },
                         "spec": {
                             "nodeSelector": {node_selector_key: node_selector_value},
-                            **({"imagePullSecrets": [{"name": image_pull_secret}]} if image_pull_secret else {}),
-                            "tolerations": [{"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"}],
-                            "securityContext": {"fsGroup": 1000, "fsGroupChangePolicy": "OnRootMismatch"},
+                            **(
+                                {"imagePullSecrets": [{"name": image_pull_secret}]}
+                                if image_pull_secret
+                                else {}
+                            ),
+                            "tolerations": [
+                                {
+                                    "key": "nvidia.com/gpu",
+                                    "operator": "Exists",
+                                    "effect": "NoSchedule",
+                                }
+                            ],
+                            "securityContext": {
+                                "fsGroup": 1000,
+                                "fsGroupChangePolicy": "OnRootMismatch",
+                            },
                             "containers": [
                                 {
                                     "name": "service",
@@ -201,13 +287,16 @@ def _kubernetes_manifest(
                                         "limits": {"nvidia.com/gpu": "1"},
                                         "requests": {"nvidia.com/gpu": "1"},
                                     },
-                                    "readinessProbe": {"httpGet": {"path": "/health", "port": "http"}, "initialDelaySeconds": 10, "periodSeconds": 10},
+                                    "readinessProbe": {
+                                        "httpGet": {"path": "/health", "port": "http"},
+                                        "initialDelaySeconds": 10,
+                                        "periodSeconds": 10,
+                                    },
                                     "securityContext": {
                                         "allowPrivilegeEscalation": False,
                                         "capabilities": {"drop": ["ALL"]},
                                         "seccompProfile": {"type": "RuntimeDefault"},
                                     },
-
                                 }
                             ],
                         },
@@ -258,7 +347,9 @@ def _service_env(
         env["ROBOCASA_TOKEN"] = token
     if not project.strip():
         access_key = os.environ.get("AWS_ACCESS_KEY_ID") or creds.s3_access_key_id
-        secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY") or creds.s3_secret_access_key
+        secret_key = (
+            os.environ.get("AWS_SECRET_ACCESS_KEY") or creds.s3_secret_access_key
+        )
         endpoint = os.environ.get("AWS_ENDPOINT_URL") or creds.s3_endpoint
         if access_key:
             env["AWS_ACCESS_KEY_ID"] = access_key
@@ -287,7 +378,9 @@ def _kubectl(
         typer.echo(" ".join(cmd))
         return ""
     try:
-        result = subprocess.run(cmd, input=stdin, text=True, capture_output=True, check=True)
+        result = subprocess.run(
+            cmd, input=stdin, text=True, capture_output=True, check=True
+        )
     except FileNotFoundError:
         fail("kubectl is not installed or not on PATH")
     except subprocess.CalledProcessError as exc:

@@ -11,9 +11,15 @@ from npa.workbench.isaac_arena import phase_liveness as liveness
 
 
 def _event(sequence, timestamp, event, action=1, phase="simulation_step"):
-    return {"schema": "npa.isaac-arena.simulator-phase.v1", "sequence": sequence,
-            "monotonic_ns": timestamp, "event": event, "action_step": action,
-            "phase": phase, "rank": 0}
+    return {
+        "schema": "npa.isaac-arena.simulator-phase.v1",
+        "sequence": sequence,
+        "monotonic_ns": timestamp,
+        "event": event,
+        "action_step": action,
+        "phase": phase,
+        "rank": 0,
+    }
 
 
 def _calibrated():
@@ -50,7 +56,9 @@ def test_nested_advancement_and_rank_observers_do_not_reset_each_other():
     assert second.stalled(50000) is None
 
 
-@pytest.mark.parametrize("change", ["sequence", "clock", "nesting", "fields", "rank", "type"])
+@pytest.mark.parametrize(
+    "change", ["sequence", "clock", "nesting", "fields", "rank", "type"]
+)
 def test_invalid_progress_is_not_healthy_evidence(change):
     progress = _calibrated()
     row = _event(17, 200, "begin")
@@ -102,7 +110,9 @@ while True: time.sleep(1)
 """
     result = liveness.run_supervised(
         [sys.executable, "-c", source, str(run / "simulator-phases-rank0.jsonl")],
-        artifact_root=root, private_dir=private, text=True,
+        artifact_root=root,
+        private_dir=private,
+        text=True,
     )
     assert result.returncode == 124
     assert "real child reached" in result.stdout
@@ -113,7 +123,9 @@ while True: time.sleep(1)
 
 def test_success_preserves_exact_native_result_and_command(tmp_path):
     argv = [sys.executable, "-c", "print('native completed')"]
-    result = liveness.run_supervised(argv, artifact_root=tmp_path, private_dir=tmp_path, text=True)
+    result = liveness.run_supervised(
+        argv, artifact_root=tmp_path, private_dir=tmp_path, text=True
+    )
     assert result.args is argv and result.returncode == 0
     assert result.stdout == "native completed\n"
     assert not (tmp_path / "simulator-liveness.json").exists()
@@ -123,8 +135,14 @@ def test_state_only_evaluation_stages_private_log_without_replay_or_graphics(tmp
     private = tmp_path / "private"
     assert not private.exists()
     result = liveness.run_supervised(
-        [sys.executable, "-c", "print('state-only native result'); raise SystemExit(7)"],
-        artifact_root=tmp_path, private_dir=private, text=True,
+        [
+            sys.executable,
+            "-c",
+            "print('state-only native result'); raise SystemExit(7)",
+        ],
+        artifact_root=tmp_path,
+        private_dir=private,
+        text=True,
     )
     assert result.returncode == 7
     assert result.stdout == "state-only native result\n"
@@ -133,8 +151,16 @@ def test_state_only_evaluation_stages_private_log_without_replay_or_graphics(tmp
 
 
 def test_termination_escalates_only_for_owned_process(tmp_path):
-    process = subprocess.Popen([sys.executable, "-c", "import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); print('ready',flush=True); time.sleep(60)"],
-                               start_new_session=True, stdout=subprocess.PIPE, text=True)
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); print('ready',flush=True); time.sleep(60)",
+        ],
+        start_new_session=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
     assert process.stdout.readline() == "ready\n"
     liveness._stop_owned_process(process)
     assert process.returncode == -9
@@ -149,8 +175,12 @@ if os.fork() == 0:
     while True: time.sleep(1)
 while True: time.sleep(1)
 """
-    process = subprocess.Popen([sys.executable, "-c", source], start_new_session=True,
-                               stdout=subprocess.PIPE, text=True)
+    process = subprocess.Popen(
+        [sys.executable, "-c", source],
+        start_new_session=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
     child_pid = int(process.stdout.readline())
     liveness._stop_owned_process(process)
     assert process.returncode == -15

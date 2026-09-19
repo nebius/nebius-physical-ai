@@ -120,7 +120,8 @@ class SSHClient:
         try:
             client.set_missing_host_key_policy(paramiko.RejectPolicy())
             known_hosts = (
-                self._known_hosts if self._known_hosts is not None
+                self._known_hosts
+                if self._known_hosts is not None
                 else os.environ.get("NPA_SSH_KNOWN_HOSTS", "")
             )
             if known_hosts:
@@ -137,10 +138,14 @@ class SSHClient:
         except Exception as exc:
             with suppress(Exception):
                 client.close()
-            error_type = SSHHostKeyError if (
-                isinstance(exc, paramiko.BadHostKeyException)
-                or "not found in known_hosts" in str(exc)
-            ) else SSHError
+            error_type = (
+                SSHHostKeyError
+                if (
+                    isinstance(exc, paramiko.BadHostKeyException)
+                    or "not found in known_hosts" in str(exc)
+                )
+                else SSHError
+            )
             raise error_type(
                 f"SSH connection to {self._config.user}@{self._config.host} failed: {exc}\n"
                 "Check SSH credentials and the independently verified host key in "
@@ -185,7 +190,9 @@ class SSHClient:
         try:
             mode = sftp.lstat(directory).st_mode
             if not stat.S_ISDIR(mode) or stat.S_IMODE(mode) != 0o700:
-                raise SSHError("SFTP server did not create an owner-only staging directory")
+                raise SSHError(
+                    "SFTP server did not create an owner-only staging directory"
+                )
         except BaseException:
             with suppress(OSError):
                 sftp.rmdir(directory)
@@ -204,7 +211,9 @@ class SSHClient:
         if not env_file:
             raise SSHError("Token env file was not prepared")
         env_file_q = shlex.quote(env_file)
-        cleanup = f"rm -f -- {env_file_q}; rmdir -- {shlex.quote(str(Path(env_file).parent))}"
+        cleanup = (
+            f"rm -f -- {env_file_q}; rmdir -- {shlex.quote(str(Path(env_file).parent))}"
+        )
         script = (
             f"trap {shlex.quote(cleanup)} EXIT HUP INT TERM\n"
             f"set -a\n. {env_file_q}\nset +a\n{cleanup}\ntrap - EXIT HUP INT TERM\n{command}"
@@ -324,7 +333,9 @@ class SSHClient:
                     with suppress(OSError, paramiko.SSHException, EOFError):
                         with client.open_sftp() as sftp:
                             with suppress(FileNotFoundError):
-                                self._remove_private_payload(sftp, str(Path(token_env_file).parent))
+                                self._remove_private_payload(
+                                    sftp, str(Path(token_env_file).parent)
+                                )
                 client.close()
 
     def run_or_raise(
@@ -392,7 +403,9 @@ class SSHClient:
             sftp.posix_rename(staged, remote_path)
             return remote_path
         except Exception as exc:
-            raise SSHError(f"Private SFTP upload failed for {remote_path}: {exc}") from exc
+            raise SSHError(
+                f"Private SFTP upload failed for {remote_path}: {exc}"
+            ) from exc
         finally:
             try:
                 if sftp is not None:
@@ -422,7 +435,10 @@ class SSHClient:
         try:
             yield directory
         finally:
-            self.run_or_raise(f"rm -rf -- {shlex.quote(directory)}", label="remove private staging directory")
+            self.run_or_raise(
+                f"rm -rf -- {shlex.quote(directory)}",
+                label="remove private staging directory",
+            )
 
     def upload_directory(self, local_dir: str, remote_dir: str) -> str:
         """Upload a local directory to the VM over SFTP."""

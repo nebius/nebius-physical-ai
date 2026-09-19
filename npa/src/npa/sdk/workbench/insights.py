@@ -60,7 +60,14 @@ def record(
     )
     if _resolve_mode(mode=mode, service=service):
         return RecordResponse.model_validate(
-            _request_json("POST", endpoint or os.environ.get(ENDPOINT_ENV, ""), "/record", payload=request.model_dump(mode="json"), token_env=token_env, timeout=timeout)
+            _request_json(
+                "POST",
+                endpoint or os.environ.get(ENDPOINT_ENV, ""),
+                "/record",
+                payload=request.model_dump(mode="json"),
+                token_env=token_env,
+                timeout=timeout,
+            )
         )
     from npa.workbench.insights.store import record_metrics
 
@@ -90,7 +97,14 @@ def ingest_run(
     )
     if _resolve_mode(mode=mode, service=service):
         return IngestRunResponse.model_validate(
-            _request_json("POST", endpoint or os.environ.get(ENDPOINT_ENV, ""), "/ingest-run", payload=request.model_dump(mode="json"), token_env=token_env, timeout=timeout)
+            _request_json(
+                "POST",
+                endpoint or os.environ.get(ENDPOINT_ENV, ""),
+                "/ingest-run",
+                payload=request.model_dump(mode="json"),
+                token_env=token_env,
+                timeout=timeout,
+            )
         )
     from npa.workbench.insights.store import ingest_run as _ingest_run
 
@@ -151,9 +165,20 @@ def query(
         lancedb_endpoint=lancedb_endpoint,
     )
     if _resolve_mode(mode=mode, service=service):
-        params = {k: v for k, v in request.model_dump(mode="json").items() if v not in ("", None)}
+        params = {
+            k: v
+            for k, v in request.model_dump(mode="json").items()
+            if v not in ("", None)
+        }
         return QueryResponse.model_validate(
-            _request_json("GET", endpoint or os.environ.get(ENDPOINT_ENV, ""), "/query", params=params, token_env=token_env, timeout=timeout)
+            _request_json(
+                "GET",
+                endpoint or os.environ.get(ENDPOINT_ENV, ""),
+                "/query",
+                params=params,
+                token_env=token_env,
+                timeout=timeout,
+            )
         )
     from npa.workbench.insights.analytics import query_metrics
 
@@ -174,11 +199,24 @@ def lineage(
     timeout: float = 60.0,
 ) -> LineageResponse:
     """Traverse the provenance graph for an artifact/version."""
-    request = LineageRequest(input_uri=input_uri, uri=uri, version=version, direction=direction, depth=depth)
+    request = LineageRequest(
+        input_uri=input_uri, uri=uri, version=version, direction=direction, depth=depth
+    )
     if _resolve_mode(mode=mode, service=service):
-        params = {k: v for k, v in request.model_dump(mode="json").items() if v not in ("", None)}
+        params = {
+            k: v
+            for k, v in request.model_dump(mode="json").items()
+            if v not in ("", None)
+        }
         return LineageResponse.model_validate(
-            _request_json("GET", endpoint or os.environ.get(ENDPOINT_ENV, ""), "/lineage", params=params, token_env=token_env, timeout=timeout)
+            _request_json(
+                "GET",
+                endpoint or os.environ.get(ENDPOINT_ENV, ""),
+                "/lineage",
+                params=params,
+                token_env=token_env,
+                timeout=timeout,
+            )
         )
     from npa.workbench.insights.analytics import traverse_lineage
 
@@ -207,13 +245,24 @@ def compare(
         lower_is_better=lower_is_better or [],
     )
     if _resolve_mode(mode=mode, service=service):
-        params: dict[str, Any] = {"input_uri": input_uri, "base_run": base_run, "candidate_run": candidate_run}
+        params: dict[str, Any] = {
+            "input_uri": input_uri,
+            "base_run": base_run,
+            "candidate_run": candidate_run,
+        }
         if request.metric_names:
             params["metric_names"] = request.metric_names
         if request.lower_is_better:
             params["lower_is_better"] = request.lower_is_better
         return CompareResponse.model_validate(
-            _request_json("GET", endpoint or os.environ.get(ENDPOINT_ENV, ""), "/compare", params=params, token_env=token_env, timeout=timeout)
+            _request_json(
+                "GET",
+                endpoint or os.environ.get(ENDPOINT_ENV, ""),
+                "/compare",
+                params=params,
+                token_env=token_env,
+                timeout=timeout,
+            )
         )
     from npa.workbench.insights.analytics import compare_runs
 
@@ -242,9 +291,20 @@ def dashboard(
         latest_run=latest_run,
     )
     if _resolve_mode(mode=mode, service=service):
-        params = {k: v for k, v in request.model_dump(mode="json").items() if v not in ("", None)}
+        params = {
+            k: v
+            for k, v in request.model_dump(mode="json").items()
+            if v not in ("", None)
+        }
         return DashboardResponse.model_validate(
-            _request_json("GET", endpoint or os.environ.get(ENDPOINT_ENV, ""), "/dashboard", params=params, token_env=token_env, timeout=timeout)
+            _request_json(
+                "GET",
+                endpoint or os.environ.get(ENDPOINT_ENV, ""),
+                "/dashboard",
+                params=params,
+                token_env=token_env,
+                timeout=timeout,
+            )
         )
     from npa.workbench.insights.analytics import build_dashboard
 
@@ -280,17 +340,30 @@ def _request_json(
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
-        response = httpx.request(method, f"{resolved}{path}", headers=headers, json=payload, params=params, timeout=timeout)
+        response = httpx.request(
+            method,
+            f"{resolved}{path}",
+            headers=headers,
+            json=payload,
+            params=params,
+            timeout=timeout,
+        )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         detail = exc.response.text.strip()
-        raise InsightsServiceError(f"Insights service request failed ({exc.response.status_code}): {detail}") from exc
+        raise InsightsServiceError(
+            f"Insights service request failed ({exc.response.status_code}): {detail}"
+        ) from exc
     except httpx.HTTPError as exc:
-        raise InsightsServiceError(f"Cannot reach insights service {resolved}: {exc}") from exc
+        raise InsightsServiceError(
+            f"Cannot reach insights service {resolved}: {exc}"
+        ) from exc
     try:
         data = response.json()
     except ValueError as exc:
-        raise InsightsServiceError("Insights service returned non-JSON response") from exc
+        raise InsightsServiceError(
+            "Insights service returned non-JSON response"
+        ) from exc
     if not isinstance(data, dict):
         raise InsightsServiceError("Insights service returned an unexpected response")
     return data

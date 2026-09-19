@@ -21,8 +21,11 @@ from mibot.models.runner.base_runner import BaseRunner
 
 class _ValidationDataset(JsonDataset):
     def _samples(self):
-        return [{"file": path, "frame_index": frame} for path in self.files
-                for frame in range(0, int(self._read_json(path)["num_frames"]) - 29, 30)]
+        return [
+            {"file": path, "frame_index": frame}
+            for path in self.files
+            for frame in range(0, int(self._read_json(path)["num_frames"]) - 29, 30)
+        ]
 
     def _augment(self, images):
         return images
@@ -35,8 +38,13 @@ class _DataModule(BaseDataModule):
         self.validation_params.train_datasets.paths = validation_paths
 
     def val_dataloader(self):
-        return DataLoader(_ValidationDataset(self.validation_params), batch_size=self.batch_size,
-                          num_workers=2, collate_fn=self.collate_fn, pin_memory=True)
+        return DataLoader(
+            _ValidationDataset(self.validation_params),
+            batch_size=self.batch_size,
+            num_workers=2,
+            collate_fn=self.collate_fn,
+            pin_memory=True,
+        )
 
 
 class _Runner(BaseRunner):
@@ -48,12 +56,20 @@ class _Runner(BaseRunner):
         self.model.train()
         try:
             with torch.no_grad(), torch.random.fork_rng(devices=[self.device.index]):
-                torch.manual_seed(4096 + batch_idx * self.trainer.world_size + self.global_rank)
+                torch.manual_seed(
+                    4096 + batch_idx * self.trainer.world_size + self.global_rank
+                )
                 losses = self.model(batch, return_loss=True)
         finally:
             self.model.train(prior_mode)
-        self.log("val_loss", losses["loss"], sync_dist=True, batch_size=batch_size,
-                 on_step=False, on_epoch=True)
+        self.log(
+            "val_loss",
+            losses["loss"],
+            sync_dist=True,
+            batch_size=batch_size,
+            on_step=False,
+            on_epoch=True,
+        )
         for name, value in losses.items():
             self.log(f"validation/{name}", value, sync_dist=True, batch_size=batch_size)
 
@@ -65,11 +81,19 @@ class _Evidence(Callback):
     def on_validation_end(self, trainer, pl_module):
         if not trainer.is_global_zero:
             return
-        row = {"optimizer_step": trainer.global_step, "baseline": trainer.sanity_checking,
-               "metrics": {key: float(value) for key, value in trainer.callback_metrics.items()
-                           if key == "val_loss" or key.startswith("validation/")}}
+        row = {
+            "optimizer_step": trainer.global_step,
+            "baseline": trainer.sanity_checking,
+            "metrics": {
+                key: float(value)
+                for key, value in trainer.callback_metrics.items()
+                if key == "val_loss" or key.startswith("validation/")
+            },
+        }
         if "val_loss" not in row["metrics"]:
-            raise ValueError("Native XR1 validation did not produce a checkpoint-selection metric")
+            raise ValueError(
+                "Native XR1 validation did not produce a checkpoint-selection metric"
+            )
         with (self.output / "validation.jsonl").open("a") as stream:
             stream.write(json.dumps(row, allow_nan=False) + "\n")
         print("XR1_VALIDATION " + json.dumps(row), flush=True)
@@ -85,13 +109,24 @@ def _trainer(configuration: Config, output: Path) -> tuple[Trainer, ModelCheckpo
     settings.pop("exp_name")
     settings.pop("ckpt_path")
     strategy = DeepSpeedStrategy(stage=2, **settings.pop("strategy")["params"])
-    checkpoint = ModelCheckpoint(dirpath=output / "checkpoints", monitor="val_loss", mode="min",
-                                 save_top_k=1, save_last=True, save_on_train_epoch_end=False,
-                                 filename="step={step}-loss={val_loss:.6f}")
-    trainer = Trainer(**settings, strategy=strategy, val_check_interval=1000,
-                      num_sanity_val_steps=-1, log_every_n_steps=10,
-                      callbacks=[_Evidence(output), checkpoint],
-                      logger=CSVLogger(str(output), name="metrics"))
+    checkpoint = ModelCheckpoint(
+        dirpath=output / "checkpoints",
+        monitor="val_loss",
+        mode="min",
+        save_top_k=1,
+        save_last=True,
+        save_on_train_epoch_end=False,
+        filename="step={step}-loss={val_loss:.6f}",
+    )
+    trainer = Trainer(
+        **settings,
+        strategy=strategy,
+        val_check_interval=1000,
+        num_sanity_val_steps=-1,
+        log_every_n_steps=10,
+        callbacks=[_Evidence(output), checkpoint],
+        logger=CSVLogger(str(output), name="metrics"),
+    )
     return trainer, checkpoint
 
 
@@ -111,10 +146,18 @@ def _fit(configuration_path: Path) -> None:
 
 
 def _export(checkpoint, configuration: Config, output: Path, steps: int) -> None:
-    state_path = Path(checkpoint.best_model_path) / "checkpoint/mp_rank_00_model_states.pt"
-    candidate = torch.load(state_path, map_location="cpu", mmap=True, weights_only=True)["module"]
-    baseline = torch.load(configuration.model.params.pretrained, map_location="cpu",
-                          mmap=True, weights_only=True)["module"]
+    state_path = (
+        Path(checkpoint.best_model_path) / "checkpoint/mp_rank_00_model_states.pt"
+    )
+    candidate = torch.load(
+        state_path, map_location="cpu", mmap=True, weights_only=True
+    )["module"]
+    baseline = torch.load(
+        configuration.model.params.pretrained,
+        map_location="cpu",
+        mmap=True,
+        weights_only=True,
+    )["module"]
     if set(candidate) != set(baseline):
         raise ValueError("Trained checkpoint keys differ from the exact baseline model")
     changed, total = 0, 0
@@ -127,8 +170,12 @@ def _export(checkpoint, configuration: Config, output: Path, steps: int) -> None
     export.mkdir()
     torch.save({"module": candidate}, export / "model_states.pt")
     configuration.dump(str(export / "config.py"))
-    report = {"optimizer_steps": steps, "checkpoint_selection": "minimum held-out native XR1 loss",
-              "best_validation_loss": float(checkpoint.best_model_score),
-              "changed_parameters": changed, "total_parameters": total,
-              "closed_loop_evaluation_required": True}
+    report = {
+        "optimizer_steps": steps,
+        "checkpoint_selection": "minimum held-out native XR1 loss",
+        "best_validation_loss": float(checkpoint.best_model_score),
+        "changed_parameters": changed,
+        "total_parameters": total,
+        "closed_loop_evaluation_required": True,
+    }
     (export / "training.json").write_text(json.dumps(report, indent=2))

@@ -17,9 +17,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 MAKEFILE = REPO_ROOT / "Makefile"
-AUTOMATIC_PR_WORKFLOWS = (
-    "security-regression.yml",
-)
+AUTOMATIC_PR_WORKFLOWS = ("security-regression.yml",)
 
 
 def _load_workflow(name: str) -> dict:
@@ -169,7 +167,7 @@ def test_coverage_shards_are_parallel_and_merged_before_enforcement() -> None:
         "NPA_E2E_PROJECT_ID": "project-test-00000000",
         "NPA_E2E_GROOT_BUCKET": "test-bucket-00000000",
         "NPA_CI_SHARD_INDEX": "${{ matrix.shard }}",
-        "NPA_CI_TOTAL_SHARDS": "${{ contains(fromJSON('[\"pull_request\", \"merge_group\"]'), github.event_name) && 5 || 4 }}",
+        "NPA_CI_TOTAL_SHARDS": '${{ contains(fromJSON(\'["pull_request", "merge_group"]\'), github.event_name) && 5 || 4 }}',
         "COVERAGE_FILE": ".coverage.${{ matrix.python-version }}.${{ matrix.shard }}",
         "NPA_CI_TIMING_OUTPUT": "ci-timings-${{ matrix.python-version }}-${{ matrix.shard }}.json",
         "NPA_REQUIRE_FFMPEG": "1",
@@ -199,17 +197,30 @@ def test_ci_installers_pin_versions_cache_packages_and_keep_cpu_runtime() -> Non
     """
     jobs = _load_workflow("test.yml")["jobs"]
     for name in ("test", "affected-tests", "pr-smoke", "browser-mocked"):
-        setup = next(step for step in jobs[name]["steps"] if "setup-uv@" in step.get("uses", ""))
+        setup = next(
+            step for step in jobs[name]["steps"] if "setup-uv@" in step.get("uses", "")
+        )
         assert setup["with"]["version"] == "0.12.5"
         assert setup["with"]["enable-cache"] == "true"
         assert "npa/ci/requirements.txt" in setup["with"]["cache-dependency-glob"]
-        installs = [step["run"] for step in jobs[name]["steps"] if "uv pip install" in step.get("run", "")]
-        assert installs and all("-c npa/ci/requirements.txt" in command for command in installs)
+        installs = [
+            step["run"]
+            for step in jobs[name]["steps"]
+            if "uv pip install" in step.get("run", "")
+        ]
+        assert installs and all(
+            "-c npa/ci/requirements.txt" in command for command in installs
+        )
     for name in ("test", "affected-tests"):
-        command = _step("test.yml", name, "CPU checkpoint" if name == "test" else "Install affected")["run"]
+        command = _step(
+            "test.yml", name, "CPU checkpoint" if name == "test" else "Install affected"
+        )["run"]
         assert "--torch-backend cpu" in command
         assert "assert torch.version.cuda is None" in command
-    assert "ci_requirements.py --check" in _step("test.yml", "scope", "dependency pins")["run"]
+    assert (
+        "ci_requirements.py --check"
+        in _step("test.yml", "scope", "dependency pins")["run"]
+    )
 
 
 def test_timing_report_is_read_only_and_runs_after_the_required_gate() -> None:

@@ -26,8 +26,9 @@ from npa.sdk.fleet import ClusterSpec, KubeRaySpec, NodePoolSpec
 cluster = ClusterSpec(
     name="cpu-ray",
     cpu_nodes=NodePoolSpec(count=1, platform="cpu-d3", preset="16vcpu-64gb"),
-    kuberay=KubeRaySpec(enabled=True, worker_replicas=2,
-                       worker_cpus=2, worker_memory_gib=4),
+    kuberay=KubeRaySpec(
+        enabled=True, worker_replicas=2, worker_cpus=2, worker_memory_gib=4
+    ),
 )
 cluster.validate()
 ```

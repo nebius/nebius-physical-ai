@@ -45,8 +45,16 @@ def _prepare(args) -> Path:
     Config(configuration).dump(str(output / "config.py"))
     shutil.copyfile(root / "normalization.json", output / "normalization.json")
     shutil.copyfile(root / "dataset-report.json", output / "dataset-report.json")
-    print("XR1_DATASET " + json.dumps({split: sum(row["success"] for row in report[split])
-                                      for split in ("train", "validation")}), flush=True)
+    print(
+        "XR1_DATASET "
+        + json.dumps(
+            {
+                split: sum(row["success"] for row in report[split])
+                for split in ("train", "validation")
+            }
+        ),
+        flush=True,
+    )
     return output
 
 
@@ -55,14 +63,30 @@ def _train(args) -> None:
     _Store(args.output_path.rstrip("/") + "/preparation").publish(output)
     source = args.work_path / "runtime/source/xr1"
     env = dict(os.environ, WANDB_MODE="disabled", TOKENIZERS_PARALLELISM="false")
-    result = subprocess.run([
-        sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc_per_node=8",
-        "-m", "npa.workflows.xr1_antioch.training", "fit", "--configuration", str(output / "config.py"),
-    ], cwd=source, env=env)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "torch.distributed.run",
+            "--standalone",
+            "--nproc_per_node=8",
+            "-m",
+            "npa.workflows.xr1_antioch.training",
+            "fit",
+            "--configuration",
+            str(output / "config.py"),
+        ],
+        cwd=source,
+        env=env,
+    )
     if result.returncode:
-        raise RuntimeError(f"Native XR1 training failed with exit {result.returncode}; no checkpoint promotion")
+        raise RuntimeError(
+            f"Native XR1 training failed with exit {result.returncode}; no checkpoint promotion"
+        )
     if not (output / "candidate/training.json").is_file():
-        raise ValueError("The training process did not export a validated candidate checkpoint")
+        raise ValueError(
+            "The training process did not export a validated candidate checkpoint"
+        )
     _Store(args.output_path).publish(output)
     print("XR1_TRAINING_PUBLISHED_AND_READBACK_VERIFIED", flush=True)
 
@@ -92,10 +116,21 @@ def build_parser() -> argparse.ArgumentParser:
 def _isolate(args) -> None:
     args.work_path.mkdir(parents=True, exist_ok=False, mode=0o700)
     environment = args.work_path / "vendor-venv"
-    subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", str(environment)], check=True)
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--system-site-packages", str(environment)],
+        check=True,
+    )
     interpreter = environment / "bin/python"
-    subprocess.run([str(interpreter), "-m", "npa.workflows.xr1_antioch.training",
-                    "bootstrap", *sys.argv[2:]], check=True)
+    subprocess.run(
+        [
+            str(interpreter),
+            "-m",
+            "npa.workflows.xr1_antioch.training",
+            "bootstrap",
+            *sys.argv[2:],
+        ],
+        check=True,
+    )
 
 
 def _main() -> None:
@@ -112,8 +147,16 @@ def _main() -> None:
         _runtime(args.runtime_path, args.work_path / "runtime")
         # Start fresh after pip installation so imported NumPy/Torch versions
         # cannot survive an upstream dependency replacement in this process.
-        subprocess.run([sys.executable, "-m", "npa.workflows.xr1_antioch.training",
-                        "train", *sys.argv[2:]], check=True)
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "npa.workflows.xr1_antioch.training",
+                "train",
+                *sys.argv[2:],
+            ],
+            check=True,
+        )
 
 
 if __name__ == "__main__":

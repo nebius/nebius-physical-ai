@@ -25,7 +25,9 @@ pytestmark = pytest.mark.e2e_skypilot
 
 
 @pytest.mark.parametrize("stale_key", ["HOME", "SKYPILOT_USER_ID", "KUBECONFIG"])
-def test_real_local_daemon_repairs_environment_before_status(tmp_path, stale_key) -> None:
+def test_real_local_daemon_repairs_environment_before_status(
+    tmp_path, stale_key
+) -> None:
     if os.environ.get("NPA_E2E_SKYPILOT_LOCAL_DAEMON") != "1":
         pytest.skip("NPA_E2E_SKYPILOT_LOCAL_DAEMON not set")
     sky_bin = os.environ.get("NPA_SKYPILOT_BIN", "")
@@ -54,7 +56,9 @@ def test_real_local_daemon_repairs_environment_before_status(tmp_path, stale_key
     kubeconfig = tmp_path / "kubeconfig"
     stale_kubeconfig = tmp_path / "stale-kubeconfig"
     for config in (kubeconfig, stale_kubeconfig):
-        config.write_text("apiVersion: v1\nkind: Config\nclusters: []\ncontexts: []\nusers: []\n")
+        config.write_text(
+            "apiVersion: v1\nkind: Config\nclusters: []\ncontexts: []\nusers: []\n"
+        )
     # Allowlist local process essentials; no operator credentials or cloud
     # configuration enter the real SkyPilot process tree.
     env = {
@@ -77,13 +81,18 @@ def test_real_local_daemon_repairs_environment_before_status(tmp_path, stale_key
     started = False
     try:
         start = subprocess.run(
-            [sky_bin, "api", "start"], env=stale_env, cwd=tmp_path,
-            text=True, capture_output=True, check=False,
+            [sky_bin, "api", "start"],
+            env=stale_env,
+            cwd=tmp_path,
+            text=True,
+            capture_output=True,
+            check=False,
         )
         started = True
         assert start.returncode == 0, start.stderr or start.stdout
         before = _probe_local_api_daemon_cwd(
-            sky_bin, expected_home=env["HOME"],
+            sky_bin,
+            expected_home=env["HOME"],
             expected_user_id=env["SKYPILOT_USER_ID"],
             expected_kubeconfig=env["KUBECONFIG"],
             expected_runtime_dir=env["SKY_RUNTIME_DIR"],
@@ -92,16 +101,24 @@ def test_real_local_daemon_repairs_environment_before_status(tmp_path, stale_key
         repaired = _ensure_local_api_daemon_cwd(sky_bin, env=env, cwd=str(tmp_path))
         assert repaired.healthy and repaired.outcome == "restarted_from_durable_cwd"
         status = subprocess.run(
-            [sky_bin, "status", "--output", "json"], env=env, cwd=tmp_path,
-            text=True, capture_output=True, check=False,
+            [sky_bin, "status", "--output", "json"],
+            env=env,
+            cwd=tmp_path,
+            text=True,
+            capture_output=True,
+            check=False,
         )
         assert status.returncode == 0, status.stderr or status.stdout
         assert status.stdout.strip() == "[]"
     finally:
         if started:
             stop = subprocess.run(
-                [sky_bin, "api", "stop"], env=env, cwd=tmp_path,
-                text=True, capture_output=True, check=False,
+                [sky_bin, "api", "stop"],
+                env=env,
+                cwd=tmp_path,
+                text=True,
+                capture_output=True,
+                check=False,
             )
             assert stop.returncode == 0, stop.stderr or stop.stdout
             assert _probe_local_api_daemon_cwd(sky_bin).outcome == "absent"

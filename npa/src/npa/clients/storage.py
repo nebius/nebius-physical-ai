@@ -180,7 +180,11 @@ class StorageClient:
         return results
 
     def upload_directory(
-        self, local_dir: str, bucket_uri: str, *, remote_prefix: str = "",
+        self,
+        local_dir: str,
+        bucket_uri: str,
+        *,
+        remote_prefix: str = "",
         require_empty: bool = False,
     ) -> str:
         """Upload a local directory through the shared retry-configured client.
@@ -200,10 +204,16 @@ class StorageClient:
         """
         bucket, base_prefix = _parse_bucket_uri(bucket_uri)
         if remote_prefix:
-            base_prefix = "/".join(part for part in (base_prefix.rstrip("/"), remote_prefix.strip("/")) if part)
+            base_prefix = "/".join(
+                part
+                for part in (base_prefix.rstrip("/"), remote_prefix.strip("/"))
+                if part
+            )
         base_prefix = base_prefix.rstrip("/") + "/" if base_prefix else ""
         if require_empty:
-            existing = self._s3.list_objects_v2(Bucket=bucket, Prefix=base_prefix, MaxKeys=1)
+            existing = self._s3.list_objects_v2(
+                Bucket=bucket, Prefix=base_prefix, MaxKeys=1
+            )
             if existing.get("Contents"):
                 raise StorageError(f"Output S3 prefix must be empty: {bucket_uri}")
 
@@ -286,8 +296,14 @@ class StorageClient:
             response = self._s3.put_object(**kwargs)
         except ClientError as exc:
             code = str(exc.response.get("Error", {}).get("Code", ""))
-            status = int(exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0) or 0)
-            if code in {"412", "PreconditionFailed", "ConditionalRequestConflict"} or status in {
+            status = int(
+                exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0) or 0
+            )
+            if code in {
+                "412",
+                "PreconditionFailed",
+                "ConditionalRequestConflict",
+            } or status in {
                 409,
                 412,
             }:

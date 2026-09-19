@@ -17,9 +17,7 @@ from npa.project_destroy import _internal_command_argv
 def _without_npa_on_path() -> dict[str, str]:
     env = dict(os.environ)
     env["PATH"] = os.pathsep.join(
-        value
-        for value in ("/usr/bin", "/bin")
-        if Path(value).is_dir()
+        value for value in ("/usr/bin", "/bin") if Path(value).is_dir()
     )
     return env
 
@@ -169,7 +167,5 @@ def test_real_destroy_cli_executes_registered_phases_without_npa_on_path(
         }
     ]
     assert by_phase["local_cleanup"]["status"] == "completed"
-    assert by_phase["local_cleanup"]["evidence"]["command_results"][0][
-        "exit_code"
-    ] == 0
+    assert by_phase["local_cleanup"]["evidence"]["command_results"][0]["exit_code"] == 0
     assert by_phase["controller"]["blocked_by"] == ["workflows"]

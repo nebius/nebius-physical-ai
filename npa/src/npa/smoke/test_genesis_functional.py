@@ -89,7 +89,9 @@ def check_import_genesis(state: SmokeState) -> CheckResult:
 
 def check_build_franka_scene(state: SmokeState) -> CheckResult:
     if state.gs is None:
-        return CheckResult("build Franka scene", False, "skipped because genesis import failed")
+        return CheckResult(
+            "build Franka scene", False, "skipped because genesis import failed"
+        )
 
     try:
         gs = state.gs
@@ -110,33 +112,45 @@ def check_build_franka_scene(state: SmokeState) -> CheckResult:
         state.scene = scene
         state.box = box
         state.franka = franka
-        return CheckResult("build Franka scene", True, "plane + box + Franka Panda built")
+        return CheckResult(
+            "build Franka scene", True, "plane + box + Franka Panda built"
+        )
     except Exception as exc:
         return CheckResult("build Franka scene", False, _format_exception(exc))
 
 
 def check_step_scene(state: SmokeState) -> CheckResult:
     if state.scene is None:
-        return CheckResult("step scene 10 times", False, "skipped because scene build failed")
+        return CheckResult(
+            "step scene 10 times", False, "skipped because scene build failed"
+        )
 
     try:
         for _ in range(10):
             state.scene.step()
-        return CheckResult("step scene 10 times", True, "completed 10 scene.step() calls")
+        return CheckResult(
+            "step scene 10 times", True, "completed 10 scene.step() calls"
+        )
     except Exception as exc:
         return CheckResult("step scene 10 times", False, _format_exception(exc))
 
 
 def check_read_body_state(state: SmokeState) -> CheckResult:
     if state.box is None:
-        return CheckResult("read body position", False, "skipped because box entity is unavailable")
+        return CheckResult(
+            "read body position", False, "skipped because box entity is unavailable"
+        )
 
     try:
         pos = _flatten_numbers(state.box.get_pos())
         if len(pos) < 3:
-            return CheckResult("read body position", False, f"expected >=3 values, got {pos}")
+            return CheckResult(
+                "read body position", False, f"expected >=3 values, got {pos}"
+            )
         if not all(math.isfinite(v) for v in pos[:3]):
-            return CheckResult("read body position", False, f"non-finite position: {pos[:3]}")
+            return CheckResult(
+                "read body position", False, f"non-finite position: {pos[:3]}"
+            )
         return CheckResult("read body position", True, f"box position: {pos[:3]}")
     except Exception as exc:
         return CheckResult("read body position", False, _format_exception(exc))

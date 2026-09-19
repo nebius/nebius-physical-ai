@@ -77,13 +77,19 @@ def check_create_dataset(state: SmokeState) -> CheckResult:
 
 def check_query_dataset(state: SmokeState) -> CheckResult:
     if state.dataset is None:
-        return CheckResult("query sample dataset", False, "skipped because dataset creation failed")
+        return CheckResult(
+            "query sample dataset", False, "skipped because dataset creation failed"
+        )
     try:
         count = len(state.dataset.match_tags("smoke"))
         first = state.dataset.first()
         if count != 3 or first is None:
-            return CheckResult("query sample dataset", False, f"count={count}; first={first!r}")
-        return CheckResult("query sample dataset", True, f"tagged_samples={count}; first_id={first.id}")
+            return CheckResult(
+                "query sample dataset", False, f"count={count}; first={first!r}"
+            )
+        return CheckResult(
+            "query sample dataset", True, f"tagged_samples={count}; first_id={first.id}"
+        )
     except Exception as exc:
         return CheckResult("query sample dataset", False, _format_exception(exc))
 
@@ -98,7 +104,9 @@ def check_brain_curation(state: SmokeState) -> CheckResult:
     needed to actually curate, not just view.
     """
     if state.dataset is None:
-        return CheckResult("brain curation (uniqueness/similarity/visualization)", False, "no dataset")
+        return CheckResult(
+            "brain curation (uniqueness/similarity/visualization)", False, "no dataset"
+        )
     try:
         import fiftyone.brain as fob
         import numpy as np
@@ -114,11 +122,15 @@ def check_brain_curation(state: SmokeState) -> CheckResult:
         fob.compute_uniqueness(dataset, embeddings=emb, uniqueness_field="uniqueness")
         got_uniqueness = all(s["uniqueness"] is not None for s in dataset)
 
-        sim = fob.compute_similarity(dataset, embeddings=emb, backend="sklearn", brain_key="smoke_sim")
+        sim = fob.compute_similarity(
+            dataset, embeddings=emb, backend="sklearn", brain_key="smoke_sim"
+        )
         sim.find_duplicates(thresh=0.1)
         n_dupes = len(getattr(sim, "neighbors_map", {}) or {})
 
-        viz = fob.compute_visualization(dataset, embeddings=emb, method="pca", brain_key="smoke_viz")
+        viz = fob.compute_visualization(
+            dataset, embeddings=emb, method="pca", brain_key="smoke_viz"
+        )
         points = getattr(viz, "points", None)
         got_points = points is not None and len(points) == n
 
@@ -134,12 +146,20 @@ def check_brain_curation(state: SmokeState) -> CheckResult:
             f"uniqueness+similarity+visualization ok; dupe_groups={n_dupes}",
         )
     except Exception as exc:
-        return CheckResult("brain curation (uniqueness/similarity/visualization)", False, _format_exception(exc))
+        return CheckResult(
+            "brain curation (uniqueness/similarity/visualization)",
+            False,
+            _format_exception(exc),
+        )
 
 
 def check_launch_app(state: SmokeState) -> CheckResult:
     if state.dataset is None:
-        return CheckResult("launch and stop app server", False, "skipped because dataset creation failed")
+        return CheckResult(
+            "launch and stop app server",
+            False,
+            "skipped because dataset creation failed",
+        )
     try:
         import fiftyone as fo
 
@@ -167,7 +187,9 @@ def check_launch_app(state: SmokeState) -> CheckResult:
             except Exception as exc:
                 last_error = _format_exception(exc)
             time.sleep(1)
-        return CheckResult("launch and stop app server", False, last_error or f"no response from {url}")
+        return CheckResult(
+            "launch and stop app server", False, last_error or f"no response from {url}"
+        )
     except Exception as exc:
         return CheckResult("launch and stop app server", False, _format_exception(exc))
 

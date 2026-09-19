@@ -41,7 +41,13 @@ from .schemas import (
     RecordRequest,
     RecordResponse,
 )
-from .store import InsightsStoreError, ingest_run, read_edges, read_records, record_metrics
+from .store import (
+    InsightsStoreError,
+    ingest_run,
+    read_edges,
+    read_records,
+    record_metrics,
+)
 
 # Service-tracked stores keyed by store URI.
 STORES: dict[str, dict[str, Any]] = {}
@@ -59,7 +65,9 @@ def create_app(
     resolved_auth_mode = auth_mode or os.environ.get("INSIGHTS_AUTH_MODE", "token")
     if resolved_auth_mode not in {"token", "none"}:
         raise ValueError("INSIGHTS_AUTH_MODE must be 'token' or explicit 'none'")
-    resolved_token = token if token is not None else os.environ.get("INSIGHTS_TOKEN", "")
+    resolved_token = (
+        token if token is not None else os.environ.get("INSIGHTS_TOKEN", "")
+    )
     storage_scope = (
         StorageScope.from_env("INSIGHTS")
         if allowed_s3_roots is None and allowed_local_roots is None
@@ -81,29 +89,41 @@ def create_app(
             return await call_next(request)
 
     @app.exception_handler(StorageAuthorizationError)
-    async def storage_denied(_request: Request, exc: StorageAuthorizationError) -> JSONResponse:
+    async def storage_denied(
+        _request: Request, exc: StorageAuthorizationError
+    ) -> JSONResponse:
         return JSONResponse(status_code=403, content={"detail": str(exc)})
 
-    async def require_auth(request: Request, authorization: str = Header(default="")) -> None:
+    async def require_auth(
+        request: Request, authorization: str = Header(default="")
+    ) -> None:
         if resolved_auth_mode == "none":
             return
         if not resolved_token:
-            raise HTTPException(status_code=503, detail="INSIGHTS_TOKEN is not configured")
+            raise HTTPException(
+                status_code=503, detail="INSIGHTS_TOKEN is not configured"
+            )
         if not hmac.compare_digest(authorization, f"Bearer {resolved_token}"):
             raise HTTPException(status_code=401, detail="invalid token")
 
     @app.get("/health")
-    async def health(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
+    async def health(
+        request: Request, authorization: str = Header(default="")
+    ) -> dict[str, Any]:
         await require_auth(request, authorization)
         return {"status": "ok", "stores": len(STORES)}
 
     @app.get("/system-info")
-    async def system_info(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
+    async def system_info(
+        request: Request, authorization: str = Header(default="")
+    ) -> dict[str, Any]:
         await require_auth(request, authorization)
         return system_info_payload()
 
     @app.get("/list", response_model=InsightsListResponse)
-    async def list_stores(request: Request, authorization: str = Header(default="")) -> InsightsListResponse:
+    async def list_stores(
+        request: Request, authorization: str = Header(default="")
+    ) -> InsightsListResponse:
         await require_auth(request, authorization)
         return InsightsListResponse(stores=list(STORES.values()))
 
@@ -163,7 +183,11 @@ def create_app(
         try:
             return traverse_lineage(
                 LineageRequest(
-                    input_uri=input_uri, uri=uri, version=version, direction=direction, depth=depth
+                    input_uri=input_uri,
+                    uri=uri,
+                    version=version,
+                    direction=direction,
+                    depth=depth,
                 )
             )
         except InsightsQueryError as exc:
@@ -289,7 +313,9 @@ def _track(store_uri: str, total_records: int, total_edges: int) -> None:
 def status_for_store(input_uri: str, run_id: str = "") -> dict[str, Any]:
     records = read_records(input_uri)
     edges = read_edges(input_uri)
-    runs = sorted({str(record.get("run_id", "")) for record in records if record.get("run_id")})
+    runs = sorted(
+        {str(record.get("run_id", "")) for record in records if record.get("run_id")}
+    )
     payload: dict[str, Any] = {
         "store_uri": input_uri,
         "total_records": len(records),
@@ -300,7 +326,9 @@ def status_for_store(input_uri: str, run_id: str = "") -> dict[str, Any]:
         run_records = [record for record in records if record.get("run_id") == run_id]
         payload["run_id"] = run_id
         payload["run_record_count"] = len(run_records)
-        payload["run_metrics"] = sorted({str(r.get("metric_name", "")) for r in run_records})
+        payload["run_metrics"] = sorted(
+            {str(r.get("metric_name", "")) for r in run_records}
+        )
     return payload
 
 

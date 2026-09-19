@@ -14,13 +14,28 @@ from typing import Any, Iterator
 
 
 _PHASES = {
-    "policy_action", "env_step", "pink_ik", "capture", "render_call",
-    "action_apply", "scene_write", "scene_update", "simulation_step",
-    "simulation_render", "physics_wait", "physics_step",
+    "policy_action",
+    "env_step",
+    "pink_ik",
+    "capture",
+    "render_call",
+    "action_apply",
+    "scene_write",
+    "scene_update",
+    "simulation_step",
+    "simulation_render",
+    "physics_wait",
+    "physics_step",
 }
 _METHOD_PHASES = {
-    "pink_ik", "action_apply", "scene_write", "scene_update", "simulation_step",
-    "simulation_render", "physics_wait", "physics_step",
+    "pink_ik",
+    "action_apply",
+    "scene_write",
+    "scene_update",
+    "simulation_step",
+    "simulation_render",
+    "physics_wait",
+    "physics_step",
 }
 _READINESS_FIELDS = {"stage_ready", "annotator_ready", "nonblack_rgb"}
 _CLASS_OWNERS: dict[type, Any] = {}
@@ -97,18 +112,27 @@ def _validate_readiness(render_call: Any, readiness: dict) -> None:
     if (
         not _render_ordinal(render_call)
         or set(readiness) != _READINESS_FIELDS
-        or any(value is not None and type(value) is not bool for value in readiness.values())
+        or any(
+            value is not None and type(value) is not bool
+            for value in readiness.values()
+        )
     ):
         raise ValueError("invalid simulator readiness fields")
 
 
 def _validate_event(phase: Any, event: Any, action_step: Any, fields: dict) -> None:
-    if type(phase) is not str or type(event) is not str or not _nonnegative_integer(action_step):
+    if (
+        type(phase) is not str
+        or type(event) is not str
+        or not _nonnegative_integer(action_step)
+    ):
         raise ValueError("invalid simulator phase event")
     if phase == "capture_readiness":
         if event != "observed" or "render_call" not in fields:
             raise ValueError("invalid simulator readiness event")
-        readiness = {key: value for key, value in fields.items() if key != "render_call"}
+        readiness = {
+            key: value for key, value in fields.items() if key != "render_call"
+        }
         _validate_readiness(fields["render_call"], readiness)
         return
     if event == "unavailable":
@@ -140,7 +164,11 @@ def phase_scope(
         ValueError: A diagnostic label or counter violates the scalar contract.
         BaseException: The original operation's exception, unchanged.
     """
-    if type(phase) is not str or phase not in _PHASES or not _nonnegative_integer(action_step):
+    if (
+        type(phase) is not str
+        or phase not in _PHASES
+        or not _nonnegative_integer(action_step)
+    ):
         raise ValueError("invalid simulator phase or action counter")
     if render_call is not None and not _render_ordinal(render_call):
         raise ValueError("invalid simulator render counter")
@@ -176,8 +204,11 @@ def record_readiness(env: Any, render_call: int, **readiness: bool | None) -> No
     journal = _journal(env)
     if journal is not None:
         journal.emit(
-            "capture_readiness", "observed", journal.action_step,
-            render_call=render_call, **readiness,
+            "capture_readiness",
+            "observed",
+            journal.action_step,
+            render_call=render_call,
+            **readiness,
         )
 
 
@@ -246,7 +277,9 @@ def _observe_method(target: Any, name: str, phase: str, env: Any) -> None:
     )
 
 
-def _install_observer(target: Any, name: str, installed: Any, phase: str, env: Any) -> bool:
+def _install_observer(
+    target: Any, name: str, installed: Any, phase: str, env: Any
+) -> bool:
     try:
         setattr(target, name, installed)
     except AttributeError:

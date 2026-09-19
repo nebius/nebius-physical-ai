@@ -588,10 +588,7 @@ def up_cmd(
                 _tfvar_value(tfvars, env, "existing_filestore", "") or ""
             ),
             filesystem_csi_chart_repository=str(
-                _tfvar_value(
-                    tfvars, env, "filesystem_csi_chart_repository", ""
-                )
-                or ""
+                _tfvar_value(tfvars, env, "filesystem_csi_chart_repository", "") or ""
             ),
             subnet_id=str(_tfvar_value(tfvars, env, "subnet_id", "") or ""),
             filestore_disk_size_gibibytes=int(
@@ -681,7 +678,9 @@ def up_cmd(
             # checks below instead of being reclassified as fleet state.
             provider_preflight=(
                 inherited_plan is None
-                and (mig_enabled or (not legacy_state_exists and shared_recipe_available))
+                and (
+                    mig_enabled or (not legacy_state_exists and shared_recipe_available)
+                )
             ),
             scope=MK8sExecutionScope(
                 fleet_name=one_target.name,
@@ -4058,20 +4057,31 @@ def _gpus_per_node(preset: str) -> int:
     return int(match.group(1)) if match else 0
 
 
-def _validate_skypilot_readiness(kubeconfig_path, context, cluster_name, sky_gpus, *, sky_bin=""):
-    from npa.orchestration.skypilot.k8s_gpu_catalog import wait_for_kubernetes_accelerators
+def _validate_skypilot_readiness(
+    kubeconfig_path, context, cluster_name, sky_gpus, *, sky_bin=""
+):
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        wait_for_kubernetes_accelerators,
+    )
 
     with cluster_validation_session(kubeconfig_path, context):
         _check_skypilot_kubernetes(kubeconfig_path, context, sky_bin=sky_bin)
         _recover_skypilot_smoke(kubeconfig_path, context, cluster_name, sky_bin=sky_bin)
         wait_for_kubernetes_accelerators(
-            [sky_gpus] if sky_gpus.strip() else [], context=context,
-            kubeconfig=kubeconfig_path, sky_bin=sky_bin or None, label_known_gpus=True,
+            [sky_gpus] if sky_gpus.strip() else [],
+            context=context,
+            kubeconfig=kubeconfig_path,
+            sky_bin=sky_bin or None,
+            label_known_gpus=True,
             on_status=lambda message: typer.echo(message, err=True),
         )
         _run_skypilot_smoke(
-            kubeconfig_path, context, cluster_name, sky_gpus,
-            sky_bin=sky_bin, credentials_checked=True,
+            kubeconfig_path,
+            context,
+            cluster_name,
+            sky_gpus,
+            sky_bin=sky_bin,
+            credentials_checked=True,
         )
 
 
@@ -4165,7 +4175,9 @@ def _run_skypilot_smoke(
         sky, infra, env, config_override=config_override, cwd=sky_cwd
     )
     session.begin_smoke(smoke_name)
-    _skypilot_smoke_attempt(sky, smoke_name, infra, accelerator, env, config_override, sky_cwd)
+    _skypilot_smoke_attempt(
+        sky, smoke_name, infra, accelerator, env, config_override, sky_cwd
+    )
     typer.echo(f"SkyPilot smoke passed and {smoke_name} was removed.")
 
 
@@ -4176,16 +4188,34 @@ def _recover_skypilot_smoke(kubeconfig_path, context, cluster_name, *, sky_bin="
         return
     name = _sky_cluster_name(cluster_name)
     if session.pending_smoke != name:
-        raise RuntimeError("Recover the recorded validation smoke with its original cluster command first")
+        raise RuntimeError(
+            "Recover the recorded validation smoke with its original cluster command first"
+        )
     sky, env, override = _skypilot_context(kubeconfig_path, context, sky_bin=sky_bin)
-    _remove_skypilot_smoke(sky, name, env, override, Path(env["NPA_SKYPILOT_ISOLATED_API_DIR"]))
+    _remove_skypilot_smoke(
+        sky, name, env, override, Path(env["NPA_SKYPILOT_ISOLATED_API_DIR"])
+    )
 
 
 def _launch_skypilot_smoke(sky, name, infra, accelerator, env, config_override, cwd):
     _run_stream(
-        [sky, "launch", "--config", config_override, "-c", name,
-         "--infra", infra, "--gpus", accelerator, "-y", "nvidia-smi"],
-        cwd=cwd, env=env, timeout=1800,
+        [
+            sky,
+            "launch",
+            "--config",
+            config_override,
+            "-c",
+            name,
+            "--infra",
+            infra,
+            "--gpus",
+            accelerator,
+            "-y",
+            "nvidia-smi",
+        ],
+        cwd=cwd,
+        env=env,
+        timeout=1800,
     )
 
 
@@ -4210,7 +4240,9 @@ def _skypilot_smoke_attempt(sky, name, infra, accelerator, env, config_override,
 def _remove_skypilot_smoke(sky, name, env, config_override, cwd):
     _run_stream(
         [sky, "down", "--config", config_override, "--yes", name],
-        cwd=cwd, env=env, timeout=600,
+        cwd=cwd,
+        env=env,
+        timeout=600,
     )
     _wait_for_sky_down(sky, name, env, config_override=config_override, cwd=cwd)
     current_validation_session().smoke_removed()
@@ -4286,7 +4318,9 @@ def _wait_for_sky_down(
             )
         names = [row["name"] for row in rows]
         if len(set(names)) != len(names):
-            raise typer.BadParameter("SkyPilot cleanup status contains ambiguous identities")
+            raise typer.BadParameter(
+                "SkyPilot cleanup status contains ambiguous identities"
+            )
         if cluster_name not in names:
             return
         time.sleep(10)

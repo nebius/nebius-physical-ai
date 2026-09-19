@@ -24,7 +24,11 @@ def remap_moved_franka_usd(env_cfg) -> str:
     robot = getattr(getattr(env_cfg, "scene", None), "robot", None)
     spawn = getattr(robot, "spawn", None)
     usd_path = str(getattr(spawn, "usd_path", "") or "")
-    if spawn is not None and usd_path.endswith(_STALE_SUFFIX) and "/Legacy/" not in usd_path:
+    if (
+        spawn is not None
+        and usd_path.endswith(_STALE_SUFFIX)
+        and "/Legacy/" not in usd_path
+    ):
         spawn.usd_path = usd_path[: -len(_STALE_SUFFIX)] + _LEGACY_SUFFIX
         return spawn.usd_path
     return usd_path

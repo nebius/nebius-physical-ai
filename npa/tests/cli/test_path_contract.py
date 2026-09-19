@@ -50,7 +50,9 @@ def test_read_validator_rejects_relative_path() -> None:
         validate_read_path("rel/path", tool="Tool")
 
     message = str(excinfo.value)
-    assert "Tool --input-path expects an S3 URI or a Hugging Face Hub dataset" in message
+    assert (
+        "Tool --input-path expects an S3 URI or a Hugging Face Hub dataset" in message
+    )
     assert "S3 handoff contract" in message
 
 

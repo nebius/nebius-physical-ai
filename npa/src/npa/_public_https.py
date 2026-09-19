@@ -80,7 +80,7 @@ def _download_hops(url, output, allowed_hosts, redirect_hosts):
                         output.write(chunk)
                     return
                 elif response.status in (429, 500, 502, 503, 504) and retries < 3:
-                    retry_delay = 2 ** retries
+                    retry_delay = 2**retries
                     retries += 1
                 else:
                     raise PublicDownloadError(

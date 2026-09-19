@@ -167,9 +167,16 @@ def _configure_model_weight_cache(manifest: dict[str, Any]) -> dict[str, str]:
     if not root or not (pvc or host_path):
         return {}
     pod_spec = manifest["spec"]["template"]["spec"]
-    containers = [item for item in (pod_spec.get("containers") or []) if isinstance(item, dict)]
+    containers = [
+        item for item in (pod_spec.get("containers") or []) if isinstance(item, dict)
+    ]
     patched = pod_config_with_model_cache(
-        {"spec": {"containers": containers, "volumes": list(pod_spec.get("volumes") or [])}},
+        {
+            "spec": {
+                "containers": containers,
+                "volumes": list(pod_spec.get("volumes") or []),
+            }
+        },
         root=root,
         pvc=pvc,
         host_path=host_path,

@@ -479,6 +479,12 @@ build hook.
 5. Blackwell fleet digests: `npa/docker/workbench/sm120-images.json`.
 6. Update golden evals when the image’s “does its job” command changes.
 
+## Platform scope
+
+All workbench images are linux/amd64 only. The publish buildx step passes no platform flag.
+
+This is intentional: the workbench targets NVIDIA GPU workloads which are amd64-only.
+
 ## Operator checklist (new or changed image)
 
 - [ ] Dockerfile under `npa/docker/workbench/<tool>/`

@@ -585,7 +585,9 @@ def _stage9(args: argparse.Namespace) -> None:
         evaluation = dict(right[rollout_id])
         evaluation["threshold"] = args.threshold
         signal = convert_evaluation(evaluation)
-        (evaluation_dir / f"{rollout_id}.json").write_text(json.dumps(evaluation, indent=2))
+        (evaluation_dir / f"{rollout_id}.json").write_text(
+            json.dumps(evaluation, indent=2)
+        )
         (signal_dir / f"{rollout_id}.json").write_text(json.dumps(signal, indent=2))
         evaluations.append(evaluation)
         signals.append(signal)

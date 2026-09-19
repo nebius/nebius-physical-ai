@@ -45,11 +45,19 @@ def test_truncated_container_header_does_not_crash(measure, length) -> None:
     assert measure.scan(_container(_entry())[:length]) == ({}, {})
 
 
-@pytest.mark.parametrize("entry", [
-    _entry(kind=99), _entry(header_size=0), _entry(header_size=16),
-    _entry(header_size=4097), _entry(payload_size=0),
-    _entry(payload_size=9), _entry(arch=0), _entry()[:31],
-])
+@pytest.mark.parametrize(
+    "entry",
+    [
+        _entry(kind=99),
+        _entry(header_size=0),
+        _entry(header_size=16),
+        _entry(header_size=4097),
+        _entry(payload_size=0),
+        _entry(payload_size=9),
+        _entry(arch=0),
+        _entry()[:31],
+    ],
+)
 def test_malformed_entries_never_prove_architecture_coverage(measure, entry) -> None:
     assert measure.scan(_container(entry)) == ({}, {})
     # A valid prefix cannot hide an invalid trailing entry in the same container.
@@ -74,13 +82,18 @@ def test_require_fails_for_malformed_binary(measure, tmp_path, capsys) -> None:
     assert json.loads(captured.out)[str(target)]["missing"] == ["sm_100"]
 
 
-def test_wheel_and_directory_measurement_and_exact_sass_requirement(measure, tmp_path, capsys) -> None:
+def test_wheel_and_directory_measurement_and_exact_sass_requirement(
+    measure, tmp_path, capsys
+) -> None:
     binary = tmp_path / "extension.so"
     binary.write_bytes(_container(_entry() + _entry(kind=1, arch=120)))
     wheel = tmp_path / "extension.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
         archive.write(binary, "package/extension.so")
-    assert measure.main([str(wheel), "--min-size-mb", "0", "--require", "100", "--json"]) == 0
+    assert (
+        measure.main([str(wheel), "--min-size-mb", "0", "--require", "100", "--json"])
+        == 0
+    )
     report = json.loads(capsys.readouterr().out)
     assert report["extension.whl:package/extension.so"]["sass"] == ["sm_100"]
     # PTX and forward-compatible SASS do not satisfy an exact --require gate.

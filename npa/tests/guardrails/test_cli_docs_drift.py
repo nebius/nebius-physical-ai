@@ -38,28 +38,81 @@ ALLOWLIST: dict[tuple[str, ...], str] = {
     ("workbench", "workflow", "submit", "workflows"): "positional spec-path arg",
     ("workbench", "workflow", "validate-spec", "workflows"): "positional spec-path arg",
     ("workbench", "workflow", "plan-spec", "workflows"): "positional spec-path arg",
-    ("workbench", "workflow", "preflight-images", "workflows"): "positional spec-path arg",
-    ("workbench", "workflow", "validate-spec", "alpamayo2-super-inference"): "positional spec-name arg",
-    ("workbench", "workflow", "plan-spec", "alpamayo2-super-inference"): "positional spec-name arg",
-    ("workbench", "workflow", "submit", "alpamayo2-super-inference"): "positional spec-name arg",
-    ("workbench", "workflow", "submit", "physical-ai-data-factory"): "positional spec-name arg",
+    (
+        "workbench",
+        "workflow",
+        "preflight-images",
+        "workflows",
+    ): "positional spec-path arg",
+    (
+        "workbench",
+        "workflow",
+        "validate-spec",
+        "alpamayo2-super-inference",
+    ): "positional spec-name arg",
+    (
+        "workbench",
+        "workflow",
+        "plan-spec",
+        "alpamayo2-super-inference",
+    ): "positional spec-name arg",
+    (
+        "workbench",
+        "workflow",
+        "submit",
+        "alpamayo2-super-inference",
+    ): "positional spec-name arg",
+    (
+        "workbench",
+        "workflow",
+        "submit",
+        "physical-ai-data-factory",
+    ): "positional spec-name arg",
     ("workbench", "golden-eval", "show", "cosmos3-ray-serve"): "positional target arg",
-    ("workbench", "golden-eval", "run-all", "lerobot", "groot"): "positional tool-name args",
+    (
+        "workbench",
+        "golden-eval",
+        "run-all",
+        "lerobot",
+        "groot",
+    ): "positional tool-name args",
     ("rerun", "host", "recording"): "positional file arg (recording.rrd)",
     ("rerun", "share", "recording"): "positional file arg (recording.rrd)",
     # Prose fragments the extractor over-matched, not command invocations.
-    ("workbench", "health", "preflight", "for", "the", "selected"): "prose: 'for the selected services'",
-    ("workbench", "health", "preflight", "for", "the", "selected", "project"): "prose: 'for the selected project'",
+    (
+        "workbench",
+        "health",
+        "preflight",
+        "for",
+        "the",
+        "selected",
+    ): "prose: 'for the selected services'",
+    (
+        "workbench",
+        "health",
+        "preflight",
+        "for",
+        "the",
+        "selected",
+        "project",
+    ): "prose: 'for the selected project'",
     ("storage", "helpers", "or"): "prose: 'npa storage helpers or ...'",
     ("agent", "without", "workflow"): "prose: 'npa agent without workflow ...'",
     ("workflow", "pod"): "prose: 'npa workflow pod' (a Kubernetes pod)",
     # Deliberate negative example: the doc says not to invent this tool.
-    ("workbench", "data-factory"): "negative example in physical-ai-data-factory/SKILL.md",
+    (
+        "workbench",
+        "data-factory",
+    ): "negative example in physical-ai-data-factory/SKILL.md",
     # Passthrough subcommands: `npa studio` forwards to npa.studio.run's argparse dispatcher (search/create), invisible to the Typer tree walk.
     ("studio", "search"): "passthrough dispatched by npa.studio.run",
     # Known-stale references tracked by their own issues; remove the entry
     # when the referenced issue lands.
-    ("workbench", "retargeting", "workflow"): "stale command; #520 tracks fixing the docs",
+    (
+        "workbench",
+        "retargeting",
+        "workflow",
+    ): "stale command; #520 tracks fixing the docs",
 }
 
 

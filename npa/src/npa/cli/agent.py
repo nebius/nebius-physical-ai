@@ -739,15 +739,20 @@ def _agent_mobile_login_help_html() -> str:
 def _agent_auth_setup_script(auth_user: str, auth_password: str) -> str:
     """Install nginx's password hash privately, with no password in process argv."""
     if (
-        not auth_user or auth_user.startswith("-") or ":" in auth_user
+        not auth_user
+        or auth_user.startswith("-")
+        or ":" in auth_user
         or any(ord(char) < 32 or ord(char) == 127 for char in auth_user)
     ):
         raise ValueError("Invalid agent authentication username")
     if (
-        not auth_password or len(auth_password.encode("utf-8")) > 72
+        not auth_password
+        or len(auth_password.encode("utf-8")) > 72
         or any(char in auth_password for char in "\r\n\0")
     ):
-        raise ValueError("Agent password must contain 1..72 UTF-8 bytes without CR, LF or NUL")
+        raise ValueError(
+            "Agent password must contain 1..72 UTF-8 bytes without CR, LF or NUL"
+        )
     return f"""\
 (
 set -euo pipefail
@@ -851,9 +856,14 @@ def _bootstrap_agent_stack(
     # This check runs before staging source, writing manifests, or restarting
     # services. A stale/missing local record cannot authorize overwriting a VM
     # that is still advertising a different immutable owner.
-    installed = assert_remote_owner_if_present(ssh, deployment, backend_port=backend_port)
+    installed = assert_remote_owner_if_present(
+        ssh, deployment, backend_port=backend_port
+    )
     if resume_services and installed.get("bootstrap_timestamp"):
-        deployment = {**deployment, "bootstrap_timestamp": installed["bootstrap_timestamp"]}
+        deployment = {
+            **deployment,
+            "bootstrap_timestamp": installed["bootstrap_timestamp"],
+        }
     deployment_json = json.dumps(deployment, sort_keys=True)
     deployment_b64 = base64.b64encode(deployment_json.encode("utf-8")).decode("ascii")
     preload_stock_demo_value = "1" if preload_stock_demo else "0"
@@ -10480,10 +10490,14 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         )
     )
     if install_agent_services(
-        ssh, setup_script=setup_script, stage_source=_stage_agent_npa_source,
+        ssh,
+        setup_script=setup_script,
+        stage_source=_stage_agent_npa_source,
         resuming=resume_services,
     ):
-        typer.echo("  Reusing completed agent service installation; restaging credentials.")
+        typer.echo(
+            "  Reusing completed agent service installation; restaging credentials."
+        )
     agent_llm_config.write_agent_llm_env(
         ssh,
         api_key=llm_api_key or tf_api_key,
@@ -11274,7 +11288,8 @@ def deploy_cmd(
             from npa.cli.agent_terraform import _record_configured_backend
 
             _record_configured_backend(
-                operation, project_alias=project,
+                operation,
+                project_alias=project,
                 bucket=str(configured_storage.get("s3_bucket", "")),
                 endpoint=str(configured_storage.get("s3_endpoint", "")),
                 project_id=env_project_id,
