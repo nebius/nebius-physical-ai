@@ -1112,6 +1112,7 @@ def _fixture() -> tuple[dict[str, object], list[tuple]]:
                 b"Version: 3.10.6-1~22.04.1\nSource: python3-defaults\n\n",
             ),
             file("var/lib/dpkg/info/python3.list", b"/usr/bin/python3\n"),
+            file("usr/bin/python3", b"python3 runtime fixture\n"),
             file("usr/share/doc/python3/copyright", b"python license\n"),
             file("opt/venv/lib/python3.10/site-packages/fixture/native.so", native),
         ]
@@ -1472,7 +1473,7 @@ def test_valid_attested_oci_has_complete_graph_and_payload_receipt(tmp_path) -> 
     report = _verify(tmp_path, [_required_entries()])
     assert report["valid"] is True
     assert report["layer_count"] == 1
-    assert report["regular_files_read"] == 49
+    assert report["regular_files_read"] == 50
     assert report["installed_package_count"] == 1
     assert report["dpkg_inventory"]["python3"] == {
         "version": "3.10.6-1~22.04.1",
@@ -1485,8 +1486,18 @@ def test_valid_attested_oci_has_complete_graph_and_payload_receipt(tmp_path) -> 
                 "sha256": _digest(b"/usr/bin/python3\n"),
             }
         ],
+        "locked_package_sha256": "1" * 64,
         "copyright_path": "usr/share/doc/python3/copyright",
         "copyright_sha256": _digest(b"python license\n"),
+        "file_contents": [
+            {
+                "path": "usr/bin/python3",
+                "resolved_path": "usr/bin/python3",
+                "kind": "file",
+                "sha256": _digest(b"python3 runtime fixture\n"),
+                "size": len(b"python3 runtime fixture\n"),
+            }
+        ],
     }
     assert report["projected_source_file_count"] == 15
     assert report["python_distribution_count"] == 4
@@ -2105,7 +2116,10 @@ def test_every_installed_package_list_bytes_are_bound(tmp_path) -> None:
         [entries],
         expected_dpkg_inventory_sha256=baseline["dpkg_inventory_sha256"],
     )
-    assert "runtime_dpkg_inventory_lock_mismatch" in _codes(report)
+    assert {
+        "runtime_dpkg_inventory_lock_mismatch",
+        "runtime_package_file_missing",
+    } <= _codes(report)
 
     missing = [
         row for row in _required_entries() if not row[0].endswith("python3.list")
@@ -2121,6 +2135,49 @@ def test_every_installed_package_list_bytes_are_bound(tmp_path) -> None:
     assert "runtime_package_file_list_population" in _codes(
         _verify(tmp_path, [duplicate])
     )
+
+
+def test_non_elf_package_file_content_is_bound_to_inventory_digest(tmp_path) -> None:
+    baseline = _verify(tmp_path, [_required_entries()])
+    entries = _required_entries()
+    file_index = next(index for index, row in enumerate(entries) if row[0] == "usr/bin/python3")
+    entries[file_index] = file("usr/bin/python3", b"rewritten runtime fixture\n")
+    report = _verify(
+        tmp_path,
+        [entries],
+        expected_dpkg_inventory_sha256=baseline["dpkg_inventory_sha256"],
+    )
+    assert "runtime_dpkg_inventory_lock_mismatch" in _codes(report)
+
+
+def test_package_file_with_multiple_declared_owners_is_refused() -> None:
+    tracked = {
+        "var/lib/dpkg/info/first.list": b"/usr/bin/shared\n",
+        "var/lib/dpkg/info/second.list": b"/usr/bin/shared\n",
+    }
+    findings: list[dict[str, object]] = []
+    owners = H._dpkg_file_owners(
+        tracked,
+        {"first": {}, "second": {}},
+        {"usr/bin/shared": "file"},
+        {},
+        findings,
+    )
+    assert owners == {"usr/bin/shared": {"first", "second"}}
+    assert findings == [
+        {
+            "code": "runtime_package_file_owner_ambiguous",
+            "path": "usr/bin/shared",
+            "packages": ["first", "second"],
+        }
+    ]
+
+
+def test_unlisted_runtime_file_is_refused_as_unowned(tmp_path) -> None:
+    entries = _required_entries()
+    entries.append(file("usr/bin/unlisted-runtime", b"not in any package list\n"))
+    report = _verify(tmp_path, [entries])
+    assert "runtime_package_file_unowned" in _codes(report)
 
 
 def test_native_needed_resolution_and_dpkg_ownership_are_closed(tmp_path) -> None:

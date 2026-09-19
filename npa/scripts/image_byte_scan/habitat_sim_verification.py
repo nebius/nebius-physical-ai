@@ -379,15 +379,23 @@ def _dpkg_findings(
     lock_path = contract["apt_runtime_lock_path"].lstrip("/")
     rows = _apt_lock_rows(tracked.get(lock_path, b""))
     _apt_identity_findings(installed, rows, findings)
+    list_payloads = _package_list_payloads(tracked, installed)
     list_bindings = _package_list_bindings(tracked, installed)
     inventory = _package_inventory(
-        installed, list_bindings, final_paths, final_links, final_files, findings
+        installed,
+        list_bindings,
+        list_payloads,
+        final_paths,
+        final_links,
+        final_files,
+        findings,
     )
     serialized = json.dumps(inventory, sort_keys=True, separators=(",", ":"))
     inventory_sha256 = hashlib.sha256(serialized.encode()).hexdigest()
     if inventory_sha256 != expected_inventory_sha256:
         findings.append({"code": "runtime_dpkg_inventory_lock_mismatch"})
     owners = _dpkg_file_owners(tracked, installed, final_paths, final_links, findings)
+    _unowned_runtime_file_findings(final_paths, owners, findings)
     return findings, installed, owners, len(rows), inventory_sha256, inventory
 
 
@@ -406,9 +414,22 @@ def _apt_identity_findings(installed, rows, findings):
             findings.append(
                 {"code": "runtime_apt_lock_mismatch", "package": row["binary"]}
             )
+        elif observed is not None:
+            observed["locked_package_sha256"] = row["sha256"]
 
 
 def _package_list_bindings(tracked, installed):
+    payloads = _package_list_payloads(tracked, installed)
+    return {
+        package: [
+            {"path": path, "sha256": hashlib.sha256(payload).hexdigest()}
+            for path, payload in rows
+        ]
+        for package, rows in payloads.items()
+    }
+
+
+def _package_list_payloads(tracked, installed):
     list_bindings: dict[str, list[dict[str, str]]] = {
         package: [] for package in installed
     }
@@ -420,44 +441,106 @@ def _package_list_bindings(tracked, installed):
         if package not in installed:
             package = package.split(":", 1)[0]
         if package in installed:
-            list_bindings[package].append(
-                {
-                    "path": control_path,
-                    "sha256": hashlib.sha256(payload).hexdigest(),
-                }
-            )
+            list_bindings[package].append((control_path, payload))
     return list_bindings
 
 
 def _package_inventory(
-    installed, list_bindings, final_paths, final_links, final_files, findings
+    installed,
+    list_bindings,
+    list_payloads,
+    final_paths,
+    final_links,
+    final_files,
+    findings,
 ):
     inventory: dict[str, dict[str, object]] = {}
     for package, identity in installed.items():
-        package_lists = sorted(list_bindings[package], key=lambda row: row["path"])
-        if len(package_lists) != 1:
-            findings.append(
-                {
-                    "code": "runtime_package_file_list_population",
-                    "package": package,
-                }
-            )
-        copyright_path = f"usr/share/doc/{package}/copyright"
-        resolved_copyright = _resolve_final_path(
-            copyright_path, final_paths, final_links
+        inventory[package] = _package_inventory_row(
+            package,
+            identity,
+            list_bindings[package],
+            list_payloads,
+            final_paths,
+            final_links,
+            final_files,
+            findings,
         )
-        copyright_sha256 = final_files.get(resolved_copyright or "", {}).get("sha256")
-        if resolved_copyright is None or not isinstance(copyright_sha256, str):
-            findings.append(
-                {"code": "runtime_package_copyright_missing", "package": package}
-            )
-        inventory[package] = {
-            **identity,
-            "file_lists": package_lists,
-            "copyright_path": resolved_copyright or "",
-            "copyright_sha256": copyright_sha256 or "",
-        }
     return inventory
+
+
+def _package_inventory_row(
+    package,
+    identity,
+    package_lists,
+    list_payloads,
+    final_paths,
+    final_links,
+    final_files,
+    findings,
+):
+    package_lists = sorted(package_lists, key=lambda row: row["path"])
+    if len(package_lists) != 1:
+        findings.append({"code": "runtime_package_file_list_population", "package": package})
+    copyright_path = f"usr/share/doc/{package}/copyright"
+    resolved = _resolve_final_path(copyright_path, final_paths, final_links)
+    copyright_sha256 = final_files.get(resolved or "", {}).get("sha256")
+    if resolved is None or not isinstance(copyright_sha256, str):
+        findings.append({"code": "runtime_package_copyright_missing", "package": package})
+    return {
+        **identity,
+        "file_lists": package_lists,
+        "copyright_path": resolved or "",
+        "copyright_sha256": copyright_sha256 or "",
+        "file_contents": _package_file_content_rows(
+            package, list_payloads, final_paths, final_links, final_files, findings
+        ),
+    }
+
+
+def _package_file_content_rows(
+    package,
+    package_lists,
+    final_paths,
+    final_links,
+    final_files,
+    findings,
+):
+    rows = []
+    for _control_path, payload in package_lists.get(package, []):
+        for line in payload.decode("utf-8", errors="strict").splitlines():
+            if not line.startswith("/"):
+                continue
+            row = _package_file_content_row(
+                package, line, final_paths, final_links, final_files, findings
+            )
+            if row is None:
+                continue
+            rows.append(row)
+    return sorted(rows, key=lambda row: (row["path"], row["resolved_path"]))
+
+
+def _package_file_content_row(package, line, final_paths, final_links, final_files, findings):
+    try:
+        declared = W.safe_name(line.lstrip("/"))
+    except W.ScanError:
+        findings.append({"code": "runtime_package_file_list_invalid", "package": package})
+        return None
+    resolved = _resolve_final_path(declared, final_paths, final_links)
+    if resolved is None:
+        findings.append({"code": "runtime_package_file_missing", "path": declared})
+        return None
+    kind = final_paths.get(resolved)
+    row = {"path": declared, "resolved_path": resolved, "kind": kind}
+    if kind == "file":
+        file_row = final_files.get(resolved, {})
+        if not isinstance(file_row.get("sha256"), str) or not isinstance(
+            file_row.get("size"), int
+        ):
+            findings.append({"code": "runtime_package_file_content_missing", "path": resolved})
+            return None
+        row.update(sha256=file_row["sha256"], size=file_row["size"])
+    return row
 
 
 def _dpkg_file_owners(
@@ -477,23 +560,46 @@ def _dpkg_file_owners(
             package = package.split(":", 1)[0]
         if package not in installed:
             continue
-        for line in payload.decode("utf-8", errors="strict").splitlines():
-            if not line.startswith("/"):
+        for resolved in _package_owner_paths(
+            package, payload, final_paths, final_links, findings
+        ):
+            owner_set = owners.setdefault(resolved, set())
+            owner_set.add(package)
+            if len(owner_set) > 1:
                 findings.append(
-                    {"code": "runtime_package_file_list_invalid", "package": package}
+                    {
+                        "code": "runtime_package_file_owner_ambiguous",
+                        "path": resolved,
+                        "packages": sorted(owner_set),
+                    }
                 )
-                continue
-            try:
-                path = W.safe_name(line.lstrip("/"))
-            except W.ScanError:
-                findings.append(
-                    {"code": "runtime_package_file_list_invalid", "package": package}
-                )
-                continue
-            resolved = _resolve_final_path(path, final_paths, final_links)
-            if resolved is not None:
-                owners.setdefault(resolved, set()).add(package)
     return owners
+
+
+def _package_owner_paths(package, payload, final_paths, final_links, findings):
+    resolved_paths = []
+    for line in payload.decode("utf-8", errors="strict").splitlines():
+        if not line.startswith("/"):
+            findings.append({"code": "runtime_package_file_list_invalid", "package": package})
+            continue
+        try:
+            path = W.safe_name(line.lstrip("/"))
+        except W.ScanError:
+            findings.append({"code": "runtime_package_file_list_invalid", "package": package})
+            continue
+        resolved = _resolve_final_path(path, final_paths, final_links)
+        if resolved is None:
+            findings.append({"code": "runtime_package_file_missing", "path": path})
+            continue
+        resolved_paths.append(resolved)
+    return resolved_paths
+
+
+def _unowned_runtime_file_findings(final_paths, owners, findings):
+    prefixes = ("bin/", "sbin/", "lib/", "lib64/", "usr/bin/", "usr/sbin/", "usr/lib/")
+    for path, kind in final_paths.items():
+        if kind != "directory" and path.startswith(prefixes) and path not in owners:
+            findings.append({"code": "runtime_package_file_unowned", "path": path})
 
 
 def _resolve_final_path(
@@ -1196,26 +1302,39 @@ def _dsc_source_matches(
 ) -> bool:
     payload = state.tracked.get(dsc_path)
     fields = _debian_source_fields(payload) if payload is not None else None
-    if fields is None or (fields.get("Source"), fields.get("Version")) != (
-        row.get("source"),
-        row.get("source_version"),
-    ):
+    if not _dsc_identity_matches(row, fields):
         return False
     files = _source_checksum_rows(fields.get("Files"), 32)
     checksums = _source_checksum_rows(fields.get("Checksums-Sha256"), 64)
     if files is None or checksums is None or set(files) != set(checksums):
         return False
+    if paths != _dsc_expected_paths(dsc_path, files, paths):
+        return False
+    return _dsc_content_matches(state, dsc_path, files, checksums)
+
+
+def _dsc_identity_matches(row, fields) -> bool:
+    return fields is not None and (fields.get("Source"), fields.get("Version")) == (
+        row.get("source"),
+        row.get("source_version"),
+    )
+
+
+def _dsc_expected_paths(dsc_path, files, paths):
     parent = str(PurePosixPath(dsc_path).parent)
     expected = {dsc_path} | {f"{parent}/{name}" for name in files}
-    signatures = {
+    expected |= {
         path
         for path in paths - expected
-        if path.startswith(parent + "/") and path.endswith(".asc")
+        if path.startswith(parent + "/")
+        and path.endswith(".asc")
         and path.removesuffix(".asc") in expected
     }
-    expected |= signatures
-    if paths != expected:
-        return False
+    return expected
+
+
+def _dsc_content_matches(state, dsc_path, files, checksums):
+    parent = str(PurePosixPath(dsc_path).parent)
     for name, (size, md5) in files.items():
         path = f"{parent}/{name}"
         artifact = state.files.get(path, {})
@@ -1235,11 +1354,17 @@ def _dsc_source_matches(
 
 
 def _archive_metadata(payload: bytes) -> bytes | None:
-    def safe(name: str) -> bool:
-        return bool(name) and not name.startswith(("/", "\\")) and all(
-            part not in {"", ".", ".."} for part in PurePosixPath(name).parts
-        )
+    metadata = _tar_archive_metadata(payload)
+    return metadata if metadata is not None else _zip_archive_metadata(payload)
 
+
+def _safe_archive_name(name: str) -> bool:
+    return bool(name) and not name.startswith(("/", "\\")) and all(
+        part not in {"", ".", ".."} for part in PurePosixPath(name).parts
+    )
+
+
+def _tar_archive_metadata(payload: bytes) -> bytes | None:
     try:
         with tarfile.open(fileobj=io.BytesIO(payload), mode="r:*") as archive:
             metadata = None
@@ -1248,7 +1373,7 @@ def _archive_metadata(payload: bytes) -> bytes | None:
             if not members:
                 return None
             for member in members:
-                if not safe(member.name) or member.issym() or member.islnk():
+                if not _safe_archive_name(member.name) or member.issym() or member.islnk():
                     return None
                 if member.isdir():
                     continue
@@ -1259,7 +1384,10 @@ def _archive_metadata(payload: bytes) -> bytes | None:
                     metadata = archive.extractfile(member).read()  # type: ignore[union-attr]
             return metadata if regular_files else None
     except (OSError, tarfile.TarError):
-        pass
+        return None
+
+
+def _zip_archive_metadata(payload: bytes) -> bytes | None:
     try:
         with zipfile.ZipFile(io.BytesIO(payload)) as archive:
             metadata = None
@@ -1267,7 +1395,7 @@ def _archive_metadata(payload: bytes) -> bytes | None:
             if not names:
                 return None
             for name in names:
-                if not safe(name) or name.endswith("/"):
+                if not _safe_archive_name(name) or name.endswith("/"):
                     continue
                 if PurePosixPath(name).name in {"PKG-INFO", "METADATA"}:
                     metadata = archive.read(name)
@@ -1293,37 +1421,15 @@ def _delivered_source_matches(
 ) -> bool:
     if not isinstance(artifacts, list) or not artifacts:
         return False
-    paths = set()
+    paths: set[str] = set()
     dsc_paths: list[str] = []
     for artifact in artifacts:
-        if not isinstance(artifact, dict) or set(artifact) != {
-            "path",
-            "bytes",
-            "sha256",
-        }:
-            return False
-        path = artifact["path"]
-        if not isinstance(path, str) or path in paths:
+        path = _source_artifact_path(row, artifact, paths)
+        if path is None or not _source_artifact_content_matches(state, artifact, path):
             return False
         paths.add(path)
-        if not _source_artifact_binding(row, path):
-            return False
         if path.endswith(".dsc"):
             dsc_paths.append(path)
-        if any(part in {"", ".", ".."} for part in path.split("/")):
-            return False
-        if type(artifact["bytes"]) is not int or artifact["bytes"] <= 0:
-            return False
-        if not isinstance(artifact["sha256"], str) or not re.fullmatch(
-            r"[0-9a-f]{64}", artifact["sha256"]
-        ):
-            return False
-        actual = state.files.get(path, {})
-        if (
-            actual.get("sha256") != artifact["sha256"]
-            or actual.get("size") != artifact["bytes"]
-        ):
-            return False
     if row.get("ecosystem") == "dpkg":
         if len(dsc_paths) != 1:
             return False
@@ -1335,6 +1441,38 @@ def _delivered_source_matches(
         ):
             return False
     return True
+
+
+def _source_artifact_path(
+    row: dict[str, object], artifact: object, paths: set[str]
+) -> str | None:
+    if not isinstance(artifact, dict) or set(artifact) != {"path", "bytes", "sha256"}:
+        return None
+    path = artifact["path"]
+    if not isinstance(path, str) or path in paths:
+        return None
+    if not _source_artifact_binding(row, path):
+        return None
+    if any(part in {"", ".", ".."} for part in path.split("/")):
+        return None
+    if type(artifact["bytes"]) is not int or artifact["bytes"] <= 0:
+        return None
+    if not isinstance(artifact["sha256"], str) or not re.fullmatch(
+        r"[0-9a-f]{64}", artifact["sha256"]
+    ):
+        return None
+    return path
+
+
+def _source_artifact_content_matches(
+    state: _ScanState, artifact: object, path: str
+) -> bool:
+    actual = state.files.get(path, {})
+    return (
+        isinstance(artifact, dict)
+        and actual.get("sha256") == artifact["sha256"]
+        and actual.get("size") == artifact["bytes"]
+    )
 
 
 def _source_delivery_findings(state: _ScanState, contract: dict) -> list[dict]:
@@ -1352,35 +1490,37 @@ def _source_delivery_findings(state: _ScanState, contract: dict) -> list[dict]:
     # from a top-level license or a caller-provided "not copyleft" exemption.
     claimed_artifacts: dict[str, tuple[str, str, str]] = {}
     for identity, row in inventory.items():
-        record = records[identity]
-        if not isinstance(record, dict) or record.get("component") != row:
-            findings.append({"code": "corresponding_source_component_mismatch"})
-            continue
-        artifacts = record.get("artifacts")
-        if isinstance(artifacts, list):
-            for artifact in artifacts:
-                if isinstance(artifact, dict) and isinstance(artifact.get("path"), str):
-                    path = artifact["path"]
-                    component_key = _source_component_key(row)
-                    previous = claimed_artifacts.setdefault(path, component_key)
-                    if previous != component_key:
-                        findings.append(
-                            {
-                                "code": "corresponding_source_artifact_reused",
-                                "path": path,
-                            }
-                        )
-        if not _delivered_source_matches(state, row, artifacts):
-            findings.append(
-                {
-                    "code": "corresponding_source_delivery_mismatch",
-                    "component": identity,
-                }
+        findings.extend(
+            _source_delivery_record_findings(
+                state, identity, row, records[identity], claimed_artifacts
             )
-        if row.get("ecosystem") == "dpkg" and not row.get("copyright_sha256"):
-            findings.append({"code": "corresponding_source_copyright_missing"})
-        if row.get("ecosystem") == "python" and not row.get("record_sha256"):
-            findings.append({"code": "corresponding_source_python_record_missing"})
+        )
+    return findings
+
+
+def _source_delivery_record_findings(
+    state: _ScanState,
+    identity: str,
+    row: dict[str, object],
+    record: object,
+    claimed_artifacts: dict[str, tuple[str, str, str]],
+) -> list[dict]:
+    findings: list[dict] = []
+    if not isinstance(record, dict) or record.get("component") != row:
+        return [{"code": "corresponding_source_component_mismatch"}]
+    artifacts = record.get("artifacts")
+    if isinstance(artifacts, list):
+        component_key = _source_component_key(row)
+        for artifact in artifacts:
+            path = artifact.get("path") if isinstance(artifact, dict) else None
+            if isinstance(path, str) and claimed_artifacts.setdefault(path, component_key) != component_key:
+                findings.append({"code": "corresponding_source_artifact_reused", "path": path})
+    if not _delivered_source_matches(state, row, artifacts):
+        findings.append({"code": "corresponding_source_delivery_mismatch", "component": identity})
+    if row.get("ecosystem") == "dpkg" and not row.get("copyright_sha256"):
+        findings.append({"code": "corresponding_source_copyright_missing"})
+    if row.get("ecosystem") == "python" and not row.get("record_sha256"):
+        findings.append({"code": "corresponding_source_python_record_missing"})
     return findings
 
 
