@@ -3190,7 +3190,19 @@ def _native_context_digest(*, isolated_dir, controller, context, sky_executable,
         if not process or not local_api._listener_owned(record, process):
             raise NativeResultUnavailable("owned API identity is unavailable")
         _check_native_environment(record, environment, sky_executable)
-        store = Path(environment["HOME"]) / ".sky/api_server/requests.db"
+        runtime_value = str(environment.get("SKY_RUNTIME_DIR") or "").strip()
+        runtime_home = Path(environment.get("HOME") or Path.home())
+        if runtime_value == "~":
+            runtime_dir = runtime_home
+        elif runtime_value.startswith("~/"):
+            runtime_dir = runtime_home / runtime_value[2:]
+        else:
+            runtime_dir = Path(runtime_value)
+        if not runtime_value or not runtime_dir.is_absolute():
+            raise NativeResultUnavailable("native request store runtime is unavailable")
+        if runtime_dir.resolve() != runtime_dir:
+            raise NativeResultUnavailable("native request store runtime is not owner-bound")
+        store = runtime_dir / ".sky" / "api_server" / "requests.db"
         metadata = store.lstat()
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
             raise NativeResultUnavailable("native request store is not owner-bound")

@@ -3751,7 +3751,8 @@ def test_native_context_digest_sanitizes_kubectl_environment(
     monkeypatch, tmp_path
 ) -> None:
     home = tmp_path / "home"
-    store = home / ".sky" / "api_server"
+    runtime = tmp_path / "runtime"
+    store = runtime / ".sky" / "api_server"
     store.mkdir(parents=True)
     (store / "requests.db").write_text("synthetic", encoding="utf-8")
     config = tmp_path / "global.yaml"
@@ -3759,6 +3760,7 @@ def test_native_context_digest_sanitizes_kubectl_environment(
     sky_executable = tmp_path / "sky" / "bin" / "sky"
     environment = {
         "HOME": str(home),
+        "SKY_RUNTIME_DIR": str(runtime),
         "PATH": "/usr/bin",
         "LANG": "C.UTF-8",
         "KUBECONFIG": str(tmp_path / "kubeconfig"),
