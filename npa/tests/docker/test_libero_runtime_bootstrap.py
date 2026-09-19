@@ -267,7 +267,9 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
     caller_bytes = json.dumps(caller_assertion, sort_keys=True).encode() + b"\n"
     caller_trust_root = tmp_path / "authenticated-caller-public-key.b64"
     caller_trust_root.write_bytes(module.base64.b64encode(caller_public_key))
-    caller_trust_root.chmod(0o600)
+    caller_trust_root.chmod(0o444)
+    module.AUTHENTICATED_CALLER_TRUST_ROOT = caller_trust_root
+    module.AUTHENTICATED_CALLER_TRUST_ROOT_OWNER_UID = os.getuid()
     caller_trust_raw = tmp_path / "authenticated-caller-public-key.raw"
     caller_trust_raw.write_bytes(caller_public_key)
     caller_trust_raw.chmod(0o600)
@@ -411,6 +413,10 @@ def test_output_storage_authorization_is_hash_bound_scoped_and_temporary(
     for name, value in credentials.items():
         monkeypatch.setenv(name, value)
     policy_sha256 = "a" * 64
+    lease_key = f"byof/{run_id}/.npa-output-lease"
+    lease_etag = '"lease-etag"'
+    lease_version = "lease-version"
+    lease_nonce = "lease-nonce-000000000000000000000000000000"
     authorization = {
         "schema": module.OUTPUT_STORAGE_AUTHORIZATION_SCHEMA,
         "issuer": "npa-output-storage-control-plane",
@@ -425,6 +431,10 @@ def test_output_storage_authorization_is_hash_bound_scoped_and_temporary(
         "secret_access_key_sha256": _sha(credentials["AWS_SECRET_ACCESS_KEY"].encode()),
         "session_token_sha256": _sha(credentials["AWS_SESSION_TOKEN"].encode()),
         "policy_sha256": policy_sha256,
+        "lease_key": lease_key,
+        "lease_etag": lease_etag,
+        "lease_version_id": lease_version,
+        "lease_nonce": lease_nonce,
         "issued_at": datetime.now(timezone.utc).isoformat(),
         "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
         "nonce": "libero-output-authorization-nonce-0001",
@@ -458,6 +468,9 @@ def test_output_storage_authorization_is_hash_bound_scoped_and_temporary(
     monkeypatch.setenv(
         "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256", policy_sha256
     )
+    monkeypatch.setenv("NPA_LIBERO_EXPECTED_OUTPUT_LEASE_KEY", lease_key)
+    monkeypatch.setenv("NPA_LIBERO_EXPECTED_OUTPUT_LEASE_ETAG", lease_etag)
+    monkeypatch.setenv("NPA_LIBERO_EXPECTED_OUTPUT_LEASE_VERSION_ID", lease_version)
     monkeypatch.setenv(
         "NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT",
         (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
@@ -1557,9 +1570,7 @@ def _execution_descriptors(module, args, final):
         os.O_RDONLY | os.O_NOFOLLOW,
     )
     trust_fd = os.open(
-        Path(os.environ["NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE"]).with_suffix(
-            ".raw"
-        ),
+        module.AUTHENTICATED_CALLER_TRUST_ROOT.with_suffix(".raw"),
         os.O_RDONLY | os.O_NOFOLLOW,
     )
     try:
@@ -2658,10 +2669,17 @@ def test_output_upload_is_commit_last_and_cleans_exact_failed_transaction(
     lease_key = f"byof/{run_id}/.npa-output-lease"
     lease_etag = '"lease-etag"'
     lease_version = "lease-version"
+    lease_nonce = "lease-nonce-000000000000000000000000000000"
     monkeypatch.setenv("NPA_LIBERO_EXPECTED_OUTPUT_LEASE_KEY", lease_key)
     monkeypatch.setenv("NPA_LIBERO_EXPECTED_OUTPUT_LEASE_ETAG", lease_etag)
     monkeypatch.setenv("NPA_LIBERO_EXPECTED_OUTPUT_LEASE_VERSION_ID", lease_version)
-    capability = {"capability_id": "libero-output-capability-fixture-0001"}
+    capability = {
+        "capability_id": "libero-output-capability-fixture-0001",
+        "lease_key": lease_key,
+        "lease_etag": lease_etag,
+        "lease_version_id": lease_version,
+        "lease_nonce": lease_nonce,
+    }
     validation_calls = 0
 
     def validate_storage(*_args, **_kwargs):
@@ -2695,6 +2713,7 @@ def test_output_upload_is_commit_last_and_cleans_exact_failed_transaction(
                     {
                         "etag": lease_etag,
                         "x-amz-version-id": lease_version,
+                        "x-amz-meta-npa-lease-nonce": lease_nonce,
                     },
                     b"",
                 )
@@ -2863,7 +2882,7 @@ def test_successful_put_without_identity_headers_refuses_without_claiming_owners
         )
 
     monkeypatch.setattr(module, "_sigv4_request", request)
-    with pytest.raises(module.BootstrapRefusal, match="cleanup ownership is incomplete"):
+    with pytest.raises(module.BootstrapRefusal, match="ownership identity unavailable"):
         module._verified_output_put(
             endpoint="https://storage.fixture.invalid",
             bucket="fixture-bucket",
@@ -2874,8 +2893,8 @@ def test_successful_put_without_identity_headers_refuses_without_claiming_owners
             transaction_token="c" * 32,
             attempted=attempted,
         )
-    assert calls == ["PUT"]
-    assert attempted == {}
+    assert calls == ["PUT", "HEAD"]
+    assert attempted["byof/run/artifact.json"]["version_id"] == ""
 
 
 def test_ambiguous_put_failure_refuses_without_unversioned_recovery(
@@ -2904,7 +2923,7 @@ def test_ambiguous_put_failure_refuses_without_unversioned_recovery(
             attempted=attempted,
         )
     assert calls == ["PUT", "HEAD"]
-    assert attempted == {}
+    assert attempted[object_key]["version_id"] == ""
 
 
 def test_ambiguous_put_reconciles_only_exact_transaction_metadata(monkeypatch) -> None:

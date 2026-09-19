@@ -61,7 +61,7 @@ RUN set -eux; \
     rm -f /var/log/dpkg.log /var/log/alternatives.log /var/log/lastlog /var/log/faillog /var/cache/ldconfig/aux-cache; \
     install -d -m 0750 -o ubuntu -g npa-libero-exec /workspace /workspace/.cache /workspace/.cache/npa /workspace/.cache/npa/libero; \
     install -d -m 1770 -o ubuntu -g npa-libero-exec /workspace/byof-runs; \
-    install -d -m 0755 /run/sshd /opt/npa/libero; \
+    install -d -m 0755 /run/sshd /run/npa/libero /opt/npa/libero; \
     printf '%s\n' \
       'Cmnd_Alias NPA_SKYPILOT_SSH = /usr/local/bin/ssh-keygen -A, /usr/sbin/service ssh start, /usr/sbin/service ssh restart' \
       'Cmnd_Alias NPA_SKYPILOT_APT = /usr/local/sbin/apt-get update, /usr/local/sbin/apt-get update *, /usr/local/sbin/apt-get install, /usr/local/sbin/apt-get install *' \

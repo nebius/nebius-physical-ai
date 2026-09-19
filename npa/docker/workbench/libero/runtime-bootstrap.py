@@ -96,6 +96,10 @@ OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY = Path(
     "/opt/npa/libero/output-storage-authorization-public-key.b64"
 )
 OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_OWNER_UID = 0
+AUTHENTICATED_CALLER_TRUST_ROOT = Path(
+    "/run/npa/libero/authenticated-caller-public-key.b64"
+)
+AUTHENTICATED_CALLER_TRUST_ROOT_OWNER_UID = 0
 CUSTOMER_AUTHORIZATION_NAMESPACE = b"npa.libero.customer-authorization"
 AUTHENTICATED_CALLER_NAMESPACE = b"npa.libero.authenticated-caller"
 OUTPUT_STORAGE_AUTHORIZATION_NAMESPACE = b"npa.libero.output-storage-authorization"
@@ -1316,18 +1320,13 @@ def _authenticated_caller_binding_from_environment() -> tuple[bytes, bytes, str]
     except (ValueError, binascii.Error) as exc:
         raise BootstrapRefusal("authenticated caller assertion is unavailable") from exc
     expected_sha256 = os.environ.get("NPA_LIBERO_AUTHENTICATED_CALLER_SHA256", "")
-    trust_path = os.environ.get("NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE", "")
-    if not _is_hex(expected_sha256, 64) or not trust_path:
+    if not _is_hex(expected_sha256, 64):
         raise BootstrapRefusal("authenticated caller binding is unavailable")
-    encoded_trust_root = _read_private_regular_bytes(
-        Path(trust_path), limit=1024, input_name="authenticated caller trust root"
+    trusted_public_key = _trusted_public_key(
+        AUTHENTICATED_CALLER_TRUST_ROOT,
+        owner_uid=AUTHENTICATED_CALLER_TRUST_ROOT_OWNER_UID,
+        label="authenticated caller",
     )
-    try:
-        trusted_public_key = base64.b64decode(encoded_trust_root, validate=True)
-    except (ValueError, binascii.Error) as exc:
-        raise BootstrapRefusal("authenticated caller trust root is invalid") from exc
-    if len(trusted_public_key) != 32:
-        raise BootstrapRefusal("authenticated caller trust root is invalid")
     try:
         caller = json.loads(caller_bytes)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -3108,6 +3107,10 @@ def _storage_authorization(
         "secret_access_key_sha256",
         "session_token_sha256",
         "policy_sha256",
+        "lease_key",
+        "lease_etag",
+        "lease_version_id",
+        "lease_nonce",
         "issued_at",
         "expires_at",
         "nonce",
@@ -3122,6 +3125,11 @@ def _storage_authorization(
     _, runtime_manifest_sha256 = _validate_manifest(DEFAULT_MANIFEST)
     issued_at = _parse_utc(authorization.get("issued_at"), "authorization issued_at")
     expires_at = _parse_utc(authorization.get("expires_at"), "authorization expires_at")
+    expected_lease_key = os.environ.get("NPA_LIBERO_EXPECTED_OUTPUT_LEASE_KEY", "")
+    expected_lease_etag = os.environ.get("NPA_LIBERO_EXPECTED_OUTPUT_LEASE_ETAG", "")
+    expected_lease_version_id = os.environ.get(
+        "NPA_LIBERO_EXPECTED_OUTPUT_LEASE_VERSION_ID", ""
+    )
     customer_authorization_expires_at = _parse_utc(
         os.environ.get("NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT"),
         "customer authorization expires_at",
@@ -3146,6 +3154,17 @@ def _storage_authorization(
         == os.environ.get("NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_PREFIX_SHA256", "")
         and authorization.get("policy_sha256")
         == os.environ.get("NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256", "")
+        and authorization.get("lease_key") == expected_lease_key
+        and authorization.get("lease_etag") == expected_lease_etag
+        and authorization.get("lease_version_id") == expected_lease_version_id
+        and authorization.get("lease_key")
+        and re.fullmatch(r'"[^\"]+"', str(authorization.get("lease_etag") or ""))
+        is not None
+        and authorization.get("lease_version_id")
+        and re.fullmatch(
+            r"[A-Za-z0-9_-]{32,128}", str(authorization.get("lease_nonce") or "")
+        )
+        is not None
         and all((access_key, secret_key, session_token))
         and authorization.get("access_key_id_sha256")
         == hashlib.sha256(access_key.encode()).hexdigest()
@@ -3372,6 +3391,52 @@ def _verified_output_put(
         raise BootstrapRefusal("output transaction identity is invalid")
     checksum = base64.b64encode(bytes.fromhex(digest)).decode()
     url = _s3_object_url(endpoint, bucket, object_key)
+    attempted[object_key] = {
+        "size_bytes": len(payload),
+        "checksum": checksum,
+        "etag": "",
+        "version_id": "",
+        "transaction_token_sha256": hashlib.sha256(transaction_token.encode()).hexdigest(),
+    }
+
+    def reconcile_put() -> dict[str, str]:
+        try:
+            status_code, reconciled_headers, _ = _sigv4_request(
+                "HEAD",
+                url,
+                extra_headers={"x-amz-checksum-mode": "ENABLED"},
+                expected_statuses=frozenset({200, 404}),
+            )
+        except BootstrapRefusal as reconcile_exc:
+            key_hash = hashlib.sha256(object_key.encode()).hexdigest()
+            raise BootstrapRefusal(
+                "output storage PUT outcome is ambiguous; ownership "
+                f"reconciliation failed for key hash {key_hash}"
+            ) from reconcile_exc
+        if status_code == 404:
+            attempted.pop(object_key, None)
+            key_hash = hashlib.sha256(object_key.encode()).hexdigest()
+            raise BootstrapRefusal(
+                "output storage PUT outcome is ambiguous; object proven absent "
+                f"for key hash {key_hash}"
+            )
+        version_id = reconciled_headers.get("x-amz-version-id", "")
+        etag = reconciled_headers.get("etag", "")
+        if (
+            reconciled_headers.get("x-amz-meta-npa-transaction-token")
+            != transaction_token
+            or reconciled_headers.get("x-amz-checksum-sha256") != checksum
+            or not version_id
+            or re.fullmatch(r'"[^\"]+"', etag) is None
+        ):
+            key_hash = hashlib.sha256(object_key.encode()).hexdigest()
+            raise BootstrapRefusal(
+                "output storage PUT outcome is ambiguous; immutable ownership "
+                f"identity unavailable for key hash {key_hash}"
+            )
+        attempted[object_key].update({"etag": etag, "version_id": version_id})
+        return reconciled_headers
+
     try:
         _, created_headers, _ = _sigv4_request(
             "PUT",
@@ -3384,57 +3449,17 @@ def _verified_output_put(
             },
         )
     except BootstrapRefusal as exc:
-        if str(exc) != "output storage PUT request failed":
+        if not str(exc).startswith("output storage PUT "):
+            attempted.pop(object_key, None)
             raise
-        if str(exc) == "output storage PUT request failed":
-            try:
-                status_code, reconciled_headers, _ = _sigv4_request(
-                    "HEAD",
-                    url,
-                    extra_headers={"x-amz-checksum-mode": "ENABLED"},
-                    expected_statuses=frozenset({200, 404}),
-                )
-            except BootstrapRefusal as reconcile_exc:
-                key_hash = hashlib.sha256(object_key.encode()).hexdigest()
-                raise BootstrapRefusal(
-                    "output storage PUT outcome is ambiguous; ownership "
-                    f"reconciliation failed for key hash {key_hash}"
-                ) from reconcile_exc
-            if status_code == 404:
-                key_hash = hashlib.sha256(object_key.encode()).hexdigest()
-                raise BootstrapRefusal(
-                    "output storage PUT outcome is ambiguous; object proven absent "
-                    f"for key hash {key_hash}"
-                ) from exc
-            version_id = reconciled_headers.get("x-amz-version-id", "")
-            etag = reconciled_headers.get("etag", "")
-            if (
-                reconciled_headers.get("x-amz-meta-npa-transaction-token")
-                != transaction_token
-                or reconciled_headers.get("x-amz-checksum-sha256") != checksum
-                or not version_id
-                or re.fullmatch(r'"[^\"]+"', etag) is None
-            ):
-                key_hash = hashlib.sha256(object_key.encode()).hexdigest()
-                raise BootstrapRefusal(
-                    "output storage PUT outcome is ambiguous; immutable ownership "
-                    f"identity unavailable for key hash {key_hash}"
-                ) from exc
-            created_headers = reconciled_headers
+        created_headers = reconcile_put()
     version_id = created_headers.get("x-amz-version-id", "")
     etag = created_headers.get("etag", "")
     if not version_id or re.fullmatch(r'"[^\"]+"', etag) is None:
-        raise BootstrapRefusal(
-            "output storage PUT succeeded without immutable creation identity; "
-            "cleanup ownership is incomplete"
-        )
-    attempted[object_key] = {
-        "size_bytes": len(payload),
-        "checksum": checksum,
-        "etag": etag,
-        "version_id": version_id,
-        "transaction_token_sha256": hashlib.sha256(transaction_token.encode()).hexdigest(),
-    }
+        created_headers = reconcile_put()
+        version_id = created_headers.get("x-amz-version-id", "")
+        etag = created_headers.get("etag", "")
+    attempted[object_key].update({"etag": etag, "version_id": version_id})
     version_url = url + "?versionId=" + urllib.parse.quote(version_id, safe="")
     _, headers, observed = _sigv4_request(
         "GET", version_url, extra_headers={"x-amz-checksum-mode": "ENABLED"}
@@ -3526,13 +3551,21 @@ def _cleanup_output_attempts(
         )
 
 
-def _verify_output_lease(*, endpoint: str, bucket: str) -> tuple[str, str, str]:
-    """Require the exact manager-created, version-bound output lease."""
+def _verify_output_lease(
+    *, endpoint: str, bucket: str, authorization: dict[str, Any]
+) -> tuple[str, str, str, str]:
+    """Require the signed, manager-created, version-bound output lease."""
 
-    key = os.environ.get("NPA_LIBERO_EXPECTED_OUTPUT_LEASE_KEY", "")
-    etag = os.environ.get("NPA_LIBERO_EXPECTED_OUTPUT_LEASE_ETAG", "")
-    version_id = os.environ.get("NPA_LIBERO_EXPECTED_OUTPUT_LEASE_VERSION_ID", "")
-    if not key or re.fullmatch(r'"[^\"]+"', etag) is None or not version_id:
+    key = str(authorization.get("lease_key") or "")
+    etag = str(authorization.get("lease_etag") or "")
+    version_id = str(authorization.get("lease_version_id") or "")
+    nonce = str(authorization.get("lease_nonce") or "")
+    if (
+        not key
+        or re.fullmatch(r'"[^\"]+"', etag) is None
+        or not version_id
+        or re.fullmatch(r"[A-Za-z0-9_-]{32,128}", nonce) is None
+    ):
         raise BootstrapRefusal("output transaction lease binding is incomplete")
     url = _s3_object_url(endpoint, bucket, key)
     version_url = url + "?versionId=" + urllib.parse.quote(version_id, safe="")
@@ -3543,16 +3576,33 @@ def _verify_output_lease(*, endpoint: str, bucket: str) -> tuple[str, str, str]:
         status != 200
         or headers.get("etag") != etag
         or headers.get("x-amz-version-id") != version_id
+        or headers.get("x-amz-meta-npa-lease-nonce") != nonce
     ):
         raise BootstrapRefusal("output transaction lease changed or disappeared")
-    return key, etag, version_id
+    return key, etag, version_id, nonce
 
 
 def _release_output_lease(
-    *, endpoint: str, bucket: str, key: str, etag: str, version_id: str
+    *,
+    endpoint: str,
+    bucket: str,
+    key: str,
+    etag: str,
+    version_id: str,
+    nonce: str,
 ) -> None:
     url = _s3_object_url(endpoint, bucket, key)
     version_url = url + "?versionId=" + urllib.parse.quote(version_id, safe="")
+    status, headers, _ = _sigv4_request(
+        "HEAD", version_url, expected_statuses=frozenset({200, 404})
+    )
+    if (
+        status != 200
+        or headers.get("etag") != etag
+        or headers.get("x-amz-version-id") != version_id
+        or headers.get("x-amz-meta-npa-lease-nonce") != nonce
+    ):
+        raise BootstrapRefusal("output transaction lease identity changed")
     status, _, _ = _sigv4_request(
         "DELETE",
         version_url,
@@ -3626,9 +3676,12 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
     receipts: list[dict[str, Any]] = []
     committed = False
     lease_released = False
+    lease_key = lease_etag = lease_version_id = lease_nonce = ""
     try:
-        lease_key, lease_etag, lease_version_id = _verify_output_lease(
-            endpoint=endpoint, bucket=parsed.netloc
+        lease_key, lease_etag, lease_version_id, lease_nonce = _verify_output_lease(
+            endpoint=endpoint,
+            bucket=parsed.netloc,
+            authorization=storage_authorization,
         )
         if smoke_exit_code == 0:
             output_limits = OUTPUT_ARTIFACT_SIZE_LIMITS
@@ -3735,13 +3788,13 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
             transaction_token=transaction_token,
             attempted=attempted,
         )
-        _verify_output_lease(endpoint=endpoint, bucket=parsed.netloc)
         _release_output_lease(
             endpoint=endpoint,
             bucket=parsed.netloc,
             key=lease_key,
             etag=lease_etag,
             version_id=lease_version_id,
+            nonce=lease_nonce,
         )
         lease_released = True
         committed = True
@@ -3754,7 +3807,7 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
                 )
             except BootstrapRefusal as cleanup_exc:
                 cleanup_errors.append(str(cleanup_exc))
-        if not lease_released and "lease_key" in locals():
+        if not lease_released and lease_key and lease_nonce:
             try:
                 _release_output_lease(
                     endpoint=endpoint,
@@ -3762,6 +3815,7 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
                     key=lease_key,
                     etag=lease_etag,
                     version_id=lease_version_id,
+                    nonce=lease_nonce,
                 )
             except BootstrapRefusal as lease_exc:
                 cleanup_errors.append(str(lease_exc))
