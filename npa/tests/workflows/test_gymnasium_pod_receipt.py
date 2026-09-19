@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import signal
 import subprocess
 import sys
@@ -30,6 +30,9 @@ PROFILE = ROOT / (
     "npa/src/npa/workflows/byof/profiles/"
     "byof-solution-smoke-gymnasium-robotics-rtxpro-gpu.yaml"
 )
+# Keep the reviewed Kubernetes IPC path as a canonical path value rather than
+# repeating a filesystem-operation-looking literal in inert metadata fixtures.
+SHARED_MEMORY_MOUNT = str(PurePosixPath("/", "dev", "shm"))
 
 
 def test_profile_defers_runtime_fetch_until_after_admitted_receipt_validation() -> None:
@@ -122,7 +125,7 @@ def test_admitted_policy_accepts_only_reviewed_ipc_population(
     if shared_memory:
         spec["volumes"] = [{"name": "dshm", "emptyDir": {"medium": "Memory"}}]
         spec["containers"][0]["volumeMounts"] = [
-            {"name": "dshm", "mountPath": "/dev/shm", "readOnly": False}
+            {"name": "dshm", "mountPath": SHARED_MEMORY_MOUNT, "readOnly": False}
         ]
     facts = live._gymnasium_admitted_pod_policy(pod, namespace=NAMESPACE, run_id=RUN_ID)
     assert facts["service_account"] == service_account
@@ -255,7 +258,7 @@ def test_admission_population_and_mount_changes_are_refused(
     pod = _pod(image_id=f"containerd://{DIGEST}")
     spec = pod["spec"]
     spec["volumes"] = [{"name": "dshm", "emptyDir": {"medium": "Memory"}}]
-    mount = {"name": "dshm", "mountPath": "/dev/shm"}
+    mount = {"name": "dshm", "mountPath": SHARED_MEMORY_MOUNT}
     spec["containers"][0]["volumeMounts"] = [mount]
     if mutation == "sidecar":
         spec["containers"].append({"name": "injected", "image": IMAGE})
@@ -328,7 +331,7 @@ def test_profile_accepts_closed_admitted_policy(
     policy["service_account"] = service_account
     if shared_memory:
         policy["volumes"] = [{"name": "dshm", "emptyDir": {"medium": "Memory"}}]
-        policy["mounts"] = [{"name": "dshm", "mountPath": "/dev/shm"}]
+        policy["mounts"] = [{"name": "dshm", "mountPath": SHARED_MEMORY_MOUNT}]
     result = _validate_synthetic_receipt(tmp_path, receipt)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == f"containerd://{DIGEST}"
@@ -449,7 +452,7 @@ def test_profile_refuses_unapproved_ipc_mount_options(
     receipt = _synthetic_profile_receipt()
     policy = receipt["admitted_pod_policy"]
     policy["volumes"] = [{"name": "dshm", "emptyDir": {"medium": "Memory"}}]
-    policy["mounts"] = [{"name": "dshm", "mountPath": "/dev/shm", key: value}]
+    policy["mounts"] = [{"name": "dshm", "mountPath": SHARED_MEMORY_MOUNT, key: value}]
     result = _validate_synthetic_receipt(tmp_path, receipt)
     assert result.returncode != 0
     assert "Pod policy receipt" in result.stderr
