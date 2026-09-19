@@ -49,6 +49,19 @@ def _missing_install_message(
     )
 
 
+def _namespace_package_message(expected_src: Path, npa_module) -> str:
+    found_at = ", ".join(getattr(npa_module, "__path__", [])) or "<unknown>"
+    src = shlex.quote(str(expected_src))
+    return (
+        "error: `import npa` resolved to an implicit namespace package (no "
+        f"__init__.py), found under: {found_at}\n"
+        "This usually means PYTHONPATH points at the checkout root instead of\n"
+        "its npa/src — a common typo (PYTHONPATH=<repo root> instead of\n"
+        "PYTHONPATH=<repo root>/npa/src). Point it at the real package source:\n"
+        f"  export PYTHONPATH={src}"
+    )
+
+
 def _drift_message(expected_src: Path, resolved_src: Path, npa_dir: Path) -> str:
     src = shlex.quote(str(expected_src))
     return (
@@ -92,6 +105,9 @@ def check(python_executable: str, repo_root: Path) -> str | None:
         import npa
     except ImportError as error:
         return _missing_install_message(expected_src, npa_dir, error)
+
+    if npa.__file__ is None:
+        return _namespace_package_message(expected_src, npa)
 
     resolved_src = Path(npa.__file__).resolve().parent.parent
     if resolved_src != expected_src:

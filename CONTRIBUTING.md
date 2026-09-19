@@ -643,9 +643,10 @@ Run `make test-prereqs` once per environment before trusting `make test`'s
 result: it distinguishes two different consequences of a missing optional
 tool, verified against the specific test files that check for each, not
 assumed. The `adapter` extra's `pyarrow` is not optional in the usual sense —
-without it, 45+ files that import it unconditionally fail to collect at all,
-so `make test` exits non-zero outright rather than passing with less
-coverage. Missing ffmpeg/ffprobe, a CPU checkpoint runtime, tmux, or Node
+without it, files that import it unconditionally (for example
+`npa/tests/test_lerobot_shared_video_offsets.py`) fail to collect at all, so
+`make test` exits non-zero outright rather than passing with less coverage.
+Missing ffmpeg/ffprobe, a CPU checkpoint runtime, tmux, or Node
 instead let the specific tests that check for them self-skip, so `make test`
 can still exit 0 while covering less than CI. The same command also reports
 free space and any retained `pytest-of-<user>/pytest-N` directories under the

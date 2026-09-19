@@ -100,9 +100,10 @@ def collect_prereqs() -> list[Prereq]:
             pyarrow_present,
             pyarrow_error,
             True,
-            "FAILS `make test`, not a skip: 45+ files under npa/tests/ do an "
-            "unguarded top-level `import pyarrow`, so pytest cannot even collect "
-            "them without it (ModuleNotFoundError at collection, non-zero exit)",
+            "FAILS `make test`, not a skip: multiple files under npa/tests/ do an "
+            "unguarded top-level `import pyarrow` (for example "
+            "npa/tests/test_lerobot_shared_video_offsets.py), so pytest cannot even "
+            "collect them without it (ModuleNotFoundError at collection, non-zero exit)",
             'pip install -e "npa[dev,adapter]"',
         ),
         Prereq(

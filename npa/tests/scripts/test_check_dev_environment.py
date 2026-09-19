@@ -118,6 +118,36 @@ def test_missing_install_fails_with_install_instructions(tmp_path: Path) -> None
     assert "[dev,adapter]" in result.stderr
 
 
+def test_pythonpath_at_checkout_root_gives_guidance_not_a_traceback(
+    tmp_path: Path,
+) -> None:
+    """PYTHONPATH=<checkout root> (typo for <checkout root>/npa/src) is a real crash we saw.
+
+    `checkout/npa` has no `__init__.py` of its own (only nested under
+    `npa/src/npa/`), so pointing PYTHONPATH at the checkout root instead of
+    its `npa/src` makes `import npa` succeed as an implicit namespace
+    package with `npa.__file__ is None`. `Path(None)` then raised
+    `TypeError` before this fix, escaping as a raw traceback instead of the
+    guard's own actionable message.
+
+    Args:
+        tmp_path: Isolated fixture directory.
+    Returns:
+        None.
+    Raises:
+        AssertionError: The guard crashes with a traceback instead of
+            reporting the PYTHONPATH mistake.
+    """
+    target = _make_checkout(tmp_path, "target")
+    result = _run(target, str(target))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "TypeError" not in result.stderr
+    assert "namespace package" in result.stderr
+    expected_src = str((target / "npa" / "src").resolve())
+    assert f"export PYTHONPATH={expected_src}" in result.stderr
+
+
 def test_drift_message_never_recommends_installing_into_the_resolved_interpreter(
     tmp_path: Path,
 ) -> None:
