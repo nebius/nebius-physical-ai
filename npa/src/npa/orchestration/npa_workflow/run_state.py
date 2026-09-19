@@ -540,10 +540,10 @@ def status_key(prefix: str) -> str:
     return f"{base}/npa-workflow/status.json"
 
 
-def _corrupt_runtime_state(reason: str) -> NpaWorkflowError:
+def _corrupt_runtime_state(key: str, reason: str) -> NpaWorkflowError:
     return NpaWorkflowError(
-        "durable runtime state is corrupt: "
-        f"runtime.json {reason}; preserve it and restore a valid ledger before resuming"
+        f"durable runtime state is corrupt at {key}: {reason}; "
+        "preserve it and restore a valid ledger before resuming"
     )
 
 
@@ -640,18 +640,33 @@ class RunStateStore:
         return payload
 
     def read_runtime_state(self) -> RuntimeRunState | None:
+        """Read the durable runtime ledger without collapsing corruption or I/O errors.
+
+        Args:
+            None.
+
+        Returns:
+            The decoded runtime state, or ``None`` when the object does not exist.
+
+        Raises:
+            NpaWorkflowError: The object is not valid UTF-8 JSON or a JSON object.
+            Exception: The object store denied or could not complete the read.
+        """
+        key = runtime_key(self.prefix)
         try:
-            body = self._read(runtime_key(self.prefix))
+            body = self._read(key)
         except FileNotFoundError:
             return None
         except UnicodeDecodeError as exc:
-            raise _corrupt_runtime_state("is not valid UTF-8 JSON") from exc
+            raise _corrupt_runtime_state(
+                key, "content is not valid UTF-8 JSON"
+            ) from exc
         try:
             payload = json.loads(body)
         except json.JSONDecodeError as exc:
-            raise _corrupt_runtime_state("is not valid JSON") from exc
+            raise _corrupt_runtime_state(key, "content is not valid JSON") from exc
         if not isinstance(payload, dict):
-            raise _corrupt_runtime_state("must contain a JSON object")
+            raise _corrupt_runtime_state(key, "content must be a JSON object")
         return RuntimeRunState.from_dict(payload)
 
     def write_runtime_state(self, state: RuntimeRunState) -> dict[str, Any]:
@@ -776,6 +791,7 @@ class RunStateStore:
             value = self._reader(self.bucket, key)
             return value if isinstance(value, bytes) else str(value).encode("utf-8")
         from npa.clients.storage import StorageClient
+        from botocore.exceptions import ClientError
 
         client = StorageClient.from_environment(
             endpoint_url=self._endpoint_url,
@@ -784,8 +800,11 @@ class RunStateStore:
         )
         try:
             response = client._s3.get_object(Bucket=self.bucket, Key=key)
-        except Exception as exc:
-            raise FileNotFoundError(f"s3://{self.bucket}/{key}") from exc
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in {"404", "NoSuchKey", "NotFound"}:
+                raise FileNotFoundError(f"s3://{self.bucket}/{key}") from exc
+            raise
         return response["Body"].read()
 
     def _write(self, key: str, payload: Mapping[str, Any]) -> None:

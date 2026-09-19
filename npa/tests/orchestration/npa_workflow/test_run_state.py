@@ -314,8 +314,13 @@ def test_read_runtime_state_propagates_unexpected_storage_errors() -> None:
         store.read_runtime_state()
 
 
-@pytest.mark.parametrize("corrupt_body", ['{"schema_version":', "[]"])
-def test_read_runtime_state_rejects_corrupt_ledger(corrupt_body: str) -> None:
+@pytest.mark.parametrize(
+    "corrupt_body",
+    ['{"schema_version":', "[]", b'\xff\xfe{"schema_version":'],
+)
+def test_read_runtime_state_rejects_corrupt_ledger(
+    corrupt_body: str | bytes,
+) -> None:
     """Corrupt durable state must never be mistaken for an absent resume ledger."""
 
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
@@ -331,8 +336,60 @@ def test_read_runtime_state_rejects_corrupt_ledger(corrupt_body: str) -> None:
     with pytest.raises(
         NpaWorkflowError,
         match=r"durable runtime state is corrupt.*runtime\.json",
-    ):
+    ) as error:
         corrupt.read_runtime_state()
+    assert "runs/demo/npa-workflow/runtime.json" in str(error.value)
+    assert "s3://bucket" not in str(error.value)
+
+
+@pytest.mark.parametrize("error_code", ["AccessDenied", "SlowDown", "InternalError"])
+def test_read_runtime_state_propagates_s3_read_failures(
+    error_code: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only an absent object may initialize an empty production resume ledger."""
+
+    from botocore.exceptions import ClientError
+
+    from npa.orchestration.npa_workflow.run_state import RunStateStore as Store
+
+    class FailingS3:
+        def get_object(self, **_kwargs: object) -> dict[str, object]:
+            raise ClientError({"Error": {"Code": error_code}}, "GetObject")
+
+    class FailingStorage:
+        _s3 = FailingS3()
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: FailingStorage(),
+    )
+
+    with pytest.raises(ClientError) as error:
+        Store(bucket="bucket", prefix="runs/demo").read_runtime_state()
+    assert error.value.response["Error"]["Code"] == error_code
+
+
+def test_read_runtime_state_returns_none_for_missing_s3_object(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from botocore.exceptions import ClientError
+
+    from npa.orchestration.npa_workflow.run_state import RunStateStore as Store
+
+    class MissingS3:
+        def get_object(self, **_kwargs: object) -> dict[str, object]:
+            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+
+    class MissingStorage:
+        _s3 = MissingS3()
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: MissingStorage(),
+    )
+
+    assert Store(bucket="bucket", prefix="runs/missing").read_runtime_state() is None
 
 
 # ── Resource-honest manifests for submitted runs ─────────────────────────────
