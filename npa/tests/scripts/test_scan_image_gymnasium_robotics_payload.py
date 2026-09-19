@@ -393,6 +393,100 @@ def _duplicate_outer_member(path: Path, name: str) -> None:
     path.write_bytes(rendered.getvalue())
 
 
+def _append_outer_files(path: Path, files: dict[str, bytes]) -> None:
+    """Append deterministic regular members while preserving existing tar bytes."""
+
+    source = path.read_bytes()
+    rendered = io.BytesIO()
+    with tarfile.open(fileobj=io.BytesIO(source), mode="r:") as archive:
+        members = archive.getmembers()
+        bodies = {
+            id(member): archive.extractfile(member).read()
+            for member in members
+            if member.isfile()
+        }
+        with tarfile.open(fileobj=rendered, mode="w") as output:
+            for member in members:
+                output.addfile(
+                    member,
+                    io.BytesIO(bodies[id(member)]) if member.isfile() else None,
+                )
+            for name, body in files.items():
+                info = tarfile.TarInfo(name)
+                info.size = len(body)
+                output.addfile(info, io.BytesIO(body))
+    path.write_bytes(rendered.getvalue())
+
+
+def _docker_save_with_oci_graph(
+    path: Path,
+    files: dict[str, bytes],
+    *,
+    unreferenced_blob: bool = False,
+) -> tuple[str, list[str]]:
+    """Build a Docker-save fixture with a graph-bound OCI index and blobs."""
+
+    config_digest, diff_ids = _docker_save(path, files)
+    with tarfile.open(path) as archive:
+        manifest = json.loads(archive.extractfile("manifest.json").read())
+        entry = manifest[0]
+        config_name = entry["Config"]
+        config_raw = archive.extractfile(config_name).read()
+        layer_raw = [archive.extractfile(name).read() for name in entry["Layers"]]
+    config_descriptor = {
+        "mediaType": "application/vnd.oci.image.config.v1+json",
+        "digest": "sha256:" + config_digest,
+        "size": len(config_raw),
+    }
+    layer_descriptors = [
+        {
+            "mediaType": "application/vnd.oci.image.layer.v1.tar",
+            "digest": "sha256:" + hashlib.sha256(raw).hexdigest(),
+            "size": len(raw),
+        }
+        for raw in layer_raw
+    ]
+    graph_manifest = json.dumps(
+        {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "config": config_descriptor,
+            "layers": layer_descriptors,
+        },
+        separators=(",", ":"),
+    ).encode()
+    graph_manifest_digest = hashlib.sha256(graph_manifest).hexdigest()
+    root_index = json.dumps(
+        {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "manifests": [
+                {
+                    "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                    "digest": "sha256:" + graph_manifest_digest,
+                    "size": len(graph_manifest),
+                    "platform": {"architecture": "amd64", "os": "linux"},
+                }
+            ],
+        },
+        separators=(",", ":"),
+    ).encode()
+    graph_files = {
+        "oci-layout": b'{"imageLayoutVersion":"1.0.0"}',
+        "index.json": root_index,
+        "blobs/sha256/" + graph_manifest_digest: graph_manifest,
+    }
+    for descriptor, raw in zip(layer_descriptors, layer_raw, strict=True):
+        graph_files["blobs/sha256/" + descriptor["digest"].removeprefix("sha256:")] = raw
+    if unreferenced_blob:
+        stray = b"unreferenced graph blob"
+        graph_files[
+            "blobs/sha256/" + hashlib.sha256(stray).hexdigest()
+        ] = stray
+    _append_outer_files(path, graph_files)
+    return config_digest, diff_ids
+
+
 def _gzip_layer(content: bytes, *, filename: str = "") -> bytes:
     stream = io.BytesIO()
     with gzip.GzipFile(filename=filename, mode="wb", fileobj=stream, mtime=0) as archive:
@@ -1147,6 +1241,28 @@ def test_docker_save_refuses_unreferenced_config_or_blob_member(
     )
 
     with pytest.raises(ValueError, match="unexpected Docker-save members"):
+        SCAN.scan(image)
+
+
+def test_docker_save_binds_and_scans_the_complete_oci_descriptor_graph(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    image = tmp_path / "graph-bound.tar"
+    _docker_save_with_oci_graph(image, _required())
+
+    result = SCAN.scan(image)
+
+    assert result["status"] == "passed"
+    assert result["distributed_blob_scan_complete"] is True
+
+
+def test_docker_save_refuses_unreferenced_oci_graph_blob(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    image = tmp_path / "unreferenced-graph-blob.tar"
+    _docker_save_with_oci_graph(image, _required(), unreferenced_blob=True)
+
+    with pytest.raises(ValueError, match="unreferenced OCI graph blobs"):
         SCAN.scan(image)
 
 

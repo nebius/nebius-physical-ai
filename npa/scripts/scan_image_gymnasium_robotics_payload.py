@@ -1643,6 +1643,7 @@ def _oci_blob(
     referenced: set[str],
     nested_budget: _NestedArchiveBudget,
     graph_budget: _OciDescriptorGraphBudget,
+    member_aliases: dict[str, str] | None = None,
 ) -> tuple[bytes, str]:
     if not isinstance(descriptor, dict):
         raise ValueError(f"OCI {label} descriptor is not an object")
@@ -1661,20 +1662,38 @@ def _oci_blob(
         raise ValueError(f"OCI {label} descriptor is incomplete")
     graph_budget.reserve(label)
     name = f"blobs/sha256/{digest.removeprefix('sha256:')}"
+    member_name = (member_aliases or {}).get(name, name)
     raw = graph_budget.validated_blobs.get(digest)
     if raw is None:
-        raw = _raw_member(archive, name, max_bytes=MAX_LAYER_ARCHIVE_BYTES)
+        raw = _raw_member(
+            archive,
+            member_name,
+            max_bytes=MAX_LAYER_ARCHIVE_BYTES,
+        )
     if len(raw) != size or (
         digest not in graph_budget.validated_blobs
         and "sha256:" + hashlib.sha256(raw).hexdigest() != digest
     ):
         raise ValueError(f"OCI {label} descriptor does not bind its blob")
-    referenced.add(name)
+    referenced.add(member_name)
     if digest not in graph_budget.validated_blobs:
         _scan_decoded_member_bytes(f"raw OCI {label} blob", raw)
-        _nested_archive_members(
-            f"raw OCI {label} blob", raw, budget=nested_budget
-        )
+        # Runtime layer blobs are decompressed and semantically scanned by the
+        # selected-manifest layer path below.  Applying generic nested-archive
+        # text policy to their compressed bytes here creates false positives on
+        # ordinary rootfs files; descriptor/config/attestation blobs still get
+        # complete recursive archive inspection at this boundary.
+        if media_type not in OCI_LAYER_MEDIA_TYPES:
+            _nested_archive_members(
+                f"raw OCI {label} blob", raw, budget=nested_budget
+            )
+        else:
+            _nested_archive_members(
+                f"raw OCI {label} blob",
+                raw,
+                budget=nested_budget,
+                skip_text_policy=True,
+            )
         graph_budget.remember(digest, raw)
     return raw, media_type
 
@@ -1686,6 +1705,7 @@ def _oci_manifest_candidates(
     referenced: set[str],
     nested_budget: _NestedArchiveBudget,
     graph_budget: _OciDescriptorGraphBudget,
+    member_aliases: dict[str, str] | None = None,
     inherited_platform: dict[str, object] | None = None,
     depth: int = 0,
 ) -> list[tuple[dict[str, object], dict[str, object]]]:
@@ -1704,6 +1724,7 @@ def _oci_manifest_candidates(
             referenced=referenced,
             nested_budget=nested_budget,
             graph_budget=graph_budget,
+            member_aliases=member_aliases,
         )
         if media_type not in OCI_INDEX_MEDIA_TYPES | OCI_MANIFEST_MEDIA_TYPES:
             raise ValueError("OCI index contains an unsupported descriptor media type")
@@ -1729,6 +1750,7 @@ def _oci_manifest_candidates(
                     referenced=referenced,
                     nested_budget=nested_budget,
                     graph_budget=graph_budget,
+                    member_aliases=member_aliases,
                     inherited_platform=platform,
                     depth=depth + 1,
                 )
@@ -1743,6 +1765,7 @@ def _oci_manifest_candidates(
             referenced=referenced,
             nested_budget=nested_budget,
             graph_budget=graph_budget,
+            member_aliases=member_aliases,
         )
         _scan_decoded_member_bytes(
             f"decoded OCI manifest config {depth}:{index}", config_raw
@@ -1758,6 +1781,7 @@ def _oci_manifest_candidates(
                 referenced=referenced,
                 nested_budget=nested_budget,
                 graph_budget=graph_budget,
+                member_aliases=member_aliases,
             )
         annotations = descriptor.get("annotations") or {}
         if not isinstance(annotations, dict):
@@ -1783,14 +1807,12 @@ def _strict_oci_layer(
             decoded = stream.decompress(raw, MAX_LAYER_ARCHIVE_BYTES + 1)
         except zlib.error as error:
             raise ValueError(f"unreadable OCI layer stream: {label}") from error
-        if (
-            len(decoded) > MAX_LAYER_ARCHIVE_BYTES
-            or not stream.eof
-            or stream.unconsumed_tail
-            or stream.unused_data
-        ):
-            raise ValueError(f"ambiguous or oversized OCI layer stream: {label}")
-    if len(decoded) > MAX_LAYER_ARCHIVE_BYTES or not _looks_like_tar(decoded):
+        if not stream.eof or stream.unconsumed_tail or stream.unused_data:
+            raise ValueError(f"ambiguous compressed stream: {label}")
+        if len(decoded) > MAX_LAYER_ARCHIVE_BYTES:
+            raise ValueError(f"OCI layer exceeds scan bound: {label}")
+    empty_tar = len(decoded) == 1024 and not any(decoded)
+    if len(decoded) > MAX_LAYER_ARCHIVE_BYTES or not (empty_tar or _looks_like_tar(decoded)):
         raise ValueError(f"OCI layer is not one bounded tar stream: {label}")
     return decoded
 
@@ -1994,6 +2016,117 @@ def scan_oci_layout(
     )
 
 
+def _bind_docker_save_oci_graph(
+    archive: tarfile.TarFile,
+    outer_by_name: dict[str, tarfile.TarInfo],
+    config_name: str,
+    layer_names: list[str],
+) -> set[str]:
+    """Bind Docker-save's optional OCI index and every reachable descriptor.
+
+    Docker 29 may place an OCI index, attestations, and descriptor blobs beside
+    the classic ``manifest.json``.  Those bytes are part of the image graph,
+    not arbitrary auxiliary files: every descriptor must resolve to a hashed
+    member, the selected runnable manifest must describe the classic config and
+    layers byte-for-byte, and no blob may remain outside the graph.
+    """
+
+    outer_names = set(outer_by_name)
+    auxiliary = {
+        name
+        for name in outer_names
+        if re.fullmatch(r"blobs/sha256/[0-9a-f]{64}", name)
+        and name != config_name
+        and name not in set(layer_names)
+    }
+    if "index.json" not in outer_names:
+        if auxiliary:
+            raise ValueError(
+                "unexpected Docker-save members: auxiliary OCI blobs require an index descriptor graph"
+            )
+        return set()
+    index_raw = _raw_member(
+        archive, "index.json", max_bytes=MAX_DOCKER_SAVE_METADATA_BYTES
+    )
+    _scan_decoded_member_bytes("Docker-save OCI root index", index_raw)
+    try:
+        index = json.loads(index_raw)
+    except json.JSONDecodeError as error:
+        raise ValueError("Docker-save OCI root index is malformed") from error
+    if (
+        not isinstance(index, dict)
+        or index.get("schemaVersion") != 2
+        or index.get("mediaType") not in (None, *OCI_INDEX_MEDIA_TYPES)
+    ):
+        raise ValueError("Docker-save OCI root index is malformed")
+    if "oci-layout" not in outer_names:
+        raise ValueError("Docker-save OCI index is missing oci-layout")
+    layout_raw = _raw_member(
+        archive, "oci-layout", max_bytes=MAX_DOCKER_SAVE_METADATA_BYTES
+    )
+    _scan_decoded_member_bytes("Docker-save OCI layout", layout_raw)
+    try:
+        layout = json.loads(layout_raw)
+    except json.JSONDecodeError as error:
+        raise ValueError("Docker-save OCI layout is malformed") from error
+    if layout != {"imageLayoutVersion": "1.0.0"}:
+        raise ValueError("Docker-save OCI layout version is unsupported")
+
+    config_digest = _docker_save_config_digest(config_name)
+    config_aliases = {
+        f"blobs/sha256/{config_digest}": config_name
+    }
+    graph_referenced: set[str] = set()
+    nested_budget = _NestedArchiveBudget()
+    graph_budget = _OciDescriptorGraphBudget()
+    candidates = _oci_manifest_candidates(
+        archive,
+        index.get("manifests"),
+        referenced=graph_referenced,
+        nested_budget=nested_budget,
+        graph_budget=graph_budget,
+        member_aliases=config_aliases,
+    )
+    selected = _selected_oci_manifest(candidates)
+    selected_config = selected.get("config")
+    if (
+        not isinstance(selected_config, dict)
+        or selected_config.get("digest") != f"sha256:{config_digest}"
+    ):
+        raise ValueError(
+            "Docker-save OCI runnable manifest does not bind manifest.json config"
+        )
+    selected_layers = selected.get("layers")
+    if not isinstance(selected_layers, list) or len(selected_layers) != len(layer_names):
+        raise ValueError(
+            "Docker-save OCI runnable manifest does not bind manifest.json layers"
+        )
+    for position, (descriptor, layer_name) in enumerate(
+        zip(selected_layers, layer_names, strict=True)
+    ):
+        if not isinstance(descriptor, dict):
+            raise ValueError("Docker-save OCI layer descriptor is malformed")
+        raw = _raw_member(
+            archive, layer_name, max_bytes=MAX_LAYER_ARCHIVE_BYTES
+        )
+        expected_digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+        if descriptor.get("digest") != expected_digest:
+            raise ValueError(
+                f"Docker-save OCI layer descriptor does not bind layer {position}"
+            )
+        media_type = descriptor.get("mediaType")
+        if media_type not in OCI_LAYER_MEDIA_TYPES:
+            raise ValueError("Docker-save OCI layer media type is unsupported")
+        _strict_oci_layer(
+            f"Docker-save OCI layer {position}",
+            raw,
+            media_type=media_type,
+        )
+    if auxiliary - graph_referenced:
+        raise ValueError("Docker-save contains unreferenced OCI graph blobs")
+    return graph_referenced
+
+
 def scan(
     path: Path,
     *,
@@ -2061,20 +2194,19 @@ def scan(
                     archive_bytes, member, member, name
                 ):
                     raise ValueError("Docker save repeats an ordered layer")
-        auxiliary_blobs = {
-            name
-            for name in outer_names
-            if re.fullmatch(r"blobs/sha256/[0-9a-f]{64}", name)
-            and name not in set(layers)
-            and name != config_name
-        }
+        graph_referenced = _bind_docker_save_oci_graph(
+            archive,
+            outer_by_name,
+            config_name,
+            layers,
+        )
         allowed_outer = {
             "manifest.json",
             "index.json",
             "oci-layout",
             config_name,
             *layers,
-            *auxiliary_blobs,
+            *graph_referenced,
             "repositories",
         }
         allowed_directories = {
@@ -2102,26 +2234,6 @@ def scan(
                     max_bytes=MAX_DOCKER_SAVE_METADATA_BYTES,
                 ),
             )
-        # Docker 29 saves BuildKit's OCI index/attestation graph alongside the
-        # Docker-save manifest.  Every extra blob remains part of the complete
-        # byte scan: its path digest must bind its exact bytes and no arbitrary
-        # non-blob member is admitted.
-        for name in auxiliary_blobs:
-            member = outer_by_name[name]
-            raw = _raw_member(
-                archive, name, max_bytes=MAX_DOCKER_SAVE_METADATA_BYTES
-            )
-            if hashlib.sha256(raw).hexdigest() != name.rsplit("/", 1)[-1]:
-                raise ValueError(f"unexpected Docker-save members: [{name}]")
-            _scan_decoded_member_bytes(f"Docker-save auxiliary blob: {name}", raw)
-        for name in ("index.json", "oci-layout"):
-            if name in outer_by_name:
-                _scan_decoded_member_bytes(
-                    f"Docker-save OCI metadata: {name}",
-                    _raw_member(
-                        archive, name, max_bytes=MAX_DOCKER_SAVE_METADATA_BYTES
-                    ),
-                )
         raw_layers: list[tuple[str, bytes]] = []
         for name in layers:
             stored = _raw_member(
