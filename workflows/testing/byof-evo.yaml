@@ -1,0 +1,475 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: byof-evo
+  description: >
+    Registry-candidate BYOF workflow for evo odometry and SLAM trajectory
+    evaluation. Runs native APE, RPE, and trajectory plotting on frozen
+    positive/negative controls and the pinned upstream KITTI examples.
+config:
+  bucket: example-bucket
+  repo_url: "https://github.com/MichaelGrupp/evo.git"
+  repo_ref: "8dd6cfe0ec1747f9e1b5b569edd82c54d1a3f422"
+  repo_auth: none
+  repo_token_env: GH_TOKEN
+  base_profile: ubuntu
+  base_image: "ubuntu:22.04"
+  build_command: >
+    python3 -m pip install --no-cache-dir . &&
+    python3 -c "import evo; assert evo.__version__ == 'v1.35.1'"
+  workload: solution-smoke
+  smoke_command: |
+    export PATH="${EVO_BIN_DIR:-/usr/local/bin}:${PATH}"
+    export MPLBACKEND=Agg
+    python3 - <<'PY'
+    import hashlib
+    import io
+    import json
+    import math
+    import os
+    import subprocess
+    import zipfile
+    from pathlib import Path
+
+    import evo
+    import numpy as np
+    from PIL import Image, ImageStat
+
+    output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
+    repo_root = Path.cwd()
+    controls_dir = output_dir / "controls"
+    results_dir = output_dir / "results"
+    plots_dir = output_dir / "plots"
+    for path in (controls_dir, results_dir, plots_dir):
+        path.mkdir(parents=True, exist_ok=True)
+
+    def sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def write_tum(path: Path, lateral_offset) -> None:
+        rows = []
+        for index in range(120):
+            progress = index / 119
+            x = 5.0 * math.cos(2.0 * math.pi * progress)
+            y = (
+                5.0 * math.sin(2.0 * math.pi * progress)
+                + float(lateral_offset(progress, index))
+            )
+            z = 0.5 * math.sin(4.0 * math.pi * progress)
+            rows.append(
+                f"{index * 0.1:.6f} {x:.9f} {y:.9f} {z:.9f} "
+                "0 0 0 1"
+            )
+        path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    def run_command(name: str, command: list[str], expect_success: bool = True):
+        completed = subprocess.run(
+            command,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        (output_dir / f"{name}.stdout.log").write_text(
+            completed.stdout, encoding="utf-8"
+        )
+        (output_dir / f"{name}.stderr.log").write_text(
+            completed.stderr, encoding="utf-8"
+        )
+        if expect_success and completed.returncode != 0:
+            raise RuntimeError(
+                f"{name} failed with {completed.returncode}: "
+                f"{completed.stderr[-1000:]}"
+            )
+        return completed
+
+    def decode_result(path: Path) -> dict:
+        with zipfile.ZipFile(path) as archive:
+            members = set(archive.namelist())
+            required = {"info.json", "stats.json", "error_array.npy"}
+            if not required.issubset(members):
+                raise RuntimeError(f"{path.name} lacks {sorted(required - members)}")
+            info = json.loads(archive.read("info.json"))
+            stats = json.loads(archive.read("stats.json"))
+            errors = np.load(io.BytesIO(archive.read("error_array.npy")))
+        if errors.size == 0 or not np.isfinite(errors).all():
+            raise RuntimeError(f"{path.name} has invalid error array")
+        recomputed_rmse = float(np.sqrt(np.mean(np.square(errors))))
+        if not math.isclose(
+            recomputed_rmse,
+            float(stats["rmse"]),
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        ):
+            raise RuntimeError(f"{path.name} RMSE disagrees with error array")
+        return {
+            "sha256": sha256(path),
+            "stats": stats,
+            "info": info,
+            "error_count": int(errors.size),
+            "recomputed_rmse": recomputed_rmse,
+            "error_min": float(errors.min()),
+            "error_max": float(errors.max()),
+        }
+
+    def inspect_plot(path: Path) -> dict:
+        with Image.open(path) as image:
+            image.load()
+            width, height = image.size
+            extrema = image.convert("RGB").getextrema()
+            standard_deviation = ImageStat.Stat(image.convert("RGB")).stddev
+        if width < 800 or height < 600:
+            raise RuntimeError(f"{path.name} is only {width}x{height}")
+        if max(standard_deviation) < 5.0:
+            raise RuntimeError(f"{path.name} is visually uniform")
+        return {
+            "sha256": sha256(path),
+            "width": width,
+            "height": height,
+            "rgb_extrema": extrema,
+            "rgb_standard_deviation": standard_deviation,
+        }
+
+    def run_tum_metrics(label: str, reference: Path, estimate: Path) -> dict:
+        ape_path = results_dir / f"{label}_ape.zip"
+        rpe_path = results_dir / f"{label}_rpe.zip"
+        plot_stem = plots_dir / f"{label}_ape.png"
+        run_command(
+            f"{label}_ape",
+            [
+                "evo_ape",
+                "tum",
+                str(reference),
+                str(estimate),
+                "--align",
+                "--pose_relation",
+                "trans_part",
+                "--plot_mode",
+                "xy",
+                "--save_results",
+                str(ape_path),
+                "--save_plot",
+                str(plot_stem),
+                "--no_warnings",
+            ],
+        )
+        run_command(
+            f"{label}_rpe",
+            [
+                "evo_rpe",
+                "tum",
+                str(reference),
+                str(estimate),
+                "--align",
+                "--pose_relation",
+                "trans_part",
+                "--delta",
+                "10",
+                "--delta_unit",
+                "f",
+                "--all_pairs",
+                "--save_results",
+                str(rpe_path),
+                "--no_warnings",
+            ],
+        )
+        return {
+            "ape": decode_result(ape_path),
+            "rpe": decode_result(rpe_path),
+            "map_plot": inspect_plot(
+                plots_dir / f"{label}_ape_map.png"
+            ),
+            "raw_plot": inspect_plot(
+                plots_dir / f"{label}_ape_raw.png"
+            ),
+        }
+
+    def run_kitti_metrics(label: str, estimate: Path) -> dict:
+        reference = Path("test/data/KITTI_00_gt.txt")
+        ape_path = results_dir / f"{label}_ape.zip"
+        rpe_path = results_dir / f"{label}_rpe.zip"
+        plot_stem = plots_dir / f"{label}_ape.png"
+        run_command(
+            f"{label}_ape",
+            [
+                "evo_ape",
+                "kitti",
+                str(reference),
+                str(estimate),
+                "--align",
+                "--pose_relation",
+                "trans_part",
+                "--plot_mode",
+                "xz",
+                "--save_results",
+                str(ape_path),
+                "--save_plot",
+                str(plot_stem),
+                "--no_warnings",
+            ],
+        )
+        run_command(
+            f"{label}_rpe",
+            [
+                "evo_rpe",
+                "kitti",
+                str(reference),
+                str(estimate),
+                "--align",
+                "--pose_relation",
+                "trans_part",
+                "--delta",
+                "100",
+                "--delta_unit",
+                "m",
+                "--all_pairs",
+                "--pairs_from_reference",
+                "--save_results",
+                str(rpe_path),
+                "--no_warnings",
+            ],
+        )
+        return {
+            "ape": decode_result(ape_path),
+            "rpe": decode_result(rpe_path),
+            "map_plot": inspect_plot(
+                plots_dir / f"{label}_ape_map.png"
+            ),
+            "raw_plot": inspect_plot(
+                plots_dir / f"{label}_ape_raw.png"
+            ),
+        }
+
+    def gate(metrics: dict) -> bool:
+        return (
+            metrics["ape"]["stats"]["rmse"] <= 0.05
+            and metrics["rpe"]["stats"]["rmse"] <= 0.02
+            and metrics["ape"]["error_count"] >= 100
+            and metrics["rpe"]["error_count"] >= 100
+        )
+
+    reference = controls_dir / "reference.tum"
+    exact = controls_dir / "exact.tum"
+    bounded = controls_dir / "bounded.tum"
+    drifting = controls_dir / "drifting.tum"
+    malformed = controls_dir / "malformed.tum"
+    write_tum(reference, lambda _progress, _index: 0.0)
+    write_tum(exact, lambda _progress, _index: 0.0)
+    write_tum(
+        bounded,
+        lambda _progress, index: 0.005 * math.sin(index * 0.2),
+    )
+    write_tum(drifting, lambda progress, _index: 1.5 * progress**2)
+    malformed.write_text("not-a-trajectory\n", encoding="utf-8")
+
+    bounded_metrics = run_tum_metrics("bounded", reference, bounded)
+    drifting_metrics = run_tum_metrics("drifting", reference, drifting)
+    exact_metrics = run_tum_metrics("exact", reference, exact)
+    malformed_result = results_dir / "malformed_ape.zip"
+    malformed_run = run_command(
+        "malformed_ape",
+        [
+            "evo_ape",
+            "tum",
+            str(reference),
+            str(malformed),
+            "--save_results",
+            str(malformed_result),
+            "--no_warnings",
+        ],
+        expect_success=False,
+    )
+    malformed_rejected = (
+        malformed_run.returncode != 0 and not malformed_result.exists()
+    )
+
+    run_command(
+        "synthetic_controls_plot",
+        [
+            "evo_traj",
+            "tum",
+            str(bounded),
+            str(drifting),
+            "--ref",
+            str(reference),
+            "--sync",
+            "--align",
+            "--plot_mode",
+            "xy",
+            "--save_plot",
+            str(plots_dir / "synthetic_controls.png"),
+            "--no_warnings",
+        ],
+    )
+    synthetic_plot = inspect_plot(
+        plots_dir / "synthetic_controls_trajectories.png"
+    )
+
+    kitti_reference = Path("test/data/KITTI_00_gt.txt")
+    kitti_orb = Path("test/data/KITTI_00_ORB.txt")
+    kitti_sptam = Path("test/data/KITTI_00_SPTAM.txt")
+    orb_metrics = run_kitti_metrics("kitti_orb", kitti_orb)
+    sptam_metrics = run_kitti_metrics("kitti_sptam", kitti_sptam)
+    run_command(
+        "kitti_matched_plot",
+        [
+            "evo_traj",
+            "kitti",
+            str(kitti_orb),
+            str(kitti_sptam),
+            "--ref",
+            str(kitti_reference),
+            "--align",
+            "--plot_mode",
+            "xz",
+            "--save_plot",
+            str(plots_dir / "kitti_matched.png"),
+            "--no_warnings",
+        ],
+    )
+    matched_plot_path = plots_dir / "kitti_matched_trajectories.png"
+    matched_plot = inspect_plot(matched_plot_path)
+
+    controls = {
+        "exact": {"expected": True, "observed": gate(exact_metrics)},
+        "bounded": {"expected": True, "observed": gate(bounded_metrics)},
+        "drifting": {"expected": False, "observed": gate(drifting_metrics)},
+        "malformed": {"expected": False, "observed": not malformed_rejected},
+    }
+    false_positives = sum(
+        not item["expected"] and item["observed"]
+        for item in controls.values()
+    )
+    false_negatives = sum(
+        item["expected"] and not item["observed"]
+        for item in controls.values()
+    )
+    if false_positives or false_negatives:
+        raise RuntimeError(f"trajectory gate controls failed: {controls}")
+
+    input_hashes = {
+        str(path): sha256(path)
+        for path in (
+            reference,
+            exact,
+            bounded,
+            drifting,
+            malformed,
+            kitti_reference,
+            kitti_orb,
+            kitti_sptam,
+        )
+    }
+    capture_manifest = {
+        "schema": "npa.evo.capture-manifest.v1",
+        "source_trajectory_hashes": input_hashes,
+        "plot_mode": {"synthetic": "xy", "kitti": "xz"},
+        "captures": {
+            "synthetic_controls": {
+                "path": str(plots_dir / "synthetic_controls_trajectories.png"),
+                **synthetic_plot,
+            },
+            "kitti_matched": {
+                "path": str(matched_plot_path),
+                **matched_plot,
+            },
+            "kitti_orb_ape": orb_metrics["map_plot"],
+            "kitti_sptam_ape": sptam_metrics["map_plot"],
+        },
+    }
+    capture_path = output_dir / "capture-manifest.json"
+    capture_path.write_text(
+        json.dumps(capture_manifest, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    result = {
+        "solution": "evo",
+        "capability": "evo_ape_rpe_trajectory_evaluation",
+        "capabilities_exercised": [
+            "evo_ape",
+            "evo_rpe",
+            "evo_traj",
+            "trajectory_acceptance_controls",
+            "decoded_plot_validation",
+        ],
+        "upstream": {
+            "repo": "https://github.com/MichaelGrupp/evo.git",
+            "commit": "8dd6cfe0ec1747f9e1b5b569edd82c54d1a3f422",
+            "version": evo.__version__,
+            "license": "GPL-3.0-or-later",
+        },
+        "thresholds": {
+            "ape_translation_rmse_m_max": 0.05,
+            "rpe_translation_rmse_m_max": 0.02,
+            "minimum_matched_poses": 100,
+        },
+        "controls": controls,
+        "control_confusion_matrix": {
+            "true_positive": 2,
+            "true_negative": 2,
+            "false_positive": false_positives,
+            "false_negative": false_negatives,
+        },
+        "synthetic_metrics": {
+            "exact": exact_metrics,
+            "bounded": bounded_metrics,
+            "drifting": drifting_metrics,
+            "malformed_returncode": malformed_run.returncode,
+        },
+        "representative_metrics": {
+            "kitti_orb": orb_metrics,
+            "kitti_sptam": sptam_metrics,
+        },
+        "input_hashes": input_hashes,
+        "capture_manifest_sha256": sha256(capture_path),
+        "limitations": [
+            "Synthetic controls prove the metric gate, not real-world SLAM quality.",
+            "Pinned KITTI examples prove compatibility and reviewability only.",
+            "No navigation success, robot safety, or sensor-accuracy claim is made.",
+        ],
+    }
+    artifact_path = output_dir / "evo_trajectory_evaluation.json"
+    artifact_path.write_text(
+        json.dumps(result, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    print(json.dumps(result, sort_keys=True))
+    PY
+  solution_name: "evo"
+  capability_name: "evo_ape_rpe_trajectory_evaluation"
+  smoke_artifact_name: "evo_trajectory_evaluation.json"
+  resource_profile_yaml: "byof-container-smoke-rtxpro"
+  task: "trajectory-evaluation"
+  iterations: 1
+  num_envs: 1
+  num_demos: 1
+  wait_timeout: 21600
+  poll_interval: 60
+
+  output_root: s3://{{config.bucket}}/oss-solutions/evo/{{run.id}}
+  summary_uri: "{{config.output_root}}/npa_byof_summary.json"
+  dataset_uri: "{{config.output_root}}/evo_trajectory_evaluation.json"
+  checkpoint_uri: "{{config.output_root}}/capture-manifest.json"
+resources:
+  cpu:
+    cloud: kubernetes
+    image: "{{config.base_image}}"
+    cpus: "2+"
+    memory: "8+"
+initial: byof-run
+states:
+  byof-run:
+    description: >
+      Build and push pinned evo, pull the image in Kubernetes, then run native
+      APE/RPE controls and representative KITTI trajectory comparisons.
+    toolRef: workbench.byof.repo
+    resources: cpu
+    outputs:
+      - uri: "{{config.summary_uri}}"
+        schema: npa.workbench.byof.summary.v1
+    terminal: true

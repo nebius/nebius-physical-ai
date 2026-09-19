@@ -133,6 +133,18 @@ SOLUTION_CAPABILITY_CONTRACTS = {
             "droid_100_config_gen",
         ],
     },
+    "evo": {
+        "capability_name": "evo_ape_rpe_trajectory_evaluation",
+        "smoke_artifact_name": "evo_trajectory_evaluation.json",
+        "spec": "byof-evo.yaml",
+        "must_exercise": [
+            "evo_ape",
+            "evo_rpe",
+            "evo_traj",
+            "trajectory_acceptance_controls",
+            "decoded_plot_validation",
+        ],
+    },
     "open-dreamer": {
         "capability_name": "dreamer4_tokenizer_train_two_gpu",
         "smoke_artifact_name": "open_dreamer_world_model_2gpu.json",
@@ -330,6 +342,29 @@ def test_registry_skill_is_solution_specific_not_taxonomy() -> None:
     for solution, expected in SOLUTION_CAPABILITY_CONTRACTS.items():
         assert expected["capability_name"] in text or expected["spec"] in text, solution
         assert f"byof-{solution}.yaml" in text or expected["spec"] in text
+
+
+def test_evo_smoke_has_frozen_metric_and_failure_controls() -> None:
+    config = _load_config(WORKFLOW_DIR / "byof-evo.yaml")
+    smoke = str(config["smoke_command"])
+
+    assert config["repo_ref"] == "8dd6cfe0ec1747f9e1b5b569edd82c54d1a3f422"
+    assert config["base_profile"] == "ubuntu"
+    assert config["resource_profile_yaml"] == "byof-container-smoke-rtxpro"
+    assert "python3 -m pip install --no-cache-dir ." in config["build_command"]
+    assert "evo.__version__ == 'v1.35.1'" in config["build_command"]
+    assert "test/data/KITTI_00_gt.txt" in smoke
+    assert "test/data/KITTI_00_ORB.txt" in smoke
+    assert "test/data/KITTI_00_SPTAM.txt" in smoke
+    assert '"ape_translation_rmse_m_max": 0.05' in smoke
+    assert '"rpe_translation_rmse_m_max": 0.02' in smoke
+    assert '"minimum_matched_poses": 100' in smoke
+    assert "malformed_run.returncode != 0" in smoke
+    assert "not malformed_result.exists()" in smoke
+    assert "false_positives or false_negatives" in smoke
+    assert "recomputed_rmse" in smoke
+    assert "capture-manifest.json" in smoke
+    assert "width < 800 or height < 600" in smoke
 
 
 def test_oss_catalog_lists_solution_specific_capabilities() -> None:

@@ -287,6 +287,32 @@ Also exercised in the same smoke (live-accepted with S3 evidence):
 
 Follow-up: full / debug `train.py` once data is staged.
 
+### evo trajectory evaluation (`byof-evo.yaml`)
+
+Pinned: `MichaelGrupp/evo`
+`8dd6cfe0ec1747f9e1b5b569edd82c54d1a3f422` (`v1.35.1`).
+This is a GPL-3.0-or-later operator-built BYOF candidate; do not describe it as
+an NPA-published image without a separate conveyance/compliance decision.
+
+Hard-gate capability:
+
+- `evo_ape_rpe_trajectory_evaluation`: native `evo_ape`, `evo_rpe`, and
+  `evo_traj` commands must save decodable result archives and matched plots.
+  Exact and bounded-error controls must pass the predeclared APE/RPE thresholds;
+  nonlinear drift and malformed-input controls must fail, with zero false
+  positives and zero false negatives.
+
+The same smoke evaluates the pinned upstream KITTI 00 ground truth, ORB, and
+S-PTAM examples. Treat those as representative compatibility and reviewability
+evidence, not as threshold calibration or proof of navigation success. Retain
+each error distribution, trajectory-input hash, plot hash, and decode result.
+The live-qualified candidate passed the digest-pinned CPU Kubernetes pull and
+execution path, all four frozen gate controls, ten independent archive decodes,
+and calibrated hosted-VLM review of the exact matched and APE plots. Its
+operator-built image remains unpublished. Before registry admission, require
+independent review of the candidate commit and retained evidence; a later
+conveyance still needs an explicit GPL compliance decision.
+
 ### Open Dreamer (`byof-open-dreamer.yaml`)
 
 Pinned: `next-state/open-dreamer` `2b10640` · base `ubuntu` + system `python3.11`
