@@ -340,6 +340,27 @@ def _gymnasium_credential_name(name: Any) -> bool:
     )
 
 
+_GYMNASIUM_BOUND_ENV_NAMES = frozenset({
+    "AWS_ENDPOINT_URL_S3", "AWS_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT",
+    "NPA_STORAGE_ENDPOINT", "S3_ENDPOINT_URL", "NPA_OUTPUT_PATH",
+    "NPA_OUTPUT_URI", "S3_OUTPUT_PATH", "S3_OUTPUT_PREFIX",
+    "NPA_WORKFLOW_RUN_PREFIX_URI", "HTTP_PROXY", "HTTPS_PROXY",
+    "ALL_PROXY", "NO_PROXY",
+})
+
+
+def _resolved_gymnasium_environment_value(
+    name: str,
+    value: Any,
+    resolved_environment: Mapping[str, str] | None,
+) -> Any:
+    if not isinstance(value, str) or resolved_environment is None:
+        return value
+    if value.startswith("${") and value.endswith("}") and value.count("${") == 1:
+        return resolved_environment.get(value[2:-1], value)
+    return value
+
+
 def _validate_gymnasium_environment(env: Mapping[str, Any], *, storage: bool) -> None:
     storage_names = {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"}
     for name in env:
@@ -347,15 +368,33 @@ def _validate_gymnasium_environment(env: Mapping[str, Any], *, storage: bool) ->
             _gymnasium_configuration_error("unnecessary credential environment is forbidden")
 
 
-def _validate_gymnasium_pod_environment(container: Mapping[str, Any]) -> None:
+def _validate_gymnasium_pod_environment(
+    container: Mapping[str, Any], *, expected_environment: Mapping[str, Any] | None = None,
+    resolved_environment: Mapping[str, str] | None = None, storage: bool = False,
+) -> None:
     if container.get("envFrom"):
         _gymnasium_configuration_error("pod envFrom is forbidden")
+    expected_values = expected_environment or {}
+    names: set[str] = set()
     for entry in _gymnasium_entries(container.get("env", [])):
-        _validate_gymnasium_environment({entry.get("name"): None}, storage=False)
+        name = entry.get("name")
+        if not isinstance(name, str) or not name or name in names:
+            _gymnasium_configuration_error("pod environment names must be unique non-empty strings")
+        names.add(name)
+        _validate_gymnasium_environment({name: None}, storage=storage)
         if "valueFrom" in entry:
-            reference = _gymnasium_mapping(entry["valueFrom"])
-            if len(reference) != 1 or not set(reference) <= {"fieldRef", "resourceFieldRef"}:
-                _gymnasium_configuration_error("pod credential references are forbidden")
+            _gymnasium_configuration_error("pod environment values must be explicit reviewed strings")
+        if name in _GYMNASIUM_BOUND_ENV_NAMES or any(
+            marker in name.upper() for marker in ("ENDPOINT", "OUTPUT", "PROXY")
+        ):
+            if name not in expected_values:
+                _gymnasium_configuration_error("pod control environment is not declared by the reviewed task")
+            expected = _resolved_gymnasium_environment_value(
+                name, expected_values[name], resolved_environment,
+            )
+            value = entry.get("value")
+            if not isinstance(expected, str) or not isinstance(value, str) or value != expected:
+                _gymnasium_configuration_error("pod control environment differs from the reviewed task")
 
 
 def _validate_gymnasium_security_context(context: Any, *, required: bool = False, container: bool = False) -> None:
@@ -397,7 +436,11 @@ def _validate_gymnasium_volumes(pod: Mapping[str, Any]) -> None:
         _gymnasium_mapping(volume[next(iter(kinds))])
 
 
-def _validate_gymnasium_pod(pod: Mapping[str, Any], *, require_automount: bool) -> None:
+def _validate_gymnasium_pod(
+    pod: Mapping[str, Any], *, require_automount: bool,
+    expected_environment: Mapping[str, Any] | None = None,
+    resolved_environment: Mapping[str, str] | None = None, storage: bool = False,
+) -> None:
     if require_automount or "automountServiceAccountToken" in pod:
         if pod.get("automountServiceAccountToken") is not False:
             _gymnasium_configuration_error("task must explicitly disable service-account automount")
@@ -412,7 +455,10 @@ def _validate_gymnasium_pod(pod: Mapping[str, Any], *, require_automount: bool) 
     if (require_automount or containers) and [entry.get("name") for entry in containers] != ["ray-node"]:
         _gymnasium_configuration_error("only the explicit ray-node workload container is permitted")
     for container in containers:
-        _validate_gymnasium_pod_environment(container)
+        _validate_gymnasium_pod_environment(
+            container, expected_environment=expected_environment,
+            resolved_environment=resolved_environment, storage=storage,
+        )
         _validate_gymnasium_security_context(
             container.get("securityContext", {}), required=require_automount, container=True,
         )
@@ -426,6 +472,7 @@ def _validate_gymnasium_pod(pod: Mapping[str, Any], *, require_automount: bool) 
 def validate_gymnasium_task_configuration(
     documents: Sequence[Mapping[str, Any]], *, global_config: Mapping[str, Any] | None = None,
     solution_name: str = "", secret_envs: Sequence[str] = (),
+    resolved_environment: Mapping[str, str] | None = None,
 ) -> bool:
     """Reject unsafe Gymnasium pod configuration without resolving any secret.
 
@@ -446,12 +493,23 @@ def validate_gymnasium_task_configuration(
     if not set(secret_envs) <= {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"}:
         _gymnasium_configuration_error("only storage task-secret names are permitted")
     global_values = {} if global_config is None else _gymnasium_mapping(global_config)
-    _validate_gymnasium_pod(_gymnasium_pod_config(global_values), require_automount=False)
+    global_environment = global_values.get("envs", {})
+    if not isinstance(global_environment, Mapping):
+        _gymnasium_configuration_error("global task environment must be a mapping")
+    _validate_gymnasium_pod(
+        _gymnasium_pod_config(global_values), require_automount=False,
+        expected_environment=global_environment, resolved_environment=resolved_environment,
+    )
     for task in selected:
         if task.get("file_mounts") or task.get("workdir"):
             _gymnasium_configuration_error("operator file mounts and workdir uploads are forbidden")
         _validate_gymnasium_environment(_gymnasium_mapping(task.get("envs", {})), storage=True)
-        _validate_gymnasium_pod(_task_kubernetes_pod_spec(task), require_automount=True)
+        task_environment = _gymnasium_mapping(task.get("envs", {}))
+        _validate_gymnasium_pod(
+            _task_kubernetes_pod_spec(task), require_automount=True,
+            expected_environment=task_environment, resolved_environment=resolved_environment,
+            storage=True,
+        )
     return True
 
 
@@ -729,6 +787,10 @@ def preflight_skypilot_submission(
         for name, value in injected.items():
             if value:
                 env[name] = value
+    validate_gymnasium_task_configuration(
+        documents, global_config=global_config,
+        resolved_environment={**process_env, **injected},
+    )
     verify_worker_environment(target, [*documents, dict(global_config or {})])
     if process_env.get("AWS_SESSION_TOKEN") or workflow_env.get("AWS_SESSION_TOKEN"):
         raise ExecutionPreflightError("credentials", "session-token overrides are unsupported by the executing principal contract")

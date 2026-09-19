@@ -834,6 +834,43 @@ def test_gymnasium_configuration_refuses_global_overrides(pod_override: dict) ->
         )
 
 
+def test_gymnasium_configuration_binds_pod_storage_environment_to_task() -> None:
+    task = _configuration_task()
+    expected = {
+        "AWS_ENDPOINT_URL": "https://storage.eu-north1.nebius.cloud",
+        "S3_OUTPUT_PREFIX": "s3://synthetic-bucket/byof/synthetic-run/",
+    }
+    task["envs"] = expected.copy()
+    task["config"]["kubernetes"]["pod_config"]["spec"]["containers"][0]["env"] = [
+        {"name": name, "value": value} for name, value in expected.items()
+    ]
+    assert validate_gymnasium_task_configuration([task])
+
+    for index, entry in enumerate(task["config"]["kubernetes"]["pod_config"]["spec"]["containers"][0]["env"]):
+        mutated = json.loads(json.dumps(task))
+        mutated["config"]["kubernetes"]["pod_config"]["spec"]["containers"][0]["env"][index]["value"] = (
+            "https://attacker.invalid" if entry["name"] == "AWS_ENDPOINT_URL" else "s3://attacker.invalid/"
+        )
+        with pytest.raises(ExecutionPreflightError, match="control environment"):
+            validate_gymnasium_task_configuration([mutated])
+
+
+def test_gymnasium_configuration_refuses_duplicate_or_undeclared_pod_controls() -> None:
+    task = _configuration_task()
+    task["envs"] = {"AWS_ENDPOINT_URL": "https://storage.eu-north1.nebius.cloud"}
+    container = task["config"]["kubernetes"]["pod_config"]["spec"]["containers"][0]
+    container["env"] = [
+        {"name": "AWS_ENDPOINT_URL", "value": "https://storage.eu-north1.nebius.cloud"},
+        {"name": "AWS_ENDPOINT_URL", "value": "https://storage.eu-north1.nebius.cloud"},
+    ]
+    with pytest.raises(ExecutionPreflightError, match="unique"):
+        validate_gymnasium_task_configuration([task])
+
+    container["env"] = [{"name": "HTTPS_PROXY", "value": "http://proxy.invalid"}]
+    with pytest.raises(ExecutionPreflightError, match="not declared"):
+        validate_gymnasium_task_configuration([task])
+
+
 @pytest.mark.parametrize("extra", [
     {"envs": {"SYNTHETIC_API_KEY": "not-a-credential"}},
     {"file_mounts": {"/synthetic/mount": "synthetic-local-input"}},
