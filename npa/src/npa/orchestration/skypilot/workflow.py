@@ -2081,9 +2081,11 @@ def _libero_launch_binding_candidates(
 
     SkyPilot's all-jobs queue retains historical rows under a deterministic
     name.  A numeric launch result is therefore only authoritative when the
-    queue has exactly one viable same-name row, that row has the exact
-    executable profile digest, and its immutable ID is the returned ID.  All
-    other plausible IDs are retained as indeterminate evidence rather than
+    queue has exactly one viable same-name row, its immutable ID is the
+    returned ID, and any optional provider profile field agrees with the
+    locally preflighted digest.  The local digest is the authoritative
+    launch contract; an omitted provider field is not evidence of failure.
+    All other plausible IDs are retained as indeterminate evidence rather than
     silently adopting one.
     """
 
@@ -2141,16 +2143,18 @@ def _libero_launch_binding_candidates(
             key=int,
         )
     )
-    profile_matches = tuple(
+    profile_conflicts = tuple(
         row
         for row in named_rows
-        if _managed_job_profile_digest(row) == expected_profile_sha256
+        if _managed_job_profile_values(row)
+        and _managed_job_profile_digest(row) != expected_profile_sha256
     )
     if (
         parsed_id
         and len(named_rows) == 1
         and candidate_ids == (parsed_id,)
-        and len(profile_matches) == 1
+        and re.fullmatch(r"[0-9a-f]{64}", expected_profile_sha256)
+        and not profile_conflicts
     ):
         return parsed_id, (), ""
 
@@ -2172,7 +2176,12 @@ def _libero_launch_binding_candidates(
             "same-name queue IDs; preserving plausible candidates as indeterminate "
             "and refusing retry"
         )
-    elif len(profile_matches) != 1:
+    elif not re.fullmatch(r"[0-9a-f]{64}", expected_profile_sha256):
+        error = (
+            "LIBERO launch lacks the locally preflighted executable profile digest; "
+            "preserving indeterminate state and refusing retry"
+        )
+    elif profile_conflicts:
         error = (
             "LIBERO launch returned success without an exact queue/name/profile "
             "binding; preserving indeterminate state and refusing retry"
@@ -2403,6 +2412,15 @@ def _load_libero_bound_job_id(
 def _managed_job_profile_digest(row: Mapping[str, Any]) -> str:
     """Extract the provider's durable profile binding for LIBERO adoption."""
 
+    for candidate in _managed_job_profile_values(row):
+        if re.fullmatch(r"[0-9a-f]{64}", candidate):
+            return candidate
+    return ""
+
+
+def _managed_job_profile_values(row: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return provider profile fields, preserving malformed values for refusal."""
+
     candidates: list[Any] = [
         row.get("executable_profile_sha256"),
         row.get("workflow_profile_sha256"),
@@ -2411,18 +2429,19 @@ def _managed_job_profile_digest(row: Mapping[str, Any]) -> str:
         container = row.get(container_name)
         if isinstance(container, Mapping):
             candidates.extend(
-                container.get(key)
+                container[key]
                 for key in (
                     "NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256",
                     "executable_profile_sha256",
                     "workflow_profile_sha256",
                 )
+                if key in container
             )
-    for candidate in candidates:
-        value = str(candidate or "").strip()
-        if re.fullmatch(r"[0-9a-f]{64}", value):
-            return value
-    return ""
+    return tuple(
+        str(candidate or "").strip()
+        for candidate in candidates
+        if candidate is not None
+    )
 
 
 def parse_job_ids_by_name(output: str, job_name: str) -> list[str]:
