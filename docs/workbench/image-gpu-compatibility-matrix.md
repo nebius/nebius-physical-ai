@@ -44,10 +44,12 @@ Two compatibility rules govern every cell:
 ## Measured torch stack per image
 
 The new `npa-diffusers`, `npa-lingbot-world`, and `npa-sam2` public packaging
-candidates are pending their own builds and exact-digest GPU qualification.
-Earlier private BYOF B200 runs do not establish these new images' compatibility.
-They inherit a hash-locked runtime-fetch mechanism; no CUDA wheel is baked, and
-no B300 capability is claimed from the planned runtime or a B200 result.
+completed their own builds and exact-digest B200 capability qualification, as
+recorded in the linked native capability evidence. Earlier private BYOF B200
+runs remain historical and do not substitute for that exact public-digest
+evidence. These images inherit a hash-locked runtime-fetch mechanism; no CUDA
+wheel is baked, and no B300 capability is claimed because B300 remains
+unvalidated.
 
 `arch_list` is `torch._C._cuda_getArchFlags()` read out of the published image. It is fixed when the wheel is built — `TORCH_CUDA_ARCH_LIST` cannot change it — so it decides which GPUs the image can execute on. Reproduce any row with `npa/scripts/validate_blackwell_image.sh <image> --target b200`.
 
