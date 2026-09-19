@@ -69,8 +69,13 @@ root sudo grant for generating missing per-Pod SSH host keys with the exact
 only other sudo grant invokes the fixed bootstrap entry point as the separate
 unprivileged `npa-libero-exec` user with exactly `execute`. Its environment
 excludes storage credentials as well as Python and dynamic-loader injection
-variables. After fetched code exits, the image-owned system Python performs the
-bounded upload with separately accepted, run-prefix-only temporary credentials.
+variables. After fetched code exits, the image-owned system Python remains
+prohibited from uploading raw workload output in Phase A. A later trusted
+supervisor may perform the bounded upload with separately accepted, run-prefix-
+only temporary credentials only after it strictly parses each permitted result,
+rejects unknown fields and embedded blobs, and serializes the canonical
+allowlisted representation itself; Phase A has no such uploader or retrieval
+set.
 No host key is baked into an image layer. The complete SkyPilot
 0.12.2 synchronous package set is
 baked, including `curl`, `wget`, and the `fuse3` provider. When every package and
