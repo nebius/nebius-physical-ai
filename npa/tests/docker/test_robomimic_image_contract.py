@@ -1679,44 +1679,45 @@ def test_build_helper_shell_functions_remain_reviewable() -> None:
     assert max(function_lengths.values()) < 40, function_lengths
 
 
-def test_verifier_changed_functions_remain_reviewable() -> None:
-    verifier = IMAGE_ROOT / "verify_image.py"
-    tree = ast.parse(verifier.read_text(encoding="utf-8"))
-    changed_lines: set[int] = set()
-    for revision in ("origin/main HEAD", "HEAD"):
-        result = subprocess.run(
-            [
-                "git",
-                "diff",
-                "--unified=0",
-                *revision.split(),
-                "--",
-                str(verifier.relative_to(ROOT)),
-            ],
-            cwd=ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        for line in result.stdout.splitlines():
-            match = re.match(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", line)
-            if match:
-                start = int(match.group(1))
-                count = int(match.group(2) or "1")
-                changed_lines.update(range(start, start + count))
-    functions = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    ]
-    touched = [
-        node
-        for node in functions
-        if any(node.lineno <= line <= node.end_lineno for line in changed_lines)
-    ]
-    lengths = {node.name: node.end_lineno - node.lineno + 1 for node in touched}
-    assert touched, "the verifier repair must be covered by this reviewability guard"
-    assert max(lengths.values()) < 40, lengths
+def test_changed_trust_boundary_functions_remain_reviewable() -> None:
+    for relative_path in ("verify_image.py", "smoke.py"):
+        source = IMAGE_ROOT / relative_path
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        changed_lines: set[int] = set()
+        for revision in ("origin/main HEAD", "HEAD"):
+            result = subprocess.run(
+                [
+                    "git",
+                    "diff",
+                    "--unified=0",
+                    *revision.split(),
+                    "--",
+                    str(source.relative_to(ROOT)),
+                ],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            for line in result.stdout.splitlines():
+                match = re.match(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", line)
+                if match:
+                    start = int(match.group(1))
+                    count = int(match.group(2) or "1")
+                    changed_lines.update(range(start, start + count))
+        functions = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
+        touched = [
+            node
+            for node in functions
+            if any(node.lineno <= line <= node.end_lineno for line in changed_lines)
+        ]
+        lengths = {node.name: node.end_lineno - node.lineno + 1 for node in touched}
+        assert touched, f"{relative_path} repair must be reviewable"
+        assert max(lengths.values()) < 40, {relative_path: lengths}
 
 
 def test_dataset_notice_binds_exact_official_license_metadata() -> None:

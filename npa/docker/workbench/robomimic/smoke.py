@@ -85,6 +85,50 @@ def _approved_request_target(parsed: urllib.parse.SplitResult) -> str:
     return target
 
 
+def _https_authority_allowed(
+    parsed: urllib.parse.SplitResult,
+    hostname: str,
+    port: int | None,
+    allowed_hosts: tuple[str, ...],
+    allow_hf_redirects: bool,
+) -> None:
+    allowed = hostname in allowed_hosts or (
+        allow_hf_redirects
+        and (
+            re.fullmatch(r"cdn-lfs(?:-[a-z0-9-]+)?\.hf\.co", hostname) is not None
+            or hostname in {"cas-bridge.xethub.hf.co", "cdn.hf.co"}
+            or hostname.endswith(".cdn.hf.co")
+        )
+    )
+    if (
+        parsed.scheme != "https"
+        or not allowed
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in {None, 443}
+        or parsed.fragment
+    ):
+        raise RuntimeError("refusing URL outside the approved HTTPS origins")
+
+
+def _https_get(
+    hostname: str,
+    port: int | None,
+    target: str,
+    headers: dict[str, str],
+    context: ssl.SSLContext | None,
+) -> tuple[http.client.HTTPSConnection, http.client.HTTPResponse]:
+    connection = http.client.HTTPSConnection(
+        hostname, port=port, context=context, timeout=120
+    )
+    try:
+        connection.request("GET", target, headers=headers)
+        return connection, connection.getresponse()
+    except (OSError, http.client.HTTPException, UnicodeError, ValueError):
+        connection.close()
+        raise RuntimeError("approved HTTPS transport failed") from None
+
+
 def _open_allowed_https(
     url: str,
     *,
@@ -98,42 +142,14 @@ def _open_allowed_https(
     current_url = url
     for _ in range(6):
         parsed, hostname, port = _parsed_https_url(current_url)
-        allowed = hostname in allowed_hosts or (
-            allow_hf_redirects
-            and (
-                re.fullmatch(r"cdn-lfs(?:-[a-z0-9-]+)?\.hf\.co", hostname) is not None
-                or hostname == "cas-bridge.xethub.hf.co"
-                or hostname == "cdn.hf.co"
-                or hostname.endswith(".cdn.hf.co")
-            )
+        _https_authority_allowed(
+            parsed, hostname, port, allowed_hosts, allow_hf_redirects
         )
-        if (
-            parsed.scheme != "https"
-            or not allowed
-            or parsed.username is not None
-            or parsed.password is not None
-            or port not in {None, 443}
-            or parsed.fragment
-        ):
-            raise RuntimeError("refusing URL outside the approved HTTPS origins")
-        target = _approved_request_target(parsed)
         if before_request is not None:
             before_request()
-        connection = http.client.HTTPSConnection(
-            hostname,
-            port=port,
-            context=context,
-            timeout=120,
+        connection, response = _https_get(
+            hostname, port, _approved_request_target(parsed), headers, context
         )
-        transport_failed = False
-        try:
-            connection.request("GET", target, headers=headers)
-            response = connection.getresponse()
-        except (OSError, http.client.HTTPException, UnicodeError, ValueError):
-            connection.close()
-            transport_failed = True
-        if transport_failed:
-            raise RuntimeError("approved HTTPS transport failed") from None
         if response.status in _HTTPS_REDIRECT_STATUSES:
             location = response.getheader("Location")
             response.close()
@@ -174,23 +190,9 @@ def _value_free_customer_entitlement(**arguments: object) -> dict[str, object]:
     return proof
 
 
-def _pod_identity(
-    runtime_image: str, expected_digest: str, runtime_root: Path
+def _read_pod_status(
+    service_account_root: Path, namespace: str, pod_name: str, token: str
 ) -> dict[str, object]:
-    service_account_root = Path("/var/run/secrets/kubernetes.io/serviceaccount")
-    pod_name = os.environ.get("HOSTNAME", "").strip()
-    namespace = (service_account_root / "namespace").read_text(encoding="utf-8").strip()
-    expected_namespace = os.environ.get("NPA_ROBOMIMIC_EXPECTED_NAMESPACE", "").strip()
-    expected_service_account = os.environ.get(
-        "NPA_ROBOMIMIC_EXPECTED_SERVICE_ACCOUNT", ""
-    ).strip()
-    if namespace != expected_namespace or not expected_service_account:
-        raise RuntimeError(
-            "workload identity selector mismatch: "
-            f"namespace_match={namespace == expected_namespace} "
-            f"service_account_set={bool(expected_service_account)}"
-        )
-    token = (service_account_root / "token").read_text(encoding="utf-8").strip()
     context = ssl.create_default_context(cafile=str(service_account_root / "ca.crt"))
     connection, response = _open_allowed_https(
         f"https://kubernetes.default.svc/api/v1/namespaces/{namespace}/pods/{pod_name}",
@@ -199,10 +201,18 @@ def _pod_identity(
         context=context,
     )
     try:
-        pod_status = json.load(response)
+        return json.load(response)
     finally:
         response.close()
         connection.close()
+
+
+def _validate_pod_identity(
+    pod_status: dict[str, object],
+    pod_name: str,
+    expected_namespace: str,
+    expected_service_account: str,
+) -> str:
     observed_service_account = str(
         pod_status.get("spec", {}).get("serviceAccountName", "")
     )
@@ -214,6 +224,12 @@ def _pod_identity(
         raise RuntimeError(
             "Kubernetes Pod identity does not match the run-owned observer"
         )
+    return observed_service_account
+
+
+def _validate_pod_container(
+    pod_status: dict[str, object], expected_digest: str, runtime_image: str
+) -> tuple[dict[str, object], dict[str, object]]:
     matching_statuses = [
         status
         for status in pod_status.get("status", {}).get("containerStatuses", [])
@@ -224,7 +240,6 @@ def _pod_identity(
         raise RuntimeError(
             "Pod status did not prove exactly one executing immutable image"
         )
-    status = matching_statuses[0]
     containers = [
         container
         for container in pod_status.get("spec", {}).get("containers", [])
@@ -234,9 +249,32 @@ def _pod_identity(
         raise RuntimeError(
             "executing ray-node container does not use the expected immutable image"
         )
+    return matching_statuses[0], containers[0]
+
+
+def _validate_pod_status(
+    pod_status: dict[str, object],
+    pod_name: str,
+    expected_namespace: str,
+    expected_service_account: str,
+    expected_digest: str,
+    runtime_image: str,
+) -> tuple[dict[str, object], dict[str, object], str]:
+    observed_service_account = _validate_pod_identity(
+        pod_status, pod_name, expected_namespace, expected_service_account
+    )
+    status, container = _validate_pod_container(
+        pod_status, expected_digest, runtime_image
+    )
+    return status, container, observed_service_account
+
+
+def _pod_mount_proof(
+    pod_status: dict[str, object], container: dict[str, object], runtime_root: Path
+) -> None:
     runtime_mounts = [
         mount
-        for mount in containers[0].get("volumeMounts", [])
+        for mount in container.get("volumeMounts", [])
         if mount.get("name") == "robomimic-runtime"
         and mount.get("mountPath") == str(runtime_root)
     ]
@@ -254,6 +292,33 @@ def _pod_identity(
     )
     if not mount_read_only:
         raise RuntimeError("runtime volume is not observed as read-only")
+
+
+def _pod_selector() -> tuple[Path, str, str, str, str]:
+    service_account_root = Path("/var/run/secrets/kubernetes.io/serviceaccount")
+    pod_name = os.environ.get("HOSTNAME", "").strip()
+    namespace = (service_account_root / "namespace").read_text(encoding="utf-8").strip()
+    expected_namespace = os.environ.get("NPA_ROBOMIMIC_EXPECTED_NAMESPACE", "").strip()
+    expected_service_account = os.environ.get(
+        "NPA_ROBOMIMIC_EXPECTED_SERVICE_ACCOUNT", ""
+    ).strip()
+    if namespace != expected_namespace or not expected_service_account:
+        raise RuntimeError(
+            "workload identity selector mismatch: "
+            f"namespace_match={namespace == expected_namespace} service_account_set={bool(expected_service_account)}"
+        )
+    token = (service_account_root / "token").read_text(encoding="utf-8").strip()
+    return service_account_root, pod_name, namespace, expected_namespace, token
+
+
+def _pod_identity_result(
+    runtime_image: str,
+    expected_digest: str,
+    runtime_root: Path,
+    status: dict[str, object],
+    observed_service_account: str,
+    namespace: str,
+) -> dict[str, object]:
     return {
         "pod_image": {
             "runtime_ref": runtime_image,
@@ -278,6 +343,35 @@ def _pod_identity(
             ),
         },
     }
+
+
+def _pod_identity(
+    runtime_image: str, expected_digest: str, runtime_root: Path
+) -> dict[str, object]:
+    service_account_root, pod_name, namespace, expected_namespace, token = (
+        _pod_selector()
+    )
+    expected_service_account = os.environ.get(
+        "NPA_ROBOMIMIC_EXPECTED_SERVICE_ACCOUNT", ""
+    ).strip()
+    pod_status = _read_pod_status(service_account_root, namespace, pod_name, token)
+    status, container, observed_service_account = _validate_pod_status(
+        pod_status,
+        pod_name,
+        expected_namespace,
+        expected_service_account,
+        expected_digest,
+        runtime_image,
+    )
+    _pod_mount_proof(pod_status, container, runtime_root)
+    return _pod_identity_result(
+        runtime_image,
+        expected_digest,
+        runtime_root,
+        status,
+        observed_service_account,
+        namespace,
+    )
 
 
 def _hardware() -> dict[str, object]:
@@ -328,20 +422,9 @@ def _require_strict_capacity_observation() -> None:
     )
 
 
-def _download_dataset(
-    input_dir: Path,
-    *,
-    entitlement_arguments: dict[str, object],
-) -> tuple[Path, list[str], dict[str, int], float, float]:
-    # Freeze the exact expected hashes/run once; reread and verify the bound
-    # record at each side-effect boundary, including redirected requests.
-    bound_arguments = dict(entitlement_arguments)
-
-    def authorize() -> dict[str, object]:
-        return _value_free_customer_entitlement(**bound_arguments)
-
-    partial = input_dir / "lift_ph_lowdim_v15.download"
-    dataset = input_dir / "lift_ph_lowdim_v15.hdf5"
+def _prepare_dataset_input_dir(
+    input_dir: Path, partial: Path, authorize: Callable[[], object]
+) -> None:
     authorize()
     try:
         input_dir.mkdir(parents=True, exist_ok=False)
@@ -371,53 +454,83 @@ def _download_dataset(
                 raise RuntimeError("refusing an unsafe stale dataset partial")
             authorize()
             partial.unlink()
+
+
+def _fetch_dataset_bytes(
+    partial: Path, authorize: Callable[[], object]
+) -> tuple[str, int]:
     url = (
         "https://huggingface.co/datasets/robomimic/robomimic_datasets/resolve/"
         f"{DATASET_REVISION}/{DATASET_PATH}?download=true"
     )
     digest = hashlib.sha256()
     byte_count = 0
+    authorize()
+    connection, response = _open_allowed_https(
+        url,
+        headers={"User-Agent": "npa-robomimic-smoke/1"},
+        allowed_hosts=("huggingface.co",),
+        allow_hf_redirects=True,
+        before_request=authorize,
+    )
     try:
         authorize()
-        connection, response = _open_allowed_https(
-            url,
-            headers={"User-Agent": "npa-robomimic-smoke/1"},
-            allowed_hosts=("huggingface.co",),
-            allow_hf_redirects=True,
-            before_request=authorize,
+        with response, partial.open("xb") as handle:
+            for chunk in iter(lambda: response.read(1024 * 1024), b""):
+                next_byte_count = byte_count + len(chunk)
+                if next_byte_count > DATASET_BYTES:
+                    raise RuntimeError("dataset exceeds its locked byte count")
+                authorize()
+                handle.write(chunk)
+                digest.update(chunk)
+                byte_count = next_byte_count
+    finally:
+        response.close()
+        connection.close()
+    return digest.hexdigest(), byte_count
+
+
+def _inspect_dataset(
+    partial: Path,
+) -> tuple[list[str], dict[str, int], float, float]:
+    with h5py.File(partial, "r") as handle:
+        demo_keys = sorted(handle["data"].keys())
+        sample_counts = {
+            key: int(handle[f"data/{key}"].attrs["num_samples"]) for key in demo_keys
+        }
+        action_min = min(
+            float(np.min(handle[f"data/{key}/actions"][:])) for key in demo_keys
         )
-        try:
-            authorize()
-            with response, partial.open("xb") as handle:
-                for chunk in iter(lambda: response.read(1024 * 1024), b""):
-                    next_byte_count = byte_count + len(chunk)
-                    if next_byte_count > DATASET_BYTES:
-                        raise RuntimeError("dataset exceeds its locked byte count")
-                    authorize()
-                    handle.write(chunk)
-                    digest.update(chunk)
-                    byte_count = next_byte_count
-        finally:
-            response.close()
-            connection.close()
-        if digest.hexdigest() != DATASET_SHA256 or byte_count != DATASET_BYTES:
+        action_max = max(
+            float(np.max(handle[f"data/{key}/actions"][:])) for key in demo_keys
+        )
+    if len(demo_keys) != 200 or sum(sample_counts.values()) <= 0:
+        raise RuntimeError("official Lift PH trajectory/sample inventory mismatch")
+    return demo_keys, sample_counts, action_min, action_max
+
+
+def _download_dataset(
+    input_dir: Path,
+    *,
+    entitlement_arguments: dict[str, object],
+) -> tuple[Path, list[str], dict[str, int], float, float]:
+    # Freeze the exact expected hashes/run once; reread and verify the bound
+    # record at each side-effect boundary, including redirected requests.
+    bound_arguments = dict(entitlement_arguments)
+
+    def authorize() -> dict[str, object]:
+        return _value_free_customer_entitlement(**bound_arguments)
+
+    partial = input_dir / "lift_ph_lowdim_v15.download"
+    dataset = input_dir / "lift_ph_lowdim_v15.hdf5"
+    _prepare_dataset_input_dir(input_dir, partial, authorize)
+    try:
+        digest, byte_count = _fetch_dataset_bytes(partial, authorize)
+        if digest != DATASET_SHA256 or byte_count != DATASET_BYTES:
             raise RuntimeError(
-                f"dataset identity mismatch: sha256={digest.hexdigest()} bytes={byte_count}"
+                f"dataset identity mismatch: sha256={digest} bytes={byte_count}"
             )
-        with h5py.File(partial, "r") as handle:
-            demo_keys = sorted(handle["data"].keys())
-            sample_counts = {
-                key: int(handle[f"data/{key}"].attrs["num_samples"])
-                for key in demo_keys
-            }
-            action_min = min(
-                float(np.min(handle[f"data/{key}/actions"][:])) for key in demo_keys
-            )
-            action_max = max(
-                float(np.max(handle[f"data/{key}/actions"][:])) for key in demo_keys
-            )
-        if len(demo_keys) != 200 or sum(sample_counts.values()) <= 0:
-            raise RuntimeError("official Lift PH trajectory/sample inventory mismatch")
+        demo_keys, sample_counts, action_min, action_max = _inspect_dataset(partial)
         authorize()
         partial.replace(dataset)
         return dataset, demo_keys, sample_counts, action_min, action_max
@@ -426,22 +539,17 @@ def _download_dataset(
         raise
 
 
-def main() -> None:
-    _require_strict_capacity_observation()
-    output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
-    output_dir.mkdir(parents=True, exist_ok=True)
+def _load_image_context() -> dict[str, object]:
     runtime_image = os.environ.get("BYOF_IMAGE", "")
     match = re.fullmatch(r".+@(sha256:[0-9a-f]{64})", runtime_image)
     if match is None:
         raise RuntimeError("robomimic workload image must be digest-pinned")
-
-    source_root = Path("/opt/robomimic")
-    component_root = Path("/opt/npa/robomimic")
     source_identity = verified_source_identity(
         Path("/opt/byof/npa_source_metadata.json")
     )
     if source_identity["revision"] != SOURCE_REVISION:
         raise RuntimeError("unexpected immutable robomimic source identity")
+    component_root = Path("/opt/npa/robomimic")
     baked_lock = component_root / "baked-requirements.lock"
     baked_lock_bytes = baked_lock.read_bytes()
     if (
@@ -453,6 +561,17 @@ def main() -> None:
         != BAKED_DISTRIBUTION_COUNT
     ):
         raise RuntimeError("neutral baked dependency lock mismatch")
+    return {
+        "runtime_image": runtime_image,
+        "image_digest": match.group(1),
+        "source_root": Path("/opt/robomimic"),
+        "component_root": component_root,
+        "source_identity": source_identity,
+        "baked_lock_bytes": baked_lock_bytes,
+    }
+
+
+def _load_runtime_context(component_root: Path) -> dict[str, object]:
     runtime_lock = component_root / "runtime-requirements.lock"
     runtime_mount_root = Path(os.environ["NPA_ROBOMIMIC_RUNTIME_ROOT"])
     runtime_root = Path(os.environ["NPA_ROBOMIMIC_ACTIVE_RUNTIME_ROOT"])
@@ -466,21 +585,31 @@ def main() -> None:
         raise RuntimeError(
             "runtime execution snapshot is not private or has write bits"
         )
-    runtime_inventory = json.loads(
-        (runtime_root / "inventory.json").read_text(encoding="utf-8")
-    )
-
-    expected_runtime_inventory = os.environ.get(
+    inventory_path = runtime_root / "inventory.json"
+    expected_inventory = os.environ.get(
         "NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256", ""
     ).strip()
-    if (
-        re.fullmatch(r"[0-9a-f]{64}", expected_runtime_inventory) is None
-        or _sha256(runtime_root / "inventory.json") != expected_runtime_inventory
-    ):
+    if re.fullmatch(r"[0-9a-f]{64}", expected_inventory) is None:
         raise RuntimeError(
             "runtime inventory does not match the operator-selected digest"
         )
-    entitlement_arguments = dict(
+    if _sha256(inventory_path) != expected_inventory:
+        raise RuntimeError(
+            "runtime inventory does not match the operator-selected digest"
+        )
+    return {
+        "runtime_lock": runtime_lock,
+        "runtime_mount_root": runtime_mount_root,
+        "runtime_root": runtime_root,
+        "runtime_inventory": json.loads(inventory_path.read_text(encoding="utf-8")),
+        "expected_inventory": expected_inventory,
+    }
+
+
+def _entitlement_arguments(
+    runtime_lock: Path, expected_inventory: str
+) -> dict[str, object]:
+    return dict(
         entitlement_path=Path(os.environ["NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE"]),
         runtime_lock_path=runtime_lock,
         expected_entitlement_sha256=os.environ.get(
@@ -490,22 +619,40 @@ def main() -> None:
             "NPA_ROBOMIMIC_CUSTOMER_BINDING_SHA256", ""
         ).strip(),
         expected_run_id=os.environ.get("NPA_BYOF_RUN_ID", "").strip(),
-        expected_inventory_sha256=expected_runtime_inventory,
+        expected_inventory_sha256=expected_inventory,
     )
-    entitlement = _value_free_customer_entitlement(**entitlement_arguments)
 
-    pod = _pod_identity(runtime_image, match.group(1), runtime_mount_root)
-    runtime_mount_proof = pod.get("runtime_mount")
-    if not isinstance(runtime_mount_proof, dict):
+
+def _load_smoke_context(output_dir: Path) -> dict[str, object]:
+    image = _load_image_context()
+    runtime = _load_runtime_context(image["component_root"])
+    arguments = _entitlement_arguments(
+        runtime["runtime_lock"], runtime["expected_inventory"]
+    )
+    entitlement = _value_free_customer_entitlement(**arguments)
+    pod = _pod_identity(
+        image["runtime_image"], image["image_digest"], runtime["runtime_mount_root"]
+    )
+    mount_proof = pod.get("runtime_mount")
+    if not isinstance(mount_proof, dict):
         raise RuntimeError("runtime mount observation is absent")
-    hardware = _hardware()
-    dataset, demo_keys, sample_counts, action_min, action_max = _download_dataset(
-        Path("/workspace/byof-inputs") / output_dir.name,
-        entitlement_arguments=entitlement_arguments,
-    )
+    return {
+        **image,
+        **runtime,
+        "entitlement_arguments": arguments,
+        "entitlement": entitlement,
+        "pod": pod,
+        "runtime_mount_proof": mount_proof,
+        "hardware": _hardware(),
+        "output_dir": output_dir,
+    }
 
+
+def _split_dataset(
+    source_root: Path, dataset: Path, output_dir: Path, demo_keys: list[str]
+) -> tuple[list[str], list[str], list[str]]:
     split_script = source_root / "robomimic" / "scripts" / "split_train_val.py"
-    split_program = "\n".join(
+    program = "\n".join(
         [
             "import numpy as np, runpy, sys",
             "script, dataset = sys.argv[1:3]",
@@ -515,7 +662,7 @@ def main() -> None:
         ]
     )
     split = subprocess.run(
-        [sys.executable, "-c", split_program, str(split_script), str(dataset)],
+        [sys.executable, "-c", program, str(split_script), str(dataset)],
         check=True,
         capture_output=True,
         text=True,
@@ -535,7 +682,10 @@ def main() -> None:
         or set(train_keys + valid_keys) != set(demo_keys)
     ):
         raise RuntimeError("invalid genuine held-out split")
+    return train_keys, valid_keys, overlap
 
+
+def _write_training_config(dataset: Path, output_dir: Path) -> tuple[Path, Path]:
     train_root = output_dir / "training"
     config_path = output_dir / "bc_config.json"
     config = config_factory("bc")
@@ -563,7 +713,10 @@ def main() -> None:
         config.train.num_epochs = 1
         config.train.cuda = True
     config_path.write_text(config.dump() + "\n", encoding="utf-8")
+    return train_root, config_path
 
+
+def _run_training(source_root: Path, output_dir: Path, config_path: Path) -> str:
     training = subprocess.run(
         [
             sys.executable,
@@ -575,26 +728,33 @@ def main() -> None:
         capture_output=True,
         text=True,
     )
-    training_text = training.stdout + "\n" + training.stderr
-    (output_dir / "training.log").write_text(training_text, encoding="utf-8")
-    if (
-        "finished run successfully!" not in training_text
-        or "run failed with error:" in training_text
-    ):
+    text = training.stdout + "\n" + training.stderr
+    (output_dir / "training.log").write_text(text, encoding="utf-8")
+    if "finished run successfully!" not in text or "run failed with error:" in text:
         raise RuntimeError("upstream robomimic training did not finish successfully")
+    return text
 
+
+def _training_losses(training_text: str) -> tuple[float, float]:
     decoder = json.JSONDecoder()
 
     def metrics_after(marker: str) -> dict[str, object]:
         marker_pos = training_text.index(marker)
-        json_pos = training_text.index("{", marker_pos)
-        metrics, _ = decoder.raw_decode(training_text, json_pos)
+        metrics, _ = decoder.raw_decode(
+            training_text, training_text.index("{", marker_pos)
+        )
         return metrics
 
     train_loss = float(metrics_after("Train Epoch 1")["Loss"])
     validation_loss = float(metrics_after("Validation Epoch 1")["Loss"])
     if not math.isfinite(train_loss) or not math.isfinite(validation_loss):
         raise RuntimeError("training produced non-finite loss")
+    return train_loss, validation_loss
+
+
+def _load_checkpoint_state(
+    train_root: Path,
+) -> tuple[str, object, int]:
     checkpoints = list(
         train_root.glob("lift_ph_lowdim_bc_smoke/*/models/model_epoch_1.pth")
     )
@@ -605,32 +765,64 @@ def main() -> None:
     policy, checkpoint = policy_from_checkpoint(
         device=torch.device("cuda:0"), ckpt_path=str(checkpoint_path), verbose=False
     )
-    optimizer_state = checkpoint["model"]["optimizers"]["policy"]["state"]
-    serialized_steps = []
-    for state in optimizer_state.values():
-        value = state.get("step")
-        if value is not None:
-            serialized_steps.append(
-                int(value.item() if hasattr(value, "item") else value)
-            )
-    optimizer_step_count = max(serialized_steps, default=0)
-    if optimizer_step_count != TRAIN_STEPS:
+    serialized_steps = [
+        int(value.item() if hasattr(value, "item") else value)
+        for state in checkpoint["model"]["optimizers"]["policy"]["state"].values()
+        if (value := state.get("step")) is not None
+    ]
+    optimizer_steps = max(serialized_steps, default=0)
+    if optimizer_steps != TRAIN_STEPS:
         raise RuntimeError("serialized optimizer state does not prove four steps")
 
+    return checkpoint_hash, policy, optimizer_steps
+
+
+def _heldout_action(
+    policy: object, dataset: Path, valid_keys: list[str]
+) -> tuple[str, object, bool, bool]:
     heldout_demo = valid_keys[0]
     with h5py.File(dataset, "r") as handle:
-        heldout_observation = {
+        observation = {
             key: np.asarray(handle[f"data/{heldout_demo}/obs/{key}"][0])
             for key in policy.policy.global_config.all_obs_keys
         }
     policy.start_episode()
-    action = np.asarray(policy(heldout_observation))
+    action = np.asarray(policy(observation))
     finite = bool(np.isfinite(action).all())
     within_range = bool((action >= -1.0).all() and (action <= 1.0).all())
     if action.shape != (7,) or not finite or not within_range:
         raise RuntimeError("invalid held-out action from reloaded checkpoint")
+    return heldout_demo, action, finite, within_range
 
-    split_proof = {
+
+def _reload_checkpoint(
+    train_root: Path, dataset: Path, valid_keys: list[str], training_text: str
+) -> dict[str, object]:
+    train_loss, validation_loss = _training_losses(training_text)
+    checkpoint_hash, policy, optimizer_steps = _load_checkpoint_state(train_root)
+    heldout_demo, action, finite, within_range = _heldout_action(
+        policy, dataset, valid_keys
+    )
+    return {
+        "train_loss": train_loss,
+        "validation_loss": validation_loss,
+        "checkpoint_hash": checkpoint_hash,
+        "optimizer_steps": optimizer_steps,
+        "heldout_demo": heldout_demo,
+        "action": action,
+        "finite": finite,
+        "within_range": within_range,
+    }
+
+
+def _split_proof(
+    train_keys: list[str],
+    valid_keys: list[str],
+    overlap: list[str],
+    sample_counts: dict[str, int],
+    heldout_demo: str,
+) -> dict[str, object]:
+    return {
         "algorithm": "robomimic.scripts.split_train_val seed=0 ratio=0.1",
         "train_trajectory_count": len(train_keys),
         "validation_trajectory_count": len(valid_keys),
@@ -645,19 +837,95 @@ def main() -> None:
         ).hexdigest(),
         "heldout_demo": heldout_demo,
     }
-    result = {
+
+
+def _result_source(context: dict[str, object]) -> dict[str, object]:
+    source_identity = context["source_identity"]
+    return {
+        "repository": source_identity["repository"],
+        "revision": SOURCE_REVISION,
+        "observed_head": source_identity["observed_head"],
+        "git_tree_sha1": source_identity["git_tree_sha1"],
+        "tree_archive_sha256": source_identity["tree_archive_sha256"],
+        "version": "0.5.0",
+    }
+
+
+def _result_runtime(context: dict[str, object]) -> dict[str, object]:
+    runtime_inventory = context["runtime_inventory"]
+    return {
+        "external_runtime": {
+            "lock_sha256": _sha256(context["runtime_lock"]),
+            "inventory_sha256": _sha256(context["runtime_root"] / "inventory.json"),
+            "runtime_id": runtime_inventory["runtime_id"],
+            "prepopulated": True,
+            "runtime_manifest_digest_matched": True,
+            "read_only": context["runtime_mount_proof"].get("read_only") is True,
+            "atomic_private_snapshot_published": True,
+            "snapshot_write_bits_absent": context["runtime_root"].stat().st_mode & 0o222
+            == 0,
+        },
+    }
+
+
+def _result_dataset(
+    demo_keys: list[str],
+    sample_counts: dict[str, int],
+    action_range: tuple[float, float],
+) -> dict[str, object]:
+    return {
+        "dataset": {
+            "repository": "robomimic/robomimic_datasets",
+            "revision": DATASET_REVISION,
+            "path": DATASET_PATH,
+            "sha256": DATASET_SHA256,
+            "size_bytes": DATASET_BYTES,
+            "trajectory_count": len(demo_keys),
+            "sample_count": sum(sample_counts.values()),
+            "action_observed_range": list(action_range),
+        },
+    }
+
+
+def _result_training(training: dict[str, object]) -> dict[str, object]:
+    return {
+        "training": {
+            "entrypoint": "robomimic/scripts/train.py",
+            "algorithm": "bc",
+            "optimizer": "adam",
+            "optimizer_step_count": training["optimizer_steps"],
+            "configured_optimizer_steps": TRAIN_STEPS,
+            "configured_validation_forward_steps": VALIDATION_STEPS,
+            "train_loss": training["train_loss"],
+            "validation_loss": training["validation_loss"],
+        },
+        "checkpoint": {"sha256": training["checkpoint_hash"], "reloaded": True},
+    }
+
+
+def _result_action(training: dict[str, object]) -> dict[str, object]:
+    action = training["action"]
+    return {
+        "heldout_action": {
+            "demo": training["heldout_demo"],
+            "shape": list(action.shape),
+            "dtype": str(action.dtype),
+            "finite": training["finite"],
+            "allowed_range": [-1.0, 1.0],
+            "within_allowed_range": training["within_range"],
+            "observed_min": float(action.min()),
+            "observed_max": float(action.max()),
+        },
+    }
+
+
+def _result_header(context: dict[str, object]) -> dict[str, object]:
+    return {
         "schema": "npa.workbench.robomimic.smoke.v1",
         "solution": "robomimic",
         "capability": "lift_ph_lowdim_checkpoint_reload_action",
         "capabilities_exercised": CAPABILITIES,
-        "source": {
-            "repository": source_identity["repository"],
-            "revision": SOURCE_REVISION,
-            "observed_head": source_identity["observed_head"],
-            "git_tree_sha1": source_identity["git_tree_sha1"],
-            "tree_archive_sha256": source_identity["tree_archive_sha256"],
-            "version": "0.5.0",
-        },
+        "source": _result_source(context),
         "boundaries": {
             "baked_runtime": "neutral-no-cuda",
             "pretrained_weights": False,
@@ -669,55 +937,31 @@ def main() -> None:
             "sha256": BAKED_LOCK_SHA256,
             "distribution_count": BAKED_DISTRIBUTION_COUNT,
             "accepted_sha256_count": len(
-                re.findall(rb"--hash=sha256:[0-9a-f]{64}", baked_lock_bytes)
+                re.findall(rb"--hash=sha256:[0-9a-f]{64}", context["baked_lock_bytes"])
             ),
             "install_contract": "only-binary no-deps require-hashes",
         },
-        "external_runtime": {
-            "lock_sha256": _sha256(runtime_lock),
-            "inventory_sha256": _sha256(runtime_root / "inventory.json"),
-            "runtime_id": runtime_inventory["runtime_id"],
-            "prepopulated": True,
-            "runtime_manifest_digest_matched": True,
-            "read_only": runtime_mount_proof.get("read_only") is True,
-            "atomic_private_snapshot_published": True,
-            "snapshot_write_bits_absent": runtime_root.stat().st_mode & 0o222 == 0,
-        },
-        "customer_runtime_entitlement": entitlement,
-        "dataset": {
-            "repository": "robomimic/robomimic_datasets",
-            "revision": DATASET_REVISION,
-            "path": DATASET_PATH,
-            "sha256": DATASET_SHA256,
-            "size_bytes": DATASET_BYTES,
-            "trajectory_count": len(demo_keys),
-            "sample_count": sum(sample_counts.values()),
-            "action_observed_range": [action_min, action_max],
-        },
+    }
+
+
+def _build_result(
+    context: dict[str, object],
+    demo_keys: list[str],
+    sample_counts: dict[str, int],
+    action_range: tuple[float, float],
+    split_proof: dict[str, object],
+    training: dict[str, object],
+) -> dict[str, object]:
+    return {
+        **_result_header(context),
+        **_result_runtime(context),
+        "customer_runtime_entitlement": context["entitlement"],
+        **_result_dataset(demo_keys, sample_counts, action_range),
         "split": split_proof,
-        "training": {
-            "entrypoint": "robomimic/scripts/train.py",
-            "algorithm": "bc",
-            "optimizer": "adam",
-            "optimizer_step_count": optimizer_step_count,
-            "configured_optimizer_steps": TRAIN_STEPS,
-            "configured_validation_forward_steps": VALIDATION_STEPS,
-            "train_loss": train_loss,
-            "validation_loss": validation_loss,
-        },
-        "checkpoint": {"sha256": checkpoint_hash, "reloaded": True},
-        "heldout_action": {
-            "demo": heldout_demo,
-            "shape": list(action.shape),
-            "dtype": str(action.dtype),
-            "finite": finite,
-            "allowed_range": [-1.0, 1.0],
-            "within_allowed_range": within_range,
-            "observed_min": float(action.min()),
-            "observed_max": float(action.max()),
-        },
-        "hardware": hardware,
-        **pod,
+        **_result_training(training),
+        **_result_action(training),
+        "hardware": context["hardware"],
+        **context["pod"],
         "exit_status": 0,
         "deferred": [
             "public_image_acceptance",
@@ -726,6 +970,34 @@ def main() -> None:
             "full_algorithm_matrix",
         ],
     }
+
+
+def main() -> None:
+    _require_strict_capacity_observation()
+    output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
+    output_dir.mkdir(parents=True, exist_ok=True)
+    context = _load_smoke_context(output_dir)
+    dataset, demo_keys, sample_counts, action_min, action_max = _download_dataset(
+        Path("/workspace/byof-inputs") / output_dir.name,
+        entitlement_arguments=context["entitlement_arguments"],
+    )
+    train_keys, valid_keys, overlap = _split_dataset(
+        context["source_root"], dataset, output_dir, demo_keys
+    )
+    train_root, config_path = _write_training_config(dataset, output_dir)
+    training_text = _run_training(context["source_root"], output_dir, config_path)
+    training = _reload_checkpoint(train_root, dataset, valid_keys, training_text)
+    result = _build_result(
+        context,
+        dataset,
+        demo_keys,
+        sample_counts,
+        (action_min, action_max),
+        _split_proof(
+            train_keys, valid_keys, overlap, sample_counts, training["heldout_demo"]
+        ),
+        training,
+    )
     (output_dir / "robomimic-smoke.json").write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
