@@ -112,7 +112,7 @@ likewise predates its current coherent release.
 | `npa-lancedb` | supported | **verified** [26] | **verified** [27] | **verified** [24] | **verified** [25] |
 | `npa-detection-training` | supported | **historical evidence** [29] | **verified** [current release evidence](#current-detection-runtime-evidence) | **historical evidence** [28] | **historical evidence** [31] |
 | `npa-robocasa` | supported (cu124) | supported (cu124) | blocked (needs cu130) | blocked (needs cu130) | blocked (needs cu130) |
-| `npa-openarm` | supported (RT cores; unmeasured) | blocked (no RT cores) | verified (MuJoCo); **historical evidence** (Isaac reach/training) [79] | blocked (no RT cores) | blocked (no RT cores) |
+| `npa-openarm` | supported (RT cores; unmeasured) | blocked (no RT cores) | **historical evidence (CPU-capable MuJoCo only; GPU qualification unverified)**; **historical evidence** (Isaac reach/training) [79] | blocked (no RT cores) | blocked (no RT cores) |
 | `npa-cosmos3` | supported | supported | **verified** [accepted records](#accepted-release-evidence) (r7, effective guardrails attested) | supported | supported |
 | `npa-cosmos3-serving` (public zero-payload bootstrap) | blocked (8-GPU memory floor) | historical predecessor only; current digest unverified | unverified (8 GPUs) | **verified** [accepted records](#accepted-release-evidence) (8 GPUs) | unverified (8 GPUs) |
 | `npa-cosmos3-super-benchmark` (operator-private) | blocked (8-GPU benchmark contract) | supported (8 GPUs) | supported (8 GPUs) | **verified** [private benchmark record](#accepted-release-evidence) | supported (8 GPUs) |
