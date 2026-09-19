@@ -27,7 +27,7 @@ absolute seconds in isolation.
 |---|---|---|
 | Credential preflight (`npa workbench health preflight`) | 5 independent provider checks (Hugging Face, NGC, S3, Token Factory, Nebius CLI) now run in a bounded thread pool instead of serially | **2.70x** median speedup over 5 alternated trials, all 5 checks PASS against real providers both before and after |
 | Workflow-run manifest discovery (`workflow list` / `status` / `artifacts` without an explicit S3 URI) | Candidate run manifests below a bucket prefix are fetched concurrently through one shared client instead of one client built per candidate | **11.88x** (`list_runs`) / **12.53x** (`discover_workflow_run_state`) median speedup over 3 alternated trials against 40 real seeded manifests; identical results verified between the old and new code every trial |
-| S3 directory transfer (`upload_directory` / `download_directory` / `download_path`) | Per-file transfers run concurrently (bounded pool) with an adaptive per-file multipart thread budget | **6.2x–7.2x** for many small files, **2.5x–3.0x** for a realistic mixed checkpoint directory; a disclosed, workload-dependent tradeoff for one large file alone in a directory, from ~7% slower (fresh connection) to ~2.1x slower (after prior small-file traffic on the same client) — see below — **no blanket 5x claim for storage** |
+| S3 directory transfer (`upload_directory` / `download_directory` / `download_path`) | Per-file transfers run concurrently (bounded pool) with an adaptive per-file multipart thread budget | **6.2x–7.2x** for many small files, **2.4x–3.0x** for a realistic mixed checkpoint directory; a disclosed, workload-dependent tradeoff for one large file alone in a directory, from ~7% slower (fresh connection) to ~2.1x slower (after prior small-file traffic on the same client) — see below — **no blanket 5x claim for storage** |
 
 Workflow-run manifest discovery is the strongest real result (11.9x-12.5x).
 Credential preflight measured 2.70x. The storage result is reported
@@ -122,27 +122,32 @@ unchanged from before this change:
 
 - **New:** `download_file`'s exact-object GET is now atomic. It streams into
   a staging file created with the destination's exact permission bits from
-  the first byte (`os.open`'s mode argument, not a post-rename `chmod`),
-  then renames onto the destination only once the transfer completes and
-  the byte count matches the provider's declared length. Replacing an
-  existing restrictively-permissioned file therefore never has a window
-  where the in-progress replacement is more permissive than the file it is
-  replacing, and a transport or disk failure partway through never leaves
-  a truncated file where a complete one previously existed.
+  the first byte: when replacing an existing file, `os.fchmod` sets those
+  exact bits on the open file descriptor before any bytes are written (not
+  just `os.open`'s mode argument, which alone can still be masked by a
+  stricter-than-default process umask), then renames onto the destination
+  only once the transfer completes and the byte count matches the
+  provider's declared length. Replacing an existing restrictively-permissioned
+  file therefore never has a window where the in-progress replacement is
+  more permissive than the file it is replacing, and a transport or disk
+  failure partway through never leaves a truncated file where a complete
+  one previously existed.
 - **Unchanged:** `download_path`'s exact-object-vs-tree precedence —
   a literal object key always wins over a same-named descendant tree — is
-  preserved through the concurrency refactor. For a non-`/`-ending, non
-  -empty key, a direct HEAD checks for the exact object first; when that
-  HEAD is ambiguous (403) or is skipped (a `/`-ending, non-empty prefix),
+  preserved through the concurrency refactor. For a non-`/`-ending,
+  non-empty key, a direct HEAD checks for the exact object first; when
+  that HEAD is ambiguous (403) or is skipped (a `/`-ending, non-empty prefix),
   one bounded, single-item listing probe checks for the same exact-key
   precedence before the prefix is treated as a tree. An empty prefix skips
   this probe entirely and is always treated as a tree.
 
-**Real evidence** (5 alternating real-Nebius rounds per study, hash
--verified readback every round, fixture prefixes deleted and verified
-absent afterward, zero provider retry attempts observed). Two separate
-studies isolate a genuine workload-dependent effect for the single-large
--file case:
+**Real evidence** (5 alternating real-Nebius rounds per study,
+hash-verified readback every round, fixture prefixes deleted and verified
+absent afterward, zero provider retry attempts observed). Fixture sizes:
+"64 small files" is 64 x 32KiB; "mixed directory" is one 128MiB file plus
+63 x 32KiB files; "one large file alone" is a single 128MiB file. Two
+separate studies isolate a genuine workload-dependent effect for the
+single-large-file case:
 
 | Scenario | Study | Upload | Download |
 |---|---|---|---|
@@ -167,7 +172,7 @@ the gap but does not eliminate it, and no specific cause (network
 conditions, connection state, or something else) has been established —
 this is reported as an open, measured tradeoff, not a resolved or fully
 explained one. Treat the storage speedup as proven for the common
-multi-file case (consistently 2.5x-7.2x across both studies) and treat the
+multi-file case (consistently 2.4x-7.2x across both studies) and treat the
 single-large-file case as a real cost under at least the reused-client
 condition tested. It does not change the atomicity or correctness evidence
 above.
@@ -204,44 +209,62 @@ the published Genesis image was used only as a ready-made PyTorch/CUDA
 runtime container, and no Genesis simulation capability was exercised or
 validated.
 
-A real GPU job (RTX PRO 6000 Blackwell, `torch 2.9.0+cu130`, CUDA 13.0) ran
-the reviewed source snapshot for all three changed modules plus the
-incidental `workbench/data` fix — SHA256 of each staged module file on the
-worker matched the corresponding file in this repository at the time of
-the run exactly, verified independently on the operator's own machine, not
-just the job's self-report. One documentation-only change (a docstring
-clarification, no behavior change) landed in `sim2real_health.py` after
-this run; an independent comparison confirms the other 4 modules stay
-byte-identical to what the GPU job ran, and `sim2real_health.py`'s
-executable AST (source with docstrings stripped) is unchanged. The same
-job exercised the real changed behavior, not a synthetic stand-in:
+Both GPU jobs (RTX first, B200 second) ran the same frozen source
+archive, staged once for all five modules (the three changed modules,
+`sim2real_health.py`, and the incidental `workbench/data` fix) before
+either job started. SHA256 of each staged module file matched that frozen
+reviewed snapshot exactly, verified independently on the operator's own
+machine, not just the jobs' self-report. That frozen snapshot predates one
+documentation-only change (a docstring clarification, no behavior change)
+that later landed in `sim2real_health.py`; today's repository differs from
+what both GPU jobs actually ran only by that one change, confirmed
+executable-AST-equivalent (source with docstrings stripped is identical) —
+the other 4 modules remain byte-identical. Both jobs exercised the real
+changed behavior, not a synthetic stand-in:
 
 - 12 durable run manifests correctly listed and the exact target run
   correctly discovered through the concurrent manifest-discovery path.
-- 2 concurrent real credential-preflight checks (S3, Nebius) PASS.
+- 2 concurrent real credential-preflight checks, both `s3`, proving two
+  real concurrent S3 probes execute correctly (the separate, deterministic
+  unit test proves the repeated-check-name worker-pool cap; this GPU run
+  does not exercise that cap with only 2 checks).
 - An exact-object download preserved its destination's `0600` permission
   bits through the atomic replace path.
-- 34 artifact hashes (inputs and outputs) verified identical on both the
-  worker and an independent operator-side readback.
+- 34 output artifact hashes verified identical between the worker and an
+  independent operator-side readback (input artifacts were verified
+  separately: the worker checked them after its own download, independent
+  of this output check).
 - A real CUDA computation, not just a driver check: a 2048x2048 matmul
   with zero max-absolute-error against an independently recomputed
   expected result, and 16 real SGD optimizer steps with monotonically
   decreasing loss (0.2275 -> 0.1432).
+- The written checkpoint's ZIP container CRC is valid and its float32
+  parameter buffers contain only finite values on both GPUs (no local
+  `torch.load` was performed for this check; the operator machine has no
+  torch installed).
 
-**B200:** the initial job launch attempt failed before reaching any
-worker code (a provider-side `StartFailed`), traced to the launch
-harness's interpreter invocation, not to the changed source. Being
-retried with a corrected launch command. This section will be updated
-with that result; until then, treat GPU validation as proven on RTX PRO
-6000 and open on B200, not passed on both authorized families.
+| GPU | Result | Compute capability |
+|---|---|---|
+| RTX PRO 6000 Blackwell Server Edition | PASSED | `(12, 0)` |
+| B200 | PASSED (after one retry) | `(10, 0)` |
+
+The B200 job's first launch attempt failed before reaching any worker code
+(a provider-side `StartFailed`); root cause was the private launch
+harness assuming the wrong interpreter path for that image, not the
+changed source. The failed attempt's job was confirmed terminal and
+removed, and the retry (a distinct job) passed with the same checks above.
 
 ## Full-suite and guardrail status
 
 The full hermetic unit suite reports `155 failed`, `21,111 passed`, `235
 skipped`, `1 xpassed`. Its failing-test set was diffed node-ID-by-node-ID
 against an independently generated clean-base run on the same machine: the
-two failing-test sets are identical (0 new failures, 0 resolved). That
-identity is evidence this change did not add or remove failures; it does
-not by itself establish the individual root cause of every one of the 155
-pre-existing failures. All 3,460 repository guardrail tests pass. `ruff
-check` is clean on every changed file.
+two failing-test sets are identical (0 new failures, 0 resolved). Both runs used `pytest-timeout`'s signal method; the base run's
+timeout threshold was 180 seconds and the candidate run's was 45 seconds
+(lowered after an unrelated hang during an earlier attempt) — the timeout
+threshold was not identical between the two runs, so the failure-set match
+is evidence this change did not add or remove failures, not proof of an
+otherwise fully controlled comparison, and it does not by itself establish
+the individual root cause of every one of the 155 pre-existing failures. All 3,460
+repository guardrail tests pass. `ruff check` is clean on every changed
+file.
