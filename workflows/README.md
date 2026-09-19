@@ -15,6 +15,7 @@ artifacts. Start with a runbook that matches the result you want.
 | Reconstruct a captured scene | [NuRec](../docs/workbench/guides/neural-reconstruction.md) |
 | Compose the 14-stage robot loop | [Sim2Real](../docs/workbench/guides/sim2real-workflow.md) |
 | Train a GR00T policy | [GR00T N1.7](../docs/workbench/cookbooks/groot-1-7-training.md) |
+| Evaluate a BEHAVIOR 2026 policy | [Workflow](testing/behavior-challenge-eval.yaml) · [rules and runtime prerequisites](../docs/workbench/behavior-challenge.md) — GPU validation pending |
 | Fine-tune XR1 on Antioch robot demonstrations | [Antioch pipeline](partners/antioch/README.md) — physical demonstrations, Nebius S3, NPA credential storage, attached evaluation with the pinned Antioch SDK, and measured policy results |
 | Package your own repository | [BYOF](../docs/workbench/cookbooks/byof-isaac-lab/README.md) |
 

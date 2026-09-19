@@ -2981,7 +2981,7 @@ def _plan_requires_npa_source(
     config_overrides: Mapping[str, str] | None = None,
     options: SkypilotRenderOptions,
 ) -> bool:
-    """Return whether any fully configured planned step lacks a container image."""
+    """Return whether planned steps need staged source or an explicit overlay."""
 
     from npa.orchestration.npa_workflow import build_plan, load_spec
     from npa.orchestration.npa_workflow.skypilot_render import (
@@ -2997,6 +2997,11 @@ def _plan_requires_npa_source(
     # unused source tree (and ``--no-stage-src`` cannot submit it at all).
     spec = merge_config_overrides(load_spec(yaml_path), config_overrides)
     plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
+    overlay = (
+        os.environ.get("NPA_SRC_OVERLAY") or spec.config.get("source_overlay") or ""
+    )
+    if plan.steps and str(overlay).strip().lower() in {"1", "true"}:
+        return True
     for step in plan.steps:
         task = build_scheduler_task(spec, step, run_id=run_id)
         if tool_requires_staged_npa_source(str(task.get("tool_ref") or "")):
