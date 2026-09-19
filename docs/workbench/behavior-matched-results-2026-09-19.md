@@ -7,11 +7,13 @@ That is **7,200 new planned optimizer updates**. The replay arm selected update
 training metric; it is not the challenge's task-completion score. The teacher
 control also selected update 3599, with its own conditioning loss **0.160796**.
 
-No matched-candidate rollout was completed. The previous
-balanced fine-tune regressed, as documented in the
-[earlier comparison](behavior-followup-results-2026-09-18.md). The matched
-experiment changes the training approach in response to that result; it does
-not erase it or establish an improvement by itself.
+The replay-selected update 3599 completed two matched development cells. On the
+ten radio cases it scored mean Q **0.10** with **1/10** full successes, versus
+stock's Q **0.40** and **4/10** successes. On trash it scored **0.30** versus
+stock's **0.366667**, with **2/10** successes each. Four cells remain pending,
+so there is no six-task aggregate. The previous balanced fine-tune regressed, as
+documented in the [earlier comparison](behavior-followup-results-2026-09-18.md).
+The matched experiment does not erase that result or establish an improvement.
 
 ## Experiment
 
@@ -50,6 +52,40 @@ with the private run evidence.
 
 See the [training guide](behavior-matched-training.md) for executable commands
 and the exact training contract.
+
+## Completed replay-selected development cells
+
+The replay-selected model used native selected execution and the unchanged
+official evaluator on development instances 311–320, once each. Original
+metric and video identities were retained, every video decoded fully, and the
+comparison used the same stock cases listed below.
+
+| Task | Policy | Mean Q | Full successes | Simulator steps |
+| --- | --- | ---: | ---: | ---: |
+| Turning on radio | Stock | 0.400000 | 4/10 | 28,422 |
+| Turning on radio | Replay-selected update 3599 | 0.100000 | 1/10 | 29,962 |
+| Picking up trash | Stock | 0.366667 | 2/10 | 72,280 |
+| Picking up trash | Replay-selected update 3599 | 0.300000 | 2/10 | 73,119 |
+
+On radio, the selected model was better on zero paired cases, tied on seven,
+and worse on three. It scored zero on instances 311–319 and completed instance
+320 with Q=1.0 in 937 steps. On trash, it was better on two cases, tied on four,
+and worse on four. These are two trained tasks on reused development cases;
+they do not establish an unseen-test result or a three-task, six-task, or full
+challenge aggregate.
+
+The candidate-cell, comparison, task-summary, and paired-case evidence have
+SHA-256 values `11bd401fed491e1caf388391963cba20d3952c6970d3392095e1fbfc4bc2e6eb`,
+`73b6d34569af3853df17ca30587cd89b863533aa27dacc645861ba1ac4872b0b`,
+`1d496f0a7216b4de186e9f2e57f72526108ebc9aa7e21c9c74270225e7a78be0`,
+and `52058598612125d908860c667476c7e2d90e31737a7be67b748f6d6a6361a7b2`,
+respectively, for the radio comparison. The trash candidate-cell SHA-256 is
+`6fba61fe05ea091536f88af8049517a5ed529ef86c1cf044a0d7ba8f2040dc0d`.
+The [partial-panel per-case CSV](behavior-matched-candidate-cases-partial-task0-task1-2026-09-19.csv)
+contains all twenty cases and their original metric identities; its SHA-256 is
+`c770e242e2cb6792c72391b229545742e4e1e8f8943f88f633cb82e0d08de177`.
+The optional transition-refresh public module was not used for these cells and
+remains without a public GPU validation or rollout score.
 
 ## Completed stock-policy development cells
 
@@ -177,6 +213,15 @@ finite delta. The public JSON records those two deltas as `null`, with this
 reason, and retains the raw validation receipt hash. This serving result admits
 the checkpoint to development rollouts. It is not a rollout result or evidence
 that training improved the policy.
+
+The stock baseline constructs FP32 correlation statistics, while these selected
+rollouts preserve the completed training run's native BF16 statistics. The
+stock-versus-selected comparison therefore changes both learned weights and
+this intermediate. At update 600, changing only correlation precision raised
+the fixed-batch mean action loss by 0.03048% with BF16; it left stage predictions
+unchanged. No selected-update-3599 FP32-versus-BF16 same-RNG actions were retained.
+These diagnostics establish an inference-state difference, but do not establish
+its effect on rollout Q or explain the radio regression.
 
 ## Selected failure observations
 

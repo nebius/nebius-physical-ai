@@ -75,7 +75,7 @@ def _adapter_files(output: Path, *, selected: bool) -> dict[str, str]:
     adapters = {}
     names = ["rlc_server.py", "rlc_observations.py"]
     if selected:
-        names.extend(("rlc_selected.py", "rlc_selected_server.py"))
+        names.extend(("rlc_selected.py", "rlc_selected_server.py", "rlc_transition.py"))
     for name in names:
         shutil.copyfile(Path(__file__).with_name(name), output / name)
         adapters[name] = file_digest(output / name)
@@ -237,12 +237,20 @@ def _command(args, task_id, output, selected_artifacts=None):
                 str(selected_artifacts["correlation_manifest"]),
                 "--validation-receipt",
                 str(selected_artifacts["validation_receipt"]),
+                "--execution-variant",
+                getattr(args, "policy_execution_variant", "native"),
             ]
         )
     return command
 
 
 def _record_selected(output, command, files, receipt, plan, staged):
+    variant = command[command.index("--execution-variant") + 1]
+    provenance = None
+    if variant == "transition-refresh":
+        from .rlc_transition import TRANSITION_REFRESH_PROVENANCE
+
+        provenance = dict(TRANSITION_REFRESH_PROVENANCE)
     adapters = _adapter_files(output, selected=True)
     shutil.copyfile(
         Path(__file__).with_name("POLICY_LICENSE"), output / "rlc-adapter.LICENSE"
@@ -262,7 +270,15 @@ def _record_selected(output, command, files, receipt, plan, staged):
         },
         "command": command,
         "normalization_asset": NORMALIZATION,
-        "status": "serving_validated_not_rollout_evaluated",
+        "execution_variant": {
+            "name": variant,
+            "transition_refresh_provenance": provenance,
+        },
+        "status": (
+            "serving_validated_not_rollout_evaluated"
+            if variant == "native"
+            else "selected_state_validated_execution_variant_unevaluated"
+        ),
     }
     (output / "policy-provenance.json").write_text(
         json.dumps(evidence, indent=2) + "\n"

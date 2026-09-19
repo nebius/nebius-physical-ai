@@ -8,10 +8,14 @@ import importlib
 import logging
 import os
 from pathlib import Path
+import signal
 import sys
 import tempfile
 
 from rlc_selected import load_selected_policy, load_validated_correlation
+
+NATIVE_EXECUTION = "native"
+TRANSITION_REFRESH = "transition-refresh"
 
 
 def parser() -> argparse.ArgumentParser:
@@ -30,7 +34,46 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--validation-receipt", type=Path, required=True)
     value.add_argument("--task-id", type=int, choices=range(50), required=True)
     value.add_argument("--port", type=int, required=True)
+    value.add_argument(
+        "--execution-variant",
+        choices=(NATIVE_EXECUTION, TRANSITION_REFRESH),
+        default=NATIVE_EXECUTION,
+    )
     return value
+
+
+def _configure_execution(policy, variant: str):
+    if variant == NATIVE_EXECUTION:
+        return policy
+    from rlc_transition import configure_selected_execution
+
+    return configure_selected_execution(policy, variant)
+
+
+def _install_termination_handlers(policy):
+    original_handlers = {}
+
+    def terminate(signum, frame):
+        del frame
+        policy.finalize_telemetry()
+        raise SystemExit(128 + signum)
+
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        original_handlers[signum] = signal.signal(signum, terminate)
+    return original_handlers
+
+
+def _serve_policy(adapter, policy, args) -> None:
+    if args.execution_variant == NATIVE_EXECUTION:
+        asyncio.run(adapter._serve(policy, args.port))
+        return
+    original_handlers = _install_termination_handlers(policy)
+    try:
+        asyncio.run(adapter._serve(policy, args.port))
+    finally:
+        policy.finalize_telemetry()
+        for signum, handler in original_handlers.items():
+            signal.signal(signum, handler)
 
 
 def main() -> None:
@@ -61,7 +104,8 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="npa-rlc-selected-") as temporary:
         adapter._policy_source(args.source_root, Path(temporary))
         policy = load_selected_policy(adapter, args, correlation, manifest)
-        asyncio.run(adapter._serve(policy, args.port))
+        policy = _configure_execution(policy, args.execution_variant)
+        _serve_policy(adapter, policy, args)
 
 
 if __name__ == "__main__":

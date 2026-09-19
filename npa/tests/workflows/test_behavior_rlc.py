@@ -741,6 +741,7 @@ def test_selected_server_command_uses_explicit_receipts(tmp_path):
         policy_python=Path("/runtime/python"),
         policy_root=Path("/runtime/source"),
         policy_checkpoint=Path("/runtime/selected-model"),
+        policy_execution_variant="transition-refresh",
         port=9000,
     )
     command = rlc_policy._command(args, 22, tmp_path, staged)
@@ -752,17 +753,62 @@ def test_selected_server_command_uses_explicit_receipts(tmp_path):
         "--adapter-root",
         str(tmp_path),
     ]
-    assert command[-6:] == [
+    assert command[-8:] == [
         "--selected-export-receipt",
         str(staged["selected_export"]),
         "--correlation-manifest",
         str(staged["correlation_manifest"]),
         "--validation-receipt",
         str(staged["validation_receipt"]),
+        "--execution-variant",
+        "transition-refresh",
     ]
     published = rlc_policy._command(args, 22, tmp_path)
     assert published[1] == str(tmp_path / "rlc_server.py")
     assert "--adapter-root" not in published
+
+
+@pytest.mark.parametrize("variant", ["native", "transition-refresh"])
+def test_selected_provenance_records_execution_validation_scope(
+    tmp_path, monkeypatch, variant
+):
+    module = "npa.workflows.behavior_challenge.rlc_transition"
+    monkeypatch.delitem(sys.modules, module, raising=False)
+    staged = {}
+    for name in ("selected_export", "correlation_manifest"):
+        path = tmp_path / f"{name}.json"
+        path.write_text("{}")
+        staged[name] = path
+    validation = tmp_path / "validation.json"
+    validation.write_text("{}")
+    staged["validation_receipt"] = validation
+    monkeypatch.setattr(
+        rlc_policy,
+        "_adapter_files",
+        lambda output, selected: {"selected": str(selected)},
+    )
+    command = ["server", "--execution-variant", variant]
+    rlc_policy._record_selected(
+        tmp_path,
+        command,
+        {"params": "a" * 64},
+        {"selected_step": 3599},
+        {"recipe": {"policy_checkpoint_sha256": "b" * 64}},
+        staged,
+    )
+
+    evidence = json.loads((tmp_path / "policy-provenance.json").read_text())
+    assert evidence["execution_variant"]["name"] == variant
+    if variant == "native":
+        assert module not in sys.modules
+        assert evidence["execution_variant"]["transition_refresh_provenance"] is None
+        assert evidence["status"] == "serving_validated_not_rollout_evaluated"
+    else:
+        assert evidence["execution_variant"]["transition_refresh_provenance"]
+        assert (
+            evidence["status"]
+            == "selected_state_validated_execution_variant_unevaluated"
+        )
 
 
 def test_selected_policy_arguments_are_all_or_nothing(tmp_path):

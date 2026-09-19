@@ -13,7 +13,11 @@ updates, full holdout selection, and selected-model export. GPU validation found
 one native correlation-statistics precision difference, then proved the selected
 update-3599 model's typed state, fixed-batch metrics, fixed-RNG actions, and
 existing serving wrapper agree after restoring that receipt-bound intermediate.
-The selected model has no rollout score.
+The replay-selected model then completed the ten radio development cases with
+mean Q=0.10 and one full success, compared with stock's Q=0.40 and four
+successes on the same cases. Trash scored Q=0.30 versus stock's Q=0.366667,
+with two full successes each. The other four matched cells remain pending, so
+there is no six-task aggregate or policy-quality win claim.
 
 **Earlier comparison, September 18:** the
 [76-rollout follow-up](behavior-followup-results-2026-09-18.md) scored the
@@ -84,9 +88,10 @@ timestamp and annotation-alignment audits. The separate
 [matched stage-conditioning implementation](behavior-matched-training.md)
 freezes the parent task and stage modules while comparing teacher-bin and parent
 stage-replay action conditioning. Native GPU training and holdout selection
-completed for both arms. Selected-model serving validation passed; rollout
-evaluation remains pending. The published RLC comparison below is a separate
-measured result.
+completed for both arms. Selected-model serving validation passed; the first
+matched radio and trash cells regressed from stock's Q=0.40 and Q=0.366667 to
+Q=0.10 and Q=0.30, respectively. Four matched cells remain pending. The published
+RLC comparison below is a separate measured result.
 
 `--policy-kind rlc` selects a development-only transfer of the published
 [RLC 2025 winning solution](https://github.com/IliaLarchenko/behavior-1k-solution).
@@ -154,6 +159,20 @@ and the unchanged RLC server and observation-adapter sources. The runner loads
 that intermediate before policy/JIT construction and rejects partial or mixed
 receipt sets. A successful serving validation permits development evaluation;
 it does not establish a policy-quality improvement.
+
+Selected mode defaults to the exact native execution wrapper. The optional
+`--policy-execution-variant transition-refresh` experiment keeps the native
+26-action prediction prefix, executes 20 steps, retains four actions for
+inpainting, and keeps the native two-of-three stage vote. Before an action is
+computed, two consecutive fully open or fully closed onboard gripper readings
+can clear the queued plan. An accepted stage change clears the remaining queue
+and inpainting state after returning the action that detected the change, so the
+next observation replans. The variant receives only the same RGB images and
+61-element proprioception as native selected serving; episode ordinals and
+transition counts are logging metadata and never policy inputs. Its public
+integration has unit and differential coverage but has not itself passed a GPU
+run or produced measured rollout scores. The radio result above used the native
+selected execution path; it does not validate this optional transition variant.
 
 This selected export remains limited to the 16 tasks assigned to published
 checkpoint 2: task IDs 0, 1, 7, 8, 9, 12, 16, 17, 18, 20, 21, 22, 26, 30, 43,

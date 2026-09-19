@@ -218,6 +218,11 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
     selected = [bool(getattr(args, field, None)) for field in POLICY_FIELDS]
     selected_rlc = [bool(getattr(args, field, None)) for field in SELECTED_RLC_FIELDS]
     selected_kind = getattr(args, "policy_kind", "official") == "rlc-selected"
+    execution_variant = getattr(args, "policy_execution_variant", "native")
+    if execution_variant not in {"native", "transition-refresh"}:
+        raise ValueError("Unsupported selected-RLC execution variant")
+    if execution_variant != "native" and not selected_kind:
+        raise ValueError("Execution variants require --policy-kind rlc-selected")
     if selected_kind and not all(selected_rlc):
         raise ValueError(
             "Selected RLC policy requires its export, correlation, and validation receipts"

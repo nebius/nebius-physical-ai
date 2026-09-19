@@ -18,8 +18,12 @@ parameters. A B200 diagnostic isolated a correlation-statistics precision
 difference at update 600: matching that one array made all four checked metrics
 byte-identical. The selected update-3599 model then passed typed-state,
 fixed-batch metric, fixed-RNG action, and existing-wrapper validation with the
-same explicit native BF16 correlation asset. Rollout evaluation is still
-required. See the [experiment report](behavior-matched-results-2026-09-19.md).
+same explicit native BF16 correlation asset. The replay-selected model then
+completed the radio development cell at Q=0.10 with one success, versus stock's
+Q=0.40 with four successes on the same ten cases. Trash scored Q=0.30 versus
+stock's Q=0.366667, with two successes each. The other four matched cells and
+the six-task aggregate remain pending. See the
+[experiment report](behavior-matched-results-2026-09-19.md).
 
 ## What is trained
 
