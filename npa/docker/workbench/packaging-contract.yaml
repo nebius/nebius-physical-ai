@@ -253,6 +253,16 @@ images:
       Pinned Apache-2.0 LingBot source, retained upstream license, OSS CPU
       dependencies and native camera adapter. Runtime-only CUDA and checkpoints.
       Four-rank attention/all-to-all and decoded video gate supported publication.
+  sam3:
+    dockerfile: sam3/Dockerfile
+    tier: job
+    redistribution: public
+    passwordless_root_exemption: "SkyPilot bootstrap only; non-root ubuntu, no default SSH daemon, and no credentials or vendor payload baked into the image."
+    notes: >-
+      Neutral Python bootstrap and NPA video adapter; SAM 3.1 source, checkpoint
+      and CUDA closure are pinned runtime fetches. Mandatory SAM payload scans
+      inspect every layer before and after public development publication.
+      Supported release remains quarantined pending exact-digest GPU proof.
   sam2:
     dockerfile: sam2/Dockerfile
     tier: job

@@ -46,10 +46,10 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory has **42 packaging entries** (40 redistribution-eligible
-and two restricted) and **43 mapped tools**: 37 public-release members, two
-restricted tools, and four quarantined tools (`curobo`, `ncore`, `openpi` and
-`robocasa`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
+The current source inventory has **43 packaging entries** (41 redistribution-eligible
+and two restricted) and **44 mapped tools**: 37 public-release members, two
+restricted tools, and five quarantined tools (`curobo`, `ncore`, `openpi`,
+`robocasa` and `sam3`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
 they do not constitute acceptance of the quarantined images.
 
 LeRobot 0.6.0 is selectable package support with an accepted optional public
@@ -65,6 +65,10 @@ The four-wave [LeRobot transfer experiment](guides/lerobot-transfer.md) selects
 that optional 0.6.0 image by digest and stages its adapters from the checkout.
 It uses the image's non-root runtime user and baked SkyPilot prerequisites;
 no new image publication is required for the experiment.
+
+SAM 3.1 has a [runtime-fetch development container](../../npa/docker/workbench/sam3/README.md).
+Its gated checkpoint access and real GPU qualification remain pending; it does
+not replace the accepted SAM 2.1 release or add a supported release row.
 
 ## Native model publication
 
