@@ -20,11 +20,11 @@ images. It and existing saved `container_registry` values do not repoint these
 repository-owned runtime defaults; select custom bytes with a complete image
 reference or an explicit workflow `--registry`.
 
-The Gymnasium-Robotics public candidate is a proposed neutral bootstrap with no
+The Gymnasium-Robotics public candidate is a neutral development bootstrap with no
 upstream source, Shadow asset, MuJoCo/Python workload runtime, or populated
-cache in its layers. It has no accepted or public build and remains
-pre-registration quarantined, has no public image row, and does not change
-public-release or mapped-tool counts.
+cache in its layers. It has no accepted release build and remains release
+quarantined; it has no public image row, but now has a truthful immutable
+development-build path for byte and capability validation.
 
 The combined public plan and accepted-release manifest were verified against
 GHCR without credentials on **2026-09-17**. All **34 current release tags**
@@ -55,21 +55,21 @@ separate claims.
 The current source inventory, including the Gymnasium-Robotics neutral-bootstrap
 candidate, has **43 packaging entries** (41 redistribution-eligible
 and two restricted) and **43 mapped tools**: 37 public-release members, two
-restricted tools, and four quarantined tools (`curobo`, `ncore`, `openpi` and
-`robocasa`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
+restricted tools, and four release-quarantined tools (`curobo`, `ncore`, `openpi`
+and `robocasa`). Gymnasium-Robotics is tracked separately as a development-build
+candidate because it has no supported release tag. These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
 they do not constitute acceptance of the quarantined images.
 
-Gymnasium-Robotics is separately tracked in the pre-registration quarantine.
-It is deliberately absent from the mapped-tool count, supported versions,
-public build matrix, and release table. It appears in the GPU compatibility
-matrix only as a quarantined pre-registration/no-accepted-image row. An
+Gymnasium-Robotics is selected by the immutable development-build matrix but
+remains separately tracked outside the mapped release inventory. It appears in the GPU
+compatibility matrix only as a development-candidate/no-accepted-image row. An
 owner-only reference build supplied the exact config and ordered 20-DiffID
 scanner anchors, but did not complete the product scan, SBOM, push, or
 immutable-digest gates and left no accepted artifact. Its Dockerfile refuses
 before package network access until the exact neutral-bootstrap package and
 corresponding-source closure exists. Runtime fetching later changes delivery
-only, not use, derivative, output, or service rights. No accepted or public
-image, anonymous pull, or current GPU capability is claimed.
+only, not use, derivative, output, or service rights. No accepted release,
+anonymous pull, or current GPU capability is claimed.
 
 LeRobot 0.6.0 is selectable package support with an accepted optional public
 image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact

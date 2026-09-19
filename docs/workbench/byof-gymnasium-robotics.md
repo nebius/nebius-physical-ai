@@ -12,9 +12,10 @@ reference build produced the exact config and ordered 20-DiffID graph now pinned
 by the product scanner, but its transaction stopped before the complete product
 scan, SBOM, push, or immutable-digest gates and cleaned the artifact. Those
 anchors are scanner inputs, not accepted image or current-head capability proof.
-`npa-gymnasium-robotics` remains in **pre-registration quarantine**: it has no
-supported tag, accepted manifest, SM120 compatibility record, retained registry
-object, or anonymous-pull evidence. The intended layers exclude the upstream
+`npa-gymnasium-robotics` now has an immutable **development-build path** but
+remains release-quarantined: it has no supported release tag, accepted manifest,
+SM120 compatibility record, retained registry object, or anonymous-pull evidence.
+The intended layers exclude the upstream
 solution tree, Shadow Hand assets, MuJoCo/Python wheels, runtime cache, CUDA or
 other vendor runtime, credentials, datasets, checkpoints, and outputs. The
 Dockerfile's first executable gate binds the exact neutral Ubuntu/Python

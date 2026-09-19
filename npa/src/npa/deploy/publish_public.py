@@ -419,19 +419,15 @@ def verify_validated_publication(item: PublishItem) -> tuple[bool, str]:
     if item.tool not in (
         images.PUBLICATION_QUARANTINE_TOOLS
         | images.PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS
+        | images.DEVELOPMENT_BUILD_QUARANTINE_TOOLS
     ):
         return True, "not applicable"
-    if item.tool in images.PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS:
-        return False, (
-            f"{item.tool} is a pre-registration neutral-bootstrap candidate: "
-            "its exact corresponding-source/runtime closure, accepted manifest, "
-            "supported tag, and architecture record are withheld. Trusted build "
-            "and publication are blocked."
-        )
     return False, (
-        f"{item.tool} has no accepted image: it has not been built, payload "
-        "scanned, or GPU validated. Publication is blocked until that evidence "
-        "exists and the tool leaves images.PUBLICATION_QUARANTINE_TOOLS."
+        f"{item.tool} has no accepted release image: its corresponding-source "
+        "closure, accepted manifest, supported tag, architecture, payload-scan "
+        "and GPU evidence are not accepted. Development builds may be produced "
+        "for validation, but release publication remains blocked until that "
+        "evidence exists and the tool leaves images.PUBLICATION_QUARANTINE_TOOLS."
     )
 
 

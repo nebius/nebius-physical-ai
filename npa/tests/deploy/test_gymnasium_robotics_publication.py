@@ -8,13 +8,17 @@ from npa.deploy.publish_public import PublishItem, verify_validated_publication
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_neutral_candidate_is_eligible_but_not_registered_or_publishable() -> None:
+def test_neutral_candidate_has_a_development_path_but_is_not_release_publishable() -> None:
     tool = "gymnasium-robotics"
     assert images.is_publicly_redistributable(tool)
-    assert tool in images.PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS
+    assert tool not in images.PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS
+    assert tool in images.DEVELOPMENT_BUILD_QUARANTINE_TOOLS
     assert tool not in images.PUBLICATION_QUARANTINE_TOOLS
     assert tool not in images.CONTAINER_IMAGE_NAMES
     assert tool not in images.SUPPORTED_TOOL_VERSIONS
+    assert images.container_image_for_tool(
+        tool, registry="registry.example.invalid"
+    ).endswith("/npa-gymnasium-robotics:neutral-unbuilt")
     assert tool not in images.publicly_publishable_tools()
 
 
@@ -27,11 +31,11 @@ def test_publication_guard_names_every_withheld_evidence_boundary() -> None:
     ok, reason = verify_validated_publication(item)
     assert not ok
     for token in (
-        "pre-registration",
         "corresponding-source",
         "accepted manifest",
         "supported tag",
         "architecture",
+        "GPU",
     ):
         assert token in reason
 

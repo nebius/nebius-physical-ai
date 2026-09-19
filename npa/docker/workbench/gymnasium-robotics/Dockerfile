@@ -17,7 +17,7 @@ ARG SOURCE_SHA
 LABEL org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai" \
       org.opencontainers.image.revision="${SOURCE_SHA}" \
       org.nebius.npa.delivery="neutral-runtime-bootstrap" \
-      org.nebius.npa.phase="pre-registration-quarantine" \
+      org.nebius.npa.phase="development-build-quarantine" \
       org.nebius.npa.redistribution="public-eligible-unvalidated" \
       org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1" \
       org.nebius.npa.skypilot-bootstrap-packages="openssh-server,rsync,sudo"

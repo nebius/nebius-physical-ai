@@ -39,7 +39,7 @@ unique and must be tested with its own upstream-named capabilities.
 | MuJoCo Playground | `mjx_cartpole_step` | **accepted** | `defcap8-mujoco-playground-20260709-024455` (+ prior `…-005745`) |
 | MuJoCo Playground | `mjx_cheetah_run_step` | **accepted** | Same runs; CheetahRun reward≈0.0019 |
 | MuJoCo Playground | `train_jax_ppo_cartpole_smoke` | **accepted** | `defcap9-mujoco-playground-20260709-034059` (`brax_ppo_train_api`, jax 0.8.0) |
-| Gymnasium-Robotics | `HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` | **historical private proof; neutral public bootstrap quarantined** | The accepted `c308945a` result remains bound to its private digest. The redesigned source has no accepted or public image proof and remains pre-registration quarantined; any new private receipt remains owner-only. |
+| Gymnasium-Robotics | `HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` | **historical private proof; neutral development build release-quarantined** | The accepted `c308945a` result remains bound to its private digest. The redesigned source has a payload-free development-build path but no accepted release or public image proof; any new private receipt remains owner-only. |
 | RoboCasa | `kitchen_task_registration` | **accepted** | `defcap8-robocasa-20260709-024455` (+ prior `…-011138`) |
 | RoboCasa | `download_kitchen_assets_lw` | **accepted** | `defcap17-robocasa-20260709-060243` (IIFAN fixtures+objects; restored git accessories) |
 | RoboCasa | `kitchen_egl_env_reset` | **accepted** | `defcap17-robocasa-20260709-060243` (post-download subprocess; 58 lightwheel cats; obs dict) |
@@ -102,7 +102,8 @@ This remains a minimal BYOF candidate. It has no model, external dataset,
 gated asset, terms acceptance, RL training claim, expert score, other
 environment-family claim, or physical-robot transfer claim. See
 [`byof-gymnasium-robotics.md`](byof-gymnasium-robotics.md).
-The neutral zero-Shadow-payload bootstrap is pre-registration quarantined. An
+The neutral zero-Shadow-payload bootstrap has a development-build path but is
+release-quarantined. An
 owner-only reference build supplied the scanner's exact config and ordered
 20-DiffID anchors, but did not complete the product scan, SBOM, push, or
 immutable-digest gates and left no accepted artifact. Pinned source, Shadow

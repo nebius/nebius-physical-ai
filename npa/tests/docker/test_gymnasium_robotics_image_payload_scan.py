@@ -93,28 +93,29 @@ def test_product_scan_is_staged_before_push_and_after_exact_pull() -> None:
         assert gate in text
 
 
-def test_corresponding_source_delivery_is_verified_before_image_push() -> None:
+def test_neutral_payload_scan_is_verified_before_development_image_push() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
-    source_gate = text.index("Require Gymnasium public corresponding source before push")
+    source_gate = text.index("Require Gymnasium neutral payload scan before development push")
     push = text.index('docker push "$IMAGE"')
     assert source_gate < push
     for token in (
         '--metadata-file "$RUNNER_TEMP/${TOOL}-build-metadata.json"',
-        '.["containerimage.digest"]',
         '.["containerimage.config.digest"]',
-        "npa.deploy.corresponding_source",
-        "gymnasium_robotics_image_manifest.json",
-        "corresponding-source.lock.json",
-        '--source-revision "$DEVELOPMENT_SHA"',
+        'payload="$RUNNER_TEMP/${TOOL}-gymnasium-payload.json"',
+        '.status == "passed"',
+        '.distributed_blob_scan_complete == true',
+        '.accepted_manifest_present == false',
+        '.release_authorized == false',
     ):
         assert token in text
 
 
-def test_trusted_workflow_refuses_pre_registration_selection_before_build() -> None:
+def test_trusted_workflow_allows_neutral_development_selection_before_build() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
-    refusal = text.index("pre-registration candidate has no build authority")
     build = text.index("docker buildx build")
-    assert refusal < build
+    assert "pre-registration candidate has no build authority" not in text
+    assert "Require Gymnasium neutral payload scan before development push" in text
+    assert build > text.index("Resolve immutable public development plan")
 
 
 def test_future_runtime_stage_proves_the_non_root_user_before_switching() -> None:

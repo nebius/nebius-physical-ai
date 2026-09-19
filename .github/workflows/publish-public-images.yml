@@ -106,7 +106,6 @@ jobs:
           import yaml
 
           from npa.deploy.images import (
-              PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS,
               development_image_for_tool,
               development_tag,
           )
@@ -134,10 +133,6 @@ jobs:
                   raise SystemExit("lerobot_version is not supported by the packaged manifest")
           matrix = []
           for tool in build_tools:
-              if tool in PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS:
-                  raise SystemExit(
-                      f"{tool}: pre-registration candidate has no build authority"
-                  )
               key = tool if tool in entries else f"sim2real-{tool}"
               entry = entries.get(key)
               if not isinstance(entry, dict) or entry.get("redistribution") != "public":
@@ -156,10 +151,6 @@ jobs:
 
           cleanup = []
           for tool in tools("CLEANUP_TOOLS"):
-              if tool in PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS:
-                  raise SystemExit(
-                      f"{tool}: no public development tag exists to clean"
-                  )
               cleanup.append({
                   "tool": tool,
                   "image": development_image_for_tool(tool, git_sha=sha, registry=target),
@@ -603,21 +594,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Require Gymnasium public corresponding source before push
+      - name: Require Gymnasium neutral payload scan before development push
         if: matrix.tool == 'gymnasium-robotics'
         run: |
           set -euo pipefail
           metadata="$RUNNER_TEMP/${TOOL}-build-metadata.json"
-          image_digest="$(jq -er '.["containerimage.digest"]' "$metadata")"
           config_digest="$(jq -er '.["containerimage.config.digest"]' "$metadata")"
           test "$config_digest" = "$(docker image inspect --format '{{.Id}}' "$IMAGE")"
-          npa/.venv/bin/python -m npa.deploy.corresponding_source \
-            --record npa/src/npa/deploy/gymnasium_robotics_image_manifest.json \
-            --lock npa/docker/workbench/gymnasium-robotics/corresponding-source.lock.json \
-            --source-revision "$DEVELOPMENT_SHA" \
-            --image-digest "$image_digest" \
-            --platform-manifest-digest "$image_digest" \
-            --config-digest "$config_digest"
+          payload="$RUNNER_TEMP/${TOOL}-gymnasium-payload.json"
+          test -s "$payload"
+          jq -e '
+            .status == "passed" and
+            .distributed_blob_scan_complete == true and
+            .unresolved_findings == 0 and
+            .upstream_runtime_payload_count == 0 and
+            .shadow_asset_count == 0 and
+            .runtime_cache_entry_count == 0 and
+            .accepted_manifest_present == false and
+            .release_authorized == false
+          ' "$payload" >/dev/null
 
       - name: Gate and publish the exact NCore OCI graph
         if: matrix.tool == 'ncore'

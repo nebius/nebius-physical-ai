@@ -680,7 +680,7 @@ def test_documentation_keeps_neutral_and_historical_evidence_separate() -> None:
     )
     for token in (
         "neutral bootstrap",
-        "pre-registration quarantine",
+        "development-build path",
         "historical",
         "corresponding-source",
         "No model, external dataset, gated artifact, or terms-acceptance flag",

@@ -161,7 +161,7 @@ def test_packaging_contract_distinguishes_reference_from_accepted_image() -> Non
     )
     entry = contract["images"]["gymnasium-robotics"]
     assert entry["redistribution"] == "public"
-    assert entry["phase"] == "pre-registration-quarantine"
+    assert entry["phase"] == "development-build-quarantine"
     assert entry["skypilot_bootstrap_contract"] == "skypilot-0.12.2-v1"
     assert "uid 1000" in entry["passwordless_root_exemption"]
     assert "reference build" in entry["notes"]
