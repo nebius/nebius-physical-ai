@@ -417,6 +417,7 @@ def test_managed_submit_cleanup_ownership_boundary(
             )
             cleanup.job_id = "42"
             cleanup.native_verified = True
+            cleanup.context_check = lambda: "f" * 64
         handles.append(cleanup)
         kwargs["on_launch_ready"](cleanup)
         if failure == "signal":
@@ -437,7 +438,7 @@ def test_managed_submit_cleanup_ownership_boundary(
                 },
                 log_paths={
                     "config": str(kwargs["config_path"]),
-                    "submission_dir": str(workdirs[0]),
+                    "submission_dir": str(workdirs[0] / "submission"),
                 },
             )
         raise RuntimeError("synthetic accepted failure")
@@ -488,14 +489,19 @@ def test_managed_submit_cleanup_ownership_boundary(
         module._submit_and_wait(
             args, robotwin_submit_context=context, authorized_env={}
         )
-    assert not mutations and status == ["RUNNING"]
-    assert all(path.exists() == (failure != "refused") for path in workdirs)
-    assert all(
-        (handle.job_id == "42" if failure == "post-return" else not handle.job_id)
-        and not handle.verified
-        for handle in handles
-    )
-    assert all(handle.result.errors for handle in handles)
+    if failure == "post-return":
+        assert mutations == [["/synthetic-sky", "jobs", "cancel", "--yes", "42"]]
+        assert status == ["CANCELLED"]
+        assert all(not path.exists() for path in workdirs)
+    else:
+        assert not mutations and status == ["RUNNING"]
+        assert all(path.exists() == (failure != "refused") for path in workdirs)
+    if failure == "post-return":
+        assert all(handle.job_id == "42" and handle.verified for handle in handles)
+        assert all(not handle.result.errors for handle in handles)
+    else:
+        assert all(not handle.job_id and not handle.verified for handle in handles)
+        assert all(handle.result.errors for handle in handles)
 
 
 def test_submit_cleanup_configuration_refinement_cannot_retarget(tmp_path):
