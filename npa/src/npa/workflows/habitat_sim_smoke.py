@@ -845,10 +845,8 @@ def _put_owned_object(
             if observed == payload:
                 ledger.owned.append(key)
         except Exception:
-            if exclusive_key:
-                ledger.owned.append(key)
-            else:
-                ledger.unresolved.append(key)
+            del exclusive_key
+            ledger.unresolved.append(key)
         raise
     ledger.owned.append(key)
     _verify_object(client, bucket, key, payload, label)

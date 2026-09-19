@@ -176,12 +176,62 @@ def _trusted_runtime_closure(contract: dict[str, object]) -> tuple[str, str, str
     return values  # type: ignore[return-value]
 
 
-def _verify_habitat_report(args, archive, report) -> dict[str, object]:
-    """Re-run Habitat verification against the exact held archive descriptor."""
+def _habitat_verifier_module():
+    """Load the verifier without changing package/script invocation behavior."""
     if __package__ in {None, ""}:
         from image_byte_scan import habitat_sim_verification as verifier
     else:
         from . import habitat_sim_verification as verifier
+    return verifier
+
+
+def _habitat_verify_descriptor(args, archive, verifier, contract, source_revision, expected):
+    """Verify the held descriptor and close only the descriptor-owned handle."""
+    _, fd, initial = W.open_private_fd(args.archive)
+    try:
+        W.require(
+            W.descriptor_digest(fd) == archive["sha256"], "prepared_archive_changed"
+        )
+        return verifier.verify(
+            fd,
+            initial.st_size,
+            args.expected_image_id,
+            contract,
+            archive["sha256"],
+            source_revision,
+            *expected,
+        )
+    finally:
+        os.close(fd)
+
+
+def _require_habitat_receipt(report, verified, expected):
+    """Require every reported Habitat receipt field to match trusted output."""
+    for key in (
+        "image_manifest_digest",
+        "image_config_digest",
+        "verified_layer_diff_ids",
+        "layer_count",
+        "regular_files_read",
+        "content_bytes_read",
+        "expected_dpkg_inventory_sha256",
+        "expected_python_venv_inventory_sha256",
+        "expected_native_closure_sha256",
+    ):
+        trusted = {
+            "expected_dpkg_inventory_sha256": expected[0],
+            "expected_python_venv_inventory_sha256": expected[1],
+            "expected_native_closure_sha256": expected[2],
+        }.get(key, verified.get(key))
+        W.require(
+            report.get(key) == trusted and verified.get(key) == trusted,
+            "habitat_verifier_receipt_mismatch",
+        )
+
+
+def _verify_habitat_report(args, archive, report) -> dict[str, object]:
+    """Re-run Habitat verification against the exact held archive descriptor."""
+    verifier = _habitat_verifier_module()
 
     W.require(
         isinstance(report.get("findings"), list) and not report["findings"],
@@ -194,49 +244,14 @@ def _verify_habitat_report(args, archive, report) -> dict[str, object]:
     )
     contract, contract_binding = _trusted_contract(args.trusted_root, source_revision)
     expected = _trusted_runtime_closure(contract)
-    _, fd, initial = W.open_private_fd(args.archive)
-    try:
-        W.require(
-            W.descriptor_digest(fd) == archive["sha256"], "prepared_archive_changed"
-        )
-        verified = verifier.verify(
-            fd,
-            initial.st_size,
-            args.expected_image_id,
-            contract,
-            archive["sha256"],
-            source_revision,
-            *expected,
-        )
-    finally:
-        os.close(fd)
+    verified = _habitat_verify_descriptor(
+        args, archive, verifier, contract, source_revision, expected
+    )
     W.require(
         verified.get("valid") is True and not verified.get("findings"),
         "habitat_verifier_not_accepted",
     )
-    for key in (
-        "image_manifest_digest",
-        "image_config_digest",
-        "verified_layer_diff_ids",
-        "layer_count",
-        "regular_files_read",
-        "content_bytes_read",
-        "expected_dpkg_inventory_sha256",
-        "expected_python_venv_inventory_sha256",
-        "expected_native_closure_sha256",
-    ):
-        if key == "expected_dpkg_inventory_sha256":
-            trusted = expected[0]
-        elif key == "expected_python_venv_inventory_sha256":
-            trusted = expected[1]
-        elif key == "expected_native_closure_sha256":
-            trusted = expected[2]
-        else:
-            trusted = verified.get(key)
-        W.require(
-            report.get(key) == trusted and verified.get(key) == trusted,
-            "habitat_verifier_receipt_mismatch",
-        )
+    _require_habitat_receipt(report, verified, expected)
     return contract_binding
 
 

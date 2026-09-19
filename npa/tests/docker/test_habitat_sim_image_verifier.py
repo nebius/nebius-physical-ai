@@ -351,10 +351,30 @@ def test_source_ownership_requires_content_bound_python_metadata() -> None:
         "metadata_sha256": _digest(b"expected metadata"),
     }
     tracked = {
-        "opt/venv/lib/python3.10/site-packages/fixture-1.0.dist-info/RECORD": b"fixture.py,,\n",
+        "opt/venv/lib/python3.10/site-packages/fixture-1.0.dist-info/RECORD": (
+            f"fixture.py,{_record_hash(b'expected')},{len(b'expected')}\n"
+        ).encode(),
         row["metadata_path"]: b"different metadata",
+        "opt/venv/lib/python3.10/site-packages/fixture.py": b"changed payload",
     }
     assert H._layer_python_owners({"id": row}, tracked, "opt/venv/lib/python3.10/site-packages/fixture.py") == set()
+
+
+def test_source_ownership_requires_content_bound_dpkg_payload() -> None:
+    row = {
+        "ecosystem": "dpkg",
+        "name": "fixture",
+        "source": "fixture-source",
+        "source_version": "1.0",
+        "file_contents": {
+            "usr/bin/fixture": {"sha256": _digest(b"expected"), "size": 8}
+        },
+    }
+    tracked = {
+        "var/lib/dpkg/info/fixture.list": b"/usr/bin/fixture\n",
+        "usr/bin/fixture": b"changed",
+    }
+    assert H._layer_dpkg_owners({"id": row}, tracked, "usr/bin/fixture") == set()
 
 
 def test_debian_epoch_filename_is_bound_to_normalized_source_identity() -> None:
@@ -366,6 +386,9 @@ def test_debian_epoch_filename_is_bound_to_normalized_source_identity() -> None:
     base = "usr/share/doc/npa-habitat-sim/ubuntu-sources/fixture/"
     assert H._source_artifact_binding(row, base + "fixture_2.3-4.dsc")
     assert H._source_artifact_binding(row, base + "fixture_2.3.orig.tar.gz")
+    assert H._source_artifact_binding(row, base + "fixture_2.3-4.tar.xz")
+    assert H._source_artifact_binding(row, base + "fixture_2.3-4.tar.gz")
+    assert H._source_artifact_binding(row, base + "fixture_2.3-4.tar.bz2")
     assert not H._source_artifact_binding(row, base + "fixture_1:2.3-4.dsc")
     assert not H._source_artifact_binding(row, base + "other_2.3-4.dsc")
     python_row = {"ecosystem": "python", "name": "fixture", "version": "1.0"}

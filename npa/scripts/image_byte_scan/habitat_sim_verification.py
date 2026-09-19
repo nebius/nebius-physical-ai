@@ -1251,8 +1251,12 @@ def _layer_owner_rows(
         if row.get("ecosystem") == "python" and path == row.get("metadata_path"):
             if row.get("metadata_sha256") == actual_sha:
                 owners.add(identity)
-    owners.update(_layer_dpkg_owners(source_inventory, tracked, path))
-    owners.update(_layer_python_owners(source_inventory, tracked, path))
+    owners.update(
+        _layer_dpkg_owners(source_inventory, tracked, path, state=state, payload=payload)
+    )
+    owners.update(
+        _layer_python_owners(source_inventory, tracked, path, state=state, payload=payload)
+    )
     owners.update(_layer_contract_owners(state, path, payload, tracked))
     return owners
 
@@ -1373,7 +1377,18 @@ def _layer_dpkg_owners(
     source_inventory: dict[str, dict[str, object]],
     tracked: dict[str, bytes],
     path: str,
+    *,
+    state: _ScanState | None = None,
+    payload: dict[str, object] | None = None,
 ) -> set[str]:
+    if state is None:
+        content = tracked.get(path)
+        actual_sha = hashlib.sha256(content).hexdigest() if content is not None else None
+        actual_size = len(content) if content is not None else None
+    else:
+        actual_sha, actual_size = _payload_identity(state, path, payload, tracked)
+    if actual_sha is None or actual_size is None:
+        return set()
     owners = set()
     for list_path, payload in tracked.items():
         if not list_path.startswith("var/lib/dpkg/info/") or not list_path.endswith(".list"):
@@ -1381,14 +1396,19 @@ def _layer_dpkg_owners(
         package = list_path.removeprefix("var/lib/dpkg/info/").removesuffix(".list")
         package = package.split(":", 1)[0]
         paths = {line.lstrip("/") for line in payload.decode(errors="ignore").splitlines()}
-        if path in paths:
-            owners.update(
-                identity
-                for identity, row in source_inventory.items()
-                if row.get("name") == package
+        if path not in paths:
+            continue
+        for identity, row in source_inventory.items():
+            expected = row.get("file_contents", {}).get(path)
+            if (
+                row.get("name") == package
                 and isinstance(row.get("source"), str)
                 and isinstance(row.get("source_version"), str)
-            )
+                and isinstance(expected, dict)
+                and expected.get("sha256") == actual_sha
+                and expected.get("size") == actual_size
+            ):
+                owners.add(identity)
     return owners
 
 
@@ -1396,12 +1416,33 @@ def _layer_python_owners(
     source_inventory: dict[str, dict[str, object]],
     tracked: dict[str, bytes],
     path: str,
+    *,
+    state: _ScanState | None = None,
+    payload: dict[str, object] | None = None,
 ) -> set[str]:
+    if state is None:
+        content = tracked.get(path)
+        actual_sha = hashlib.sha256(content).hexdigest() if content is not None else None
+        actual_size = len(content) if content is not None else None
+    else:
+        actual_sha, actual_size = _payload_identity(state, path, payload, tracked)
+    if actual_sha is None or actual_size is None:
+        return set()
     owners = set()
     for record_path, payload in tracked.items():
         if not record_path.endswith(".dist-info/RECORD"):
             continue
-        for relative, _hash, _size in csv.reader(io.StringIO(payload.decode(errors="ignore"))):
+        for identity, row in source_inventory.items():
+            if (
+                row.get("metadata_path") == record_path.removesuffix("RECORD") + "METADATA"
+                and row.get("record_sha256") == actual_sha
+                and path == record_path
+            ):
+                owners.add(identity)
+                break
+        for relative, hash_field, size_field in csv.reader(
+            io.StringIO(payload.decode(errors="ignore"))
+        ):
             if _record_target(record_path, relative) != path:
                 continue
             metadata_path = record_path.removesuffix("RECORD") + "METADATA"
@@ -1416,8 +1457,36 @@ def _layer_python_owners(
                 for identity, row in source_inventory.items()
                 if row.get("metadata_path") == metadata_path
                 and row.get("metadata_sha256") == metadata_sha
+                and _python_payload_matches(
+                    row, path, actual_sha, actual_size, hash_field, size_field
+                )
             )
     return owners
+
+
+def _python_payload_matches(
+    row: dict[str, object],
+    path: str,
+    actual_sha: str,
+    actual_size: int,
+    hash_field: str,
+    size_field: str,
+) -> bool:
+    """Require RECORD identity or the exact locked observed hashless member."""
+    if hash_field:
+        identity = _python_record_identity(hash_field, size_field, [])
+        return bool(
+            identity
+            and identity[0] == "sha256"
+            and identity[1] == actual_sha
+            and identity[2] == actual_size
+        )
+    expected = row.get("file_contents", {}).get(path)
+    return (
+        isinstance(expected, dict)
+        and expected.get("sha256") == actual_sha
+        and expected.get("size") == actual_size
+    )
 
 
 def _source_artifact_owner(
@@ -1493,6 +1562,7 @@ def _record_source_population(state: _ScanState) -> None:
             "name": name,
             **identity,
             "copyright_sha256": state.files.get(copyright_path, {}).get("sha256"),
+            "file_contents": _dpkg_file_contents(state, name),
         }
         state.source_inventory[_source_identity(row)] = row
     for path, payload in state.tracked.items():
@@ -1508,6 +1578,9 @@ def _record_source_population(state: _ScanState) -> None:
             "record_sha256": state.files.get(
                 path.removesuffix("METADATA") + "RECORD", {}
             ).get("sha256"),
+            "file_contents": _python_file_contents(
+                state, path.removesuffix("METADATA") + "RECORD"
+            ),
         }
         state.source_inventory[_source_identity(row)] = row
     for payload in state.layer_payloads:
@@ -1519,13 +1592,69 @@ def _record_source_population(state: _ScanState) -> None:
     state.layer_inventory = _source_layer_inventory(state)
 
 
+def _dpkg_file_contents(state: _ScanState, package: str) -> dict[str, dict[str, object]]:
+    """Bind each listed package path to the observed bytes in this layer state."""
+    contents: dict[str, dict[str, object]] = {}
+    prefix = "var/lib/dpkg/info/"
+    for list_path, payload in state.tracked.items():
+        if not list_path.startswith(prefix) or not list_path.endswith(".list"):
+            continue
+        listed_package = list_path.removeprefix(prefix).removesuffix(".list")
+        if listed_package.split(":", 1)[0] != package:
+            continue
+        for line in payload.decode("utf-8", errors="ignore").splitlines():
+            if not line.startswith("/"):
+                continue
+            try:
+                declared = W.safe_name(line.lstrip("/"))
+            except W.ScanError:
+                continue
+            resolved = _resolve_final_path(declared, state.paths, state.links)
+            for candidate in {declared, resolved}:
+                if candidate is None:
+                    continue
+                observed = state.files.get(candidate, {})
+                if isinstance(observed.get("sha256"), str) and isinstance(
+                    observed.get("size"), int
+                ):
+                    contents[candidate] = {
+                        "sha256": observed["sha256"],
+                        "size": observed["size"],
+                    }
+    return contents
+
+
+def _python_file_contents(
+    state: _ScanState, record_path: str
+) -> dict[str, dict[str, object]]:
+    """Bind RECORD members, including hashless generated files, to observed bytes."""
+    payload = state.tracked.get(record_path)
+    if payload is None:
+        return {}
+    contents: dict[str, dict[str, object]] = {}
+    for relative, _hash, _size in csv.reader(
+        io.StringIO(payload.decode("utf-8", errors="ignore"))
+    ):
+        target = _record_target(record_path, relative)
+        observed = state.files.get(target, {})
+        if isinstance(observed.get("sha256"), str) and isinstance(
+            observed.get("size"), int
+        ):
+            contents[target] = {
+                "sha256": observed["sha256"],
+                "size": observed["size"],
+            }
+    return contents
+
+
 def _debian_artifact_filename_matches(source: str, version: str, name: str) -> bool:
     if not name.startswith(f"{source}_") or not version:
         return False
     basename = name.removeprefix(f"{source}_")
     suffixes = (
         ".orig.tar.gz", ".debian.tar.xz", ".orig.tar.xz", ".orig.tar.bz2",
-        ".orig.tar", ".dsc", ".asc",
+        ".orig.tar", ".tar.xz", ".tar.gz", ".tar.bz2", ".tar.zst", ".tar.lz",
+        ".dsc", ".asc",
     )
     for suffix in suffixes:
         if basename.endswith(suffix):
