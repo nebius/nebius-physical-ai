@@ -60,21 +60,22 @@ the manifest closes those metadata checks at 3,277,640,175 total bytes. Runtime
 materialization still refuses without the customer/run authorization. These
 controls prove identity and refusal; they do not accept terms for a customer.
 
-The candidate remains unbuilt, unvalidated, and quarantined. A private stage
-must first emit a canonical complete-image inventory and OCI config digest for
-independent review. The inventory binds every byte in each ordered uncompressed
-layer tar and the canonical flattened-rootfs records. The public workflow
-currently rejects every LIBERO dispatch before building. A future publication
-path would also require a current strict checked-in qualification record binding
-those exact identities and the exact development source revision. Dispatch
-inputs cannot self-attest them. The dedicated complete-byte/layer/exported-rootfs
+The candidate remains unvalidated and unreleased. The trusted public workflow
+permits payload-free development staging, but its downstream qualification
+gates must first emit a canonical complete-image inventory and OCI config digest
+for independent review. The inventory binds every byte in each ordered uncompressed
+layer tar and the canonical flattened-rootfs records. A future publication path
+would also require a current strict checked-in qualification record binding those
+exact identities and the exact development source revision. Dispatch inputs
+cannot self-attest them. The dedicated complete-byte/layer/exported-rootfs
 scanner requires equality before push. Both builds derive `SOURCE_DATE_EPOCH` from the exact source
 commit; the package layer removes APT/dpkg/account logs and normalizes the
 non-root account's shadow day to that epoch. It must also pass the
 SBOM/provenance/security gates, anonymous pull proof, and an exact-digest B200
 hard gate before any supported release or public catalog claim.
-LIBERO public disclosure, public tagging, and registry deletion are currently
-unavailable. No exact-digest live-B200 authorization path has been accepted, and
+LIBERO public disclosure, public tagging, and registry deletion remain fail-closed
+until the exact-digest live-B200 and registry-atomicity gates pass. No exact-digest
+live-B200 authorization path has been accepted, and
 the workflow has no registry-enforced exclusive-writer or atomic compare-and-set
 primitive for visibility changes or identity-and-tag-bound deletion. Repository
 workflow concurrency and repeated graph reads do not provide those guarantees.

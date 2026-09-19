@@ -261,9 +261,20 @@ OUTPUT_ARTIFACT_SIZE_LIMITS = {
     "solution_smoke_stderr.log": 16 * 1024 * 1024,
     "solution_smoke_stdout.log": 16 * 1024 * 1024,
 }
-# The commit receipt is deliberately not a workload artifact. Keep the
-# workload allowlist separate so the receipt can only be created after every
-# ordinary artifact has been snapshotted and uploaded.
+# Only canonical, schema-validated evidence may cross the output boundary.
+# Checkpoints, logs, and GPU probe text remain local to the owner-controlled
+# staging directory and are never uploaded as workload output.
+OUTPUT_UPLOAD_ARTIFACT_NAMES = frozenset(
+    {
+        "libero-smoke.json",
+        "npa_byof_summary.json",
+        "npa_runtime_bootstrap.json",
+        "npa_runtime_metadata.json",
+    }
+)
+OUTPUT_UPLOAD_SIZE_LIMITS = {
+    name: OUTPUT_ARTIFACT_SIZE_LIMITS[name] for name in OUTPUT_UPLOAD_ARTIFACT_NAMES
+}
 OUTPUT_SIZE_LIMITS = OUTPUT_ARTIFACT_SIZE_LIMITS
 FAILURE_OUTPUT_REQUIRED_SIZE_LIMITS = {
     name: limit
@@ -277,6 +288,155 @@ FAILURE_OUTPUT_OPTIONAL_SIZE_LIMITS = {
 MAX_OUTPUT_BYTES = 320 * 1024 * 1024
 OUTPUT_RECEIPT_NAME = "npa_upload_receipt.json"
 OUTPUT_RECEIPT_SCHEMA = "npa.libero.s3-upload-readback.v2"
+
+_OUTPUT_JSON_TOP_LEVEL_KEYS = {
+    "libero-smoke.json": frozenset(
+        {
+            "boundaries",
+            "build",
+            "capabilities_exercised",
+            "capability",
+            "checkpoint",
+            "dataset",
+            "deferred",
+            "error",
+            "exit_status",
+            "heldout_metrics",
+            "reloaded_action",
+            "runtime",
+            "sample_count",
+            "schema",
+            "solution",
+            "source",
+            "split",
+            "status",
+            "task_assets",
+            "task_language_model",
+            "training",
+        }
+    ),
+    "npa_byof_summary.json": frozenset(
+        {
+            "capability_name",
+            "created_unix",
+            "image",
+            "run_id",
+            "runtime_cache_uploaded",
+            "smoke_artifact_name",
+            "smoke_exit_code",
+            "solution_name",
+            "status",
+            "tool",
+            "workload",
+        }
+    ),
+    "npa_runtime_bootstrap.json": frozenset(
+        {
+            "cache_path",
+            "cache_uploaded",
+            "content_inventory_entry_count",
+            "content_inventory_sha256",
+            "customer_authorization_sha256",
+            "customer_identity_sha256",
+            "demonstration_sha256",
+            "demonstration_size_bytes",
+            "governing_terms_count",
+            "governing_terms_fetched_this_invocation",
+            "governing_terms_sha256",
+            "git_objects_present",
+            "language_model_revision",
+            "manifest_sha256",
+            "render_assets_present",
+            "run_id",
+            "runtime_artifact_count",
+            "runtime_requirements_sha256",
+            "schema",
+            "solution",
+            "source_license_sha256",
+            "source_revision",
+            "source_tree",
+            "status",
+            "warm_reuse",
+        }
+    ),
+    "npa_runtime_metadata.json": frozenset(
+        {
+            "cache_uploaded",
+            "content_inventory_entry_count",
+            "content_inventory_sha256",
+            "customer_authorization_sha256",
+            "customer_identity_sha256",
+            "demonstration_sha256",
+            "demonstration_size_bytes",
+            "governing_terms_count",
+            "governing_terms_sha256",
+            "git_objects_present",
+            "language_model_revision",
+            "manifest_sha256",
+            "render_assets_present",
+            "runtime_artifact_count",
+            "runtime_requirements_sha256",
+            "schema",
+            "solution",
+            "source_license_sha256",
+            "source_revision",
+            "source_tree",
+            "task_bddl_sha256",
+            "task_initial_states_sha256",
+        }
+    ),
+}
+_OUTPUT_JSON_REQUIRED_KEYS = {
+    "libero-smoke.json": frozenset(
+        {"schema", "status", "exit_status", "solution", "capability", "source", "dataset"}
+    ),
+    "npa_byof_summary.json": frozenset(
+        {"status", "tool", "workload", "run_id", "smoke_exit_code"}
+    ),
+    "npa_runtime_bootstrap.json": frozenset(
+        {"schema", "solution", "status", "run_id", "manifest_sha256"}
+    ),
+    "npa_runtime_metadata.json": frozenset(
+        {"schema", "solution", "manifest_sha256", "run_id"}
+    ),
+}
+_EMBEDDED_OUTPUT_KEYS = frozenset(
+    {"payload", "raw", "raw_bytes", "source_bytes", "checkpoint_bytes", "artifact_bytes"}
+)
+
+
+def _reject_embedded_output(value: Any, *, path: str) -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key in _EMBEDDED_OUTPUT_KEYS:
+                raise BootstrapRefusal(f"embedded output payload is not allowed:{path}.{key}")
+            _reject_embedded_output(child, path=f"{path}.{key}")
+    elif isinstance(value, list):
+        if len(value) > 1024:
+            raise BootstrapRefusal(f"embedded output array is not allowed:{path}")
+        for index, child in enumerate(value):
+            _reject_embedded_output(child, path=f"{path}[{index}]")
+    elif isinstance(value, str) and len(value) > 4096:
+        raise BootstrapRefusal(f"embedded output string is not allowed:{path}")
+
+
+def _canonical_output_payload(name: str, payload: bytes) -> bytes:
+    """Return only closed-schema, canonical metadata bytes for upload."""
+
+    allowed = _OUTPUT_JSON_TOP_LEVEL_KEYS.get(name)
+    required = _OUTPUT_JSON_REQUIRED_KEYS.get(name)
+    if allowed is None or required is None:
+        raise BootstrapRefusal(f"output is not an uploadable canonical artifact:{name}")
+    try:
+        value = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise BootstrapRefusal(f"output JSON is invalid:{name}") from exc
+    if not isinstance(value, dict):
+        raise BootstrapRefusal(f"output JSON schema is not closed:{name}")
+    _reject_embedded_output(value, path=name)
+    if set(value) - allowed or not required <= set(value):
+        raise BootstrapRefusal(f"output JSON schema is not closed:{name}")
+    return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
 
 
 class BootstrapRefusal(RuntimeError):
@@ -3981,8 +4141,10 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
         if observed_total > MAX_OUTPUT_BYTES:
             raise BootstrapRefusal("output exceeds the aggregate size budget")
         snapshots = []
-        for name, limit in sorted(output_limits.items()):
+        for name, limit in sorted(OUTPUT_UPLOAD_SIZE_LIMITS.items()):
             payload, digest = _immutable_output_bytes(root_fd, name, limit)
+            payload = _canonical_output_payload(name, payload)
+            digest = hashlib.sha256(payload).hexdigest()
             snapshots.append((name, payload, digest))
         for name, payload, digest in snapshots:
             current_authorization = _storage_authorization(

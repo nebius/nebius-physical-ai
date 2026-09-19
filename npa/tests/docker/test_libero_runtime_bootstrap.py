@@ -2717,7 +2717,19 @@ def test_execute_and_upload_holds_descriptor_and_cache_lock_through_readback(
     monkeypatch.setattr(module, "_run_output_root", lambda _run_id: output)
     receipt = Path(args.cache_root) / "run-receipts" / f"{fixture['run_id']}.json"
     receipt.parent.mkdir(mode=0o750)
-    receipt.write_text('{"status":"ready"}\n', encoding="utf-8")
+    receipt.write_text(
+        json.dumps(
+            {
+                "schema": "npa.libero.runtime-cache.v1",
+                "solution": "libero",
+                "status": "ready",
+                "run_id": fixture["run_id"],
+                "manifest_sha256": module.EXPECTED_RUNTIME_MANIFEST_SHA256,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     receipt.chmod(0o640)
     monkeypatch.setenv("NPA_BYOF_RUN_ID", fixture["run_id"])
     monkeypatch.setenv("BYOF_SMOKE_ARTIFACT_NAME", "libero-smoke.json")
@@ -2846,6 +2858,9 @@ def test_output_upload_is_commit_last_and_cleans_exact_failed_transaction(
     monkeypatch, tmp_path, failure
 ) -> None:
     module, _args, fixture = _fixture(tmp_path)
+    # This test isolates transaction ordering; schema/parser hostile cases are
+    # covered separately so the fixture can use compact synthetic bytes.
+    monkeypatch.setattr(module, "_canonical_output_payload", lambda _name, payload: payload)
     output = tmp_path / "output"
     output.mkdir(mode=0o700)
     for name in set(module.OUTPUT_SIZE_LIMITS) - {"npa_byof_summary.json"}:
@@ -2995,7 +3010,7 @@ def test_output_upload_is_commit_last_and_cleans_exact_failed_transaction(
     assert receipt["status"] == "verified"
     assert receipt["commit_marker"] == "npa_upload_receipt.json"
     assert {item["name"] for item in receipt["artifacts"]} == set(
-        module.OUTPUT_SIZE_LIMITS
+        module.OUTPUT_UPLOAD_SIZE_LIMITS
     )
     assert all(
         item["object_key"].startswith(receipt["transaction_prefix"])
@@ -3022,6 +3037,40 @@ def test_successful_output_inventory_rejects_and_removes_unexpected_entries(
     finally:
         os.close(root_fd)
     assert not unexpected.exists()
+
+
+def test_canonical_output_payload_rejects_unknown_fields_and_embedded_bytes():
+    module = _load_module()
+    base = {
+        "schema": "npa.workbench.libero.bc-smoke.v1",
+        "status": "failed",
+        "exit_status": 1,
+        "solution": "libero",
+        "capability": "libero_spatial_bc_rnn_train_reload_heldout",
+        "source": {},
+        "dataset": {},
+    }
+    with pytest.raises(module.BootstrapRefusal, match="schema is not closed"):
+        module._canonical_output_payload(
+            "libero-smoke.json", json.dumps({**base, "unknown": "field"}).encode()
+        )
+    with pytest.raises(module.BootstrapRefusal, match="embedded output payload"):
+        module._canonical_output_payload(
+            "libero-smoke.json", json.dumps({**base, "payload": "secret"}).encode()
+        )
+
+
+def test_output_upload_allowlist_excludes_checkpoint_and_raw_logs():
+    module = _load_module()
+    assert "libero-bc-rnn-smoke.pth" not in module.OUTPUT_UPLOAD_SIZE_LIMITS
+    assert "solution_smoke_stdout.log" not in module.OUTPUT_UPLOAD_SIZE_LIMITS
+    assert "solution_smoke_stderr.log" not in module.OUTPUT_UPLOAD_SIZE_LIMITS
+    assert set(module.OUTPUT_UPLOAD_SIZE_LIMITS) == {
+        "libero-smoke.json",
+        "npa_byof_summary.json",
+        "npa_runtime_bootstrap.json",
+        "npa_runtime_metadata.json",
+    }
 
 
 def test_failed_conditional_output_put_never_claims_or_deletes_existing_object(

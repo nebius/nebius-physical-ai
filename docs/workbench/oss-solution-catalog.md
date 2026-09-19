@@ -18,7 +18,7 @@ unique and must be tested with its own upstream-named capabilities.
 
 | Candidate | Pinned source | Primary (hard-gate) capability | Artifact | NPA workflow |
 | --- | --- | --- | --- | --- |
-| LIBERO | `Lifelong-Robot-Learning/LIBERO` `8f1084e3…` | `libero_spatial_bc_rnn_train_reload_heldout` | `libero-smoke.json` + checkpoint digest/reload evidence (checkpoint stays local) | `byof-libero.yaml` |
+| LIBERO | `Lifelong-Robot-Learning/LIBERO` `8f1084e3…` | `libero_spatial_bc_rnn_train_reload_heldout` | Canonical `libero-smoke.json` + checkpoint digest/reload evidence (checkpoint remains local and is never uploaded) | `byof-libero.yaml` |
 | ManiSkill | `mani-skill/ManiSkill` `v3.0.1` | `gymnasium_pickcube_registration` | `maniskill_pickcube_step.json` | `byof-maniskill.yaml` |
 | MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_task_registration` | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |

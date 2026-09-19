@@ -54,7 +54,7 @@ separate upstream-access inputs and never establish terms acknowledgement.
 | Weights | None are baked. Exact `google-bert/bert-base-cased@cd5ef92a9fb2f889e972770a36d4ed042daf221e` files are runtime-only and Apache-2.0. |
 | Data and task inputs | No demonstration or task/render asset is baked. The selected official demonstration is runtime-only: `yifengzhu-hf/LIBERO-datasets@f13aa24a3da8c43c7225569f28c562979fa0e35a`, 508,779,600 bytes, SHA-256 `ff6f26121653c77280eb40a38773a74141c11a8509f3466058cb56dd2cc60ead`, upstream-declared CC BY 4.0 with LIBERO attribution. The MIT BDDL and initial-state files are fetched only with the sparse source and verified by SHA-256. |
 | Runtime cache | `/workspace/.cache/npa/libero/<customer-run-manifest-scope-sha256>` is customer/run/manifest-addressed, atomically completed, sealed group-readable/non-writable, and separate from output. The bootstrap owner and execution UID are distinct, so fetched code cannot restore cache write bits. A shared lock and stable directory descriptor remain held through smoke/upload execution, with full inventory checks before and after. A cold population resolves all seven hash-bound official governing-terms sources after authorization and before the first cache mutation. The cache is never uploaded. Missing, denied, expired, invalid, wrong-customer/run, wrong-image, or wrong-manifest authorization refuses before cache or network effects. Runtime fetch changes delivery, not permission. |
-| Outputs | Execution begins in an owner-controlled sticky staging directory, while the bootstrap receipt remains in a separate owner-writable/group-readable cache directory. After the execution UID exits, the supervisor proves that no process under that UID remains, seals the output directory owner-only, and materializes the protected bootstrap/cache receipts itself. Exactly ten named qualification files may then exist beneath a stable, descriptor-opened `$NPA_SMOKE_OUTPUT_DIR`; any missing or additional entry refuses. Every regular, single-link file is opened with `O_NOFOLLOW`, copied to stable in-memory bytes while inode/size/mtime identity is checked, and all ten snapshots are complete before network output begins. An exact version-bound output lease is retained for the transaction. Each snapshot is conditionally created below a unique immutable transaction prefix, then read back by provider-issued version ID, ETag, checksum, and bytes. The final create-only receipt binds every exact object key, version, ETag, size, and digest; pre-existing state refuses without being claimed or deleted. These filename, link, stability, size, and readback checks are not semantic output validation: Phase A makes no claim that a workload-created file cannot contain source, models, packages, input data, authorization-derived bytes, or caches. A trusted supervisor must strictly parse each permitted result, reject unknown fields and embedded blobs, and serialize the canonical allowlisted representation itself before any future upload. Until that separate parser and canonicalization proof exists, no output bytes are qualified or uploaded. |
+| Outputs | Execution begins in an owner-controlled sticky staging directory, while the bootstrap receipt remains in a separate owner-writable/group-readable cache directory. After the execution UID exits, the supervisor proves that no process under that UID remains, seals the output directory owner-only, and materializes the protected bootstrap/cache receipts itself. Exactly ten named qualification files may then exist beneath a stable, descriptor-opened `$NPA_SMOKE_OUTPUT_DIR`; any missing or additional entry refuses. Every regular, single-link file is opened with `O_NOFOLLOW`, copied to stable in-memory bytes while inode/size/mtime identity is checked, and the complete local inventory is closed before network output begins. Only four supervisor-defined JSON evidence files are strictly schema-validated, checked for embedded payload fields, canonically serialized, and uploaded; the checkpoint, logs, and GPU probe text remain local. An exact version-bound output lease is retained for the transaction. Each canonical snapshot is conditionally created below a unique immutable transaction prefix, then read back by provider-issued version ID, ETag, checksum, and bytes. The final create-only receipt binds every uploaded object key, version, ETag, size, and digest; pre-existing state refuses without being claimed or deleted. |
 
 The task mentions Google Scanned Objects and a HOPE distractor, but their meshes
 and textures are neither fetched nor needed for stored-observation behavior
@@ -64,20 +64,18 @@ CC BY 4.0 dataset declaration.
 
 ## Quarantine and image proof
 
-`npa/docker/workbench/libero/Dockerfile` describes the candidate but Phase A
-does not build or publish it. The non-root `ubuntu` bootstrap user has a finite
+`npa/docker/workbench/libero/Dockerfile` describes the candidate but qualification
+and release remain pending. The non-root `ubuntu` bootstrap user has a finite
 root sudo grant for generating missing per-Pod SSH host keys with the exact
 `-A` argument and for starting or restarting the preinstalled SSH daemon. Its
 only other sudo grant invokes the fixed bootstrap entry point as the separate
 unprivileged `npa-libero-exec` user with exactly `execute`. Its environment
 excludes storage credentials as well as Python and dynamic-loader injection
-variables. After fetched code exits, the image-owned system Python remains
-prohibited from uploading raw workload output in Phase A. A later trusted
-supervisor may perform the bounded upload with separately accepted, run-prefix-
-only temporary credentials only after it strictly parses each permitted result,
-rejects unknown fields and embedded blobs, and serializes the canonical
-allowlisted representation itself; Phase A has no such uploader or retrieval
-set.
+variables. After fetched code exits, the owner-controlled uploader strictly
+parses the four permitted JSON evidence files, rejects unknown fields and
+embedded payload values, and uploads only their canonical allowlisted
+representations with separately accepted, run-prefix-only temporary
+credentials. Checkpoints, logs, and GPU probe text remain local.
 No host key is baked into an image layer. The complete SkyPilot
 0.12.2 synchronous package set is
 baked, including `curl`, `wget`, and the `fuse3` provider. When every package and
