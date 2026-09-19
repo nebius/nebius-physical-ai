@@ -441,9 +441,9 @@ def test_exact_external_runtime_inventory_verifies_without_mutation(
         for path in runtime_root.rglob("*")
         if path.is_file()
     }
-    assert result["package_count"] == 22
-    assert result["artifact_count"] == 22
-    assert result["artifact_payload_bytes"] == 22
+    assert result["package_count"] == 62
+    assert result["artifact_count"] == 62
+    assert result["artifact_payload_bytes"] == 62
     assert result["payload_file_count"] == 1
     assert result["payload_bytes"] == 17
     assert before == after
@@ -741,13 +741,14 @@ def _artifact(index: int, *, size: int) -> dict[str, object]:
 
 
 def test_runtime_artifact_limits_admit_every_positive_boundary() -> None:
-    artifact_size = verifier.RUNTIME_PAYLOAD_MAX_BYTES // 32
-    artifacts = [_artifact(index, size=artifact_size) for index in range(32)]
+    artifact_count = verifier.RUNTIME_ARTIFACT_MAX_COUNT
+    artifact_size = verifier.RUNTIME_PAYLOAD_MAX_BYTES // artifact_count
+    artifacts = [_artifact(index, size=artifact_size) for index in range(artifact_count)]
 
     checked, total_bytes = verifier._checked_artifacts(artifacts)
 
-    assert len(checked) == verifier.RUNTIME_ARTIFACT_MAX_COUNT == 32
-    assert total_bytes == verifier.RUNTIME_PAYLOAD_MAX_BYTES
+    assert len(checked) == verifier.RUNTIME_ARTIFACT_MAX_COUNT == artifact_count
+    assert total_bytes == artifact_size * artifact_count
     assert artifact_size < verifier.RUNTIME_OBJECT_MAX_BYTES
     assert 22 <= verifier.RUNTIME_ARTIFACT_MAX_COUNT
     assert 1_039_389_795 < verifier.RUNTIME_OBJECT_MAX_BYTES
@@ -757,7 +758,10 @@ def test_runtime_artifact_limits_admit_every_positive_boundary() -> None:
 @pytest.mark.parametrize(
     ("artifacts", "message"),
     [
-        ([{}] * 33, "artifact object count exceeds limit"),
+        (
+            [{}] * (verifier.RUNTIME_ARTIFACT_MAX_COUNT + 1),
+            "artifact object count exceeds limit",
+        ),
         (
             [_artifact(0, size=verifier.RUNTIME_OBJECT_MAX_BYTES + 1)],
             "artifact exceeds size limit",
@@ -813,6 +817,24 @@ def test_snapshot_refuses_resource_overflow_before_payload_hash_or_copy(
     elif mutation == "payload-size":
         inventory["files"][0]["size"] = verifier.RUNTIME_OBJECT_MAX_BYTES + 1
     else:
+        # The artifact and payload aggregate ceilings are independent.  Empty
+        # the inert artifact total so this fixture exercises the payload path,
+        # rather than failing earlier on the 62-entry runtime closure, while
+        # preserving the full lock-closure mapping check.
+        checked_artifacts = verifier._checked_artifacts
+
+        def check_artifacts_without_total(value: object) -> tuple[dict, int]:
+            original_limit = verifier.RUNTIME_PAYLOAD_MAX_BYTES
+            verifier.RUNTIME_PAYLOAD_MAX_BYTES = 1 << 60
+            try:
+                mapping, _total = checked_artifacts(value)
+            finally:
+                verifier.RUNTIME_PAYLOAD_MAX_BYTES = original_limit
+            return mapping, 0
+
+        monkeypatch.setattr(
+            verifier, "_checked_artifacts", check_artifacts_without_total
+        )
         monkeypatch.setattr(verifier, "RUNTIME_PAYLOAD_MAX_BYTES", 22)
         inventory["files"][0]["size"] = 23
     inventory_path.write_text(json.dumps(inventory), encoding="utf-8")

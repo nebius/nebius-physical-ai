@@ -49,6 +49,12 @@ def test_neutral_image_is_pinned_non_root_and_contains_no_cuda_install() -> None
         re.search(r"\bpip\s+install\b[^\n]*(?:torch|nvidia-)", normalized, re.I) is None
     )
     assert "robomimic-runtime assert-refusal" in normalized
+    assert "PYTHONPATH=/opt/robomimic" in normalized
+    assert "/opt/robomimic-deps" not in normalized
+    assert "baked-requirements.lock" not in normalized
+    assert "installer download" not in normalized
+    assert "installer install" not in normalized
+    assert "runtime-requirements.lock" in normalized
     assert "robomimic-runtime ensure" not in normalized
     assert "robomimic-runtime exec" not in normalized
     assert "apt-get" not in normalized
@@ -134,6 +140,8 @@ def test_neutral_image_boundaries_and_locks_are_explicit() -> None:
         assert forbidden not in lowered
     runtime = json.loads((IMAGE_ROOT / "runtime-requirements.lock").read_text())
     assert runtime["schema"] == "npa.robomimic.runtime-lock.v1"
+    assert len(runtime["packages"]) == 62
+    assert set(baked_names) <= set(runtime["packages"])
     assert runtime["packages"]["torch"] == "2.7.1+cu128"
     assert runtime["packages"]["nvidia-cudnn-cu12"] == "9.7.1.26"
     assert runtime["artifact_hash_closure"] == "required-in-runtime-inventory"
@@ -2207,26 +2215,18 @@ def test_installed_byte_proof_rejects_symlink_type_without_following(
         VERIFIER.verify_neutral_image(**inert_installed_image)
 
 
-def test_dockerfile_authenticates_installed_bytes_before_discarding_proof_inputs() -> (
-    None
-):
+def test_dockerfile_is_bootstrap_only_and_does_not_install_python_wheels() -> None:
     text = DOCKERFILE.read_text()
     python_commands = re.findall(r"python3 [^\n]+", text)
     assert python_commands and all(
         command.startswith("python3 -I -S -B ") for command in python_commands
     )
     assert "-m pip" not in text
-    assert (
-        text.index("installer download")
-        < text.index("installer install")
-        < text.index("verify_image.py image")
-    )
-    assert "--source-archive /mnt/robomimic-build-inputs/source/robomimic.tar" in text
-    assert "--selected-wheel-root /opt/npa/robomimic/installer-wheels" in text
-    assert "--installer-input-root /mnt/robomimic-build-inputs" in text
-    assert text.index("verify_image.py image") < text.index(
-        "rm -r /opt/npa/robomimic/installer-wheels"
-    )
+    assert "installer download" not in text
+    assert "installer install" not in text
+    assert "verify_image.py image" not in text
+    assert "runtime-requirements.lock" in text
+    assert "/opt/robomimic-deps" not in text
 
 
 def test_installed_byte_proof_does_not_trust_self_consistent_installed_record(

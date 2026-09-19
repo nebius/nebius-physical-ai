@@ -1,17 +1,17 @@
 # robomimic neutral candidate redistribution boundary
 
 This candidate contains the immutable MIT-licensed robomimic source, the neutral
-Python base, the exact 78-package Debian closure, and the 40-package
-hash-locked non-CUDA Python closure. Those baked distributions are candidate
-open-source build inputs subject to exact selected-byte notices, source duties,
-and license review; redistribution eligibility remains unvalidated. They are
-not the restricted customer runtime. The public image
-contains no PyTorch, torchvision, Triton, NVIDIA CUDA, cuDNN, NCCL, model
+Python base, and the exact 78-package Debian closure. No Python wheel closure is
+baked into the public image: the historical `baked-requirements.lock` remains
+source evidence only, while the complete public and restricted package map is
+declared in `runtime-requirements.lock` and fetched into a customer-owned
+runtime volume. The public image
+contains no Python distributions, PyTorch, torchvision, Triton, NVIDIA CUDA, cuDNN, NCCL, model
 weights, dataset bytes, populated runtime cache, credentials, or run output.
 Its build path stages the exact Git tree and canonical archive plus every exact
-Debian and Python package outside the image build, verifies them before use,
-and exposes those payloads to the Dockerfile only through read-only build
-mounts. The Dockerfile does not contact APT or Git.
+Debian input outside the image, verifies them before use, and exposes those
+payloads to the Dockerfile only through read-only build mounts. The Dockerfile
+does not contact APT or Git and does not execute a Python wheel installer.
 
 The source and Debian lock metadata are reproducibility inputs, not built-byte
 or license acceptance. Debian package copyright notices must remain installed,

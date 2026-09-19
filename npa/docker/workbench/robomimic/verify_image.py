@@ -68,10 +68,10 @@ INSTALLER_POLICY = "pip-26.2.1-posix-home-target-no-compile-v2"
 RUNTIME_ROOT_DEFAULT = "/opt/npa-runtime/robomimic"
 RUNTIME_REFUSAL_STATUS = 78
 RUNTIME_METADATA_MAX_BYTES = 4 * 1024 * 1024
-# The sealed CUDA/PyTorch closure contains 22 wheel objects, totals
-# 3,855,918,950 bytes, and has a 1,039,389,795-byte largest object. These
-# ceilings leave bounded headroom without accepting an open-ended closure.
-RUNTIME_ARTIFACT_MAX_COUNT = 32
+# The runtime lock currently names 62 public and vendor wheel objects. Keep a
+# small bounded headroom for a customer inventory while refusing an open-ended
+# closure; the exact inventory still has to match the lock byte-for-byte.
+RUNTIME_ARTIFACT_MAX_COUNT = 64
 RUNTIME_OBJECT_MAX_BYTES = 4 * 1024 * 1024 * 1024
 RUNTIME_PAYLOAD_MAX_BYTES = 8 * 1024 * 1024 * 1024
 # Installed wheels expand into more filesystem entries than source objects.

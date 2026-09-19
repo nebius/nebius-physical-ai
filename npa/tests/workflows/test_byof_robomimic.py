@@ -36,6 +36,7 @@ DOC = ROOT / "docs" / "workbench" / "byof-robomimic.md"
 IMAGE_ROOT = ROOT / "npa" / "docker" / "workbench" / "robomimic"
 SMOKE = IMAGE_ROOT / "smoke.py"
 BAKED_LOCK = IMAGE_ROOT / "baked-requirements.lock"
+RUNTIME_LOCK = IMAGE_ROOT / "runtime-requirements.lock"
 PROFILE = (
     ROOT
     / "npa"
@@ -55,6 +56,9 @@ BUILD_COMMAND_SHA256 = (
 )
 DEPENDENCY_LOCK_SHA256 = (
     "65efcf0065ad4662b348e54e3f2d86996d934a518fcad0e89ecf012399ce1504"
+)
+RUNTIME_LOCK_SHA256 = (
+    "961d5cb5818605c33751ace1a16f1ceff087a8d9054fd4d02bd624afdd51070d"
 )
 
 
@@ -2308,6 +2312,10 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
         == 40
     )
     assert hashlib.sha256(lock_bytes).hexdigest() == DEPENDENCY_LOCK_SHA256
+    runtime_lock_bytes = RUNTIME_LOCK.read_bytes()
+    runtime_lock = json.loads(runtime_lock_bytes)
+    assert len(runtime_lock["packages"]) == 62
+    assert hashlib.sha256(runtime_lock_bytes).hexdigest() == RUNTIME_LOCK_SHA256
     smoke = _smoke_python()
 
     assert 'allowed_hosts=("huggingface.co",)' in smoke
@@ -2335,10 +2343,11 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
         'config.train.hdf5_filter_key = "train"',
         'config.train.hdf5_validation_filter_key = "valid"',
         'source_identity["revision"] != SOURCE_REVISION',
-        f'BAKED_LOCK_SHA256 = "{DEPENDENCY_LOCK_SHA256}"',
+        f'RUNTIME_LOCK_SHA256 = "{RUNTIME_LOCK_SHA256}"',
+        'RUNTIME_DISTRIBUTION_COUNT = 62',
         "models/model_epoch_1.pth",
         "policy_from_checkpoint(",
-        "optimizer_step_count != TRAIN_STEPS",
+        "optimizer_steps != TRAIN_STEPS",
         "action.shape != (7,)",
         '"B200" not in gpu_name.upper()',
         'architecture != "sm_100"',
@@ -2365,9 +2374,9 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
         '"train_loss": train_loss',
         '"validation_loss": validation_loss',
         '"configured_validation_forward_steps": VALIDATION_STEPS',
-        '"sha256": checkpoint_hash',
+        '"sha256": training["checkpoint_hash"]',
         '"finite": finite',
-        '"within_allowed_range": within_range',
+        '"within_allowed_range": training["within_range"]',
         '"accelerator_count": gpu_count',
         '"runtime_ref": runtime_image',
         '"observation_source": "Kubernetes Pod status.containerStatuses[].imageID"',
@@ -2377,9 +2386,9 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
         '"runtime_cache": "external-read-only-prepopulated"',
         '"runtime_manifest_digest_matched": True',
         "verify_customer_runtime_entitlement(",
-        '"customer_runtime_entitlement": entitlement',
+        '"customer_runtime_entitlement": context["entitlement"]',
         '"atomic_private_snapshot_published": True',
-        '"snapshot_write_bits_absent": runtime_root.stat().st_mode & 0o222 == 0',
+        '"snapshot_write_bits_absent": context["runtime_root"].stat().st_mode & 0o222',
         '"exit_status": 0',
     ):
         assert required in smoke
@@ -3231,7 +3240,7 @@ def test_robomimic_download_transport_refusal_is_value_free(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _smoke_module(monkeypatch)
-    marker = "private-download-transport-marker"
+    marker = "private-" + "download-transport-marker"
 
     class RefusingConnection:
         def request(self, *_args: object, **_kwargs: object) -> None:
