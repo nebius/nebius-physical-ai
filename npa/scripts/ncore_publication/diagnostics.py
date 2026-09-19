@@ -4,19 +4,51 @@ from contextlib import contextmanager
 import sys
 
 
-_PHASES = frozenset({
-    "prepare", "build", "check", "publish", "inputs", "build-receipt",
-    "prepare-keyring", "prepare-scanner-tools", "prepare-literal-engine",
-    "prepare-native-checks", "prepare-source-inputs", "prepare-source-annex",
-    "prepare-bootstrap-sources",
-    "prepublication", "source-binding", "source-guards", "oci-graph", "provenance",
-    "byte-scan", "byte-scan-authorization", "byte-scan-execution", "byte-scan-report", "byte-scan-attribution",
-    "inspection-archives", "shipped-source", "source-delivery",
-    "payload", "payload-history", "image-security", "selected-base", "components",
-    "bootstrap", "source-recheck", "registry-transfer", "registry-tag-lookup",
-    "registry-copy", "registry-visibility", "anonymous-verification", "anonymous-copy",
-    "anonymous-graph", "anonymous-tag-check",
-})
+_PHASES = frozenset(
+    {
+        "prepare",
+        "build",
+        "check",
+        "publish",
+        "inputs",
+        "build-receipt",
+        "prepare-keyring",
+        "prepare-scanner-tools",
+        "prepare-literal-engine",
+        "prepare-native-checks",
+        "prepare-source-inputs",
+        "prepare-source-annex",
+        "prepare-bootstrap-sources",
+        "prepublication",
+        "source-binding",
+        "source-guards",
+        "oci-graph",
+        "provenance",
+        "byte-scan",
+        "byte-scan-authorization",
+        "byte-scan-execution",
+        "byte-scan-report",
+        "byte-scan-attribution",
+        "inspection-archives",
+        "shipped-source",
+        "source-delivery",
+        "payload",
+        "payload-history",
+        "image-security",
+        "selected-base",
+        "components",
+        "bootstrap",
+        "source-recheck",
+        "registry-transfer",
+        "registry-tag-lookup",
+        "registry-copy",
+        "registry-visibility",
+        "anonymous-verification",
+        "anonymous-copy",
+        "anonymous-graph",
+        "anonymous-tag-check",
+    }
+)
 
 
 @contextmanager
@@ -37,7 +69,9 @@ def phase(identifier):
     try:
         yield
     except BaseException:
-        print(f"NCore OCI phase={identifier} status=failure", file=sys.stderr, flush=True)
+        print(
+            f"NCore OCI phase={identifier} status=failure", file=sys.stderr, flush=True
+        )
         raise
     print(f"NCore OCI phase={identifier} status=pass", file=sys.stderr, flush=True)
 

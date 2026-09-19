@@ -29,9 +29,20 @@ only running a slice:
 .venv/bin/python -m pytest tests/ -q -n auto
 ```
 
-Use the serial form when a failure needs a readable, ordered traceback. CI still
-runs serially with coverage, so treat a parallel pass as the fast signal, not as a
-replacement for the gate.
+Use the serial form when a failure needs a readable, ordered traceback. PR CI
+runs smoke and affected subsystem tests, or the full suite for unknown/shared
+changes. Agent/browser changes also run the dedicated Cypress job. Merge-queue
+CI runs browser and compatibility checks alongside xdist inside five
+duration-balanced Python 3.12 coverage shards, then merges their data before
+enforcing the floor. Narrow prose-only candidates retain smoke, docs, guardrails,
+and security gates; see `CONTRIBUTING.md` for the trusted-base classification.
+Scheduled/manual audits repeat four shards across supported interpreters.
+Every full Python 3.12 run uploads module timings; successful runs emit a merged
+profile. Use successful scheduled main profiles for reviewed weight updates.
+The independent CI timing report separates runner waiting from execution and
+setup; see `CONTRIBUTING.md` for dependency pins and report interpretation.
+A local parallel pass is the
+fast signal, not a reproduction of that distributed coverage gate.
 
 **Docs drift is a required gate and is slow to re-run blind.** `scripts/build_docs.sh`
 memoizes and prefetches its `npa --help` walk (~1 min, was ~5), but it still costs a

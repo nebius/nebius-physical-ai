@@ -34,6 +34,11 @@ from npa.workflows.byof.source_auth import (
     private_repository_secrets,
     validate_repository_url,
 )
+from npa.workflows.byof.worker import (
+    WorkerSmoke,
+    in_workflow_worker,
+    run_prebuilt_smoke,
+)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ISAAC_RUNNER = SCRIPT_DIR / "run_isaac_lab_rl.py"
@@ -337,16 +342,17 @@ def _dockerfile_text() -> str:
         "  && echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \\\n"
         "  && chmod 440 /etc/sudoers.d/ubuntu\n"
         "RUN mkdir -p /workspace && chown ubuntu:ubuntu /workspace\n"
+        "WORKDIR /workspace\n"
         "RUN --mount=type=secret,id=npa_byof_repo_token \\\n"
         "    --mount=type=secret,id=npa_byof_repo_url \\\n"
         "    --mount=type=secret,id=npa_byof_repo_ref \\\n"
         "    set -eu; \\\n"
         '    test -n "${BYOF_SOURCE_CACHE_KEY}"; \\\n'
         '    repo_url="${OSS_REPO_URL}"; repo_ref="${OSS_REPO_REF}"; \\\n'
-        "    if [ -s /run/secrets/npa_byof_repo_url ]; then repo_url=\"$(cat /run/secrets/npa_byof_repo_url)\"; fi; \\\n"
-        "    if [ -s /run/secrets/npa_byof_repo_ref ]; then repo_ref=\"$(cat /run/secrets/npa_byof_repo_ref)\"; fi; \\\n"
+        '    if [ -s /run/secrets/npa_byof_repo_url ]; then repo_url="$(cat /run/secrets/npa_byof_repo_url)"; fi; \\\n'
+        '    if [ -s /run/secrets/npa_byof_repo_ref ]; then repo_ref="$(cat /run/secrets/npa_byof_repo_ref)"; fi; \\\n'
         "    export GIT_TERMINAL_PROMPT=0; \\\n"
-        "    git_with_auth() { git \"$@\"; }; \\\n"
+        '    git_with_auth() { git "$@"; }; \\\n'
         "    if [ -s /run/secrets/npa_byof_repo_token ]; then \\\n"
         "      printf '%s\\n' '#!/bin/sh' \\\n"
         "        '[ \"$1\" = get ] || exit 0' \\\n"
@@ -355,19 +361,19 @@ def _dockerfile_text() -> str:
         "        'printf \"\\\\n\\\\n\"' \\\n"
         "        > /tmp/npa-byof-git-credential; \\\n"
         "      chmod 700 /tmp/npa-byof-git-credential; \\\n"
-        "      git_with_auth() { git -c credential.useHttpPath=true -c credential.helper=/tmp/npa-byof-git-credential \"$@\"; }; \\\n"
+        '      git_with_auth() { git -c credential.useHttpPath=true -c credential.helper=/tmp/npa-byof-git-credential "$@"; }; \\\n'
         "    fi; \\\n"
         f'    git_with_auth clone --depth 1 --branch "$repo_ref" "$repo_url" {BYOF_REPO_MOUNT} \\\n'
         f"    || (rm -rf {BYOF_REPO_MOUNT}; \\\n"
         f'      git_with_auth clone "$repo_url" {BYOF_REPO_MOUNT}; \\\n'
-        f"      cd {BYOF_REPO_MOUNT}; git checkout \"$repo_ref\"); \\\n"
-        f"    if [ \"${{BYOF_SOURCE_VISIBILITY}}\" = private ]; then \\\n"
+        f'      cd {BYOF_REPO_MOUNT}; git checkout "$repo_ref"); \\\n'
+        f'    if [ "${{BYOF_SOURCE_VISIBILITY}}" = private ]; then \\\n'
         "      repo_sha=\"$(printf '%s' \"$repo_url\" | sha256sum | cut -d' ' -f1)\"; \\\n"
         "      ref_sha=\"$(printf '%s' \"$repo_ref\" | sha256sum | cut -d' ' -f1)\"; \\\n"
-        f"      printf '{{\"source\":\"private-byof\",\"repository_sha256\":\"%s\",\"ref_sha256\":\"%s\"}}\\n' \"$repo_sha\" \"$ref_sha\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
+        f'      printf \'{{"source":"private-byof","repository_sha256":"%s","ref_sha256":"%s"}}\\n\' "$repo_sha" "$ref_sha" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n'
         f"      rm -rf {BYOF_REPO_MOUNT}/.git; \\\n"
         "    else \\\n"
-        f"      printf '{{\\n  \"source\": \"oss-byof\",\\n  \"repo\": \"%s\",\\n  \"ref\": \"%s\"\\n}}\\n' \"$repo_url\" \"$repo_ref\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n"
+        f'      printf \'{{\\n  "source": "oss-byof",\\n  "repo": "%s",\\n  "ref": "%s"\\n}}\\n\' "$repo_url" "$repo_ref" > {BYOF_REPO_MOUNT}/npa_source_metadata.json; \\\n'
         "    fi; \\\n"
         "    rm -f /tmp/npa-byof-git-credential; \\\n"
         f"    chown -R ubuntu:ubuntu {BYOF_REPO_MOUNT}\n"
@@ -379,6 +385,10 @@ def _dockerfile_text() -> str:
         f'    "$build_command_executed" "$build_command_sha256" > {BYOF_REPO_MOUNT}/npa_build_metadata.json\n'
         f"RUN chown ubuntu:ubuntu {BYOF_REPO_MOUNT}/npa_source_metadata.json {BYOF_REPO_MOUNT}/npa_build_metadata.json\n"
         'LABEL npa.byof.repo="${BYOF_SOURCE_LABEL_REPO}" npa.byof.ref="${BYOF_SOURCE_LABEL_REF}" '
+        'npa.tool="byof" npa.source.repo="${BYOF_SOURCE_LABEL_REPO}" '
+        'npa.source.ref="${BYOF_SOURCE_LABEL_REF}" '
+        'org.opencontainers.image.source="${BYOF_SOURCE_LABEL_REPO}" '
+        'org.opencontainers.image.revision="${BYOF_SOURCE_LABEL_REF}" '
         'npa.packaging.tier="interactive" '
         'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"\n'
         "USER ubuntu\n"
@@ -720,6 +730,60 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
+def _postprocess_solution(
+    args: argparse.Namespace, key: str | None, summary: dict[str, Any]
+) -> None:
+    if key is None:
+        return
+    result = run_registered_postprocess(
+        key,
+        PostprocessContext(
+            run_prefix_uri=f"{args.output_root.rstrip('/')}/{args.run_id}/",
+            project=args.project or None,
+            wan_acceptance_candidate_image=args.wan_acceptance_candidate_image.strip(),
+        ),
+    )
+    if result is None:
+        raise RuntimeError(
+            f"registered solution {key!r} returned no verified postprocess result"
+        )
+    summary["postprocess"] = result
+
+
+def _run_worker(
+    args: argparse.Namespace,
+    summary: dict[str, Any],
+    *,
+    image: str,
+    base_profile: str,
+    postprocess_key: str | None,
+) -> int:
+    if base_profile != "prebuilt" or args.workload != "solution-smoke" or args.skip_run:
+        raise ValueError(
+            "Allocated BYOF workflow workers support prebuilt solution-smoke only; "
+            "build and launch other workloads from the operator host"
+        )
+    summary["build"] = {"ok": True, "skipped": True}
+    summary["run"] = run_prebuilt_smoke(
+        WorkerSmoke(
+            run_id=args.run_id,
+            image=image,
+            repo_url=args.repo_url,
+            repo_ref=args.repo_ref,
+            output_root=args.output_root,
+            command=args.smoke_command,
+            solution=args.solution_name,
+            capability=args.capability_name,
+            artifact_name=args.smoke_artifact_name,
+            repo_root=Path(BYOF_REPO_MOUNT),
+        )
+    )
+    _postprocess_solution(args, postprocess_key, summary)
+    summary["status"] = "ok"
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0
+
+
 def _run_byof(
     args: argparse.Namespace,
     *,
@@ -749,6 +813,14 @@ def _run_byof(
                 f"registered solution {postprocess_key!r} cannot use --skip-run "
                 "because verified postprocessing is mandatory"
             )
+        if in_workflow_worker():
+            return _run_worker(
+                args,
+                summary,
+                image=image,
+                base_profile=base_profile,
+                postprocess_key=postprocess_key,
+            )
         if not skip_build:
             with tempfile.TemporaryDirectory(prefix="npa-byof-build-") as tmp:
                 context = Path(tmp)
@@ -764,34 +836,34 @@ def _run_byof(
                     )
                     try:
                         build_cmd = [
-                                "docker",
-                                "build",
-                                "--platform",
-                                "linux/amd64",
-                                "--build-arg",
-                                f"BYOF_BASE_IMAGE={base_image}",
-                                "--build-arg",
-                                f"BYOF_SOURCE_VISIBILITY={'private' if source_secrets else 'public'}",
-                                "--build-arg",
-                                (
-                                    "BYOF_SOURCE_CACHE_KEY="
-                                    + (
-                                        source_secrets.repository_sha256
-                                        + source_secrets.ref_sha256
-                                        if source_secrets
-                                        else "public"
-                                    )
-                                ),
-                                "--build-arg",
-                                f"BYOF_SOURCE_LABEL_REPO={'<private-repository>' if source_secrets else args.repo_url}",
-                                "--build-arg",
-                                f"BYOF_SOURCE_LABEL_REF={'<private-ref>' if source_secrets else args.repo_ref}",
-                                "--build-arg",
-                                f"BYOF_BUILD_COMMAND={args.build_command}",
-                                "-t",
-                                image,
-                                str(context),
-                            ]
+                            "docker",
+                            "build",
+                            "--platform",
+                            "linux/amd64",
+                            "--build-arg",
+                            f"BYOF_BASE_IMAGE={base_image}",
+                            "--build-arg",
+                            f"BYOF_SOURCE_VISIBILITY={'private' if source_secrets else 'public'}",
+                            "--build-arg",
+                            (
+                                "BYOF_SOURCE_CACHE_KEY="
+                                + (
+                                    source_secrets.repository_sha256
+                                    + source_secrets.ref_sha256
+                                    if source_secrets
+                                    else "public"
+                                )
+                            ),
+                            "--build-arg",
+                            f"BYOF_SOURCE_LABEL_REPO={'<private-repository>' if source_secrets else args.repo_url}",
+                            "--build-arg",
+                            f"BYOF_SOURCE_LABEL_REF={'<private-ref>' if source_secrets else args.repo_ref}",
+                            "--build-arg",
+                            f"BYOF_BUILD_COMMAND={args.build_command}",
+                            "-t",
+                            image,
+                            str(context),
+                        ]
                         if source_secrets is None:
                             build_cmd[8:8] = [
                                 "--build-arg",
@@ -935,23 +1007,7 @@ def _run_byof(
             summary["run"] = _parse_last_json(run_proc.stdout) or {
                 "status": "submitted"
             }
-            if postprocess_key is not None:
-                postprocess = run_registered_postprocess(
-                    postprocess_key,
-                    PostprocessContext(
-                        run_prefix_uri=f"{args.output_root.rstrip('/')}/{args.run_id}/",
-                        project=args.project or None,
-                        wan_acceptance_candidate_image=(
-                            args.wan_acceptance_candidate_image.strip()
-                        ),
-                    ),
-                )
-                if postprocess is None:
-                    raise RuntimeError(
-                        f"registered solution {postprocess_key!r} returned no "
-                        "verified postprocess result"
-                    )
-                summary["postprocess"] = postprocess
+            _postprocess_solution(args, postprocess_key, summary)
         else:
             summary["run"] = {"skipped": True}
         summary["status"] = "ok"

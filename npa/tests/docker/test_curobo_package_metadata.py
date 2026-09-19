@@ -45,12 +45,18 @@ def reviewed_source(tmp_path, helper, monkeypatch):
     corrected = helper.CHANGE_NOTICE + original.replace(
         helper.ORIGINAL_CLASSIFIER, helper.CORRECTED_CLASSIFIER
     )
-    monkeypatch.setattr(helper, "UPSTREAM_METADATA_SHA256", hashlib.sha256(original).hexdigest())
-    monkeypatch.setattr(helper, "CORRECTED_METADATA_SHA256", hashlib.sha256(corrected).hexdigest())
+    monkeypatch.setattr(
+        helper, "UPSTREAM_METADATA_SHA256", hashlib.sha256(original).hexdigest()
+    )
+    monkeypatch.setattr(
+        helper, "CORRECTED_METADATA_SHA256", hashlib.sha256(corrected).hexdigest()
+    )
     return tmp_path, original, corrected
 
 
-def test_single_classifier_correction_preserves_every_other_metadata_field(helper, reviewed_source):
+def test_single_classifier_correction_preserves_every_other_metadata_field(
+    helper, reviewed_source
+):
     root, original, expected = reviewed_source
     original_files = {p.name: p.read_bytes() for p in root.iterdir()}
     receipt = helper.correct_package_metadata(root)
@@ -61,7 +67,9 @@ def test_single_classifier_correction_preserves_every_other_metadata_field(helpe
     assert after["project"].pop("classifiers") == ["Topic :: Scientific/Engineering"]
     before["project"].pop("classifiers")
     assert before == after
-    assert actual.startswith(helper.CHANGE_NOTICE + b"# SPDX-License-Identifier: Apache-2.0\n")
+    assert actual.startswith(
+        helper.CHANGE_NOTICE + b"# SPDX-License-Identifier: Apache-2.0\n"
+    )
     assert receipt["before_sha256"] == hashlib.sha256(original).hexdigest()
     assert receipt["after_sha256"] == hashlib.sha256(actual).hexdigest()
     assert receipt["source_archive_sha256"] == helper.SOURCE_ARCHIVE_SHA256
@@ -72,8 +80,12 @@ def test_single_classifier_correction_preserves_every_other_metadata_field(helpe
         assert (root / name).read_bytes() == original_files[name]
 
 
-@pytest.mark.parametrize("failure", ["changed_metadata", "revision", "missing_revision", "second_apply"])
-def test_unreviewed_source_fails_without_further_mutation(helper, reviewed_source, failure):
+@pytest.mark.parametrize(
+    "failure", ["changed_metadata", "revision", "missing_revision", "second_apply"]
+)
+def test_unreviewed_source_fails_without_further_mutation(
+    helper, reviewed_source, failure
+):
     root, _, _ = reviewed_source
     if failure == "changed_metadata":
         with (root / "pyproject.toml").open("ab") as stream:
@@ -91,17 +103,25 @@ def test_unreviewed_source_fails_without_further_mutation(helper, reviewed_sourc
 
 
 @pytest.mark.parametrize("count", [0, 2])
-def test_reviewed_classifier_must_appear_exactly_once(helper, reviewed_source, monkeypatch, count):
+def test_reviewed_classifier_must_appear_exactly_once(
+    helper, reviewed_source, monkeypatch, count
+):
     root, original, _ = reviewed_source
-    changed = original.replace(helper.ORIGINAL_CLASSIFIER, b", ".join([helper.ORIGINAL_CLASSIFIER] * count))
+    changed = original.replace(
+        helper.ORIGINAL_CLASSIFIER, b", ".join([helper.ORIGINAL_CLASSIFIER] * count)
+    )
     (root / "pyproject.toml").write_bytes(changed)
-    monkeypatch.setattr(helper, "UPSTREAM_METADATA_SHA256", hashlib.sha256(changed).hexdigest())
+    monkeypatch.setattr(
+        helper, "UPSTREAM_METADATA_SHA256", hashlib.sha256(changed).hexdigest()
+    )
     with pytest.raises(ValueError, match="exactly one"):
         helper.correct_package_metadata(root)
     assert (root / "pyproject.toml").read_bytes() == changed
 
 
-def test_changed_transform_output_fails_before_write(helper, reviewed_source, monkeypatch):
+def test_changed_transform_output_fails_before_write(
+    helper, reviewed_source, monkeypatch
+):
     root, original, _ = reviewed_source
     monkeypatch.setattr(helper, "CORRECTED_METADATA_SHA256", "0" * 64)
     with pytest.raises(ValueError, match="corrected metadata hash"):
@@ -111,7 +131,9 @@ def test_changed_transform_output_fails_before_write(helper, reviewed_source, mo
 
 @pytest.mark.parametrize("name", ["pyproject.toml", "NPA_SOURCE_REVISION"])
 @pytest.mark.parametrize("kind", ["symlink", "hardlink"])
-def test_linked_input_is_rejected_without_modifying_target(helper, reviewed_source, name, kind):
+def test_linked_input_is_rejected_without_modifying_target(
+    helper, reviewed_source, name, kind
+):
     root, _, _ = reviewed_source
     path = root / name
     target = root / (name + ".outside")
@@ -132,11 +154,26 @@ def test_docker_build_applies_hash_guard_before_normal_pinned_backend(helper):
     install = "SETUPTOOLS_SCM_PRETEND_VERSION=0.8.0 pip install --no-deps --no-build-isolation --no-cache-dir /opt/curobo"
     assert f"{helper.SOURCE_ARCHIVE_SHA256}  /tmp/curobo.tar.gz" in dockerfile
     assert f"{helper.SOURCE_REVISION} > /opt/curobo/NPA_SOURCE_REVISION" in dockerfile
-    assert dockerfile.index("sha256sum -c -", dockerfile.index("/tmp/curobo.tar.gz")) < dockerfile.index(correction)
-    assert dockerfile.index("/opt/curobo/NPA_SOURCE_REVISION") < dockerfile.index(correction) < dockerfile.index(install)
-    assert correction + " > /usr/share/doc/npa-curobo/metadata-correction.json" in dockerfile
+    assert dockerfile.index(
+        "sha256sum -c -", dockerfile.index("/tmp/curobo.tar.gz")
+    ) < dockerfile.index(correction)
+    assert (
+        dockerfile.index("/opt/curobo/NPA_SOURCE_REVISION")
+        < dockerfile.index(correction)
+        < dockerfile.index(install)
+    )
+    assert (
+        correction + " > /usr/share/doc/npa-curobo/metadata-correction.json"
+        in dockerfile
+    )
     lock = (IMAGE_DIR / "requirements.lock").read_text()
     assert "setuptools==84.0.0" in lock
     assert "trove-classifiers==2026.6.1.19" in lock
-    assert helper.UPSTREAM_METADATA_SHA256 == "4c93ee00a80dbc46e45fb6a1dd9486b57c8547e59bd948c30978a8ac7ed03a44"
-    assert helper.CORRECTED_METADATA_SHA256 == "ca1967835fbf45a89617a70d5cbf596cd4368623b84a8013dfca2b6bedae32b9"
+    assert (
+        helper.UPSTREAM_METADATA_SHA256
+        == "4c93ee00a80dbc46e45fb6a1dd9486b57c8547e59bd948c30978a8ac7ed03a44"
+    )
+    assert (
+        helper.CORRECTED_METADATA_SHA256
+        == "ca1967835fbf45a89617a70d5cbf596cd4368623b84a8013dfca2b6bedae32b9"
+    )

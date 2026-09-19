@@ -28,7 +28,9 @@ def _doc_table_tool_refs() -> set[str]:
 def _catalog_keys_for_doc() -> set[str]:
     keys = set(TOOL_CATALOG)
     # Doc may use wildcard rows for detection_training train/eval variants.
-    train_keys = {k for k in keys if k.startswith("workbench.detection_training.train_")}
+    train_keys = {
+        k for k in keys if k.startswith("workbench.detection_training.train_")
+    }
     eval_keys = {k for k in keys if k.startswith("workbench.detection_training.eval_")}
     if train_keys:
         keys -= train_keys

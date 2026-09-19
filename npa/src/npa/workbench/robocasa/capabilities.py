@@ -131,7 +131,9 @@ def system_info() -> RoboCasaSystemInfo:
         import torch
 
         info.cuda_available = bool(torch.cuda.is_available())
-        info.cuda_device_count = int(torch.cuda.device_count()) if torch.cuda.is_available() else 0
+        info.cuda_device_count = (
+            int(torch.cuda.device_count()) if torch.cuda.is_available() else 0
+        )
         if torch.cuda.is_available():
             info.cuda_device_name = torch.cuda.get_device_name(0)
     except Exception as exc:  # pragma: no cover - torch optional on client.
@@ -149,7 +151,6 @@ def system_info() -> RoboCasaSystemInfo:
     except Exception as exc:  # pragma: no cover - depends on the container.
         LOGGER.debug("assets root unavailable: %s", exc)
     return info
-
 
 
 def _download_assets() -> None:
@@ -177,44 +178,136 @@ def _download_assets() -> None:
         # has content. (repo_id, filename, extract_to, marker_dir)
         standard = [
             ("robocasa/robocasa-assets", "textures.zip", ".", "textures"),
-            ("robocasa/robocasa-assets", "generative_textures.zip", ".", "generative_textures"),
+            (
+                "robocasa/robocasa-assets",
+                "generative_textures.zip",
+                ".",
+                "generative_textures",
+            ),
             ("robocasa/robocasa-assets", "fixtures.zip", ".", "fixtures/accessories"),
-            ("robocasa/robocasa-assets", "objaverse.zip", "objects", "objects/objaverse"),
-            ("robocasa/robocasa-assets", "aigen_objs.zip", "objects", "objects/aigen_objs"),
+            (
+                "robocasa/robocasa-assets",
+                "objaverse.zip",
+                "objects",
+                "objects/objaverse",
+            ),
+            (
+                "robocasa/robocasa-assets",
+                "aigen_objs.zip",
+                "objects",
+                "objects/aigen_objs",
+            ),
         ]
         # Lightwheel fixtures are one zip per fixture family, each extracting a
         # top-level folder (e.g. stoves/) that must land under fixtures/. They are
         # additive on top of baked directories, so track completion with a marker.
         lightwheel_fixtures = [
-            "blenders", "cabinets", "coffee_machines", "dishwashers",
-            "electric_kettles", "fridges", "handles", "hoods", "microwaves",
-            "ovens", "sinks", "stand_mixers", "stoves", "stovetops",
-            "toaster_ovens", "toasters", "windows",
+            "blenders",
+            "cabinets",
+            "coffee_machines",
+            "dishwashers",
+            "electric_kettles",
+            "fridges",
+            "handles",
+            "hoods",
+            "microwaves",
+            "ovens",
+            "sinks",
+            "stand_mixers",
+            "stoves",
+            "stovetops",
+            "toaster_ovens",
+            "toasters",
+            "windows",
         ]
         # Lightwheel objects are one zip per object family, each extracting a
         # top-level folder (e.g. stool/) that must land under objects/lightwheel/.
         lightwheel_objects = [
-            "aluminum_foil", "basket", "blender_jug", "cheese_grater",
-            "chicken_drumstick", "cinnamon", "colander", "cookie_dough_ball",
-            "cream_cheese_stick", "digital_scale", "dish_brush", "dish_rack",
-            "flour_bag", "flower_vase", "fruit_bowl", "glass_cup",
-            "honey_bottle", "hotdog_bun", "ice_cube", "ice_cube_tray", "jar",
-            "juice", "kebab_skewer", "kettle", "knife_block", "lemon_wedge",
-            "lettuce", "marshmallow", "mayonnaise", "measuring_cup", "mug_tree",
-            "mustard", "oil_and_vinegar_bottle", "oven_tray", "pancake",
-            "paper_towel_holder", "paprika", "peeler", "pickle_slice",
-            "pitcher", "pizza", "pizza_cutter", "placemat", "plant", "pot",
-            "reamer", "salt_and_pepper_shaker", "sandwich_bread", "saucepan",
-            "shrimp", "soap_dispenser", "spray", "stool", "strainer", "straw",
-            "sugar_cube", "syrup_bottle", "tiered_basket", "tiered_shelf",
-            "tomato_slice", "tongs", "tray", "tupperware", "turkey_slice",
-            "turmeric", "utensil_rack", "utensil_set", "whisk", "wooden_spoon",
+            "aluminum_foil",
+            "basket",
+            "blender_jug",
+            "cheese_grater",
+            "chicken_drumstick",
+            "cinnamon",
+            "colander",
+            "cookie_dough_ball",
+            "cream_cheese_stick",
+            "digital_scale",
+            "dish_brush",
+            "dish_rack",
+            "flour_bag",
+            "flower_vase",
+            "fruit_bowl",
+            "glass_cup",
+            "honey_bottle",
+            "hotdog_bun",
+            "ice_cube",
+            "ice_cube_tray",
+            "jar",
+            "juice",
+            "kebab_skewer",
+            "kettle",
+            "knife_block",
+            "lemon_wedge",
+            "lettuce",
+            "marshmallow",
+            "mayonnaise",
+            "measuring_cup",
+            "mug_tree",
+            "mustard",
+            "oil_and_vinegar_bottle",
+            "oven_tray",
+            "pancake",
+            "paper_towel_holder",
+            "paprika",
+            "peeler",
+            "pickle_slice",
+            "pitcher",
+            "pizza",
+            "pizza_cutter",
+            "placemat",
+            "plant",
+            "pot",
+            "reamer",
+            "salt_and_pepper_shaker",
+            "sandwich_bread",
+            "saucepan",
+            "shrimp",
+            "soap_dispenser",
+            "spray",
+            "stool",
+            "strainer",
+            "straw",
+            "sugar_cube",
+            "syrup_bottle",
+            "tiered_basket",
+            "tiered_shelf",
+            "tomato_slice",
+            "tongs",
+            "tray",
+            "tupperware",
+            "turkey_slice",
+            "turmeric",
+            "utensil_rack",
+            "utensil_set",
+            "whisk",
+            "wooden_spoon",
         ]
         lightwheel = [
-            ("nvidia/PhysicalAI-Kitchen-Assets", f"fixtures_lightwheel/{name}.zip", "fixtures", f"fixtures/{name}")
+            (
+                "nvidia/PhysicalAI-Kitchen-Assets",
+                f"fixtures_lightwheel/{name}.zip",
+                "fixtures",
+                f"fixtures/{name}",
+            )
             for name in lightwheel_fixtures
         ] + [
-            ("nvidia/PhysicalAI-Kitchen-Assets", f"objects_lightwheel/{name}.zip", "objects/lightwheel", f"objects/lightwheel/{name}")
+            (
+                "nvidia/PhysicalAI-Kitchen-Assets",
+                f"objects_lightwheel/{name}.zip",
+                "objects/lightwheel",
+                f"objects/lightwheel/{name}",
+            )
             for name in lightwheel_objects
         ]
 
@@ -238,7 +331,9 @@ def _download_assets() -> None:
                 _extract(repo_id, filename, extract_to)
                 LOGGER.info("downloaded robocasa assets %s from %s", filename, repo_id)
             except Exception as exc:  # pragma: no cover - network/entitlement.
-                LOGGER.warning("failed to download robocasa assets %s: %s", filename, exc)
+                LOGGER.warning(
+                    "failed to download robocasa assets %s: %s", filename, exc
+                )
         for repo_id, filename, extract_to, marker_dir in lightwheel:
             marker_path = assets_root / marker_dir
             done_marker = marker_path / ".npa_lightwheel_done"
@@ -250,7 +345,9 @@ def _download_assets() -> None:
                 done_marker.write_text("done\n")
                 LOGGER.info("downloaded robocasa assets %s from %s", filename, repo_id)
             except Exception as exc:  # pragma: no cover - network/entitlement.
-                LOGGER.warning("failed to download robocasa assets %s: %s", filename, exc)
+                LOGGER.warning(
+                    "failed to download robocasa assets %s: %s", filename, exc
+                )
     except Exception as exc:  # pragma: no cover - client without the stack.
         LOGGER.warning("robocasa asset download unavailable: %s", exc)
 
@@ -279,6 +376,7 @@ def _make_env(env_id: str, *, download_assets: bool = True) -> Any:
     except Exception as exc:  # pragma: no cover - depends on the container.
         raise RoboCasaError(f"failed to create RoboCasa env {env_id}: {exc}") from exc
 
+
 def kitchen_task_registration(*, env_id: str = DEFAULT_ENV_ID) -> dict[str, Any]:
     """Verify Gymnasium task registration for a RoboCasa env id."""
     gym = _import_gymnasium()
@@ -301,9 +399,7 @@ def kitchen_asset_availability() -> dict[str, Any]:
     assets_root = _assets_root()
     if not assets_root.exists():
         raise RoboCasaError(f"RoboCasa assets root does not exist: {assets_root}")
-    subdirs = sorted(
-        p.name for p in assets_root.iterdir() if p.is_dir()
-    )
+    subdirs = sorted(p.name for p in assets_root.iterdir() if p.is_dir())
     return {
         "assets_root": str(assets_root),
         "assets_root_exists": True,
@@ -312,7 +408,10 @@ def kitchen_asset_availability() -> dict[str, Any]:
 
 
 def kitchen_egl_env_reset(
-    *, env_id: str = DEFAULT_ENV_ID, seed: int | None = None, download_assets: bool = True
+    *,
+    env_id: str = DEFAULT_ENV_ID,
+    seed: int | None = None,
+    download_assets: bool = True,
 ) -> dict[str, Any]:
     """Create a headless EGL RoboCasa env and reset it."""
     env = _make_env(env_id, download_assets=download_assets)
@@ -488,7 +587,9 @@ def _flatten_action(action: Any) -> np.ndarray:
             value = action[key]
             if isinstance(value, dict):
                 for sub_key in sorted(value.keys()):
-                    parts.append(np.asarray(value[sub_key], dtype=np.float32).reshape(-1))
+                    parts.append(
+                        np.asarray(value[sub_key], dtype=np.float32).reshape(-1)
+                    )
             else:
                 parts.append(np.asarray(value, dtype=np.float32).reshape(-1))
         return np.concatenate(parts)
@@ -505,9 +606,7 @@ def _obs_image(obs: dict[str, Any], key: str) -> Any:
         return arr.astype(np.uint8)
     if arr.ndim == 4 and arr.shape[0] == 1:
         return arr[0].astype(np.uint8)
-    raise RoboCasaError(
-        f"RoboCasa image key {key!r} has unexpected shape {arr.shape}"
-    )
+    raise RoboCasaError(f"RoboCasa image key {key!r} has unexpected shape {arr.shape}")
 
 
 def _obs_state(obs: dict[str, Any]) -> np.ndarray:
@@ -581,7 +680,9 @@ def _sha256_tree(root: Path) -> str:
 
 def _download_s3_tree(uri: str, destination: Path) -> Path:
     if not uri.startswith("s3://"):
-        raise RoboCasaError("policy evaluation requires an exact s3:// checkpoint prefix")
+        raise RoboCasaError(
+            "policy evaluation requires an exact s3:// checkpoint prefix"
+        )
     import boto3
 
     bucket, prefix = uri[5:].split("/", 1)
@@ -598,9 +699,7 @@ def _download_s3_tree(uri: str, destination: Path) -> Path:
             key = str(item["Key"])
             if key.endswith("/"):
                 continue
-            target = safe_s3_download_target(
-                destination, key, prefix.rstrip("/") + "/"
-            )
+            target = safe_s3_download_target(destination, key, prefix.rstrip("/") + "/")
             target.parent.mkdir(parents=True, exist_ok=True)
             client.download_file(bucket, key, str(target))
             count += 1
@@ -710,7 +809,9 @@ def kitchen_policy_eval(
         episodes: list[dict[str, Any]] = []
         for episode_index in range(num_envs):
             task_id = heldout_ids[episode_index % len(heldout_ids)]
-            env = _make_env(task_id, download_assets=download_assets and episode_index == 0)
+            env = _make_env(
+                task_id, download_assets=download_assets and episode_index == 0
+            )
             frames: list[Any] = []
             try:
                 obs, _ = env.reset(
@@ -725,14 +826,20 @@ def kitchen_policy_eval(
                     model_obs = preprocessor(_policy_observation(obs, device))
                     with torch.inference_mode():
                         action = postprocessor(policy.select_action(model_obs))
-                    flat = np.asarray(action.squeeze(0).detach().cpu(), dtype=np.float32)
+                    flat = np.asarray(
+                        action.squeeze(0).detach().cpu(), dtype=np.float32
+                    )
                     obs, reward, terminated, truncated, info = env.step(
                         _unflatten_action(env.action_space, flat)
                     )
                     frames.append(_obs_image(obs, "video.robot0_agentview_left"))
                     reward_sum += float(reward)
                     max_reward = max(max_reward, float(reward))
-                    success = success or bool(info.get("success", False)) or float(reward) >= 1.0
+                    success = (
+                        success
+                        or bool(info.get("success", False))
+                        or float(reward) >= 1.0
+                    )
                     steps += 1
                     if terminated or truncated:
                         break
@@ -795,7 +902,10 @@ def kitchen_policy_eval(
     (output_dir / "eval.json").write_text(json.dumps(result, indent=2, sort_keys=True))
     (output_dir / "metrics.json").write_text(
         json.dumps(
-            {"success_rate": result["success_rate"], "mean_reward": result["mean_reward"]},
+            {
+                "success_rate": result["success_rate"],
+                "mean_reward": result["mean_reward"],
+            },
             indent=2,
             sort_keys=True,
         )
@@ -836,7 +946,9 @@ def run_capability(
         return kitchen_asset_availability()
     if request.capability == "kitchen_egl_env_reset":
         return kitchen_egl_env_reset(
-            env_id=request.env_id, seed=request.seed, download_assets=request.download_assets
+            env_id=request.env_id,
+            seed=request.seed,
+            download_assets=request.download_assets,
         )
     if request.capability == "kitchen_random_rollout":
         return kitchen_random_rollout(
@@ -971,7 +1083,9 @@ def upload_output(local_dir: Path, output_uri: str, result: dict[str, Any]) -> N
         return
     import boto3
 
-    endpoint = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT", "")
+    endpoint = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get(
+        "NEBIUS_S3_ENDPOINT", ""
+    )
     s3 = boto3.client(
         "s3",
         endpoint_url=endpoint or None,
@@ -990,11 +1104,9 @@ def parse_s3_uri(uri: str) -> tuple[str, str]:
     """Parse an s3:// URI into (bucket, prefix)."""
     if not uri.startswith("s3://"):
         raise ValueError(f"not an s3:// URI: {uri}")
-    rest = uri[len("s3://"):]
+    rest = uri[len("s3://") :]
     bucket, _, prefix = rest.partition("/")
     return bucket, prefix.rstrip("/")
-
-
 
 
 __all__ = [

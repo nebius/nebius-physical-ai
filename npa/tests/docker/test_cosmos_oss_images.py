@@ -48,7 +48,9 @@ def test_dockerfile_does_not_download_weights_at_build_time(image: str) -> None:
             # Comments explain the policy and legitimately name these commands.
             if not line.lstrip().startswith("#") and re.search(pattern, line)
         ]
-        assert not matches, f"{image} Dockerfile fetches weights at build time: {matches}"
+        assert not matches, (
+            f"{image} Dockerfile fetches weights at build time: {matches}"
+        )
 
 
 @pytest.mark.parametrize("image", IMAGES)
@@ -99,7 +101,9 @@ def test_dockerfile_never_copies_a_weight_file(image: str) -> None:
         if line.lstrip().upper().startswith(("COPY", "ADD"))
         and any(suffix in line.lower() for suffix in WEIGHT_SUFFIXES)
     ]
-    assert not copied, f"{image} Dockerfile copies a weight file into the image: {copied}"
+    assert not copied, (
+        f"{image} Dockerfile copies a weight file into the image: {copied}"
+    )
 
 
 @pytest.mark.parametrize("image", IMAGES)
@@ -107,7 +111,9 @@ def test_upstream_checkout_skips_git_lfs_payloads(image: str) -> None:
     """LFS objects are how upstream ships its EULA-gated weights."""
 
     body = _dockerfile(image)
-    assert "git fetch" in body, f"{image} Dockerfile does not fetch an upstream checkout"
+    assert "git fetch" in body, (
+        f"{image} Dockerfile does not fetch an upstream checkout"
+    )
     for line in body.splitlines():
         stripped = line.strip()
         if stripped.startswith("#"):
@@ -134,7 +140,9 @@ def test_curator_documents_the_runtime_weight_fetch() -> None:
     assert 'VOLUME ["/config/models"]' in body, (
         "the weights directory must be a volume so downloads survive across runs"
     )
-    entrypoint = (DOCKER_ROOT / "cosmos-curate" / "entrypoint.sh").read_text(encoding="utf-8")
+    entrypoint = (DOCKER_ROOT / "cosmos-curate" / "entrypoint.sh").read_text(
+        encoding="utf-8"
+    )
     assert "fetch-models" in entrypoint, "the image must expose a fetch-models mode"
 
 
@@ -142,7 +150,7 @@ def test_evaluator_needs_no_weights_at_all() -> None:
     """Nothing NPA wires in the evaluator loads a local model."""
 
     body = _dockerfile("cosmos-evaluator")
-    assert "npa.model_weights=\"none" in body
+    assert 'npa.model_weights="none' in body
     assert "GIT_LFS_SKIP_SMUDGE=1" in body
 
 
@@ -198,7 +206,7 @@ def test_entrypoint_execs_its_arguments(image: str) -> None:
     passes_through = 'exec "$@"' in text or 'exec "$MODE" "$@"' in text
     assert passes_through, (
         f'{image}/{name} must exec its arguments (`exec "$@"`, or a mode dispatcher '
-        'whose catch-all branch does) so an orchestrator-supplied command runs'
+        "whose catch-all branch does) so an orchestrator-supplied command runs"
     )
 
 
@@ -260,15 +268,17 @@ def test_transfer_builds_a_fresh_rootless_venv_instead_of_relocating_one() -> No
     body = _dockerfile("cosmos2-transfer")
     assert "ARG BASE_IMAGE=npa-cosmos2-transfer" not in body
     assert 'uv python install "${COSMOS_PYTHON_VERSION}"' in body
-    assert 'uv sync --locked --no-dev --no-editable --extra=cu128' in body
-    assert 'readlink -f .venv/bin/python' in body
+    assert "uv sync --locked --no-dev --no-editable --extra=cu128" in body
+    assert "readlink -f .venv/bin/python" in body
     assert 'find "${UV_PYTHON_INSTALL_DIR}"' in body
 
 
 @pytest.mark.parametrize("image", IMAGES)
 def test_golden_eval_command_matches_the_image_smoke_script(image: str) -> None:
     manifest = yaml.safe_load(
-        (REPO_ROOT / "npa" / "src" / "npa" / "smoke" / "golden_evals.yaml").read_text(encoding="utf-8")
+        (REPO_ROOT / "npa" / "src" / "npa" / "smoke" / "golden_evals.yaml").read_text(
+            encoding="utf-8"
+        )
     )
     entry = manifest["containers"][image]
     command = entry["golden_eval"]["command"]

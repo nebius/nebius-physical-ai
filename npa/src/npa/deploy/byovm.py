@@ -108,7 +108,9 @@ def detect_gpu_info(ssh: SSHClient) -> GPUInfo:
     return GPUInfo(count=len(names), names=names)
 
 
-def select_visible_devices(detected_count: int, gpu_count: int | None = None) -> tuple[int, str]:
+def select_visible_devices(
+    detected_count: int, gpu_count: int | None = None
+) -> tuple[int, str]:
     """Return effective GPU count and CUDA_VISIBLE_DEVICES."""
     if detected_count <= 0:
         raise ValueError("No GPUs were detected on the BYOVM target")
@@ -221,7 +223,9 @@ def apply_project_storage_vars(
     return found
 
 
-def ssh_config_for_target(target: BYOVMTarget, *, tokens: dict[str, str] | None = None) -> SSHConfig:
+def ssh_config_for_target(
+    target: BYOVMTarget, *, tokens: dict[str, str] | None = None
+) -> SSHConfig:
     return SSHConfig(
         host=target.host,
         user=target.user,

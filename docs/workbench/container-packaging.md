@@ -66,6 +66,7 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-sonic` | `sonic/Dockerfile` | `/entrypoint.sh` modes |
 | `npa-detection-training` | `detection-training/Dockerfile` | uvicorn `:8790` |
 | `npa-robocasa` | `robocasa/Dockerfile` | uvicorn `:8791`; non-root service with no sudo grant |
+| `npa-openarm` | `openarm/Dockerfile` | authenticated service `:8792`; MuJoCo baked, Isaac runtime-fetched |
 | `npa-retargeting` | `retargeting/Dockerfile` | job shell |
 | `npa-foxglove-embed` | `foxglove-embed/Dockerfile` | static host `:8099` (Foxglove embed SDK + MCAP data) |
 | Sim2Real stack | `sim2real-*/`, `cosmos3-reason/`, `lerobot-vlm-rl/` | workflow modules |
@@ -121,10 +122,11 @@ has a license boundary that the contract encodes in a `redistribution` field per
 image (`public` | `restricted`), enforced by
 `npa/tests/docker/test_packaging_contract.py`.
 
-- **`public`** — OSS-redistributable. Code is under OSI-approved licenses
-  (Apache-2.0 / BSD-3 / MIT / MPL-2.0), the exact CUDA/PyTorch base and wheel
-  payloads have applicable redistribution grants,
-  and model weights are pulled at runtime. Public GR00T N1.7, GEAR-SONIC,
+- **`public`** — Every shipped component has reviewed permission for public
+  redistribution, and the image must satisfy the applicable license conditions,
+  including notices and corresponding-source delivery. This classification does
+  not mean every component has an OSI-approved license. Check exact base and wheel
+  payloads individually; model weights are pulled at runtime. Public GR00T N1.7, GEAR-SONIC,
   Cosmos Reason1, and Cosmos3 Nano assets work anonymously; gated Cosmos assets require a token at
   **runtime** by the operator, never baked into the image. These may be published
   to a public/anonymous registry.
@@ -138,6 +140,24 @@ image (`public` | `restricted`), enforced by
   in a later layer leaves them distributed in an ancestor; select a suitable
   base and filter any non-distributable install payload before that layer is
   committed. Keep the applicable licenses and verify the final image's layers.
+
+  FiftyOne bundles MongoDB Community Server under SSPL v1, which is
+  [not OSI-approved](https://www.mongodb.com/legal/licensing/server-side-public-license/faq).
+  The supported FiftyOne 1.21 image contains verified matching source,
+  provenance and delivery directions alongside the retained notices. Repeat
+  the exact-image checks for each replacement digest. See the
+  [FiftyOne release requirements](../../npa/docker/workbench/fiftyone/RELEASE.md).
+  Before any public push, run `npa/.venv/bin/python
+  npa/docker/workbench/fiftyone/validate_image.py` from the repository root with
+  `--image-id` set to the exact loaded local image ID, `--revision` set to its
+  full committed source revision, `--source-root` set to that checkout and
+  `--output-path` set to a new child of a private directory. The release guide
+  supplies the complete command and its bootstrap, source-delivery and functional
+  coverage. Keep raw receipts private; the trusted CI workflow publishes only
+  the validator's allowlisted `public-summary.json`.
+  Review the [SSPL's distribution and service provisions](https://www.mongodb.com/legal/licensing/server-side-public-license)
+  separately; an image's redistribution classification does not decide whether
+  an operator's service use meets its obligations.
 - **`restricted`** — bakes a runtime we are not licensed to redistribute. Such an
   image may be built and run by the operator who owns the registry (internal R&D,
   build-your-own), but hosting it **prebuilt on a public/anonymous registry** would
@@ -165,7 +185,7 @@ Neither mechanism grants redistribution rights or enables privacy/telemetry.
 
 | Audited surface | Assets/images covered | Outcome |
 | --- | --- | --- |
-| Isaac runtime images and routes | `isaac-lab`, `sonic`, `groot`, Isaac-backed `sim2real` builders and raw-shell sweep states | No Isaac/Kit bytes are baked. Resolved-image routing injects canonical `ACCEPT_EULA=Y` by default; empty/negative values opt out, affirmative legacy values normalize, and invalid values fail before pull/provision/scheduling. No second public EULA variable exists. |
+| Isaac runtime images and routes | `isaac-lab`, `sonic`, `groot`, Isaac-backed `sim2real` builders and raw-shell sweep states | No Isaac Sim/Lab wheels or restricted Kit runtime payloads are baked. Resolved-image routing injects canonical `ACCEPT_EULA=Y` by default; empty/negative values opt out, affirmative legacy values normalize, and invalid values fail before pull/provision/scheduling. No second public EULA variable exists. |
 | GR00T deployment | `nvidia/GR00T-N1.7-3B`, `nvidia/Cosmos-Reason2-2B` | Both runtime dependencies are probed before every deploy/update path. Gated access is determined only by the operator's HF token and actual upstream permission; there is no skip or NPA terms flag. |
 | Cosmos and Physical AI Data Factory | `nvidia/Cosmos-Transfer2.5-2B`, `nvidia/Cosmos-Reason2-2B`, `nvidia/Cosmos-Reason2-8B`, `nvidia/Cosmos-Reason1-7B`, `nvidia/Cosmos3-Nano`, `nvidia/Cosmos-Guardrail1`, `nvidia/Cosmos-1.0-Guardrail`, `nvidia/Cosmos-1.0-Diffusion-7B-Text2World` | Weights stay out of image layers. Public repositories may be fetched anonymously; gated repositories require a successful upstream HF probe with the operator's token. Deploy has no bypass or duplicate consent flag. |
 | Other runtime-fetched NVIDIA assets | `nvidia/GEAR-SONIC`, `nvidia/PhysicalAI-NuRec-PPISP`; NuRec NRE runtime | Public HF assets remain anonymous. NuRec's NGC-hosted NRE runtime requires a real `NGC_API_KEY` repository probe; no local EULA boolean substitutes for vendor access. |
@@ -178,20 +198,26 @@ Isaac examples now state `Y`; non-Isaac tasks do not receive the variable.
 
 ## Runtime-fetched Isaac Sim (why the Isaac images are publishable)
 
-The four Isaac images used to bake **NVIDIA Omniverse Kit (Isaac Sim)**. The Isaac Sim
-*source* is Apache-2.0, but the shipped binary bundles the Kit SDK and NVIDIA assets,
-and — this is the part that is easy to get wrong — **both** the `isaacsim` *and*
-`isaaclab` PyPI packages declare `License: NVIDIA Proprietary Software`, with
-`isaaclab/__init__.py` carrying an explicit no-redistribution header. The
-`isaac-sim/IsaacLab` **GitHub repo** is BSD-3-Clause; the wheel is a
-differently-licensed repackaging of it. So "Isaac Lab is BSD-3, we can bake that half"
-is wrong, and read-the-metadata beats read-the-badge.
+The Isaac runtime images previously baked **NVIDIA Omniverse Kit (Isaac Sim)**.
+Isaac Sim's Apache-2.0 source license does not cover its proprietary Kit SDK and
+runtime dependencies. Classify each exact wheel and its bundled components:
+the `isaaclab==3.0.0b2.post1` wheel selected by Arena declares **BSD-3-Clause**,
+in its structured `METADATA` License field. The exact wheel and metadata hashes
+are recorded in Arena's `license-evidence.json`; the wheel has no standalone
+license member. Isaac Sim 6.0.1.0 and its proprietary runtime dependencies
+retain their separate NVIDIA terms. Do not apply a license finding from another wheel or
+version to this Lab wheel, or extend its BSD license to the complete runtime.
+The [Arena third-party notices](../../npa/docker/workbench/isaac-arena/THIRD_PARTY_NOTICES.md)
+record these component boundaries.
 
 A runtime token could not have rescued a baked image: a token gates a *download*, and
 Kit was already in the layers. So the images were changed to make the statement true.
 
-**How it works.** The images contain **no NVIDIA Isaac bytes**. On first use of
-`/isaac-sim/python.sh`, `npa/docker/workbench/common/isaac_bootstrap.sh`:
+**How it works.** The public images omit the Isaac Sim/Lab wheels and restricted
+Kit runtime payloads. Arena separately bakes its Apache-2.0 application source
+and redistributable client dependencies; that source is not the simulator
+runtime. On first use of `/isaac-sim/python.sh`,
+`npa/docker/workbench/common/isaac_bootstrap.sh`:
 
 1. Applies NPA's non-interactive Isaac default when `ACCEPT_EULA` is unset, then
    validates the value before download. `Y`, `YES`, `1`, and `TRUE` normalize to
@@ -216,10 +242,12 @@ wrapper but deletes its wheel-bundled static executable and resolves video work
 through Ubuntu's dynamically packaged `/usr/bin/ffmpeg`. The built-image payload
 scanner fails if that bundled executable returns.
 
-`pypi.nvidia.com` serves these wheels **anonymously**, so the credential was never the
-gate — acceptance is. NVIDIA delivers Isaac to each operator under that operator's own
-acceptance, and we redistribute nothing. This is the same pattern already used for gated
-model weights (Cosmos, GR00T N1, Cosmos-Reason).
+`pypi.nvidia.com` serves these wheels **anonymously**. The shared bootstrap checks
+the operator's acceptance before fetching the runtime closure; this does not
+change the Lab wheel's BSD license or the separate Sim/runtime terms. NVIDIA
+delivers the fetched wheels directly to the operator's cache, and NPA keeps
+those wheels out of published image layers. Gated model weights use a similar
+runtime-delivery boundary, with provider access checked separately.
 
 **What it costs.** Runtime size and cold-bootstrap cost are version-specific.
 Do not apply the old Isaac Lab 2 / Isaac Sim 5 cache measurements to the Isaac
@@ -347,8 +375,13 @@ The manually dispatched `publish-public-images.yml` workflow builds selected
 development images and separately promotes validated digests. Registry state
 must still be checked: source availability is not proof of publication.
 
-The 2026-09-05 anonymous audit resolved all 32 current public-plan tags and
-matched all 32 accepted release digests. It required no build or registry write.
+The public-plan inventory retains all 34 published release tags. The current
+Isaac Arena r3 tag is an exact-digest promotion of the public full-SHA candidate
+after image security, B200 state, and successful RTX task/visual gates. The
+historical r2 tag remains recorded, but its RTX visual acceptance is rejected:
+render grain satisfied the old pixel-delta test despite a zero-success task
+result and 170 held-action steps.
+
 See the [public image catalog](container-image-catalog.md) for retained aliases,
 exclusions, and the distinction between current source and released bytes.
 
@@ -428,10 +461,11 @@ from the repository root before building:
 npa/.venv/bin/python npa/src/npa/workflow_build.py --stage-catalog --package-root npa
 ```
 
-This copies `workflows/main/*.yaml` and `workflows/testing/*.yaml` into ignored
-package data in `main/` and `testing/` under `npa/src/npa/workflows/`, where existing
-Docker `COPY src` instructions include them. Repeat staging after catalog edits;
-it also removes stale generated YAMLs. Edit the top-level catalog source files.
+This copies `workflows/main/*.yaml`, `workflows/testing/*.yaml`, and
+`workflows/partners/*/*.yaml` into ignored package data under
+`npa/src/npa/workflows/`, preserving their relative directories. Existing Docker
+`COPY src` instructions include them. Repeat staging after catalog edits; it
+also removes stale generated YAMLs. Edit the top-level catalog source files.
 Wheel and source-distribution builds stage the same catalog through the package
 build hook.
 
@@ -444,6 +478,12 @@ build hook.
 4. SONIC variants: `npa/src/npa/deploy/sonic_image_manifest.json`.
 5. Blackwell fleet digests: `npa/docker/workbench/sm120-images.json`.
 6. Update golden evals when the image’s “does its job” command changes.
+
+## Platform scope
+
+All workbench images are linux/amd64 only. The publish buildx step passes no platform flag.
+
+This is intentional: the workbench targets NVIDIA GPU workloads which are amd64-only.
 
 ## Operator checklist (new or changed image)
 

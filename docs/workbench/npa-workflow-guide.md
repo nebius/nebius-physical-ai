@@ -333,6 +333,22 @@ project's platform/preset offering and exact GPU count before creating a job.
 Provider-owned catalog products require a matching lookup through that same
 project, without treating shared catalog ownership as workload ownership.
 Catalog availability is separate from actual allocation or reservation evidence.
+For existing Kubernetes capacity, `workflow submit` exits with code **75** when
+GPU, CPU, memory, pod-slot or ephemeral-storage requests fit the nominal node
+shape but cannot currently fit alongside active pod reservations. `disk_size`
+in a Kubernetes workflow profile is rendered as an ephemeral-storage request;
+it is checked at both submission preflights. For example, two 500 GB jobs cannot
+share a node with 950 GB allocatable disk even when their GPUs fit.
+
+This also applies when
+the requested per-node shape is supported but occupied, fragmented, temporarily
+unschedulable, or waiting for another pending GPU pod to be placed. This code is
+emitted only before any provider launch. An external queue can wait and retry the
+same run identity. It must preserve the pinned inputs and still reconcile any
+other failed or interrupted submission. Invalid shapes, unreadable inventories,
+credential failures and ambiguous provider launches do not return this code.
+NPA does not reserve the observed capacity or introduce a queue; the scheduler
+still owns actual placement.
 Scope, destination access and GPU gates remain active with `--skip-preflight`.
 Generic `health preflight --offline` still proves only credential presence;
 generic online health/access checks do not themselves prove execution readiness.
@@ -358,6 +374,57 @@ Machine-readable evidence distinguishes:
   outputs. Infrastructure retry is disabled.
 - `unknown`: missing, conflicting, or ambiguous backend identity/evidence.
   Relaunch and fuzzy cancellation are blocked to prevent duplicates.
+
+A credential-exec RPC stream closure during controller file synchronization can
+leave a reserved Pending row before the task payload arrives. The default SDK
+retains the typed transport cause and refuses to adopt that row as running work.
+The runtime may replace it only after checking every declared output is absent,
+cancelling the exact ID, rereading its actual terminal outcome, and refreshing
+the shared image/access/GPU preflight against unchanged task bytes. It checks
+output absence again after cancellation and preflight. A success racing with
+cancellation is reused only when all declared outputs validate. Unknown rows,
+auth/configuration failures, output uncertainty, and unverified cancellation
+block replacement.
+
+The supervisor records a content-addressed parent-to-successor reservation under
+the existing infrastructure recovery policy. A restarted driver consumes the
+same identity and count; it cannot invent another reservation or fall back to
+attempt 1. An observable successor is adopted exactly. An absent successor can
+be submitted only when durable intent proves the provider POST was not begun;
+unknown POST outcomes remain blocked. Explicit driver recovery is recorded as
+`recovery_resumed`, separately from payload replay. Recovery preparation retains
+the failed attempt's original local files and writes its refreshed preflight
+files into a separate owned directory.
+
+Status keeps the workflow lifecycle separate from the observed managed jobs.
+When every recorded job has succeeded but the workflow has not recorded
+completion, it retains the durable `RUNNING`/`SUBMITTED` lifecycle instead of
+reporting a failed live query or inferring workflow success. The JSON
+`workflow_lifecycle` includes the original durable status source and update time,
+`completion_recorded`, and `driver_liveness: unknown`. Polling an old completed
+job does not create a workflow heartbeat or establish driver liveness. `--watch`
+continues through inter-wave and finalization handoffs; check the original submit
+driver before deciding to resume. Durable failure/cancellation and conflicting
+outcomes remain visible; conflicting terminal evidence and live query errors
+exit nonzero, and `--cached` remains
+non-authoritative. Completion and declared artifact validation are separate
+requirements.
+
+Job aggregates and task rows come from separate queue snapshots. A successful
+task row or durable stage record can therefore coexist with a recognized
+nonterminal job observation. Status retains the incomplete workflow lifecycle
+and `--watch` continues. Each stage's `raw_job_scheduler_state` and
+`raw_task_scheduler_state` preserve the distinct observations; neither a poll nor
+stage success proves workflow completion. Missing, unknown, malformed, or failed
+queries still stop live verification. Contradictory terminal job/task outcomes
+remain `UNKNOWN` with explicit stage conflicts; a failed parallel job can
+legitimately include successful member tasks.
+
+The interpreter manifest records successful completion as `completed`. Status
+normalizes that manifest marker to `SUCCEEDED`; `workflow_lifecycle.manifest_evidence`
+retains its raw status, original update time, and authoritative source. The runtime
+ledger continues to use `succeeded`. Conflicting terminal outcomes and failed
+latest attempts still prevent a successful status.
 
 `npa workbench workflow status <run-id> --json` includes the latest supervisor
 classification, recovery action, exact attempt identity, output/checkpoint

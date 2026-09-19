@@ -17,15 +17,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 MAKEFILE = REPO_ROOT / "Makefile"
-AUTOMATIC_PR_WORKFLOWS = (
-    "confidentiality-scan.yml",
-    "gitleaks.yml",
-    "harness-guardrails.yml",
-    "lint.yml",
-    "security-regression.yml",
-    "test.yml",
-    "typecheck.yml",
-)
+AUTOMATIC_PR_WORKFLOWS = ("security-regression.yml",)
 
 
 def _load_workflow(name: str) -> dict:
@@ -36,12 +28,6 @@ def _load_workflow(name: str) -> dict:
 
 
 def test_automatic_pr_workflows_cancel_superseded_commits() -> None:
-    expected_group = (
-        "${{ github.workflow }}-"
-        "${{ github.event.pull_request.number || github.run_id }}"
-    )
-    expected_cancel = "${{ github.event_name == 'pull_request' }}"
-
     discovered = {
         path.name
         for path in WORKFLOW_DIR.glob("*.y*ml")
@@ -53,24 +39,99 @@ def test_automatic_pr_workflows_cancel_superseded_commits() -> None:
         workflow = _load_workflow(name)
         assert "pull_request" in workflow["on"], name
         assert workflow["concurrency"] == {
-            "group": expected_group,
-            "cancel-in-progress": expected_cancel,
+            "group": "pr-gate-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}",
+            "cancel-in-progress": "${{ github.event_name == 'pull_request' || github.event_name == 'push' }}",
         }, name
 
 
+def test_one_pr_workflow_owns_every_merge_gate() -> None:
+    """Keep PR updates atomic instead of spawning six independent workflows."""
+
+    workflow = _load_workflow("security-regression.yml")
+    assert set(workflow["on"]) == {"pull_request", "merge_group", "push"}
+    jobs = workflow["jobs"]
+    assert jobs["test-gate"]["uses"] == "./.github/workflows/test.yml"
+    assert jobs["lint-gate"]["uses"] == "./.github/workflows/lint.yml"
+    assert jobs["guardrails-gate"]["uses"] == (
+        "./.github/workflows/harness-guardrails.yml"
+    )
+    assert jobs["typecheck-gate"]["uses"] == "./.github/workflows/typecheck.yml"
+    assert jobs["gitleaks"]["name"] == "gitleaks"
+    assert jobs["scan"]["name"] == "scan"
+    required = set(jobs["security-regression"]["needs"])
+    assert required == set(jobs) - {"security-regression", "ci-timing-report"}
+    assert jobs["ci-timing-report"]["needs"] == "security-regression"
+
+
 def test_test_and_lint_do_not_duplicate_feature_branch_pushes() -> None:
-    for name in ("test.yml", "lint.yml"):
+    for name in (
+        "confidentiality-scan.yml",
+        "gitleaks.yml",
+        "harness-guardrails.yml",
+        "lint.yml",
+        "typecheck.yml",
+    ):
         workflow = _load_workflow(name)
         assert workflow["on"]["push"] == {"branches": ["main"]}, name
+        assert "pull_request" not in workflow["on"], name
+
+    test = _load_workflow("test.yml")["on"]
+    assert set(test) == {"workflow_call", "schedule", "workflow_dispatch"}
+    assert test["schedule"] == [{"cron": "23 5 * * *"}]
 
 
-def test_pr_and_main_test_the_full_python_compatibility_matrix() -> None:
+def test_main_validation_cancels_superseded_commits() -> None:
+    for name in (
+        "confidentiality-scan.yml",
+        "gitleaks.yml",
+        "harness-guardrails.yml",
+        "lint.yml",
+        "typecheck.yml",
+    ):
+        cancellation = _load_workflow(name)["concurrency"]["cancel-in-progress"]
+        assert cancellation in (
+            "true",
+            "${{ github.event_name == 'pull_request' || github.event_name == 'push' }}",
+        ), name
+
+
+def test_merge_queue_suite_is_sharded_and_scheduled_audit_keeps_compatibility() -> None:
     workflow = _load_workflow("test.yml")
     job = workflow["jobs"]["test"]
-    assert job["strategy"]["matrix"]["python-version"] == ["3.10", "3.12", "3.14"]
-    assert job["strategy"]["fail-fast"] == "false"
-    assert "if" not in job and "continue-on-error" not in job
-    assert workflow["on"]["pull_request"] == ""
+    python_matrix = job["strategy"]["matrix"]["python-version"]
+    assert '["pull_request", "merge_group"]' in python_matrix
+    assert '["3.12"]' in python_matrix
+    assert '["3.10", "3.12", "3.14"]' in python_matrix
+    shard_matrix = job["strategy"]["matrix"]["shard"]
+    assert '["pull_request", "merge_group"]' in shard_matrix
+    assert "[1, 2, 3, 4]" in shard_matrix
+    assert "[1, 2, 3, 4, 5]" in shard_matrix
+    assert job["strategy"]["fail-fast"] == (
+        "${{ github.event_name == 'merge_group' || github.event_name == 'pull_request' }}"
+    )
+    assert job["needs"] == "scope"
+    assert job["if"] == "needs.scope.outputs.full_suite != 'false'"
+    assert "continue-on-error" not in job
+    assert workflow["on"]["workflow_call"] == ""
+
+    smoke = workflow["jobs"]["pr-smoke"]
+    assert smoke["if"] == (
+        "github.event_name == 'pull_request' || needs.scope.outputs.prose_only == 'true'"
+    )
+    commands = "\n".join(step.get("run", "") for step in smoke["steps"])
+    assert "npa/tests/smoke" in commands
+    assert "test_ci_workflows.py" in commands
+
+    assert workflow["jobs"]["browser-mocked"]["if"] == (
+        "needs.scope.outputs.browser != 'false'"
+    )
+    browser_steps = workflow["jobs"]["browser-mocked"]["steps"]
+    browser_step_names = {step["name"] for step in browser_steps}
+    for version in ("3.10", "3.14"):
+        assert f"Set up Python {version} compatibility" in browser_step_names
+        install_step = f"Install Python {version} compatibility environment"
+        assert install_step in browser_step_names
+        assert f"Run Python {version} compatibility regressions" in browser_step_names
 
 
 def test_compatibility_regressions_run_before_heavy_dependencies() -> None:
@@ -79,7 +140,12 @@ def test_compatibility_regressions_run_before_heavy_dependencies() -> None:
     regression = _step("test.yml", "test", "compatibility and image scan")
     install = _step("test.yml", "test", "CPU checkpoint")
     assert steps.index(regression) < steps.index(install)
-    assert "if" not in regression and "continue-on-error" not in regression
+    assert regression["if"] == "matrix.shard == 1"
+    assert regression["env"] == {
+        "NPA_CI_SHARD_INDEX": "1",
+        "NPA_CI_TOTAL_SHARDS": "1",
+    }
+    assert "continue-on-error" not in regression
     for path in (
         "npa/tests/guardrails/test_ci_workflows.py",
         "npa/tests/docker/test_base_image_scan.py",
@@ -87,6 +153,189 @@ def test_compatibility_regressions_run_before_heavy_dependencies() -> None:
         "npa/tests/workbench/test_cosmos3_nano_video_server.py",
     ):
         assert path in regression["run"]
+
+
+def test_coverage_shards_are_parallel_and_merged_before_enforcement() -> None:
+    workflow = _load_workflow("test.yml")
+    test_job = workflow["jobs"]["test"]
+    pytest_step = _step("test.yml", "test", "pytest coverage shard")
+    assert "-n auto" in pytest_step["run"]
+    assert "--dist worksteal" in pytest_step["run"]
+    assert "--cov=src/npa" in pytest_step["run"]
+    assert "--cov=npa" not in pytest_step["run"]
+    assert "--cov-fail-under" not in pytest_step["run"]
+    assert test_job["env"] == {
+        "NPA_PROJECT_ID": "project-test-00000000",
+        "NPA_S3_BUCKET": "test-bucket-00000000",
+        "NPA_E2E_PROJECT_ID": "project-test-00000000",
+        "NPA_E2E_GROOT_BUCKET": "test-bucket-00000000",
+        "NPA_CI_SHARD_INDEX": "${{ matrix.shard }}",
+        "NPA_CI_TOTAL_SHARDS": '${{ contains(fromJSON(\'["pull_request", "merge_group"]\'), github.event_name) && 5 || 4 }}',
+        "COVERAGE_FILE": ".coverage.${{ matrix.python-version }}.${{ matrix.shard }}",
+        "NPA_CI_TIMING_OUTPUT": "ci-timings-${{ matrix.python-version }}-${{ matrix.shard }}.json",
+        "NPA_REQUIRE_FFMPEG": "1",
+    }
+
+    coverage = workflow["jobs"]["coverage"]
+    assert coverage["needs"] == ["scope", "test"]
+    assert coverage["if"] == (
+        "${{ always() && needs.scope.outputs.full_suite != 'false' }}"
+    )
+    report = _step("test.yml", "coverage", "merged coverage floor")["run"]
+    assert "coverage combine" in report
+    assert "--fail-under=60" in report
+    profile = _step("test.yml", "coverage", "Merge Python 3.12 duration")["run"]
+    assert "merge_ci_test_timings.py" in profile
+
+
+def test_ci_installers_pin_versions_cache_packages_and_keep_cpu_runtime() -> None:
+    """Preserve reproducibility and real CPU coverage when speeding up setup.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A test environment loses dependency pins or CPU routing.
+    """
+    jobs = _load_workflow("test.yml")["jobs"]
+    for name in ("test", "affected-tests", "pr-smoke", "browser-mocked"):
+        setup = next(
+            step for step in jobs[name]["steps"] if "setup-uv@" in step.get("uses", "")
+        )
+        assert setup["with"]["version"] == "0.12.5"
+        assert setup["with"]["enable-cache"] == "true"
+        assert "npa/ci/requirements.txt" in setup["with"]["cache-dependency-glob"]
+        installs = [
+            step["run"]
+            for step in jobs[name]["steps"]
+            if "uv pip install" in step.get("run", "")
+        ]
+        assert installs and all(
+            "-c npa/ci/requirements.txt" in command for command in installs
+        )
+    for name in ("test", "affected-tests"):
+        command = _step(
+            "test.yml", name, "CPU checkpoint" if name == "test" else "Install affected"
+        )["run"]
+        assert "--torch-backend cpu" in command
+        assert "assert torch.version.cuda is None" in command
+    assert (
+        "ci_requirements.py --check"
+        in _step("test.yml", "scope", "dependency pins")["run"]
+    )
+
+
+def test_timing_report_is_read_only_and_runs_after_the_required_gate() -> None:
+    """Keep timing metadata collection outside the required validation path.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Reporting gains write access or delays a required check.
+    """
+    workflow = _load_workflow("security-regression.yml")
+    job = workflow["jobs"]["ci-timing-report"]
+    assert job["needs"] == "security-regression"
+    assert job["if"] == "${{ !cancelled() }}"
+    assert job["permissions"] == {"actions": "read", "contents": "read"}
+    steps = job["steps"]
+    assert steps[0]["with"] == {"persist-credentials": "false"}
+    commands = "\n".join(step.get("run", "") for step in steps)
+    assert "--paginate --slurp" in commands
+    assert "/attempts/${GITHUB_RUN_ATTEMPT}" in commands
+    assert all("download-artifact" not in step.get("uses", "") for step in steps)
+    assert "ci-timing-report" not in workflow["jobs"]["security-regression"]["needs"]
+
+
+def test_every_python_312_candidate_publishes_module_timings() -> None:
+    """Retain failed-shard measurements and merge complete successful profiles.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Timing evidence is confined to scheduled audits.
+    """
+    upload = _step("test.yml", "test", "Upload Python 3.12 timing")
+    assert "always()" in upload["if"]
+    assert "matrix.python-version == '3.12'" in upload["if"]
+    assert "schedule" not in upload["if"]
+    merge = _step("test.yml", "coverage", "Merge Python 3.12 duration")
+    assert "if" not in merge
+
+
+def test_browser_execution_has_one_owner_and_remains_blocking() -> None:
+    """Keep real browser coverage without nesting a second run inside pytest.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Browser coverage is duplicated or made optional.
+    """
+    browser = _load_workflow("test.yml")["jobs"]["browser-mocked"]
+    steps = [step for step in browser["steps"] if "cy:mock" in step.get("run", "")]
+    assert len(steps) == 1
+    assert "if" not in steps[0] and "continue-on-error" not in steps[0]
+    assert "continue-on-error" not in browser
+    assert browser["needs"] == "scope"
+    source = (REPO_ROOT / "npa/tests/cli/test_agent_foxglove.py").read_text()
+    assert "def test_ci_executes_mocked_agent_cypress" not in source
+
+
+def test_test_scope_is_trusted_and_does_not_filter_required_security_jobs() -> None:
+    """Keep test shortcuts independent from always-required security and docs gates.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Selection trusts candidate policy or removes required gates.
+    """
+    scope = _load_workflow("test.yml")["jobs"]["scope"]
+    assert scope["steps"][0]["with"]["fetch-depth"] == "0"
+    command = scope["steps"][-1]["run"]
+    assert 'git show "${BASE_SHA}:${policy}"' in command
+    assert '"${RUNNER_TEMP}/ci_test_scope.py"' in command
+    assert "echo 'full_suite=true'" in command
+    assert "echo 'browser=true'" in command
+    parent = _load_workflow("security-regression.yml")
+    for event in ("pull_request", "merge_group"):
+        assert parent["on"][event] == ""
+    for job in ("test-gate", "lint-gate", "guardrails-gate", "gitleaks", "scan"):
+        assert parent["jobs"][job]["if"] == "github.event_name != 'push'"
+    for job in ("security-scanners", "security-runtime", "image-security"):
+        assert "if" not in parent["jobs"][job]
+
+
+def test_affected_tests_fail_the_candidate_and_use_json_arguments() -> None:
+    """Require selected PR tests without treating repository paths as shell code.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Affected tests become optional or bypass subprocess checking.
+    """
+    job = _load_workflow("test.yml")["jobs"]["affected-tests"]
+    assert job["needs"] == "scope"
+    assert job["if"] == (
+        "github.event_name == 'pull_request' && needs.scope.outputs.full_suite == 'false' "
+        "&& needs.scope.outputs.test_paths != '[]'"
+    )
+    assert "continue-on-error" not in job
+    step = job["steps"][-1]
+    assert step["env"]["TEST_PATHS"] == "${{ needs.scope.outputs.test_paths }}"
+    assert "${{" not in step["run"]
+    assert "check=True" in step["run"]
+    assert '"-n", "auto"' in step["run"]
 
 
 def _make_recipe(target: str) -> list[str]:
@@ -241,8 +490,8 @@ def test_check_target_does_not_claim_the_coverage_floor() -> None:
     rather than presenting `make check` as the whole gate.
     """
 
-    ci_pytest = _step("test.yml", "test", "pytest")["run"]
-    floor = re.search(r"--cov-fail-under=(\d+)", ci_pytest)
+    coverage_report = _step("test.yml", "coverage", "merged coverage floor")["run"]
+    floor = re.search(r"--fail-under=(\d+)", coverage_report)
     assert floor, "test.yml no longer enforces a coverage floor; update CONTRIBUTING"
 
     # `check` is prerequisites only, so the recipes that matter are its children's.
@@ -273,19 +522,25 @@ def test_check_target_does_not_claim_the_coverage_floor() -> None:
     )
 
 
-def test_blocking_mypy_runs_on_pr_with_baseline() -> None:
+def test_blocking_mypy_runs_as_merge_gate() -> None:
     # CI POLICY CHANGE (PR #574, closes #489): mypy used to be advisory-only
-    # and manual-dispatch-only -- the previous version of this test pinned
-    # exactly that. It now runs on PRs touching npa/src/** and BLOCKS the
-    # merge on new errors beyond the committed baseline in
-    # npa/mypy-baseline.txt. If you are flipping this back to advisory, that
-    # is a deliberate policy reversal: say so in the PR body and update this
-    # test, don't just weaken the workflow.
+    # and manual-dispatch-only -- the previous version of this test
+    # (test_advisory_mypy_is_manual_only) pinned exactly that: "Type check
+    # (manual)", workflow_dispatch only, continue-on-error: true. It is now a
+    # BLOCKING merge gate: the security-regression orchestrator calls
+    # typecheck.yml on PRs and merge-queue runs, and new mypy errors beyond
+    # the committed baseline fail the merge. If you are flipping this back to
+    # advisory, that is a deliberate policy reversal: say so in the PR body
+    # and update this test, don't just weaken the workflow.
     lint = _load_workflow("lint.yml")
     typecheck = _load_workflow("typecheck.yml")
+    orchestrator = _load_workflow("security-regression.yml")
 
     assert "mypy" not in lint["jobs"]
-    assert "pull_request" in typecheck["on"]
+    # No direct pull_request trigger: the orchestrator owns PR triggering so
+    # PR updates stay atomic (see test_one_pr_workflow_owns_every_merge_gate).
+    assert "pull_request" not in typecheck["on"]
+    assert "workflow_call" in typecheck["on"]
     assert "workflow_dispatch" in typecheck["on"]
     assert set(typecheck["jobs"]) == {"mypy"}
     assert typecheck["permissions"] == {"contents": "read"}
@@ -296,10 +551,16 @@ def test_blocking_mypy_runs_on_pr_with_baseline() -> None:
     for step in steps:
         assert step.get("continue-on-error", "") != "true", step.get("name")
 
+    # The orchestrator must wire it as a required merge gate.
+    assert (
+        orchestrator["jobs"]["typecheck-gate"]["uses"]
+        == "./.github/workflows/typecheck.yml"
+    )
+    assert "typecheck-gate" in orchestrator["jobs"]["security-regression"]["needs"]
+
     # The original PR shipped an empty baseline that was never seeded from a
     # real mypy run. The baseline must contain the grandfathered errors, or
-    # the first PR touching npa/src/** fails on pre-existing errors that are
-    # not actually new.
+    # the first gated PR fails on pre-existing errors that are not new.
     baseline = REPO_ROOT / "npa" / "mypy-baseline.txt"
     assert baseline.is_file(), "mypy baseline file is missing"
     entries = [

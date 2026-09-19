@@ -102,7 +102,9 @@ def build_checkpoint(
     """Write a weights-only-loadable checkpoint and return its metadata."""
 
     torch = _import_torch()
-    policy = build_policy_module(obs_dim=obs_dim, act_dim=act_dim, hidden=hidden, seed=seed)
+    policy = build_policy_module(
+        obs_dim=obs_dim, act_dim=act_dim, hidden=hidden, seed=seed
+    )
     policy.eval()
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -122,7 +124,8 @@ def build_checkpoint(
             "policy": {
                 "class": "npa.workbench.sonic.reference_policy.ReferenceLocomotionPolicy",
                 "kwargs": {
-                    "observation_dim": obs_dim, "action_dim": act_dim,
+                    "observation_dim": obs_dim,
+                    "action_dim": act_dim,
                     "hidden_sizes": [hidden, hidden],
                 },
             },

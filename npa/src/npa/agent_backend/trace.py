@@ -144,7 +144,11 @@ def _observation_is_empty(observation: Any) -> bool:
         if observation.get("count") == 0 or observation.get("total_records") == 0:
             return True
         for field in ("records", "runs", "items", "artifacts"):
-            if field in observation and isinstance(observation.get(field), list) and not observation[field]:
+            if (
+                field in observation
+                and isinstance(observation.get(field), list)
+                and not observation[field]
+            ):
                 return True
         return False
     if isinstance(observation, (list, str)):
@@ -188,14 +192,18 @@ def spans_from_action_loop(result: dict[str, Any]) -> list[Span]:
         span_status = (
             SPAN_ERROR
             if status in {"error", "rejected"}
-            else SPAN_WARN if status == "empty" and not terminal_empty else SPAN_OK
+            else SPAN_WARN
+            if status == "empty" and not terminal_empty
+            else SPAN_OK
         )
         observation = step.get("observation")
         attrs = {
             "phase": phase,
             "step": step.get("step"),
             "tool": step.get("tool"),
-            "arg_keys": sorted((step.get("args") or {}).keys()) if isinstance(step.get("args"), dict) else [],
+            "arg_keys": sorted((step.get("args") or {}).keys())
+            if isinstance(step.get("args"), dict)
+            else [],
             "status": status,
             "terminal_observation": terminal_empty,
         }
@@ -204,7 +212,11 @@ def spans_from_action_loop(result: dict[str, Any]) -> list[Span]:
             events.append({"name": "observation_truncated"})
         if _observation_is_empty(observation) and phase == "call":
             events.append(
-                {"name": "empty_terminal_result" if terminal_empty else "empty_tool_result"}
+                {
+                    "name": "empty_terminal_result"
+                    if terminal_empty
+                    else "empty_tool_result"
+                }
             )
         spans.append(
             Span(
@@ -276,7 +288,11 @@ def _silent_failures_for(trace: dict[str, Any], idx: int) -> list[dict[str, Any]
 
     if stopped == "max_steps":
         findings.append(
-            {"trace_index": idx, "kind": "max_steps_exhausted", "detail": "loop hit max_steps without a final answer"}
+            {
+                "trace_index": idx,
+                "kind": "max_steps_exhausted",
+                "detail": "loop hit max_steps without a final answer",
+            }
         )
 
     tool_error = False
@@ -288,7 +304,11 @@ def _silent_failures_for(trace: dict[str, Any], idx: int) -> list[dict[str, Any]
         phase = str(step.get("phase") or "")
         if isinstance(observation, dict) and observation.get("truncated"):
             findings.append(
-                {"trace_index": idx, "kind": "truncated_observation", "detail": f"step {step.get('step')} observation truncated"}
+                {
+                    "trace_index": idx,
+                    "kind": "truncated_observation",
+                    "detail": f"step {step.get('step')} observation truncated",
+                }
             )
         if (
             phase == "call"
@@ -297,7 +317,11 @@ def _silent_failures_for(trace: dict[str, Any], idx: int) -> list[dict[str, Any]
             and _observation_is_empty(observation)
         ):
             findings.append(
-                {"trace_index": idx, "kind": "empty_tool_result", "detail": f"tool {step.get('tool')} returned empty result"}
+                {
+                    "trace_index": idx,
+                    "kind": "empty_tool_result",
+                    "detail": f"tool {step.get('tool')} returned empty result",
+                }
             )
         if status in {"error", "rejected"}:
             tool_error = True
@@ -306,7 +330,11 @@ def _silent_failures_for(trace: dict[str, Any], idx: int) -> list[dict[str, Any]
     # step errored — a classic silent failure the operator would miss.
     if tool_error and trace.get("ok") and stopped == "done":
         findings.append(
-            {"trace_index": idx, "kind": "unsurfaced_tool_error", "detail": "a step errored but the run reported done/ok"}
+            {
+                "trace_index": idx,
+                "kind": "unsurfaced_tool_error",
+                "detail": "a step errored but the run reported done/ok",
+            }
         )
     return findings
 
@@ -348,7 +376,9 @@ def analyze_traces(traces: Sequence[dict[str, Any]]) -> dict[str, Any]:
 # ── guarded-import tracer adapters (self-hosted OSS backends) ─────────────────
 
 
-def build_langfuse_tracer(*, public_key: str = "", secret_key: str = "", host: str = "") -> Any:
+def build_langfuse_tracer(
+    *, public_key: str = "", secret_key: str = "", host: str = ""
+) -> Any:
     """Build a Langfuse-backed tracer (guarded import; live/VM path only).
 
     Endpoint + keys are passed in (operator/config-resolved), never hardcoded.
@@ -360,12 +390,17 @@ def build_langfuse_tracer(*, public_key: str = "", secret_key: str = "", host: s
 
     class _LangfuseTracer:
         def emit(self, span: dict[str, Any]) -> None:
-            client.trace(name=str(span.get("name") or "agent"), metadata=span.get("attributes") or {})
+            client.trace(
+                name=str(span.get("name") or "agent"),
+                metadata=span.get("attributes") or {},
+            )
 
     return _LangfuseTracer()
 
 
-def build_otel_tracer(tracer_provider: Any = None, *, service_name: str = "npa-agent") -> Any:
+def build_otel_tracer(
+    tracer_provider: Any = None, *, service_name: str = "npa-agent"
+) -> Any:
     """Build an OpenTelemetry-backed tracer (guarded import; live/VM path only)."""
     from opentelemetry import trace as _otel_trace  # local import: optional extra
 
@@ -374,7 +409,9 @@ def build_otel_tracer(tracer_provider: Any = None, *, service_name: str = "npa-a
 
     class _OtelTracer:
         def emit(self, span: dict[str, Any]) -> None:
-            with otel.start_as_current_span(str(span.get("name") or "agent")) as otel_span:
+            with otel.start_as_current_span(
+                str(span.get("name") or "agent")
+            ) as otel_span:
                 for key, value in (span.get("attributes") or {}).items():
                     try:
                         otel_span.set_attribute(str(key), value)

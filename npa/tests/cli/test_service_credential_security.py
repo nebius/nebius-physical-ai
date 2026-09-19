@@ -61,14 +61,26 @@ def test_cosmos_env_private_atomic_and_literal(tmp_path, operation, failure):
     assert env_block in rendered
     if operation == "serve":
         compile(rendered.split("<<'PY'\n", 1)[1].split("\nPY", 1)[0], "server", "exec")
-    token = "synthetic '$value' \\\" unicode-é" if failure != "token" else "synthetic\nINJECTED=1"
+    token = (
+        "synthetic '$value' \\\" unicode-é"
+        if failure != "token"
+        else "synthetic\nINJECTED=1"
+    )
     completed = subprocess.run(
-        ["/bin/bash", "-c", "umask 022\n" + env_block.replace("/etc/npa-cosmos-server", str(destination.parent))],
+        [
+            "/bin/bash",
+            "-c",
+            "umask 022\n"
+            + env_block.replace("/etc/npa-cosmos-server", str(destination.parent)),
+        ],
         env={**os.environ, "PATH": f"{tools}:{os.environ['PATH']}", "HF_TOKEN": token},
         capture_output=True,
         text=True,
     )
-    assert json.loads(observations.read_text()) == {"file_mode": 0o600, "parent_mode": 0o700}
+    assert json.loads(observations.read_text()) == {
+        "file_mode": 0o600,
+        "parent_mode": 0o700,
+    }
     assert not list(destination.parent.glob(".env.*"))
     assert token not in completed.stdout + completed.stderr
     if failure != "none":
@@ -76,7 +88,12 @@ def test_cosmos_env_private_atomic_and_literal(tmp_path, operation, failure):
         assert destination.read_bytes() == prior
     else:
         assert completed.returncode == 0, completed.stderr
-        values = {key: json.loads(value) for key, value in (line.split("=", 1) for line in destination.read_text().splitlines())}
+        values = {
+            key: json.loads(value)
+            for key, value in (
+                line.split("=", 1) for line in destination.read_text().splitlines()
+            )
+        }
         assert values["HF_TOKEN"] == token
         assert values["COSMOS_MODEL_ID"] == model
         assert values["COSMOS_DISABLE_SAFETY"] == "1"
@@ -92,17 +109,23 @@ def test_cosmos_rejects_env_control_characters(model):
 
 def test_cosmos_download_uses_environment_token_not_process_argv():
     rendered = shlex.split(_build_install_command("example/model", 8080))[-1]
-    downloads = [line for line in rendered.splitlines() if "huggingface-cli download" in line]
+    downloads = [
+        line for line in rendered.splitlines() if "huggingface-cli download" in line
+    ]
     assert len(downloads) == 1
     assert "--token" not in downloads[0]
     assert "$HF_TOKEN" not in downloads[0]
 
 
 @pytest.mark.parametrize("exit_code", [0, 17])
-def test_cosmos_installer_uses_private_workspace_and_always_cleans_it(tmp_path, exit_code):
+def test_cosmos_installer_uses_private_workspace_and_always_cleans_it(
+    tmp_path, exit_code
+):
     rendered = shlex.split(_build_install_command("example/model", 8080))[-1]
     setup = rendered.split("export DEBIAN_FRONTEND", 1)[0]
-    setup = setup.replace("/tmp/npa-cosmos-install.", str(tmp_path / "npa-cosmos-install."))
+    setup = setup.replace(
+        "/tmp/npa-cosmos-install.", str(tmp_path / "npa-cosmos-install.")
+    )
     # The installer assigns every pip input inside this same private directory
     # before any apt, download or pip operation can fail.
     inspect = """
@@ -119,9 +142,17 @@ print(json.dumps({'stage': str(stage), 'inputs': len(paths)}))
 PY
 """
     completed = subprocess.run(
-        ["/bin/bash", "-c", "umask 022\nset -a\n" + setup + inspect + f"exit {exit_code}\n"],
-        env={**os.environ, "PATH": f"{Path(sys.executable).parent}:{os.environ['PATH']}"},
-        capture_output=True, text=True,
+        [
+            "/bin/bash",
+            "-c",
+            "umask 022\nset -a\n" + setup + inspect + f"exit {exit_code}\n",
+        ],
+        env={
+            **os.environ,
+            "PATH": f"{Path(sys.executable).parent}:{os.environ['PATH']}",
+        },
+        capture_output=True,
+        text=True,
     )
     assert completed.returncode == exit_code, completed.stderr
     observation = json.loads(completed.stdout)
@@ -155,7 +186,9 @@ def test_agent_auth_private_staging_stdin_and_atomic_failure(tmp_path, fail_hash
         "path.write_text('operator:replacement-hash\\n')\n"
         f"raise SystemExit({17 if fail_hash else 0})\n",
     )
-    script = _agent_auth_setup_script("operator", password).replace("/etc/nginx", str(destination.parent))
+    script = _agent_auth_setup_script("operator", password).replace(
+        "/etc/nginx", str(destination.parent)
+    )
     completed = subprocess.run(
         ["/bin/bash", "-c", "umask 022\n" + script],
         env={**os.environ, "PATH": f"{tools}:{os.environ['PATH']}"},
@@ -178,13 +211,17 @@ def test_agent_auth_private_staging_stdin_and_atomic_failure(tmp_path, fail_hash
         assert destination.stat().st_mode & 0o777 == 0o640
 
 
-@pytest.mark.parametrize("password", ["", "x" * 73, "é" * 37, "line\nother", "line\rother", "nul\0byte"])
+@pytest.mark.parametrize(
+    "password", ["", "x" * 73, "é" * 37, "line\nother", "line\rother", "nul\0byte"]
+)
 def test_agent_auth_rejects_truncation_or_multiline_password(password):
     with pytest.raises(ValueError, match="1..72"):
         _agent_auth_setup_script("operator", password)
 
 
-@pytest.mark.parametrize("username", ["", "-option", "user:other", "user\nother", "user\0other"])
+@pytest.mark.parametrize(
+    "username", ["", "-option", "user:other", "user\nother", "user\0other"]
+)
 def test_agent_auth_rejects_malformed_username(username):
     with pytest.raises(ValueError, match="username"):
         _agent_auth_setup_script(username, "synthetic-password")

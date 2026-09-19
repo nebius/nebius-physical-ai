@@ -185,40 +185,62 @@ def validate_recipe_kuberay_compatibility(cluster: Any, recipe_dir: Path) -> Non
 
 def _walk_recipe_sources(root: Path):
     def unreadable(error: OSError) -> None:
-        raise ValueError("Unreadable source cannot honor the reviewed CPU KubeRay contract") from error
+        raise ValueError(
+            "Unreadable source cannot honor the reviewed CPU KubeRay contract"
+        ) from error
 
     for subtree in (root / "k8s-training", root / "modules"):
         try:
             mode = subtree.lstat().st_mode
         except FileNotFoundError as exc:
-            raise ValueError("Missing source root cannot honor the reviewed CPU KubeRay contract") from exc
+            raise ValueError(
+                "Missing source root cannot honor the reviewed CPU KubeRay contract"
+            ) from exc
         if not stat.S_ISDIR(mode):
-            raise ValueError("Source roots must be directories for the reviewed CPU KubeRay contract")
+            raise ValueError(
+                "Source roots must be directories for the reviewed CPU KubeRay contract"
+            )
         yield from os.walk(subtree, followlinks=False, onerror=unreadable)
 
 
-def _validate_source_entry(path: Path, relative: str, allowed_directories: set[str] | None) -> int:
+def _validate_source_entry(
+    path: Path, relative: str, allowed_directories: set[str] | None
+) -> int:
     mode = path.lstat().st_mode
     if stat.S_ISLNK(mode):
         raise ValueError("Symlinks cannot honor the reviewed CPU KubeRay contract")
     if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
-        raise ValueError("Special source entries cannot honor the reviewed CPU KubeRay contract")
-    if stat.S_ISDIR(mode) and allowed_directories is not None and relative not in allowed_directories:
-        raise ValueError("Unexpected source directories cannot honor the reviewed CPU KubeRay contract")
+        raise ValueError(
+            "Special source entries cannot honor the reviewed CPU KubeRay contract"
+        )
+    if (
+        stat.S_ISDIR(mode)
+        and allowed_directories is not None
+        and relative not in allowed_directories
+    ):
+        raise ValueError(
+            "Unexpected source directories cannot honor the reviewed CPU KubeRay contract"
+        )
     return mode
 
 
 def _source_inventory(
-    root: Path, *, materialized: bool = False,
+    root: Path,
+    *,
+    materialized: bool = False,
     allowed_directories: set[str] | None = None,
 ) -> dict[str, str]:
     """Hash regular source files only, rejecting special entries before reads."""
     actual = {}
     excluded = {
         *(f"k8s-training/{name}" for name in KUBERAY_STATE_FILES),
-        "k8s-training/.terraform.lock.hcl", "k8s-training/.terraform.tfstate.lock.info",
+        "k8s-training/.terraform.lock.hcl",
+        "k8s-training/.terraform.tfstate.lock.info",
     }
-    runtime_directories = {"k8s-training/.terraform", "k8s-training/filesystem-csi-validation/.state"}
+    runtime_directories = {
+        "k8s-training/.terraform",
+        "k8s-training/filesystem-csi-validation/.state",
+    }
     for directory, directories, files in _walk_recipe_sources(root):
         for name in [*directories, *files]:
             path = Path(directory) / name
@@ -291,15 +313,25 @@ def validate_kuberay_destroyed_state(workdir: Path) -> None:
     if not stat.S_ISREG(state.lstat().st_mode):
         raise ValueError("KubeRay teardown requires a regular canonical state file")
     data = json.loads(state.read_text())
-    if not isinstance(data, dict) or data.get("version") != 4 or not isinstance(data.get("resources"), list):
-        raise ValueError("KubeRay teardown state is missing or malformed; recovery state retained")
+    if (
+        not isinstance(data, dict)
+        or data.get("version") != 4
+        or not isinstance(data.get("resources"), list)
+    ):
+        raise ValueError(
+            "KubeRay teardown state is missing or malformed; recovery state retained"
+        )
     for resource in data["resources"]:
         if not isinstance(resource, dict) or resource.get("mode") != "data":
-            raise ValueError("KubeRay teardown still has managed or unrecognized resources; recovery state retained")
+            raise ValueError(
+                "KubeRay teardown still has managed or unrecognized resources; recovery state retained"
+            )
 
 
 def validate_kuberay_execution_inputs(
-    cluster: Any, *, workdir: Path | None = None,
+    cluster: Any,
+    *,
+    workdir: Path | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> None:
     """Bind opt-in execution to generated inputs and owned local state.
@@ -327,11 +359,20 @@ def validate_kuberay_execution_inputs(
 
 
 def _validate_execution_environment(environment: Mapping[str, str]) -> None:
-    if any(value.strip() for key, value in environment.items()
-           if key == "TF_CLI_ARGS" or key.startswith("TF_CLI_ARGS_")):
-        raise ValueError("KubeRay does not support inherited TF_CLI_ARGS overrides; unset them before deployment")
-    if environment.get("TF_DATA_DIR", "") or environment.get("TF_WORKSPACE", "") not in ("", "default"):
-        raise ValueError("KubeRay requires the default workspace and local Terraform data directory")
+    if any(
+        value.strip()
+        for key, value in environment.items()
+        if key == "TF_CLI_ARGS" or key.startswith("TF_CLI_ARGS_")
+    ):
+        raise ValueError(
+            "KubeRay does not support inherited TF_CLI_ARGS overrides; unset them before deployment"
+        )
+    if environment.get("TF_DATA_DIR", "") or environment.get(
+        "TF_WORKSPACE", ""
+    ) not in ("", "default"):
+        raise ValueError(
+            "KubeRay requires the default workspace and local Terraform data directory"
+        )
 
 
 def _validate_installation_entries(workdir: Path) -> None:
@@ -342,22 +383,39 @@ def _validate_installation_entries(workdir: Path) -> None:
         return
     if not workdir.is_dir():
         raise ValueError("KubeRay Terraform workdir must be a directory")
-    contract = json.loads(Path(__file__).with_name("kuberay_recipe_contract.json").read_text())
-    allowed = {Path(name).name for name in contract if Path(name).parent == Path("k8s-training")}
+    contract = json.loads(
+        Path(__file__).with_name("kuberay_recipe_contract.json").read_text()
+    )
+    allowed = {
+        Path(name).name
+        for name in contract
+        if Path(name).parent == Path("k8s-training")
+    }
     allowed.add("terraform.tfvars")
     for path in workdir.iterdir():
         if path.is_symlink():
             raise ValueError("KubeRay installation entries must not be symlinks")
         name = path.name
         if name == "errored.tfstate":
-            raise ValueError("KubeRay requires recovery of errored.tfstate before continuing")
+            raise ValueError(
+                "KubeRay requires recovery of errored.tfstate before continuing"
+            )
         if not (path.is_file() or path.is_dir()):
-            raise ValueError("KubeRay installation entries must be regular files or directories")
+            raise ValueError(
+                "KubeRay installation entries must be regular files or directories"
+            )
         if name.startswith("terraform.tfstate"):
             if name not in KUBERAY_STATE_FILES or not path.is_file():
-                raise ValueError("KubeRay requires exact regular Terraform state and backup files")
-        if name.endswith((".tf", ".tf.json", ".tfvars", ".tfvars.json")) and name not in allowed:
-            raise ValueError("KubeRay installation contains unsupported effective Terraform inputs")
+                raise ValueError(
+                    "KubeRay requires exact regular Terraform state and backup files"
+                )
+        if (
+            name.endswith((".tf", ".tf.json", ".tfvars", ".tfvars.json"))
+            and name not in allowed
+        ):
+            raise ValueError(
+                "KubeRay installation contains unsupported effective Terraform inputs"
+            )
         if name == ".terraform" and not path.is_dir():
             raise ValueError("KubeRay Terraform data path must be a directory")
 
@@ -365,12 +423,17 @@ def _validate_installation_entries(workdir: Path) -> None:
 def _validate_retained_backend(workdir: Path) -> None:
     backend = workdir / ".terraform/terraform.tfstate"
     if backend.is_symlink() or backend.exists():
-        raise ValueError("KubeRay requires implicit local Terraform state without retained backend metadata")
+        raise ValueError(
+            "KubeRay requires implicit local Terraform state without retained backend metadata"
+        )
     workspace = workdir / ".terraform/environment"
-    if workspace.is_symlink() or (workspace.exists() and (
-        not workspace.is_file() or workspace.read_text() != "default"
-    )):
+    if workspace.is_symlink() or (
+        workspace.exists()
+        and (not workspace.is_file() or workspace.read_text() != "default")
+    ):
         raise ValueError("KubeRay requires the default retained Terraform workspace")
     modules_cache = workdir / ".terraform/modules"
-    if modules_cache.is_symlink() or (modules_cache.exists() and not modules_cache.is_dir()):
+    if modules_cache.is_symlink() or (
+        modules_cache.exists() and not modules_cache.is_dir()
+    ):
         raise ValueError("KubeRay Terraform module cache must be a local directory")

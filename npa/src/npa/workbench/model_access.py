@@ -622,9 +622,7 @@ def access_note(results: list[CheckResult]) -> str:
     )
     ngc_unverified = bool(ngc is not None and ngc.status == WARN and not ngc_missing)
     ngc_credential_rejected = bool(
-        ngc is not None
-        and ngc.status == FAIL
-        and "credential rejected" in ngc.summary
+        ngc is not None and ngc.status == FAIL and "credential rejected" in ngc.summary
     )
 
     if not hf_no and ngc_ok and not hf_unverified:
@@ -643,17 +641,13 @@ def access_note(results: list[CheckResult]) -> str:
         )
     elif ngc_unverified:
         parts.append(
-            "NGC repository entitlement unverified for: "
-            + ", ".join(NGC_CAPABILITIES)
+            "NGC repository entitlement unverified for: " + ", ".join(NGC_CAPABILITIES)
         )
     elif ngc_credential_rejected:
-        parts.append(
-            "NGC credential rejected for: " + ", ".join(NGC_CAPABILITIES)
-        )
+        parts.append("NGC credential rejected for: " + ", ".join(NGC_CAPABILITIES))
     elif not ngc_ok:
         parts.append(
-            "NGC repository entitlement denied for: "
-            + ", ".join(NGC_CAPABILITIES)
+            "NGC repository entitlement denied for: " + ", ".join(NGC_CAPABILITIES)
         )
     if hf_unverified:
         parts.append(f"{len(hf_unverified)} model(s) unverified")

@@ -19,10 +19,7 @@ from npa.workflows.byof import openpi_pipeline
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SPEC = (
-    REPO_ROOT
-    / "workflows" / "testing" / "openpi-pi05-full-droid-finetune.yaml"
-)
+SPEC = REPO_ROOT / "workflows" / "testing" / "openpi-pi05-full-droid-finetune.yaml"
 
 
 def test_full_droid_recipe_matches_pinned_upstream_contract() -> None:
@@ -36,9 +33,7 @@ def test_full_droid_recipe_matches_pinned_upstream_contract() -> None:
     assert full_droid.NORM_MAX_FRAMES == 10_000_000
     assert full_droid.PINNED_UPSTREAM_NORM_SHUFFLE_BUFFER_SIZE == 250_000
     assert full_droid.NORM_SHUFFLE_BUFFER_SIZE == 50_000
-    assert full_droid.FILTER_DICTIONARY_URI.endswith(
-        "/droid_sample_ranges_v1_0_1.json"
-    )
+    assert full_droid.FILTER_DICTIONARY_URI.endswith("/droid_sample_ranges_v1_0_1.json")
     assert len(full_droid.FILTER_DICTIONARY_SHA256) == 64
 
 
@@ -414,6 +409,7 @@ def test_prepare_report_preserves_filter_dictionary_lineage(
         },
     )
     monkeypatch.setattr(full_droid, "_configured_upstream", lambda *args: object())
+
     def fake_compute_norm_stats(*args, **kwargs):
         del args, kwargs
         assert os.environ["JAX_PLATFORMS"] == "cpu"
@@ -603,7 +599,9 @@ def test_wandb_telemetry_init_does_not_make_wrapper_recursive() -> None:
     assert calls == ["step-0"]
 
 
-def test_checkpoint_only_resume_records_only_new_factual_metrics(tmp_path: Path) -> None:
+def test_checkpoint_only_resume_records_only_new_factual_metrics(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "telemetry.jsonl"
     config = _telemetry_config()
     interrupted = full_droid._TrainingTelemetryJournal(
@@ -625,19 +623,19 @@ def test_checkpoint_only_resume_records_only_new_factual_metrics(tmp_path: Path)
     resumed.record_checkpoint(step=1, event="materialized")
     resumed.close()
 
-    records = full_droid._load_telemetry_records(
-        path, run_id="checkpoint-only-resume"
-    )
+    records = full_droid._load_telemetry_records(path, run_id="checkpoint-only-resume")
     assert [
         record["optimizer_step"]
         for record in records
         if record["record_type"] == "metrics"
     ] == [0, 1]
-    assert sum(
-        record["record_type"] == "checkpoint"
-        and record["event"] == "materialized"
-        for record in records
-    ) == 1
+    assert (
+        sum(
+            record["record_type"] == "checkpoint" and record["event"] == "materialized"
+            for record in records
+        )
+        == 1
+    )
 
 
 def test_telemetry_journal_is_durable_deduplicated_and_run_scoped(
@@ -833,9 +831,7 @@ def test_telemetry_resume_deduplicates_without_inventing_cross_segment_timing(
 
     metrics = [
         record
-        for record in full_droid._load_telemetry_records(
-            path, run_id="rrd-resume"
-        )
+        for record in full_droid._load_telemetry_records(path, run_id="rrd-resume")
         if record["record_type"] == "metrics"
     ]
     assert [record["optimizer_step"] for record in metrics] == [0, 1, 2]
@@ -855,9 +851,7 @@ def test_telemetry_loader_rejects_non_integer_optimizer_step(
         '"record_type":"metrics","optimizer_step":"1"}\n',
         encoding="utf-8",
     )
-    with pytest.raises(
-        full_droid.OpenPIPipelineError, match="invalid step or segment"
-    ):
+    with pytest.raises(full_droid.OpenPIPipelineError, match="invalid step or segment"):
         full_droid._load_telemetry_records(path, run_id="bad-step")
 
 
@@ -888,9 +882,7 @@ def test_real_rrd_contains_run_identity_timeline_and_review_entities(
         config=config,
         prepared={
             "dataset": {"listing_sha256": "a" * 64},
-            "filter_dictionary": {
-                "sha256": full_droid.FILTER_DICTIONARY_SHA256
-            },
+            "filter_dictionary": {"sha256": full_droid.FILTER_DICTIONARY_SHA256},
             "normalization": {"sha256": "b" * 64},
         },
         runtime_image="ghcr.io/example/openpi@sha256:" + "c" * 64,
@@ -907,9 +899,10 @@ def test_real_rrd_contains_run_identity_timeline_and_review_entities(
     assert inspection["recording_id"] == run_id
     assert inspection["timelines"] == ["optimizer_step"]
     assert set(full_droid.REQUIRED_RRD_ENTITIES) <= set(inspection["entities"])
-    assert inspection["source_telemetry_sha256"] == hashlib.sha256(
-        journal_path.read_bytes()
-    ).hexdigest()
+    assert (
+        inspection["source_telemetry_sha256"]
+        == hashlib.sha256(journal_path.read_bytes()).hexdigest()
+    )
     decoded_loss = subprocess.run(
         [
             full_droid._rerun_executable(),
@@ -1001,9 +994,7 @@ def test_preparation_rrd_contains_factual_progress_and_lineage(
     )
     assert inspection["parseable"] is True
     assert inspection["timelines"] == ["normalization_batch"]
-    assert set(full_droid.PREPARATION_RRD_ENTITIES) <= set(
-        inspection["entities"]
-    )
+    assert set(full_droid.PREPARATION_RRD_ENTITIES) <= set(inspection["entities"])
 
 
 def test_preparation_rrd_uses_isolated_worker_contract(
@@ -1045,9 +1036,7 @@ def test_preparation_rrd_uses_isolated_worker_contract(
         },
     )
     output = tmp_path / "worker.rrd"
-    monkeypatch.setattr(
-        full_droid, "_rrd_worker_python", lambda: Path(sys.executable)
-    )
+    monkeypatch.setattr(full_droid, "_rrd_worker_python", lambda: Path(sys.executable))
     inspection = full_droid._build_preparation_rrd(
         journal,
         output,
@@ -1103,9 +1092,7 @@ def test_rrd_worker_python_allows_direct_fallback_without_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("NPA_OPENPI_RERUN_PYTHON", raising=False)
-    monkeypatch.setattr(
-        full_droid, "DEFAULT_RERUN_WORKER_PYTHON", tmp_path / "missing"
-    )
+    monkeypatch.setattr(full_droid, "DEFAULT_RERUN_WORKER_PYTHON", tmp_path / "missing")
 
     assert full_droid._rrd_worker_python() is None
 
@@ -1420,9 +1407,7 @@ def test_telemetry_prefix_is_immutable_milestone_source(tmp_path: Path) -> None:
             learning_rate=1e-6,
         )
     journal.close()
-    first = full_droid._telemetry_prefix_payload(
-        path, run_id=run_id, through_step=1
-    )
+    first = full_droid._telemetry_prefix_payload(path, run_id=run_id, through_step=1)
     assert b'"optimizer_step": 2' not in first
     assert b'"optimizer_step": 1' in first
     assert first == full_droid._telemetry_prefix_payload(
@@ -1450,9 +1435,7 @@ def test_cuda_hardware_probe_requires_exact_runtime_evidence(
         == expected
     )
     with pytest.raises(openpi_pipeline.OpenPIPipelineError, match="unexpected"):
-        openpi_pipeline._validated_cuda_probe_output(
-            "", expected_cc=compute_capability
-        )
+        openpi_pipeline._validated_cuda_probe_output("", expected_cc=compute_capability)
     with pytest.raises(openpi_pipeline.OpenPIPipelineError, match="unexpected"):
         openpi_pipeline._validated_cuda_probe_output(
             "devices=2 cc=" + compute_capability,
@@ -1477,9 +1460,12 @@ def test_milestone_manifest_hashes_rrd_and_journal() -> None:
     value = json.loads(payload)
     content_sha256 = value.pop("content_sha256")
     value["content_sha256"] = ""
-    assert content_sha256 == hashlib.sha256(
-        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    assert (
+        content_sha256
+        == hashlib.sha256(
+            json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    )
     assert value["rrd"]["sha256"] == "a" * 64
     assert value["source_telemetry_sha256"] == "b" * 64
 
@@ -1537,8 +1523,7 @@ def test_pause_run_reconciles_500_update_log_only_prefix(
         full_droid,
         "_load_telemetry_records",
         lambda _path, *, run_id: [
-            {"record_type": "metrics", "optimizer_step": step}
-            for step in range(500)
+            {"record_type": "metrics", "optimizer_step": step} for step in range(500)
         ],
     )
     publisher = full_droid._TrainingMilestonePublisher(
@@ -1645,9 +1630,7 @@ def test_training_rrd_rebuild_has_deterministic_decoded_contract(
         "config": config,
         "prepared": {
             "dataset": {"listing_sha256": "a" * 64},
-            "filter_dictionary": {
-                "sha256": full_droid.FILTER_DICTIONARY_SHA256
-            },
+            "filter_dictionary": {"sha256": full_droid.FILTER_DICTIONARY_SHA256},
             "normalization": {"sha256": "b" * 64},
         },
         "runtime_image": "ghcr.io/example/openpi@sha256:" + "c" * 64,
@@ -1656,18 +1639,12 @@ def test_training_rrd_rebuild_has_deterministic_decoded_contract(
             "global_gpu_count": 8,
             "local_devices_per_process": 1,
         },
-        "topology": [
-            {"sm120_probe": "devices=1 cc=12.0"} for _ in range(8)
-        ],
+        "topology": [{"sm120_probe": "devices=1 cc=12.0"} for _ in range(8)],
     }
     first = tmp_path / "first.rrd"
     second = tmp_path / "second.rrd"
-    first_inspection = full_droid._build_training_rrd(
-        journal_path, first, **kwargs
-    )
-    second_inspection = full_droid._build_training_rrd(
-        journal_path, second, **kwargs
-    )
+    first_inspection = full_droid._build_training_rrd(journal_path, first, **kwargs)
+    second_inspection = full_droid._build_training_rrd(journal_path, second, **kwargs)
     for key in (
         "application_id",
         "recording_id",
@@ -1681,8 +1658,7 @@ def test_training_rrd_rebuild_has_deterministic_decoded_contract(
 def test_runtime_image_provenance_requires_only_a_digest() -> None:
     digest = "sha256:" + "c" * 64
     assert (
-        full_droid._runtime_image_digest("ghcr.io/example/openpi@" + digest)
-        == digest
+        full_droid._runtime_image_digest("ghcr.io/example/openpi@" + digest) == digest
     )
     with pytest.raises(
         full_droid.OpenPIPipelineError, match="must be pinned by SHA-256"

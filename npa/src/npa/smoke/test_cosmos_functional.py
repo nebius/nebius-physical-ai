@@ -110,7 +110,9 @@ def _save_result(result: Any, output_path: Path) -> None:
 
 def check_single_inference(state: SmokeState) -> CheckResult:
     if state.pipe is None:
-        return CheckResult("run single cosmos inference", False, "skipped because model load failed")
+        return CheckResult(
+            "run single cosmos inference", False, "skipped because model load failed"
+        )
 
     prompt = os.environ.get("COSMOS_SMOKE_PROMPT", DEFAULT_PROMPT)
     try:
@@ -124,8 +126,12 @@ def check_single_inference(state: SmokeState) -> CheckResult:
         return CheckResult("run single cosmos inference", False, _format_exception(exc))
 
     if not state.output_path.exists() or state.output_path.stat().st_size == 0:
-        return CheckResult("run single cosmos inference", False, f"missing output: {state.output_path}")
-    return CheckResult("run single cosmos inference", True, f"output: {state.output_path}")
+        return CheckResult(
+            "run single cosmos inference", False, f"missing output: {state.output_path}"
+        )
+    return CheckResult(
+        "run single cosmos inference", True, f"output: {state.output_path}"
+    )
 
 
 def _print_result(result: CheckResult) -> None:
@@ -139,7 +145,9 @@ def main() -> int:
     root = Path(tempfile.mkdtemp(prefix="npa_cosmos_functional_"))
     atexit.register(lambda: shutil.rmtree(root, ignore_errors=True))
     model_id = os.environ.get("COSMOS_MODEL_ID", DEFAULT_MODEL)
-    state = SmokeState(root=root, output_path=root / "cosmos_output.mp4", model_id=model_id)
+    state = SmokeState(
+        root=root, output_path=root / "cosmos_output.mp4", model_id=model_id
+    )
 
     print(f"Temporary workspace: {root}")
     checks: list[Callable[[SmokeState], CheckResult]] = [

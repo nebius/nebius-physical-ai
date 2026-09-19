@@ -80,7 +80,9 @@ def response_evidence(response: dict[str, Any], requested_model: str) -> dict[st
     counts = {}
     for name in ("prompt_tokens", "completion_tokens", "total_tokens"):
         value = usage.get(name)
-        counts[name] = value if isinstance(value, int) and not isinstance(value, bool) else None
+        counts[name] = (
+            value if isinstance(value, int) and not isinstance(value, bool) else None
+        )
     raw_reasoning = details.get("reasoning_tokens")
     reasoning_tokens = raw_reasoning if isinstance(raw_reasoning, int) else None
     reasons = []
@@ -103,9 +105,10 @@ def response_evidence(response: dict[str, Any], requested_model: str) -> dict[st
         "visible_characters": len(visible),
         "reasoning_characters": len(reasoning or ""),
         "reasoning_tokens": reasoning_tokens,
-        "finish_reason": choice.get("finish_reason") if choice.get("finish_reason") in {
-            "stop", "length", "tool_calls", "content_filter"
-        } else "unknown",
+        "finish_reason": choice.get("finish_reason")
+        if choice.get("finish_reason")
+        in {"stop", "length", "tool_calls", "content_filter"}
+        else "unknown",
         "usage": counts,
         "errors": reasons,
     }
@@ -136,10 +139,16 @@ def run_contract(
     """
     if expected_json_behavior not in {"malformed_json", "schema_invalid", "healthy"}:
         raise ValueError("Invalid structured-output baseline")
-    required = tuple(dict.fromkeys((
-        DEFAULT_TEXT_MODEL, DEFAULT_REASONER_MODEL, DEFAULT_VISION_MODEL,
-        *additional_models,
-    )))
+    required = tuple(
+        dict.fromkeys(
+            (
+                DEFAULT_TEXT_MODEL,
+                DEFAULT_REASONER_MODEL,
+                DEFAULT_VISION_MODEL,
+                *additional_models,
+            )
+        )
+    )
     report: dict[str, Any] = {
         "schema": "npa.token_factory.contract.v1",
         "provider": "nebius_token_factory",
@@ -151,49 +160,86 @@ def run_contract(
     try:
         available = client.list_models()
         missing = [model for model in required if model not in available]
-        checks.append({"check": "required_model_catalog", "passed": not missing,
-                       "required_count": len(required),
-                       "missing_models": [model_reference(model) for model in missing]})
+        checks.append(
+            {
+                "check": "required_model_catalog",
+                "passed": not missing,
+                "required_count": len(required),
+                "missing_models": [model_reference(model) for model in missing],
+            }
+        )
     except Exception as exc:
-        checks.append({"check": "required_model_catalog", "passed": False,
-                       "error_type": type(exc).__name__})
+        checks.append(
+            {
+                "check": "required_model_catalog",
+                "passed": False,
+                "error_type": type(exc).__name__,
+            }
+        )
 
-    def probe(name: str, model: str, *, thinking: bool | None = None,
-              response_format: dict | None = None, json_expected: str | None = None) -> None:
+    def probe(
+        name: str,
+        model: str,
+        *,
+        thinking: bool | None = None,
+        response_format: dict | None = None,
+        json_expected: str | None = None,
+    ) -> None:
         check: dict[str, Any] = {
-            "check": name, "requested_model": model_reference(model), "passed": False,
+            "check": name,
+            "requested_model": model_reference(model),
+            "passed": False,
         }
         checks.append(check)
         extra = None
         if thinking is not None:
-            control = ({"enable_thinking": thinking} if model == LIGHTNING else
-                       {"thinking_mode": "enabled" if thinking else "disabled"})
+            control = (
+                {"enable_thinking": thinking}
+                if model == LIGHTNING
+                else {"thinking_mode": "enabled" if thinking else "disabled"}
+            )
             extra = {"chat_template_kwargs": control}
             check["control"] = control
-        prompt = JSON_PROMPT if json_expected is not None else (
-            "A box has two red balls and three blue balls. Without replacement, "
-            "what is the minimum number of draws that guarantees a red ball? "
-            "Answer with the digit and a short explanation."
+        prompt = (
+            JSON_PROMPT
+            if json_expected is not None
+            else (
+                "A box has two red balls and three blue balls. Without replacement, "
+                "what is the minimum number of draws that guarantees a red ball? "
+                "Answer with the digit and a short explanation."
+            )
         )
         try:
             response = client.chat_completion(
-                model=model, messages=[{"role": "user", "content": prompt}],
-                temperature=0, extra=extra, response_format=response_format,
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
+                extra=extra,
+                response_format=response_format,
             )
             evidence = response_evidence(response, model)
             check.update(evidence)
             visible, _ = split_reasoning(response["choices"][0]["message"])
-            if json_expected is None and not ("4" in visible or "four" in visible.lower()):
+            if json_expected is None and not (
+                "4" in visible or "four" in visible.lower()
+            ):
                 check["errors"].append("incorrect_synthetic_answer")
-            if thinking is False and (evidence["reasoning_characters"] or
-                                      (evidence["reasoning_tokens"] or 0) > 0):
+            if thinking is False and (
+                evidence["reasoning_characters"]
+                or (evidence["reasoning_tokens"] or 0) > 0
+            ):
                 check["errors"].append("thinking_not_disabled")
-            if thinking is True and not (evidence["reasoning_characters"] or
-                                         (evidence["reasoning_tokens"] or 0) > 0):
+            if thinking is True and not (
+                evidence["reasoning_characters"]
+                or (evidence["reasoning_tokens"] or 0) > 0
+            ):
                 check["errors"].append("thinking_not_enabled")
             if json_expected is not None:
                 observed = structured_behavior(visible)
-                check.update(observed_json_behavior=observed, expected_json_behavior=json_expected)
+                check.update(
+                    observed_json_behavior=observed,
+                    expected_json_behavior=json_expected,
+                )
                 if observed != json_expected:
                     check["errors"].append("structured_output_baseline_changed")
             check["passed"] = not check["errors"]
@@ -205,14 +251,25 @@ def run_contract(
         probe("required_model_inference", model)
     for model in (LIGHTNING, MINIMAX):
         for enabled in (False, True):
-            probe("thinking_enabled" if enabled else "thinking_disabled", model, thinking=enabled)
+            probe(
+                "thinking_enabled" if enabled else "thinking_disabled",
+                model,
+                thinking=enabled,
+            )
     for kind in ("json_object", "json_schema"):
         response_format = {"type": kind}
         if kind == "json_schema":
             response_format["json_schema"] = {
-                "name": "evaluation", "strict": True, "schema": JSON_SCHEMA,
+                "name": "evaluation",
+                "strict": True,
+                "schema": JSON_SCHEMA,
             }
-        probe(kind, MINIMAX, response_format=response_format, json_expected=expected_json_behavior)
+        probe(
+            kind,
+            MINIMAX,
+            response_format=response_format,
+            json_expected=expected_json_behavior,
+        )
     probe("prompted_json_workaround", MINIMAX, json_expected="healthy")
     report["passed"] = all(check["passed"] for check in checks)
     return report

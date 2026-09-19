@@ -473,16 +473,19 @@ Committed examples should use placeholders such as:
 Secrets belong in the user credentials file described by
 `docs/credentials.yaml.example`, not in source, docs, tests, or workflow YAMLs.
 
-These workflows block a pull request:
+One automatic PR workflow, `.github/workflows/security-regression.yml`, owns the
+required candidate gate. It calls the following reusable workflows and runs the
+security jobs in the same candidate-level concurrency group, so a new commit
+cancels the complete superseded gate instead of six independent fragments:
 
 | Workflow | What it runs | Reproduce locally |
 | --- | --- | --- |
-| `.github/workflows/test.yml` | `pytest tests/` with `--cov-fail-under=60`, plus `tests/integration/test_cli_install.sh` | `make test` |
+| `.github/workflows/test.yml` | PR smoke and affected subsystem tests; full candidate coverage when needed; scheduled compatibility audit | `make test` |
 | `.github/workflows/lint.yml` | `ruff check .`, and `scripts/build_docs.sh --check` for `docs/cli/` drift | `make lint`, `make docs-check` |
 | `.github/workflows/harness-guardrails.yml` | `pytest npa/tests/guardrails` | `make test-guardrails` |
 | `.github/workflows/confidentiality-scan.yml` | `npa.guardrails.confidentiality` over the diff and tree | needs the denylist secrets; see `skills/atomic/protect-nebius-infra-details/SKILL.md` |
 | `.github/workflows/gitleaks.yml` | the custom Nebius-pattern rules in `.gitleaks.toml` | `gitleaks detect` |
-| `.github/workflows/image-security-scan.yml` | Trivy against built images | `npa/tests/docker/` for the contract checks |
+| `.github/workflows/image-security-scan.yml` | Always reports scope; runs Trivy and complete-byte checks for image-affecting candidates and every main/scheduled audit | `npa/tests/docker/` for the contract checks |
 
 `make check` runs the reproducible subset in one command: `lint`, `docs-check`,
 `test`. It is not a full stand-in for `test.yml`, which additionally enforces
@@ -492,7 +495,7 @@ pass while `test.yml` fails the 60% floor. Add coverage locally when a change mo
 a lot of untested code:
 
 ```bash
-make test PYTEST_ADDOPTS="--cov=npa --cov-fail-under=60"
+make test PYTEST_ADDOPTS="--cov=src/npa --cov-fail-under=60"
 ```
 
 The two also report different counts, so do not compare them directly: `make test`
@@ -501,8 +504,79 @@ tree and lets those tests self-skip. Both numbers rise as tests land; the shape 
 the difference, several hundred more collected and skipped in CI, is the part that
 stays true.
 
-`test.yml` runs a Python matrix of 3.10, 3.12, and 3.14 on `main` and 3.12 alone on
-a pull request; `requires-python` is `>=3.10`.
+Pull requests run smoke feedback and the affected subsystem's Python tests
+alongside security, lint, documentation drift, and repository guardrails. Agent
+and browser changes also run the dedicated Cypress job before queue admission.
+CI, dependency, shared configuration, deleted files, and unknown paths trigger
+the full Python 3.12 suite on the PR. Selection is conservative: a source change
+runs its subsystem's tests, not just tests named after the modified module.
+
+The merge queue validates the combined candidate against its current base with
+five Python 3.12 coverage shards, the dedicated browser job, and focused Python
+3.10/3.14 compatibility checks. Coverage is combined before enforcing the 60%
+floor. Cypress runs once in its own job, never inside a pytest shard. Scheduled
+and manual audits retain four shards on each of Python 3.10, 3.12, and 3.14.
+
+A narrow prose-only exception skips the full Python and browser suites on PRs
+and merge candidates while retaining smoke, lint, documentation drift, guardrail,
+and every existing security gate. It applies only to edits of existing regular
+Markdown files in `docs/`, the root/package README and contribution guide, or
+workflow READMEs. Generated CLI references, security documentation, skills, new
+or renamed files, mode changes, and edits to fenced/indented code, inline code,
+frontmatter, or templates keep full validation. Mixed merge groups use the full
+combined diff, so a prose PR cannot hide a preceding code change.
+
+The scope job executes `npa/scripts/ci_test_scope.py` from the trusted base
+commit. A candidate cannot install its own shortcut. Missing base policy keeps
+the full suite; an invalid comparison fails the job. To inspect a selection
+locally with the candidate checked out, pass full commit SHAs:
+
+```bash
+npa/.venv/bin/python npa/scripts/ci_test_scope.py \
+  --base "$(git rev-parse origin/main)" --head "$(git rev-parse HEAD)" \
+  --event pull_request
+```
+
+The command prints the prose/full-suite/browser decisions and selected pytest
+paths as JSON. Use `--event merge_group` to inspect queue eligibility instead.
+
+The internal sharder activates only when `NPA_CI_SHARD_INDEX` and
+`NPA_CI_TOTAL_SHARDS` are both set. The index is one-based and must not exceed
+the total; ordinary local test runs leave both variables unset. It greedily
+balances measured module durations from `npa/tests/ci_test_durations.json`, then
+uses a deterministic default for new tests. Every full Python 3.12 run uploads
+per-shard module timings, including available measurements from failed shards.
+Successful full runs publish `ci-test-durations-<sha>` with a merged profile.
+Use a successful scheduled `main` audit to refresh the reviewed manifest; PR
+profiles are diagnostic evidence and are never loaded automatically as policy.
+
+### CI dependency setup and timing reports
+
+Python test jobs use uv 0.12.5 with a persistent package cache and
+`npa/ci/requirements.txt` constraints. These pins cover the core, development,
+adapter, and CPU SONIC/export dependencies across Python 3.10, 3.12, and 3.14.
+The CPU Torch version remains in `npa/ci/constraints.in`. CI rejects stale pins
+when these dependency inputs change. With uv 0.12.5 installed, refresh them using:
+
+```bash
+npa/.venv/bin/python npa/scripts/ci_requirements.py --update
+npa/.venv/bin/python npa/scripts/ci_requirements.py --check
+```
+
+Add `--upgrade` to the update command for an intentional dependency upgrade;
+ordinary refreshes retain compatible existing pins. Review and commit the
+generated requirements with their input change. Local contributor installs may
+still use pip; these constraints make the CI test environment reproducible.
+
+The `ci-timing-report` job runs after the required `security-regression` check
+finishes, including failed checks. Its Actions summary and
+`ci-timing-<run-id>-<attempt>` artifact show each job's runner wait, execution,
+and setup time, with individual step durations in JSON. Runner wait measures
+job creation to start; it excludes time waiting for dependencies before job
+creation. Parallel job durations must not be added to estimate merge latency.
+Reporting reads only run metadata with read-only permissions and is excluded
+from its own measurements. It is outside the required merge checks; cancellation
+of the parent workflow can interrupt reporting.
 
 ## Testing Requirements
 
@@ -555,8 +629,9 @@ make test-e2e         # opt-in: real Nebius infrastructure, NPA_INTEGRATION_E2E=
 or help string.
 
 The suite is xdist-safe; `make test PYTEST_ADDOPTS=-nauto` cuts the serial run to
-a few minutes with an identical pass count. CI still runs serially with coverage,
-so treat a parallel pass as the fast signal rather than the gate.
+a few minutes with an identical pass count. CI also uses xdist inside four
+coverage shards, then merges their data before enforcing the floor. A local
+parallel pass remains a strong signal, but it does not reproduce that merge.
 
 `make test` deselects the live/GPU/e2e markers (`gpu`, `multi_gpu`, `e2e`,
 `e2e_serverless`, `e2e_skypilot`, `e2e_pipeline`, `byovm_live`, `ngc_e2e`) by

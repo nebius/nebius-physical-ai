@@ -6,14 +6,13 @@ from pathlib import Path
 
 import pytest
 
+from npa.orchestration.npa_workflow.blueprints import iter_npa_workflow_specs
 from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
 
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-WORKFLOW_DIR = REPO_ROOT / "workflows"
-SHIPPED_SPECS = sorted(WORKFLOW_DIR.glob("*/*.yaml"))
+SHIPPED_SPECS = iter_npa_workflow_specs()
 TEST_REGISTRY = "cr.ci.invalid/workbench"
 TEST_BAKED_IMAGE = f"{TEST_REGISTRY}/npa-runtime@sha256:{'0' * 64}"
 
@@ -40,9 +39,7 @@ def _prepare_catalog_workflow(spec_path):
         assume_decision="promote_checkpoint",
         # Immutable baked images bind their NPA package to an exact checkout.
         # Supply the same operator input CI supplies for the digest below.
-        config_overrides=(
-            {"source_sha": "0" * 40} if requires_baked_image else None
-        ),
+        config_overrides=({"source_sha": "0" * 40} if requires_baked_image else None),
         render_options=SkypilotRenderOptions(
             registry=TEST_REGISTRY,
             # Specs that fail closed on image provenance require the same
@@ -64,9 +61,7 @@ def test_shipped_catalog_prepares_for_submit(
 
     assert SHIPPED_SPECS, "expected shipped npa.workflow specs"
     monkeypatch.setenv("NPA_REGISTRY", TEST_REGISTRY)
-    monkeypatch.setenv(
-        "NPA_PUBLIC_REGISTRY", "ghcr.io/nebius/nebius-physical-ai"
-    )
+    monkeypatch.setenv("NPA_PUBLIC_REGISTRY", "ghcr.io/nebius/nebius-physical-ai")
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://ci-fixtures/npa-source")
     prepared = _prepare_catalog_workflow(spec_path)
     try:

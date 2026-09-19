@@ -50,6 +50,7 @@ if __name__ == "npa.cli.agent_access_runtime":
     from npa.workflows.artifacts import (
         RunListPage,
         decode_run_ref,
+        find_run_sources_by_prefix_tree_across_buckets,
         find_run_sources_across_buckets,
         list_artifacts,
         parse_s3_uri,
@@ -388,6 +389,41 @@ def _configured_exact_run_page(s3, query: str, *, discovery_limit: int):
     )
 
 
+def _generic_exact_run_page(
+    s3,
+    query: str,
+    *,
+    buckets: list[str],
+    base_prefix: str,
+    exclude: set[str],
+    bucket_projects: dict[str, str],
+    discovery_limit: int,
+):
+    """Use generic directory prefixes when a complete object index is too large."""
+    if len(str(query or "").strip()) < 20:
+        return None
+    try:
+        exact_run = validate_run_id(query)
+    except Exception:
+        return None
+    runs, errors, complete = find_run_sources_by_prefix_tree_across_buckets(
+        buckets,
+        base_prefix=base_prefix,
+        run_id=exact_run,
+        exclude=exclude,
+        bucket_projects=bucket_projects,
+        s3=s3,
+    )
+    return RunListPage(
+        runs=runs,
+        truncated=not complete,
+        total_runs=len(runs),
+        limit=discovery_limit,
+        discovery_complete=complete,
+        source_errors=errors,
+    )
+
+
 def _finish_agent_access_refresh(report: "AgentAccessReport | None") -> None:
     with _AGENT_ACCESS_CONDITION:
         if report is not None:
@@ -405,6 +441,34 @@ def _refresh_agent_access_in_background() -> None:
     except BaseException:
         report = None
     _finish_agent_access_refresh(report)
+
+
+def _agent_access_report_for_artifact_discovery() -> "AgentAccessReport | None":
+    """Return cached access or begin a background cold-start discovery."""
+    now_mono = time.monotonic()
+    start_refresh = False
+    with _AGENT_ACCESS_CONDITION:
+        cached = _AGENT_ACCESS_CACHE.get("report")
+        expires_at = float(_AGENT_ACCESS_CACHE.get("expires_at") or 0.0)
+        refreshing = bool(_AGENT_ACCESS_CACHE.get("refreshing"))
+        if isinstance(cached, AgentAccessReport):
+            if expires_at <= now_mono and not refreshing:
+                _AGENT_ACCESS_CACHE["refreshing"] = True
+                start_refresh = True
+            report = cached
+        elif refreshing:
+            report = None
+        else:
+            _AGENT_ACCESS_CACHE["refreshing"] = True
+            start_refresh = True
+            report = None
+    if start_refresh:
+        threading.Thread(
+            target=_refresh_agent_access_in_background,
+            name="npa-agent-access-refresh",
+            daemon=True,
+        ).start()
+    return report
 
 
 def _agent_access_report(*, refresh: bool = False) -> "AgentAccessReport":
