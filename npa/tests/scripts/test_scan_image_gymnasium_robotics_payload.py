@@ -1032,6 +1032,22 @@ def test_source_and_built_graph_trust_roots_are_pinned() -> None:
         assert locked[record["package"]]["sha256"] == record["package_sha256"]
 
 
+def test_reviewed_neutral_graph_record_is_hash_bound_and_exact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_digest, layer_diff_ids = SCAN._load_reviewed_neutral_graph()
+    assert config_digest == SCAN.EXPECTED_IMAGE_CONFIG_SHA256
+    assert layer_diff_ids == list(SCAN.EXPECTED_ORDERED_LAYER_DIFF_IDS)
+
+    changed = dict(
+        SCAN.REVIEWED_NEUTRAL_OCI_GRAPH,
+        schema="npa.gymnasium-robotics.oci-graph.v2",
+    )
+    monkeypatch.setattr(SCAN, "REVIEWED_NEUTRAL_OCI_GRAPH", changed)
+    with pytest.raises(ValueError, match="graph record bytes changed"):
+        SCAN._load_reviewed_neutral_graph()
+
+
 @pytest.mark.parametrize("mutation", ["entrypoint", "notice", "extra", "partial"])
 def test_reviewed_image_graph_closes_every_candidate_added_byte(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str

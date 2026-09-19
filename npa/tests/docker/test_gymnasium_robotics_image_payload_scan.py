@@ -118,6 +118,24 @@ def test_trusted_workflow_allows_neutral_development_selection_before_build() ->
     assert build > text.index("Resolve immutable public development plan")
 
 
+def test_public_workflow_uses_hash_bound_graph_not_candidate_digests() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    scanner_text = SCANNER.read_text(encoding="utf-8")
+    assert (
+        "ef9104df9ec9c2f85a26a2ea38db3b1c27565b3e68eb84cfff508d6969ae5ba5"
+        in scanner_text
+    )
+    assert '"schema": "npa.gymnasium-robotics.oci-graph.v1"' in scanner_text
+    assert (
+        "500cf71fa1d9e0a75d4964145ad5cabeb8f4dab213daa47e3eb4062daa26d8ee"
+        in scanner_text
+    )
+    assert "--reviewed-graph-record" in text
+    assert "--expected-config-sha256" not in text
+    assert "--expected-layer-diff-ids-json" not in text
+    assert "docker image inspect --format '{{json .RootFS.Layers}}'" not in text
+
+
 def test_future_runtime_stage_proves_the_non_root_user_before_switching() -> None:
     dockerfile = (
         ROOT / "npa/docker/workbench/gymnasium-robotics/Dockerfile"

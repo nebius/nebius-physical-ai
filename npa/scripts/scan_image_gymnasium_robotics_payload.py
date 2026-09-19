@@ -216,6 +216,17 @@ EXPECTED_ORDERED_LAYER_DIFF_IDS = (
     "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
     "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
 )
+# Canonical bytes of the checked-in, independently reviewed neutral OCI graph.
+# The hard-coded serialization hash makes edits to either graph field fail
+# closed before any candidate archive is inspected.
+REVIEWED_NEUTRAL_OCI_GRAPH = {
+    "config_sha256": EXPECTED_IMAGE_CONFIG_SHA256,
+    "ordered_layer_diff_ids": list(EXPECTED_ORDERED_LAYER_DIFF_IDS),
+    "schema": "npa.gymnasium-robotics.oci-graph.v1",
+}
+REVIEWED_NEUTRAL_GRAPH_RECORD_SHA256 = (
+    "ef9104df9ec9c2f85a26a2ea38db3b1c27565b3e68eb84cfff508d6969ae5ba5"
+)
 # Neutral files are trusted only after their exact bytes are independently
 # reviewed and pinned here. The reference-build config and ordered layer graph
 # above are scanner inputs, not an accepted image digest or current-head proof;
@@ -1438,6 +1449,32 @@ def _reviewed_image_graph(
             raise ValueError("OCI image does not begin with the reviewed Ubuntu blob")
 
 
+def _load_reviewed_neutral_graph() -> tuple[str, list[str]]:
+    """Load the hash-bound neutral OCI graph used by publication workflows."""
+
+    raw = json.dumps(
+        REVIEWED_NEUTRAL_OCI_GRAPH, sort_keys=True, separators=(",", ":")
+    ).encode()
+    if hashlib.sha256(raw).hexdigest() != REVIEWED_NEUTRAL_GRAPH_RECORD_SHA256:
+        raise ValueError("reviewed neutral OCI graph record bytes changed")
+    record = json.loads(raw)
+    if not isinstance(record, dict) or sorted(record) != [
+        "config_sha256",
+        "ordered_layer_diff_ids",
+        "schema",
+    ]:
+        raise ValueError("reviewed neutral OCI graph record schema is invalid")
+    config_digest = record["config_sha256"]
+    layer_diff_ids = record["ordered_layer_diff_ids"]
+    if record["schema"] != "npa.gymnasium-robotics.oci-graph.v1":
+        raise ValueError("reviewed neutral OCI graph record schema is unsupported")
+    if config_digest != EXPECTED_IMAGE_CONFIG_SHA256:
+        raise ValueError("reviewed neutral OCI graph config digest is not pinned")
+    if layer_diff_ids != list(EXPECTED_ORDERED_LAYER_DIFF_IDS):
+        raise ValueError("reviewed neutral OCI graph DiffIDs are not pinned")
+    return config_digest, layer_diff_ids
+
+
 def _neutral_candidate(
     rootfs: dict[str, bytes],
     layer_diff_ids: list[str],
@@ -2032,15 +2069,35 @@ def main(argv: list[str] | None = None) -> int:
         "--expected-layer-diff-ids-json",
         help="JSON list of ordered RootFS layer DiffIDs from the exact image",
     )
+    parser.add_argument(
+        "--reviewed-graph-record",
+        action="store_true",
+        help="Use the hash-bound immutable neutral OCI graph record",
+    )
     args = parser.parse_args(argv)
     try:
-        if args.expected_config_sha256 is not None and not re.fullmatch(
-            r"[0-9a-f]{64}", args.expected_config_sha256
+        if args.reviewed_graph_record is not None and (
+            args.expected_config_sha256 is not None
+            or args.expected_layer_diff_ids_json is not None
+        ):
+            raise ValueError(
+                "reviewed graph record cannot be combined with candidate digests"
+            )
+        expected_config_sha256 = args.expected_config_sha256
+        expected_layer_diff_ids_json = args.expected_layer_diff_ids_json
+        if args.reviewed_graph_record is not None:
+            (
+                expected_config_sha256,
+                reviewed_layer_diff_ids,
+            ) = _load_reviewed_neutral_graph()
+            expected_layer_diff_ids_json = json.dumps(reviewed_layer_diff_ids)
+        if expected_config_sha256 is not None and not re.fullmatch(
+            r"[0-9a-f]{64}", expected_config_sha256
         ):
             raise ValueError("expected config digest must be a lowercase SHA-256")
         expected_layer_diff_ids = None
-        if args.expected_layer_diff_ids_json is not None:
-            parsed_layers = json.loads(args.expected_layer_diff_ids_json)
+        if expected_layer_diff_ids_json is not None:
+            parsed_layers = json.loads(expected_layer_diff_ids_json)
             if (
                 not isinstance(parsed_layers, list)
                 or not parsed_layers
@@ -2055,13 +2112,13 @@ def main(argv: list[str] | None = None) -> int:
         result = (
             scan_oci_layout(
                 args.oci_layout,
-                expected_config_digest=args.expected_config_sha256,
+                expected_config_digest=expected_config_sha256,
                 expected_layer_diff_ids=expected_layer_diff_ids,
             )
             if args.oci_layout is not None
             else scan(
                 args.docker_save,
-                expected_config_digest=args.expected_config_sha256,
+                expected_config_digest=expected_config_sha256,
                 expected_layer_diff_ids=expected_layer_diff_ids,
             )
         )
