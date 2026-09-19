@@ -869,14 +869,51 @@ def verify_corresponding_source_delivery(
     return _verified_record(record_path, lock_path, subject, opener)
 
 
+def verify_runtime_fetch_corresponding_source(
+    manifest_path: Path,
+    source_lock_path: Path,
+    corresponding_lock_path: Path,
+) -> dict[str, Any]:
+    """Verify the payload-free runtime-fetch corresponding-source boundary.
+
+    This is the development-publication contract: restricted source and runtime
+    material remain outside the image and are delivered only through the
+    operator-owned runtime cache.  It deliberately does not manufacture an
+    accepted public source archive record; that record remains a separate,
+    stricter release gate.
+    """
+    from npa.deploy.runtime_fetch_contract import validate_runtime_fetch_contract
+
+    result = validate_runtime_fetch_contract(
+        manifest_path,
+        source_lock_path,
+        corresponding_lock_path,
+    )
+    lock, _raw = _load_json(corresponding_lock_path, "corresponding-source lock")
+    _require(
+        lock.get("public_corresponding_source_delivery")
+        == "runtime-fetch-operator-owned",
+        "development publication requires operator-owned runtime-fetch delivery",
+    )
+    _require(result.get("payload_free") is True, "development image must remain payload-free")
+    return {
+        "status": "passed",
+        "delivery": "runtime-fetch-operator-owned",
+        "payload_free": True,
+    }
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--record", type=Path, required=True)
-    parser.add_argument("--lock", type=Path, required=True)
-    parser.add_argument("--source-revision", required=True)
-    parser.add_argument("--image-digest", required=True)
-    parser.add_argument("--platform-manifest-digest", required=True)
-    parser.add_argument("--config-digest", required=True)
+    parser.add_argument("--runtime-fetch-development", action="store_true")
+    parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--record", type=Path)
+    parser.add_argument("--lock", type=Path)
+    parser.add_argument("--source-lock", type=Path)
+    parser.add_argument("--source-revision")
+    parser.add_argument("--image-digest")
+    parser.add_argument("--platform-manifest-digest")
+    parser.add_argument("--config-digest")
     return parser
 
 
@@ -893,6 +930,31 @@ def main(argv: list[str] | None = None) -> int:
         CorrespondingSourceError: The delivery contract is not satisfied.
     """
     args = _parser().parse_args(argv)
+    if args.runtime_fetch_development:
+        if not (args.manifest and args.source_lock and args.lock):
+            raise CorrespondingSourceError(
+                "runtime-fetch development verification requires manifest, source-lock and lock"
+            )
+        result = verify_runtime_fetch_corresponding_source(
+            args.manifest,
+            args.source_lock,
+            args.lock,
+        )
+        print(json.dumps(result, sort_keys=True))
+        return 0
+    required = {
+        "record": args.record,
+        "lock": args.lock,
+        "source-revision": args.source_revision,
+        "image-digest": args.image_digest,
+        "platform-manifest-digest": args.platform_manifest_digest,
+        "config-digest": args.config_digest,
+    }
+    missing = [name for name, value in required.items() if value is None]
+    if missing:
+        raise CorrespondingSourceError(
+            "accepted publication verification requires " + ", ".join(missing)
+        )
     verify_corresponding_source_delivery(
         args.record,
         args.lock,

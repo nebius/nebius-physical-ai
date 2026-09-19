@@ -1644,6 +1644,7 @@ def _oci_blob(
     nested_budget: _NestedArchiveBudget,
     graph_budget: _OciDescriptorGraphBudget,
     member_aliases: dict[str, str] | None = None,
+    scan_layer_text_policy: bool = True,
 ) -> tuple[bytes, str]:
     if not isinstance(descriptor, dict):
         raise ValueError(f"OCI {label} descriptor is not an object")
@@ -1692,7 +1693,7 @@ def _oci_blob(
                 f"raw OCI {label} blob",
                 raw,
                 budget=nested_budget,
-                skip_text_policy=True,
+                skip_text_policy=not scan_layer_text_policy,
             )
         graph_budget.remember(digest, raw)
     return raw, media_type
@@ -1773,6 +1774,10 @@ def _oci_manifest_candidates(
         layers = document.get("layers")
         if not isinstance(layers, list) or len(layers) > MAX_ORDERED_LAYERS:
             raise ValueError("OCI manifest layer descriptor list is malformed")
+        annotations = descriptor.get("annotations") or {}
+        if not isinstance(annotations, dict):
+            raise ValueError("OCI descriptor annotations are malformed")
+        attestation = annotations.get("vnd.docker.reference.type") == "attestation-manifest"
         for layer_index, layer_descriptor in enumerate(layers):
             _oci_blob(
                 archive,
@@ -1782,11 +1787,9 @@ def _oci_manifest_candidates(
                 nested_budget=nested_budget,
                 graph_budget=graph_budget,
                 member_aliases=member_aliases,
+                scan_layer_text_policy=attestation,
             )
-        annotations = descriptor.get("annotations") or {}
-        if not isinstance(annotations, dict):
-            raise ValueError("OCI descriptor annotations are malformed")
-        if annotations.get("vnd.docker.reference.type") != "attestation-manifest":
+        if not attestation:
             document = dict(document)
             document["_npa_platform"] = platform
             candidates.append((descriptor, document))
@@ -2040,6 +2043,10 @@ def _bind_docker_save_oci_graph(
         and name not in set(layer_names)
     }
     if "index.json" not in outer_names:
+        if "oci-layout" in outer_names:
+            raise ValueError(
+                "Docker-save OCI layout marker requires an index descriptor graph"
+            )
         if auxiliary:
             raise ValueError(
                 "unexpected Docker-save members: auxiliary OCI blobs require an index descriptor graph"

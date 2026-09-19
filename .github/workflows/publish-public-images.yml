@@ -612,6 +612,11 @@ jobs:
             --manifest npa/docker/workbench/gymnasium-robotics/runtime-fetch-manifest.json \
             --source-lock npa/docker/workbench/gymnasium-robotics/source-lock.json \
             --corresponding-lock npa/docker/workbench/gymnasium-robotics/corresponding-source.lock.json
+          npa/.venv/bin/python -m npa.deploy.corresponding_source \
+            --runtime-fetch-development \
+            --manifest npa/docker/workbench/gymnasium-robotics/runtime-fetch-manifest.json \
+            --source-lock npa/docker/workbench/gymnasium-robotics/source-lock.json \
+            --lock npa/docker/workbench/gymnasium-robotics/corresponding-source.lock.json
 
       - name: Require Gymnasium neutral payload scan before development push
         if: matrix.tool == 'gymnasium-robotics'

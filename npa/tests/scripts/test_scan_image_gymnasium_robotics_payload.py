@@ -423,6 +423,7 @@ def _docker_save_with_oci_graph(
     files: dict[str, bytes],
     *,
     unreferenced_blob: bool = False,
+    attestation_body: bytes | None = None,
 ) -> tuple[str, list[str]]:
     """Build a Docker-save fixture with a graph-bound OCI index and blobs."""
 
@@ -456,26 +457,87 @@ def _docker_save_with_oci_graph(
         separators=(",", ":"),
     ).encode()
     graph_manifest_digest = hashlib.sha256(graph_manifest).hexdigest()
+    graph_files = {
+        "oci-layout": b'{"imageLayoutVersion":"1.0.0"}',
+        "blobs/sha256/" + graph_manifest_digest: graph_manifest,
+    }
+    root_manifests: list[dict[str, object]] = [
+        {
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "digest": "sha256:" + graph_manifest_digest,
+            "size": len(graph_manifest),
+            "platform": {"architecture": "amd64", "os": "linux"},
+        }
+    ]
+    if attestation_body is not None:
+        att_config = b'{"_type":"https://in-toto.io/Statement/v1"}'
+        att_layer = _tar_bytes({"attestation.txt": attestation_body})
+        att_config_digest = hashlib.sha256(att_config).hexdigest()
+        att_layer_digest = hashlib.sha256(att_layer).hexdigest()
+        att_manifest = json.dumps(
+            {
+                "schemaVersion": 2,
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "config": {
+                    "mediaType": "application/vnd.in-toto+json",
+                    "digest": "sha256:" + att_config_digest,
+                    "size": len(att_config),
+                },
+                "layers": [
+                    {
+                        "mediaType": "application/vnd.oci.image.layer.v1.tar",
+                        "digest": "sha256:" + att_layer_digest,
+                        "size": len(att_layer),
+                    }
+                ],
+            },
+            separators=(",", ":"),
+        ).encode()
+        att_manifest_digest = hashlib.sha256(att_manifest).hexdigest()
+        nested_index = json.dumps(
+            {
+                "schemaVersion": 2,
+                "mediaType": "application/vnd.oci.image.index.v1+json",
+                "manifests": [
+                    root_manifests[0],
+                    {
+                        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                        "digest": "sha256:" + att_manifest_digest,
+                        "size": len(att_manifest),
+                        "annotations": {
+                            "vnd.docker.reference.type": "attestation-manifest",
+                            "vnd.docker.reference.digest": "sha256:" + graph_manifest_digest,
+                        },
+                    },
+                ],
+            },
+            separators=(",", ":"),
+        ).encode()
+        nested_index_digest = hashlib.sha256(nested_index).hexdigest()
+        root_manifests = [
+            {
+                "mediaType": "application/vnd.oci.image.index.v1+json",
+                "digest": "sha256:" + nested_index_digest,
+                "size": len(nested_index),
+            }
+        ]
+        graph_files.update(
+            {
+                "blobs/sha256/" + nested_index_digest: nested_index,
+                "blobs/sha256/" + att_manifest_digest: att_manifest,
+                "blobs/sha256/" + att_config_digest: att_config,
+                "blobs/sha256/" + att_layer_digest: att_layer,
+            }
+        )
     root_index = json.dumps(
         {
             "schemaVersion": 2,
             "mediaType": "application/vnd.oci.image.index.v1+json",
-            "manifests": [
-                {
-                    "mediaType": "application/vnd.oci.image.manifest.v1+json",
-                    "digest": "sha256:" + graph_manifest_digest,
-                    "size": len(graph_manifest),
-                    "platform": {"architecture": "amd64", "os": "linux"},
-                }
-            ],
+            "manifests": root_manifests,
         },
         separators=(",", ":"),
     ).encode()
-    graph_files = {
-        "oci-layout": b'{"imageLayoutVersion":"1.0.0"}',
-        "index.json": root_index,
-        "blobs/sha256/" + graph_manifest_digest: graph_manifest,
-    }
+    graph_files["index.json"] = root_index
     for descriptor, raw in zip(layer_descriptors, layer_raw, strict=True):
         graph_files["blobs/sha256/" + descriptor["digest"].removeprefix("sha256:")] = raw
     if unreferenced_blob:
@@ -1263,6 +1325,30 @@ def test_docker_save_refuses_unreferenced_oci_graph_blob(
     _docker_save_with_oci_graph(image, _required(), unreferenced_blob=True)
 
     with pytest.raises(ValueError, match="unreferenced OCI graph blobs"):
+        SCAN.scan(image)
+
+
+def test_docker_save_scans_attestation_layer_text_policy(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    image = tmp_path / "attestation-secret.tar"
+    _docker_save_with_oci_graph(
+        image,
+        _required(),
+        attestation_body=b"password=" + (b"x" * 16),
+    )
+
+    with pytest.raises(ValueError, match="forbidden secret signature"):
+        SCAN.scan(image)
+
+
+def test_docker_save_refuses_orphan_oci_layout_marker(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    image = tmp_path / "orphan-oci-layout.tar"
+    _docker_save(image, _required(), outer_extra_files={"oci-layout": b"{}"})
+
+    with pytest.raises(ValueError, match="layout marker requires an index"):
         SCAN.scan(image)
 
 

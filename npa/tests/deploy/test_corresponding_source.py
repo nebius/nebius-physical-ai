@@ -16,6 +16,7 @@ import zstandard
 import npa.deploy.corresponding_source as SOURCE
 from npa.deploy.corresponding_source import (
     CorrespondingSourceError,
+    verify_runtime_fetch_corresponding_source,
 )
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -761,6 +762,10 @@ def test_both_publication_paths_consume_the_same_record() -> None:
         encoding="utf-8"
     )
     assert "runtime_fetch_contract" in workflow
+    assert "verify_runtime_fetch_corresponding_source" in (
+        ROOT / "npa/src/npa/deploy/corresponding_source.py"
+    ).read_text(encoding="utf-8")
+    assert "--runtime-fetch-development" in workflow
     assert "runtime-fetch-manifest.json" in workflow
     assert "verify_gymnasium_corresponding_source(item)" in release
     assert "CORRESPONDING SOURCE GATE" in release
@@ -772,3 +777,32 @@ def test_current_candidate_remains_fail_closed() -> None:
     ).exists()
     lock = json.loads(REAL_LOCK.read_text(encoding="utf-8"))
     assert lock["public_corresponding_source_delivery"] == "runtime-fetch-operator-owned"
+
+
+def test_runtime_fetch_corresponding_source_contract_passes() -> None:
+    result = verify_runtime_fetch_corresponding_source(
+        ROOT / "npa/docker/workbench/gymnasium-robotics/runtime-fetch-manifest.json",
+        ROOT / "npa/docker/workbench/gymnasium-robotics/source-lock.json",
+        ROOT / "npa/docker/workbench/gymnasium-robotics/corresponding-source.lock.json",
+    )
+    assert result == {
+        "status": "passed",
+        "delivery": "runtime-fetch-operator-owned",
+        "payload_free": True,
+    }
+
+
+def test_runtime_fetch_verifier_refuses_public_record_shape(tmp_path: Path) -> None:
+    manifest = ROOT / "npa/docker/workbench/gymnasium-robotics/runtime-fetch-manifest.json"
+    source_lock = ROOT / "npa/docker/workbench/gymnasium-robotics/source-lock.json"
+    lock = tmp_path / "corresponding-source.lock.json"
+    payload = json.loads(REAL_LOCK.read_text(encoding="utf-8"))
+    payload["public_corresponding_source_delivery"] = "accepted-public-immutable"
+    lock_bytes = json.dumps(payload).encode()
+    lock.write_bytes(lock_bytes)
+    manifest_copy = tmp_path / "runtime-fetch-manifest.json"
+    manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
+    manifest_payload["runtime_fetch"]["corresponding_source_lock_sha256"] = hashlib.sha256(lock_bytes).hexdigest()
+    manifest_copy.write_text(json.dumps(manifest_payload), encoding="utf-8")
+    with pytest.raises(Exception, match="runtime-fetch-only"):
+        verify_runtime_fetch_corresponding_source(manifest_copy, source_lock, lock)
