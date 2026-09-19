@@ -2495,7 +2495,7 @@ def test_submission_cleanup_rejects_stale_launch_text_and_same_name_agreement(
     else:
         path = tmp_path / "workflow.yaml"
         path.write_text("name: synthetic\nresources:\n  cloud: kubernetes\n")
-    handles, launches, cancellations = [], [], []
+    handles, launches, cancellations, record_calls = [], [], [], []
     status = ["RUNNING"]
 
     def ready(handle):
@@ -2541,6 +2541,7 @@ def test_submission_cleanup_rejects_stale_launch_text_and_same_name_agreement(
         )
 
     def record(payload):
+        record_calls.append(payload)
         if scenario == "receipt-exception" and payload["job_id"] == "42":
             raise RuntimeError("synthetic post-acknowledgment failure")
 
@@ -2558,18 +2559,46 @@ def test_submission_cleanup_rejects_stale_launch_text_and_same_name_agreement(
         workflow_module, "run_launch_transaction", _REAL_RUN_LAUNCH_TRANSACTION
     )
     monkeypatch.setattr(workflow_module, "_native_context_digest", lambda **_k: "c" * 64)
-    # Outer subprocess text is never the native IPC channel. Deliberately leave
-    # that channel empty even when the process claims a successful prior job.
+    # Outer subprocess text is never the native IPC channel.  The
+    # receipt-exception case must first provide the complete bound native
+    # observation so the recorder callback, rather than observation decoding,
+    # is the failure under test.  Other stale-text cases intentionally leave
+    # the private channel empty and therefore fail closed before recording.
+    def invoke_native_bridge(payload, _environment, _cwd, _timeout):
+        completed, _ = launch(["synthetic-native-client"])
+        if scenario == "receipt-exception" and kind == "successful":
+            request_id = "00000000-0000-4000-8000-000000000001"
+            rows = (
+                {
+                    "event": "request",
+                    "attempt": payload["attempt"],
+                    "context": payload["context"],
+                    "request_id": request_id,
+                },
+                {
+                    "event": "result",
+                    "attempt": payload["attempt"],
+                    "context": payload["context"],
+                    "request_id": request_id,
+                    "job_id": 42,
+                    "task_ids": list(range(payload["task_count"])),
+                },
+            )
+            data = "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
+            os.write(payload["descriptor"], data.encode())
+            os.fsync(payload["descriptor"])
+        return completed
+
     monkeypatch.setattr(
         workflow_module, "_invoke_native_bridge",
-        lambda _payload, _environment, _cwd, _timeout: launch(["synthetic-native-client"]),
+        invoke_native_bridge,
     )
     monkeypatch.setattr(workflow_module, "_wait_for_healthy_jobs_controller", lambda *_a, **_k:
                         workflow_module.ControllerHealthResult(workflow_module.ControllerState.UP,
                                                                "synthetic-controller"))
     monkeypatch.setattr(workflow_module, "_reconcile_managed_job_env", reconcile)
     monkeypatch.setattr(subprocess, "run", command_run)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError) as caught:
         submit_workflow(
             path,
             "synthetic-owned-receipt",
@@ -2582,10 +2611,20 @@ def test_submission_cleanup_rejects_stale_launch_text_and_same_name_agreement(
             launch_lock_root=tmp_path / "locks",
             **options,
         )
+    if scenario == "receipt-exception" and kind == "successful":
+        assert str(caught.value) == "synthetic post-acknowledgment failure"
+        native_receipts = [record for record in record_calls if record.get("job_id") == "42"]
+        assert len(native_receipts) == 1
+        assert native_receipts[0]["state"] == "submitted"
+    else:
+        assert not [record for record in record_calls if record.get("job_id") == "42"]
     assert len(launches) == int(scenario != "before-launch")
     assert not cancellations and status == ["RUNNING"]
     handle = handles[0]
-    assert not handle.verified and not handle.job_id
+    if scenario == "receipt-exception" and kind == "successful":
+        assert not handle.verified and handle.job_id == "42"
+    else:
+        assert not handle.verified and not handle.job_id
     assert handle.config_path.is_file()
     if confidential:
         assert Path(handle.environment["KUBECONFIG"]).is_file()
