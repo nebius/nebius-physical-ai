@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 import traceback
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1391,6 +1392,27 @@ def test_runtime_fetch_credentials_are_bound_to_provider_origins() -> None:
         verifier._runtime_fetch_auth_headers(
             "https://huggingface.co/org/example.whl", "NGC_API_KEY", "secret"
         )
+
+
+def test_runtime_fetch_redirect_rechecks_entitlement_before_following() -> None:
+    calls: list[int] = []
+
+    def refuse() -> None:
+        calls.append(1)
+        raise verifier.VerificationError("entitlement expired")
+
+    handler = verifier._SameHostRedirect(refuse)
+    request = urllib.request.Request("https://files.pythonhosted.org/a.whl")
+    with pytest.raises(verifier.VerificationError, match="expired"):
+        handler.redirect_request(
+            request,
+            None,
+            302,
+            "found",
+            {},
+            "https://files.pythonhosted.org/b.whl",
+        )
+    assert calls == [1]
 
 
 def test_runtime_fetch_does_not_remove_replaced_published_tree(tmp_path: Path) -> None:

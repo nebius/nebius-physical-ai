@@ -2316,6 +2316,10 @@ def _runtime_fetch_plan(
 class _SameHostRedirect(urllib.request.HTTPRedirectHandler):
     """Reject redirects to a different host or scheme during runtime fetch."""
 
+    def __init__(self, before_request: Any) -> None:
+        super().__init__()
+        self._before_request = before_request
+
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
         old = urllib.parse.urlsplit(req.full_url)
         new = urllib.parse.urlsplit(newurl)
@@ -2325,6 +2329,7 @@ class _SameHostRedirect(urllib.request.HTTPRedirectHandler):
             or new.port != old.port
         ):
             raise VerificationError("runtime fetch redirected to an unapproved host")
+        self._before_request()
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
@@ -2334,6 +2339,7 @@ def _download_runtime_wheel(
     destination: Path,
     credential_env: str,
     credential: str,
+    before_request: Any,
 ) -> None:
     """Download one exact wheel into a private temporary wheelhouse."""
 
@@ -2343,30 +2349,39 @@ def _download_runtime_wheel(
             str(artifact["source"]), credential_env, credential
         ),
     )
-    opener = urllib.request.build_opener(_SameHostRedirect())
+    opener = urllib.request.build_opener(_SameHostRedirect(before_request))
     try:
         with opener.open(request, timeout=60) as response:
             final_url = response.geturl()
             _runtime_fetch_url(final_url)
-            digest = hashlib.sha256()
-            total = 0
-            with destination.open("xb") as output:
-                while True:
-                    chunk = response.read(min(1024 * 1024, int(artifact["size"]) + 1))
-                    if not chunk:
-                        break
-                    total += len(chunk)
-                    if total > int(artifact["size"]):
-                        raise VerificationError("runtime wheel exceeds its locked size")
-                    digest.update(chunk)
-                    output.write(chunk)
+            total, digest = _receive_runtime_wheel(
+                response, destination, int(artifact["size"])
+            )
     except (OSError, urllib.error.URLError, urllib.error.HTTPError) as exc:
         raise VerificationError("runtime wheel fetch failed") from exc
-    if total != int(artifact["size"]) or digest.hexdigest() != artifact["sha256"]:
+    if total != int(artifact["size"]) or digest != artifact["sha256"]:
         raise VerificationError(
             "runtime wheel bytes do not match the customer manifest"
         )
     destination.chmod(0o600)
+
+
+def _receive_runtime_wheel(
+    response: Any, destination: Path, expected_size: int
+) -> tuple[int, str]:
+    digest = hashlib.sha256()
+    total = 0
+    with destination.open("xb") as output:
+        while True:
+            chunk = response.read(min(1024 * 1024, expected_size + 1))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > expected_size:
+                raise VerificationError("runtime wheel exceeds its locked size")
+            digest.update(chunk)
+            output.write(chunk)
+    return total, digest.hexdigest()
 
 
 def _fetched_record_digest(value: str) -> str:
@@ -2478,6 +2493,7 @@ def _download_runtime_artifacts(
             destination=wheel,
             credential_env=credential_env,
             credential=credential,
+            before_request=before_request,
         )
         lines.append(
             f"{name}=={artifact['version']} --hash=sha256:{artifact['sha256']}"
