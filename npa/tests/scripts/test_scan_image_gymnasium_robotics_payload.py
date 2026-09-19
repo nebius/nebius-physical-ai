@@ -418,6 +418,29 @@ def _add_outer_file(path: Path, name: str, content: bytes) -> None:
     path.write_bytes(rendered.getvalue())
 
 
+def _replace_outer_file(path: Path, name: str, content: bytes) -> None:
+    """Replace one regular outer member while preserving the tar graph."""
+
+    source = path.read_bytes()
+    rendered = io.BytesIO()
+    replaced = False
+    with tarfile.open(fileobj=io.BytesIO(source), mode="r:") as source_tar:
+        with tarfile.open(fileobj=rendered, mode="w") as output:
+            for member in source_tar.getmembers():
+                body = (
+                    source_tar.extractfile(member).read()
+                    if member.isfile()
+                    else None
+                )
+                if member.name == name:
+                    member.size = len(content)
+                    body = content
+                    replaced = True
+                output.addfile(member, io.BytesIO(body) if body is not None else None)
+    assert replaced
+    path.write_bytes(rendered.getvalue())
+
+
 def _gzip_layer(content: bytes, *, filename: str = "") -> bytes:
     stream = io.BytesIO()
     with gzip.GzipFile(filename=filename, mode="wb", fileobj=stream, mtime=0) as archive:
@@ -1263,6 +1286,27 @@ def test_docker_save_accepts_repeated_ordered_layer_reference(
     assert result["config_sha256"] == config_digest
     assert result["ordered_layer_diff_ids"] == diff_ids
     assert result["layer_count"] == 2
+
+
+def test_docker_save_refuses_unicode_registry_port(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    image = tmp_path / "unicode-port-docker-save.tar"
+    config_digest, _diff_ids = _docker_save(image, _required())
+    manifest = json.dumps(
+        [
+            {
+                "Config": f"{config_digest}.json",
+                "RepoTags": ["registry.example:٤٤٣/repo:tag"],
+                "Layers": ["base/layer.tar", "app/layer.tar"],
+            }
+        ],
+        separators=(",", ":"),
+    ).encode()
+    _replace_outer_file(image, "manifest.json", manifest)
+
+    with pytest.raises(ValueError, match="Docker-save manifest RepoTags are malformed"):
+        SCAN.scan(image)
 
 
 @pytest.mark.parametrize(
