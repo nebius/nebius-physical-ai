@@ -1569,7 +1569,7 @@ def _wheel_target(name: str, directory: str) -> str:
 
 
 def _wheel_script_member(
-    name: str, directory: str, raw: bytes
+    name: str, directory: str, raw: bytes, interpreter: str = BAKED_INSTALLER_EXECUTABLE
 ) -> tuple[str, dict[str, Any], str]:
     """Apply only pip's authenticated ``.data/scripts`` transformation.
 
@@ -1588,16 +1588,20 @@ def _wheel_script_member(
     firstline, separator, rest = raw.partition(b"\n")
     if firstline != b"#!python" or not separator:
         raise VerificationError("unsupported wheel script transformation")
-    transformed = b"#!" + BAKED_INSTALLER_EXECUTABLE.encode("ascii") + b"\n" + rest
+    transformed = b"#!" + interpreter.encode("ascii") + b"\n" + rest
     return target, _file_identity(transformed, True), "../../" + target
 
 
 def _wheel_member_installation(
-    name: str, directory: str, raw: bytes, executable: bool
+    name: str,
+    directory: str,
+    raw: bytes,
+    executable: bool,
+    interpreter: str = BAKED_INSTALLER_EXECUTABLE,
 ) -> tuple[str, dict[str, Any], str]:
     parts = PurePosixPath(name).parts
     if len(parts) >= 2 and parts[0].endswith(".data") and parts[1] == "scripts":
-        return _wheel_script_member(name, directory, raw)
+        return _wheel_script_member(name, directory, raw, interpreter)
     target = _wheel_target(name, directory)
     if target == "bin" or target.startswith("bin/"):
         raise VerificationError("wheel reserves generated script directory")
@@ -1624,7 +1628,9 @@ def _console_script(module: str, function: str) -> bytes:
     ).encode()
 
 
-def _wheel_scripts(members: dict, directory: str) -> dict:
+def _wheel_scripts(
+    members: dict, directory: str, interpreter: str = BAKED_INSTALLER_EXECUTABLE
+) -> dict:
     raw = members.get(f"{directory}/entry_points.txt", (b"", False))[0]
     parser = configparser.ConfigParser(interpolation=None)
     parser.optionxform = str
@@ -1636,28 +1642,31 @@ def _wheel_scripts(members: dict, directory: str) -> dict:
         if not parser.has_section(section):
             continue
         for name, value in parser.items(section):
-            match = re.fullmatch(
-                r"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*):"
-                r"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)",
-                value,
-            )
-            if (
-                not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", name)
-                or re.fullmatch(r"pip(?:[0-9.]+)?|easy_install(?:-[0-9.]+)?", name)
-                or match is None
-                or any(
-                    keyword.iskeyword(part)
-                    for group in match.groups()
-                    for part in group.split(".")
-                )
-            ):
-                raise VerificationError("unsupported wheel script entry point")
-            _add_inventory_member(
-                result,
-                "bin/" + name,
-                _file_identity(_console_script(*match.groups()), True),
-            )
+            _add_wheel_script(result, name, value, interpreter)
     return result
+
+
+def _add_wheel_script(result: dict, name: str, value: str, interpreter: str) -> None:
+    match = re.fullmatch(
+        r"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*):"
+        r"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)",
+        value,
+    )
+    if (
+        not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", name)
+        or re.fullmatch(r"pip(?:[0-9.]+)?|easy_install(?:-[0-9.]+)?", name)
+        or match is None
+        or any(
+            keyword.iskeyword(part)
+            for group in match.groups()
+            for part in group.split(".")
+        )
+    ):
+        raise VerificationError("unsupported wheel script entry point")
+    generated = _console_script(*match.groups()).replace(
+        BAKED_INSTALLER_EXECUTABLE.encode("ascii"), interpreter.encode("ascii")
+    )
+    _add_inventory_member(result, "bin/" + name, _file_identity(generated, True))
 
 
 def _record_digest(entry: dict) -> str:
@@ -1724,7 +1733,10 @@ def _verify_wheel_record(members: dict, record_name: str) -> None:
 
 
 def _wheel_expected_inventory(
-    members: dict, directory: str, installed_root: Path
+    members: dict,
+    directory: str,
+    installed_root: Path | None,
+    interpreter: str = BAKED_INSTALLER_EXECUTABLE,
 ) -> dict:
     record_name = f"{directory}/RECORD"
     if record_name not in members:
@@ -1734,7 +1746,7 @@ def _wheel_expected_inventory(
     for name, (raw, executable) in members.items():
         if name != record_name:
             target, entry, record_path = _wheel_member_installation(
-                name, directory, raw, executable
+                name, directory, raw, executable, interpreter
             )
             _add_inventory_member(result, target, entry)
             record_paths[target] = record_path
@@ -1742,12 +1754,17 @@ def _wheel_expected_inventory(
         target = f"{directory}/{suffix}"
         _add_inventory_member(result, target, _file_identity(raw))
         record_paths[target] = target
-    for name, entry in _wheel_scripts(members, directory).items():
+    for name, entry in _wheel_scripts(members, directory, interpreter).items():
         _add_inventory_member(result, name, entry)
         record_paths[name] = "../../" + name
-    result[record_name] = _authenticated_installed_record(
-        installed_root / record_name, result, record_name, record_paths
-    )
+    if installed_root is None:
+        result[record_name] = _file_identity(
+            _installed_record_bytes(result, record_name, record_paths)
+        )
+    else:
+        result[record_name] = _authenticated_installed_record(
+            installed_root / record_name, result, record_name, record_paths
+        )
     return result
 
 
@@ -2247,11 +2264,34 @@ def _runtime_fetch_site_packages(value: Any) -> str:
     return value
 
 
-def _runtime_fetch_contract(inventory: dict, artifacts: dict) -> tuple[str, str, str]:
+def _runtime_fetch_installer(fetch: dict[str, Any]) -> dict[str, str | int]:
+    raw = fetch.get("installer")
+    name, installer = _checked_artifact_entry(raw)
+    if (
+        name != "pip"
+        or installer["version"] != "26.2.1"
+        or installer["filename"] != "pip-26.2.1-py3-none-any.whl"
+        or installer["size"] != INSTALLER_WHEEL_SIZE
+        or installer["sha256"] != INSTALLER_WHEEL_SHA256
+        or urllib.parse.urlsplit(str(installer["source"])).hostname
+        not in RUNTIME_FETCH_PUBLIC_HOSTS
+    ):
+        raise VerificationError("runtime fetch installer identity is unsupported")
+    _runtime_fetch_url(str(installer["source"]))
+    return installer
+
+
+def _runtime_fetch_contract(
+    inventory: dict, artifacts: dict
+) -> tuple[str, str, str, dict[str, str | int]]:
     """Validate the runtime input and require credentials only for vendor origins."""
 
     fetch = inventory.get("fetch")
-    if not isinstance(fetch, dict) or set(fetch) != {"credential_env", "site_packages"}:
+    if not isinstance(fetch, dict) or set(fetch) != {
+        "credential_env",
+        "site_packages",
+        "installer",
+    }:
         raise VerificationError("runtime fetch contract is absent or malformed")
     credential_env = fetch["credential_env"]
     if credential_env not in RUNTIME_FETCH_CREDENTIAL_ENVS:
@@ -2271,7 +2311,8 @@ def _runtime_fetch_contract(inventory: dict, artifacts: dict) -> tuple[str, str,
     if credential_required and not credential:
         raise VerificationError("customer runtime credential is absent")
     site_packages = _runtime_fetch_site_packages(fetch["site_packages"])
-    return credential_env, credential, site_packages
+    installer = _runtime_fetch_installer(fetch)
+    return credential_env, credential, site_packages, installer
 
 
 def _runtime_fetch_destination(runtime_root: Path, site_packages: str) -> Path:
@@ -2322,11 +2363,13 @@ def _runtime_fetch_plan(
         require_read_only_mount=False,
     )
     artifacts, _ = _runtime_artifact_closure(lock, inventory)
-    credential_env, credential, site_packages = _runtime_fetch_contract(
+    credential_env, credential, site_packages, installer = _runtime_fetch_contract(
         inventory, artifacts
     )
     site_root = _runtime_fetch_destination(runtime_root, site_packages)
-    denylist_source = _runtime_fetch_artifacts(artifacts, credential_env, credential)
+    denylist_source = _runtime_fetch_artifacts(
+        {**artifacts, "pip": installer}, credential_env, credential
+    )
     return (
         lock,
         inventory,
@@ -2336,6 +2379,7 @@ def _runtime_fetch_plan(
         site_root,
         denylist_source,
         credential_env,
+        installer,
     )
 
 
@@ -2493,6 +2537,67 @@ def _verify_fetched_record_tree(stage: Path, artifacts: dict) -> int:
     return len(records)
 
 
+def _runtime_expected_inventory(
+    wheelhouse: Path, artifacts: dict, interpreter: Path
+) -> dict[str, dict[str, Any]]:
+    """Derive runtime bytes from locked wheel members before invoking pip."""
+
+    expected: dict[str, dict[str, Any]] = {}
+    for name, artifact in artifacts.items():
+        wheel = wheelhouse / str(artifact["filename"])
+        raw = _immutable_bytes(wheel, RUNTIME_OBJECT_MAX_BYTES)
+        if (
+            len(raw) != artifact["size"]
+            or hashlib.sha256(raw).hexdigest() != artifact["sha256"]
+        ):
+            raise VerificationError("runtime wheel bytes changed before installation")
+        members = _wheel_members(raw)
+        directory = _wheel_distribution(members, name, str(artifact["version"]))
+        wheel_expected = _wheel_expected_inventory(
+            members, directory, None, str(interpreter)
+        )
+        for relative, entry in wheel_expected.items():
+            _add_inventory_member(expected, relative, entry)
+    if len(expected) > RUNTIME_PAYLOAD_MAX_ENTRY_COUNT:
+        raise VerificationError("runtime expected member count exceeds limit")
+    total = sum(int(entry["size"]) for entry in expected.values())
+    if total > RUNTIME_PAYLOAD_MAX_BYTES:
+        raise VerificationError("runtime expected bytes exceed limit")
+    return expected
+
+
+def _verify_runtime_expected_tree(
+    stage: Path, expected: dict[str, dict[str, Any]]
+) -> None:
+    """Compare the final install tree to the pre-install wheel-derived proof."""
+
+    observed: set[str] = set()
+    total = 0
+    for path in stage.rglob("*"):
+        if path.is_dir():
+            continue
+        if path.is_symlink() or not path.is_file():
+            raise VerificationError("runtime installed tree contains unsafe member")
+        relative = path.relative_to(stage).as_posix()
+        observed.add(relative)
+        if len(observed) > RUNTIME_PAYLOAD_MAX_ENTRY_COUNT:
+            raise VerificationError("runtime installed member count exceeds limit")
+    if observed != set(expected):
+        raise VerificationError("runtime installed tree differs from wheel proof")
+    for relative, entry in expected.items():
+        member = stage / relative
+        raw = _immutable_bytes(member, RUNTIME_OBJECT_MAX_BYTES)
+        total += len(raw)
+        if total > RUNTIME_PAYLOAD_MAX_BYTES:
+            raise VerificationError("runtime installed bytes exceed limit")
+        if (
+            len(raw) != entry["size"]
+            or hashlib.sha256(raw).hexdigest() != entry["sha256"]
+            or stat.S_IMODE(member.stat().st_mode) != entry["mode"]
+        ):
+            raise VerificationError("runtime installed member differs from wheel proof")
+
+
 def _runtime_subprocess_env() -> dict[str, str]:
     return {
         "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
@@ -2501,26 +2606,24 @@ def _runtime_subprocess_env() -> dict[str, str]:
     }
 
 
-def _runtime_pip_probe(interpreter: Path) -> None:
-    probe = subprocess.run(
-        [str(interpreter), "-m", "pip", "--version"],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=_runtime_subprocess_env(),
-    )
-    if probe.returncode != 0:
-        raise VerificationError("runtime interpreter has no usable pip")
-
-
 def _download_runtime_artifacts(
     wheelhouse: Path,
     artifacts: dict,
+    installer: dict[str, str | int],
     credential_env: str,
     credential: str,
     before_request: Any,
 ) -> Path:
     requirement_file = wheelhouse / "requirements.txt"
+    installer_path = wheelhouse / str(installer["filename"])
+    before_request()
+    _download_runtime_wheel(
+        artifact=installer,
+        destination=installer_path,
+        credential_env=credential_env,
+        credential=credential,
+        before_request=before_request,
+    )
     lines = []
     for name, artifact in artifacts.items():
         wheel = wheelhouse / str(artifact["filename"])
@@ -2540,28 +2643,20 @@ def _download_runtime_artifacts(
 
 
 def _install_runtime_artifacts(
-    interpreter: Path, wheelhouse: Path, stage: Path, requirement_file: Path
+    interpreter: Path,
+    wheelhouse: Path,
+    stage: Path,
+    requirement_file: Path,
+    installer: dict[str, str | int],
+    expected: dict[str, dict[str, Any]],
 ) -> Path:
     staged_site = stage / "site-packages"
     staged_site.mkdir(mode=0o700)
+    installer_path = wheelhouse / str(installer["filename"])
     install = subprocess.run(
-        [
-            str(interpreter),
-            "-m",
-            "pip",
-            "install",
-            "--disable-pip-version-check",
-            "--no-cache-dir",
-            "--no-index",
-            "--no-deps",
-            "--require-hashes",
-            "--find-links",
-            str(wheelhouse),
-            "--target",
-            str(staged_site),
-            "-r",
-            str(requirement_file),
-        ],
+        _runtime_installer_command(
+            interpreter, installer_path, wheelhouse, staged_site, requirement_file
+        ),
         check=False,
         capture_output=True,
         text=True,
@@ -2569,7 +2664,40 @@ def _install_runtime_artifacts(
     )
     if install.returncode != 0:
         raise VerificationError("runtime wheel installation failed")
+    _verify_runtime_expected_tree(staged_site, expected)
     return staged_site
+
+
+def _runtime_installer_command(
+    interpreter: Path,
+    installer: Path,
+    wheelhouse: Path,
+    staged_site: Path,
+    requirement_file: Path,
+) -> list[str]:
+    return [
+        str(interpreter),
+        "-I",
+        "-S",
+        "-B",
+        "-c",
+        "import runpy,sys;sys.path.insert(0,sys.argv.pop(1));"
+        "runpy.run_module('pip',run_name='__main__',alter_sys=True)",
+        str(installer),
+        "install",
+        "--isolated",
+        "--disable-pip-version-check",
+        "--no-cache-dir",
+        "--no-index",
+        "--no-deps",
+        "--require-hashes",
+        "--find-links",
+        str(wheelhouse),
+        "--target",
+        str(staged_site),
+        "-r",
+        str(requirement_file),
+    ]
 
 
 def _runtime_path_identity(path: Path) -> tuple[int, int]:
@@ -2732,35 +2860,60 @@ def _runtime_fetch_install(
     stage: Path,
     before_request: Any,
 ) -> dict[str, Any]:
-    (
-        lock,
-        artifacts,
-        lock_hash,
-        inventory_sha256,
-        site_root,
-        denylist_source,
-        credential_env,
-    ) = _runtime_install_inputs(plan)
-    credential = os.environ.get(credential_env, "")
-    staged_site = _stage_runtime_install(
-        runtime_root=runtime_root,
-        runtime_lock_path=runtime_lock_path,
-        expected_inventory_sha256=inventory_sha256,
-        artifacts=artifacts,
-        credential_env=credential_env,
-        credential=credential,
-        wheelhouse=wheelhouse,
-        stage=stage,
-        before_request=before_request,
+    context = _runtime_install_context(plan)
+    staged_site = _stage_runtime_install_from_context(
+        context, runtime_root, runtime_lock_path, wheelhouse, stage, before_request
     )
     return _runtime_install_result(
         staged_site=staged_site,
-        lock=lock,
-        inventory_sha256=inventory_sha256,
-        lock_hash=lock_hash,
-        site_root=site_root,
-        artifacts=artifacts,
-        denylist_source=denylist_source,
+        lock=context["lock"],
+        inventory_sha256=context["inventory_sha256"],
+        lock_hash=context["lock_hash"],
+        site_root=context["site_root"],
+        artifacts=context["artifacts"],
+        denylist_source=context["denylist_source"],
+    )
+
+
+def _runtime_install_context(plan: tuple) -> dict[str, Any]:
+    values = _runtime_install_inputs(plan)
+    return dict(
+        zip(
+            (
+                "lock",
+                "artifacts",
+                "lock_hash",
+                "inventory_sha256",
+                "site_root",
+                "denylist_source",
+                "credential_env",
+                "installer",
+            ),
+            values,
+        )
+    )
+
+
+def _stage_runtime_install_from_context(
+    context: dict[str, Any],
+    runtime_root: Path,
+    runtime_lock_path: Path,
+    wheelhouse: Path,
+    stage: Path,
+    before_request: Any,
+) -> Path:
+    credential_env = context["credential_env"]
+    return _stage_runtime_install(
+        runtime_root=runtime_root,
+        runtime_lock_path=runtime_lock_path,
+        expected_inventory_sha256=context["inventory_sha256"],
+        artifacts=context["artifacts"],
+        credential_env=credential_env,
+        credential=os.environ.get(credential_env, ""),
+        installer=context["installer"],
+        wheelhouse=wheelhouse,
+        stage=stage,
+        before_request=before_request,
     )
 
 
@@ -2773,6 +2926,7 @@ def _runtime_install_inputs(plan: tuple) -> tuple:
         plan[5],
         plan[6],
         plan[7],
+        plan[8],
     )
 
 
@@ -2832,6 +2986,7 @@ def _stage_runtime_install(
     artifacts: dict,
     credential_env: str,
     credential: str,
+    installer: dict[str, str | int],
     wheelhouse: Path,
     stage: Path,
     before_request: Any,
@@ -2844,16 +2999,14 @@ def _stage_runtime_install(
         stage=stage,
     )
     before_request()
-    _runtime_pip_probe(interpreter)
     requirement_file = _download_runtime_artifacts(
-        wheelhouse,
-        artifacts,
-        credential_env,
-        credential,
-        before_request,
+        wheelhouse, artifacts, installer, credential_env, credential, before_request
     )
+    expected = _runtime_expected_inventory(wheelhouse, artifacts, interpreter)
     before_request()
-    return _install_runtime_artifacts(interpreter, wheelhouse, stage, requirement_file)
+    return _install_runtime_artifacts(
+        interpreter, wheelhouse, stage, requirement_file, installer, expected
+    )
 
 
 def _runtime_fetch_operation(

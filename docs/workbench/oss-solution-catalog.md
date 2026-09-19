@@ -175,10 +175,10 @@ exact runtime lock and inventory, exact terms set, and expiry. A manager or
 generic human signature is not a substitute. If gated Hugging Face or NGC
 assets are selected later, use the customer's real vendor entitlement probe
 without a duplicate NPA terms boolean. The runtime fetch verifies the fetched
-environment and installed RECORD before use; a customer-provided
-`CUSTOMER_DENYLIST` is an explicit runtime input with a safe empty default, not
-a publication prerequisite. Separate image, infrastructure, dataset, and B200
-transaction gates still apply.
+environment and installed RECORD before use; `NPA_ROBOMIMIC_CUSTOMER_DENYLIST`
+is an explicit customer runtime input, and when unset the built-in safe denylist
+applies. It is not a publication prerequisite. Separate image, infrastructure,
+dataset, and B200 transaction gates still apply.
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |

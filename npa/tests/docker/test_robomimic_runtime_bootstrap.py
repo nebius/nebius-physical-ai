@@ -30,6 +30,17 @@ verifier = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(verifier)
 
 
+def _runtime_installer() -> dict[str, str | int]:
+    return {
+        "name": "pip",
+        "version": "26.2.1",
+        "filename": "pip-26.2.1-py3-none-any.whl",
+        "source": "https://files.pythonhosted.org/packages/f3/6e/1736e5b4ae2b778ef2f81c47d797de9f891d4d8acb047a24ca37a60294dd/pip-26.2.1-py3-none-any.whl",
+        "sha256": verifier.INSTALLER_WHEEL_SHA256,
+        "size": verifier.INSTALLER_WHEEL_SIZE,
+    }
+
+
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -1359,6 +1370,14 @@ def test_runtime_fetch_plan_binds_customer_credential_and_site_root(
     inventory["fetch"] = {
         "credential_env": "HF_TOKEN",
         "site_packages": "payload/lib/python3.11/site-packages",
+        "installer": {
+            "name": "pip",
+            "version": "26.2.1",
+            "filename": "pip-26.2.1-py3-none-any.whl",
+            "source": "https://files.pythonhosted.org/packages/f3/6e/1736e5b4ae2b778ef2f81c47d797de9f891d4d8acb047a24ca37a60294dd/pip-26.2.1-py3-none-any.whl",
+            "sha256": verifier.INSTALLER_WHEEL_SHA256,
+            "size": verifier.INSTALLER_WHEEL_SIZE,
+        },
     }
     inventory_path.write_text(
         json.dumps(inventory, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -1386,6 +1405,7 @@ def test_runtime_fetch_plan_allows_public_closure_without_vendor_credential(
     inventory["fetch"] = {
         "credential_env": "HF_TOKEN",
         "site_packages": "payload/lib/python3.11/site-packages",
+        "installer": _runtime_installer(),
     }
     inventory_path.write_text(
         json.dumps(inventory, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -1415,6 +1435,7 @@ def test_runtime_fetch_plan_requires_vendor_credential_for_mixed_closure(
     inventory["fetch"] = {
         "credential_env": "HF_TOKEN",
         "site_packages": "payload/lib/python3.11/site-packages",
+        "installer": _runtime_installer(),
     }
     inventory["artifacts"][0]["source"] = "https://huggingface.co/org/runtime.whl"
     inventory_path.write_text(
@@ -1434,14 +1455,69 @@ def test_runtime_fetch_plan_requires_vendor_credential_for_mixed_closure(
         )
 
 
+def test_runtime_fetch_rejects_unbound_installer(tmp_path: Path) -> None:
+    runtime_root, lock_path, _ = _runtime(tmp_path)
+    inventory_path = runtime_root / "inventory.json"
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    inventory["fetch"] = {
+        "credential_env": "HF_TOKEN",
+        "site_packages": "payload/lib/python3.11/site-packages",
+        "installer": {**_runtime_installer(), "sha256": "0" * 64},
+    }
+    inventory_path.write_text(
+        json.dumps(inventory, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    marker_path = runtime_root / ".ready.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["inventory_sha256"] = _sha(inventory_path)
+    marker_path.write_text(json.dumps(marker, sort_keys=True) + "\n", encoding="utf-8")
+    with pytest.raises(verifier.VerificationError, match="installer identity"):
+        verifier._runtime_fetch_plan(
+            runtime_root=runtime_root,
+            runtime_lock_path=lock_path,
+            expected_inventory_sha256=_sha(inventory_path),
+        )
+
+
+def test_runtime_install_invokes_only_bound_wheel_installer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    installer = _runtime_installer()
+    installer_path = wheelhouse / str(installer["filename"])
+    installer_path.write_bytes(b"inert installer bytes")
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess:
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(verifier.subprocess, "run", fake_run)
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    result = verifier._install_runtime_artifacts(
+        Path("/opt/runtime/python"),
+        wheelhouse,
+        stage,
+        tmp_path / "requirements.txt",
+        installer,
+        {},
+    )
+    assert result == stage / "site-packages"
+    assert len(calls) == 1
+    assert "-m" not in calls[0]
+    assert any("runpy.run_module('pip'" in item for item in calls[0])
+    assert str(installer_path) in calls[0]
+
+
 def test_runtime_fetch_authenticates_staged_interpreter_before_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
     stage = tmp_path / "stage"
     stage.mkdir()
-    probed: list[Path] = []
-    monkeypatch.setattr(verifier, "_runtime_pip_probe", probed.append)
+    installed: list[Path] = []
     monkeypatch.setattr(
         verifier,
         "_download_runtime_artifacts",
@@ -1450,7 +1526,9 @@ def test_runtime_fetch_authenticates_staged_interpreter_before_probe(
     monkeypatch.setattr(
         verifier,
         "_install_runtime_artifacts",
-        lambda *_args: stage / "site-packages",
+        lambda interpreter, *_args: (
+            installed.append(interpreter) or stage / "site-packages"
+        ),
     )
 
     verifier._stage_runtime_install(
@@ -1460,12 +1538,13 @@ def test_runtime_fetch_authenticates_staged_interpreter_before_probe(
         artifacts={},
         credential_env="HF_TOKEN",
         credential="",
+        installer=_runtime_installer(),
         wheelhouse=tmp_path / "wheelhouse",
         stage=stage,
         before_request=lambda: None,
     )
 
-    assert probed == [stage / "verified-runtime" / "payload" / "bin" / "python"]
+    assert installed == [stage / "verified-runtime" / "payload" / "bin" / "python"]
 
 
 def test_runtime_fetch_refuses_changed_interpreter_before_probe(
@@ -1474,8 +1553,6 @@ def test_runtime_fetch_refuses_changed_interpreter_before_probe(
     runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
     interpreter = runtime_root / "payload" / "bin" / "python"
     interpreter.write_text("#!/bin/sh\nexit 9\n", encoding="utf-8")
-    probed: list[Path] = []
-    monkeypatch.setattr(verifier, "_runtime_pip_probe", probed.append)
 
     with pytest.raises(verifier.VerificationError, match="identity mismatch"):
         verifier._stage_runtime_install(
@@ -1485,12 +1562,11 @@ def test_runtime_fetch_refuses_changed_interpreter_before_probe(
             artifacts={},
             credential_env="HF_TOKEN",
             credential="",
+            installer=_runtime_installer(),
             wheelhouse=tmp_path / "wheelhouse",
             stage=tmp_path / "stage",
             before_request=lambda: None,
         )
-
-    assert probed == []
 
 
 def test_runtime_fetch_rechecks_entitlement_before_interpreter_probe(
@@ -1500,14 +1576,12 @@ def test_runtime_fetch_rechecks_entitlement_before_interpreter_probe(
     stage = tmp_path / "stage"
     stage.mkdir()
     calls: list[int] = []
-    probed: list[Path] = []
 
     def before_request() -> None:
         calls.append(1)
         if len(calls) == 2:
             raise verifier.VerificationError("entitlement expired")
 
-    monkeypatch.setattr(verifier, "_runtime_pip_probe", probed.append)
     with pytest.raises(verifier.VerificationError, match="expired"):
         verifier._stage_runtime_install(
             runtime_root=runtime_root,
@@ -1516,12 +1590,11 @@ def test_runtime_fetch_rechecks_entitlement_before_interpreter_probe(
             artifacts={},
             credential_env="HF_TOKEN",
             credential="",
+            installer=_runtime_installer(),
             wheelhouse=tmp_path / "wheelhouse",
             stage=stage,
             before_request=before_request,
         )
-
-    assert probed == []
 
 
 def test_runtime_fetch_rechecks_entitlement_before_installer_execution(
@@ -1531,7 +1604,6 @@ def test_runtime_fetch_rechecks_entitlement_before_installer_execution(
     stage = tmp_path / "stage"
     stage.mkdir()
     calls: list[int] = []
-    probed: list[Path] = []
     installed: list[Path] = []
 
     def before_request() -> None:
@@ -1539,7 +1611,6 @@ def test_runtime_fetch_rechecks_entitlement_before_installer_execution(
         if len(calls) == 3:
             raise verifier.VerificationError("entitlement expired")
 
-    monkeypatch.setattr(verifier, "_runtime_pip_probe", probed.append)
     monkeypatch.setattr(
         verifier,
         "_download_runtime_artifacts",
@@ -1558,12 +1629,12 @@ def test_runtime_fetch_rechecks_entitlement_before_installer_execution(
             artifacts={},
             credential_env="HF_TOKEN",
             credential="",
+            installer=_runtime_installer(),
             wheelhouse=tmp_path / "wheelhouse",
             stage=stage,
             before_request=before_request,
         )
 
-    assert probed == [stage / "verified-runtime" / "payload" / "bin" / "python"]
     assert installed == []
 
 
@@ -1774,6 +1845,7 @@ def test_runtime_verifier_accepts_record_authenticated_fetched_site_packages(
     inventory["fetch"] = {
         "credential_env": "HF_TOKEN",
         "site_packages": "payload/lib/python3.11/site-packages",
+        "installer": _runtime_installer(),
     }
     inventory_path.write_text(
         json.dumps(inventory, indent=2, sort_keys=True) + "\n", encoding="utf-8"

@@ -57,9 +57,7 @@ BUILD_COMMAND_SHA256 = (
 DEPENDENCY_LOCK_SHA256 = (
     "65efcf0065ad4662b348e54e3f2d86996d934a518fcad0e89ecf012399ce1504"
 )
-RUNTIME_LOCK_SHA256 = (
-    "961d5cb5818605c33751ace1a16f1ceff087a8d9054fd4d02bd624afdd51070d"
-)
+RUNTIME_LOCK_SHA256 = "60e13f9903e3d9966eb3ec1a8a88536e93fe17358c7adc40844927b6357ac283"
 
 
 def _customer_binding(project: str) -> str:
@@ -2344,7 +2342,7 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
         'config.train.hdf5_validation_filter_key = "valid"',
         'source_identity["revision"] != SOURCE_REVISION',
         f'RUNTIME_LOCK_SHA256 = "{RUNTIME_LOCK_SHA256}"',
-        'RUNTIME_DISTRIBUTION_COUNT = 62',
+        "RUNTIME_DISTRIBUTION_COUNT = 62",
         "models/model_epoch_1.pth",
         "policy_from_checkpoint(",
         "optimizer_steps != TRAIN_STEPS",

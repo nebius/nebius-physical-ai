@@ -30,7 +30,7 @@ DATASET_REVISION = "74fa018461f479cd9fd15b924a16103012096203"
 DATASET_PATH = "v1.5/lift/ph/low_dim_v15.hdf5"
 DATASET_SHA256 = "2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540"
 DATASET_BYTES = 21_084_088
-RUNTIME_LOCK_SHA256 = "961d5cb5818605c33751ace1a16f1ceff087a8d9054fd4d02bd624afdd51070d"
+RUNTIME_LOCK_SHA256 = "60e13f9903e3d9966eb3ec1a8a88536e93fe17358c7adc40844927b6357ac283"
 RUNTIME_DISTRIBUTION_COUNT = 62
 TRAIN_STEPS = 4
 VALIDATION_STEPS = 2
@@ -944,7 +944,9 @@ def _result_header(context: dict[str, object]) -> dict[str, object]:
             "sha256": RUNTIME_LOCK_SHA256,
             "distribution_count": RUNTIME_DISTRIBUTION_COUNT,
             "accepted_sha256_count": len(
-                re.findall(rb"--hash=sha256:[0-9a-f]{64}", context["runtime_lock_bytes"])
+                re.findall(
+                    rb"--hash=sha256:[0-9a-f]{64}", context["runtime_lock_bytes"]
+                )
             ),
             "install_contract": "customer runtime inventory; exact RECORD required",
         },
