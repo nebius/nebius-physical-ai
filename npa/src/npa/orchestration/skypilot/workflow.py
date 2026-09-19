@@ -1025,7 +1025,9 @@ def submit_workflow(
     streamer: _LaunchStreamer | None = None
     bound_libero_job_id = ""
     unverified_libero_job_id = ""
+    unverified_libero_job_ids: tuple[str, ...] = ()
     libero_binding_error = ""
+    libero_launch_succeeded = False
     try:
         prepared = _prepare_workflow_submission(
             yaml_path,
@@ -1146,6 +1148,9 @@ def submit_workflow(
             )
 
         def _reconcile() -> ReconciliationEvidence:
+            nonlocal bound_libero_job_id
+            nonlocal unverified_libero_job_id, unverified_libero_job_ids
+            nonlocal libero_binding_error
             expected_profile_sha256 = ""
             expected_job_id = ""
             binding_error = ""
@@ -1154,6 +1159,20 @@ def submit_workflow(
                 from npa.execution_preflight import libero_executable_profile_sha256
 
                 expected_profile_sha256 = libero_executable_profile_sha256(docs)
+                if libero_launch_succeeded and not (
+                    bound_libero_job_id
+                    or unverified_libero_job_id
+                    or unverified_libero_job_ids
+                ):
+                    return ReconciliationEvidence(
+                        ReconciliationState.UNAVAILABLE,
+                        error=libero_binding_error
+                        or (
+                            "LIBERO launch succeeded without an exact immutable "
+                            "ID/name/profile binding; preserving indeterminate state "
+                            "and refusing retry"
+                        ),
+                    )
                 if libero_binding_error and not (
                     bound_libero_job_id or unverified_libero_job_id
                 ):
@@ -1197,7 +1216,7 @@ def submit_workflow(
                 require_owner_binding=libero_submission,
                 owner_ledger_binding=owner_ledger_binding,
             )
-            return _preserve_unverified_libero_candidate(
+            preserved = _preserve_unverified_libero_candidate(
                 evidence,
                 expected_job_id=expected_job_id,
                 binding_error=binding_error,
@@ -1207,6 +1226,20 @@ def submit_workflow(
                     and evidence.state is ReconciliationState.FOUND
                 ),
             )
+            if (
+                libero_submission
+                and binding_error
+                and preserved.state is ReconciliationState.FOUND
+                and preserved.job_id
+            ):
+                # Promotion is one local state transition: only the same exact
+                # ID/name/profile observation may clear the candidate/error and
+                # become the durable verified owner binding.
+                bound_libero_job_id = preserved.job_id
+                unverified_libero_job_id = ""
+                unverified_libero_job_ids = ()
+                libero_binding_error = ""
+            return preserved
 
         def _launch() -> tuple[
             subprocess.CompletedProcess[str], list[SkyPilotDiagnosis]
@@ -1238,8 +1271,10 @@ def submit_workflow(
                     launch_result,
                 )
             if libero_submission:
-                nonlocal bound_libero_job_id
+                nonlocal bound_libero_job_id, libero_launch_succeeded
                 nonlocal libero_binding_error, unverified_libero_job_id
+                nonlocal unverified_libero_job_ids
+                libero_launch_succeeded = True
                 parsed_job_id = _parse_job_id(
                     "\n".join(
                         part
@@ -1249,7 +1284,11 @@ def submit_workflow(
                 )
                 from npa.execution_preflight import libero_executable_profile_sha256
 
-                verified_job_id = _verified_libero_job_id(
+                (
+                    verified_job_id,
+                    plausible_job_ids,
+                    launch_binding_error,
+                ) = _libero_launch_binding_candidates(
                     parsed_job_id,
                     run_id,
                     env=env,
@@ -1259,11 +1298,30 @@ def submit_workflow(
                 )
                 if verified_job_id:
                     bound_libero_job_id = verified_job_id
-                elif parsed_job_id.isdigit():
+                    unverified_libero_job_id = ""
+                    unverified_libero_job_ids = ()
+                    libero_binding_error = ""
+                else:
+                    unverified_libero_job_ids = plausible_job_ids
+                    unverified_libero_job_id = (
+                        parsed_job_id if parsed_job_id.isdigit() else ""
+                    )
+                    libero_binding_error = launch_binding_error
+                    if unverified_libero_job_id:
+                        # Keep the historical scalar for compatibility while
+                        # also retaining every plausible immutable candidate.
+                        unverified_libero_job_ids = tuple(
+                            dict.fromkeys(
+                                (unverified_libero_job_id, *plausible_job_ids)
+                            )
+                        )
+                if not verified_job_id and not libero_binding_error:
+                    # Defensive fallback for a malformed resolver result.
                     unverified_libero_job_id = parsed_job_id
                     libero_binding_error = (
-                        "LIBERO launch returned success without an exact queue/name/profile "
-                        "binding; preserving indeterminate state and refusing retry"
+                        "LIBERO launch returned success without an exact immutable "
+                        "ID/name/profile binding; preserving indeterminate state "
+                        "and refusing retry"
                     )
             return launch_result, diagnoses
 
@@ -1300,6 +1358,12 @@ def submit_workflow(
                 )
                 if bound_libero_job_id:
                     enriched["libero_candidate_job_id"] = bound_libero_job_id
+                if libero_launch_succeeded:
+                    enriched["libero_launch_succeeded"] = True
+                if unverified_libero_job_ids:
+                    enriched["libero_unverified_candidate_job_ids"] = list(
+                        unverified_libero_job_ids
+                    )
                 if unverified_libero_job_id:
                     enriched["libero_unverified_candidate_job_id"] = (
                         unverified_libero_job_id
@@ -1313,6 +1377,8 @@ def submit_workflow(
                         profile_sha256=enriched["libero_profile_sha256"],
                         state=("candidate" if unverified_libero_job_id else "verified"),
                     )
+                if libero_binding_error:
+                    enriched["libero_binding_error"] = libero_binding_error
             enriched["controller"] = {
                 **controller_health.to_dict(),
                 "selected_context": selected_context,
@@ -1371,6 +1437,12 @@ def submit_workflow(
                 libero_executable_profile_sha256(docs)
             )
             candidate_job_id = bound_libero_job_id or unverified_libero_job_id
+            if libero_launch_succeeded:
+                launch_transaction["libero_launch_succeeded"] = True
+            if unverified_libero_job_ids:
+                launch_transaction["libero_unverified_candidate_job_ids"] = list(
+                    unverified_libero_job_ids
+                )
             if candidate_job_id:
                 launch_transaction["libero_owner_binding"] = (
                     _libero_owner_binding_payload(
@@ -1380,11 +1452,12 @@ def submit_workflow(
                         state=("candidate" if unverified_libero_job_id else "verified"),
                     )
                 )
-                if unverified_libero_job_id:
-                    launch_transaction["libero_unverified_candidate_job_id"] = (
-                        unverified_libero_job_id
-                    )
-                    launch_transaction["libero_binding_error"] = libero_binding_error
+            if unverified_libero_job_id:
+                launch_transaction["libero_unverified_candidate_job_id"] = (
+                    unverified_libero_job_id
+                )
+            if libero_binding_error:
+                launch_transaction["libero_binding_error"] = libero_binding_error
         return WorkflowResult(
             # Preserve the public result contract; adoption is exposed through
             # launch_transaction.state and the human reconciliation message.
@@ -1990,7 +2063,7 @@ def _reconcile_managed_job_env(
     )
 
 
-def _verified_libero_job_id(
+def _libero_launch_binding_candidates(
     parsed: str,
     job_name: str,
     *,
@@ -1998,11 +2071,20 @@ def _verified_libero_job_id(
     sky_executable: str,
     cwd: str | None,
     expected_profile_sha256: str,
-) -> str:
-    """Accept launch output only after exact queue/name/profile confirmation."""
+) -> tuple[str, tuple[str, ...], str]:
+    """Resolve launch output only when one viable row is attributable to it.
 
-    if not str(parsed or "").isdigit():
-        return ""
+    SkyPilot's all-jobs queue retains historical rows under a deterministic
+    name.  A numeric launch result is therefore only authoritative when the
+    queue has exactly one viable same-name row, that row has the exact
+    executable profile digest, and its immutable ID is the returned ID.  All
+    other plausible IDs are retained as indeterminate evidence rather than
+    silently adopting one.
+    """
+
+    parsed_id = str(parsed or "").strip()
+    if not parsed_id.isdigit():
+        parsed_id = ""
     try:
         result = subprocess.run(
             [sky_executable, "jobs", "queue", "--all", "--output", "json"],
@@ -2015,23 +2097,109 @@ def _verified_libero_job_id(
             check=False,
         )
         if result.returncode != 0:
-            return ""
+            return (
+                "",
+                (parsed_id,) if parsed_id else (),
+                "LIBERO launch returned success but exact queue/name/profile "
+                "binding could not be read; preserving indeterminate state and "
+                "refusing retry",
+            )
         rows = queue_rows_from_output(result.stdout)
     except Exception:  # noqa: BLE001 - missing confirmation must fail closed
-        return ""
+        return (
+            "",
+            (parsed_id,) if parsed_id else (),
+            "LIBERO launch returned success but exact queue/name/profile binding "
+            "could not be read; preserving indeterminate state and refusing retry",
+        )
     if rows is None:
-        return ""
-    for row in rows:
-        if not isinstance(row, Mapping):
-            continue
-        if str(row.get("job_id") or row.get("id") or "") != str(parsed):
-            continue
-        if str(row.get("job_name") or row.get("name") or "") != job_name:
-            return ""
-        if _managed_job_profile_digest(row) != expected_profile_sha256:
-            return ""
-        return str(parsed)
-    return ""
+        return (
+            "",
+            (parsed_id,) if parsed_id else (),
+            "LIBERO launch returned success but the queue binding was malformed; "
+            "preserving indeterminate state and refusing retry",
+        )
+
+    named_rows = [
+        row
+        for row in rows
+        if isinstance(row, Mapping)
+        and str(row.get("job_name") or row.get("name") or "") == job_name
+        and str(row.get("job_id") or row.get("id") or "").isdigit()
+        and not is_terminal_failure_job_status(
+            str(row.get("status") or "UNKNOWN").upper()
+        )
+    ]
+    candidate_ids = tuple(
+        sorted(
+            {str(row.get("job_id") or row.get("id") or "") for row in named_rows},
+            key=int,
+        )
+    )
+    profile_matches = tuple(
+        row
+        for row in named_rows
+        if _managed_job_profile_digest(row) == expected_profile_sha256
+    )
+    if (
+        parsed_id
+        and len(named_rows) == 1
+        and candidate_ids == (parsed_id,)
+        and len(profile_matches) == 1
+    ):
+        return parsed_id, (), ""
+
+    plausible_ids = tuple(
+        sorted(
+            set(candidate_ids).union({parsed_id} if parsed_id else set()),
+            key=int,
+        )
+    )
+    if not parsed_id:
+        error = (
+            "LIBERO launch returned success without a parseable job ID; preserving "
+            "indeterminate state and refusing retry until exact ID/name/profile "
+            "binding is verified or the operator resolves it"
+        )
+    elif len(named_rows) != 1:
+        error = (
+            "LIBERO launch returned success with multiple or missing viable "
+            "same-name queue IDs; preserving plausible candidates as indeterminate "
+            "and refusing retry"
+        )
+    elif len(profile_matches) != 1:
+        error = (
+            "LIBERO launch returned success without an exact queue/name/profile "
+            "binding; preserving indeterminate state and refusing retry"
+        )
+    else:
+        error = (
+            "LIBERO launch ID was not uniquely attributable to the exact queue "
+            "name/profile row; preserving indeterminate state and refusing retry"
+        )
+    return "", plausible_ids, error
+
+
+def _verified_libero_job_id(
+    parsed: str,
+    job_name: str,
+    *,
+    env: Mapping[str, str],
+    sky_executable: str,
+    cwd: str | None,
+    expected_profile_sha256: str,
+) -> str:
+    """Return a launch ID only after unique exact queue/name/profile proof."""
+
+    verified, _plausible, _error = _libero_launch_binding_candidates(
+        parsed,
+        job_name,
+        env=env,
+        sky_executable=sky_executable,
+        cwd=cwd,
+        expected_profile_sha256=expected_profile_sha256,
+    )
+    return verified
 
 
 def _preserve_unverified_libero_candidate(
@@ -2150,12 +2318,27 @@ def _load_libero_owner_binding(
         # Preserve compatibility with the pre-binding ledger while keeping its
         # conservative queue-digest requirement. New launches always write the
         # explicit immutable binding above.
+        launch_succeeded = launch.get("libero_launch_succeeded") is True
         job_id = str(
             launch.get("job_id") or launch.get("libero_candidate_job_id") or ""
         ).strip()
         unverified_candidate = str(
             launch.get("libero_unverified_candidate_job_id") or ""
         ).strip()
+        raw_candidates = launch.get("libero_unverified_candidate_job_ids")
+        if isinstance(raw_candidates, (list, tuple)):
+            candidate_ids = tuple(
+                sorted(
+                    {
+                        str(value).strip()
+                        for value in raw_candidates
+                        if str(value).strip().isdigit()
+                    },
+                    key=int,
+                )
+            )
+        else:
+            candidate_ids = ()
         if not job_id and unverified_candidate.isdigit():
             return (
                 unverified_candidate,
@@ -2164,8 +2347,25 @@ def _load_libero_owner_binding(
                 "unverified and must not be treated as absence",
                 False,
             )
+        if not job_id and candidate_ids:
+            return (
+                "",
+                "existing LIBERO launch ledger preserves plausible candidate IDs "
+                + ", ".join(candidate_ids)
+                + "; exact ID/name/profile binding remains unverified and must "
+                "not be treated as absence",
+                False,
+            )
         digest = str(launch.get("libero_profile_sha256") or "").strip()
         if not job_id.isdigit() or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            if launch_succeeded:
+                return (
+                    "",
+                    "existing LIBERO launch ledger records successful submission "
+                    "without an exact immutable ID/name/profile binding; refusing "
+                    "retry until the operator resolves it",
+                    False,
+                )
             return (
                 "",
                 "existing LIBERO launch ledger has no valid profile binding",
