@@ -2278,6 +2278,19 @@ def test_deterministic_installer_record_order_and_modes_are_exact() -> None:
     assert VERIFIER._file_identity(b"abc", True)["mode"] == 0o755
 
 
+def test_deterministic_installer_records_data_scheme_relative_path() -> None:
+    digest = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    entry = {"sha256": digest, "size": 3}
+    assert VERIFIER._installed_record_bytes(
+        {"share/man/ttx.1": entry},
+        "inert.dist-info/RECORD",
+        {"share/man/ttx.1": "../../../share/man/ttx.1"},
+    ) == (
+        b"../../../share/man/ttx.1,sha256=ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0,3\r\n"
+        b"inert.dist-info/RECORD,,\r\n"
+    )
+
+
 def test_deterministic_installer_arguments_do_not_inherit_configuration() -> None:
     wheels = Path("/opt/npa/robomimic/installer-wheels")
     lock = Path("/opt/npa/robomimic/baked-requirements.lock")

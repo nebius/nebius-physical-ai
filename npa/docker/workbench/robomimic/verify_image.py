@@ -1479,20 +1479,33 @@ def _record_digest(entry: dict) -> str:
 
 
 def _authenticated_installed_record(
-    path: Path, expected: dict, record_name: str
+    path: Path,
+    expected: dict,
+    record_name: str,
+    record_paths: dict[str, str] | None = None,
 ) -> dict:
     """Require pinned pip's exact sorted CSV, independently derived from inputs."""
     raw = _immutable_bytes(path, BAKED_MEMBER_MAX_BYTES)
-    if raw != _installed_record_bytes(expected, record_name):
+    if raw != _installed_record_bytes(expected, record_name, record_paths):
         raise VerificationError("installed RECORD transformation mismatch")
     return _file_identity(raw)
 
 
-def _installed_record_bytes(expected: dict, record_name: str) -> bytes:
+def _installed_record_bytes(
+    expected: dict,
+    record_name: str,
+    record_paths: dict[str, str] | None = None,
+) -> bytes:
     # posix_home lib/python -> bin is exactly ../../bin before --target moves.
     rows = [
         (
-            "../../" + name if name.startswith("bin/") else name,
+            (
+                record_paths[name]
+                if record_paths is not None and name in record_paths
+                else "../../" + name
+                if name.startswith("bin/")
+                else name
+            ),
             _record_digest(entry),
             str(entry["size"]),
         )
@@ -1529,19 +1542,27 @@ def _wheel_expected_inventory(
     if record_name not in members:
         raise VerificationError("wheel RECORD is absent")
     _verify_wheel_record(members, record_name)
-    result = {}
+    result, record_paths = {}, {}
     for name, (raw, executable) in members.items():
         if name != record_name:
             target = _wheel_target(name, directory)
             if target == "bin" or target.startswith("bin/"):
                 raise VerificationError("wheel reserves generated script directory")
             _add_inventory_member(result, target, _file_identity(raw, executable))
+            record_paths[target] = (
+                "../../../" + target
+                if PurePosixPath(name).parts[0].endswith(".data")
+                else target
+            )
     for suffix, raw in (("INSTALLER", b"pip\n"), ("REQUESTED", b"")):
-        _add_inventory_member(result, f"{directory}/{suffix}", _file_identity(raw))
+        target = f"{directory}/{suffix}"
+        _add_inventory_member(result, target, _file_identity(raw))
+        record_paths[target] = target
     for name, entry in _wheel_scripts(members, directory).items():
         _add_inventory_member(result, name, entry)
+        record_paths[name] = "../../" + name
     result[record_name] = _authenticated_installed_record(
-        installed_root / record_name, result, record_name
+        installed_root / record_name, result, record_name, record_paths
     )
     return result
 
