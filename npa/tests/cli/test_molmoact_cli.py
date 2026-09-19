@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 import json
-import urllib.request
+import http.client
 
 import pytest
 import typer
@@ -27,13 +27,23 @@ from npa.workflows.byof.molmoact_pipeline import (
 
 
 def test_hf_model_repo_accessible():
-    """allenai/MolmoAct-7B-O-0812 must be a public, ungated HF repo."""
-    url = f"https://huggingface.co/api/models/{DEFAULT_MODEL_ID}"
-    request = urllib.request.Request(url, headers={"User-Agent": "npa-molmoact-tests"})
-    # Constant HuggingFace API URL built from the pinned DEFAULT_MODEL_ID.
-    with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
+    """allenai/MolmoAct-7B-O-0812 must be a public, ungated HF repo.
+
+    The probe uses HTTPS against the fixed huggingface.co host; the pinned
+    repo id only ever lands in the request path.
+    """
+    connection = http.client.HTTPSConnection("huggingface.co", timeout=30)
+    try:
+        connection.request(
+            "GET",
+            f"/api/models/{DEFAULT_MODEL_ID}",
+            headers={"User-Agent": "npa-molmoact-tests"},
+        )
+        response = connection.getresponse()
         assert response.status == 200
-        payload = json.load(response)
+        payload = json.loads(response.read().decode("utf-8"))
+    finally:
+        connection.close()
     assert payload["id"] == DEFAULT_MODEL_ID
     assert payload["private"] is False
     assert payload.get("gated") in (False, None, "false")
