@@ -1,0 +1,30 @@
+[
+  {
+    "end": 200000000,
+    "index_type": 2,
+    "sample_id": "episode-0",
+    "start": 0,
+    "tag": "subtask:approach"
+  },
+  {
+    "end": 400000000,
+    "index_type": 2,
+    "sample_id": "episode-0",
+    "start": 200000000,
+    "tag": "subtask:grasp"
+  },
+  {
+    "end": 100000000,
+    "index_type": 2,
+    "sample_id": "episode-1",
+    "start": 0,
+    "tag": "subtask:align"
+  },
+  {
+    "end": 400000000,
+    "index_type": 2,
+    "sample_id": "episode-1",
+    "start": 100000000,
+    "tag": "subtask:place"
+  }
+]

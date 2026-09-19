@@ -60,7 +60,8 @@ def test_one_pr_workflow_owns_every_merge_gate() -> None:
     assert jobs["gitleaks"]["name"] == "gitleaks"
     assert jobs["scan"]["name"] == "scan"
     required = set(jobs["security-regression"]["needs"])
-    assert required == set(jobs) - {"security-regression"}
+    assert required == set(jobs) - {"security-regression", "ci-timing-report"}
+    assert jobs["ci-timing-report"]["needs"] == "security-regression"
 
 
 def test_test_and_lint_do_not_duplicate_feature_branch_pushes() -> None:
@@ -182,8 +183,75 @@ def test_coverage_shards_are_parallel_and_merged_before_enforcement() -> None:
     report = _step("test.yml", "coverage", "merged coverage floor")["run"]
     assert "coverage combine" in report
     assert "--fail-under=60" in report
-    profile = _step("test.yml", "coverage", "Merge scheduled duration")["run"]
+    profile = _step("test.yml", "coverage", "Merge Python 3.12 duration")["run"]
     assert "merge_ci_test_timings.py" in profile
+
+
+def test_ci_installers_pin_versions_cache_packages_and_keep_cpu_runtime() -> None:
+    """Preserve reproducibility and real CPU coverage when speeding up setup.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A test environment loses dependency pins or CPU routing.
+    """
+    jobs = _load_workflow("test.yml")["jobs"]
+    for name in ("test", "affected-tests", "pr-smoke", "browser-mocked"):
+        setup = next(step for step in jobs[name]["steps"] if "setup-uv@" in step.get("uses", ""))
+        assert setup["with"]["version"] == "0.12.5"
+        assert setup["with"]["enable-cache"] == "true"
+        assert "npa/ci/requirements.txt" in setup["with"]["cache-dependency-glob"]
+        installs = [step["run"] for step in jobs[name]["steps"] if "uv pip install" in step.get("run", "")]
+        assert installs and all("-c npa/ci/requirements.txt" in command for command in installs)
+    for name in ("test", "affected-tests"):
+        command = _step("test.yml", name, "CPU checkpoint" if name == "test" else "Install affected")["run"]
+        assert "--torch-backend cpu" in command
+        assert "assert torch.version.cuda is None" in command
+    assert "ci_requirements.py --check" in _step("test.yml", "scope", "dependency pins")["run"]
+
+
+def test_timing_report_is_read_only_and_runs_after_the_required_gate() -> None:
+    """Keep timing metadata collection outside the required validation path.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Reporting gains write access or delays a required check.
+    """
+    workflow = _load_workflow("security-regression.yml")
+    job = workflow["jobs"]["ci-timing-report"]
+    assert job["needs"] == "security-regression"
+    assert job["if"] == "${{ !cancelled() }}"
+    assert job["permissions"] == {"actions": "read", "contents": "read"}
+    steps = job["steps"]
+    assert steps[0]["with"] == {"persist-credentials": "false"}
+    commands = "\n".join(step.get("run", "") for step in steps)
+    assert "--paginate --slurp" in commands
+    assert "/attempts/${GITHUB_RUN_ATTEMPT}" in commands
+    assert all("download-artifact" not in step.get("uses", "") for step in steps)
+    assert "ci-timing-report" not in workflow["jobs"]["security-regression"]["needs"]
+
+
+def test_every_python_312_candidate_publishes_module_timings() -> None:
+    """Retain failed-shard measurements and merge complete successful profiles.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Timing evidence is confined to scheduled audits.
+    """
+    upload = _step("test.yml", "test", "Upload Python 3.12 timing")
+    assert "always()" in upload["if"]
+    assert "matrix.python-version == '3.12'" in upload["if"]
+    assert "schedule" not in upload["if"]
+    merge = _step("test.yml", "coverage", "Merge Python 3.12 duration")
+    assert "if" not in merge
 
 
 def test_browser_execution_has_one_owner_and_remains_blocking() -> None:

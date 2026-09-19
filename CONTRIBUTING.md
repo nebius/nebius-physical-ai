@@ -544,8 +544,39 @@ The internal sharder activates only when `NPA_CI_SHARD_INDEX` and
 `NPA_CI_TOTAL_SHARDS` are both set. The index is one-based and must not exceed
 the total; ordinary local test runs leave both variables unset. It greedily
 balances measured module durations from `npa/tests/ci_test_durations.json`, then
-uses a deterministic default for new tests. Scheduled Python 3.12 shards
-publish a merged timing profile that can refresh the reviewed manifest.
+uses a deterministic default for new tests. Every full Python 3.12 run uploads
+per-shard module timings, including available measurements from failed shards.
+Successful full runs publish `ci-test-durations-<sha>` with a merged profile.
+Use a successful scheduled `main` audit to refresh the reviewed manifest; PR
+profiles are diagnostic evidence and are never loaded automatically as policy.
+
+### CI dependency setup and timing reports
+
+Python test jobs use uv 0.12.5 with a persistent package cache and
+`npa/ci/requirements.txt` constraints. These pins cover the core, development,
+adapter, and CPU SONIC/export dependencies across Python 3.10, 3.12, and 3.14.
+The CPU Torch version remains in `npa/ci/constraints.in`. CI rejects stale pins
+when these dependency inputs change. With uv 0.12.5 installed, refresh them using:
+
+```bash
+npa/.venv/bin/python npa/scripts/ci_requirements.py --update
+npa/.venv/bin/python npa/scripts/ci_requirements.py --check
+```
+
+Add `--upgrade` to the update command for an intentional dependency upgrade;
+ordinary refreshes retain compatible existing pins. Review and commit the
+generated requirements with their input change. Local contributor installs may
+still use pip; these constraints make the CI test environment reproducible.
+
+The `ci-timing-report` job runs after the required `security-regression` check
+finishes, including failed checks. Its Actions summary and
+`ci-timing-<run-id>-<attempt>` artifact show each job's runner wait, execution,
+and setup time, with individual step durations in JSON. Runner wait measures
+job creation to start; it excludes time waiting for dependencies before job
+creation. Parallel job durations must not be added to estimate merge latency.
+Reporting reads only run metadata with read-only permissions and is excluded
+from its own measurements. It is outside the required merge checks; cancellation
+of the parent workflow can interrupt reporting.
 
 ## Testing Requirements
 

@@ -86,6 +86,10 @@ _GIB = 1024**3
 _MIN_TERRAFORM_VERSION = (1, 12, 0)
 
 
+class _ClusterNameCollisionError(RuntimeError):
+    """Terraform rejected creation because the requested cluster name exists."""
+
+
 def _redacted_exception_message(prefix: str, exc: BaseException) -> str:
     from npa.clients.nebius import redact_nebius_output
 
@@ -676,7 +680,8 @@ def up_cmd(
             # legacy Terraform state keeps its established reconciliation
             # checks below instead of being reclassified as fleet state.
             provider_preflight=(
-                mig_enabled or (not legacy_state_exists and shared_recipe_available)
+                inherited_plan is None
+                and (mig_enabled or (not legacy_state_exists and shared_recipe_available))
             ),
             scope=MK8sExecutionScope(
                 fleet_name=one_target.name,
@@ -890,13 +895,19 @@ def up_cmd(
                     terraform_env=env,
                     terraform_timeout_seconds=timeout * 60,
                     terraform_cancel_reason=lambda: watcher.fatal_reason,
-                    command_runner=_run_stream,
+                    command_runner=_run_stream_with_captured_output,
                 ),
             )
         except BaseException as exc:
             watcher.stop()
+            error_to_report: BaseException = exc
+            if _is_cluster_name_collision(exc):
+                error_to_report = _ClusterNameCollisionError(
+                    "Terraform rejected the requested cluster name because it already exists"
+                )
             typer.echo(
-                _redacted_exception_message("terraform apply error", exc), err=True
+                _redacted_exception_message("terraform apply error", error_to_report),
+                err=True,
             )
             operation = current_operation()
             rolled_back = False
@@ -917,6 +928,8 @@ def up_cmd(
                 )
             if not rolled_back:
                 _echo_apply_recovery(tf_dir, tfvars, isinstance(exc, KeyboardInterrupt))
+            if isinstance(error_to_report, _ClusterNameCollisionError):
+                raise error_to_report from exc
             raise
         finally:
             watcher.stop()
@@ -2226,6 +2239,31 @@ def _run_stream(
         raise typer.BadParameter(str(exc)) from exc
 
 
+def _run_stream_with_captured_output(
+    args: list[str],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+    timeout: int | None = None,
+    cancel: Callable[[], str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run Terraform while retaining diagnostics for a safe error classification."""
+    return _run_stream(
+        args,
+        cwd=cwd,
+        env=env,
+        timeout=timeout,
+        cancel=cancel,
+        capture_output=True,
+    )
+
+
+def _is_cluster_name_collision(exc: BaseException) -> bool:
+    """Return whether Terraform reported that creation collided with an existing name."""
+    message = str(exc).lower()
+    return "alreadyexists" in message or "already exists" in message
+
+
 def _stop_process(process: subprocess.Popen[str]) -> None:
     """Compatibility alias for tests and older internal callers."""
 
@@ -2438,6 +2476,20 @@ def _capacity_block_group_var_args(capacity_block_group: str) -> list[str]:
 _SSH_PUBLIC_KEY_NAMES = ("id_ed25519.pub", "id_rsa.pub", "id_ecdsa.pub")
 
 
+def _authorized_key_from_file(path: Path) -> str:
+    """Return the first plain public-key entry from an ``authorized_keys`` file."""
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for line in lines:
+        value = line.strip()
+        if value.startswith(("ssh-ed25519 ", "ssh-rsa ", "ecdsa-sha2-")):
+            return value
+    return ""
+
+
 def _resolve_shared_ssh_public_key(tfvars: dict[str, Any], env: dict[str, str]) -> str:
     """Resolve legacy path-or-key tfvars into the shared recipe's key value."""
 
@@ -2445,6 +2497,24 @@ def _resolve_shared_ssh_public_key(tfvars: dict[str, Any], env: dict[str, str]) 
     if raw is None:
         raw = env.get("TF_VAR_ssh_public_key", "")
     document = str(raw or "").strip()
+    # ``TF_VAR_*`` is commonly set from shell or service-manager environments.
+    # Accept the JSON object representation too: an earlier agent backend used
+    # ``json.dumps({"path": ...})`` while Terraform's CLI examples use HCL.
+    # Keeping both forms makes an in-place agent upgrade safe.
+    try:
+        json_object = json.loads(document)
+    except json.JSONDecodeError:
+        json_object = None
+    if isinstance(json_object, dict):
+        key = json_object.get("key")
+        if isinstance(key, str) and key.strip():
+            return key.strip()
+        path_value = json_object.get("path")
+        if isinstance(path_value, str) and path_value.strip():
+            path = Path(path_value).expanduser()
+            if not path.is_file():
+                raise typer.BadParameter(f"SSH public key path does not exist: {path}")
+            return path.read_text(encoding="utf-8").strip()
     key_match = re.search(r'\bkey\s*=\s*"([^"]+)"', document, re.DOTALL)
     if key_match:
         return key_match.group(1).strip()
@@ -2457,6 +2527,12 @@ def _resolve_shared_ssh_public_key(tfvars: dict[str, Any], env: dict[str, str]) 
     if document and document.startswith(("ssh-", "ecdsa-")):
         return document
     explicit = os.environ.get("NPA_SSH_PUBLIC_KEY", "").strip()
+    if explicit:
+        explicit_path = Path(explicit).expanduser()
+        if explicit_path.name == "authorized_keys":
+            authorized_key = _authorized_key_from_file(explicit_path)
+            if authorized_key:
+                return authorized_key
     candidates = (
         [Path(explicit).expanduser()]
         if explicit
@@ -2501,6 +2577,13 @@ def _ssh_public_key_var_args(
     )
     for candidate in candidates:
         if candidate.is_file():
+            if candidate.name == "authorized_keys":
+                authorized_key = _authorized_key_from_file(candidate)
+                if authorized_key:
+                    return [
+                        "-var",
+                        "ssh_public_key={key=" + json.dumps(authorized_key) + "}",
+                    ]
             return ["-var", f'ssh_public_key={{path="{candidate}"}}']
     if allow_placeholder:
         return [

@@ -1296,6 +1296,28 @@ def test_generate_workflow_yaml_dispatcher() -> None:
     assert "sim2real-two-step" in default
 
 
+def test_cpu_workflow_draft_binds_the_discovered_kubernetes_context() -> None:
+    draft = generate_workflow_draft(
+        template="token-factory-deployment-review",
+        bucket="unit-bucket",
+        infrastructure={
+            "project": "unit",
+            "has_infra": True,
+            "configured": [
+                {
+                    "cluster_name": "unit-cluster",
+                    "context": "unit-context",
+                    "kubeconfig": str(Path.cwd() / "unit-kubeconfig"),
+                }
+            ],
+        },
+    )
+
+    spec = yaml.safe_load(draft["yaml"])
+    assert draft["runnable"] is True
+    assert spec["resources"]["cpu"]["infra"] == "k8s/unit-context"
+
+
 def test_vlm_rl_draft_keeps_canonical_resource_profiles_without_live_infra() -> None:
     draft = generate_workflow_draft(
         template="vlm-rl-loop",
@@ -1384,6 +1406,52 @@ def test_generate_workflow_draft_returns_selection_and_valid_yaml() -> None:
     assert draft["runnable"] is True
     assert "metadata:" in draft["yaml"]
     assert "\n\n  scene_uri:" in draft["yaml"]
+
+
+def test_deployment_review_draft_is_runnable_and_chains_real_artifacts() -> None:
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    draft = generate_workflow_draft(
+        user_text="create a Token Factory deployment readiness review workflow",
+        intent="create_workflow",
+        bucket="run-bucket",
+        tool_refs=frozenset(TOOL_CATALOG),
+    )
+
+    assert draft["template"] == "token-factory-deployment-review"
+    assert draft["validation"]["ok"] is True
+    assert draft["plan"]["ok"] is True
+    assert draft["runnable"] is True
+    spec = yaml.safe_load(draft["yaml"])
+    assert "token_factory_deployment_input" in spec["states"]["prepare-prompts"]["run"]["shell"]
+    assert spec["states"]["prepare-prompts"]["outputs"] == [
+        {
+            "uri": "{{config.prompts_uri}}",
+            "schema": "npa.token_factory.prompts.v1",
+        }
+    ]
+    assert spec["states"]["generate-recommendations"]["toolRef"] == (
+        "workbench.token_factory.generate"
+    )
+    assert spec["states"]["generate-recommendations"]["needs"] == ["prepare-prompts"]
+    assert spec["states"]["triage-recommendations"]["toolRef"] == (
+        "workbench.token_factory.triage"
+    )
+    assert spec["resources"]["cpu"] == {
+        "cloud": "kubernetes",
+        "cpus": 1,
+        "memory": "4Gi",
+    }
+    assert spec["config"]["artifacts_uri"].endswith("/")
+
+
+def test_deployment_review_beats_generic_gate_for_the_chat_intent() -> None:
+    selection = choose_workflow_template(
+        user_text="Create a Token Factory deployment readiness review workflow.",
+        intent="create_gate_workflow",
+    )
+
+    assert selection["template"] == "token-factory-deployment-review"
 
 
 def test_generate_workflow_draft_sets_not_runnable_when_plan_fails(monkeypatch) -> None:

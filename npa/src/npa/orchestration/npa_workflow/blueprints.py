@@ -1,7 +1,7 @@
 """Locations of the supported ``npa.workflow`` blueprint catalog.
 
-The source catalog lives in repo-root ``workflows/main`` and
-``workflows/testing``. Wheels include the same directories as package data so
+The source catalog lives in repo-root ``workflows/main``, ``workflows/testing``,
+and ``workflows/partners/<partner>``. Wheels include the same directories so
 discovery and canonical workflow consumers also work without a source checkout.
 Guarded raw SkyPilot examples and resource profiles are separate from this catalog.
 """
@@ -12,36 +12,29 @@ from pathlib import Path
 
 import yaml
 
+from npa.workflow_build import catalog_directories
+
 # blueprints.py -> npa_workflow -> orchestration -> npa -> src -> npa -> <repo root>
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 _PACKAGE_ROOT = Path(__file__).resolve().parents[2]
-
-#: The first pair is the source catalog; the second pair is its installed fallback.
-NPA_WORKFLOW_SPEC_DIRS: tuple[Path, ...] = (
-    _REPO_ROOT / "workflows" / "main",
-    _REPO_ROOT / "workflows" / "testing",
-    _PACKAGE_ROOT / "workflows" / "main",
-    _PACKAGE_ROOT / "workflows" / "testing",
-)
 
 
 def npa_workflow_spec_dirs() -> tuple[Path, ...]:
     """Return the existing source or installed catalog directories."""
 
-    source_dirs = tuple(
-        directory for directory in NPA_WORKFLOW_SPEC_DIRS[:2] if directory.is_dir()
-    )
     # Generated container copies can outlive a source rename or deletion. A
     # checkout's catalog remains authoritative until the next build stages it.
-    return source_dirs or tuple(
-        directory for directory in NPA_WORKFLOW_SPEC_DIRS[2:] if directory.is_dir()
-    )
+    for catalog in (_REPO_ROOT / "workflows", _PACKAGE_ROOT / "workflows"):
+        directories = tuple(path for path in catalog_directories(catalog) if path.is_dir())
+        if directories:
+            return directories
+    return ()
 
 
 def iter_npa_workflow_specs() -> list[Path]:
     """All ``*.yaml`` blueprint specs across the roots, de-duplicated by name.
 
-    Only the two catalog directories are scanned; nested examples and raw
+    Only supported catalog directories are scanned; nested examples and raw
     SkyPilot/profile YAML homes are outside the supported declarative catalog.
     """
 

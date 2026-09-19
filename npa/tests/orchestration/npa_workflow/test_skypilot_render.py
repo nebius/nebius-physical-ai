@@ -23,6 +23,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     render_skypilot_yaml,
     resolve_task_image,
     tool_image_key,
+    tool_requires_staged_npa_source,
 )
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit import (
@@ -530,6 +531,8 @@ def test_tool_image_key_prefix_match() -> None:
     assert tool_image_key("workbench.lancedb.import_bdd100k") == "lancedb"
     assert tool_image_key("workbench.sonic.train") == "sonic"
     assert tool_image_key("unknown.tool") is None
+    assert tool_requires_staged_npa_source("workbench.sonic.train") is True
+    assert tool_requires_staged_npa_source("workbench.cosmos3.generate") is False
 
 
 def test_alpamayo2_super_resolves_configured_image() -> None:
@@ -1336,6 +1339,23 @@ def test_default_npa_setup_has_optin_source_overlay() -> None:
     assert setup.index("PYTHONPATH=/tmp/npa-src-overlay/src") < setup.index(
         "npa_pip_install -e /tmp/npa-src-overlay --no-deps"
     )
+
+
+def test_default_npa_setup_installs_the_image_local_runtime_source_first() -> None:
+    """Runtime-fetch images may carry /opt/npa without a PATH-visible CLI."""
+
+    from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
+
+    setup = default_npa_setup()
+    modern_guard = "[ -f /opt/npa/pyproject.toml ] && [ -d /opt/npa/src/npa ]"
+    assert modern_guard in setup
+    assert "npa_pip_install -e /opt/npa" in setup
+    # The image-local source must win before legacy / external paths, otherwise
+    # a runtime-fetch task can acquire a GPU and then fail solely because no
+    # NPA_SRC_S3_URI was supplied.
+    assert setup.index("npa_pip_install -e /opt/npa") < setup.index(
+        "npa_pip_install -e /opt/nebius-physical-ai/npa"
+    ) < setup.index("NPA_SRC_S3_URI")
 
 
 def test_openpi_full_droid_prepare_forces_cpu_jax_before_cli_import() -> None:

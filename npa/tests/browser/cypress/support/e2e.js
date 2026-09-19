@@ -1183,12 +1183,31 @@ function installAgentApiMocks() {
       ],
     },
   })).as("workflowPlan");
-  cy.intercept("POST", "/api/workflows/submit", json({
-    ok: true,
-    run_id: "workflow-run",
-    submit_mode: "mock",
-    validation: WORKFLOW_VALIDATION,
-  })).as("workflowSubmitYaml");
+  cy.intercept("POST", "/api/workflows/submit", (req) => {
+    if (req.body && req.body.prepare_execution) {
+      req.reply(json({
+        ok: true,
+        run_id: "workflow-run",
+        submit_mode: "agent-live-infra-confirm-required",
+        validation: WORKFLOW_VALIDATION,
+        needs_confirmation: true,
+        confirm_token: "mock-confirm-token",
+        proposed_action: { action: "execute_workflow" },
+      }));
+      return;
+    }
+    if (req.body && req.body.execute) {
+      req.reply(json({
+        ok: true,
+        run_id: "workflow-run",
+        submit_mode: "agent-live-infra-executed",
+        validation: WORKFLOW_VALIDATION,
+        execution: { run_id: "workflow-run", status: "SUCCEEDED" },
+      }));
+      return;
+    }
+    req.reply(json({ ok: false, error: "missing execution intent" }));
+  }).as("workflowSubmitYaml");
   cy.intercept("POST", "/api/workflows/sim2real/submit", json({
     ok: true,
     run_id: "submitted-run",
@@ -1422,5 +1441,6 @@ export {
   resolveLiveAgentConfig,
   SIM_VIZ,
   STATIC_BUTTON_IDS,
+  WORKFLOW_VALIDATION,
   WORKFLOW_YAML,
 };

@@ -9,10 +9,12 @@ layout, and verify the final aggregate without embedding Python in YAML.
 from __future__ import annotations
 
 import concurrent.futures
+from contextlib import contextmanager
 import hashlib
 import json
 import math
 import os
+import queue
 import shutil
 import subprocess
 import tempfile
@@ -760,6 +762,57 @@ def _caption_text(payload: Any) -> str:
     return " ".join(captions[index] for index in indices)
 
 
+@contextmanager
+def _generation_gpu(available: queue.Queue[str]):
+    gpu = available.get()
+    try:
+        yield gpu
+    finally:
+        available.put(gpu)
+
+
+def _generation_progress(variants, failures, *, count, attempt):
+    status = "running"
+    if len(variants) + len(failures) == count:
+        status = "failed" if failures else "completed"
+    return {
+        "schema": "npa.paidf.cosmos3.generation-progress.v1",
+        "status": status,
+        "attempt": attempt,
+        "requested_variant_count": count,
+        "published_variant_count": len(variants),
+        "failed_variant_count": len(failures),
+        "variants": sorted(variants, key=lambda item: item["clip"]),
+        "failures": sorted(failures, key=lambda item: item["clip"]),
+    }
+
+
+def _publish_completed_variants(futures, publish, *, output_uri, storage, attempt):
+    variants = []
+    failures = []
+    first_error = None
+    for future in concurrent.futures.as_completed(futures):
+        index = futures[future]
+        phase = "generation"
+        try:
+            generated = future.result()
+            phase = "publication"
+            variants.append(publish(generated))
+        except Exception as error:
+            if first_error is None:
+                first_error = error
+            failures.append({"clip": f"variant-{index:04d}", "phase": phase,
+                             "error_type": type(error).__name__})
+        progress = _generation_progress(variants, failures, count=len(futures), attempt=attempt)
+        _write_json(progress, output_uri.rstrip("/") + "/generation-progress.json", storage=storage)
+    if failures:
+        raise PaidfCosmos3Error(
+            f"{len(failures)} of {len(futures)} variants failed; "
+            f"{len(variants)} published variants retained; inspect generation-progress.json and stage logs"
+        ) from first_error
+    return sorted(variants, key=lambda item: item["clip"])
+
+
 def _variant_metadata(
     clip: str,
     variables: Mapping[str, Any],
@@ -876,6 +929,7 @@ def generate_variants(
     transfer_edge_threshold: str = "medium",
     transfer_rgb_weight: float = 0.0,
     transfer_first_chunk_conditional_frames: int = 1,
+    transfer_cfg_normalization: str = "disabled",
 ) -> dict[str, Any]:
     """Run one real Cosmos 3 video2video inference per configured variant."""
 
@@ -893,13 +947,17 @@ def generate_variants(
         raise PaidfCosmos3Error("transfer_rgb_weight requires structural_control=edge")
     if structural_control == "none" and transfer_first_chunk_conditional_frames != 1:
         raise PaidfCosmos3Error("transfer_first_chunk_conditional_frames requires structural_control=edge")
+    from npa.workbench.cosmos.structural_transfer import cfg_normalization_enabled
+
+    if cfg_normalization_enabled(transfer_cfg_normalization) and structural_control != "edge":
+        raise PaidfCosmos3Error("transfer_cfg_normalization requires structural_control=edge")
     transfer = None
     if structural_control == "edge":
         from npa.workbench.cosmos.structural_transfer import TransferSettings
 
         transfer = TransferSettings(conditioning_fps, transfer_chunk_frames, control_guidance,
                                     transfer_edge_threshold, transfer_rgb_weight,
-                                    transfer_first_chunk_conditional_frames)
+                                    transfer_first_chunk_conditional_frames, transfer_cfg_normalization)
         transfer.validate()
     enabled = str(guardrails).strip().lower() in {"1", "true", "yes", "on"}
     if not enabled:
@@ -943,6 +1001,9 @@ def generate_variants(
     if not gpu_ids:
         raise PaidfCosmos3Error("Cosmos 3 generation requires a visible GPU")
     concurrency = min(count, requested_parallelism, len(gpu_ids))
+    available_gpus: queue.Queue[str] = queue.Queue()
+    for gpu in gpu_ids[:concurrency]:
+        available_gpus.put(gpu)
     config_manifest = _read_json(
         configs_uri.rstrip("/") + "/manifest.json", storage=client
     )
@@ -977,57 +1038,57 @@ def generate_variants(
         variant_prompt = generation_prompt(prompt, caption, str(combo.get("prompt") or ""))
         variant_seed = base_seed + attempt * seed_stride + index
         env = dict(environ if environ is not None else os.environ)
-        env["CUDA_VISIBLE_DEVICES"] = gpu_ids[index % concurrency]
-        result = run_generate(
-            mode=VIDEO_MODE,
-            prompt=variant_prompt,
-            name=f"variant-{index:04d}",
-            checkpoint=checkpoint,
-            input_path=local_input,
-            output_path=str(work_root / f"variant-{index:04d}"),
-            negative_prompt=negative_prompt,
-            seed=variant_seed,
-            num_steps=effective_steps,
-            guidance=effective_guidance,
-            no_guardrails=False,
-            parallelism_preset=parallelism_preset,
-            run_id=run_id,
-            environ=env,
-            **({"transfer": transfer} if transfer is not None else {}),
-        )
+        with _generation_gpu(available_gpus) as gpu:
+            env["CUDA_VISIBLE_DEVICES"] = gpu
+            result = run_generate(
+                mode=VIDEO_MODE,
+                prompt=variant_prompt,
+                name=f"variant-{index:04d}",
+                checkpoint=checkpoint,
+                input_path=local_input,
+                output_path=str(work_root / f"variant-{index:04d}"),
+                negative_prompt=negative_prompt,
+                seed=variant_seed,
+                num_steps=effective_steps,
+                guidance=effective_guidance,
+                no_guardrails=False,
+                parallelism_preset=parallelism_preset,
+                run_id=run_id,
+                environ=env,
+                **({"transfer": transfer} if transfer is not None else {}),
+            )
         if transfer is not None:
             from npa.workflows.paidf_cosmos3_media import verify_pair
 
             result["temporal_alignment"] = verify_pair(Path(local_input), Path(result["output_path"]), conditioning_fps)
         return index, result, combo, variant_prompt
 
-    generated: list[tuple[int, dict[str, Any], dict[str, Any], str]] = []
+    def publish_one(generated):
+        index, result, combo, variant_prompt = generated
+        return _publish_variant(
+            result=result,
+            output_uri=output_uri,
+            clip=f"variant-{index:04d}",
+            variables=combo,
+            metadata={
+                "prompt": variant_prompt,
+                "model": checkpoint,
+                "seed": base_seed + attempt * seed_stride + index,
+                "guidance": effective_guidance,
+                "steps": effective_steps,
+                "guardrails": True,
+                "attempt": attempt,
+                "input_provenance_uri": input_provenance_uri,
+                **({"temporal_alignment": result["temporal_alignment"]} if transfer is not None else {}),
+            },
+            storage=client,
+        )
+
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
-            futures = [pool.submit(run_one, index) for index in range(count)]
-            for future in concurrent.futures.as_completed(futures):
-                generated.append(future.result())
-        variants: list[dict[str, Any]] = []
-        for index, result, combo, variant_prompt in sorted(generated):
-            variants.append(
-                _publish_variant(
-                    result=result,
-                    output_uri=output_uri,
-                    clip=f"variant-{index:04d}",
-                    variables=combo,
-                    metadata={
-                        "prompt": variant_prompt,
-                        "model": checkpoint,
-                        "seed": base_seed + attempt * seed_stride + index,
-                        "guidance": effective_guidance,
-                        "steps": effective_steps,
-                        "guardrails": True,
-                        "attempt": attempt,
-                        "input_provenance_uri": input_provenance_uri,
-                        **({"temporal_alignment": result["temporal_alignment"]} if transfer is not None else {}),
-                    },
-                    storage=client,
-                )
+            futures = {pool.submit(run_one, index): index for index in range(count)}
+            variants = _publish_completed_variants(
+                futures, publish_one, output_uri=output_uri, storage=client, attempt=attempt,
             )
     finally:
         shutil.rmtree(work_root, ignore_errors=True)

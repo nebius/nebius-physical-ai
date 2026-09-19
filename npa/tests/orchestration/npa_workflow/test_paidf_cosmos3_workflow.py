@@ -110,6 +110,7 @@ def test_edge_preset_reaches_generation_cli_and_settings(tmp_path, monkeypatch):
     document["config"]["transfer_edge_threshold"] = "very_low"
     document["config"]["transfer_rgb_weight"] = 0.5
     document["config"]["transfer_first_chunk_conditional_frames"] = "0"
+    document["config"]["transfer_cfg_normalization"] = "enabled"
     path = tmp_path / "workflow.yaml"
     path.write_text(yaml.safe_dump(document))
     plan = build_plan(load_spec(path), run_id="edge-detail", assume_decision="promote_checkpoint")
@@ -121,6 +122,7 @@ def test_edge_preset_reaches_generation_cli_and_settings(tmp_path, monkeypatch):
     assert calls[0]["transfer_edge_threshold"] == "very_low"
     assert calls[0]["transfer_rgb_weight"] == 0.5
     assert calls[0]["transfer_first_chunk_conditional_frames"] == 0
+    assert calls[0]["transfer_cfg_normalization"] == "enabled"
 
 
 def test_invalid_edge_preset_fails_during_planning():
@@ -138,6 +140,7 @@ def test_legacy_generation_config_uses_default_rgb_weight(tmp_path, monkeypatch)
     document = _doc()
     document["config"].pop("transfer_rgb_weight")
     document["config"].pop("transfer_first_chunk_conditional_frames")
+    document["config"].pop("transfer_cfg_normalization")
     path = tmp_path / "workflow.yaml"
     path.write_text(yaml.safe_dump(document))
     plan = build_plan(load_spec(path), run_id="legacy-rgb", assume_decision="promote_checkpoint")
@@ -150,6 +153,26 @@ def test_legacy_generation_config_uses_default_rgb_weight(tmp_path, monkeypatch)
     assert calls[0]["transfer_rgb_weight"] == 0.0
     assert "--transfer-first-chunk-conditional-frames" not in stage.argv
     assert calls[0]["transfer_first_chunk_conditional_frames"] == 1
+    assert "--transfer-cfg-normalization" not in stage.argv
+    assert calls[0]["transfer_cfg_normalization"] == "disabled"
+
+
+@pytest.mark.parametrize("value", ["true", "false", "auto", "1", ""])
+def test_invalid_cfg_normalization_fails_during_planning(value):
+    result = runner.invoke(app, ["workbench", "workflow", "plan-spec", str(SPEC),
+                                "--run-id", "invalid-normalization", "--var",
+                                f"transfer_cfg_normalization={value}", "--json"])
+    assert result.exit_code != 0
+    assert "transfer_cfg_normalization" in result.output
+
+
+def test_cfg_normalization_requires_native_transfer():
+    result = runner.invoke(app, ["workbench", "workflow", "plan-spec", str(SPEC),
+                                "--run-id", "normalization-without-edge", "--var",
+                                "transfer_cfg_normalization=enabled", "--var",
+                                "structural_control=none", "--json"])
+    assert result.exit_code != 0
+    assert "transfer_cfg_normalization requires structural_control=edge" in result.output
 
 
 @pytest.mark.parametrize("value", ["-1", "2", "0.5", "true", "invalid"])

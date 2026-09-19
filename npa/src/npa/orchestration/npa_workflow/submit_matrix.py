@@ -83,6 +83,14 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Official v3.9.2 RGBD evaluator; no challenge score has been measured.",
     ),
     SubmitLiveCase(
+        "xr1-antioch-finetune.yaml", "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        rotation_skip=True,
+        skip_reason=("Requires an operator-owned Antioch session, physically qualified "
+                     "demonstrations, pinned XR1 assets, and the verified SM120 runtime in S3."),
+        notes="Native eight-RTX-PRO-6000 XR1 fine-tuning; paired Antioch robot evaluation is a separate operator step.",
+    ),
+    SubmitLiveCase(
         "franka-rl-transfer.yaml", "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "NEBIUS_TOKEN_FACTORY_KEY"),
         runtime=True, requires_token_factory=True,
@@ -315,6 +323,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "CPU-only fail-closed execution of the installed SONIC accelerator "
             "resolver; publishes a manifest, test report, and time-structured RRD. "
             "Provider recognition and GPU execution remain separate assertions."
+        ),
+    ),
+    SubmitLiveCase(
+        "lerobot-subtask-proof.yaml",
+        "cpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes=(
+            "CPU-only post-review gate over real LeRobot v3 Parquet rows. The "
+            "harness seeds complete approach/grasp labels; the workflow publishes "
+            "a grasp proof bound to the source data-file digest."
         ),
     ),
     SubmitLiveCase(
@@ -1018,6 +1036,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "robocasa-smoke.yaml",
         "gpu",
+        secret_envs=("ROBOCASA_TOKEN",),
         plan_only=True,
         plan_only_justification="npa-robocasa is a validation candidate; its image is not yet built or GPU-validated, so the native RoboCasa smoke cannot submit until the accepted digest and GPU evidence are recorded",
         notes="Native RoboCasa workbench smoke: task registration, asset availability, EGL reset, random rollout.",
@@ -1025,7 +1044,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "robocasa-data-policy.yaml",
         "gpu",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "ROBOCASA_TOKEN"),
         notes="Production PandaOmron RoboCasa data->policy pipeline: multi-task trajectory export, LeRobotDataset materialization, real ACT training, disjoint RoboCasa exact-checkpoint evaluation, insights lineage.",
     ),
     SubmitLiveCase(

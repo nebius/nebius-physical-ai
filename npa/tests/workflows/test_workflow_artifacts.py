@@ -16,10 +16,12 @@ from npa.workflows.artifacts import (
     artifact_media_type,
     artifact_data_role,
     build_fiftyone_dataset,
+    build_s3_client,
     decode_run_ref,
     download_s3_uri,
     encode_run_ref,
     find_run_artifacts,
+    find_run_sources_by_prefix_tree_across_buckets,
     infer_run_id_from_artifact_key,
     find_run_artifact_page,
     list_all_run_prefixes,
@@ -35,6 +37,33 @@ from npa.workflows.artifacts import (
     resolve_run_artifacts,
     select_preferred_artifact,
 )
+
+
+def test_build_s3_client_applies_requested_transport_bounds() -> None:
+    client = build_s3_client(
+        endpoint_url="https://storage.example.test",
+        aws_access_key_id="test-access-key",
+        aws_secret_access_key="test-secret-key",
+        connect_timeout=3,
+        read_timeout=8,
+        retries={"total_max_attempts": 1, "mode": "standard"},
+    )
+
+    assert client.meta.config.connect_timeout == 3
+    assert client.meta.config.read_timeout == 8
+    assert client.meta.config.retries["total_max_attempts"] == 1
+
+
+@pytest.mark.parametrize("name", ["connect_timeout", "read_timeout"])
+def test_build_s3_client_rejects_non_positive_transport_bound(name: str) -> None:
+    kwargs = {name: 0}
+    with pytest.raises(ValueError, match=f"{name} must be positive"):
+        build_s3_client(
+            endpoint_url="https://storage.example.test",
+            aws_access_key_id="test-access-key",
+            aws_secret_access_key="test-secret-key",
+            **kwargs,
+        )
 
 
 def test_complete_canonical_run_wins_over_same_id_one_file_overlay() -> None:
@@ -969,6 +998,45 @@ def test_exact_run_ref_reuses_credential_scoped_server_observation(monkeypatch) 
         A._run_list_cache_clear()
 
 
+def test_cold_async_run_discovery_returns_pending_page(monkeypatch) -> None:
+    from threading import Event
+
+    import npa.workflows.artifacts as A
+
+    started = Event()
+    release = Event()
+    finished = Event()
+
+    def slow_discovery(*_args, **kwargs):
+        started.set()
+        assert release.wait(timeout=2)
+        finished.set()
+        return A.RunListPage(
+            runs=[],
+            truncated=False,
+            total_runs=0,
+            limit=kwargs["limit"],
+        )
+
+    A._run_list_cache_clear()
+    monkeypatch.setattr(A, "list_all_runs_across_buckets", slow_discovery)
+    try:
+        page = A.list_runs_cached_multi(
+            ["bucket"],
+            limit=20,
+            s3=object(),
+            cold_start_async=True,
+        )
+        assert page.runs == []
+        assert page.discovery_complete is False
+        assert page.source_errors[0]["code"] == "artifact_discovery_pending"
+        assert started.wait(timeout=2)
+    finally:
+        release.set()
+        assert finished.wait(timeout=2)
+        A._run_list_cache_clear()
+
+
 def test_server_discovered_exact_source_survives_unrelated_truncated_scan(
     monkeypatch,
 ) -> None:
@@ -1676,6 +1744,32 @@ def test_exact_search_finds_flat_root_run_in_mixed_layout() -> None:
     assert resolved_prefix == ""
     assert len(artifact_page.artifacts) == 6
     assert artifact_page.truncated is False
+
+
+def test_exact_prefix_tree_search_finds_nested_run_without_object_index() -> None:
+    run_id = "deployment-review-run-20300101t010203z"
+    s3 = _PrefixAwareS3(
+        [
+            ("archive/older-run/report.json", "2026-08-01T00:00:00+00:00"),
+            (f"workflow-family/{run_id}/generated/report.json", "2026-08-02T00:00:00+00:00"),
+            (f"workflow-family/{run_id}/review/triage.json", "2026-08-02T00:01:00+00:00"),
+        ]
+    )
+
+    sources, errors, complete = find_run_sources_by_prefix_tree_across_buckets(
+        ["bucket"],
+        base_prefix="",
+        run_id=run_id,
+        bucket_projects={"bucket": "project-a"},
+        s3=s3,
+    )
+
+    assert errors == ()
+    assert complete is True
+    assert [
+        (item.run_id, item.bucket, item.project_id, item.resolved_prefix)
+        for item in sources
+    ] == [(run_id, "bucket", "project-a", "workflow-family")]
 
 
 def test_artifact_pages_preserve_unknown_formats_and_cursor() -> None:

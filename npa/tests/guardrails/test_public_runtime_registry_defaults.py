@@ -15,6 +15,7 @@ from npa.deploy.images import (
 )
 from npa.workflows.sim2real.config import build_config_from_env
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
+from npa.orchestration.npa_workflow.blueprints import iter_npa_workflow_specs
 from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
@@ -117,7 +118,7 @@ def test_every_shipped_workflow_keeps_owned_images_on_public_ghcr(
     public_prefix = f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/npa-"
 
     rendered_images: set[str] = set()
-    for spec_path in sorted(WORKFLOW_DIR.glob("*/*.yaml")):
+    for spec_path in iter_npa_workflow_specs():
         prepared = _prepare_registry_workflow(spec_path)
         try:
             rendered_images.update(_rendered_images(prepared))

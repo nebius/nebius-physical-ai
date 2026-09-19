@@ -994,6 +994,20 @@ skills:
       - type: cli_help
         args: ["workbench", "sim2real", "status", "--help"]
         contains: "run-id"
+  - name: antioch-workbench
+    category: workflows
+    when_to_use: "Connect Antioch simulation to Workbench, configure Antioch authentication, and operate XR1 collection, S3 transfer, fine-tuning, and evaluation."
+    path: skills/workflows/antioch-workbench/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/src/npa/workflows/xr1_antioch/operator.py
+      - type: file_exists
+        path: npa/src/npa/workflows/xr1_antioch/transport.py
+      - type: file_exists
+        path: npa/src/npa/clients/antioch.py
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/partners/antioch/xr1-antioch-finetune.yaml
   - name: train-policy
     category: workflows
     when_to_use: "Plan, review, or operate robot policy training across LeRobot, Isaac Lab, SONIC, and workflow YAMLs."

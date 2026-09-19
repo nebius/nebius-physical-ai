@@ -1313,7 +1313,7 @@ def test_agent_bootstrap_installs_turn_without_baking_session_configuration() ->
     agent = (ROOT / "npa/src/npa/cli/agent.py").read_text(encoding="utf-8")
     ui = (ROOT / "npa/src/npa/cli/agent_ui.html").read_text(encoding="utf-8")
 
-    assert "ca-certificates coturn" in agent
+    assert "ca-certificates coturn socat" in agent
     assert "leisaac-turn.conf" not in agent
     assert 'iceTransportPolicy: "relay"' in ui
     assert "installLeIsaacPeerConnection(status)" in ui

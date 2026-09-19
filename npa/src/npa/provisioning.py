@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import functools
 import inspect
+import logging
 import sys
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -22,6 +23,7 @@ from npa.cluster.gpu_health import (
 from npa.cluster.gpu_workload_profile import resolve_gpu_workload_profile
 from npa.cluster.state import kubeconfig_file, load_cluster_state
 from npa.provisioning_journal import (
+    OperationIdentityError,
     ProvisioningOperation,
     current_operation,
     emit_recovery_summary,
@@ -213,7 +215,7 @@ def _transactional_provision(function):
             if not skip_k8s
             else []
         )
-        operation = ProvisioningOperation.prepare(
+        operation_kwargs = dict(
             command="npa provision-if-absent",
             project_alias=alias,
             project_id=str(getattr(environment, "project_id", "") or ""),
@@ -232,7 +234,34 @@ def _transactional_provision(function):
             resume_argv=resume_argv,
             destroy_argv=destroy_argv,
         )
-        operation.record_preflight_plan(plan.to_dict())
+        operation = ProvisioningOperation.prepare(**operation_kwargs)
+        try:
+            operation.record_preflight_plan(plan.to_dict())
+        except OperationIdentityError:
+            # A retry with a different topology must never overwrite an
+            # incomplete operation's immutable plan. When no cloud resource,
+            # local Terraform state, or config mutation was recorded, however,
+            # the old operation is safely empty: terminalize that evidence and
+            # start a new deterministic generation for the new requested shape.
+            prior = operation.read()
+            if any(
+                prior.get(key)
+                for key in ("resources", "local_state_copies", "config_mutations")
+            ):
+                raise
+            operation.record_rollback(
+                attempted=False,
+                completed=True,
+                removed=[],
+                preserved=[],
+                error="superseded empty operation after requested topology changed",
+            )
+            operation.transition(
+                "rolled-back",
+                error="superseded empty operation after requested topology changed",
+            )
+            operation = ProvisioningOperation.prepare(**operation_kwargs)
+            operation.record_preflight_plan(plan.to_dict())
         with operation_context(operation):
             sys.stderr.write(
                 f"Provisioning operation {operation.operation_id}: preflight complete; beginning mutation\n"
@@ -888,12 +917,77 @@ def _build_provision_plan(
         cpu_disk_gib=requested.cpu_disk_gib,
         gpu_disk_gib=requested.gpu_disk_gib,
     )
+    quota_reader = None
+    quota_names = tuple(topology.quota_requirements())
+
+    def fixed_quota_reader(observations):
+        def read_quota_snapshot(_tenant, _region, _names):
+            return observations
+
+        return read_quota_snapshot
+
+    try:
+        from npa.provisioning_preflight import read_provider_quotas
+
+        tenant_observations = read_provider_quotas(
+            str(getattr(environment, "tenant_id", "") or ""),
+            str(getattr(environment, "region", "") or ""),
+            quota_names,
+        )
+    except Exception as tenant_exc:  # noqa: BLE001 - a project fallback is narrowly typed
+        from npa.clients.nebius import is_permission_denied
+
+        project_id = str(getattr(environment, "project_id", "") or "")
+        if project_id and is_permission_denied(str(tenant_exc)):
+            try:
+                from npa.provisioning_preflight import (
+                    PROJECT_QUOTA_RBAC_FALLBACK_REASON,
+                    PreflightCheck,
+                    read_project_quota_observations,
+                )
+
+                project_observations = read_project_quota_observations(
+                    project_id,
+                    str(getattr(environment, "region", "") or ""),
+                    quota_names,
+                )
+            except Exception as project_exc:  # noqa: BLE001 - preserve fail-closed quota evidence
+                # Keep the ordinary planner's fail-closed unknown evidence when
+                # the exact-project view is unavailable or malformed too.
+                logging.getLogger(__name__).debug(
+                    "project-scoped quota fallback was unavailable",
+                    exc_info=project_exc,
+                )
+            else:
+                quota_reader = fixed_quota_reader(project_observations)
+                evidence_complete = all(
+                    observation.state in {"known", "unbounded"}
+                    for observation in project_observations.values()
+                )
+                checks.append(
+                    PreflightCheck(
+                        name="quota_evidence_scope",
+                        status="ready" if evidence_complete else "unknown",
+                        reason=(
+                            PROJECT_QUOTA_RBAC_FALLBACK_REASON
+                            if evidence_complete
+                            else (
+                                "tenant-wide quota query unavailable due to RBAC; "
+                                "project-scoped quota response did not verify every "
+                                "requested allowance"
+                            )
+                        ),
+                    )
+                )
+    else:
+        quota_reader = fixed_quota_reader(tenant_observations)
     return build_whole_path_plan(
         project_alias=alias,
         project_id=str(getattr(environment, "project_id", "") or ""),
         tenant_id=str(getattr(environment, "tenant_id", "") or ""),
         region=str(getattr(environment, "region", "") or ""),
         topology=topology,
+        quota_reader=quota_reader,
         checks=checks,
         mutation=not dry_run,
     )
