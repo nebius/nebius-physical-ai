@@ -397,6 +397,18 @@ def test_debian_epoch_filename_is_bound_to_normalized_source_identity() -> None:
     assert H._source_artifact_binding(row, base + "fixture_2.3-4.diff.gz")
     assert not H._source_artifact_binding(row, base + "fixture_1:2.3-4.dsc")
     assert not H._source_artifact_binding(row, base + "other_2.3-4.dsc")
+    component_row = {
+        "ecosystem": "dpkg",
+        "source": "perl",
+        "source_version": "1:5.36.0-7+deb12u3",
+    }
+    component_base = "usr/share/doc/npa-habitat-sim/ubuntu-sources/perl/"
+    assert H._source_artifact_binding(
+        component_row, component_base + "perl_5.36.0.orig-regen-configure.tar.xz"
+    )
+    assert not H._source_artifact_binding(
+        component_row, component_base + "perl_5.36.1.orig-regen-configure.tar.xz"
+    )
     python_row = {"ecosystem": "python", "name": "fixture", "version": "1.0"}
     python_base = "usr/share/doc/npa-habitat-sim/python-sources/fixture/1.0/"
     assert H._source_artifact_binding(python_row, python_base + "fixture-1.0.tar.gz")

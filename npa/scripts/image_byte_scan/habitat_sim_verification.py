@@ -1667,7 +1667,12 @@ def _debian_artifact_filename_matches(source: str, version: str, name: str) -> b
         return False
     unepoch = version.split(":", 1)[-1]
     upstream = unepoch.rsplit("-", 1)[0] if "-" in unepoch else unepoch
-    return basename in {unepoch, upstream}
+    component_prefix = f"{upstream}.orig-"
+    component = basename.removeprefix(component_prefix)
+    return basename in {unepoch, upstream} or bool(
+        basename.startswith(component_prefix)
+        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+~-]*", component)
+    )
 
 
 def _python_artifact_filename_matches(package: str, version: str, name: str) -> bool:
