@@ -717,7 +717,16 @@ def test_oci_layout_refuses_ambiguous_docker_compatibility_manifest(
 
 @pytest.mark.parametrize(
     "tag",
-    ["repo:", "repo//child:tag", "repo/../child:tag", "repo:one:two"],
+    [
+        "repo:",
+        "repo//child:tag",
+        "repo/../child:tag",
+        "repo:one:two",
+        "repo.:tag",
+        "repo..child:tag",
+        "repo___child:tag",
+        "repo@sha256-:" + "a" * 32,
+    ],
 )
 def test_oci_layout_refuses_malformed_docker_reference_strings(
     tmp_path: Path, structural_scan: None, tag: str

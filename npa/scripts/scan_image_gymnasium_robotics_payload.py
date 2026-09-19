@@ -1649,9 +1649,11 @@ def _oci_descriptor_path(descriptor: object, label: str) -> str:
     return f"blobs/sha256/{digest.removeprefix('sha256:')}"
 
 
-_DOCKER_NAME_COMPONENT = re.compile(r"[a-z0-9]+(?:[._]|__|[-]*[a-z0-9]+)*")
+_DOCKER_NAME_COMPONENT = re.compile(r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*")
 _DOCKER_TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")
-_DOCKER_DIGEST = re.compile(r"[A-Za-z][A-Za-z0-9+._-]*:[0-9a-fA-F]{32,}")
+_DOCKER_DIGEST = re.compile(
+    r"[A-Za-z][A-Za-z0-9]*(?:[+._-][A-Za-z0-9]+)*:[0-9a-fA-F]{32,}"
+)
 _DOCKER_HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 
 
