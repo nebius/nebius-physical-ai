@@ -1405,6 +1405,13 @@ def _cli_fixture(
         provenance_entries.append(
             file(f"{VERIFIER.PROVENANCE_ROOT}/inputs/{path}", payload)
         )
+    if mutation == "missing":
+        omitted = (
+            f"{VERIFIER.PROVENANCE_ROOT}/inputs/{VERIFIER.NPA_SOURCE_PATHS[0]}"
+        )
+        provenance_entries = [
+            entry for entry in provenance_entries if entry[0] != omitted
+        ]
     installed_entries = [
         _image_entry(
             destination.lstrip("/"),
@@ -1438,6 +1445,13 @@ def _cli_fixture(
     if mutation == "path-set":
         provenance_entries.append(
             file(f"{VERIFIER.PROVENANCE_ROOT}/inputs/undeclared.txt", b"hostile\n")
+        )
+    if mutation == "directory":
+        provenance_entries.append(
+            _image_entry(
+                f"{VERIFIER.PROVENANCE_ROOT}/unexpected-empty",
+                kind=tarfile.DIRTYPE,
+            )
         )
     archive, expected, diff_ids = _oci(
         analysis,
@@ -1763,7 +1777,9 @@ def test_host_verifier_cli_accepts_owner_only_synthetic_oci(tmp_path) -> None:
         ("manifest", "required_file_hash_mismatch"),
         ("provenance", "required_file_hash_mismatch"),
         ("file", "required_file_hash_mismatch"),
+        ("missing", "source_provenance_path_missing"),
         ("path-set", "source_provenance_unexpected_path"),
+        ("directory", "source_provenance_unexpected_directory"),
     ],
 )
 def test_host_verifier_cli_refuses_source_provenance_mutations(

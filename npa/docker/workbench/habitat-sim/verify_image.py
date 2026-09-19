@@ -338,8 +338,24 @@ def _record_provenance_member(
     observed[relative] = digest_hex
 
 
+def _provenance_directory_set(expected: dict[str, str]) -> set[str]:
+    """Return directories that are required parents of expected files."""
+    directories: set[str] = set()
+    for path in expected:
+        parts = path.split("/")
+        directories.update("/".join(parts[:index]) for index in range(1, len(parts)))
+    return directories
+
+
 def _inspect_provenance_layer(
-    fd, layer, layer_index, expected, expected_sizes, observed, findings
+    fd,
+    layer,
+    layer_index,
+    expected,
+    expected_directories,
+    expected_sizes,
+    observed,
+    findings,
 ):
     """Account for each provenance-layer member, including removals and types."""
     prefix = PROVENANCE_ROOT + "/"
@@ -349,7 +365,16 @@ def _inspect_provenance_layer(
             if not path.startswith(prefix):
                 continue
             relative = path.removeprefix(prefix)
-            if not relative or member.isdir():
+            if not relative:
+                continue
+            if member.isdir():
+                if relative not in expected_directories:
+                    findings.append(
+                        {
+                            "code": "source_provenance_unexpected_directory",
+                            "path": relative,
+                        }
+                    )
                 continue
             if "/.wh." in f"/{relative}" or relative.startswith(".wh."):
                 findings.append(
@@ -359,6 +384,19 @@ def _inspect_provenance_layer(
             _record_provenance_member(
                 archive, member, relative, expected, expected_sizes, observed, findings
             )
+
+
+def _expected_provenance_files(
+    expected_inputs: dict[str, str], revision: str, manifest_sha256: str
+) -> dict[str, str]:
+    """Build the attested files that every source-provenance layer may contain."""
+    return {
+        "npa-source-manifest.sha256": manifest_sha256,
+        "npa-source-provenance.json": hashlib.sha256(
+            _provenance_bytes(revision, manifest_sha256)
+        ).hexdigest(),
+        **expected_inputs,
+    }
 
 
 def _source_provenance_findings(
@@ -373,19 +411,21 @@ def _source_provenance_findings(
 ) -> list[dict[str, object]]:
     """Require the exact source-provenance population in every image layer."""
 
-    expected = {
-        "npa-source-manifest.sha256": manifest_sha256,
-        "npa-source-provenance.json": hashlib.sha256(
-            _provenance_bytes(revision, manifest_sha256)
-        ).hexdigest(),
-        **expected_inputs,
-    }
+    expected = _expected_provenance_files(expected_inputs, revision, manifest_sha256)
     observed: dict[str, str] = {}
     findings: list[dict[str, object]] = []
+    expected_directories = _provenance_directory_set(expected)
     graph = H.inspect(fd, length, expected_image_id)
     for layer_index, layer in enumerate(graph["layers"]):
         _inspect_provenance_layer(
-            fd, layer, layer_index, expected, expected_sizes, observed, findings
+            fd,
+            layer,
+            layer_index,
+            expected,
+            expected_directories,
+            expected_sizes,
+            observed,
+            findings,
         )
     for path in sorted(set(expected) - set(observed)):
         findings.append({"code": "source_provenance_path_missing", "path": path})
