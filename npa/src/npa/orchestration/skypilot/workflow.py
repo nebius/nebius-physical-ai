@@ -1155,6 +1155,7 @@ def submit_workflow(
             expected_job_id = ""
             binding_error = ""
             owner_ledger_binding = False
+            persisted_candidate_binding = False
             if libero_submission:
                 from npa.execution_preflight import libero_executable_profile_sha256
 
@@ -1194,7 +1195,8 @@ def submit_workflow(
                         expected_job_id,
                         binding_error,
                         owner_ledger_binding,
-                    ) = _load_libero_owner_binding(
+                        persisted_candidate_binding,
+                    ) = _load_libero_owner_binding_details(
                         project=project,
                         run_id=run_id,
                         expected_profile_sha256=expected_profile_sha256,
@@ -1216,7 +1218,8 @@ def submit_workflow(
                 require_owner_binding=libero_submission,
                 owner_ledger_binding=owner_ledger_binding,
                 allow_omitted_profile=(
-                    bool(bound_libero_job_id) and not owner_ledger_binding
+                    (bool(bound_libero_job_id) or persisted_candidate_binding)
+                    and not owner_ledger_binding
                 ),
             )
             preserved = _preserve_unverified_libero_candidate(
@@ -2319,9 +2322,9 @@ def _preserve_unverified_libero_candidate(
     )
 
 
-def _load_libero_owner_binding(
+def _load_libero_owner_binding_details(
     *, project: str, run_id: str, expected_profile_sha256: str
-) -> tuple[str, str, bool]:
+) -> tuple[str, str, bool, bool]:
     """Read the atomic owner binding, without trusting undocumented queue fields."""
 
     try:
@@ -2333,7 +2336,7 @@ def _load_libero_owner_binding(
         payload = receipt.payload if receipt.outcome == "found" else {}
         launch = payload.get("launch")
         if not isinstance(launch, Mapping):
-            return "", "", False
+            return "", "", False, False
         binding = launch.get("libero_owner_binding")
         if isinstance(binding, Mapping):
             job_id = str(binding.get("job_id") or "").strip()
@@ -2351,6 +2354,7 @@ def _load_libero_owner_binding(
                     "",
                     "existing LIBERO launch ledger has an invalid immutable owner binding",
                     False,
+                    False,
                 )
             state = str(binding.get("state") or "").strip()
             if state not in {"candidate", "verified"}:
@@ -2358,23 +2362,25 @@ def _load_libero_owner_binding(
                     "",
                     "existing LIBERO launch ledger has an unsupported owner-binding state",
                     False,
+                    False,
                 )
             if digest != expected_profile_sha256:
                 return (
                     "",
                     "existing LIBERO launch ledger profile digest conflicts with the prepared profile",
                     False,
+                    False,
                 )
             binding_error = str(launch.get("libero_binding_error") or "").strip()
             if state == "candidate":
                 if binding_error:
-                    return job_id, binding_error, False
+                    return job_id, binding_error, False, True
                 binding_error = (
                     "existing LIBERO launch ledger contains an unverified candidate "
                     f"job {job_id}; exact name/profile binding remains unverified "
                     "and must not be treated as absence"
                 )
-                return job_id, binding_error, False
+                return job_id, binding_error, False, True
             if (
                 binding.get("evidence") != "queue_exact_id_name_profile"
                 or binding_error
@@ -2385,8 +2391,9 @@ def _load_libero_owner_binding(
                     "",
                     "existing LIBERO verified owner binding lacks exact queue evidence",
                     False,
+                    False,
                 )
-            return job_id, "", True
+            return job_id, "", True, False
 
         # Preserve compatibility with the pre-binding ledger while keeping its
         # conservative queue-digest requirement. New launches always write the
@@ -2419,6 +2426,7 @@ def _load_libero_owner_binding(
                 f"job {unverified_candidate}; exact name/profile binding remains "
                 "unverified and must not be treated as absence",
                 False,
+                False,
             )
         if not job_id and candidate_ids:
             return (
@@ -2427,6 +2435,7 @@ def _load_libero_owner_binding(
                 + ", ".join(candidate_ids)
                 + "; exact ID/name/profile binding remains unverified and must "
                 "not be treated as absence",
+                False,
                 False,
             )
         digest = str(launch.get("libero_profile_sha256") or "").strip()
@@ -2438,10 +2447,12 @@ def _load_libero_owner_binding(
                     "without an exact immutable ID/name/profile binding; refusing "
                     "retry until the operator resolves it",
                     False,
+                    False,
                 )
             return (
                 "",
                 "existing LIBERO launch ledger has no valid profile binding",
+                False,
                 False,
             )
         if digest != expected_profile_sha256:
@@ -2449,10 +2460,26 @@ def _load_libero_owner_binding(
                 "",
                 "existing LIBERO launch ledger profile digest conflicts with the prepared profile",
                 False,
+                False,
             )
-        return job_id, "", False
+        return job_id, "", False, False
     except Exception:  # noqa: BLE001 - unavailable owner state must fail closed
-        return "", "existing LIBERO launch ledger is unavailable", False
+        return "", "existing LIBERO launch ledger is unavailable", False, False
+
+
+def _load_libero_owner_binding(
+    *, project: str, run_id: str, expected_profile_sha256: str
+) -> tuple[str, str, bool]:
+    """Read the owner binding while preserving the legacy three-value contract."""
+
+    job_id, error, owner_binding, _persisted_candidate = (
+        _load_libero_owner_binding_details(
+            project=project,
+            run_id=run_id,
+            expected_profile_sha256=expected_profile_sha256,
+        )
+    )
+    return job_id, error, owner_binding
 
 
 def _load_libero_bound_job_id(

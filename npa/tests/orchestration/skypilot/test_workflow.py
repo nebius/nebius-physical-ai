@@ -2596,6 +2596,86 @@ def test_libero_owner_ledger_binding_validates_run_and_digest(monkeypatch) -> No
     assert error == "queue profile field unavailable"
 
 
+def test_libero_persisted_candidate_promotes_without_optional_queue_profile(
+    monkeypatch,
+) -> None:
+    from npa.orchestration.npa_workflow import submission_state
+
+    class Receipt:
+        outcome = "found"
+        payload = {
+            "launch": {
+                "libero_owner_binding": {
+                    "schema": workflow_module.LIBERO_OWNER_BINDING_SCHEMA,
+                    "run_id": "exact-run",
+                    "job_name": "exact-run",
+                    "job_id": "126",
+                    "profile_sha256": "a" * 64,
+                    "state": "candidate",
+                }
+            }
+        }
+
+    monkeypatch.setattr(
+        submission_state,
+        "inspect_submission_state",
+        lambda _project, _run_id: Receipt(),
+    )
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps(
+                [
+                    {
+                        "job_id": 126,
+                        "job_name": "exact-run",
+                        "status": "PENDING",
+                        "schedule_state": "WAITING",
+                    }
+                ]
+            ),
+            stderr="",
+        ),
+    )
+
+    job_id, error, owner_binding, persisted_candidate = (
+        workflow_module._load_libero_owner_binding_details(
+            project="project",
+            run_id="exact-run",
+            expected_profile_sha256="a" * 64,
+        )
+    )
+    assert persisted_candidate is True
+    observed = workflow_module._reconcile_managed_job_env(
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        expected_job_id=job_id,
+        require_owner_binding=True,
+        owner_ledger_binding=owner_binding,
+        allow_omitted_profile=persisted_candidate,
+    )
+    assert observed.state is workflow_module.ReconciliationState.FOUND
+    promoted = workflow_module._preserve_unverified_libero_candidate(
+        observed,
+        expected_job_id=job_id,
+        binding_error=error,
+        binding_verified=(
+            bool(error)
+            and not owner_binding
+            and observed.state is workflow_module.ReconciliationState.FOUND
+        ),
+    )
+    assert promoted.state is workflow_module.ReconciliationState.FOUND
+    assert promoted.job_id == "126"
+    assert promoted.error == ""
+
+
 @pytest.mark.parametrize("state", ["", "unknown", "CANDIDATE"])
 def test_libero_owner_binding_rejects_unsupported_state(monkeypatch, state) -> None:
     from npa.orchestration.npa_workflow import submission_state
