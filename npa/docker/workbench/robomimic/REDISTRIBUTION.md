@@ -5,9 +5,11 @@ Python base, and the exact 78-package Debian closure. No Python wheel closure is
 baked into the public image: the historical `baked-requirements.lock` remains
 source evidence only, while the complete public and restricted package map is
 declared in `runtime-requirements.lock` and fetched into a customer-owned
-runtime volume. The public image
-contains no Python distributions, PyTorch, torchvision, Triton, NVIDIA CUDA, cuDNN, NCCL, model
-weights, dataset bytes, populated runtime cache, credentials, or run output.
+runtime volume. The public image adds no solution/runtime Python wheel closure,
+PyTorch, torchvision, Triton, NVIDIA CUDA, cuDNN, NCCL, model weights, dataset
+bytes, populated runtime cache, credentials, or run output. Inherited Python
+distributions and ancestor bytes belong to the pinned parent and remain outside
+this absence claim until exact parent inspection is complete.
 Its build path stages the exact Git tree and canonical archive plus every exact
 Debian input outside the image, verifies them before use, and exposes those
 payloads to the Dockerfile only through read-only build mounts. The Dockerfile

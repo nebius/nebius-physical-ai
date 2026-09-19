@@ -1485,6 +1485,15 @@ def _inventory_proof(root: Path, expected: dict, *, read_only: bool = False) -> 
     }
 
 
+def verify_installed_source_tree(
+    *, source_root: Path, source_archive_path: Path, metadata_path: Path
+) -> dict[str, Any]:
+    """Authenticate the extracted source tree before the build continues."""
+    metadata = _source_manifest(metadata_path)
+    expected = _source_installed_inventory(source_archive_path, metadata)
+    return _inventory_proof(source_root, expected)
+
+
 def _wheel_members(raw: bytes) -> dict[str, tuple[bytes, bool]]:
     result, names, total = {}, set(), 0
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
@@ -3363,6 +3372,10 @@ def _build_parsers(subparsers: Any) -> None:
     prepare.add_argument("--source-manifest", type=Path, required=True)
     debian_install = subparsers.add_parser("debian-install")
     debian_install.add_argument("--debian-lock", type=Path, required=True)
+    source_tree = subparsers.add_parser("source-tree")
+    source_tree.add_argument("--source-archive", type=Path, required=True)
+    source_tree.add_argument("--source-manifest", type=Path, required=True)
+    source_tree.add_argument("--source-root", type=Path, required=True)
     installer = subparsers.add_parser("installer")
     installer.add_argument("action", choices=("download", "install"))
     installer.add_argument("--input-root", type=Path, required=True)
@@ -3523,6 +3536,8 @@ def _dispatch_build(args: argparse.Namespace) -> dict:
         )
     if args.mode == "debian-install":
         return verify_debian_install(debian_lock_path=args.debian_lock)
+    if args.mode == "source-tree":
+        return _dispatch_source_tree(args)
     return verify_neutral_image(
         source_root=args.source_root,
         metadata_path=args.metadata,
@@ -3538,6 +3553,14 @@ def _dispatch_build(args: argparse.Namespace) -> dict:
             Path("/workspace/byof-inputs"),
             Path("/workspace/byof-runs"),
         ),
+    )
+
+
+def _dispatch_source_tree(args: argparse.Namespace) -> dict:
+    return verify_installed_source_tree(
+        source_root=args.source_root,
+        source_archive_path=args.source_archive,
+        metadata_path=args.source_manifest,
     )
 
 

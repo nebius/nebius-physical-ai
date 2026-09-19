@@ -25,6 +25,10 @@ RUN --mount=type=bind,source=build-inputs,target=/mnt/robomimic-build-inputs,rea
         /opt/npa-runtime/robomimic /workspace/byof-inputs /workspace/byof-runs \
     && tar --extract --no-same-permissions --file /mnt/robomimic-build-inputs/source/robomimic.tar \
         --directory /opt/robomimic \
+    && python3 -I -S -B /opt/npa/robomimic/verify_image.py source-tree \
+        --source-root /opt/robomimic \
+        --source-archive /mnt/robomimic-build-inputs/source/robomimic.tar \
+        --source-manifest /opt/npa/robomimic/source-manifest.json \
     && cp /opt/npa/robomimic/source-manifest.json \
         /opt/byof/npa_source_metadata.json \
     && dpkg --unpack /mnt/robomimic-build-inputs/debian/*.deb \

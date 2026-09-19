@@ -2107,6 +2107,25 @@ def test_installed_byte_proof_binds_archive_wheels_and_inventories(
     assert "../../inert_platform.txt," not in record
 
 
+def test_extracted_source_tree_is_authenticated_before_dpkg(
+    inert_installed_image: dict,
+) -> None:
+    proof = VERIFIER.verify_installed_source_tree(
+        source_root=inert_installed_image["source_root"],
+        source_archive_path=inert_installed_image["source_archive_path"],
+        metadata_path=inert_installed_image["metadata_path"],
+    )
+    assert proof["file_count"] == 2
+
+
+def test_dockerfile_authenticates_extracted_source_before_debian_install() -> None:
+    text = (IMAGE_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    source_check = text.index("verify_image.py source-tree")
+    dpkg_install = text.index("dpkg --unpack")
+    assert source_check < dpkg_install
+    assert "--source-archive /mnt/robomimic-build-inputs/source/robomimic.tar" in text
+
+
 def test_production_wheel_proof_refuses_without_complete_authenticated_closure(
     tmp_path: Path,
 ) -> None:
