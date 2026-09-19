@@ -155,7 +155,11 @@ def recorded_agent_ip() -> str:
         agents = (project or {}).get("agents") if isinstance(project, dict) else None
         for record in (agents or {}).values():
             ip = str((record or {}).get("public_ip", "") or "").strip()
-            if ip and ip not in {"localhost", "127.0.0.1"} and not ip.startswith("127."):
+            if (
+                ip
+                and ip not in {"localhost", "127.0.0.1"}
+                and not ip.startswith("127.")
+            ):
                 return ip
     return ""
 

@@ -113,3 +113,4 @@ docs/.cli-prev-*/
 # Generated catalog copies for narrow Python/container build contexts.
 /npa/src/npa/workflows/main/
 /npa/src/npa/workflows/testing/
+/npa/src/npa/workflows/partners/

@@ -77,10 +77,12 @@ def _write_groot_overlay_recording(
     input_rgb = _normalize_color(input_color)
     predictions_rgb = _normalize_color(predictions_color)
     input_states, source_fps, _title = load_lerobot_state_vectors(input_dataset_path)
-    selected_input_states, _input_indices, _resolved_duration_s = _select_adapter_frames(
-        input_states,
-        fps=source_fps,
-        duration_s=duration_s,
+    selected_input_states, _input_indices, _resolved_duration_s = (
+        _select_adapter_frames(
+            input_states,
+            fps=source_fps,
+            duration_s=duration_s,
+        )
     )
     # Use the shared duration budget, but retain a contiguous source prefix.
     # Resampling the whole input would compare later states with earlier
@@ -113,7 +115,9 @@ def _write_groot_overlay_recording(
 
     output_rrd_path = Path(output_rrd_path)
     if output_rrd_path.suffix.lower() != ".rrd":
-        raise RerunAdapterError(f"Rerun output path must end in .rrd, got: {output_rrd_path}")
+        raise RerunAdapterError(
+            f"Rerun output path must end in .rrd, got: {output_rrd_path}"
+        )
     output_rrd_path.parent.mkdir(parents=True, exist_ok=True)
 
     blueprint = _build_blueprint(rrb)
@@ -162,7 +166,9 @@ def _load_prediction_frames(
         states = predictions.reshape(-1, G1_STATE_DIM).astype(np.float32, copy=False)
         skeleton = g1_state_vectors_to_skeleton(states)
     elif predictions.ndim >= 2 and predictions.shape[-1] == REAL_G1_ACTION_DIM:
-        action_vectors = predictions.reshape(-1, REAL_G1_ACTION_DIM).astype(np.float32, copy=False)
+        action_vectors = predictions.reshape(-1, REAL_G1_ACTION_DIM).astype(
+            np.float32, copy=False
+        )
         states = real_g1_action_vectors_to_g1_state_vectors(action_vectors)
         skeleton = g1_state_vectors_to_skeleton(states)
     else:
@@ -181,4 +187,6 @@ def _materialize_predictions(predictions_path: str | Path, stack: ExitStack) -> 
     if not _is_s3_uri(predictions_ref):
         return Path(predictions_path)
     temp_dir = stack.enter_context(TemporaryDirectory(prefix="npa-rerun-predictions-"))
-    return Path(_storage_client(predictions_ref).download_path(predictions_ref, temp_dir))
+    return Path(
+        _storage_client(predictions_ref).download_path(predictions_ref, temp_dir)
+    )

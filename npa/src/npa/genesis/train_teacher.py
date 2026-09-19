@@ -122,7 +122,9 @@ class GenesisEnvWrapper:
         self.max_episode_length: int = env.cfg.max_episode_steps
         self.device = torch.device(env.device)
         self.episode_length_buf = torch.zeros(
-            env.n_envs, device=self.device, dtype=torch.long,
+            env.n_envs,
+            device=self.device,
+            dtype=torch.long,
         )
         self._obs: torch.Tensor | None = None
 
@@ -139,16 +141,17 @@ class GenesisEnvWrapper:
         return self._obs, {"observations": {"critic": self._obs}}
 
     def step(
-        self, actions: torch.Tensor,
+        self,
+        actions: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict]:
         obs_dict, rewards, dones, info = self._env.step(actions)
         self._obs = obs_dict["flat"]
         self.episode_length_buf += 1
 
         # Distinguish timeouts from true terminations so PPO can bootstrap
-        time_outs = (
-            self.episode_length_buf >= self.max_episode_length
-        ) & ~info.get("success", torch.zeros_like(dones, dtype=torch.bool))
+        time_outs = (self.episode_length_buf >= self.max_episode_length) & ~info.get(
+            "success", torch.zeros_like(dones, dtype=torch.bool)
+        )
 
         infos: dict[str, Any] = {
             "observations": {"critic": self._obs},

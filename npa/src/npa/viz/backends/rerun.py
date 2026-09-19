@@ -70,8 +70,21 @@ def render(
     encode those Rerun-rendered PNG frames to MP4.
     """
     skeleton = np.asarray(skeleton_data, dtype=np.float32)
-    predictions = None if predictions_data is None else np.asarray(predictions_data, dtype=np.float32)
-    _validate_inputs(skeleton, predictions, layout, output_path, resolution, fps, duration_s, joint_connections)
+    predictions = (
+        None
+        if predictions_data is None
+        else np.asarray(predictions_data, dtype=np.float32)
+    )
+    _validate_inputs(
+        skeleton,
+        predictions,
+        layout,
+        output_path,
+        resolution,
+        fps,
+        duration_s,
+        joint_connections,
+    )
 
     tools = _ensure_runtime_tools()
     with tempfile.TemporaryDirectory(prefix="npa-rerun-render-") as tmp:
@@ -100,7 +113,9 @@ def render(
         _encode_png_sequence(tools.ffmpeg, frames_dir, fps, output_path)
 
     if not output_path.exists() or output_path.stat().st_size == 0:
-        raise RerunRenderError(f"Rerun backend did not create MP4 output: {output_path}")
+        raise RerunRenderError(
+            f"Rerun backend did not create MP4 output: {output_path}"
+        )
 
 
 def _validate_inputs(
@@ -118,10 +133,16 @@ def _validate_inputs(
     if layout in {"side-by-side", "overlay"} and predictions is None:
         raise RerunRenderError(f"predictions_data is required for layout '{layout}'")
     if skeleton.ndim != 3 or skeleton.shape[-1] != 3:
-        raise RerunRenderError(f"skeleton_data must have shape [T, J, 3], got {skeleton.shape}")
+        raise RerunRenderError(
+            f"skeleton_data must have shape [T, J, 3], got {skeleton.shape}"
+        )
     if skeleton.shape[0] == 0 or skeleton.shape[1] == 0:
-        raise RerunRenderError("skeleton_data must contain at least one frame and one joint")
-    if predictions is not None and (predictions.ndim != 3 or predictions.shape[-1] != 3):
+        raise RerunRenderError(
+            "skeleton_data must contain at least one frame and one joint"
+        )
+    if predictions is not None and (
+        predictions.ndim != 3 or predictions.shape[-1] != 3
+    ):
         raise RerunRenderError(
             f"predictions_data must have shape [T, J, 3], got {predictions.shape}"
         )
@@ -140,11 +161,15 @@ def _validate_inputs(
     max_joint = skeleton.shape[1] - 1
     for start, end in joint_connections:
         if start < 0 or end < 0 or start > max_joint or end > max_joint:
-            raise RerunRenderError(f"joint connection {(start, end)} is outside skeleton joint range 0..{max_joint}")
+            raise RerunRenderError(
+                f"joint connection {(start, end)} is outside skeleton joint range 0..{max_joint}"
+            )
     if output_path.suffix.lower() != ".mp4":
         raise RerunRenderError(f"Rerun backend writes MP4 only, got: {output_path}")
     if resolution[0] <= 0 or resolution[1] <= 0:
-        raise RerunRenderError(f"resolution dimensions must be positive, got: {resolution}")
+        raise RerunRenderError(
+            f"resolution dimensions must be positive, got: {resolution}"
+        )
     if fps <= 0:
         raise RerunRenderError(f"fps must be positive, got {fps}")
     if duration_s <= 0:
@@ -217,7 +242,9 @@ def _resolve_required_executable(
         resolved = shutil.which(candidate_s)
         if resolved:
             return resolved
-    raise RerunRenderError(f"{description} is required for the Rerun backend. {install_hint} ({env_var})")
+    raise RerunRenderError(
+        f"{description} is required for the Rerun backend. {install_hint} ({env_var})"
+    )
 
 
 def _prepare_web_viewer_assets(rerun_cli: str, viewer_dir: Path) -> None:
@@ -256,13 +283,20 @@ def _prepare_web_viewer_assets(rerun_cli: str, viewer_dir: Path) -> None:
                 if "/" in asset or "\\" in asset or asset.startswith("."):
                     continue
                 try:
-                    target.write_bytes(_download_url(f"{base_url}/{asset}", timeout_s=60.0))
+                    target.write_bytes(
+                        _download_url(f"{base_url}/{asset}", timeout_s=60.0)
+                    )
                 except Exception as exc:
                     if asset in {"re_viewer.js", "re_viewer_bg.wasm"}:
-                        raise RerunRenderError(f"Failed to download Rerun web asset {asset}: {exc}") from exc
+                        raise RerunRenderError(
+                            f"Failed to download Rerun web asset {asset}: {exc}"
+                        ) from exc
         finally:
             _terminate_process(proc)
-    if not (viewer_dir / "index.html").exists() or not (viewer_dir / "re_viewer.js").exists():
+    if (
+        not (viewer_dir / "index.html").exists()
+        or not (viewer_dir / "re_viewer.js").exists()
+    ):
         raise RerunRenderError(
             "Rerun web viewer assets were not prepared. "
             f"Rerun stderr tail: {_tail_text(stderr_path)}"
@@ -274,7 +308,9 @@ def _extract_asset_names(index_html: str) -> set[str]:
     return {
         asset
         for asset in assets
-        if asset and not asset.startswith(("http://", "https://", "data:")) and "://" not in asset
+        if asset
+        and not asset.startswith(("http://", "https://", "data:"))
+        and "://" not in asset
     }
 
 
@@ -290,7 +326,9 @@ def _write_frame_recordings(
 ) -> list[Path]:
     rr, rrb = _import_rerun()
     recordings_dir.mkdir(parents=True, exist_ok=True)
-    side_by_side_offset = _side_by_side_offset(skeleton, predictions) if layout == "side-by-side" else 0.0
+    side_by_side_offset = (
+        _side_by_side_offset(skeleton, predictions) if layout == "side-by-side" else 0.0
+    )
     recordings = []
     for frame_idx in range(int(skeleton.shape[0])):
         path = recordings_dir / f"frame_{frame_idx:06d}.rrd"
@@ -336,18 +374,42 @@ def _write_single_frame_recording(
     if predictions is not None and frame_idx < int(predictions.shape[0]):
         prediction_frame = predictions[frame_idx]
     if layout == "side-by-side":
-        input_frame = input_frame + np.array([-side_by_side_offset / 2.0, 0.0, 0.0], dtype=np.float32)
+        input_frame = input_frame + np.array(
+            [-side_by_side_offset / 2.0, 0.0, 0.0], dtype=np.float32
+        )
         if prediction_frame is not None:
-            prediction_frame = prediction_frame + np.array([side_by_side_offset / 2.0, 0.0, 0.0], dtype=np.float32)
+            prediction_frame = prediction_frame + np.array(
+                [side_by_side_offset / 2.0, 0.0, 0.0], dtype=np.float32
+            )
 
-    _log_skeleton(rr, recording, "world/input", input_frame, joint_connections, INPUT_COLOR)
+    _log_skeleton(
+        rr, recording, "world/input", input_frame, joint_connections, INPUT_COLOR
+    )
     if prediction_frame is not None and layout in {"overlay", "side-by-side"}:
-        prediction_color = PREDICTION_SIDE_BY_SIDE_COLOR if layout == "side-by-side" else PREDICTION_COLOR
-        _log_skeleton(rr, recording, "world/predictions", prediction_frame, joint_connections, prediction_color)
+        prediction_color = (
+            PREDICTION_SIDE_BY_SIDE_COLOR
+            if layout == "side-by-side"
+            else PREDICTION_COLOR
+        )
+        _log_skeleton(
+            rr,
+            recording,
+            "world/predictions",
+            prediction_frame,
+            joint_connections,
+            prediction_color,
+        )
 
     if hasattr(rr, "TextDocument"):
-        rr.log("world/title", rr.TextDocument(title, media_type="text/markdown"), static=True, recording=recording)
-    _log_motion_series(rr, recording, skeleton, predictions, fps=fps, duration_s=duration_s)
+        rr.log(
+            "world/title",
+            rr.TextDocument(title, media_type="text/markdown"),
+            static=True,
+            recording=recording,
+        )
+    _log_motion_series(
+        rr, recording, skeleton, predictions, fps=fps, duration_s=duration_s
+    )
     _disconnect_recording(rr, recording)
 
     if not output_rrd.exists() or output_rrd.stat().st_size == 0:
@@ -355,7 +417,9 @@ def _write_single_frame_recording(
 
 
 def _build_blueprint(rrb: Any, title: str, layout: str) -> Any:
-    spatial_name = "GR00T predictions overlay" if layout == "overlay" else "Isaac Lab trajectory"
+    spatial_name = (
+        "GR00T predictions overlay" if layout == "overlay" else "Isaac Lab trajectory"
+    )
     if layout == "side-by-side":
         spatial_name = "Input and predictions"
     return rrb.Blueprint(
@@ -434,16 +498,26 @@ def _log_motion_series(
 ) -> None:
     _log_series_styles(rr, recording, "world/input/angles", INPUT_COLOR)
     if predictions is not None:
-        _log_series_styles(rr, recording, "world/predictions/angles", PREDICTION_SIDE_BY_SIDE_COLOR)
+        _log_series_styles(
+            rr, recording, "world/predictions/angles", PREDICTION_SIDE_BY_SIDE_COLOR
+        )
     frame_count = int(skeleton.shape[0])
     for frame_idx in range(frame_count):
         seconds = min(frame_idx / float(fps), duration_s)
         _set_time_seconds(rr, recording, seconds)
         for label, value in _representative_values(skeleton[frame_idx]):
-            rr.log(f"world/input/angles/{label}", rr.Scalars(float(value)), recording=recording)
+            rr.log(
+                f"world/input/angles/{label}",
+                rr.Scalars(float(value)),
+                recording=recording,
+            )
         if predictions is not None and frame_idx < int(predictions.shape[0]):
             for label, value in _representative_values(predictions[frame_idx]):
-                rr.log(f"world/predictions/angles/{label}", rr.Scalars(float(value)), recording=recording)
+                rr.log(
+                    f"world/predictions/angles/{label}",
+                    rr.Scalars(float(value)),
+                    recording=recording,
+                )
     if hasattr(rr, "reset_time"):
         rr.reset_time(recording=recording)
 
@@ -467,7 +541,11 @@ def _log_series_styles(
 
 def _representative_values(frame: np.ndarray) -> list[tuple[str, float]]:
     values = []
-    for index, label in zip(_representative_indices(int(frame.shape[0])), _representative_labels(), strict=True):
+    for index, label in zip(
+        _representative_indices(int(frame.shape[0])),
+        _representative_labels(),
+        strict=True,
+    ):
         values.append((label, float(frame[index, 2])))
     return values
 
@@ -551,8 +629,15 @@ def _capture_rerun_frames(
                 client.call("Runtime.enable")
                 for frame_idx, recording in enumerate(recordings):
                     if frame_idx > 0:
-                        client.call("Page.navigate", {"url": _viewer_url(server_url, viewer_dir, recording)})
-                    _wait_for_rerun_canvas(client, timeout_s=_frame_wait_timeout_s(), minimum_wait_s=_frame_min_wait_s(frame_idx))
+                        client.call(
+                            "Page.navigate",
+                            {"url": _viewer_url(server_url, viewer_dir, recording)},
+                        )
+                    _wait_for_rerun_canvas(
+                        client,
+                        timeout_s=_frame_wait_timeout_s(),
+                        minimum_wait_s=_frame_min_wait_s(frame_idx),
+                    )
                     screenshot = client.call(
                         "Page.captureScreenshot",
                         {
@@ -569,8 +654,12 @@ def _capture_rerun_frames(
                     )
                     data = screenshot.get("data")
                     if not isinstance(data, str) or not data:
-                        raise RerunRenderError(f"Chrome did not return screenshot data for frame {frame_idx}")
-                    (frames_dir / f"frame_{frame_idx:06d}.png").write_bytes(base64.b64decode(data))
+                        raise RerunRenderError(
+                            f"Chrome did not return screenshot data for frame {frame_idx}"
+                        )
+                    (frames_dir / f"frame_{frame_idx:06d}.png").write_bytes(
+                        base64.b64decode(data)
+                    )
             finally:
                 if client is not None:
                     client.close()
@@ -579,10 +668,14 @@ def _capture_rerun_frames(
     expected = len(recordings)
     captured = len(list(frames_dir.glob("frame_*.png")))
     if captured != expected:
-        raise RerunRenderError(f"Captured {captured} Rerun frames, expected {expected}. Chrome log: {_tail_text(chrome_log)}")
+        raise RerunRenderError(
+            f"Captured {captured} Rerun frames, expected {expected}. Chrome log: {_tail_text(chrome_log)}"
+        )
 
 
-def _encode_png_sequence(ffmpeg: str, frames_dir: Path, fps: int, output_path: Path) -> None:
+def _encode_png_sequence(
+    ffmpeg: str, frames_dir: Path, fps: int, output_path: Path
+) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     command = [
         ffmpeg,
@@ -604,7 +697,9 @@ def _encode_png_sequence(ffmpeg: str, frames_dir: Path, fps: int, output_path: P
     result = subprocess.run(command, check=False, capture_output=True, text=True)
     if result.returncode != 0:
         stderr = result.stderr.strip()
-        raise RerunRenderError(f"ffmpeg failed to encode Rerun frames: {stderr or result.returncode}")
+        raise RerunRenderError(
+            f"ffmpeg failed to encode Rerun frames: {stderr or result.returncode}"
+        )
 
 
 def _viewer_url(server_url: str, viewer_dir: Path, recording: Path) -> str:
@@ -622,7 +717,9 @@ class _StaticAssetServer:
     def __enter__(self) -> str:
         handler = functools.partial(_CORSRequestHandler, directory=str(self._directory))
         self._server = _ThreadingHTTPServer(("127.0.0.1", 0), handler)
-        self._thread = threading.Thread(target=self._server.serve_forever, name="npa-rerun-http", daemon=True)
+        self._thread = threading.Thread(
+            target=self._server.serve_forever, name="npa-rerun-http", daemon=True
+        )
         self._thread.start()
         host, port = self._server.server_address
         return f"http://{host}:{port}"
@@ -666,7 +763,13 @@ class _CDPClient:
         self._next_id = 0
         self._handshake()
 
-    def call(self, method: str, params: dict[str, Any] | None = None, *, timeout_s: float = 30.0) -> dict[str, Any]:
+    def call(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        timeout_s: float = 30.0,
+    ) -> dict[str, Any]:
         self._next_id += 1
         message_id = self._next_id
         payload: dict[str, Any] = {"id": message_id, "method": method}
@@ -679,10 +782,14 @@ class _CDPClient:
             if message.get("id") != message_id:
                 continue
             if "error" in message:
-                raise RerunRenderError(f"Chrome DevTools command {method} failed: {message['error']}")
+                raise RerunRenderError(
+                    f"Chrome DevTools command {method} failed: {message['error']}"
+                )
             result = message.get("result")
             return result if isinstance(result, dict) else {}
-        raise RerunRenderError(f"Timed out waiting for Chrome DevTools command {method}")
+        raise RerunRenderError(
+            f"Timed out waiting for Chrome DevTools command {method}"
+        )
 
     def close(self) -> None:
         try:
@@ -709,7 +816,9 @@ class _CDPClient:
                 break
             response += chunk
         if b" 101 " not in response.split(b"\r\n", 1)[0]:
-            raise RerunRenderError(f"Chrome DevTools websocket handshake failed: {response[:200]!r}")
+            raise RerunRenderError(
+                f"Chrome DevTools websocket handshake failed: {response[:200]!r}"
+            )
 
     def _send_text(self, text: str) -> None:
         payload = text.encode("utf-8")
@@ -739,7 +848,9 @@ class _CDPClient:
             mask = self._read_exact(4) if masked else b""
             payload = self._read_exact(length) if length else b""
             if masked:
-                payload = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
+                payload = bytes(
+                    byte ^ mask[index % 4] for index, byte in enumerate(payload)
+                )
             if opcode == 0x8:
                 raise RerunRenderError("Chrome DevTools websocket closed")
             if opcode == 0x9:
@@ -779,10 +890,14 @@ def _wait_for_cdp_target(port: int, *, timeout_s: float) -> str:
         except Exception as exc:
             last_error = exc
         time.sleep(0.2)
-    raise RerunRenderError(f"Timed out waiting for Chrome DevTools target on port {port}: {last_error}")
+    raise RerunRenderError(
+        f"Timed out waiting for Chrome DevTools target on port {port}: {last_error}"
+    )
 
 
-def _wait_for_rerun_canvas(client: _CDPClient, *, timeout_s: float, minimum_wait_s: float) -> None:
+def _wait_for_rerun_canvas(
+    client: _CDPClient, *, timeout_s: float, minimum_wait_s: float
+) -> None:
     time.sleep(minimum_wait_s)
     deadline = time.monotonic() + timeout_s
     expression = """
@@ -795,13 +910,19 @@ def _wait_for_rerun_canvas(client: _CDPClient, *, timeout_s: float, minimum_wait
 })()
 """
     while time.monotonic() < deadline:
-        result = client.call("Runtime.evaluate", {"expression": expression, "returnByValue": True}, timeout_s=5.0)
+        result = client.call(
+            "Runtime.evaluate",
+            {"expression": expression, "returnByValue": True},
+            timeout_s=5.0,
+        )
         value = result.get("result", {}).get("value")
         if value is True:
             time.sleep(_post_canvas_ready_wait_s())
             return
         time.sleep(0.25)
-    raise RerunRenderError("Timed out waiting for Rerun web viewer canvas to become visible")
+    raise RerunRenderError(
+        "Timed out waiting for Rerun web viewer canvas to become visible"
+    )
 
 
 def _import_rerun() -> tuple[Any, Any]:
@@ -809,7 +930,9 @@ def _import_rerun() -> tuple[Any, Any]:
         import rerun as rr
         import rerun.blueprint as rrb
     except ImportError as exc:
-        raise RerunRenderError("rerun-sdk==0.31.4 is required for the Rerun backend") from exc
+        raise RerunRenderError(
+            "rerun-sdk==0.31.4 is required for the Rerun backend"
+        ) from exc
     return rr, rrb
 
 
@@ -855,11 +978,15 @@ def _tail_text(path: Path, *, max_bytes: int = 4096) -> str:
 
 
 def _viewer_chrome_top_px() -> int:
-    return int(os.environ.get("NPA_RERUN_VIEWER_TOP_CROP_PX", str(VIEWER_CHROME_TOP_PX)))
+    return int(
+        os.environ.get("NPA_RERUN_VIEWER_TOP_CROP_PX", str(VIEWER_CHROME_TOP_PX))
+    )
 
 
 def _viewer_chrome_bottom_px() -> int:
-    return int(os.environ.get("NPA_RERUN_VIEWER_BOTTOM_CROP_PX", str(VIEWER_CHROME_BOTTOM_PX)))
+    return int(
+        os.environ.get("NPA_RERUN_VIEWER_BOTTOM_CROP_PX", str(VIEWER_CHROME_BOTTOM_PX))
+    )
 
 
 def _frame_wait_timeout_s() -> float:

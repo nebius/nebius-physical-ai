@@ -21,7 +21,11 @@ from rich.console import Console
 
 from npa.clients.env import load_env_file_script
 from npa.cli._error_formatting import format_error_for_user
-from npa.cli.path_contract import PathContractError, validate_read_path, validate_write_path
+from npa.cli.path_contract import (
+    PathContractError,
+    validate_read_path,
+    validate_write_path,
+)
 from npa.clients.config import (
     APP_STATUS_HEALTHY,
     APP_STATUS_INSTALL_FAILED,
@@ -41,8 +45,17 @@ from npa.clients.config import (
 )
 from npa.clients.credentials import apply_shared_credential_env, shared_credential_env
 from npa.clients.endpoint import EndpointError, service_endpoint
-from npa.clients.serverless import EndpointNotFoundError, JobInfo, ServerlessClient, ServerlessClientError
-from npa.deploy.images import container_image_for_tool, resolve_lerobot_image_tag, supported_tool_version
+from npa.clients.serverless import (
+    EndpointNotFoundError,
+    JobInfo,
+    ServerlessClient,
+    ServerlessClientError,
+)
+from npa.deploy.images import (
+    container_image_for_tool,
+    resolve_lerobot_image_tag,
+    supported_tool_version,
+)
 from npa.serverless_common import (
     MissingS3CredentialsError,
     SubnetResolutionError,
@@ -142,7 +155,9 @@ class OutputFormat(str, Enum):
     json = "json"
 
 
-def _training_storage_tokens(cfg: Any, training_config: TrainingConfig) -> dict[str, str]:
+def _training_storage_tokens(
+    cfg: Any, training_config: TrainingConfig
+) -> dict[str, str]:
     tokens: dict[str, str] = {}
     storage = getattr(cfg, "storage", None)
     if storage is not None:
@@ -206,7 +221,9 @@ def _fail(msg: str, code: int = 1) -> None:
     raise typer.Exit(code)
 
 
-def _fail_serverless(exc: ServerlessClientError, output: OutputFormat = OutputFormat.text) -> None:
+def _fail_serverless(
+    exc: ServerlessClientError, output: OutputFormat = OutputFormat.text
+) -> None:
     typer.echo(format_error_for_user(exc, output_format=output.value), err=True)
     raise typer.Exit(1)
 
@@ -289,7 +306,7 @@ def _probe_remote_lerobot_version(ssh: Any, cfg: Any) -> str:
 
     probe = (
         "source /opt/lerobot/venv/bin/activate 2>/dev/null || true; "
-        "python -c \"import lerobot; print(lerobot.__version__)\""
+        'python -c "import lerobot; print(lerobot.__version__)"'
     )
     try:
         code, stdout, _stderr = ssh.run(_runtime_exec_cmd(cfg, probe), stream=False)
@@ -410,7 +427,9 @@ def _is_lerobot_workbench(name: str, wb_cfg: dict) -> bool:
 
 @app.command("list")
 def list_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """List configured LeRobot workbenches (excludes Genesis VMs)."""
     from npa.clients import config as client_config
@@ -423,25 +442,38 @@ def list_cmd(
         # Filter to lerobot-only workbenches in JSON output too.
         filtered = {}
         for pname, pcfg in projects.items():
-            wbs = {k: v for k, v in pcfg.get("workbenches", {}).items()
-                   if _is_lerobot_workbench(k, v)}
+            wbs = {
+                k: v
+                for k, v in pcfg.get("workbenches", {}).items()
+                if _is_lerobot_workbench(k, v)
+            }
             if wbs:
                 filtered[pname] = {**pcfg, "workbenches": wbs}
-        typer.echo(json.dumps({
-            "projects": filtered,
-            "default_project": def_proj,
-            "default_workbench": def_wb,
-        }, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "projects": filtered,
+                    "default_project": def_proj,
+                    "default_workbench": def_wb,
+                },
+                indent=2,
+            )
+        )
         return
 
     if not projects:
-        typer.echo("No projects configured. Run 'npa workbench lerobot deploy' to create one.")
+        typer.echo(
+            "No projects configured. Run 'npa workbench lerobot deploy' to create one."
+        )
         return
 
     any_shown = False
     for proj_name, proj_cfg in projects.items():
-        workbenches = {k: v for k, v in proj_cfg.get("workbenches", {}).items()
-                       if _is_lerobot_workbench(k, v)}
+        workbenches = {
+            k: v
+            for k, v in proj_cfg.get("workbenches", {}).items()
+            if _is_lerobot_workbench(k, v)
+        }
         if not workbenches:
             continue
         any_shown = True
@@ -459,7 +491,9 @@ def list_cmd(
             )
 
     if not any_shown:
-        typer.echo("No LeRobot workbenches configured. Run 'npa workbench lerobot deploy' to create one.")
+        typer.echo(
+            "No LeRobot workbenches configured. Run 'npa workbench lerobot deploy' to create one."
+        )
 
 
 # ── status ───────────────────────────────────────────────────────────────
@@ -467,15 +501,21 @@ def list_cmd(
 
 @app.command()
 def status(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Check what's running on the VM."""
     cfg = _get_config()
 
     if is_serverless_runtime(getattr(cfg, "runtime", "")):
         job_cfg = getattr(cfg, "serverless_job", None)
-        job_ref = str(getattr(job_cfg, "job_id", "") or getattr(job_cfg, "job_name", ""))
-        project_id = str(getattr(job_cfg, "project_id", "") or getattr(cfg, "project_id", ""))
+        job_ref = str(
+            getattr(job_cfg, "job_id", "") or getattr(job_cfg, "job_name", "")
+        )
+        project_id = str(
+            getattr(job_cfg, "project_id", "") or getattr(cfg, "project_id", "")
+        )
         if job_ref and project_id:
             client = ServerlessClient()
             try:
@@ -488,7 +528,9 @@ def status(
                 platform=str(getattr(job_cfg, "gpu_type", "")),
                 gpu_count=int(getattr(job_cfg, "gpu_count", 0) or 0),
             )
-            result.update({"runtime": "serverless", "workbench": getattr(cfg, "name", "")})
+            result.update(
+                {"runtime": "serverless", "workbench": getattr(cfg, "name", "")}
+            )
             _output(result, output)
             return
 
@@ -501,12 +543,17 @@ def status(
             endpoint_url = active.url
     except EndpointError as exc:
         if output == OutputFormat.json:
-            typer.echo(json.dumps({
-                "endpoint": cfg.endpoint,
-                "app_status": cfg.app_status or "unknown",
-                "server": "down",
-                "error": str(exc),
-            }, indent=2))
+            typer.echo(
+                json.dumps(
+                    {
+                        "endpoint": cfg.endpoint,
+                        "app_status": cfg.app_status or "unknown",
+                        "server": "down",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                )
+            )
         else:
             typer.echo(f"  endpoint: {cfg.endpoint}")
             typer.echo(f"  app_status: {cfg.app_status or 'unknown'}")
@@ -514,12 +561,17 @@ def status(
         return
     except ServerError as exc:
         if output == OutputFormat.json:
-            typer.echo(json.dumps({
-                "endpoint": cfg.endpoint,
-                "app_status": cfg.app_status or "unknown",
-                "server": "down",
-                "error": str(exc),
-            }, indent=2))
+            typer.echo(
+                json.dumps(
+                    {
+                        "endpoint": cfg.endpoint,
+                        "app_status": cfg.app_status or "unknown",
+                        "server": "down",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                )
+            )
         else:
             typer.echo(f"  endpoint: {cfg.endpoint}")
             typer.echo(f"  app_status: {cfg.app_status or 'unknown'}")
@@ -540,22 +592,31 @@ def status(
                     container_info[key] = value
 
     if output == OutputFormat.json:
-        typer.echo(json.dumps({
-            "app_status": cfg.app_status or "unknown",
-            "runtime": getattr(cfg, "runtime", "vm"),
-            "container": container_info,
-            **data,
-        }, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "app_status": cfg.app_status or "unknown",
+                    "runtime": getattr(cfg, "runtime", "vm"),
+                    "container": container_info,
+                    **data,
+                },
+                indent=2,
+            )
+        )
     else:
         typer.echo(f"  endpoint: {endpoint_url}")
         typer.echo(f"  app_status: {cfg.app_status or 'unknown'}")
         typer.echo(f"  runtime: {getattr(cfg, 'runtime', 'vm')}")
         if container_info:
-            typer.echo(f"  container: {container_info.get('state', 'unknown')} ({container_info.get('image', 'unknown')})")
+            typer.echo(
+                f"  container: {container_info.get('state', 'unknown')} ({container_info.get('image', 'unknown')})"
+            )
         typer.echo("  server: up")
         ps = data.get("policy_server", {})
         if ps.get("running"):
-            typer.echo(f"  policy_server: running (checkpoint: {ps.get('checkpoint', 'unknown')})")
+            typer.echo(
+                f"  policy_server: running (checkpoint: {ps.get('checkpoint', 'unknown')})"
+            )
         else:
             typer.echo("  policy_server: stopped")
         for job in data.get("jobs", []):
@@ -570,7 +631,9 @@ def _lerobot_serverless_job_name(wb_name: str, suffix: str | None = None) -> str
     return re.sub(r"-+", "-", re.sub(r"[^a-z0-9-]+", "-", raw)).strip("-")[:63]
 
 
-def _lerobot_serverless_train_output_path(bucket: str, wb_name: str, job_name: str) -> str:
+def _lerobot_serverless_train_output_path(
+    bucket: str, wb_name: str, job_name: str
+) -> str:
     if not bucket:
         _fail("LeRobot train --runtime serverless requires storage.checkpoint_bucket.")
     normalized = bucket.rstrip("/")
@@ -590,7 +653,9 @@ def _lerobot_serverless_output_path(
             _fail("LeRobot train --output-path expects an S3 URI for serverless jobs.")
         return output_path.rstrip("/") + "/"
     storage = resolve_project_storage(project)
-    return _lerobot_serverless_train_output_path(storage.checkpoint_bucket, wb_name, job_name)
+    return _lerobot_serverless_train_output_path(
+        storage.checkpoint_bucket, wb_name, job_name
+    )
 
 
 def _lerobot_serverless_job_env(
@@ -638,7 +703,9 @@ def _s3_bucket_name(uri: str) -> str:
     return urlparse(normalized).netloc
 
 
-def _serverless_storage_env_values(storage: Any, credentials: Any, output_path: str) -> tuple[str, str, str]:
+def _serverless_storage_env_values(
+    storage: Any, credentials: Any, output_path: str
+) -> tuple[str, str, str]:
     storage_bucket = _s3_bucket_name(getattr(storage, "checkpoint_bucket", ""))
     credentials_bucket = _s3_bucket_name(getattr(credentials, "s3_bucket", ""))
     output_bucket = _s3_bucket_name(output_path)
@@ -647,7 +714,10 @@ def _serverless_storage_env_values(storage: Any, credentials: Any, output_path: 
         and getattr(credentials, "s3_secret_access_key", "")
     )
     output_uses_credentials_bucket = bool(
-        output_bucket and credentials_bucket and output_bucket == credentials_bucket and getattr(credentials, "s3_endpoint", "")
+        output_bucket
+        and credentials_bucket
+        and output_bucket == credentials_bucket
+        and getattr(credentials, "s3_endpoint", "")
     )
     use_credentials_storage = bool(
         has_credentials
@@ -661,12 +731,24 @@ def _serverless_storage_env_values(storage: Any, credentials: Any, output_path: 
         return (
             str(getattr(credentials, "s3_access_key_id", "")),
             str(getattr(credentials, "s3_secret_access_key", "")),
-            str(getattr(credentials, "s3_endpoint", "") or getattr(storage, "endpoint_url", "")),
+            str(
+                getattr(credentials, "s3_endpoint", "")
+                or getattr(storage, "endpoint_url", "")
+            ),
         )
     return (
-        str(getattr(storage, "aws_access_key_id", "") or getattr(credentials, "s3_access_key_id", "")),
-        str(getattr(storage, "aws_secret_access_key", "") or getattr(credentials, "s3_secret_access_key", "")),
-        str(getattr(storage, "endpoint_url", "") or getattr(credentials, "s3_endpoint", "")),
+        str(
+            getattr(storage, "aws_access_key_id", "")
+            or getattr(credentials, "s3_access_key_id", "")
+        ),
+        str(
+            getattr(storage, "aws_secret_access_key", "")
+            or getattr(credentials, "s3_secret_access_key", "")
+        ),
+        str(
+            getattr(storage, "endpoint_url", "")
+            or getattr(credentials, "s3_endpoint", "")
+        ),
     )
 
 
@@ -770,7 +852,9 @@ def _lerobot_train_container_command(
     if data_path:
         if _is_s3_uri(data_path):
             resolved_dataset = f"/tmp/lerobot_dataset/{_path_name(data_path)}"
-            dataset_setup_cmd = _remote_download_dir_cmd(data_path, resolved_dataset) + " && "
+            dataset_setup_cmd = (
+                _remote_download_dir_cmd(data_path, resolved_dataset) + " && "
+            )
         else:
             resolved_dataset = data_path
         dataset_arg = (
@@ -847,9 +931,13 @@ def _lerobot_profile_train_container_command(
             "Future: implement S3 transient upload for larger scripts."
         )
     if not output_path.startswith("s3://"):
-        raise ValueError(f"--output-path must start with s3:// for serverless profile-train; got {output_path}")
+        raise ValueError(
+            f"--output-path must start with s3:// for serverless profile-train; got {output_path}"
+        )
     if num_workers < 0:
-        raise ValueError(f"--num-workers must be >= 0 for profile-train, got {num_workers}")
+        raise ValueError(
+            f"--num-workers must be >= 0 for profile-train, got {num_workers}"
+        )
 
     # mtime=0: gzip stamps the current time into its header, so the same script
     # produced a different payload from one second to the next -- which made the
@@ -862,7 +950,7 @@ def _lerobot_profile_train_container_command(
 set -euo pipefail
 cd /opt/lerobot
 source /opt/lerobot/venv/bin/activate
-{load_env_file_script('/opt/lerobot/.env', required=False)}
+{load_env_file_script("/opt/lerobot/.env", required=False)}
 export MUJOCO_GL=egl
 export PYOPENGL_PLATFORM=egl
 export HF_HOME="${{HF_HOME:-/tmp/hf_home}}"
@@ -964,7 +1052,9 @@ def _train_serverless(
     if num_workers < -1:
         _fail(f"--num-workers must be -1 (omit) or >= 0, got {num_workers}")
     if gpu_count < 0:
-        _fail(f"--gpu-count must be 0 (default 1 for serverless) or positive, got {gpu_count}")
+        _fail(
+            f"--gpu-count must be 0 (default 1 for serverless) or positive, got {gpu_count}"
+        )
     input_path = training_config.data_path or input_path
     dataset_ref = input_path or dataset
     if not dataset_ref:
@@ -994,7 +1084,11 @@ def _train_serverless(
     resolved_image = image or container_image_for_tool("lerobot", tag=image_tag)
     if existing is not None:
         info = existing
-        if not submit_only and existing.status not in {"succeeded", "failed", "cancelled"}:
+        if not submit_only and existing.status not in {
+            "succeeded",
+            "failed",
+            "cancelled",
+        }:
             info = client.poll_job(
                 existing.id,
                 resolved_project_id,
@@ -1015,19 +1109,38 @@ def _train_serverless(
             last_status=info.status,
             last_submitted_at=datetime.now(timezone.utc).isoformat(),
         )
-        _output({"status": "existing", "job_id": info.id, "job_name": info.name, "job_status": info.status, "output_path": out}, output)
+        _output(
+            {
+                "status": "existing",
+                "job_id": info.id,
+                "job_name": info.name,
+                "job_status": info.status,
+                "output_path": out,
+            },
+            output,
+        )
         return
 
     storage = resolve_project_storage(proj_alias)
     credentials = resolve_credentials()
-    s3_access_key, s3_secret_key, s3_endpoint = _serverless_storage_env_values(storage, credentials, out)
+    s3_access_key, s3_secret_key, s3_endpoint = _serverless_storage_env_values(
+        storage, credentials, out
+    )
     if checkpoint_s3_explicit:
-        resolved_access_key = training_config.checkpoint_s3.aws_access_key_id or s3_access_key
-        resolved_secret_key = training_config.checkpoint_s3.aws_secret_access_key or s3_secret_key
+        resolved_access_key = (
+            training_config.checkpoint_s3.aws_access_key_id or s3_access_key
+        )
+        resolved_secret_key = (
+            training_config.checkpoint_s3.aws_secret_access_key or s3_secret_key
+        )
         resolved_endpoint = training_config.checkpoint_s3.endpoint_url or s3_endpoint
     else:
-        resolved_access_key = s3_access_key or training_config.checkpoint_s3.aws_access_key_id
-        resolved_secret_key = s3_secret_key or training_config.checkpoint_s3.aws_secret_access_key
+        resolved_access_key = (
+            s3_access_key or training_config.checkpoint_s3.aws_access_key_id
+        )
+        resolved_secret_key = (
+            s3_secret_key or training_config.checkpoint_s3.aws_secret_access_key
+        )
         resolved_endpoint = s3_endpoint or training_config.checkpoint_s3.endpoint_url
     try:
         require_s3_credentials(
@@ -1113,7 +1226,15 @@ def _train_serverless(
         last_status=info.status,
         last_submitted_at=submitted_at,
     )
-    _output({"status": "submitted" if submit_only else info.status, "job_id": info.id, "job_name": info.name, "output_path": out}, output)
+    _output(
+        {
+            "status": "submitted" if submit_only else info.status,
+            "job_id": info.id,
+            "job_name": info.name,
+            "output_path": out,
+        },
+        output,
+    )
 
 
 def _profile_train_serverless(
@@ -1153,7 +1274,9 @@ def _profile_train_serverless(
     if steps <= warmup_steps and mode in {"wallclock", "inference"}:
         _fail(f"--steps ({steps}) must be greater than --warmup-steps ({warmup_steps})")
     if gpu_count < 1:
-        _fail(f"--gpu-count must be positive for serverless profile-train, got {gpu_count}")
+        _fail(
+            f"--gpu-count must be positive for serverless profile-train, got {gpu_count}"
+        )
     if not dataset_repo_id:
         _fail("LeRobot profile-train --runtime serverless requires --dataset-repo-id.")
     if not policy_type:
@@ -1161,7 +1284,9 @@ def _profile_train_serverless(
     if not output_path:
         _fail("LeRobot profile-train --runtime serverless requires --output-path.")
     if not output_path.startswith("s3://"):
-        _fail("LeRobot profile-train --output-path expects an S3 URI for serverless jobs.")
+        _fail(
+            "LeRobot profile-train --output-path expects an S3 URI for serverless jobs."
+        )
     if not script.exists() or not script.is_file():
         _fail(f"LeRobot profile-train script not found: {script}")
 
@@ -1170,7 +1295,9 @@ def _profile_train_serverless(
         env_cfg = resolve_environment(proj_alias)
         resolved_project_id = env_cfg.project_id if env_cfg else ""
     if not resolved_project_id:
-        _fail("LeRobot profile-train --runtime serverless requires a Nebius project ID.")
+        _fail(
+            "LeRobot profile-train --runtime serverless requires a Nebius project ID."
+        )
 
     _warn_for_lerobot_gpu_policy(policy_type, gpu_type)
     name = job_name or _lerobot_serverless_job_name(wb_name)
@@ -1195,7 +1322,11 @@ def _profile_train_serverless(
 
     if existing is not None:
         info = existing
-        if not submit_only and existing.status not in {"succeeded", "failed", "cancelled"}:
+        if not submit_only and existing.status not in {
+            "succeeded",
+            "failed",
+            "cancelled",
+        }:
             info = client.poll_job(
                 existing.id,
                 resolved_project_id,
@@ -1216,12 +1347,23 @@ def _profile_train_serverless(
             last_status=info.status,
             last_submitted_at=submitted_at,
         )
-        _output({"status": "existing", "job_id": info.id, "job_name": info.name, "job_status": info.status, "output_path": out}, output)
+        _output(
+            {
+                "status": "existing",
+                "job_id": info.id,
+                "job_name": info.name,
+                "job_status": info.status,
+                "output_path": out,
+            },
+            output,
+        )
         return
 
     storage = resolve_project_storage(proj_alias)
     credentials = resolve_credentials()
-    s3_access_key, s3_secret_key, s3_endpoint = _serverless_storage_env_values(storage, credentials, out)
+    s3_access_key, s3_secret_key, s3_endpoint = _serverless_storage_env_values(
+        storage, credentials, out
+    )
     try:
         require_s3_credentials(
             {
@@ -1300,7 +1442,15 @@ def _profile_train_serverless(
         last_status=info.status,
         last_submitted_at=submitted_at,
     )
-    _output({"status": "submitted" if submit_only else info.status, "job_id": info.id, "job_name": info.name, "output_path": out}, output)
+    _output(
+        {
+            "status": "submitted" if submit_only else info.status,
+            "job_id": info.id,
+            "job_name": info.name,
+            "output_path": out,
+        },
+        output,
+    )
 
 
 # ── train ────────────────────────────────────────────────────────────────
@@ -1308,7 +1458,9 @@ def _profile_train_serverless(
 
 @app.command()
 def train(
-    policy_type: str = typer.Option(..., "--policy-type", help="Policy type (act, diffusion, smolvla)."),
+    policy_type: str = typer.Option(
+        ..., "--policy-type", help="Policy type (act, diffusion, smolvla)."
+    ),
     dataset: str = typer.Option("", "--dataset", help="HF dataset repo ID."),
     data_path: str = typer.Option(
         "",
@@ -1320,13 +1472,23 @@ def train(
         "--input-path",
         help="Compatibility alias for --data-path.",
     ),
-    job_name: str = typer.Option(..., "--job-name", help="Unique name for this training run."),
+    job_name: str = typer.Option(
+        ..., "--job-name", help="Unique name for this training run."
+    ),
     steps: int = typer.Option(5000, "--steps", help="Training steps."),
     batch_size: int = typer.Option(8, "--batch-size", help="Batch size."),
-    env_type: str = typer.Option("", "--env-type", help="Environment type (omit to use lerobot default)."),
+    env_type: str = typer.Option(
+        "", "--env-type", help="Environment type (omit to use lerobot default)."
+    ),
     env_task: str = typer.Option("", "--env-task", help="Environment task."),
-    num_workers: int = typer.Option(-1, "--num-workers", help="Dataloader num_workers (-1 = omit, 0+ = explicit)."),
-    gpu_count: int = typer.Option(0, "--gpu-count", help="Number of GPUs (0 = workbench config; uses accelerate launch for >1)."),
+    num_workers: int = typer.Option(
+        -1, "--num-workers", help="Dataloader num_workers (-1 = omit, 0+ = explicit)."
+    ),
+    gpu_count: int = typer.Option(
+        0,
+        "--gpu-count",
+        help="Number of GPUs (0 = workbench config; uses accelerate launch for >1).",
+    ),
     device: str = typer.Option("cuda", "--device", help="Device."),
     output_path: str = typer.Option(
         "",
@@ -1338,23 +1500,63 @@ def train(
         "--override",
         help="Generic Hydra override as KEY=VALUE. Repeat for learning rate, clip params, terminations, or any trainer key.",
     ),
-    wandb_enabled: bool = typer.Option(False, "--wandb/--no-wandb", help="Enable W&B logging for the training run."),
+    wandb_enabled: bool = typer.Option(
+        False, "--wandb/--no-wandb", help="Enable W&B logging for the training run."
+    ),
     wandb_project: str = typer.Option("", "--wandb-project", help="W&B project name."),
     wandb_run_name: str = typer.Option("", "--wandb-run-name", help="W&B run name."),
-    wandb_mode: str = typer.Option("offline", "--wandb-mode", help="W&B mode such as online, offline, or disabled."),
-    checkpoint_s3_uri: str = typer.Option("", "--checkpoint-s3-uri", help="S3 URI for checkpoint upload."),
-    checkpoint_s3_endpoint_url: str = typer.Option("", "--checkpoint-s3-endpoint-url", help="S3-compatible endpoint URL."),
-    checkpoint_s3_access_key_id: str = typer.Option("", "--checkpoint-s3-access-key-id", help="S3 access key ID."),
-    checkpoint_s3_secret_access_key: str = typer.Option("", "--checkpoint-s3-secret-access-key", help="S3 secret access key."),
-    runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help="Runtime backend: vm, container, byovm, or serverless."),
-    project_id: str = typer.Option("", "--project-id", help="Nebius project ID override for serverless Jobs."),
-    image: str = typer.Option("", "--image", help="Container image override for serverless Jobs."),
-    gpu_type: str = typer.Option("h200", "--gpu-type", help="GPU type for serverless Jobs (h200, b300, l40s, or Nebius platform)."),
-    subnet_id: str = typer.Option("", "--subnet-id", help="Subnet ID for serverless Jobs (auto-discovered if omitted)."),
-    submit_only: bool = typer.Option(False, "--submit-only", help="Submit Job and return immediately without polling."),
-    smoke: bool = typer.Option(False, "--smoke", help="Use smoke training settings for serverless Jobs."),
-    poll_interval: float = typer.Option(30.0, "--poll-interval", help="Seconds between serverless Job status checks."),
-    wait_timeout: int = typer.Option(3600, "--wait-timeout", help="Max seconds to wait for Job completion when not --submit-only."),
+    wandb_mode: str = typer.Option(
+        "offline", "--wandb-mode", help="W&B mode such as online, offline, or disabled."
+    ),
+    checkpoint_s3_uri: str = typer.Option(
+        "", "--checkpoint-s3-uri", help="S3 URI for checkpoint upload."
+    ),
+    checkpoint_s3_endpoint_url: str = typer.Option(
+        "", "--checkpoint-s3-endpoint-url", help="S3-compatible endpoint URL."
+    ),
+    checkpoint_s3_access_key_id: str = typer.Option(
+        "", "--checkpoint-s3-access-key-id", help="S3 access key ID."
+    ),
+    checkpoint_s3_secret_access_key: str = typer.Option(
+        "", "--checkpoint-s3-secret-access-key", help="S3 secret access key."
+    ),
+    runtime: WorkbenchRuntime = typer.Option(
+        WorkbenchRuntime.vm,
+        "--runtime",
+        help="Runtime backend: vm, container, byovm, or serverless.",
+    ),
+    project_id: str = typer.Option(
+        "", "--project-id", help="Nebius project ID override for serverless Jobs."
+    ),
+    image: str = typer.Option(
+        "", "--image", help="Container image override for serverless Jobs."
+    ),
+    gpu_type: str = typer.Option(
+        "h200",
+        "--gpu-type",
+        help="GPU type for serverless Jobs (h200, b300, l40s, or Nebius platform).",
+    ),
+    subnet_id: str = typer.Option(
+        "",
+        "--subnet-id",
+        help="Subnet ID for serverless Jobs (auto-discovered if omitted).",
+    ),
+    submit_only: bool = typer.Option(
+        False,
+        "--submit-only",
+        help="Submit Job and return immediately without polling.",
+    ),
+    smoke: bool = typer.Option(
+        False, "--smoke", help="Use smoke training settings for serverless Jobs."
+    ),
+    poll_interval: float = typer.Option(
+        30.0, "--poll-interval", help="Seconds between serverless Job status checks."
+    ),
+    wait_timeout: int = typer.Option(
+        3600,
+        "--wait-timeout",
+        help="Max seconds to wait for Job completion when not --submit-only.",
+    ),
     lerobot_version: str = typer.Option(
         "",
         "--lerobot-version",
@@ -1364,7 +1566,9 @@ def train(
             f"Default: {supported_tool_version('lerobot')}."
         ),
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Run lerobot-train on the VM via SSH, stream logs."""
     try:
@@ -1405,7 +1609,9 @@ def train(
                 checkpoint_s3_access_key_id=checkpoint_s3_access_key_id,
                 checkpoint_s3_secret_access_key=checkpoint_s3_secret_access_key,
             )
-        checkpoint_output_path = validate_write_path(checkpoint_output_path, tool="LeRobot train")
+        checkpoint_output_path = validate_write_path(
+            checkpoint_output_path, tool="LeRobot train"
+        )
     except PathContractError as exc:
         _fail(str(exc))
         return
@@ -1464,7 +1670,9 @@ def train(
 
     output_is_s3 = _is_s3_uri(checkpoint_output_path)
     checkpoint_dir = (
-        checkpoint_output_path if checkpoint_output_path and not output_is_s3 else f"/opt/lerobot/checkpoints/{job_name}"
+        checkpoint_output_path
+        if checkpoint_output_path and not output_is_s3
+        else f"/opt/lerobot/checkpoints/{job_name}"
     )
     status_dir = "/opt/lerobot/job_status"
 
@@ -1477,7 +1685,11 @@ def train(
         if _is_s3_uri(training_config.data_path):
             resolved_dataset = _remote_cache_dir("dataset", training_config.data_path)
             dataset_setup_cmd = (
-                _remote_download_dir_cmd(training_config.data_path, resolved_dataset, cfg.storage.endpoint_url)
+                _remote_download_dir_cmd(
+                    training_config.data_path,
+                    resolved_dataset,
+                    cfg.storage.endpoint_url,
+                )
                 + " && "
             )
         else:
@@ -1538,18 +1750,22 @@ def train(
         f"{extra_train_args}&& "
         f"END_TS=$(date +%s) && "
         f"DURATION=$((END_TS - START_TS)) && "
-        f"echo '{{\"status\": \"success\", \"job_name\": \"{job_name}\", "
-        f"\"checkpoint_path\": \"{checkpoint_dir}/checkpoints/last/pretrained_model\", "
-        f"\"duration_seconds\": '\"$DURATION\"'}}' > {status_dir}/{job_name}.json && "
+        f'echo \'{{"status": "success", "job_name": "{job_name}", '
+        f'"checkpoint_path": "{checkpoint_dir}/checkpoints/last/pretrained_model", '
+        f'"duration_seconds": \'"$DURATION"\'}}\' > {status_dir}/{job_name}.json && '
         f"echo NPA_TRAIN_COMPLETE"
     )
 
     if stream_logs:
-        console.print(f"[bold]Training {policy_type} on {dataset_ref}[/bold] (job: {job_name})")
+        console.print(
+            f"[bold]Training {policy_type} on {dataset_ref}[/bold] (job: {job_name})"
+        )
 
     start = time.time()
     try:
-        exit_code, stdout, stderr = ssh.run(_runtime_exec_cmd(cfg, cmd), stream=stream_logs)
+        exit_code, stdout, stderr = ssh.run(
+            _runtime_exec_cmd(cfg, cmd), stream=stream_logs
+        )
     except SSHError as exc:
         _fail(str(exc))
         return
@@ -1572,7 +1788,9 @@ def train(
     if exit_code == 0 and checkpoint_output_path:
         if output_is_s3:
             if stream_logs:
-                console.print(f"[bold]Uploading checkpoint to {checkpoint_output_path}...[/bold]")
+                console.print(
+                    f"[bold]Uploading checkpoint to {checkpoint_output_path}...[/bold]"
+                )
             upload_cmd = (
                 f"source /opt/lerobot/venv/bin/activate && "
                 f"{load_env_file_script('/opt/lerobot/.env')} && "
@@ -1584,13 +1802,20 @@ def train(
             else:
                 result["status"] = "failed"
                 result["exit_code"] = up_code or 1
-                result["output_upload_error"] = up_err.strip()[-500:] if up_err else up_out.strip()[-500:]
+                result["output_upload_error"] = (
+                    up_err.strip()[-500:] if up_err else up_out.strip()[-500:]
+                )
                 exit_code = up_code or 1
         else:
             result["output_path"] = ckpt_path
 
     # Upload checkpoint to object storage if configured
-    if exit_code == 0 and not output_is_s3 and cfg.storage.checkpoint_bucket and cfg.storage.endpoint_url:
+    if (
+        exit_code == 0
+        and not output_is_s3
+        and cfg.storage.checkpoint_bucket
+        and cfg.storage.endpoint_url
+    ):
         if stream_logs:
             console.print("[bold]Uploading checkpoint to object storage...[/bold]")
         try:
@@ -1599,12 +1824,16 @@ def train(
             _parsed = _urlparse(cfg.storage.checkpoint_bucket)
             bucket_name = _parsed.netloc
             bucket_prefix = _parsed.path.lstrip("/").rstrip("/")
-            s3_dest_prefix = f"{bucket_prefix}/{job_name}" if bucket_prefix else f"checkpoints/{job_name}"
+            s3_dest_prefix = (
+                f"{bucket_prefix}/{job_name}"
+                if bucket_prefix
+                else f"checkpoints/{job_name}"
+            )
 
             upload_cmd = (
                 f"source /opt/lerobot/venv/bin/activate && "
                 f"{load_env_file_script('/opt/lerobot/.env')} && "
-                f"python3 -c \""
+                f'python3 -c "'
                 f"import boto3, os, pathlib; "
                 f"s3 = boto3.client('s3', "
                 f"endpoint_url=os.environ.get('NEBIUS_S3_ENDPOINT', '{cfg.storage.endpoint_url}'), "
@@ -1618,7 +1847,9 @@ def train(
             if "uploaded" in up_out:
                 result["storage_uri"] = f"s3://{bucket_name}/{s3_dest_prefix}/"
         except Exception:
-            logging.getLogger(__name__).debug("suppressed exception", exc_info=True)  # non-fatal; checkpoint is still on the VM
+            logging.getLogger(__name__).debug(
+                "suppressed exception", exc_info=True
+            )  # non-fatal; checkpoint is still on the VM
 
     _output(result, output)
     if exit_code != 0:
@@ -1630,7 +1861,9 @@ def train(
 
 @app.command("eval")
 def eval_cmd(
-    checkpoint: str = typer.Option("", "--checkpoint", help="Checkpoint path, HF repo, or s3:// URI."),
+    checkpoint: str = typer.Option(
+        "", "--checkpoint", help="Checkpoint path, HF repo, or s3:// URI."
+    ),
     input_path: str = typer.Option(
         "",
         "--input-path",
@@ -1644,7 +1877,9 @@ def eval_cmd(
         "--output-path",
         help="S3 URI where eval results are written.",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Run lerobot-eval on the VM, return metrics."""
     try:
@@ -1686,11 +1921,15 @@ def eval_cmd(
             ssh.run_or_raise(_runtime_exec_cmd(cfg, resolve_cmd))
             resolved_checkpoint = local_cache
         except Exception:
-            logging.getLogger(__name__).debug("suppressed exception", exc_info=True)  # try using the URI directly
+            logging.getLogger(__name__).debug(
+                "suppressed exception", exc_info=True
+            )  # try using the URI directly
 
     output_is_s3 = _is_s3_uri(output_path)
     eval_output_dir = (
-        output_path if output_path and not output_is_s3 else f"/tmp/npa-eval-{int(time.time())}"
+        output_path
+        if output_path and not output_is_s3
+        else f"/tmp/npa-eval-{int(time.time())}"
     )
     env_task_arg = f"--env.task={env_task}" if env_task else ""
 
@@ -1712,7 +1951,9 @@ def eval_cmd(
 
     start = time.time()
     try:
-        exit_code, stdout, stderr = ssh.run(_runtime_exec_cmd(cfg, cmd), stream=stream_logs)
+        exit_code, stdout, stderr = ssh.run(
+            _runtime_exec_cmd(cfg, cmd), stream=stream_logs
+        )
     except SSHError as exc:
         _fail(str(exc))
         return
@@ -1755,7 +1996,9 @@ def eval_cmd(
     if exit_code == 0 and output_path:
         if output_is_s3:
             if stream_logs:
-                console.print(f"[bold]Uploading eval results to {output_path}...[/bold]")
+                console.print(
+                    f"[bold]Uploading eval results to {output_path}...[/bold]"
+                )
             upload_cmd = (
                 f"source /opt/lerobot/venv/bin/activate && "
                 f"{load_env_file_script('/opt/lerobot/.env')} && "
@@ -1767,7 +2010,9 @@ def eval_cmd(
             else:
                 result["status"] = "failed"
                 result["exit_code"] = up_code or 1
-                result["output_upload_error"] = up_err.strip()[-500:] if up_err else up_out.strip()[-500:]
+                result["output_upload_error"] = (
+                    up_err.strip()[-500:] if up_err else up_out.strip()[-500:]
+                )
                 exit_code = up_code or 1
         else:
             result["output_path"] = eval_output_dir
@@ -1790,10 +2035,14 @@ def serve(
     ),
     # Deprecated path alias: keep --checkpoint working for existing scripts.
     checkpoint: str = typer.Option("", "--checkpoint", hidden=True),
-    env_type: str = typer.Option("", "--env-type", help="Environment type (needed for shape resolution)."),
+    env_type: str = typer.Option(
+        "", "--env-type", help="Environment type (needed for shape resolution)."
+    ),
     env_task: str = typer.Option("", "--env-task", help="Environment task."),
     port: int = typer.Option(8080, "--port", help="Server port."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Start or restart the PolicyServer with a given checkpoint."""
     checkpoint_ref = input_path or checkpoint
@@ -1823,7 +2072,9 @@ def serve(
     try:
         with service_endpoint(cfg, default_port=port) as active:
             client = HTTPClient(active.url)
-            data = client.serve(checkpoint_ref, env_type=env_type or None, env_task=env_task or None)
+            data = client.serve(
+                checkpoint_ref, env_type=env_type or None, env_task=env_task or None
+            )
 
             # Wait for healthy
             if output != OutputFormat.json:
@@ -1851,14 +2102,18 @@ def serve(
 
 @app.command()
 def infer(
-    observation: Path = typer.Option(..., "--observation", help="Path to observation JSON file."),
+    observation: Path = typer.Option(
+        ..., "--observation", help="Path to observation JSON file."
+    ),
     output_path: str = typer.Option(
         "",
         "--output-path",
         "-o",
         help="S3 URI where the inference response JSON is written.",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """POST an observation to the running PolicyServer, return predicted actions."""
     if not observation.exists():
@@ -1901,7 +2156,9 @@ def infer(
                 ).upload_file(str(local_file), output_path)
         else:
             local_path = Path(output_path)
-            if output_path.endswith("/") or (local_path.exists() and local_path.is_dir()):
+            if output_path.endswith("/") or (
+                local_path.exists() and local_path.is_dir()
+            ):
                 local_path = local_path / "infer-response.json"
             local_path.parent.mkdir(parents=True, exist_ok=True)
             local_path.write_text(json.dumps(data, indent=2))
@@ -1916,7 +2173,9 @@ def infer(
 
 @app.command("list-checkpoints")
 def list_checkpoints(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """List available checkpoints on the VM and in object storage."""
     cfg = _get_config()
@@ -1940,7 +2199,9 @@ def list_checkpoints(
             if line:
                 # Extract job name from path
                 parts = line.split("/")
-                name_idx = parts.index("checkpoints") + 1 if "checkpoints" in parts else -1
+                name_idx = (
+                    parts.index("checkpoints") + 1 if "checkpoints" in parts else -1
+                )
                 name = parts[name_idx] if 0 <= name_idx < len(parts) else line
                 results["vm_checkpoints"].append({"name": name, "path": line})
     except SSHError:
@@ -1984,34 +2245,86 @@ def list_checkpoints(
 
 @app.command()
 def deploy(
-    gpu_type: str = typer.Option("gpu-h200-sxm", "--gpu-type", help="Nebius GPU platform."),
-    gpu_preset: str = typer.Option("1gpu-16vcpu-200gb", "--gpu-preset", help="GPU preset."),
-    region: str = typer.Option("", "--region", help="Nebius region (saved per project)."),
-    project_id: str = typer.Option("", "--project-id", help="Nebius project ID (saved per project)."),
-    tenant_id: str = typer.Option("", "--tenant-id", help="Nebius tenant ID (saved per project)."),
-    tf_dir: str = typer.Option("", "--tf-dir", help="Path to Terraform directory (default: bundled)."),
-    tf_var: list[str] = typer.Option([], "--tf-var", "-v", help="Extra TF variable (key=value), repeatable."),
-    skip_infra: bool = typer.Option(False, "--skip-infra", help="Skip Terraform, only redeploy app."),
-    skip_app: bool = typer.Option(False, "--skip-app", help="Skip app deployment, only provision infra."),
-    destroy: bool = typer.Option(False, "--destroy", help="Destroy infrastructure and clean up config."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without doing it."),
+    gpu_type: str = typer.Option(
+        "gpu-h200-sxm", "--gpu-type", help="Nebius GPU platform."
+    ),
+    gpu_preset: str = typer.Option(
+        "1gpu-16vcpu-200gb", "--gpu-preset", help="GPU preset."
+    ),
+    region: str = typer.Option(
+        "", "--region", help="Nebius region (saved per project)."
+    ),
+    project_id: str = typer.Option(
+        "", "--project-id", help="Nebius project ID (saved per project)."
+    ),
+    tenant_id: str = typer.Option(
+        "", "--tenant-id", help="Nebius tenant ID (saved per project)."
+    ),
+    tf_dir: str = typer.Option(
+        "", "--tf-dir", help="Path to Terraform directory (default: bundled)."
+    ),
+    tf_var: list[str] = typer.Option(
+        [], "--tf-var", "-v", help="Extra TF variable (key=value), repeatable."
+    ),
+    skip_infra: bool = typer.Option(
+        False, "--skip-infra", help="Skip Terraform, only redeploy app."
+    ),
+    skip_app: bool = typer.Option(
+        False, "--skip-app", help="Skip app deployment, only provision infra."
+    ),
+    destroy: bool = typer.Option(
+        False, "--destroy", help="Destroy infrastructure and clean up config."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would happen without doing it."
+    ),
     yes: bool = typer.Option(
         False,
         "--yes",
         "-y",
         help="Skip confirmation prompts (use with deploy --destroy for automation).",
     ),
-    no_shared_creds: bool = typer.Option(False, "--no-shared-creds", help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env."),
-    checkpoint: str = typer.Option("", "--checkpoint", help="Pre-load a checkpoint after deploy."),
-    server_port: int = typer.Option(8080, "--server-port", help="Server port on the VM."),
-    runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help=RUNTIME_HELP),
-    host: str = typer.Option("", "--host", help="BYOVM SSH host/IP. Used only with --runtime byovm."),
-    ssh_key: str = typer.Option("", "--ssh-key", help="BYOVM SSH private key path. Used only with --runtime byovm."),
-    ssh_user: str = typer.Option("", "--ssh-user", help="BYOVM SSH username. Defaults to ubuntu."),
-    gpu_count: int = typer.Option(0, "--gpu-count", help="Limit visible GPUs on BYOVM (0 = all detected)."),
-    disk_size: int | None = typer.Option(None, "--disk-size", help="Boot disk size in GiB. Defaults to 250 for container runtime; VM runtime keeps the Terraform default."),
-    preemptible: bool = typer.Option(True, "--preemptible/--no-preemptible", help="Preemptible (spot) instance. Pass --no-preemptible for regular VMs."),
-    default: bool = typer.Option(False, "--default", help="Set this workbench as the default."),
+    no_shared_creds: bool = typer.Option(
+        False,
+        "--no-shared-creds",
+        help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env.",
+    ),
+    checkpoint: str = typer.Option(
+        "", "--checkpoint", help="Pre-load a checkpoint after deploy."
+    ),
+    server_port: int = typer.Option(
+        8080, "--server-port", help="Server port on the VM."
+    ),
+    runtime: WorkbenchRuntime = typer.Option(
+        WorkbenchRuntime.vm, "--runtime", help=RUNTIME_HELP
+    ),
+    host: str = typer.Option(
+        "", "--host", help="BYOVM SSH host/IP. Used only with --runtime byovm."
+    ),
+    ssh_key: str = typer.Option(
+        "",
+        "--ssh-key",
+        help="BYOVM SSH private key path. Used only with --runtime byovm.",
+    ),
+    ssh_user: str = typer.Option(
+        "", "--ssh-user", help="BYOVM SSH username. Defaults to ubuntu."
+    ),
+    gpu_count: int = typer.Option(
+        0, "--gpu-count", help="Limit visible GPUs on BYOVM (0 = all detected)."
+    ),
+    disk_size: int | None = typer.Option(
+        None,
+        "--disk-size",
+        help="Boot disk size in GiB. Defaults to 250 for container runtime; VM runtime keeps the Terraform default.",
+    ),
+    preemptible: bool = typer.Option(
+        True,
+        "--preemptible/--no-preemptible",
+        help="Preemptible (spot) instance. Pass --no-preemptible for regular VMs.",
+    ),
+    default: bool = typer.Option(
+        False, "--default", help="Set this workbench as the default."
+    ),
     lerobot_version: str = typer.Option(
         "",
         "--lerobot-version",
@@ -2021,7 +2334,9 @@ def deploy(
             f"Default: {supported_tool_version('lerobot')}."
         ),
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Deploy or update LeRobot infrastructure and application.
 
@@ -2079,9 +2394,7 @@ def deploy(
         tag=resolved_lerobot_version,
     )
     cloud_init_workbench_type = (
-        "lerobot-container"
-        if runtime_uses_container(runtime)
-        else "lerobot"
+        "lerobot-container" if runtime_uses_container(runtime) else "lerobot"
     )
 
     # ── Bootstrap Nebius environment ─────────────────────────────────
@@ -2121,23 +2434,29 @@ def deploy(
             # Persist project early so retries don't need IDs.
             from npa.clients.config import write_config as _early_write
 
-            _early_write({
-                "projects": {
-                    proj_alias: {
-                        "project_id": env_project,
-                        "tenant_id": env_tenant,
-                        "region": env_region,
+            _early_write(
+                {
+                    "projects": {
+                        proj_alias: {
+                            "project_id": env_project,
+                            "tenant_id": env_tenant,
+                            "region": env_region,
+                        },
                     },
-                },
-            })
+                }
+            )
 
     # Merge bootstrapped credentials into TF vars.
     merged_vars: dict[str, str] = {**extra_vars}
     for key in (
-        "iam_token", "service_account_id",
-        "nebius_api_key", "nebius_secret_key",
-        "s3_bucket", "s3_endpoint",
-        "nebius_project_id", "nebius_region",
+        "iam_token",
+        "service_account_id",
+        "nebius_api_key",
+        "nebius_secret_key",
+        "s3_bucket",
+        "s3_endpoint",
+        "nebius_project_id",
+        "nebius_region",
     ):
         if key in nebius_creds:
             merged_vars[key] = nebius_creds[key]
@@ -2168,13 +2487,15 @@ def deploy(
     if use_remote_state and nebius_creds and not dry_run:
         from npa.clients.config import write_config as _state_write
 
-        _state_write({
-            "projects": {
-                proj_alias: {
-                    "terraform_state": _terraform_state_config(merged_vars),
+        _state_write(
+            {
+                "projects": {
+                    proj_alias: {
+                        "terraform_state": _terraform_state_config(merged_vars),
+                    },
                 },
-            },
-        })
+            }
+        )
 
     total_steps = _deploy_step_count(skip_infra, skip_app, destroy, checkpoint)
     step = 0
@@ -2190,12 +2511,16 @@ def deploy(
         )
         if byovm:
             step += 1
-            console.print(f"  [{step}/{total_steps}] Unregistering BYOVM workbench {proj_alias}/{wb_name}...")
+            console.print(
+                f"  [{step}/{total_steps}] Unregistering BYOVM workbench {proj_alias}/{wb_name}..."
+            )
             if not dry_run:
                 from npa.clients.config import remove_workbench_config
 
                 remove_workbench_config(proj_alias, wb_name)
-            console.print(f"  {proj_alias}/{wb_name} unregistered. BYOVM host was not modified.")
+            console.print(
+                f"  {proj_alias}/{wb_name} unregistered. BYOVM host was not modified."
+            )
             return
 
         step += 1
@@ -2208,16 +2533,26 @@ def deploy(
 
         if use_remote_state:
             s3_bucket = merged_vars.get("s3_bucket", "")
-            s3_endpoint = merged_vars.get("s3_endpoint", f"https://storage.{env_region}.nebius.cloud")
-            resolved_tf_dir = str(provisioner.prepare_working_dir(
-                proj_alias, wb_name,
-                bucket=s3_bucket, region=env_region, endpoint=s3_endpoint,
-            ))
+            s3_endpoint = merged_vars.get(
+                "s3_endpoint", f"https://storage.{env_region}.nebius.cloud"
+            )
+            resolved_tf_dir = str(
+                provisioner.prepare_working_dir(
+                    proj_alias,
+                    wb_name,
+                    bucket=s3_bucket,
+                    region=env_region,
+                    endpoint=s3_endpoint,
+                )
+            )
             try:
-                provisioner.init(tf_dir=resolved_tf_dir, backend_config={
-                    "access_key": merged_vars.get("nebius_api_key", ""),
-                    "secret_key": merged_vars.get("nebius_secret_key", ""),
-                })
+                provisioner.init(
+                    tf_dir=resolved_tf_dir,
+                    backend_config={
+                        "access_key": merged_vars.get("nebius_api_key", ""),
+                        "secret_key": merged_vars.get("nebius_secret_key", ""),
+                    },
+                )
             except ProvisionerError as exc:
                 _fail(f"Terraform init failed: {exc}")
                 return
@@ -2237,11 +2572,14 @@ def deploy(
         try:
             provisioner.destroy(
                 tf_dir=resolved_tf_dir or None,
-                tf_vars={"gpu_platform": gpu_type, "gpu_preset": gpu_preset,
-                         "instance_name": destroy_instance_name,
-                         "workbench_type": cloud_init_workbench_type,
-                         "enable_preemptible": "true" if preemptible else "false",
-                         **merged_vars},
+                tf_vars={
+                    "gpu_platform": gpu_type,
+                    "gpu_preset": gpu_preset,
+                    "instance_name": destroy_instance_name,
+                    "workbench_type": cloud_init_workbench_type,
+                    "enable_preemptible": "true" if preemptible else "false",
+                    **merged_vars,
+                },
             )
         except ProvisionerError as exc:
             _fail(f"Terraform destroy failed: {exc}")
@@ -2250,6 +2588,7 @@ def deploy(
         step += 1
         console.print(f"  [{step}/{total_steps}] Cleaning up config...")
         from npa.clients.config import remove_workbench_config
+
         remove_workbench_config(proj_alias, wb_name)
         if use_remote_state:
             provisioner.cleanup_working_dir(proj_alias, wb_name)
@@ -2267,26 +2606,40 @@ def deploy(
 
         if use_remote_state:
             s3_bucket = merged_vars.get("s3_bucket", "")
-            s3_endpoint = merged_vars.get("s3_endpoint", f"https://storage.{env_region}.nebius.cloud")
-            resolved_tf_dir = str(provisioner.prepare_working_dir(
-                proj_alias, wb_name,
-                bucket=s3_bucket, region=env_region, endpoint=s3_endpoint,
-            ))
+            s3_endpoint = merged_vars.get(
+                "s3_endpoint", f"https://storage.{env_region}.nebius.cloud"
+            )
+            resolved_tf_dir = str(
+                provisioner.prepare_working_dir(
+                    proj_alias,
+                    wb_name,
+                    bucket=s3_bucket,
+                    region=env_region,
+                    endpoint=s3_endpoint,
+                )
+            )
         else:
             resolved_tf_dir = tf_dir
 
         step += 1
-        console.print(f"  [{step}/{total_steps}] Initializing Terraform ({proj_alias}/{wb_name})...")
+        console.print(
+            f"  [{step}/{total_steps}] Initializing Terraform ({proj_alias}/{wb_name})..."
+        )
         if dry_run:
             console.print("    [dry-run] Would run: terraform init")
         else:
             try:
                 backend_cfg = (
-                    {"access_key": merged_vars.get("nebius_api_key", ""),
-                     "secret_key": merged_vars.get("nebius_secret_key", "")}
-                    if use_remote_state else None
+                    {
+                        "access_key": merged_vars.get("nebius_api_key", ""),
+                        "secret_key": merged_vars.get("nebius_secret_key", ""),
+                    }
+                    if use_remote_state
+                    else None
                 )
-                provisioner.init(tf_dir=resolved_tf_dir or None, backend_config=backend_cfg)
+                provisioner.init(
+                    tf_dir=resolved_tf_dir or None, backend_config=backend_cfg
+                )
             except ProvisionerError as exc:
                 _fail(f"Terraform init failed: {exc}")
                 return
@@ -2294,22 +2647,30 @@ def deploy(
         step += 1
         apply_instance_name = f"lerobot-{proj_alias}-{wb_name}"
         all_vars = {
-            "gpu_platform": gpu_type, "gpu_preset": gpu_preset,
+            "gpu_platform": gpu_type,
+            "gpu_preset": gpu_preset,
             "instance_name": apply_instance_name,
             "workbench_type": cloud_init_workbench_type,
             "enable_preemptible": "true" if preemptible else "false",
             **merged_vars,
         }
-        console.print(f"  [{step}/{total_steps}] Applying Terraform (gpu={gpu_type}, region={env_region})...")
+        console.print(
+            f"  [{step}/{total_steps}] Applying Terraform (gpu={gpu_type}, region={env_region})..."
+        )
         if dry_run:
             console.print("    [dry-run] terraform apply")
-            tf_outputs = {"vm_ip": "<pending>", "ssh_user": "ubuntu",
-                          "ssh_key_path": "~/.ssh/id_ed25519",
-                          "storage_bucket": "<pending>",
-                          "storage_endpoint": f"https://storage.{env_region}.nebius.cloud"}
+            tf_outputs = {
+                "vm_ip": "<pending>",
+                "ssh_user": "ubuntu",
+                "ssh_key_path": "~/.ssh/id_ed25519",
+                "storage_bucket": "<pending>",
+                "storage_endpoint": f"https://storage.{env_region}.nebius.cloud",
+            }
         else:
             try:
-                tf_outputs = provisioner.apply(tf_dir=resolved_tf_dir or None, tf_vars=all_vars)
+                tf_outputs = provisioner.apply(
+                    tf_dir=resolved_tf_dir or None, tf_vars=all_vars
+                )
             except ProvisionerError as exc:
                 _fail(f"Terraform apply failed: {exc}")
                 return
@@ -2318,7 +2679,11 @@ def deploy(
         step += 1
         console.print(
             f"  [{step}/{total_steps}] "
-            + ("Using BYOVM target..." if byovm else "Skipping infra, reading existing config...")
+            + (
+                "Using BYOVM target..."
+                if byovm
+                else "Skipping infra, reading existing config..."
+            )
         )
         resolved_tf_dir = tf_dir
         if byovm:
@@ -2326,14 +2691,14 @@ def deploy(
                 from npa.clients.config import resolve_credentials
                 from npa.clients.ssh import SSHClient, SSHError
 
-                target = resolve_byovm_target(host=host, ssh_key=ssh_key, ssh_user=ssh_user)
-                bucket = (
-                    merged_vars.get("s3_bucket", "")
-                    or os.environ.get("NPA_CHECKPOINT_BUCKET", "")
+                target = resolve_byovm_target(
+                    host=host, ssh_key=ssh_key, ssh_user=ssh_user
                 )
-                storage_ep = (
-                    merged_vars.get("s3_endpoint", "")
-                    or os.environ.get("AWS_ENDPOINT_URL", "")
+                bucket = merged_vars.get("s3_bucket", "") or os.environ.get(
+                    "NPA_CHECKPOINT_BUCKET", ""
+                )
+                storage_ep = merged_vars.get("s3_endpoint", "") or os.environ.get(
+                    "AWS_ENDPOINT_URL", ""
                 )
                 tf_outputs = workbench_storage_outputs(
                     target=target,
@@ -2341,12 +2706,18 @@ def deploy(
                     endpoint=storage_ep,
                 )
                 if not dry_run:
-                    ssh = SSHClient(ssh_config_for_target(target, tokens=resolve_credentials().tokens))
+                    ssh = SSHClient(
+                        ssh_config_for_target(
+                            target, tokens=resolve_credentials().tokens
+                        )
+                    )
                     ssh.run_or_raise("echo connected")
                     byovm_gpu_info = detect_gpu_info(ssh)
-                    byovm_effective_gpu_count, byovm_visible_devices = select_visible_devices(
-                        byovm_gpu_info.count,
-                        gpu_count or None,
+                    byovm_effective_gpu_count, byovm_visible_devices = (
+                        select_visible_devices(
+                            byovm_gpu_info.count,
+                            gpu_count or None,
+                        )
                     )
                     console.print(
                         f"    Detected {byovm_gpu_info.count} GPU(s): "
@@ -2360,38 +2731,57 @@ def deploy(
                 return
         elif resolved_tf_dir:
             from npa.deploy import provisioner
+
             try:
                 tf_outputs = provisioner.outputs(tf_dir=resolved_tf_dir)
             except ProvisionerError:
                 pass
         elif use_remote_state:
             from npa.deploy import provisioner
+
             work_dir = provisioner.working_dir_path(proj_alias, wb_name)
             if work_dir.exists():
                 try:
-                    provisioner.init(tf_dir=str(work_dir), backend_config={
-                        "access_key": merged_vars.get("nebius_api_key", ""),
-                        "secret_key": merged_vars.get("nebius_secret_key", ""),
-                    })
+                    provisioner.init(
+                        tf_dir=str(work_dir),
+                        backend_config={
+                            "access_key": merged_vars.get("nebius_api_key", ""),
+                            "secret_key": merged_vars.get("nebius_secret_key", ""),
+                        },
+                    )
                     tf_outputs = provisioner.outputs(tf_dir=str(work_dir))
                 except ProvisionerError:
                     pass
 
         if not tf_outputs:
-            from npa.clients.config import _load_yaml, _deep_get, _resolve_project_section, _resolve_workbench_in_project
+            from npa.clients.config import (
+                _load_yaml,
+                _deep_get,
+                _resolve_project_section,
+                _resolve_workbench_in_project,
+            )
+
             yml = _load_yaml()
             proj = _resolve_project_section(yml, proj_alias)
             wb = _resolve_workbench_in_project(proj, wb_name, yml)
             tf_outputs = {
                 "vm_ip": _deep_get(wb, "ssh", "host", default=""),
                 "ssh_user": _deep_get(wb, "ssh", "user", default="ubuntu"),
-                "ssh_key_path": _deep_get(wb, "ssh", "key_path", default="~/.ssh/id_ed25519"),
-                "storage_bucket": _deep_get(wb, "storage", "checkpoint_bucket", default=""),
-                "storage_endpoint": _deep_get(wb, "storage", "endpoint_url", default=""),
+                "ssh_key_path": _deep_get(
+                    wb, "ssh", "key_path", default="~/.ssh/id_ed25519"
+                ),
+                "storage_bucket": _deep_get(
+                    wb, "storage", "checkpoint_bucket", default=""
+                ),
+                "storage_endpoint": _deep_get(
+                    wb, "storage", "endpoint_url", default=""
+                ),
             }
 
         if not tf_outputs.get("vm_ip"):
-            _fail("No VM IP found. Run without --skip-infra first, or set config manually.")
+            _fail(
+                "No VM IP found. Run without --skip-infra first, or set config manually."
+            )
             return
 
     # ── Phase 2: Application ─────────────────────────────────────────
@@ -2401,7 +2791,11 @@ def deploy(
     bucket = tf_outputs.get("storage_bucket", "")
     storage_ep = tf_outputs.get("storage_endpoint", "")
     endpoint = f"http://{vm_ip}:{server_port}"
-    bucket_display = bucket if str(bucket).startswith("s3://") else (f"s3://{bucket}/checkpoints/" if bucket else "")
+    bucket_display = (
+        bucket
+        if str(bucket).startswith("s3://")
+        else (f"s3://{bucket}/checkpoints/" if bucket else "")
+    )
     instance_name = f"lerobot-{proj_alias}-{wb_name}"
     byovm_fields = gpu_config_fields(
         byovm_gpu_info,
@@ -2426,7 +2820,10 @@ def deploy(
                         "app_status": APP_STATUS_PROVISIONED,
                         **byovm_fields,
                         "ssh": {"host": vm_ip, "user": ssh_user, "key_path": ssh_key},
-                        "storage": {"checkpoint_bucket": bucket_display, "endpoint_url": storage_ep},
+                        "storage": {
+                            "checkpoint_bucket": bucket_display,
+                            "endpoint_url": storage_ep,
+                        },
                     },
                 },
             },
@@ -2441,6 +2838,7 @@ def deploy(
 
     if not dry_run:
         from npa.clients.config import write_config
+
         write_config(config_data)
         console.print("    Registered workbench in ~/.npa/config.yaml")
 
@@ -2457,8 +2855,13 @@ def deploy(
         from npa.clients.config import SSHConfig, resolve_credentials
         from npa.clients.ssh import SSHClient, SSHError
         from npa.deploy.configurator import (
-            ConfiguratorError, deploy_lerobot_container, deploy_server, health_check,
-            install_lerobot, write_manifest, write_remote_docker_env_file,
+            ConfiguratorError,
+            deploy_lerobot_container,
+            deploy_server,
+            health_check,
+            install_lerobot,
+            write_manifest,
+            write_remote_docker_env_file,
         )
 
         credentials = resolve_credentials()
@@ -2470,7 +2873,9 @@ def deploy(
         )
 
         step += 1
-        console.print(f"  [{step}/{total_steps}] Connecting via SSH to {ssh_user}@{vm_ip}...")
+        console.print(
+            f"  [{step}/{total_steps}] Connecting via SSH to {ssh_user}@{vm_ip}..."
+        )
         if not dry_run:
             ssh = SSHClient(ssh_cfg)
             try:
@@ -2485,7 +2890,9 @@ def deploy(
         server_config = {
             "server_port": server_port,
             "checkpoint_dir": "/opt/lerobot/checkpoints",
-            "checkpoint_bucket": bucket if str(bucket).startswith("s3://") else (f"s3://{bucket}/checkpoints/" if bucket else ""),
+            "checkpoint_bucket": bucket
+            if str(bucket).startswith("s3://")
+            else (f"s3://{bucket}/checkpoints/" if bucket else ""),
             "storage_endpoint": storage_ep,
             "job_status_dir": "/opt/lerobot/job_status",
             "log_dir": "/var/log/npa-lerobot",
@@ -2493,7 +2900,9 @@ def deploy(
             "training_output_dir": "/opt/lerobot/checkpoints",
             "cuda_visible_devices": byovm_visible_devices,
             "gpu_count": byovm_effective_gpu_count,
-            "shared_env": shared_credential_env(credentials) if not no_shared_creds else {},
+            "shared_env": shared_credential_env(credentials)
+            if not no_shared_creds
+            else {},
         }
         if runtime == WorkbenchRuntime.vm:
             step += 1
@@ -2502,7 +2911,9 @@ def deploy(
                 if install_lerobot(ssh):
                     console.print("    LeRobot already installed")
                 else:
-                    fail_app("LeRobot not installed. cloud-init may still be running - wait and retry.")
+                    fail_app(
+                        "LeRobot not installed. cloud-init may still be running - wait and retry."
+                    )
                     return
 
             step += 1
@@ -2515,13 +2926,19 @@ def deploy(
                     return
         else:
             step += 1
-            console.print(f"  [{step}/{total_steps}] Deploying LeRobot container ({container_image})...")
+            console.print(
+                f"  [{step}/{total_steps}] Deploying LeRobot container ({container_image})..."
+            )
             if not dry_run:
                 try:
                     if byovm:
                         byovm_env = {
-                            "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", "") or os.environ.get("AWS_ACCESS_KEY_ID", ""),
-                            "AWS_SECRET_ACCESS_KEY": merged_vars.get("nebius_secret_key", "") or os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
+                            "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", "")
+                            or os.environ.get("AWS_ACCESS_KEY_ID", ""),
+                            "AWS_SECRET_ACCESS_KEY": merged_vars.get(
+                                "nebius_secret_key", ""
+                            )
+                            or os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
                             "AWS_ENDPOINT_URL": storage_ep,
                             "NEBIUS_S3_ENDPOINT": storage_ep,
                             "NEBIUS_S3_BUCKET": bucket,
@@ -2535,7 +2952,9 @@ def deploy(
                                 visible_devices=byovm_visible_devices,
                             ),
                         }
-                        apply_shared_credential_env(byovm_env, credentials, include=not no_shared_creds)
+                        apply_shared_credential_env(
+                            byovm_env, credentials, include=not no_shared_creds
+                        )
                         write_remote_docker_env_file(
                             ssh,
                             "/opt/lerobot/.env",
@@ -2579,22 +2998,32 @@ def deploy(
         console.print(f"  [{step}/{total_steps}] Writing deployment manifest...")
         if not dry_run:
             try:
-                write_manifest(ssh, tool="lerobot", version=resolved_lerobot_version, deployed_by=f"npa deploy --runtime {runtime.value}")
+                write_manifest(
+                    ssh,
+                    tool="lerobot",
+                    version=resolved_lerobot_version,
+                    deployed_by=f"npa deploy --runtime {runtime.value}",
+                )
             except SSHError:
                 pass
         mark_app_status(APP_STATUS_HEALTHY)
 
     # ── Write config ─────────────────────────────────────────────────
     step += 1
-    console.print(f"  [{step}/{total_steps}] Updating config status ({proj_alias}/{wb_name})...")
+    console.print(
+        f"  [{step}/{total_steps}] Updating config status ({proj_alias}/{wb_name})..."
+    )
     if not dry_run:
         console.print("    Saved to ~/.npa/config.yaml")
 
     # ── Optional: pre-load checkpoint ────────────────────────────────
     if checkpoint and not dry_run and not skip_app:
         step += 1
-        console.print(f"  [{step}/{total_steps}] Pre-loading checkpoint: {checkpoint}...")
+        console.print(
+            f"  [{step}/{total_steps}] Pre-loading checkpoint: {checkpoint}..."
+        )
         from npa.clients.http import HTTPClient, ServerError
+
         client = HTTPClient(endpoint)
         try:
             client.serve(checkpoint)
@@ -2612,18 +3041,32 @@ def deploy(
     console.print(f"  Try: npa workbench lerobot -p {proj_alias} -n {wb_name} status")
 
     if output == OutputFormat.json:
-        typer.echo(json.dumps({
-            "project": proj_alias, "name": wb_name,
-            "endpoint": endpoint, "vm_ip": vm_ip, "ssh_user": ssh_user,
-            "gpu_platform": byovm_fields.get("gpu_platform", gpu_type),
-            "gpu_preset": byovm_fields.get("gpu_preset", gpu_preset),
-            "gpu_count": byovm_fields.get("gpu_count"),
-            "environment": {"project_id": env_project, "tenant_id": env_tenant, "region": env_region},
-            "tf_outputs": tf_outputs,
-        }, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "project": proj_alias,
+                    "name": wb_name,
+                    "endpoint": endpoint,
+                    "vm_ip": vm_ip,
+                    "ssh_user": ssh_user,
+                    "gpu_platform": byovm_fields.get("gpu_platform", gpu_type),
+                    "gpu_preset": byovm_fields.get("gpu_preset", gpu_preset),
+                    "gpu_count": byovm_fields.get("gpu_count"),
+                    "environment": {
+                        "project_id": env_project,
+                        "tenant_id": env_tenant,
+                        "region": env_region,
+                    },
+                    "tf_outputs": tf_outputs,
+                },
+                indent=2,
+            )
+        )
 
 
-def _deploy_step_count(skip_infra: bool, skip_app: bool, destroy: bool, checkpoint: str) -> int:
+def _deploy_step_count(
+    skip_infra: bool, skip_app: bool, destroy: bool, checkpoint: str
+) -> int:
     if destroy:
         return 2
     count = 0
@@ -2644,7 +3087,9 @@ def _deploy_step_count(skip_infra: bool, skip_app: bool, destroy: bool, checkpoi
 
 @app.command("system-info")
 def system_info_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Collect and display system hardware information from the VM."""
     cfg = _get_config()
@@ -2680,15 +3125,21 @@ def system_info_cmd(
 @app.command("benchmark")
 def benchmark_cmd(
     run: list[str] = typer.Option(
-        ..., "--run", "-r",
+        ...,
+        "--run",
+        "-r",
         help="Training spec as POLICY:DATASET:STEPS (repeatable).",
     ),
     num_workers: list[int] = typer.Option(
-        ..., "--num-workers", "-w",
+        ...,
+        "--num-workers",
+        "-w",
         help="Dataloader num_workers to test (0 = max CPUs). Repeatable.",
     ),
     batch_size: int = typer.Option(8, "--batch-size", help="Batch size for all runs."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Run a benchmark suite: collect system info, train each model at each num_workers value, upload results to S3."""
     import base64
@@ -2776,7 +3227,9 @@ def benchmark_cmd(
             console.print("  system_info.txt saved")
     except SSHError as exc:
         if stream:
-            console.print(f"  [yellow]Warning: system info collection failed: {exc}[/yellow]")
+            console.print(
+                f"  [yellow]Warning: system info collection failed: {exc}[/yellow]"
+            )
 
     # ── Training runs ────────────────────────────────────────────────
     results: list[dict[str, Any]] = []
@@ -2822,12 +3275,20 @@ def benchmark_cmd(
             except SSHError as exc:
                 if stream:
                     console.print(f"  [red]SSH failed (mkdir): {exc}[/red]")
-                results.append({
-                    "run_name": run_name, "policy": policy, "dataset": dataset,
-                    "steps": steps, "num_workers": nw, "batch_size": batch_size,
-                    "status": "failed", "exit_code": -1,
-                    "duration_seconds": 0, "error": f"SSH: {exc}",
-                })
+                results.append(
+                    {
+                        "run_name": run_name,
+                        "policy": policy,
+                        "dataset": dataset,
+                        "steps": steps,
+                        "num_workers": nw,
+                        "batch_size": batch_size,
+                        "status": "failed",
+                        "exit_code": -1,
+                        "duration_seconds": 0,
+                        "error": f"SSH: {exc}",
+                    }
+                )
                 continue
 
             train_cmd = (
@@ -2853,17 +3314,26 @@ def benchmark_cmd(
 
             start = time.time()
             try:
-                exit_code, stdout, stderr = ssh.run(_runtime_exec_cmd(cfg, train_cmd), stream=stream)
+                exit_code, stdout, stderr = ssh.run(
+                    _runtime_exec_cmd(cfg, train_cmd), stream=stream
+                )
             except SSHError as exc:
                 if stream:
                     console.print(f"  [red]SSH failed (train): {exc}[/red]")
-                results.append({
-                    "run_name": run_name, "policy": policy, "dataset": dataset,
-                    "steps": steps, "num_workers": nw, "batch_size": batch_size,
-                    "status": "failed", "exit_code": -1,
-                    "duration_seconds": round(time.time() - start, 1),
-                    "error": f"SSH: {exc}",
-                })
+                results.append(
+                    {
+                        "run_name": run_name,
+                        "policy": policy,
+                        "dataset": dataset,
+                        "steps": steps,
+                        "num_workers": nw,
+                        "batch_size": batch_size,
+                        "status": "failed",
+                        "exit_code": -1,
+                        "duration_seconds": round(time.time() - start, 1),
+                        "error": f"SSH: {exc}",
+                    }
+                )
                 continue
             duration = round(time.time() - start, 1)
 
@@ -2889,7 +3359,9 @@ def benchmark_cmd(
                 pass  # best-effort; summary is already in `results`
 
             if stream:
-                status_str = "[green]OK[/green]" if exit_code == 0 else "[red]FAILED[/red]"
+                status_str = (
+                    "[green]OK[/green]" if exit_code == 0 else "[red]FAILED[/red]"
+                )
                 console.print(f"  {status_str} ({duration}s)")
 
     # ── Write overall benchmark summary ──────────────────────────────
@@ -2910,7 +3382,9 @@ def benchmark_cmd(
         ssh.run(f"echo {b64} | base64 -d > {bench_dir}/benchmark_summary.json")
     except SSHError:
         if stream:
-            console.print("  [yellow]Warning: could not write benchmark_summary.json to VM[/yellow]")
+            console.print(
+                "  [yellow]Warning: could not write benchmark_summary.json to VM[/yellow]"
+            )
 
     # ── Upload results to S3 ─────────────────────────────────────────
     if cfg.storage.checkpoint_bucket and cfg.storage.endpoint_url:
@@ -2966,10 +3440,16 @@ def benchmark_cmd(
     if output == OutputFormat.json:
         typer.echo(json.dumps(overall, indent=2))
     elif stream:
-        tag = "[bold green]Benchmark complete.[/bold green]" if not any_failure else "[bold red]Benchmark finished with failures.[/bold red]"
+        tag = (
+            "[bold green]Benchmark complete.[/bold green]"
+            if not any_failure
+            else "[bold red]Benchmark finished with failures.[/bold red]"
+        )
         console.print(f"\n{tag}")
         console.print(f"  VM results:  {bench_dir}")
-        console.print(f"  Runs: {total_runs} ({overall['passed']} passed, {overall['failed']} failed)")
+        console.print(
+            f"  Runs: {total_runs} ({overall['passed']} passed, {overall['failed']} failed)"
+        )
         if cfg.storage.checkpoint_bucket:
             console.print(f"  S3 results:  {s3_prefix}/")
 
@@ -2983,21 +3463,50 @@ def benchmark_cmd(
 @app.command("profile-train")
 def profile_train_cmd(
     run: list[str] | None = typer.Option(
-        None, "--run", "-r",
+        None,
+        "--run",
+        "-r",
         help="Training spec as POLICY:DATASET:STEPS (repeatable).",
     ),
-    mode: str = typer.Option("wallclock", "--mode", "-m", help="Measurement mode: wallclock, profiler, or inference."),
-    policy_type: str = typer.Option("", "--policy-type", help="Policy type for --runtime serverless."),
-    dataset_repo_id: str = typer.Option("", "--dataset-repo-id", help="HF dataset repo ID for --runtime serverless."),
-    steps: int = typer.Option(100, "--steps", help="Training steps for --runtime serverless."),
-    compile_model: bool = typer.Option(False, "--compile", help="Apply torch.compile to the policy model."),
-    num_workers: int = typer.Option(0, "--num-workers", "-w", help="Dataloader num_workers (0 = max CPUs)."),
+    mode: str = typer.Option(
+        "wallclock",
+        "--mode",
+        "-m",
+        help="Measurement mode: wallclock, profiler, or inference.",
+    ),
+    policy_type: str = typer.Option(
+        "", "--policy-type", help="Policy type for --runtime serverless."
+    ),
+    dataset_repo_id: str = typer.Option(
+        "", "--dataset-repo-id", help="HF dataset repo ID for --runtime serverless."
+    ),
+    steps: int = typer.Option(
+        100, "--steps", help="Training steps for --runtime serverless."
+    ),
+    compile_model: bool = typer.Option(
+        False, "--compile", help="Apply torch.compile to the policy model."
+    ),
+    num_workers: int = typer.Option(
+        0, "--num-workers", "-w", help="Dataloader num_workers (0 = max CPUs)."
+    ),
     batch_size: int = typer.Option(8, "--batch-size", help="Batch size."),
-    warmup_steps: int = typer.Option(10, "--warmup-steps", help="Warmup steps before measurement (both modes)."),
-    skip_first: int = typer.Option(10, "--skip-first", help="(profiler mode) Profiler schedule skip_first."),
-    warmup: int = typer.Option(5, "--warmup", help="(profiler mode) Profiler schedule warmup."),
-    active: int = typer.Option(50, "--active", help="(profiler mode) Profiler schedule active."),
-    runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help="Runtime backend: vm, container, byovm, or serverless."),
+    warmup_steps: int = typer.Option(
+        10, "--warmup-steps", help="Warmup steps before measurement (both modes)."
+    ),
+    skip_first: int = typer.Option(
+        10, "--skip-first", help="(profiler mode) Profiler schedule skip_first."
+    ),
+    warmup: int = typer.Option(
+        5, "--warmup", help="(profiler mode) Profiler schedule warmup."
+    ),
+    active: int = typer.Option(
+        50, "--active", help="(profiler mode) Profiler schedule active."
+    ),
+    runtime: WorkbenchRuntime = typer.Option(
+        WorkbenchRuntime.vm,
+        "--runtime",
+        help="Runtime backend: vm, container, byovm, or serverless.",
+    ),
     script: Path | None = typer.Option(
         None,
         "--script",
@@ -3011,17 +3520,47 @@ def profile_train_cmd(
             "Defaults to research/lerobot-deploy/training/profile_train.py if not specified."
         ),
     ),
-    project_id: str = typer.Option("", "--project-id", help="Nebius project ID override for serverless Jobs."),
-    image: str = typer.Option("", "--image", help="Container image override for serverless Jobs."),
-    gpu_type: str = typer.Option("h200", "--gpu-type", help="GPU type for serverless Jobs (h200, b300, l40s, gpu-rtx-pro-6000, or Nebius platform)."),
-    gpu_count: int = typer.Option(1, "--gpu-count", help="Number of GPUs for serverless Jobs."),
-    subnet_id: str = typer.Option("", "--subnet-id", help="Subnet ID for serverless Jobs (auto-discovered if omitted)."),
+    project_id: str = typer.Option(
+        "", "--project-id", help="Nebius project ID override for serverless Jobs."
+    ),
+    image: str = typer.Option(
+        "", "--image", help="Container image override for serverless Jobs."
+    ),
+    gpu_type: str = typer.Option(
+        "h200",
+        "--gpu-type",
+        help="GPU type for serverless Jobs (h200, b300, l40s, gpu-rtx-pro-6000, or Nebius platform).",
+    ),
+    gpu_count: int = typer.Option(
+        1, "--gpu-count", help="Number of GPUs for serverless Jobs."
+    ),
+    subnet_id: str = typer.Option(
+        "",
+        "--subnet-id",
+        help="Subnet ID for serverless Jobs (auto-discovered if omitted).",
+    ),
     job_name: str = typer.Option("", "--job-name", help="Unique serverless Job name."),
-    output_path: str = typer.Option("", "--output-path", help="S3 URI where profile artifacts are written for serverless Jobs."),
-    submit_only: bool = typer.Option(False, "--submit-only", help="Submit Job and return immediately without polling."),
-    poll_interval: float = typer.Option(30.0, "--poll-interval", help="Seconds between serverless Job status checks."),
-    wait_timeout: int = typer.Option(5400, "--wait-timeout", help="Max seconds to wait for Job completion when not --submit-only."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output_path: str = typer.Option(
+        "",
+        "--output-path",
+        help="S3 URI where profile artifacts are written for serverless Jobs.",
+    ),
+    submit_only: bool = typer.Option(
+        False,
+        "--submit-only",
+        help="Submit Job and return immediately without polling.",
+    ),
+    poll_interval: float = typer.Option(
+        30.0, "--poll-interval", help="Seconds between serverless Job status checks."
+    ),
+    wait_timeout: int = typer.Option(
+        5400,
+        "--wait-timeout",
+        help="Max seconds to wait for Job completion when not --submit-only.",
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Profile training. Modes: wallclock (throughput), profiler (torch.profiler), or inference."""
     import base64
@@ -3031,7 +3570,9 @@ def profile_train_cmd(
     # Inference mode measures single-sample latency — force batch_size=1.
     if mode == "inference" and batch_size != 1:
         if stream:
-            console.print(f"  [yellow]Note: inference mode overrides batch_size={batch_size} → 1[/yellow]")
+            console.print(
+                f"  [yellow]Note: inference mode overrides batch_size={batch_size} → 1[/yellow]"
+            )
         batch_size = 1
 
     run_specs = run or []
@@ -3039,10 +3580,14 @@ def profile_train_cmd(
     if is_serverless_runtime(runtime):
         if run_specs:
             if len(run_specs) != 1:
-                _fail("LeRobot profile-train --runtime serverless accepts exactly one --run spec.")
+                _fail(
+                    "LeRobot profile-train --runtime serverless accepts exactly one --run spec."
+                )
             parts = run_specs[0].split(":")
             if len(parts) != 3:
-                _fail(f"Invalid --run format: '{run_specs[0]}' (expected POLICY:DATASET:STEPS)")
+                _fail(
+                    f"Invalid --run format: '{run_specs[0]}' (expected POLICY:DATASET:STEPS)"
+                )
             if not policy_type:
                 policy_type = parts[0]
             if not dataset_repo_id:
@@ -3050,7 +3595,9 @@ def profile_train_cmd(
             try:
                 steps = int(parts[2])
             except ValueError:
-                _fail(f"Invalid STEPS value in --run '{run_specs[0]}': '{parts[2]}' is not an integer")
+                _fail(
+                    f"Invalid STEPS value in --run '{run_specs[0]}': '{parts[2]}' is not an integer"
+                )
                 return
         script_path = script or _default_lerobot_profile_script_path()
         _profile_train_serverless(
@@ -3082,7 +3629,11 @@ def profile_train_cmd(
         )
         return
 
-    cfg = _get_config(runtime=runtime.value) if runtime != WorkbenchRuntime.vm else _get_config()
+    cfg = (
+        _get_config(runtime=runtime.value)
+        if runtime != WorkbenchRuntime.vm
+        else _get_config()
+    )
     from npa.clients.ssh import SSHClient, SSHError
 
     ssh = SSHClient(cfg.ssh)
@@ -3090,7 +3641,9 @@ def profile_train_cmd(
     # Parse run specs
     specs: list[dict[str, Any]] = []
     if not run_specs:
-        _fail("LeRobot profile-train requires at least one --run spec unless --runtime serverless is used.")
+        _fail(
+            "LeRobot profile-train requires at least one --run spec unless --runtime serverless is used."
+        )
     for r in run_specs:
         parts = r.split(":")
         if len(parts) != 3:
@@ -3124,13 +3677,19 @@ def profile_train_cmd(
         return
 
     if stream:
-        console.print(f"[bold]profile-train ({mode}): {len(specs)} run(s) on {wb}[/bold]")
-        console.print(f"  CPUs: {max_cpus}, num_workers: {resolved_workers}, batch_size: {batch_size}")
+        console.print(
+            f"[bold]profile-train ({mode}): {len(specs)} run(s) on {wb}[/bold]"
+        )
+        console.print(
+            f"  CPUs: {max_cpus}, num_workers: {resolved_workers}, batch_size: {batch_size}"
+        )
 
     # Pre-cache datasets
     unique_datasets = {s["dataset"] for s in specs}
     if stream:
-        console.print(f"\n[bold]Pre-caching {len(unique_datasets)} dataset(s)...[/bold]")
+        console.print(
+            f"\n[bold]Pre-caching {len(unique_datasets)} dataset(s)...[/bold]"
+        )
     for ds in unique_datasets:
         try:
             ssh.run_or_raise(
@@ -3138,7 +3697,7 @@ def profile_train_cmd(
                     cfg,
                     f"source /opt/lerobot/venv/bin/activate && "
                     f"{load_env_file_script('/opt/lerobot/.env')} && "
-                    f"python3 -c \"from lerobot.datasets.lerobot_dataset import LeRobotDataset; "
+                    f'python3 -c "from lerobot.datasets.lerobot_dataset import LeRobotDataset; '
                     f"LeRobotDataset('{ds}'); print('cached: {ds}')\"",
                 ),
             )
@@ -3157,7 +3716,9 @@ def profile_train_cmd(
         run_dir = f"{profile_dir}/{run_name}"
 
         if stream:
-            console.print(f"\n[bold][{idx}/{len(specs)}] {policy} | {dataset} | workers={resolved_workers}[/bold]")
+            console.print(
+                f"\n[bold][{idx}/{len(specs)}] {policy} | {dataset} | workers={resolved_workers}[/bold]"
+            )
 
         cmd = (
             f"source /opt/lerobot/venv/bin/activate && "
@@ -3180,17 +3741,25 @@ def profile_train_cmd(
 
         start = time.time()
         try:
-            exit_code, stdout, stderr = ssh.run(_runtime_exec_cmd(cfg, cmd), stream=stream)
+            exit_code, stdout, stderr = ssh.run(
+                _runtime_exec_cmd(cfg, cmd), stream=stream
+            )
         except SSHError as exc:
             if stream:
                 console.print(f"  [red]SSH failed: {exc}[/red]")
-            results.append({"run_name": run_name, "status": "failed", "error": str(exc)})
+            results.append(
+                {"run_name": run_name, "status": "failed", "error": str(exc)}
+            )
             continue
         duration = round(time.time() - start, 1)
 
         result: dict[str, Any] = {
-            "run_name": run_name, "policy": policy, "dataset": dataset,
-            "steps": steps, "num_workers": resolved_workers, "batch_size": batch_size,
+            "run_name": run_name,
+            "policy": policy,
+            "dataset": dataset,
+            "steps": steps,
+            "num_workers": resolved_workers,
+            "batch_size": batch_size,
             "status": "success" if exit_code == 0 else "failed",
             "duration_seconds": duration,
         }
@@ -3238,7 +3807,8 @@ def profile_train_cmd(
                 console.print("  [yellow]S3 upload failed[/yellow]")
 
     overall = {
-        "profile_dir": profile_dir, "total_runs": len(specs),
+        "profile_dir": profile_dir,
+        "total_runs": len(specs),
         "passed": sum(1 for r in results if r["status"] == "success"),
         "failed": sum(1 for r in results if r["status"] != "success"),
         "runs": results,
@@ -3247,10 +3817,16 @@ def profile_train_cmd(
     if output == OutputFormat.json:
         typer.echo(json.dumps(overall, indent=2))
     elif stream:
-        tag = "[bold green]Profile complete.[/bold green]" if overall["failed"] == 0 else "[bold red]Profile finished with failures.[/bold red]"
+        tag = (
+            "[bold green]Profile complete.[/bold green]"
+            if overall["failed"] == 0
+            else "[bold red]Profile finished with failures.[/bold red]"
+        )
         console.print(f"\n{tag}")
         console.print(f"  VM results: {profile_dir}")
-        console.print(f"  Runs: {len(specs)} ({overall['passed']} passed, {overall['failed']} failed)")
+        console.print(
+            f"  Runs: {len(specs)} ({overall['passed']} passed, {overall['failed']} failed)"
+        )
 
     if overall["failed"] > 0:
         raise typer.Exit(1)
@@ -3269,24 +3845,40 @@ def train_student_cmd(
         "--input-path",
         help="S3 URI for a LeRobotDataset v3 directory. Overrides --dataset.",
     ),
-    data_path: str = typer.Option("", "--data-path", help="Custom LeRobotDataset v3 directory path."),
+    data_path: str = typer.Option(
+        "", "--data-path", help="Custom LeRobotDataset v3 directory path."
+    ),
     override: list[str] = typer.Option(
         [],
         "--override",
         help="Generic trainer override as KEY=VALUE. Repeat for any LeRobot training key.",
     ),
-    wandb_enabled: bool = typer.Option(False, "--wandb/--no-wandb", help="Enable W&B logging for the training run."),
+    wandb_enabled: bool = typer.Option(
+        False, "--wandb/--no-wandb", help="Enable W&B logging for the training run."
+    ),
     wandb_project: str = typer.Option("", "--wandb-project", help="W&B project name."),
     wandb_run_name: str = typer.Option("", "--wandb-run-name", help="W&B run name."),
-    wandb_mode: str = typer.Option("offline", "--wandb-mode", help="W&B mode such as online, offline, or disabled."),
-    checkpoint_s3_uri: str = typer.Option("", "--checkpoint-s3-uri", help="S3 URI for checkpoint upload."),
-    checkpoint_s3_endpoint_url: str = typer.Option("", "--checkpoint-s3-endpoint-url", help="S3-compatible endpoint URL."),
-    checkpoint_s3_access_key_id: str = typer.Option("", "--checkpoint-s3-access-key-id", help="S3 access key ID."),
-    checkpoint_s3_secret_access_key: str = typer.Option("", "--checkpoint-s3-secret-access-key", help="S3 secret access key."),
+    wandb_mode: str = typer.Option(
+        "offline", "--wandb-mode", help="W&B mode such as online, offline, or disabled."
+    ),
+    checkpoint_s3_uri: str = typer.Option(
+        "", "--checkpoint-s3-uri", help="S3 URI for checkpoint upload."
+    ),
+    checkpoint_s3_endpoint_url: str = typer.Option(
+        "", "--checkpoint-s3-endpoint-url", help="S3-compatible endpoint URL."
+    ),
+    checkpoint_s3_access_key_id: str = typer.Option(
+        "", "--checkpoint-s3-access-key-id", help="S3 access key ID."
+    ),
+    checkpoint_s3_secret_access_key: str = typer.Option(
+        "", "--checkpoint-s3-secret-access-key", help="S3 secret access key."
+    ),
     policy: str = typer.Option("act", "--policy", help="Policy type (act, diffusion)."),
     epochs: int = typer.Option(100, "--epochs", help="Number of training epochs."),
     batch_size: int = typer.Option(64, "--batch-size", help="Batch size."),
-    num_workers: int = typer.Option(4, "--num-workers", help="Dataloader num_workers (>= 0)."),
+    num_workers: int = typer.Option(
+        4, "--num-workers", help="Dataloader num_workers (>= 0)."
+    ),
     device: str = typer.Option("cuda", "--device", help="Torch device."),
     output_dir: str = typer.Option(
         "./checkpoints/student/", "--output-dir", help="Checkpoint output directory."
@@ -3296,7 +3888,9 @@ def train_student_cmd(
         "--output-path",
         help="S3 URI where the student checkpoint is written.",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Train a vision-only student policy via LeRobot imitation learning.
 
@@ -3350,7 +3944,9 @@ def train_student_cmd(
             tmp = tempfile.TemporaryDirectory(prefix="npa-train-student-input-")
             temp_dirs.append(tmp)
             ds_path = Path(
-                StorageClient.from_environment().download_directory(dataset_ref, tmp.name)
+                StorageClient.from_environment().download_directory(
+                    dataset_ref, tmp.name
+                )
             )
         else:
             ds_path = Path(dataset_ref)
@@ -3366,7 +3962,9 @@ def train_student_cmd(
         if not ds_path.exists():
             _fail(f"Dataset not found: {ds_path}")
         if not (ds_path / "meta" / "info.json").exists():
-            _fail(f"Not a valid LeRobotDataset v3 directory: {ds_path} (missing meta/info.json)")
+            _fail(
+                f"Not a valid LeRobotDataset v3 directory: {ds_path} (missing meta/info.json)"
+            )
         if epochs <= 0:
             _fail(f"--epochs must be positive, got {epochs}")
         if batch_size <= 0:
@@ -3379,12 +3977,20 @@ def train_student_cmd(
         if stream_logs:
             console.print(f"[bold]Training student ({policy})[/bold]")
             console.print(f"  dataset: {dataset_ref}")
-            console.print(f"  epochs={epochs}  batch_size={batch_size}  device={device}")
+            console.print(
+                f"  epochs={epochs}  batch_size={batch_size}  device={device}"
+            )
             console.print(f"  output: {output_path or output_dir}")
 
         from npa.lerobot.train_student import StudentTrainingError, train_student
-        extra_args = {key: str(value) for key, value in overrides_to_mapping(training_config.overrides).items()}
-        extra_args["wandb.enable"] = "true" if training_config.wandb.enabled else "false"
+
+        extra_args = {
+            key: str(value)
+            for key, value in overrides_to_mapping(training_config.overrides).items()
+        }
+        extra_args["wandb.enable"] = (
+            "true" if training_config.wandb.enabled else "false"
+        )
         if training_config.wandb.project:
             extra_args["wandb.project"] = training_config.wandb.project
         if training_config.wandb.run_name:

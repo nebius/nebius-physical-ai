@@ -101,6 +101,26 @@ def test_cancellable_default_stream_is_also_redacted(capsys) -> None:
     assert "<redacted-private-key>" in emitted
 
 
+def test_cancellable_failed_stream_retains_redacted_diagnostic() -> None:
+    env = {**os.environ, "TF_VAR_iam_token": "cancellable-failure-secret"}
+    with pytest.raises(BackendCommandError) as raised:
+        run_stream(
+            [
+                "/bin/sh",
+                "-c",
+                "printf '%s: provider rejected request\\n' \"$TF_VAR_iam_token\" >&2; exit 7",
+            ],
+            env=env,
+            cancel=lambda: None,
+            capture_output=True,
+        )
+
+    message = str(raised.value)
+    assert "cancellable-failure-secret" not in message
+    assert "<redacted>" in message
+    assert "provider rejected request" in message
+
+
 def test_capture_normalizes_launch_and_timeout_errors(tmp_path: Path) -> None:
     with pytest.raises(BackendCommandError, match="Could not start executable"):
         run_capture([str(tmp_path / "absent")])
@@ -215,7 +235,9 @@ def test_terraform_plugin_cache_lock_serializes_threads(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("data_dir", [".terraform", "custom-data", "absolute"])
-def test_provider_snapshot_survives_later_cache_rewrite(tmp_path: Path, data_dir: str) -> None:
+def test_provider_snapshot_survives_later_cache_rewrite(
+    tmp_path: Path, data_dir: str
+) -> None:
     cache = tmp_path / "cache" / "package"
     cache.mkdir(parents=True)
     binary = cache / "terraform-provider-example"
@@ -225,7 +247,14 @@ def test_provider_snapshot_survives_later_cache_rewrite(tmp_path: Path, data_dir
     configured = str(tmp_path / "absolute-data") if data_dir == "absolute" else data_dir
     data = Path(configured) if Path(configured).is_absolute() else workdir / configured
     providers = data / "providers"
-    package = providers / "registry.example.test" / "example" / "provider" / "1.0" / "linux_amd64"
+    package = (
+        providers
+        / "registry.example.test"
+        / "example"
+        / "provider"
+        / "1.0"
+        / "linux_amd64"
+    )
     package.parent.mkdir(parents=True)
     package.symlink_to(cache, target_is_directory=True)
     env = {"TF_PLUGIN_CACHE_DIR": str(cache.parent), "TF_DATA_DIR": configured}
@@ -241,7 +270,9 @@ def test_provider_snapshot_survives_later_cache_rewrite(tmp_path: Path, data_dir
     assert not list(data.glob(".npa-providers-*"))
 
 
-def test_provider_snapshot_copy_failure_preserves_initialized_tree(tmp_path: Path, monkeypatch) -> None:
+def test_provider_snapshot_copy_failure_preserves_initialized_tree(
+    tmp_path: Path, monkeypatch
+) -> None:
     from npa.cluster_backends import process
 
     cache = tmp_path / "cache"
@@ -262,7 +293,9 @@ def test_provider_snapshot_copy_failure_preserves_initialized_tree(tmp_path: Pat
     assert not list(providers.parent.glob(".npa-providers-*"))
 
 
-def test_provider_snapshot_publish_failure_restores_initialized_tree(tmp_path: Path, monkeypatch) -> None:
+def test_provider_snapshot_publish_failure_restores_initialized_tree(
+    tmp_path: Path, monkeypatch
+) -> None:
     cache = tmp_path / "cache"
     cache.mkdir()
     (cache / "provider").write_text("original")

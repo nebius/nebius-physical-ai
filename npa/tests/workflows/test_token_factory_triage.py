@@ -97,7 +97,9 @@ def test_run_triage_writes_a_report_and_the_prompt_beside_it(tmp_path: Path) -> 
     assert Path(payload["prompts_uri"]).is_file()
 
 
-def test_the_prompt_carries_the_digest_and_the_default_system_prompt(tmp_path: Path) -> None:
+def test_the_prompt_carries_the_digest_and_the_default_system_prompt(
+    tmp_path: Path,
+) -> None:
     source = _artifacts(tmp_path / "artifacts")
     captured: dict = {}
 
@@ -155,8 +157,11 @@ def test_required_uris_are_validated(tmp_path: Path, missing: str) -> None:
 def test_parser_requires_both_uris() -> None:
     parser = build_parser()
 
-    assert parser.parse_args(
-        ["run", "--artifacts-uri", "s3://b/a/", "--triage-uri", "s3://b/t/"]
-    ).command == "run"
+    assert (
+        parser.parse_args(
+            ["run", "--artifacts-uri", "s3://b/a/", "--triage-uri", "s3://b/t/"]
+        ).command
+        == "run"
+    )
     with pytest.raises(SystemExit):
         parser.parse_args(["run", "--artifacts-uri", "s3://b/a/"])

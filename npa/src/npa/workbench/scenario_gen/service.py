@@ -28,7 +28,9 @@ LOGGER = logging.getLogger(__name__)
 def create_app(*, auth_mode: str | None = None, token: str | None = None) -> FastAPI:
     """Create the scenario-generation FastAPI application."""
     resolved_auth_mode = auth_mode or os.environ.get("SCENARIO_GEN_AUTH_MODE", "none")
-    resolved_token = token if token is not None else os.environ.get("SCENARIO_GEN_TOKEN", "")
+    resolved_token = (
+        token if token is not None else os.environ.get("SCENARIO_GEN_TOKEN", "")
+    )
     app = FastAPI(title="NPA Adversarial Scenario Generation")
     if resolved_auth_mode == "none":
         LOGGER.warning(
@@ -36,26 +38,36 @@ def create_app(*, auth_mode: str | None = None, token: str | None = None) -> Fas
             "without a token. Set SCENARIO_GEN_AUTH_MODE=token and SCENARIO_GEN_TOKEN."
         )
 
-    async def require_auth(request: Request, authorization: str = Header(default="")) -> None:
+    async def require_auth(
+        request: Request, authorization: str = Header(default="")
+    ) -> None:
         if resolved_auth_mode == "none":
             return
         if not resolved_token:
-            raise HTTPException(status_code=500, detail="SCENARIO_GEN_TOKEN is not configured")
+            raise HTTPException(
+                status_code=500, detail="SCENARIO_GEN_TOKEN is not configured"
+            )
         if not hmac.compare_digest(authorization, f"Bearer {resolved_token}"):
             raise HTTPException(status_code=401, detail="invalid token")
 
     @app.get("/health")
-    async def health(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
+    async def health(
+        request: Request, authorization: str = Header(default="")
+    ) -> dict[str, Any]:
         await require_auth(request, authorization)
         return {"status": "ok", "runs": len(RUNS)}
 
     @app.get("/system-info")
-    async def system_info(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
+    async def system_info(
+        request: Request, authorization: str = Header(default="")
+    ) -> dict[str, Any]:
         await require_auth(request, authorization)
         return system_info_payload()
 
     @app.get("/list", response_model=RunListResponse)
-    async def list_runs(request: Request, authorization: str = Header(default="")) -> RunListResponse:
+    async def list_runs(
+        request: Request, authorization: str = Header(default="")
+    ) -> RunListResponse:
         await require_auth(request, authorization)
         return RunListResponse(runs=list(RUNS.values()))
 
@@ -139,7 +151,9 @@ def system_info_payload() -> dict[str, Any]:
             {
                 "torch": getattr(torch, "__version__", ""),
                 "cuda_available": bool(torch.cuda.is_available()),
-                "cuda_device_count": int(torch.cuda.device_count()) if torch.cuda.is_available() else 0,
+                "cuda_device_count": int(torch.cuda.device_count())
+                if torch.cuda.is_available()
+                else 0,
             }
         )
         if torch.cuda.is_available():

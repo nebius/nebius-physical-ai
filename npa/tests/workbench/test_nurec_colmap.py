@@ -270,7 +270,9 @@ def test_converter_failure_is_private(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("field", ["cache_dir", "scratch_dir"])
-def test_unsafe_staging_fails_before_download_or_conversion(monkeypatch, tmp_path, field):
+def test_unsafe_staging_fails_before_download_or_conversion(
+    monkeypatch, tmp_path, field
+):
     storage, events = fake_conversion(monkeypatch, tmp_path)
     outside = tmp_path / "private-name"
     outside.mkdir(mode=0o700)

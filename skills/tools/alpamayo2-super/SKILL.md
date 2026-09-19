@@ -78,6 +78,10 @@ select samples and inference controls, but cannot change the pinned model,
 dataset revision, or startup snapshot of `NPA_ALPAMAYO2_SUPER_MANIFEST`.
 Their `output_path` is a result label, and the server creates a fresh prefix
 under its configured root. Trusted CLI/SDK customization remains available.
+Keep the container-native health check on
+`npa.workbench.alpamayo2_super.healthcheck`; it reads the admission credential
+from the runtime environment and authenticates `/health` without putting the
+credential in process arguments or output.
 
 - 401/403 before GPU allocation: accept the dataset agreement with the same HF
   account or replace the rejected token; do not add an NPA bypass boolean.
@@ -94,13 +98,19 @@ merely because a validation job finished.
 
 ## Accepted release baseline
 
-`0.1.0-cu128` is the accepted runtime-fetch baseline. Its OCI index digest is
-`sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5`.
-On 2026-08-18 the exact digest completed the real upstream workflow on B200
-(`sm_100`) and, independently, RTX PRO 6000 (`sm_120`). The 26-layer payload
-scan was clean. RTX peak allocation was 71,447 MiB; the B200 run completed but
-was not sampled for peak memory, so retain NVIDIA's 72,115 MiB H100 measurement
-as the conservative documented reference rather than inventing a B200 number.
+`0.1.0-cu128-r3` is the accepted runtime-fetch baseline. Its OCI index digest is
+`sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07`.
+It was built from source commit `5b693476c113c833e9d9d4f8c7aa492492a27505`,
+which includes the `HTTPConnection` loopback healthcheck fix. Later acceptance
+metadata commits are not the image source. On 2026-09-16 the exact digest
+completed the real upstream workflow on B200 (`sm_100`) and, independently,
+RTX PRO 6000 (`sm_120`). The 25-layer payload scan and complete
+vulnerability/secret/license scan were clean. Both runs
+produced all three required artifacts, projected shape `[1, 1, 1, 64, 3]`, and
+runtime-only model/data provenance. B200 measured ADE 1.503835 and FDE 4.357265;
+RTX measured ADE 1.501321 and FDE 4.351557. Neither r3 run recorded a trustworthy
+peak allocation, so retain NVIDIA's 72,115 MiB H100 measurement as the
+conservative documented reference rather than inventing a B200 or RTX number.
 
 For RTX qualification, preserve the committed B200 default and override the
 submitted accelerator with `NPA_WORKFLOW_GPU_ACCELERATOR=RTXPRO6000:1`. Require
@@ -112,10 +122,11 @@ B200 result.
 For Ray scenario/seed/diffusion experiments, use
 `workflows/testing/alpamayo2-ray-sweep.yaml` and
 `workflows/testing/alpamayo2-ray-hardcases.yaml`, derived from the inference
-template. Submit current changes with `--stage-src`: the accepted release image
-does not yet contain `npa workbench alpamayo2-super sweep`. The catalog installs
-Ray 2.58.0 in the NPA interpreter. GPU actors reuse downloaded snapshots while
-upstream subprocesses reload weights per case; do not claim resident-model reuse.
+template. Accepted release `0.1.0-cu128-r3` contains
+`npa workbench alpamayo2-super sweep` and Ray 2.58.0 in the NPA interpreter.
+Use `--stage-src` only to test intentionally newer source. GPU actors reuse
+downloaded snapshots while upstream subprocesses reload weights per case; do
+not claim resident-model reuse.
 CPU reductions report measured errors and seed variability. Refinement inherits
 baseline seeds, verifies source manifest and revision identity, and supports an
 empty selection without fabricating inference. Keep public handoffs on S3.

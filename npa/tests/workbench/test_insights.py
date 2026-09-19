@@ -45,10 +45,14 @@ def _seed_two_runs(store: str) -> None:
             output_uri=store,
             records=[
                 _metric("r1", "accuracy", 0.80, tool="rl", stage="eval"),
-                _metric("r1", "corruption_rate", 0.20, tool="dataset", stage="validate"),
+                _metric(
+                    "r1", "corruption_rate", 0.20, tool="dataset", stage="validate"
+                ),
                 _metric("r1", "latency", 1.00, tool="rl", stage="eval"),
                 _metric("r2", "accuracy", 0.90, tool="rl", stage="eval"),
-                _metric("r2", "corruption_rate", 0.10, tool="dataset", stage="validate"),
+                _metric(
+                    "r2", "corruption_rate", 0.10, tool="dataset", stage="validate"
+                ),
                 _metric("r2", "latency", 1.20, tool="rl", stage="eval"),
             ],
         )
@@ -64,7 +68,9 @@ def test_record_appends_records_and_edges(tmp_path: Path) -> None:
         RecordRequest(
             output_uri=store,
             records=[_metric("r1", "accuracy", 0.9, tool="rl")],
-            edges=[{"from_uri": "s3://a", "to_uri": "s3://b", "relation": "derived_from"}],
+            edges=[
+                {"from_uri": "s3://a", "to_uri": "s3://b", "relation": "derived_from"}
+            ],
         )
     )
     assert response.recorded_count == 1
@@ -74,14 +80,20 @@ def test_record_appends_records_and_edges(tmp_path: Path) -> None:
     assert rows[0]["schema"] == METRIC_RECORD_SCHEMA
     assert rows[0]["timestamp"]  # auto-filled
 
-    again = record_metrics(RecordRequest(output_uri=store, records=[_metric("r1", "loss", 0.1)]))
+    again = record_metrics(
+        RecordRequest(output_uri=store, records=[_metric("r1", "loss", 0.1)])
+    )
     assert again.total_records == 2  # append-only
 
 
 def test_record_reads_input_uri_document(tmp_path: Path) -> None:
     doc = tmp_path / "metrics.json"
-    doc.write_text(json.dumps({"records": [_metric("r1", "accuracy", 0.7)], "edges": []}))
-    response = record_metrics(RecordRequest(output_uri=str(tmp_path / "store"), input_uri=str(doc)))
+    doc.write_text(
+        json.dumps({"records": [_metric("r1", "accuracy", 0.7)], "edges": []})
+    )
+    response = record_metrics(
+        RecordRequest(output_uri=str(tmp_path / "store"), input_uri=str(doc))
+    )
     assert response.recorded_count == 1
 
 
@@ -90,7 +102,9 @@ def test_record_without_payload_raises(tmp_path: Path) -> None:
         record_metrics(RecordRequest(output_uri=str(tmp_path / "store")))
 
 
-def test_record_indexes_lancedb_seam(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_record_indexes_lancedb_seam(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import npa.workbench.insights.store as store_module
 
     calls: dict[str, Any] = {}
@@ -124,8 +138,16 @@ def _write_run_prefix(run_dir: Path) -> str:
                 "version": "v1",
                 "record_count": 4,
                 "modalities": ["camera", "lidar"],
-                "lineage": {"workflow_run": "run-A", "input_uris": ["s3://raw/records.json"]},
-                "quality_stats": {"record_count": 4, "mean_completeness": 0.8, "corrupt_count": 1, "modalities": ["camera", "lidar"]},
+                "lineage": {
+                    "workflow_run": "run-A",
+                    "input_uris": ["s3://raw/records.json"],
+                },
+                "quality_stats": {
+                    "record_count": 4,
+                    "mean_completeness": 0.8,
+                    "corrupt_count": 1,
+                    "modalities": ["camera", "lidar"],
+                },
                 "records": [],
             }
         )
@@ -152,7 +174,11 @@ def _write_run_prefix(run_dir: Path) -> str:
                 "schema": "npa.scenario_gen.adversarial_set.v1",
                 "run_id": "run-A",
                 "scenario_count": 2,
-                "lineage": {"workflow_run": "run-A", "policy_uri": "s3://p/ckpt.pt", "base_config_uri": "s3://c/task.json"},
+                "lineage": {
+                    "workflow_run": "run-A",
+                    "policy_uri": "s3://p/ckpt.pt",
+                    "base_config_uri": "s3://c/task.json",
+                },
                 "scenarios": [
                     {"scenario_id": "adv-0", "severity": 0.9, "diversity": 0.5},
                     {"scenario_id": "adv-1", "severity": 0.6, "diversity": 0.4},
@@ -161,14 +187,20 @@ def _write_run_prefix(run_dir: Path) -> str:
         )
     )
     (run_dir / "gate").mkdir(parents=True, exist_ok=True)
-    Path(run_dir / "gate" / "decision.json").write_text(json.dumps({"decision": "promote_checkpoint"}))
+    Path(run_dir / "gate" / "decision.json").write_text(
+        json.dumps({"decision": "promote_checkpoint"})
+    )
     return manifest_uri
 
 
 def test_ingest_run_extracts_metrics_and_lineage(tmp_path: Path) -> None:
     manifest_uri = _write_run_prefix(tmp_path / "run")
     store = str(tmp_path / "store")
-    response = ingest_run(IngestRunRequest(input_uri=str(tmp_path / "run"), output_uri=store, workflow="wf"))
+    response = ingest_run(
+        IngestRunRequest(
+            input_uri=str(tmp_path / "run"), output_uri=store, workflow="wf"
+        )
+    )
 
     assert response.scanned == 4
     # 5 (manifest) + 4 (validation) + 4 (adversarial) + 1 (decision) = 14
@@ -193,7 +225,11 @@ def test_ingest_run_extracts_metrics_and_lineage(tmp_path: Path) -> None:
 
     edges = read_edges(store)
     relations = {(e["from_uri"], e["to_uri"], e["relation"]) for e in edges}
-    assert (manifest_uri, str(tmp_path / "run" / "validation" / "validation_report.json"), "evaluated_on") in relations
+    assert (
+        manifest_uri,
+        str(tmp_path / "run" / "validation" / "validation_report.json"),
+        "evaluated_on",
+    ) in relations
 
 
 def test_ingest_run_skips_per_scenario_config_files(tmp_path: Path) -> None:
@@ -206,7 +242,11 @@ def test_ingest_run_skips_per_scenario_config_files(tmp_path: Path) -> None:
                 "schema": "npa.scenario_gen.adversarial_set.v1",
                 "run_id": "gpu-run",
                 "scenario_count": 2,
-                "lineage": {"workflow_run": "gpu-run", "policy_uri": "s3://p/ckpt.pt", "base_config_uri": "s3://c/t.json"},
+                "lineage": {
+                    "workflow_run": "gpu-run",
+                    "policy_uri": "s3://p/ckpt.pt",
+                    "base_config_uri": "s3://c/t.json",
+                },
                 "scenarios": [
                     {"scenario_id": "adv-0", "severity": 0.9, "diversity": 0.5},
                     {"scenario_id": "adv-1", "severity": 0.6, "diversity": 0.4},
@@ -217,24 +257,41 @@ def test_ingest_run_skips_per_scenario_config_files(tmp_path: Path) -> None:
     # Per-scenario config files reuse the schema tag but have no scenarios list.
     for index in range(2):
         (run / "adversarial" / "scenarios" / f"adv-{index}.json").write_text(
-            json.dumps({"schema": "npa.scenario_gen.adversarial_set.v1", "run_id": "gpu-run", "scenario_id": f"adv-{index}", "perturbation": {}})
+            json.dumps(
+                {
+                    "schema": "npa.scenario_gen.adversarial_set.v1",
+                    "run_id": "gpu-run",
+                    "scenario_id": f"adv-{index}",
+                    "perturbation": {},
+                }
+            )
         )
     store = str(tmp_path / "store")
-    response = ingest_run(IngestRunRequest(input_uri=str(run), output_uri=store, workflow="wf"))
+    response = ingest_run(
+        IngestRunRequest(input_uri=str(run), output_uri=store, workflow="wf")
+    )
     assert response.scanned == 3
     # Only the aggregate manifest is ingested (4 metrics); the 2 configs skipped.
     assert response.recorded_count == 4
-    scenario_counts = [r["value"] for r in read_records(store) if r["metric_name"] == "scenario_count"]
+    scenario_counts = [
+        r["value"] for r in read_records(store) if r["metric_name"] == "scenario_count"
+    ]
     assert scenario_counts == [2.0]
 
 
 def test_ingest_run_empty_prefix_raises(tmp_path: Path) -> None:
     (tmp_path / "empty").mkdir()
     with pytest.raises(InsightsStoreError):
-        ingest_run(IngestRunRequest(input_uri=str(tmp_path / "empty"), output_uri=str(tmp_path / "store")))
+        ingest_run(
+            IngestRunRequest(
+                input_uri=str(tmp_path / "empty"), output_uri=str(tmp_path / "store")
+            )
+        )
 
 
-def _write_run_manifest(run_dir: Path, *, accelerators: str, run_id: str = "gpu-run") -> None:
+def _write_run_manifest(
+    run_dir: Path, *, accelerators: str, run_id: str = "gpu-run"
+) -> None:
     (run_dir / "npa-workflow").mkdir(parents=True, exist_ok=True)
     (run_dir / "npa-workflow" / "manifest.json").write_text(
         json.dumps(
@@ -245,7 +302,12 @@ def _write_run_manifest(run_dir: Path, *, accelerators: str, run_id: str = "gpu-
                 "api_version": "npa.workflow/v0.0.1",
                 "status": "succeeded",
                 "steps": [
-                    {"state": "control", "iteration": 0, "status": "ok", "resources_profile": {"cpus": 4}},
+                    {
+                        "state": "control",
+                        "iteration": 0,
+                        "status": "ok",
+                        "resources_profile": {"cpus": 4},
+                    },
                     {
                         "state": "generate",
                         "iteration": 0,
@@ -262,7 +324,9 @@ def test_ingest_run_extracts_gpu_count_from_run_manifest(tmp_path: Path) -> None
     run = tmp_path / "run"
     _write_run_manifest(run, accelerators="RTXPRO6000:4", run_id="insights-4gpu-viz")
     store = str(tmp_path / "store")
-    response = ingest_run(IngestRunRequest(input_uri=str(run), output_uri=store, workflow="wf"))
+    response = ingest_run(
+        IngestRunRequest(input_uri=str(run), output_uri=store, workflow="wf")
+    )
     assert "npa.workflow.run.v1" in {a.schema_id for a in response.ingested}
     gpus = [r for r in read_records(store) if r["metric_name"] == "gpus"]
     assert len(gpus) == 1
@@ -282,14 +346,23 @@ def test_ingest_run_skips_cpu_only_run_manifest(tmp_path: Path) -> None:
                 "workflow": "insights-aggregate",
                 "run_id": "cpu-run",
                 "api_version": "npa.workflow/v0.0.1",
-                "steps": [{"state": "aggregate", "iteration": 0, "status": "ok", "resources_profile": {"cpus": 2}}],
+                "steps": [
+                    {
+                        "state": "aggregate",
+                        "iteration": 0,
+                        "status": "ok",
+                        "resources_profile": {"cpus": 2},
+                    }
+                ],
             }
         )
     )
     # No accelerator anywhere -> no fabricated gpus metric, and no known schema to
     # ingest, so the run raises rather than inventing a value.
     with pytest.raises(InsightsStoreError):
-        ingest_run(IngestRunRequest(input_uri=str(run), output_uri=str(tmp_path / "store")))
+        ingest_run(
+            IngestRunRequest(input_uri=str(run), output_uri=str(tmp_path / "store"))
+        )
 
 
 def test_ingest_run_skips_a_planned_only_run_manifest(tmp_path: Path) -> None:
@@ -309,13 +382,19 @@ def test_ingest_run_skips_a_planned_only_run_manifest(tmp_path: Path) -> None:
                 "run_id": "planned-only",
                 "status": "planned",
                 "steps": [
-                    {"state": "generate", "status": "planned", "resources_profile": {"accelerators": "RTXPRO6000:4"}}
+                    {
+                        "state": "generate",
+                        "status": "planned",
+                        "resources_profile": {"accelerators": "RTXPRO6000:4"},
+                    }
                 ],
             }
         )
     )
     with pytest.raises(InsightsStoreError):
-        ingest_run(IngestRunRequest(input_uri=str(run), output_uri=str(tmp_path / "store")))
+        ingest_run(
+            IngestRunRequest(input_uri=str(run), output_uri=str(tmp_path / "store"))
+        )
 
 
 def test_ingest_run_accepts_a_submitted_run_manifest(tmp_path: Path) -> None:
@@ -330,7 +409,11 @@ def test_ingest_run_accepts_a_submitted_run_manifest(tmp_path: Path) -> None:
                 "run_id": "submitted-run",
                 "status": "submitted",
                 "steps": [
-                    {"state": "retrain", "status": "submitted", "resources_profile": {"accelerators": "RTXPRO6000:2"}}
+                    {
+                        "state": "retrain",
+                        "status": "submitted",
+                        "resources_profile": {"accelerators": "RTXPRO6000:2"},
+                    }
                 ],
             }
         )
@@ -387,12 +470,19 @@ def test_ingest_run_skips_unknown_schema(tmp_path: Path) -> None:
                 "record_count": 1,
                 "modalities": ["camera"],
                 "lineage": {"workflow_run": "r", "input_uris": []},
-                "quality_stats": {"record_count": 1, "mean_completeness": 1.0, "corrupt_count": 0, "modalities": ["camera"]},
+                "quality_stats": {
+                    "record_count": 1,
+                    "mean_completeness": 1.0,
+                    "corrupt_count": 0,
+                    "modalities": ["camera"],
+                },
                 "records": [],
             }
         )
     )
-    response = ingest_run(IngestRunRequest(input_uri=str(run), output_uri=str(tmp_path / "store")))
+    response = ingest_run(
+        IngestRunRequest(input_uri=str(run), output_uri=str(tmp_path / "store"))
+    )
     assert response.scanned == 2
     assert len(response.ingested) == 1
 
@@ -507,7 +597,9 @@ def _write_signal_run(
     }
 
 
-def test_ingest_run_extracts_observed_curves_runtime_cost_and_lineage(tmp_path: Path) -> None:
+def test_ingest_run_extracts_observed_curves_runtime_cost_and_lineage(
+    tmp_path: Path,
+) -> None:
     paths = _write_signal_run(
         tmp_path / "run-rich", run_id="run-rich", success_rate=0.82, cost_usd=12.75
     )
@@ -547,10 +639,16 @@ def test_ingest_run_extracts_observed_curves_runtime_cost_and_lineage(tmp_path: 
     assert (paths["eval"], paths["gate"], "derived_from") in triples
 
 
-def test_new_signal_facets_compare_and_dashboard_preserve_dimensions(tmp_path: Path) -> None:
+def test_new_signal_facets_compare_and_dashboard_preserve_dimensions(
+    tmp_path: Path,
+) -> None:
     store = str(tmp_path / "store")
-    _write_signal_run(tmp_path / "run-a", run_id="run-a", success_rate=0.82, cost_usd=12.75)
-    _write_signal_run(tmp_path / "run-b", run_id="run-b", success_rate=0.76, cost_usd=10.25)
+    _write_signal_run(
+        tmp_path / "run-a", run_id="run-a", success_rate=0.82, cost_usd=12.75
+    )
+    _write_signal_run(
+        tmp_path / "run-b", run_id="run-b", success_rate=0.76, cost_usd=10.25
+    )
     ingest_run(IngestRunRequest(input_uri=str(tmp_path / "run-a"), output_uri=store))
     ingest_run(IngestRunRequest(input_uri=str(tmp_path / "run-b"), output_uri=store))
 
@@ -596,7 +694,9 @@ def test_new_signal_facets_compare_and_dashboard_preserve_dimensions(tmp_path: P
     }
 
 
-def test_eval_metadata_is_typed_as_counter_or_duration_not_score(tmp_path: Path) -> None:
+def test_eval_metadata_is_typed_as_counter_or_duration_not_score(
+    tmp_path: Path,
+) -> None:
     run = tmp_path / "run"
     run.mkdir()
     (run / "eval.json").write_text(
@@ -719,19 +819,17 @@ def test_cost_basis_survives_ingest_query_compare_dashboard_sdk_service_cli(
     ingest_run(IngestRunRequest(input_uri=str(run), output_uri=store))
 
     costs = query_metrics(QueryRequest(input_uri=store, currency="USD"))
-    assert {(row["metric_name"], row["labels"]["cost_basis"]) for row in costs.records} == {
+    assert {
+        (row["metric_name"], row["labels"]["cost_basis"]) for row in costs.records
+    } == {
         ("cost_usd", "billed"),
         ("estimated_cost_usd", "estimated"),
     }
     assert query_metrics(QueryRequest(input_uri=store, cost_basis="billed")).count == 1
     assert sdk_query(input_uri=store, cost_basis="estimated").count == 1
 
-    client = TestClient(
-        create_app(auth_mode="none", allowed_local_roots=[tmp_path])
-    )
-    response = client.get(
-        "/query", params={"input_uri": store, "cost_basis": "billed"}
-    )
+    client = TestClient(create_app(auth_mode="none", allowed_local_roots=[tmp_path]))
+    response = client.get("/query", params={"input_uri": store, "cost_basis": "billed"})
     assert response.status_code == 200
     assert response.json()["records"][0]["labels"]["cost_basis"] == "billed"
 
@@ -742,7 +840,9 @@ def test_cost_basis_survives_ingest_query_compare_dashboard_sdk_service_cli(
     assert cli.exit_code == 0, cli.output
     assert json.loads(cli.output)["count"] == 1
 
-    dashboard = build_dashboard(DashboardRequest(input_uri=store, group_by="cost_basis"))
+    dashboard = build_dashboard(
+        DashboardRequest(input_uri=store, group_by="cost_basis")
+    )
     assert {(group.key, group.count) for group in dashboard.groups} == {
         ("billed", 1),
         ("estimated", 1),
@@ -762,7 +862,9 @@ def test_sparse_observed_report_emits_no_new_signal(tmp_path: Path) -> None:
         )
     )
     with pytest.raises(InsightsStoreError, match="no known manifest/report schemas"):
-        ingest_run(IngestRunRequest(input_uri=str(run), output_uri=str(tmp_path / "store")))
+        ingest_run(
+            IngestRunRequest(input_uri=str(run), output_uri=str(tmp_path / "store"))
+        )
 
 
 def test_new_signal_facets_thread_through_service_sdk_and_cli(tmp_path: Path) -> None:
@@ -861,7 +963,9 @@ def test_query_filters_by_facet(tmp_path: Path) -> None:
 
 def test_query_empty_store_returns_empty_no_fabrication(tmp_path: Path) -> None:
     # An empty/absent store yields an empty result — never a fabricated fallback.
-    result = query_metrics(QueryRequest(input_uri=str(tmp_path / "store"), metric_name="gpus"))
+    result = query_metrics(
+        QueryRequest(input_uri=str(tmp_path / "store"), metric_name="gpus")
+    )
     assert result.count == 0
     assert result.records == []
 
@@ -870,7 +974,13 @@ def test_query_threshold_predicate(tmp_path: Path) -> None:
     store = str(tmp_path / "store")
     _seed_two_runs(store)
     result = query_metrics(
-        QueryRequest(input_uri=store, metric_name="accuracy", threshold_metric="accuracy", threshold_op="ge", threshold_value=0.85)
+        QueryRequest(
+            input_uri=store,
+            metric_name="accuracy",
+            threshold_metric="accuracy",
+            threshold_op="ge",
+            threshold_value=0.85,
+        )
     )
     assert result.count == 1
     assert result.records[0]["run_id"] == "r2"
@@ -879,8 +989,15 @@ def test_query_threshold_predicate(tmp_path: Path) -> None:
 def test_query_lancedb_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import npa.workbench.insights.analytics as analytics
 
-    monkeypatch.setattr(analytics, "query_metrics_in_lancedb", lambda **kw: [{"metric_name": "x"}])
-    result = query_metrics(QueryRequest(input_uri=str(tmp_path / "unused"), lancedb_endpoint="http://lancedb.example"))
+    monkeypatch.setattr(
+        analytics, "query_metrics_in_lancedb", lambda **kw: [{"metric_name": "x"}]
+    )
+    result = query_metrics(
+        QueryRequest(
+            input_uri=str(tmp_path / "unused"),
+            lancedb_endpoint="http://lancedb.example",
+        )
+    )
     assert result.backend == "lancedb"
     assert result.count == 1
 
@@ -891,7 +1008,9 @@ def test_query_lancedb_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
 def test_compare_flags_improved_and_regressed(tmp_path: Path) -> None:
     store = str(tmp_path / "store")
     _seed_two_runs(store)
-    result = compare_runs(CompareRequest(input_uri=store, base_run="r1", candidate_run="r2"))
+    result = compare_runs(
+        CompareRequest(input_uri=store, base_run="r1", candidate_run="r2")
+    )
     assert result.comparison_schema == COMPARISON_SCHEMA
     status = {m.metric_name: m.status for m in result.metrics}
     # accuracy up (higher better) -> improved; corruption_rate down (lower better)
@@ -909,7 +1028,11 @@ def test_compare_missing_run_raises(tmp_path: Path) -> None:
     store = str(tmp_path / "store")
     _seed_two_runs(store)
     with pytest.raises(InsightsQueryError):
-        compare_runs(CompareRequest(input_uri=store, base_run="r1", candidate_run="does-not-exist"))
+        compare_runs(
+            CompareRequest(
+                input_uri=store, base_run="r1", candidate_run="does-not-exist"
+            )
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -922,9 +1045,21 @@ def test_lineage_traverses_ancestors_and_descendants(tmp_path: Path) -> None:
             output_uri=store,
             records=[_metric("r1", "n", 1.0)],
             edges=[
-                {"from_uri": "s3://raw", "to_uri": "s3://manifest", "relation": "produced_from"},
-                {"from_uri": "s3://manifest", "to_uri": "s3://curated", "relation": "derived_from"},
-                {"from_uri": "s3://manifest", "to_uri": "s3://report", "relation": "evaluated_on"},
+                {
+                    "from_uri": "s3://raw",
+                    "to_uri": "s3://manifest",
+                    "relation": "produced_from",
+                },
+                {
+                    "from_uri": "s3://manifest",
+                    "to_uri": "s3://curated",
+                    "relation": "derived_from",
+                },
+                {
+                    "from_uri": "s3://manifest",
+                    "to_uri": "s3://report",
+                    "relation": "evaluated_on",
+                },
             ],
         )
     )
@@ -934,7 +1069,12 @@ def test_lineage_traverses_ancestors_and_descendants(tmp_path: Path) -> None:
     assert ("s3://raw", "s3://manifest") in ancestors
     assert ("s3://manifest", "s3://curated") in descendants
     assert ("s3://manifest", "s3://report") in descendants
-    assert set(result.nodes) == {"s3://raw", "s3://manifest", "s3://curated", "s3://report"}
+    assert set(result.nodes) == {
+        "s3://raw",
+        "s3://manifest",
+        "s3://curated",
+        "s3://report",
+    }
 
 
 def test_lineage_descendants_only(tmp_path: Path) -> None:
@@ -943,10 +1083,14 @@ def test_lineage_descendants_only(tmp_path: Path) -> None:
         RecordRequest(
             output_uri=store,
             records=[_metric("r1", "n", 1.0)],
-            edges=[{"from_uri": "s3://a", "to_uri": "s3://b", "relation": "produced_from"}],
+            edges=[
+                {"from_uri": "s3://a", "to_uri": "s3://b", "relation": "produced_from"}
+            ],
         )
     )
-    result = traverse_lineage(LineageRequest(input_uri=store, uri="s3://a", direction="descendants"))
+    result = traverse_lineage(
+        LineageRequest(input_uri=store, uri="s3://a", direction="descendants")
+    )
     assert result.ancestors == []
     assert len(result.descendants) == 1
 
@@ -957,7 +1101,11 @@ def test_lineage_descendants_only(tmp_path: Path) -> None:
 def test_dashboard_groups_and_writes_html(tmp_path: Path) -> None:
     store = str(tmp_path / "store")
     _seed_two_runs(store)
-    result = build_dashboard(DashboardRequest(input_uri=store, output_path=str(tmp_path / "dash"), group_by="tool"))
+    result = build_dashboard(
+        DashboardRequest(
+            input_uri=store, output_path=str(tmp_path / "dash"), group_by="tool"
+        )
+    )
     assert result.dashboard_schema == DASHBOARD_SCHEMA
     assert result.total_records == 6
     assert set(result.runs) == {"r1", "r2"}
@@ -974,9 +1122,7 @@ def test_dashboard_groups_and_writes_html(tmp_path: Path) -> None:
 def test_service_record_query_lineage_compare_dashboard(tmp_path: Path) -> None:
     from npa.workbench.insights.service import create_app
 
-    client = TestClient(
-        create_app(auth_mode="none", allowed_local_roots=[tmp_path])
-    )
+    client = TestClient(create_app(auth_mode="none", allowed_local_roots=[tmp_path]))
     store = str(tmp_path / "store")
     record = client.post(
         "/record",
@@ -986,7 +1132,9 @@ def test_service_record_query_lineage_compare_dashboard(tmp_path: Path) -> None:
                 _metric("r1", "accuracy", 0.8),
                 _metric("r2", "accuracy", 0.9),
             ],
-            "edges": [{"from_uri": "s3://a", "to_uri": "s3://b", "relation": "produced_from"}],
+            "edges": [
+                {"from_uri": "s3://a", "to_uri": "s3://b", "relation": "produced_from"}
+            ],
         },
     )
     assert record.status_code == 200, record.text
@@ -1000,7 +1148,9 @@ def test_service_record_query_lineage_compare_dashboard(tmp_path: Path) -> None:
     assert lineage.status_code == 200
     assert lineage.json()["descendants"]
 
-    compare = client.get("/compare", params={"input_uri": store, "base_run": "r1", "candidate_run": "r2"})
+    compare = client.get(
+        "/compare", params={"input_uri": store, "base_run": "r1", "candidate_run": "r2"}
+    )
     assert compare.status_code == 200
     assert compare.json()["improved"] == ["accuracy"]
 
@@ -1018,31 +1168,36 @@ def test_service_record_query_lineage_compare_dashboard(tmp_path: Path) -> None:
 def test_service_ingest_run_endpoint_and_failure(tmp_path: Path) -> None:
     from npa.workbench.insights.service import create_app
 
-    client = TestClient(
-        create_app(auth_mode="none", allowed_local_roots=[tmp_path])
-    )
+    client = TestClient(create_app(auth_mode="none", allowed_local_roots=[tmp_path]))
     _write_run_prefix(tmp_path / "run")
     ok = client.post(
         "/ingest-run",
-        json={"input_uri": str(tmp_path / "run"), "output_uri": str(tmp_path / "store")},
+        json={
+            "input_uri": str(tmp_path / "run"),
+            "output_uri": str(tmp_path / "store"),
+        },
     )
     assert ok.status_code == 200, ok.text
     assert ok.json()["recorded_count"] == 14
 
     (tmp_path / "empty").mkdir()
-    bad = client.post("/ingest-run", json={"input_uri": str(tmp_path / "empty"), "output_uri": str(tmp_path / "s2")})
+    bad = client.post(
+        "/ingest-run",
+        json={"input_uri": str(tmp_path / "empty"), "output_uri": str(tmp_path / "s2")},
+    )
     assert bad.status_code == 400
 
 
 def test_service_compare_failure_returns_400(tmp_path: Path) -> None:
     from npa.workbench.insights.service import create_app
 
-    client = TestClient(
-        create_app(auth_mode="none", allowed_local_roots=[tmp_path])
-    )
+    client = TestClient(create_app(auth_mode="none", allowed_local_roots=[tmp_path]))
     store = str(tmp_path / "store")
     _seed_two_runs(store)
-    bad = client.get("/compare", params={"input_uri": store, "base_run": "r1", "candidate_run": "nope"})
+    bad = client.get(
+        "/compare",
+        params={"input_uri": store, "base_run": "r1", "candidate_run": "nope"},
+    )
     assert bad.status_code == 400
 
 
@@ -1061,9 +1216,7 @@ def test_service_storage_scope_fails_closed_and_enforces_configured_root(
     unconfigured = TestClient(create_app(auth_mode="none"))
     assert unconfigured.post("/record", json=payload).status_code == 403
 
-    configured = TestClient(
-        create_app(auth_mode="none", allowed_local_roots=[allowed])
-    )
+    configured = TestClient(create_app(auth_mode="none", allowed_local_roots=[allowed]))
     assert configured.post("/record", json=payload).status_code == 200
     payload["output_uri"] = str(tmp_path / "outside")
     assert configured.post("/record", json=payload).status_code == 403
@@ -1078,10 +1231,15 @@ def test_service_health_system_info_and_token_auth() -> None:
 
     secure = TestClient(create_app(auth_mode="token", token="s3cr3t"))
     assert secure.get("/health").status_code == 401
-    assert secure.get("/health", headers={"Authorization": "Bearer s3cr3t"}).status_code == 200
+    assert (
+        secure.get("/health", headers={"Authorization": "Bearer s3cr3t"}).status_code
+        == 200
+    )
 
 
-def test_deployed_default_is_not_unauthenticated(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_deployed_default_is_not_unauthenticated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from npa.workbench.insights.service import create_app
 
     monkeypatch.delenv("INSIGHTS_AUTH_MODE", raising=False)
@@ -1176,7 +1334,9 @@ def test_store_reads_legacy_single_object_plus_shards(tmp_path: Path) -> None:
     assert [row["run_id"] for row in rows] == ["legacy", "new"]
 
 
-def test_reader_deduplicates_existing_duplicate_metric_and_edge_shards(tmp_path: Path) -> None:
+def test_reader_deduplicates_existing_duplicate_metric_and_edge_shards(
+    tmp_path: Path,
+) -> None:
     from npa.workbench.insights.storage import append_jsonl_uri
     from npa.workbench.insights.store import edges_uri, records_uri
 
@@ -1232,7 +1392,9 @@ def test_repeated_ingest_is_logically_idempotent(tmp_path: Path) -> None:
     assert second.edge_count == 0
     assert read_records(store) == first_records
     assert read_edges(store) == first_edges
-    dashboard = build_dashboard(DashboardRequest(input_uri=store, group_by="metric_name"))
+    dashboard = build_dashboard(
+        DashboardRequest(input_uri=store, group_by="metric_name")
+    )
     assert dashboard.total_records == len(first_records)
     assert sum(group.count for group in dashboard.groups) == len(first_records)
 
@@ -1285,11 +1447,19 @@ def test_ingest_run_twice_concurrently_keeps_both_runs(tmp_path: Path) -> None:
                     "workflow": "wf",
                     "run_id": run_id,
                     "status": "submitted",
-                    "steps": [{"state": "s", "status": "submitted", "resources_profile": {"accelerators": "H100:2"}}],
+                    "steps": [
+                        {
+                            "state": "s",
+                            "status": "submitted",
+                            "resources_profile": {"accelerators": "H100:2"},
+                        }
+                    ],
                 }
             )
         )
-        ingest_run(IngestRunRequest(input_uri=str(run), output_uri=store, workflow="wf"))
+        ingest_run(
+            IngestRunRequest(input_uri=str(run), output_uri=store, workflow="wf")
+        )
 
     records = read_records(store)
     assert {r["run_id"] for r in records} == {"run-one", "run-two"}
@@ -1303,11 +1473,18 @@ def test_failed_check_count_increase_is_a_regression(tmp_path: Path) -> None:
             RecordRequest(
                 output_uri=store,
                 records=[
-                    MetricRecord(run_id=run_id, metric_name="failed_check_count", value=failed, tool="dataset"),
+                    MetricRecord(
+                        run_id=run_id,
+                        metric_name="failed_check_count",
+                        value=failed,
+                        tool="dataset",
+                    ),
                 ],
             )
         )
-    response = compare_runs(CompareRequest(input_uri=store, base_run="base", candidate_run="cand"))
+    response = compare_runs(
+        CompareRequest(input_uri=store, base_run="base", candidate_run="cand")
+    )
     assert response.regressed == ["failed_check_count"]
     assert response.improved == []
 
@@ -1315,7 +1492,9 @@ def test_failed_check_count_increase_is_a_regression(tmp_path: Path) -> None:
 # ── Review follow-ups: store scaling, hint precision, planned-only diagnostics ──
 
 
-def test_append_does_not_reread_the_store_when_the_total_is_known(tmp_path: Path, monkeypatch) -> None:
+def test_append_does_not_reread_the_store_when_the_total_is_known(
+    tmp_path: Path, monkeypatch
+) -> None:
     """The sharded layout must not re-list + re-GET every shard just for telemetry."""
     from npa.workbench.insights import storage as st
 
@@ -1339,16 +1518,24 @@ def test_append_does_not_reread_the_store_when_the_total_is_known(tmp_path: Path
 def test_persist_totals_stay_exact_across_appends(tmp_path: Path) -> None:
     store = str(tmp_path / "store")
     first = record_metrics(
-        RecordRequest(output_uri=store, records=[MetricRecord(run_id="r1", metric_name="m", value=1.0)])
+        RecordRequest(
+            output_uri=store,
+            records=[MetricRecord(run_id="r1", metric_name="m", value=1.0)],
+        )
     )
     second = record_metrics(
-        RecordRequest(output_uri=store, records=[MetricRecord(run_id="r2", metric_name="m", value=2.0)])
+        RecordRequest(
+            output_uri=store,
+            records=[MetricRecord(run_id="r2", metric_name="m", value=2.0)],
+        )
     )
     assert (first.total_records, second.total_records) == (1, 2)
     assert len(read_records(store)) == 2
 
 
-def test_failsafe_style_metric_is_not_flipped_to_lower_is_better(tmp_path: Path) -> None:
+def test_failsafe_style_metric_is_not_flipped_to_lower_is_better(
+    tmp_path: Path,
+) -> None:
     """A bare "fail" substring would silently invert a higher-is-better metric."""
     from npa.workbench.insights.analytics import _is_lower_better
 
@@ -1369,12 +1556,20 @@ def test_planned_only_prefix_explains_why_nothing_was_ingested(tmp_path: Path) -
                 "workflow": "wf",
                 "run_id": "planned-only",
                 "status": "planned",
-                "steps": [{"state": "s", "status": "planned", "resources_profile": {"accelerators": "H100:8"}}],
+                "steps": [
+                    {
+                        "state": "s",
+                        "status": "planned",
+                        "resources_profile": {"accelerators": "H100:8"},
+                    }
+                ],
             }
         )
     )
     with pytest.raises(InsightsStoreError) as excinfo:
-        ingest_run(IngestRunRequest(input_uri=str(run), output_uri=str(tmp_path / "store")))
+        ingest_run(
+            IngestRunRequest(input_uri=str(run), output_uri=str(tmp_path / "store"))
+        )
     message = str(excinfo.value)
     assert "planned" in message
     assert "never executed" in message

@@ -166,13 +166,16 @@ skills:
         contains: "output-path"
   - name: find-artifacts
     category: atomic
-    when_to_use: "Discover, classify, and load artifacts in npa agent using artifact-first browse/pick/view flow."
+    when_to_use: "Search selected or accessible S3 buckets with npa studio, or discover, classify, and load run artifacts in the npa agent."
     path: skills/atomic/find-artifacts/SKILL.md
     smoke:
       - type: file_exists
         path: npa/src/npa/workflows/artifacts.py
       - type: file_exists
         path: skills/atomic/find-artifacts/SKILL.md
+      - type: cli_help
+        args: ["studio", "search", "--help"]
+        contains: "--bucket"
   - name: agent-visual-feedback
     category: atomic
     when_to_use: "Describe or critique the NPA agent viewer (Rerun, video, image, data) via Describe this / multimodal visual feedback."
@@ -497,6 +500,20 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/robocasa-smoke.yaml
+  - name: openarm
+    category: tools
+    when_to_use: "Package, run, validate, or troubleshoot Enactic OpenArm v2 workloads through the first-class MuJoCo and NVIDIA Isaac Sim/Isaac Lab surfaces."
+    path: skills/tools/openarm/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "openarm", "run", "--help"]
+        contains: "simulator"
+      - type: cli_help
+        args: ["workbench", "openarm", "deploy", "--help"]
+        contains: "gpu-type"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/openarm-simulators.yaml
   - name: foxglove
     category: tools
     when_to_use: "Embed, operate, or debug the Foxglove viewer in the NPA agent: the @foxglove/embed TypeScript SDK, MCAP recordings, the npa-foxglove-embed container, and /api/foxglove/* endpoints."
@@ -614,6 +631,20 @@ skills:
       - type: cli_help
         args: ["workbench", "isaac-lab", "train", "--help"]
         contains: "task"
+  - name: isaac-arena
+    category: tools
+    when_to_use: "Package, run, validate, or troubleshoot Isaac Lab-Arena policy evaluation, its public runtime-fetch image, zero/replay/RSL-RL modes, and independent B200/RTX PRO 6000 evidence."
+    path: skills/tools/isaac-arena/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "isaac-arena", "evaluate", "--help"]
+        contains: "output-path"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/isaac-arena-evaluation-b200.yaml
+          - workflows/testing/isaac-arena-evaluation-rtxpro.yaml
+      - type: file_exists
+        path: npa/docker/workbench/isaac-arena/REDISTRIBUTION.md
   - name: lancedb
     category: tools
     when_to_use: "LanceDB tables, vector queries, LeRobot/BDD100K imports, UDF backfills, and materialized views."
@@ -630,6 +661,9 @@ skills:
     when_to_use: "LeRobot policy training, evaluation, serving, inference, dataset conversion, or policy workflows."
     path: skills/tools/lerobot/SKILL.md
     smoke:
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/lerobot-transfer.yaml
       - type: cli_help
         args: ["workbench", "lerobot", "train", "--help"]
         contains: "policy"
@@ -913,12 +947,12 @@ skills:
         path: workflows/testing/cosmos3-generate.yaml
   - name: cosmos3-post-training
     category: workflows
-    when_to_use: "Plan or review Cosmos3 supervised fine-tuning and post-training support."
+    when_to_use: "Operate the experimental native LIBERO policy workflow or plan and review other Cosmos3 post-training recipes."
     path: skills/workflows/cosmos3-post-training/SKILL.md
     smoke:
       - type: cli_help
-        args: ["workbench", "cosmos", "train", "--help"]
-        contains: "runtime"
+        args: ["workbench", "cosmos3", "policy-train", "--help"]
+        contains: "SFT"
   - name: sim-to-real
     category: workflows
     when_to_use: "Design, review, or operate sim-to-real data, training, evaluation, and loop-control workflows."
@@ -960,6 +994,20 @@ skills:
       - type: cli_help
         args: ["workbench", "sim2real", "status", "--help"]
         contains: "run-id"
+  - name: antioch-workbench
+    category: workflows
+    when_to_use: "Connect Antioch simulation to Workbench, configure Antioch authentication, and operate XR1 collection, S3 transfer, fine-tuning, and evaluation."
+    path: skills/workflows/antioch-workbench/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/src/npa/workflows/xr1_antioch/operator.py
+      - type: file_exists
+        path: npa/src/npa/workflows/xr1_antioch/transport.py
+      - type: file_exists
+        path: npa/src/npa/clients/antioch.py
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/partners/antioch/xr1-antioch-finetune.yaml
   - name: train-policy
     category: workflows
     when_to_use: "Plan, review, or operate robot policy training across LeRobot, Isaac Lab, SONIC, and workflow YAMLs."

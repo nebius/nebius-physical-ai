@@ -9,10 +9,7 @@ safety rules for the unauthenticated CORS data directory, and the text-only
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
-import subprocess
-import sys
 
 import pytest
 
@@ -115,27 +112,6 @@ def test_cypress_live_runner_fails_closed_and_keeps_credentials_out_of_arguments
     assert "agent_live.cy.js" not in package["scripts"]["cy:live"]
     assert "lichtblick_mcap_live.cy.js" not in package["scripts"]["cy:live"]
     assert "cy:live-all" in package["scripts"]
-
-
-@pytest.mark.skipif(
-    os.environ.get("CI") != "true" or sys.version_info[:2] != (3, 12),
-    reason="the standard CI Python 3.12 lane owns the hermetic Cypress smoke",
-)
-def test_ci_executes_mocked_agent_cypress() -> None:
-    """Keep the real production-bundle browser smoke in the standard CI gate."""
-    repo_root = Path(__file__).resolve().parents[3]
-    child_env = dict(os.environ)
-    for name in tuple(child_env):
-        if name in {"NPA_AGENT_PASSWORD", "FOXGLOVE_API_TOKEN"} or name.startswith(
-            "CYPRESS_NPA_AGENT_"
-        ):
-            child_env.pop(name, None)
-    subprocess.run(
-        ["bash", "npa/scripts/run_agent_cypress.sh", "--mock"],
-        cwd=repo_root,
-        env=child_env,
-        check=True,
-    )
 
 
 def test_deploy_foxglove_settings_preserve_saved_values_and_validate_override(

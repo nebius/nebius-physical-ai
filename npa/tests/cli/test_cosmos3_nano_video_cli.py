@@ -13,13 +13,17 @@ from npa.sdk.workbench import cosmos3 as sdk
 from npa.workbench.cosmos import nano_video
 
 
-@pytest.mark.parametrize("output_path", ["/tmp/output", "file:///tmp/output", "https://example.com/output"])
+@pytest.mark.parametrize(
+    "output_path", ["/tmp/output", "file:///tmp/output", "https://example.com/output"]
+)
 def test_local_or_http_handoff_is_rejected_before_generation(monkeypatch, output_path):
     def never(**kwargs):
         pytest.fail("invalid public path reached generation")
 
     monkeypatch.setattr(nano_video, "submit_batch", never)
-    result = CliRunner().invoke(app, ["nano-video-batch", "--concurrency", "8", "--output-path", output_path])
+    result = CliRunner().invoke(
+        app, ["nano-video-batch", "--concurrency", "8", "--output-path", output_path]
+    )
     assert result.exit_code == 1
     assert json.loads(result.stdout)["status"] == "failed"
 
@@ -32,10 +36,21 @@ def test_cli_and_sdk_call_same_client_and_failed_fanout_exits_nonzero(monkeypatc
         return {"status": "failed", "completed": 7, "distinct_replicas": 7}
 
     monkeypatch.setattr(nano_video, "submit_batch", submit)
-    result = CliRunner().invoke(app, ["nano-video-batch", "--concurrency", "8", "--output-path", "s3://example-bucket/batch"])
+    result = CliRunner().invoke(
+        app,
+        [
+            "nano-video-batch",
+            "--concurrency",
+            "8",
+            "--output-path",
+            "s3://example-bucket/batch",
+        ],
+    )
     assert result.exit_code == 1
     assert json.loads(result.stdout)["completed"] == 7
-    response = sdk.nano_video_batch(output_path="s3://example-bucket/batch", concurrency=8)
+    response = sdk.nano_video_batch(
+        output_path="s3://example-bucket/batch", concurrency=8
+    )
     assert response["status"] == "failed"
     assert seen[0] == seen[1]
 
@@ -45,9 +60,21 @@ def test_provider_exception_does_not_disclose_endpoint_or_credentials(monkeypatc
         raise RuntimeError("private deployment endpoint and secret-shaped detail")
 
     monkeypatch.setattr(nano_video, "submit_batch", failed)
-    result = CliRunner().invoke(app, ["nano-video-batch", "--concurrency", "1", "--output-path", "s3://example-bucket/batch"])
+    result = CliRunner().invoke(
+        app,
+        [
+            "nano-video-batch",
+            "--concurrency",
+            "1",
+            "--output-path",
+            "s3://example-bucket/batch",
+        ],
+    )
     assert result.exit_code == 1
-    assert json.loads(result.stdout) == {"status": "failed", "error_type": "RuntimeError"}
+    assert json.loads(result.stdout) == {
+        "status": "failed",
+        "error_type": "RuntimeError",
+    }
     assert "private deployment" not in result.output
 
 
@@ -66,14 +93,25 @@ def test_live_acceptance_parses_stdout_and_retains_stderr(monkeypatch, tmp_path)
 
     def submit(*, concurrency, **kwargs):
         seen.append(concurrency)
-        batch = Path(os.environ["NPA_COSMOS3_VIDEO_RECOVERY_DIR"]) / "npa-nano-video-cpu-fixture" / "batch"
+        batch = (
+            Path(os.environ["NPA_COSMOS3_VIDEO_RECOVERY_DIR"])
+            / "npa-nano-video-cpu-fixture"
+            / "batch"
+        )
         batch.mkdir(parents=True)
-        (batch / "batch.json").write_text(json.dumps({
-            "peak_overlapping_chunk_requests": concurrency, "fanout_verified": True,
-        }))
+        (batch / "batch.json").write_text(
+            json.dumps(
+                {
+                    "peak_overlapping_chunk_requests": concurrency,
+                    "fanout_verified": True,
+                }
+            )
+        )
         return {
-            "status": "succeeded", "completed": concurrency,
-            "distinct_replicas": concurrency, "peak_overlapping_rollouts": concurrency,
+            "status": "succeeded",
+            "completed": concurrency,
+            "distinct_replicas": concurrency,
+            "peak_overlapping_rollouts": concurrency,
             "publication_verified": True,
         }
 

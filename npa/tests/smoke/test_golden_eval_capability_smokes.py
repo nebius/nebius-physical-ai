@@ -33,7 +33,9 @@ def test_lerobot_vlm_rl_signal_step_passes() -> None:
 
     with patch(
         "npa.smoke.test_lerobot_vlm_rl_functional.run_vlm_signal_training_step",
-        return_value=MagicMock(checkpoint_path="/tmp/checkpoint.pt", policy_delta_l2=0.1),
+        return_value=MagicMock(
+            checkpoint_path="/tmp/checkpoint.pt", policy_delta_l2=0.1
+        ),
     ):
         with patch("pathlib.Path.exists", return_value=True):
             from npa.smoke.test_lerobot_vlm_rl_functional import check_vlm_signal_step
@@ -77,9 +79,11 @@ def test_manifest_covers_all_tools_with_container_smokes_or_server_smokes() -> N
         ge = specs[name].golden_eval
         if ge.command.endswith("--help"):
             weak.append(name)
-        if ge.command.startswith("python -c \"import npa.workbench"):
+        if ge.command.startswith('python -c "import npa.workbench'):
             weak.append(name)
-    assert not weak, f"containers still using import/help-only smokes: {sorted(set(weak))}"
+    assert not weak, (
+        f"containers still using import/help-only smokes: {sorted(set(weak))}"
+    )
 
 
 def test_run_all_dry_run_includes_all_tools() -> None:

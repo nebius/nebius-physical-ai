@@ -92,7 +92,9 @@ def test_cosmos_text2world_serverless_generation(tmp_path: Path) -> None:
     (artifacts_dir / "job-name.txt").write_text(name + "\n", encoding="utf-8")
 
     try:
-        serverless_mod._JOB_CREATE_TIMEOUT = int(os.environ.get("NPA_E2E_COSMOS_CREATE_TIMEOUT", "120"))
+        serverless_mod._JOB_CREATE_TIMEOUT = int(
+            os.environ.get("NPA_E2E_COSMOS_CREATE_TIMEOUT", "120")
+        )
         gpu_type = resolve_serverless_gpu_type(
             os.environ.get("NPA_E2E_COSMOS_GPU_TYPE", "gpu-h200-sxm")
         )
@@ -103,7 +105,9 @@ def test_cosmos_text2world_serverless_generation(tmp_path: Path) -> None:
             command=_cosmos_smoke_command(),
             gpu_type=gpu_type,
             gpu_count=1,
-            preset=resolve_serverless_gpu_preset("1gpu-16vcpu-200gb", platform=gpu_type),
+            preset=resolve_serverless_gpu_preset(
+                "1gpu-16vcpu-200gb", platform=gpu_type
+            ),
             subnet_id=_subnet_id(project_id),
             output_path=output_path,
             env=env,
@@ -118,11 +122,17 @@ def test_cosmos_text2world_serverless_generation(tmp_path: Path) -> None:
         _capture_job(project_id, job_id, artifacts_dir, label="final")
 
         local_dir = artifacts_dir / "s3"
-        _download_s3_prefix(output_path, local_dir, access_key, secret_key, endpoint_url)
-        metadata = json.loads((local_dir / "cosmos_generation_metadata.json").read_text(encoding="utf-8"))
+        _download_s3_prefix(
+            output_path, local_dir, access_key, secret_key, endpoint_url
+        )
+        metadata = json.loads(
+            (local_dir / "cosmos_generation_metadata.json").read_text(encoding="utf-8")
+        )
         trace_events = [
             json.loads(line)["event"]
-            for line in (local_dir / "cosmos_inference_trace.jsonl").read_text(encoding="utf-8").splitlines()
+            for line in (local_dir / "cosmos_inference_trace.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
             if line.strip()
         ]
         video_path = local_dir / "cosmos_text2world_output.mp4"
@@ -220,7 +230,12 @@ def _job_env(
 
 
 def _hf_token() -> str:
-    for key in ("HF_TOKEN", "HUGGINGFACE_HUB_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_TOKEN"):
+    for key in (
+        "HF_TOKEN",
+        "HUGGINGFACE_HUB_TOKEN",
+        "HUGGING_FACE_HUB_TOKEN",
+        "HUGGINGFACE_TOKEN",
+    ):
         if os.environ.get(key):
             return os.environ[key]
     try:
@@ -233,7 +248,7 @@ def _hf_token() -> str:
 
 
 def _cosmos_smoke_command() -> str:
-    job_py = r'''
+    job_py = r"""
 import importlib
 import json
 import os
@@ -396,7 +411,7 @@ def main():
 
 
 sys.exit(main())
-'''
+"""
     script = "set -euo pipefail\npython3 - <<'PY'\n" + job_py.strip() + "\nPY\n"
     return "bash -lc " + shlex.quote(script)
 
@@ -406,7 +421,16 @@ def _subnet_id(project_id: str) -> str:
     if override:
         return override
     result = subprocess.run(
-        ["nebius", "vpc", "subnet", "list", "--parent-id", project_id, "--format", "json"],
+        [
+            "nebius",
+            "vpc",
+            "subnet",
+            "list",
+            "--parent-id",
+            project_id,
+            "--format",
+            "json",
+        ],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -432,7 +456,9 @@ def _subnet_id(project_id: str) -> str:
     return str((ranked[0].get("metadata") or {}).get("id") or "")
 
 
-def _poll_job(client: ServerlessClient, project_id: str, job_id: str, artifacts_dir: Path):
+def _poll_job(
+    client: ServerlessClient, project_id: str, job_id: str, artifacts_dir: Path
+):
     deadline = time.monotonic() + MAX_WAIT
     last = None
     tick = 0
@@ -451,7 +477,9 @@ def _poll_job(client: ServerlessClient, project_id: str, job_id: str, artifacts_
     pytest.fail(f"Job {job_id} did not finish within {MAX_WAIT}s; last={last}")
 
 
-def _capture_job(project_id: str, job_id: str, artifacts_dir: Path, *, label: str) -> None:
+def _capture_job(
+    project_id: str, job_id: str, artifacts_dir: Path, *, label: str
+) -> None:
     try:
         info = ServerlessClient().get_job(job_id, project_id)
         (artifacts_dir / f"job-detail-{label}.json").write_text(
@@ -459,7 +487,9 @@ def _capture_job(project_id: str, job_id: str, artifacts_dir: Path, *, label: st
             encoding="utf-8",
         )
     except Exception as exc:
-        (artifacts_dir / f"job-detail-{label}.err").write_text(str(exc), encoding="utf-8")
+        (artifacts_dir / f"job-detail-{label}.err").write_text(
+            str(exc), encoding="utf-8"
+        )
     _capture_logs(job_id, artifacts_dir / f"job-logs-{label}.txt")
 
 
@@ -502,7 +532,9 @@ def _cleanup_job(project_id: str, ref: str, artifacts_dir: Path) -> None:
         timeout=60,
         check=False,
     )
-    (artifacts_dir / "cleanup-orphan-check.log").write_text(orphan.stdout, encoding="utf-8")
+    (artifacts_dir / "cleanup-orphan-check.log").write_text(
+        orphan.stdout, encoding="utf-8"
+    )
 
 
 def _download_s3_prefix(

@@ -8,7 +8,11 @@ import typer
 
 from npa.cluster.api import ClusterInfo, MK8sClient
 from npa.cluster.config import resolve_project_id
-from npa.cluster.exceptions import ClusterConfigError, ClusterError, ClusterNotFoundError
+from npa.cluster.exceptions import (
+    ClusterConfigError,
+    ClusterError,
+    ClusterNotFoundError,
+)
 from npa.cluster.state import (
     ClusterState,
     delete_cluster_state,
@@ -20,10 +24,20 @@ from npa.lifecycle_intent import OperationIntent, intent_boundary
 
 @intent_boundary(OperationIntent.DESTROY)
 def destroy_cmd(
-    name: str = typer.Option(..., "--name", help="NPA cluster target/profile name to clean up."),
-    force: bool = typer.Option(False, "--force", help="Skip confirmation for NPA target cleanup."),
-    timeout: int = typer.Option(30, "--timeout", help="Target cleanup wait timeout in minutes."),
-    project_id: str = typer.Option("", "--project-id", help="Nebius project ID. Defaults from local state or NPA config."),
+    name: str = typer.Option(
+        ..., "--name", help="NPA cluster target/profile name to clean up."
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Skip confirmation for NPA target cleanup."
+    ),
+    timeout: int = typer.Option(
+        30, "--timeout", help="Target cleanup wait timeout in minutes."
+    ),
+    project_id: str = typer.Option(
+        "",
+        "--project-id",
+        help="Nebius project ID. Defaults from local state or NPA config.",
+    ),
 ) -> None:
     """Delete a Managed Kubernetes cluster through the API and drop its local state.
 
@@ -43,18 +57,26 @@ def destroy_cmd(
         if target is None:
             if local_state is not None:
                 delete_cluster_state(name)
-                typer.echo(f"Cluster {name} no longer exists remotely; local state removed.")
+                typer.echo(
+                    f"Cluster {name} no longer exists remotely; local state removed."
+                )
                 return
-            available = ", ".join(cluster.name for cluster in list_local_clusters()) or "(none)"
+            available = (
+                ", ".join(cluster.name for cluster in list_local_clusters()) or "(none)"
+            )
             typer.echo(f"Cluster {name} not found. Local clusters: {available}")
             return
 
-        if not force and not typer.confirm(f"Destroy cluster {target.name or name} ({target.id})?"):
+        if not force and not typer.confirm(
+            f"Destroy cluster {target.name or name} ({target.id})?"
+        ):
             raise typer.Exit(1)
 
         typer.echo(f"Destroying cluster {target.name or name} ({target.id})...")
         client.delete_cluster(target.id, project_id=resolved_project_id)
-        client.wait_for_deleted(target.id, project_id=resolved_project_id, timeout_minutes=timeout)
+        client.wait_for_deleted(
+            target.id, project_id=resolved_project_id, timeout_minutes=timeout
+        )
         delete_cluster_state(name)
         typer.echo(f"Cluster {name} destroyed and local state removed.")
         _warn_terraform_leftovers(name)
@@ -96,7 +118,9 @@ def _warn_terraform_leftovers(name: str) -> None:
     )
 
 
-def _resolve_project_for_destroy(local_state: ClusterState | None, explicit_project_id: str) -> str:
+def _resolve_project_for_destroy(
+    local_state: ClusterState | None, explicit_project_id: str
+) -> str:
     if explicit_project_id.strip():
         return explicit_project_id.strip()
     if local_state is not None and local_state.project_id:
@@ -115,7 +139,9 @@ def _find_destroy_target(
 ) -> ClusterInfo | None:
     if local_state is not None:
         try:
-            return client.get_cluster(local_state.cluster_id, project_id=local_state.project_id or project_id)
+            return client.get_cluster(
+                local_state.cluster_id, project_id=local_state.project_id or project_id
+            )
         except ClusterNotFoundError:
             return None
     if not project_id:

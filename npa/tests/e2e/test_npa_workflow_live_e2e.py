@@ -48,7 +48,9 @@ def test_live_npa_workflow_specs_plan(name: str, forbidden_markers: list[str]) -
     assume = assume_decision_for(name) or "promote_checkpoint"
     plan = build_plan(spec, run_id="live-spec-check", assume_decision=assume)
     assert plan.steps, name
-    assert_no_credential_leakage(json.dumps(plan.to_dict()), extra_forbidden=forbidden_markers)
+    assert_no_credential_leakage(
+        json.dumps(plan.to_dict()), extra_forbidden=forbidden_markers
+    )
 
 
 @pytest.mark.parametrize("name", ALL_GOLDEN_SPECS)
@@ -59,7 +61,9 @@ def test_live_npa_workflow_cli_validate_and_plan(
     """Exercise validate-spec / plan-spec / run-spec --plan-only on live creds."""
 
     path = resolve_spec_path(name)
-    validate = RUNNER.invoke(app, ["workbench", "workflow", "validate-spec", str(path), "--json"])
+    validate = RUNNER.invoke(
+        app, ["workbench", "workflow", "validate-spec", str(path), "--json"]
+    )
     payload = parse_json_payload(validate, forbidden_markers)
     assert payload["status"] == "valid"
 
@@ -153,7 +157,11 @@ def test_live_golden_materialized_validate(
     forbidden_markers: list[str],
 ) -> None:
     bucket = live_bucket(e2e_project)
-    path = materialize_live_spec(tmp_path, name, bucket=bucket, run_id="live-materialized")
-    validate = RUNNER.invoke(app, ["workbench", "workflow", "validate-spec", str(path), "--json"])
+    path = materialize_live_spec(
+        tmp_path, name, bucket=bucket, run_id="live-materialized"
+    )
+    validate = RUNNER.invoke(
+        app, ["workbench", "workflow", "validate-spec", str(path), "--json"]
+    )
     payload = parse_json_payload(validate, forbidden_markers)
     assert payload["status"] == "valid"

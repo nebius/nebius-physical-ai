@@ -16,7 +16,12 @@ from npa.cluster.config import (
     resolve_project_id,
 )
 from npa.cluster.exceptions import ClusterError
-from npa.cluster.state import ClusterState, kubeconfig_file, save_cluster_state, utc_now_iso
+from npa.cluster.state import (
+    ClusterState,
+    kubeconfig_file,
+    save_cluster_state,
+    utc_now_iso,
+)
 from npa.serverless_common.subnet import resolve_subnet
 
 
@@ -26,8 +31,16 @@ def deploy_cmd(
         "--name",
         help="NPA cluster target/profile name; also used as the kubeconfig context.",
     ),
-    region: str = typer.Option(DEFAULT_REGION, "--region", help="Nebius region for the NPA-managed cluster target."),
-    node_count: int = typer.Option(1, "--node-count", help="CPU worker count for the initial NPA target node group."),
+    region: str = typer.Option(
+        DEFAULT_REGION,
+        "--region",
+        help="Nebius region for the NPA-managed cluster target.",
+    ),
+    node_count: int = typer.Option(
+        1,
+        "--node-count",
+        help="CPU worker count for the initial NPA target node group.",
+    ),
     node_preset: str = typer.Option(
         DEFAULT_NODE_PRESET,
         "--node-preset",
@@ -43,9 +56,15 @@ def deploy_cmd(
         "--wait/--no-wait",
         help="Wait until the NPA target cluster and initial node group are READY.",
     ),
-    timeout: int = typer.Option(30, "--timeout", help="Target bootstrap readiness timeout in minutes."),
-    project_id: str = typer.Option("", "--project-id", help="Nebius project ID. Defaults from NPA config or env."),
-    subnet_id: str = typer.Option("", "--subnet-id", help="VPC subnet ID. Defaults through NPA subnet resolution."),
+    timeout: int = typer.Option(
+        30, "--timeout", help="Target bootstrap readiness timeout in minutes."
+    ),
+    project_id: str = typer.Option(
+        "", "--project-id", help="Nebius project ID. Defaults from NPA config or env."
+    ),
+    subnet_id: str = typer.Option(
+        "", "--subnet-id", help="VPC subnet ID. Defaults through NPA subnet resolution."
+    ),
     node_platform: str = typer.Option(
         DEFAULT_NODE_PLATFORM,
         "--node-platform",
@@ -84,12 +103,18 @@ def deploy_cmd(
         client = MK8sClient(timeout=timeout * 60, poll_interval=30.0)
         typer.echo(f"Creating cluster {config.name} in {config.region}...")
         cluster = client.create_cluster(config)
-        state = _state_from_cluster(config, cluster.id, cluster.status, cluster.node_group_id, cluster.endpoint)
+        state = _state_from_cluster(
+            config, cluster.id, cluster.status, cluster.node_group_id, cluster.endpoint
+        )
         save_cluster_state(state, metadata=_metadata("created", cluster.status))
 
         if wait:
+
             def on_state_change(current, groups) -> None:
-                group_state = ", ".join(f"{group.name}:{group.status}" for group in groups) or "no-node-groups"
+                group_state = (
+                    ", ".join(f"{group.name}:{group.status}" for group in groups)
+                    or "no-node-groups"
+                )
                 typer.echo(f"State: cluster={current.status} node_groups={group_state}")
 
             cluster = client.wait_for_ready(
@@ -109,9 +134,13 @@ def deploy_cmd(
             save_cluster_state(state, metadata=_metadata("ready", cluster.status))
 
         kubeconfig_path = kubeconfig_file(config.name)
-        client.get_kubeconfig(cluster.id, kubeconfig_path, context_name=config.name, external=True)
+        client.get_kubeconfig(
+            cluster.id, kubeconfig_path, context_name=config.name, external=True
+        )
         state = replace(state, kubeconfig_path=str(kubeconfig_path))
-        save_cluster_state(state, metadata=_metadata("kubeconfig_written", state.last_seen_state))
+        save_cluster_state(
+            state, metadata=_metadata("kubeconfig_written", state.last_seen_state)
+        )
 
         typer.echo(f"Cluster ID: {cluster.id}")
         if state.node_group_id:

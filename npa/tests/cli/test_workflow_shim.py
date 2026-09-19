@@ -45,7 +45,9 @@ def test_workflow_shim_submit_matches_workbench_workflow(mocker, tmp_path) -> No
 
 
 @pytest.mark.parametrize("command", [["workbench", "workflow"], ["workflow"]])
-def test_workflow_shim_preserves_mandatory_preflight_rejection(mocker, tmp_path, command) -> None:
+def test_workflow_shim_preserves_mandatory_preflight_rejection(
+    mocker, tmp_path, command
+) -> None:
     yaml_path = tmp_path / "workflow.yaml"
     yaml_path.write_text("name: demo\nrun: echo hello\n", encoding="utf-8")
     preflight = mocker.patch(
@@ -54,7 +56,10 @@ def test_workflow_shim_preserves_mandatory_preflight_rejection(mocker, tmp_path,
     )
     submit = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
 
-    result = runner.invoke(app, [*command, "submit", str(yaml_path), "--run-id", "run-1", "--skip-preflight"])
+    result = runner.invoke(
+        app,
+        [*command, "submit", str(yaml_path), "--run-id", "run-1", "--skip-preflight"],
+    )
 
     assert result.exit_code == 1
     assert "selected target disagrees" in result.output

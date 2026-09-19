@@ -78,6 +78,9 @@ MANUAL_GATES = {
     "NPA_BYOF_OPENPI_LIVE_B200": "OpenPI B200 validation requires live GPU and registry access",
     "NPA_BYOF_WAN22_LIVE_GPU": "Wan single-GPU BYOF mutation requires an explicitly selected validation run",
     "NPA_BYOF_WAN22_MULTIGPU_LIVE_GPU": "Wan multi-GPU BYOF mutation requires an explicitly selected validation run",
+    "NPA_BYOF_WAN22_WORKER_VERIFY": (
+        "read-only completed Wan worker verification requires operator-selected private run artifacts and generation controls"
+    ),
     "NPA_BYOF_LIVE_UBUNTU": "BYOF Ubuntu mutation is a dedicated onboarding acceptance",
     # Not merely operator-selected: an automated runner *must not* reach this
     # suite. It needs a token entitled to the gated Lightricks/LTX-2.5
@@ -176,8 +179,11 @@ def test_pr218_mutation_gates_are_runner_reachable_not_manual() -> None:
 
 def test_fleet_storage_verification_has_an_opt_in_daily_runner() -> None:
     runner = RUNNER_FILES[0].read_text(encoding="utf-8")
-    for gate in ("NPA_FLEET_STORAGE_VERIFY", "NPA_FLEET_STORAGE_VERIFY_SPEC",
-                 "NPA_FLEET_STORAGE_EVIDENCE_DIR"):
+    for gate in (
+        "NPA_FLEET_STORAGE_VERIFY",
+        "NPA_FLEET_STORAGE_VERIFY_SPEC",
+        "NPA_FLEET_STORAGE_EVIDENCE_DIR",
+    ):
         assert gate in runner
         assert gate not in MANUAL_GATES
     assert 'if [[ "${NPA_FLEET_STORAGE_VERIFY:-0}" != "1" ]]; then' in runner

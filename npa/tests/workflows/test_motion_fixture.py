@@ -78,7 +78,9 @@ def test_pelvis_actually_moves_and_stays_upright(tmp_path: Path) -> None:
 def test_joint_angles_stay_inside_a_safe_envelope(tmp_path: Path) -> None:
     build_clip(tmp_path / "walk", frames=24, amplitude=0.25)
 
-    values = [value for row in _rows(tmp_path / "walk" / "joint_pos.csv") for value in row]
+    values = [
+        value for row in _rows(tmp_path / "walk" / "joint_pos.csv") for value in row
+    ]
     assert max(abs(value) for value in values) <= 0.25 + 1e-6
     # ...and are not all the same number.
     assert len(set(round(value, 4) for value in values)) > 10
