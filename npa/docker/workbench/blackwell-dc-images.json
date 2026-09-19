@@ -64,7 +64,7 @@
       "name": "npa-habitat-sim",
       "dockerfile": "habitat-sim/Dockerfile",
       "build_script": "habitat-sim/build.sh",
-      "verdict": "blocked",
+      "verdict": "unknown",
       "validation": "pending-build",
       "redistribution": "unvalidated",
       "smoke": "Run the genuine official Skokloster RGB/depth, Bullet, EGL, and agent-traversal gate on exactly one RTX PRO 6000 Blackwell; verify the exact image digest, artifact hashes, and exit zero.",
