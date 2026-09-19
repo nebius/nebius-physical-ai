@@ -726,6 +726,7 @@ def test_oci_layout_refuses_ambiguous_docker_compatibility_manifest(
         "repo..child:tag",
         "repo___child:tag",
         "repo@sha256-:" + "a" * 32,
+        "registry.example:٤٤٣/repo:tag",
     ],
 )
 def test_oci_layout_refuses_malformed_docker_reference_strings(

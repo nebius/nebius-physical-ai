@@ -1685,7 +1685,7 @@ def _is_valid_docker_reference(value: str) -> bool:
         host = components.pop(0)
         host_name, port_separator, port = host.rpartition(":")
         if port_separator:
-            if not port.isdecimal() or not 1 <= int(port) <= 65535:
+            if not re.fullmatch(r"[0-9]+", port) or not 1 <= int(port) <= 65535:
                 return False
             host = host_name
         if host == "localhost":
