@@ -1698,6 +1698,8 @@ def _debian_artifact_filename_matches(source: str, version: str, name: str) -> b
         ".orig.tar", ".tar.xz", ".tar.gz", ".tar.bz2", ".tar.zst", ".tar.lz", ".tar.lzma",
         ".dsc", ".asc",
     )
+    if basename.endswith(".asc"):
+        return _debian_artifact_filename_matches(source, version, f"{source}_{basename[:-4]}")
     for suffix in suffixes:
         if basename.endswith(suffix):
             basename = basename[: -len(suffix)]

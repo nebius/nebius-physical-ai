@@ -444,6 +444,9 @@ def test_debian_epoch_filename_is_bound_to_normalized_source_identity() -> None:
     assert H._source_artifact_binding(row, base + "fixture_2.3-4.debian.tar.gz")
     assert H._source_artifact_binding(row, base + "fixture_2.3-4.debian.tar.bz2")
     assert H._source_artifact_binding(row, base + "fixture_2.3-4.diff.gz")
+    assert H._source_artifact_binding(row, base + "fixture_2.3.orig.tar.gz.asc")
+    assert H._source_artifact_binding(row, base + "fixture_2.3-4.dsc.asc")
+    assert not H._source_artifact_binding(row, base + "fixture_2.3-4.txt.asc")
     assert not H._source_artifact_binding(row, base + "fixture_1:2.3-4.dsc")
     assert not H._source_artifact_binding(row, base + "other_2.3-4.dsc")
     component_row = {
