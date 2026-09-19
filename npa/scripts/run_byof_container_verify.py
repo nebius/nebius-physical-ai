@@ -26,6 +26,9 @@ from npa.clients.project_credentials import (
 from npa.orchestration.skypilot import submit_workflow, workflow_status
 from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
 from npa.orchestration.skypilot.launch_transaction import (
+    ReconciliationEvidence,
+    ReconciliationState,
+    is_recognized_job_status,
     is_terminal_failure_job_status,
 )
 from npa.orchestration.skypilot._bin import (
@@ -707,7 +710,7 @@ def _stop_owned_robotwin_api(isolated_config_dir: Path) -> bool:
 
 
 def _native_polling_identity(result: Any, cleanup: Any, logical_id: str) -> str | None:
-    """Check the producer's native-result/callback contract without adopting a job."""
+    """Check the native receipt and complete controller evidence without adoption."""
     job_id = getattr(result, "job_id", None)
     transaction = getattr(result, "launch_transaction", None)
     native = getattr(cleanup, "native_result", None)
@@ -734,6 +737,24 @@ def _native_polling_identity(result: Any, cleanup: Any, logical_id: str) -> str 
         and getattr(cleanup, "active", False) is True
         and getattr(cleanup, "submitting", True) is False
         and getattr(cleanup, "requested", True) is False
+    ):
+        return None
+    lookup = getattr(cleanup, "_lookup", None)
+    if not callable(lookup):
+        return None
+    try:
+        evidence = lookup()
+    except BaseException:
+        return None
+    if not isinstance(evidence, ReconciliationEvidence):
+        return None
+    if not (
+        evidence.state is ReconciliationState.FOUND
+        and evidence.job_id == job_id
+        and evidence.workload_observable is True
+        and isinstance(evidence.status, str)
+        and is_recognized_job_status(evidence.status)
+        and tuple(evidence.observed_task_ids) == tuple(native.task_ids)
     ):
         return None
     return job_id

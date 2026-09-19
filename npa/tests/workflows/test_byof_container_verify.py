@@ -157,6 +157,13 @@ def test_authorized_default_wrapper_uses_one_private_native_state(
             "NPA_EXECUTION_OUTPUTS": "synthetic-output",
         },
     )
+    cleanup._lookup = lambda: module.ReconciliationEvidence(
+        module.ReconciliationState.FOUND,
+        job_id="42",
+        status="RUNNING",
+        workload_observable=True,
+        observed_task_ids=(0,),
+    )
     calls = []
 
     def submit(_yaml, run_id, **kwargs):
@@ -341,6 +348,13 @@ def test_native_polling_identity_requires_bound_native_receipt(
             (0,),
             "b" * 64,
         ),
+        _lookup=lambda: module.ReconciliationEvidence(
+            module.ReconciliationState.FOUND,
+            job_id=native_job_id,
+            status="RUNNING",
+            workload_observable=True,
+            observed_task_ids=(0,),
+        ),
     )
     result = SimpleNamespace(
         status="SUBMITTED",
@@ -362,6 +376,80 @@ def test_native_polling_identity_requires_bound_native_receipt(
         with pytest.raises(module.SkyPilotConfigError, match="native polling identity"):
             guard.native_job_id(result, logical_id)
         assert guard.retain_context and guard.pending
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    (
+        # A matching ID without a controller-observed workload is not ownership.
+        lambda module: module.ReconciliationEvidence(
+            module.ReconciliationState.FOUND,
+            job_id="42",
+            status="RUNNING",
+            workload_observable=False,
+            observed_task_ids=(0,),
+        ),
+        # UNKNOWN is not a recognized native status, even when IDs match.
+        lambda module: module.ReconciliationEvidence(
+            module.ReconciliationState.FOUND,
+            job_id="42",
+            status="UNKNOWN",
+            workload_observable=True,
+            observed_task_ids=(0,),
+        ),
+        # A partial or unrelated task population cannot establish this launch.
+        lambda module: module.ReconciliationEvidence(
+            module.ReconciliationState.FOUND,
+            job_id="42",
+            status="RUNNING",
+            workload_observable=True,
+            observed_task_ids=(1,),
+        ),
+        lambda module: module.ReconciliationEvidence(
+            module.ReconciliationState.ABSENT,
+            job_id="42",
+            status="RUNNING",
+            workload_observable=True,
+            observed_task_ids=(0,),
+        ),
+    ),
+)
+def test_native_polling_identity_retains_context_without_complete_controller_evidence(
+    evidence,
+):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+
+    module = _load_module()
+    cleanup = SimpleNamespace(
+        run_id="robotwin-inner-owned",
+        job_id="42",
+        active=True,
+        submitting=False,
+        requested=False,
+        native_verified=True,
+        native_result=NativeLaunchResult(
+            "a" * 64,
+            "00000000-0000-4000-8000-000000000005",
+            "42",
+            (0,),
+            "b" * 64,
+        ),
+    )
+    cleanup._lookup = lambda: evidence(module)
+    result = SimpleNamespace(
+        status="SUBMITTED",
+        job_id="42",
+        returncode=0,
+        error="",
+        launch_transaction={
+            "state": "submitted",
+            "identity_source": "native_request_result",
+            "logical_launch_id": "robotwin-inner-owned",
+            "job_id": "42",
+        },
+    )
+
+    assert module._native_polling_identity(result, cleanup, cleanup.run_id) is None
 
 
 def test_generic_wrapper_preserves_explicit_isolated_state(inert_wrapper, monkeypatch):
@@ -509,6 +597,8 @@ def test_managed_submit_cleanup_ownership_boundary(
             state.UNAVAILABLE if failure == "unverified" else state.FOUND,
             job_id="42",
             status=status[0],
+            workload_observable=True,
+            observed_task_ids=(0,),
         )
 
     def run(command, **kwargs):
@@ -1108,6 +1198,13 @@ def _summary_submit_result(module, kwargs, confidential_dir):
             "PATH": "/bin",
             "KUBECONFIG": str(confidential_dir / "generated-kubeconfig"),
         },
+    )
+    cleanup._lookup = lambda: module.ReconciliationEvidence(
+        module.ReconciliationState.FOUND,
+        job_id="42",
+        status="RUNNING",
+        workload_observable=True,
+        observed_task_ids=(0,),
     )
     kwargs["on_launch_ready"](cleanup)
     return SimpleNamespace(
