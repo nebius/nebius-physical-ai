@@ -143,9 +143,13 @@ def test_scenario_assignment_cursor_covers_tail_before_wrapping() -> None:
 
 
 def test_scenario_assignment_cursor_applies_offset_and_validates_bounds() -> None:
-    assert scenario_assignment_indices(
-        count=5, row_count=3, cursor=2, offset=1
-    ) == [0, 1, 2, 0, 1]
+    assert scenario_assignment_indices(count=5, row_count=3, cursor=2, offset=1) == [
+        0,
+        1,
+        2,
+        0,
+        1,
+    ]
     with pytest.raises(ValueError, match="non-negative"):
         scenario_assignment_indices(count=-1, row_count=3)
     with pytest.raises(ValueError, match="at least one"):
@@ -667,12 +671,21 @@ def test_goal_curriculum_reaches_exact_target_and_fails_closed() -> None:
 
 def _recorded_visual_fields(step: int) -> dict:
     camera = f"camera-{step:03d}.png"
-    return {"sim_step": step, "camera_observation": camera,
+    return {
+        "sim_step": step,
+        "camera_observation": camera,
+        "episode_boundary": _no_reset_boundary(),
+        "visual_grounding": {
+            "schema": "npa.sim2real.visual_grounding.v2",
+            "action_step": step,
+            "action_sim_step": step,
+            "frame_sim_step": step,
+            "camera_observation": camera,
+            "supported": True,
             "episode_boundary": _no_reset_boundary(),
-            "visual_grounding": {"schema": "npa.sim2real.visual_grounding.v2", "action_step": step,
-                                 "action_sim_step": step, "frame_sim_step": step,
-                                 "camera_observation": camera, "supported": True,
-                                 "episode_boundary": _no_reset_boundary(), "frame_simulator_episode_id": 0}}
+            "frame_simulator_episode_id": 0,
+        },
+    }
 
 
 def test_temporal_credit_is_grounded_bounded_and_non_degenerate() -> None:
@@ -969,7 +982,10 @@ Metrics/object_pose/position_error: 0.3215
 def _no_reset_boundary():
     return {
         "schema": "npa.sim2real.episode_boundary.v1",
-        "simulator_episode_id": 0, "action_episode_id": 0,
-        "reset_events": [], "reset_on_current_step": False,
-        "action_outcome_valid": True, "temporal_credit_valid": True,
+        "simulator_episode_id": 0,
+        "action_episode_id": 0,
+        "reset_events": [],
+        "reset_on_current_step": False,
+        "action_outcome_valid": True,
+        "temporal_credit_valid": True,
     }

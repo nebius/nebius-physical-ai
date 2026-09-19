@@ -58,6 +58,8 @@ def test_only_restricted_non_runnable_defaults_are_operator_placeholders() -> No
     assert not _is_restricted_operator_placeholder(
         "registry.example.invalid/npa-paidf-anomalygen-sky@sha256:" + "a" * 64
     )
+
+
 def test_every_published_tool_ignores_ambient_private_registry(monkeypatch) -> None:
     monkeypatch.setenv("NPA_REGISTRY", "registry.invalid/operator/private")
     prefix = f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/"
@@ -95,13 +97,17 @@ def test_sim2real_custom_registry_is_scoped_and_explicit(monkeypatch) -> None:
 
 def _prepare_registry_workflow(spec_path):
     spec = load_spec(spec_path)
-    requires_baked_image = str(
-        spec.config.get("require_baked_npa") or ""
-    ).lower() in {"1", "true", "yes", "on"}
+    requires_baked_image = str(spec.config.get("require_baked_npa") or "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     public_prefix = f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/npa-"
     image_overrides = (
         {"*": f"{public_prefix}runtime@sha256:{'0' * 64}"}
-        if requires_baked_image else {}
+        if requires_baked_image
+        else {}
     )
     if spec_path.name == "nurec-colmap-reconstruct.yaml":
         # This validation workflow documents a required per-tool override
@@ -111,9 +117,7 @@ def _prepare_registry_workflow(spec_path):
         spec_path,
         run_id=f"registry-guard-{spec_path.stem}",
         assume_decision="promote_checkpoint",
-        config_overrides=(
-            {"source_sha": "0" * 40} if requires_baked_image else None
-        ),
+        config_overrides=({"source_sha": "0" * 40} if requires_baked_image else None),
         render_options=SkypilotRenderOptions(
             image_overrides=image_overrides,
             materialize_registry_secrets=False,

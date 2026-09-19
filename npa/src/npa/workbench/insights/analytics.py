@@ -79,9 +79,11 @@ def _matches(record: dict[str, Any], request: QueryRequest) -> bool:
         return False
     if request.metric_name and record.get("metric_name") != request.metric_name:
         return False
-    if request.accelerator and request.accelerator.lower() not in str(
-        labels.get("accelerators", "")
-    ).lower():
+    if (
+        request.accelerator
+        and request.accelerator.lower()
+        not in str(labels.get("accelerators", "")).lower()
+    ):
         return False
     for requested, label in (
         (request.metric_kind, METRIC_KIND_LABEL),
@@ -109,9 +111,14 @@ def _matches(record: dict[str, Any], request: QueryRequest) -> bool:
     if request.time_end and timestamp > request.time_end:
         return False
     if request.threshold_op and request.threshold_value is not None:
-        if request.threshold_metric and record.get("metric_name") != request.threshold_metric:
+        if (
+            request.threshold_metric
+            and record.get("metric_name") != request.threshold_metric
+        ):
             return False
-        if not _OPS[request.threshold_op](float(record.get("value", 0.0)), request.threshold_value):
+        if not _OPS[request.threshold_op](
+            float(record.get("value", 0.0)), request.threshold_value
+        ):
             return False
     return True
 
@@ -125,11 +132,19 @@ def query_metrics(request: QueryRequest) -> QueryResponse:
             filter_predicate=facets,
             limit=request.limit,
         )
-        return QueryResponse(backend="lancedb", count=len(records), records=records, facets=facets)
+        return QueryResponse(
+            backend="lancedb", count=len(records), records=records, facets=facets
+        )
 
-    matched = [record for record in read_records(request.input_uri) if _matches(record, request)]
+    matched = [
+        record
+        for record in read_records(request.input_uri)
+        if _matches(record, request)
+    ]
     limited = matched[: request.limit]
-    return QueryResponse(backend="jsonl", count=len(limited), records=limited, facets=facets)
+    return QueryResponse(
+        backend="jsonl", count=len(limited), records=limited, facets=facets
+    )
 
 
 def _is_lower_better(metric_name: str, overrides: list[str]) -> bool:
@@ -210,9 +225,13 @@ def compare_runs(request: CompareRequest) -> CompareResponse:
     base = _run_metric_samples(records, request.base_run)
     candidate = _run_metric_samples(records, request.candidate_run)
     if not base:
-        raise InsightsQueryError(f"no metrics recorded for base run: {request.base_run}")
+        raise InsightsQueryError(
+            f"no metrics recorded for base run: {request.base_run}"
+        )
     if not candidate:
-        raise InsightsQueryError(f"no metrics recorded for candidate run: {request.candidate_run}")
+        raise InsightsQueryError(
+            f"no metrics recorded for candidate run: {request.candidate_run}"
+        )
 
     identities = sorted(set(base) & set(candidate))
     if request.metric_names:
@@ -266,7 +285,11 @@ def compare_runs(request: CompareRequest) -> CompareResponse:
         improved=improved,
         regressed=regressed,
         unchanged=unchanged,
-        summary={"improved": len(improved), "regressed": len(regressed), "unchanged": len(unchanged)},
+        summary={
+            "improved": len(improved),
+            "regressed": len(regressed),
+            "unchanged": len(unchanged),
+        },
     )
 
 
@@ -311,7 +334,11 @@ def _walk(
         if depth != -1 and level >= depth:
             continue
         for edge in adjacency.get(current, []):
-            key = (str(edge.get("from_uri")), str(edge.get("to_uri")), str(edge.get("relation")))
+            key = (
+                str(edge.get("from_uri")),
+                str(edge.get("to_uri")),
+                str(edge.get("relation")),
+            )
             if key in seen_edges:
                 continue
             seen_edges.add(key)
@@ -329,13 +356,17 @@ def build_dashboard(request: DashboardRequest) -> DashboardResponse:
         for record in read_records(request.input_uri)
         if not request.workflow or record.get("workflow") == request.workflow
     ]
-    runs = sorted({str(record.get("run_id", "")) for record in records if record.get("run_id")})
+    runs = sorted(
+        {str(record.get("run_id", "")) for record in records if record.get("run_id")}
+    )
     latest_run = request.latest_run or _latest_run(records)
 
     groups = _group(records, request.group_by)
-    latest_rollup = {
-        name: value for name, value in _run_metric_map(records, latest_run).items()
-    } if latest_run else {}
+    latest_rollup = (
+        {name: value for name, value in _run_metric_map(records, latest_run).items()}
+        if latest_run
+        else {}
+    )
 
     generated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     response = DashboardResponse(

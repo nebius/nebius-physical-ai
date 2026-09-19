@@ -93,6 +93,7 @@ def _successful_storage_probe(monkeypatch):
         "npa.cli.cluster.terraform_lifecycle._check_skypilot_kubernetes",
         lambda *_args, **_kwargs: ("sky", {}, "config"),
     )
+
     # provision_if_absent resolves kubectl before calling the validator stubbed
     # above, so without this the cached-cluster tests pass only on a machine that
     # happens to have kubectl installed. Nothing here ever executes the binary.
@@ -170,7 +171,9 @@ def _capture_mk8s_backend_plan(monkeypatch: pytest.MonkeyPatch) -> dict[str, obj
         def preflight(self, desired, request):  # noqa: ANN001, ANN202
             return backend.preflight(desired, request)
 
-    monkeypatch.setattr(cluster_backends, "get_backend", lambda _name: CapturingBackend())
+    monkeypatch.setattr(
+        cluster_backends, "get_backend", lambda _name: CapturingBackend()
+    )
     return seen
 
 
@@ -323,6 +326,7 @@ def test_reserved_capacity_recovery_uses_the_effective_topology(
 ) -> None:
     _write_runtime(tmp_path, monkeypatch)
     from npa.provisioning_journal import ProvisioningOperation
+
     monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
     monkeypatch.setattr(provisioning, "_has_cached_kubeconfig", lambda *_a, **_k: False)
     applied: dict[str, object] = {}

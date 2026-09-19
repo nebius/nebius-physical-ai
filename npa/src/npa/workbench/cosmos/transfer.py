@@ -118,7 +118,9 @@ def resolve_control_modality(control: str) -> str:
         checkpoint, _weight = validate_control_request(
             modality=control or DEFAULT_INPUT_CONTROL,
             weight=1.0,
-            control_asset="precomputed" if str(control or "").strip().lower() == "depth" else "",
+            control_asset="precomputed"
+            if str(control or "").strip().lower() == "depth"
+            else "",
         )
     except ControlContractError as exc:
         raise ControlModalityError(str(exc)) from exc
@@ -220,7 +222,7 @@ def preserve_source_chroma(
             "protected chroma needs readable source and augmented videos"
         )
     output = augmented.with_name(f"{augmented.stem}-source-chroma.mp4")
-    script = r'''
+    script = r"""
 import av, json, numpy as np, sys
 from pathlib import Path
 source_path, augmented_path, frames_dir_text, regions_text, masks_dir_text, feather_text, luma_delta_text = sys.argv[1:]
@@ -313,7 +315,7 @@ if masks_dir is not None:
     if len(mask_files) != count:
         raise RuntimeError("protected SAM2 mask count differs from video frame count")
 print(json.dumps({"frames": count, "fps": float(rate)}))
-'''
+"""
     try:
         with tempfile.TemporaryDirectory(
             prefix="npa-protected-chroma-", dir=str(augmented.parent)
@@ -339,7 +341,13 @@ print(json.dumps({"frames": count, "fps": float(rate)}))
                 decoded = json.loads(str(completed.stdout).strip().splitlines()[-1])
                 frame_count = int(decoded["frames"])
                 fps = float(decoded["fps"])
-            except (IndexError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            except (
+                IndexError,
+                KeyError,
+                TypeError,
+                ValueError,
+                json.JSONDecodeError,
+            ) as exc:
                 raise ProtectedChromaError(
                     "protected source-chroma decoder returned invalid metadata"
                 ) from exc
@@ -457,9 +465,7 @@ def _spec_for_input_video(
     except ControlContractError as exc:
         raise ControlModalityError(str(exc)) from exc
     modality = checkpoint.modality
-    control_config: dict[str, Any] = {
-        "control_weight": normalized_weight
-    }
+    control_config: dict[str, Any] = {"control_weight": normalized_weight}
     if control_asset:
         control_config["control_path"] = str(Path(control_asset).resolve())
     if control_prompt:
@@ -480,7 +486,9 @@ def _spec_for_input_video(
         spec["negative_prompt"] = str(negative_prompt).strip()
     if seed is not None:
         spec["seed"] = int(seed)
-    safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in str(name or "input"))
+    safe = "".join(
+        c if (c.isalnum() or c in "-_") else "_" for c in str(name or "input")
+    )
     spec_path = repo / f"_npa_input_spec_{safe}.json"
     spec_path.write_text(_json.dumps(spec, indent=2), encoding="utf-8")
     return str(spec_path.relative_to(repo)), modality
@@ -663,7 +671,9 @@ def _guardrail_nltk_tree_sha256(files: dict[str, dict[str, Any]]) -> str:
 
 
 def _write_guardrail_nltk_ready_marker(
-    root: Path, *, repository: str = GUARDRAIL_REPO,
+    root: Path,
+    *,
+    repository: str = GUARDRAIL_REPO,
     revision: str = GUARDRAIL_REVISION,
 ) -> None:
     files = _guardrail_nltk_inventory(root)
@@ -684,7 +694,9 @@ def _write_guardrail_nltk_ready_marker(
 
 
 def _verify_guardrail_nltk_materialization(
-    destination: Path, *, repository: str = GUARDRAIL_REPO,
+    destination: Path,
+    *,
+    repository: str = GUARDRAIL_REPO,
     revision: str = GUARDRAIL_REVISION,
 ) -> int:
     """Verify exact revision identity and every copied byte before cache reuse."""
@@ -761,8 +773,11 @@ def _guardrail_nltk_download_error(
 
 
 def prepare_guardrail_nltk_data(
-    *, hf_home: str | None = None, repository: str = GUARDRAIL_REPO,
-    revision: str = GUARDRAIL_REVISION, snapshot_path: Path | None = None,
+    *,
+    hf_home: str | None = None,
+    repository: str = GUARDRAIL_REPO,
+    revision: str = GUARDRAIL_REVISION,
+    snapshot_path: Path | None = None,
 ) -> int:
     """Download and safely materialize the pinned guardrail tokenizer data.
 
@@ -777,20 +792,30 @@ def prepare_guardrail_nltk_data(
     """
 
     home = Path(hf_home or os.environ.get("HF_HOME", "/opt/cosmos-data/hf_cache"))
-    if not re.fullmatch(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+", repository) or not re.fullmatch(r"[0-9a-f]{40}", revision):
-        raise GuardrailNLTKDataError("content_invalid", "Guardrail repository and revision must be exact reviewed identities")
-    destination = _guardrail_nltk_data_path(str(home), repository=repository, revision=revision)
+    if not re.fullmatch(
+        r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+", repository
+    ) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise GuardrailNLTKDataError(
+            "content_invalid",
+            "Guardrail repository and revision must be exact reviewed identities",
+        )
+    destination = _guardrail_nltk_data_path(
+        str(home), repository=repository, revision=revision
+    )
     ancestor = destination.parent
     while True:
         if ancestor.is_symlink():
             raise GuardrailNLTKDataError(
-                "cache_invalid", "Cosmos guardrail NLTK cache contains an unsafe ancestor link"
+                "cache_invalid",
+                "Cosmos guardrail NLTK cache contains an unsafe ancestor link",
             )
         if ancestor == home:
             break
         ancestor = ancestor.parent
     if destination.exists() or destination.is_symlink():
-        return _verify_guardrail_nltk_materialization(destination, repository=repository, revision=revision)
+        return _verify_guardrail_nltk_materialization(
+            destination, repository=repository, revision=revision
+        )
 
     hub = (home / "hub").resolve()
     if snapshot_path is None:
@@ -804,17 +829,24 @@ def prepare_guardrail_nltk_data(
             ) from exc
         try:
             downloaded = snapshot_download(
-                repo_id=repository, revision=revision,
-                allow_patterns=["blocklist/nltk_data/**"], cache_dir=hub,
+                repo_id=repository,
+                revision=revision,
+                allow_patterns=["blocklist/nltk_data/**"],
+                cache_dir=hub,
                 token=os.environ.get("HF_TOKEN"),
             )
         except Exception as exc:
             raise _guardrail_nltk_download_error(exc, revision=revision) from exc
     else:
         downloaded = snapshot_path
-        expected = hub / ("models--" + repository.replace("/", "--")) / "snapshots" / revision
+        expected = (
+            hub / ("models--" + repository.replace("/", "--")) / "snapshots" / revision
+        )
         if snapshot_path.is_symlink() or snapshot_path.resolve() != expected:
-            raise GuardrailNLTKDataError("content_invalid", "Staged guardrail snapshot differs from the exact repository revision")
+            raise GuardrailNLTKDataError(
+                "content_invalid",
+                "Staged guardrail snapshot differs from the exact repository revision",
+            )
     snapshot = Path(downloaded).resolve()
     nltk_data = (snapshot / "blocklist" / "nltk_data").resolve()
     if (
@@ -829,9 +861,7 @@ def prepare_guardrail_nltk_data(
         )
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(
-        tempfile.mkdtemp(prefix=f".{revision}.", dir=destination.parent)
-    )
+    staging = Path(tempfile.mkdtemp(prefix=f".{revision}.", dir=destination.parent))
     materialized = 0
     try:
         for entry in sorted(nltk_data.rglob("*")):
@@ -857,13 +887,17 @@ def prepare_guardrail_nltk_data(
             raise GuardrailNLTKDataError(
                 "content_invalid", "Pinned Cosmos guardrail NLTK subtree is empty"
             )
-        _write_guardrail_nltk_ready_marker(staging, repository=repository, revision=revision)
+        _write_guardrail_nltk_ready_marker(
+            staging, repository=repository, revision=revision
+        )
         try:
             os.replace(staging, destination)
         except OSError:
             if not destination.exists():
                 raise
-            winner_count = _verify_guardrail_nltk_materialization(destination, repository=repository, revision=revision)
+            winner_count = _verify_guardrail_nltk_materialization(
+                destination, repository=repository, revision=revision
+            )
             shutil.rmtree(staging)
             return winner_count
     except GuardrailNLTKDataError:
@@ -880,11 +914,15 @@ def prepare_guardrail_nltk_data(
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
-    return _verify_guardrail_nltk_materialization(destination, repository=repository, revision=revision)
+    return _verify_guardrail_nltk_materialization(
+        destination, repository=repository, revision=revision
+    )
 
 
 def _guardrail_nltk_data_path(
-    hf_home: str, *, repository: str = GUARDRAIL_REPO,
+    hf_home: str,
+    *,
+    repository: str = GUARDRAIL_REPO,
     revision: str = GUARDRAIL_REVISION,
 ) -> Path:
     """Return the regular-file NLTK tree created for the pinned guardrail."""
@@ -1079,7 +1117,11 @@ def run_cosmos_transfer(
     # from clobbering each other, so removing exactly our file is fan-out safe.
     # Capture its content first so callers can still inspect the effective spec
     # after the file is gone (nothing depends on the ephemeral file persisting).
-    temp_spec = repo / spec if Path(spec).name.startswith(("_npa_input_spec_", "_npa_prompted_")) else None
+    temp_spec = (
+        repo / spec
+        if Path(spec).name.startswith(("_npa_input_spec_", "_npa_prompted_"))
+        else None
+    )
     spec_json: dict[str, Any] | None = None
     if temp_spec is not None:
         try:
@@ -1171,7 +1213,9 @@ def run_cosmos_transfer(
     }
 
 
-def extract_frames(video_path: str, dest_dir: Path, *, max_frames: int = 8) -> list[Path]:
+def extract_frames(
+    video_path: str, dest_dir: Path, *, max_frames: int = 8
+) -> list[Path]:
     """Extract up to ``max_frames`` evenly-spaced PNG frames from ``video_path``.
 
     Runs in the transfer venv (which ships PyAV). A successful decode with no
@@ -1280,9 +1324,7 @@ def publish_transfer_clip(
     input_conditioned = bool(transfer.get("input_conditioned"))
     conditioned_input = Path(str(transfer.get("input_video") or "")).name
     conditioned_control = str(transfer.get("control") or "")
-    content_guardrails_enabled = bool(
-        transfer.get("content_guardrails_enabled", True)
-    )
+    content_guardrails_enabled = bool(transfer.get("content_guardrails_enabled", True))
     protected_chroma = transfer.get("protected_chroma") or {"mode": "off"}
     refinement = transfer.get("refinement") or {}
     effective_control_weight = transfer.get("effective_control_weight")
@@ -1298,7 +1340,9 @@ def publish_transfer_clip(
     }
     frame_index: list[dict[str, str]] = []
     with _tempfile.TemporaryDirectory(prefix="npa-cosmos-pub-") as tmp:
-        frames = extract_frames(transfer["video_path"], Path(tmp) / "frames", max_frames=max_frames)
+        frames = extract_frames(
+            transfer["video_path"], Path(tmp) / "frames", max_frames=max_frames
+        )
         if require_frames and not frames:
             raise RuntimeError(
                 "Cosmos Transfer completed but no frames could be extracted from "
@@ -1311,7 +1355,9 @@ def publish_transfer_clip(
         for i, frame_path in enumerate(frames):
             key = f"frame-{i:05d}.png"
             client.upload_file(str(frame_path), f"{frames_base}{key}")
-            frame_index.append({"frame_id": f"frame-{i:05d}", "uri": f"{frames_base}{key}"})
+            frame_index.append(
+                {"frame_id": f"frame-{i:05d}", "uri": f"{frames_base}{key}"}
+            )
 
         clip_meta: dict[str, Any] = {
             "schema": TRANSFER_MANIFEST_SCHEMA,
@@ -1442,7 +1488,11 @@ def _publish_control_signal(
         raise ValueError(
             f"control_output_uri must be an s3:// prefix, got: {control_output_uri!r}"
         )
-    base = control_output_uri if control_output_uri.endswith("/") else control_output_uri + "/"
+    base = (
+        control_output_uri
+        if control_output_uri.endswith("/")
+        else control_output_uri + "/"
+    )
     clip_base = f"{base}{clip}/"
     signals: list[tuple[str, str]] = [
         (f"control_{modality}", path)
@@ -1520,10 +1570,10 @@ def publish_transfer_failure(
             "promotion_eligible": False,
         }
     )
-    failure_uri = (
-        f"{output_uri.rstrip('/')}/_failures/variant-{index:05d}.json"
+    failure_uri = f"{output_uri.rstrip('/')}/_failures/variant-{index:05d}.json"
+    _upload_json(
+        storage_client or StorageClient.from_environment(), document, failure_uri
     )
-    _upload_json(storage_client or StorageClient.from_environment(), document, failure_uri)
     document["failure_uri"] = failure_uri
     return document
 
@@ -1547,8 +1597,7 @@ def attempt_output_uri_for(output_uri: str, attempt_id: str) -> str:
     """Return the private object prefix for one gang recovery generation."""
 
     return (
-        f"{output_uri.rstrip('/')}/{ATTEMPT_PREFIX}/"
-        f"{_validated_attempt_id(attempt_id)}"
+        f"{output_uri.rstrip('/')}/{ATTEMPT_PREFIX}/{_validated_attempt_id(attempt_id)}"
     )
 
 
@@ -1619,7 +1668,9 @@ def validate_committed_run_manifest(
     try:
         node_count = int(document.get("node_count", 1) or 1)
     except (TypeError, ValueError) as exc:
-        raise ValueError("canonical Cosmos augment manifest has invalid node_count") from exc
+        raise ValueError(
+            "canonical Cosmos augment manifest has invalid node_count"
+        ) from exc
     if node_count < 1:
         raise ValueError("canonical Cosmos augment manifest has invalid node_count")
     scheduler_owned = node_count > 1 or any(
@@ -1636,9 +1687,7 @@ def validate_committed_run_manifest(
                 int(document.get("scheduler_fence_sequence", 0)),
                 int(document.get("scheduler_fence_attempt", 0)),
             )
-            publication_generation = int(
-                document.get(PUBLICATION_GENERATION_FIELD, 0)
-            )
+            publication_generation = int(document.get(PUBLICATION_GENERATION_FIELD, 0))
         except (TypeError, ValueError) as exc:
             raise ValueError(
                 "scheduler-fenced Cosmos augment manifest has invalid publication identity"
@@ -1671,11 +1720,11 @@ def validate_committed_run_manifest(
             if marker in first_video:
                 root = first_video.split(marker, 1)[0] + marker
     if not root:
-        raise ValueError("canonical Cosmos augment manifest output root is indeterminate")
+        raise ValueError(
+            "canonical Cosmos augment manifest output root is indeterminate"
+        )
     expected_prefix = (
-        f"{root.rstrip('/')}/{ATTEMPT_PREFIX}/{attempt_id}/"
-        if attempt_id
-        else root
+        f"{root.rstrip('/')}/{ATTEMPT_PREFIX}/{attempt_id}/" if attempt_id else root
     )
     seen_clips: set[str] = set()
     seen_indices: set[int] = set()
@@ -1696,12 +1745,16 @@ def validate_committed_run_manifest(
                 "its declared publication prefix"
             )
         if variant_index in seen_indices:
-            raise ValueError("canonical Cosmos augment manifest duplicates a variant index")
+            raise ValueError(
+                "canonical Cosmos augment manifest duplicates a variant index"
+            )
         seen_clips.add(clip)
         seen_indices.add(variant_index)
         control_uris = variant.get("control_uris") or {}
         if not isinstance(control_uris, dict):
-            raise ValueError("canonical Cosmos augment manifest control_uris is invalid")
+            raise ValueError(
+                "canonical Cosmos augment manifest control_uris is invalid"
+            )
         if attempt_id and any(
             f"/{ATTEMPT_PREFIX}/{attempt_id}/" not in str(uri or "")
             for uri in control_uris.values()
@@ -1735,7 +1788,9 @@ def validate_committed_run_manifest(
             )
         seen_indices.add(variant_index)
     if seen_indices != set(range(attempted_variant_count)):
-        raise ValueError("canonical Cosmos augment manifest has incomplete variant indices")
+        raise ValueError(
+            "canonical Cosmos augment manifest has incomplete variant indices"
+        )
     return variants
 
 
@@ -1816,8 +1871,7 @@ def claim_run_publication(
             prior_generation = int(document.get(PUBLICATION_GENERATION_FIELD, 0) or 0)
             prior_node_count = int(document.get("node_count", 1) or 1)
             scheduler_owned = prior_node_count > 1 or any(
-                field in document
-                for field in SCHEDULER_PUBLICATION_IDENTITY_FIELDS
+                field in document for field in SCHEDULER_PUBLICATION_IDENTITY_FIELDS
             )
             if scheduler_owned:
                 _validated_attempt_id(str(document.get("attempt_id") or ""))
@@ -2066,8 +2120,7 @@ def write_run_manifest(
             and current_document.get("status") == PUBLICATION_CLAIM_STATUS
             and str(current_document.get("attempt_id") or "") == str(attempt_id)
             and str(current_document.get("run_id") or "") == str(run_id or "")
-            and int(current_document.get("node_count", 0) or 0)
-            == int(node_count)
+            and int(current_document.get("node_count", 0) or 0) == int(node_count)
             and int(current_document.get(PUBLICATION_GENERATION_FIELD, 0) or 0)
             == int(publication_generation)
         ):
@@ -2264,8 +2317,7 @@ def merge_shard_manifests(
             and claim_document.get("mode") == TRANSFER_MANIFEST_MODE
             and claim_document.get("status") == PUBLICATION_CLAIM_STATUS
             and str(claim_document.get("run_id") or "") == str(run_id or "")
-            and str(claim_document.get("attempt_id") or "")
-            == normalized_attempt_id
+            and str(claim_document.get("attempt_id") or "") == normalized_attempt_id
             and int(claim_document.get("node_count", 0) or 0) == expected
             and int(claim_document.get(PUBLICATION_GENERATION_FIELD, 0) or 0)
             == int(publication_generation)
@@ -2294,7 +2346,9 @@ def merge_shard_manifests(
         or int(expected_shard_identity["scheduler_fence_sequence"]) < 1
         or int(expected_shard_identity["scheduler_fence_attempt"]) < 1
     ):
-        raise RuntimeError("multi-node publication claim has an incomplete scheduler fence")
+        raise RuntimeError(
+            "multi-node publication claim has an incomplete scheduler fence"
+        )
     waiter = sleep or _time.sleep
     clock = monotonic or _time.monotonic
     reporter = progress or (
@@ -2309,9 +2363,7 @@ def merge_shard_manifests(
             raise ValueError(
                 "NPA_COSMOS_SHARD_JOIN_TIMEOUT_S must be a non-negative number"
             ) from exc
-    if limit is not None and (
-        not _math.isfinite(float(limit)) or float(limit) < 0
-    ):
+    if limit is not None and (not _math.isfinite(float(limit)) or float(limit) < 0):
         raise ValueError("shard join timeout must be finite and non-negative")
     started = clock()
     deadline = None if limit is None else started + float(limit)
@@ -2325,9 +2377,7 @@ def merge_shard_manifests(
             return False
         descriptors = document.get("clip_descriptors")
         failures = document.get("failed_variants", [])
-        attempt_prefix = (
-            attempt_output_uri_for(output_uri, normalized_attempt_id) + "/"
-        )
+        attempt_prefix = attempt_output_uri_for(output_uri, normalized_attempt_id) + "/"
         return bool(
             document.get("schema") == SHARD_MANIFEST_SCHEMA
             and document.get("mode") == TRANSFER_MANIFEST_MODE
@@ -2401,9 +2451,8 @@ def merge_shard_manifests(
             break
         now = clock()
         missing = [r for r in range(expected) if r not in shards]
-        if (
-            last_progress is None
-            or now - last_progress >= max(0.0, float(progress_interval_s))
+        if last_progress is None or now - last_progress >= max(
+            0.0, float(progress_interval_s)
         ):
             reporter(
                 "multi-node augment shard join waiting: "
@@ -2431,7 +2480,11 @@ def merge_shard_manifests(
         )
     variant_total = next(iter(totals))
     ordered = sorted(
-        (clip for shard in shards.values() for clip in shard.get("clip_descriptors", [])),
+        (
+            clip
+            for shard in shards.values()
+            for clip in shard.get("clip_descriptors", [])
+        ),
         key=lambda c: int(c.get("variant_index", 0) or 0),
     )
     ordered_failures = sorted(
@@ -2475,10 +2528,10 @@ def merge_shard_manifests(
                 "attempted_variant_count": int(
                     shard.get("attempted_variant_count", 0) or 0
                 ),
-                "failed_variant_count": int(
-                    shard.get("failed_variant_count", 0) or 0
+                "failed_variant_count": int(shard.get("failed_variant_count", 0) or 0),
+                "variant_parallelism": max(
+                    1, int(shard.get("variant_parallelism", 1) or 1)
                 ),
-                "variant_parallelism": max(1, int(shard.get("variant_parallelism", 1) or 1)),
                 "clips": list(shard.get("clips", [])),
                 "attempt_id": str(shard.get("attempt_id") or ""),
             }
@@ -2523,7 +2576,9 @@ def publish_transfer_to_s3(
         require_frames=require_frames,
         storage_client=storage_client,
     )
-    return write_run_manifest([clip], output_uri, run_id=run_id, storage_client=storage_client)
+    return write_run_manifest(
+        [clip], output_uri, run_id=run_id, storage_client=storage_client
+    )
 
 
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".ppm", ".webp"}

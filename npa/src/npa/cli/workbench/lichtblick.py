@@ -55,21 +55,31 @@ def serve_cmd(
         help="Treat --input-path as a camera-frame sequence (e.g. sim2real rollout/augment "
         "frames) and pack it into an MCAP of foxglove.CompressedImage messages.",
     ),
-    topic: str = typer.Option(DEFAULT_CAMERA_TOPIC, "--topic", help="MCAP topic for exported frames."),
-    fps: float = typer.Option(DEFAULT_FPS, "--fps", help="Playback rate for exported frames."),
+    topic: str = typer.Option(
+        DEFAULT_CAMERA_TOPIC, "--topic", help="MCAP topic for exported frames."
+    ),
+    fps: float = typer.Option(
+        DEFAULT_FPS, "--fps", help="Playback rate for exported frames."
+    ),
     execute: bool = typer.Option(
         False,
         "--execute/--plan",
         help="Actually stage from S3 and run the viewer container (default: print the plan only).",
     ),
-    host: str = typer.Option(DEFAULT_HOST, "--host", help="Bind interface; non-loopback explicitly exposes the artifact without authentication."),
+    host: str = typer.Option(
+        DEFAULT_HOST,
+        "--host",
+        help="Bind interface; non-loopback explicitly exposes the artifact without authentication.",
+    ),
     port: int = typer.Option(DEFAULT_PORT, "--port", help="HTTP port to serve on."),
     image: str = typer.Option(
         "",
         "--image",
         help="Override the npa-lichtblick image ref (defaults to the pinned tag).",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Serve a robotics log in Lichtblick, staged from S3.
 
@@ -101,16 +111,41 @@ def serve_cmd(
 # Alias: `launch` reads the same as `serve` for parity with other viewers.
 @app.command("launch")
 def launch_cmd(
-    input_path: str = typer.Option(..., "--input-path", "-i", help="S3/local MCAP, or (with --from-frames) camera frames."),
-    output_path: str = typer.Option("", "--output-path", "-o", help="Optional S3/local output path."),
-    from_frames: bool = typer.Option(False, "--from-frames/--no-from-frames", help="Pack a camera-frame sequence into MCAP."),
-    topic: str = typer.Option(DEFAULT_CAMERA_TOPIC, "--topic", help="MCAP topic for exported frames."),
-    fps: float = typer.Option(DEFAULT_FPS, "--fps", help="Playback rate for exported frames."),
-    execute: bool = typer.Option(False, "--execute/--plan", help="Stage and launch the viewer container."),
-    host: str = typer.Option(DEFAULT_HOST, "--host", help="Bind interface; non-loopback explicitly exposes the artifact without authentication."),
+    input_path: str = typer.Option(
+        ...,
+        "--input-path",
+        "-i",
+        help="S3/local MCAP, or (with --from-frames) camera frames.",
+    ),
+    output_path: str = typer.Option(
+        "", "--output-path", "-o", help="Optional S3/local output path."
+    ),
+    from_frames: bool = typer.Option(
+        False,
+        "--from-frames/--no-from-frames",
+        help="Pack a camera-frame sequence into MCAP.",
+    ),
+    topic: str = typer.Option(
+        DEFAULT_CAMERA_TOPIC, "--topic", help="MCAP topic for exported frames."
+    ),
+    fps: float = typer.Option(
+        DEFAULT_FPS, "--fps", help="Playback rate for exported frames."
+    ),
+    execute: bool = typer.Option(
+        False, "--execute/--plan", help="Stage and launch the viewer container."
+    ),
+    host: str = typer.Option(
+        DEFAULT_HOST,
+        "--host",
+        help="Bind interface; non-loopback explicitly exposes the artifact without authentication.",
+    ),
     port: int = typer.Option(DEFAULT_PORT, "--port", help="HTTP port to serve on."),
-    image: str = typer.Option("", "--image", help="Override the npa-lichtblick image ref."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    image: str = typer.Option(
+        "", "--image", help="Override the npa-lichtblick image ref."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Alias for ``serve``: stage and view a robotics log in Lichtblick."""
 
@@ -130,7 +165,9 @@ def launch_cmd(
 
 @app.command("to-rerun")
 def to_rerun_cmd(
-    input_path: str = typer.Option(..., "--input-path", "-i", help="S3/local MCAP artifact to decode."),
+    input_path: str = typer.Option(
+        ..., "--input-path", "-i", help="S3/local MCAP artifact to decode."
+    ),
     output_path: str = typer.Option(
         "",
         "--output-path",
@@ -142,7 +179,9 @@ def to_rerun_cmd(
         "--execute/--plan",
         help="Actually stage the MCAP and write the .rrd (default: print the plan only).",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Decode an MCAP into a native Rerun ``.rrd`` so Rerun renders it.
 
@@ -178,7 +217,9 @@ def to_rerun_cmd(
 
 @app.command("status")
 def status_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Show Lichtblick tool status."""
 
@@ -197,7 +238,9 @@ def status_cmd(
 
 @app.command("list")
 def list_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """List artifact formats the Lichtblick viewer can open."""
 

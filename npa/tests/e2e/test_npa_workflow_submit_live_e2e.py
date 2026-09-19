@@ -617,7 +617,9 @@ def test_npa_workflow_runtime_live_reaches_terminal(
         )
 
 
-def _assert_transfer_variant(client, bucket, prefix, variant, evaluated, source, folder, read_json):
+def _assert_transfer_variant(
+    client, bucket, prefix, variant, evaluated, source, folder, read_json
+):
     from npa.workflows.paidf_cosmos3_media import verify_pair, video_sha256
 
     clip = variant["clip"]
@@ -631,15 +633,21 @@ def _assert_transfer_variant(client, bucket, prefix, variant, evaluated, source,
     transfer = read_json(base + "transfer.json")
     assert transfer["source_frames"] == alignment["decoded_frames"]
     assert transfer["native_torch_compile"] is False
-    for field in ("control_loader_verified", "text_guardrail_passed", "video_guardrail_passed",
-                  "guardrail_postprocessing_applied"):
+    for field in (
+        "control_loader_verified",
+        "text_guardrail_passed",
+        "video_guardrail_passed",
+        "guardrail_postprocessing_applied",
+    ):
         assert transfer[field] is True
     control = folder / f"{clip}-edges.mkv"
     client.download_file(bucket, prefix + base + "source_edges.mkv", str(control))
     assert video_sha256(control) == transfer["control_sha256"]
 
 
-def _assert_full_transfer_artifacts(client, bucket, prefix, augment, evaluator, read_json):
+def _assert_full_transfer_artifacts(
+    client, bucket, prefix, augment, evaluator, read_json
+):
     import tempfile
     from npa.workflows.paidf_cosmos3_annotation import _validate_caption_coverage
     from npa.workflows.paidf_cosmos3_media import probe_video
@@ -656,12 +664,28 @@ def _assert_full_transfer_artifacts(client, bucket, prefix, augment, evaluator, 
         client.download_file(bucket, prefix + "input/source.mp4", str(source))
         assert probe_video(source) == timeline["prepared"]
         original = folder / "original.mp4"
-        client.download_file(bucket, prefix + "input/original_source.mp4", str(original))
+        client.download_file(
+            bucket, prefix + "input/original_source.mp4", str(original)
+        )
         assert probe_video(original) == timeline["original"]
         for variant in augment["variants"]:
-            _assert_transfer_variant(client, bucket, prefix, variant, clips[variant["clip"]], source, folder, read_json)
-        _assert_transfer_recording(client, bucket, prefix, folder, augment["variants"], read_json)
-    expected = {item["clip"]: item["temporal_alignment"]["generated_sha256"] for item in augment["variants"]}
+            _assert_transfer_variant(
+                client,
+                bucket,
+                prefix,
+                variant,
+                clips[variant["clip"]],
+                source,
+                folder,
+                read_json,
+            )
+        _assert_transfer_recording(
+            client, bucket, prefix, folder, augment["variants"], read_json
+        )
+    expected = {
+        item["clip"]: item["temporal_alignment"]["generated_sha256"]
+        for item in augment["variants"]
+    }
     _validate_caption_coverage(read_json("labeled_augmented/captions.json"), expected)
 
 
@@ -696,7 +720,10 @@ def _recording_document(entities, entity):
         for name in batch.schema.names:
             if "text" in name.lower() or "body" in name.lower():
                 for row in batch.column(name).to_pylist():
-                    parts.extend(str(value) for value in (row if isinstance(row, list) else [row]))
+                    parts.extend(
+                        str(value)
+                        for value in (row if isinstance(row, list) else [row])
+                    )
     return "\n".join(parts)
 
 
@@ -708,8 +735,13 @@ def _recording_public_references():
     contract = load_starter_contract()
     source = contract["source"]
     return {
-        CURATOR_REPO, EVALUATOR_REPO, contract["license"]["url"],
-        *(source[key] for key in ("authoritative_url", "asset_url", "episode_metadata_url")),
+        CURATOR_REPO,
+        EVALUATOR_REPO,
+        contract["license"]["url"],
+        *(
+            source[key]
+            for key in ("authoritative_url", "asset_url", "episode_metadata_url")
+        ),
     }
 
 
@@ -717,11 +749,15 @@ def _assert_recording_text_is_portable(text, bucket):
     import re
 
     assert bucket not in text, "Recording text contains the private bucket"
-    assert "s3://" not in text.lower(), "Recording text must use run-relative references"
+    assert "s3://" not in text.lower(), (
+        "Recording text must use run-relative references"
+    )
     assert "file://" not in text.lower(), "Recording text contains a local file URI"
-    assert not re.search(r"(?i)[?&](?:x-amz-|signature=|token=)", text), "Recording text contains a signed URL"
+    assert not re.search(r"(?i)[?&](?:x-amz-|signature=|token=)", text), (
+        "Recording text contains a signed URL"
+    )
     public = _recording_public_references()
-    for uri in re.findall(r'''\b[A-Za-z][A-Za-z0-9+.-]*://[^\s<>"'`)\]}]+''', text):
+    for uri in re.findall(r"""\b[A-Za-z][A-Za-z0-9+.-]*://[^\s<>"'`)\]}]+""", text):
         assert uri in public, "Recording text contains an unapproved location"
     local_path = r"(?<![\w:/])/(?:[\w.~%-]+/)+[\w.~%-]+|\b[A-Za-z]:[\\/]"
     assert not re.search(local_path, text), "Recording text contains a local path"
@@ -737,16 +773,22 @@ def _assert_recording_text_is_portable(text, bucket):
         "aws_secret_access_key|aws_session_token|hf_token|ngc_api_key|nebius_iam_token"
     )
     keys = r'"(?:' + private_fields + "|" + credential_fields + r')"\s*:'
-    assert not re.search(keys, text, re.IGNORECASE), "Recording text contains private metadata"
+    assert not re.search(keys, text, re.IGNORECASE), (
+        "Recording text contains private metadata"
+    )
 
 
 def _assert_curation_fields(recorded, original, fields):
     for field in fields:
         actual, expected = recorded, original
         for key in field.split("."):
-            assert key in actual and key in expected, f"Missing recorded curation fact: {field}"
+            assert key in actual and key in expected, (
+                f"Missing recorded curation fact: {field}"
+            )
             actual, expected = actual[key], expected[key]
-        assert type(actual) is type(expected) and actual == expected, f"Recorded curation fact differs from source: {field}"
+        assert type(actual) is type(expected) and actual == expected, (
+            f"Recorded curation fact differs from source: {field}"
+        )
 
 
 def _assert_recorded_curation(text, raw, relative):
@@ -758,19 +800,28 @@ def _assert_recorded_curation(text, raw, relative):
     recorded, original = json.loads(blocks[0]), json.loads(raw)
     assert isinstance(recorded, dict) and isinstance(original, dict)
     source = recorded["source_report"]
-    assert source["artifact"] == relative, "Curation source must name the exact run-relative report"
-    assert source["sha256"] == hashlib.sha256(raw).hexdigest(), "Curation source-report bytes differ"
+    assert source["artifact"] == relative, (
+        "Curation source must name the exact run-relative report"
+    )
+    assert source["sha256"] == hashlib.sha256(raw).hexdigest(), (
+        "Curation source-report bytes differ"
+    )
     if relative == "curation/cosmos_curator.json":
         assert original["schema"] == "npa.cosmos_curate.curation.v1"
-        assert original["engine"] in {"cosmos-curator-stages", "cosmos-curator-video-pipeline"}, "Curator must use a real engine"
+        assert original["engine"] in {
+            "cosmos-curator-stages",
+            "cosmos-curator-video-pipeline",
+        }, "Curator must use a real engine"
         assert original["status"] == "completed" and original["clip_count"] > 0
         fields = "schema status engine variant_count clip_count motion_filter encoder".split()
     else:
         assert original["schema"] == "npa.fiftyone.curation.v1"
         assert original["curation_engine"] == "fiftyone-brain"
         assert original["status"] == "curated" and original["augmented_clips"] > 0
-        fields = ("schema status curation_engine augmented_clips clip_ids video_count frame_count "
-                  "curated_kept curated_dropped multiply.mode multiply.variant_count").split()
+        fields = (
+            "schema status curation_engine augmented_clips clip_ids video_count frame_count "
+            "curated_kept curated_dropped multiply.mode multiply.variant_count"
+        ).split()
         if "fiftyone" in original:
             fields += ["fiftyone.fiftyone_version", "fiftyone.dedup_threshold"]
     _assert_curation_fields(recorded, original, fields)
@@ -788,8 +839,10 @@ def _assert_transfer_recording(client, bucket, prefix, folder, variants, read_js
     def document(entity):
         return _recording_document(entities, entity)
 
-    for entity, relative in (("/pipeline/4_cosmos_curator", "curation/cosmos_curator.json"),
-                             ("/pipeline/4_curation", "curation/report.json")):
+    for entity, relative in (
+        ("/pipeline/4_cosmos_curator", "curation/cosmos_curator.json"),
+        ("/pipeline/4_curation", "curation/report.json"),
+    ):
         with client.get_object(Bucket=bucket, Key=prefix + relative)["Body"] as body:
             _assert_recorded_curation(document(entity), body.read(), relative)
     for entity in entities:
@@ -798,8 +851,11 @@ def _assert_transfer_recording(client, bucket, prefix, folder, variants, read_js
     for variant in variants:
         clip = variant["clip"]
         assert clip + "/" in captions
-        _assert_recorded_video(entities[f"/augmented/{clip}/video"], folder / f"{clip}.mp4",
-                               variant["temporal_alignment"])
+        _assert_recorded_video(
+            entities[f"/augmented/{clip}/video"],
+            folder / f"{clip}.mp4",
+            variant["temporal_alignment"],
+        )
         assert "ACCEPTED" in document(f"/augmented/{clip}/disposition").upper()
 
 
@@ -937,8 +993,12 @@ def _assert_paidf_live_artifacts(
     assert evaluator.get("schema") == "npa.cosmos_evaluator.report.v1"
     assert evaluator.get("engines")
     if spec == "paidf-cosmos3.yaml":
-        _assert_full_transfer_artifacts(client, bucket, prefix, augment, evaluator, read_json)
-        quality_rrd = client.head_object(Bucket=bucket, Key=prefix + "reports/quality-evidence.rrd")
+        _assert_full_transfer_artifacts(
+            client, bucket, prefix, augment, evaluator, read_json
+        )
+        quality_rrd = client.head_object(
+            Bucket=bucket, Key=prefix + "reports/quality-evidence.rrd"
+        )
         assert int(quality_rrd["ContentLength"]) > 0
     decision = read_json("grade/decision.json")
     assert decision.get("decision") in {"promote_checkpoint", "loop_back"}

@@ -269,7 +269,9 @@ def caption_images(
                     max_tokens=max_tokens,
                 )
             except TokenFactoryError as exc:
-                raise TokenFactoryToolError(f"captioning {label} failed: {exc}") from exc
+                raise TokenFactoryToolError(
+                    f"captioning {label} failed: {exc}"
+                ) from exc
             captions.append(CaptionItem(image=label, caption=text.strip()))
 
     return CaptionResult(
@@ -328,8 +330,12 @@ def generate_text(
                 max_tokens=max_tokens,
             )
         except TokenFactoryError as exc:
-            raise TokenFactoryToolError(f"generation for {item_id!r} failed: {exc}") from exc
-        generations.append(GenerationItem(id=item_id, prompt=prompt, completion=text.strip()))
+            raise TokenFactoryToolError(
+                f"generation for {item_id!r} failed: {exc}"
+            ) from exc
+        generations.append(
+            GenerationItem(id=item_id, prompt=prompt, completion=text.strip())
+        )
 
     return GenerateResult(
         status="completed",
@@ -412,7 +418,9 @@ def batch_generate(
             rows=rows,
         )
     except TokenFactoryError as exc:
-        raise TokenFactoryToolError(f"uploading {len(rows)} batch prompts failed: {exc}") from exc
+        raise TokenFactoryToolError(
+            f"uploading {len(rows)} batch prompts failed: {exc}"
+        ) from exc
 
     dataset_id = str(dataset.get("id") or "")
     dataset_version = str(dataset.get("current_version") or "")
@@ -442,7 +450,9 @@ def batch_generate(
                 "accepts text-to-text models only; caption images with "
                 "`npa workbench token-factory caption` instead."
             )
-        raise TokenFactoryToolError(f"starting batch inference failed: {exc}{hint}") from exc
+        raise TokenFactoryToolError(
+            f"starting batch inference failed: {exc}{hint}"
+        ) from exc
 
     operation_id = str(operation.get("id") or "")
     if not operation_id:
@@ -511,7 +521,9 @@ def batch_collect(
     try:
         operation = active.get_operation(operation_id)
     except TokenFactoryError as exc:
-        raise TokenFactoryToolError(f"reading operation {operation_id} failed: {exc}") from exc
+        raise TokenFactoryToolError(
+            f"reading operation {operation_id} failed: {exc}"
+        ) from exc
 
     source_dataset_id = _source_dataset_id(operation)
     prompt_lookup = _recover_prompts(active, source_dataset_id)
@@ -586,7 +598,9 @@ def _await_and_collect(
         # timeout does not reach here: that operation is still running and still
         # needs its source rows.
         if not keep_datasets:
-            _cleanup_datasets(client, [_destination_dataset_id(operation), source_dataset_id])
+            _cleanup_datasets(
+                client, [_destination_dataset_id(operation), source_dataset_id]
+            )
         raise TokenFactoryToolError(explanation)
 
     batch = _batch_record(client, operation_id)
@@ -745,10 +759,14 @@ def _parse_batch_export(
         try:
             row = json.loads(line)
         except json.JSONDecodeError:
-            failures.append({"id": f"row-{index:04d}", "error": "result row is not valid JSON"})
+            failures.append(
+                {"id": f"row-{index:04d}", "error": "result row is not valid JSON"}
+            )
             continue
         if not isinstance(row, dict):
-            failures.append({"id": f"row-{index:04d}", "error": "result row is not an object"})
+            failures.append(
+                {"id": f"row-{index:04d}", "error": "result row is not an object"}
+            )
             continue
 
         item_id = str(row.get("custom_id") or row.get("id") or f"row-{index:04d}")
@@ -944,7 +962,10 @@ def reason_scene(
         content: list[dict[str, Any]] = [{"type": "text", "text": effective_task}]
         for image_path in image_paths:
             content.append(
-                {"type": "image_url", "image_url": {"url": _image_to_data_url(image_path)}}
+                {
+                    "type": "image_url",
+                    "image_url": {"url": _image_to_data_url(image_path)},
+                }
             )
         messages: list[dict[str, Any]] = []
         if effective_system:
@@ -1011,7 +1032,12 @@ def write_captions(
     storage_client: "StorageClient | None" = None,
 ) -> str:
     body = json.dumps(payload, indent=2, sort_keys=True) + "\n"
-    return _write_text(body, result_uri=result_uri, filename=CAPTION_RESULT_FILENAME, storage_client=storage_client)
+    return _write_text(
+        body,
+        result_uri=result_uri,
+        filename=CAPTION_RESULT_FILENAME,
+        storage_client=storage_client,
+    )
 
 
 def write_generations(
@@ -1021,7 +1047,12 @@ def write_generations(
     storage_client: "StorageClient | None" = None,
 ) -> str:
     body = "".join(json.dumps(row, sort_keys=True) + "\n" for row in generations)
-    return _write_text(body, result_uri=result_uri, filename=GENERATE_RESULT_FILENAME, storage_client=storage_client)
+    return _write_text(
+        body,
+        result_uri=result_uri,
+        filename=GENERATE_RESULT_FILENAME,
+        storage_client=storage_client,
+    )
 
 
 def write_batch_operation(
@@ -1046,7 +1077,12 @@ def write_reason(
     storage_client: "StorageClient | None" = None,
 ) -> str:
     body = json.dumps(payload, indent=2, sort_keys=True) + "\n"
-    return _write_text(body, result_uri=result_uri, filename=REASON_RESULT_FILENAME, storage_client=storage_client)
+    return _write_text(
+        body,
+        result_uri=result_uri,
+        filename=REASON_RESULT_FILENAME,
+        storage_client=storage_client,
+    )
 
 
 def _write_text(
@@ -1164,7 +1200,9 @@ def _parse_jsonl_prompts(text: str) -> list[tuple[str, str]]:
         try:
             payload = json.loads(line)
         except json.JSONDecodeError as exc:
-            raise TokenFactoryToolError(f"prompt file line {index} is not valid JSON") from exc
+            raise TokenFactoryToolError(
+                f"prompt file line {index} is not valid JSON"
+            ) from exc
         prompts.append(_prompt_from_object(payload, index))
     return prompts
 
@@ -1177,8 +1215,12 @@ def _parse_json_prompts(text: str) -> list[tuple[str, str]]:
     if isinstance(payload, dict):
         payload = payload.get("prompts") or payload.get("items") or []
     if not isinstance(payload, list):
-        raise TokenFactoryToolError("prompt JSON must be a list or have a 'prompts' list")
-    return [_prompt_from_object(item, index) for index, item in enumerate(payload, start=1)]
+        raise TokenFactoryToolError(
+            "prompt JSON must be a list or have a 'prompts' list"
+        )
+    return [
+        _prompt_from_object(item, index) for index, item in enumerate(payload, start=1)
+    ]
 
 
 def _prompt_from_object(payload: Any, index: int) -> tuple[str, str]:
@@ -1188,8 +1230,12 @@ def _prompt_from_object(payload: Any, index: int) -> tuple[str, str]:
         raise TokenFactoryToolError(f"prompt item {index} must be a string or object")
     prompt = payload.get("prompt") or payload.get("text") or payload.get("instruction")
     if not prompt:
-        raise TokenFactoryToolError(f"prompt item {index} must include a 'prompt' field")
-    item_id = str(payload.get("id") or payload.get("name") or f"item-{index:04d}").strip()
+        raise TokenFactoryToolError(
+            f"prompt item {index} must include a 'prompt' field"
+        )
+    item_id = str(
+        payload.get("id") or payload.get("name") or f"item-{index:04d}"
+    ).strip()
     return (item_id or f"item-{index:04d}", str(prompt).strip())
 
 

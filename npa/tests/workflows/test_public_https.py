@@ -170,8 +170,10 @@ def test_https_default_path_and_explicit_standard_port(network):
     "status", [201, 204, 206, 300, 304, 305, 400, 401, 403, 404, 500]
 )
 def test_non_download_status_never_returns_server_body(network, status):
-    network[0].extend(Response(b"server secret", status=status)
-                      for _ in range(4 if status == 500 else 1))
+    network[0].extend(
+        Response(b"server secret", status=status)
+        for _ in range(4 if status == 500 else 1)
+    )
     with pytest.raises(transport.PublicDownloadError, match="HTTP status") as caught:
         fetch()
     assert "server secret" not in str(caught.value)
@@ -179,10 +181,14 @@ def test_non_download_status_never_returns_server_body(network, status):
 
 
 @pytest.mark.parametrize("status", [429, 500, 502, 503, 504])
-def test_transient_status_retries_without_delivering_error_bytes(network, monkeypatch, status):
+def test_transient_status_retries_without_delivering_error_bytes(
+    network, monkeypatch, status
+):
     delays = []
     monkeypatch.setattr(transport.time, "sleep", delays.append)
-    network[0].extend([Response(b"private server body", status=status), Response(b"verified input")])
+    network[0].extend(
+        [Response(b"private server body", status=status), Response(b"verified input")]
+    )
     assert fetch() == b"verified input"
     assert delays == [1]
     assert len(network[2]) == 2
@@ -203,7 +209,12 @@ def test_transient_status_exhaustion_stays_a_failure(network, monkeypatch):
 
 
 def test_retry_does_not_relax_redirect_policy(network):
-    network[0].extend([Response(status=503), Response(status=302, location="http://huggingface.co/public.zip")])
+    network[0].extend(
+        [
+            Response(status=503),
+            Response(status=302, location="http://huggingface.co/public.zip"),
+        ]
+    )
     with pytest.raises(transport.PublicDownloadError, match="not permitted"):
         fetch()
     assert len(network[2]) == 2

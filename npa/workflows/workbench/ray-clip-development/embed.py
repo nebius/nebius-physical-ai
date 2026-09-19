@@ -56,7 +56,9 @@ def source_hashes() -> dict:
     for name in SOURCE_FILES:
         path = directory / name
         if not path.is_file() or path.is_symlink():
-            raise ValueError("Ray working_dir must contain the application, worker and canonical Workbench UDF")
+            raise ValueError(
+                "Ray working_dir must contain the application, worker and canonical Workbench UDF"
+            )
         hashes[name] = sha256(path)
     return hashes
 
@@ -73,7 +75,9 @@ def application_gcs_address() -> str:
     """
     address = os.environ.get("RAY_ADDRESS", "")
     if not address.endswith(":6381") or "://" in address or not address[:-5]:
-        raise ValueError("Submit through the application Ray Jobs server; its GCS must use port 6381")
+        raise ValueError(
+            "Submit through the application Ray Jobs server; its GCS must use port 6381"
+        )
     return address
 
 
@@ -86,7 +90,9 @@ def _imported_source_receipt(workbench) -> dict:
     }
     hashes = {name: sha256(Path(path)) for name, path in paths.items()}
     if hashes != source_hashes():
-        raise ValueError("Imported application/UDF modules differ from the Jobs working_dir")
+        raise ValueError(
+            "Imported application/UDF modules differ from the Jobs working_dir"
+        )
     return {"source_sha256": hashes, "imported_paths": paths}
 
 
@@ -200,8 +206,12 @@ class ClipModel:
             raise ValueError("Preprocessor and GPU actor imported different source")
         torch.cuda.synchronize()
         started = time.perf_counter()
-        batch = pyarrow.record_batch({"image_bytes": [row["image_bytes"] for row in shard["rows"]]})
-        vectors = self.workbench.udf_clip_embedding(batch, device="cuda:0", precision="float32")
+        batch = pyarrow.record_batch(
+            {"image_bytes": [row["image_bytes"] for row in shard["rows"]]}
+        )
+        vectors = self.workbench.udf_clip_embedding(
+            batch, device="cuda:0", precision="float32"
+        )
         torch.cuda.synchronize()
         self.calls += 1
         rows = []
@@ -211,7 +221,9 @@ class ClipModel:
             "rows": rows,
             "inference_seconds": time.perf_counter() - started,
             "preprocessing_seconds": shard["preprocess_seconds"],
-            "preprocessor": {key: shard[key] for key in ("source_sha256", "node_id", "pid")},
+            "preprocessor": {
+                key: shard[key] for key in ("source_sha256", "node_id", "pid")
+            },
         }
 
 
@@ -235,12 +247,16 @@ def _persist_vector_tables(output: Path, rows: list[dict], vectors):
     import pyarrow
     import pyarrow.parquet
 
-    table = pyarrow.table({
-        "record_id": [row["record_id"] for row in rows],
-        "input_sha256": [row["input_sha256"] for row in rows],
-        "processed_sha256": [row["processed_sha256"] for row in rows],
-        "vector": pyarrow.array(vectors.tolist(), type=pyarrow.list_(pyarrow.float32(), 512)),
-    })
+    table = pyarrow.table(
+        {
+            "record_id": [row["record_id"] for row in rows],
+            "input_sha256": [row["input_sha256"] for row in rows],
+            "processed_sha256": [row["processed_sha256"] for row in rows],
+            "vector": pyarrow.array(
+                vectors.tolist(), type=pyarrow.list_(pyarrow.float32(), 512)
+            ),
+        }
+    )
     pyarrow.parquet.write_table(table, output / "embeddings.parquet")
     database = lancedb.connect(str(output / "lance"))
     return database.create_table("embeddings", table)
@@ -270,7 +286,9 @@ def _preview_inputs(row: dict) -> tuple[bytes, bytes]:
     return original, row["image_bytes"]
 
 
-def _save_preview_image(content: bytes, destination: Path, preview, position: tuple) -> None:
+def _save_preview_image(
+    content: bytes, destination: Path, preview, position: tuple
+) -> None:
     """Decode RGB bytes before including them in the inspectable contact sheet."""
     from PIL import Image
 
@@ -362,7 +380,11 @@ def _parse_arguments(arguments: list[str] | None) -> argparse.Namespace:
         raise ValueError("records, actors and batch-size must be positive")
     output = Path(options.output_path)
     source_directory = Path(__file__).resolve().parent
-    if not output.is_absolute() or output.resolve().is_relative_to(source_directory) or output.exists():
+    if (
+        not output.is_absolute()
+        or output.resolve().is_relative_to(source_directory)
+        or output.exists()
+    ):
         raise ValueError("Use a new absolute output directory outside Ray working_dir")
     return options
 
@@ -370,13 +392,16 @@ def _parse_arguments(arguments: list[str] | None) -> argparse.Namespace:
 def _start_model_actors(options: argparse.Namespace, expected_sources: dict) -> list:
     """Create GPU actors from the imported module and verify their delivered source."""
     import ray
+
     # Module import makes each actor resolve its own working_dir, not __main__ bytes.
     from embed import ClipModel
 
     if ray.cluster_resources().get("GPU", 0) < options.actors:
         raise ValueError("The application cluster has fewer GPUs than requested actors")
     Path(options.output_path).mkdir(parents=True)
-    clip_actor = ray.remote(num_gpus=1, num_cpus=1, scheduling_strategy="SPREAD")(ClipModel)
+    clip_actor = ray.remote(num_gpus=1, num_cpus=1, scheduling_strategy="SPREAD")(
+        ClipModel
+    )
     models = [clip_actor.remote(options.model_path) for _ in range(options.actors)]
     receipts = ray.get([model.status.remote() for model in models])
     if any(receipt["source_sha256"] != expected_sources for receipt in receipts):
@@ -432,7 +457,9 @@ def _batch_record_ids(index: int, records: int, batch_size: int) -> list[int]:
     return list(range(start, stop))
 
 
-def _run_inference_batches(options: argparse.Namespace, models: list) -> tuple[list, float]:
+def _run_inference_batches(
+    options: argparse.Namespace, models: list
+) -> tuple[list, float]:
     """Apply backpressure across CPU preprocessing and CUDA inference.
 
     Args:
@@ -454,7 +481,9 @@ def _run_inference_batches(options: argparse.Namespace, models: list) -> tuple[l
     initial_window_submitted_at = 0.0
     while next_batch < batch_count or pending:
         while next_batch < batch_count and len(pending) < limit:
-            record_ids = _batch_record_ids(next_batch, options.records, options.batch_size)
+            record_ids = _batch_record_ids(
+                next_batch, options.records, options.batch_size
+            )
             shard = prepare.remote(record_ids)
             model = models[next_batch % options.actors]
             pending[model.infer.remote(shard)] = next_batch
@@ -468,7 +497,9 @@ def _run_inference_batches(options: argparse.Namespace, models: list) -> tuple[l
     return results, initial_window_submitted_at
 
 
-def _write_execution_report(options, models, results, expected_sources, boundaries) -> dict:
+def _write_execution_report(
+    options, models, results, expected_sources, boundaries
+) -> dict:
     """Persist workload evidence using the same artifacts a reader inspects."""
     import ray
 
@@ -483,7 +514,9 @@ def _write_execution_report(options, models, results, expected_sources, boundari
         "cluster_connect_and_model_ready": ready - started,
         "preprocessing_submission": prepared - ready,
         "preprocessing_and_inference_wall": inferred - ready,
-        "preprocessing_task_sum": sum(result["preprocessing_seconds"] for result in results),
+        "preprocessing_task_sum": sum(
+            result["preprocessing_seconds"] for result in results
+        ),
         "inference_actor_sum": sum(result["inference_seconds"] for result in results),
         "aggregation_and_artifacts": time.perf_counter() - inferred,
         "application": time.perf_counter() - started,
@@ -501,7 +534,9 @@ def _write_execution_report(options, models, results, expected_sources, boundari
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     write_hashes(output)
     print(f"Embedded {options.records} RGB images on {len(actors)} CUDA actor(s).")
-    print(f"Open {output}/preview.png; vectors: embeddings.parquet and lance/embeddings.lance")
+    print(
+        f"Open {output}/preview.png; vectors: embeddings.parquet and lance/embeddings.lance"
+    )
     print(json.dumps({"retrieval": artifacts["retrieval"], "timings_seconds": timings}))
     return report
 

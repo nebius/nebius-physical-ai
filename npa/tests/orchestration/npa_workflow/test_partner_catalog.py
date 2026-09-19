@@ -116,7 +116,9 @@ def test_worker_upload_includes_partner_yaml_and_omits_stale_or_private_files(
     (source / "partners/acme/linked.yaml").symlink_to(outside)
 
     files = staged_source_files(package)
-    workflows = {path for path in files if path.parts[:3] == ("src", "npa", "workflows")}
+    workflows = {
+        path for path in files if path.parts[:3] == ("src", "npa", "workflows")
+    }
 
     assert workflows == {
         Path("src/npa/workflows/main/main.yaml"),

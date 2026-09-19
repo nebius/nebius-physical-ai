@@ -17,7 +17,6 @@ def _embedded_ui_html(source: str = "") -> str:
     return rendered_agent_ui_html()
 
 
-
 def test_ui_consolidates_active_run_and_artifacts() -> None:
     source = AGENT_MODULE.read_text(encoding="utf-8")
     ui = _embedded_ui_html(source)
@@ -36,7 +35,9 @@ def test_ui_consolidates_active_run_and_artifacts() -> None:
 
 def test_available_run_ids_use_latest_first_helper() -> None:
     source = AGENT_MODULE.read_text(encoding="utf-8")
-    status = source.split('@app.get("/sim-viz/status")')[1].split('@app.get("/sim-viz/runs")')[0]
+    status = source.split('@app.get("/sim-viz/status")')[1].split(
+        '@app.get("/sim-viz/runs")'
+    )[0]
     assert "available_run_ids" in status
     assert "available_runs" in status
     assert "_sim_viz_runs(state)" in status
@@ -76,7 +77,9 @@ def test_client_merge_dates_runs_by_start_not_recency_or_activity() -> None:
     assert "function effectiveRunTs(" in ui
     # Effective timestamp prefers run start, then artifact recency, then activity.
     assert "run.started_at || run.last_modified || run.activity_at" in ui
-    merge_fn = ui.split("function mergeRunsLatestFirst")[1].split("function fillRunSelectOptionsRich")[0]
+    merge_fn = ui.split("function mergeRunsLatestFirst")[1].split(
+        "function fillRunSelectOptionsRich"
+    )[0]
     # Start is kept as the earliest across sources; activity/recency stay separate.
     assert "prev.started_at" in merge_fn
     assert "startTs < prev.started_at" in merge_fn
@@ -85,7 +88,9 @@ def test_client_merge_dates_runs_by_start_not_recency_or_activity() -> None:
     assert "effectiveRunTs(b).localeCompare(effectiveRunTs(a))" in merge_fn
     # Known/available runs carry started_at + activity_at through to the merge.
     assert "started_at: String((item && (item.started_at || item.submitted_at))" in ui
-    assert "activity_at: String((item && (item.activity_at || item.rrd_updated_at))" in ui
+    assert (
+        "activity_at: String((item && (item.activity_at || item.rrd_updated_at))" in ui
+    )
 
 
 def test_client_consumes_incomplete_viewability_without_fabricating_false() -> None:
@@ -113,7 +118,9 @@ def test_client_omits_stale_stock_demo_alias_for_artifact_run() -> None:
     )[0]
 
     assert 'const staleDemoAlias = runId !== "franka-demo"' in merge_fn
-    assert 'String((run && run.stage) || "").trim().toLowerCase() === "demo"' in merge_fn
+    assert (
+        'String((run && run.stage) || "").trim().toLowerCase() === "demo"' in merge_fn
+    )
     assert '!String((run && run.run_ref) || "").trim()' in merge_fn
     assert "if (staleDemoAlias) continue;" in merge_fn
 

@@ -25,7 +25,9 @@ def npa_workflow_spec_dirs() -> tuple[Path, ...]:
     # Generated container copies can outlive a source rename or deletion. A
     # checkout's catalog remains authoritative until the next build stages it.
     for catalog in (_REPO_ROOT / "workflows", _PACKAGE_ROOT / "workflows"):
-        directories = tuple(path for path in catalog_directories(catalog) if path.is_dir())
+        directories = tuple(
+            path for path in catalog_directories(catalog) if path.is_dir()
+        )
         if directories:
             return directories
     return ()

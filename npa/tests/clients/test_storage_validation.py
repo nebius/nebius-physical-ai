@@ -63,7 +63,9 @@ class FakeS3:
     def list_objects_v2(self, **kwargs):
         self._call("list", kwargs)
         prefix = kwargs["Prefix"]
-        return {"Contents": [{"Key": key} for key in self.objects if key.startswith(prefix)]}
+        return {
+            "Contents": [{"Key": key} for key in self.objects if key.startswith(prefix)]
+        }
 
     def delete_object(self, **kwargs):
         self._call("delete", kwargs)
@@ -93,7 +95,9 @@ def test_probe_requires_each_storage_prerequisite_without_using_a_client() -> No
     )
     assert not result.ok
     assert result.error.kind is StorageFailureKind.MISSING_CONFIGURATION
-    assert "bucket, endpoint, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY" in result.summary
+    assert (
+        "bucket, endpoint, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY" in result.summary
+    )
 
 
 def test_standard_profile_round_trips_and_reports_optional_cleanup() -> None:
@@ -112,16 +116,56 @@ def test_standard_profile_round_trips_and_reports_optional_cleanup() -> None:
 @pytest.mark.parametrize(
     ("code", "status", "kind", "retryability"),
     [
-        ("InvalidRequest", 400, StorageFailureKind.MALFORMED_REQUEST, StorageRetryability.NEVER),
-        ("InvalidAccessKeyId", 401, StorageFailureKind.AUTHENTICATION, StorageRetryability.PROPAGATION),
-        ("AccessDenied", 403, StorageFailureKind.AUTHORIZATION, StorageRetryability.PROPAGATION),
+        (
+            "InvalidRequest",
+            400,
+            StorageFailureKind.MALFORMED_REQUEST,
+            StorageRetryability.NEVER,
+        ),
+        (
+            "InvalidAccessKeyId",
+            401,
+            StorageFailureKind.AUTHENTICATION,
+            StorageRetryability.PROPAGATION,
+        ),
+        (
+            "AccessDenied",
+            403,
+            StorageFailureKind.AUTHORIZATION,
+            StorageRetryability.PROPAGATION,
+        ),
         ("NoSuchBucket", 404, StorageFailureKind.NOT_FOUND, StorageRetryability.NEVER),
         ("Conflict", 409, StorageFailureKind.CONFLICT, StorageRetryability.NEVER),
-        ("TooManyRequests", 429, StorageFailureKind.THROTTLED, StorageRetryability.TRANSIENT),
-        ("InternalError", 500, StorageFailureKind.SERVER, StorageRetryability.TRANSIENT),
-        ("ServiceUnavailable", 503, StorageFailureKind.SERVER, StorageRetryability.TRANSIENT),
-        ("UnsupportedHeader", 400, StorageFailureKind.UNSUPPORTED_CAPABILITY, StorageRetryability.NEVER),
-        ("SignatureDoesNotMatch", 403, StorageFailureKind.SIGNING, StorageRetryability.NEVER),
+        (
+            "TooManyRequests",
+            429,
+            StorageFailureKind.THROTTLED,
+            StorageRetryability.TRANSIENT,
+        ),
+        (
+            "InternalError",
+            500,
+            StorageFailureKind.SERVER,
+            StorageRetryability.TRANSIENT,
+        ),
+        (
+            "ServiceUnavailable",
+            503,
+            StorageFailureKind.SERVER,
+            StorageRetryability.TRANSIENT,
+        ),
+        (
+            "UnsupportedHeader",
+            400,
+            StorageFailureKind.UNSUPPORTED_CAPABILITY,
+            StorageRetryability.NEVER,
+        ),
+        (
+            "SignatureDoesNotMatch",
+            403,
+            StorageFailureKind.SIGNING,
+            StorageRetryability.NEVER,
+        ),
     ],
 )
 def test_typed_provider_classification_matrix(code, status, kind, retryability) -> None:
@@ -200,7 +244,9 @@ def test_new_credential_transient_403_converges_without_real_sleep() -> None:
     result = converge_storage_probe(
         lambda: _probe(client, key_factory=lambda: "stable-probe"),
         propagation_context=True,
-        policy=StorageConvergencePolicy(max_attempts=3, initial_delay_seconds=1, jitter_ratio=0),
+        policy=StorageConvergencePolicy(
+            max_attempts=3, initial_delay_seconds=1, jitter_ratio=0
+        ),
         sleep=delays.append,
     )
     assert result.ok and result.attempts == 2

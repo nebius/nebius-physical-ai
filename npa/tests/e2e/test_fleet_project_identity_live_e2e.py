@@ -37,7 +37,9 @@ def test_existing_project_identity_live(live_spec: FleetSpec, mismatch: str) -> 
             "prefix": live_spec.project_prefix,
             "create": False,
             "env": env,
-            "region": "wrong-region" if mismatch == "region" else project.region or live_spec.region,
+            "region": "wrong-region"
+            if mismatch == "region"
+            else project.region or live_spec.region,
             "profile": live_spec.profile,
         }
         tenant = "wrong-tenant" if mismatch == "tenant" else live_spec.tenant_id
@@ -45,7 +47,9 @@ def test_existing_project_identity_live(live_spec: FleetSpec, mismatch: str) -> 
             with pytest.raises(ValueError, match="immutable identity verification"):
                 resolve_project_id("nebius", tenant, project, **kwargs)
         else:
-            project_id, created = resolve_project_id("nebius", tenant, project, **kwargs)
+            project_id, created = resolve_project_id(
+                "nebius", tenant, project, **kwargs
+            )
             assert project_id == project.project_id
             assert created is False
 

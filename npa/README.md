@@ -247,10 +247,10 @@ shards, then enforces the merged floor. Recognized prose-only edits retain smoke
 documentation, lint, guardrail, and security checks while skipping runtime suites.
 See the [contributor CI guide](../CONTRIBUTING.md) for the conservative selection
 rules and local inspection command. Scheduled/manual audits run the full suite
-on all three supported versions; the scheduled audit publishes measured module
-durations for later rebalancing. The focused compatibility check runs before the
-CPU tensor dependencies
-are installed, so async cancellation and isolated SkyPilot fixture regressions
+on all three supported versions. Every full Python 3.12 run publishes module
+timings, with merged profiles from successful runs for reviewed rebalancing.
+The focused compatibility check runs before CPU tensor dependencies are
+installed, so async cancellation and isolated SkyPilot fixture regressions
 surface before merge. Run it locally with:
 
 ```bash
@@ -260,6 +260,13 @@ npa/.venv/bin/python -m pytest \
   npa/tests/orchestration/skypilot/test_workflow_logs.py \
   npa/tests/workbench/test_cosmos3_nano_video_server.py -q
 ```
+
+CI uses cached uv installs constrained by `npa/ci/requirements.txt`. After changing
+CI dependency inputs, run `npa/.venv/bin/python npa/scripts/ci_requirements.py
+--update` with uv 0.12.5 and commit the refreshed pins. Add `--upgrade` only for an
+intentional version refresh. The [contributor CI guide](../CONTRIBUTING.md#ci-dependency-setup-and-timing-reports)
+also explains the automatic `ci-timing-report` job, whose summary and
+JSON artifact separate runner waiting, setup, and execution for completed runs.
 
 The required [security check](../docs/security/merge-security-gate.md) is the
 single automatic candidate workflow. It runs secrets, confidentiality, source,

@@ -15,12 +15,16 @@ import re
 # classifying a failure against the raw error would always match whichever
 # branch is checked first. Drop the quoted body and keep only what the script
 # actually printed at runtime.
-_PROVISIONER_BODY_RE = re.compile(r"error running command '.*?': exit status", re.DOTALL)
+_PROVISIONER_BODY_RE = re.compile(
+    r"error running command '.*?': exit status", re.DOTALL
+)
 
 
 def _provisioner_runtime_output(detail: str) -> str:
     """Return ``detail`` lowercased with the quoted provisioner script body removed."""
-    return _PROVISIONER_BODY_RE.sub("error running command: exit status", str(detail or "").lower())
+    return _PROVISIONER_BODY_RE.sub(
+        "error running command: exit status", str(detail or "").lower()
+    )
 
 
 def _agent_deploy_failure_hint(detail: str) -> str:
@@ -38,7 +42,10 @@ def _agent_deploy_failure_hint(detail: str) -> str:
     # ``cloud-init status: error`` is echoed by the status poll, which only runs
     # once SSH already worked, so it cannot be confused with a reachability
     # failure.
-    if "cloud-init status: error" in runtime or "cloud-init finished with status" in runtime:
+    if (
+        "cloud-init status: error" in runtime
+        or "cloud-init finished with status" in runtime
+    ):
         return (
             "The agent VM booted but its cloud-init bootstrap failed (cloud-init "
             "status: error). The failing "

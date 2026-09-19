@@ -25,9 +25,13 @@ _AT_STATX_FORCE_SYNC = 0x2000
 class _StatxResult(ctypes.Structure):
     """Receive the stable Linux statx prefix within its complete 256-byte buffer."""
 
-    _fields_ = [("mask", ctypes.c_uint32), ("block_size", ctypes.c_uint32),
-                ("attributes", ctypes.c_uint64), ("link_count", ctypes.c_uint32),
-                ("remaining_fields", ctypes.c_ubyte * 236)]
+    _fields_ = [
+        ("mask", ctypes.c_uint32),
+        ("block_size", ctypes.c_uint32),
+        ("attributes", ctypes.c_uint64),
+        ("link_count", ctypes.c_uint32),
+        ("remaining_fields", ctypes.c_ubyte * 236),
+    ]
 
 
 class StorageProbeError(ValueError):
@@ -79,7 +83,9 @@ def _verify_marker(directory: int, run_id: str, create: bool) -> None:
     flags = os.O_RDONLY | os.O_NOFOLLOW
     if create:
         try:
-            descriptor = os.open(marker, flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=directory)
+            descriptor = os.open(
+                marker, flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=directory
+            )
         except FileExistsError:
             descriptor = os.open(marker, flags, dir_fd=directory)
     else:
@@ -91,7 +97,9 @@ def _verify_marker(directory: int, run_id: str, create: bool) -> None:
 
 
 @contextmanager
-def _owned_directory(configuration: dict[str, Any], create: bool) -> Iterator[tuple[int, int, int]]:
+def _owned_directory(
+    configuration: dict[str, Any], create: bool
+) -> Iterator[tuple[int, int, int]]:
     run_id = _token(configuration["run_id"])
     with ExitStack() as stack:
         root = _open_root(configuration["root_path"], stack)
@@ -119,7 +127,9 @@ def _digest_file(directory: int, filename: str) -> str:
 
 
 def _write_file(directory: int, filename: str) -> str:
-    descriptor = _regular_file(directory, filename, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+    descriptor = _regular_file(
+        directory, filename, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    )
     payload = os.urandom(32)
     with os.fdopen(descriptor, "wb") as stream:
         stream.write(payload)
@@ -149,14 +159,24 @@ def _synchronized_link_count(directory: int, filename: str) -> int | None:
     query = getattr(library, "statx", None)
     if query is None:
         raise StorageProbeError("synchronized_absence_unsupported")
-    query.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_uint,
-                      ctypes.POINTER(_StatxResult)]
+    query.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_uint,
+        ctypes.POINTER(_StatxResult),
+    ]
     query.restype = ctypes.c_int
     details = _StatxResult()
     flags = _AT_STATX_FORCE_SYNC | _AT_SYMLINK_NOFOLLOW
     ctypes.set_errno(0)
-    result = query(directory, os.fsencode(filename), flags, _STATX_LINK_COUNT,
-                   ctypes.byref(details))
+    result = query(
+        directory,
+        os.fsencode(filename),
+        flags,
+        _STATX_LINK_COUNT,
+        ctypes.byref(details),
+    )
     if result == -1:
         return _absence_query_error(ctypes.get_errno())
     if result != 0 or details.mask & _STATX_LINK_COUNT != _STATX_LINK_COUNT:
@@ -198,9 +218,16 @@ def _mount_record(configuration: dict[str, Any]) -> dict[str, str]:
             if len(fields) < 6 or len(filesystem) < 3:
                 continue
             if _decode_mount_field(fields[4]) == configuration["mount_path"]:
-                records.append({"type": filesystem[0], "source": _decode_mount_field(filesystem[1]),
-                                "options": fields[5], "super_options": filesystem[2],
-                                "device": fields[2], "root": _decode_mount_field(fields[3])})
+                records.append(
+                    {
+                        "type": filesystem[0],
+                        "source": _decode_mount_field(filesystem[1]),
+                        "options": fields[5],
+                        "super_options": filesystem[2],
+                        "device": fields[2],
+                        "root": _decode_mount_field(fields[3]),
+                    }
+                )
     if len(records) != 1:
         raise StorageProbeError("missing_or_ambiguous_mount")
     record = records[0]
@@ -208,7 +235,9 @@ def _mount_record(configuration: dict[str, Any]) -> dict[str, str]:
         raise StorageProbeError("wrong_filesystem_type")
     if record["source"] != configuration["mount_tag"]:
         raise StorageProbeError("wrong_mount_source")
-    if "rw" not in record["options"].split(",") or "ro" in record["super_options"].split(","):
+    if "rw" not in record["options"].split(",") or "ro" in record[
+        "super_options"
+    ].split(","):
         raise StorageProbeError("mount_read_only")
     return record
 
@@ -218,13 +247,19 @@ def _verify_persistence(configuration: dict[str, Any]) -> None:
     with open(configuration["fstab_path"], encoding="utf-8") as stream:
         for line in stream:
             fields = line.split("#", 1)[0].split()
-            if len(fields) < 4 or _decode_mount_field(fields[1]) != configuration["mount_path"]:
+            if (
+                len(fields) < 4
+                or _decode_mount_field(fields[1]) != configuration["mount_path"]
+            ):
                 continue
             matches.append(fields)
     if len(matches) != 1:
         raise StorageProbeError("missing_or_ambiguous_persistence")
     fields = matches[0]
-    if _decode_mount_field(fields[0]) != configuration["mount_tag"] or fields[2] != "virtiofs":
+    if (
+        _decode_mount_field(fields[0]) != configuration["mount_tag"]
+        or fields[2] != "virtiofs"
+    ):
         raise StorageProbeError("persistence_identity_mismatch")
     if "nofail" not in fields[3].split(",") or "ro" in fields[3].split(","):
         raise StorageProbeError("unsafe_mount_persistence")
@@ -262,9 +297,15 @@ def _host_state(configuration: dict[str, Any]) -> dict[str, Any]:
     _verify_mount_device(configuration, record)
     _verify_persistence(configuration)
     reported_bytes, requested_bytes, fragment_size = _capacity(configuration)
-    return {"capacity_bytes": reported_bytes, "requested_bytes": requested_bytes,
-            "filesystem_type": "virtiofs", "source_matches": True, "nofail": True,
-            "read_write": True, "fragment_size": fragment_size}
+    return {
+        "capacity_bytes": reported_bytes,
+        "requested_bytes": requested_bytes,
+        "filesystem_type": "virtiofs",
+        "source_matches": True,
+        "nofail": True,
+        "read_write": True,
+        "fragment_size": fragment_size,
+    }
 
 
 def _host(configuration: dict[str, Any]) -> dict[str, Any]:
@@ -282,8 +323,13 @@ def _host(configuration: dict[str, Any]) -> dict[str, Any]:
 
 
 def _backing_path(configuration: dict[str, Any]) -> str:
-    mount = {**configuration, "mount_path": configuration["root_path"],
-             "mountinfo_path": configuration.get("self_mountinfo_path", "/proc/self/mountinfo")}
+    mount = {
+        **configuration,
+        "mount_path": configuration["root_path"],
+        "mountinfo_path": configuration.get(
+            "self_mountinfo_path", "/proc/self/mountinfo"
+        ),
+    }
     record = _mount_record(mount)
     _verify_mount_device(mount, record)
     return _validate_backing_path(record["root"].removeprefix("/"))
@@ -305,7 +351,11 @@ def _write(configuration: dict[str, Any]) -> dict[str, Any]:
     filename = "payload-" + _token(configuration["node_token"])
     with _owned_directory(configuration, create=True) as (_, _, directory):
         checksum = _write_file(directory, filename)
-    return {"checksum": checksum, "written": True, "backing_relative_path": backing_path}
+    return {
+        "checksum": checksum,
+        "written": True,
+        "backing_relative_path": backing_path,
+    }
 
 
 def _expected_checksums(configuration: dict[str, Any]) -> dict[str, str]:
@@ -317,7 +367,9 @@ def _expected_checksums(configuration: dict[str, Any]) -> dict[str, str]:
         if not isinstance(checksum, str) or not _DIGEST_PATTERN.fullmatch(checksum):
             raise StorageProbeError("invalid_expected_checksum")
     node_tokens = configuration.get("node_tokens")
-    if node_tokens is not None and set(expected) != {_token(value) for value in node_tokens}:
+    if node_tokens is not None and set(expected) != {
+        _token(value) for value in node_tokens
+    }:
         raise StorageProbeError("missing_cross_node_evidence")
     return expected
 
@@ -329,12 +381,17 @@ def _read(configuration: dict[str, Any]) -> dict[str, Any]:
         for node_token, checksum in expected.items():
             if _digest_file(directory, "payload-" + node_token) != checksum:
                 raise StorageProbeError("cross_node_checksum_mismatch")
-    return {"verified_checksums": expected, "read_count": len(expected),
-            "backing_relative_path": backing_path}
+    return {
+        "verified_checksums": expected,
+        "read_count": len(expected),
+        "backing_relative_path": backing_path,
+    }
 
 
 def _known_filenames(configuration: dict[str, Any]) -> list[str]:
-    node_tokens = configuration.get("node_tokens", list(configuration.get("expected_checksums", {})))
+    node_tokens = configuration.get(
+        "node_tokens", list(configuration.get("expected_checksums", {}))
+    )
     if configuration.get("node_token"):
         node_tokens = [*node_tokens, configuration["node_token"]]
     if not isinstance(node_tokens, list) or not node_tokens:
@@ -436,8 +493,14 @@ def execute_probe(configuration: dict[str, Any]) -> dict[str, Any]:
         OSError: A filesystem or probe operation fails.
         KeyError: Required configuration is absent.
     """
-    actions = {"host": _host, "write": _write, "read": _read, "cleanup": _cleanup,
-               "audit": _audit, "audit_backing": _audit_backing}
+    actions = {
+        "host": _host,
+        "write": _write,
+        "read": _read,
+        "cleanup": _cleanup,
+        "audit": _audit,
+        "audit_backing": _audit_backing,
+    }
     action = configuration["action"]
     if action not in actions:
         raise StorageProbeError("invalid_probe_action")

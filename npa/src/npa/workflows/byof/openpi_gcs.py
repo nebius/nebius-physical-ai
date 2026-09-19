@@ -24,19 +24,27 @@ class GCSReadError(RuntimeError):
 
 
 def _object_name(value: str) -> str:
-    if (not value or value.startswith("/") or "\\" in value
-            or any(ord(c) < 32 or ord(c) == 127 for c in value)
-            or any(part in {"", ".", ".."} for part in value.split("/"))):
+    if (
+        not value
+        or value.startswith("/")
+        or "\\" in value
+        or any(ord(c) < 32 or ord(c) == 127 for c in value)
+        or any(part in {"", ".", ".."} for part in value.split("/"))
+    ):
         raise GCSReadError("invalid GCS object path")
     return value
 
 
 def _source(uri: str) -> tuple[str, str]:
     parsed = urlsplit(uri)
-    if (parsed.scheme != "gs" or parsed.query or parsed.fragment
-            or not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", parsed.netloc)
-            or any(c in uri for c in "*?[]\\")
-            or any(ord(c) < 32 or ord(c) == 127 for c in uri)):
+    if (
+        parsed.scheme != "gs"
+        or parsed.query
+        or parsed.fragment
+        or not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", parsed.netloc)
+        or any(c in uri for c in "*?[]\\")
+        or any(ord(c) < 32 or ord(c) == 127 for c in uri)
+    ):
         raise GCSReadError("expected an exact public GCS object or prefix")
     return parsed.netloc, _object_name(parsed.path.removeprefix("/"))
 
@@ -54,8 +62,11 @@ def _directory(path: Path) -> Iterator[int]:
                 os.mkdir(part, mode=0o700, dir_fd=descriptor)
             except FileExistsError:
                 pass
-            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-                            | os.O_CLOEXEC, dir_fd=descriptor)
+            child = os.open(
+                part,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=descriptor,
+            )
             os.close(descriptor)
             descriptor = child
         yield descriptor
@@ -90,20 +101,28 @@ def _metadata(blob) -> tuple[int, str, int]:
 
 def _reuse(descriptor: int, name: str, expected: tuple[int, str]) -> bool:
     try:
-        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
-                     | os.O_CLOEXEC, dir_fd=descriptor)
+        fd = os.open(
+            name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            dir_fd=descriptor,
+        )
     except FileNotFoundError:
         return False
     with os.fdopen(fd, "rb") as handle:
         before = os.fstat(handle.fileno())
         if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
-            raise GCSReadError("download destination must be a regular file with one link")
+            raise GCSReadError(
+                "download destination must be a regular file with one link"
+            )
         if before.st_size != expected[0]:
             return False
         actual = _crc32c(handle)
         after = os.fstat(handle.fileno())
         if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
-                after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ):
             raise GCSReadError("download destination changed during verification")
         return actual == expected
 
@@ -117,18 +136,30 @@ def download(blob, destination: Path) -> bool:
         if _reuse(descriptor, destination.name, (size, checksum)):
             return True
         temporary = ".npa-gcs-" + secrets.token_hex(16)
-        fd = os.open(temporary, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
-                     | os.O_CLOEXEC, 0o600, dir_fd=descriptor)
+        fd = os.open(
+            temporary,
+            os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+            dir_fd=descriptor,
+        )
         try:
             with os.fdopen(fd, "w+b") as handle:
-                blob.download_to_file(handle, raw_download=True, checksum="crc32c",
-                                      if_generation_match=generation)
+                blob.download_to_file(
+                    handle,
+                    raw_download=True,
+                    checksum="crc32c",
+                    if_generation_match=generation,
+                )
                 handle.flush()
                 if _crc32c(handle) != (size, checksum):
                     raise GCSReadError("GCS object checksum or byte count differs")
                 os.fsync(handle.fileno())
-            os.replace(temporary, destination.name,
-                       src_dir_fd=descriptor, dst_dir_fd=descriptor)
+            os.replace(
+                temporary,
+                destination.name,
+                src_dir_fd=descriptor,
+                dst_dir_fd=descriptor,
+            )
             os.fsync(descriptor)
         finally:
             try:
@@ -148,7 +179,7 @@ def _objects(client, bucket: str, prefix: str):
         name = _object_name(blob.name)
         if not name.startswith(prefix):
             raise GCSReadError("GCS listing escaped the requested prefix")
-        relative = _object_name(name[len(prefix):])
+        relative = _object_name(name[len(prefix) :])
         _metadata(blob)
         found = True
         yield blob, relative
@@ -188,7 +219,9 @@ def run(arguments: Sequence[str], *, client=None) -> None:
             if operation == "list":
                 if blob.updated is None:
                     raise GCSReadError("GCS object has no update timestamp")
-                print(f"{blob.size}  {blob.updated.isoformat()}  gs://{bucket}/{blob.name}")
+                print(
+                    f"{blob.size}  {blob.updated.isoformat()}  gs://{bucket}/{blob.name}"
+                )
             else:
                 download(blob, destination / relative)
     finally:

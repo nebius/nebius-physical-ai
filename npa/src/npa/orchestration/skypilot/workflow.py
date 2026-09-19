@@ -340,14 +340,10 @@ def _probe_local_api_daemon_cwd(
     daemon_roots = {
         pid
         for pid, (_ppid, cmdline, _process) in records.items()
-        if cmdline
-        and "-m" in cmdline
-        and "sky.server.server" in cmdline
+        if cmdline and "-m" in cmdline and "sky.server.server" in cmdline
     }
     roots = {
-        pid
-        for pid in daemon_roots
-        if _api_server_port(records[pid][1]) == str(port)
+        pid for pid in daemon_roots if _api_server_port(records[pid][1]) == str(port)
     }
     if caller_network_namespace is not None or caller_mount_namespace is not None:
         # Localhost is scoped by network namespace, not the interpreter or
@@ -464,9 +460,11 @@ def _probe_local_api_daemon_cwd(
     runtime_roots: set[int] = set()
     for pid, environment in environments.items():
         daemon_home = environment.get("HOME", "").strip()
-        if expected_home and Path(daemon_home).expanduser().absolute() != Path(
+        if (
             expected_home
-        ).expanduser().absolute():
+            and Path(daemon_home).expanduser().absolute()
+            != Path(expected_home).expanduser().absolute()
+        ):
             return unhealthy_runtime(
                 "stale_runtime_environment",
                 process_count=len(runtime_roots) + 1,
@@ -675,8 +673,10 @@ def _ensure_local_api_daemon_cwd_locked(
     isolated_api_dir = env.get("NPA_SKYPILOT_ISOLATED_API_DIR")
     if isolated_api_dir:
         return _ensure_isolated_api(
-            isolated_dir=Path(isolated_api_dir), sky_executable=sky_executable,
-            environment=env, cwd=cwd,
+            isolated_dir=Path(isolated_api_dir),
+            sky_executable=sky_executable,
+            environment=env,
+            cwd=cwd,
         )
 
     # SkyPilot 0.12 exposes one local API server on a fixed loopback port per
@@ -698,7 +698,10 @@ def _ensure_local_api_daemon_cwd_locked(
 
 
 def _ensure_isolated_api(**kwargs) -> ApiDaemonCwdProbe:
-    from npa.orchestration.skypilot.local_api import IsolatedApiError, ensure_isolated_api
+    from npa.orchestration.skypilot.local_api import (
+        IsolatedApiError,
+        ensure_isolated_api,
+    )
 
     try:
         return ApiDaemonCwdProbe(**ensure_isolated_api(**kwargs))
@@ -804,7 +807,6 @@ def _selected_kube_context(
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
-
 @dataclass
 class _PreparedWorkflowSubmission:
     runtime_config: Any
@@ -820,13 +822,16 @@ class _PreparedWorkflowSubmission:
 def _submission_global_config(runtime, controller_backend, infra):
     config = _controller_config_for_execution(
         _load_base_config(runtime.global_config_path),
-        controller_backend=controller_backend, infra=infra,
+        controller_backend=controller_backend,
+        infra=infra,
     )
     context = _controller_region_from_infra(infra, controller_backend)
     if context:
         kubernetes = config.setdefault("kubernetes", {})
         if not isinstance(kubernetes, dict):
-            raise ValueError("SkyPilot global config kubernetes section must be a mapping")
+            raise ValueError(
+                "SkyPilot global config kubernetes section must be a mapping"
+            )
         # The selected workload and controller share this exact context; other
         # operator settings, including pod configuration, retain their values.
         kubernetes["allowed_contexts"] = [context]
@@ -845,13 +850,19 @@ def _preflight_prepared_submission(prepared, *, project, infra, extra_env, targe
     if env.get("NPA_SKYPILOT_ISOLATED_API_DIR") and isolated_endpoint:
         api_server = prepared.global_config.setdefault("api_server", {})
         if not isinstance(api_server, dict):
-            raise ValueError("SkyPilot global config api_server section must be a mapping")
+            raise ValueError(
+                "SkyPilot global config api_server section must be a mapping"
+            )
         api_server["endpoint"] = isolated_endpoint
     env["SKYPILOT_GLOBAL_CONFIG"] = str(prepared.config_path)
     try:
         selected, _report, injected = _execution_preflight(
-            prepared.docs, project=project, infra=infra, extra_env=env,
-            target=target, global_config=prepared.global_config,
+            prepared.docs,
+            project=project,
+            infra=infra,
+            extra_env=env,
+            target=target,
+            global_config=prepared.global_config,
             sky_bin=prepared.sky_executable,
             cwd=_stable_sky_cwd(prepared.runtime_config.isolated_config_dir),
         )
@@ -861,19 +872,34 @@ def _preflight_prepared_submission(prepared, *, project, infra, extra_env, targe
     if selected is not None:
         env["NPA_SKYPILOT_PROJECT"] = selected.project
     prepared.env = env
-    prepared.config_path.write_text(yaml.safe_dump(prepared.global_config, sort_keys=False), encoding="utf-8")
+    prepared.config_path.write_text(
+        yaml.safe_dump(prepared.global_config, sort_keys=False), encoding="utf-8"
+    )
     _chmod_owner_only(prepared.config_path)
-    prepared.yaml_path.write_text(yaml.safe_dump_all(prepared.docs, sort_keys=False), encoding="utf-8")
+    prepared.yaml_path.write_text(
+        yaml.safe_dump_all(prepared.docs, sort_keys=False), encoding="utf-8"
+    )
     _chmod_owner_only(prepared.yaml_path)
 
 
 def _prepare_workflow_submission(
-    yaml_path, run_id, *, isolated_config_dir=None, config_path=None, sky_bin=None,
-    controller_backend=DEFAULT_CONTROLLER_BACKEND, infra="", extra_env=None,
-    project="", execution_target=None,
+    yaml_path,
+    run_id,
+    *,
+    isolated_config_dir=None,
+    config_path=None,
+    sky_bin=None,
+    controller_backend=DEFAULT_CONTROLLER_BACKEND,
+    infra="",
+    extra_env=None,
+    project="",
+    execution_target=None,
 ):
-    runtime = resolve_config(sky_bin=sky_bin, global_config_path=config_path,
-                             isolated_config_dir=isolated_config_dir)
+    runtime = resolve_config(
+        sky_bin=sky_bin,
+        global_config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+    )
     docs = _load_yaml_documents(Path(yaml_path))
     if not docs:
         raise ValueError("SkyPilot YAML is empty")
@@ -885,12 +911,20 @@ def _prepare_workflow_submission(
         executable = str(ensure_skypilot_version(runtime.sky_bin))
         global_config = _submission_global_config(runtime, controller_backend, infra)
         generated = directory / "skypilot-config.yaml"
-        generated.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")
+        generated.write_text(
+            yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8"
+        )
         _chmod_owner_only(generated)
-        prepared = _PreparedWorkflowSubmission(runtime, docs, directory, rendered,
-                                                generated, executable, global_config)
-        _preflight_prepared_submission(prepared, project=project, infra=infra,
-                                      extra_env=extra_env, target=execution_target)
+        prepared = _PreparedWorkflowSubmission(
+            runtime, docs, directory, rendered, generated, executable, global_config
+        )
+        _preflight_prepared_submission(
+            prepared,
+            project=project,
+            infra=infra,
+            extra_env=extra_env,
+            target=execution_target,
+        )
         return prepared
     except BaseException:
         if runtime.isolated_config_dir is None:
@@ -951,17 +985,25 @@ def submit_workflow(
     streamer: _LaunchStreamer | None = None
     try:
         prepared = _prepare_workflow_submission(
-            yaml_path, run_id, isolated_config_dir=isolated_config_dir,
-            config_path=config_path, sky_bin=sky_bin,
-            controller_backend=controller_backend, infra=infra,
-            extra_env=extra_env, project=project, execution_target=execution_target,
+            yaml_path,
+            run_id,
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
+            sky_bin=sky_bin,
+            controller_backend=controller_backend,
+            infra=infra,
+            extra_env=extra_env,
+            project=project,
+            execution_target=execution_target,
         )
         runtime_config = prepared.runtime_config
         docs, env = prepared.docs, prepared.env
         submission_dir, prepared_yaml = prepared.submission_dir, prepared.yaml_path
         generated_config_path = prepared.config_path
         sky_executable = prepared.sky_executable
-        owned_submission_dir = submission_dir if runtime_config.isolated_config_dir is None else None
+        owned_submission_dir = (
+            submission_dir if runtime_config.isolated_config_dir is None else None
+        )
 
         cmd = [
             sky_executable,
@@ -2155,9 +2197,7 @@ def _wait_for_healthy_jobs_controller(
         if (
             "--refresh" in status_args
             and result.returncode != 0
-            and _can_ignore_foreign_controller_refresh(
-                result, env
-            )
+            and _can_ignore_foreign_controller_refresh(result, env)
         ):
             # A Kubernetes cloud can expose a controller from another namespace
             # while this process has an explicit, distinct SkyPilot user ID.  A
@@ -2455,9 +2495,12 @@ def _execution_preflight(*args, **kwargs):
 
 
 def _controller_config_for_execution(base_config, *, controller_backend, infra):
-    configured = ((base_config.get("jobs") or {}).get("controller") or {}).get("resources") or {}
+    configured = ((base_config.get("jobs") or {}).get("controller") or {}).get(
+        "resources"
+    ) or {}
     config = apply_controller_override(
-        base_config, controller_backend=controller_backend,
+        base_config,
+        controller_backend=controller_backend,
         controller_region=_controller_region_from_infra(infra, controller_backend),
     )
     if controller_backend == "nebius" and not configured.get("region"):
@@ -2578,7 +2621,9 @@ def _cleanup_owned_submission_dir(path: Path | None) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
-def _submit_failure_prefix(result: subprocess.CompletedProcess[str], detail: str) -> str:
+def _submit_failure_prefix(
+    result: subprocess.CompletedProcess[str], detail: str
+) -> str:
     state, _category = classify_failure(
         phase="launch", stdout=result.stdout or "", stderr=result.stderr or ""
     )

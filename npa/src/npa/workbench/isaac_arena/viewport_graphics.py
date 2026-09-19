@@ -27,8 +27,12 @@ _SIGNED_APT_OPTIONS = [
 def _graphics_probe(env: dict[str, str], *, runner: _Runner = subprocess.run) -> bool:
     """Return whether NVIDIA's headless EGL/Vulkan and OptiX libraries load."""
     libraries = runner(
-        [sys.executable, "-c", "import ctypes; ctypes.CDLL('libEGL_nvidia.so.0'); "
-         "ctypes.CDLL('libnvoptix.so.1')"],
+        [
+            sys.executable,
+            "-c",
+            "import ctypes; ctypes.CDLL('libEGL_nvidia.so.0'); "
+            "ctypes.CDLL('libnvoptix.so.1')",
+        ],
         env=env,
         text=True,
         stdout=subprocess.PIPE,
@@ -276,9 +280,15 @@ def _private_graphics_evidence(
 def _optix_library_sha256(library_dir: Path, driver_version: str) -> str:
     library = library_dir / f"libnvoptix.so.{driver_version}"
     entrypoint = library_dir / "libnvoptix.so.1"
-    if (not library.is_file() or library.is_symlink() or library.stat().st_size == 0
-            or entrypoint.resolve() != library.resolve()):
-        raise IsaacArenaError("matching NVIDIA package has no exact-driver OptiX library")
+    if (
+        not library.is_file()
+        or library.is_symlink()
+        or library.stat().st_size == 0
+        or entrypoint.resolve() != library.resolve()
+    ):
+        raise IsaacArenaError(
+            "matching NVIDIA package has no exact-driver OptiX library"
+        )
     return _sha256(library)
 
 
@@ -289,7 +299,9 @@ def _prepare_viewport_graphics(
     runner: _Runner = subprocess.run,
 ) -> dict[str, Any]:
     """Validate native graphics or an exact driver package in private scratch."""
-    native_weights = _native_optix_weights() if _graphics_probe(env, runner=runner) else None
+    native_weights = (
+        _native_optix_weights() if _graphics_probe(env, runner=runner) else None
+    )
     if native_weights is not None:
         return {
             "mode": "native",

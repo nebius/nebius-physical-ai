@@ -552,7 +552,12 @@ def persist_supported_env_credentials(
     payload: dict[str, Any] = {}
     tokens = {
         name: str(env[name])
-        for name in ("HF_TOKEN", TOKEN_FACTORY_ENV_KEY, FOXGLOVE_API_TOKEN_KEY, ANTIOCH_TOKEN_KEY)
+        for name in (
+            "HF_TOKEN",
+            TOKEN_FACTORY_ENV_KEY,
+            FOXGLOVE_API_TOKEN_KEY,
+            ANTIOCH_TOKEN_KEY,
+        )
         if str(env.get(name) or "")
     }
     if tokens:

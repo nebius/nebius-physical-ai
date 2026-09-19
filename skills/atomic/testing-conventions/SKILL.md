@@ -36,8 +36,12 @@ CI runs browser and compatibility checks alongside xdist inside five
 duration-balanced Python 3.12 coverage shards, then merges their data before
 enforcing the floor. Narrow prose-only candidates retain smoke, docs, guardrails,
 and security gates; see `CONTRIBUTING.md` for the trusted-base classification.
-Scheduled/manual audits repeat four shards across supported interpreters, and
-the scheduled audit emits the next timing profile. A local parallel pass is the
+Scheduled/manual audits repeat four shards across supported interpreters.
+Every full Python 3.12 run uploads module timings; successful runs emit a merged
+profile. Use successful scheduled main profiles for reviewed weight updates.
+The independent CI timing report separates runner waiting from execution and
+setup; see `CONTRIBUTING.md` for dependency pins and report interpretation.
+A local parallel pass is the
 fast signal, not a reproduction of that distributed coverage gate.
 
 **Docs drift is a required gate and is slow to re-run blind.** `scripts/build_docs.sh`

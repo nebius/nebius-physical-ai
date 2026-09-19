@@ -43,7 +43,9 @@ def check_validate_motion_lib() -> CheckResult:
         except Exception as exc:
             return CheckResult("validate motion lib", False, str(exc))
         if count != 1:
-            return CheckResult("validate motion lib", False, f"expected 1 motion, got {count}")
+            return CheckResult(
+                "validate motion lib", False, f"expected 1 motion, got {count}"
+            )
         return CheckResult("validate motion lib", True, f"files={files}")
 
 

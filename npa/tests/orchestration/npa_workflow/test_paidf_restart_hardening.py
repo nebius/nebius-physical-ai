@@ -8,7 +8,10 @@ from pathlib import Path
 
 from npa.clients.config import persist_workflow_src_s3_uri, write_config
 from npa.orchestration.npa_workflow.artifact_load import load_final_artifact_into_agent
-from npa.orchestration.npa_workflow.run_state import RunManifest, build_actionable_run_status
+from npa.orchestration.npa_workflow.run_state import (
+    RunManifest,
+    build_actionable_run_status,
+)
 from npa.orchestration.npa_workflow.src_staging import stage_npa_source
 from npa.orchestration.npa_workflow.submission_state import (
     load_submission_state,
@@ -122,9 +125,10 @@ def test_configure_stage_restart_gpu_delay_and_startup_failure(
 
     # Process restarts after staging: the commit manifest prevents every source
     # object from being uploaded again.
-    assert stage_npa_source(
-        bucket="unit", source_root=source, client=s3, max_workers=1
-    ) == uri
+    assert (
+        stage_npa_source(bucket="unit", source_root=source, client=s3, max_workers=1)
+        == uri
+    )
     assert s3.upload_count == uploads_before_restart
 
     catalogs = iter(
@@ -166,19 +170,24 @@ def test_configure_stage_restart_gpu_delay_and_startup_failure(
     assert status["status"] == "FAILED_STARTUP"
     assert status["active_stage_index"] == 8
     assert status["stages"]["fiftyone-curate"]["scheduler_state"] == "PENDING"
-    assert "workflow logs paidf-hermetic --stage fiftyone-curate" in (
-        status["stages"]["fiftyone-curate"]["log_command"]
+    assert (
+        "workflow logs paidf-hermetic --stage fiftyone-curate"
+        in (status["stages"]["fiftyone-curate"]["log_command"])
     )
     ledger = str(load_submission_state("demo", "paidf-hermetic"))
     assert "credential" not in ledger.lower()
     assert "secret" not in ledger.lower()
 
 
-def test_success_restart_finishes_only_missing_agent_load(tmp_path: Path, monkeypatch) -> None:
+def test_success_restart_finishes_only_missing_agent_load(
+    tmp_path: Path, monkeypatch
+) -> None:
     import npa.cli.agent as agent
 
     secret = tmp_path / "agent.env"
-    secret.write_text("AGENT_USER=user\nAGENT_PASSWORD=never-serialize\n", encoding="utf-8")
+    secret.write_text(
+        "AGENT_USER=user\nAGENT_PASSWORD=never-serialize\n", encoding="utf-8"
+    )
     monkeypatch.setattr(
         agent,
         "resolve_project_agents",

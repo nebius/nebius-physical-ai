@@ -76,9 +76,9 @@
       }
     },
     "recipe_sha256": {
-      "npa/scripts/record_lerobot_subtask_proof.py": "7525ae9aa3aaba25b7125b62934f57092f047be25511d51948b237e3ec201bee",
+      "npa/scripts/record_lerobot_subtask_proof.py": "0e489dd73bde2a0ea2719945253ae7faf1b9d1b847043112b90bbf79dc46b784",
       "npa/src/npa/fiftyone_lerobot_subtasks.py": "1f3ea655ca34738fb49507d9da6bea56f322b5d38cf9c9d79108608ad106e7fe",
-      "npa/src/npa/workflows/lerobot_subtask_proof.py": "41e3887daab5fc6daa9f1c4f36c545f9c578294f82160b361e169f109da04c94",
+      "npa/src/npa/workflows/lerobot_subtask_proof.py": "938c7bdda3d2e3c6aede83efa1f64ada1b03e896d21cd2d57b340ebdf9dad6aa",
       "workflows/testing/lerobot-subtask-proof.yaml": "cd66862dd0e95a2530e3979dff55ad0fa0cc1f2d198d601440fea95508d9f9f9"
     },
     "run_id": "lerobot-subtask-recorded-proof",

@@ -103,6 +103,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.token_factory import app as token_factory_app
     from npa.cli.workbench.vlm_eval import app as vlm_eval_app
     from npa.cli.workbench.workflow import app as workflow_app
+
     full = typer.Typer(
         name="workbench",
         help="Physical AI workbench tools.",
@@ -202,9 +203,7 @@ if _LIGHT_IMPORT:
         from npa.cli.workbench.cosmos3 import app as cosmos3_app
 
         light = typer.Typer(
-            name="workbench",
-            help="Physical AI workbench tools.",
-            no_args_is_help=True,
+            name="workbench", help="Physical AI workbench tools.", no_args_is_help=True
         )
 
         @light.callback()

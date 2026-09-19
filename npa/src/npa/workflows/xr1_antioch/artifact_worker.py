@@ -26,7 +26,8 @@ def _manifest(root: Path) -> dict:
             raise ValueError("Artifact roots cannot contain symlinks")
         if path.is_file():
             files[path.relative_to(root).as_posix()] = {
-                "sha256": _digest(path), "bytes": path.stat().st_size,
+                "sha256": _digest(path),
+                "bytes": path.stat().st_size,
             }
     if not files:
         raise ValueError("Artifact directory contains no files")
@@ -42,13 +43,29 @@ def _upload(root: Path, transfers: dict) -> dict:
         if _digest(path) != transfer["sha256"]:
             raise ValueError("Artifact changed after its transfer manifest was sealed")
         url = urlsplit(transfer["url"])
-        if url.scheme != "https" or not url.hostname or url.username or url.password or url.fragment:
-            raise ValueError("Signed uploads require HTTPS without user information or fragments")
-        with closing(HTTPSConnection(url.hostname, url.port, timeout=120)) as connection, path.open("rb") as stream:
-            connection.request("PUT", url.path + ("?" + url.query if url.query else ""), body=stream, headers={
-                "Content-Length": str(path.stat().st_size),
-                "x-amz-meta-sha256": transfer["sha256"],
-            })
+        if (
+            url.scheme != "https"
+            or not url.hostname
+            or url.username
+            or url.password
+            or url.fragment
+        ):
+            raise ValueError(
+                "Signed uploads require HTTPS without user information or fragments"
+            )
+        with (
+            closing(HTTPSConnection(url.hostname, url.port, timeout=120)) as connection,
+            path.open("rb") as stream,
+        ):
+            connection.request(
+                "PUT",
+                url.path + ("?" + url.query if url.query else ""),
+                body=stream,
+                headers={
+                    "Content-Length": str(path.stat().st_size),
+                    "x-amz-meta-sha256": transfer["sha256"],
+                },
+            )
             if connection.getresponse().status != 200:
                 raise RuntimeError("Artifact upload did not return success")
         completed.append(relative)
@@ -69,7 +86,9 @@ def _main() -> None:
             raise ValueError("Unsupported artifact operation")
     except (HTTPException, OSError) as error:
         # Signed requests contain credentials, which must not enter error logs.
-        raise RuntimeError(f"Artifact request failed ({type(error).__name__})") from None
+        raise RuntimeError(
+            f"Artifact request failed ({type(error).__name__})"
+        ) from None
     print(json.dumps(result, allow_nan=False), flush=True)
 
 

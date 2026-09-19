@@ -38,7 +38,9 @@ async def _update_scene(scene, args, previous):
         staging = Path(temporary)
         record = await _scene(scene, staging, args.voice)
         for extension in ["mp3", "srt"]:
-            (staging / f"{scene['id']}.{extension}").replace(args.output_dir / f"{scene['id']}.{extension}")
+            (staging / f"{scene['id']}.{extension}").replace(
+                args.output_dir / f"{scene['id']}.{extension}"
+            )
     return record
 
 
@@ -51,7 +53,9 @@ async def _run(args):
     with _render_lock(args.output_dir):
         records = _voice_manifest(args.output_dir)
         for scene in storyboard["scenes"]:
-            records[scene["id"]] = await _update_scene(scene, args, records.get(scene["id"]))
+            records[scene["id"]] = await _update_scene(
+                scene, args, records.get(scene["id"])
+            )
             temporary = args.output_dir / ".voice-manifest.pending"
             temporary.write_text(json.dumps(list(records.values()), indent=2) + "\n")
             temporary.replace(args.output_dir / "voice-manifest.json")
@@ -59,11 +63,19 @@ async def _run(args):
 
 def _main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--storyboard", type=Path, default=Path(__file__).with_name("storyboard.json"))
+    parser.add_argument(
+        "--storyboard", type=Path, default=Path(__file__).with_name("storyboard.json")
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--voice", default="en-US-AndrewMultilingualNeural")
-    parser.add_argument("--force", action="store_true", help="Regenerate every narration clip.")
-    parser.add_argument("--recorded", action="store_true", help="Register supplied MP3/SRT files without contacting a speech service.")
+    parser.add_argument(
+        "--force", action="store_true", help="Regenerate every narration clip."
+    )
+    parser.add_argument(
+        "--recorded",
+        action="store_true",
+        help="Register supplied MP3/SRT files without contacting a speech service.",
+    )
     asyncio.run(_run(parser.parse_args()))
 
 

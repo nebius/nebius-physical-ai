@@ -14,7 +14,9 @@ from npa.workbench.model_access import GatedAsset, HF, NGC
 RUNNER = CliRunner()
 SPEC = (
     Path(__file__).resolve().parents[3]
-    / "workflows" / "main" / "nurec-reconstruct.yaml"
+    / "workflows"
+    / "main"
+    / "nurec-reconstruct.yaml"
 )
 RAY_BATCH_SPEC = SPEC.parent.parent / "testing" / "cosmos3-ray-batch.yaml"
 
@@ -121,8 +123,14 @@ def test_ray_batch_refuses_execution_without_native_guardrail_access(
     )
     result = RUNNER.invoke(
         app,
-        ["workbench", "workflow", "run-spec", str(RAY_BATCH_SPEC),
-         "--execute", "--json"],
+        [
+            "workbench",
+            "workflow",
+            "run-spec",
+            str(RAY_BATCH_SPEC),
+            "--execute",
+            "--json",
+        ],
     )
     assert result.exit_code == 1
     payload = json.loads(result.stdout)

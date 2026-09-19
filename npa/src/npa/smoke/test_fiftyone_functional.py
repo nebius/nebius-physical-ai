@@ -97,32 +97,40 @@ def _write_synthetic_lerobot_dataset(root: Path) -> None:
 
     meta_dir = root / "meta"
     meta_dir.mkdir(parents=True, exist_ok=True)
-    (meta_dir / "info.json").write_text(json.dumps({
-        "codebase_version": "v3.0",
-        "features": {
-            "observation.image": {
-                "dtype": "image",
-                "shape": [1, 1, 3],
+    (meta_dir / "info.json").write_text(
+        json.dumps(
+            {
+                "codebase_version": "v3.0",
+                "features": {
+                    "observation.image": {
+                        "dtype": "image",
+                        "shape": [1, 1, 3],
+                    }
+                },
             }
-        },
-    }))
+        )
+    )
 
-    data = pa.table({
-        "observation.image": pa.array(["frame-0.png", "frame-1.png"]),
-        "episode_index": pa.array([0, 0], type=pa.int64()),
-        "frame_index": pa.array([0, 1], type=pa.int64()),
-        "timestamp": pa.array([0.0, 0.05], type=pa.float32()),
-        "task_success": pa.array([True, True], type=pa.bool_()),
-        "task_index": pa.array([0, 0], type=pa.int64()),
-    })
+    data = pa.table(
+        {
+            "observation.image": pa.array(["frame-0.png", "frame-1.png"]),
+            "episode_index": pa.array([0, 0], type=pa.int64()),
+            "frame_index": pa.array([0, 1], type=pa.int64()),
+            "timestamp": pa.array([0.0, 0.05], type=pa.float32()),
+            "task_success": pa.array([True, True], type=pa.bool_()),
+            "task_index": pa.array([0, 0], type=pa.int64()),
+        }
+    )
     data_path = root / "data" / "chunk-000" / "file-000.parquet"
     data_path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(data, data_path)
 
-    tasks = pa.table({
-        "task_index": pa.array([0], type=pa.int64()),
-        "task": pa.array(["synthetic smoke task"]),
-    })
+    tasks = pa.table(
+        {
+            "task_index": pa.array([0], type=pa.int64()),
+            "task": pa.array(["synthetic smoke task"]),
+        }
+    )
     pq.write_table(tasks, meta_dir / "tasks.parquet")
 
 
@@ -143,12 +151,26 @@ def check_lerobot_import(state: SmokeState) -> CheckResult:
         first = dataset.first()
         try:
             if len(dataset) != 2:
-                return CheckResult("import synthetic LeRobotDataset", False, f"samples: {len(dataset)}")
+                return CheckResult(
+                    "import synthetic LeRobotDataset", False, f"samples: {len(dataset)}"
+                )
             for field in ("episode_index", "frame_index", "timestamp", "task_success"):
                 if field not in dataset.get_field_schema():
-                    return CheckResult("import synthetic LeRobotDataset", False, f"missing field: {field}")
-            if first is None or first["episode_index"] != 0 or first["frame_index"] != 0:
-                return CheckResult("import synthetic LeRobotDataset", False, "unexpected first sample metadata")
+                    return CheckResult(
+                        "import synthetic LeRobotDataset",
+                        False,
+                        f"missing field: {field}",
+                    )
+            if (
+                first is None
+                or first["episode_index"] != 0
+                or first["frame_index"] != 0
+            ):
+                return CheckResult(
+                    "import synthetic LeRobotDataset",
+                    False,
+                    "unexpected first sample metadata",
+                )
         finally:
             dataset.delete()
         return CheckResult(
@@ -157,12 +179,16 @@ def check_lerobot_import(state: SmokeState) -> CheckResult:
             f"samples: {result['samples']}; fields: {','.join(result['metadata_fields'])}",
         )
     except Exception as exc:
-        return CheckResult("import synthetic LeRobotDataset", False, _format_exception(exc))
+        return CheckResult(
+            "import synthetic LeRobotDataset", False, _format_exception(exc)
+        )
 
 
 def check_launch_app(state: SmokeState) -> CheckResult:
     if state.dataset is None:
-        return CheckResult("launch app", False, "skipped because dataset creation failed")
+        return CheckResult(
+            "launch app", False, "skipped because dataset creation failed"
+        )
 
     try:
         import fiftyone as fo
@@ -181,7 +207,9 @@ def check_launch_app(state: SmokeState) -> CheckResult:
             try:
                 with urllib.request.urlopen(url, timeout=2) as response:
                     if 200 <= response.status < 500:
-                        return CheckResult("launch app", True, f"url: {url}; status: {response.status}")
+                        return CheckResult(
+                            "launch app", True, f"url: {url}; status: {response.status}"
+                        )
             except Exception as exc:
                 last_error = _format_exception(exc)
             time.sleep(1)

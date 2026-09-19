@@ -23,7 +23,9 @@ def test_deployment_review_prompt_records_are_nonempty_and_stable() -> None:
     assert all(record["prompt"].strip() for record in records)
 
 
-def test_written_prompt_jsonl_is_accepted_by_the_generate_reader(tmp_path: Path) -> None:
+def test_written_prompt_jsonl_is_accepted_by_the_generate_reader(
+    tmp_path: Path,
+) -> None:
     output = tmp_path / "prompts.jsonl"
 
     result = write_deployment_review_prompts(str(output))

@@ -15,7 +15,9 @@ from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
 from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
 from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
 
-SPEC_PATH = Path(__file__).resolve().parents[3] / "workflows/testing/curobo-benchmark.yaml"
+SPEC_PATH = (
+    Path(__file__).resolve().parents[3] / "workflows/testing/curobo-benchmark.yaml"
+)
 
 
 def test_complete_benchmark_and_factual_rrd_are_reachable():

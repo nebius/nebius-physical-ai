@@ -400,9 +400,7 @@ def _resolve_workbench_in_project(
         wb = workbenches.get(name, {})
         if not wb:
             available = ", ".join(workbenches.keys()) if workbenches else "(none)"
-            raise ConfigError(
-                f"Workbench '{name}' not found. Available: {available}"
-            )
+            raise ConfigError(f"Workbench '{name}' not found. Available: {available}")
         return wb
 
     # Fall back to default_workbench, then a sole unambiguous entry.
@@ -562,7 +560,9 @@ def persist_workflow_src_s3_uri(uri: str, project: str | None = None) -> Path:
 
     value = str(uri or "").strip()
     if not value.startswith("s3://"):
-        raise ConfigError(f"workflow source URI must use s3://, got {value or '<empty>'}")
+        raise ConfigError(
+            f"workflow source URI must use s3://, got {value or '<empty>'}"
+        )
     yml = _load_yaml()
     projects = yml.get("projects")
     if isinstance(projects, dict) and projects:
@@ -737,7 +737,9 @@ def storage_iam_residues() -> dict[str, dict[str, Any]]:
         return {}
     result: dict[str, dict[str, Any]] = {}
     for alias, project in projects.items():
-        marker = project.get(STORAGE_IAM_RESIDUE_KEY) if isinstance(project, dict) else None
+        marker = (
+            project.get(STORAGE_IAM_RESIDUE_KEY) if isinstance(project, dict) else None
+        )
         if isinstance(marker, dict) and marker:
             result[str(alias)] = _normalize_storage_iam_residue(marker)
     return result
@@ -800,11 +802,9 @@ def mark_storage_iam_residue(alias: str, evidence: dict[str, Any]) -> dict[str, 
         ]
     for key, value in incoming.items():
         if value not in (None, "", [], {}):
-            if (
-                key == "status"
-                and status_rank.get(incoming_status, -1)
-                < status_rank.get(current_status, -1)
-            ):
+            if key == "status" and status_rank.get(
+                incoming_status, -1
+            ) < status_rank.get(current_status, -1):
                 continue
             merged[str(key)] = value
     merged = _normalize_storage_iam_residue(merged)
@@ -869,9 +869,7 @@ def forget_project(alias: str) -> bool:
             "retry forgetting the project."
         )
     project_id = (
-        str(project.get("project_id", "") or "")
-        if isinstance(project, dict)
-        else ""
+        str(project.get("project_id", "") or "") if isinstance(project, dict) else ""
     )
     skypilot = yml.get("skypilot")
     skypilot_map: dict[str, Any] = skypilot if isinstance(skypilot, dict) else {}
@@ -903,6 +901,7 @@ def remove_workbench_config(
     name: str,
 ) -> None:
     """Remove ``projects.<project>.workbenches.<name>``."""
+
     def remove(existing: dict[str, Any]) -> dict[str, Any]:
         projects = existing.get("projects", {})
         proj = projects.get(project, {}) if isinstance(projects, dict) else {}
@@ -997,17 +996,19 @@ def alias_has_terraform_state(project: str | None, name: str | None) -> bool:
 
 def update_workbench_app_status(project: str, name: str, app_status: str) -> Path:
     """Set ``projects.<project>.workbenches.<name>.app_status``."""
-    return write_config({
-        "projects": {
-            project: {
-                "workbenches": {
-                    name: {
-                        "app_status": app_status,
+    return write_config(
+        {
+            "projects": {
+                project: {
+                    "workbenches": {
+                        name: {
+                            "app_status": app_status,
+                        },
                     },
                 },
             },
-        },
-    })
+        }
+    )
 
 
 def update_workbench_endpoint_strategy(
@@ -1017,18 +1018,22 @@ def update_workbench_endpoint_strategy(
     service_port: int,
 ) -> Path:
     """Persist live-command endpoint routing for a workbench alias."""
-    return write_config({
-        "projects": {
-            project: {
-                "workbenches": {
-                    name: {
-                        "endpoint_strategy": _normalize_endpoint_strategy(endpoint_strategy),
-                        "service_port": int(service_port),
+    return write_config(
+        {
+            "projects": {
+                project: {
+                    "workbenches": {
+                        name: {
+                            "endpoint_strategy": _normalize_endpoint_strategy(
+                                endpoint_strategy
+                            ),
+                            "service_port": int(service_port),
+                        },
                     },
                 },
             },
-        },
-    })
+        }
+    )
 
 
 def update_workbench_serverless_endpoint(
@@ -1046,33 +1051,35 @@ def update_workbench_serverless_endpoint(
     auth: str = "none",
 ) -> Path:
     """Persist Nebius Serverless AI endpoint metadata for a workbench alias."""
-    return write_config({
-        "projects": {
-            project: {
-                "workbenches": {
-                    name: {
-                        "endpoint": url,
-                        "endpoint_strategy": "public",
-                        "service_port": int(container_port),
-                        "runtime": "serverless",
-                        "app_status": APP_STATUS_PROVISIONED,
-                        "serverless": {
-                            "resource_type": "endpoint",
-                            "endpoint_id": endpoint_id,
-                            "endpoint_name": endpoint_name,
-                            "project_id": project_id,
-                            "url": url,
-                            "image": image,
-                            "platform": platform,
-                            "preset": preset,
-                            "container_port": int(container_port),
-                            "auth": auth,
+    return write_config(
+        {
+            "projects": {
+                project: {
+                    "workbenches": {
+                        name: {
+                            "endpoint": url,
+                            "endpoint_strategy": "public",
+                            "service_port": int(container_port),
+                            "runtime": "serverless",
+                            "app_status": APP_STATUS_PROVISIONED,
+                            "serverless": {
+                                "resource_type": "endpoint",
+                                "endpoint_id": endpoint_id,
+                                "endpoint_name": endpoint_name,
+                                "project_id": project_id,
+                                "url": url,
+                                "image": image,
+                                "platform": platform,
+                                "preset": preset,
+                                "container_port": int(container_port),
+                                "auth": auth,
+                            },
                         },
                     },
                 },
             },
-        },
-    })
+        }
+    )
 
 
 def update_workbench_serverless_job(
@@ -1091,31 +1098,33 @@ def update_workbench_serverless_job(
     last_submitted_at: str,
 ) -> Path:
     """Persist Nebius Serverless AI Job metadata for a workbench alias."""
-    return write_config({
-        "projects": {
-            project: {
-                "workbenches": {
-                    name: {
-                        "runtime": "serverless",
-                        "app_status": APP_STATUS_PROVISIONED,
-                        "serverless_job": {
-                            "resource_type": "job",
-                            "job_id": job_id,
-                            "job_name": job_name,
-                            "project_id": project_id,
-                            "image": image,
-                            "gpu_type": gpu_type,
-                            "gpu_count": int(gpu_count),
-                            "subnet_id": subnet_id,
-                            "output_path": output_path,
-                            "last_status": last_status,
-                            "last_submitted_at": last_submitted_at,
+    return write_config(
+        {
+            "projects": {
+                project: {
+                    "workbenches": {
+                        name: {
+                            "runtime": "serverless",
+                            "app_status": APP_STATUS_PROVISIONED,
+                            "serverless_job": {
+                                "resource_type": "job",
+                                "job_id": job_id,
+                                "job_name": job_name,
+                                "project_id": project_id,
+                                "image": image,
+                                "gpu_type": gpu_type,
+                                "gpu_count": int(gpu_count),
+                                "subnet_id": subnet_id,
+                                "output_path": output_path,
+                                "last_status": last_status,
+                                "last_submitted_at": last_submitted_at,
+                            },
                         },
                     },
                 },
             },
-        },
-    })
+        }
+    )
 
 
 def _serverless_config(wb: dict[str, Any]) -> ServerlessConfig:
@@ -1213,14 +1222,13 @@ def resolve_config(
     runtime = pick(None, "", "runtime") or "vm"
     serverless = _serverless_config(wb)
     serverless_job = _serverless_job_config(wb)
-    ep = (
-        pick(endpoint, "NPA_WORKBENCH_ENDPOINT", "endpoint")
-        or serverless.url
-    )
+    ep = pick(endpoint, "NPA_WORKBENCH_ENDPOINT", "endpoint") or serverless.url
     s_host = pick(ssh_host, "NPA_SSH_HOST", "ssh", "host")
     s_user = pick(ssh_user, "NPA_SSH_USER", "ssh", "user")
     s_key = pick(ssh_key, "NPA_SSH_KEY", "ssh", "key_path")
-    cb = pick(checkpoint_bucket, "NPA_CHECKPOINT_BUCKET", "storage", "checkpoint_bucket")
+    cb = pick(
+        checkpoint_bucket, "NPA_CHECKPOINT_BUCKET", "storage", "checkpoint_bucket"
+    )
     se = (
         pick(storage_endpoint_url, "AWS_ENDPOINT_URL", "storage", "endpoint_url")
         or os.environ.get("NEBIUS_S3_ENDPOINT", "")
@@ -1233,18 +1241,16 @@ def resolve_config(
     tin = pick(None, "", "tf_instance_name")
     app_status = pick(None, "", "app_status")
     endpoint_strategy = pick(None, "NPA_ENDPOINT_STRATEGY", "endpoint_strategy")
-    endpoint_strategy_configured = (
-        "NPA_ENDPOINT_STRATEGY" in os.environ
-        or _has_path(wb, "endpoint_strategy")
+    endpoint_strategy_configured = "NPA_ENDPOINT_STRATEGY" in os.environ or _has_path(
+        wb, "endpoint_strategy"
     )
     service_port_raw = (
         pick(None, "NPA_SERVICE_PORT", "service_port")
         or pick(None, "", "app_port")
         or str(_endpoint_port(ep) or "")
     )
-    service_port_configured = (
-        "NPA_SERVICE_PORT" in os.environ
-        or _has_path(wb, "service_port")
+    service_port_configured = "NPA_SERVICE_PORT" in os.environ or _has_path(
+        wb, "service_port"
     )
     container_registry = resolve_container_registry(project)
     instance_id = pick(None, "", "instance_id")
@@ -1265,7 +1271,9 @@ def resolve_config(
 
     return WorkbenchConfig(
         endpoint=ep,
-        ssh=SSHConfig(host=s_host, user=s_user, key_path=s_key, tokens=credentials.tokens),
+        ssh=SSHConfig(
+            host=s_host, user=s_user, key_path=s_key, tokens=credentials.tokens
+        ),
         storage=StorageConfig(
             checkpoint_bucket=cb,
             endpoint_url=se,
@@ -1288,7 +1296,9 @@ def resolve_config(
         security_group_id=security_group_id,
         gpu_platform=gpu_platform,
         gpu_count=int(gpu_count_raw) if str(gpu_count_raw).isdigit() else 0,
-        detected_gpu_count=int(detected_gpu_count_raw) if str(detected_gpu_count_raw).isdigit() else 0,
+        detected_gpu_count=int(detected_gpu_count_raw)
+        if str(detected_gpu_count_raw).isdigit()
+        else 0,
         cuda_visible_devices=cuda_visible_devices,
         workbench_type=workbench_type,
         serverless=serverless,
@@ -1345,18 +1355,16 @@ def resolve_ssh_config(
     app_status = pick(None, "", "app_status")
     runtime = pick(None, "", "runtime") or "vm"
     endpoint_strategy = pick(None, "NPA_ENDPOINT_STRATEGY", "endpoint_strategy")
-    endpoint_strategy_configured = (
-        "NPA_ENDPOINT_STRATEGY" in os.environ
-        or _has_path(wb, "endpoint_strategy")
+    endpoint_strategy_configured = "NPA_ENDPOINT_STRATEGY" in os.environ or _has_path(
+        wb, "endpoint_strategy"
     )
     service_port_raw = (
         pick(None, "NPA_SERVICE_PORT", "service_port")
         or pick(None, "", "app_port")
         or str(_endpoint_port(ep) or "")
     )
-    service_port_configured = (
-        "NPA_SERVICE_PORT" in os.environ
-        or _has_path(wb, "service_port")
+    service_port_configured = "NPA_SERVICE_PORT" in os.environ or _has_path(
+        wb, "service_port"
     )
     container_registry = resolve_container_registry(project)
     instance_id = pick(None, "", "instance_id")
@@ -1374,7 +1382,9 @@ def resolve_ssh_config(
 
     return WorkbenchConfig(
         endpoint=ep,
-        ssh=SSHConfig(host=s_host, user=s_user, key_path=s_key, tokens=credentials.tokens),
+        ssh=SSHConfig(
+            host=s_host, user=s_user, key_path=s_key, tokens=credentials.tokens
+        ),
         storage=StorageConfig(
             checkpoint_bucket=cb,
             endpoint_url=se,
@@ -1397,7 +1407,9 @@ def resolve_ssh_config(
         security_group_id=security_group_id,
         gpu_platform=gpu_platform,
         gpu_count=int(gpu_count_raw) if str(gpu_count_raw).isdigit() else 0,
-        detected_gpu_count=int(detected_gpu_count_raw) if str(detected_gpu_count_raw).isdigit() else 0,
+        detected_gpu_count=int(detected_gpu_count_raw)
+        if str(detected_gpu_count_raw).isdigit()
+        else 0,
         cuda_visible_devices=cuda_visible_devices,
         workbench_type=workbench_type,
     )

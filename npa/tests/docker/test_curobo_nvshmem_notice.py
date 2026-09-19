@@ -18,8 +18,12 @@ NOTICE_SHA256 = "43a87c0ff94ce3196011ff75e17fbee96933c9e1d511557659ece8a326f95e8
 
 
 def _notice_instruction():
-    instructions = re.sub(r"[ \t]*\\\n\s*", " ", (IMAGE / "Dockerfile").read_text()).splitlines()
-    matches = [line for line in instructions if line.startswith("RUN ") and NOTICE_URL in line]
+    instructions = re.sub(
+        r"[ \t]*\\\n\s*", " ", (IMAGE / "Dockerfile").read_text()
+    ).splitlines()
+    matches = [
+        line for line in instructions if line.startswith("RUN ") and NOTICE_URL in line
+    ]
     assert len(matches) == 1
     return matches[0].removeprefix("RUN ")
 
@@ -38,13 +42,19 @@ def test_notice_is_additional_and_bound_to_reviewed_release_bytes():
 
 
 @pytest.mark.parametrize("download_fails", [False, True])
-def test_actual_notice_shell_rejects_changed_bytes_or_failed_fetch(tmp_path, download_fails):
+def test_actual_notice_shell_rejects_changed_bytes_or_failed_fetch(
+    tmp_path, download_fails
+):
     """Mock only HTTP transport; use the real shell and SHA256 verifier."""
     curl = tmp_path / "curl"
     curl.write_text(
         "#!/bin/sh\n"
-        + ("exit 22\n" if download_fails else "for arg; do output=$arg; done\n"
-           "printf 'changed or incomplete upstream notice\\n' > \"$output\"\n")
+        + (
+            "exit 22\n"
+            if download_fails
+            else "for arg; do output=$arg; done\n"
+            "printf 'changed or incomplete upstream notice\\n' > \"$output\"\n"
+        )
     )
     curl.chmod(0o755)
     destination = tmp_path / "NVSHMEM-LICENSE.txt"
@@ -62,4 +72,6 @@ def test_actual_notice_shell_rejects_changed_bytes_or_failed_fetch(tmp_path, dow
         assert not destination.exists()
     else:
         assert "FAILED" in result.stdout
-        assert destination.stat().st_mode & 0o200  # Final read-only chmod was not reached.
+        assert (
+            destination.stat().st_mode & 0o200
+        )  # Final read-only chmod was not reached.

@@ -23,7 +23,9 @@ def test_disk_shortfall_preserves_bytes_and_explains_reserved_capacity():
 
 
 def test_count_shortfall_stays_in_counts_and_uses_available_capacity():
-    shortage = QuotaShortfall("compute.instance.count", "us-central1", 4, 65, 2, "count")
+    shortage = QuotaShortfall(
+        "compute.instance.count", "us-central1", 4, 65, 2, "count"
+    )
     message = shortfall_message([shortage], "<tenant>")
     assert "needs 4 count, 2 available from tenant limit 65; shortfall 2" in message
     assert "GiB" not in message

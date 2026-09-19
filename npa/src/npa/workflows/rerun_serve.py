@@ -83,17 +83,22 @@ class RerunServeConfig:
 
     def __post_init__(self) -> None:
         if bool(self.auth_user) != bool(self.auth_password):
-            raise RerunServeError("Rerun authentication requires both username and password")
+            raise RerunServeError(
+                "Rerun authentication requires both username and password"
+            )
         if self.auth_user and (
             ":" in self.auth_user
             or any(ord(c) < 32 or ord(c) == 127 for c in self.auth_user)
         ):
-            raise RerunServeError("Rerun authentication username contains invalid characters")
+            raise RerunServeError(
+                "Rerun authentication username contains invalid characters"
+            )
         if self.auth_password and (
-            "\x00" in self.auth_password
-            or len(self.auth_password.encode("utf-8")) > 72
+            "\x00" in self.auth_password or len(self.auth_password.encode("utf-8")) > 72
         ):
-            raise RerunServeError("Rerun password must contain no NUL and at most 72 UTF-8 bytes")
+            raise RerunServeError(
+                "Rerun password must contain no NUL and at most 72 UTF-8 bytes"
+            )
 
     @property
     def auth_enabled(self) -> bool:
@@ -709,7 +714,11 @@ test -s /data/sim2real.rrd
                                             "mountPath": "/etc/nginx/nginx.conf",
                                             "subPath": "nginx.conf",
                                         },
-                                        {"name": "rrd-data", "mountPath": "/data", "readOnly": True},
+                                        {
+                                            "name": "rrd-data",
+                                            "mountPath": "/data",
+                                            "readOnly": True,
+                                        },
                                     ]
                                     + (
                                         [
@@ -735,7 +744,8 @@ test -s /data/sim2real.rrd
                                     "readinessProbe": {
                                         "exec": {
                                             "command": [
-                                                "python", "-c",
+                                                "python",
+                                                "-c",
                                                 "import urllib.request; "
                                                 "urllib.request.urlopen('http://127.0.0.1:"
                                                 f"{RERUN_INTERNAL_WEB_PORT}/', timeout=5).close()",

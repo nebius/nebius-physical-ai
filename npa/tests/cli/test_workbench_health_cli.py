@@ -285,7 +285,8 @@ def test_preflight_live_nebius_failure_exits_nonzero_without_provider_output(
 
 @pytest.mark.parametrize("checks", ["all", "nebius,all,nebius", "all,all"])
 def test_preflight_live_all_runs_nebius_and_preserves_service_checks(
-    monkeypatch, checks: str,
+    monkeypatch,
+    checks: str,
 ) -> None:
     from npa.cli.workbench import health as health_module
     from npa.clients.nebius_auth import ProfileVerification
@@ -425,13 +426,17 @@ def test_preflight_live_ngc_uses_token_exchange_probe(monkeypatch) -> None:
 
 @pytest.mark.parametrize("checks", ["bogus", "all,bogus", "bogus,all", "nebius,bogus"])
 @pytest.mark.parametrize("output_json", [False, True])
-def test_preflight_rejects_unknown_check(monkeypatch, checks: str, output_json: bool) -> None:
+def test_preflight_rejects_unknown_check(
+    monkeypatch, checks: str, output_json: bool
+) -> None:
     from npa.cli.workbench import health as health_module
 
     monkeypatch.setattr(
         health_module,
         "load_credentials",
-        lambda: pytest.fail("invalid selection must not load credentials or run probes"),
+        lambda: pytest.fail(
+            "invalid selection must not load credentials or run probes"
+        ),
     )
     result = runner.invoke(
         app,
@@ -445,7 +450,9 @@ def test_preflight_rejects_unknown_check(monkeypatch, checks: str, output_json: 
 
 
 @pytest.mark.parametrize("checks", ["", " ", ",", " , , "])
-def test_preflight_rejects_empty_selection_even_with_warn_only(monkeypatch, checks: str) -> None:
+def test_preflight_rejects_empty_selection_even_with_warn_only(
+    monkeypatch, checks: str
+) -> None:
     from npa.cli.workbench import health as health_module
 
     monkeypatch.setattr(
@@ -455,7 +462,15 @@ def test_preflight_rejects_empty_selection_even_with_warn_only(monkeypatch, chec
     )
     result = runner.invoke(
         app,
-        ["workbench", "health", "preflight", "--checks", checks, "--warn-only", "--json"],
+        [
+            "workbench",
+            "health",
+            "preflight",
+            "--checks",
+            checks,
+            "--warn-only",
+            "--json",
+        ],
     )
     assert result.exit_code == 2
     assert "select at least one check" in result.stderr
@@ -476,13 +491,19 @@ def test_preflight_deduplicates_checks_without_repeating_probes(monkeypatch) -> 
     result = runner.invoke(
         app,
         [
-            "workbench", "health", "preflight", "--checks",
-            " nebius , hf,nebius,hf,token_factory ", "--json",
+            "workbench",
+            "health",
+            "preflight",
+            "--checks",
+            " nebius , hf,nebius,hf,token_factory ",
+            "--json",
         ],
     )
     assert result.exit_code == 0
     assert [check["name"] for check in json.loads(result.stdout)["checks"]] == [
-        "nebius", "hf", "token_factory",
+        "nebius",
+        "hf",
+        "token_factory",
     ]
     assert calls == ["nebius"]
 
@@ -498,9 +519,14 @@ def test_preflight_token_probe_timeout_keeps_public_report_secret_free(
 
     def probe_runner(command, **kwargs):
         if command[-1] == "whoami":
-            return subprocess.CompletedProcess(command, 0, stdout="synthetic-private-identity")
+            return subprocess.CompletedProcess(
+                command, 0, stdout="synthetic-private-identity"
+            )
         raise subprocess.TimeoutExpired(
-            command, 30, output="synthetic-private-token", stderr="synthetic-private-identity"
+            command,
+            30,
+            output="synthetic-private-token",
+            stderr="synthetic-private-identity",
         )
 
     monkeypatch.setattr(health_module, "load_credentials", lambda: _EmptyCreds())

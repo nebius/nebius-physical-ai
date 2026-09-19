@@ -73,11 +73,21 @@ def preparation_command(entry: dict[str, object]) -> list[str] | None:
     if purge == "false" and upgrade == "false":
         return None
     return [
-        "docker", "build", "--pull", "--no-cache",
-        "--build-arg", f"BASE_IMAGE={entry['image']}",
-        "--build-arg", f"PURGE_LINUX_LIBC_DEV={purge}",
-        "--build-arg", f"UPGRADE_OS={upgrade}",
-        "-t", f"npa-base-scan:{entry['name']}", "-f", "-", ".",
+        "docker",
+        "build",
+        "--pull",
+        "--no-cache",
+        "--build-arg",
+        f"BASE_IMAGE={entry['image']}",
+        "--build-arg",
+        f"PURGE_LINUX_LIBC_DEV={purge}",
+        "--build-arg",
+        f"UPGRADE_OS={upgrade}",
+        "-t",
+        f"npa-base-scan:{entry['name']}",
+        "-f",
+        "-",
+        ".",
     ]
 
 
@@ -101,9 +111,20 @@ def prepare_target(entry: dict[str, object]) -> str:
 
 def _trivy_command(target: str, cache: Path, *, sarif: Path | None) -> list[str]:
     command = [
-        "trivy", "image", "--cache-dir", str(cache), "--skip-db-update",
-        "--severity", "CRITICAL", "--ignore-unfixed", "--vuln-type", "os",
-        "--timeout", "2562047h47m16s", "--exit-code", "0" if sarif else "1",
+        "trivy",
+        "image",
+        "--cache-dir",
+        str(cache),
+        "--skip-db-update",
+        "--severity",
+        "CRITICAL",
+        "--ignore-unfixed",
+        "--vuln-type",
+        "os",
+        "--timeout",
+        "2562047h47m16s",
+        "--exit-code",
+        "0" if sarif else "1",
     ]
     if sarif:
         command.extend(["--format", "sarif", "--output", str(sarif)])
@@ -181,7 +202,9 @@ def _create_worker_cache(database: Path, root: Path, index: int) -> Path:
 
 
 def scan_inventory(
-    entries: list[dict[str, object]], cache: Path, workers: int,
+    entries: list[dict[str, object]],
+    cache: Path,
+    workers: int,
     sarif_directory: Path | None,
 ) -> None:
     """Scan all entries with bounded parallelism and fail on any finding.

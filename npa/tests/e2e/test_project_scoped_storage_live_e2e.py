@@ -127,9 +127,7 @@ def _wait_until(
     if last is None:
         raise AssertionError("provider convergence check did not execute")
     actual = "ok" if last.returncode == 0 else _error_category(last)
-    raise AssertionError(
-        f"provider convergence expected {expected}, received {actual}"
-    )
+    raise AssertionError(f"provider convergence expected {expected}, received {actual}")
 
 
 def _profile_parent(profile: str) -> str:
@@ -171,9 +169,7 @@ def _assert_all_s3_actions(
     fetched = client.get_object(Bucket=bucket_name, Key=key)
     assert fetched["Body"].read() == body
     listed = client.list_objects_v2(Bucket=bucket_name, Prefix=key, MaxKeys=1)
-    assert key in {
-        str(item.get("Key") or "") for item in listed.get("Contents", [])
-    }
+    assert key in {str(item.get("Key") or "") for item in listed.get("Contents", [])}
     client.delete_object(Bucket=bucket_name, Key=key)
     with pytest.raises(ClientError) as deleted:
         client.head_object(Bucket=bucket_name, Key=key)
@@ -380,10 +376,11 @@ def _exercise_storage_scope(
                     profile=admin_profile,
                     check=False,
                 )
-                if scheduled.returncode != 0 and _error_category(scheduled) != "not_found":
-                    cleanup_errors.append(
-                        f"bucket_delete:{_error_category(scheduled)}"
-                    )
+                if (
+                    scheduled.returncode != 0
+                    and _error_category(scheduled) != "not_found"
+                ):
+                    cleanup_errors.append(f"bucket_delete:{_error_category(scheduled)}")
 
         if storage_access_key_id:
             cleanup_cli(
@@ -407,7 +404,10 @@ def _exercise_storage_scope(
             )
 
         audit_targets = [
-            (["storage", "bucket", "get", "--id", storage_bucket_id], storage_bucket_id),
+            (
+                ["storage", "bucket", "get", "--id", storage_bucket_id],
+                storage_bucket_id,
+            ),
             (
                 ["iam", "v2", "access-key", "get", "--id", storage_access_key_id],
                 storage_access_key_id,
@@ -472,12 +472,8 @@ def test_tenant_and_project_scoped_storage_binding_and_actions(
     admin_profile = os.environ.get(
         "NPA_PROJECT_SCOPED_STORAGE_E2E_ADMIN_PROFILE", ""
     ).strip()
-    project_id = os.environ.get(
-        "NPA_PROJECT_SCOPED_STORAGE_E2E_PROJECT_ID", ""
-    ).strip()
-    tenant_id = os.environ.get(
-        "NPA_PROJECT_SCOPED_STORAGE_E2E_TENANT_ID", ""
-    ).strip()
+    project_id = os.environ.get("NPA_PROJECT_SCOPED_STORAGE_E2E_PROJECT_ID", "").strip()
+    tenant_id = os.environ.get("NPA_PROJECT_SCOPED_STORAGE_E2E_TENANT_ID", "").strip()
     if not all((admin_profile, project_id, tenant_id)):
         pytest.skip("explicit admin profile, project ID, and tenant ID are required")
 
@@ -694,9 +690,7 @@ def test_tenant_and_project_scoped_storage_binding_and_actions(
         print("live_tenant_and_project_scope_matrix=passed")
     finally:
         if original_profile:
-            restored = _run_cli(
-                ["profile", "activate", original_profile], check=False
-            )
+            restored = _run_cli(["profile", "activate", original_profile], check=False)
             if restored.returncode != 0:
                 cleanup_errors.append("profile_restore:failed")
         else:

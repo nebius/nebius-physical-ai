@@ -18,7 +18,9 @@ TASK_NAME = os.environ.get("ISAAC_LAB_SMOKE_TASK", "Isaac-Reach-Franka-v0")
 NUM_ENVS = int(os.environ.get("ISAAC_LAB_SMOKE_NUM_ENVS", "64"))
 STEP_COUNT = int(os.environ.get("ISAAC_LAB_SMOKE_STEP_COUNT", "100"))
 REPLAY_STEPS = int(os.environ.get("ISAAC_LAB_SMOKE_REPLAY_STEPS", "50"))
-OUTPUT_ROOT = Path(os.environ.get("NPA_ISAAC_LAB_OUTPUT_DIR", "/workspace/isaaclab/npa-runs"))
+OUTPUT_ROOT = Path(
+    os.environ.get("NPA_ISAAC_LAB_OUTPUT_DIR", "/workspace/isaaclab/npa-runs")
+)
 
 if NUM_ENVS < 1 or STEP_COUNT < 1 or REPLAY_STEPS < 1:
     raise ValueError("smoke counts must all be positive")
@@ -49,7 +51,9 @@ def _format_exception(exc: BaseException) -> str:
 def _sample_action(env: Any, device: str) -> Any:
     import torch
 
-    return torch.as_tensor(env.action_space.sample(), device=device, dtype=torch.float32)
+    return torch.as_tensor(
+        env.action_space.sample(), device=device, dtype=torch.float32
+    )
 
 
 def _make_env(task: str, num_envs: int, device: str) -> Any:
@@ -82,7 +86,9 @@ def check_launch_runtime(state: SmokeState) -> CheckResult:
         app_launcher = AppLauncher(visualizer="none")
         state.simulation_app = app_launcher.app
         if state.simulation_app is None:
-            return CheckResult("launch Isaac Sim runtime", False, "AppLauncher.app is None")
+            return CheckResult(
+                "launch Isaac Sim runtime", False, "AppLauncher.app is None"
+            )
         return CheckResult("launch Isaac Sim runtime", True, "headless app launched")
     except Exception as exc:
         return CheckResult("launch Isaac Sim runtime", False, _format_exception(exc))
@@ -90,7 +96,11 @@ def check_launch_runtime(state: SmokeState) -> CheckResult:
 
 def check_environment_steps(state: SmokeState) -> CheckResult:
     if state.simulation_app is None:
-        return CheckResult("step vectorized environment", False, "skipped because runtime launch failed")
+        return CheckResult(
+            "step vectorized environment",
+            False,
+            "skipped because runtime launch failed",
+        )
     try:
         import torch
 
@@ -102,8 +112,12 @@ def check_environment_steps(state: SmokeState) -> CheckResult:
         for step in range(STEP_COUNT):
             _, rewards, _, _, _ = state.env.step(_sample_action(state.env, device))
             reward_total += float(torch.as_tensor(rewards).mean().item())
-            if (step + 1) % max(1, min(25, STEP_COUNT)) == 0 or (step + 1) == STEP_COUNT:
-                print(f"ISAAC_LAB_SMOKE_ENV_STEP step={step + 1}/{STEP_COUNT}", flush=True)
+            if (step + 1) % max(1, min(25, STEP_COUNT)) == 0 or (
+                step + 1
+            ) == STEP_COUNT:
+                print(
+                    f"ISAAC_LAB_SMOKE_ENV_STEP step={step + 1}/{STEP_COUNT}", flush=True
+                )
 
         trace = {
             "format": "npa_isaac_lab_environment_step_trace_v1",
@@ -139,23 +153,33 @@ def check_environment_steps(state: SmokeState) -> CheckResult:
 
 def check_trace(state: SmokeState) -> CheckResult:
     if not state.trace_path.exists():
-        return CheckResult("verify environment trace", False, f"missing {state.trace_path}")
+        return CheckResult(
+            "verify environment trace", False, f"missing {state.trace_path}"
+        )
     try:
         trace = json.loads(state.trace_path.read_text())
     except Exception as exc:
         return CheckResult("verify environment trace", False, _format_exception(exc))
     if trace.get("format") != "npa_isaac_lab_environment_step_trace_v1":
-        return CheckResult("verify environment trace", False, f"unexpected trace: {trace}")
+        return CheckResult(
+            "verify environment trace", False, f"unexpected trace: {trace}"
+        )
     return CheckResult("verify environment trace", True, str(state.trace_path))
 
 
 def check_replay(state: SmokeState) -> CheckResult:
     if state.simulation_app is None:
-        return CheckResult("replay environment steps", False, "skipped because runtime launch failed")
+        return CheckResult(
+            "replay environment steps", False, "skipped because runtime launch failed"
+        )
     if not state.trace_path.exists():
-        return CheckResult("replay environment steps", False, "skipped because trace is missing")
+        return CheckResult(
+            "replay environment steps", False, "skipped because trace is missing"
+        )
     if state.env is None:
-        return CheckResult("replay environment steps", False, "skipped because environment is missing")
+        return CheckResult(
+            "replay environment steps", False, "skipped because environment is missing"
+        )
     try:
         import torch
 
@@ -177,20 +201,26 @@ def check_replay(state: SmokeState) -> CheckResult:
             "output_path": str(state.replay_summary_path),
         }
         state.replay_summary_path.write_text(json.dumps(state.replay_summary, indent=2))
-        return CheckResult("replay environment steps", True, f"steps={REPLAY_STEPS}; device={device}")
+        return CheckResult(
+            "replay environment steps", True, f"steps={REPLAY_STEPS}; device={device}"
+        )
     except Exception as exc:
         return CheckResult("replay environment steps", False, _format_exception(exc))
 
 
 def check_replay_metrics(state: SmokeState) -> CheckResult:
     if not state.replay_summary_path.exists():
-        return CheckResult("verify replay metrics", False, f"missing {state.replay_summary_path}")
+        return CheckResult(
+            "verify replay metrics", False, f"missing {state.replay_summary_path}"
+        )
     try:
         summary = json.loads(state.replay_summary_path.read_text())
     except Exception as exc:
         return CheckResult("verify replay metrics", False, _format_exception(exc))
     if summary.get("status") != "success" or "mean_reward" not in summary:
-        return CheckResult("verify replay metrics", False, f"unexpected summary: {summary}")
+        return CheckResult(
+            "verify replay metrics", False, f"unexpected summary: {summary}"
+        )
     return CheckResult(
         "verify replay metrics",
         True,

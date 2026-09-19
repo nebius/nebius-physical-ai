@@ -39,9 +39,7 @@ def _prepare_catalog_workflow(spec_path):
         assume_decision="promote_checkpoint",
         # Immutable baked images bind their NPA package to an exact checkout.
         # Supply the same operator input CI supplies for the digest below.
-        config_overrides=(
-            {"source_sha": "0" * 40} if requires_baked_image else None
-        ),
+        config_overrides=({"source_sha": "0" * 40} if requires_baked_image else None),
         render_options=SkypilotRenderOptions(
             registry=TEST_REGISTRY,
             # Specs that fail closed on image provenance require the same
@@ -63,9 +61,7 @@ def test_shipped_catalog_prepares_for_submit(
 
     assert SHIPPED_SPECS, "expected shipped npa.workflow specs"
     monkeypatch.setenv("NPA_REGISTRY", TEST_REGISTRY)
-    monkeypatch.setenv(
-        "NPA_PUBLIC_REGISTRY", "ghcr.io/nebius/nebius-physical-ai"
-    )
+    monkeypatch.setenv("NPA_PUBLIC_REGISTRY", "ghcr.io/nebius/nebius-physical-ai")
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://ci-fixtures/npa-source")
     prepared = _prepare_catalog_workflow(spec_path)
     try:

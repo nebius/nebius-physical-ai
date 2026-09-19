@@ -104,9 +104,7 @@ def test_security_fixed_runtime_and_baked_image_are_fully_pinned() -> None:
     assert "wan-runtime ensure" in smoke
 
 
-def _metadata(
-    name: str, version: str, *requires_dist: str
-) -> DistributionMetadata:
+def _metadata(name: str, version: str, *requires_dist: str) -> DistributionMetadata:
     return DistributionMetadata(
         name=name,
         version=version,

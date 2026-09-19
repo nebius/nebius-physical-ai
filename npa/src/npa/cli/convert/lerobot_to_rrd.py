@@ -16,16 +16,24 @@ console = Console(stderr=True)
 
 def lerobot_to_rrd_cmd(
     input_path: str = typer.Option(
-        ..., "--input-path", "--input", "-i", help="Local or s3:// LeRobotDataset directory."
+        ...,
+        "--input-path",
+        "--input",
+        "-i",
+        help="Local or s3:// LeRobotDataset directory.",
     ),
     output_path: str = typer.Option(
         ..., "--output-path", "--output", "-o", help="Local or s3:// .rrd output path."
     ),
     duration: float | None = typer.Option(
-        None, "--duration", help="Maximum recording duration in seconds. Defaults to adapter cap."
+        None,
+        "--duration",
+        help="Maximum recording duration in seconds. Defaults to adapter cap.",
     ),
     predictions_path: str = typer.Option(
-        "", "--predictions-path", help="Optional local or s3:// GR00T prediction artifact path."
+        "",
+        "--predictions-path",
+        help="Optional local or s3:// GR00T prediction artifact path.",
     ),
 ) -> None:
     """Convert a LeRobotDataset, optionally with GR00T predictions, to a Rerun `.rrd`."""
