@@ -42,6 +42,7 @@ token-factory  Nebius Token Factory hosted inference (zero-GPU, OpenAI-compatibl
 byof  Onboard an OSS repo as a BYOF container (Tier 0 of the OSS ladder).
 workflow  Multi-stage training workflow orchestration.
 health  Preflight health checks for workbench workflows.
+gc-artifacts  Garbage-collect expired workbench run artifacts from S3 (dry-run by default).
 golden-eval  Per-container golden-eval / hello-world reruns.
 ```
 
@@ -85,6 +86,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `byof` | Onboard an OSS repo as a BYOF container (Tier 0 of the OSS ladder). |
 | `workflow` | Multi-stage training workflow orchestration. |
 | `health` | Preflight health checks for workbench workflows. |
+| `gc-artifacts` | Garbage-collect expired workbench run artifacts from S3 (dry-run by default). |
 | `golden-eval` | Per-container golden-eval / hello-world reruns. |
 
 ## Examples
