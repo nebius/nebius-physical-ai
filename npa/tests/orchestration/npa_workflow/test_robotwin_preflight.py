@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
 from types import SimpleNamespace
 
@@ -27,6 +28,9 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
     CUSTOMER_ENTITLEMENT_NOTICE,
     CUSTOMER_TERMS,
     CUSTOMER_USE_SCOPE,
+    MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV,
+    MATERIALIZED_KUBECONFIG_ENV,
+    MATERIALIZED_SKYPILOT_CONFIG_ENV,
     MAX_CONTEXT_BYTES,
     MAX_TRANSPORT_BYTES,
     PUBLIC_CONTEXT_ENV,
@@ -38,7 +42,6 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
     encode_transport,
     is_robotwin_request,
     load_runtime_authorization,
-    materialize_transport,
     prepare_inner_submit,
     prepare_live_submit,
     read_customer_entitlement,
@@ -213,9 +216,21 @@ def _authorization_environment(
     context_path.write_bytes(context_raw)
     context_path.chmod(0o600)
     entitlement_path, entitlement_raw = _entitlement_file(tmp_path, context=context)
+    materialized_dir = tmp_path / "materialized-config"
+    materialized_dir.mkdir(mode=0o700)
+    source_kubeconfig = Path(str(context["kubeconfig"]))
+    source_skypilot = Path(str(context["skypilot_config_path"]))
+    materialized_kubeconfig = materialized_dir / "kubeconfig.yaml"
+    materialized_skypilot = materialized_dir / "skypilot.yaml"
+    shutil.copyfile(source_kubeconfig, materialized_kubeconfig)
+    shutil.copyfile(source_skypilot, materialized_skypilot)
+    materialized_kubeconfig.chmod(0o600)
+    materialized_skypilot.chmod(0o600)
     return (
         {
             PUBLIC_CONTEXT_ENV: str(context_path),
+            MATERIALIZED_KUBECONFIG_ENV: str(materialized_kubeconfig),
+            MATERIALIZED_SKYPILOT_CONFIG_ENV: str(materialized_skypilot),
         },
         context_path,
         context_raw,
@@ -789,13 +804,21 @@ def test_worker_materialization_preserves_bytes_modes_and_paths(tmp_path: Path) 
     directory = tmp_path / "materialized"
     directory.mkdir(mode=0o700)
 
-    with pytest.raises(
-        RobotwinPreflightError,
-        match="customer-authorization-independent-proof-unavailable",
-    ):
-        materialize_transport(encode_transport(authorization), directory)
+    materialized = preflight_module._materialize_authorization(authorization, directory)
     assert stat.S_IMODE(directory.stat().st_mode) == 0o700
-    assert list(directory.iterdir()) == []
+    assert {
+        materialized.context_path,
+        materialized.customer_authorization_path,
+        materialized.kubeconfig_path,
+        materialized.skypilot_config_path,
+    } == set(directory.iterdir())
+    assert stat.S_IMODE(materialized.kubeconfig_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(materialized.skypilot_config_path.stat().st_mode) == 0o600
+    assert materialized.kubeconfig_path.read_bytes() == authorization.kubeconfig_bytes
+    assert (
+        materialized.skypilot_config_path.read_bytes()
+        == authorization.skypilot_config_bytes
+    )
 
 
 def test_worker_materialization_rolls_back_partial_private_files(
@@ -818,12 +841,64 @@ def test_worker_materialization_rolls_back_partial_private_files(
         real_write(path, payload, directory_fd=directory_fd)
 
     monkeypatch.setattr(preflight_module, "write_owner_file", fail_second)
-    with pytest.raises(
-        RobotwinPreflightError,
-        match="customer-authorization-independent-proof-unavailable",
-    ):
-        materialize_transport(encode_transport(authorization), directory)
+    with pytest.raises(OSError, match="injected write failure") as caught:
+        preflight_module._materialize_authorization(authorization, directory)
+    assert str(caught.value) == "injected write failure"
+    assert calls == 2
     assert list(directory.iterdir()) == []
+
+
+def test_worker_materialization_records_each_rollback_outcome_and_residual(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    environment, _path, raw, _entitlement_path, _entitlement_raw = (
+        _authorization_environment(tmp_path)
+    )
+    authorization = _load_authorization(environment, raw)
+    directory = tmp_path / "materialized"
+    directory.mkdir(mode=0o700)
+    real_write = preflight_module.write_owner_file
+    real_unlink = preflight_module.os.unlink
+    real_fsync = preflight_module.os.fsync
+    write_calls = 0
+    events: list[str] = []
+
+    def fail_third_write(path: Path, payload: bytes, *, directory_fd=None) -> None:
+        nonlocal write_calls
+        write_calls += 1
+        if write_calls == 3:
+            raise OSError("injected materialization failure")
+        real_write(path, payload, directory_fd=directory_fd)
+
+    def fail_one_unlink(path: str | bytes, *, dir_fd=None) -> None:
+        events.append(f"unlink:{path}")
+        if path == "customer-authorization.json":
+            raise PermissionError(13, "injected rollback refusal")
+        real_unlink(path, dir_fd=dir_fd)
+
+    def record_fsync(descriptor: int) -> None:
+        events.append("fsync")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(preflight_module, "write_owner_file", fail_third_write)
+    monkeypatch.setattr(preflight_module.os, "unlink", fail_one_unlink)
+    monkeypatch.setattr(preflight_module.os, "fsync", record_fsync)
+
+    with pytest.raises(OSError, match="injected materialization failure") as caught:
+        preflight_module._materialize_authorization(authorization, directory)
+
+    recovery = caught.value.recovery_context
+    assert caught.value.args == ("injected materialization failure",)
+    assert write_calls == 3
+    assert recovery.cleanup_outcomes == (
+        ("kubeconfig.yaml", "missing"),
+        ("customer-authorization.json", "error:PermissionError:13"),
+        ("runtime-context.json", "removed"),
+    )
+    assert recovery.residual_names == ("customer-authorization.json",)
+    assert recovery.directory_fsync == "synced"
+    assert list(directory.iterdir())[0].name == "customer-authorization.json"
+    assert events[-1] == "fsync"
 
 
 def test_worker_materialization_removes_the_file_whose_fsync_fails(
@@ -840,12 +915,25 @@ def test_worker_materialization_removes_the_file_whose_fsync_fails(
         raise OSError("injected fsync failure")
 
     monkeypatch.setattr(preflight_module.os, "fsync", fail_fsync)
-    with pytest.raises(
-        RobotwinPreflightError,
-        match="customer-authorization-independent-proof-unavailable",
-    ):
-        materialize_transport(encode_transport(authorization), directory)
+    with pytest.raises(OSError, match="injected fsync failure") as caught:
+        preflight_module._materialize_authorization(authorization, directory)
+    assert str(caught.value) == "injected fsync failure"
     assert list(directory.iterdir()) == []
+
+
+def test_materialized_config_mutation_refuses_before_submit(
+    tmp_path: Path,
+) -> None:
+    environment, _path, raw, _entitlement_path, _entitlement_raw = (
+        _authorization_environment(tmp_path)
+    )
+    authorization = _load_authorization(environment, raw)
+    Path(environment[MATERIALIZED_KUBECONFIG_ENV]).write_bytes(b"changed-after-auth")
+
+    with pytest.raises(
+        RobotwinPreflightError, match="materialized-kubeconfig-digest-mismatch"
+    ):
+        prepare_inner_submit(authorization, {})
 
 
 @pytest.mark.parametrize(
@@ -1138,7 +1226,14 @@ def test_live_submit_real_source_proof_refuses_before_authority_consumption(
     tuple(
         name
         for name in CONTEXT_ENV_NAMES
-        if name not in {PUBLIC_CONTEXT_ENV, CUSTOMER_ENTITLEMENT_ENV}
+        if name
+        not in {
+            PUBLIC_CONTEXT_ENV,
+            CUSTOMER_ENTITLEMENT_ENV,
+            MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV,
+            MATERIALIZED_KUBECONFIG_ENV,
+            MATERIALIZED_SKYPILOT_CONFIG_ENV,
+        }
     ),
 )
 def test_live_submit_rejects_every_internal_context_channel_before_loading(
@@ -1176,11 +1271,15 @@ def test_invalid_config_refuses_before_assertion_is_consumed(tmp_path: Path) -> 
     context = json.loads(raw)
     Path(str(context["kubeconfig"])).unlink()
     Path(str(context["skypilot_config_path"])).unlink()
+    Path(environment[MATERIALIZED_KUBECONFIG_ENV]).unlink()
+    Path(environment[MATERIALIZED_SKYPILOT_CONFIG_ENV]).unlink()
 
     boundary = _AuthenticatedBoundary(
         _entitlement_payload(context, expires_at="2020-01-01T00:00:00Z")
     )
-    with pytest.raises(RobotwinPreflightError, match="kubeconfig-unreadable"):
+    with pytest.raises(
+        RobotwinPreflightError, match="materialized-kubeconfig-unreadable"
+    ):
         load_runtime_authorization(
             environment,
             customer_authorization_boundary=boundary,

@@ -21,8 +21,10 @@ repository-owned runtime defaults; select custom bytes with a complete image
 reference or an explicit workflow `--registry`.
 
 The combined public plan and accepted-release manifest were verified against
-GHCR without credentials on **2026-09-17**. All **34 current release tags**
-matched their recorded digests; independent manifest and OCI config reads
+GHCR without credentials on **2026-09-17**. The audit covered **34 current
+release tags**, each matched to its recorded digest; the manifest separately
+contains **37 accepted release references**, so those populations must not be
+treated as the same cardinality. Independent manifest and OCI config reads
 confirmed `linux/amd64` runtime metadata. This read-only audit includes both
 Isaac Arena and OpenArm. The earlier 2026-09-12 audit covered 44 table references
 (33 then-current pins and 11 historical aliases); historical aliases were not

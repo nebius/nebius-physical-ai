@@ -457,6 +457,15 @@ class MaterializedRobotwinContext:
     authorization: RobotwinAuthorization = field(repr=False)
 
 
+@dataclass(frozen=True)
+class MaterializationRecoveryContext:
+    """Redacted rollback receipt attached to a failed materialization."""
+
+    cleanup_outcomes: tuple[tuple[str, str], ...]
+    residual_names: tuple[str, ...]
+    directory_fsync: str
+
+
 def _refusal(category: str, raw: bytes = b"") -> RobotwinPreflightError:
     digest = hashlib.sha256(raw).hexdigest() if raw else ""
     return RobotwinPreflightError(category, digest)
@@ -497,6 +506,55 @@ def _read_owner_file(path_text: str, *, label: str, limit: int) -> bytes:
     if len(raw) > limit:
         raise _refusal(f"{label}-too-large")
     return raw
+
+
+def _validate_materialized_path(path_text: str, *, label: str) -> Path:
+    """Require an owner-only file below an owner-only materialization directory."""
+
+    try:
+        path = Path(path_text).expanduser()
+    except (RuntimeError, ValueError, OSError):
+        raise _refusal(f"{label}-unreadable") from None
+    if not path.is_absolute():
+        raise _refusal(f"{label}-not-absolute")
+    try:
+        parent = path.parent
+        metadata = parent.lstat()
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != os.geteuid()
+            or metadata.st_mode & 0o077
+        ):
+            raise _refusal(f"{label}-parent-not-owner-only")
+    except RobotwinPreflightError:
+        raise
+    except (OSError, ValueError):
+        raise _refusal(f"{label}-parent-unreadable") from None
+    _read_owner_file(str(path), label=label, limit=MAX_CONFIG_BYTES)
+    return path
+
+
+def _validate_materialized_config_binding(
+    authorization: RobotwinAuthorization,
+) -> None:
+    """Re-read materialized config bytes immediately before any submit bridge."""
+
+    for path_text, expected, label in (
+        (
+            authorization.kubeconfig_source,
+            authorization.kubeconfig_bytes,
+            "materialized-kubeconfig",
+        ),
+        (
+            authorization.skypilot_config_source,
+            authorization.skypilot_config_bytes,
+            "materialized-skypilot-config",
+        ),
+    ):
+        _validate_materialized_path(path_text, label=label)
+        current = _read_owner_file(path_text, label=label, limit=MAX_CONFIG_BYTES)
+        if current != expected:
+            raise _refusal(f"{label}-digest-mismatch", authorization.raw_context)
 
 
 def read_owner_context(environ: Mapping[str, str] | None = None) -> bytes:
@@ -1395,31 +1453,41 @@ def load_runtime_authorization(
     sky_path = str(source.get(MATERIALIZED_SKYPILOT_CONFIG_ENV) or "").strip()
     if bool(kube_path) != bool(sky_path):
         raise _refusal("materialized-config-set-incomplete", raw)
-    config_bytes = (
-        {
-            "kubeconfig": _read_owner_file(
-                kube_path, label="materialized-kubeconfig", limit=MAX_CONFIG_BYTES
-            ),
-            "skypilot_config_path": _read_owner_file(
-                sky_path,
-                label="materialized-skypilot-config",
-                limit=MAX_CONFIG_BYTES,
-            ),
-        }
-        if kube_path
-        else {
-            "kubeconfig": _read_owner_file(
-                context_values["kubeconfig"],
-                label="kubeconfig",
-                limit=MAX_CONFIG_BYTES,
-            ),
-            "skypilot_config_path": _read_owner_file(
-                context_values["skypilot_config_path"],
-                label="skypilot-config",
-                limit=MAX_CONFIG_BYTES,
-            ),
-        }
+    if not kube_path:
+        # Live authority must never retain the original context paths after
+        # validating their bytes.  The worker transport path supplies these
+        # files below one private 0700 directory; outer callers that cannot
+        # provide the same immutable materialization fail closed here.
+        raise _refusal("materialized-config-required", raw)
+    materialized_kube_path = _validate_materialized_path(
+        kube_path, label="materialized-kubeconfig"
     )
+    materialized_sky_path = _validate_materialized_path(
+        sky_path, label="materialized-skypilot-config"
+    )
+    try:
+        original_kube_path = Path(context_values["kubeconfig"]).expanduser()
+        original_sky_path = Path(context_values["skypilot_config_path"]).expanduser()
+        if materialized_kube_path.resolve() == original_kube_path.resolve():
+            raise _refusal("materialized-kubeconfig-not-distinct", raw)
+        if materialized_sky_path.resolve() == original_sky_path.resolve():
+            raise _refusal("materialized-skypilot-config-not-distinct", raw)
+    except RobotwinPreflightError:
+        raise
+    except (OSError, RuntimeError, ValueError):
+        raise _refusal("materialized-config-path-unreadable", raw) from None
+    config_bytes = {
+        "kubeconfig": _read_owner_file(
+            str(materialized_kube_path),
+            label="materialized-kubeconfig",
+            limit=MAX_CONFIG_BYTES,
+        ),
+        "skypilot_config_path": _read_owner_file(
+            str(materialized_sky_path),
+            label="materialized-skypilot-config",
+            limit=MAX_CONFIG_BYTES,
+        ),
+    }
     _validate_context_with_customer_authorization(
         raw,
         verified_customer_authorization=_VerifiedCustomerAuthorization(
@@ -1431,6 +1499,21 @@ def load_runtime_authorization(
         ),
         config_bytes=config_bytes,
     )
+    if (
+        _read_owner_file(
+            str(materialized_kube_path),
+            label="materialized-kubeconfig",
+            limit=MAX_CONFIG_BYTES,
+        )
+        != config_bytes["kubeconfig"]
+        or _read_owner_file(
+            str(materialized_sky_path),
+            label="materialized-skypilot-config",
+            limit=MAX_CONFIG_BYTES,
+        )
+        != config_bytes["skypilot_config_path"]
+    ):
+        raise _refusal("materialized-config-digest-mismatch", raw)
     if control_plane_source_uri or control_plane_source_origin:
         _validate_control_plane_source_fields(
             output_bucket=context_values["bucket"],
@@ -1477,18 +1560,23 @@ def load_runtime_authorization(
         verified_customer_authorization=verified,
         config_bytes=config_bytes,
     )
-    if not kube_path:
-        return authorization
-    return replace(
+    authorization = replace(
         authorization,
-        kubeconfig_source=kube_path,
-        skypilot_config_source=sky_path,
+        kubeconfig_source=str(materialized_kube_path),
+        skypilot_config_source=str(materialized_sky_path),
         redactions=tuple(
             dict.fromkeys(
-                (*authorization.redactions, authorization_path, kube_path, sky_path)
+                (
+                    *authorization.redactions,
+                    authorization_path,
+                    str(materialized_kube_path),
+                    str(materialized_sky_path),
+                )
             )
         ),
     )
+    _validate_materialized_config_binding(authorization)
+    return authorization
 
 
 def require_runtime_lock_complete(
@@ -1802,7 +1890,14 @@ def prepare_live_submit(
     internal_channels = tuple(
         name
         for name in CONTEXT_ENV_NAMES
-        if name not in {PUBLIC_CONTEXT_ENV, CUSTOMER_ENTITLEMENT_ENV}
+        if name
+        not in {
+            PUBLIC_CONTEXT_ENV,
+            CUSTOMER_ENTITLEMENT_ENV,
+            MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV,
+            MATERIALIZED_KUBECONFIG_ENV,
+            MATERIALIZED_SKYPILOT_CONFIG_ENV,
+        }
         and str(source.get(name) or "").strip()
     )
     if internal_channels:
@@ -1841,6 +1936,7 @@ def prepare_inner_submit(
 ) -> RobotwinSubmitContext:
     """Bind the inner launcher to the same in-process validated authorization."""
 
+    _validate_materialized_config_binding(authorization)
     output_prefix = f"{authorization.output_root.rstrip('/')}/{authorization.run_id}/"
     expected = {
         "KUBECONFIG": authorization.kubeconfig_source,
@@ -1942,6 +2038,7 @@ def bind_submit_coordinates(
     """Bind live launcher coordinates to the validated manager authorization."""
 
     authorization = context.authorization
+    _validate_materialized_config_binding(authorization)
     expected_infra = f"k8s/{authorization.kubernetes_context}"
     if project and project != authorization.project:
         raise _refusal("submit-project-conflict", authorization.raw_context)
@@ -2206,6 +2303,7 @@ def validate_confidential_submit_bridge(
     if not isinstance(context, RobotwinSubmitContext):
         raise _refusal("submit-bridge-contract-mismatch")
     authorization = context.authorization
+    _validate_materialized_config_binding(authorization)
     if context.context_sha256 != authorization.context_sha256:
         raise _refusal("submit-bridge-context-mismatch", authorization.raw_context)
     expected_infra = f"k8s/{authorization.kubernetes_context}"
@@ -2331,10 +2429,53 @@ def write_owner_file(
             os.close(descriptor)
 
 
-def materialize_transport(value: str, directory: Path) -> MaterializedRobotwinContext:
-    """Decode a transport and write its exact bytes below one 0700 directory."""
+def _rollback_materialization(
+    directory_fd: int, created: Sequence[str]
+) -> MaterializationRecoveryContext:
+    """Remove every created file and durably record the rollback outcome."""
 
-    authorization = decode_transport(value)
+    outcomes: list[tuple[str, str]] = []
+    for name in reversed(created):
+        try:
+            os.unlink(name, dir_fd=directory_fd)
+        except FileNotFoundError:
+            outcomes.append((name, "missing"))
+        except OSError as failure:
+            errno = getattr(failure, "errno", None)
+            detail = type(failure).__name__
+            if errno is not None:
+                detail = f"{detail}:{errno}"
+            outcomes.append((name, f"error:{detail}"))
+        else:
+            outcomes.append((name, "removed"))
+    try:
+        os.fsync(directory_fd)
+    except OSError as failure:
+        errno = getattr(failure, "errno", None)
+        detail = type(failure).__name__
+        if errno is not None:
+            detail = f"{detail}:{errno}"
+        directory_fsync = f"error:{detail}"
+    else:
+        directory_fsync = "synced"
+    try:
+        residual_names = tuple(sorted(os.listdir(directory_fd)))
+    except OSError:
+        residual_names = tuple(
+            name for name, outcome in outcomes if outcome != "removed"
+        )
+    return MaterializationRecoveryContext(
+        cleanup_outcomes=tuple(outcomes),
+        residual_names=residual_names,
+        directory_fsync=directory_fsync,
+    )
+
+
+def _materialize_authorization(
+    authorization: RobotwinAuthorization, directory: Path
+) -> MaterializedRobotwinContext:
+    """Write an already independently verified authorization below one 0700 directory."""
+
     directory_fd: int | None = None
     created: list[str] = []
     try:
@@ -2375,8 +2516,8 @@ def materialize_transport(value: str, directory: Path) -> MaterializedRobotwinCo
     )
     try:
         for path, raw in payloads:
-            write_owner_file(path, raw, directory_fd=directory_fd)
             created.append(path.name)
+            write_owner_file(path, raw, directory_fd=directory_fd)
         os.fsync(directory_fd)
         return MaterializedRobotwinContext(
             context_path,
@@ -2385,12 +2526,15 @@ def materialize_transport(value: str, directory: Path) -> MaterializedRobotwinCo
             skypilot_path,
             authorization,
         )
-    except BaseException:
-        for name in reversed(created):
-            try:
-                os.unlink(name, dir_fd=directory_fd)
-            except OSError:
-                pass
+    except BaseException as failure:
+        recovery = _rollback_materialization(directory_fd, created)
+        setattr(failure, "recovery_context", recovery)
         raise
     finally:
         os.close(directory_fd)
+
+
+def materialize_transport(value: str, directory: Path) -> MaterializedRobotwinContext:
+    """Decode a transport and write its exact bytes below one 0700 directory."""
+
+    return _materialize_authorization(decode_transport(value), directory)

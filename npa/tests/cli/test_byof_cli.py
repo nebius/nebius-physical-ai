@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from dataclasses import replace
 import json
 import os
 import re
@@ -29,7 +30,6 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
     PUBLIC_CONTEXT_ENV,
     RUNTIME_LOCK_SHA256,
     TRANSPORT_CONTEXT_ENV,
-    decode_transport,
     encode_transport,
     load_runtime_authorization,
 )
@@ -226,7 +226,9 @@ def test_robotwin_equivalent_or_mutable_direct_cli_refuses_before_loading_runner
     assert "only through normal" in result.output
 
 
-def _robotwin_transport_fixture(tmp_path: Path) -> tuple[list[str], str]:
+def _robotwin_transport_fixture(
+    tmp_path: Path,
+) -> tuple[list[str], str, object]:
     workflow = yaml.safe_load(
         (
             Path(__file__).resolve().parents[3] / "workflows/testing/byof-robotwin.yaml"
@@ -282,6 +284,14 @@ def _robotwin_transport_fixture(tmp_path: Path) -> tuple[list[str], str]:
         encoding="utf-8",
     )
     context.chmod(0o600)
+    materialized_dir = tmp_path / "materialized-config"
+    materialized_dir.mkdir(mode=0o700)
+    materialized_kubeconfig = materialized_dir / "kubeconfig.yaml"
+    materialized_skypilot = materialized_dir / "skypilot.yaml"
+    materialized_kubeconfig.write_bytes(kubeconfig.read_bytes())
+    materialized_skypilot.write_bytes(skypilot.read_bytes())
+    materialized_kubeconfig.chmod(0o600)
+    materialized_skypilot.chmod(0o600)
     assertion = SimpleNamespace(
         issuer="https://customer-auth.example.invalid",
         customer_scope_id="robotwin-customer-canary",
@@ -296,7 +306,11 @@ def _robotwin_transport_fixture(tmp_path: Path) -> tuple[list[str], str]:
         nonce="nonce-canary-00000001",
     )
     authorization = load_runtime_authorization(
-        {PUBLIC_CONTEXT_ENV: str(context)},
+        {
+            PUBLIC_CONTEXT_ENV: str(context),
+            MATERIALIZED_KUBECONFIG_ENV: str(materialized_kubeconfig),
+            MATERIALIZED_SKYPILOT_CONFIG_ENV: str(materialized_skypilot),
+        },
         customer_authorization_boundary=SimpleNamespace(
             trusted_issuer="https://customer-auth.example.invalid",
             consume_once=lambda _request: assertion,
@@ -325,7 +339,7 @@ def _robotwin_transport_fixture(tmp_path: Path) -> tuple[list[str], str]:
         wait_timeout=config["wait_timeout"],
         poll_interval=config["poll_interval"],
     )
-    return argv, encode_transport(authorization)
+    return argv, encode_transport(authorization), authorization
 
 
 @pytest.mark.parametrize("failure", [None, RuntimeError, SystemExit])
@@ -335,7 +349,21 @@ def test_robotwin_worker_transport_materializes_owner_only_and_always_cleans_up(
     failure: type[BaseException] | None,
 ) -> None:
     runner_module = byof_cli._load_runner()
-    argv, transport = _robotwin_transport_fixture(tmp_path)
+    argv, transport, fixture_authorization = _robotwin_transport_fixture(tmp_path)
+    monkeypatch.setattr(
+        robotwin_preflight,
+        "decode_transport",
+        lambda _value: fixture_authorization,
+    )
+    monkeypatch.setattr(
+        robotwin_preflight,
+        "load_runtime_authorization",
+        lambda environ, **_kwargs: replace(
+            fixture_authorization,
+            kubeconfig_source=environ[MATERIALIZED_KUBECONFIG_ENV],
+            skypilot_config_source=environ[MATERIALIZED_SKYPILOT_CONFIG_ENV],
+        ),
+    )
     monkeypatch.delenv(PUBLIC_CONTEXT_ENV, raising=False)
     monkeypatch.setenv(TRANSPORT_CONTEXT_ENV, transport)
     materialized_paths: list[Path] = []
@@ -379,7 +407,21 @@ def test_robotwin_worker_materialization_never_mutates_process_environment(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     runner_module = byof_cli._load_runner()
-    argv, transport = _robotwin_transport_fixture(tmp_path)
+    argv, transport, fixture_authorization = _robotwin_transport_fixture(tmp_path)
+    monkeypatch.setattr(
+        robotwin_preflight,
+        "decode_transport",
+        lambda _value: fixture_authorization,
+    )
+    monkeypatch.setattr(
+        robotwin_preflight,
+        "load_runtime_authorization",
+        lambda environ, **_kwargs: replace(
+            fixture_authorization,
+            kubeconfig_source=environ[MATERIALIZED_KUBECONFIG_ENV],
+            skypilot_config_source=environ[MATERIALIZED_SKYPILOT_CONFIG_ENV],
+        ),
+    )
     monkeypatch.setenv(TRANSPORT_CONTEXT_ENV, transport)
     before = dict(os.environ)
 
@@ -404,7 +446,7 @@ def test_robotwin_worker_transport_failure_detaches_private_exception_graph(
     failure_boundary: str,
 ) -> None:
     runner_module = byof_cli._load_runner()
-    argv, transport = _robotwin_transport_fixture(tmp_path)
+    argv, transport, _authorization = _robotwin_transport_fixture(tmp_path)
     private_canary = "owner-only-worker-context-canary"
     private_digest = "b" * 64
 
@@ -443,7 +485,7 @@ def test_robotwin_worker_transport_failure_keeps_private_details_out_of_cli(
     failure_boundary: str,
     terminal_width: int,
 ) -> None:
-    argv, transport = _robotwin_transport_fixture(tmp_path)
+    argv, transport, _authorization = _robotwin_transport_fixture(tmp_path)
     private_canary = "owner-only-worker-cli-canary"
     private_digest = "c" * 64
 
@@ -485,7 +527,7 @@ def test_robotwin_caller_supplied_transport_cannot_activate_internal_runner(
     terminal_width: int,
 ) -> None:
     real_runner = byof_cli._load_runner()
-    argv, transport = _robotwin_transport_fixture(tmp_path)
+    argv, transport, _authorization = _robotwin_transport_fixture(tmp_path)
     observed: dict[str, object] = {}
 
     def run_authorized(received: list[str], *, authorization: object) -> int:
@@ -520,8 +562,7 @@ def test_robotwin_internal_cli_runner_signature_passes_only_validated_authorizat
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     runner_module = byof_cli._load_runner()
-    argv, transport = _robotwin_transport_fixture(tmp_path)
-    authorization = decode_transport(transport)
+    argv, transport, authorization = _robotwin_transport_fixture(tmp_path)
     observed: dict[str, object] = {}
     monkeypatch.setenv("UNBOUND_PRIVATE_OVERRIDE", "ambient-private-canary")
     monkeypatch.setattr(

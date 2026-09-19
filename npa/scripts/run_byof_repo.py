@@ -1501,6 +1501,16 @@ def _run_byof(
             sys.stdout.write(sanitized_stdout)
             if sanitized_stderr:
                 sys.stderr.write(sanitized_stderr)
+            if authorization is not None and run_proc.returncode != 0:
+                summary["run"] = {
+                    "status": "failed",
+                    "returncode": run_proc.returncode,
+                    "stdout": sanitized_stdout,
+                    "stderr": sanitized_stderr,
+                }
+                raise RuntimeError(
+                    f"authorized RoboTwin verifier failed with exit {run_proc.returncode}"
+                )
             parsed_run = _parse_last_json(sanitized_stdout) or {"status": "submitted"}
             summary["run"] = _redact_payload(parsed_run, effective_redactions)
             _postprocess_solution(args, postprocess_key, summary)

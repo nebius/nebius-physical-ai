@@ -66,16 +66,38 @@ def _robotwin_context(**updates: object) -> dict[str, object]:
     return payload
 
 
+def _authorized_stub(payload: dict[str, object]) -> SimpleNamespace:
+    return SimpleNamespace(
+        redactions=(),
+        raw_context=json.dumps(payload, sort_keys=True).encode(),
+        context_sha256="c" * 64,
+        project=payload["project"],
+        profile=payload["nebius_profile"],
+        kubeconfig=payload["kubeconfig"],
+        kubernetes_context=payload["kubernetes_context"],
+        skypilot_config_path=payload["skypilot_config_path"],
+        bootstrap_image=payload["bootstrap_image"],
+        bucket=payload["bucket"],
+        output_root=payload["output_root"],
+        run_id=payload["run_id"],
+    )
+
+
 def _install_robotwin_context(module, monkeypatch, tmp_path, **updates: object):
     from npa.orchestration.npa_workflow.robotwin_preflight import (
         CUSTOMER_TERMS,
         CUSTOMER_USE_SCOPE,
         MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV,
+        MATERIALIZED_KUBECONFIG_ENV,
+        MATERIALIZED_SKYPILOT_CONFIG_ENV,
         validate_context_bytes,
     )
 
     monkeypatch.setattr(module, "require_runtime_lock_complete", lambda value: value)
     payload = _robotwin_context(**updates)
+    materialized_dir = tmp_path / "materialized-config"
+    materialized_dir.mkdir(mode=0o700)
+    materialized_paths = {}
     for field, filename in (
         ("kubeconfig", "kubeconfig.yaml"),
         ("skypilot_config_path", "skypilot.yaml"),
@@ -95,6 +117,10 @@ def _install_robotwin_context(module, monkeypatch, tmp_path, **updates: object):
         path.write_text(content, encoding="utf-8")
         path.chmod(0o600)
         payload[field] = str(path)
+        materialized = materialized_dir / filename
+        materialized.write_text(content, encoding="utf-8")
+        materialized.chmod(0o600)
+        materialized_paths[field] = materialized
     context = tmp_path / "runtime-context.json"
     context.write_text(json.dumps(payload), encoding="utf-8")
     context.chmod(0o600)
@@ -136,6 +162,11 @@ def _install_robotwin_context(module, monkeypatch, tmp_path, **updates: object):
     receipt.chmod(0o600)
     monkeypatch.delenv(module.ROBOTWIN_CUSTOMER_ENTITLEMENT_ENV, raising=False)
     monkeypatch.setenv(MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV, str(receipt))
+    monkeypatch.setenv(MATERIALIZED_KUBECONFIG_ENV, str(materialized_paths["kubeconfig"]))
+    monkeypatch.setenv(
+        MATERIALIZED_SKYPILOT_CONFIG_ENV,
+        str(materialized_paths["skypilot_config_path"]),
+    )
     return payload
 
 
@@ -297,7 +328,12 @@ def test_robotwin_disabled_runtime_delivery_refuses_before_any_side_effect(
     )
 
     module = _load_module()
-    _install_robotwin_context(module, monkeypatch, tmp_path)
+    payload = _install_robotwin_context(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        module,
+        "load_runtime_authorization",
+        lambda: _authorized_stub(payload),
+    )
     monkeypatch.setattr(
         module, "require_runtime_lock_complete", require_runtime_lock_complete
     )
@@ -385,11 +421,19 @@ def test_robotwin_malformed_context_types_refuse_before_any_side_effect(
 def test_robotwin_missing_runtime_config_refuses_before_any_side_effect(
     monkeypatch, capsys, tmp_path, field: str
 ) -> None:
+    from npa.orchestration.npa_workflow.robotwin_preflight import (
+        MATERIALIZED_KUBECONFIG_ENV,
+        MATERIALIZED_SKYPILOT_CONFIG_ENV,
+    )
+
     module = _load_module()
-    payload = _install_robotwin_context(module, monkeypatch, tmp_path)
-    payload[field] = str(tmp_path / "missing-private-config")
-    context_path = Path(os.environ[module.ROBOTWIN_RUNTIME_CONTEXT_ENV])
-    context_path.write_text(json.dumps(payload), encoding="utf-8")
+    _install_robotwin_context(module, monkeypatch, tmp_path)
+    materialized_env = (
+        MATERIALIZED_KUBECONFIG_ENV
+        if field == "kubeconfig"
+        else MATERIALIZED_SKYPILOT_CONFIG_ENV
+    )
+    monkeypatch.setenv(materialized_env, str(tmp_path / "missing-private-config"))
     monkeypatch.setattr(
         module,
         "_run",
@@ -406,9 +450,19 @@ def test_robotwin_missing_runtime_config_refuses_before_any_side_effect(
 def test_robotwin_runtime_config_must_be_owner_only_before_any_side_effect(
     monkeypatch, capsys, tmp_path, field: str
 ) -> None:
+    from npa.orchestration.npa_workflow.robotwin_preflight import (
+        MATERIALIZED_KUBECONFIG_ENV,
+        MATERIALIZED_SKYPILOT_CONFIG_ENV,
+    )
+
     module = _load_module()
-    payload = _install_robotwin_context(module, monkeypatch, tmp_path)
-    Path(str(payload[field])).chmod(0o644)
+    _install_robotwin_context(module, monkeypatch, tmp_path)
+    materialized_env = (
+        MATERIALIZED_KUBECONFIG_ENV
+        if field == "kubeconfig"
+        else MATERIALIZED_SKYPILOT_CONFIG_ENV
+    )
+    Path(os.environ[materialized_env]).chmod(0o644)
     monkeypatch.setattr(
         module,
         "_run",
@@ -453,6 +507,11 @@ def test_robotwin_authorized_profile_is_environment_only(monkeypatch, tmp_path) 
     module = _load_module()
     payload = _install_robotwin_context(module, monkeypatch, tmp_path)
     monkeypatch.setattr(
+        module,
+        "load_runtime_authorization",
+        lambda: _authorized_stub(payload),
+    )
+    monkeypatch.setattr(
         module, "validate_repository_url", lambda *_args, **_kwargs: None
     )
     monkeypatch.setattr(
@@ -479,6 +538,57 @@ def test_robotwin_authorized_profile_is_environment_only(monkeypatch, tmp_path) 
     )
 
     assert _run_authorized_robotwin(module, _robotwin_args(module)) == 0
+
+
+def test_robotwin_authorized_verifier_failure_is_not_reported_success(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _load_module()
+    args = module._parse_args(_robotwin_args(module))
+    summary: dict[str, object] = {}
+    authorization = SimpleNamespace(redactions=(), bootstrap_image="private-image")
+    monkeypatch.setattr(module, "_required_postprocess_key", lambda *_a, **_k: None)
+    monkeypatch.setattr(module, "_scan_robotwin_image", lambda *_a, **_k: {
+        "report_sha256": "b" * 64,
+        "archives_scanned": 2,
+    })
+    monkeypatch.setattr(
+        module,
+        "_authorized_live_env",
+        lambda *_a, **_k: {"PATH": "/synthetic"},
+    )
+    monkeypatch.setattr(
+        module,
+        "_run_robotwin_container_verify",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 7, stdout='{"status":"failed"}\n', stderr="synthetic refusal\n"
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="authorized RoboTwin verifier failed"):
+        module._run_byof(
+            args,
+            authorization=authorization,
+            summary=summary,
+            source_secrets=None,
+            redactions=(),
+            docker_env={},
+            base_candidates=["unused"],
+            base_image="unused",
+            base_profile="prebuilt",
+            image="private-image",
+            registry="unused",
+            skip_build=True,
+            skip_push=True,
+        )
+
+    assert summary["run"] == {
+        "status": "failed",
+        "returncode": 7,
+        "stdout": '{"status":"failed"}\n',
+        "stderr": "synthetic refusal\n",
+    }
+    assert '"status": "ok"' not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("allocated_outer", [False, True])
@@ -714,7 +824,12 @@ def test_robotwin_image_scan_failure_precedes_live_runner(
     monkeypatch, capsys, tmp_path
 ) -> None:
     module = _load_module()
-    _install_robotwin_context(module, monkeypatch, tmp_path)
+    payload = _install_robotwin_context(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        module,
+        "load_runtime_authorization",
+        lambda: _authorized_stub(payload),
+    )
     monkeypatch.setattr(
         module, "validate_repository_url", lambda *_args, **_kwargs: None
     )
@@ -744,7 +859,12 @@ def test_robotwin_rejects_unscannable_build_modes_before_commands(
     monkeypatch, capsys, tmp_path
 ) -> None:
     module = _load_module()
-    _install_robotwin_context(module, monkeypatch, tmp_path)
+    payload = _install_robotwin_context(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        module,
+        "load_runtime_authorization",
+        lambda: _authorized_stub(payload),
+    )
     monkeypatch.setattr(
         module,
         "_run",
@@ -762,7 +882,12 @@ def test_robotwin_rejects_modified_public_smoke_contract_before_commands(
     monkeypatch, capsys, tmp_path
 ) -> None:
     module = _load_module()
-    _install_robotwin_context(module, monkeypatch, tmp_path)
+    payload = _install_robotwin_context(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        module,
+        "load_runtime_authorization",
+        lambda: _authorized_stub(payload),
+    )
     monkeypatch.setattr(
         module,
         "_run",

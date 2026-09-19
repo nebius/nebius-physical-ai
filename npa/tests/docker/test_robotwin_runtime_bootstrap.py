@@ -287,6 +287,63 @@ def test_capability_is_consumed_once_immediately_before_runtime_fetch(
     assert caught.value.__context__ is None
 
 
+def test_capability_write_failure_rolls_back_marker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    state_dir = tmp_path / "capabilities"
+    capability = json.loads(_environment()[runtime.AUTH_ENV])
+    original_write = runtime.os.write
+
+    def fail_marker_write(descriptor: int, payload: bytes) -> int:
+        if payload == b"consumed\n":
+            raise OSError("synthetic marker write failure")
+        return original_write(descriptor, payload)
+
+    monkeypatch.setattr(runtime.os, "write", fail_marker_write)
+    with pytest.raises(runtime.Refusal, match="capability-state-unavailable"):
+        runtime._consume_capability(capability, state_dir=state_dir)
+    assert list(state_dir.iterdir()) == []
+
+
+def test_capability_file_fsync_failure_rolls_back_marker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    state_dir = tmp_path / "capabilities"
+    capability = json.loads(_environment()[runtime.AUTH_ENV])
+    original_fsync = runtime.os.fsync
+
+    def fail_file_fsync(descriptor: int) -> None:
+        if stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise OSError("synthetic marker fsync failure")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(runtime.os, "fsync", fail_file_fsync)
+    with pytest.raises(runtime.Refusal, match="capability-state-unavailable"):
+        runtime._consume_capability(capability, state_dir=state_dir)
+    assert list(state_dir.iterdir()) == []
+
+
+def test_capability_directory_fsync_failure_rolls_back_marker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    state_dir = tmp_path / "capabilities"
+    capability = json.loads(_environment()[runtime.AUTH_ENV])
+    original_fsync = runtime.os.fsync
+    calls = 0
+
+    def fail_directory_commit(descriptor: int) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2 and stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            raise OSError("synthetic directory fsync failure")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(runtime.os, "fsync", fail_directory_commit)
+    with pytest.raises(runtime.Refusal, match="capability-state-unavailable"):
+        runtime._consume_capability(capability, state_dir=state_dir)
+    assert list(state_dir.iterdir()) == []
+
+
 def test_valid_context_reaches_only_the_technical_delivery_refusal(
     tmp_path: Path,
 ) -> None:

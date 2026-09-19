@@ -362,6 +362,17 @@ def _robotwin_bridge_fixture(
         sort_keys=False,
     ).encode()
     skypilot = (f"kubernetes:\n  allowed_contexts: [{context_name}]\n").encode()
+    materialized_dir = tmp_path / "materialized-config"
+    materialized_dir.mkdir(mode=0o700)
+    materialized_kubeconfig = materialized_dir / "kubeconfig.yaml"
+    materialized_skypilot = materialized_dir / "skypilot.yaml"
+    materialized_kubeconfig.write_bytes(kubeconfig)
+    materialized_skypilot.write_bytes(skypilot)
+    materialized_kubeconfig.chmod(0o600)
+    materialized_skypilot.chmod(0o600)
+    payload["kubeconfig"] = str(materialized_kubeconfig)
+    payload["skypilot_config_path"] = str(materialized_skypilot)
+    raw = json.dumps(payload, sort_keys=True).encode()
     authorization = validate_context_bytes(
         raw,
         customer_authorization_boundary=SimpleNamespace(

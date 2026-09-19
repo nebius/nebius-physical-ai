@@ -26,6 +26,8 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
     CUSTOMER_ENTITLEMENT_ENV as ROBOTWIN_ENTITLEMENT_ENV,
     CUSTOMER_TERMS,
     CUSTOMER_USE_SCOPE,
+    MATERIALIZED_KUBECONFIG_ENV,
+    MATERIALIZED_SKYPILOT_CONFIG_ENV,
     PUBLIC_CONTEXT_ENV as ROBOTWIN_CONTEXT_ENV,
     RUNTIME_LOCK_SHA256,
     TRANSPORT_CONTEXT_ENV as ROBOTWIN_TRANSPORT_ENV,
@@ -149,6 +151,14 @@ def _install_robotwin_submit_context(
     )
     for path in (kubeconfig, skypilot):
         path.chmod(0o600)
+    materialized_dir = tmp_path / "materialized-config"
+    materialized_dir.mkdir(mode=0o700)
+    materialized_kubeconfig = materialized_dir / "kubeconfig.yaml"
+    materialized_skypilot = materialized_dir / "skypilot.yaml"
+    materialized_kubeconfig.write_bytes(kubeconfig.read_bytes())
+    materialized_skypilot.write_bytes(skypilot.read_bytes())
+    materialized_kubeconfig.chmod(0o600)
+    materialized_skypilot.chmod(0o600)
     payload: dict[str, object] = {
         "solution": "robotwin",
         "ownership_provenance": "manager-issued",
@@ -177,6 +187,8 @@ def _install_robotwin_submit_context(
     context.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
     context.chmod(0o600)
     monkeypatch.setenv(ROBOTWIN_CONTEXT_ENV, str(context))
+    monkeypatch.setenv(MATERIALIZED_KUBECONFIG_ENV, str(materialized_kubeconfig))
+    monkeypatch.setenv(MATERIALIZED_SKYPILOT_CONFIG_ENV, str(materialized_skypilot))
     unsigned_entitlement = tmp_path / "unsigned-customer-entitlement.json"
     unsigned_entitlement.write_text(
         json.dumps(
@@ -244,6 +256,10 @@ def test_robotwin_submit_refuses_before_every_external_boundary_even_when_skippe
     tmp_path: Path,
     malformed: bool,
 ) -> None:
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.robotwin_preflight.RUNTIME_LOCK_STATUS",
+        "complete",
+    )
     monkeypatch.delenv(ROBOTWIN_CONTEXT_ENV, raising=False)
     args = [
         "--secret-env",

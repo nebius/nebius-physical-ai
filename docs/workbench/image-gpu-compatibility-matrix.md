@@ -28,7 +28,7 @@ Machine-readable source of record: [`npa/docker/workbench/blackwell-dc-images.js
 
 H100 and H200 are both `sm_90`, so they share a column below.
 
-Also offered: `gpu-gb300` (Grace-Blackwell Ultra). Its GPU is the same `sm_103`, but the host is aarch64, and the x86_64 workbench images do not run there. All 34 accepted release references in the [public container catalog](container-image-catalog.md) resolved anonymously to their recorded digests on 2026-09-17. Twenty-three resolve directly to an image manifest and 11 to an OCI index; every runtime variant is `linux/amd64`. The aarch64 platform is therefore uncovered across the published set rather than per image.
+Also offered: `gpu-gb300` (Grace-Blackwell Ultra). Its GPU is the same `sm_103`, but the host is aarch64, and the x86_64 workbench images do not run there. The 34 current release tags in the [public container catalog](container-image-catalog.md) resolved anonymously to their recorded digests on 2026-09-17; the catalog's accepted-release manifest contains a separate 37-reference population. Twenty-three of the audited current tags resolve directly to an image manifest and 11 to an OCI index; every runtime variant is `linux/amd64`. The aarch64 platform is therefore uncovered across the published set rather than per image.
 
 One column below carries no recorded capability run: public-image L40S cells are supported, blocked, not routed, unverified, or CPU-only rather than verified or historical evidence. L40S is the one architecture besides RTX PRO 6000 that can render. The recorded capability runs are on H100, H200, RTX PRO 6000, B200, and B300.
 

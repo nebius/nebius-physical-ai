@@ -167,16 +167,38 @@ def _consume_capability(
         state_dir
         / hashlib.sha256(_text(capability, "capability_id").encode("utf-8")).hexdigest()
     )
+    directory_descriptor = -1
     descriptor = -1
+    created = False
+    committed = False
     failure = ""
     try:
+        directory_descriptor = os.open(
+            state_dir,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+        opened = os.fstat(directory_descriptor)
+        if (opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino):
+            _refuse("capability-state-changed")
         descriptor = os.open(
-            marker,
+            marker.name,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
             0o600,
+            dir_fd=directory_descriptor,
         )
-        os.write(descriptor, b"consumed\n")
+        created = True
+        payload = b"consumed\n"
+        offset = 0
+        while offset < len(payload):
+            written = os.write(descriptor, payload[offset:])
+            if written <= 0:
+                raise OSError("capability marker short write")
+            offset += written
         os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        os.fsync(directory_descriptor)
+        committed = True
     except FileExistsError:
         failure = "capability-replayed"
     except OSError:
@@ -184,6 +206,14 @@ def _consume_capability(
     finally:
         if descriptor >= 0:
             os.close(descriptor)
+        if failure and created and not committed and directory_descriptor >= 0:
+            try:
+                os.unlink(marker.name, dir_fd=directory_descriptor)
+                os.fsync(directory_descriptor)
+            except OSError:
+                pass
+        if directory_descriptor >= 0:
+            os.close(directory_descriptor)
     if failure:
         _refuse(failure)
 
