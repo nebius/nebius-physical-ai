@@ -298,6 +298,7 @@ def _docker_save(
     config_name: str | None = None,
     oci_config_path: bool = False,
     configured_diff_ids: list[str] | None = None,
+    manifest_layers: list[str] | None = None,
     structural_gname: str = "",
     base_symlinks: dict[str, str] | None = None,
     base_hardlinks: dict[str, str] | None = None,
@@ -322,9 +323,11 @@ def _docker_save(
         suffix=layer_suffix,
         gname=structural_gname,
     )
+    layer_bytes = {"base/layer.tar": base, "app/layer.tar": app}
+    manifest_layers = manifest_layers or list(layer_bytes)
     diff_ids = [
-        "sha256:" + hashlib.sha256(base).hexdigest(),
-        "sha256:" + hashlib.sha256(app).hexdigest(),
+        "sha256:" + hashlib.sha256(layer_bytes[name]).hexdigest()
+        for name in manifest_layers
     ]
     config = json.dumps(
         {
@@ -348,7 +351,7 @@ def _docker_save(
             {
                 "Config": actual_name,
                 "RepoTags": ["neutral:test"],
-                "Layers": ["base/layer.tar", "app/layer.tar"],
+                "Layers": manifest_layers,
             }
         ],
         separators=(",", ":"),
@@ -357,8 +360,10 @@ def _docker_save(
         {
             "manifest.json": manifest,
             actual_name: config,
-            "base/layer.tar": base,
-            "app/layer.tar": app,
+            **{
+                name: layer_bytes[name]
+                for name in dict.fromkeys(manifest_layers)
+            },
             **(outer_extra_files or {}),
         },
         directories=outer_directories,
@@ -1095,6 +1100,24 @@ def test_docker_save_accepts_only_hash_bound_config_path_forms(
     assert result["config_sha256"] == config_digest
 
 
+def test_docker_save_accepts_repeated_ordered_layer_reference(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    image = tmp_path / "repeated-layer-reference.tar"
+    config_digest, diff_ids = _docker_save(
+        image,
+        _required(),
+        manifest_layers=["app/layer.tar", "app/layer.tar"],
+    )
+
+    result = SCAN.scan(image)
+
+    assert result["status"] == "passed"
+    assert result["config_sha256"] == config_digest
+    assert result["ordered_layer_diff_ids"] == diff_ids
+    assert result["layer_count"] == 2
+
+
 @pytest.mark.parametrize(
     "config_name",
     [
@@ -1140,6 +1163,17 @@ def test_docker_save_refuses_duplicate_physical_config_member(
     image = tmp_path / "duplicate-config.tar"
     config_digest, _diff_ids = _docker_save(image, _required())
     _duplicate_outer_member(image, f"{config_digest}.json")
+
+    with pytest.raises(ValueError, match="duplicate normalized member paths"):
+        SCAN.scan(image)
+
+
+def test_docker_save_refuses_duplicate_physical_layer_member(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    image = tmp_path / "duplicate-layer.tar"
+    _docker_save(image, _required())
+    _duplicate_outer_member(image, "base/layer.tar")
 
     with pytest.raises(ValueError, match="duplicate normalized member paths"):
         SCAN.scan(image)

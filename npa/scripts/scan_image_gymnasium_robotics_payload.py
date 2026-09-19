@@ -2007,8 +2007,6 @@ def scan(
         if len(layer_names) > MAX_ORDERED_LAYERS:
             raise ValueError("ordered layer count exceeds scan bound")
         layers = [_safe(str(name)) for name in layer_names]
-        if len(layers) != len(set(layers)):
-            raise ValueError("Docker save repeats an ordered layer")
         allowed_outer = {"manifest.json", config_name, *layers, "repositories"}
         allowed_directories = {
             str(parent)
