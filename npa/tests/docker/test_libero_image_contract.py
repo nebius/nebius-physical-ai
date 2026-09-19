@@ -115,6 +115,9 @@ def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
     assert "base|dependency|direct)" in text
     assert "pip install" not in text
     assert "runtime-bootstrap.py ensure" not in text
+    assert "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_SHA256" in text
+    assert "org.nebius.npa.output-storage-authorization-public-key-sha256" in text
+    assert "sha256sum /tmp/npa-libero-output-storage-authorization-public-key.raw" in text
     assert "npa_libero_customer_authorization_public_key_b64" not in text
     assert "customer-authorization-public-key.b64" not in text
     assert (
@@ -477,6 +480,11 @@ def test_build_script_requires_exact_sha_tag_and_buildx_attestations() -> None:
     assert '"oci-archive:$oci_archive" "docker-daemon:$image"' in text
     assert "containerimage.config.digest" in text
     assert '--build-arg "SOURCE_DATE_EPOCH=$source_epoch"' in text
+    assert "output_storage_authorization_public_key_sha256" in text
+    assert (
+        '--build-arg "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_SHA256='
+        '$output_storage_authorization_public_key_sha256"'
+    ) in text
     assert "docker push" not in text
     assert "docker history" not in text
 

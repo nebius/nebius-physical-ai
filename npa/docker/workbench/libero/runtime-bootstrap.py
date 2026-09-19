@@ -1985,6 +1985,62 @@ def _run(
             continue
     if child.returncode:
         raise subprocess.CalledProcessError(child.returncode, command)
+    _ensure_deadline(deadline)
+
+
+def _run_capture(
+    command: list[str],
+    *,
+    cwd: Path | None = None,
+    environment: dict[str, str] | None = None,
+    deadline: datetime | None = None,
+) -> str:
+    """Run one fetch command while bounding captured output by authorization."""
+
+    selected_environment = dict(os.environ if environment is None else environment)
+    selected_environment["GIT_TERMINAL_PROMPT"] = "0"
+    _ensure_deadline(deadline)
+    if deadline is None:
+        return subprocess.check_output(
+            command,
+            cwd=cwd,
+            env=selected_environment,
+            text=True,
+        )
+    child = _Popen(
+        command,
+        cwd=cwd,
+        env=selected_environment,
+        stdout=subprocess.PIPE,
+        stderr=sys.stderr,
+        start_new_session=True,
+        text=True,
+    )
+    while child.poll() is None:
+        remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
+        if remaining <= 0:
+            try:
+                os.killpg(child.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                child.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                child.wait(timeout=5.0)
+            raise CustomerAcceptanceRequired("authorization_expired_or_replayable")
+        try:
+            child.wait(timeout=min(remaining, 1.0))
+        except subprocess.TimeoutExpired:
+            continue
+    stdout, _ = child.communicate()
+    _ensure_deadline(deadline)
+    if child.returncode:
+        raise subprocess.CalledProcessError(child.returncode, command, output=stdout)
+    return stdout
 
 
 def _runtime_materialization_environment(root: Path) -> dict[str, str]:
@@ -2008,25 +2064,38 @@ def _runtime_materialization_environment(root: Path) -> dict[str, str]:
     return environment
 
 
-def _fetch_source(root: Path, source: dict[str, Any]) -> None:
+def _fetch_source(
+    root: Path,
+    source: dict[str, Any],
+    *,
+    deadline: datetime | None = None,
+) -> None:
     destination = root / "source"
     destination.mkdir(mode=0o700)
     environment = _runtime_materialization_environment(root)
-    _run(["/usr/bin/git", "init", "--quiet"], cwd=destination, environment=environment)
+    _run(
+        ["/usr/bin/git", "init", "--quiet"],
+        cwd=destination,
+        environment=environment,
+        deadline=deadline,
+    )
     _run(
         ["/usr/bin/git", "remote", "add", "origin", source["repository"]],
         cwd=destination,
         environment=environment,
+        deadline=deadline,
     )
     _run(
         ["/usr/bin/git", "config", "remote.origin.promisor", "true"],
         cwd=destination,
         environment=environment,
+        deadline=deadline,
     )
     _run(
         ["/usr/bin/git", "config", "remote.origin.partialclonefilter", "blob:none"],
         cwd=destination,
         environment=environment,
+        deadline=deadline,
     )
     _run(
         [
@@ -2040,18 +2109,19 @@ def _fetch_source(root: Path, source: dict[str, Any]) -> None:
         ],
         cwd=destination,
         environment=environment,
+        deadline=deadline,
     )
-    fetched = subprocess.check_output(
+    fetched = _run_capture(
         ["/usr/bin/git", "rev-parse", "FETCH_HEAD^{commit}"],
         cwd=destination,
-        env=environment,
-        text=True,
+        environment=environment,
+        deadline=deadline,
     ).strip()
-    tree = subprocess.check_output(
+    tree = _run_capture(
         ["/usr/bin/git", "rev-parse", "FETCH_HEAD^{tree}"],
         cwd=destination,
-        env=environment,
-        text=True,
+        environment=environment,
+        deadline=deadline,
     ).strip()
     if fetched != source["revision"] or tree != source["tree"]:
         raise BootstrapRefusal(
@@ -2061,6 +2131,7 @@ def _fetch_source(root: Path, source: dict[str, Any]) -> None:
         ["/usr/bin/git", "sparse-checkout", "init", "--no-cone"],
         cwd=destination,
         environment=environment,
+        deadline=deadline,
     )
     _run(
         [
@@ -2073,11 +2144,13 @@ def _fetch_source(root: Path, source: dict[str, Any]) -> None:
         ],
         cwd=destination,
         environment=environment,
+        deadline=deadline,
     )
     _run(
         ["/usr/bin/git", "checkout", "--quiet", "--detach", fetched],
         cwd=destination,
         environment=environment,
+        deadline=deadline,
     )
     if _sha256(destination / source["license_file"]) != source["license_sha256"]:
         raise BootstrapRefusal(
@@ -2851,7 +2924,11 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
                 renamed_identity: tuple[int, int] | None = None
                 try:
                     revalidate_authorization()
-                    _fetch_source(partial, manifest["source"])
+                    _fetch_source(
+                        partial,
+                        manifest["source"],
+                        deadline=authorization_expires_at,
+                    )
                     _validate_task_inputs(partial, manifest)
                     revalidate_authorization()
                     _install_runtime(

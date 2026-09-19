@@ -785,7 +785,10 @@ def test_s3_object_url_refuses_noncanonical_segments(object_key: str) -> None:
 def _install_fake_materializers(
     monkeypatch, module, fixture: dict[str, object], *, python_exit: int = 0
 ) -> None:
-    def fetch_source(root: Path, source: dict[str, object]) -> None:
+    def fetch_source(
+        root: Path, source: dict[str, object], *, deadline=None
+    ) -> None:
+        del deadline
         source_root = root / "source"
         files = {
             str(source["license_file"]): fixture["license"],
@@ -1539,6 +1542,57 @@ def test_source_fetch_uses_only_the_credential_free_materialization_environment(
         environment["HOME"] == str(tmp_path / "runtime")
         for environment in subprocess_environments
     )
+
+
+def test_source_fetch_propagates_authorization_deadline_to_every_subprocess(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    license_bytes = b"MIT fixture\n"
+    source = {
+        "repository": "https://example.invalid/LIBERO.git",
+        "revision": "a" * 40,
+        "tree": "b" * 40,
+        "sparse_paths": ["LICENSE"],
+        "license_file": "LICENSE",
+        "license_sha256": _sha(license_bytes),
+    }
+    deadline = datetime.now(timezone.utc) + timedelta(minutes=5)
+    runs: list[datetime | None] = []
+    captures: list[datetime | None] = []
+    (tmp_path / "runtime").mkdir()
+
+    def fake_run(command: list[str], **kwargs) -> None:
+        runs.append(kwargs["deadline"])
+        if command[1:3] == ["init", "--quiet"]:
+            destination = kwargs["cwd"]
+            (destination / ".git").mkdir()
+            (destination / "LICENSE").write_bytes(license_bytes)
+
+    def fake_capture(command: list[str], **kwargs) -> str:
+        captures.append(kwargs["deadline"])
+        return source["revision"] if "^{commit}" in command[-1] else source["tree"]
+
+    monkeypatch.setattr(module, "_run", fake_run)
+    monkeypatch.setattr(module, "_run_capture", fake_capture)
+
+    module._fetch_source(tmp_path / "runtime", source, deadline=deadline)
+
+    assert len(runs) == 8
+    assert len(captures) == 2
+    assert runs == [deadline] * 8
+    assert captures == [deadline] * 2
+
+
+def test_source_fetch_capture_terminates_the_process_group_at_expiry() -> None:
+    module = _load_module()
+    started = datetime.now(timezone.utc)
+    with pytest.raises(module.CustomerAcceptanceRequired, match="expired or replayable"):
+        module._run_capture(
+            ["/bin/sh", "-ceu", "sleep 10"],
+            deadline=started + timedelta(milliseconds=50),
+        )
+    assert (datetime.now(timezone.utc) - started).total_seconds() < 2
 
 
 def test_authorized_materialization_is_atomic_and_warm_reusable(
