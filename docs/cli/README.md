@@ -41,6 +41,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa workbench ltx2](ltx2.md)
 - [npa workbench mjlab](mjlab.md)
 - [npa network](network.md)
+- [npa workbench newton](newton.md)
 - [npa cluster node-group](node-group.md)
 - [npa workbench nurec](nurec.md)
 - [npa workbench openarm](openarm.md)
