@@ -3287,6 +3287,69 @@ def test_libero_launch_binding_rejects_stale_historical_id(monkeypatch) -> None:
     )
 
 
+def test_libero_launch_binding_rejects_preexisting_succeeded_id_without_correlation(
+    monkeypatch,
+) -> None:
+    row = {
+        "job_id": 125,
+        "job_name": "exact-run",
+        "status": "SUCCEEDED",
+    }
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=""
+        ),
+    )
+
+    verified, plausible, error = workflow_module._libero_launch_binding_candidates(
+        "125",
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+    )
+
+    assert verified == ""
+    assert plausible == ("125",)
+    assert "current-attempt correlation" in error
+
+
+def test_libero_launch_binding_accepts_succeeded_id_after_launch_started(
+    monkeypatch,
+) -> None:
+    row = {
+        "job_id": 125,
+        "job_name": "exact-run",
+        "status": "SUCCEEDED",
+        "submitted_at": 101.0,
+        "metadata": {"executable_profile_sha256": "a" * 64},
+    }
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=""
+        ),
+    )
+
+    verified, plausible, error = workflow_module._libero_launch_binding_candidates(
+        "125",
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        launch_started_at=100.0,
+    )
+
+    assert verified == "125"
+    assert plausible == ()
+    assert error == ""
+
+
 def test_libero_success_without_parseable_id_persists_indeterminate_marker(
     monkeypatch,
 ) -> None:

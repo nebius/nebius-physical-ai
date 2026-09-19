@@ -1258,6 +1258,7 @@ def submit_workflow(
                     raise _SkyPilotLaunchCommandError(
                         "validated SkyPilot submission artifacts changed before launch"
                     )
+                launch_started_at = time.time()
                 launch_result, diagnoses = _run_launch(
                     cmd,
                     env=env,
@@ -1301,6 +1302,7 @@ def submit_workflow(
                     sky_executable=sky_executable,
                     cwd=stable_cwd,
                     expected_profile_sha256=libero_executable_profile_sha256(docs),
+                    launch_started_at=launch_started_at,
                 )
                 if verified_job_id:
                     bound_libero_job_id = verified_job_id
@@ -1938,6 +1940,22 @@ def _libero_managed_job_group_status(
     return statuses[-1] if statuses else "UNKNOWN"
 
 
+def _managed_job_submission_time(row: Mapping[str, Any]) -> float | None:
+    """Return a numeric provider submission time when the queue exposes one."""
+
+    for key in ("submitted_at", "created_at", "launch_started_at"):
+        value = row.get(key)
+        if isinstance(value, bool):
+            continue
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            continue
+        if parsed >= 0:
+            return parsed
+    return None
+
+
 def _reconcile_managed_job_env(
     job_name: str,
     *,
@@ -2142,6 +2160,7 @@ def _libero_launch_binding_candidates(
     sky_executable: str,
     cwd: str | None,
     expected_profile_sha256: str,
+    launch_started_at: float | None = None,
 ) -> tuple[str, tuple[str, ...], str]:
     """Resolve launch output only when one viable row is attributable to it.
 
@@ -2211,12 +2230,27 @@ def _libero_launch_binding_candidates(
         )
     )
     candidate_rows = viable_groups.get(parsed_id, ())
+    terminal_success = candidate_rows and all(
+        str(row.get("status") or "UNKNOWN").upper()
+        in {"SUCCEEDED", "SUCCESS", "COMPLETED", "DONE"}
+        for row in candidate_rows
+    )
+    current_attempt = (
+        not terminal_success
+        or launch_started_at is not None
+        and any(
+            _managed_job_submission_time(row) is not None
+            and _managed_job_submission_time(row) >= launch_started_at
+            for row in candidate_rows
+        )
+    )
     if (
         parsed_id
         and candidate_ids == (parsed_id,)
         and candidate_rows
         and re.fullmatch(r"[0-9a-f]{64}", expected_profile_sha256)
         and not profile_conflicts
+        and current_attempt
     ):
         return parsed_id, (), ""
 
@@ -2242,6 +2276,12 @@ def _libero_launch_binding_candidates(
         error = (
             "LIBERO launch lacks the locally preflighted executable profile digest; "
             "preserving indeterminate state and refusing retry"
+        )
+    elif terminal_success and not current_attempt:
+        error = (
+            "LIBERO launch returned a pre-existing terminal job ID without "
+            "authoritative current-attempt correlation; preserving indeterminate "
+            "state and refusing adoption"
         )
     elif profile_conflicts:
         error = (
