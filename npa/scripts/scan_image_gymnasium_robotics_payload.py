@@ -1330,11 +1330,12 @@ def _layers_from_bytes(
                     continue
                 allowed_system_wheel = path in EXPECTED_SYSTEM_WHEEL_FILES
                 if (
-                    (
-                        FORBIDDEN_PATH.search(path)
-                        and not allowed_system_wheel
-                        and not item.isdir()
-                        and not (path in ALLOWED_EMPTY_BASE_PATHS and item.size == 0)
+                    FORBIDDEN_PATH.search(path)
+                    and not allowed_system_wheel
+                    and not (
+                        item.isdir()
+                        and item.size == 0
+                        and path in ALLOWED_EMPTY_BASE_PATHS
                     )
                     or (UPSTREAM_TREE_PATH.search(path) and not item.isdir())
                 ):

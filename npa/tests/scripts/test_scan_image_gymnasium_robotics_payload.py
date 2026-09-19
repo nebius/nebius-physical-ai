@@ -1449,6 +1449,31 @@ def test_forbidden_payload_or_state_path_refuses(
         SCAN.scan(image)
 
 
+def test_forbidden_layer_directory_refuses_even_when_empty(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    image = tmp_path / "forbidden-directory.tar"
+    _docker_save(
+        image,
+        _required(),
+        layer_directories={"workspace/.cache": b""},
+    )
+    with pytest.raises(ValueError, match="forbidden image path"):
+        SCAN.scan(image)
+
+
+def test_exact_empty_apt_base_directory_is_allowed(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    image = tmp_path / "empty-apt-directory.tar"
+    _docker_save(
+        image,
+        _required(),
+        layer_directories={"var/cache/apt/archives": b""},
+    )
+    assert SCAN.scan(image)["status"] == "passed"
+
+
 def test_only_exact_locked_system_bootstrap_wheel_path_and_bytes_are_allowed(
     tmp_path: Path,
     structural_scan: None,
