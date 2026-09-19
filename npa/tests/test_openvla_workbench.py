@@ -110,7 +110,7 @@ def test_eval_is_plan_only_even_when_not_dry_run(monkeypatch, capsys) -> None:
     cfg = pipe.EvalConfig(
         checkpoint="runs/openvla-oft", dataset_uri="s3://bucket/eval", dry_run=False
     )
-    assert pipe.eval(cfg) == 0
+    assert pipe.evaluate(cfg) == 0
     out = capsys.readouterr().out
     assert "stub" in out and "rollout" in out
 

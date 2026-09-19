@@ -116,7 +116,7 @@ def serve_cmd(
         "--checkpoint",
         help="OpenVLA checkpoint: HuggingFace Hub id or local run dir.",
     ),
-    host: str = typer.Option("0.0.0.0", "--host", help="Host IP address."),
+    host: str = typer.Option("127.0.0.1", "--host", help="Host IP address."),
     port: int = typer.Option(8000, "--port", help="Host port."),
     dry_run: bool = typer.Option(
         False,

@@ -154,6 +154,9 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.fiftyone.launch_app` | FiftyOne review hook | `config.lance_uri` | review session | yes |
 | `workbench.fiftyone.curate_augmented` | `npa workbench fiftyone curate-augmented` | `config.augment_uri`, `config.curator_report_uri` | `config.curation_report_uri` (real FiftyOne Brain keep/drop report) | no |
 | `workbench.fiftyone.review_augmented` | `npa workbench fiftyone review-augmented` | canonical run + quality disposition | portable real FiftyOneDataset for every accepted/rejected terminal candidate, with non-promoting rejected fields | no |
+| `workbench.openvla.train` | `python3 -m npa.workflows.byof.openvla_pipeline train` | `config.model_id`, `config.dataset_uri`, `config.training_uri` | validated config plus an upstream training plan (training executes via OpenVLA-OFT, not yet wired) | yes (plan-only: validates config, emits upstream argv plan, then raises; training not implemented) |
+| `workbench.openvla.serve` | `python3 -m npa.workflows.byof.openvla_pipeline serve` | `config.trained_checkpoint_uri` | validated config plus an upstream serve plan (serving not yet wired) | yes (plan-only: validates config, emits upstream argv plan, then raises; serving not implemented) |
+| `workbench.openvla.eval` | `python3 -m npa.workflows.byof.openvla_pipeline eval` | `config.trained_checkpoint_uri`, `config.dataset_uri`, `config.evaluation_uri` | validated config plus an upstream eval plan (rollout execution not implemented) | yes (plan-only: validates config, emits upstream argv plan, then raises; evaluation not implemented) |
 
 Creative mashup example: `tokenfactory-cosmos-gate.yaml` (reason → augment → VLM gate loop).
 

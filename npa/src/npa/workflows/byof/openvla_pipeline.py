@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import os
 import subprocess
 import sys
@@ -51,17 +52,26 @@ def _require_non_empty(value: str, name: str) -> str:
     return cleaned
 
 
+_HF_REPO_ID = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+
+
 def check_model_accessible(
     model_id: str = DEFAULT_MODEL_ID, *, timeout: float = 15.0
 ) -> bool:
     """Return True when the HuggingFace model repo resolves over the public API."""
-    _require_non_empty(model_id, "model_id")
-    url = f"https://huggingface.co/api/models/{model_id}"
+    cleaned = _require_non_empty(model_id, "model_id")
+    if not _HF_REPO_ID.match(cleaned):
+        raise OpenVLAPipelineError(
+            f"model_id {cleaned!r} is not a valid HuggingFace repo id (expected owner/name)"
+        )
+    url = f"https://huggingface.co/api/models/{cleaned}"
     request = urllib.request.Request(
         url, headers={"User-Agent": "npa-openvla-pipeline"}
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        # URL is confined to the HuggingFace API host: the repo id is validated
+        # against _HF_REPO_ID above so it cannot alter the scheme or host.
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
             if response.status != 200:
                 return False
             payload = json.loads(response.read().decode("utf-8"))
@@ -148,7 +158,7 @@ class ServeConfig:
     """OpenVLA checkpoint serving configuration."""
 
     checkpoint: str = DEFAULT_MODEL_ID
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 8000
     dry_run: bool = True
     openvla_checkout: str = ""
@@ -241,7 +251,7 @@ def serve(cfg: ServeConfig) -> int:
     return _run(argv)
 
 
-def eval(cfg: EvalConfig) -> int:
+def evaluate(cfg: EvalConfig) -> int:
     """Evaluate a checkpoint (or print the plan in dry-run mode)."""
     plan = cfg.plan()
     print("[openvla] eval plan")
@@ -282,7 +292,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     serve_p = commands.add_parser("serve", help="Serve a checkpoint over HTTP.")
     serve_p.add_argument("--checkpoint", default=DEFAULT_MODEL_ID)
-    serve_p.add_argument("--host", default="0.0.0.0")
+    serve_p.add_argument("--host", default="127.0.0.1")
     serve_p.add_argument("--port", type=int, default=8000)
     serve_p.add_argument("--openvla-checkout", default="")
     serve_p.add_argument("--dry-run/--no-dry-run", dest="dry_run", default=True)
@@ -333,7 +343,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         )
     if args.command == "eval":
-        return eval(
+        return evaluate(
             EvalConfig(
                 checkpoint=args.checkpoint,
                 dataset_uri=args.dataset_uri,
