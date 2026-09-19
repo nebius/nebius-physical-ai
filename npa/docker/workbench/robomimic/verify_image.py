@@ -2233,6 +2233,20 @@ def _runtime_fetch_denylist() -> tuple[re.Pattern[str], str]:
     return pattern, source
 
 
+def _runtime_fetch_site_packages(value: Any) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or "\\" in value
+        or PurePosixPath(value).is_absolute()
+        or PurePosixPath(value).as_posix() != value
+        or any(part in {"", ".", ".."} for part in PurePosixPath(value).parts)
+        or not value.startswith("payload/")
+    ):
+        raise VerificationError("runtime fetch site-packages path is unsafe")
+    return value
+
+
 def _runtime_fetch_contract(inventory: dict, artifacts: dict) -> tuple[str, str, str]:
     """Validate the runtime input and require credentials only for vendor origins."""
 
@@ -2256,17 +2270,7 @@ def _runtime_fetch_contract(inventory: dict, artifacts: dict) -> tuple[str, str,
         credential_required = True
     if credential_required and not credential:
         raise VerificationError("customer runtime credential is absent")
-    site_packages = fetch["site_packages"]
-    if (
-        not isinstance(site_packages, str)
-        or not site_packages
-        or "\\" in site_packages
-        or PurePosixPath(site_packages).is_absolute()
-        or PurePosixPath(site_packages).as_posix() != site_packages
-        or any(part in {"", ".", ".."} for part in PurePosixPath(site_packages).parts)
-        or not site_packages.startswith("payload/")
-    ):
-        raise VerificationError("runtime fetch site-packages path is unsafe")
+    site_packages = _runtime_fetch_site_packages(fetch["site_packages"])
     return credential_env, credential, site_packages
 
 
@@ -2434,7 +2438,7 @@ def _fetched_distribution_identity(record_path: Path, artifacts: dict) -> str:
     return name
 
 
-def _verify_fetched_record_rows(stage: Path, record_path: Path) -> None:
+def _verify_fetched_record_rows(stage: Path, record_path: Path) -> set[str]:
     with record_path.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.reader(handle))
     if not rows:
@@ -2460,6 +2464,7 @@ def _verify_fetched_record_rows(stage: Path, record_path: Path) -> None:
             raw
         ).hexdigest() or size_value != str(len(raw)):
             raise VerificationError("fetched RECORD member does not match")
+    return seen
 
 
 def _verify_fetched_record_tree(stage: Path, artifacts: dict) -> int:
@@ -2471,8 +2476,18 @@ def _verify_fetched_record_tree(stage: Path, artifacts: dict) -> int:
         _fetched_distribution_identity(record_path, artifacts)
         for record_path in records
     }
+    recorded_members: set[str] = set()
     for record_path in records:
-        _verify_fetched_record_rows(stage, record_path)
+        recorded_members.update(_verify_fetched_record_rows(stage, record_path))
+    observed_members: set[str] = set()
+    for path in stage.rglob("*"):
+        if path.is_dir():
+            continue
+        if path.is_symlink() or not path.is_file():
+            raise VerificationError("fetched RECORD tree contains an unsafe member")
+        observed_members.add(path.relative_to(stage).as_posix())
+    if observed_members != recorded_members:
+        raise VerificationError("fetched RECORD tree has unrecorded members")
     if observed_names != set(artifacts):
         raise VerificationError("fetched distribution set is incomplete")
     return len(records)
@@ -2828,6 +2843,7 @@ def _stage_runtime_install(
         expected_inventory_sha256=expected_inventory_sha256,
         stage=stage,
     )
+    before_request()
     _runtime_pip_probe(interpreter)
     requirement_file = _download_runtime_artifacts(
         wheelhouse,
@@ -2940,7 +2956,7 @@ def fetch_external_runtime(
 
 
 def _runtime_declared_objects(
-    runtime_root: Path, files: dict, links: dict
+    runtime_root: Path, files: dict, links: dict, fetched_site_root: Path | None
 ) -> tuple[set[str], set[str]]:
     if set(files) & set(links):
         raise VerificationError("runtime path declared as both file and symlink")
@@ -2948,6 +2964,7 @@ def _runtime_declared_objects(
     if not payload_root.is_dir() or payload_root.is_symlink():
         raise VerificationError("runtime payload directory is absent")
     declared = set(files) | set(links)
+    allowed_objects = set(declared)
     allowed_directories = {"payload"}
     for relative in declared:
         allowed_directories.update(
@@ -2955,13 +2972,46 @@ def _runtime_declared_objects(
             for parent in PurePosixPath(relative).parents
             if parent.as_posix() != "."
         )
+    if fetched_site_root is not None:
+        _extend_fetched_runtime_directories(
+            runtime_root, payload_root, fetched_site_root, allowed_directories
+        )
     allowed_objects = declared | allowed_directories | {".ready.json", "inventory.json"}
+    if fetched_site_root is not None:
+        allowed_objects.update(
+            path.relative_to(runtime_root).as_posix()
+            for path in fetched_site_root.rglob("*")
+        )
     return allowed_objects, allowed_directories
 
 
-def _verify_runtime_object_types(runtime_root: Path, files: dict, links: dict) -> None:
+def _extend_fetched_runtime_directories(
+    runtime_root: Path,
+    payload_root: Path,
+    fetched_site_root: Path,
+    allowed_directories: set[str],
+) -> None:
+    try:
+        fetched_site_root.relative_to(payload_root)
+    except ValueError as exc:
+        raise VerificationError("fetched site-packages escapes payload") from exc
+    for path in fetched_site_root.rglob("*"):
+        relative = path.relative_to(runtime_root).as_posix()
+        if path.is_dir():
+            allowed_directories.add(relative)
+            continue
+        allowed_directories.update(
+            parent.as_posix()
+            for parent in PurePosixPath(relative).parents
+            if parent.as_posix() != "."
+        )
+
+
+def _verify_runtime_object_types(
+    runtime_root: Path, files: dict, links: dict, fetched_site_root: Path | None
+) -> None:
     allowed_objects, allowed_directories = _runtime_declared_objects(
-        runtime_root, files, links
+        runtime_root, files, links, fetched_site_root
     )
     for path in runtime_root.rglob("*"):
         relative = path.relative_to(runtime_root).as_posix()
@@ -2975,7 +3025,14 @@ def _verify_runtime_object_types(runtime_root: Path, files: dict, links: dict) -
             not stat.S_ISREG(mode) or path.is_symlink()
         ):
             raise VerificationError(f"runtime metadata is not regular: {relative}")
-    _verify_runtime_observed_members(runtime_root, set(files) | set(links))
+    declared = set(files) | set(links)
+    if fetched_site_root is not None:
+        declared.update(
+            path.relative_to(runtime_root).as_posix()
+            for path in fetched_site_root.rglob("*")
+            if not path.is_dir()
+        )
+    _verify_runtime_observed_members(runtime_root, declared)
 
 
 def _verify_runtime_observed_members(runtime_root: Path, declared: set[str]) -> None:
@@ -3045,7 +3102,8 @@ def _verify_external_runtime(
     )
     artifacts, artifact_payload_bytes = _runtime_artifact_closure(lock, inventory)
     files, links, payload_bytes = _checked_payload_entries(inventory)
-    _verify_runtime_object_types(runtime_root, files, links)
+    fetched_site_root = _runtime_fetched_site_root(runtime_root, inventory, artifacts)
+    _verify_runtime_object_types(runtime_root, files, links, fetched_site_root)
     _verify_runtime_member_content(runtime_root, files, links)
     return {
         "schema": "npa.robomimic.external-runtime-verification.v1",
@@ -3061,6 +3119,24 @@ def _verify_external_runtime(
         "payload_symlink_count": len(links),
         "payload_bytes": payload_bytes,
     }
+
+
+def _runtime_fetched_site_root(
+    runtime_root: Path, inventory: dict, artifacts: dict
+) -> Path | None:
+    fetch = inventory.get("fetch")
+    if fetch is None:
+        return None
+    if not isinstance(fetch, dict):
+        raise VerificationError("runtime fetch contract is malformed")
+    site_packages = _runtime_fetch_site_packages(fetch.get("site_packages"))
+    candidate_site_root = runtime_root / site_packages
+    if not candidate_site_root.exists() and not candidate_site_root.is_symlink():
+        return None
+    if not candidate_site_root.is_dir() or candidate_site_root.is_symlink():
+        raise VerificationError("fetched site-packages is not a directory")
+    _verify_fetched_record_tree(candidate_site_root, artifacts)
+    return candidate_site_root
 
 
 def verify_external_runtime(

@@ -1493,6 +1493,80 @@ def test_runtime_fetch_refuses_changed_interpreter_before_probe(
     assert probed == []
 
 
+def test_runtime_fetch_rechecks_entitlement_before_interpreter_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    calls: list[int] = []
+    probed: list[Path] = []
+
+    def before_request() -> None:
+        calls.append(1)
+        if len(calls) == 2:
+            raise verifier.VerificationError("entitlement expired")
+
+    monkeypatch.setattr(verifier, "_runtime_pip_probe", probed.append)
+    with pytest.raises(verifier.VerificationError, match="expired"):
+        verifier._stage_runtime_install(
+            runtime_root=runtime_root,
+            runtime_lock_path=lock_path,
+            expected_inventory_sha256=inventory_sha256,
+            artifacts={},
+            credential_env="HF_TOKEN",
+            credential="",
+            wheelhouse=tmp_path / "wheelhouse",
+            stage=stage,
+            before_request=before_request,
+        )
+
+    assert probed == []
+
+
+def test_runtime_fetch_rechecks_entitlement_before_installer_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    calls: list[int] = []
+    probed: list[Path] = []
+    installed: list[Path] = []
+
+    def before_request() -> None:
+        calls.append(1)
+        if len(calls) == 3:
+            raise verifier.VerificationError("entitlement expired")
+
+    monkeypatch.setattr(verifier, "_runtime_pip_probe", probed.append)
+    monkeypatch.setattr(
+        verifier,
+        "_download_runtime_artifacts",
+        lambda *_args: tmp_path / "requirements.txt",
+    )
+    monkeypatch.setattr(
+        verifier,
+        "_install_runtime_artifacts",
+        lambda interpreter, *_args: installed.append(interpreter) or stage,
+    )
+    with pytest.raises(verifier.VerificationError, match="expired"):
+        verifier._stage_runtime_install(
+            runtime_root=runtime_root,
+            runtime_lock_path=lock_path,
+            expected_inventory_sha256=inventory_sha256,
+            artifacts={},
+            credential_env="HF_TOKEN",
+            credential="",
+            wheelhouse=tmp_path / "wheelhouse",
+            stage=stage,
+            before_request=before_request,
+        )
+
+    assert probed == [stage / "verified-runtime" / "payload" / "bin" / "python"]
+    assert installed == []
+
+
 def test_runtime_fetch_checks_entitlement_before_creating_lock(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1661,6 +1735,87 @@ def test_fetched_record_tree_rejects_duplicate_members(tmp_path: Path) -> None:
     )
     with pytest.raises(verifier.VerificationError, match="duplicate"):
         verifier._verify_fetched_record_tree(stage, {"demo": {"version": "1.0"}})
+
+
+def test_fetched_record_tree_rejects_unrecorded_member(tmp_path: Path) -> None:
+    stage = tmp_path / "site-packages"
+    dist = stage / "demo-1.0.dist-info"
+    dist.mkdir(parents=True)
+    member = stage / "demo.py"
+    member.write_text("safe\n", encoding="utf-8")
+    metadata_path = dist / "METADATA"
+    metadata_path.write_text("Name: demo\nVersion: 1.0\n", encoding="utf-8")
+    member_digest = (
+        base64.urlsafe_b64encode(hashlib.sha256(b"safe\n").digest())
+        .decode()
+        .rstrip("=")
+    )
+    metadata = metadata_path.read_bytes()
+    metadata_digest = (
+        base64.urlsafe_b64encode(hashlib.sha256(metadata).digest()).decode().rstrip("=")
+    )
+    (dist / "RECORD").write_text(
+        f"demo.py,sha256={member_digest},5\n"
+        f"demo-1.0.dist-info/METADATA,sha256={metadata_digest},{len(metadata)}\n"
+        "demo-1.0.dist-info/RECORD,,\n",
+        encoding="utf-8",
+    )
+    (stage / "unrecorded.py").write_text("unexpected\n", encoding="utf-8")
+    with pytest.raises(verifier.VerificationError, match="unrecorded"):
+        verifier._verify_fetched_record_tree(stage, {"demo": {"version": "1.0"}})
+
+
+def test_runtime_verifier_accepts_record_authenticated_fetched_site_packages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root, lock_path, _ = _runtime(tmp_path)
+    inventory_path = runtime_root / "inventory.json"
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    inventory["fetch"] = {
+        "credential_env": "HF_TOKEN",
+        "site_packages": "payload/lib/python3.11/site-packages",
+    }
+    inventory_path.write_text(
+        json.dumps(inventory, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    marker_path = runtime_root / ".ready.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["inventory_sha256"] = _sha(inventory_path)
+    marker_path.write_text(json.dumps(marker, sort_keys=True) + "\n", encoding="utf-8")
+
+    site_root = runtime_root / "payload/lib/python3.11/site-packages"
+    dist = site_root / "demo-1.0.dist-info"
+    dist.mkdir(parents=True)
+    module = site_root / "demo.py"
+    module.write_text("safe\n", encoding="utf-8")
+    metadata_path = dist / "METADATA"
+    metadata_path.write_text("Name: demo\nVersion: 1.0\n", encoding="utf-8")
+    rows = []
+    for relative, path in (
+        ("demo.py", module),
+        ("demo-1.0.dist-info/METADATA", metadata_path),
+    ):
+        digest = base64.urlsafe_b64encode(hashlib.sha256(path.read_bytes()).digest())
+        rows.append(
+            f"{relative},sha256={digest.decode().rstrip('=')},{path.stat().st_size}"
+        )
+    rows.append("demo-1.0.dist-info/RECORD,,")
+    (dist / "RECORD").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        verifier,
+        "_runtime_artifact_closure",
+        lambda _lock, _inventory: ({"demo": {"version": "1.0"}}, 0),
+    )
+    proof = verifier.verify_external_runtime(
+        runtime_root=runtime_root,
+        runtime_lock_path=lock_path,
+        expected_inventory_sha256=_sha(inventory_path),
+        require_read_only_mount=False,
+    )
+
+    assert proof["artifact_count"] == 1
+    assert proof["payload_file_count"] == 1
 
 
 def test_bootstrap_cleans_snapshot_when_import_gate_fails(tmp_path: Path) -> None:

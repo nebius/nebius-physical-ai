@@ -161,18 +161,24 @@ official Lift PH low-dimensional HDF5 at immutable dataset revision
 `robomimic/robomimic_datasets@74fa018461f479cd9fd15b924a16103012096203`.
 
 Phase A provides an unbuilt, quarantined neutral bootstrap candidate: pinned
-source and 40 hash-locked non-CUDA dependencies only. CUDA/PyTorch is an
-externally prepared exact-inventory read-only runtime; the official HDF5 is an
-immutable runtime fetch; pretrained weights are unnecessary. No runtime/data
-bytes were fetched, no image was built or published, and no B200 result is
-claimed. The public, anonymously retrievable exact dataset carries its MIT
-notice and needs no separate NPA acceptance. The external CUDA/cuDNN runtime
-requires a customer-facing notice and a customer-created, unexpired
-authorization bound to the customer, run, exact runtime lock and inventory,
-exact terms set, and expiry. A manager or generic human signature is not a
-substitute. If gated Hugging Face or NGC assets are selected later, use the
-customer's real vendor entitlement probe without a duplicate NPA terms boolean.
-Separate image, infrastructure, dataset, and B200 transaction gates still apply.
+source and Debian/bootstrap packages only. The historical 40-entry hash lock
+is retained as verifier evidence and is not baked into this public bootstrap.
+CUDA/PyTorch and other restricted dependencies are fetched at runtime into a
+customer-owned, exact-inventory environment using the customer's vendor
+entitlement. The official HDF5 is an immutable runtime fetch; pretrained
+weights are unnecessary. No runtime/data bytes were fetched, no image was
+built or published, and no B200 result is claimed. The public, anonymously
+retrievable exact dataset carries its MIT notice and needs no separate NPA
+acceptance. The external CUDA/cuDNN runtime requires a customer-facing notice
+and a customer-created, unexpired authorization bound to the customer, run,
+exact runtime lock and inventory, exact terms set, and expiry. A manager or
+generic human signature is not a substitute. If gated Hugging Face or NGC
+assets are selected later, use the customer's real vendor entitlement probe
+without a duplicate NPA terms boolean. The runtime fetch verifies the fetched
+environment and installed RECORD before use; a customer-provided
+`CUSTOMER_DENYLIST` is an explicit runtime input with a safe empty default, not
+a publication prerequisite. Separate image, infrastructure, dataset, and B200
+transaction gates still apply.
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
