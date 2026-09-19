@@ -129,6 +129,7 @@ _OPENPI_FULL_DROID_PIPELINE = [
     "-m",
     "npa.workflows.byof.openpi_full_droid",
 ]
+_ROS2_PIPELINE = ["python3", "-m", "npa.workflows.byof.ros2_pipeline"]
 
 _CONTENT_AGENTS_PIPELINE = [
     "python3",
@@ -1527,6 +1528,15 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--expected-compute-capability",
             "{{config.expected_compute_capability}}",
         ],
+    ),
+    "workbench.ros2.preflight": ToolEntry(
+        name="workbench.ros2.preflight",
+        description=(
+            "Check ROS 2 Jazzy prerequisites (ros2 CLI, ROS_DISTRO, rclpy); "
+            "exits non-zero with remediation when unusable. Bridge, bag "
+            "conversion, and fleet execution are not implemented."
+        ),
+        argv_template=[*_ROS2_PIPELINE, "--preflight"],
     ),
     "workbench.isaac_lab.byof_repo": ToolEntry(
         name="workbench.isaac_lab.byof_repo",

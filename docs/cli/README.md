@@ -46,6 +46,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa workbench openarm](openarm.md)
 - [npa provision-if-absent](provision-if-absent.md)
 - [npa rerun](rerun.md)
+- [npa workbench ros2](ros2.md)
 - [npa workbench sonic retargeting](retargeting.md)
 - [npa workbench robocasa](robocasa.md)
 - [npa workbench scenario-gen](scenario-gen.md)
