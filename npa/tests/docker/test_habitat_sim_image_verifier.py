@@ -75,33 +75,48 @@ def _source_delivery_state() -> H._ScanState:
         b"inert source fixture\n",
     )
     for row in state.source_inventory.values():
-        path, payload = _source_artifact(row)
-        _memory_inventory_file(state, path, payload)
+        for path, payload in _source_artifacts(row):
+            _memory_inventory_file(state, path, payload)
     return state
 
 
-def _source_artifact(row: dict[str, object]) -> tuple[str, bytes]:
+def _source_artifacts(row: dict[str, object]) -> list[tuple[str, bytes]]:
     if row["ecosystem"] == "dpkg":
         source = str(row["source"])
         version = str(row["source_version"])
-        path = (
+        parent = (
             "usr/share/doc/npa-habitat-sim/ubuntu-sources/"
-            f"{source}/{source}_{version}.dsc"
+            f"{source}"
         )
-        label = source
-        payload = (
-            f"Format: 3.0 (quilt)\nSource: {source}\nVersion: {version}\n".encode()
-        )
-    else:
-        package = H._normalize_distribution(str(row["name"]))
-        version = str(row["version"])
-        path = (
-            "usr/share/doc/npa-habitat-sim/python-sources/"
-            f"{package}/{version}/{package}-{version}.tar.gz"
-        )
-        label = package
-        payload = f"inert source fixture:{label}\n".encode()
-    return path, payload
+        archive_name = f"{source}_{version}.orig.tar.gz"
+        archive = f"source archive:{source}:{version}\n".encode()
+        dsc = (
+            f"Format: 3.0 (quilt)\nSource: {source}\nVersion: {version}\n"
+            "Files:\n "
+            f"{hashlib.md5(archive, usedforsecurity=False).hexdigest()} "
+            f"{len(archive)} {archive_name}\n"
+            "Checksums-Sha256:\n "
+            f"{_digest(archive)} {len(archive)} {archive_name}\n"
+        ).encode()
+        return [(f"{parent}/{source}_{version}.dsc", dsc), (f"{parent}/{archive_name}", archive)]
+    package = H._normalize_distribution(str(row["name"]))
+    version = str(row["version"])
+    path = (
+        "usr/share/doc/npa-habitat-sim/python-sources/"
+        f"{package}/{version}/{package}-{version}.tar.gz"
+    )
+    payload_buffer = io.BytesIO()
+    with gzip.GzipFile(fileobj=payload_buffer, mode="wb", mtime=0) as compressed:
+        with tarfile.open(fileobj=compressed, mode="w") as archive:
+            metadata = f"Metadata-Version: 2.1\nName: {row['name']}\nVersion: {version}\n".encode()
+            member = tarfile.TarInfo(f"{package}-{version}/PKG-INFO")
+            member.size = len(metadata)
+            archive.addfile(member, io.BytesIO(metadata))
+    return [(path, payload_buffer.getvalue())]
+
+
+def _source_artifact(row: dict[str, object]) -> tuple[str, bytes]:
+    return _source_artifacts(row)[0]
 
 
 def test_source_delivery_covers_superseded_base_and_installed_versions() -> None:
@@ -184,6 +199,43 @@ def test_source_delivery_rejects_reused_artifact_path() -> None:
         state, {"corresponding_source_closure": closure}
     )
     assert "corresponding_source_artifact_reused" in {row["code"] for row in findings}
+
+
+def test_source_delivery_rejects_missing_or_unrelated_declared_contents() -> None:
+    state = _source_delivery_state()
+    closure = _fixture_source_delivery(
+        {
+            "corresponding_source_inventory": copy.deepcopy(state.source_inventory),
+            "corresponding_source_inventory_sha256": H._source_identity(
+                state.source_inventory
+            ),
+        }
+    )
+    identity = next(iter(closure["records"]))
+    artifacts = closure["records"][identity]["artifacts"]
+    missing = copy.deepcopy(closure)
+    missing["records"][identity]["artifacts"] = artifacts[:1]
+    assert H._source_delivery_findings(
+        state, {"corresponding_source_closure": missing}
+    )
+    unrelated = copy.deepcopy(closure)
+    extra = copy.deepcopy(artifacts[1])
+    extra["path"] = extra["path"].replace(".orig.tar.gz", ".extra.tar.gz")
+    unrelated["records"][identity]["artifacts"].append(extra)
+    assert H._source_delivery_findings(
+        state, {"corresponding_source_closure": unrelated}
+    )
+
+
+def test_python_source_distribution_identity_and_content_are_bound() -> None:
+    state = H._ScanState()
+    row = {"ecosystem": "python", "name": "fixture", "version": "1.0"}
+    path, payload = _source_artifacts(row)[0]
+    _memory_inventory_file(state, path, payload)
+    artifact = {"path": path, "bytes": len(payload), "sha256": _digest(payload)}
+    assert H._delivered_source_matches(state, row, [artifact])
+    state.tracked[path] = b"unrelated source bytes"
+    assert not H._delivered_source_matches(state, row, [artifact])
 
 
 def test_current_image_contract_remains_source_delivery_quarantined() -> None:
@@ -1064,49 +1116,20 @@ def _fixture() -> tuple[dict[str, object], list[tuple]]:
             file("opt/venv/lib/python3.10/site-packages/fixture/native.so", native),
         ]
     )
+    source_rows = [
+        {"ecosystem": "dpkg", "source": "python3-defaults", "source_version": "3.10.6-1~22.04.1"},
+        {"ecosystem": "dpkg", "source": "fixture-source", "source_version": "1.0"},
+        {"ecosystem": "dpkg", "source": "transitive", "source_version": "1.0"},
+        {"ecosystem": "dpkg", "source": "cmake", "source_version": "1"},
+        {"ecosystem": "python", "name": "fixture", "version": "1.0"},
+        {"ecosystem": "python", "name": "habitat-sim", "version": "0.3.3"},
+        {"ecosystem": "python", "name": "pip", "version": "22.0.2"},
+        {"ecosystem": "python", "name": "setuptools", "version": "59.6.0"},
+    ]
     entries.extend(
-        [
-            file(
-                "usr/share/doc/npa-habitat-sim/ubuntu-sources/"
-                "python3-defaults/python3-defaults_3.10.6-1~22.04.1.dsc",
-                b"Format: 3.0 (quilt)\nSource: python3-defaults\n"
-                b"Version: 3.10.6-1~22.04.1\n",
-            ),
-            file(
-                "usr/share/doc/npa-habitat-sim/python-sources/fixture/1.0/"
-                "fixture-1.0.tar.gz",
-                b"inert source fixture:fixture\n",
-            ),
-            file(
-                "usr/share/doc/npa-habitat-sim/python-sources/habitat-sim/0.3.3/"
-                "habitat-sim-0.3.3.tar.gz",
-                b"inert source fixture:habitat-sim\n",
-            ),
-            file(
-                "usr/share/doc/npa-habitat-sim/python-sources/pip/22.0.2/"
-                "pip-22.0.2.tar.gz",
-                b"inert source fixture:pip\n",
-            ),
-            file(
-                "usr/share/doc/npa-habitat-sim/python-sources/setuptools/59.6.0/"
-                "setuptools-59.6.0.tar.gz",
-                b"inert source fixture:setuptools\n",
-            ),
-            file(
-                "usr/share/doc/npa-habitat-sim/ubuntu-sources/"
-                "fixture-source/fixture-source_1.0.dsc",
-                b"Format: 3.0 (quilt)\nSource: fixture-source\nVersion: 1.0\n",
-            ),
-            file(
-                "usr/share/doc/npa-habitat-sim/ubuntu-sources/"
-                "transitive/transitive_1.0.dsc",
-                b"Format: 3.0 (quilt)\nSource: transitive\nVersion: 1.0\n",
-            ),
-            file(
-                "usr/share/doc/npa-habitat-sim/ubuntu-sources/cmake/cmake_1.dsc",
-                b"Format: 3.0 (quilt)\nSource: cmake\nVersion: 1\n",
-            ),
-        ]
+        file(path, payload)
+        for row in source_rows
+        for path, payload in _source_artifacts(row)
     )
     distributions = {
         "fixture": "1.0",
@@ -1145,11 +1168,8 @@ def _fixture_source_delivery(report: dict[str, object]) -> dict[str, object]:
             identity: {
                 "component": row,
                 "artifacts": [
-                    {
-                        "path": _source_artifact(row)[0],
-                        "bytes": len(_source_artifact(row)[1]),
-                        "sha256": _digest(_source_artifact(row)[1]),
-                    }
+                    {"path": path, "bytes": len(payload), "sha256": _digest(payload)}
+                    for path, payload in _source_artifacts(row)
                 ],
             }
             for identity, row in report["corresponding_source_inventory"].items()
@@ -1452,7 +1472,7 @@ def test_valid_attested_oci_has_complete_graph_and_payload_receipt(tmp_path) -> 
     report = _verify(tmp_path, [_required_entries()])
     assert report["valid"] is True
     assert report["layer_count"] == 1
-    assert report["regular_files_read"] == 45
+    assert report["regular_files_read"] == 49
     assert report["installed_package_count"] == 1
     assert report["dpkg_inventory"]["python3"] == {
         "version": "3.10.6-1~22.04.1",
@@ -1535,6 +1555,48 @@ def test_executable_sources_reject_extra_replacement_mode_and_whiteout(
     whiteout = file("opt/npa-runtime/npa/workflows/.wh.habitat_sim_smoke.py")
     report = _verify(tmp_path / "whiteout", [entries, [whiteout]], contract=contract)
     assert "executable_source_layer_policy" in _codes(report)
+
+
+def test_root_opaque_whiteout_affects_every_protected_target() -> None:
+    contract = {
+        "executable_source_bindings": {
+            "/opt/npa-runtime/npa/a.py": {
+                "kind": "file", "uid": 0, "gid": 0, "sha256": "a" * 64
+            },
+            "/opt/npa-runtime/npa/nested/b.py": {
+                "kind": "file", "uid": 0, "gid": 0, "sha256": "b" * 64
+            },
+        }
+    }
+    targets = {path.lstrip("/") for path in contract["executable_source_bindings"]}
+    state = H._ScanState()
+    state.paths = {path: "file" for path in targets}
+    state.events = [{"kind": "whiteout", "path": ".wh..wh..opq"}]
+    findings = H._executable_source_findings(state, contract)
+    assert {row["path"].lstrip("/") for row in findings} == targets
+
+
+def test_nested_opaque_whiteout_affects_only_nested_protected_targets() -> None:
+    contract = {
+        "executable_source_bindings": {
+            "/opt/npa-runtime/npa/a.py": {
+                "kind": "file", "uid": 0, "gid": 0, "sha256": "a" * 64
+            },
+            "/opt/npa-runtime/npa/nested/b.py": {
+                "kind": "file", "uid": 0, "gid": 0, "sha256": "b" * 64
+            },
+        }
+    }
+    targets = {path.lstrip("/") for path in contract["executable_source_bindings"]}
+    nested = next(path for path in targets if "/" in path)
+    parent = nested.rsplit("/", 1)[0]
+    state = H._ScanState()
+    state.paths = {path: "file" for path in targets}
+    state.events = [{"kind": "whiteout", "path": f"{parent}/.wh..wh..opq"}]
+    findings = H._executable_source_findings(state, contract)
+    assert {row["path"].lstrip("/") for row in findings} == {
+        path for path in targets if path == parent or path.startswith(parent + "/")
+    }
 
 
 def test_config_and_account_boundary_fail_closed(tmp_path) -> None:

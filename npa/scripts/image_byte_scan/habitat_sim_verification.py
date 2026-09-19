@@ -15,6 +15,7 @@ import posixpath
 import re
 import struct
 import tarfile
+import zipfile
 
 from . import core as W
 from . import oci_graph as G
@@ -1143,6 +1144,150 @@ def _source_component_key(row: dict[str, object]) -> tuple[str, str, str]:
     return ("python", str(row.get("name")), str(row.get("version")))
 
 
+def _source_checksum_rows(value: object, width: int) -> dict[str, tuple[int, str]] | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    rows: dict[str, tuple[int, str]] = {}
+    for line in value.strip().splitlines():
+        fields = line.split()
+        if len(fields) != 3:
+            return None
+        digest, size, name = fields
+        if not re.fullmatch(rf"[0-9a-f]{{{width}}}", digest):
+            return None
+        if not size.isdecimal() or int(size) <= 0:
+            return None
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.+_~-]*", name):
+            return None
+        if name in rows:
+            return None
+        rows[name] = (int(size), digest)
+    return rows or None
+
+
+def _debian_source_fields(payload: bytes) -> dict[str, str] | None:
+    try:
+        lines = payload.decode("utf-8", errors="strict").splitlines()
+    except UnicodeDecodeError:
+        return None
+    fields: dict[str, str] = {}
+    previous: str | None = None
+    for line in lines:
+        if line.startswith((" ", "\t")):
+            if previous is None:
+                return None
+            fields[previous] += "\n" + line.strip()
+            continue
+        if ":" not in line:
+            return None
+        key, value = line.split(":", 1)
+        if not key or key in fields:
+            return None
+        fields[key] = value.strip()
+        previous = key
+    return fields
+
+
+def _dsc_source_matches(
+    state: _ScanState,
+    row: dict[str, object],
+    dsc_path: str,
+    paths: set[str],
+) -> bool:
+    payload = state.tracked.get(dsc_path)
+    fields = _debian_source_fields(payload) if payload is not None else None
+    if fields is None or (fields.get("Source"), fields.get("Version")) != (
+        row.get("source"),
+        row.get("source_version"),
+    ):
+        return False
+    files = _source_checksum_rows(fields.get("Files"), 32)
+    checksums = _source_checksum_rows(fields.get("Checksums-Sha256"), 64)
+    if files is None or checksums is None or set(files) != set(checksums):
+        return False
+    parent = str(PurePosixPath(dsc_path).parent)
+    expected = {dsc_path} | {f"{parent}/{name}" for name in files}
+    signatures = {
+        path
+        for path in paths - expected
+        if path.startswith(parent + "/") and path.endswith(".asc")
+        and path.removesuffix(".asc") in expected
+    }
+    expected |= signatures
+    if paths != expected:
+        return False
+    for name, (size, md5) in files.items():
+        path = f"{parent}/{name}"
+        artifact = state.files.get(path, {})
+        content = state.tracked.get(path)
+        sha_size, sha256 = checksums[name]
+        if (
+            content is None
+            or artifact.get("size") != size
+            or artifact.get("sha256") != sha256
+            or len(content) != size
+            or hashlib.md5(content, usedforsecurity=False).hexdigest() != md5
+            or hashlib.sha256(content).hexdigest() != sha256
+            or sha_size != size
+        ):
+            return False
+    return True
+
+
+def _archive_metadata(payload: bytes) -> bytes | None:
+    def safe(name: str) -> bool:
+        return bool(name) and not name.startswith(("/", "\\")) and all(
+            part not in {"", ".", ".."} for part in PurePosixPath(name).parts
+        )
+
+    try:
+        with tarfile.open(fileobj=io.BytesIO(payload), mode="r:*") as archive:
+            metadata = None
+            regular_files = 0
+            members = archive.getmembers()
+            if not members:
+                return None
+            for member in members:
+                if not safe(member.name) or member.issym() or member.islnk():
+                    return None
+                if member.isdir():
+                    continue
+                if not member.isfile():
+                    return None
+                regular_files += 1
+                if PurePosixPath(member.name).name in {"PKG-INFO", "METADATA"}:
+                    metadata = archive.extractfile(member).read()  # type: ignore[union-attr]
+            return metadata if regular_files else None
+    except (OSError, tarfile.TarError):
+        pass
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            metadata = None
+            names = archive.namelist()
+            if not names:
+                return None
+            for name in names:
+                if not safe(name) or name.endswith("/"):
+                    continue
+                if PurePosixPath(name).name in {"PKG-INFO", "METADATA"}:
+                    metadata = archive.read(name)
+            return metadata
+    except (OSError, zipfile.BadZipFile):
+        return None
+
+
+def _python_source_matches(row: dict[str, object], payload: bytes | None) -> bool:
+    if payload is None:
+        return False
+    metadata = _archive_metadata(payload)
+    if metadata is None:
+        return False
+    fields = _debian_source_fields(metadata)
+    return fields is not None and (
+        fields.get("Name"), fields.get("Version")
+    ) == (row.get("name"), row.get("version"))
+
+
 def _delivered_source_matches(
     state: _ScanState, row: dict[str, object], artifacts: object
 ) -> bool:
@@ -1182,17 +1327,11 @@ def _delivered_source_matches(
     if row.get("ecosystem") == "dpkg":
         if len(dsc_paths) != 1:
             return False
-        payload = state.tracked.get(dsc_paths[0])
-        if payload is None:
+        if not _dsc_source_matches(state, row, dsc_paths[0], paths):
             return False
-        fields = {}
-        for line in payload.decode("utf-8", errors="strict").splitlines():
-            if ": " in line:
-                key, value = line.split(": ", 1)
-                fields[key] = value
-        if (fields.get("Source"), fields.get("Version")) != (
-            row.get("source"),
-            row.get("source_version"),
+    elif row.get("ecosystem") == "python":
+        if len(paths) != 1 or not _python_source_matches(
+            row, state.tracked.get(next(iter(paths)))
         ):
             return False
     return True
@@ -1532,7 +1671,7 @@ def _whiteout_affects(path: str, target: str) -> bool:
     posix = PurePosixPath(path)
     if posix.name == ".wh..wh..opq":
         parent = "" if str(posix.parent) == "." else str(posix.parent)
-        return target == parent or target.startswith(parent + "/")
+        return not parent or target == parent or target.startswith(parent + "/")
     if not posix.name.startswith(".wh."):
         return False
     removed = str(posix.parent / posix.name.removeprefix(".wh."))
