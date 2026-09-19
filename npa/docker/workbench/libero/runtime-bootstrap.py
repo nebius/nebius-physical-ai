@@ -18,6 +18,7 @@ import binascii
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+import errno
 import fcntl
 import grp
 import hashlib
@@ -218,6 +219,7 @@ RUNTIME_EXECUTION_PASSTHROUGH_ENV_NAMES = frozenset(
         "NPA_LIBERO_EXPECTED_NAMESPACE_UID_SHA256",
         "NPA_LIBERO_EXPECTED_OUTPUT_LEASE_ETAG",
         "NPA_LIBERO_EXPECTED_OUTPUT_LEASE_KEY",
+        "NPA_LIBERO_AUTHENTICATED_CALLER_SHA256",
         "NPA_LIBERO_EXPECTED_OUTPUT_LEASE_VERSION_ID",
         "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_AUTHORIZATION_SHA256",
         "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256",
@@ -2641,8 +2643,39 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
     governing_terms_sha256: str | None = None
     cache_root_created = False
 
+    def revalidate_authorization() -> None:
+        """Recheck the signed customer/run binding before every fetch boundary."""
+
+        try:
+            _caller_bytes, _trusted_key, signer_sha256 = (
+                _authenticated_caller_binding_from_environment()
+            )
+            current_bytes = _read_private_regular_bytes(
+                Path(args.authorization),
+                limit=1024 * 1024,
+                input_name="customer authorization file",
+            )
+        except CustomerAcceptanceRequired:
+            raise
+        except BootstrapRefusal as exc:
+            raise CustomerAcceptanceRequired("authorization_signature_invalid") from exc
+        current, current_sha256 = _validate_customer_authorization_bytes(
+            current_bytes,
+            authorization_sha256,
+            manifest,
+            manifest_sha256,
+            authenticated_signer_sha256=signer_sha256,
+        )
+        if (
+            current_sha256 != authorization_sha256
+            or current["customer_identity_sha256"] != customer_identity_sha256
+            or current["run_id"] != run_id
+        ):
+            raise CustomerAcceptanceRequired("authorization_changed")
+
     def verify_terms_before_cache_creation(_parent_descriptor: int, _name: str) -> None:
         nonlocal cache_root_created, governing_terms_sha256
+        revalidate_authorization()
         governing_terms_sha256 = _verify_governing_terms(manifest)
         cache_root_created = True
 
@@ -2657,6 +2690,7 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
         if initial_identity is not None:
             governing_terms_sha256 = _governing_terms_identity(manifest)
         elif governing_terms_sha256 is None:
+            revalidate_authorization()
             governing_terms_sha256 = _verify_governing_terms(manifest)
         try:
             group_id = grp.getgrnam(RUNTIME_EXECUTION_GROUP).gr_gid
@@ -2674,6 +2708,7 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
             warm_reuse = locked_identity is not None
             if warm_reuse:
                 assert locked_identity is not None
+                revalidate_authorization()
                 record = _validate_and_publish_cache(
                     cache_root=stable_cache_root,
                     final=final,
@@ -2697,14 +2732,17 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
                 committed = False
                 renamed_identity: tuple[int, int] | None = None
                 try:
+                    revalidate_authorization()
                     _fetch_source(partial, manifest["source"])
                     _validate_task_inputs(partial, manifest)
+                    revalidate_authorization()
                     _install_runtime(
                         partial,
                         manifest["runtime_artifacts"],
                         requirement_lines,
                         published_root=display_final,
                     )
+                    revalidate_authorization()
                     _fetch_inputs(partial, manifest)
                     record = _complete_record(
                         partial,
@@ -2734,6 +2772,7 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
                         raise BootstrapRefusal(
                             "materialized runtime cache is unavailable"
                         )
+                    revalidate_authorization()
                     record = _validate_and_publish_cache(
                         cache_root=stable_cache_root,
                         final=final,
@@ -2873,6 +2912,16 @@ def _require_current_cache_link(
         raise BootstrapRefusal(refusal)
 
 
+def _close_sensitive_execution_descriptor(descriptor: int, name: str) -> None:
+    """Remove one customer-evidence descriptor before launching runtime code."""
+
+    try:
+        os.close(descriptor)
+    except OSError as exc:
+        if exc.errno != errno.EBADF:
+            raise BootstrapRefusal(f"{name} descriptor could not be closed") from exc
+
+
 def execute(
     cache_descriptor: int = INHERITED_CACHE_DESCRIPTOR,
     authorization_descriptor: int = INHERITED_AUTHORIZATION_DESCRIPTOR,
@@ -2976,6 +3025,13 @@ def execute(
             run_id,
             requirements_sha256,
             governing_terms_sha256,
+        )
+        _close_sensitive_execution_descriptor(
+            authorization_descriptor, "customer authorization"
+        )
+        _close_sensitive_execution_descriptor(caller_descriptor, "authenticated caller")
+        _close_sensitive_execution_descriptor(
+            customer_trust_descriptor, "authenticated caller trust root"
         )
         environment = _runtime_execution_environment(stable_root)
         completed = subprocess.run(

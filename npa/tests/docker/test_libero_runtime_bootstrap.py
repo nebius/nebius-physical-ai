@@ -834,6 +834,40 @@ def test_missing_customer_authorization_refuses_before_network_or_cache_mutation
     assert not Path(args.cache_root).exists()
 
 
+def test_ensure_revalidates_authorization_before_terms_or_cache_creation(
+    monkeypatch, tmp_path
+) -> None:
+    module, args, _fixture_values = _fixture(tmp_path)
+    original_validate = module._validate_customer_authorization_bytes
+    validations = 0
+
+    def validate(*call_args, **call_kwargs):
+        nonlocal validations
+        validations += 1
+        result = original_validate(*call_args, **call_kwargs)
+        if validations == 2:
+            raise module.CustomerAcceptanceRequired(
+                "authorization expired or replayable"
+            )
+        return result
+
+    monkeypatch.setattr(module, "_validate_customer_authorization_bytes", validate)
+    monkeypatch.setattr(
+        module,
+        "_verify_governing_terms",
+        lambda *_args: pytest.fail("terms resolution began after authorization drift"),
+    )
+
+    with pytest.raises(
+        module.CustomerAcceptanceRequired,
+        match="authorization expired or replayable",
+    ):
+        module.ensure(args)
+
+    assert validations == 2
+    assert not Path(args.cache_root).exists()
+
+
 def test_missing_authorization_notification_names_exact_terms_and_refusal(
     tmp_path,
 ) -> None:
@@ -1549,11 +1583,11 @@ def _execution_descriptors(module, args, final):
                 trust_fd,
             )
     finally:
-        os.close(trust_fd)
-        os.close(caller_fd)
-        os.close(authorization_fd)
-        os.close(cache_fd)
-        os.close(root_fd)
+        for descriptor in (trust_fd, caller_fd, authorization_fd, cache_fd, root_fd):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
 
 
 def test_execute_returns_the_exact_smoke_exit_code(monkeypatch, tmp_path) -> None:
@@ -1595,6 +1629,9 @@ def test_execute_returns_the_exact_smoke_exit_code(monkeypatch, tmp_path) -> Non
         assert kwargs["check"] is False
         assert kwargs["env"]["LIBERO_RUNTIME_ROOT"].startswith("/proc/self/fd/")
         assert len(kwargs["pass_fds"]) == 1
+        for descriptor in (descriptors[1], descriptors[4], descriptors[5]):
+            with pytest.raises(OSError):
+                os.fstat(descriptor)
         return type("Completed", (), {"returncode": 23})()
 
     monkeypatch.setattr(module.subprocess, "run", smoke)
@@ -2542,6 +2579,9 @@ def test_execute_and_upload_holds_descriptor_and_cache_lock_through_readback(
         assert "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64" not in environment
         assert "HF_TOKEN" not in environment
         assert environment["NPA_BYOF_RUN_ID"] == fixture["run_id"]
+        assert environment["NPA_LIBERO_AUTHENTICATED_CALLER_SHA256"] == _sha(
+            fixture["caller_bytes"]
+        )
         assert environment["NPA_LIBERO_BOOTSTRAP_RECEIPT"] == str(receipt)
         assert environment["HOME"] == "/nonexistent"
         assert environment["PATH"] == "/usr/bin:/bin"
