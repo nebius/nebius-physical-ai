@@ -86,7 +86,6 @@ flowchart TB
     vlm["lerobot-vlm-rl: VLM signal RL step"]
     genesis["genesis: scene build + step"]
     isaac["isaac-lab: headless env + RTX render"]
-    habitat["habitat-sim: Skokloster RGB-D + Bullet + EGL traversal"]
     content["content-agents: rigid physics + OVRTX validation"]
     cosmos["cosmos: model load + infer"]
     transfer["cosmos2-transfer: real 4-step transfer"]
@@ -94,6 +93,9 @@ flowchart TB
     sonic["sonic: entrypoint smoke artifact"]
     s2r["envgen / reference-policy / loop-eval rollouts"]
     groot["groot: GR00T inference"]
+  end
+  subgraph unvalidated["Unvalidated / publication-quarantined"]
+    habitat["habitat-sim: unvalidated/quarantined; strict RTX-only route pending"]
   end
   subgraph blocked["blocked-on-upstream"]
     b300["base-cuda13-b300: flash_attn + CUDA13"]

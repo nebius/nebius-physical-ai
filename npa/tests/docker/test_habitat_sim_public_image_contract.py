@@ -81,6 +81,34 @@ def test_habitat_capability_metadata_keeps_byte_and_source_qualification_pending
     assert "habitat-sim" in images.PENDING_REDISTRIBUTION_TOOLS
 
 
+def test_habitat_diagram_keeps_unvalidated_candidate_out_of_gpu_gated_group() -> None:
+    diagram = (ROOT / "docs/security/container-golden-evals.md").read_text(
+        encoding="utf-8"
+    )
+    gpu_start = diagram.index('subgraph gpu_gated["GPU-gated smokes"]')
+    gpu_end = diagram.index("\n  end", gpu_start)
+    gpu_group = diagram[gpu_start:gpu_end]
+    assert "habitat[" not in gpu_group
+
+    pending_start = diagram.index(
+        'subgraph unvalidated["Unvalidated / publication-quarantined"]'
+    )
+    pending_end = diagram.index("\n  end", pending_start)
+    pending_group = diagram[pending_start:pending_end]
+    assert (
+        'habitat["habitat-sim: unvalidated/quarantined; strict RTX-only route pending"]'
+        in pending_group
+    )
+    assert "unvalidated" in pending_group
+    assert "quarantined" in pending_group
+
+    habitat_row = next(
+        line for line in diagram.splitlines() if line.startswith("| `habitat-sim` |")
+    )
+    assert "exactly one RTX PRO 6000 Blackwell; never B200" in habitat_row
+    assert habitat_row.rstrip().endswith("| unvalidated |")
+
+
 def _run_bash(
     script: str,
     *arguments: str,
