@@ -1028,8 +1028,15 @@ def _nested_archive_members(
             with zipfile.ZipFile(io.BytesIO(content)) as archive:
                 for member in infos:
                     safe = _safe(member.filename)
+                    allowed_empty_base_dir = (
+                        member.is_dir()
+                        and member.file_size == 0
+                        and safe in ALLOWED_EMPTY_BASE_PATHS
+                    )
                     if (
-                        FORBIDDEN_PATH.search(safe) and not reviewed_system_wheel
+                        FORBIDDEN_PATH.search(safe)
+                        and not reviewed_system_wheel
+                        and not allowed_empty_base_dir
                     ) or UPSTREAM_TREE_PATH.search(safe):
                         raise ValueError(
                             f"forbidden nested archive member: {path}:{safe}"
@@ -1101,7 +1108,14 @@ def _nested_archive_members(
             with tarfile.open(fileobj=io.BytesIO(content), mode="r:*") as archive:
                 for member in archive:
                     safe = _safe(member.name)
-                    if FORBIDDEN_PATH.search(safe) or UPSTREAM_TREE_PATH.search(safe):
+                    allowed_empty_base_dir = (
+                        member.isdir()
+                        and member.size == 0
+                        and safe in ALLOWED_EMPTY_BASE_PATHS
+                    )
+                    if (
+                        FORBIDDEN_PATH.search(safe) and not allowed_empty_base_dir
+                    ) or UPSTREAM_TREE_PATH.search(safe):
                         raise ValueError(
                             f"forbidden nested archive member: {path}:{safe}"
                         )

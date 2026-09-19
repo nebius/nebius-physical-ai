@@ -1678,6 +1678,25 @@ def test_supported_nested_compression_accepts_neutral_bytes(kind: str) -> None:
     assert SCAN._nested_archive_members(f"neutral.{kind}", nested) == expected_members
 
 
+@pytest.mark.parametrize("kind", ["tar", "zip"])
+def test_nested_scan_accepts_only_declared_empty_apt_base_directories(kind: str) -> None:
+    if kind == "tar":
+        nested = _tar_bytes({}, directories={"var/cache/apt/archives": b""})
+    else:
+        nested = _zip_with_files({"var/cache/apt/archives/": b""})
+    assert SCAN._nested_archive_members(f"empty-base.{kind}", nested) == 1
+
+
+@pytest.mark.parametrize("kind", ["tar", "zip"])
+def test_nested_scan_refuses_payload_under_declared_empty_apt_base(kind: str) -> None:
+    if kind == "tar":
+        nested = _tar_bytes({"var/cache/apt/archives/package.deb": b"payload"})
+    else:
+        nested = _zip_with_files({"var/cache/apt/archives/package.deb": b"payload"})
+    with pytest.raises(ValueError, match="forbidden nested archive member"):
+        SCAN._nested_archive_members(f"nonempty-base.{kind}", nested)
+
+
 @pytest.mark.parametrize("kind", ["gzip", "bzip2", "xz"])
 def test_secret_in_compressed_representation_refuses_without_echo(kind: str) -> None:
     marker = b"api" + b"_key=" + (b"x" * 16)
