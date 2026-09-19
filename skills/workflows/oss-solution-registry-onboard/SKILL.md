@@ -241,8 +241,9 @@ and the pod-observed digest. The public candidate is a neutral bootstrap with
 an empty workflow build command: upstream source, Shadow assets, MuJoCo/Python
 workload, and populated caches are fetched only into an operator-owned runtime
 cache after complete hash locks. Fetch changes delivery only, not use,
-derivative, output, or service rights. The image remains unbuilt and in
-pre-registration publication quarantine. Historical private evidence never
+derivative, output, or service rights. The image has an immutable payload-free
+development-build path but remains release-quarantined until every exact
+publication and capability gate passes. Historical private evidence never
 qualifies redesigned or public bytes. This is not a first-class tool. It uses
 no model, external dataset, gated asset, or terms acceptance. RL sweeps, expert
 scores, other environment families, and physical-robot transfer remain

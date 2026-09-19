@@ -3,9 +3,9 @@ kind: Workflow
 metadata:
   name: byof-gymnasium-robotics
   description: >
-    Pre-registration workflow for the neutral Gymnasium-Robotics bootstrap.
-    The placeholder image is intentionally non-resolving; a future authorized
-    gate must inject a reviewed immutable candidate digest. Pinned upstream
+    Development-candidate workflow for the neutral Gymnasium-Robotics bootstrap.
+    The placeholder image is intentionally non-resolving; the authorized
+    full-SHA build gate injects a reviewed immutable candidate digest. Pinned upstream
     runtime and Shadow Hand bytes are acquired only into an operator cache.
 config:
   bucket: example-bucket

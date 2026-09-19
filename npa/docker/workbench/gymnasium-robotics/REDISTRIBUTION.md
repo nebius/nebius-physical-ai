@@ -1,8 +1,8 @@
 # Gymnasium-Robotics neutral-bootstrap redistribution boundary
 
-The proposed public image is a neutral bootstrap in pre-registration
-quarantine. It has not been built, scanned, GPU-qualified, accepted, or
-published. Its candidate layers may contain only the exact Ubuntu/Python
+The candidate public image is a neutral bootstrap on an immutable development
+build path and remains release-quarantined until every byte, scan, digest and
+GPU gate passes. Its candidate layers may contain only the exact Ubuntu/Python
 bootstrap closure, NPA bootstrap and validation code, and license/provenance
 metadata. They must contain no Gymnasium-Robotics source tree, Shadow Hand XML,
 mesh, or texture, MuJoCo or other Python wheel, populated runtime cache, CUDA or

@@ -97,7 +97,7 @@ EXPECTED_FIXED_FILE_SHA256 = {
         "a91e6df63d826b2df1cff942b288e6c23a84fec31a75af659d217eb1d8f8a121"
     ),
     "usr/share/doc/npa-gymnasium-robotics/REDISTRIBUTION.md": (
-        "ec19141ab09703de4c149b774184a98e739573edf54cd8245d1f4103695f02c3"
+        "b3fc53d76bb7ba0fec78350164386d5fa6364e825036ac98148c421b51a68cc8"
     ),
 }
 

@@ -91,14 +91,9 @@ def regressions(base: list[dict], candidate: list[dict]) -> list[dict]:
     def key(finding: dict) -> tuple:
         return tuple(finding[field] for field in ("scanner", "path", "rule", "identity"))
 
-    def actionable(finding: dict) -> bool:
-        return finding.get("policy_disposition") != "trusted-declarative-mount-metadata"
-
-    remaining = collections.Counter(key(finding) for finding in base if actionable(finding))
+    remaining = collections.Counter(key(finding) for finding in base)
     added = []
     for finding in candidate:
-        if not actionable(finding):
-            continue
         identity = key(finding)
         if remaining[identity]:
             remaining[identity] -= 1

@@ -42,7 +42,7 @@ containers:
     physical_ai:
       useful: true
       role: >-
-        Neutral pre-registration bootstrap for a runtime-cached genuine Shadow
+        Neutral development-candidate bootstrap for a runtime-cached genuine Shadow
         Dexterous Hand manipulation, touch, contacts, and EGL hard gate.
     safety:
       runs_as: ubuntu

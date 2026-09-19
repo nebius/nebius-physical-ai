@@ -227,7 +227,7 @@ EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
     "requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a",
     "runtime-bootstrap.py": "ebf8126e6c3477c25b8cb0eb40ddcdbb936aeef0c3fab24dfed6e530bb63c879",
     "capability_smoke.py": "f91683fa5955882e29e2ac8e6ba9f4d92f2a25eb71621275fa3c45b26828d6d6",
-    "verify_image.py": "cd5aa837e55d40789abb36c80e5e00cc05d90872cf08d9694b4eee5be83a7563",  # gitleaks:allow; public file-content SHA-256
+    "verify_image.py": "4deb49724fcab6e79d9efcd97c3a91cab29f86e811edbeb3df485bfdea203e97",  # gitleaks:allow; public file-content SHA-256
 }
 EXPECTED_SOURCE_FIELDS = {
     "farama_gymnasium_robotics": {
@@ -1401,9 +1401,15 @@ def _reviewed_image_graph(
     config_digest: str,
     layer_diff_ids: list[str],
     layer_descriptors: list[dict[str, object]] | None = None,
+    expected_config_digest: str | None = None,
 ) -> None:
-    if not isinstance(EXPECTED_IMAGE_CONFIG_SHA256, str) or not re.fullmatch(
-        r"[0-9a-f]{64}", EXPECTED_IMAGE_CONFIG_SHA256
+    expected_config = (
+        EXPECTED_IMAGE_CONFIG_SHA256
+        if expected_config_digest is None
+        else expected_config_digest
+    )
+    if not isinstance(expected_config, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", expected_config
     ):
         raise ValueError("reviewed neutral image config digest is not configured")
     expected_layers = EXPECTED_ORDERED_LAYER_DIFF_IDS
@@ -1416,7 +1422,7 @@ def _reviewed_image_graph(
         )
     ):
         raise ValueError("reviewed neutral ordered layer graph is not configured")
-    if config_digest != EXPECTED_IMAGE_CONFIG_SHA256:
+    if config_digest != expected_config:
         raise ValueError("reviewed neutral image config bytes changed")
     if layer_diff_ids != list(expected_layers):
         raise ValueError("reviewed neutral ordered layer bytes changed")
@@ -1731,6 +1737,8 @@ def _finalize_scan(
     layer_descriptors: list[dict[str, object]] | None,
     archive_format: str,
     nested_budget: _NestedArchiveBudget | None = None,
+    expected_config_digest: str | None = None,
+    distributed_blob_scan_complete: bool = False,
 ) -> dict[str, Any]:
     runtime_config = config.get("config")
     if not isinstance(runtime_config, dict) or runtime_config.get("User") != "ubuntu":
@@ -1751,7 +1759,12 @@ def _finalize_scan(
     ):
         raise ValueError("image config rootfs diff IDs do not match ordered layer bytes")
     config_digest = hashlib.sha256(config_raw).hexdigest()
-    _reviewed_image_graph(config_digest, layer_diff_ids, layer_descriptors)
+    _reviewed_image_graph(
+        config_digest,
+        layer_diff_ids,
+        layer_descriptors,
+        expected_config_digest,
+    )
     missing = sorted(REQUIRED - rootfs.keys())
     if missing:
         raise ValueError(f"required image files absent: {missing}")
@@ -1767,7 +1780,7 @@ def _finalize_scan(
         "nested_archive_member_count": nested_members,
         "ordered_layer_diff_ids": layer_diff_ids,
         "ordered_layer_descriptors": layer_descriptors or [],
-        "distributed_blob_scan_complete": layer_descriptors is not None,
+        "distributed_blob_scan_complete": distributed_blob_scan_complete,
         "whiteout_entry_count": len(whiteouts),
         "whiteout_metadata_sha256": hashlib.sha256(
             json.dumps(whiteouts, separators=(",", ":"), sort_keys=True).encode()
@@ -1783,7 +1796,9 @@ def _finalize_scan(
     }
 
 
-def scan_oci_layout(path: Path) -> dict[str, Any]:
+def scan_oci_layout(
+    path: Path, *, expected_config_digest: str | None = None
+) -> dict[str, Any]:
     """Bind a complete OCI distribution graph, including compressed blobs."""
 
     archive_bytes = _container_archive_bytes(path)
@@ -1885,10 +1900,12 @@ def scan_oci_layout(path: Path) -> dict[str, Any]:
         layer_descriptors=normalized_descriptors,
         archive_format="oci-layout",
         nested_budget=nested_budget,
+        expected_config_digest=expected_config_digest,
+        distributed_blob_scan_complete=True,
     )
 
 
-def scan(path: Path) -> dict[str, Any]:
+def scan(path: Path, *, expected_config_digest: str | None = None) -> dict[str, Any]:
     archive_bytes = _docker_save_bytes(path)
     archive_sha256 = hashlib.sha256(archive_bytes).hexdigest()
     _scan_raw_blob_bytes("complete Docker-save archive", archive_bytes)
@@ -1979,6 +1996,8 @@ def scan(path: Path) -> dict[str, Any]:
         layers=raw_layers,
         layer_descriptors=None,
         archive_format="docker-save",
+        expected_config_digest=expected_config_digest,
+        distributed_blob_scan_complete=True,
     )
 
 
@@ -1988,12 +2007,26 @@ def main(argv: list[str] | None = None) -> int:
     inputs.add_argument("--docker-save", type=Path)
     inputs.add_argument("--oci-layout", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--expected-config-sha256",
+        help="Exact config digest from the build metadata being scanned",
+    )
     args = parser.parse_args(argv)
     try:
+        if args.expected_config_sha256 is not None and not re.fullmatch(
+            r"[0-9a-f]{64}", args.expected_config_sha256
+        ):
+            raise ValueError("expected config digest must be a lowercase SHA-256")
         result = (
-            scan_oci_layout(args.oci_layout)
+            scan_oci_layout(
+                args.oci_layout,
+                expected_config_digest=args.expected_config_sha256,
+            )
             if args.oci_layout is not None
-            else scan(args.docker_save)
+            else scan(
+                args.docker_save,
+                expected_config_digest=args.expected_config_sha256,
+            )
         )
     except (
         KeyError,

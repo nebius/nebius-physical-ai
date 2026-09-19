@@ -427,7 +427,7 @@ def verify_validated_publication(item: PublishItem) -> tuple[bool, str]:
         "closure, accepted manifest, supported tag, architecture, payload-scan "
         "and GPU evidence are not accepted. Development builds may be produced "
         "for validation, but release publication remains blocked until that "
-        "evidence exists and the tool leaves images.PUBLICATION_QUARANTINE_TOOLS."
+        "evidence exists and the tool leaves its development-build quarantine."
     )
 
 

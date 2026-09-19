@@ -137,8 +137,8 @@ def test_multiline_call_uses_full_expression_when_issue_marks_keyword(tmp_path: 
     assert findings[0]["line"] == 3
 
 
-def test_only_reviewed_declarative_mount_metadata_is_dispositioned(tmp_path: Path) -> None:
-    """Raw B108 stays visible while only the exact trusted fixture shape is non-actionable."""
+def test_reviewed_declarative_mount_metadata_stays_visible(tmp_path: Path) -> None:
+    """Raw B108 stays visible and is never suppressed by the regression gate."""
 
     mount_path = str(PurePosixPath("/", "dev", "shm"))
     unsafe_mount_path = str(PurePosixPath("/", "dev", "shm", "unsafe"))
@@ -161,7 +161,7 @@ def test_only_reviewed_declarative_mount_metadata_is_dispositioned(tmp_path: Pat
         {"npa/tests/workflows/test_gymnasium_pod_receipt.py"},
     )
     assert findings[0]["policy_disposition"] == "trusted-declarative-mount-metadata"
-    assert security_gate.regressions([], findings) == []
+    assert security_gate.regressions([], findings) == findings
 
     path.write_text(
         "def test_profile_accepts_closed_admitted_policy():\n"
