@@ -44,6 +44,8 @@ from pathlib import Path
 from typing import Any
 import zipfile
 
+_Popen = subprocess.Popen
+
 PAYLOAD_RELEASE_ANNOTATION = "npa.nebius.com/libero-release"
 
 SCHEMA = "npa.libero.runtime-manifest.v1"
@@ -2921,6 +2923,43 @@ def _close_sensitive_execution_descriptor(descriptor: int, name: str) -> None:
             raise BootstrapRefusal(f"{name} descriptor could not be closed") from exc
 
 
+def _run_authorized_smoke(
+    *,
+    cache_descriptor: int,
+    environment: dict[str, str],
+    expires_at: datetime,
+) -> int:
+    """Run the untrusted child only while the signed authorization is valid."""
+
+    child = _Popen(
+        ["/opt/npa/libero/smoke.sh"],
+        env=environment,
+        pass_fds=(cache_descriptor,),
+        start_new_session=True,
+    )
+    while child.poll() is None:
+        remaining = (expires_at - datetime.now(timezone.utc)).total_seconds()
+        if remaining <= 0:
+            try:
+                os.killpg(child.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                child.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                child.wait(timeout=5.0)
+            raise CustomerAcceptanceRequired("authorization_expired_or_replayable")
+        try:
+            child.wait(timeout=min(remaining, 1.0))
+        except subprocess.TimeoutExpired:
+            continue
+    return int(child.returncode)
+
+
 def execute(
     cache_descriptor: int = INHERITED_CACHE_DESCRIPTOR,
     authorization_descriptor: int = INHERITED_AUTHORIZATION_DESCRIPTOR,
@@ -2989,6 +3028,9 @@ def execute(
     run_id = authorization["run_id"]
     if customer_identity_sha256 != expected_customer or run_id != expected_run:
         raise CustomerAcceptanceRequired("authorization_wrong_scope")
+    expires_at = _parse_utc(
+        authorization["expires_at"], "customer authorization expires_at"
+    )
     cache_root = _validate_cache_root(DEFAULT_CACHE, None)
     with _open_cache_root_descriptor(
         cache_root, create=False, owner_uid=supervisor_uid
@@ -3033,12 +3075,10 @@ def execute(
             customer_trust_descriptor, "authenticated caller trust root"
         )
         environment = _runtime_execution_environment(stable_root)
-        completed = subprocess.run(
-            ["/opt/npa/libero/smoke.sh"],
-            check=False,
-            env=environment,
-            pass_fds=(cache_descriptor,),
-            start_new_session=True,
+        smoke_exit_code = _run_authorized_smoke(
+            cache_descriptor=cache_descriptor,
+            environment=environment,
+            expires_at=expires_at,
         )
         _validate_complete(
             stable_root,
@@ -3057,7 +3097,7 @@ def execute(
             scope_sha256,
             "runtime current link changed during execution",
         )
-        return completed.returncode
+        return smoke_exit_code
 
 
 def _parse_utc(value: object, label: str) -> datetime:
@@ -3618,6 +3658,60 @@ def _release_output_lease(
         raise BootstrapRefusal("output transaction lease cleanup is incomplete")
 
 
+def _remove_unexpected_output_entries(root_fd: int, names: set[str]) -> list[str]:
+    """Remove only unexpected entries from the owner-controlled staging root."""
+
+    errors: list[str] = []
+    root = Path("/proc/self/fd") / str(root_fd)
+    for name in sorted(names):
+        try:
+            info = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+            if stat.S_ISDIR(info.st_mode):
+                errors.extend(_remove_cache_tree(root / name))
+            elif stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
+                os.unlink(name, dir_fd=root_fd)
+            else:
+                errors.append(f"unsupported unexpected output:{name}")
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            errors.append(f"unexpected output cleanup failed:{name}:{exc}")
+    return errors
+
+
+def _output_limits_for_exit(smoke_exit_code: int, *, root_fd: int) -> dict[str, int]:
+    """Apply the exact success/failure inventory before reading any payload."""
+
+    observed_names = set(os.listdir(root_fd))
+    if smoke_exit_code == 0:
+        required_names = set(OUTPUT_ARTIFACT_SIZE_LIMITS)
+        allowed_names = required_names
+        output_limits = OUTPUT_ARTIFACT_SIZE_LIMITS
+    else:
+        required_names = set(FAILURE_OUTPUT_REQUIRED_SIZE_LIMITS)
+        optional_names = set(FAILURE_OUTPUT_OPTIONAL_SIZE_LIMITS)
+        allowed_names = required_names | optional_names
+        output_limits = {
+            **FAILURE_OUTPUT_REQUIRED_SIZE_LIMITS,
+            **{
+                name: FAILURE_OUTPUT_OPTIONAL_SIZE_LIMITS[name]
+                for name in sorted(optional_names & observed_names)
+            },
+        }
+    unexpected = observed_names - allowed_names
+    if unexpected:
+        cleanup_errors = _remove_unexpected_output_entries(root_fd, unexpected)
+        detail = ", ".join(sorted(unexpected))
+        if cleanup_errors:
+            detail += "; cleanup=" + ", ".join(cleanup_errors)
+        raise BootstrapRefusal(
+            "output differs from the exact artifact allowlist: " + detail
+        )
+    if not required_names <= observed_names:
+        raise BootstrapRefusal("output is missing a required artifact")
+    return output_limits
+
+
 def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
     """Upload through image-owned stdlib code after untrusted runtime execution ends."""
 
@@ -3683,25 +3777,7 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
             bucket=parsed.netloc,
             authorization=storage_authorization,
         )
-        if smoke_exit_code == 0:
-            output_limits = OUTPUT_ARTIFACT_SIZE_LIMITS
-        else:
-            observed_names = set(os.listdir(root_fd))
-            required_names = set(FAILURE_OUTPUT_REQUIRED_SIZE_LIMITS)
-            optional_names = set(FAILURE_OUTPUT_OPTIONAL_SIZE_LIMITS)
-            if not required_names <= observed_names or not observed_names <= (
-                required_names | optional_names
-            ):
-                raise BootstrapRefusal(
-                    "output differs from the exact failure artifact allowlist"
-                )
-            output_limits = {
-                **FAILURE_OUTPUT_REQUIRED_SIZE_LIMITS,
-                **{
-                    name: FAILURE_OUTPUT_OPTIONAL_SIZE_LIMITS[name]
-                    for name in sorted(optional_names & observed_names)
-                },
-            }
+        output_limits = _output_limits_for_exit(smoke_exit_code, root_fd=root_fd)
         observed_total = sum(
             os.stat(name, dir_fd=root_fd, follow_symlinks=False).st_size
             for name in output_limits

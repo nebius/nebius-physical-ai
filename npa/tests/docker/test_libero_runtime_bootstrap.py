@@ -1636,16 +1636,29 @@ def test_execute_returns_the_exact_smoke_exit_code(monkeypatch, tmp_path) -> Non
             assert "capture_output" not in kwargs
             assert "text" not in kwargs
             return original_run(command, **kwargs)
+    monkeypatch.setattr(module.subprocess, "run", smoke)
+
+    class Completed:
+        pid = 12345
+        returncode = 23
+
+        def poll(self):
+            return self.returncode
+
+        def wait(self, timeout=None):
+            del timeout
+            return self.returncode
+
+    def smoke_process(command, **kwargs):
         assert command == ["/opt/npa/libero/smoke.sh"]
-        assert kwargs["check"] is False
         assert kwargs["env"]["LIBERO_RUNTIME_ROOT"].startswith("/proc/self/fd/")
         assert len(kwargs["pass_fds"]) == 1
         for descriptor in (descriptors[1], descriptors[4], descriptors[5]):
             with pytest.raises(OSError):
                 os.fstat(descriptor)
-        return type("Completed", (), {"returncode": 23})()
+        return Completed()
 
-    monkeypatch.setattr(module.subprocess, "run", smoke)
+    monkeypatch.setattr(module, "_Popen", smoke_process)
 
     with _execution_descriptors(module, args, final) as descriptors:
         assert module.execute(*descriptors) == 23
@@ -1675,6 +1688,52 @@ def test_execute_revalidates_expiry_immediately_before_smoke(
             match="authorization expired or replayable",
         ):
             module.execute(*descriptors)
+
+
+def test_execute_terminates_smoke_when_authorization_expires_during_run(
+    monkeypatch, tmp_path
+) -> None:
+    module, args, final, _current = _prepared_execute(monkeypatch, tmp_path)
+    actual_datetime = module.datetime
+    now_calls = 0
+
+    class ExpiringDateTime(actual_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            nonlocal now_calls
+            now_calls += 1
+            current = actual_datetime.now(tz)
+            return current if now_calls <= 2 else current + timedelta(hours=2)
+
+    class RunningChild:
+        pid = 12347
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        def wait(self, timeout=None):
+            del timeout
+            self.returncode = 143
+            return self.returncode
+
+    child = RunningChild()
+    monkeypatch.setattr(module, "datetime", ExpiringDateTime)
+    monkeypatch.setattr(module, "_Popen", lambda *_a, **_k: child)
+    killed: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        module.os,
+        "killpg",
+        lambda pid, signal_number: killed.append((pid, signal_number)),
+    )
+
+    with _execution_descriptors(module, args, final) as descriptors:
+        with pytest.raises(
+            module.CustomerAcceptanceRequired,
+            match="authorization expired or replayable",
+        ):
+            module.execute(*descriptors)
+    assert killed == [(child.pid, module.signal.SIGTERM)]
 
 
 @pytest.mark.parametrize("drift", ["current-removed", "cache-replaced"])
@@ -1718,6 +1777,20 @@ def test_execute_rejects_post_smoke_cache_identity_drift(
             assert "capture_output" not in kwargs
             assert "text" not in kwargs
             return original_run(command, **kwargs)
+    monkeypatch.setattr(module.subprocess, "run", smoke)
+
+    class Completed:
+        pid = 12346
+        returncode = 0
+
+        def poll(self):
+            return self.returncode
+
+        def wait(self, timeout=None):
+            del timeout
+            return self.returncode
+
+    def smoke_process(command, **kwargs):
         assert command == ["/opt/npa/libero/smoke.sh"]
         if drift == "current-removed":
             current.unlink()
@@ -1725,9 +1798,9 @@ def test_execute_rejects_post_smoke_cache_identity_drift(
             stale = final.with_name(".stale-execution-cache")
             final.rename(stale)
             final.mkdir(mode=0o550)
-        return type("Completed", (), {"returncode": 0})()
+        return Completed()
 
-    monkeypatch.setattr(module.subprocess, "run", smoke)
+    monkeypatch.setattr(module, "_Popen", smoke_process)
 
     with _execution_descriptors(module, args, final) as descriptors:
         with pytest.raises(module.BootstrapRefusal, match="changed|current link"):
@@ -2817,6 +2890,23 @@ def test_output_upload_is_commit_last_and_cleans_exact_failed_transaction(
         for item in receipt["artifacts"]
     )
     assert validation_calls == len(puts) + 1
+
+
+def test_successful_output_inventory_rejects_and_removes_unexpected_entries(
+    tmp_path,
+):
+    module = _load_module()
+    output = tmp_path / "output"
+    output.mkdir(mode=0o700)
+    unexpected = output / "fetched-payload.bin"
+    unexpected.write_bytes(b"not an output artifact")
+    root_fd = os.open(output, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        with pytest.raises(module.BootstrapRefusal, match="exact artifact allowlist"):
+            module._output_limits_for_exit(0, root_fd=root_fd)
+    finally:
+        os.close(root_fd)
+    assert not unexpected.exists()
 
 
 def test_failed_conditional_output_put_never_claims_or_deletes_existing_object(
