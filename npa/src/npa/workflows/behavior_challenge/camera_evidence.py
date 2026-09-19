@@ -28,7 +28,13 @@ class EvidenceThresholds:
     interaction_weight: float = 0.5
 
     def __post_init__(self):
-        values = (self.low, self.high, self.focal, self.global_visibility, self.interaction_weight)
+        values = (
+            self.low,
+            self.high,
+            self.focal,
+            self.global_visibility,
+            self.interaction_weight,
+        )
         if not np.isfinite(values).all() or not 0 < self.low < self.high < 1:
             raise ValueError("Evidence thresholds require 0 < low < high < 1")
         if not 0 <= self.focal < 1 or not 0 < self.global_visibility < 1:
@@ -97,7 +103,9 @@ def sample_camera(weights, random):
     return indices.astype(np.int32), total
 
 
-def consistency_loss(clean_velocity, corrupted_velocity, importance_weight, *, action_dimensions):
+def consistency_loss(
+    clean_velocity, corrupted_velocity, importance_weight, *, action_dimensions
+):
     """Return per-example importance-weighted flow consistency without detaching gradients.
 
     Use identical noise, flow time and ordinary augmentation for both predictions.
@@ -113,11 +121,26 @@ def consistency_loss(clean_velocity, corrupted_velocity, importance_weight, *, a
     Raises:
         ValueError: Prediction shapes or action dimensions are incompatible.
     """
-    if len(clean_velocity.shape) != 3 or clean_velocity.shape != corrupted_velocity.shape:
-        raise ValueError("Flow predictions must have matching [batch, horizon, action] shapes")
-    if not all(clean_velocity.shape) or importance_weight.shape != (clean_velocity.shape[0],):
-        raise ValueError("Flow predictions and camera weights must have matching nonempty batches")
-    if not isinstance(action_dimensions, int) or not 0 < action_dimensions <= clean_velocity.shape[-1]:
+    if (
+        len(clean_velocity.shape) != 3
+        or clean_velocity.shape != corrupted_velocity.shape
+    ):
+        raise ValueError(
+            "Flow predictions must have matching [batch, horizon, action] shapes"
+        )
+    if not all(clean_velocity.shape) or importance_weight.shape != (
+        clean_velocity.shape[0],
+    ):
+        raise ValueError(
+            "Flow predictions and camera weights must have matching nonempty batches"
+        )
+    if (
+        not isinstance(action_dimensions, int)
+        or not 0 < action_dimensions <= clean_velocity.shape[-1]
+    ):
         raise ValueError("Real action dimensions must fit the flow prediction")
-    difference = clean_velocity[..., :action_dimensions] - corrupted_velocity[..., :action_dimensions]
+    difference = (
+        clean_velocity[..., :action_dimensions]
+        - corrupted_velocity[..., :action_dimensions]
+    )
     return importance_weight * (difference * difference).mean(axis=(-2, -1))

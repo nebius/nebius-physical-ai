@@ -19,13 +19,17 @@ def images():
 
 def objective(predict, weights):
     return regularization_losses(
-        predict, images(), weights, jax.random.key(3),
-        camera_names=CAMERAS, action_dimensions=2,
+        predict,
+        images(),
+        weights,
+        jax.random.key(3),
+        camera_names=CAMERAS,
+        action_dimensions=2,
     )
 
 
 def test_informative_wrist_is_preserved_under_both_objectives():
-    weights = jnp.array([[[1., 0., 1.], [0., 1., 0.]]] * 2)
+    weights = jnp.array([[[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]]] * 2)
 
     def predict(views, key):
         # Shared random noise must cancel; only the informative wrist drives actions.
@@ -33,11 +37,13 @@ def test_informative_wrist_is_preserved_under_both_objectives():
         return jnp.broadcast_to(value[:, None, None], (2, 4, 3))
 
     losses = jax.jit(lambda: objective(predict, weights))()
-    np.testing.assert_array_equal(np.asarray(losses), 0.)
+    np.testing.assert_array_equal(np.asarray(losses), 0.0)
 
 
 def test_jitted_gradient_reduces_dependence_on_irrelevant_cameras():
-    weights = jnp.array([[[1., 0., 1.], [0., 1., 0.]], [[0., 0., 0.], [0., 0., 0.]]])
+    weights = jnp.array(
+        [[[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]], [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]]
+    )
 
     def loss(scale):
         def predict(views, key):
@@ -47,7 +53,9 @@ def test_jitted_gradient_reduces_dependence_on_irrelevant_cameras():
         invariance, sufficiency = objective(predict, weights)
         return (invariance + sufficiency).sum(), (invariance, sufficiency)
 
-    (value, per_example), gradient = jax.jit(jax.value_and_grad(loss, has_aux=True))(jnp.ones(3))
+    (value, per_example), gradient = jax.jit(jax.value_and_grad(loss, has_aux=True))(
+        jnp.ones(3)
+    )
     assert np.isfinite(value) and value > 0
     assert np.all(np.asarray(gradient[:2]) > 0)
     assert gradient[2] == 0  # Padding cannot influence the objective.
@@ -63,7 +71,7 @@ def test_no_visible_object_has_finite_zero_loss_and_gradient():
 
         return sum(value.sum() for value in objective(predict, jnp.zeros((2, 2, 3))))
 
-    value, gradient = jax.jit(jax.value_and_grad(loss))(1.)
+    value, gradient = jax.jit(jax.value_and_grad(loss))(1.0)
     assert value == 0 and gradient == 0
 
 
@@ -84,8 +92,12 @@ def test_three_predictions_share_the_same_flow_key():
 def test_ambiguous_camera_mapping_is_rejected(names):
     with pytest.raises(ValueError, match="exactly once"):
         regularization_losses(
-            None, images(), jnp.ones((2, 2, 3)), jax.random.key(0),
-            camera_names=names, action_dimensions=2,
+            None,
+            images(),
+            jnp.ones((2, 2, 3)),
+            jax.random.key(0),
+            camera_names=names,
+            action_dimensions=2,
         )
 
 

@@ -105,7 +105,9 @@ def test_filtered_reader_positions_differ_from_absolute_frame_indices(filtered_r
     assert bounds["to"].tolist() == [2, 5]
 
 
-@pytest.mark.parametrize("column", ["episode_index", "frame_index", "task_index", "index"])
+@pytest.mark.parametrize(
+    "column", ["episode_index", "frame_index", "task_index", "index"]
+)
 def test_corrupt_native_row_identity_is_rejected(filtered_rows, column):
     columns, metadata = filtered_rows
     columns[column][3] += 1

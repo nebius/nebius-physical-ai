@@ -2997,7 +2997,9 @@ def _plan_requires_npa_source(
     # unused source tree (and ``--no-stage-src`` cannot submit it at all).
     spec = merge_config_overrides(load_spec(yaml_path), config_overrides)
     plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
-    overlay = os.environ.get("NPA_SRC_OVERLAY") or spec.config.get("source_overlay") or ""
+    overlay = (
+        os.environ.get("NPA_SRC_OVERLAY") or spec.config.get("source_overlay") or ""
+    )
     if plan.steps and str(overlay).strip().lower() in {"1", "true"}:
         return True
     for step in plan.steps:

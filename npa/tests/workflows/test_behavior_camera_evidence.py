@@ -66,31 +66,44 @@ def test_consistency_excludes_action_padding_and_applies_importance():
     np.testing.assert_array_equal(loss, [8, 0])
 
 
-@pytest.mark.parametrize('areas', [[[np.nan, 0]], [[-0.1, 0]], [[1.1, 0]], [], [0, 0]])
+@pytest.mark.parametrize("areas", [[[np.nan, 0]], [[-0.1, 0]], [[1.1, 0]], [], [0, 0]])
 def test_invalid_visibility_is_rejected(areas):
     with pytest.raises(ValueError):
         camera_weights(areas, areas)
 
 
-@pytest.mark.parametrize('arguments', [{'low': 0}, {'high': 1}, {'low': 0.9},
-                                    {'global_visibility': 0}, {'focal': -1},
-                                    {'interaction_weight': float('nan')}])
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"low": 0},
+        {"high": 1},
+        {"low": 0.9},
+        {"global_visibility": 0},
+        {"focal": -1},
+        {"interaction_weight": float("nan")},
+    ],
+)
 def test_invalid_thresholds_are_rejected(arguments):
     with pytest.raises(ValueError):
         EvidenceThresholds(**arguments)
 
 
 def test_mismatched_camera_matrices_are_rejected():
-    with pytest.raises(ValueError, match='matching shapes'):
+    with pytest.raises(ValueError, match="matching shapes"):
         camera_weights([[0, 0]], [[0, 0, 0]])
 
 
-@pytest.mark.parametrize('weights', [[[float('inf')]], [[-1]], [], [1]])
+@pytest.mark.parametrize("weights", [[[float("inf")]], [[-1]], [], [1]])
 def test_invalid_sampling_weights_are_rejected(weights):
     with pytest.raises(ValueError):
         sample_camera(weights, np.random.default_rng(0))
 
 
 def test_invalid_physical_action_shape_is_rejected():
-    with pytest.raises(ValueError, match='Real action dimensions'):
-        consistency_loss(np.zeros((1, 30, 23)), np.zeros((1, 30, 23)), np.ones(1), action_dimensions=32)
+    with pytest.raises(ValueError, match="Real action dimensions"):
+        consistency_loss(
+            np.zeros((1, 30, 23)),
+            np.zeros((1, 30, 23)),
+            np.ones(1),
+            action_dimensions=32,
+        )
