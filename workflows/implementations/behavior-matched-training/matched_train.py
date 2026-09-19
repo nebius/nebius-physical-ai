@@ -363,6 +363,7 @@ def guarded_update(update):
     """
 
     import jax
+    import jax.numpy as jnp
     import numpy as np
     from flax import traverse_util
 
@@ -378,9 +379,22 @@ def guarded_update(update):
         jax.debug.callback(
             require_finite, metrics["loss"], metrics["grad_norm"], metrics["param_norm"]
         )
-        return updated, metrics
+        return updated, _logger_compatible_metrics(metrics, jnp)
 
     return checked
+
+
+def _logger_compatible_metrics(metrics: dict, array_module) -> dict:
+    """Return only scalar numeric metrics in the native logger's dtype."""
+    compatible = {}
+    for name, value in metrics.items():
+        if isinstance(value, str):
+            continue
+        array = array_module.asarray(value)
+        if array.ndim != 0:
+            raise ValueError(f"Training metric {name!r} is not scalar")
+        compatible[name] = array.astype(array_module.float32)
+    return compatible
 
 
 def _load_trainer(source_root: Path):
@@ -410,7 +424,11 @@ def _changed_paths(jax, jnp, before: dict, after: dict) -> set[tuple[str, ...]]:
 
 
 def _write_update_receipt(
-    output: Path, changed: set, changed_ema: set, metrics: dict
+    output: Path,
+    changed: set,
+    changed_ema: set,
+    metrics: dict,
+    formatted: str,
 ) -> None:
     checked = {
         name: float(metrics[name]) for name in ("loss", "grad_norm", "param_norm")
@@ -425,34 +443,20 @@ def _write_update_receipt(
             "/".join(path) for path in changed_ema
         ),
         "frozen_ema_paths_byte_equal": True,
+        "native_formatter_line": formatted,
+        "native_formatter_updates": 2,
         "metrics": checked,
         "status": "passed",
     }
     output.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
 
 
-def validate_real_update(training, trainer, output: Path) -> None:
-    """Run one real update and prove every frozen parameter remains byte-equal."""
+def _validate_action_and_ema_update(state, updated) -> tuple[set, set]:
+    """Check the real parameter and export-EMA changes against the action partition."""
     import jax
     import jax.numpy as jnp
-    from b1k.training import data_loader
     from flax import traverse_util
-    from openpi.training import sharding
 
-    mesh = sharding.make_mesh(training.fsdp_devices)
-    loader = data_loader.create_behavior_data_loader(training, shuffle=True)
-    batch = next(iter(loader))
-    norm_stats = loader.data_config().norm_stats
-    state, _ = trainer.init_train_state(
-        training,
-        jax.random.key(training.seed),
-        mesh,
-        resume=False,
-        norm_stats=norm_stats,
-    )
-    updated, metrics = jax.jit(functools.partial(trainer.train_step, training))(
-        jax.random.key(training.seed), state, batch
-    )
     before = traverse_util.flatten_dict(state.params.to_pure_dict())
     after = traverse_util.flatten_dict(updated.params.to_pure_dict())
     changed = _changed_paths(jax, jnp, before, after)
@@ -465,8 +469,76 @@ def validate_real_update(training, trainer, output: Path) -> None:
     changed_ema = _changed_paths(jax, jnp, ema_before, ema_after)
     if not changed_ema.issubset(EXPECTED_TRAINABLE_PATHS):
         raise ValueError("EMA update did not remain inside the exact action partition")
+    return changed, changed_ema
+
+
+def validate_real_update(training, trainer, output: Path) -> None:
+    """Prove action-only updates and the native two-update logging contract.
+
+    Args:
+        training: Pinned native training configuration.
+        trainer: Native trainer with guarded updates installed.
+        output: Destination for the successful GPU validation receipt.
+    Returns:
+        None.
+    Raises:
+        ValueError: The update changes frozen parameters or lacks export EMA.
+        FloatingPointError: The update produces non-finite metrics.
+    """
+    import jax
+    from b1k.training import data_loader
+    from openpi.training import sharding
+
+    mesh = sharding.make_mesh(training.fsdp_devices)
+    loader = data_loader.create_behavior_data_loader(training, shuffle=True)
+    iterator = iter(loader)
+    batch = next(iterator)
+    state, _ = trainer.init_train_state(
+        training, jax.random.key(training.seed), mesh,
+        resume=False, norm_stats=loader.data_config().norm_stats,
+    )
+    update = jax.jit(functools.partial(trainer.train_step, training))
+    updated, metrics = update(jax.random.key(training.seed), state, batch)
+    changed, changed_ema = _validate_action_and_ema_update(state, updated)
+    second, second_metrics = update(
+        jax.random.key(training.seed), updated, next(iterator)
+    )
+    del second
     device_metrics = jax.device_get(metrics)
-    _write_update_receipt(output, changed, changed_ema, device_metrics)
+    second_device_metrics = jax.device_get(second_metrics)
+    formatted = _format_native_metrics([device_metrics, second_device_metrics])
+    _write_update_receipt(
+        output, changed, changed_ema, device_metrics, formatted
+    )
+
+
+def _format_native_metrics(metrics: list[dict]) -> str:
+    """Exercise the pinned trainer's metric reduction and format contract."""
+    import jax
+    import jax.numpy as jnp
+    from flax.training import common_utils
+
+    stacked = common_utils.stack_forest(metrics)
+    reduced = jax.device_get(jax.tree.map(jnp.mean, stacked))
+    return _format_reduced_metrics(reduced)
+
+
+def _format_reduced_metrics(reduced: dict) -> str:
+    """Format the same reduced metric subset as the pinned native trainer."""
+    main = {
+        key: value
+        for key, value in reduced.items()
+        if "loss" in key
+        or "accuracy" in key
+        or key
+        in {
+            "grad_norm",
+            "param_norm",
+            "grad_norm_vlm",
+            "grad_norm_action_expert",
+        }
+    }
+    return ", ".join(f"{key}={value:.4f}" for key, value in main.items())
 
 
 def _training_provenance(args, config, manifest, revisions, checkpoint_files) -> dict:

@@ -133,9 +133,12 @@ The merger requires exact shard membership and frame order. Its receipt records
 the input and output hashes. Both training arms consume the same merged traces.
 
 Freeze each arm's inputs, then invoke `matched_train.py`. The trainer performs
-one real compiled update before the planned run. That gate requires finite
-loss, gradient norm, and parameter norm; byte equality for every frozen leaf;
-and changes confined to the action allowlist.
+two consecutive compiled updates on disposable state before the planned run.
+The first checks finite loss, gradient norm, and parameter norm; byte equality
+for every frozen leaf; and changes confined to the action allowlist. Both
+updates pass through the native metric reduction and numeric formatter.
+Reporting metrics are converted to scalar float32 after the model update.
+The planned run rebuilds its state and data loader from the original seed.
 
 ```bash
 for arm in teacher replay; do

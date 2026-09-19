@@ -23,7 +23,11 @@ from checkpoint_selection import LossRow, select_checkpoint
 from export_selected import export_selected
 from gpu_preflight import _logits_equal, _result
 from generate_prefix_records import _transform_raw_sample
-from matched_train import _preserve_frozen_ema
+from matched_train import (
+    _format_reduced_metrics,
+    _logger_compatible_metrics,
+    _preserve_frozen_ema,
+)
 from panel_data import (
     CarryStageLabels,
     PanelDataset,
@@ -90,6 +94,22 @@ def test_ema_updates_only_action_partition() -> None:
         "action_in_proj": {"bias": 3},
         "frozen": {"bias": 2},
     }
+
+
+def test_training_metrics_satisfy_native_formatter_contract() -> None:
+    metrics = _logger_compatible_metrics(
+        {
+            "loss": np.float16(0.25),
+            "grad_norm": np.float16(0.5),
+            "param_norm": np.float16(1.0),
+            "loss_kind": "action_only",
+        },
+        np,
+    )
+    assert set(metrics) == {"loss", "grad_norm", "param_norm"}
+    assert all(value.dtype == np.dtype("float32") for value in metrics.values())
+    line = _format_reduced_metrics(metrics)
+    assert line == "loss=0.2500, grad_norm=0.5000, param_norm=1.0000"
 
 
 def test_public_package_has_no_campaign_locations() -> None:
