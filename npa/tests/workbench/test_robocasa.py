@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import sys
 import threading
 import types
@@ -301,8 +302,16 @@ def test_run_registry_concurrent_updates_are_safe() -> None:
 
 
 class _FakeActionSpace:
+    shape = (7,)
+
     def sample(self) -> np.ndarray:
         return np.zeros(7, dtype=np.float32)
+
+    def seed(self, _seed: int) -> None:
+        return None
+
+    def contains(self, action) -> bool:
+        return np.asarray(action).shape == self.shape
 
 
 class _FakeEnv:
@@ -316,6 +325,13 @@ class _FakeEnv:
 
     def step(self, action):
         return self._obs(), 0.0, False, False, {}
+
+    @property
+    def unwrapped(self):
+        return self
+
+    def _check_success(self) -> bool:
+        return False
 
     def render(self):
         return np.zeros((64, 64, 3), dtype=np.uint8)
@@ -400,6 +416,7 @@ def test_assets_root_does_not_import_robocasa(monkeypatch: pytest.MonkeyPatch) -
 
 def test_kitchen_trajectory_export(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     _install_fake_env(monkeypatch)
+    _install_fake_video_writer(monkeypatch)
     from npa.workbench.robocasa.capabilities import kitchen_trajectory_export
 
     result = kitchen_trajectory_export(
@@ -410,6 +427,9 @@ def test_kitchen_trajectory_export(monkeypatch: pytest.MonkeyPatch, tmp_path) ->
         output_dir=tmp_path,
     )
     assert result["trajectory_export_ok"] is True
+    assert result["schema"] == "npa.robocasa.trajectory_export.v1"
+    assert result["temporal_alignment"] == "observation_before_action"
+    assert result["policy"] == "random_action_baseline"
     assert result["num_episodes"] == 2
     for ep in range(2):
         ep_dir = tmp_path / f"episode_{ep:04d}"
@@ -422,8 +442,146 @@ def test_kitchen_trajectory_export(monkeypatch: pytest.MonkeyPatch, tmp_path) ->
         assert ws.dtype == np.uint8
         st = np.load(ep_dir / "state.npy")
         assert st.shape == (3, 16)
+        assert (ep_dir / "rollout.mp4").stat().st_size > 0
     assert (tmp_path / "metadata.json").exists()
     assert (tmp_path / "metrics.json").exists()
+
+
+def _install_fake_video_writer(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_write_video(frames, path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"video:" + str(len(frames)).encode())
+        return path
+
+    monkeypatch.setattr(
+        "npa.workbench.robocasa.capabilities._write_video", fake_write_video
+    )
+
+
+class _TemporalActionSpace(_FakeActionSpace):
+    def __init__(self, env) -> None:
+        self.env = env
+
+    def sample(self) -> np.ndarray:
+        return np.full(7, self.env.state + 10, dtype=np.float32)
+
+
+class _TemporalEnv(_FakeEnv):
+    def __init__(self) -> None:
+        super().__init__()
+        self.state = 0
+        self.action_space = _TemporalActionSpace(self)
+
+    def reset(self, seed=None):
+        self.state = 0
+        return self._obs(), {}
+
+    def step(self, action):
+        assert float(np.asarray(action)[0]) == self.state + 10
+        self.state += 1
+        return self._obs(), 0.0, False, False, {}
+
+    def _obs(self) -> dict:
+        observation = super()._obs()
+        observation["video.robot0_agentview_left"].fill(self.state)
+        observation["video.robot0_eye_in_hand"].fill(self.state)
+        observation["state.base_position"] = np.full(3, self.state, dtype=np.float32)
+        return observation
+
+
+def test_trajectory_rows_store_observation_before_same_index_action() -> None:
+    from npa.workbench.robocasa.capabilities import _collect_trajectory_episode
+
+    arrays, episode = _collect_trajectory_episode(_TemporalEnv(), iterations=3, seed=7)
+
+    assert [float(state[0]) for state in arrays["state"]] == [0.0, 1.0, 2.0]
+    assert [float(action[0]) for action in arrays["actions"]] == [10.0, 11.0, 12.0]
+    assert episode["seed"] == 7
+    assert episode["length"] == 3
+    assert episode["success"] is False
+
+
+def test_native_task_success_rejects_disagreeing_signals() -> None:
+    from npa.workbench.robocasa.capabilities import _native_task_success
+
+    with pytest.raises(RoboCasaError, match="signals disagree"):
+        _native_task_success(_FakeEnv(), {"success": True}, 0.0)
+
+
+def test_native_task_success_does_not_round_dense_reward_to_success() -> None:
+    from npa.workbench.robocasa.capabilities import _native_task_success
+
+    success, sources = _native_task_success(_FakeEnv(), {}, 0.999999)
+
+    assert success is False
+    assert sources == ["environment._check_success"]
+
+
+def test_policy_action_rejects_non_finite_values() -> None:
+    from npa.workbench.robocasa.capabilities import _validated_action
+
+    action = np.zeros(7, dtype=np.float32)
+    action[0] = np.nan
+    with pytest.raises(RoboCasaError, match="action contains non-finite"):
+        _validated_action(action, _FakeActionSpace())
+
+
+def test_policy_action_rejects_action_space_mismatch() -> None:
+    from npa.workbench.robocasa.capabilities import _validated_action
+
+    with pytest.raises(RoboCasaError, match="outside the RoboCasa action space"):
+        _validated_action(np.zeros(6, dtype=np.float32), _FakeActionSpace())
+
+
+def test_episode_outcome_rejects_non_finite_reward() -> None:
+    from npa.workbench.robocasa.capabilities import (
+        _empty_episode_outcome,
+        _update_episode_outcome,
+    )
+
+    with pytest.raises(RoboCasaError, match="reward contains a non-finite"):
+        _update_episode_outcome(
+            _empty_episode_outcome(), _FakeEnv(), np.nan, False, False, {}
+        )
+
+
+def test_eval_rejects_non_finite_initial_state() -> None:
+    from npa.workbench.robocasa.capabilities import _rollout_eval_episode
+
+    observation = _FakeEnv()._obs()
+    observation["state.base_position"][0] = np.inf
+    with pytest.raises(RoboCasaError, match="robot state contains non-finite"):
+        _rollout_eval_episode(
+            _FakeEnv(),
+            iterations=1,
+            selector=lambda env, _observation: env.action_space.sample(),
+            observation=observation,
+        )
+
+
+def test_matched_eval_rejects_different_initial_workspace_frames() -> None:
+    from npa.workbench.robocasa.capabilities import _require_matched_initial_state
+
+    with pytest.raises(RoboCasaError, match="initial workspace frames do not match"):
+        _require_matched_initial_state(
+            {"initial_workspace_sha256": "policy"},
+            {"initial_workspace_sha256": "baseline"},
+        )
+
+
+def test_required_video_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.workbench.robocasa.capabilities import _write_required_video
+
+    monkeypatch.setattr(
+        "npa.workbench.robocasa.capabilities._write_video",
+        lambda _frames, _path: None,
+    )
+    with pytest.raises(RoboCasaError, match="video was not written"):
+        _write_required_video(
+            [np.zeros((4, 4, 3), dtype=np.uint8)], tmp_path / "missing.mp4"
+        )
 
 
 def test_rollout_output_has_machine_readable_execution_provenance(
@@ -470,6 +628,7 @@ def test_kitchen_trajectory_export_records_panda_omron_multitask_metadata(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     _install_fake_env(monkeypatch)
+    _install_fake_video_writer(monkeypatch)
     from npa.workbench.robocasa.capabilities import kitchen_trajectory_export
 
     result = kitchen_trajectory_export(
@@ -488,6 +647,7 @@ def test_kitchen_trajectory_export_records_panda_omron_multitask_metadata(
         "robocasa/TrainA",
         "robocasa/TrainB",
     ]
+    assert metadata["temporal_alignment"] == "observation_before_action"
 
 
 def test_kitchen_policy_eval_rejects_overlapping_tasks_before_loading_checkpoint(
@@ -523,6 +683,86 @@ def test_checkpoint_identity_hashes_exact_pretrained_model_separately(tmp_path) 
     assert resolved == checkpoint
     assert checkpoint_sha == checkpoint_sha_after
     assert first_tree_sha != second_tree_sha
+
+
+def test_kitchen_policy_eval_compares_matched_seed_random_baseline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.workbench.robocasa.capabilities import (
+        _random_action_selector,
+        kitchen_policy_eval,
+    )
+
+    class SuccessfulEnv(_TemporalEnv):
+        def step(self, action):
+            self.state += 1
+            success = self.state >= 2
+            return self._obs(), float(success), success, False, {}
+
+        def _check_success(self) -> bool:
+            return self.state >= 2
+
+    class FakePolicy:
+        def reset(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "npa.workbench.robocasa.capabilities._make_env",
+        lambda *_args, **_kwargs: SuccessfulEnv(),
+    )
+    monkeypatch.setattr(
+        "npa.workbench.robocasa.capabilities._download_s3_tree",
+        lambda _uri, destination: destination,
+    )
+    monkeypatch.setattr(
+        "npa.workbench.robocasa.capabilities._checkpoint_identity",
+        lambda root: (root, "a" * 64, "b" * 64),
+    )
+    monkeypatch.setattr(
+        "npa.workbench.robocasa.capabilities._load_act_policy",
+        lambda _path: (FakePolicy(),),
+    )
+    monkeypatch.setattr(
+        "npa.workbench.robocasa.capabilities._act_action_selector",
+        lambda _runtime: _random_action_selector,
+    )
+    _install_fake_video_writer(monkeypatch)
+
+    result = kitchen_policy_eval(
+        checkpoint_uri="s3://example/checkpoint/",
+        train_env_ids="robocasa/TrainA",
+        heldout_env_ids="robocasa/HeldoutA",
+        iterations=3,
+        num_envs=2,
+        seed=100,
+        output_dir=tmp_path,
+        download_assets=False,
+    )
+
+    assert result["success_rate"] == 1.0
+    assert result["baseline_success_rate"] == 1.0
+    assert result["success_rate_delta"] == 0.0
+    assert result["paired_outcomes"] == {
+        "policy_wins": 0,
+        "baseline_wins": 0,
+        "ties": 2,
+    }
+    assert [pair["seed"] for pair in result["paired_episodes"]] == [100, 101]
+    assert all(
+        pair["policy"]["initial_workspace_sha256"]
+        == pair["random_baseline"]["initial_workspace_sha256"]
+        for pair in result["paired_episodes"]
+    )
+    assert all(
+        episode["success_sources"] == ["binary_reward", "environment._check_success"]
+        for episode in result["episodes"]
+    )
+    assert len(list(tmp_path.glob("episode_*/*.mp4"))) == 4
+    assert (tmp_path / "eval_manifest.json").is_file()
+    assert (
+        result["split_proof"]["heldout_episode_manifest_sha256"]
+        == hashlib.sha256((tmp_path / "eval_manifest.json").read_bytes()).hexdigest()
+    )
 
 
 def test_kitchen_trajectory_export_missing_image_key(

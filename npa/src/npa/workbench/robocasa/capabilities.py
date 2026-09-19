@@ -23,7 +23,7 @@ import tempfile
 
 import numpy as np
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from npa.clients.storage import safe_s3_download_target
 from npa.workbench.robocasa.schemas import (
@@ -505,64 +505,17 @@ def kitchen_trajectory_export(
     ``metrics.json``. This is the real trajectory export seam between RoboCasa
     simulation and LeRobotDataset policy training.
     """
-    env_ids = _parse_env_ids(env_id)
-    env = None
     try:
-        episodes: list[dict[str, Any]] = []
-        for ep in range(num_envs):
-            episode_env_id = env_ids[ep % len(env_ids)]
-            if env is not None:
-                env.close()
-            env = _make_env(
-                episode_env_id,
-                download_assets=download_assets and ep == 0,
-            )
-            obs, _ = env.reset(seed=(seed + ep) if seed is not None else None)
-            workspace_frames: list[Any] = []
-            wrist_frames: list[Any] = []
-            states: list[Any] = []
-            actions: list[Any] = []
-            reward = 0.0
-            terminated = False
-            truncated = False
-            for _ in range(iterations):
-                action = env.action_space.sample()
-                obs, reward, terminated, truncated, _info = env.step(action)
-                workspace_frames.append(_obs_image(obs, "video.robot0_agentview_left"))
-                wrist_frames.append(_obs_image(obs, "video.robot0_eye_in_hand"))
-                states.append(_obs_state(obs))
-                actions.append(_flatten_action(action))
-                if terminated or truncated:
-                    break
-            if output_dir is not None:
-                ep_dir = output_dir / f"episode_{ep:04d}"
-                ep_dir.mkdir(parents=True, exist_ok=True)
-                np.save(ep_dir / "obs_workspace.npy", np.stack(workspace_frames))
-                np.save(ep_dir / "obs_wrist.npy", np.stack(wrist_frames))
-                np.save(ep_dir / "state.npy", np.stack(states))
-                np.save(ep_dir / "actions.npy", np.stack(actions))
-                _write_video(workspace_frames, ep_dir / "rollout.mp4")
-            episodes.append(
-                {
-                    "episode_index": ep,
-                    "env_id": episode_env_id,
-                    "task": episode_env_id.removeprefix("robocasa/"),
-                    "embodiment": ROBOCASA_EMBODIMENT,
-                    "length": len(actions),
-                    "final_reward": float(reward),
-                    "terminated": bool(terminated),
-                    "truncated": bool(truncated),
-                }
-            )
-        result: dict[str, Any] = {
-            "env_id": env_id,
-            "env_ids": env_ids,
-            "embodiment": ROBOCASA_EMBODIMENT,
-            "trajectory_export_ok": True,
-            "num_episodes": len(episodes),
-            "iterations": iterations,
-            "episodes": episodes,
-        }
+        env_ids = _parse_env_ids(env_id)
+        episodes = _collect_trajectory_episodes(
+            env_ids=env_ids,
+            iterations=iterations,
+            num_envs=num_envs,
+            seed=seed,
+            output_dir=output_dir,
+            download_assets=download_assets,
+        )
+        result = _trajectory_export_result(env_id, env_ids, iterations, episodes)
         if output_dir is not None:
             _write_run_metadata(output_dir, env_id, episodes)
             result["output_dir"] = str(output_dir)
@@ -571,12 +524,187 @@ def kitchen_trajectory_export(
         raise RoboCasaError(
             f"failed to run RoboCasa trajectory export {env_id}: {exc}"
         ) from exc
+
+
+def _collect_trajectory_episodes(
+    *,
+    env_ids: list[str],
+    iterations: int,
+    num_envs: int,
+    seed: int | None,
+    output_dir: Path | None,
+    download_assets: bool,
+) -> list[dict[str, Any]]:
+    episodes: list[dict[str, Any]] = []
+    env = None
+    try:
+        for episode_index in range(num_envs):
+            if env is not None:
+                env.close()
+            episode_env_id = env_ids[episode_index % len(env_ids)]
+            env = _make_env(
+                episode_env_id,
+                download_assets=download_assets and episode_index == 0,
+            )
+            episode_seed = seed + episode_index if seed is not None else episode_index
+            arrays, outcome = _collect_trajectory_episode(
+                env, iterations=iterations, seed=episode_seed
+            )
+            if output_dir is not None:
+                episode_dir = output_dir / f"episode_{episode_index:04d}"
+                episode_dir.mkdir(parents=True, exist_ok=True)
+                _write_trajectory_artifacts(episode_dir, arrays)
+            episodes.append(
+                _trajectory_episode_identity(episode_index, episode_env_id, outcome)
+            )
+        return episodes
     finally:
         try:
             if env is not None:
                 env.close()
         except Exception as exc:  # pragma: no cover - best effort.
             LOGGER.debug("env close failed: %s", exc)
+
+
+def _trajectory_episode_identity(
+    episode_index: int, env_id: str, outcome: dict[str, Any]
+) -> dict[str, Any]:
+    return {
+        "episode_index": episode_index,
+        "env_id": env_id,
+        "task": env_id.removeprefix("robocasa/"),
+        "embodiment": ROBOCASA_EMBODIMENT,
+        **outcome,
+    }
+
+
+def _trajectory_export_result(
+    env_id: str,
+    env_ids: list[str],
+    iterations: int,
+    episodes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "schema": "npa.robocasa.trajectory_export.v1",
+        "env_id": env_id,
+        "env_ids": env_ids,
+        "embodiment": ROBOCASA_EMBODIMENT,
+        "trajectory_export_ok": True,
+        "temporal_alignment": "observation_before_action",
+        "policy": "random_action_baseline",
+        "num_episodes": len(episodes),
+        "iterations": iterations,
+        "successful_episodes": sum(int(episode["success"]) for episode in episodes),
+        "episodes": episodes,
+    }
+
+
+def _collect_trajectory_episode(
+    env: Any, *, iterations: int, seed: int
+) -> tuple[dict[str, list[Any]], dict[str, Any]]:
+    """Collect causally aligned observation/action rows from one random rollout."""
+    _seed_action_space(env.action_space, seed)
+    observation, _ = env.reset(seed=seed)
+    arrays: dict[str, list[Any]] = {
+        "workspace": [],
+        "wrist": [],
+        "state": [],
+        "actions": [],
+    }
+    outcome = _empty_episode_outcome()
+    for _ in range(iterations):
+        action = env.action_space.sample()
+        _append_observation_action(arrays, observation, action)
+        observation, reward, terminated, truncated, info = env.step(action)
+        _update_episode_outcome(outcome, env, reward, terminated, truncated, info)
+        if terminated or truncated:
+            break
+    terminal_frame = _obs_image(observation, "video.robot0_agentview_left")
+    _validate_trajectory_arrays(arrays)
+    return arrays, _trajectory_episode_record(
+        arrays, outcome, terminal_frame, seed=seed
+    )
+
+
+def _append_observation_action(
+    arrays: dict[str, list[Any]], observation: dict[str, Any], action: Any
+) -> None:
+    arrays["workspace"].append(_obs_image(observation, "video.robot0_agentview_left"))
+    arrays["wrist"].append(_obs_image(observation, "video.robot0_eye_in_hand"))
+    arrays["state"].append(_validated_finite("robot state", _obs_state(observation)))
+    arrays["actions"].append(_validated_action(action))
+
+
+def _empty_episode_outcome() -> dict[str, Any]:
+    return {
+        "reward_sum": 0.0,
+        "final_reward": 0.0,
+        "max_reward": float("-inf"),
+        "success": False,
+        "success_sources": set(),
+        "terminated": False,
+        "truncated": False,
+    }
+
+
+def _update_episode_outcome(
+    outcome: dict[str, Any],
+    env: Any,
+    reward: Any,
+    terminated: Any,
+    truncated: Any,
+    info: Any,
+) -> None:
+    reward_value = float(reward)
+    if not np.isfinite(reward_value):
+        raise RoboCasaError("RoboCasa reward contains a non-finite value")
+    success, sources = _native_task_success(env, info, reward_value)
+    outcome["reward_sum"] += reward_value
+    outcome["final_reward"] = reward_value
+    outcome["max_reward"] = max(outcome["max_reward"], reward_value)
+    outcome["success"] = bool(outcome["success"] or success)
+    outcome["success_sources"].update(sources)
+    outcome["terminated"] = bool(terminated)
+    outcome["truncated"] = bool(truncated)
+
+
+def _trajectory_episode_record(
+    arrays: dict[str, list[Any]],
+    outcome: dict[str, Any],
+    terminal_frame: np.ndarray,
+    *,
+    seed: int,
+) -> dict[str, Any]:
+    workspace = arrays["workspace"]
+    return {
+        "seed": seed,
+        "length": len(arrays["actions"]),
+        "reward_sum": outcome["reward_sum"],
+        "final_reward": outcome["final_reward"],
+        "max_reward": outcome["max_reward"],
+        "success": outcome["success"],
+        "success_sources": sorted(outcome["success_sources"]),
+        "terminated": outcome["terminated"],
+        "truncated": outcome["truncated"],
+        "initial_workspace_sha256": _sha256_array(workspace[0]),
+        "terminal_workspace_sha256": _sha256_array(terminal_frame),
+    }
+
+
+def _write_trajectory_artifacts(
+    episode_dir: Path, arrays: dict[str, list[Any]]
+) -> None:
+    np.save(episode_dir / "obs_workspace.npy", np.stack(arrays["workspace"]))
+    np.save(episode_dir / "obs_wrist.npy", np.stack(arrays["wrist"]))
+    np.save(episode_dir / "state.npy", np.stack(arrays["state"]))
+    np.save(episode_dir / "actions.npy", np.stack(arrays["actions"]))
+    _write_required_video(arrays["workspace"], episode_dir / "rollout.mp4")
+
+
+def _validate_trajectory_arrays(arrays: dict[str, list[Any]]) -> None:
+    lengths = {name: len(values) for name, values in arrays.items()}
+    if len(set(lengths.values())) != 1 or not next(iter(lengths.values()), 0):
+        raise RoboCasaError(f"trajectory arrays are not aligned: {lengths}")
 
 
 def _flatten_action(action: Any) -> np.ndarray:
@@ -636,6 +764,9 @@ def _write_run_metadata(
         "num_episodes": len(episodes),
         "episodes": episodes,
         "format": "lerobot-adapter-input",
+        "schema": "npa.robocasa.trajectory_export.v1",
+        "temporal_alignment": "observation_before_action",
+        "policy": "random_action_baseline",
         "embodiment": ROBOCASA_EMBODIMENT,
         "robot_type": "panda_omron",
         "task_env_ids": sorted({str(ep["env_id"]) for ep in episodes}),
@@ -771,6 +902,211 @@ def _unflatten_action(space: Any, values: np.ndarray) -> Any:
     return values.reshape(space.shape)
 
 
+def _seed_action_space(space: Any, seed: int) -> None:
+    seed_method = getattr(space, "seed", None)
+    if callable(seed_method):
+        seed_method(seed)
+
+
+def _validated_finite(name: str, value: Any) -> np.ndarray:
+    array = np.asarray(value, dtype=np.float32)
+    if not np.isfinite(array).all():
+        raise RoboCasaError(f"RoboCasa {name} contains non-finite values")
+    return array
+
+
+def _validated_action(action: Any, space: Any | None = None) -> np.ndarray:
+    flat = _validated_finite("action", _flatten_action(action))
+    contains = getattr(space, "contains", None)
+    if callable(contains) and not bool(contains(action)):
+        raise RoboCasaError("policy action is outside the RoboCasa action space")
+    return flat
+
+
+def _native_task_success(env: Any, info: Any, reward: float) -> tuple[bool, list[str]]:
+    signals: dict[str, bool] = {}
+    if isinstance(info, dict):
+        for key in ("success", "is_success", "goal_reached"):
+            if key in info:
+                signals[f"info.{key}"] = bool(info[key])
+    unwrapped = getattr(env, "unwrapped", env)
+    checker = getattr(unwrapped, "_check_success", None)
+    if callable(checker):
+        signals["environment._check_success"] = bool(checker())
+    if reward in {0.0, 1.0}:
+        signals["binary_reward"] = reward == 1.0
+    if not signals:
+        raise RoboCasaError("RoboCasa native task-success signal is unavailable")
+    if len(set(signals.values())) != 1:
+        raise RoboCasaError(f"RoboCasa native task-success signals disagree: {signals}")
+    return next(iter(signals.values())), sorted(signals)
+
+
+def _sha256_array(value: Any) -> str:
+    array = np.ascontiguousarray(value)
+    digest = hashlib.sha256()
+    digest.update(str(array.dtype).encode())
+    digest.update(json.dumps(array.shape).encode())
+    digest.update(array.tobytes())
+    return digest.hexdigest()
+
+
+def _load_act_policy(pretrained: Path) -> tuple[Any, Any, Any, Any, Any]:
+    import torch
+    from lerobot.configs.policies import PreTrainedConfig
+    from lerobot.policies.act.modeling_act import ACTPolicy
+    from lerobot.policies.factory import make_pre_post_processors
+
+    policy = ACTPolicy.from_pretrained(str(pretrained))
+    policy.eval()
+    device = next(policy.parameters()).device
+    config = PreTrainedConfig.from_pretrained(str(pretrained))
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=config, pretrained_path=str(pretrained)
+    )
+    return policy, device, preprocessor, postprocessor, torch
+
+
+def _act_action_selector(
+    runtime: tuple[Any, Any, Any, Any, Any],
+) -> Callable[[Any, dict[str, Any]], Any]:
+    policy, device, preprocessor, postprocessor, torch = runtime
+
+    def select(_env: Any, observation: dict[str, Any]) -> Any:
+        model_observation = preprocessor(_policy_observation(observation, device))
+        with torch.inference_mode():
+            action = postprocessor(policy.select_action(model_observation))
+        flat = np.asarray(action.squeeze(0).detach().cpu(), dtype=np.float32)
+        return _unflatten_action(_env.action_space, flat)
+
+    return select
+
+
+def _random_action_selector(env: Any, _observation: dict[str, Any]) -> Any:
+    return env.action_space.sample()
+
+
+def _rollout_eval_episode(
+    env: Any,
+    *,
+    iterations: int,
+    selector: Callable[[Any, dict[str, Any]], Any],
+    observation: dict[str, Any],
+) -> tuple[list[np.ndarray], dict[str, Any]]:
+    frames = [_obs_image(observation, "video.robot0_agentview_left")]
+    _validated_finite("robot state", _obs_state(observation))
+    outcome = _empty_episode_outcome()
+    action_digest = hashlib.sha256()
+    steps = 0
+    for _ in range(iterations):
+        action = selector(env, observation)
+        flat = _validated_action(action, env.action_space)
+        action_digest.update(flat.tobytes())
+        observation, reward, terminated, truncated, info = env.step(action)
+        frames.append(_obs_image(observation, "video.robot0_agentview_left"))
+        _validated_finite("robot state", _obs_state(observation))
+        _update_episode_outcome(outcome, env, reward, terminated, truncated, info)
+        steps += 1
+        if terminated or truncated:
+            break
+    return frames, _eval_episode_record(frames, outcome, steps, action_digest)
+
+
+def _eval_episode_record(
+    frames: list[np.ndarray],
+    outcome: dict[str, Any],
+    steps: int,
+    action_digest: Any,
+) -> dict[str, Any]:
+    return {
+        "steps": steps,
+        "reward_sum": outcome["reward_sum"],
+        "max_reward": outcome["max_reward"],
+        "success": outcome["success"],
+        "success_sources": sorted(outcome["success_sources"]),
+        "terminated": outcome["terminated"],
+        "truncated": outcome["truncated"],
+        "initial_workspace_sha256": _sha256_array(frames[0]),
+        "terminal_workspace_sha256": _sha256_array(frames[-1]),
+        "action_sha256": action_digest.hexdigest(),
+        "action_count": steps,
+    }
+
+
+def _run_eval_episode(
+    task_id: str,
+    *,
+    seed: int,
+    iterations: int,
+    selector: Callable[[Any, dict[str, Any]], Any],
+    video_path: Path,
+    download_assets: bool,
+) -> dict[str, Any]:
+    env = _make_env(task_id, download_assets=download_assets)
+    try:
+        _seed_action_space(env.action_space, seed)
+        observation, _ = env.reset(seed=seed)
+        frames, result = _rollout_eval_episode(
+            env, iterations=iterations, selector=selector, observation=observation
+        )
+        video = _write_required_video(frames, video_path)
+        result.update(
+            {
+                "video_sha256": _sha256_file(video),
+                "video_bytes": video.stat().st_size,
+                "video_frames": len(frames),
+            }
+        )
+        return result
+    finally:
+        try:
+            env.close()
+        except Exception as exc:  # pragma: no cover - best effort.
+            LOGGER.debug("env close failed: %s", exc)
+
+
+def _write_eval_manifest(
+    output_dir: Path,
+    *,
+    train_ids: list[str],
+    heldout_ids: list[str],
+    num_envs: int,
+    seed: int,
+) -> tuple[list[dict[str, Any]], str]:
+    episodes = [
+        {
+            "episode_index": index,
+            "env_id": heldout_ids[index % len(heldout_ids)],
+            "seed": seed + index,
+        }
+        for index in range(num_envs)
+    ]
+    manifest = {
+        "schema": "npa.robocasa.eval_manifest.v1",
+        "train_env_ids": train_ids,
+        "heldout_env_ids": heldout_ids,
+        "episodes": episodes,
+    }
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / "eval_manifest.json"
+    path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
+    return episodes, _sha256_file(path)
+
+
+def _paired_outcome_counts(pairs: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {"policy_wins": 0, "baseline_wins": 0, "ties": 0}
+    for pair in pairs:
+        policy_success = bool(pair["policy"]["success"])
+        baseline_success = bool(pair["random_baseline"]["success"])
+        if policy_success and not baseline_success:
+            counts["policy_wins"] += 1
+        elif baseline_success and not policy_success:
+            counts["baseline_wins"] += 1
+        else:
+            counts["ties"] += 1
+    return counts
+
+
 def kitchen_policy_eval(
     *,
     checkpoint_uri: str,
@@ -782,135 +1118,209 @@ def kitchen_policy_eval(
     output_dir: Path,
     download_assets: bool = True,
 ) -> dict[str, Any]:
-    """Evaluate the exact trained ACT checkpoint on disjoint RoboCasa tasks."""
+    """Evaluate ACT and random actions on matched, disjoint RoboCasa tasks."""
     train_ids = _parse_env_ids(train_env_ids)
     heldout_ids = _parse_env_ids(heldout_env_ids)
     overlap = sorted(set(train_ids) & set(heldout_ids))
     if overlap:
         raise RoboCasaError(f"train/held-out RoboCasa task overlap: {overlap}")
 
-    import torch
-    from lerobot.configs.policies import PreTrainedConfig
-    from lerobot.policies.act.modeling_act import ACTPolicy
-    from lerobot.policies.factory import make_pre_post_processors
+    base_seed = seed if seed is not None else 42
+    episode_manifest, manifest_sha256 = _write_eval_manifest(
+        output_dir,
+        train_ids=train_ids,
+        heldout_ids=heldout_ids,
+        num_envs=num_envs,
+        seed=base_seed,
+    )
+    execution = _evaluate_policy_checkpoint(
+        checkpoint_uri,
+        episode_manifest=episode_manifest,
+        iterations=iterations,
+        output_dir=output_dir,
+        download_assets=download_assets,
+    )
+    result = _policy_eval_result(
+        checkpoint_uri=checkpoint_uri,
+        base_seed=base_seed,
+        train_ids=train_ids,
+        heldout_ids=heldout_ids,
+        manifest_sha256=manifest_sha256,
+        execution=execution,
+    )
+    _write_policy_eval_outputs(output_dir, result)
+    return result
 
+
+def _evaluate_policy_checkpoint(
+    checkpoint_uri: str,
+    *,
+    episode_manifest: list[dict[str, Any]],
+    iterations: int,
+    output_dir: Path,
+    download_assets: bool,
+) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="robocasa-checkpoint-") as tmp:
         checkpoint_root = _download_s3_tree(checkpoint_uri, Path(tmp))
         pretrained, checkpoint_sha256, artifact_tree_sha256 = _checkpoint_identity(
             checkpoint_root
         )
-        policy = ACTPolicy.from_pretrained(str(pretrained))
-        policy.eval()
-        device = next(policy.parameters()).device
-        cfg = PreTrainedConfig.from_pretrained(str(pretrained))
-        preprocessor, postprocessor = make_pre_post_processors(
-            policy_cfg=cfg, pretrained_path=str(pretrained)
+        runtime = _load_act_policy(pretrained)
+        policy, *_ = runtime
+        selector = _act_action_selector(runtime)
+        pairs = _run_matched_eval_pairs(
+            episode_manifest,
+            policy=policy,
+            selector=selector,
+            iterations=iterations,
+            output_dir=output_dir,
+            download_assets=download_assets,
         )
-        episodes: list[dict[str, Any]] = []
-        for episode_index in range(num_envs):
-            task_id = heldout_ids[episode_index % len(heldout_ids)]
-            env = _make_env(
-                task_id, download_assets=download_assets and episode_index == 0
-            )
-            frames: list[Any] = []
-            try:
-                obs, _ = env.reset(
-                    seed=(seed + episode_index) if seed is not None else None
-                )
-                policy.reset()
-                reward_sum = 0.0
-                max_reward = float("-inf")
-                success = False
-                steps = 0
-                for _ in range(iterations):
-                    model_obs = preprocessor(_policy_observation(obs, device))
-                    with torch.inference_mode():
-                        action = postprocessor(policy.select_action(model_obs))
-                    flat = np.asarray(
-                        action.squeeze(0).detach().cpu(), dtype=np.float32
-                    )
-                    obs, reward, terminated, truncated, info = env.step(
-                        _unflatten_action(env.action_space, flat)
-                    )
-                    frames.append(_obs_image(obs, "video.robot0_agentview_left"))
-                    reward_sum += float(reward)
-                    max_reward = max(max_reward, float(reward))
-                    success = (
-                        success
-                        or bool(info.get("success", False))
-                        or float(reward) >= 1.0
-                    )
-                    steps += 1
-                    if terminated or truncated:
-                        break
-                video = output_dir / f"episode_{episode_index:04d}" / "rollout.mp4"
-                video.parent.mkdir(parents=True, exist_ok=True)
-                _write_video(frames, video)
-                episodes.append(
-                    {
-                        "episode_index": episode_index,
-                        "env_id": task_id,
-                        "seed": (seed + episode_index) if seed is not None else None,
-                        "steps": steps,
-                        "reward_sum": reward_sum,
-                        "max_reward": max_reward,
-                        "success": success,
-                        "video_sha256": _sha256_file(video) if video.exists() else "",
-                    }
-                )
-            finally:
-                env.close()
+    return {
+        "checkpoint_sha256": checkpoint_sha256,
+        "artifact_tree_sha256": artifact_tree_sha256,
+        "pairs": pairs,
+    }
 
-    heldout_episode_manifest = [
-        {
-            "episode_index": int(ep["episode_index"]),
-            "env_id": str(ep["env_id"]),
-            "seed": ep["seed"],
-        }
-        for ep in episodes
-    ]
-    split_proof = {
+
+def _policy_eval_split_proof(
+    train_ids: list[str], heldout_ids: list[str], manifest_sha256: str
+) -> dict[str, Any]:
+    task_sets_disjoint = set(train_ids).isdisjoint(heldout_ids)
+    return {
         "train_env_ids": train_ids,
         "heldout_env_ids": heldout_ids,
-        "task_sets_disjoint": True,
-        "episode_sets_disjoint_by_task": True,
+        "task_sets_disjoint": task_sets_disjoint,
+        "episode_sets_disjoint_by_task": task_sets_disjoint,
         "train_task_set_sha256": hashlib.sha256(
             json.dumps(sorted(train_ids), separators=(",", ":")).encode()
         ).hexdigest(),
         "heldout_task_set_sha256": hashlib.sha256(
             json.dumps(sorted(heldout_ids), separators=(",", ":")).encode()
         ).hexdigest(),
-        "heldout_episode_manifest_sha256": hashlib.sha256(
-            json.dumps(
-                heldout_episode_manifest, sort_keys=True, separators=(",", ":")
-            ).encode()
-        ).hexdigest(),
+        "heldout_episode_manifest_sha256": manifest_sha256,
     }
-    result = {
+
+
+def _policy_eval_result(
+    *,
+    checkpoint_uri: str,
+    base_seed: int,
+    train_ids: list[str],
+    heldout_ids: list[str],
+    manifest_sha256: str,
+    execution: dict[str, Any],
+) -> dict[str, Any]:
+    pairs = execution["pairs"]
+    episodes = [pair["policy"] for pair in pairs]
+    baselines = [pair["random_baseline"] for pair in pairs]
+    policy_success_rate = _success_rate(episodes)
+    baseline_success_rate = _success_rate(baselines)
+    return {
         "schema": "npa.robocasa.policy_eval.v1",
         "embodiment": ROBOCASA_EMBODIMENT,
         "checkpoint_uri": checkpoint_uri,
-        "checkpoint_sha256": checkpoint_sha256,
-        "training_artifact_tree_sha256": artifact_tree_sha256,
+        "checkpoint_sha256": execution["checkpoint_sha256"],
+        "training_artifact_tree_sha256": execution["artifact_tree_sha256"],
         "checkpoint_loadable": True,
-        "split_proof": split_proof,
+        "split_proof": _policy_eval_split_proof(
+            train_ids, heldout_ids, manifest_sha256
+        ),
         "num_episodes": len(episodes),
-        "success_rate": sum(int(ep["success"]) for ep in episodes) / len(episodes),
-        "mean_reward": sum(float(ep["reward_sum"]) for ep in episodes) / len(episodes),
+        "base_seed": base_seed,
+        "success_rate": policy_success_rate,
+        "baseline_success_rate": baseline_success_rate,
+        "success_rate_delta": policy_success_rate - baseline_success_rate,
+        "paired_outcomes": _paired_outcome_counts(pairs),
+        "mean_reward": _mean_reward(episodes),
+        "baseline_mean_reward": _mean_reward(baselines),
         "episodes": episodes,
+        "baseline_episodes": baselines,
+        "paired_episodes": pairs,
     }
+
+
+def _write_policy_eval_outputs(output_dir: Path, result: dict[str, Any]) -> None:
     (output_dir / "eval.json").write_text(json.dumps(result, indent=2, sort_keys=True))
     (output_dir / "metrics.json").write_text(
         json.dumps(
             {
                 "success_rate": result["success_rate"],
+                "baseline_success_rate": result["baseline_success_rate"],
+                "success_rate_delta": result["success_rate_delta"],
                 "mean_reward": result["mean_reward"],
+                "baseline_mean_reward": result["baseline_mean_reward"],
+                **result["paired_outcomes"],
             },
             indent=2,
             sort_keys=True,
         )
     )
-    return result
+
+
+def _run_matched_eval_pairs(
+    manifest: list[dict[str, Any]],
+    *,
+    policy: Any,
+    selector: Callable[[Any, dict[str, Any]], Any],
+    iterations: int,
+    output_dir: Path,
+    download_assets: bool,
+) -> list[dict[str, Any]]:
+    pairs: list[dict[str, Any]] = []
+    for item in manifest:
+        policy.reset()
+        episode_dir = output_dir / f"episode_{item['episode_index']:04d}"
+        policy_result = _run_eval_episode(
+            item["env_id"],
+            seed=item["seed"],
+            iterations=iterations,
+            selector=selector,
+            video_path=episode_dir / "rollout.mp4",
+            download_assets=download_assets and not pairs,
+        )
+        baseline = _run_eval_episode(
+            item["env_id"],
+            seed=item["seed"],
+            iterations=iterations,
+            selector=_random_action_selector,
+            video_path=episode_dir / "random_baseline.mp4",
+            download_assets=False,
+        )
+        _require_matched_initial_state(policy_result, baseline)
+        identity = {key: item[key] for key in ("episode_index", "env_id", "seed")}
+        policy_result.update(identity)
+        baseline.update(identity)
+        pairs.append({**identity, "policy": policy_result, "random_baseline": baseline})
+    return pairs
+
+
+def _require_matched_initial_state(
+    policy_result: dict[str, Any], baseline_result: dict[str, Any]
+) -> None:
+    if (
+        policy_result["initial_workspace_sha256"]
+        != baseline_result["initial_workspace_sha256"]
+    ):
+        raise RoboCasaError(
+            "policy and random baseline initial workspace frames do not match"
+        )
+
+
+def _success_rate(episodes: list[dict[str, Any]]) -> float:
+    return sum(int(episode["success"]) for episode in episodes) / len(episodes)
+
+
+def _mean_reward(episodes: list[dict[str, Any]]) -> float:
+    return sum(float(episode["reward_sum"]) for episode in episodes) / len(episodes)
+
+
+def _write_required_video(frames: list[Any], path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    written = _write_video(frames, path)
+    if written is None or not written.is_file() or written.stat().st_size <= 0:
+        raise RoboCasaError(f"RoboCasa video was not written: {path}")
+    return written
 
 
 def _write_video(frames: list[Any], path: Path) -> Path | None:

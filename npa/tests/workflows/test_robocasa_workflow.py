@@ -105,6 +105,7 @@ def test_data_policy_trajectory_export_toolref_renders() -> None:
     assert "--capability" in argv
     assert "kitchen_trajectory_export" in argv
     assert "--num-envs" in argv
+    assert argv[argv.index("--seed") + 1] == "{{config.seed}}"
     assert "--token-env" in argv
     assert "{{config.robocasa_token_env}}" in argv
 
@@ -146,6 +147,8 @@ def test_data_policy_uses_panda_omron_and_disjoint_robocasa_eval() -> None:
     assert "--train-env-ids" in argv
     assert "--heldout-env-ids" in argv
     assert "--env-id" not in argv
+    assert argv[argv.index("--seed") + 1] == "{{config.seed}}"
+    assert spec.config["seed"] == "42"
 
 
 def test_data_policy_routes_raw_cpu_stages_to_native_images() -> None:

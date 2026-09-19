@@ -3464,6 +3464,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.iterations}}",
             "--num-envs",
             "{{config.num_envs}}",
+            "--seed",
+            "{{config.seed}}",
             "--service",
             "--endpoint",
             "{{config.robocasa_endpoint}}",
@@ -3480,7 +3482,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.robocasa.policy_eval",
         description=(
             "Load the exact produced ACT checkpoint and evaluate it on explicitly "
-            "disjoint held-out RoboCasa tasks and episodes with videos and hashes."
+            "disjoint held-out RoboCasa tasks against matched random-action "
+            "episodes, with native outcomes, videos, and hashes."
         ),
         argv_template=[
             "npa",
@@ -3501,6 +3504,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.eval_iterations}}",
             "--num-envs",
             "{{config.rollout_episodes}}",
+            "--seed",
+            "{{config.seed}}",
             "--service",
             "--endpoint",
             "{{config.robocasa_endpoint}}",

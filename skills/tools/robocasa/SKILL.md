@@ -90,6 +90,16 @@ There are six per-capability toolRefs:
 `.egl_env_reset`, `.random_rollout`, `.trajectory_export`, and `.policy_eval`.
 The first four appear together in `robocasa-smoke.yaml`; the latter two drive
 the data-policy workflow's real rollout export and held-out evaluation.
+Trajectory rows use the observation-before-action convention required by
+behavior cloning. The checked-in workflow deliberately labels its source as a
+seeded random-action baseline rather than expert demonstrations.
+
+Policy evaluation runs the exact ACT checkpoint and a random-action arm on the
+same held-out task IDs and reset seeds. It fails when paired initial workspace
+frames do not match, when native success signals disagree, when actions or
+states are non-finite, or when either arm does not produce its MP4. Use
+`success_rate_delta` and the paired win/loss/tie counts for comparison; do not
+turn a zero or negative delta into a policy-improvement claim.
 
 Every run uploads `result.json` and `provenance.json`. Rollout provenance names
 the RoboCasa → MuJoCo execution path and hashes each generated MP4, with
@@ -107,6 +117,10 @@ RRD or MCAP recordings.
   validation error.
 - **Gymnasium must stay pinned at 0.29.1.** Newer wrappers drop `__getattr__`
   and break `env.sim` video capture.
+- **The data-policy reference trains on random actions.** It proves the
+  data/training/evaluation path and exposes a matched baseline; it does not
+  establish useful imitation learning without successful demonstrations and a
+  measured held-out benefit.
 
 ## Verify
 

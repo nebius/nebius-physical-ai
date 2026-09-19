@@ -22,6 +22,7 @@ config:
   heldout_env_ids: >-
     robocasa/PickPlaceSinkToCounter,robocasa/PickPlaceCounterToMicrowave
   env_id: "{{config.train_env_ids}}"
+  seed: "42"
   iterations: "100"
   num_envs: "12"
   poll_seconds: "30"
@@ -79,7 +80,7 @@ initial: trajectory-export
 
 states:
   trajectory-export:
-    description: Run a batch of RoboCasa kitchen rollouts and export trajectories.
+    description: Run seeded random-action RoboCasa baselines with causally aligned trajectories.
     toolRef: workbench.robocasa.trajectory_export
     resources: sim-gpu
     outputs:
@@ -116,7 +117,7 @@ states:
     next: policy-train
 
   policy-train:
-    description: Train a real LeRobot ACT policy on the generated dataset.
+    description: Train a real LeRobot ACT behavior-cloning baseline on the random-action dataset.
     toolRef: workbench.lerobot.policy_train
     resources: train-gpu
     needs: [lerobot-convert]
@@ -126,7 +127,7 @@ states:
     next: policy-eval
 
   policy-eval:
-    description: Evaluate the exact produced checkpoint on disjoint held-out RoboCasa tasks.
+    description: Compare the exact checkpoint with random actions on matched held-out tasks and seeds.
     toolRef: workbench.robocasa.policy_eval
     resources: sim-gpu
     needs: [policy-train]
