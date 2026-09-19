@@ -205,8 +205,13 @@ images:
       Unbuilt, publication-quarantined candidate targeting public delivery;
       complete inherited/installed corresponding-source closure is pending, not
       established by the rsync source package or a top-level MIT grant.
-      The intended image contains the exact Habitat-Sim 0.3.3 source projection
-      and locked Ubuntu/Python closure. The CC BY 4.0 Skokloster Castle scene is fetched
+      The intended bootstrap image contains the exact Habitat-Sim 0.3.3 source
+      projection and its bounded locked Ubuntu/Python closure. The optional
+      SciPy/Numba/llvmlite/Matplotlib scientific and visualisation stack is
+      intentionally runtime-fetched from the hash-locked requirements marker
+      into a private run-owned cache only when the smoke workload is invoked;
+      it is absent from the bootstrap image and this mechanism does not qualify
+      redistribution rights. The CC BY 4.0 Skokloster Castle scene is fetched
       only at runtime from the official HTTPS locator after complete archive and
       selected-member hash checks; scene, cache, credentials, and outputs are
       absent from the image. A trusted public full-SHA rebuild creates a new

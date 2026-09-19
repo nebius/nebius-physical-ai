@@ -4,8 +4,14 @@ This directory defines an unbuilt, quarantined candidate targeting public delive
 does not record a built image, a registry publication, or functional acceptance.
 
 The image may contain only the exact Habitat-Sim source projection and
-redistributable source, Ubuntu, and Python closure recorded by the adjacent
-manifests. The Habitat code and PBR configuration are MIT. The PBR resource
+redistributable source, Ubuntu, and Python bootstrap closure recorded by the
+adjacent manifests. The optional scientific/visualisation stack (SciPy,
+NumPy-quaternion, SciPy, Numba/llvmlite, Matplotlib, FontTools, contourpy, and
+kiwisolver) is deliberately
+absent from the bootstrap image because its ELF closure exceeds the retained
+512 MiB guard; its exact hash-locked rows are runtime-fetched into a private,
+run-owned cache only when the smoke workload is invoked. This is a delivery
+mechanism, not a redistribution or licensing qualification. The Habitat code and PBR configuration are MIT. The PBR resource
 projection also contains the upstream BRDF LUT under its MIT grant and five
 Poly Haven environment maps under CC0 1.0, together with the exact upstream
 `data/pbr/license.txt` notice. The image carries the corresponding notice at

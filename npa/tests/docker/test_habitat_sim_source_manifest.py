@@ -16,7 +16,6 @@ import tarfile
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, call
 
-from packaging.requirements import Requirement
 import pytest
 
 
@@ -529,7 +528,7 @@ def test_source_manifest_pins_every_official_archive_and_projection() -> None:
     assert MANIFEST["expected_projection"] == {
         "file_count": 8147,
         "inventory_sha256": (
-            "014957d05e0d70184d38c25a7a0ba1ef75a5a546ffa7dd84ae136bf412f2a0cb"
+            "db14891b7403f0f0e0554c847a1fcfff404d68abf3fdc878b08c3e01e851edb2"
         ),
     }
 
@@ -543,28 +542,48 @@ def test_pillow_metadata_patch_is_exact_and_matches_runtime_closure() -> None:
             "upstream_file_sha256": (
                 "43e4dbeea6f9e5294469471c58da6dba497f496b2b38d7913655728d50a22b08"
             ),
-            "preimage_utf8": '    "pillow==10.4.0",\n',
-            "preimage_sha256": (
-                "fa18a78709845c41b6126d8891ae9242d0f620372b9b5a99c97f79d2889f5792"
+            "preimage_utf8": (
+                '    "attrs>=19.1.0",\n'
+                '    "gitpython",\n'
+                '    "imageio",\n'
+                '    "imageio-ffmpeg",\n'
+                '    "matplotlib",\n'
+                '    "numba>=0.60.0",\n'
+                '    "numpy>=2.0.0,<2.4",\n'
+                '    "numpy-quaternion>=2024.0.0",\n'
+                '    "pillow==10.4.0",\n'
+                '    "scipy>=1.13.0",\n'
+                '    "tqdm",\n'
             ),
-            "postimage_utf8": '    "pillow==12.3.0",\n',
+            "preimage_sha256": (
+                "280e033f7e47f04fd61db02a59b05c6e7bb8a31dec2ff6dc1c85711c76522e01"
+            ),
+            "postimage_utf8": (
+                '    "attrs>=19.1.0",\n'
+                '    "gitpython",\n'
+                '    "imageio",\n'
+                '    "imageio-ffmpeg",\n'
+                '    "numpy>=2.0.0,<2.4",\n'
+                '    "pillow==12.3.0",\n'
+                '    "tqdm",\n'
+            ),
             "postimage_sha256": (
-                "4182c99cf1ae8748d641bc94d848f214fc387ac0bbf82d17f11ce8dfa96ab187"
+                "a21250ec068ba2c8150372d2f93c4a385ce6accb02d8cfc78348ebe628725b90"
             ),
             "expected_match_count": 1,
-            "patched_file_bytes": 4829,
+            "patched_file_bytes": 4735,
             "patched_file_sha256": (
-                "e5800094351b07779cafa2e1b65fa504bd1642cc11c904a5af0a2d3e261e437d"
+                "c5a6d3d39e89158e3bc35b696481ebfa12357b8cd1c941c2be38d2ef0dbdcf93"
             ),
             "reason": (
-                "Accept the security-pinned Pillow 12.3.0 runtime after "
-                "compatibility verification"
+                "Pin Pillow and keep the optional numpy-quaternion/numba/scipy/matplotlib stack "
+                "runtime-fetched to keep the public bootstrap ELF closure bounded"
             ),
         }
     ]
-    requirement = Requirement(patch[0]["postimage_utf8"].strip().rstrip(",").strip('"'))
-    assert requirement.name == "pillow"
-    assert str(requirement.specifier) == "==12.3.0"
+    assert '"pillow==12.3.0",' in patch[0]["postimage_utf8"]
+    for omitted in ("matplotlib", "numba", "numpy-quaternion", "scipy"):
+        assert f'"{omitted}' not in patch[0]["postimage_utf8"]
     runtime = (PACKAGE / "requirements-runtime.lock").read_text(encoding="utf-8")
     licenses = json.loads((PACKAGE / "licenses.json").read_text(encoding="utf-8"))
     pillow = next(row for row in licenses["python_wheels"] if row["name"] == "pillow")

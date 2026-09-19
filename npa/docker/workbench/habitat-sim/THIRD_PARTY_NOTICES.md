@@ -39,9 +39,13 @@ the separately licensed Skokloster demo scene, which remains runtime-fetched.
 
 ## Downstream packaging metadata modification
 
-NPA changes one dependency declaration in the pinned Habitat-Sim
-`pyproject.toml`: `pillow==10.4.0` becomes `pillow==12.3.0`. This metadata-only
-patch accepts the security-pinned Pillow runtime after compatibility testing;
-it does not change Habitat-Sim runtime code or its MIT license. The source
-manifest binds the complete upstream file, exact preimage and postimage, final
-patched file, and resulting source-projection inventory by SHA-256.
+NPA changes the pinned Habitat-Sim dependency declaration by retaining
+`pillow==12.3.0` and omitting the optional Matplotlib/Numba/SciPy scientific
+stack from the bootstrap image. The omitted `contourpy`, `fonttools`,
+`numpy-quaternion`, `kiwisolver`, `llvmlite`, `matplotlib`, `numba`, and `scipy` rows remain
+hash-locked and are fetched only into a private run-owned cache when the smoke
+workload actually needs them. This metadata-only/runtime-delivery design keeps
+their bytes out of the public bootstrap image; it does not change Habitat-Sim
+runtime source or grant redistribution rights. The source manifest binds the
+complete upstream file, exact preimage and postimage, final patched file, and
+resulting source-projection inventory by SHA-256.

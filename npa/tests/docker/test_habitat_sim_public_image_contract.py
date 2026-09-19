@@ -109,6 +109,44 @@ def test_habitat_diagram_keeps_unvalidated_candidate_out_of_gpu_gated_group() ->
     assert habitat_row.rstrip().endswith("| unvalidated |")
 
 
+def test_habitat_optional_elf_stack_is_runtime_fetched_from_hash_locked_rows() -> None:
+    lock_lines = (
+        PACKAGE / "requirements-runtime.lock"
+    ).read_text(encoding="utf-8").splitlines()
+    runtime_rows = {
+        line.removeprefix("# runtime-fetch: ").split("==", 1)[0]
+        for line in lock_lines
+        if line.startswith("# runtime-fetch: ")
+    }
+    expected = {
+        "contourpy",
+        "fonttools",
+        "kiwisolver",
+        "llvmlite",
+        "matplotlib",
+        "numba",
+        "numpy-quaternion",
+        "scipy",
+    }
+    assert runtime_rows == expected
+    assert not any(
+        line and not line.startswith("#") and line.split("==", 1)[0] in expected
+        for line in lock_lines
+    )
+    entrypoint = (PACKAGE / "entrypoint.sh").read_text(encoding="utf-8")
+    for required in (
+        "runtime_fetch_optional_scientific_stack",
+        "--require-hashes",
+        "--target \"$staging/payload\"",
+        ".ready",
+        "payload-$lock_digest",
+        "mkdir \"$final_dir\"",
+    ):
+        assert required in entrypoint
+    assert "--help" in entrypoint
+    assert "credential" not in entrypoint.lower()
+
+
 def _run_bash(
     script: str,
     *arguments: str,

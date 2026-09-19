@@ -14,7 +14,11 @@ PACKAGE = ROOT / "npa/docker/workbench/habitat-sim"
 def _wheel_lock(name: str) -> dict[str, str]:
     result = {}
     for line in (PACKAGE / name).read_text(encoding="utf-8").splitlines():
-        if not line or line.startswith("#"):
+        if not line:
+            continue
+        if line.startswith("# runtime-fetch: "):
+            line = line.removeprefix("# runtime-fetch: ")
+        elif line.startswith("#"):
             continue
         package, digest = line.split(" --hash=sha256:")
         result[package.lower().replace("_", "-")] = digest
@@ -41,6 +45,17 @@ def test_every_locked_wheel_has_exact_license_bytes_and_role() -> None:
         assert all(
             re.fullmatch(r"[0-9a-f]{64}", value) for value in row["license_sha256"]
         )
+    for name in (
+        "contourpy",
+        "fonttools",
+        "kiwisolver",
+        "llvmlite",
+        "matplotlib",
+        "numba",
+        "scipy",
+    ):
+        row = next(row for row in rows if row["name"].lower() == name)
+        assert row["role"] == "runtime-fetch"
 
 
 def test_source_license_manifest_matches_exact_selected_dependencies() -> None:
