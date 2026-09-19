@@ -1019,6 +1019,7 @@ def submit_workflow(
     owned_submission_dir: Path | None = None
     prepared_yaml: Path | None = None
     streamer: _LaunchStreamer | None = None
+    bound_libero_job_id = ""
     try:
         prepared = _prepare_workflow_submission(
             yaml_path,
@@ -1140,16 +1141,24 @@ def submit_workflow(
 
         def _reconcile() -> ReconciliationEvidence:
             expected_profile_sha256 = ""
+            expected_job_id = ""
             if libero_submission:
                 from npa.execution_preflight import libero_executable_profile_sha256
 
                 expected_profile_sha256 = libero_executable_profile_sha256(docs)
+                expected_job_id = bound_libero_job_id or _load_libero_bound_job_id(
+                    project=project, run_id=run_id
+                )
             return _reconcile_managed_job_env(
                 run_id,
                 env=env,
                 sky_executable=sky_executable,
                 cwd=stable_cwd,
-                expected_profile_sha256=expected_profile_sha256,
+                expected_profile_sha256=(
+                    expected_profile_sha256 if expected_job_id else ""
+                ),
+                expected_job_id=expected_job_id,
+                require_owner_binding=libero_submission,
             )
 
         def _launch() -> tuple[
@@ -1181,6 +1190,15 @@ def submit_workflow(
                     _format_submit_error(cmd, launch_result, streamed=diagnoses),
                     launch_result,
                 )
+            if libero_submission:
+                nonlocal bound_libero_job_id
+                bound_libero_job_id = _parse_job_id(
+                    "\n".join(
+                        part
+                        for part in (launch_result.stdout, launch_result.stderr)
+                        if part
+                    )
+                )
             return launch_result, diagnoses
 
         def _classify(exc: BaseException) -> tuple[EvidenceState, FailureCategory]:
@@ -1208,6 +1226,10 @@ def submit_workflow(
             if transaction_recorder is None:
                 return
             enriched = dict(payload)
+            if libero_submission:
+                from npa.execution_preflight import libero_executable_profile_sha256
+
+                enriched["libero_profile_sha256"] = libero_executable_profile_sha256(docs)
             enriched["controller"] = {
                 **controller_health.to_dict(),
                 "selected_context": selected_context,
@@ -1657,6 +1679,8 @@ def _reconcile_managed_job_env(
     sky_executable: str,
     cwd: str | None,
     expected_profile_sha256: str = "",
+    expected_job_id: str = "",
+    require_owner_binding: bool = False,
     timeout: int = 60,
 ) -> ReconciliationEvidence:
     """Reconcile one exact name through the same SkyPilot runtime as launch."""
@@ -1702,23 +1726,58 @@ def _reconcile_managed_job_env(
     matching: set[str] = set()
     statuses: dict[str, str] = {}
     workload_markers: dict[str, set[str]] = {}
-    expected_profile_sha256 = (
-        str(expected_profile_sha256 or "").strip()
-        or str(env.get("NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256") or "").strip()
-    )
+    expected_profile_sha256 = str(expected_profile_sha256 or "").strip()
+    expected_job_id = str(expected_job_id or "").strip()
+    matching_rows = [
+        row
+        for row in rows
+        if isinstance(row, Mapping)
+        and str(row.get("job_name") or row.get("name") or "") == job_name
+    ]
+    if expected_job_id:
+        matching_rows = [
+            row
+            for row in matching_rows
+            if str(row.get("job_id") or row.get("id") or "") == expected_job_id
+        ]
+    elif require_owner_binding:
+        viable_rows = [
+            row
+            for row in matching_rows
+            if not is_terminal_failure_job_status(
+                str(row.get("status") or "UNKNOWN").upper()
+            )
+        ]
+        if viable_rows:
+            return ReconciliationEvidence(
+                ReconciliationState.UNAVAILABLE,
+                error=(
+                    "existing LIBERO managed job has no owner-controlled immutable "
+                    "job binding; refusing adoption"
+                ),
+            )
+        matching_rows = []
     for row in rows:
         if not isinstance(row, Mapping):
             continue
-        if str(row.get("job_name") or row.get("name") or "") != job_name:
+        if row not in matching_rows:
             continue
         if expected_profile_sha256:
             observed_profile_sha256 = _managed_job_profile_digest(row)
-            if observed_profile_sha256 != expected_profile_sha256:
+            if observed_profile_sha256 and observed_profile_sha256 != expected_profile_sha256:
                 return ReconciliationEvidence(
                     ReconciliationState.UNAVAILABLE,
                     error=(
-                        "existing LIBERO managed job lacks the exact executable "
+                        "existing LIBERO managed job has a conflicting executable "
                         "profile digest; refusing adoption"
+                    ),
+                )
+            if not expected_job_id or not expected_profile_sha256:
+                return ReconciliationEvidence(
+                    ReconciliationState.UNAVAILABLE,
+                    error=(
+                        "existing LIBERO managed job lacks the exact owner-controlled "
+                        "profile binding; refusing adoption"
                     ),
                 )
         job_id = str(row.get("job_id") or row.get("id") or "")
@@ -1757,6 +1816,28 @@ def _reconcile_managed_job_env(
         workload_observable=bool(markers),
         workload_evidence=",".join(markers),
     )
+
+
+def _load_libero_bound_job_id(*, project: str, run_id: str) -> str:
+    """Read the exact owner ledger binding from a prior LIBERO launch."""
+
+    try:
+        from npa.orchestration.npa_workflow.submission_state import (
+            inspect_submission_state,
+        )
+
+        receipt = inspect_submission_state(project or "default", run_id)
+        payload = receipt.payload if receipt.outcome == "found" else {}
+        launch = payload.get("launch")
+        if not isinstance(launch, Mapping):
+            return ""
+        job_id = str(launch.get("job_id") or "").strip()
+        digest = str(launch.get("libero_profile_sha256") or "").strip()
+        if job_id.isdigit() and re.fullmatch(r"[0-9a-f]{64}", digest):
+            return job_id
+    except Exception:  # noqa: BLE001 - unavailable owner state must fail closed
+        return ""
+    return ""
 
 
 def _managed_job_profile_digest(row: Mapping[str, Any]) -> str:

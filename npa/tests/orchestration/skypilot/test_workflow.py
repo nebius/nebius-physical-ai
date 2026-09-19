@@ -2361,12 +2361,14 @@ def test_libero_reconciliation_refuses_unbound_existing_job(monkeypatch) -> None
     )
     evidence = workflow_module._reconcile_managed_job_env(
         "exact-run",
-        env={"NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256": "a" * 64},
+        env={},
         sky_executable="sky",
         cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        require_owner_binding=True,
     )
     assert evidence.state is workflow_module.ReconciliationState.UNAVAILABLE
-    assert "refusing adoption" in evidence.error
+    assert "owner-controlled immutable job binding" in evidence.error
 
 
 def test_libero_reconciliation_requires_exact_profile_digest(monkeypatch) -> None:
@@ -2385,10 +2387,68 @@ def test_libero_reconciliation_requires_exact_profile_digest(monkeypatch) -> Non
     )
     evidence = workflow_module._reconcile_managed_job_env(
         "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        expected_job_id="126",
+        require_owner_binding=True,
+    )
+    assert evidence.state is workflow_module.ReconciliationState.FOUND
+    assert evidence.job_id == "126"
+
+
+def test_non_libero_reconciliation_ignores_ambient_libero_digest(monkeypatch) -> None:
+    row = {"job_id": 126, "job_name": "exact-run", "status": "PENDING"}
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=""
+        ),
+    )
+
+    evidence = workflow_module._reconcile_managed_job_env(
+        "exact-run",
         env={"NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256": "a" * 64},
         sky_executable="sky",
         cwd="/durable",
     )
+
+    assert evidence.state is workflow_module.ReconciliationState.FOUND
+    assert evidence.job_id == "126"
+
+
+def test_libero_reconciliation_ignores_terminal_profile_history_for_bound_job(
+    monkeypatch,
+) -> None:
+    rows = [
+        {
+            "job_id": 125,
+            "job_name": "exact-run",
+            "status": "CANCELLED",
+            "metadata": {"executable_profile_sha256": "b" * 64},
+        },
+        {"job_id": 126, "job_name": "exact-run", "status": "PENDING"},
+    ]
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(rows), stderr=""
+        ),
+    )
+
+    evidence = workflow_module._reconcile_managed_job_env(
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        expected_job_id="126",
+        require_owner_binding=True,
+    )
+
     assert evidence.state is workflow_module.ReconciliationState.FOUND
     assert evidence.job_id == "126"
 
