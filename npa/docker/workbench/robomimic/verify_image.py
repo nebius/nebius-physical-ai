@@ -1413,7 +1413,7 @@ def _wheel_target(name: str, directory: str) -> str:
         if (
             parts[0] != directory.removesuffix(".dist-info") + ".data"
             or len(parts) < 3
-            or parts[1] not in {"purelib", "platlib"}
+            or parts[1] not in {"purelib", "platlib", "data"}
         ):
             raise VerificationError("unsupported wheel installation scheme")
         parts = parts[2:]

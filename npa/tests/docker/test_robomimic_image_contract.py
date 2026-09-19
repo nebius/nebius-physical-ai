@@ -2149,6 +2149,16 @@ def test_wheel_inventory_refuses_unknown_installation_transformation() -> None:
         )
 
 
+def test_wheel_inventory_accepts_authenticated_data_scheme_target() -> None:
+    assert (
+        VERIFIER._wheel_target(
+            "fonttools-4.64.0.data/data/share/man/man1/ttx.1",
+            "fonttools-4.64.0.dist-info",
+        )
+        == "share/man/man1/ttx.1"
+    )
+
+
 def test_wheel_distribution_accepts_pep427_name_case_and_separator_normalization() -> None:
     members = {
         "PyYAML-6.0.2.dist-info/METADATA": (
