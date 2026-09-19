@@ -318,8 +318,8 @@ def test_fiftyone_base_gets_the_unchanged_critical_vulnerability_gate():
     assert len(entries) == 1
     assert entries[0]["purge_linux_libc_dev"] is False
     scanner = (ROOT / "npa/scripts/scan_base_images.py").read_text()
-    assert '"--severity", "CRITICAL"' in scanner
-    assert '"--exit-code", "0" if sarif else "1"' in scanner
+    assert re.search(r'"--severity",\s*"CRITICAL"', scanner)
+    assert re.search(r'"--exit-code",\s*"0" if sarif else "1"', scanner)
 
 
 def test_publisher_policy_pin_matches_the_reviewed_product_catalog():
