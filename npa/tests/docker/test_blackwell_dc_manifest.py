@@ -103,6 +103,29 @@ def test_blocked_entries_track_an_upstream_reason(entries: list[dict]) -> None:
         )
 
 
+def test_habitat_block_binds_to_the_graphics_path_contract(manifest: dict) -> None:
+    """Habitat's refusal names its OpenGL/EGL gate, not unrelated RT hardware."""
+
+    habitat = next(
+        item for item in manifest["images"] if item["name"] == "npa-habitat-sim"
+    )
+    reason = habitat["blocked_reason"]
+    assert "supported NVIDIA OpenGL/EGL headless rendering path" in reason
+    assert "no such path is verified" in reason
+    assert "STRICT-bound to one RTX PRO 6000 Blackwell" in reason
+    assert "RT core" not in reason
+
+    matrix = (ROOT / "docs/workbench/image-gpu-compatibility-matrix.md").read_text(
+        encoding="utf-8"
+    )
+    habitat_row = next(
+        line for line in matrix.splitlines() if "`npa-habitat-sim`" in line
+    )
+    assert "supported NVIDIA OpenGL/EGL path unverified" in habitat_row
+    assert "no RT cores" not in habitat_row
+    assert "strict RTX-only route" in habitat_row
+
+
 def test_port_entries_name_their_blocker(entries: list[dict]) -> None:
     for entry in [item for item in entries if item["verdict"] == "port"]:
         name = entry["name"]
@@ -191,7 +214,9 @@ def test_published_tags_are_additive_and_arch_labelled(entries: list[dict]) -> N
                 SUPPORTED_TOOL_VERSIONS,
             )
 
-            tool = next(tool for tool, image in CONTAINER_IMAGE_NAMES.items() if image == name)
+            tool = next(
+                tool for tool, image in CONTAINER_IMAGE_NAMES.items() if image == name
+            )
             assert tag == SUPPORTED_TOOL_VERSIONS[tool]
             assert entry["published_digest"] == GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS[tool]
         else:
