@@ -1110,12 +1110,8 @@ def _run_byo_rerun_command(
     rerun_argv, rerun_env = _split_component_command(
         config.byo_rerun_command, component="rerun_viz"
     )
-    env.update(rerun_env)
     invocation = _run_component_command(
-        rerun_argv,
-        cwd=local_dir,
-        env=env,
-        component="rerun_viz",
+        rerun_argv, cwd=local_dir, env=env | rerun_env, component="rerun_viz"
     )
     if not rrd_path.exists() or rrd_path.stat().st_size == 0:
         raise Sim2RealLoopError(
