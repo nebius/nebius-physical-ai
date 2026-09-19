@@ -28,6 +28,16 @@ and enforced by `npa/docker/workbench/packaging-contract.yaml`.
 The active [GPU e2e preflight](../../.github/workflows/e2e.yml) collects tests
 and checks shell syntax. It does not execute GPU workloads.
 
+Gymnasium-Robotics appears in the machine-readable manifest as an internal
+pre-registration record with `needs-image-update`. This records the future real
+MuJoCo/EGL gate without registering a supported image. The neutral candidate
+must contain no upstream source, Shadow asset, MuJoCo/Python workload runtime,
+or populated cache; its Dockerfile refuses before package network access when
+the exact signed-snapshot bootstrap or corresponding-source locks differ. An
+owner-only reference build supplied exact config and ordered-layer scanner
+anchors but did not complete the product scan or leave an accepted artifact. No
+golden evaluation, accepted image, or public availability is claimed.
+
 ## CLI
 
 ```bash

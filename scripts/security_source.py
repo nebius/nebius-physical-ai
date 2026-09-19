@@ -8,9 +8,24 @@ import json
 import shutil
 import subprocess
 import tokenize
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 _SCANNER_VERSIONS = {"bandit": "1.9.4", "zizmor": "1.30.0"}
+_DECLARATIVE_B108_PATHS = frozenset(
+    {
+        "npa/tests/e2e/test_byof_onboarding_live_e2e.py",
+        "npa/tests/workflows/test_gymnasium_pod_receipt.py",
+    }
+)
+_DECLARATIVE_B108_FUNCTIONS = {
+    "npa/tests/e2e/test_byof_onboarding_live_e2e.py": {"_gymnasium_admitted_volumes"},
+    "npa/tests/workflows/test_gymnasium_pod_receipt.py": {
+        "test_admitted_policy_accepts_only_reviewed_ipc_population",
+        "test_admission_population_and_mount_changes_are_refused",
+        "test_profile_accepts_closed_admitted_policy",
+        "test_profile_refuses_unapproved_ipc_mount_options",
+    },
+}
 
 
 def _scanner_binary(scanner: str) -> str:
@@ -56,7 +71,7 @@ def _identity(value: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _python_node(root: Path, path: str, issue: dict, trees: dict) -> str:
+def _python_issue_node(root: Path, path: str, issue: dict, trees: dict) -> ast.AST:
     """Ignore line movement while preserving changes to the vulnerable expression."""
     if path not in trees:
         with tokenize.open(root / path) as source:
@@ -71,8 +86,66 @@ def _python_node(root: Path, path: str, issue: dict, trees: dict) -> str:
             and getattr(node, "col_offset", None) == column
         ]
         if candidates:
-            return ast.dump(candidates[0], include_attributes=False)
+            return candidates[0]
     raise RuntimeError(f"Bandit finding has no matching source node: {path}:{line}")
+
+
+def _python_node(root: Path, path: str, issue: dict, trees: dict) -> str:
+    return ast.dump(
+        _python_issue_node(root, path, issue, trees), include_attributes=False
+    )
+
+
+def _declarative_mount_b108(
+    *, path: str, issue: dict, node: ast.AST, parents: dict[ast.AST, ast.AST]
+) -> bool:
+    """Disposition only the exact inert mount metadata shape under trusted paths.
+
+    This is deliberately narrower than a string or file allowlist: the Bandit
+    node must be the ``/dev/shm`` value of a ``mountPath`` key, inside one of
+    the reviewed fixture helpers, without a call/operation in its ancestry.
+    Any other B108 occurrence remains actionable.
+    """
+
+    if issue.get("test_id") != "B108" or path not in _DECLARATIVE_B108_PATHS:
+        return False
+    reviewed_mount_path = PurePosixPath("/", "dev", "shm")
+    if (
+        not isinstance(node, ast.Constant)
+        or not isinstance(node.value, str)
+        or node.value != str(reviewed_mount_path)
+        or PurePosixPath(node.value) != reviewed_mount_path
+    ):
+        return False
+    parent = parents.get(node)
+    if not isinstance(parent, ast.Dict):
+        return False
+    mount_keys = {
+        key.value
+        for key in parent.keys
+        if isinstance(key, ast.Constant) and isinstance(key.value, str)
+    }
+    matching_values = [
+        value
+        for key, value in zip(parent.keys, parent.values)
+        if isinstance(key, ast.Constant)
+        and key.value == "mountPath"
+        and value is node
+    ]
+    if len(matching_values) != 1 or not mount_keys <= {
+        "name", "mountPath", "readOnly", "mountPropagation"
+    }:
+        return False
+    current: ast.AST | None = parent
+    function_name = None
+    while current is not None:
+        if isinstance(current, ast.Call):
+            return False
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            function_name = current.name
+            break
+        current = parents.get(current)
+    return function_name in _DECLARATIVE_B108_FUNCTIONS[path]
 
 
 def _python_findings(report: object, root: Path, expected: set[str]) -> list[dict]:
@@ -86,13 +159,31 @@ def _python_findings(report: object, root: Path, expected: set[str]) -> list[dic
     if scanned != expected:
         raise RuntimeError("Bandit report did not cover every Python file in the snapshot")
     trees: dict[str, ast.AST] = {}
+    parents_by_path: dict[str, dict[ast.AST, ast.AST]] = {}
     findings = []
     for issue in report["results"]:
         path = _relative_path(issue["filename"], root)
+        node = _python_issue_node(root, path, issue, trees)
+        parents = parents_by_path.setdefault(path, {})
+        if not parents:
+            parents.update(
+                {
+                    child: parent
+                    for parent in ast.walk(trees[path])
+                    for child in ast.iter_child_nodes(parent)
+                }
+            )
         findings.append({
             "scanner": "bandit", "path": path, "rule": issue["test_id"],
-            "identity": _identity(_python_node(root, path, issue, trees)),
+            "identity": _identity(ast.dump(node, include_attributes=False)),
             "line": issue["line_number"], "message": issue["issue_text"],
+            "policy_disposition": (
+                "trusted-declarative-mount-metadata"
+                if _declarative_mount_b108(
+                    path=path, issue=issue, node=node, parents=parents
+                )
+                else "actionable"
+            ),
         })
     return findings
 

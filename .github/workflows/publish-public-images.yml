@@ -105,7 +105,11 @@ jobs:
 
           import yaml
 
-          from npa.deploy.images import development_image_for_tool, development_tag
+          from npa.deploy.images import (
+              PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS,
+              development_image_for_tool,
+              development_tag,
+          )
 
           target = os.environ["TARGET"].strip().rstrip("/")
           sha = os.environ["DEVELOPMENT_SHA"].strip().lower()
@@ -130,6 +134,10 @@ jobs:
                   raise SystemExit("lerobot_version is not supported by the packaged manifest")
           matrix = []
           for tool in build_tools:
+              if tool in PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS:
+                  raise SystemExit(
+                      f"{tool}: pre-registration candidate has no build authority"
+                  )
               key = tool if tool in entries else f"sim2real-{tool}"
               entry = entries.get(key)
               if not isinstance(entry, dict) or entry.get("redistribution") != "public":
@@ -148,6 +156,10 @@ jobs:
 
           cleanup = []
           for tool in tools("CLEANUP_TOOLS"):
+              if tool in PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS:
+                  raise SystemExit(
+                      f"{tool}: no public development tag exists to clean"
+                  )
               cleanup.append({
                   "tool": tool,
                   "image": development_image_for_tool(tool, git_sha=sha, registry=target),
@@ -388,8 +400,13 @@ jobs:
             [[ "$curobo_source_epoch" =~ ^[1-9][0-9]*$ ]] || { echo "Positive source commit epoch is required" >&2; exit 1; }
             build_args+=(--build-arg "SOURCE_DATE_EPOCH=$curobo_source_epoch")
           fi
+          metadata_args=()
+          if [[ "$TOOL" == gymnasium-robotics ]]; then
+            metadata_args=(--metadata-file "$RUNNER_TEMP/${TOOL}-build-metadata.json")
+          fi
           docker buildx build \
             --load \
+            "${metadata_args[@]}" \
             --file "$DOCKERFILE" \
             "${build_args[@]}" \
             --label "org.opencontainers.image.revision=$DEVELOPMENT_SHA" \
@@ -440,6 +457,11 @@ jobs:
           npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
             --tarball "$RUNNER_TEMP/${TOOL}.tar" \
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
+          if [ "$TOOL" = gymnasium-robotics ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_gymnasium_robotics_payload.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
+              --output "$RUNNER_TEMP/${TOOL}-gymnasium-payload.json"
+          fi
           if [ "$TOOL" = curobo ]; then
             npa/.venv/bin/python npa/docker/workbench/curobo/verify_image.py \
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
@@ -581,6 +603,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Require Gymnasium public corresponding source before push
+        if: matrix.tool == 'gymnasium-robotics'
+        run: |
+          set -euo pipefail
+          metadata="$RUNNER_TEMP/${TOOL}-build-metadata.json"
+          image_digest="$(jq -er '.["containerimage.digest"]' "$metadata")"
+          config_digest="$(jq -er '.["containerimage.config.digest"]' "$metadata")"
+          test "$config_digest" = "$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+          npa/.venv/bin/python -m npa.deploy.corresponding_source \
+            --record npa/src/npa/deploy/gymnasium_robotics_image_manifest.json \
+            --lock npa/docker/workbench/gymnasium-robotics/corresponding-source.lock.json \
+            --source-revision "$DEVELOPMENT_SHA" \
+            --image-digest "$image_digest" \
+            --platform-manifest-digest "$image_digest" \
+            --config-digest "$config_digest"
+
       - name: Gate and publish the exact NCore OCI graph
         if: matrix.tool == 'ncore'
         env:
@@ -687,6 +725,11 @@ jobs:
             payload_attempt=$((payload_attempt + 1))
             sleep 5
           done
+          if [ "$TOOL" = gymnasium-robotics ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_gymnasium_robotics_payload.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --output "$RUNNER_TEMP/${TOOL}-pushed-gymnasium-payload.json"
+          fi
           if [ "$TOOL" = curobo ]; then
             npa/.venv/bin/python npa/docker/workbench/curobo/verify_image.py \
               --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
