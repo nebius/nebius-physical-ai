@@ -97,12 +97,18 @@ is considered publication-ready.
 Before any public byte is disclosed, a separately authorized private stage must
 first emit a canonical complete-image inventory. It binds every byte in each
 ordered uncompressed layer tar, the resulting flattened-rootfs path records,
-and the observed OCI config digest. Independent review qualifies those exact
-identities outside the repository. The trusted public workflow obtains every
-qualified identity exclusively from the strict checked-in qualification record; no
-free-form dispatch value can create or widen qualification. Its pre-push scanner
-then requires complete image, config, exact Buildx metadata, and published-base
-provenance equality. Finite
+and the observed OCI config digest. The checked-in qualification record is only a
+descriptive, hash-bound candidate record; it is not an approval or trust boundary
+and cannot qualify its own identities. The current source-only branch has no
+publication transaction that verifies an external approval receipt. A later
+operator-controlled publication transaction must first verify an immutable,
+owner-only review receipt bound to the exact source SHA, OCI config/index/layers,
+rootfs inventory, reviewer identity, and expiry; an absent or mismatched receipt
+keeps LIBERO blocked and unvalidated. Any future trusted publication workflow
+must obtain qualified identities only from that verified receipt or qualification
+handoff; free-form dispatch values cannot create or widen qualification. Its
+pre-push scanner then requires complete image, config, exact Buildx metadata, and
+published-base provenance equality. Finite
 path and content signatures remain defense in depth, not the proof that
 arbitrary renamed, compiled, or subsequently whiteouted bytes are absent.
 Before LIBERO's first package-wide visibility change, the private destination
