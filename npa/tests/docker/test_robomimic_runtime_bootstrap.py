@@ -1487,10 +1487,10 @@ def test_runtime_install_invokes_only_bound_wheel_installer(
     installer = _runtime_installer()
     installer_path = wheelhouse / str(installer["filename"])
     installer_path.write_bytes(b"inert installer bytes")
-    calls: list[list[str]] = []
+    calls: list[tuple[list[str], dict[str, object]]] = []
 
     def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess:
-        calls.append(command)
+        calls.append((command, _))
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(verifier.subprocess, "run", fake_run)
@@ -1506,9 +1506,12 @@ def test_runtime_install_invokes_only_bound_wheel_installer(
     )
     assert result == stage / "site-packages"
     assert len(calls) == 1
-    assert "-m" not in calls[0]
-    assert any("runpy.run_module('pip'" in item for item in calls[0])
-    assert str(installer_path) in calls[0]
+    command, kwargs = calls[0]
+    assert "-m" not in command
+    assert any("runpy.run_module('pip'" in item for item in command)
+    assert str(installer_path) in command
+    assert "--no-compile" in command
+    assert kwargs["umask"] == 0o022
 
 
 def test_runtime_fetch_authenticates_staged_interpreter_before_probe(

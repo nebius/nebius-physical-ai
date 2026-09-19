@@ -246,9 +246,10 @@ images:
       historical 40-entry hash lock is verifier evidence only; the selected
       62-entry public/CUDA/PyTorch/vendor runtime map is fetched into the
       customer-owned runtime volume after entitlement and exact inventory
-      checks. The image bakes no Python wheel closure, torch, torchvision,
+      checks. The image adds no solution Python wheel closure, torch, torchvision,
       Triton, NVIDIA CUDA/cuDNN/NCCL distribution, weight, dataset, runtime
-      cache, credential, or output. Any prepared CUDA runtime is an external,
+      cache, credential, or output; inherited parent distributions and ancestor
+      bytes remain subject to exact parent inspection. Any prepared CUDA runtime is an external,
       exact-inventory read-only mount owned by the customer and is not part of
       this image. Publication stays quarantined until
       built-image scanning, license/security/SBOM/provenance, exact-digest

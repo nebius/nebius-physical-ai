@@ -1,8 +1,8 @@
 # robomimic neutral candidate redistribution boundary
 
 This candidate contains the immutable MIT-licensed robomimic source, the neutral
-Python base, and the exact 78-package Debian closure. No Python wheel closure is
-baked into the public image: the historical `baked-requirements.lock` remains
+Python base, and the exact 78-package Debian closure. It adds no solution/runtime
+Python wheel closure; the historical `baked-requirements.lock` remains
 source evidence only, while the complete public and restricted package map is
 declared in `runtime-requirements.lock` and fetched into a customer-owned
 runtime volume. The public image adds no solution/runtime Python wheel closure,

@@ -2661,6 +2661,7 @@ def _install_runtime_artifacts(
         capture_output=True,
         text=True,
         env=_runtime_subprocess_env(),
+        umask=0o022,
     )
     if install.returncode != 0:
         raise VerificationError("runtime wheel installation failed")
@@ -2688,6 +2689,7 @@ def _runtime_installer_command(
         "--isolated",
         "--disable-pip-version-check",
         "--no-cache-dir",
+        "--no-compile",
         "--no-index",
         "--no-deps",
         "--require-hashes",
