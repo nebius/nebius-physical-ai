@@ -1386,8 +1386,11 @@ def _wheel_distribution(members: dict, name: str, version: str) -> str:
     if len(directories) != 1:
         raise VerificationError("wheel distribution identity is ambiguous")
     directory = directories.pop()
-    expected = f"{name.replace('-', '_')}-{version}.dist-info"
-    if directory != expected:
+    suffix = f"-{version}.dist-info"
+    if not directory.endswith(suffix):
+        raise VerificationError("wheel distribution directory mismatch")
+    observed_name = directory[: -len(suffix)]
+    if _canonical_name(observed_name) != _canonical_name(name):
         raise VerificationError("wheel distribution directory mismatch")
     metadata = BytesParser().parsebytes(members[f"{directory}/METADATA"][0])
     if metadata.get_all("Name") != [metadata.get("Name")] or metadata.get_all(

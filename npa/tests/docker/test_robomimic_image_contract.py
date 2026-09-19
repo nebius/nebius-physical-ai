@@ -2149,6 +2149,36 @@ def test_wheel_inventory_refuses_unknown_installation_transformation() -> None:
         )
 
 
+def test_wheel_distribution_accepts_pep427_name_case_and_separator_normalization() -> None:
+    members = {
+        "PyYAML-6.0.2.dist-info/METADATA": (
+            b"Name: PyYAML\nVersion: 6.0.2\n",
+            False,
+        ),
+        "PyYAML-6.0.2.dist-info/WHEEL": (
+            b"Wheel-Version: 1.0\nRoot-Is-Purelib: true\n",
+            False,
+        ),
+    }
+    assert (
+        VERIFIER._wheel_distribution(members, "pyyaml", "6.0.2")
+        == "PyYAML-6.0.2.dist-info"
+    )
+
+
+@pytest.mark.parametrize(
+    "directory",
+    ["PyYAML-6.0.3.dist-info", "Other-6.0.2.dist-info"],
+)
+def test_wheel_distribution_refuses_version_or_name_mismatch(directory: str) -> None:
+    members = {
+        f"{directory}/METADATA": (b"Name: PyYAML\nVersion: 6.0.2\n", False),
+        f"{directory}/WHEEL": (b"Wheel-Version: 1.0\nRoot-Is-Purelib: true\n", False),
+    }
+    with pytest.raises(VERIFIER.VerificationError, match="directory mismatch"):
+        VERIFIER._wheel_distribution(members, "pyyaml", "6.0.2")
+
+
 def test_wheel_inventory_refuses_relocated_duplicate_distribution() -> None:
     with pytest.raises(VERIFIER.VerificationError, match="undeclared distribution"):
         VERIFIER._wheel_target(
