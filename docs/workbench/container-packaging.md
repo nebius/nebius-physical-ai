@@ -248,12 +248,16 @@ wrapper but deletes its wheel-bundled static executable and resolves video work
 through Ubuntu's dynamically packaged `/usr/bin/ffmpeg`. The built-image payload
 scanner fails if that bundled executable returns.
 
-`pypi.nvidia.com` serves these wheels **anonymously**. The shared bootstrap checks
-the operator's acceptance before fetching the runtime closure; this does not
-change the Lab wheel's BSD license or the separate Sim/runtime terms. NVIDIA
-delivers the fetched wheels directly to the operator's cache, and NPA keeps
-those wheels out of published image layers. Gated model weights use a similar
-runtime-delivery boundary, with provider access checked separately.
+`pypi.nvidia.com` serves these wheels **anonymously**. The shared bootstrap
+requires an authenticated, customer/run-scoped authorization bound to the
+exact runtime manifest before fetching the runtime closure; missing, denied,
+expired, or mismatched authorization fails closed. NPA may authenticate,
+transport, and validate that customer-controlled authorization, but it never
+accepts or signs the separate Sim/runtime terms. This does not change the Lab
+wheel's BSD license or those terms. NVIDIA delivers the fetched wheels directly
+to the authorized customer's run cache, and NPA keeps those wheels out of
+published image layers. Gated model weights use a similar runtime-delivery
+boundary, with provider access checked separately.
 
 **What it costs.** Runtime size and cold-bootstrap cost are version-specific.
 Do not apply the old Isaac Lab 2 / Isaac Sim 5 cache measurements to the Isaac
@@ -437,9 +441,10 @@ until their required exact-digest evidence is recorded, so a classification
 change alone cannot create a supported release.
 
 > **Publishing is a business decision.** The engineering makes publication defensible —
-> the images contain no NVIDIA-proprietary bytes, and NVIDIA delivers Isaac to each
-> operator under that operator's own acceptance — but dispatching the workflow with
-> `dry_run=false` should wait on sign-off from someone with the authority to accept it.
+> the images contain no NVIDIA-proprietary bytes, and NVIDIA delivers Isaac only
+> after a customer-controlled, authenticated, run-scoped authorization bound to
+> the applicable terms and runtime manifest — but dispatching the workflow with
+> `dry_run=false` should wait on the separately required publication sign-off.
 
 ## Feature exposure
 
