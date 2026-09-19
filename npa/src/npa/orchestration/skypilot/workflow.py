@@ -1146,9 +1146,19 @@ def submit_workflow(
                 from npa.execution_preflight import libero_executable_profile_sha256
 
                 expected_profile_sha256 = libero_executable_profile_sha256(docs)
-                expected_job_id = bound_libero_job_id or _load_libero_bound_job_id(
-                    project=project, run_id=run_id
-                )
+                if bound_libero_job_id:
+                    expected_job_id, binding_error = bound_libero_job_id, ""
+                else:
+                    expected_job_id, binding_error = _load_libero_bound_job_id(
+                        project=project,
+                        run_id=run_id,
+                        expected_profile_sha256=expected_profile_sha256,
+                    )
+                if binding_error:
+                    return ReconciliationEvidence(
+                        ReconciliationState.UNAVAILABLE,
+                        error=binding_error,
+                    )
             return _reconcile_managed_job_env(
                 run_id,
                 env=env,
@@ -1192,12 +1202,22 @@ def submit_workflow(
                 )
             if libero_submission:
                 nonlocal bound_libero_job_id
-                bound_libero_job_id = _parse_job_id(
+                parsed_job_id = _parse_job_id(
                     "\n".join(
                         part
                         for part in (launch_result.stdout, launch_result.stderr)
                         if part
                     )
+                )
+                from npa.execution_preflight import libero_executable_profile_sha256
+
+                bound_libero_job_id = _verified_libero_job_id(
+                    parsed_job_id,
+                    run_id,
+                    env=env,
+                    sky_executable=sky_executable,
+                    cwd=stable_cwd,
+                    expected_profile_sha256=libero_executable_profile_sha256(docs),
                 )
             return launch_result, diagnoses
 
@@ -1764,11 +1784,11 @@ def _reconcile_managed_job_env(
             continue
         if expected_profile_sha256:
             observed_profile_sha256 = _managed_job_profile_digest(row)
-            if observed_profile_sha256 and observed_profile_sha256 != expected_profile_sha256:
+            if observed_profile_sha256 != expected_profile_sha256:
                 return ReconciliationEvidence(
                     ReconciliationState.UNAVAILABLE,
                     error=(
-                        "existing LIBERO managed job has a conflicting executable "
+                        "existing LIBERO managed job lacks the exact executable "
                         "profile digest; refusing adoption"
                     ),
                 )
@@ -1818,8 +1838,54 @@ def _reconcile_managed_job_env(
     )
 
 
-def _load_libero_bound_job_id(*, project: str, run_id: str) -> str:
-    """Read the exact owner ledger binding from a prior LIBERO launch."""
+def _verified_libero_job_id(
+    parsed: str,
+    job_name: str,
+    *,
+    env: Mapping[str, str],
+    sky_executable: str,
+    cwd: str | None,
+    expected_profile_sha256: str,
+) -> str:
+    """Accept launch output only after exact queue/name/profile confirmation."""
+
+    if not str(parsed or "").isdigit():
+        return ""
+    try:
+        result = subprocess.run(
+            [sky_executable, "jobs", "queue", "--all", "--output", "json"],
+            env=dict(env),
+            cwd=cwd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=60,
+            check=False,
+        )
+        if result.returncode != 0:
+            return ""
+        rows = queue_rows_from_output(result.stdout)
+    except Exception:  # noqa: BLE001 - missing confirmation must fail closed
+        return ""
+    if rows is None:
+        return ""
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        if str(row.get("job_id") or row.get("id") or "") != str(parsed):
+            continue
+        if str(row.get("job_name") or row.get("name") or "") != job_name:
+            return ""
+        if _managed_job_profile_digest(row) != expected_profile_sha256:
+            return ""
+        return str(parsed)
+    return ""
+
+
+def _load_libero_bound_job_id(
+    *, project: str, run_id: str, expected_profile_sha256: str
+) -> tuple[str, str]:
+    """Read and validate the exact owner-ledger job/profile binding."""
 
     try:
         from npa.orchestration.npa_workflow.submission_state import (
@@ -1830,14 +1896,17 @@ def _load_libero_bound_job_id(*, project: str, run_id: str) -> str:
         payload = receipt.payload if receipt.outcome == "found" else {}
         launch = payload.get("launch")
         if not isinstance(launch, Mapping):
-            return ""
+            return "", ""
         job_id = str(launch.get("job_id") or "").strip()
         digest = str(launch.get("libero_profile_sha256") or "").strip()
-        if job_id.isdigit() and re.fullmatch(r"[0-9a-f]{64}", digest):
-            return job_id
+        if not job_id.isdigit() or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            return "", "existing LIBERO launch ledger has no valid profile binding"
+        if digest != expected_profile_sha256:
+            return "", "existing LIBERO launch ledger profile digest conflicts with the prepared profile"
+        return job_id, ""
     except Exception:  # noqa: BLE001 - unavailable owner state must fail closed
-        return ""
-    return ""
+        return "", "existing LIBERO launch ledger is unavailable"
+    return "", ""
 
 
 def _managed_job_profile_digest(row: Mapping[str, Any]) -> str:

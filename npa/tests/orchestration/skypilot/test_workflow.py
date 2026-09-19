@@ -2429,7 +2429,12 @@ def test_libero_reconciliation_ignores_terminal_profile_history_for_bound_job(
             "status": "CANCELLED",
             "metadata": {"executable_profile_sha256": "b" * 64},
         },
-        {"job_id": 126, "job_name": "exact-run", "status": "PENDING"},
+        {
+            "job_id": 126,
+            "job_name": "exact-run",
+            "status": "PENDING",
+            "metadata": {"executable_profile_sha256": "a" * 64},
+        },
     ]
     monkeypatch.setattr(
         workflow_module.subprocess,
@@ -2451,6 +2456,45 @@ def test_libero_reconciliation_ignores_terminal_profile_history_for_bound_job(
 
     assert evidence.state is workflow_module.ReconciliationState.FOUND
     assert evidence.job_id == "126"
+
+
+def test_libero_launch_binding_requires_exact_queue_profile(monkeypatch) -> None:
+    row = {
+        "job_id": 126,
+        "job_name": "exact-run",
+        "status": "PENDING",
+        "metadata": {"executable_profile_sha256": "a" * 64},
+    }
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=""
+        ),
+    )
+
+    assert (
+        workflow_module._verified_libero_job_id(
+            "125",
+            "exact-run",
+            env={},
+            sky_executable="sky",
+            cwd="/durable",
+            expected_profile_sha256="a" * 64,
+        )
+        == ""
+    )
+    assert (
+        workflow_module._verified_libero_job_id(
+            "126",
+            "exact-run",
+            env={},
+            sky_executable="sky",
+            cwd="/durable",
+            expected_profile_sha256="a" * 64,
+        )
+        == "126"
+    )
 
 
 def test_reconciliation_selects_latest_when_all_named_jobs_failed(monkeypatch) -> None:
