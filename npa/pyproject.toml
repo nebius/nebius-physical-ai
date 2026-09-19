@@ -222,6 +222,8 @@ sam2 = "2.1-rtfetch-20260916"
 ltx2 = "2.5-rtfetch-20260817"
 alpamayo2-super = "0.1.0-cu128-r3"
 curobo = "0.8.0-cuda13-b300-unbuilt"
+# Open3D is CPU-only, so this image carries no CUDA tag family.
+open3d = "0.20.0-cpu-20260918"
 content-agents = "0.5.2-npa2"
 # Source inventory only: use an explicit validated image until release acceptance.
 ncore = "59c698d206da92b406a4f72619fce3b3a2c64bfd-unbuilt"

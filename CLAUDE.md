@@ -96,6 +96,10 @@ making architecture, review, or domain judgments.
 - `skills/tools/gpu-cluster-provisioning/SKILL.md`: managed-image vs GPU-Operator
  driver strategy (operator mode is unsafe on NVSwitch), the post-apply health
  gates, accelerator-name discovery, and triage for nodes whose GPUs do not work.
+- `skills/tools/open3d/SKILL.md`: point-cloud registration and surface
+  reconstruction — real RANSAC/FPFH + ICP, multiway `global_optimization`,
+  Poisson reconstruction, and a decode-verified `.rrd`. CPU-only by
+  construction (Open3D's registration APIs have no CUDA path).
 - `skills/tools/detection-training/SKILL.md`: Faster R-CNN detectors trained from
  LanceDB materialized views (BDD100K failure-mode slices).
 - `skills/tools/artifact-viz-share/SKILL.md`: sim demos → LeRobotDataset →

@@ -1,0 +1,114 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: open3d-registration
+  description: >-
+    Register overlapping indoor scans with Open3D, optimize the multiway pose
+    graph, reconstruct a Poisson surface from the fused cloud, and publish a
+    decode-verified Rerun recording. Every stage is CPU-only: Open3D's
+    registration and geometry pipelines have no CUDA path, so no stage requests
+    an accelerator. The run starts from the upstream open3d.data scans, so it
+    needs no operator-supplied capture; point `prepare` at your own prefix of
+    .pcd/.ply scans to register real captures instead.
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/open3d"
+  prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/"
+  pairs_uri: "s3://{{config.bucket}}/{{config.prefix}}/pairs/"
+  validation_uri: "s3://{{config.bucket}}/{{config.prefix}}/validation/"
+  graph_uri: "s3://{{config.bucket}}/{{config.prefix}}/graph/"
+  surface_uri: "s3://{{config.bucket}}/{{config.prefix}}/surface/"
+  reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/"
+  open3d_input_uri: "{{config.prepared_uri}}"
+  open3d_output_uri: "{{config.pairs_uri}}"
+  # voxel_size is the single scale knob: the upstream tutorials derive the normal,
+  # FPFH and correspondence radii from it. 0.05 suits metre-scale indoor scans.
+  open3d_voxel_size: "0.05"
+  open3d_icp_estimation: point_to_plane
+  open3d_poisson_depth: "9"
+  open3d_density_quantile: "0.02"
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 8
+    memory: 32Gi
+initial: stage
+states:
+  stage:
+    toolRef: workbench.open3d.stage_demo
+    resources: cpu
+    params:
+      open3d_output_uri: "{{config.prepared_uri}}"
+    outputs:
+      - uri: "{{config.prepared_uri}}manifest.json"
+        schema: npa.open3d.registration.v1
+    next: register
+  register:
+    toolRef: workbench.open3d.register
+    resources: cpu
+    inputs:
+      - uri: "{{config.prepared_uri}}manifest.json"
+    outputs:
+      - uri: "{{config.pairs_uri}}result.json"
+        schema: npa.open3d.result.v1
+      - uri: "{{config.pairs_uri}}pairs.jsonl"
+        schema: application/jsonl
+    next: validate
+  validate:
+    toolRef: workbench.open3d.validate
+    resources: cpu
+    params:
+      open3d_input_uri: "{{config.pairs_uri}}"
+      open3d_output_uri: "{{config.validation_uri}}"
+    inputs:
+      - uri: "{{config.pairs_uri}}result.json"
+      - uri: "{{config.pairs_uri}}pairs.jsonl"
+    outputs:
+      - uri: "{{config.validation_uri}}validation.json"
+        schema: npa.open3d.validation.v1
+    next: multiway
+  multiway:
+    toolRef: workbench.open3d.multiway
+    resources: cpu
+    params:
+      open3d_output_uri: "{{config.graph_uri}}"
+    inputs:
+      - uri: "{{config.prepared_uri}}manifest.json"
+    outputs:
+      - uri: "{{config.graph_uri}}result.json"
+        schema: npa.open3d.result.v1
+      - uri: "{{config.graph_uri}}pose_graph.json"
+        schema: application/json
+      - uri: "{{config.graph_uri}}fused.ply"
+        schema: application/octet-stream
+    next: reconstruct
+  reconstruct:
+    toolRef: workbench.open3d.reconstruct
+    resources: cpu
+    params:
+      open3d_input_uri: "{{config.graph_uri}}"
+      open3d_output_uri: "{{config.surface_uri}}"
+    inputs:
+      - uri: "{{config.graph_uri}}result.json"
+      - uri: "{{config.graph_uri}}fused.ply"
+    outputs:
+      - uri: "{{config.surface_uri}}result.json"
+        schema: npa.open3d.reconstruction.v1
+      - uri: "{{config.surface_uri}}mesh.ply"
+        schema: application/octet-stream
+    next: visualize
+  visualize:
+    toolRef: workbench.open3d.visualize
+    resources: cpu
+    params:
+      open3d_input_uri: "{{config.surface_uri}}"
+      open3d_output_uri: "{{config.reports_uri}}"
+    inputs:
+      - uri: "{{config.surface_uri}}result.json"
+      - uri: "{{config.surface_uri}}mesh.ply"
+    outputs:
+      - uri: "{{config.reports_uri}}point_cloud.rrd"
+        schema: application/vnd.rerun.rrd
+      - uri: "{{config.reports_uri}}rrd-manifest.json"
+        schema: application/json
+    terminal: true

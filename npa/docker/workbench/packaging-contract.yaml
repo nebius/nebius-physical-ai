@@ -300,6 +300,30 @@ images:
       layer commits; only runtime shared libraries and notices remain. No weights or populated
       runtime cache. Publication quarantined pending exact-byte security/license
       scans and independent real B200 and RTX PRO 6000 capability validation.
+  open3d:
+    dockerfile: open3d/Dockerfile
+    tier: job
+    final_user: ubuntu
+    redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    passwordless_root_exemption: >-
+      SkyPilot's Kubernetes bootstrap installs and starts its in-pod SSH runtime
+      as the non-root ubuntu user. The image deletes all build-time SSH host keys,
+      disables password and root login, starts no SSH service by default, and
+      bakes no credentials.
+    notes: >-
+      MIT Open3D 0.20.0 from the official PyPI wheel plus the exact NPA source
+      revision on the digest-pinned python:3.11-slim-trixie base shared with
+      npa-rerun-viewer. Everything baked is MIT/BSD/Apache-2.0 or PSF; no model
+      weights, datasets, credentials, or accepted terms are present. The upstream
+      open3d.data demo scans are a run-time download into the runtime user's
+      cache, not a baked payload. plotly and dash (and dash's Flask/Werkzeug
+      closure) are installed only because open3d/__init__.py imports
+      open3d.visualization unconditionally, which imports them; no visualizer is
+      started and no port is exposed for one. CPU-only by design: Open3D's
+      registration and geometry pipelines have no CUDA path, so this image does
+      not derive from the CUDA base and its stages request no accelerator.
+      Publication quarantined pending exact-byte security/license scans.
   alpamayo2-super:
     dockerfile: alpamayo2-super/Dockerfile
     tier: service

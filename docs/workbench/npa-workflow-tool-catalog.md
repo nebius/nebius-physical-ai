@@ -25,6 +25,13 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.curobo.plan` | `npa workbench curobo plan` | Franka start/goal/cuboid manifest | real trajectories and metrics | no |
 | `workbench.curobo.validate` | `npa workbench curobo validate` | result prefix | hash and complete coverage validation | no |
 | `workbench.curobo.visualize` | `npa workbench curobo visualize` | validated result prefix | verified RRD joint/FK recording | no |
+| `workbench.open3d.stage_demo` | `npa workbench open3d stage-demo` | nothing (downloads the upstream `open3d.data` indoor scans) | staged `.ply` scans and a digest-bound `manifest.json` | no |
+| `workbench.open3d.prepare` | `npa workbench open3d prepare` | prefix of operator `.pcd`/`.ply` scans | digest-bound `manifest.json` | no |
+| `workbench.open3d.register` | `npa workbench open3d register` | `manifest.json` | per-pair RANSAC/FPFH + ICP results, aligned clouds, journal | no (real `registration_ransac_based_on_feature_matching` + `registration_icp`) |
+| `workbench.open3d.validate` | `npa workbench open3d validate` | registration result prefix | hash and pair-coverage validation, no native library needed | no |
+| `workbench.open3d.multiway` | `npa workbench open3d multiway` | `manifest.json` | optimized `pose_graph.json` and one fused `.ply` | no (real `global_optimization`) |
+| `workbench.open3d.reconstruct` | `npa workbench open3d reconstruct` | multiway prefix with `fused.ply` | Poisson `mesh.ply` with manifold/watertight/area facts | no (real `create_from_point_cloud_poisson`) |
+| `workbench.open3d.visualize` | `npa workbench open3d visualize` | reconstruct prefix with `mesh.ply` | decode-verified `point_cloud.rrd` and manifest | no |
 | `workbench.alpamayo2_super.infer` | `npa workbench alpamayo2-super infer` | pinned model/dataset revisions and PhysicalAI-AV sample index | trajectory JSON, calibrated PNG, immutable provenance under `config.output_uri` | no (real upstream VLM + diffusion expert inference on GPU) |
 | `workbench.isaac_arena.evaluate` | `npa workbench isaac-arena evaluate` | environment, zero/replay/RSL-RL policy, optional input, episode/env counts, seed | scored episode JSONL, upstream HTML report, log, and hashed `result.json` under `config.output_uri` | no (real upstream policy runner on GPU) |
 | `workbench.isaac_arena.evaluate_video` | `npa workbench isaac-arena evaluate --record-video` | same evaluation inputs; RTX-class resource | same evaluation artifacts plus a required viewport MP4 | no (real upstream policy runner and viewport recorder on an RT-core GPU) |

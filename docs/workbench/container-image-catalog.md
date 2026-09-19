@@ -145,6 +145,25 @@ Select development bytes only with an explicit immutable image digest.
 The existing NRE GPU consumer remains separately licensed. The new full
 COLMAP-to-reconstruction workflow is **not yet live validated**.
 
+## Pending Open3D registration image
+
+`npa-open3d` is a development validation candidate for the
+[point-cloud registration workflow](../../workflows/testing/open3d-registration.yaml).
+It packages the MIT Open3D 0.20.0 PyPI wheel and the exact NPA source revision on
+the digest-pinned `python:3.11-slim-trixie` base, with no baked dataset, weights,
+or credentials; the upstream `open3d.data` scans download at runtime. Packaging
+marks it redistribution-eligible but quarantined from public publication until its
+exact-image byte scans are accepted, so there is **no accepted public release row
+and no verified anonymous pull claim** for this image. Select development bytes
+only with an explicit immutable image digest.
+
+Its capability is proven locally, not in the public registry: the six
+`npa workbench open3d` verbs ran end to end in the built image against real S3,
+and `npa.smoke.test_open3d_functional` checks the recovered pose against the
+ground-truth transform it applied. The image is CPU-only by construction —
+Open3D's `pipelines.registration` and geometry APIs have no CUDA path — so it
+carries no GPU architecture claim and its workflow stages request no accelerator.
+
 ## 2026-09-04 coherent Sim2Real publication
 
 The five mandatory Sim2Real roles were built from reviewed source commit
