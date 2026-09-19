@@ -1148,13 +1148,16 @@ def submit_workflow(
                 from npa.execution_preflight import libero_executable_profile_sha256
 
                 expected_profile_sha256 = libero_executable_profile_sha256(docs)
-                if libero_binding_error:
+                if libero_binding_error and not (
+                    bound_libero_job_id or unverified_libero_job_id
+                ):
                     return ReconciliationEvidence(
                         ReconciliationState.UNAVAILABLE,
                         error=libero_binding_error,
                     )
-                if bound_libero_job_id:
-                    expected_job_id, binding_error = bound_libero_job_id, ""
+                if bound_libero_job_id or unverified_libero_job_id:
+                    expected_job_id = bound_libero_job_id or unverified_libero_job_id
+                    binding_error = ""
                 else:
                     expected_job_id, binding_error = _load_libero_bound_job_id(
                         project=project,
@@ -1950,7 +1953,7 @@ def _load_libero_bound_job_id(
             launch.get("libero_unverified_candidate_job_id") or ""
         ).strip()
         if not job_id and unverified_candidate.isdigit():
-            return "", "a prior LIBERO launch has an unverified immutable job candidate"
+            return unverified_candidate, ""
         digest = str(launch.get("libero_profile_sha256") or "").strip()
         if not job_id.isdigit() or not re.fullmatch(r"[0-9a-f]{64}", digest):
             return "", "existing LIBERO launch ledger has no valid profile binding"

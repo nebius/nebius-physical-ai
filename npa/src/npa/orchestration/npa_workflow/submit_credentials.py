@@ -75,7 +75,11 @@ def resolve_submit_credentials(
     from this object's repr.
     """
 
-    process_env = environ if environ is not None else os.environ
+    # A process-authorized triplet must come from the actual process environment;
+    # a caller-supplied mapping is only an input to ordinary resolution.
+    process_env = os.environ if require_process_environment_triplet else (
+        environ if environ is not None else os.environ
+    )
     if require_process_environment_triplet:
         credential_names = (
             "AWS_ACCESS_KEY_ID",

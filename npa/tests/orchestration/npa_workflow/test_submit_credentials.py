@@ -160,6 +160,14 @@ def test_control_plane_authorized_triplet_rejects_every_partial_environment(
         "AWS_ENDPOINT_URL": "https://storage.example",
     }
     environ.pop(missing)
+    for name, value in environ.items():
+        monkeypatch.setenv(name, value)
+    for name in {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+    } - set(environ):
+        monkeypatch.delenv(name, raising=False)
 
     with pytest.raises(ValueError, match="complete.*triplet"):
         resolve_submit_credentials(
@@ -178,13 +186,21 @@ def test_control_plane_authorized_triplet_never_reads_or_mixes_saved_credentials
         "npa.orchestration.npa_workflow.submit_credentials.load_credentials",
         lambda **_kwargs: pytest.fail("configured credentials are forbidden"),
     )
+    environ = {
+        "AWS_ACCESS_KEY_ID": "caller-supplied-access",
+        "AWS_SECRET_ACCESS_KEY": "caller-supplied-secret",
+        "AWS_SESSION_TOKEN": "caller-supplied-session",
+        "AWS_ENDPOINT_URL": "https://storage.example",
+    }
+    for name, value in {
+        "AWS_ACCESS_KEY_ID": "control-plane-access",
+        "AWS_SECRET_ACCESS_KEY": "control-plane-secret",
+        "AWS_SESSION_TOKEN": "control-plane-session",
+        "AWS_ENDPOINT_URL": "https://storage.example",
+    }.items():
+        monkeypatch.setenv(name, value)
     context = resolve_submit_credentials(
-        environ={
-            "AWS_ACCESS_KEY_ID": "control-plane-access",
-            "AWS_SECRET_ACCESS_KEY": "control-plane-secret",
-            "AWS_SESSION_TOKEN": "control-plane-session",
-            "AWS_ENDPOINT_URL": "https://storage.example",
-        },
+        environ=environ,
         workflow_env={
             "AWS_ACCESS_KEY_ID": "hostile-workflow-access",
             "AWS_SECRET_ACCESS_KEY": "hostile-workflow-secret",
@@ -212,6 +228,14 @@ def test_control_plane_triplet_normalizes_and_deduplicates_requested_names(
         "npa.orchestration.npa_workflow.submit_credentials.load_credentials",
         lambda **_kwargs: pytest.fail("configured credentials were accessed"),
     )
+    environ = {
+        "AWS_ACCESS_KEY_ID": "control-plane-access",
+        "AWS_SECRET_ACCESS_KEY": "control-plane-secret",
+        "AWS_SESSION_TOKEN": "control-plane-session",
+        "AWS_ENDPOINT_URL": "https://storage.example",
+    }
+    for name, value in environ.items():
+        monkeypatch.setenv(name, value)
     context = resolve_submit_credentials(
         requested=(
             " AWS_SESSION_TOKEN ",
@@ -219,12 +243,7 @@ def test_control_plane_triplet_normalizes_and_deduplicates_requested_names(
             "",
             " AWS_ACCESS_KEY_ID ",
         ),
-        environ={
-            "AWS_ACCESS_KEY_ID": "control-plane-access",
-            "AWS_SECRET_ACCESS_KEY": "control-plane-secret",
-            "AWS_SESSION_TOKEN": "control-plane-session",
-            "AWS_ENDPOINT_URL": "https://storage.example",
-        },
+        environ=environ,
         require_process_environment_triplet=True,
     )
 
@@ -246,6 +265,14 @@ def test_control_plane_triplet_resolves_process_environment_endpoint_requests(
         "npa.orchestration.npa_workflow.submit_credentials.load_credentials",
         lambda **_kwargs: pytest.fail("configured credentials were accessed"),
     )
+    environ = {
+        "AWS_ACCESS_KEY_ID": "control-plane-access",
+        "AWS_SECRET_ACCESS_KEY": "control-plane-secret",
+        "AWS_SESSION_TOKEN": "control-plane-session",
+        "AWS_ENDPOINT_URL": "https://storage.example",
+    }
+    for name, value in environ.items():
+        monkeypatch.setenv(name, value)
     context = resolve_submit_credentials(
         requested=(" AWS_ENDPOINT_URL ", "AWS_ENDPOINT_URL_S3"),
         environ={
@@ -283,6 +310,13 @@ def test_control_plane_triplet_rejects_customer_evidence_requests(
         "npa.orchestration.npa_workflow.submit_credentials.load_credentials",
         lambda **_kwargs: pytest.fail("configured credentials were accessed"),
     )
+    for name, value in {
+        "AWS_ACCESS_KEY_ID": "control-plane-access",
+        "AWS_SECRET_ACCESS_KEY": "control-plane-secret",
+        "AWS_SESSION_TOKEN": "control-plane-session",
+        "AWS_ENDPOINT_URL": "https://storage.example",
+    }.items():
+        monkeypatch.setenv(name, value)
 
     with pytest.raises(
         ValueError, match="only the process-environment storage credential triplet"
