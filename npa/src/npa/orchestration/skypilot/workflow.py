@@ -77,6 +77,7 @@ HEALTHY_CONTROLLER_STATUS = "UP"
 # controller wait for a status ("UP") it never reaches without a launch, so the
 # preflight burned the whole timeout and failed a submit that would have worked.
 READY_CONTROLLER_STATUSES = frozenset({HEALTHY_CONTROLLER_STATUS, "STOPPED"})
+LIBERO_OWNER_BINDING_SCHEMA = "npa.libero.owner-binding.v1"
 
 
 @dataclass(frozen=True)
@@ -1148,6 +1149,7 @@ def submit_workflow(
             expected_profile_sha256 = ""
             expected_job_id = ""
             binding_error = ""
+            owner_ledger_binding = False
             if libero_submission:
                 from npa.execution_preflight import libero_executable_profile_sha256
 
@@ -1164,8 +1166,13 @@ def submit_workflow(
                     binding_error = (
                         libero_binding_error if unverified_libero_job_id else ""
                     )
+                    owner_ledger_binding = bool(unverified_libero_job_id)
                 else:
-                    expected_job_id, binding_error = _load_libero_bound_job_id(
+                    (
+                        expected_job_id,
+                        binding_error,
+                        owner_ledger_binding,
+                    ) = _load_libero_owner_binding(
                         project=project,
                         run_id=run_id,
                         expected_profile_sha256=expected_profile_sha256,
@@ -1185,6 +1192,7 @@ def submit_workflow(
                 ),
                 expected_job_id=expected_job_id,
                 require_owner_binding=libero_submission,
+                owner_ledger_binding=owner_ledger_binding,
             )
             return _preserve_unverified_libero_candidate(
                 evidence,
@@ -1289,6 +1297,14 @@ def submit_workflow(
                         unverified_libero_job_id
                     )
                     enriched["libero_binding_error"] = libero_binding_error
+                candidate_job_id = bound_libero_job_id or unverified_libero_job_id
+                if candidate_job_id:
+                    enriched["libero_owner_binding"] = _libero_owner_binding_payload(
+                        run_id=run_id,
+                        job_id=candidate_job_id,
+                        profile_sha256=enriched["libero_profile_sha256"],
+                        state=("candidate" if unverified_libero_job_id else "verified"),
+                    )
             enriched["controller"] = {
                 **controller_health.to_dict(),
                 "selected_context": selected_context,
@@ -1339,6 +1355,28 @@ def submit_workflow(
         launch_pair = transaction.launch_result
         result = launch_pair[0] if isinstance(launch_pair, tuple) else None
         job_id = transaction.job_id
+        launch_transaction = transaction.to_dict()
+        if libero_submission:
+            from npa.execution_preflight import libero_executable_profile_sha256
+
+            launch_transaction["libero_profile_sha256"] = (
+                libero_executable_profile_sha256(docs)
+            )
+            candidate_job_id = bound_libero_job_id or unverified_libero_job_id
+            if candidate_job_id:
+                launch_transaction["libero_owner_binding"] = (
+                    _libero_owner_binding_payload(
+                        run_id=run_id,
+                        job_id=candidate_job_id,
+                        profile_sha256=launch_transaction["libero_profile_sha256"],
+                        state=("candidate" if unverified_libero_job_id else "verified"),
+                    )
+                )
+                if unverified_libero_job_id:
+                    launch_transaction["libero_unverified_candidate_job_id"] = (
+                        unverified_libero_job_id
+                    )
+                    launch_transaction["libero_binding_error"] = libero_binding_error
         return WorkflowResult(
             # Preserve the public result contract; adoption is exposed through
             # launch_transaction.state and the human reconciliation message.
@@ -1352,7 +1390,7 @@ def submit_workflow(
             stdout=result.stdout if result is not None else "",
             stderr=result.stderr if result is not None else "",
             submitted_yaml_path=str(prepared_yaml),
-            launch_transaction=transaction.to_dict(),
+            launch_transaction=launch_transaction,
         )
     except SkyPilotSubmitError:
         _cleanup_owned_submission_dir(owned_submission_dir)
@@ -1731,6 +1769,25 @@ def lookup_managed_job(
     )
 
 
+def _libero_owner_binding_payload(
+    *,
+    run_id: str,
+    job_id: str,
+    profile_sha256: str,
+    state: str,
+) -> dict[str, str]:
+    """Build the immutable local owner-ledger binding for one LIBERO attempt."""
+
+    return {
+        "schema": LIBERO_OWNER_BINDING_SCHEMA,
+        "run_id": str(run_id),
+        "job_name": str(run_id),
+        "job_id": str(job_id),
+        "profile_sha256": str(profile_sha256),
+        "state": str(state),
+    }
+
+
 def _reconcile_managed_job_env(
     job_name: str,
     *,
@@ -1740,6 +1797,7 @@ def _reconcile_managed_job_env(
     expected_profile_sha256: str = "",
     expected_job_id: str = "",
     require_owner_binding: bool = False,
+    owner_ledger_binding: bool = False,
     timeout: int = 60,
 ) -> ReconciliationEvidence:
     """Reconcile one exact name through the same SkyPilot runtime as launch."""
@@ -1847,15 +1905,29 @@ def _reconcile_managed_job_env(
         if row not in matching_rows:
             continue
         if expected_profile_sha256:
-            observed_profile_sha256 = _managed_job_profile_digest(row)
-            if observed_profile_sha256 != expected_profile_sha256:
-                return ReconciliationEvidence(
-                    ReconciliationState.UNAVAILABLE,
-                    error=(
-                        "existing LIBERO managed job lacks the exact executable "
-                        "profile digest; refusing adoption"
-                    ),
-                )
+            if owner_ledger_binding:
+                # The profile digest was atomically persisted with the immutable
+                # candidate ID before reconciliation.  SkyPilot's queue schema
+                # does not promise a custom digest field, so exact ID + name
+                # binding is the durable provider-independent observation.
+                if not expected_job_id:
+                    return ReconciliationEvidence(
+                        ReconciliationState.UNAVAILABLE,
+                        error=(
+                            "LIBERO owner-ledger binding has no immutable job ID; "
+                            "refusing adoption"
+                        ),
+                    )
+            else:
+                observed_profile_sha256 = _managed_job_profile_digest(row)
+                if observed_profile_sha256 != expected_profile_sha256:
+                    return ReconciliationEvidence(
+                        ReconciliationState.UNAVAILABLE,
+                        error=(
+                            "existing LIBERO managed job lacks the exact executable "
+                            "profile digest; refusing adoption"
+                        ),
+                    )
             if not expected_job_id or not expected_profile_sha256:
                 return ReconciliationEvidence(
                     ReconciliationState.UNAVAILABLE,
@@ -1981,10 +2053,10 @@ def _preserve_unverified_libero_candidate(
     )
 
 
-def _load_libero_bound_job_id(
+def _load_libero_owner_binding(
     *, project: str, run_id: str, expected_profile_sha256: str
-) -> tuple[str, str]:
-    """Read and validate the exact owner-ledger job/profile binding."""
+) -> tuple[str, str, bool]:
+    """Read the atomic owner binding, without trusting undocumented queue fields."""
 
     try:
         from npa.orchestration.npa_workflow.submission_state import (
@@ -1995,7 +2067,43 @@ def _load_libero_bound_job_id(
         payload = receipt.payload if receipt.outcome == "found" else {}
         launch = payload.get("launch")
         if not isinstance(launch, Mapping):
-            return "", ""
+            return "", "", False
+        binding = launch.get("libero_owner_binding")
+        if isinstance(binding, Mapping):
+            job_id = str(binding.get("job_id") or "").strip()
+            binding_run_id = str(binding.get("run_id") or "").strip()
+            binding_job_name = str(binding.get("job_name") or "").strip()
+            digest = str(binding.get("profile_sha256") or "").strip()
+            if (
+                binding.get("schema") != LIBERO_OWNER_BINDING_SCHEMA
+                or binding_run_id != run_id
+                or binding_job_name != run_id
+                or not job_id.isdigit()
+                or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            ):
+                return (
+                    "",
+                    "existing LIBERO launch ledger has an invalid immutable owner binding",
+                    False,
+                )
+            if digest != expected_profile_sha256:
+                return (
+                    "",
+                    "existing LIBERO launch ledger profile digest conflicts with the prepared profile",
+                    False,
+                )
+            binding_error = str(launch.get("libero_binding_error") or "").strip()
+            if str(binding.get("state") or "") == "candidate" and not binding_error:
+                binding_error = (
+                    "existing LIBERO launch ledger contains an unverified candidate "
+                    f"job {job_id}; exact name/profile binding remains unverified "
+                    "and must not be treated as absence"
+                )
+            return job_id, binding_error, True
+
+        # Preserve compatibility with the pre-binding ledger while keeping its
+        # conservative queue-digest requirement. New launches always write the
+        # explicit immutable binding above.
         job_id = str(
             launch.get("job_id") or launch.get("libero_candidate_job_id") or ""
         ).strip()
@@ -2008,19 +2116,37 @@ def _load_libero_bound_job_id(
                 "existing LIBERO launch ledger contains an unverified candidate "
                 f"job {unverified_candidate}; exact name/profile binding remains "
                 "unverified and must not be treated as absence",
+                False,
             )
         digest = str(launch.get("libero_profile_sha256") or "").strip()
         if not job_id.isdigit() or not re.fullmatch(r"[0-9a-f]{64}", digest):
-            return "", "existing LIBERO launch ledger has no valid profile binding"
+            return (
+                "",
+                "existing LIBERO launch ledger has no valid profile binding",
+                False,
+            )
         if digest != expected_profile_sha256:
             return (
                 "",
                 "existing LIBERO launch ledger profile digest conflicts with the prepared profile",
+                False,
             )
-        return job_id, ""
+        return job_id, "", False
     except Exception:  # noqa: BLE001 - unavailable owner state must fail closed
-        return "", "existing LIBERO launch ledger is unavailable"
-    return "", ""
+        return "", "existing LIBERO launch ledger is unavailable", False
+
+
+def _load_libero_bound_job_id(
+    *, project: str, run_id: str, expected_profile_sha256: str
+) -> tuple[str, str]:
+    """Read and validate the exact owner-ledger job/profile binding."""
+
+    job_id, error, _owner_binding = _load_libero_owner_binding(
+        project=project,
+        run_id=run_id,
+        expected_profile_sha256=expected_profile_sha256,
+    )
+    return job_id, error
 
 
 def _managed_job_profile_digest(row: Mapping[str, Any]) -> str:

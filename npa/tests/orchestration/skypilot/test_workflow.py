@@ -271,7 +271,7 @@ def test_libero_submit_uses_one_identity_for_unchanged_noncanonical_yaml(
     monkeypatch.setattr(workflow_module, "_execution_preflight", preflight)
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    submit_workflow(
+    result = submit_workflow(
         yaml_path,
         "libero-exact-profile-0001",
         isolated_config_dir=tmp_path / "sky-state",
@@ -286,6 +286,13 @@ def test_libero_submit_uses_one_identity_for_unchanged_noncanonical_yaml(
     assert observed["executable_profile_sha256"] == libero_executable_profile_sha256(
         observed["documents"]
     )
+    binding = result.launch_transaction["libero_owner_binding"]
+    assert binding["schema"] == workflow_module.LIBERO_OWNER_BINDING_SCHEMA
+    assert binding["run_id"] == "libero-exact-profile-0001"
+    assert binding["job_name"] == "libero-exact-profile-0001"
+    assert binding["job_id"] == "42"
+    assert binding["profile_sha256"] == observed["executable_profile_sha256"]
+    assert binding["state"] == "candidate"
     prepared = (
         tmp_path
         / "sky-state"
@@ -2404,6 +2411,76 @@ def test_libero_reconciliation_requires_exact_profile_digest(monkeypatch) -> Non
     )
     assert evidence.state is workflow_module.ReconciliationState.FOUND
     assert evidence.job_id == "126"
+
+
+def test_libero_owner_ledger_binding_reconciles_without_queue_profile_field(
+    monkeypatch,
+) -> None:
+    row = {
+        "job_id": 126,
+        "job_name": "exact-run",
+        "status": "PENDING",
+        "schedule_state": "WAITING",
+        "controller_pid": 4321,
+    }
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=""
+        ),
+    )
+
+    evidence = workflow_module._reconcile_managed_job_env(
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        expected_job_id="126",
+        require_owner_binding=True,
+        owner_ledger_binding=True,
+    )
+
+    assert evidence.state is workflow_module.ReconciliationState.FOUND
+    assert evidence.job_id == "126"
+    assert evidence.workload_observable is True
+
+
+def test_libero_owner_ledger_binding_validates_run_and_digest(monkeypatch) -> None:
+    from npa.orchestration.npa_workflow import submission_state
+
+    class Receipt:
+        outcome = "found"
+        payload = {
+            "launch": {
+                "libero_owner_binding": {
+                    "schema": workflow_module.LIBERO_OWNER_BINDING_SCHEMA,
+                    "run_id": "exact-run",
+                    "job_name": "exact-run",
+                    "job_id": "126",
+                    "profile_sha256": "a" * 64,
+                    "state": "candidate",
+                },
+                "libero_binding_error": "queue profile field unavailable",
+            }
+        }
+
+    monkeypatch.setattr(
+        submission_state,
+        "inspect_submission_state",
+        lambda _project, _run_id: Receipt(),
+    )
+
+    job_id, error, owner_binding = workflow_module._load_libero_owner_binding(
+        project="project",
+        run_id="exact-run",
+        expected_profile_sha256="a" * 64,
+    )
+
+    assert job_id == "126"
+    assert owner_binding is True
+    assert error == "queue profile field unavailable"
 
 
 def test_libero_unverified_candidate_missing_from_queue_is_indeterminate(
