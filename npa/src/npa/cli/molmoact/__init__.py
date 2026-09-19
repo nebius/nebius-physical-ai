@@ -128,7 +128,7 @@ def serve_cmd(
         "--checkpoint",
         help="Optional fine-tuned checkpoint path or S3 URI; defaults to the base model.",
     ),
-    host: str = typer.Option("0.0.0.0", "--host", help="HTTP bind host."),
+    host: str = typer.Option("127.0.0.1", "--host", help="HTTP bind host."),
     port: int = typer.Option(8000, "--port", help="HTTP bind port."),
     device: str = typer.Option("cuda", "--device", help="Torch device for inference."),
 ) -> dict[str, Any]:

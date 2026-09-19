@@ -29,7 +29,9 @@ from npa.workflows.byof.molmoact_pipeline import (
 def test_hf_model_repo_accessible():
     """allenai/MolmoAct-7B-O-0812 must be a public, ungated HF repo."""
     url = f"https://huggingface.co/api/models/{DEFAULT_MODEL_ID}"
-    with urllib.request.urlopen(url, timeout=30) as response:
+    request = urllib.request.Request(url, headers={"User-Agent": "npa-molmoact-tests"})
+    # Constant HuggingFace API URL built from the pinned DEFAULT_MODEL_ID.
+    with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
         assert response.status == 200
         payload = json.load(response)
     assert payload["id"] == DEFAULT_MODEL_ID

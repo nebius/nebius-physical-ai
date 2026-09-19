@@ -91,7 +91,7 @@ def serve(config: Mapping[str, Any]) -> dict[str, Any]:
         "status": "validated",
         "model_id": model_id,
         "checkpoint": str(config.get("checkpoint", model_id)),
-        "host": str(config.get("host", "0.0.0.0")),
+        "host": str(config.get("host", "127.0.0.1")),
         "port": port,
         "device": device,
         "source_repository": SOURCE_REPOSITORY,

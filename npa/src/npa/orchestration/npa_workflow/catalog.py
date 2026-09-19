@@ -61,6 +61,9 @@ PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
     "workbench.insights.record": "public lineage/metrics ingestion primitive",
     "workbench.isaac_lab.byof_repo": "public Isaac Lab BYOF primitive",
     "workbench.lerobot.eval": "public LeRobot evaluation primitive",
+    "workbench.molmoact.finetune": "public MolmoAct fine-tuning primitive (config validation only; execution not implemented)",
+    "workbench.molmoact.serve": "public MolmoAct serving primitive (config validation only; execution not implemented)",
+    "workbench.molmoact.eval": "public MolmoAct evaluation primitive (config validation only; execution not implemented)",
 }
 
 
