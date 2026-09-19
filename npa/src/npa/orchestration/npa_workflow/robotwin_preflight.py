@@ -1807,6 +1807,11 @@ def prepare_live_submit(
     )
     if internal_channels:
         raise _refusal("internal-context-channel-forbidden")
+    # The current candidate deliberately has no complete runtime lock.  Refuse
+    # before asking the one-shot customer boundary so a known local gate cannot
+    # consume an assertion that can never authorize this launch.
+    if RUNTIME_LOCK_STATUS != "complete":
+        raise _refusal("runtime-delivery-technical-gates-incomplete")
     authorization = require_runtime_lock_complete(
         load_runtime_authorization(
             source,

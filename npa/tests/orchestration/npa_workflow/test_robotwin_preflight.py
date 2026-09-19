@@ -1194,6 +1194,7 @@ def test_live_submit_refuses_disabled_runtime_after_context_validation(
     environment, _context_path, raw, _entitlement_path, _entitlement_raw = (
         _authorization_environment(tmp_path)
     )
+    boundary = _AuthenticatedBoundary(_entitlement_payload(json.loads(raw)))
     with pytest.raises(
         RobotwinPreflightError,
         match="runtime-delivery-technical-gates-incomplete",
@@ -1202,11 +1203,11 @@ def test_live_submit_refuses_disabled_runtime_after_context_validation(
             load_spec(ROBOTWIN_SPEC),
             requested_secret_envs=(PUBLIC_CONTEXT_ENV,),
             environ=environment,
-            customer_authorization_boundary=_AuthenticatedBoundary(
-                _entitlement_payload(json.loads(raw))
-            ),
+            customer_authorization_boundary=boundary,
             **_source_contract(),
         )
+    assert boundary.requests == []
+    assert boundary.consumed is False
 
 
 def test_parser_refusal_has_no_cause_or_context_graph(tmp_path: Path) -> None:
