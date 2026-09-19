@@ -20,6 +20,8 @@ requires-python = ">=3.10"
 # APIs move between minor releases and the workbench tools are written against
 # the pinned ones.
 dependencies = [
+    # Require the upstream TLS hostname and process-worker fixes in every install.
+    "anyio>=4.14.2",
     "typer>=0.24",
     # Imported directly (npa.cli.workflow_shim); typer >= 0.27 no longer
     # depends on click, so it must be declared here.
