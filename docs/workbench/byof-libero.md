@@ -114,6 +114,9 @@ refuses every first publication before building or pushing, including an absent
 or empty private destination. A retained private package is preserved, never
 deleted merely because its tags or OCI subjects match a candidate. This workflow
 does not provide a separately authorized private staging operation.
+Consequently LIBERO is explicitly blocked and not completion-ready until a
+separately authorized transaction supplies that registry guarantee; no public
+development digest, anonymous pull, or B200 qualification is claimed here.
 
 Requested and failed-build reconciliation may inspect package identity, graph,
 tags, and run-bound evidence, but it does not delete package versions or change
