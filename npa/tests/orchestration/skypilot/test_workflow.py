@@ -2771,7 +2771,8 @@ def test_libero_unverified_candidate_missing_from_queue_is_indeterminate(
         require_owner_binding=True,
     )
 
-    assert observed.state is workflow_module.ReconciliationState.ABSENT
+    assert observed.state is workflow_module.ReconciliationState.UNAVAILABLE
+    assert "without authoritative terminal evidence" in observed.error
     evidence = workflow_module._preserve_unverified_libero_candidate(
         observed,
         expected_job_id="126",

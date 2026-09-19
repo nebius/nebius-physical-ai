@@ -2086,6 +2086,14 @@ def _reconcile_managed_job_env(
                 marker for row in group for marker in _managed_job_workload_markers(row)
             )
     if not matching:
+        if require_owner_binding and expected_job_id:
+            return ReconciliationEvidence(
+                ReconciliationState.UNAVAILABLE,
+                error=(
+                    "owner-bound LIBERO job is absent without authoritative terminal "
+                    "evidence; refusing duplicate launch"
+                ),
+            )
         return ReconciliationEvidence(ReconciliationState.ABSENT)
     # Historical cancelled/failed attempts retain the same deterministic name
     # in SkyPilot's all-jobs queue.  Once a viable replacement exists, those
