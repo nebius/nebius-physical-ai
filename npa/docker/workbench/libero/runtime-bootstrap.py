@@ -39,6 +39,7 @@ import urllib.parse
 from uuid import uuid4
 from pathlib import Path
 from typing import Any
+import zipfile
 
 PAYLOAD_RELEASE_ANNOTATION = "npa.nebius.com/libero-release"
 
@@ -140,6 +141,20 @@ EXPECTED_GOVERNING_TERMS = frozenset(
     }
 )
 MAX_RUNTIME_CACHE_DOWNLOAD_BYTES = 32 * 1024 * 1024 * 1024
+REVIEWED_SOURCE_BUILD_NAMES = frozenset(
+    {
+        "antlr4-python3-runtime",
+        "bddl",
+        "easydict",
+        "egl-probe",
+        "future",
+        "glfw",
+        "gym",
+        "pathtools",
+        "promise",
+        "robomimic",
+    }
+)
 RUNTIME_EXECUTION_GROUP = "npa-libero-exec"
 RUNTIME_EXECUTION_USER = "npa-libero-exec"
 RUNTIME_SUPERVISOR_USER = "ubuntu"
@@ -496,6 +511,15 @@ def _validate_manifest(
             )
         names.add(name)
         filenames.add(filename)
+        if filename.endswith(".tar.gz"):
+            if name not in REVIEWED_SOURCE_BUILD_NAMES:
+                raise BootstrapRefusal(
+                    f"source runtime artifact is not in the reviewed build allowlist for {name}"
+                )
+        elif not filename.endswith(".whl"):
+            raise BootstrapRefusal(
+                f"runtime artifact must be a wheel or reviewed source archive for {name}"
+            )
         _validate_download_url(str(item.get("url") or ""))
         version = item.get("version")
         if (
@@ -1781,6 +1805,105 @@ def _fetch_source(root: Path, source: dict[str, Any]) -> None:
     shutil.rmtree(destination / ".git")
 
 
+def _canonical_distribution_name(value: str) -> str:
+    return re.sub(r"[-_.]+", "-", value).lower()
+
+
+def _built_wheel_identity(path: Path) -> tuple[str, str]:
+    """Read a generated wheel's identity without importing build tooling."""
+
+    if path.is_symlink() or not path.is_file():
+        raise BootstrapRefusal("generated runtime wheel is not a regular file")
+    mode = stat.S_IMODE(path.stat().st_mode)
+    if mode & 0o077 or path.stat().st_uid != os.getuid():
+        raise BootstrapRefusal("generated runtime wheel is not owner-private")
+    try:
+        with zipfile.ZipFile(path) as archive:
+            metadata = [
+                name
+                for name in archive.namelist()
+                if name.endswith(".dist-info/METADATA") and "/" in name
+            ]
+            if len(metadata) != 1:
+                raise BootstrapRefusal("generated runtime wheel metadata is ambiguous")
+            payload = archive.read(metadata[0])
+            if len(payload) > 1024 * 1024:
+                raise BootstrapRefusal("generated runtime wheel metadata is too large")
+            text = payload.decode("utf-8")
+    except (OSError, UnicodeDecodeError, zipfile.BadZipFile) as exc:
+        raise BootstrapRefusal("generated runtime wheel is unreadable") from exc
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        if key in {"Name", "Version"}:
+            values[key] = value.strip()
+    if not values.get("Name") or not values.get("Version"):
+        raise BootstrapRefusal("generated runtime wheel identity is incomplete")
+    return values["Name"], values["Version"]
+
+
+def _build_source_wheels(
+    pip: str,
+    source_artifacts: list[dict[str, Any]],
+    source_lines: list[str],
+    wheelhouse: Path,
+    build_wheelhouse: Path,
+    environment: dict[str, str],
+) -> list[str]:
+    """Build reviewed source archives into identity-checked local wheels."""
+
+    if not source_artifacts:
+        return []
+    build_wheelhouse.mkdir(mode=0o700)
+    source_lock = build_wheelhouse.parent / ".source-requirements.txt"
+    source_lock.write_text("\n".join(source_lines) + "\n", encoding="utf-8")
+    os.chmod(source_lock, 0o400)
+    _run(
+        [
+            pip,
+            "-m",
+            "pip",
+            "wheel",
+            "--no-deps",
+            "--no-build-isolation",
+            "--require-hashes",
+            "--no-index",
+            "--find-links",
+            str(wheelhouse),
+            "--wheel-dir",
+            str(build_wheelhouse),
+            "-r",
+            str(source_lock),
+        ],
+        environment=environment,
+    )
+    wheels = sorted(path for path in build_wheelhouse.iterdir() if path.is_file())
+    if len(wheels) != len(source_artifacts) or any(
+        path.suffix != ".whl" for path in wheels
+    ):
+        raise BootstrapRefusal("source runtime build did not produce one wheel per archive")
+    for path in wheels:
+        os.chmod(path, 0o400)
+    expected = {
+        (_canonical_distribution_name(item["name"]), str(item["version"]))
+        for item in source_artifacts
+    }
+    observed = {_built_wheel_identity(path) for path in wheels}
+    observed = {(_canonical_distribution_name(name), version) for name, version in observed}
+    if observed != expected:
+        raise BootstrapRefusal("source runtime build produced unexpected wheel identities")
+    by_identity = {
+        (_canonical_distribution_name(_built_wheel_identity(path)[0]), _built_wheel_identity(path)[1]): path
+        for path in wheels
+    }
+    return [
+        f"{item['name']}=={item['version']} --hash=sha256:{_sha256(by_identity[(_canonical_distribution_name(item['name']), str(item['version']))])}"
+        for item in source_artifacts
+    ]
+
+
 def _install_runtime(
     root: Path,
     artifacts: list[dict[str, Any]],
@@ -1819,21 +1942,19 @@ def _install_runtime(
         + "\n",
         encoding="utf-8",
     )
-    runtime_lock.write_text(
-        "\n".join(
-            line
-            for line, item in zip(requirement_lines, artifacts, strict=True)
-            if item["name"] not in bootstrap_names
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    runtime_entries = [
+        (line, item)
+        for line, item in zip(requirement_lines, artifacts, strict=True)
+        if item["name"] not in bootstrap_names
+    ]
+    wheel_entries = [(line, item) for line, item in runtime_entries if item["filename"].endswith(".whl")]
+    source_entries = [(line, item) for line, item in runtime_entries if item["filename"].endswith(".tar.gz")]
+    build_wheelhouse = root / ".built-wheelhouse"
+    pip = str(venv / "bin" / "python")
     os.chmod(bootstrap_lock, 0o400)
-    os.chmod(runtime_lock, 0o400)
     for artifact in wheelhouse.iterdir():
         os.chmod(artifact, 0o400)
     os.chmod(wheelhouse, 0o500)
-    pip = str(venv / "bin" / "python")
     common = [
         pip,
         "-m",
@@ -1851,8 +1972,28 @@ def _install_runtime(
         [*common, "-r", str(bootstrap_lock)],
         environment=materialization_environment,
     )
+    generated_source_lines = _build_source_wheels(
+        pip,
+        [item for _line, item in source_entries],
+        [line for line, _item in source_entries],
+        wheelhouse,
+        build_wheelhouse,
+        materialization_environment,
+    )
+    runtime_lock.write_text(
+        "\n".join([line for line, _item in wheel_entries] + generated_source_lines)
+        + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(runtime_lock, 0o400)
     _run(
-        [*common, "--no-build-isolation", "-r", str(runtime_lock)],
+        [
+            *common,
+            "--find-links",
+            str(build_wheelhouse),
+            "-r",
+            str(runtime_lock),
+        ],
         environment=materialization_environment,
     )
     site_packages = subprocess.check_output(
@@ -1865,6 +2006,11 @@ def _install_runtime(
     )
     os.chmod(wheelhouse, 0o700)
     shutil.rmtree(wheelhouse)
+    if build_wheelhouse.exists():
+        shutil.rmtree(build_wheelhouse)
+    source_lock = root / ".source-requirements.txt"
+    if source_lock.exists():
+        source_lock.unlink()
     bootstrap_lock.unlink()
     runtime_lock.unlink()
 

@@ -12,6 +12,7 @@ from pathlib import Path
 import stat
 import subprocess
 import sys
+import zipfile
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
 
@@ -1261,6 +1262,56 @@ def test_runtime_install_uses_only_hash_locked_no_dependency_commands(
     assert (
         source_path.read_text(encoding="utf-8") == str(published_root / "source") + "\n"
     )
+
+
+def test_source_archives_become_identity_checked_hash_locked_wheels(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    wheelhouse = tmp_path / "downloads"
+    wheelhouse.mkdir()
+    build_wheelhouse = tmp_path / ".built-wheelhouse"
+    artifact = {
+        "name": "fixture-source",
+        "version": "1.0",
+        "filename": "fixture-source-1.0.tar.gz",
+        "sha256": "a" * 64,
+    }
+    source_line = (
+        "fixture-source==1.0 --hash=sha256:"
+        + "a" * 64
+        + " # https://files.pythonhosted.org/fixture-source-1.0.tar.gz"
+    )
+
+    def fake_run(command, **_kwargs):
+        assert command[2:4] == ["pip", "wheel"]
+        build_wheelhouse.mkdir(mode=0o700, exist_ok=True)
+        wheel = build_wheelhouse / "fixture_source-1.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel, "w") as archive:
+            archive.writestr(
+                "fixture_source-1.0.dist-info/METADATA",
+                "Metadata-Version: 2.1\nName: fixture-source\nVersion: 1.0\n",
+            )
+        wheel.chmod(0o400)
+
+    monkeypatch.setattr(module, "_run", fake_run)
+    module.REVIEWED_SOURCE_BUILD_NAMES = frozenset({"fixture-source"})
+
+    generated = module._build_source_wheels(
+        "/venv/bin/python",
+        [artifact],
+        [source_line],
+        wheelhouse,
+        build_wheelhouse,
+        {"HOME": str(tmp_path)},
+    )
+
+    assert generated == [
+        "fixture-source==1.0 --hash=sha256:"
+        + hashlib.sha256(
+            (build_wheelhouse / "fixture_source-1.0-py3-none-any.whl").read_bytes()
+        ).hexdigest()
+    ]
 
 
 def test_source_fetch_uses_only_the_credential_free_materialization_environment(
