@@ -17,6 +17,7 @@ from npa.cli.workbench.sonic.helpers import (
 )
 from npa.clients.config import list_projects
 from npa.clients.serverless import EndpointNotFoundError, ServerlessClient, ServerlessClientError
+from npa.serverless_common import job_status_payload
 
 
 def _configured_status(project: str, name: str) -> dict[str, Any]:
@@ -70,15 +71,8 @@ def status_cmd(
             return
         except ServerlessClientError as exc:
             fail(f"Serverless Job lookup failed: {exc}")
-        output(
-            {
-                "status": info.status,
-                "job_id": info.id,
-                "job_name": info.name,
-                "project_id": project_id,
-                "runtime": "serverless",
-            },
-            output_format,
-        )
+        payload = job_status_payload(client, info)
+        payload.update({"project_id": project_id, "runtime": "serverless"})
+        output(payload, output_format)
         return
     output(_configured_status(ctx.project, target_name), output_format)

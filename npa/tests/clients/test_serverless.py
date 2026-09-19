@@ -930,8 +930,11 @@ def test_create_job_timeout_fallback_raises_when_lookup_fails() -> None:
 
     client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
 
-    with pytest.raises(ServerlessClientError, match="lookup-by-name recovery failed"):
+    with pytest.raises(ServerlessClientError, match="lookup-by-name recovery failed") as failure:
         _create_job(client)
+    # A non-durable call has no journal to reconnect through, so the raised
+    # error must not claim one exists.
+    assert failure.value.durable is False
 
 
 def test_job_state_cancel_idempotency_and_poll() -> None:

@@ -83,7 +83,6 @@ from npa.clients.serverless import (
     EndpointSpec,
     EndpointStatus,
     EndpointNotFoundError,
-    JobInfo,
     ServerlessClient,
     ServerlessClientError,
 )
@@ -129,6 +128,7 @@ from npa.serverless_common import (
     SubnetResolutionError,
     build_serverless_job_env,
     build_serverless_output_upload_cmd,
+    job_status_payload,
     require_s3_credentials,
     resolve_gpu_platform,
     resolve_subnet,
@@ -1448,7 +1448,7 @@ def _serverless_job_env(
     return split_serverless_env(env)
 
 
-def _cosmos_train_smoke_command(seconds: int) -> str:
+def _cosmos_train_smoke_command(seconds: int, *, fail_after_checkpoint: bool = False) -> str:
     local_dir = "/tmp/npa-cosmos-train-smoke"
     script = f"""
 import json, os, pathlib, time
@@ -1464,7 +1464,17 @@ out.mkdir(parents=True, exist_ok=True)
 print("NPA_COSMOS_TRAIN_SMOKE_DONE", uri.rstrip("/") + "/checkpoint.json", flush=True)
 """.strip()
     upload = build_serverless_output_upload_cmd(local_dir, "")
-    return _remote_bash(f"python3 - <<'PY'\n{script}\nPY\n{upload}")
+    remote_script = f"python3 - <<'PY'\n{script}\nPY\n{upload}"
+    if fail_after_checkpoint:
+        # Test hook only: the checkpoint above is already written and
+        # uploaded by this point, so this proves status diagnostics for a
+        # job that failed *after* producing a real artifact, distinct from
+        # one that never produced anything.
+        remote_script += (
+            "\necho NPA_COSMOS_TRAIN_SMOKE_DELIBERATE_FAILURE_AFTER_CHECKPOINT >&2"
+            "\nexit 17"
+        )
+    return _remote_bash(remote_script)
 
 
 def _serverless_project_id(cfg: Any) -> str:
@@ -1511,36 +1521,6 @@ def _serverless_endpoint_status(cfg: Any) -> EndpointInfo:
     return ServerlessClient().get_endpoint(project_id, endpoint_ref)
 
 
-def _serverless_job_status_payload(
-    client: ServerlessClient,
-    info: JobInfo,
-    *,
-    platform: str = "",
-    gpu_count: int = 0,
-) -> dict[str, Any]:
-    status = client.classify_queue_state(info)
-    payload: dict[str, Any] = {
-        "job_id": info.id,
-        "job_name": info.name,
-        "status": status,
-        "raw_status": info.status,
-        "output_uris": list(info.output_uris),
-    }
-    if info.status == "queued":
-        payload["queue_state_classification"] = (
-            "capacity" if status == "waiting_for_capacity" else "scheduled"
-        )
-        payload["queued_for_seconds"] = info.queued_for_seconds
-        payload["platform"] = platform or info.platform
-        payload["gpu_count"] = gpu_count or info.gpu_count
-        payload["hint"] = (
-            "Platform may be at capacity. Retry status in a few minutes."
-            if status == "waiting_for_capacity"
-            else "Job is scheduled and waiting to start."
-        )
-    return payload
-
-
 def _serverless_job_status_for_config(cfg: Any) -> dict[str, Any] | None:
     job_cfg = getattr(cfg, "serverless_job", None)
     job_ref = str(getattr(job_cfg, "job_id", "") or getattr(job_cfg, "job_name", ""))
@@ -1549,7 +1529,7 @@ def _serverless_job_status_for_config(cfg: Any) -> dict[str, Any] | None:
         return None
     client = ServerlessClient()
     info = client.get_job(job_ref, project_id)
-    result = _serverless_job_status_payload(
+    result = job_status_payload(
         client,
         info,
         platform=str(getattr(job_cfg, "gpu_type", "")),
@@ -3144,6 +3124,17 @@ def train_cmd(
     job_name: str = typer.Option("", "--job-name", help="Explicit serverless Job name."),
     smoke: bool = typer.Option(False, "--smoke", help="Run the minimal e2e smoke workload."),
     smoke_seconds: int = typer.Option(0, "--smoke-seconds", help="Seconds the smoke job should run."),
+    smoke_fail_after_checkpoint: bool = typer.Option(
+        False,
+        "--smoke-fail-after-checkpoint",
+        help=(
+            "With --smoke, publish the real checkpoint artifact and then exit "
+            "non-zero. Test hook for validating failure diagnostics (status "
+            "log_tail/pending_reason) against a job whose checkpoint really "
+            "exists despite a terminal failed status; has no effect on the "
+            "checkpoint content or upload."
+        ),
+    ),
     require_hf: bool = typer.Option(False, "--require-hf", help="Require HF token inside the job."),
     submit_only: bool = typer.Option(False, "--submit-only", help="Submit and return before polling."),
     poll_interval: float = typer.Option(30.0, "--poll-interval", help="Seconds between status checks."),
@@ -3165,7 +3156,7 @@ def train_cmd(
             _fail("Provide a job ID or name for train status.")
         info = client.get_job(ref, resolved_project_id)
         _output(
-            _serverless_job_status_payload(
+            job_status_payload(
                 client,
                 info,
                 platform=gpu_type,
@@ -3221,7 +3212,9 @@ def train_cmd(
             project_id=resolved_project_id,
             name=name,
             image=image or container_image_for_tool("cosmos"),
-            command=_cosmos_train_smoke_command(smoke_seconds),
+            command=_cosmos_train_smoke_command(
+                smoke_seconds, fail_after_checkpoint=smoke_fail_after_checkpoint
+            ),
             gpu_type=resolved_gpu_type,
             gpu_count=resolved_gpu_count,
             preset=resolved_gpu_preset,

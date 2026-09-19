@@ -305,6 +305,38 @@ def test_e2e_cli_train_hf_propagation(jobs_to_cleanup: list[tuple[str, str]]) ->
     assert "401" not in logs and "403" not in logs
 
 
+def test_e2e_cli_status_reports_real_failure_diagnostics_after_checkpoint(
+    jobs_to_cleanup: list[tuple[str, str]]
+) -> None:
+    """A job that really published a checkpoint and then really failed must say why.
+
+    Exercises `job_status_payload`'s failure-diagnostics enrichment
+    (npa/src/npa/serverless_common/status.py) against a real Nebius
+    Serverless Job and a real S3 artifact, not just a hermetic test double.
+    `--smoke-fail-after-checkpoint` is a test-only hook on the existing
+    smoke command: it uploads the same real checkpoint the happy-path test
+    verifies, then deliberately exits non-zero.
+    """
+    name = _job_name("post-checkpoint-fail")
+    project_id, payload, result = _submit_train(
+        name, jobs_to_cleanup, "--submit-only", "--smoke-fail-after-checkpoint"
+    )
+    assert result.returncode == 0, result.stderr
+    job_id = str(payload["job_id"])
+    assert _wait_for_state(project_id, job_id, {"failed"}) == "failed"
+    _wait_for_artifact(project_id, str(payload["output_path"]))
+
+    status = _run_npa([
+        "workbench", "cosmos", "train", "--runtime", "serverless", "--project-id",
+        project_id, "status", job_id, "--output-format", "json",
+    ])
+    assert status.returncode == 0, status.stderr
+    diagnostics = json.loads(status.stdout)
+    assert diagnostics["status"] == "failed"
+    assert "NPA_COSMOS_TRAIN_SMOKE_DELIBERATE_FAILURE_AFTER_CHECKPOINT" in diagnostics["log_tail"]
+    assert "log_fetch_error" not in diagnostics
+
+
 def test_e2e_cli_train_idempotent_submit(jobs_to_cleanup: list[tuple[str, str]]) -> None:
     name = _job_name("idempotent")
     project_id, first, first_result = _submit_train(name, jobs_to_cleanup, "--submit-only")

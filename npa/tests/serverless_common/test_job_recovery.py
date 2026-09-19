@@ -164,13 +164,124 @@ def test_inconclusive_create_persists_identity_until_job_becomes_visible():
             return subprocess.CompletedProcess(args, 1, "", "not found")
         return subprocess.CompletedProcess(args, 0, _job("IMAGE_PULLING"), "")
 
-    with pytest.raises(JobSubmissionIndeterminateError) as failure:
+    with pytest.raises(JobSubmissionIndeterminateError) as first_failure:
         _create(ServerlessClient(subprocess_runner=provider))
-    assert failure.value.job_name == "training-unit"
-    with pytest.raises(JobSubmissionIndeterminateError):
+    assert first_failure.value.job_name == "training-unit"
+    # Raised inside create() itself (the durable=True lambda `durable_create_job`
+    # passes to `_create_job_request`), not the separate reconnect branch below —
+    # both must report this call used the durable journal.
+    assert first_failure.value.durable is True
+    with pytest.raises(JobSubmissionIndeterminateError) as second_failure:
         _create(ServerlessClient(subprocess_runner=provider))
+    assert second_failure.value.durable is True
     visible = True
     assert _create(ServerlessClient(subprocess_runner=provider)).id == "provider-unit"
+    assert calls.count("create") == 1
+
+
+def test_lookup_failure_after_provider_side_effect_never_recreates_or_hides_the_prior_error():
+    """A create() failure must never be read as proof nothing was created.
+
+    `_create_job_request`'s success path (provider returncode 0, so the job
+    really was created) can still raise if its own follow-up identity lookup
+    fails synchronously and transiently. Regression for a real risk: treating
+    that lookup failure as "the create request itself failed" and clearing
+    the journal would let a same-name retry call `create` again and duplicate
+    a job that already exists. The journal must stay locked, and the
+    recorded failure must surface on the next reconnect rather than being
+    silently dropped.
+    """
+    calls = []
+    observable = False
+
+    def provider(args, **kwargs):
+        action = args[3]
+        calls.append(action)
+        if action == "create":
+            # The provider accepted the request (a job now exists) but the
+            # response body cannot be parsed, forcing a follow-up lookup.
+            return subprocess.CompletedProcess(args, 0, "not-json", "")
+        if not observable:
+            # The follow-up identity lookup fails synchronously and
+            # transiently; this must not be read as "create() failed."
+            return subprocess.CompletedProcess(args, 1, "", "503 unavailable")
+        return subprocess.CompletedProcess(args, 0, _job("RUNNING"), "")
+
+    client = ServerlessClient(subprocess_runner=provider)
+    with pytest.raises(TransientServerlessError):
+        _create(client)
+    assert calls.count("create") == 1
+
+    # A second call with the identical job name and request must never
+    # create again while the journal is unresolved, regardless of the
+    # exact error `create()` raised the first time.
+    with pytest.raises(TransientServerlessError):
+        _create(client)
+    assert calls.count("create") == 1
+
+    # Once the transient condition clears, the same job name reconnects to
+    # the job the first attempt actually created — it does not recreate it.
+    observable = True
+    assert _create(client).id == "provider-unit"
+    assert calls.count("create") == 1
+
+
+def test_journal_reports_the_prior_failure_instead_of_only_indeterminate():
+    """The prior `create()` failure must be visible on reconnect, not swallowed."""
+    calls = []
+
+    def provider(args, **kwargs):
+        calls.append(args[3])
+        if args[3] == "create":
+            raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+        return subprocess.CompletedProcess(args, 1, "", "not found")
+
+    with pytest.raises(JobSubmissionIndeterminateError):
+        _create(ServerlessClient(subprocess_runner=provider))
+    with pytest.raises(JobSubmissionIndeterminateError) as failure:
+        _create(ServerlessClient(subprocess_runner=provider))
+    assert "lookup-by-name recovery failed" in str(failure.value)
+    assert calls.count("create") == 1
+
+
+def test_reconnect_recovers_through_auth_error_then_temporary_absence_then_adoption():
+    """The full reconnect chain must never call `create` more than once.
+
+    Phase 1: the provider accepts `create` (returncode 0) but the follow-up
+    identity lookup fails with an auth error. Phase 2: a same-name retry's
+    lookup finds the job temporarily unobservable (still indeterminate, not
+    proof of absence). Phase 3: the job becomes observable and the same job
+    name adopts it. `create` must be called exactly once across all three.
+    """
+    calls = []
+    phase = "lookup-fails-with-auth-error"
+
+    def provider(args, **kwargs):
+        action = args[3]
+        calls.append(action)
+        if action == "create":
+            return subprocess.CompletedProcess(args, 0, "not-json", "")
+        if phase == "lookup-fails-with-auth-error":
+            return subprocess.CompletedProcess(args, 1, "", "403 permission denied")
+        if phase == "temporarily-unobservable":
+            return subprocess.CompletedProcess(args, 1, "", "not found")
+        return subprocess.CompletedProcess(args, 0, _job("RUNNING"), "")
+
+    client = ServerlessClient(subprocess_runner=provider)
+
+    with pytest.raises(AuthError):
+        _create(client)
+    assert calls.count("create") == 1
+
+    phase = "temporarily-unobservable"
+    with pytest.raises(JobSubmissionIndeterminateError) as failure:
+        _create(client)
+    assert calls.count("create") == 1
+    assert "AuthError" in str(failure.value)
+
+    phase = "adopted"
+    result = _create(client)
+    assert result.id == "provider-unit"
     assert calls.count("create") == 1
 
 
