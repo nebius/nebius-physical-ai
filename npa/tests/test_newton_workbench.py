@@ -88,6 +88,7 @@ def test_workflow_module_functions_exist():
     for name in ("train_teacher", "generate_demos", "evaluate"):
         assert callable(getattr(pipe, name)), f"missing {name}"
     assert issubclass(pipe.NewtonPipelineError, RuntimeError)
+    pytest.importorskip("newton", reason="Newton package not installed")
     assert pipe.newton_version() == "1.2.1"
 
 
@@ -189,9 +190,8 @@ def test_newton_double_pendulum_xpbd_cpu():
     """
     import math
 
-    import warp as wp
-
-    import newton
+    wp = pytest.importorskip("warp", reason="Warp package not installed")
+    newton = pytest.importorskip("newton", reason="Newton package not installed")
 
     wp.init()
     device = wp.get_device("cpu")
