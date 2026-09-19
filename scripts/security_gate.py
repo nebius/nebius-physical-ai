@@ -89,7 +89,9 @@ def regressions(base: list[dict], candidate: list[dict]) -> list[dict]:
         KeyError: A scanner omitted a required identity field.
     """
     def key(finding: dict) -> tuple:
-        return tuple(finding[field] for field in ("scanner", "path", "rule", "identity"))
+        return tuple(finding[field] for field in ("scanner", "path", "rule", "identity")) + (
+            finding.get("policy_disposition", "actionable"),
+        )
 
     remaining = collections.Counter(key(finding) for finding in base)
     added = []

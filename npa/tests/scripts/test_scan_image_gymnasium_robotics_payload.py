@@ -1310,6 +1310,39 @@ def test_docker_save_refuses_unicode_registry_port(
 
 
 @pytest.mark.parametrize(
+    ("config_value", "layers_value", "message"),
+    [
+        (None, ["base/layer.tar", "app/layer.tar"], "Config must be a non-empty string"),
+        ("config.json", [1, "app/layer.tar"], "Layers must be a non-empty list of strings"),
+    ],
+)
+def test_docker_save_refuses_non_string_manifest_graph_fields(
+    tmp_path: Path,
+    structural_scan: None,
+    config_value: object,
+    layers_value: object,
+    message: str,
+) -> None:
+    image = tmp_path / "non-string-manifest-fields.tar"
+    config_digest, _diff_ids = _docker_save(image, _required())
+    manifest = json.dumps(
+        [
+            {
+                "Config": config_value if config_value is not None else None,
+                "RepoTags": ["neutral:test"],
+                "Layers": layers_value,
+            }
+        ],
+        separators=(",", ":"),
+    ).encode()
+    if config_value == "config.json":
+        manifest = manifest.replace(b'"config.json"', f'"{config_digest}.json"'.encode())
+    _replace_outer_file(image, "manifest.json", manifest)
+
+    with pytest.raises(ValueError, match=message):
+        SCAN.scan(image)
+
+@pytest.mark.parametrize(
     "config_name",
     [
         "unbound.json",

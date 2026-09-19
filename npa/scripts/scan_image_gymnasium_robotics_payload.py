@@ -1720,6 +1720,15 @@ def _parse_docker_manifest(raw: bytes, *, label: str) -> dict[str, object]:
         raise ValueError(f"{label} entry must be an object")
     if set(entry) != {"Config", "RepoTags", "Layers"}:
         raise ValueError(f"{label} schema is not exact")
+    if not isinstance(entry["Config"], str) or not entry["Config"]:
+        raise ValueError(f"{label} Config must be a non-empty string")
+    layers = entry["Layers"]
+    if (
+        not isinstance(layers, list)
+        or not layers
+        or any(not isinstance(layer, str) or not layer for layer in layers)
+    ):
+        raise ValueError(f"{label} Layers must be a non-empty list of strings")
     repo_tags = entry["RepoTags"]
     if repo_tags is not None:
         if (

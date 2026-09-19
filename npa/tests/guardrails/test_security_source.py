@@ -179,6 +179,8 @@ def test_reviewed_declarative_mount_metadata_stays_visible(tmp_path: Path) -> No
     )
     assert findings[0]["policy_disposition"] == "actionable"
     assert security_gate.regressions([], findings) == findings
+    trusted = dict(findings[0], policy_disposition="trusted-declarative-mount-metadata")
+    assert security_gate.regressions([trusted], findings) == findings
 
 
 @pytest.mark.parametrize("returncode,stdout", [(2, "{}"), (0, "{"), (1, "[]")])
