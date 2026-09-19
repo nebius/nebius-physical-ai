@@ -6,6 +6,8 @@ from __future__ import annotations
 import base64
 import csv
 from dataclasses import dataclass, field
+from email import policy
+from email.parser import BytesParser
 import hashlib
 import io
 import json
@@ -28,6 +30,8 @@ SOURCE_ARCHIVE_MAX_MEMBER_BYTES = 256 * 1024 * 1024
 SOURCE_ARCHIVE_MAX_EXPANDED_BYTES = 512 * 1024 * 1024
 SOURCE_ARCHIVE_MAX_COMPRESSION_RATIO = 1_000
 SOURCE_ARCHIVE_MAX_METADATA_BYTES = 1 * 1024 * 1024
+RETAINED_MEMBER_MAX_BYTES = 256 * 1024 * 1024
+RETAINED_CONTENT_MAX_BYTES = 512 * 1024 * 1024
 
 
 def inspect(fd: int, length: int, expected_id: str) -> dict[str, object]:
@@ -130,26 +134,55 @@ def _decoded(fd: int, row: dict[str, object]):
     return W.GzipReader(raw) if compressed else raw
 
 
-def _regular_hash(stream) -> tuple[str, int, bytes, bytes | None]:
+def _regular_hash(
+    stream,
+    retained_bytes: int = 0,
+    expected_size: int | None = None,
+) -> tuple[str, int, bytes, bytes | None]:
     digest = hashlib.sha256()
     size = 0
     prefix = b""
-    elf_chunks: list[bytes] | None = None
+    elf_chunks: list[bytes] = []
+    retaining = False
     while chunk := stream.read(W.CHUNK):
+        size += len(chunk)
+        W.require(size <= RETAINED_MEMBER_MAX_BYTES, "habitat_oci_member_limit")
+        if expected_size is not None:
+            W.require(size <= expected_size, "habitat_oci_regular_file_size")
         if len(prefix) < 4:
             prefix += chunk[: 4 - len(prefix)]
             if len(prefix) == 4 and prefix == b"\x7fELF":
-                elf_chunks = []
-        if elf_chunks is not None:
+                retaining = True
+                W.require(
+                    retained_bytes + (expected_size or size) <= RETAINED_CONTENT_MAX_BYTES,
+                    "habitat_oci_retained_bytes_limit",
+                )
+        if retaining:
             elf_chunks.append(chunk)
         digest.update(chunk)
-        size += len(chunk)
     return (
         digest.hexdigest(),
         size,
         prefix,
-        (b"".join(elf_chunks) if elf_chunks is not None else None),
+        (b"".join(elf_chunks) if retaining else None),
     )
+
+
+def _read_bounded_member(stream, expected_size: int, retained_bytes: int = 0) -> bytes:
+    """Read one retained member only after checking both byte ceilings."""
+    W.require(expected_size <= RETAINED_MEMBER_MAX_BYTES, "habitat_oci_member_limit")
+    W.require(
+        retained_bytes + expected_size <= RETAINED_CONTENT_MAX_BYTES,
+        "habitat_oci_retained_bytes_limit",
+    )
+    chunks: list[bytes] = []
+    size = 0
+    while chunk := stream.read(min(W.CHUNK, expected_size - size + 1)):
+        size += len(chunk)
+        W.require(size <= expected_size, "habitat_oci_regular_file_size")
+        chunks.append(chunk)
+    W.require(size == expected_size, "habitat_oci_regular_file_size")
+    return b"".join(chunks)
 
 
 def _remove_tree(mapping: dict, target: str) -> None:
@@ -1174,16 +1207,107 @@ class _ScanState:
     elf: dict[str, bytes] = field(default_factory=dict)
     events: list[dict[str, object]] = field(default_factory=list)
     source_inventory: dict[str, dict[str, object]] = field(default_factory=dict)
+    layer_payloads: list[dict[str, object]] = field(default_factory=list)
+    layer_inventory: list[dict[str, object]] = field(default_factory=list)
     findings: list[dict[str, object]] = field(default_factory=list)
     entries: int = 0
     regular_files: int = 0
     content_bytes: int = 0
+    retained_bytes: int = 0
 
 
 def _source_identity(row: dict[str, object]) -> str:
     return hashlib.sha256(
         json.dumps(row, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+
+
+def _layer_owner_rows(state: _ScanState, path: str) -> set[str]:
+    """Find package/source identities for one immutable layer payload."""
+    owners: set[str] = set()
+    for identity, row in state.source_inventory.items():
+        if _source_artifact_binding(row, path):
+            owners.add(identity)
+        name = str(row.get("name", ""))
+        if path in {
+            f"usr/share/doc/{name}/copyright",
+            f"usr/share/doc/{name}/changelog.Debian.gz",
+        }:
+            owners.add(identity)
+        if row.get("ecosystem") == "python" and ".dist-info/" in path:
+            package = _normalize_distribution(name)
+            dist_root = PurePosixPath(path).parent.name.removesuffix(".dist-info")
+            dist_name = _normalize_distribution(dist_root.rsplit("-", 1)[0])
+            if dist_name == package:
+                owners.add(identity)
+    owners.update(_layer_dpkg_owners(state, path))
+    owners.update(_layer_python_owners(state, path))
+    owners.update(_layer_contract_owners(path))
+    return owners
+
+
+def _layer_contract_owners(path: str) -> set[str]:
+    owners: set[str] = set()
+    if path.startswith("usr/share/doc/npa-habitat-sim/"):
+        owners.add("source:habitat-sim:repository")
+    if path.startswith("usr/src/habitat-sim/") or path.startswith("opt/npa-runtime/npa/"):
+        owners.add("source:habitat-sim:repository")
+    if path in {"var/lib/dpkg/status"} or path.startswith("var/lib/dpkg/info/"):
+        owners.add("dpkg:database")
+    if path in {
+        "usr/local/bin/npa-habitat-entrypoint",
+        "etc/passwd",
+        "etc/group",
+        "etc/ssh/sshd_config.d/99-npa-worker.conf",
+        "etc/sudoers.d/90-npa-skypilot",
+    }:
+        owners.add("source:habitat-sim:runtime-contract")
+    source_root = "usr/share/doc/npa-habitat-sim/ubuntu-sources/"
+    if path.startswith(source_root):
+        parts = path.removeprefix(source_root).split("/", 1)
+        if len(parts) == 2 and parts[0] and parts[1]:
+            owners.add(f"source:{parts[0]}:artifact")
+    return owners
+
+
+def _layer_dpkg_owners(state: _ScanState, path: str) -> set[str]:
+    owners = set()
+    for list_path, payload in state.tracked.items():
+        if not list_path.startswith("var/lib/dpkg/info/") or not list_path.endswith(".list"):
+            continue
+        package = list_path.removeprefix("var/lib/dpkg/info/").removesuffix(".list")
+        package = package.split(":", 1)[0]
+        paths = {line.lstrip("/") for line in payload.decode(errors="ignore").splitlines()}
+        if path in paths:
+            owners.update(
+                identity for identity, row in state.source_inventory.items()
+                if row.get("name") == package
+            )
+    return owners
+
+
+def _layer_python_owners(state: _ScanState, path: str) -> set[str]:
+    owners = set()
+    for record_path, payload in state.tracked.items():
+        if not record_path.endswith(".dist-info/RECORD"):
+            continue
+        for relative, _hash, _size in csv.reader(io.StringIO(payload.decode(errors="ignore"))):
+            if _record_target(record_path, relative) != path:
+                continue
+            metadata_path = record_path.removesuffix("RECORD") + "METADATA"
+            owners.update(
+                identity for identity, row in state.source_inventory.items()
+                if row.get("metadata_path") == metadata_path
+            )
+    return owners
+
+
+def _source_layer_inventory(state: _ScanState) -> list[dict[str, object]]:
+    inventory = []
+    for payload in state.layer_payloads:
+        owners = _layer_owner_rows(state, str(payload["path"]))
+        inventory.append({**payload, "owners": sorted(owners)})
+    return inventory
 
 
 def _record_source_population(state: _ScanState) -> None:
@@ -1217,6 +1341,7 @@ def _record_source_population(state: _ScanState) -> None:
             ).get("sha256"),
         }
         state.source_inventory[_source_identity(row)] = row
+    state.layer_inventory = _source_layer_inventory(state)
 
 
 def _source_artifact_binding(row: dict[str, object], path: str) -> bool:
@@ -1277,6 +1402,9 @@ def _source_checksum_rows(value: object, width: int) -> dict[str, tuple[int, str
 
 
 def _debian_source_fields(payload: bytes) -> dict[str, str] | None:
+    payload = _debian_clearsigned_body(payload)
+    if payload is None:
+        return None
     try:
         lines = payload.decode("utf-8", errors="strict").splitlines()
     except UnicodeDecodeError:
@@ -1297,6 +1425,42 @@ def _debian_source_fields(payload: bytes) -> dict[str, str] | None:
         fields[key] = value.strip()
         previous = key
     return fields
+
+
+def _debian_clearsigned_body(payload: bytes) -> bytes | None:
+    """Extract the signed body without treating the signature as fields."""
+    lines = payload.splitlines()
+    if not lines or lines[0] != b"-----BEGIN PGP SIGNED MESSAGE-----":
+        return payload
+    separator = next(
+        (index for index, line in enumerate(lines[1:], 1) if not line), None
+    )
+    if separator is None:
+        return None
+    try:
+        end = lines.index(b"-----BEGIN PGP SIGNATURE-----", separator + 1)
+    except ValueError:
+        return None
+    body = []
+    for line in lines[separator + 1 : end]:
+        body.append(line[2:] if line.startswith(b"- ") else line)
+    return b"\n".join(body) + b"\n"
+
+
+def _python_metadata_fields(payload: bytes) -> dict[str, str] | None:
+    """Parse RFC822 metadata while requiring one Name and Version field."""
+    try:
+        message = BytesParser(policy=policy.compat32).parsebytes(payload)
+    except (TypeError, ValueError):
+        return None
+    names = [value.strip() for value in message.get_all("Name", [])]
+    versions = [value.strip() for value in message.get_all("Version", [])]
+    if len(names) != 1 or len(versions) != 1:
+        return None
+    return {key: value.strip() for key, value in message.items()} | {
+        "Name": names[0],
+        "Version": versions[0],
+    }
 
 
 def _dsc_source_matches(
@@ -1392,85 +1556,96 @@ def _read_metadata(stream) -> bytes | None:
     return metadata if len(metadata) <= SOURCE_ARCHIVE_MAX_METADATA_BYTES else None
 
 
+def _archive_member_budget(
+    row, name: str, size: int, state: dict[str, object], expanded_limit: int
+) -> bool:
+    if not _safe_archive_name(name) or not _canonical_source_member(row, name):
+        return False
+    names = state["names"]
+    if name in names or size > SOURCE_ARCHIVE_MAX_MEMBER_BYTES:
+        return False
+    if int(state["total"]) + size > expanded_limit:
+        return False
+    names.add(name)
+    state["total"] = int(state["total"]) + size
+    return True
+
+
+def _archive_metadata_member(row, name: str, payload: bytes | None, state) -> bool:
+    if PurePosixPath(name).name not in {"PKG-INFO", "METADATA"}:
+        state["source_files"] = int(state["source_files"]) + 1
+        return True
+    if not _canonical_metadata_name(row, name) or state["metadata"] is not None:
+        return False
+    if payload is None or _read_metadata(io.BytesIO(payload)) is None:
+        return False
+    state["metadata"] = payload
+    return True
+
+
+def _tar_archive_member(row, archive, member, state, expanded_limit) -> bool:
+    if member.issym() or member.islnk():
+        return False
+    if not _archive_member_budget(row, member.name, member.size, state, expanded_limit):
+        return False
+    if member.isdir():
+        return True
+    if not member.isfile():
+        return False
+    stream = archive.extractfile(member)
+    payload = _read_metadata(stream) if stream is not None else None
+    return _archive_metadata_member(row, member.name, payload, state)
+
+
+def _zip_archive_member(row, archive, info, state, expanded_limit) -> bool:
+    name = info.filename
+    if info.is_dir() or name.endswith("/"):
+        return info.file_size == 0 and info.compress_size == 0
+    if info.file_size and (
+        not info.compress_size
+        or info.file_size > info.compress_size * SOURCE_ARCHIVE_MAX_COMPRESSION_RATIO
+    ):
+        return False
+    if not _archive_member_budget(row, name, info.file_size, state, expanded_limit):
+        return False
+    with archive.open(info) as stream:
+        payload = _read_metadata(stream)
+    return _archive_metadata_member(row, name, payload, state)
+
+
+def _archive_metadata_result(state: dict[str, object]) -> bytes | None:
+    if int(state["source_files"]) == 0:
+        return None
+    return state["metadata"]
+
+
 def _tar_archive_metadata(row: dict[str, object], payload: bytes) -> bytes | None:
     try:
-        member_limit, max_member_bytes, expanded_limit = _archive_limits(payload)
+        _, _, expanded_limit = _archive_limits(payload)
+        state = {"names": set(), "total": 0, "source_files": 0, "metadata": None}
         with tarfile.open(fileobj=io.BytesIO(payload), mode="r:*") as archive:
-            metadata = None
-            names: set[str] = set()
-            total = 0
-            source_files = 0
             for count, member in enumerate(archive, 1):
-                if count > member_limit:
+                if count > SOURCE_ARCHIVE_MAX_MEMBERS or not _tar_archive_member(
+                    row, archive, member, state, expanded_limit
+                ):
                     return None
-                if not _safe_archive_name(member.name) or member.issym() or member.islnk():
-                    return None
-                if not _canonical_source_member(row, member.name):
-                    return None
-                if member.name in names or member.size > max_member_bytes or total + member.size > expanded_limit:
-                    return None
-                names.add(member.name)
-                total += member.size
-                if member.isdir():
-                    continue
-                if not member.isfile():
-                    return None
-                if PurePosixPath(member.name).name in {"PKG-INFO", "METADATA"}:
-                    if not _canonical_metadata_name(row, member.name) or metadata is not None:
-                        return None
-                    stream = archive.extractfile(member)
-                    if stream is None:
-                        return None
-                    metadata = _read_metadata(stream)
-                    if metadata is None:
-                        return None
-                else:
-                    source_files += 1
-            return metadata if source_files else None
+        return _archive_metadata_result(state)
     except (OSError, tarfile.TarError):
         return None
 
 
 def _zip_archive_metadata(row: dict[str, object], payload: bytes) -> bytes | None:
     try:
-        member_limit, max_member_bytes, expanded_limit = _archive_limits(payload)
+        _, _, expanded_limit = _archive_limits(payload)
+        state = {"names": set(), "total": 0, "source_files": 0, "metadata": None}
         with zipfile.ZipFile(io.BytesIO(payload)) as archive:
-            metadata = None
             infos = archive.infolist()
-            if not infos or len(infos) > member_limit:
+            if not infos or len(infos) > SOURCE_ARCHIVE_MAX_MEMBERS:
                 return None
-            names: set[str] = set()
-            total = 0
-            source_files = 0
             for info in infos:
-                name = info.filename
-                if not _safe_archive_name(name) or name in names:
+                if not _zip_archive_member(row, archive, info, state, expanded_limit):
                     return None
-                if not _canonical_source_member(row, name):
-                    return None
-                names.add(name)
-                if info.is_dir() or name.endswith("/"):
-                    if info.file_size or info.compress_size:
-                        return None
-                    continue
-                if info.file_size > max_member_bytes or total + info.file_size > expanded_limit:
-                    return None
-                if info.file_size and (
-                    not info.compress_size
-                    or info.file_size > info.compress_size * SOURCE_ARCHIVE_MAX_COMPRESSION_RATIO
-                ):
-                    return None
-                total += info.file_size
-                if PurePosixPath(name).name in {"PKG-INFO", "METADATA"}:
-                    if not _canonical_metadata_name(row, name) or metadata is not None:
-                        return None
-                    with archive.open(info) as stream:
-                        metadata = _read_metadata(stream)
-                    if metadata is None:
-                        return None
-                else:
-                    source_files += 1
-            return metadata if source_files else None
+        return _archive_metadata_result(state)
     except (OSError, zipfile.BadZipFile):
         return None
 
@@ -1485,7 +1660,7 @@ def _python_source_matches(row: dict[str, object], payload: bytes | None) -> boo
         metadata = _zip_archive_metadata(row, payload)
     if metadata is None:
         return False
-    fields = _debian_source_fields(metadata)
+    fields = _python_metadata_fields(metadata)
     return fields is not None and (
         fields.get("Name"), fields.get("Version")
     ) == (row.get("name"), row.get("version"))
@@ -1558,6 +1733,18 @@ def _source_delivery_findings(state: _ScanState, contract: dict) -> list[dict]:
         findings.append({"code": "corresponding_source_closure_pending"})
     if not inventory or closure.get("inventory_sha256") != _source_identity(inventory):
         findings.append({"code": "corresponding_source_inventory_mismatch"})
+    if closure.get("status") == "complete-accompanying-source":
+        expected_layers = state.layer_inventory
+        if (
+            closure.get("layer_inventory") != expected_layers
+            or closure.get("layer_inventory_sha256") != _source_identity(expected_layers)
+        ):
+            findings.append({"code": "corresponding_source_layer_inventory_mismatch"})
+        findings.extend(
+            {"code": "corresponding_source_layer_payload_unowned", "path": row["path"]}
+            for row in expected_layers
+            if not row.get("owners")
+        )
     records = closure.get("records", {})
     if not isinstance(records, dict) or set(records) != set(inventory):
         return findings + [{"code": "corresponding_source_population_mismatch"}]
@@ -1617,20 +1804,24 @@ def _member_policy_findings(
 
 
 def _read_member(
-    archive: tarfile.TarFile, member: tarfile.TarInfo, path: str
+    archive: tarfile.TarFile,
+    member: tarfile.TarInfo,
+    path: str,
+    retained_bytes: int = 0,
 ) -> tuple[dict[str, object], bytes | None, bytes | None]:
+    W.require(member.size <= RETAINED_MEMBER_MAX_BYTES, "habitat_oci_member_limit")
     body = archive.extractfile(member)
     W.require(body is not None, "habitat_oci_regular_file_read")
     if _track_bytes(path):
-        tracked = body.read()
-        digest, size, prefix = (
-            hashlib.sha256(tracked).hexdigest(),
-            len(tracked),
-            tracked[:4],
-        )
+        tracked = _read_bounded_member(body, member.size, retained_bytes)
+        digest = hashlib.sha256(tracked).hexdigest()
+        size = len(tracked)
+        prefix = tracked[:4]
         elf = tracked if prefix == b"\x7fELF" else None
     else:
-        digest, size, prefix, elf = _regular_hash(body)
+        digest, size, prefix, elf = _regular_hash(
+            body, retained_bytes=retained_bytes, expected_size=member.size
+        )
         tracked = None
     W.require(size == member.size, "habitat_oci_regular_file_size")
     return {"sha256": digest, "size": size, "elf": prefix == b"\x7fELF"}, tracked, elf
@@ -1693,14 +1884,19 @@ def _replace_path(state: _ScanState, path: str, kind: str) -> None:
 
 def _record_regular_member(state, archive, member, path, location, contract) -> str:
     """Retain byte accounting and independent per-layer payload findings."""
-    file_row, tracked, elf = _read_member(archive, member, path)
+    file_row, tracked, elf = _read_member(
+        archive, member, path, retained_bytes=state.retained_bytes
+    )
     state.files[path] = file_row
     state.regular_files += 1
     state.content_bytes += int(file_row["size"])
     if tracked is not None:
         state.tracked[path] = tracked
+        state.retained_bytes += len(tracked)
     if elf is not None:
         state.elf[path] = elf
+        if tracked is None:
+            state.retained_bytes += len(elf)
     if file_row["sha256"] in contract["forbidden_content_sha256"]:
         state.findings.append({"code": "forbidden_payload_hash", **location})
     return str(file_row["sha256"])
@@ -1730,6 +1926,21 @@ def _record_hardlink_member(
         state.tracked[path] = state.tracked[target]
     if target in state.elf:
         state.elf[path] = state.elf[target]
+
+
+def _record_layer_payload(state, path: str, layer: int, entry: int) -> None:
+    """Retain immutable per-layer identity for every non-directory payload."""
+    row = state.files.get(path)
+    W.require(row is not None, "habitat_oci_layer_payload_identity")
+    state.layer_payloads.append(
+        {
+            "layer": layer,
+            "entry": entry,
+            "path": path,
+            "sha256": row["sha256"],
+            "bytes": row["size"],
+        }
+    )
 
 
 def _record_member(
@@ -1763,6 +1974,9 @@ def _record_member(
         event["sha256"] = _record_regular_member(
             state, archive, member, path, {"layer": layer, "entry": entry}, contract
         )
+        _record_layer_payload(state, path, layer, entry)
+    elif member.islnk():
+        _record_layer_payload(state, path, layer, entry)
     state.events.append(event)
 
 
@@ -1802,6 +2016,7 @@ def _complete_layer(lower: _ScanState, current: _ScanState, seen: set[str]) -> N
     _require_reachable_state(lower)
     lower.regular_files += current.regular_files
     lower.content_bytes += current.content_bytes
+    lower.retained_bytes = current.retained_bytes
 
 
 def _scan_layer(
@@ -1814,7 +2029,12 @@ def _scan_layer(
     """Keep complete-layer inventory separate from a single streamed observation set."""
     _verify_diff_id(fd, row)
     seen: set[str] = set()
-    current = _ScanState(events=state.events, findings=state.findings)
+    current = _ScanState(
+        events=state.events,
+        findings=state.findings,
+        layer_payloads=state.layer_payloads,
+        retained_bytes=state.retained_bytes,
+    )
     with tarfile.open(fileobj=_decoded(fd, row), mode="r|") as archive:
         for entry, member in enumerate(archive):
             state.entries += 1
@@ -1971,6 +2191,10 @@ def _scan_report(
         "corresponding_source_inventory": state.source_inventory,
         "corresponding_source_inventory_sha256": _source_identity(
             state.source_inventory
+        ),
+        "corresponding_source_layer_inventory": state.layer_inventory,
+        "corresponding_source_layer_inventory_sha256": _source_identity(
+            state.layer_inventory
         ),
         "regular_files_read": state.regular_files,
         "content_bytes_read": state.content_bytes,

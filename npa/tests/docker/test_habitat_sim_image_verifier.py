@@ -137,6 +137,10 @@ def test_source_delivery_covers_superseded_base_and_installed_versions() -> None
             "corresponding_source_inventory_sha256": H._source_identity(
                 state.source_inventory
             ),
+            "corresponding_source_layer_inventory": state.layer_inventory,
+            "corresponding_source_layer_inventory_sha256": H._source_identity(
+                state.layer_inventory
+            ),
         }
     )
     assert (
@@ -281,6 +285,66 @@ def test_python_source_archive_rejects_bounded_expansion_ratio() -> None:
         archive.writestr("fixture-1.0/PKG-INFO", b"Name: fixture\nVersion: 1.0\n")
         archive.writestr("fixture-1.0/repetitive.bin", b"0" * 2_000_000)
     assert H._python_source_matches(row, payload.getvalue()) is False
+
+
+def test_member_hashing_rejects_oversized_retained_elf(monkeypatch) -> None:
+    monkeypatch.setattr(H, "RETAINED_MEMBER_MAX_BYTES", 8)
+    with pytest.raises(H.W.ScanError, match="habitat_oci_member_limit"):
+        H._regular_hash(io.BytesIO(b"\x7fELF" + b"x" * 8), expected_size=12)
+
+
+def test_member_read_checks_limits_before_extracting_body(monkeypatch) -> None:
+    archive = Mock()
+    member = SimpleNamespace(size=9)
+    monkeypatch.setattr(H, "RETAINED_MEMBER_MAX_BYTES", 8)
+    with pytest.raises(H.W.ScanError, match="habitat_oci_member_limit"):
+        H._read_member(archive, member, "opt/npa-runtime/npa/large.py")
+    archive.extractfile.assert_not_called()
+
+
+def test_layer_inventory_rejects_unowned_superseded_payload() -> None:
+    state = H._ScanState(
+        layer_payloads=[
+            {"layer": 0, "entry": 1, "path": "opt/rogue/payload", "sha256": "a" * 64, "bytes": 4}
+        ]
+    )
+    H._record_source_population(state)
+    closure = {
+        "status": "complete-accompanying-source",
+        "inventory_sha256": H._source_identity(state.source_inventory),
+        "layer_inventory_sha256": H._source_identity(state.layer_inventory),
+        "layer_inventory": state.layer_inventory,
+        "records": state.source_inventory,
+    }
+    findings = H._source_delivery_findings(
+        state, {"corresponding_source_closure": closure}
+    )
+    assert "corresponding_source_layer_payload_unowned" in {
+        row["code"] for row in findings
+    }
+
+
+def test_source_metadata_accepts_clearsigned_dsc_and_repeated_python_fields() -> None:
+    body = b"Source: fixture\nVersion: 1.0\nFiles:\n abc 1 fixture.tar\n"
+    signed = (
+        b"-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA256\n\n"
+        + body
+        + b"-----BEGIN PGP SIGNATURE-----\nignored\n-----END PGP SIGNATURE-----\n"
+    )
+    assert H._debian_source_fields(signed)["Source"] == "fixture"
+    metadata = H._python_metadata_fields(
+        b"Name: fixture\nVersion: 1.0\nClassifier: one\nClassifier: two\n"
+    )
+    assert metadata["Name"] == "fixture"
+    assert H._python_metadata_fields(b"Name: fixture\nName: other\nVersion: 1.0\n") is None
+
+
+def test_archive_metadata_helpers_remain_small_and_split() -> None:
+    tree = ast.parse(Path(H.__file__).read_text())
+    names = {"_tar_archive_metadata", "_zip_archive_metadata", "_tar_archive_member", "_zip_archive_member"}
+    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
+    assert len(functions) == len(names)
+    assert all(node.end_lineno - node.lineno + 1 < 40 for node in functions)
 
 
 def test_current_image_contract_remains_source_delivery_quarantined() -> None:
@@ -1210,6 +1274,10 @@ def _fixture_source_delivery(report: dict[str, object]) -> dict[str, object]:
     return {
         "status": "complete-accompanying-source",
         "inventory_sha256": report["corresponding_source_inventory_sha256"],
+        "layer_inventory_sha256": report.get(
+            "corresponding_source_layer_inventory_sha256", H._source_identity([])
+        ),
+        "layer_inventory": report.get("corresponding_source_layer_inventory", []),
         "records": {
             identity: {
                 "component": row,
@@ -1508,7 +1576,11 @@ def _cli_fixture(
     contract["required_base_diff_ids"] = [diff_ids[0]]
     baseline_root = tmp_path / "baseline"
     baseline_root.mkdir()
-    baseline = _verify(baseline_root, [entries], contract=contract)
+    baseline = _verify(
+        baseline_root,
+        [[*entries, *provenance_entries, *installed_entries]],
+        contract=contract,
+    )
     contract["corresponding_source_closure"] = _fixture_source_delivery(baseline)
     contract_path = analysis / "runtime-payload.json"
     contract_path.write_text(json.dumps(contract), encoding="utf-8")
