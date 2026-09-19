@@ -1649,6 +1649,55 @@ def _oci_descriptor_path(descriptor: object, label: str) -> str:
     return f"blobs/sha256/{digest.removeprefix('sha256:')}"
 
 
+_DOCKER_NAME_COMPONENT = re.compile(r"[a-z0-9]+(?:[._]|__|[-]*[a-z0-9]+)*")
+_DOCKER_TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")
+_DOCKER_DIGEST = re.compile(r"[A-Za-z][A-Za-z0-9+._-]*:[0-9a-fA-F]{32,}")
+_DOCKER_HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+
+
+def _is_valid_docker_reference(value: str) -> bool:
+    """Accept only a bounded Docker repository tag or digest reference."""
+
+    if not value or len(value) > 255 or value != value.strip() or any(
+        char.isspace() for char in value
+    ):
+        return False
+    if value.count("@") > 1:
+        return False
+    if "@" in value:
+        name, digest = value.split("@", 1)
+        if not _DOCKER_DIGEST.fullmatch(digest):
+            return False
+    else:
+        name, separator, tag = value.rpartition(":")
+        if not separator or not _DOCKER_TAG.fullmatch(tag):
+            return False
+    if not name or name.startswith("/") or name.endswith("/") or "//" in name:
+        return False
+    components = name.split("/")
+    if any(not component for component in components):
+        return False
+    if len(components) > 1 and (
+        "." in components[0] or ":" in components[0] or components[0] == "localhost"
+    ):
+        host = components.pop(0)
+        host_name, port_separator, port = host.rpartition(":")
+        if port_separator:
+            if not port.isdecimal() or not 1 <= int(port) <= 65535:
+                return False
+            host = host_name
+        if host == "localhost":
+            pass
+        elif not host or any(
+            not _DOCKER_HOST_LABEL.fullmatch(label) for label in host.split(".")
+        ):
+            return False
+    return bool(components) and all(
+        len(component) <= 255 and _DOCKER_NAME_COMPONENT.fullmatch(component)
+        for component in components
+    )
+
+
 def _validate_hybrid_docker_manifest(
     archive: tarfile.TarFile,
     outer_by_name: dict[str, tarfile.TarInfo],
@@ -1696,8 +1745,7 @@ def _validate_hybrid_docker_manifest(
             not isinstance(repo_tags, list)
             or not repo_tags
             or any(
-                not isinstance(tag, str)
-                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9./:@_-]*", tag)
+                not isinstance(tag, str) or not _is_valid_docker_reference(tag)
                 for tag in repo_tags
             )
             or len(set(repo_tags)) != len(repo_tags)

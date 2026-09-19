@@ -715,6 +715,34 @@ def test_oci_layout_refuses_ambiguous_docker_compatibility_manifest(
         SCAN.scan_oci_layout(image)
 
 
+@pytest.mark.parametrize(
+    "tag",
+    ["repo:", "repo//child:tag", "repo/../child:tag", "repo:one:two"],
+)
+def test_oci_layout_refuses_malformed_docker_reference_strings(
+    tmp_path: Path, structural_scan: None, tag: str
+) -> None:
+    image = tmp_path / "malformed-hybrid-reference.tar"
+    config_digest, _diff_ids, descriptors = _oci_layout(image, _required())
+    manifest = json.dumps(
+        [
+            {
+                "Config": f"blobs/sha256/{config_digest}",
+                "RepoTags": [tag],
+                "Layers": [
+                    f"blobs/sha256/{descriptor['digest'].removeprefix('sha256:')}"
+                    for descriptor in descriptors
+                ],
+            }
+        ],
+        separators=(",", ":"),
+    ).encode()
+    _add_outer_file(image, "manifest.json", manifest)
+
+    with pytest.raises(ValueError, match="RepoTags are malformed"):
+        SCAN.scan_oci_layout(image)
+
+
 @pytest.mark.parametrize("name", ["oci-layout", "index.json"])
 def test_oci_layout_refuses_nonregular_required_outer_member(
     tmp_path: Path, structural_scan: None, name: str
