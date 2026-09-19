@@ -15,6 +15,7 @@ from npa.orchestration.npa_workflow.detect import (
     is_npa_workflow_spec,
 )
 from npa.orchestration.npa_workflow.interpreter import build_plan
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.skypilot_render import (
     NpaWorkflowRenderError,
     SkypilotRenderOptions,
@@ -176,6 +177,76 @@ def test_robotwin_source_uri_is_process_isolated_between_renders(
         "${NPA_SRC_S3_URI}",
         "${NPA_SRC_S3_URI}",
     ]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["timeout", "child", "eof", "start"],
+)
+def test_robotwin_isolated_render_failures_are_controlled(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    from npa.cli.workbench import workflow as workflow_cli
+
+    spec = load_spec(NPA_SPECS / "byof-robotwin.yaml")
+
+    class FakeConnection:
+        def close(self) -> None:
+            return None
+
+        def poll(self, _timeout: int) -> bool:
+            if failure == "timeout":
+                return False
+            return True
+
+        def recv(self) -> object:
+            if failure == "eof":
+                raise EOFError
+            if failure == "child":
+                return (False, "private-render-detail")
+            return (True, "unused")
+
+    class FakeProcess:
+        exitcode = 1 if failure == "child" else 0
+
+        def start(self) -> None:
+            if failure == "start":
+                raise OSError("private process detail")
+
+        def terminate(self) -> None:
+            return None
+
+        def join(self, timeout: int) -> None:
+            return None
+
+        def is_alive(self) -> bool:
+            return False
+
+        def kill(self) -> None:
+            return None
+
+    class FakeContext:
+        def Pipe(self, *, duplex: bool) -> tuple[FakeConnection, FakeConnection]:
+            assert duplex is False
+            return FakeConnection(), FakeConnection()
+
+        def Process(self, **_kwargs: object) -> FakeProcess:
+            return FakeProcess()
+
+    monkeypatch.setattr(
+        workflow_cli.multiprocessing, "get_context", lambda _name: FakeContext()
+    )
+
+    with pytest.raises(NpaWorkflowError) as exc_info:
+        workflow_cli._prepare_robotwin_submit_without_global_source(
+            spec=spec,
+            run_id="robotwin-failure-boundary",
+            assume_decision="",
+            render_options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        )
+    assert "private-render-detail" not in str(exc_info.value)
+    assert "submission was not attempted" in str(exc_info.value)
 
 
 def test_isaac_byof_config_routes_image_and_preserves_cli_opt_out() -> None:

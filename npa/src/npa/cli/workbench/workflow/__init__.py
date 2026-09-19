@@ -87,6 +87,7 @@ def _prepare_robotwin_submit_without_global_source(
     """Prepare the fixed outer task while keeping its private source run-local."""
 
     from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
     from npa.orchestration.npa_workflow.skypilot_render import (
         secret_env_hints_for_plan,
     )
@@ -99,13 +100,41 @@ def _prepare_robotwin_submit_without_global_source(
         target=_robotwin_render_process,
         args=(sender, spec, plan, run_id, render_options),
     )
-    process.start()
+    try:
+        process.start()
+    except (OSError, RuntimeError):
+        sender.close()
+        receiver.close()
+        raise NpaWorkflowError(
+            "RoboTwin isolated render could not start; submission was not attempted"
+        ) from None
     sender.close()
     try:
-        if not receiver.poll(60):
-            process.terminate()
-            raise RuntimeError("RoboTwin isolated render timed out")
-        ok, payload = receiver.recv()
+        try:
+            if not receiver.poll(60):
+                process.terminate()
+                raise NpaWorkflowError(
+                    "RoboTwin isolated render timed out; submission was not attempted"
+                )
+            response = receiver.recv()
+        except EOFError:
+            raise NpaWorkflowError(
+                "RoboTwin isolated render returned no result; submission was not attempted"
+            ) from None
+        except (OSError, RuntimeError):
+            raise NpaWorkflowError(
+                "RoboTwin isolated render could not be read; submission was not attempted"
+            ) from None
+        if (
+            not isinstance(response, tuple)
+            or len(response) != 2
+            or not isinstance(response[0], bool)
+            or not isinstance(response[1], str)
+        ):
+            raise NpaWorkflowError(
+                "RoboTwin isolated render returned an invalid result; submission was not attempted"
+            )
+        ok, payload = response
     finally:
         receiver.close()
         process.join(timeout=5)
@@ -113,7 +142,9 @@ def _prepare_robotwin_submit_without_global_source(
             process.kill()
             process.join(timeout=5)
     if not ok or process.exitcode:
-        raise RuntimeError(f"RoboTwin isolated render failed: {payload}")
+        raise NpaWorkflowError(
+            "RoboTwin isolated render failed; submission was not attempted"
+        )
     temp_dir = tempfile.TemporaryDirectory(prefix="npa-workflow-robotwin-")
     path = Path(temp_dir.name) / f"{spec.name}.skypilot.yaml"
     path.write_text(payload, encoding="utf-8")
