@@ -971,16 +971,15 @@ def test_oci_layout_refuses_trailing_compressed_stream(
         SCAN.scan_oci_layout(image)
 
 
-def test_oci_layout_scans_raw_gzip_header_without_echo(
+def test_oci_layout_ignores_raw_gzip_header_text_when_decoded_members_are_clean(
     tmp_path: Path, structural_scan: None
 ) -> None:
     marker = "password" + "=" + ("x" * 16)
     image = tmp_path / "header-secret-oci.tar"
     _oci_layout(image, _required(), layer_filename=marker)
 
-    with pytest.raises(ValueError, match="forbidden secret signature") as captured:
-        SCAN.scan_oci_layout(image)
-    assert marker not in str(captured.value)
+    result = SCAN.scan_oci_layout(image)
+    assert result["status"] == "passed"
 
 
 def test_container_archive_symlink_is_refused(

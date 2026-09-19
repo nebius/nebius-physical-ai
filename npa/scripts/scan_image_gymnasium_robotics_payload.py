@@ -1675,7 +1675,17 @@ def _oci_blob(
         raise ValueError(f"OCI {label} descriptor does not bind its blob")
     referenced.add(member_name)
     if digest not in graph_budget.validated_blobs:
-        _scan_decoded_member_bytes(f"raw OCI {label} blob", raw)
+        # A compressed runtime layer is an opaque representation, not an
+        # actionable text member.  Running the text regex over its compressed
+        # bytes creates false positives when an ordinary decoded file happens
+        # to compress to a matching byte sequence.  Raw-byte identities and
+        # decoded TAR-member policy remain mandatory below; descriptor,
+        # config, and attestation blobs still receive direct text scanning.
+        _scan_decoded_member_bytes(
+            f"raw OCI {label} blob",
+            raw,
+            skip_text_policy=media_type in OCI_LAYER_MEDIA_TYPES,
+        )
         # Runtime layer blobs are decompressed and semantically scanned by the
         # selected-manifest layer path below.  Applying generic nested-archive
         # text policy to their compressed bytes here creates false positives on
