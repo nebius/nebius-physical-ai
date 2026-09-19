@@ -1352,6 +1352,60 @@ def test_docker_save_refuses_orphan_oci_layout_marker(
         SCAN.scan(image)
 
 
+def test_docker_save_without_oci_graph_is_incomplete_for_publication(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    image = tmp_path / "missing-oci-graph.tar"
+    _docker_save(image, _required())
+
+    result = SCAN.scan(image)
+
+    assert result["status"] == "passed"
+    assert result["distributed_blob_scan_complete"] is False
+
+
+def test_selected_runtime_layer_scans_decoded_secret_policy() -> None:
+    raw = _tar_bytes({"etc/neutral-secret": b"password=" + (b"x" * 16)})
+    with pytest.raises(ValueError, match="forbidden secret signature"):
+        SCAN._layers_from_bytes([("runtime-layer.tar", raw)])
+
+
+def test_shared_oci_layer_cache_upgrades_to_attestation_text_policy(
+    tmp_path: Path,
+) -> None:
+    image = tmp_path / "shared-layer-cache.tar"
+    files = _required()
+    files["etc/neutral-secret"] = b"password=" + (b"x" * 16)
+    _oci_layout(image, files)
+    with tarfile.open(image) as archive:
+        index = json.loads(archive.extractfile("index.json").read())
+        manifest_digest = index["manifests"][0]["digest"].removeprefix("sha256:")
+        manifest = json.loads(
+            archive.extractfile(f"blobs/sha256/{manifest_digest}").read()
+        )
+        descriptor = manifest["layers"][1]
+        with pytest.raises(ValueError, match="forbidden secret signature"):
+            budget = SCAN._OciDescriptorGraphBudget()
+            SCAN._oci_blob(
+                archive,
+                descriptor,
+                label="shared runtime layer",
+                referenced=set(),
+                nested_budget=SCAN._NestedArchiveBudget(),
+                graph_budget=budget,
+                scan_layer_text_policy=False,
+            )
+            SCAN._oci_blob(
+                archive,
+                descriptor,
+                label="shared attestation layer",
+                referenced=set(),
+                nested_budget=SCAN._NestedArchiveBudget(),
+                graph_budget=budget,
+                scan_layer_text_policy=True,
+            )
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [

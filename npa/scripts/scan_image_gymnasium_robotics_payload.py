@@ -566,14 +566,18 @@ class _OciDescriptorGraphBudget:
     def __init__(self) -> None:
         self.visits = 0
         self.validated_blobs: dict[str, bytes] = {}
+        self.text_policy_scanned: dict[str, bool] = {}
 
     def reserve(self, label: str) -> None:
         self.visits += 1
         if self.visits > MAX_OCI_DESCRIPTOR_GRAPH_VISITS:
             raise ValueError(f"OCI descriptor graph work budget exceeded: {label}")
 
-    def remember(self, digest: str, content: bytes) -> None:
+    def remember(
+        self, digest: str, content: bytes, *, text_policy_scanned: bool
+    ) -> None:
         self.validated_blobs[digest] = content
+        self.text_policy_scanned[digest] = text_policy_scanned
 
 
 def _looks_like_tar(content: bytes) -> bool:
@@ -1250,6 +1254,7 @@ def _layers_from_bytes(
     layers: list[tuple[str, bytes]],
     *,
     nested_budget: _NestedArchiveBudget | None = None,
+    pre_scanned_text_digests: set[str] | None = None,
 ) -> tuple[
     dict[str, bytes],
     dict[str, dict[str, Any]],
@@ -1268,6 +1273,8 @@ def _layers_from_bytes(
     materialized_layer_bytes = 0
     if nested_budget is None:
         nested_budget = _NestedArchiveBudget()
+    if pre_scanned_text_digests is None:
+        pre_scanned_text_digests = set()
     for layer_name, raw in layers:
         if len(raw) > MAX_LAYER_ARCHIVE_BYTES:
             raise ValueError(f"archive member exceeds scan bound: {layer_name}")
@@ -1277,16 +1284,6 @@ def _layers_from_bytes(
         _scan_raw_blob_bytes(f"raw layer bytes: {layer_name}", raw)
         layer_members = _validated_tar_members(
             f"raw layer: {layer_name}", raw, max_members=MAX_LAYER_MEMBERS
-        )
-        layer_contains_candidate = any(
-            _safe(member.name).startswith(
-                (
-                    "opt/npa/gymnasium-robotics/",
-                    "usr/local/bin/npa-gymnasium-entrypoint",
-                    "usr/share/doc/npa-gymnasium-robotics/",
-                )
-            )
-            for member in layer_members
         )
         if total + len(layer_members) > MAX_TOTAL_LAYER_MEMBERS:
             raise ValueError("total member count exceeds scan bound")
@@ -1341,15 +1338,15 @@ def _layers_from_bytes(
                     content = payload.read(MAX_LAYER_MEMBER_BYTES + 1)
                     if len(content) != item.size:
                         raise ValueError(f"layer member exceeds scan bound: {path}")
-                    nested += _nested_archive_members(
-                        path,
-                        content,
-                        allowed_system_wheel_path=(
-                            path if allowed_system_wheel else None
-                        ),
-                        budget=nested_budget,
-                        skip_text_policy=not layer_contains_candidate,
-                    )
+                    if hashlib.sha256(raw).hexdigest() not in pre_scanned_text_digests:
+                        nested += _nested_archive_members(
+                            path,
+                            content,
+                            allowed_system_wheel_path=(
+                                path if allowed_system_wheel else None
+                            ),
+                            budget=nested_budget,
+                        )
                     _remove_path(current_rootfs, current_entries, path)
                     current_rootfs[path] = content
                     current_entries[path] = {
@@ -1688,14 +1685,34 @@ def _oci_blob(
             _nested_archive_members(
                 f"raw OCI {label} blob", raw, budget=nested_budget
             )
-        else:
+        elif media_type in OCI_LAYER_MEDIA_TYPES:
             _nested_archive_members(
                 f"raw OCI {label} blob",
                 raw,
                 budget=nested_budget,
                 skip_text_policy=not scan_layer_text_policy,
             )
-        graph_budget.remember(digest, raw)
+        graph_budget.remember(
+            digest,
+            raw,
+            text_policy_scanned=scan_layer_text_policy
+            or media_type not in OCI_LAYER_MEDIA_TYPES,
+        )
+    elif (
+        scan_layer_text_policy
+        and media_type in OCI_LAYER_MEDIA_TYPES
+        and not graph_budget.text_policy_scanned.get(digest, False)
+    ):
+        # A shared layer may first be reached through a runnable manifest and
+        # later through an attestation manifest. Upgrade the cache entry to the
+        # stricter decoded-member policy instead of treating the digest cache
+        # as proof that the stronger scan already ran.
+        _nested_archive_members(
+            f"raw OCI {label} blob",
+            raw,
+            budget=nested_budget,
+        )
+        graph_budget.text_policy_scanned[digest] = True
     return raw, media_type
 
 
@@ -1848,6 +1865,7 @@ def _finalize_scan(
     expected_config_digest: str | None = None,
     distributed_blob_scan_complete: bool = False,
     expected_layer_diff_ids: list[str] | None = None,
+    pre_scanned_text_digests: set[str] | None = None,
 ) -> dict[str, Any]:
     runtime_config = config.get("config")
     if not isinstance(runtime_config, dict) or runtime_config.get("User") != "ubuntu":
@@ -1859,7 +1877,11 @@ def _finalize_scan(
         nested_members,
         layer_diff_ids,
         whiteouts,
-    ) = _layers_from_bytes(layers, nested_budget=nested_budget)
+    ) = _layers_from_bytes(
+        layers,
+        nested_budget=nested_budget,
+        pre_scanned_text_digests=pre_scanned_text_digests,
+    )
     config_rootfs = config.get("rootfs")
     if (
         not isinstance(config_rootfs, dict)
@@ -1977,6 +1999,7 @@ def scan_oci_layout(
             raise ValueError("OCI image contains no layers")
         layers: list[tuple[str, bytes]] = []
         normalized_descriptors: list[dict[str, object]] = []
+        pre_scanned_text_digests: set[str] = set()
         for position, descriptor in enumerate(layer_descriptors):
             raw, media_type = _oci_blob(
                 archive,
@@ -1985,11 +2008,15 @@ def scan_oci_layout(
                 referenced=referenced,
                 nested_budget=nested_budget,
                 graph_budget=graph_budget,
+                scan_layer_text_policy=False,
             )
             assert isinstance(descriptor, dict)
             decoded = _strict_oci_layer(
                 f"layer-{position}", raw, media_type=media_type
             )
+            digest = descriptor.get("digest") if isinstance(descriptor, dict) else None
+            if isinstance(digest, str) and graph_budget.text_policy_scanned.get(digest, False):
+                pre_scanned_text_digests.add(hashlib.sha256(decoded).hexdigest())
             layers.append((f"layer-{position}.tar", decoded))
             normalized_descriptors.append(
                 {
@@ -2016,6 +2043,7 @@ def scan_oci_layout(
         expected_config_digest=expected_config_digest,
         distributed_blob_scan_complete=True,
         expected_layer_diff_ids=expected_layer_diff_ids,
+        pre_scanned_text_digests=pre_scanned_text_digests,
     )
 
 
@@ -2024,7 +2052,7 @@ def _bind_docker_save_oci_graph(
     outer_by_name: dict[str, tarfile.TarInfo],
     config_name: str,
     layer_names: list[str],
-) -> set[str]:
+) -> tuple[set[str], bool]:
     """Bind Docker-save's optional OCI index and every reachable descriptor.
 
     Docker 29 may place an OCI index, attestations, and descriptor blobs beside
@@ -2051,7 +2079,7 @@ def _bind_docker_save_oci_graph(
             raise ValueError(
                 "unexpected Docker-save members: auxiliary OCI blobs require an index descriptor graph"
             )
-        return set()
+        return set(), False
     index_raw = _raw_member(
         archive, "index.json", max_bytes=MAX_DOCKER_SAVE_METADATA_BYTES
     )
@@ -2131,7 +2159,7 @@ def _bind_docker_save_oci_graph(
         )
     if auxiliary - graph_referenced:
         raise ValueError("Docker-save contains unreferenced OCI graph blobs")
-    return graph_referenced
+    return graph_referenced, True
 
 
 def scan(
@@ -2201,7 +2229,7 @@ def scan(
                     archive_bytes, member, member, name
                 ):
                     raise ValueError("Docker save repeats an ordered layer")
-        graph_referenced = _bind_docker_save_oci_graph(
+        graph_referenced, graph_complete = _bind_docker_save_oci_graph(
             archive,
             outer_by_name,
             config_name,
@@ -2265,7 +2293,7 @@ def scan(
         layer_descriptors=None,
         archive_format="docker-save",
         expected_config_digest=expected_config_digest,
-        distributed_blob_scan_complete=True,
+        distributed_blob_scan_complete=graph_complete,
         expected_layer_diff_ids=expected_layer_diff_ids,
     )
 
