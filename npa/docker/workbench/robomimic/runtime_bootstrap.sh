@@ -8,6 +8,7 @@ readonly expected_inventory_sha256="${NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256:-}"
 readonly entitlement_file="${NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE:-}"
 readonly expected_entitlement_sha256="${NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_SHA256:-}"
 readonly expected_customer_binding_sha256="${NPA_ROBOMIMIC_CUSTOMER_BINDING_SHA256:-}"
+readonly runtime_fetch_enabled="${NPA_ROBOMIMIC_RUNTIME_FETCH:-0}"
 
 verify_entitlement() {
   if [[ -z "${entitlement_file}" ]]; then
@@ -34,13 +35,38 @@ verify_runtime() {
     --expected-inventory-sha256 "${expected_inventory_sha256}"
 }
 
+fetch_runtime() {
+  if [[ "${runtime_fetch_enabled}" != "1" ]]; then
+    echo "NPA_ROBOMIMIC_RUNTIME_REFUSED: runtime fetch must be explicitly enabled" >&2
+    return 78
+  fi
+  if [[ ! "${expected_inventory_sha256}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "NPA_ROBOMIMIC_RUNTIME_REFUSED: operator-selected runtime inventory digest is required" >&2
+    return 78
+  fi
+  verify_entitlement >/dev/null
+  /usr/local/bin/python3 "${verifier}" fetch \
+    --runtime-root "${runtime_root}" \
+    --runtime-lock "${runtime_lock}" \
+    --expected-inventory-sha256 "${expected_inventory_sha256}"
+}
+
 case "${1:-}" in
   verify)
     verify_runtime
     ;;
+  fetch)
+    fetch_runtime
+    ;;
   exec)
     shift
-    verify_entitlement >/dev/null
+    allow_writable_source=0
+    if [[ "${runtime_fetch_enabled}" == "1" ]]; then
+      fetch_runtime >/dev/null
+      allow_writable_source=1
+    else
+      verify_entitlement >/dev/null
+    fi
     snapshot_parent=""
     child_pid=""
     pending_signal=""
@@ -154,10 +180,16 @@ case "${1:-}" in
     trap 'request_stop HUP 129' HUP
     trap 'request_stop INT 130' INT
     trap 'request_stop TERM 143' TERM
-    if run_child /usr/local/bin/python3 "${verifier}" snapshot \
-      --runtime-root "${runtime_root}" \
-      --expected-inventory-sha256 "${expected_inventory_sha256}" \
-      --destination "${snapshot_root}" >/dev/null; then
+    snapshot_arguments=(
+      /usr/local/bin/python3 "${verifier}" snapshot
+      --runtime-root "${runtime_root}"
+      --expected-inventory-sha256 "${expected_inventory_sha256}"
+      --destination "${snapshot_root}"
+    )
+    if (( allow_writable_source == 1 )); then
+      snapshot_arguments+=(--allow-writable-source)
+    fi
+    if run_child "${snapshot_arguments[@]}" >/dev/null; then
       :
     else
       child_status="$?"
@@ -201,7 +233,7 @@ case "${1:-}" in
     echo "NPA_ROBOMIMIC_RUNTIME_REFUSAL_OK"
     ;;
   *)
-    echo "usage: robomimic-runtime {verify|exec|assert-refusal}" >&2
+    echo "usage: robomimic-runtime {verify|fetch|exec|assert-refusal}" >&2
     exit 64
     ;;
 esac

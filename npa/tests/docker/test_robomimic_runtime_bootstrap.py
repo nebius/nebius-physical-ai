@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import importlib.util
 import json
 import os
@@ -1283,6 +1284,12 @@ def test_bootstrap_has_no_fetch_install_or_cache_population_path() -> None:
     assert "assert-refusal" in text
     assert "verify" in text
     assert "NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256" in text
+    assert "NPA_ROBOMIMIC_RUNTIME_FETCH" in text
+    assert "  fetch)" in text
+    assert "{verify|fetch|exec|assert-refusal}" in text
+    assert "NPA_ROBOMIMIC_CUSTOMER_DENYLIST" in (
+        IMAGE_ROOT / "verify_image.py"
+    ).read_text(encoding="utf-8")
     assert "--expected-inventory-sha256" in text
     assert '"${verifier}" snapshot' in text
     assert 'NPA_ROBOMIMIC_ACTIVE_RUNTIME_ROOT="${snapshot_root}"' in text
@@ -1301,6 +1308,113 @@ def test_bootstrap_has_no_fetch_install_or_cache_population_path() -> None:
     assert "EPOCHREALTIME" not in text
     assert "</proc/uptime" in text
     assert "ps -e" not in text
+
+
+def test_runtime_fetch_plan_requires_customer_manifest_contract(tmp_path: Path) -> None:
+    runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
+    with pytest.raises(verifier.VerificationError, match="contract"):
+        verifier._runtime_fetch_plan(
+            runtime_root=runtime_root,
+            runtime_lock_path=lock_path,
+            expected_inventory_sha256=inventory_sha256,
+        )
+
+
+def test_runtime_fetch_plan_binds_customer_credential_and_site_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root, lock_path, _ = _runtime(tmp_path)
+    inventory_path = runtime_root / "inventory.json"
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    inventory["fetch"] = {
+        "credential_env": "HF_TOKEN",
+        "site_packages": "payload/lib/python3.11/site-packages",
+    }
+    inventory_path.write_text(
+        json.dumps(inventory, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    marker_path = runtime_root / ".ready.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["inventory_sha256"] = _sha(inventory_path)
+    marker_path.write_text(json.dumps(marker, sort_keys=True) + "\n", encoding="utf-8")
+    monkeypatch.setenv("HF_TOKEN", "test-token")
+    plan = verifier._runtime_fetch_plan(
+        runtime_root=runtime_root,
+        runtime_lock_path=lock_path,
+        expected_inventory_sha256=_sha(inventory_path),
+    )
+    assert plan[5] == runtime_root / "payload/lib/python3.11/site-packages"
+    assert plan[6] == "built-in-safe-default"
+
+
+def test_runtime_fetch_denylist_has_safe_default_and_explicit_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pattern, source = verifier._runtime_fetch_denylist()
+    assert source == "built-in-safe-default"
+    assert pattern.search(".ssh/id_rsa")
+    monkeypatch.setenv("NPA_ROBOMIMIC_CUSTOMER_DENYLIST", r"blocked")
+    pattern, source = verifier._runtime_fetch_denylist()
+    assert source == "runtime-input"
+    assert pattern.search("blocked-wheel.whl")
+    assert not pattern.search("safe-wheel.whl")
+
+
+def test_fetched_record_tree_rejects_changed_installed_member(tmp_path: Path) -> None:
+    stage = tmp_path / "site-packages"
+    dist = stage / "demo-1.0.dist-info"
+    dist.mkdir(parents=True)
+    member = stage / "demo.py"
+    member.write_text("safe\n", encoding="utf-8")
+    (dist / "METADATA").write_text("Name: demo\nVersion: 1.0\n", encoding="utf-8")
+    record = dist / "RECORD"
+    member_digest = (
+        base64.urlsafe_b64encode(hashlib.sha256(b"safe\n").digest())
+        .decode()
+        .rstrip("=")
+    )
+    metadata = (dist / "METADATA").read_bytes()
+    metadata_digest = (
+        base64.urlsafe_b64encode(hashlib.sha256(metadata).digest()).decode().rstrip("=")
+    )
+    record.write_text(
+        f"demo.py,sha256={member_digest},5\n"
+        f"demo-1.0.dist-info/METADATA,sha256={metadata_digest},{len(metadata)}\n"
+        "demo-1.0.dist-info/RECORD,,\n",
+        encoding="utf-8",
+    )
+    member.write_text("changed\n", encoding="utf-8")
+    artifacts = {"demo": {"version": "1.0"}}
+    with pytest.raises(verifier.VerificationError, match="does not match"):
+        verifier._verify_fetched_record_tree(stage, artifacts)
+
+
+def test_fetched_record_tree_rejects_duplicate_members(tmp_path: Path) -> None:
+    stage = tmp_path / "site-packages"
+    dist = stage / "demo-1.0.dist-info"
+    dist.mkdir(parents=True)
+    member = stage / "demo.py"
+    member.write_text("safe\n", encoding="utf-8")
+    metadata_path = dist / "METADATA"
+    metadata_path.write_text("Name: demo\nVersion: 1.0\n", encoding="utf-8")
+    member_digest = (
+        base64.urlsafe_b64encode(hashlib.sha256(b"safe\n").digest())
+        .decode()
+        .rstrip("=")
+    )
+    metadata = metadata_path.read_bytes()
+    metadata_digest = (
+        base64.urlsafe_b64encode(hashlib.sha256(metadata).digest()).decode().rstrip("=")
+    )
+    (dist / "RECORD").write_text(
+        f"demo.py,sha256={member_digest},5\n"
+        f"demo.py,sha256={member_digest},5\n"
+        f"demo-1.0.dist-info/METADATA,sha256={metadata_digest},{len(metadata)}\n"
+        "demo-1.0.dist-info/RECORD,,\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(verifier.VerificationError, match="duplicate"):
+        verifier._verify_fetched_record_tree(stage, {"demo": {"version": "1.0"}})
 
 
 def test_bootstrap_cleans_snapshot_when_import_gate_fails(tmp_path: Path) -> None:

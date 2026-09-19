@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import binascii
 import configparser
 import csv
 from email.parser import BytesParser
@@ -76,6 +77,18 @@ RUNTIME_PAYLOAD_MAX_BYTES = 8 * 1024 * 1024 * 1024
 # The metadata ceiling makes this independently bounded limit conservative for
 # the future exact operator-selected inventory while preventing inode exhaustion.
 RUNTIME_PAYLOAD_MAX_ENTRY_COUNT = 65_536
+RUNTIME_FETCH_ALLOWED_HOSTS = frozenset(
+    {
+        "download.pytorch.org",
+        "files.pythonhosted.org",
+        "pypi.org",
+    }
+)
+RUNTIME_FETCH_MANIFEST_MAX_BYTES = 4 * 1024 * 1024
+RUNTIME_FETCH_DEFAULT_DENYLIST = (
+    r"(?i)(?:^|/)(?:\.aws|\.ssh|credentials?|secrets?)(?:/|$)"
+)
+RUNTIME_FETCH_CREDENTIAL_ENVS = frozenset({"HF_TOKEN", "NGC_API_KEY"})
 RUNTIME_ENTITLEMENT_MAX_BYTES = 16 * 1024
 RUNTIME_ENTITLEMENT_TERMS = [
     {
@@ -2158,6 +2171,433 @@ def _runtime_artifact_closure(lock: dict, inventory: dict) -> tuple[dict, int]:
     return artifacts, artifact_payload_bytes
 
 
+def _runtime_fetch_url(value: str) -> str:
+    """Accept only immutable HTTPS artifact URLs on approved public hosts."""
+
+    parsed = urllib.parse.urlsplit(value)
+    if (
+        parsed.scheme != "https"
+        or parsed.username
+        or parsed.password
+        or parsed.port is not None
+        or parsed.fragment
+        or parsed.hostname not in RUNTIME_FETCH_ALLOWED_HOSTS
+        or not parsed.path
+    ):
+        raise VerificationError("runtime fetch URL is not an approved HTTPS endpoint")
+    return value
+
+
+def _runtime_fetch_denylist() -> tuple[re.Pattern[str], str]:
+    """Load a customer runtime denylist without making it a publication secret."""
+
+    raw = os.environ.get("NPA_ROBOMIMIC_CUSTOMER_DENYLIST", "")
+    source = "runtime-input" if raw else "built-in-safe-default"
+    try:
+        pattern = re.compile(raw or RUNTIME_FETCH_DEFAULT_DENYLIST)
+    except re.error as exc:
+        raise VerificationError("customer runtime denylist is invalid") from exc
+    return pattern, source
+
+
+def _runtime_fetch_contract(
+    inventory: dict,
+) -> tuple[str, str, str]:
+    fetch = inventory.get("fetch")
+    if not isinstance(fetch, dict) or set(fetch) != {"credential_env", "site_packages"}:
+        raise VerificationError("runtime fetch contract is absent or malformed")
+    credential_env = fetch["credential_env"]
+    if credential_env not in RUNTIME_FETCH_CREDENTIAL_ENVS:
+        raise VerificationError("runtime fetch credential environment is unsupported")
+    credential = os.environ.get(credential_env, "")
+    if not credential:
+        raise VerificationError("customer runtime credential is absent")
+    site_packages = fetch["site_packages"]
+    if (
+        not isinstance(site_packages, str)
+        or not site_packages
+        or "\\" in site_packages
+        or PurePosixPath(site_packages).is_absolute()
+        or PurePosixPath(site_packages).as_posix() != site_packages
+        or any(part in {"", ".", ".."} for part in PurePosixPath(site_packages).parts)
+        or not site_packages.startswith("payload/")
+    ):
+        raise VerificationError("runtime fetch site-packages path is unsafe")
+    return credential_env, credential, site_packages
+
+
+def _runtime_fetch_destination(runtime_root: Path, site_packages: str) -> Path:
+    site_root = runtime_root / site_packages
+    try:
+        site_root.relative_to(runtime_root / "payload")
+    except ValueError as exc:
+        raise VerificationError("runtime fetch site-packages escapes payload") from exc
+    if site_root.exists() or site_root.is_symlink():
+        raise VerificationError("runtime fetch site-packages already exists")
+    interpreter = runtime_root / "payload" / "bin" / "python"
+    if (
+        not interpreter.is_file()
+        or interpreter.is_symlink()
+        or not os.access(interpreter, os.X_OK)
+    ):
+        raise VerificationError("runtime fetch interpreter is absent or not executable")
+    return site_root
+
+
+def _runtime_fetch_artifacts(artifacts: dict) -> str:
+    denylist, denylist_source = _runtime_fetch_denylist()
+    for artifact in artifacts.values():
+        source = _runtime_fetch_url(str(artifact["source"]))
+        for candidate in (artifact["filename"], source):
+            if denylist.search(candidate):
+                raise VerificationError(
+                    "runtime fetch artifact refused by customer denylist"
+                )
+    return denylist_source
+
+
+def _runtime_fetch_plan(
+    *, runtime_root: Path, runtime_lock_path: Path, expected_inventory_sha256: str
+) -> tuple[dict, dict, dict, str, str, Path, str]:
+    """Validate the customer-authored artifact plan before any network access."""
+    if not runtime_root.is_dir() or runtime_root.is_symlink():
+        raise VerificationError("runtime fetch root is absent or is a symlink")
+    if os.statvfs(runtime_root).f_flag & os.ST_RDONLY:
+        raise VerificationError("runtime fetch root is mounted read-only")
+    lock, lock_hash, inventory, inventory_sha256, _ = _runtime_metadata(
+        runtime_root=runtime_root,
+        runtime_lock_path=runtime_lock_path,
+        expected_inventory_sha256=expected_inventory_sha256,
+        require_read_only_mount=False,
+    )
+    artifacts, _ = _runtime_artifact_closure(lock, inventory)
+    _, _, site_packages = _runtime_fetch_contract(inventory)
+    site_root = _runtime_fetch_destination(runtime_root, site_packages)
+    denylist_source = _runtime_fetch_artifacts(artifacts)
+    return (
+        lock,
+        inventory,
+        artifacts,
+        lock_hash,
+        inventory_sha256,
+        site_root,
+        denylist_source,
+    )
+
+
+class _SameHostRedirect(urllib.request.HTTPRedirectHandler):
+    """Reject redirects to a different host or scheme during runtime fetch."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        old = urllib.parse.urlsplit(req.full_url)
+        new = urllib.parse.urlsplit(newurl)
+        if (
+            new.scheme != "https"
+            or new.hostname != old.hostname
+            or new.port != old.port
+        ):
+            raise VerificationError("runtime fetch redirected to an unapproved host")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _download_runtime_wheel(
+    *, artifact: dict[str, str | int], destination: Path, credential: str
+) -> None:
+    """Download one exact wheel into a private temporary wheelhouse."""
+
+    request = urllib.request.Request(
+        _runtime_fetch_url(str(artifact["source"])),
+        headers={"Authorization": f"Bearer {credential}"},
+    )
+    opener = urllib.request.build_opener(_SameHostRedirect())
+    try:
+        with opener.open(request, timeout=60) as response:
+            final_url = response.geturl()
+            _runtime_fetch_url(final_url)
+            digest = hashlib.sha256()
+            total = 0
+            with destination.open("xb") as output:
+                while True:
+                    chunk = response.read(min(1024 * 1024, int(artifact["size"]) + 1))
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > int(artifact["size"]):
+                        raise VerificationError("runtime wheel exceeds its locked size")
+                    digest.update(chunk)
+                    output.write(chunk)
+    except (OSError, urllib.error.URLError, urllib.error.HTTPError) as exc:
+        raise VerificationError("runtime wheel fetch failed") from exc
+    if total != int(artifact["size"]) or digest.hexdigest() != artifact["sha256"]:
+        raise VerificationError(
+            "runtime wheel bytes do not match the customer manifest"
+        )
+    destination.chmod(0o600)
+
+
+def _fetched_record_digest(value: str) -> str:
+    if not value.startswith("sha256="):
+        raise VerificationError("installed RECORD uses an unsupported digest")
+    try:
+        decoded = base64.urlsafe_b64decode(value[7:] + "===")
+    except (ValueError, binascii.Error) as exc:
+        raise VerificationError("installed RECORD digest is malformed") from exc
+    if len(decoded) != 32:
+        raise VerificationError("installed RECORD digest is malformed")
+    return decoded.hex()
+
+
+def _fetched_distribution_identity(record_path: Path, artifacts: dict) -> str:
+    metadata_path = record_path.parent / "METADATA"
+    if not metadata_path.is_file() or metadata_path.is_symlink():
+        raise VerificationError("fetched distribution metadata is absent")
+    fields: dict[str, str] = {}
+    for line in metadata_path.read_text(encoding="utf-8", errors="strict").splitlines():
+        if ": " in line:
+            key, value = line.split(": ", 1)
+            if key in {"Name", "Version"}:
+                fields[key] = value
+    name = _canonical_name(fields.get("Name", ""))
+    if name not in artifacts or fields.get("Version") != artifacts[name]["version"]:
+        raise VerificationError("fetched distribution identity mismatch")
+    return name
+
+
+def _verify_fetched_record_rows(stage: Path, record_path: Path) -> None:
+    with record_path.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.reader(handle))
+    if not rows:
+        raise VerificationError("fetched distribution RECORD is empty")
+    record_name = record_path.relative_to(stage).as_posix()
+    seen: set[str] = set()
+    for row in rows:
+        if len(row) != 3:
+            raise VerificationError("fetched distribution RECORD row is malformed")
+        relative, digest_value, size_value = row
+        if relative in seen:
+            raise VerificationError("fetched distribution RECORD has duplicate members")
+        seen.add(relative)
+        _installed_member_path(relative)
+        member = stage / relative
+        if not member.is_file() or member.is_symlink():
+            raise VerificationError("fetched RECORD member is not regular")
+        raw = member.read_bytes()
+        if relative == record_name:
+            if digest_value or size_value:
+                raise VerificationError("fetched RECORD self-row is hashed")
+        elif _fetched_record_digest(digest_value) != hashlib.sha256(
+            raw
+        ).hexdigest() or size_value != str(len(raw)):
+            raise VerificationError("fetched RECORD member does not match")
+
+
+def _verify_fetched_record_tree(stage: Path, artifacts: dict) -> int:
+    """Verify every fetched distribution's RECORD before publishing its tree."""
+    records = sorted(stage.glob("*.dist-info/RECORD"))
+    if len(records) != len(artifacts):
+        raise VerificationError("fetched environment RECORD count mismatch")
+    observed_names = {
+        _fetched_distribution_identity(record_path, artifacts)
+        for record_path in records
+    }
+    for record_path in records:
+        _verify_fetched_record_rows(stage, record_path)
+    if observed_names != set(artifacts):
+        raise VerificationError("fetched distribution set is incomplete")
+    return len(records)
+
+
+def _runtime_subprocess_env() -> dict[str, str]:
+    return {
+        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        "PIP_CONFIG_FILE": os.devnull,
+        "PYTHONNOUSERSITE": "1",
+    }
+
+
+def _runtime_pip_probe(interpreter: Path) -> None:
+    probe = subprocess.run(
+        [str(interpreter), "-m", "pip", "--version"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=_runtime_subprocess_env(),
+    )
+    if probe.returncode != 0:
+        raise VerificationError("runtime interpreter has no usable pip")
+
+
+def _download_runtime_artifacts(
+    wheelhouse: Path, artifacts: dict, credential: str
+) -> Path:
+    requirement_file = wheelhouse / "requirements.txt"
+    lines = []
+    for name, artifact in artifacts.items():
+        wheel = wheelhouse / str(artifact["filename"])
+        _download_runtime_wheel(
+            artifact=artifact, destination=wheel, credential=credential
+        )
+        lines.append(
+            f"{name}=={artifact['version']} --hash=sha256:{artifact['sha256']}"
+        )
+    requirement_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return requirement_file
+
+
+def _install_runtime_artifacts(
+    interpreter: Path, wheelhouse: Path, stage: Path, requirement_file: Path
+) -> Path:
+    staged_site = stage / "site-packages"
+    staged_site.mkdir(mode=0o700)
+    install = subprocess.run(
+        [
+            str(interpreter),
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "--no-cache-dir",
+            "--no-index",
+            "--no-deps",
+            "--require-hashes",
+            "--find-links",
+            str(wheelhouse),
+            "--target",
+            str(staged_site),
+            "-r",
+            str(requirement_file),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=_runtime_subprocess_env(),
+    )
+    if install.returncode != 0:
+        raise VerificationError("runtime wheel installation failed")
+    return staged_site
+
+
+def _publish_fetched_runtime(
+    *,
+    staged_site: Path,
+    site_root: Path,
+    runtime_root: Path,
+    runtime_lock_path: Path,
+    expected_inventory_sha256: str,
+    artifacts: dict,
+    lock: dict,
+    lock_hash: str,
+    inventory_sha256: str,
+    denylist_source: str,
+) -> dict[str, Any]:
+    record_count = _verify_fetched_record_tree(staged_site, artifacts)
+    site_root.parent.mkdir(parents=True, exist_ok=True)
+    staged_site.replace(site_root)
+    proof = verify_external_runtime(
+        runtime_root=runtime_root,
+        runtime_lock_path=runtime_lock_path,
+        expected_inventory_sha256=expected_inventory_sha256,
+        require_read_only_mount=False,
+    )
+    return {
+        "schema": "npa.robomimic.runtime-fetch.v1",
+        "runtime_id": lock["runtime_id"],
+        "runtime_lock_sha256": lock_hash,
+        "runtime_inventory_sha256": inventory_sha256,
+        "artifact_count": len(artifacts),
+        "record_count": record_count,
+        "denylist": denylist_source,
+        "installed_runtime_verified": True,
+        "runtime_verification": proof,
+    }
+
+
+def _runtime_fetch_operation(
+    *,
+    plan: tuple,
+    runtime_root: Path,
+    runtime_lock_path: Path,
+    expected_inventory_sha256: str,
+    wheelhouse: Path,
+    stage: Path,
+) -> dict[str, Any]:
+    (
+        lock,
+        inventory,
+        artifacts,
+        lock_hash,
+        inventory_sha256,
+        site_root,
+        denylist_source,
+    ) = plan
+    interpreter = runtime_root / "payload" / "bin" / "python"
+    _runtime_pip_probe(interpreter)
+    requirement_file = _download_runtime_artifacts(
+        wheelhouse, artifacts, os.environ[inventory["fetch"]["credential_env"]]
+    )
+    staged_site = _install_runtime_artifacts(
+        interpreter, wheelhouse, stage, requirement_file
+    )
+    return _publish_fetched_runtime(
+        staged_site=staged_site,
+        site_root=site_root,
+        runtime_root=runtime_root,
+        runtime_lock_path=runtime_lock_path,
+        expected_inventory_sha256=expected_inventory_sha256,
+        artifacts=artifacts,
+        lock=lock,
+        lock_hash=lock_hash,
+        inventory_sha256=inventory_sha256,
+        denylist_source=denylist_source,
+    )
+
+
+def _run_runtime_fetch_transaction(
+    *,
+    plan: tuple,
+    runtime_root: Path,
+    runtime_lock_path: Path,
+    expected_inventory_sha256: str,
+) -> dict[str, Any]:
+    site_root = plan[5]
+    wheelhouse = Path(tempfile.mkdtemp(prefix=".npa-runtime-wheels-", dir=runtime_root))
+    stage = Path(tempfile.mkdtemp(prefix=".npa-runtime-site-", dir=runtime_root))
+    published = False
+    try:
+        result = _runtime_fetch_operation(
+            plan=plan,
+            runtime_root=runtime_root,
+            runtime_lock_path=runtime_lock_path,
+            expected_inventory_sha256=expected_inventory_sha256,
+            wheelhouse=wheelhouse,
+            stage=stage,
+        )
+        published = True
+        return result
+    finally:
+        if not published and site_root.exists():
+            shutil.rmtree(site_root, ignore_errors=False)
+        shutil.rmtree(wheelhouse, ignore_errors=False)
+        shutil.rmtree(stage, ignore_errors=False)
+
+
+def fetch_external_runtime(
+    *, runtime_root: Path, runtime_lock_path: Path, expected_inventory_sha256: str
+) -> dict[str, Any]:
+    """Fetch customer-authorized wheels, verify RECORDs, then publish one site tree."""
+    plan = _runtime_fetch_plan(
+        runtime_root=runtime_root,
+        runtime_lock_path=runtime_lock_path,
+        expected_inventory_sha256=expected_inventory_sha256,
+    )
+    return _run_runtime_fetch_transaction(
+        plan=plan,
+        runtime_root=runtime_root,
+        runtime_lock_path=runtime_lock_path,
+        expected_inventory_sha256=expected_inventory_sha256,
+    )
+
+
 def _runtime_declared_objects(
     runtime_root: Path, files: dict, links: dict
 ) -> tuple[set[str], set[str]]:
@@ -2713,7 +3153,21 @@ def _entitlement_parser(subparsers: Any) -> None:
     )
 
 
-def _runtime_parsers(subparsers: Any) -> None:
+def _fetch_parser(subparsers: Any) -> None:
+    fetch = subparsers.add_parser("fetch")
+    fetch.add_argument("--runtime-root", type=Path, default=Path(RUNTIME_ROOT_DEFAULT))
+    fetch.add_argument(
+        "--runtime-lock",
+        type=Path,
+        default=Path("/opt/npa/robomimic/runtime-requirements.lock"),
+    )
+    fetch.add_argument(
+        "--expected-inventory-sha256",
+        default=os.environ.get("NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256", ""),
+    )
+
+
+def _runtime_parser(subparsers: Any) -> None:
     runtime = subparsers.add_parser("runtime")
     runtime.add_argument(
         "--runtime-root", type=Path, default=Path(RUNTIME_ROOT_DEFAULT)
@@ -2734,6 +3188,10 @@ def _runtime_parsers(subparsers: Any) -> None:
         type=Path,
         default=Path("/opt/npa/robomimic/runtime-requirements.lock"),
     )
+    _snapshot_parser(subparsers)
+
+
+def _snapshot_parser(subparsers: Any) -> None:
     snapshot = subparsers.add_parser("snapshot")
     snapshot.add_argument(
         "--runtime-root", type=Path, default=Path(RUNTIME_ROOT_DEFAULT)
@@ -2748,6 +3206,16 @@ def _runtime_parsers(subparsers: Any) -> None:
         default=os.environ.get("NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256", ""),
     )
     snapshot.add_argument("--destination", type=Path, required=True)
+    snapshot.add_argument(
+        "--allow-writable-source",
+        action="store_true",
+        help="Allow the explicit runtime-fetch source phase before snapshotting.",
+    )
+
+
+def _runtime_parsers(subparsers: Any) -> None:
+    _fetch_parser(subparsers)
+    _runtime_parser(subparsers)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -2820,7 +3288,13 @@ def _dispatch_runtime(args: argparse.Namespace) -> dict:
             runtime_lock_path=args.runtime_lock,
             expected_inventory_sha256=args.expected_inventory_sha256,
             destination=args.destination,
-            require_source_read_only=True,
+            require_source_read_only=not args.allow_writable_source,
+        )
+    if args.mode == "fetch":
+        return fetch_external_runtime(
+            runtime_root=args.runtime_root,
+            runtime_lock_path=args.runtime_lock,
+            expected_inventory_sha256=args.expected_inventory_sha256,
         )
     if args.mode == "assert-missing-runtime":
         return verify_missing_runtime_refusal(
@@ -2843,12 +3317,13 @@ def main() -> int:
         else:
             result = _dispatch_runtime(args)
     except VerificationError as exc:
-        runtime_mode = args.mode in {"runtime", "snapshot", "entitlement"}
+        runtime_mode = args.mode in {"runtime", "snapshot", "entitlement", "fetch"}
         runtime_label = runtime_mode or args.mode == "assert-missing-runtime"
         label = "RUNTIME" if runtime_label else "BUILD_INPUT"
         runtime_details = {
             "runtime": "external runtime verification refused",
             "snapshot": "runtime snapshot materialization refused",
+            "fetch": "customer runtime fetch refused",
             "entitlement": "customer runtime entitlement refused",
             "assert-missing-runtime": "missing runtime assertion refused",
         }

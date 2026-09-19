@@ -57,6 +57,20 @@
     "triton": "3.3.1"
   },
   "runtime_id": "robomimic-cu128-py311-v1",
+  "runtime_fetch": {
+    "allowed_hosts": [
+      "download.pytorch.org",
+      "files.pythonhosted.org",
+      "pypi.org"
+    ],
+    "credential_envs": [
+      "HF_TOKEN",
+      "NGC_API_KEY"
+    ],
+    "denylist_env": "NPA_ROBOMIMIC_CUSTOMER_DENYLIST",
+    "schema": "npa.robomimic.runtime-fetch.v1",
+    "site_packages_default": "payload/lib/python3.11/site-packages"
+  },
   "schema": "npa.robomimic.runtime-lock.v1",
   "source_revision": "d309eaecc18acf4152a830a895a6984b8ac71b05"
 }

@@ -1,14 +1,14 @@
 # robomimic neutral candidate redistribution boundary
 
-This candidate is deliberately incomplete. It contains the immutable MIT-licensed
-robomimic source, an exact 78-package Debian dependency closure, and a hash-locked
-set of non-CUDA Python dependencies on a pinned neutral Python base. Its build
-path stages the exact Git tree and canonical archive plus every exact Debian
-package outside the image build, verifies them before use, and exposes the
-payloads to the Dockerfile only through a read-only build mount. The Dockerfile
-does not contact APT or Git. It contains no PyTorch, torchvision, Triton, NVIDIA
-CUDA, cuDNN, NCCL, model weights, dataset bytes, populated runtime cache,
-credentials, or run output.
+This candidate contains only the immutable MIT-licensed robomimic source, the
+neutral Python base, and the exact 78-package Debian closure. The 40-package
+Python lock is a runtime input, not an image payload: the public image contains
+no PyTorch, torchvision, Triton, NVIDIA CUDA, cuDNN, NCCL, model weights, dataset
+bytes, populated runtime cache, credentials, or run output. Its build path stages
+the exact Git tree and canonical archive plus every exact Debian package outside
+the image build, verifies them before use, and exposes those payloads to the
+Dockerfile only through a read-only build mount. The Dockerfile does not contact
+APT or Git.
 
 The source and Debian lock metadata are reproducibility inputs, not built-byte
 or license acceptance. Debian package copyright notices must remain installed,
@@ -29,9 +29,17 @@ expiry. A manager signature, runtime fetch, credential, private registry, image
 selector, or environment flag does not grant that permission. The acceptance
 action requires the exact digest emitted by the preceding notice action.
 
-The runtime volume's own inventory is not self-attestation. The operator must
+The runtime volume's own inventory is not self-attestation. The customer must
 select its exact inventory SHA-256 independently, and the bootstrap must match
-that hash and the customer entitlement while observing the mount read-only.
+that hash and the customer entitlement. When explicitly enabled with
+`NPA_ROBOMIMIC_RUNTIME_FETCH=1`, the bootstrap fetches the inventory's exact
+wheel URLs from the pinned official hosts using the customer's `HF_TOKEN` or
+`NGC_API_KEY`, verifies every wheel hash and size, installs with no index or
+dependency resolution, and validates every installed `RECORD` before publishing
+the site-packages tree. `NPA_ROBOMIMIC_CUSTOMER_DENYLIST` is an optional
+customer runtime input; unset means the built-in safe path denylist is used.
+The fetch phase is separate from the final read-only snapshot and never places
+the credential or fetched bytes in the image.
 Execution copies only declared
 objects into a private staging tree, verifies the copy again, removes write
 bits, and atomically publishes that run-local snapshot before invoking its

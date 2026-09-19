@@ -10,7 +10,8 @@ LABEL org.opencontainers.image.source="https://github.com/nebius/nebius-physical
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/opt/robomimic:/opt/robomimic-deps \
-    NPA_ROBOMIMIC_RUNTIME_ROOT=/opt/npa-runtime/robomimic
+    NPA_ROBOMIMIC_RUNTIME_ROOT=/opt/npa-runtime/robomimic \
+    NPA_ROBOMIMIC_RUNTIME_FETCH=0
 
 # Exact lock roots: ca-certificates openssh-server procps rsync sudo.
 COPY debian-packages.lock source-manifest.json verify_image.py /opt/npa/robomimic/
@@ -71,4 +72,5 @@ RUN chmod 0555 /opt/npa/robomimic/runtime_bootstrap.sh \
 
 USER ubuntu
 WORKDIR /workspace
+VOLUME ["/opt/npa-runtime/robomimic"]
 ENTRYPOINT ["/opt/npa/robomimic/entrypoint.sh"]

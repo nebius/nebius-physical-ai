@@ -18,7 +18,7 @@ anonymous pull proof, runtime-use approval, or B200 result.
 | Baked runtime | Digest-pinned `python:3.11.16-slim-bookworm` plus exactly 40 hash-locked non-CUDA Python distributions for the headless low-dimensional gate. | Candidate only. It must contain no torch, torchvision, Triton, NVIDIA distribution, CUDA, cuDNN, or NCCL payload. Base and dependency licenses remain subject to built-byte review; PyTorch source licensing is not closure for wheel/base binary dependencies. |
 | Weights | No pretrained weights are required or allowed in the image. | The four-step smoke produces its own run-scoped checkpoint only after authorization. Scanner rules reject common weight/checkpoint paths in every image layer. |
 | Data and assets | Official Lift proficient-human low-dimensional HDF5 at `robomimic/robomimic_datasets@74fa018461f479cd9fd15b924a16103012096203`, path `v1.5/lift/ph/low_dim_v15.hdf5`. The exact-revision dataset card declares MIT. | Anonymous runtime fetch only after all other gates. Accept only SHA-256 `2067777cb8b532e9263dd09fd6448c41cc31224bb27be4a3b734010ae13eb540` and 21,084,088 bytes. Delete a mismatching partial before opening it. No simulator assets or rendering. |
-| Runtime cache | A pre-populated operator volume mounted read-only at `/opt/npa-runtime/robomimic`. | The image cannot populate it. Before access, the verifier requires an unexpired customer-created entitlement bound to the customer, run, exact runtime lock, and operator-selected `inventory.json` SHA-256. It then verifies the exact lock, package map, ABI, source revision, complete regular-file/symlink inventory, hashes, sizes, and executable interpreter. Missing, declined, stale, wrong-run, wrong-manifest, corrupt, extra, escaping, or mismatched inputs refuse with exit 78 without runtime or dataset mutation. Execution copies only declared objects into a private staging tree, verifies that copy, removes its write bits, and atomically renames it before invoking Python, so later changes to the external volume cannot change the point-in-time copy. Write-bit removal is hygiene, not a read-only isolation claim: the runtime UID owns the snapshot and can restore them. The observed source PVC remains the authoritative read-only boundary. |
+| Runtime cache | A customer-owned runtime volume mounted at `/opt/npa-runtime/robomimic`. | The public image contains no CUDA/PyTorch/vendor wheels. With `NPA_ROBOMIMIC_RUNTIME_FETCH=1`, the bootstrap requires the customer entitlement and an exact `inventory.json` artifact plan, reads only HTTPS URLs on the pinned official hosts, sends the customer's `HF_TOKEN` or `NGC_API_KEY` without logging it, verifies every wheel size/SHA-256, installs with `--no-index --no-deps --require-hashes`, independently checks every installed `RECORD`, and only then publishes the site-packages tree. The final inventory/ready marker is reverified before execution and copied into a private snapshot. Missing, declined, stale, wrong-run, wrong-manifest, absent credential, redirect, corrupt, extra, escaping, or mismatched inputs refuse with exit 78. `NPA_ROBOMIMIC_CUSTOMER_DENYLIST` is an optional customer runtime input; when unset, a built-in path denylist is used. It is not a CI/publication secret or a substitute for byte identity. |
 | Outputs | `/workspace/byof-runs/<run-id>` is separate from the input emptyDir and runtime PVC. | A later authorized run may write the checkpoint, config, logs, summary, and `robomimic-smoke.json` to its run-owned output prefix. Upload preflights regular single-link files, allows at most 1 GiB per file and 2 GiB in aggregate, and streams in at most 1 MiB chunks. Image and cache scans must prove output absence. Output rights remain a separate operator responsibility. |
 
 Runtime fetching changes delivery, not permission. A credential, environment
@@ -104,22 +104,25 @@ image retains the immutable source without `.git`, removes SSH host keys, runs a
 mount points empty. Passwordless sudo exists solely for the repository's
 SkyPilot Kubernetes bootstrap contract.
 
-`runtime-requirements.lock` records the compatibility target used by the
-deferred gate. It is not a downloader and its version list is not an artifact
-hash closure. The external runtime inventory must supply that closure for every
-installed file before consumption, and its exact document hash must be selected
-by the operator outside the runtime volume. The lock also records the exact
-customer notice contract and official term URLs. The inventory digest is
-identity, never terms acceptance; the separate customer record must bind that
-identity before the runtime is inspected or executed. `runtime_bootstrap.sh` exposes only
-`verify`, `exec`, and `assert-refusal`; it has no ensure, fetch, install, sync,
-warm, or network path. `exec` verifies the read-only source, constructs a
+`runtime-requirements.lock` records the compatibility target and official fetch
+hosts; it is not itself an artifact hash closure. The external runtime
+inventory must supply exact artifact URLs/hashes and a complete installed-file
+closure before consumption, and its exact document hash must be selected by the
+operator outside the runtime volume. The lock also records the exact customer
+notice contract and official term URLs. The inventory digest is identity, never
+terms acceptance; the separate customer record must bind that identity before
+the runtime is inspected or executed. `runtime_bootstrap.sh` exposes `fetch`,
+`verify`, `exec`, and `assert-refusal`. Fetch is opt-in and requires the
+customer credential; its default is refusal, not an anonymous download. `exec`
+verifies the source, constructs a
 run-private snapshot from only declared objects, independently verifies the
 snapshot, atomically publishes it, and executes its interpreter. The ephemeral
 snapshot is a separate runtime-consumption boundary and is removed with the pod;
 it is neither baked into the image nor uploaded as output. Its absent write bits
 do not make it an enforced read-only filesystem; identity comes from the
-independently selected inventory hash and the observed read-only source mount.
+independently selected inventory hash and the observed source mount. A runtime
+fetch is not public redistribution: the customer's credential and any separate
+non-token terms remain the customer's responsibility.
 
 The checked-in `npa.workflow` remains a valid plan and immutable configuration
 source for the dedicated live harness. Its outer task names the proposed
