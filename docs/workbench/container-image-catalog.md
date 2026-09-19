@@ -66,8 +66,12 @@ that optional 0.6.0 image by digest and stages its adapters from the checkout.
 It uses the image's non-root runtime user and baked SkyPilot prerequisites;
 no new image publication is required for the experiment.
 
-SAM 3.1 has a [runtime-fetch development container](../../npa/docker/workbench/sam3/README.md).
-Its gated checkpoint access and real GPU qualification remain pending; it does
+SAM 3.1 has a [public GHCR development image](https://github.com/orgs/nebius/packages/container/package/nebius-physical-ai%2Fnpa-sam3).
+Its immutable tag is `dev-f287041cffa5a703270413e1746348dccb8e7591`;
+[publication evidence](validation/sam31-public-development-20260919.json) records
+the independently pulled digest, both verified attestations and clean layer scans.
+Use the [runtime-fetch instructions](../../npa/docker/workbench/sam3/README.md).
+Gated checkpoint access and real GPU qualification remain pending; this does
 not replace the accepted SAM 2.1 release or add a supported release row.
 
 ## Native model publication
