@@ -577,13 +577,23 @@ jobs:
               fi
               echo "Existing package is already public." >> "$GITHUB_STEP_SUMMARY"
             elif [ "$visibility" = private ]; then
-              refuse_first_publication
+              if [ "$TOOL" = libero ]; then
+                echo "NPA_FIRST_PUBLICATION_REQUIRED=1" >> "$GITHUB_ENV"
+                echo "LIBERO private package retained for payload-free public-development staging; no public visibility transition is attempted."
+              else
+                refuse_first_publication
+              fi
             else
               echo "::error::Unsupported destination visibility: $visibility"
               exit 1
             fi
           elif grep -q '^HTTP/.* 404 ' "$response"; then
-            refuse_first_publication
+            if [ "$TOOL" = libero ]; then
+              echo "NPA_FIRST_PUBLICATION_REQUIRED=1" >> "$GITHUB_ENV"
+              echo "LIBERO package is absent; payload-free public-development staging will remain untagged until qualification gates pass."
+            else
+              refuse_first_publication
+            fi
           else
             echo "::error::Could not prove destination package state"
             exit 1

@@ -655,12 +655,46 @@ def libero_build_input_bundle_sha256(
 
 
 def libero_publication_enforcement_bundle_sha256(repository_root: Path) -> str:
-    """Bind the complete trusted publication and live-validation enforcement."""
+    """Bind enforcement while projecting self-referential manifest digests."""
 
-    return _repository_file_bundle_sha256(
-        repository_root,
-        schema="npa.libero.publication-enforcement-bundle.v2",
-        paths=libero_publication_enforcement_paths(repository_root),
+    records = []
+    for relative in libero_publication_enforcement_paths(repository_root):
+        path = repository_root / relative
+        try:
+            payload = path.read_bytes()
+        except OSError as exc:
+            raise RuntimeError(
+                f"LIBERO enforcement input is unavailable: {relative}"
+            ) from exc
+        if relative == "npa/src/npa/deploy/libero_image_manifest.json":
+            try:
+                manifest = json.loads(payload)
+                qualification = manifest["qualification"]
+                if not isinstance(qualification, dict):
+                    raise TypeError("qualification is not an object")
+                qualification = dict(qualification)
+                qualification["publication_enforcement_bundle_sha256"] = ""
+                qualification["publication_bundle_sha256"] = ""
+                manifest = dict(manifest)
+                manifest["qualification"] = qualification
+                payload = (
+                    json.dumps(manifest, sort_keys=True, separators=(",", ":"))
+                    + "\n"
+                ).encode("utf-8")
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                # A malformed manifest is still fingerprinted as-is here so
+                # policy drift is observable; qualification validation remains
+                # the fail-closed gate for using the record.
+                pass
+        records.append(
+            {
+                "path": relative,
+                "size_bytes": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }
+        )
+    return _canonical_sha256(
+        {"schema": "npa.libero.publication-enforcement-bundle.v2", "inputs": records}
     )
 
 

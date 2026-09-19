@@ -956,6 +956,26 @@ def test_publication_enforcement_bundle_detects_descendant_policy_drift(
     assert libero_publication_enforcement_bundle_sha256(tmp_path) == accepted
 
 
+def test_publication_enforcement_manifest_projection_avoids_digest_self_reference(
+    tmp_path,
+) -> None:
+    enforcement_paths = libero_publication_enforcement_paths(ROOT)
+    for relative in enforcement_paths:
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / relative, target)
+    accepted = libero_publication_enforcement_bundle_sha256(tmp_path)
+    manifest_path = tmp_path / "npa/src/npa/deploy/libero_image_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    qualification = manifest["qualification"]
+    qualification["publication_enforcement_bundle_sha256"] = "a" * 64
+    qualification["publication_bundle_sha256"] = "b" * 64
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+    )
+    assert libero_publication_enforcement_bundle_sha256(tmp_path) == accepted
+
+
 def test_libero_readiness_hashes_bind_every_execution_input() -> None:
     readiness = json.loads(READINESS_PATH.read_text(encoding="utf-8"))
     expected_paths = {

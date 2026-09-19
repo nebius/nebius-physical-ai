@@ -1474,9 +1474,18 @@ def test_first_publication_refuses_before_any_registry_write(
         text=True,
         check=False,
     )
-    assert completed.returncode == 1, completed.stdout + completed.stderr
-    assert "refusing before any registry write" in completed.stdout
-    assert (
-        github_env.read_text(encoding="utf-8") == "NPA_FIRST_PUBLICATION_REQUIRED=1\n"
-    )
-    assert not operations.exists()
+    if destination == "private-libero":
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+        assert (
+            github_env.read_text(encoding="utf-8")
+            == "NPA_FIRST_PUBLICATION_REQUIRED=1\n"
+        )
+        assert operations.read_text(encoding="utf-8") == "push"
+    else:
+        assert completed.returncode == 1, completed.stdout + completed.stderr
+        assert "refusing before any registry write" in completed.stdout
+        assert (
+            github_env.read_text(encoding="utf-8")
+            == "NPA_FIRST_PUBLICATION_REQUIRED=1\n"
+        )
+        assert not operations.exists()

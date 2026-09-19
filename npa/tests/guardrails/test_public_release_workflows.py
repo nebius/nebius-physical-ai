@@ -323,13 +323,15 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     assert "refusing before any registry write" in destination_gate
     assert "refuse_first_publication()" in destination_gate
     assert (
-        'elif [ "$visibility" = private ]; then\n              refuse_first_publication'
+        'elif [ "$visibility" = private ]; then\n              if [ "$TOOL" = libero ]; then'
         in destination_gate
     )
     assert (
-        "elif grep -q '^HTTP/.* 404 ' \"$response\"; then\n            refuse_first_publication"
+        "elif grep -q '^HTTP/.* 404 ' \"$response\"; then\n            if [ \"$TOOL\" = libero ]; then"
         in destination_gate
     )
+    assert destination_gate.count('echo "NPA_FIRST_PUBLICATION_REQUIRED=1" >> "$GITHUB_ENV"') == 3
+    assert "payload-free public-development staging" in destination_gate
     steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
     attestations = {
         step["name"]: step
