@@ -120,6 +120,18 @@ def resolve_submit_credentials(
         missing = tuple(
             name for name in requested_names if not str(process_env.get(name) or "")
         )
+        if environment_endpoint:
+            normalized_endpoint = storage_endpoint_url(environment_endpoint)
+            requested_values.update(
+                {
+                    name: normalized_endpoint
+                    for name in requested_names
+                    if name in STORAGE_ENDPOINT_ENV_NAMES
+                }
+            )
+            missing = tuple(
+                name for name in missing if name not in STORAGE_ENDPOINT_ENV_NAMES
+            )
         bucket = str(
             process_env.get("NPA_S3_BUCKET")
             or process_env.get("NPA_CHECKPOINT_BUCKET")

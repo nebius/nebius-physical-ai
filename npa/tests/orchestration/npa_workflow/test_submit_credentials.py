@@ -257,8 +257,11 @@ def test_control_plane_triplet_resolves_process_environment_endpoint_requests(
         require_process_environment_triplet=True,
     )
 
-    assert context.secret_values == {"AWS_ENDPOINT_URL": "https://storage.example"}
-    assert context.missing == ("AWS_ENDPOINT_URL_S3",)
+    assert context.secret_values == {
+        "AWS_ENDPOINT_URL": "https://storage.example",
+        "AWS_ENDPOINT_URL_S3": "https://storage.example",
+    }
+    assert context.missing == ()
 
 
 @pytest.mark.parametrize(
