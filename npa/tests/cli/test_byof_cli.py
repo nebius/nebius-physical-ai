@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import replace
+import errno
 import json
 import os
 import re
@@ -401,6 +402,45 @@ def test_robotwin_worker_transport_materializes_owner_only_and_always_cleans_up(
     assert os.environ[TRANSPORT_CONTEXT_ENV] == transport
     assert PUBLIC_CONTEXT_ENV not in os.environ
     assert MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV not in os.environ
+
+
+def test_robotwin_materialization_rollback_records_partial_write_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _argv, _transport, fixture_authorization = _robotwin_transport_fixture(tmp_path)
+    materialized_dir = tmp_path / "materialized-rollback"
+    materialized_dir.mkdir(mode=0o700)
+    real_write_owner_file = robotwin_preflight.write_owner_file
+    calls = 0
+
+    def fail_after_first_write(
+        path: Path, raw: bytes, *, directory_fd: int | None = None
+    ) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError(errno.EIO, "injected rollback boundary")
+        real_write_owner_file(path, raw, directory_fd=directory_fd)
+
+    monkeypatch.setattr(
+        robotwin_preflight, "write_owner_file", fail_after_first_write
+    )
+
+    with pytest.raises(OSError, match="injected rollback boundary") as failure:
+        robotwin_preflight._materialize_authorization(
+            fixture_authorization, materialized_dir
+        )
+
+    recovery = failure.value.recovery_context
+    assert calls == 2
+    assert recovery.cleanup_outcomes == (
+        ("customer-authorization.json", "missing"),
+        ("runtime-context.json", "removed"),
+    )
+    assert recovery.residual_names == ()
+    assert recovery.directory_fsync == "synced"
+    assert not any(materialized_dir.iterdir())
 
 
 def test_robotwin_worker_materialization_never_mutates_process_environment(
