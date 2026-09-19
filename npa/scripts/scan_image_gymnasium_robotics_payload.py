@@ -1402,6 +1402,7 @@ def _reviewed_image_graph(
     layer_diff_ids: list[str],
     layer_descriptors: list[dict[str, object]] | None = None,
     expected_config_digest: str | None = None,
+    expected_layer_diff_ids: list[str] | None = None,
 ) -> None:
     expected_config = (
         EXPECTED_IMAGE_CONFIG_SHA256
@@ -1412,7 +1413,11 @@ def _reviewed_image_graph(
         r"[0-9a-f]{64}", expected_config
     ):
         raise ValueError("reviewed neutral image config digest is not configured")
-    expected_layers = EXPECTED_ORDERED_LAYER_DIFF_IDS
+    expected_layers = tuple(
+        EXPECTED_ORDERED_LAYER_DIFF_IDS
+        if expected_layer_diff_ids is None
+        else expected_layer_diff_ids
+    )
     if (
         not isinstance(expected_layers, tuple)
         or not expected_layers
@@ -1739,6 +1744,7 @@ def _finalize_scan(
     nested_budget: _NestedArchiveBudget | None = None,
     expected_config_digest: str | None = None,
     distributed_blob_scan_complete: bool = False,
+    expected_layer_diff_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     runtime_config = config.get("config")
     if not isinstance(runtime_config, dict) or runtime_config.get("User") != "ubuntu":
@@ -1764,6 +1770,7 @@ def _finalize_scan(
         layer_diff_ids,
         layer_descriptors,
         expected_config_digest,
+        expected_layer_diff_ids,
     )
     missing = sorted(REQUIRED - rootfs.keys())
     if missing:
@@ -1797,7 +1804,10 @@ def _finalize_scan(
 
 
 def scan_oci_layout(
-    path: Path, *, expected_config_digest: str | None = None
+    path: Path,
+    *,
+    expected_config_digest: str | None = None,
+    expected_layer_diff_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Bind a complete OCI distribution graph, including compressed blobs."""
 
@@ -1902,10 +1912,16 @@ def scan_oci_layout(
         nested_budget=nested_budget,
         expected_config_digest=expected_config_digest,
         distributed_blob_scan_complete=True,
+        expected_layer_diff_ids=expected_layer_diff_ids,
     )
 
 
-def scan(path: Path, *, expected_config_digest: str | None = None) -> dict[str, Any]:
+def scan(
+    path: Path,
+    *,
+    expected_config_digest: str | None = None,
+    expected_layer_diff_ids: list[str] | None = None,
+) -> dict[str, Any]:
     archive_bytes = _docker_save_bytes(path)
     archive_sha256 = hashlib.sha256(archive_bytes).hexdigest()
     _scan_raw_blob_bytes("complete Docker-save archive", archive_bytes)
@@ -1998,6 +2014,7 @@ def scan(path: Path, *, expected_config_digest: str | None = None) -> dict[str, 
         archive_format="docker-save",
         expected_config_digest=expected_config_digest,
         distributed_blob_scan_complete=True,
+        expected_layer_diff_ids=expected_layer_diff_ids,
     )
 
 
@@ -2011,21 +2028,41 @@ def main(argv: list[str] | None = None) -> int:
         "--expected-config-sha256",
         help="Exact config digest from the build metadata being scanned",
     )
+    parser.add_argument(
+        "--expected-layer-diff-ids-json",
+        help="JSON list of ordered RootFS layer DiffIDs from the exact image",
+    )
     args = parser.parse_args(argv)
     try:
         if args.expected_config_sha256 is not None and not re.fullmatch(
             r"[0-9a-f]{64}", args.expected_config_sha256
         ):
             raise ValueError("expected config digest must be a lowercase SHA-256")
+        expected_layer_diff_ids = None
+        if args.expected_layer_diff_ids_json is not None:
+            parsed_layers = json.loads(args.expected_layer_diff_ids_json)
+            if (
+                not isinstance(parsed_layers, list)
+                or not parsed_layers
+                or any(
+                    not isinstance(value, str)
+                    or re.fullmatch(r"sha256:[0-9a-f]{64}", value) is None
+                    for value in parsed_layers
+                )
+            ):
+                raise ValueError("expected layer DiffIDs must be a non-empty JSON list")
+            expected_layer_diff_ids = parsed_layers
         result = (
             scan_oci_layout(
                 args.oci_layout,
                 expected_config_digest=args.expected_config_sha256,
+                expected_layer_diff_ids=expected_layer_diff_ids,
             )
             if args.oci_layout is not None
             else scan(
                 args.docker_save,
                 expected_config_digest=args.expected_config_sha256,
+                expected_layer_diff_ids=expected_layer_diff_ids,
             )
         )
     except (
