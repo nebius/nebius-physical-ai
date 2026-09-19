@@ -59,12 +59,33 @@ TERMINAL_FAILURE_JOB_STATUSES = frozenset(
     }
 )
 
+RECOGNIZED_JOB_STATUSES = frozenset(
+    {
+        "PENDING",
+        "STARTING",
+        "RUNNING",
+        "RECOVERING",
+        "CANCELLING",
+        "SUCCEEDED",
+    }
+)
+
 
 def is_terminal_failure_job_status(status: str) -> bool:
     """Return whether a managed-job status is an unsuccessful terminal state."""
 
     upper = status.upper()
     return upper in TERMINAL_FAILURE_JOB_STATUSES or upper.startswith("FAILED")
+
+
+def is_recognized_job_status(status: str) -> bool:
+    """Return whether a queue status is a recognized native workload state."""
+
+    normalized = status.strip().upper()
+    return bool(normalized) and (
+        normalized in RECOGNIZED_JOB_STATUSES
+        or is_terminal_failure_job_status(normalized)
+    )
 
 
 class FailureCategory(str, Enum):
@@ -210,6 +231,7 @@ class ReconciliationEvidence:
     workload_observable: bool = False
     workload_evidence: str = ""
     error: str = ""
+    observed_task_ids: tuple[int, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -219,6 +241,7 @@ class ReconciliationEvidence:
             "workload_observable": self.workload_observable,
             "workload_evidence": redact_text(self.workload_evidence)[:1000],
             "error": redact_text(self.error)[:1000],
+            "observed_task_ids": list(self.observed_task_ids),
         }
 
 
@@ -873,8 +896,13 @@ def _finish_native_transaction(transaction, result, reconcile, checkpoint):
         _raise_result(transaction)
     evidence = reconcile()
     transaction.reconciliations.append(evidence.to_dict())
-    if (evidence.state is not ReconciliationState.FOUND
-            or evidence.job_id != result.job_id or evidence.status == "UNKNOWN"):
+    if (
+        evidence.state is not ReconciliationState.FOUND
+        or evidence.job_id != result.job_id
+        or not evidence.workload_observable
+        or not is_recognized_job_status(evidence.status)
+        or evidence.observed_task_ids != result.task_ids
+    ):
         transaction.primary_error = "native result and complete current job evidence disagree"
         transaction.recovery_decision = "retain_native_identity_conflict_no_retry"
         checkpoint()

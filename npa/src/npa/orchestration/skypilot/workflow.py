@@ -2611,7 +2611,14 @@ def _reconcile_native_tasks(rows, job_name, job_id, task_ids):
         status = "SUCCEEDED" if statuses == {"SUCCEEDED"} else "CANCELLED"
     else:
         status = "UNKNOWN"
-    return ReconciliationEvidence(ReconciliationState.FOUND, job_id=job_id, status=status)
+    return ReconciliationEvidence(
+        ReconciliationState.FOUND,
+        job_id=job_id,
+        status=status,
+        workload_observable=True,
+        workload_evidence="controller_task_ids:" + ",".join(str(value) for value in expected),
+        observed_task_ids=tuple(expected),
+    )
 
 
 def parse_job_ids_by_name(output: str, job_name: str) -> list[str]:

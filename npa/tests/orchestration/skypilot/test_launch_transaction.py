@@ -107,7 +107,13 @@ def test_native_transaction_distinguishes_success_from_reconciliation(tmp_path, 
 
     result = NativeLaunchResult("attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64)
     observations = iter([ReconciliationEvidence(ReconciliationState.ABSENT),
-                         ReconciliationEvidence(ReconciliationState.FOUND, job_id="41", status=status)])
+                         ReconciliationEvidence(
+                             ReconciliationState.FOUND,
+                             job_id="41",
+                             status=status,
+                             workload_observable=True,
+                             observed_task_ids=(0, 1),
+                         )])
     transaction = run_launch_transaction(
         logical_id="synthetic", readiness=_stable, launch=lambda: result,
         reconcile=lambda: next(observations), classify_launch_error=_transient,
@@ -131,7 +137,13 @@ def test_native_terminal_failure_retains_identity_without_retry(tmp_path, status
     launches, records = [], []
     observations = iter([
         ReconciliationEvidence(ReconciliationState.ABSENT),
-        ReconciliationEvidence(ReconciliationState.FOUND, job_id="41", status=status),
+        ReconciliationEvidence(
+            ReconciliationState.FOUND,
+            job_id="41",
+            status=status,
+            workload_observable=True,
+            observed_task_ids=(0, 1),
+        ),
     ])
 
     def launch():
@@ -155,6 +167,75 @@ def test_native_terminal_failure_retains_identity_without_retry(tmp_path, status
     assert all(record["state"] not in {"submitted", "adopted"} for record in records)
     assert records[-1]["recovery_decision"] == "retain_native_terminal_failure_no_retry"
     assert native.request_id not in str(records) and native.context not in str(records)
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    (
+        ReconciliationEvidence(
+            ReconciliationState.FOUND,
+            job_id="41",
+            status="RUNNING",
+            workload_observable=False,
+            observed_task_ids=(0, 1),
+        ),
+        ReconciliationEvidence(
+            ReconciliationState.FOUND,
+            job_id="41",
+            status="",
+            workload_observable=True,
+            observed_task_ids=(0, 1),
+        ),
+        ReconciliationEvidence(
+            ReconciliationState.FOUND,
+            job_id="41",
+            status="NOT_A_STATUS",
+            workload_observable=True,
+            observed_task_ids=(0, 1),
+        ),
+        ReconciliationEvidence(
+            ReconciliationState.FOUND,
+            job_id="41",
+            status="RUNNING",
+            workload_observable=True,
+            observed_task_ids=(0,),
+        ),
+    ),
+)
+def test_native_finalizer_rejects_incomplete_controller_evidence(tmp_path, evidence):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+
+    native = NativeLaunchResult(
+        "attempt",
+        "00000000-0000-4000-8000-000000000001",
+        "41",
+        (0, 1),
+        "c" * 64,
+    )
+    observations = iter([
+        ReconciliationEvidence(ReconciliationState.ABSENT),
+        evidence,
+    ])
+
+    with pytest.raises(
+        LaunchTransactionError,
+        match="native result and complete current job evidence disagree",
+    ) as caught:
+        run_launch_transaction(
+            logical_id="native-evidence-boundary",
+            readiness=_stable,
+            launch=lambda: native,
+            reconcile=lambda: next(observations),
+            classify_launch_error=_transient,
+            require_native_result=True,
+            lock_root=tmp_path,
+        )
+
+    result = caught.value.result
+    assert result.state is LaunchState.INDETERMINATE
+    assert result.job_id == ""
+    assert result.launch_result is None
+    assert result.recovery_decision == "retain_native_identity_conflict_no_retry"
 
 
 def test_consecutive_readiness_requires_count_and_full_window() -> None:
@@ -395,6 +476,7 @@ def test_getcwd_rsync_failure_rejects_phantom_pending_queue_record() -> None:
         "workload_observable": False,
         "workload_evidence": "",
         "error": "",
+        "observed_task_ids": [],
     }
 
 

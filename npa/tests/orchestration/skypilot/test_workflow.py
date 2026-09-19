@@ -2539,6 +2539,7 @@ def test_submission_cleanup_rejects_stale_launch_text_and_same_name_agreement(
             job_id="42",
             status=status[0],
             workload_observable=True,
+            observed_task_ids=tuple(kwargs.get("expected_task_ids", ())),
         )
 
     def record(payload):
