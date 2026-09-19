@@ -201,6 +201,40 @@ def test_control_plane_authorized_triplet_never_reads_or_mixes_saved_credentials
     assert "hostile-workflow" not in repr(context)
 
 
+def test_control_plane_triplet_normalizes_and_deduplicates_requested_names(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.submit_credentials.resolve_project_storage",
+        lambda *_args, **_kwargs: pytest.fail("saved project storage was accessed"),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.submit_credentials.load_credentials",
+        lambda **_kwargs: pytest.fail("configured credentials were accessed"),
+    )
+    context = resolve_submit_credentials(
+        requested=(
+            " AWS_SESSION_TOKEN ",
+            "AWS_SESSION_TOKEN",
+            "",
+            " AWS_ACCESS_KEY_ID ",
+        ),
+        environ={
+            "AWS_ACCESS_KEY_ID": "control-plane-access",
+            "AWS_SECRET_ACCESS_KEY": "control-plane-secret",
+            "AWS_SESSION_TOKEN": "control-plane-session",
+            "AWS_ENDPOINT_URL": "https://storage.example",
+        },
+        require_process_environment_triplet=True,
+    )
+
+    assert context.secret_values == {
+        "AWS_SESSION_TOKEN": "control-plane-session",
+        "AWS_ACCESS_KEY_ID": "control-plane-access",
+    }
+    assert context.missing == ()
+
+
 @pytest.mark.parametrize(
     "requested",
     [

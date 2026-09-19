@@ -347,25 +347,10 @@ def observe_own_pod_image(expected_digest: str) -> dict[str, str]:
         "namespace_sha256": hashlib.sha256(namespace.encode()).hexdigest(),
         "pod_uid_sha256": hashlib.sha256(pod_uid.encode()).hexdigest(),
         "node_name_sha256": hashlib.sha256(node_name.encode()).hexdigest(),
-        "cluster_identity_sha256": required_sha256_environment(
-            "NPA_LIBERO_EXPECTED_CLUSTER_IDENTITY_SHA256"
-        ),
         "actual_service_account": service_account_name,
         "service_account_uid_sha256": hashlib.sha256(
             claims["service_account_uid"].encode()
         ).hexdigest(),
-        "role_uid_sha256": required_sha256_environment(
-            "NPA_LIBERO_EXPECTED_ROLE_UID_SHA256"
-        ),
-        "role_binding_uid_sha256": required_sha256_environment(
-            "NPA_LIBERO_EXPECTED_ROLE_BINDING_UID_SHA256"
-        ),
-        "rbac_spec_sha256": required_sha256_environment(
-            "NPA_LIBERO_EXPECTED_RBAC_SPEC_SHA256"
-        ),
-        "external_rbac_inventory_sha256": required_sha256_environment(
-            "NPA_LIBERO_EXPECTED_EXTERNAL_RBAC_INVENTORY_SHA256"
-        ),
         "controller_service_account_separated": True,
     }
 

@@ -96,10 +96,14 @@ def resolve_submit_credentials(
             raise ValueError(
                 "Explicit storage endpoint differs from control-plane-authorized environment"
             )
-        requested_names = {
-            str(name or "").strip() for name in requested if str(name or "").strip()
-        }
-        unauthorized = requested_names - PROCESS_ENVIRONMENT_CREDENTIAL_NAMES
+        requested_names = tuple(
+            dict.fromkeys(
+                str(name or "").strip()
+                for name in requested
+                if str(name or "").strip()
+            )
+        )
+        unauthorized = set(requested_names) - PROCESS_ENVIRONMENT_CREDENTIAL_NAMES
         if unauthorized:
             raise ValueError(
                 "Control-plane-authorized storage credentials may expose only the "
@@ -107,11 +111,11 @@ def resolve_submit_credentials(
             )
         requested_values = {
             name: str(process_env.get(name) or "")
-            for name in requested
+            for name in requested_names
             if str(process_env.get(name) or "")
         }
         missing = tuple(
-            name for name in requested if not str(process_env.get(name) or "")
+            name for name in requested_names if not str(process_env.get(name) or "")
         )
         bucket = str(
             process_env.get("NPA_S3_BUCKET")

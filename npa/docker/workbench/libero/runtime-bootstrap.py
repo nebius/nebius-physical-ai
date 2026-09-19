@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import binascii
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -46,6 +47,7 @@ PAYLOAD_RELEASE_ANNOTATION = "npa.nebius.com/libero-release"
 
 SCHEMA = "npa.libero.runtime-manifest.v1"
 CUSTOMER_AUTHORIZATION_SCHEMA = "npa.libero.customer-runtime-authorization.v2"
+AUTHENTICATED_CALLER_SCHEMA = "npa.libero.authenticated-caller.v1"
 OUTPUT_STORAGE_AUTHORIZATION_SCHEMA = "npa.libero.output-storage-authorization.v3"
 COMPLETE_SCHEMA = "npa.libero.runtime-cache.v1"
 INVENTORY_SCHEMA = "npa.libero.runtime-cache-inventory.v1"
@@ -94,6 +96,7 @@ OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY = Path(
 )
 OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_OWNER_UID = 0
 CUSTOMER_AUTHORIZATION_NAMESPACE = b"npa.libero.customer-authorization"
+AUTHENTICATED_CALLER_NAMESPACE = b"npa.libero.authenticated-caller"
 OUTPUT_STORAGE_AUTHORIZATION_NAMESPACE = b"npa.libero.output-storage-authorization"
 ALLOWED_DOWNLOAD_HOSTS = frozenset(
     {
@@ -120,6 +123,8 @@ INHERITED_CACHE_DESCRIPTOR = 200
 INHERITED_AUTHORIZATION_DESCRIPTOR = 201
 INHERITED_EXECUTION_LOCK_DESCRIPTOR = 202
 INHERITED_BOOTSTRAP_LOCK_DESCRIPTOR = 203
+INHERITED_CALLER_DESCRIPTOR = 204
+INHERITED_CUSTOMER_TRUST_DESCRIPTOR = 205
 PROTECTED_AUTHORIZATION_NAME = ".npa-customer-authorization.json"
 ALLOWED_TERMS_HOSTS = frozenset(
     {
@@ -201,7 +206,6 @@ RUNTIME_EXECUTION_PASSTHROUGH_ENV_NAMES = frozenset(
         "LC_CTYPE",
         "NPA_BYOF_RUN_ID",
         "NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT",
-        "NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256",
         "NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256",
         "NPA_LIBERO_EXPECTED_ALLOWED_NODE_SHA256",
         "NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256",
@@ -1182,6 +1186,164 @@ def _sshsig_envelope(namespace: bytes, public_key: bytes, signature: bytes) -> b
     ).encode()
 
 
+def _canonical_unsigned_authenticated_caller(payload: dict[str, Any]) -> bytes:
+    unsigned = json.loads(json.dumps(payload))
+    unsigned.pop("signature", None)
+    return json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _validate_authenticated_caller_binding(
+    caller_bytes: bytes,
+    trusted_public_key: bytes,
+    *,
+    expected_sha256: str,
+    expected_run_id: str,
+    expected_customer_identity_sha256: str,
+) -> str:
+    """Validate the caller assertion that independently binds the customer signer."""
+
+    if hashlib.sha256(caller_bytes).hexdigest() != expected_sha256:
+        raise BootstrapRefusal("authenticated caller assertion digest differs")
+    try:
+        caller = json.loads(caller_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise BootstrapRefusal("authenticated caller assertion is invalid") from exc
+    signature_record = caller.get("signature") if isinstance(caller, dict) else None
+    expected_keys = {
+        "schema",
+        "issuer",
+        "session_id",
+        "customer_identity_sha256",
+        "customer_signer_public_key_sha256",
+        "run_id",
+        "issued_at",
+        "expires_at",
+        "nonce",
+        "signature",
+    }
+    if (
+        not isinstance(caller, dict)
+        or set(caller) != expected_keys
+        or caller.get("schema") != AUTHENTICATED_CALLER_SCHEMA
+        or caller.get("issuer") != "npa-authenticated-caller-control-plane"
+        or caller.get("run_id") != expected_run_id
+        or caller.get("customer_identity_sha256") != expected_customer_identity_sha256
+        or not _is_hex(caller.get("customer_identity_sha256"), 64)
+        or not _is_hex(caller.get("customer_signer_public_key_sha256"), 64)
+        or not isinstance(signature_record, dict)
+        or set(signature_record) != {"algorithm", "public_key_sha256", "signature_b64"}
+        or signature_record.get("algorithm") != "ed25519"
+        or len(trusted_public_key) != 32
+        or hashlib.sha256(trusted_public_key).hexdigest()
+        != signature_record.get("public_key_sha256")
+    ):
+        raise BootstrapRefusal("authenticated caller assertion is invalid")
+    try:
+        issued_at = datetime.fromisoformat(
+            str(caller["issued_at"]).replace("Z", "+00:00")
+        )
+        expires_at = datetime.fromisoformat(
+            str(caller["expires_at"]).replace("Z", "+00:00")
+        )
+        signature = base64.b64decode(
+            str(signature_record.get("signature_b64") or ""), validate=True
+        )
+    except (TypeError, ValueError, binascii.Error) as exc:
+        raise BootstrapRefusal("authenticated caller assertion is invalid") from exc
+    now = datetime.now(timezone.utc)
+    if (
+        issued_at.tzinfo is None
+        or expires_at.tzinfo is None
+        or issued_at > now + timedelta(minutes=1)
+        or issued_at >= expires_at
+        or expires_at <= now
+        or expires_at - issued_at > timedelta(minutes=15)
+        or len(signature) != 64
+    ):
+        raise BootstrapRefusal("authenticated caller assertion is expired or invalid")
+    canonical = _canonical_unsigned_authenticated_caller(caller)
+    allowed_signer = (
+        "npa-authenticated-caller-control-plane ssh-ed25519 "
+        + base64.b64encode(
+            _ssh_string(b"ssh-ed25519") + _ssh_string(trusted_public_key)
+        ).decode("ascii")
+        + "\n"
+    )
+    with tempfile.TemporaryDirectory(prefix="npa-libero-caller-binding-") as root:
+        root_path = Path(root)
+        allowed_path = root_path / "allowed-signers"
+        signature_path = root_path / "caller.sig"
+        allowed_path.write_text(allowed_signer, encoding="ascii")
+        signature_path.write_bytes(
+            _sshsig_envelope(AUTHENTICATED_CALLER_NAMESPACE, trusted_public_key, signature)
+        )
+        os.chmod(allowed_path, 0o600)
+        os.chmod(signature_path, 0o600)
+        completed = subprocess.run(
+            [
+                "/usr/bin/ssh-keygen",
+                "-Y",
+                "verify",
+                "-f",
+                str(allowed_path),
+                "-I",
+                "npa-authenticated-caller-control-plane",
+                "-n",
+                AUTHENTICATED_CALLER_NAMESPACE.decode("ascii"),
+                "-s",
+                str(signature_path),
+            ],
+            input=canonical,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env={"HOME": "/nonexistent", "PATH": "/usr/bin:/bin"},
+            check=False,
+        )
+    if completed.returncode:
+        raise BootstrapRefusal("authenticated caller assertion signature is invalid")
+    return str(caller["customer_signer_public_key_sha256"])
+
+
+def _authenticated_caller_binding_from_environment() -> tuple[bytes, bytes, str]:
+    """Read the owner-validated caller binding used before any runtime effect."""
+
+    try:
+        caller_bytes = base64.b64decode(
+            os.environ.get("NPA_LIBERO_AUTHENTICATED_CALLER_B64", ""), validate=True
+        )
+    except (ValueError, binascii.Error) as exc:
+        raise BootstrapRefusal("authenticated caller assertion is unavailable") from exc
+    expected_sha256 = os.environ.get("NPA_LIBERO_AUTHENTICATED_CALLER_SHA256", "")
+    trust_path = os.environ.get("NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE", "")
+    if not _is_hex(expected_sha256, 64) or not trust_path:
+        raise BootstrapRefusal("authenticated caller binding is unavailable")
+    encoded_trust_root = _read_private_regular_bytes(
+        Path(trust_path), limit=1024, input_name="authenticated caller trust root"
+    )
+    try:
+        trusted_public_key = base64.b64decode(encoded_trust_root, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise BootstrapRefusal("authenticated caller trust root is invalid") from exc
+    if len(trusted_public_key) != 32:
+        raise BootstrapRefusal("authenticated caller trust root is invalid")
+    try:
+        caller = json.loads(caller_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise BootstrapRefusal("authenticated caller assertion is unavailable") from exc
+    if not isinstance(caller, dict):
+        raise BootstrapRefusal("authenticated caller assertion is unavailable")
+    signer_sha256 = _validate_authenticated_caller_binding(
+        caller_bytes,
+        trusted_public_key,
+        expected_sha256=expected_sha256,
+        expected_run_id=os.environ.get("NPA_BYOF_RUN_ID", ""),
+        expected_customer_identity_sha256=os.environ.get(
+            "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256", ""
+        ),
+    )
+    return caller_bytes, trusted_public_key, signer_sha256
+
+
 def _trusted_public_key(path: Path, *, owner_uid: int, label: str) -> bytes:
     """Load one immutable image-baked Ed25519 verification key."""
 
@@ -1255,7 +1417,10 @@ def _trusted_output_storage_authorization_public_key() -> bytes:
 
 
 def _verify_customer_authorization_signature(
-    payload: dict[str, Any], signature_record: dict[str, Any]
+    payload: dict[str, Any],
+    signature_record: dict[str, Any],
+    *,
+    authenticated_signer_sha256: str,
 ) -> None:
     try:
         public_key = base64.b64decode(
@@ -1264,14 +1429,11 @@ def _verify_customer_authorization_signature(
     except ValueError as exc:
         raise BootstrapRefusal("customer signer identity is invalid") from exc
     claimed_fingerprint = str(signature_record.get("public_key_sha256") or "")
-    expected_fingerprint = os.environ.get(
-        "NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256", ""
-    )
     if (
         len(public_key) != 32
         or not _is_hex(claimed_fingerprint, 64)
         or hashlib.sha256(public_key).hexdigest() != claimed_fingerprint
-        or not hmac.compare_digest(claimed_fingerprint, expected_fingerprint)
+        or not hmac.compare_digest(claimed_fingerprint, authenticated_signer_sha256)
     ):
         raise BootstrapRefusal("customer signer identity differs")
     try:
@@ -1453,8 +1615,20 @@ def _validate_customer_authorization(
         raise
     except BootstrapRefusal as exc:
         raise CustomerAcceptanceRequired("authorization_file_invalid") from exc
+    if hashlib.sha256(authorization_bytes).hexdigest() != expected_sha256:
+        raise CustomerAcceptanceRequired("authorization_hash_mismatch")
+    try:
+        _caller_bytes, _trusted_key, signer_sha256 = (
+            _authenticated_caller_binding_from_environment()
+        )
+    except BootstrapRefusal as exc:
+        raise CustomerAcceptanceRequired("authorization_signature_invalid") from exc
     return _validate_customer_authorization_bytes(
-        authorization_bytes, expected_sha256, manifest, manifest_sha256
+        authorization_bytes,
+        expected_sha256,
+        manifest,
+        manifest_sha256,
+        authenticated_signer_sha256=signer_sha256,
     )
 
 
@@ -1463,6 +1637,8 @@ def _validate_customer_authorization_bytes(
     expected_sha256: str,
     manifest: dict[str, Any],
     manifest_sha256: str,
+    *,
+    authenticated_signer_sha256: str,
 ) -> tuple[dict[str, Any], str]:
     """Validate exact signed bytes, classifying customer-actionable failures."""
 
@@ -1584,7 +1760,11 @@ def _validate_customer_authorization_bytes(
     ):
         raise CustomerAcceptanceRequired("authorization_expected_expiry_mismatch")
     try:
-        _verify_customer_authorization_signature(authorization, signature_record)
+        _verify_customer_authorization_signature(
+            authorization,
+            signature_record,
+            authenticated_signer_sha256=authenticated_signer_sha256,
+        )
     except BootstrapRefusal as exc:
         if str(exc) in {
             "customer-authorization trust root is unavailable",
@@ -2698,6 +2878,8 @@ def execute(
     authorization_descriptor: int = INHERITED_AUTHORIZATION_DESCRIPTOR,
     execution_lock_descriptor: int = INHERITED_EXECUTION_LOCK_DESCRIPTOR,
     bootstrap_lock_descriptor: int = INHERITED_BOOTSTRAP_LOCK_DESCRIPTOR,
+    caller_descriptor: int = INHERITED_CALLER_DESCRIPTOR,
+    customer_trust_descriptor: int = INHERITED_CUSTOMER_TRUST_DESCRIPTOR,
 ) -> int:
     """Run the fixed smoke from one locked, descriptor-stable cache snapshot."""
 
@@ -2710,6 +2892,35 @@ def execute(
         supervisor_uid = pwd.getpwnam(RUNTIME_SUPERVISOR_USER).pw_uid
     except KeyError as exc:
         raise BootstrapRefusal("runtime supervisor account is unavailable") from exc
+    caller_bytes = _read_private_regular_descriptor(
+        caller_descriptor,
+        limit=1024 * 1024,
+        owner_uid=supervisor_uid,
+        input_name="authenticated caller assertion",
+    )
+    trusted_public_key = _read_private_regular_descriptor(
+        customer_trust_descriptor,
+        limit=1024,
+        owner_uid=supervisor_uid,
+        input_name="authenticated caller trust root",
+    )
+    try:
+        caller_signer_sha256 = _validate_authenticated_caller_binding(
+            caller_bytes,
+            trusted_public_key,
+            expected_sha256=os.environ.get(
+                "NPA_LIBERO_AUTHENTICATED_CALLER_SHA256", ""
+            ),
+            expected_run_id=expected_run,
+            expected_customer_identity_sha256=expected_customer,
+        )
+    except BootstrapRefusal as exc:
+        reason = (
+            "authorization_expired_or_replayable"
+            if "expired" in str(exc)
+            else "authorization_signature_invalid"
+        )
+        raise CustomerAcceptanceRequired(reason) from exc
     try:
         authorization_bytes = _read_private_regular_descriptor(
             authorization_descriptor,
@@ -2724,6 +2935,7 @@ def execute(
         expected_authorization_sha256,
         manifest,
         manifest_sha256,
+        authenticated_signer_sha256=caller_signer_sha256,
     )
     customer_identity_sha256 = authorization["customer_identity_sha256"]
     run_id = authorization["run_id"]
@@ -3097,8 +3309,11 @@ def _verified_output_put(
     name: str,
     payload: bytes,
     digest: str,
+    transaction_token: str,
     attempted: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
+    if not re.fullmatch(r"[0-9a-f]{32}", transaction_token):
+        raise BootstrapRefusal("output transaction identity is invalid")
     checksum = base64.b64encode(bytes.fromhex(digest)).decode()
     url = _s3_object_url(endpoint, bucket, object_key)
     try:
@@ -3106,16 +3321,50 @@ def _verified_output_put(
             "PUT",
             url,
             payload=payload,
-            extra_headers={"if-none-match": "*", "x-amz-checksum-sha256": checksum},
+            extra_headers={
+                "if-none-match": "*",
+                "x-amz-checksum-sha256": checksum,
+                "x-amz-meta-npa-transaction-token": transaction_token,
+            },
         )
     except BootstrapRefusal as exc:
+        if str(exc) != "output storage PUT request failed":
+            raise
         if str(exc) == "output storage PUT request failed":
-            key_hash = hashlib.sha256(object_key.encode()).hexdigest()
-            raise BootstrapRefusal(
-                "output storage PUT outcome is ambiguous; immutable ownership "
-                f"identity unavailable for key hash {key_hash}"
-            ) from exc
-        raise
+            try:
+                status_code, reconciled_headers, _ = _sigv4_request(
+                    "HEAD",
+                    url,
+                    extra_headers={"x-amz-checksum-mode": "ENABLED"},
+                    expected_statuses=frozenset({200, 404}),
+                )
+            except BootstrapRefusal as reconcile_exc:
+                key_hash = hashlib.sha256(object_key.encode()).hexdigest()
+                raise BootstrapRefusal(
+                    "output storage PUT outcome is ambiguous; ownership "
+                    f"reconciliation failed for key hash {key_hash}"
+                ) from reconcile_exc
+            if status_code == 404:
+                key_hash = hashlib.sha256(object_key.encode()).hexdigest()
+                raise BootstrapRefusal(
+                    "output storage PUT outcome is ambiguous; object proven absent "
+                    f"for key hash {key_hash}"
+                ) from exc
+            version_id = reconciled_headers.get("x-amz-version-id", "")
+            etag = reconciled_headers.get("etag", "")
+            if (
+                reconciled_headers.get("x-amz-meta-npa-transaction-token")
+                != transaction_token
+                or reconciled_headers.get("x-amz-checksum-sha256") != checksum
+                or not version_id
+                or re.fullmatch(r'"[^\"]+"', etag) is None
+            ):
+                key_hash = hashlib.sha256(object_key.encode()).hexdigest()
+                raise BootstrapRefusal(
+                    "output storage PUT outcome is ambiguous; immutable ownership "
+                    f"identity unavailable for key hash {key_hash}"
+                ) from exc
+            created_headers = reconciled_headers
     version_id = created_headers.get("x-amz-version-id", "")
     etag = created_headers.get("etag", "")
     if not version_id or re.fullmatch(r'"[^\"]+"', etag) is None:
@@ -3128,6 +3377,7 @@ def _verified_output_put(
         "checksum": checksum,
         "etag": etag,
         "version_id": version_id,
+        "transaction_token_sha256": hashlib.sha256(transaction_token.encode()).hexdigest(),
     }
     version_url = url + "?versionId=" + urllib.parse.quote(version_id, safe="")
     _, headers, observed = _sigv4_request(
@@ -3148,6 +3398,7 @@ def _verified_output_put(
         "sha256": digest,
         "etag": etag,
         "version_id": version_id,
+        "transaction_token_sha256": hashlib.sha256(transaction_token.encode()).hexdigest(),
     }
 
 
@@ -3313,6 +3564,7 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
 
     prefix = parsed.path.lstrip("/")
     transaction_id = uuid4().hex
+    transaction_token = uuid4().hex
     transaction_prefix = prefix + ".npa-transactions/" + transaction_id + "/"
     attempted: dict[str, dict[str, Any]] = {}
     receipts: list[dict[str, Any]] = []
@@ -3370,6 +3622,7 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
                     name=name,
                     payload=payload,
                     digest=digest,
+                    transaction_token=transaction_token,
                     attempted=attempted,
                 )
             )
@@ -3423,6 +3676,7 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
             name=OUTPUT_RECEIPT_NAME,
             payload=receipt_payload,
             digest=receipt_sha256,
+            transaction_token=transaction_token,
             attempted=attempted,
         )
         _verify_output_lease(endpoint=endpoint, bucket=parsed.netloc)
@@ -3664,9 +3918,21 @@ def execute_and_upload() -> int:
     )
     cache_root = _validate_cache_root(DEFAULT_CACHE, None)
     output_root = _run_output_root(run_id)
-    output_fd = os.open(output_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    caller_bytes, trusted_public_key, caller_signer_sha256 = (
+        _authenticated_caller_binding_from_environment()
+    )
+    caller_file = tempfile.TemporaryFile(mode="w+b")
+    trust_file = tempfile.TemporaryFile(mode="w+b")
+    caller_file.write(caller_bytes)
+    caller_file.flush()
+    caller_file.seek(0)
+    trust_file.write(trusted_public_key)
+    trust_file.flush()
+    trust_file.seek(0)
+    output_fd = -1
     authorization_fd = -1
     try:
+        output_fd = os.open(output_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         output_info = os.fstat(output_fd)
         if (
             output_info.st_uid != os.getuid()
@@ -3698,6 +3964,7 @@ def execute_and_upload() -> int:
                 authorization_sha256,
                 manifest,
                 manifest_sha256,
+                authenticated_signer_sha256=caller_signer_sha256,
             )
         )
         if (
@@ -3778,6 +4045,8 @@ def execute_and_upload() -> int:
                                     authorization_fd,
                                     execution_lock_fd,
                                     bootstrap_lock_fd,
+                                    caller_file.fileno(),
+                                    trust_file.fileno(),
                                 )
                             ) as inherited,
                         ):
@@ -3786,6 +4055,7 @@ def execute_and_upload() -> int:
                                 authorization_sha256,
                                 manifest,
                                 manifest_sha256,
+                                authenticated_signer_sha256=caller_signer_sha256,
                             )
                             environment = _runtime_execution_environment(
                                 Path("/proc/self/fd") / str(INHERITED_CACHE_DESCRIPTOR)
@@ -3798,7 +4068,7 @@ def execute_and_upload() -> int:
                                     [
                                         "/usr/bin/sudo",
                                         "--close-from",
-                                        str(INHERITED_BOOTSTRAP_LOCK_DESCRIPTOR + 1),
+                                        str(INHERITED_CUSTOMER_TRUST_DESCRIPTOR + 1),
                                         "--user=npa-libero-exec",
                                         "/opt/npa/libero/runtime-bootstrap.py",
                                         "execute",
@@ -3832,6 +4102,7 @@ def execute_and_upload() -> int:
                                     authorization_sha256,
                                     manifest,
                                     manifest_sha256,
+                                    authenticated_signer_sha256=caller_signer_sha256,
                                 )
                             except CustomerAcceptanceRequired:
                                 raise
@@ -3897,6 +4168,7 @@ def execute_and_upload() -> int:
                             authorization_sha256,
                             manifest,
                             manifest_sha256,
+                            authenticated_signer_sha256=caller_signer_sha256,
                         )
                         upload_outputs(smoke_exit_code, root_fd=output_fd)
                         _validate_complete(
@@ -3926,7 +4198,10 @@ def execute_and_upload() -> int:
     finally:
         if authorization_fd >= 0:
             os.close(authorization_fd)
-        os.close(output_fd)
+        if output_fd >= 0:
+            os.close(output_fd)
+        caller_file.close()
+        trust_file.close()
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

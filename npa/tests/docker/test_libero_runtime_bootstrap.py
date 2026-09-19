@@ -218,6 +218,10 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
     customer_public_key = customer_key.public_key().public_bytes(
         serialization.Encoding.Raw, serialization.PublicFormat.Raw
     )
+    caller_key = Ed25519PrivateKey.generate()
+    caller_public_key = caller_key.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
     authorization["customer_signer_public_key_b64"] = module.base64.b64encode(
         customer_public_key
     ).decode("ascii")
@@ -236,6 +240,40 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
             module._customer_authorization_signature_payload(authorization)
         )
     ).decode("ascii")
+    caller_assertion = {
+        "schema": module.AUTHENTICATED_CALLER_SCHEMA,
+        "issuer": "npa-authenticated-caller-control-plane",
+        "session_id": "libero-fixture-session-0001",
+        "customer_identity_sha256": authorization["customer_identity_sha256"],
+        "customer_signer_public_key_sha256": _sha(customer_public_key),
+        "run_id": authorization["run_id"],
+        "issued_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+        "nonce": "libero-authenticated-caller-nonce-0001",
+        "signature": {
+            "algorithm": "ed25519",
+            "public_key_sha256": _sha(caller_public_key),
+            "signature_b64": "",
+        },
+    }
+    caller_assertion["signature"]["signature_b64"] = module.base64.b64encode(
+        caller_key.sign(
+            module._sshsig_signature_payload(
+                module.AUTHENTICATED_CALLER_NAMESPACE,
+                module._canonical_unsigned_authenticated_caller(caller_assertion),
+            )
+        )
+    ).decode("ascii")
+    caller_bytes = json.dumps(caller_assertion, sort_keys=True).encode() + b"\n"
+    caller_trust_root = tmp_path / "authenticated-caller-public-key.b64"
+    caller_trust_root.write_bytes(module.base64.b64encode(caller_public_key))
+    caller_trust_root.chmod(0o600)
+    caller_trust_raw = tmp_path / "authenticated-caller-public-key.raw"
+    caller_trust_raw.write_bytes(caller_public_key)
+    caller_trust_raw.chmod(0o600)
+    caller_assertion_path = tmp_path / "authenticated-caller.json"
+    caller_assertion_path.write_bytes(caller_bytes)
+    caller_assertion_path.chmod(0o600)
     authorization_path = tmp_path / "customer-authorization.json"
     authorization_sha256 = _write_json(authorization_path, authorization)
     args = argparse.Namespace(
@@ -262,6 +300,14 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
             "NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT": authorization[
                 "expires_at"
             ],
+            "NPA_LIBERO_AUTHENTICATED_CALLER_B64": module.base64.b64encode(
+                caller_bytes
+            ).decode("ascii"),
+            "NPA_LIBERO_AUTHENTICATED_CALLER_SHA256": _sha(caller_bytes),
+            "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE": str(
+                caller_trust_root
+            ),
+            "NPA_LIBERO_AUTHENTICATED_CALLER_FILE": str(caller_assertion_path),
         }
     )
     fixture = {
@@ -282,6 +328,11 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
         "customer_public_key": customer_public_key,
         "storage_private_key": storage_signer,
         "storage_public_key": storage_public_key,
+        "customer_signer_sha256": _sha(customer_public_key),
+        "caller_bytes": caller_bytes,
+        "caller_assertion_path": caller_assertion_path,
+        "caller_trust_root": caller_trust_root,
+        "caller_trust_raw": caller_trust_raw,
         "authorization_path": authorization_path,
         "customer_identity_sha256": authorization["customer_identity_sha256"],
         "run_id": authorization["run_id"],
@@ -590,6 +641,7 @@ def test_version_bound_put_readback_and_cleanup_use_the_real_signer(monkeypatch)
         name="artifact.json",
         payload=payload,
         digest=digest,
+        transaction_token="a" * 32,
         attempted=attempted,
     )
     assert record["version_id"] == version and record["sha256"] == digest
@@ -599,6 +651,7 @@ def test_version_bound_put_readback_and_cleanup_use_the_real_signer(monkeypatch)
     assert [call[0] for call in calls] == ["PUT", "GET", "HEAD", "DELETE", "HEAD"]
     assert calls[0][1] == "/fixture-bucket/owned-run/artifact.json"
     assert calls[0][2] == payload and calls[0][3]["if-none-match"] == "*"
+    assert calls[0][3]["x-amz-meta-npa-transaction-token"] == "a" * 32
     assert calls[1][3]["x-amz-checksum-mode"] == "ENABLED"
     assert calls[3][3]["if-match"] == '"fixture-etag"'
     for _, target, body, _ in calls[1:]:
@@ -645,7 +698,7 @@ def test_storage_version_query_refuses_ambiguity_before_transport(
 def test_sudo_allowlist_preserves_real_profile_bound_signature_validation(
     monkeypatch, tmp_path, profile_state
 ):
-    module, args, _ = _fixture(tmp_path)
+    module, args, fixture = _fixture(tmp_path)
     manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
     authorization_bytes = Path(args.authorization).read_bytes()
     dockerfile = (SCRIPT.parent / "Dockerfile").read_text(encoding="utf-8")
@@ -676,6 +729,7 @@ def test_sudo_allowlist_preserves_real_profile_bound_signature_validation(
                 args.authorization_sha256,
                 manifest,
                 module.EXPECTED_RUNTIME_MANIFEST_SHA256,
+                authenticated_signer_sha256=fixture["customer_signer_sha256"],
             )
         return
     observed, observed_sha = module._validate_customer_authorization_bytes(
@@ -683,6 +737,7 @@ def test_sudo_allowlist_preserves_real_profile_bound_signature_validation(
         args.authorization_sha256,
         manifest,
         module.EXPECTED_RUNTIME_MANIFEST_SHA256,
+        authenticated_signer_sha256=fixture["customer_signer_sha256"],
     )
     assert observed["workflow_profile_sha256"] == "a" * 64
     assert observed_sha == args.authorization_sha256
@@ -961,11 +1016,11 @@ def test_absent_or_stale_authenticated_signer_refuses_before_network_or_cache(
     module, args, _fixture_values = _fixture(tmp_path)
     if caller_fingerprint is None:
         monkeypatch.delenv(
-            "NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256", raising=False
+            "NPA_LIBERO_AUTHENTICATED_CALLER_B64", raising=False
         )
     else:
         monkeypatch.setenv(
-            "NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256",
+            "NPA_LIBERO_AUTHENTICATED_CALLER_SHA256",
             caller_fingerprint,
         )
     monkeypatch.setattr(
@@ -1124,6 +1179,7 @@ def test_customer_authorization_rejects_empty_profile_digest(
             hashlib.sha256(authorization_bytes).hexdigest(),
             manifest,
             module.EXPECTED_RUNTIME_MANIFEST_SHA256,
+            authenticated_signer_sha256=fixture["customer_signer_sha256"],
         )
 
 
@@ -1462,6 +1518,16 @@ def _execution_descriptors(module, args, final):
     root_fd = os.open(args.cache_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     cache_fd = os.open(final, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     authorization_fd = os.open(args.authorization, os.O_RDONLY | os.O_NOFOLLOW)
+    caller_fd = os.open(
+        os.environ["NPA_LIBERO_AUTHENTICATED_CALLER_FILE"],
+        os.O_RDONLY | os.O_NOFOLLOW,
+    )
+    trust_fd = os.open(
+        Path(os.environ["NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE"]).with_suffix(
+            ".raw"
+        ),
+        os.O_RDONLY | os.O_NOFOLLOW,
+    )
     try:
         with ExitStack() as stack:
             execution_lock = stack.enter_context(
@@ -1474,8 +1540,17 @@ def _execution_descriptors(module, args, final):
                     root_fd, ".bootstrap.lock", exclusive=False, create=False
                 )
             )
-            yield cache_fd, authorization_fd, execution_lock, bootstrap_lock
+            yield (
+                cache_fd,
+                authorization_fd,
+                execution_lock,
+                bootstrap_lock,
+                caller_fd,
+                trust_fd,
+            )
     finally:
+        os.close(trust_fd)
+        os.close(caller_fd)
         os.close(authorization_fd)
         os.close(cache_fd)
         os.close(root_fd)
@@ -1491,6 +1566,8 @@ def test_execute_returns_the_exact_smoke_exit_code(monkeypatch, tmp_path) -> Non
 
     def smoke(command, **kwargs):
         if command[:3] == ["/usr/bin/ssh-keygen", "-Y", "verify"]:
+            if command[6] != "customer":
+                return original_run(command, **kwargs)
             assert len(command) == 11
             allowed_signers = Path(command[4])
             signature = Path(command[10])
@@ -1565,6 +1642,8 @@ def test_execute_rejects_post_smoke_cache_identity_drift(
 
     def smoke(command, **kwargs):
         if command[:3] == ["/usr/bin/ssh-keygen", "-Y", "verify"]:
+            if command[6] != "customer":
+                return original_run(command, **kwargs)
             assert len(command) == 11
             allowed_signers = Path(command[4])
             signature = Path(command[10])
@@ -2421,6 +2500,8 @@ def test_execute_and_upload_holds_descriptor_and_cache_lock_through_readback(
 
     def fake_run(command, **kwargs):
         if command[:3] == ["/usr/bin/ssh-keygen", "-Y", "verify"]:
+            if command[6] != "customer":
+                return original_run(command, **kwargs)
             assert len(command) == 11
             allowed_signers = Path(command[4])
             signature = Path(command[10])
@@ -2440,7 +2521,7 @@ def test_execute_and_upload_holds_descriptor_and_cache_lock_through_readback(
         assert command == [
             "/usr/bin/sudo",
             "--close-from",
-            str(module.INHERITED_BOOTSTRAP_LOCK_DESCRIPTOR + 1),
+            str(module.INHERITED_CUSTOMER_TRUST_DESCRIPTOR + 1),
             "--user=npa-libero-exec",
             "/opt/npa/libero/runtime-bootstrap.py",
             "execute",
@@ -2450,6 +2531,8 @@ def test_execute_and_upload_holds_descriptor_and_cache_lock_through_readback(
             module.INHERITED_AUTHORIZATION_DESCRIPTOR,
             module.INHERITED_EXECUTION_LOCK_DESCRIPTOR,
             module.INHERITED_BOOTSTRAP_LOCK_DESCRIPTOR,
+            module.INHERITED_CALLER_DESCRIPTOR,
+            module.INHERITED_CUSTOMER_TRUST_DESCRIPTOR,
         )
         opened = os.fstat(module.INHERITED_CACHE_DESCRIPTOR)
         assert stat.S_ISDIR(opened.st_mode)
@@ -2695,6 +2778,7 @@ def test_failed_conditional_output_put_never_claims_or_deletes_existing_object(
             name="artifact.json",
             payload=b"immutable\n",
             digest=hashlib.sha256(b"immutable\n").hexdigest(),
+            transaction_token="b" * 32,
             attempted=attempted,
         )
 
@@ -2747,6 +2831,7 @@ def test_successful_put_without_identity_headers_refuses_without_claiming_owners
             name="artifact.json",
             payload=payload,
             digest=digest,
+            transaction_token="c" * 32,
             attempted=attempted,
         )
     assert calls == ["PUT"]
@@ -2775,10 +2860,74 @@ def test_ambiguous_put_failure_refuses_without_unversioned_recovery(
             name="artifact.json",
             payload=b"immutable\n",
             digest=hashlib.sha256(b"immutable\n").hexdigest(),
+            transaction_token="d" * 32,
             attempted=attempted,
         )
-    assert calls == ["PUT"]
+    assert calls == ["PUT", "HEAD"]
     assert attempted == {}
+
+
+def test_ambiguous_put_reconciles_only_exact_transaction_metadata(monkeypatch) -> None:
+    module = _load_module()
+    content = b"reconciled\n"
+    digest = hashlib.sha256(content).hexdigest()
+    checksum = module.base64.b64encode(bytes.fromhex(digest)).decode()
+    token = "e" * 32
+    object_key = "byof/run/.npa-transactions/transaction/artifact.json"
+    calls: list[str] = []
+
+    def request(
+        method,
+        _url,
+        *,
+        payload=b"",
+        extra_headers=None,
+        expected_statuses=frozenset({200}),
+    ):
+        del expected_statuses
+        calls.append(method)
+        if method == "PUT":
+            assert payload == content
+            raise module.BootstrapRefusal("output storage PUT request failed")
+        if method == "HEAD":
+            assert extra_headers == {"x-amz-checksum-mode": "ENABLED"}
+            return (
+                200,
+                {
+                    "x-amz-meta-npa-transaction-token": token,
+                    "x-amz-checksum-sha256": checksum,
+                    "x-amz-version-id": "recovered-version",
+                    "etag": '"recovered-etag"',
+                },
+                b"",
+            )
+        assert method == "GET"
+        return (
+            200,
+            {
+                "x-amz-checksum-sha256": checksum,
+                "x-amz-version-id": "recovered-version",
+                "etag": '"recovered-etag"',
+            },
+            content,
+        )
+
+    monkeypatch.setattr(module, "_sigv4_request", request)
+    attempted: dict[str, dict[str, object]] = {}
+    record = module._verified_output_put(
+        endpoint="https://storage.fixture.invalid",
+        bucket="fixture-bucket",
+        object_key=object_key,
+        name="artifact.json",
+        payload=content,
+        digest=digest,
+        transaction_token=token,
+        attempted=attempted,
+    )
+
+    assert calls == ["PUT", "HEAD", "GET"]
+    assert record["version_id"] == "recovered-version"
+    assert attempted[object_key]["version_id"] == "recovered-version"
 
 
 def test_output_cleanup_preserves_replacement_between_head_and_delete(
