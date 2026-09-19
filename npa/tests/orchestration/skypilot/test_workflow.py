@@ -3018,6 +3018,7 @@ def test_libero_launch_binding_accepts_omitted_optional_queue_profile(
         "job_id": 126,
         "job_name": "exact-run",
         "status": "PENDING",
+        "submitted_at": 101.0,
     }
     monkeypatch.setattr(
         workflow_module.subprocess,
@@ -3035,6 +3036,7 @@ def test_libero_launch_binding_accepts_omitted_optional_queue_profile(
             sky_executable="sky",
             cwd="/durable",
             expected_profile_sha256="a" * 64,
+            launch_started_at=100.0,
         )
         == "126"
     )
@@ -3058,12 +3060,14 @@ def test_libero_launch_binding_groups_task_rows_by_unique_job_id(monkeypatch) ->
             "job_name": "exact-run",
             "task_id": "task-0",
             "status": "PENDING",
+            "submitted_at": 101.0,
         },
         {
             "job_id": 126,
             "job_name": "exact-run",
             "task_id": "task-1",
             "status": "STARTING",
+            "submitted_at": 101.0,
         },
     ]
     monkeypatch.setattr(
@@ -3081,6 +3085,7 @@ def test_libero_launch_binding_groups_task_rows_by_unique_job_id(monkeypatch) ->
         sky_executable="sky",
         cwd="/durable",
         expected_profile_sha256="a" * 64,
+        launch_started_at=100.0,
     )
 
     assert verified == "126"

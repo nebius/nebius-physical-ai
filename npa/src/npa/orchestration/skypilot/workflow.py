@@ -2169,8 +2169,10 @@ def _libero_launch_binding_candidates(
     queue has exactly one viable same-name immutable ID, every row for that ID
     is consistent, and its ID is the returned ID.  Viability is decided for the
     whole managed job: any failed/cancelled task makes that ID historical.
-    Any optional provider profile field must agree with the locally preflighted
-    digest when present; an omitted provider field is not evidence of failure.
+    The provider submission timestamp must prove that the queue row belongs to
+    this launch attempt. Any optional provider profile field must agree with the
+    locally preflighted digest when present; an omitted field is accepted only
+    with that current-attempt proof.
     All other plausible IDs are retained as indeterminate evidence rather than
     silently adopting one.
     """
@@ -2235,14 +2237,10 @@ def _libero_launch_binding_candidates(
         in {"SUCCEEDED", "SUCCESS", "COMPLETED", "DONE"}
         for row in candidate_rows
     )
-    current_attempt = (
-        not terminal_success
-        or launch_started_at is not None
-        and any(
-            _managed_job_submission_time(row) is not None
-            and _managed_job_submission_time(row) >= launch_started_at
-            for row in candidate_rows
-        )
+    current_attempt = launch_started_at is not None and any(
+        _managed_job_submission_time(row) is not None
+        and _managed_job_submission_time(row) >= launch_started_at
+        for row in candidate_rows
     )
     if (
         parsed_id
@@ -2304,6 +2302,7 @@ def _verified_libero_job_id(
     sky_executable: str,
     cwd: str | None,
     expected_profile_sha256: str,
+    launch_started_at: float | None = None,
 ) -> str:
     """Return a launch ID only after unique exact queue/name/profile proof."""
 
@@ -2314,6 +2313,7 @@ def _verified_libero_job_id(
         sky_executable=sky_executable,
         cwd=cwd,
         expected_profile_sha256=expected_profile_sha256,
+        launch_started_at=launch_started_at,
     )
     return verified
 
