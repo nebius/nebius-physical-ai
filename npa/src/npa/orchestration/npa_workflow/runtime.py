@@ -38,6 +38,7 @@ import os
 import tempfile
 import time
 from dataclasses import asdict, dataclass, field, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -82,6 +83,8 @@ TERMINAL_FAIL = frozenset(
         "STOPPED",
     }
 )
+SCHEDULER_OBSERVATION_SCHEMA = "npa.skypilot.managed-job-observation.v1"
+SCHEDULER_OBSERVATION_SOURCE = "exact_managed_job_status"
 
 DEFAULT_POLL_SECONDS = 30
 DEFAULT_MAX_WAIT_SECONDS = 3600
@@ -452,6 +455,63 @@ def wave_key(steps: Sequence[PlanStep], *, group: str, sequence_number: int) -> 
     return f"{sequence_number:03d}|{group or 'serial'}|" + ",".join(parts)
 
 
+def _record_reached_running(record: Mapping[str, Any]) -> bool:
+    """Return whether independent, typed scheduler evidence proves execution.
+
+    Submission acknowledgements, queue text, task summaries, and legacy free-form
+    observations are not adoption authority. The persisted observation must come
+    from a successful exact managed-job status query and bind every launch/fence
+    identity field to the wave record being considered.
+    """
+
+    expected_strings = {
+        "wave_key": str(record.get("key") or ""),
+        "job_id": str(record.get("job_id") or ""),
+        "job_name": str(record.get("job_name") or ""),
+        "logical_launch_id": str(record.get("logical_launch_id") or ""),
+    }
+    try:
+        expected_numbers = {
+            "attempt": int(record.get("attempt") or 0),
+            "scheduler_fence_sequence": int(
+                record.get("scheduler_fence_sequence") or 0
+            ),
+            "launch_sequence": int(record.get("launch_sequence") or 0),
+        }
+    except (TypeError, ValueError):
+        return False
+    if (
+        not all(expected_strings.values())
+        or expected_numbers["attempt"] < 1
+        or expected_numbers["scheduler_fence_sequence"] < 1
+        or expected_numbers["launch_sequence"] < 0
+    ):
+        return False
+    for item in record.get("observations") or []:
+        if not isinstance(item, Mapping):
+            continue
+        if (
+            item.get("schema") != SCHEDULER_OBSERVATION_SCHEMA
+            or item.get("source") != SCHEDULER_OBSERVATION_SOURCE
+            or str(item.get("scheduler_state") or "").upper() != "RUNNING"
+        ):
+            continue
+        if any(
+            str(item.get(key) or "") != value for key, value in expected_strings.items()
+        ):
+            continue
+        try:
+            observed_numbers = {key: int(item.get(key)) for key in expected_numbers}
+            observed_at = str(item.get("observed_at") or "")
+            timestamp = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        if timestamp.tzinfo is None or observed_numbers != expected_numbers:
+            continue
+        return True
+    return False
+
+
 class SkyPilotWaveExecutor:
     """Execute planned steps as SkyPilot managed jobs, one wave at a time.
 
@@ -656,19 +716,7 @@ class SkyPilotWaveExecutor:
                     infrastructure_recoveries = int(recovery_record.get("used") or 0)
                 category = str(latest.get("error_category") or "")
                 sky_status = str(latest.get("sky_status") or "").upper()
-                observations = latest.get("observations") or []
-                reached_running = any(
-                    isinstance(item, Mapping)
-                    and (
-                        str(item.get("scheduler_state") or "").upper() == "RUNNING"
-                        or "RUNNING"
-                        in {
-                            str(value or "").upper()
-                            for value in (item.get("statuses") or {}).values()
-                        }
-                    )
-                    for item in observations
-                )
+                reached_running = _record_reached_running(latest)
                 if (
                     self.options.adopt_absent_in_flight_outputs
                     and reached_running
@@ -1099,19 +1147,7 @@ class SkyPilotWaveExecutor:
                 self.ledger.record(attempt)
                 return attempt
         elif outcome == "absent":
-            observations = record.get("observations") or []
-            reached_running = any(
-                isinstance(item, Mapping)
-                and (
-                    str(item.get("scheduler_state") or "").upper() == "RUNNING"
-                    or "RUNNING"
-                    in {
-                        str(value or "").upper()
-                        for value in (item.get("statuses") or {}).values()
-                    }
-                )
-                for item in observations
-            )
+            reached_running = _record_reached_running(record)
             explicit_output_adoption = (
                 self.options.adopt_absent_in_flight_outputs
                 and reached_running
@@ -1889,7 +1925,16 @@ class SkyPilotWaveExecutor:
             if str(task.get("status") or "").upper() in {"RUNNING", "RECOVERING"}
         ]
         observation = {
+            "schema": SCHEDULER_OBSERVATION_SCHEMA,
+            "source": SCHEDULER_OBSERVATION_SOURCE,
             "observed_at": utc_now(),
+            "wave_key": attempt.key,
+            "job_id": attempt.job_id or job_id,
+            "job_name": attempt.job_name,
+            "logical_launch_id": attempt.logical_launch_id,
+            "attempt": attempt.attempt,
+            "scheduler_fence_sequence": attempt.scheduler_fence_sequence,
+            "launch_sequence": attempt.launch_sequence,
             "scheduler_state": scheduler_state or "UNKNOWN",
             "running": sorted(running),
             "running_count": len(running),
