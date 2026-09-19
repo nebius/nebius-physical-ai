@@ -131,6 +131,9 @@ def test_public_workflow_uses_hash_bound_graph_not_candidate_digests() -> None:
         in scanner_text
     )
     assert "--reviewed-graph-record" in text
+    assert "if args.reviewed_graph_record and (" in (
+        SCANNER.read_text(encoding="utf-8")
+    )
     assert "--expected-config-sha256" not in text
     assert "--expected-layer-diff-ids-json" not in text
     assert "docker image inspect --format '{{json .RootFS.Layers}}'" not in text

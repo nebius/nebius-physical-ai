@@ -2076,7 +2076,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     try:
-        if args.reviewed_graph_record is not None and (
+        if args.reviewed_graph_record and (
             args.expected_config_sha256 is not None
             or args.expected_layer_diff_ids_json is not None
         ):
@@ -2085,7 +2085,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         expected_config_sha256 = args.expected_config_sha256
         expected_layer_diff_ids_json = args.expected_layer_diff_ids_json
-        if args.reviewed_graph_record is not None:
+        if args.reviewed_graph_record:
             (
                 expected_config_sha256,
                 reviewed_layer_diff_ids,
