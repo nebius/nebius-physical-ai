@@ -1496,7 +1496,7 @@ def _installed_record_bytes(
     record_name: str,
     record_paths: dict[str, str] | None = None,
 ) -> bytes:
-    # posix_home lib/python -> bin is exactly ../../bin before --target moves.
+    # posix_home lib/python -> bin/data are exactly ../../ before --target moves.
     rows = [
         (
             (
@@ -1550,7 +1550,7 @@ def _wheel_expected_inventory(
                 raise VerificationError("wheel reserves generated script directory")
             _add_inventory_member(result, target, _file_identity(raw, executable))
             record_paths[target] = (
-                "../../../" + target
+                "../../" + target
                 if PurePosixPath(name).parts[0].endswith(".data")
                 else target
             )

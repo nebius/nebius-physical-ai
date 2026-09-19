@@ -2284,9 +2284,9 @@ def test_deterministic_installer_records_data_scheme_relative_path() -> None:
     assert VERIFIER._installed_record_bytes(
         {"share/man/ttx.1": entry},
         "inert.dist-info/RECORD",
-        {"share/man/ttx.1": "../../../share/man/ttx.1"},
+        {"share/man/ttx.1": "../../share/man/ttx.1"},
     ) == (
-        b"../../../share/man/ttx.1,sha256=ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0,3\r\n"
+        b"../../share/man/ttx.1,sha256=ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0,3\r\n"
         b"inert.dist-info/RECORD,,\r\n"
     )
 
