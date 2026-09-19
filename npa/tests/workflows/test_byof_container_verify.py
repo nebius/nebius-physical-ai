@@ -56,6 +56,10 @@ def inert_wrapper(monkeypatch):
     }.items():
         effects[name] = Mock(return_value=result)
         monkeypatch.setattr(module, name, effects[name])
+    effects["freshness"] = Mock()
+    monkeypatch.setattr(
+        module, "require_customer_authorization_fresh", effects["freshness"]
+    )
     monkeypatch.setattr(
         module, "_normalize_kubeconfig_current_context", lambda _p, values=None: values
     )
@@ -86,6 +90,7 @@ def _inert_authorized_context(module, monkeypatch):
         kubeconfig_source="/synthetic-private/kubeconfig",
         kubernetes_context="synthetic-context",
         project="synthetic-project",
+        customer_authorization_expires_at="2099-01-01T00:00:00Z",
     )
     context = SimpleNamespace(authorization=authorization)
     monkeypatch.setattr(module, "prepare_inner_submit", Mock(return_value=context))
@@ -262,6 +267,32 @@ def test_authorized_wrapper_refusal_precedes_isolated_state(inert_wrapper, monke
     module.subprocess.run.assert_not_called()
 
 
+def test_authorized_wrapper_rechecks_customer_freshness_before_submit(
+    inert_wrapper, monkeypatch
+):
+    from npa.orchestration.npa_workflow.robotwin_preflight import (
+        RobotwinPreflightError,
+    )
+
+    module, effects = inert_wrapper
+    context, environment = _inert_authorized_context(module, monkeypatch)
+    stale = Mock(side_effect=RobotwinPreflightError("customer-authorization-stale"))
+    monkeypatch.setattr(module, "require_customer_authorization_fresh", stale)
+    submit = Mock()
+    monkeypatch.setattr(module, "submit_workflow", submit)
+
+    with pytest.raises(RobotwinPreflightError, match="customer-authorization-stale"):
+        module.run_authorized_robotwin(
+            ["--solution-name", "robotwin"],
+            authorization=context.authorization,
+            environment=environment,
+        )
+
+    stale.assert_called_once_with(context.authorization)
+    submit.assert_not_called()
+    effects["_bootstrap_robotwin_sky"].assert_called_once()
+
+
 @pytest.mark.parametrize(
     ("logical_id", "result_job_id", "native_job_id", "expected"),
     (
@@ -357,12 +388,14 @@ def test_managed_submit_cleanup_ownership_boundary(
     from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
 
     module = _load_module()
+    monkeypatch.setattr(module, "require_customer_authorization_fresh", Mock())
     context = (
         SimpleNamespace(
             authorization=SimpleNamespace(
                 inner_launch_id="robotwin-inner-synthetic",
                 project="synthetic-project",
                 kubeconfig_source=str(tmp_path / "kubeconfig"),
+                customer_authorization_expires_at="2099-01-01T00:00:00Z",
             )
         )
         if confidential
@@ -901,6 +934,7 @@ def test_robotwin_terminal_summary_never_discloses_destination_or_customer_run(
     expected_rc: int,
 ) -> None:
     module = _load_module()
+    monkeypatch.setattr(module, "require_customer_authorization_fresh", Mock())
     run_canary = "robotwin-customer-run-private-canary"
     root_canary = "s3://private-destination-canary/output"
     launch_id = "robotwin-inner-" + "1" * 20
@@ -908,6 +942,7 @@ def test_robotwin_terminal_summary_never_discloses_destination_or_customer_run(
         inner_launch_id=launch_id,
         project="private-project-canary",
         kubeconfig_source=str(tmp_path / "private-kubeconfig"),
+        customer_authorization_expires_at="2099-01-01T00:00:00Z",
     )
     context = SimpleNamespace(authorization=authorization)
     environment = {"PRIVATE_CANARY": "private-value"}
@@ -1067,7 +1102,12 @@ def test_robotwin_render_only_summary_is_opaque(
     run_canary = "robotwin-render-customer-run-private-canary"
     root_canary = "s3://private-render-destination-canary/output"
     launch_id = "robotwin-inner-" + "2" * 20
-    context = SimpleNamespace(authorization=SimpleNamespace(inner_launch_id=launch_id))
+    context = SimpleNamespace(
+        authorization=SimpleNamespace(
+            inner_launch_id=launch_id,
+            customer_authorization_expires_at="2099-01-01T00:00:00Z",
+        )
+    )
     monkeypatch.setattr(
         module,
         "render_workflow",

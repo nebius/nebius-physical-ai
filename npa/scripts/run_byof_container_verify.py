@@ -52,6 +52,7 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
     STORAGE_CREDENTIAL_SECRET_NAMES,
     STORAGE_ENDPOINT_SECRET_NAMES,
     prepare_inner_submit,
+    require_customer_authorization_fresh,
 )
 
 DEFAULT_YAML = (
@@ -829,6 +830,15 @@ def _submit_and_wait(
             owned_api_stopped = True
             try:
                 submit_config_path = Path(config_path) if config_path else None
+                if robotwin_submit_context is not None:
+                    # Recheck the run-scoped customer assertion immediately
+                    # before the native submit boundary; bootstrap may have
+                    # consumed enough time for an otherwise valid assertion
+                    # to expire.  No provider call or adoption may occur after
+                    # this check until submit_workflow arms the launch.
+                    require_customer_authorization_fresh(
+                        robotwin_submit_context.authorization
+                    )
                 result = submit_workflow(
                     rendered_yaml,
                     scheduler_run_id,
