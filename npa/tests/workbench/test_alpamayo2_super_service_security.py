@@ -15,7 +15,7 @@ import httpx
 import pytest
 import uvicorn
 
-from npa.workbench.alpamayo2_super import service
+from npa.workbench.alpamayo2_super import healthcheck, service
 from npa.workbench.alpamayo2_super.runtime import (
     DEFAULT_DATASET_REVISION,
     DEFAULT_MODEL_ID,
@@ -30,6 +30,24 @@ TOKEN = "test-inference-credential"
 HEADERS = {"Authorization": "Bearer " + TOKEN}
 
 
+class _HealthConnection:
+    def __init__(self, host, port, *, timeout):
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+        self.request_arguments = None
+        self.closed = False
+
+    def request(self, method, path, *, headers):
+        self.request_arguments = (method, path, headers)
+
+    def getresponse(self):
+        return type("HealthResponse", (), {"status": 200})()
+
+    def close(self):
+        self.closed = True
+
+
 @pytest.fixture
 def configured(tmp_path):
     source = tmp_path / "operator-manifest.json"
@@ -39,28 +57,48 @@ def configured(tmp_path):
     return app, source, output
 
 
-@pytest.mark.parametrize("path", ["/health", "/status", "/system-info", "/list", "/run"])
+@pytest.mark.parametrize(
+    "path", ["/health", "/status", "/system-info", "/list", "/run"]
+)
 def test_all_service_operations_require_authentication(configured, path):
     app, _, output = configured
     with TestClient(app) as client:
         for headers in ({}, {"Authorization": "Bearer unrelated-credential"}):
-            response = client.post(path, json={}, headers=headers) if path == "/run" else client.get(path, headers=headers)
+            response = (
+                client.post(path, json={}, headers=headers)
+                if path == "/run"
+                else client.get(path, headers=headers)
+            )
             assert response.status_code == 401
         assert list(output.iterdir()) == []
 
 
-@pytest.mark.parametrize("field,value", [
-    ("model_id", "untrusted/model"), ("model_revision", "main"),
-    ("dataset_revision", "main"), ("manifest", "/tmp/manifest.json"),
-    ("runtime_image", "untrusted-runtime"), ("output_path", "../escape"),
-    ("output_path", "/tmp/escape"), ("output_path", "s3://outside/results"),
-    ("output_path", "nested/result"), ("output_path", "result\\escape"),
-    ("output_path", "x" * 129), ("sample_index", -1), ("sample_index", 1),
-])
-def test_http_cannot_change_deployment_code_inputs_or_output_authority(configured, field, value):
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("model_id", "untrusted/model"),
+        ("model_revision", "main"),
+        ("dataset_revision", "main"),
+        ("manifest", "/tmp/manifest.json"),
+        ("runtime_image", "untrusted-runtime"),
+        ("output_path", "../escape"),
+        ("output_path", "/tmp/escape"),
+        ("output_path", "s3://outside/results"),
+        ("output_path", "nested/result"),
+        ("output_path", "result\\escape"),
+        ("output_path", "x" * 129),
+        ("sample_index", -1),
+        ("sample_index", 1),
+    ],
+)
+def test_http_cannot_change_deployment_code_inputs_or_output_authority(
+    configured, field, value
+):
     app, _, output = configured
     with TestClient(app) as client:
-        response = client.post("/run", json={field: value, "dry_run": True}, headers=HEADERS)
+        response = client.post(
+            "/run", json={field: value, "dry_run": True}, headers=HEADERS
+        )
         assert response.status_code == 422
         assert list(output.iterdir()) == []
 
@@ -70,10 +108,15 @@ def test_manifest_snapshot_is_private_immutable_and_removed_on_shutdown(configur
     initial = source.read_bytes()
     with TestClient(app) as client:
         source.write_text('{"samples": []}')
-        response = client.post("/run", json={"output_path": "sample", "dry_run": True}, headers=HEADERS)
+        response = client.post(
+            "/run", json={"output_path": "sample", "dry_run": True}, headers=HEADERS
+        )
         assert response.status_code == 200
         body = response.json()
-        assert body["model"] == {"id": DEFAULT_MODEL_ID, "revision": DEFAULT_MODEL_REVISION}
+        assert body["model"] == {
+            "id": DEFAULT_MODEL_ID,
+            "revision": DEFAULT_MODEL_REVISION,
+        }
         assert body["dataset"]["revision"] == DEFAULT_DATASET_REVISION
         snapshot = Path(body["request"]["manifest"])
         assert snapshot.read_bytes() == initial
@@ -111,9 +154,45 @@ def test_missing_admission_credential_fails_startup(monkeypatch):
             pass
 
 
+def test_container_healthcheck_uses_the_runtime_admission_credential(monkeypatch):
+    connections = []
+
+    def open_connection(*args, **kwargs):
+        connection = _HealthConnection(*args, **kwargs)
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setenv("NPA_ALPAMAYO2_SUPER_TOKEN", TOKEN)
+    monkeypatch.setattr(healthcheck, "HTTPConnection", open_connection)
+
+    assert healthcheck.main() == 0
+    assert len(connections) == 1
+    assert connections[0].host == "127.0.0.1"
+    assert connections[0].port == 8080
+    assert connections[0].timeout == 3
+    assert connections[0].request_arguments == (
+        "GET",
+        "/health",
+        {"Authorization": "Bearer " + TOKEN},
+    )
+    assert connections[0].closed is True
+
+
+def test_container_healthcheck_fails_closed_without_a_credential(monkeypatch):
+    monkeypatch.delenv("NPA_ALPAMAYO2_SUPER_TOKEN", raising=False)
+    monkeypatch.setattr(
+        healthcheck,
+        "HTTPConnection",
+        lambda *_args, **_kwargs: pytest.fail("health request must not be sent"),
+    )
+
+    assert healthcheck.main() == 1
+
+
 def test_upstream_errors_do_not_reflect_sensitive_diagnostics(configured, monkeypatch):
     def fail(_request):
         raise Alpamayo2SuperError("synthetic-private-diagnostic")
+
     monkeypatch.setattr(service, "run_inference", fail)
     app, _, output = configured
     with TestClient(app) as client:
@@ -125,17 +204,26 @@ def test_upstream_errors_do_not_reflect_sensitive_diagnostics(configured, monkey
 
 def test_s3_outputs_get_unique_prefixes_inside_configured_authority(configured):
     _, source, _ = configured
-    app = service.create_app(token=TOKEN, output_root="s3://operator-results/inference", manifest=str(source))
+    app = service.create_app(
+        token=TOKEN, output_root="s3://operator-results/inference", manifest=str(source)
+    )
     with TestClient(app) as client:
-        first, second = [client.post("/run", json={"dry_run": True}, headers=HEADERS).json() for _ in range(2)]
+        first, second = [
+            client.post("/run", json={"dry_run": True}, headers=HEADERS).json()
+            for _ in range(2)
+        ]
     a, b = first["request"]["output_path"], second["request"]["output_path"]
     assert a.startswith("s3://operator-results/inference/run-")
     assert b.startswith("s3://operator-results/inference/run-")
     assert a != b
 
 
-def test_trusted_operator_cli_contract_keeps_custom_model_support(tmp_path, monkeypatch):
-    request = Alpamayo2SuperRequest(output_path=str(tmp_path), model_id="operator/custom-model", dry_run=True)
+def test_trusted_operator_cli_contract_keeps_custom_model_support(
+    tmp_path, monkeypatch
+):
+    request = Alpamayo2SuperRequest(
+        output_path=str(tmp_path), model_id="operator/custom-model", dry_run=True
+    )
     result = run_inference(request)
     assert result["model"]["id"] == "operator/custom-model"
     monkeypatch.setenv("NPA_ALPAMAYO2_SUPER_TOKEN", TOKEN)
@@ -147,8 +235,12 @@ def live_service(app):
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     address = listener.getsockname()
-    server = uvicorn.Server(uvicorn.Config(app, log_level="error", lifespan="on", ws="none"))
-    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    server = uvicorn.Server(
+        uvicorn.Config(app, log_level="error", lifespan="on", ws="none")
+    )
+    thread = threading.Thread(
+        target=server.run, kwargs={"sockets": [listener]}, daemon=True
+    )
     thread.start()
     try:
         while not server.started:
@@ -167,7 +259,12 @@ def test_actual_http_authorized_component_preparation_and_admission(configured):
     app, _, output = configured
     with live_service(app) as client:
         assert client.post("/run", json={"dry_run": True}).status_code == 401
-        assert client.post("/run", json={"model_id": "untrusted/model"}, headers=HEADERS).status_code == 422
+        assert (
+            client.post(
+                "/run", json={"model_id": "untrusted/model"}, headers=HEADERS
+            ).status_code
+            == 422
+        )
         assert client.get("/health", headers=HEADERS).status_code == 200
         response = client.post("/run", json={"dry_run": True}, headers=HEADERS)
         assert response.status_code == 200

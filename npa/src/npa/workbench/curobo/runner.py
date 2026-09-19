@@ -52,9 +52,7 @@ def _benchmark_module():
             while chunk := stream.read(1024 * 1024):
                 digest.update(chunk)
         if digest.hexdigest() != expected:
-            raise CuroboError(
-                "benchmark YAML bytes do not match the pinned inventory"
-            )
+            raise CuroboError("benchmark YAML bytes do not match the pinned inventory")
     _activate_dataset_imports(dataset)
     spec = importlib.util.spec_from_file_location(
         "npa_curobo_upstream_benchmark", source / "benchmark/motion_plan_benchmark.py"
@@ -75,7 +73,9 @@ def _activate_dataset_imports(dataset: Path):
         if name == "robometrics" or name.startswith("robometrics."):
             origin = getattr(module, "__file__", None)
             if not origin or not Path(origin).resolve().is_relative_to(package):
-                raise CuroboError("benchmark loader was imported outside the verified dataset tree")
+                raise CuroboError(
+                    "benchmark loader was imported outside the verified dataset tree"
+                )
     sys.path.insert(0, str(dataset.resolve(strict=True)))
     importlib.invalidate_caches()
     module = importlib.import_module("robometrics.datasets")

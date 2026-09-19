@@ -73,7 +73,9 @@ def submission_state_path(project: str, run_id: str) -> Path:
     if config.CONFIG_PATH != config.NPA_CONFIG_DIR / "config.yaml":
         root = config.CONFIG_PATH.parent
     else:
-        root = Path(os.environ.get("NPA_CONFIG_DIR", "").strip() or Path.home() / ".npa")
+        root = Path(
+            os.environ.get("NPA_CONFIG_DIR", "").strip() or Path.home() / ".npa"
+        )
     return (
         root
         / "workflow-submissions"
@@ -323,8 +325,12 @@ def update_submission_state(
 
 
 def record_submission_plan(
-    project: str, run_id: str, *, workflow: Mapping[str, Any],
-    planning: Mapping[str, Any], launch_state: str = "planned",
+    project: str,
+    run_id: str,
+    *,
+    workflow: Mapping[str, Any],
+    planning: Mapping[str, Any],
+    launch_state: str = "planned",
 ) -> dict[str, Any]:
     """Save planning metadata without erasing an earlier run's location or launch.
 

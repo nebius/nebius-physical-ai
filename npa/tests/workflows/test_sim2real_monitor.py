@@ -165,7 +165,9 @@ def test_missing_explicit_operator_config_does_not_fall_back_to_home(
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("NPA_SIM2REAL_OPERATOR_CONFIG", str(missing_path))
 
-    with pytest.raises(ValueError, match=r"missing operator config .*missing-operator-pack"):
+    with pytest.raises(
+        ValueError, match=r"missing operator config .*missing-operator-pack"
+    ):
         load_operator_config()
 
 

@@ -162,7 +162,9 @@ def test_counter_only_changes_are_neutral_context() -> None:
 def test_efficiency_only_change_is_reported_without_quality_regression() -> None:
     mem = M.RunMemory(M.InMemoryStore())
     mem.record_run("base", {"metrics": {"duration_seconds": 10.0, "cost_usd": 2.0}})
-    mem.record_run("candidate", {"metrics": {"duration_seconds": 15.0, "cost_usd": 3.0}})
+    mem.record_run(
+        "candidate", {"metrics": {"duration_seconds": 15.0, "cost_usd": 3.0}}
+    )
 
     result = mem.explain_regression_data("candidate", "base")
 
@@ -176,7 +178,10 @@ def test_efficiency_only_change_is_reported_without_quality_regression() -> None
 def test_ambiguous_success_steps_is_not_lower_is_better() -> None:
     from npa.agent_backend import memory as memory_impl
 
-    assert memory_impl._metric_taxonomy("metrics.success_steps") == ("counter", "neutral")
+    assert memory_impl._metric_taxonomy("metrics.success_steps") == (
+        "counter",
+        "neutral",
+    )
     assert memory_impl._metric_direction("metrics.success_steps") == "neutral"
 
 
@@ -203,11 +208,19 @@ def test_metric_aliases_and_repeated_success_rate_are_deduplicated() -> None:
 
     result = mem.explain_regression_data("candidate", "base")
 
-    assert [item["metric"] for item in result["metric_evidence"]].count("success_rate") == 1
-    assert [item["metric"] for item in result["metric_evidence"]].count("timestamp") == 1
-    success = next(item for item in result["metric_evidence"] if item["metric"] == "success_rate")
+    assert [item["metric"] for item in result["metric_evidence"]].count(
+        "success_rate"
+    ) == 1
+    assert [item["metric"] for item in result["metric_evidence"]].count(
+        "timestamp"
+    ) == 1
+    success = next(
+        item for item in result["metric_evidence"] if item["metric"] == "success_rate"
+    )
     assert success["field"] == "metrics.success_rate"
-    timestamp = next(item for item in result["metric_evidence"] if item["metric"] == "timestamp")
+    timestamp = next(
+        item for item in result["metric_evidence"] if item["metric"] == "timestamp"
+    )
     assert timestamp["category"] == "counter"
     assert timestamp["assessment"] == "neutral"
 

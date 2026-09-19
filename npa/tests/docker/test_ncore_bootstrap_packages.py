@@ -25,15 +25,25 @@ def apt_script(tmp_path, monkeypatch):
     upstream = tmp_path / "upstream"
     upstream.mkdir()
     template = "prefix_cmd() { printf '%s' sudo; }\n"
-    template += "".join("                " + line for line in APT.splitlines(keepends=True))
+    template += "".join(
+        "                " + line for line in APT.splitlines(keepends=True)
+    )
     template += "                {% if k8s_enable_docker_all %}\n"
     ssh = SSH + "$(prefix_cmd) mkdir -p /var/run/sshd; exit 99"
-    sources = {"kubernetes-ray.yml.j2": template, "instance.py": f"install_ssh_k8s_cmd = {ssh!r}\n"}
+    sources = {
+        "kubernetes-ray.yml.j2": template,
+        "instance.py": f"install_ssh_k8s_cmd = {ssh!r}\n",
+    }
     records = []
     for name, contents in sources.items():
         raw = contents.encode()
         (upstream / name).write_bytes(raw)
-        records.append({"url": "https://example.invalid/" + name, "sha256": hashlib.sha256(raw).hexdigest()})
+        records.append(
+            {
+                "url": "https://example.invalid/" + name,
+                "sha256": hashlib.sha256(raw).hexdigest(),
+            }
+        )
     lock = tmp_path / "npa/docker/workbench/ncore/base-source-lock.json"
     lock.parent.mkdir(parents=True)
     lock.write_text(json.dumps({"bootstrap": {"upstream": records}}))
@@ -57,7 +67,9 @@ def package_database(tmp_path):
             pytest.skip(f"requires the real Debian {name} executable")
     database = tmp_path / "dpkg"
     database.mkdir()
-    (database / "status").write_text("".join(_package_record(name) for name in PACKAGES))
+    (database / "status").write_text(
+        "".join(_package_record(name) for name in PACKAGES)
+    )
     return database
 
 
@@ -73,8 +85,20 @@ def overflowing_database(package_database):
 
 def _bash(script, database):
     return subprocess.run(
-        ["bash", "--noprofile", "--norc", "-c", script, "bootstrap-packages", str(database)],
-        cwd=ROOT, env=ENVIRONMENT, capture_output=True, text=True, check=False,
+        [
+            "bash",
+            "--noprofile",
+            "--norc",
+            "-c",
+            script,
+            "bootstrap-packages",
+            str(database),
+        ],
+        cwd=ROOT,
+        env=ENVIRONMENT,
+        capture_output=True,
+        text=True,
+        check=False,
     )
 
 
@@ -93,15 +117,21 @@ sudo() {
   esac
 }
 """
-    return _bash(setup + query_override + apt_script + "printf 'bootstrap-ready\\n'\n", database)
+    return _bash(
+        setup + query_override + apt_script + "printf 'bootstrap-ready\\n'\n", database
+    )
 
 
 def test_legacy_package_pipeline_fails_after_successful_match(overflowing_database):
-    inventory = _bash('set -euo pipefail\ndpkg --admindir="$1" -l\n', overflowing_database)
+    inventory = _bash(
+        'set -euo pipefail\ndpkg --admindir="$1" -l\n', overflowing_database
+    )
     assert inventory.returncode == 0, inventory.stderr
     assert len(inventory.stdout.encode()) > 1024 * 1024
     for package in PACKAGES:
-        assert any(line.startswith(f"ii  {package} ") for line in inventory.stdout.splitlines())
+        assert any(
+            line.startswith(f"ii  {package} ") for line in inventory.stdout.splitlines()
+        )
     script = """set -euo pipefail
 trap 'printf "pipeline=%s statuses=%s\\n" "$?" "${PIPESTATUS[*]}"' ERR
 dpkg --admindir="$1" -l | grep -q "^ii  curl "
@@ -113,23 +143,41 @@ printf 'unexpected-success\\n'
     assert result.stderr == ""
 
 
-def test_generated_bootstrap_accepts_installed_packages_in_large_inventory(apt_script, overflowing_database):
+def test_generated_bootstrap_accepts_installed_packages_in_large_inventory(
+    apt_script, overflowing_database
+):
     assert APT in apt_script and SSH in apt_script
     result = _bootstrap_probe(apt_script, overflowing_database)
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
-        "upstream-apt", "upstream-ssh", "apt-get-check", "dpkg-audit", "bootstrap-ready",
+        "upstream-apt",
+        "upstream-ssh",
+        "apt-get-check",
+        "dpkg-audit",
+        "bootstrap-ready",
     ]
 
 
 @pytest.mark.parametrize("package", PACKAGES)
-@pytest.mark.parametrize("status", [
-    None, "deinstall ok config-files", "install ok not-installed", "install ok unpacked",
-    "install ok half-installed", "install ok half-configured", "install ok triggers-awaited",
-    "install ok triggers-pending", "install reinstreq installed",
-])
+@pytest.mark.parametrize(
+    "status",
+    [
+        None,
+        "deinstall ok config-files",
+        "install ok not-installed",
+        "install ok unpacked",
+        "install ok half-installed",
+        "install ok half-configured",
+        "install ok triggers-awaited",
+        "install ok triggers-pending",
+        "install reinstreq installed",
+    ],
+)
 def test_generated_bootstrap_rejects_each_missing_or_unconfigured_package(
-    apt_script, package_database, package, status,
+    apt_script,
+    package_database,
+    package,
+    status,
 ):
     records = [_package_record(name) for name in PACKAGES if name != package]
     if status is not None:
@@ -141,7 +189,9 @@ def test_generated_bootstrap_rejects_each_missing_or_unconfigured_package(
 
 
 @pytest.mark.parametrize("package", PACKAGES)
-def test_generated_bootstrap_rejects_query_failure_after_installed_output(apt_script, package_database, package):
+def test_generated_bootstrap_rejects_query_failure_after_installed_output(
+    apt_script, package_database, package
+):
     query = f"""dpkg-query() {{
   command dpkg-query --admindir="$database" "$@"
   if [ "${{@: -1}}" = "{package}" ]; then
@@ -156,7 +206,9 @@ def test_generated_bootstrap_rejects_query_failure_after_installed_output(apt_sc
     assert result.stderr == "query-failed-after-output\n"
 
 
-def test_generated_bootstrap_rejects_real_query_database_error(apt_script, package_database):
+def test_generated_bootstrap_rejects_real_query_database_error(
+    apt_script, package_database
+):
     (package_database / "status").write_text("invalid dpkg status record\n")
     result = _bootstrap_probe(apt_script, package_database)
     assert result.returncode == 2

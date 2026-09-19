@@ -1,0 +1,16 @@
+{
+  "format": "yuv420p-visible-planes",
+  "source_revision": "728583b5eaf9e739a7f119e2def466fa1d552402",
+  "cameras": {
+    "top": {
+      "decoded_yuv420p_sha256": "11a1a214834249452af7efbfa9c7d7cd65aa591a5e866e4765d750d81231f671",
+      "clip_sha256": "702e4dc0f516db755d431c78dcf470a14a307ec4925ff2d29772d4bebb45da76",
+      "frame_count": 454
+    },
+    "wrist": {
+      "decoded_yuv420p_sha256": "f646f94c86072e90f0495d032d240e2080fd887317a07faa2d3999fc1b39a706",
+      "clip_sha256": "8023f3734ab7963186347cc3fd7abfef45f9fa2d92edc855beb30dc90478dcea",
+      "frame_count": 454
+    }
+  }
+}

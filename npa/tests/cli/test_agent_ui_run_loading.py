@@ -62,14 +62,16 @@ def test_artifact_filters_reuse_any_source_qualified_inventory() -> None:
     assert "context.reuseInventory || context.completeInventory" in loader
     assert "if (!data)" in loader
     assert "activeArtifactInventoryPage = data" in loader
-    assert "activeArtifactInventoryComplete = data.pagination_complete === true" in loader
+    assert (
+        "activeArtifactInventoryComplete = data.pagination_complete === true" in loader
+    )
 
 
 def test_default_inventory_is_lazy_and_list_artifacts_resumes_cached_cursor() -> None:
     ui = _ui()
-    wiring = ui.split(
-        'bindClick("artifactLoadRunArtifacts"', 1
-    )[1].split('bindClick("loadRerunViewer"', 1)[0]
+    wiring = ui.split('bindClick("artifactLoadRunArtifacts"', 1)[1].split(
+        'bindClick("loadRerunViewer"', 1
+    )[0]
     selector = ui.split("async function _loadSelectedRun", 1)[1].split(
         "function normalizeStageStatus", 1
     )[0]
@@ -78,9 +80,9 @@ def test_default_inventory_is_lazy_and_list_artifacts_resumes_cached_cursor() ->
     )[0]
 
     assert "completeSelectedArtifactInventory" in wiring
-    complete_inventory = ui.split("function completeSelectedArtifactInventory", 1)[1].split(
-        "async function loadArtifactsForSelectedRun", 1
-    )[0]
+    complete_inventory = ui.split("function completeSelectedArtifactInventory", 1)[
+        1
+    ].split("async function loadArtifactsForSelectedRun", 1)[0]
     assert "completeInventory: true" in complete_inventory
     assert "deferInventoryCompletion: true" in selector
     assert "seededPage = cachedInventory" in loader
@@ -98,7 +100,9 @@ def test_superseded_direct_inventory_does_not_fall_back_and_clear_selection() ->
 
     assert "if (loaded === false)" in loader
     assert "artifacts_loaded: false, superseded: true" in loader
-    assert loader.index("if (loaded === false)") < loader.index("const dataPromise = loadSelectedRun")
+    assert loader.index("if (loaded === false)") < loader.index(
+        "const dataPromise = loadSelectedRun"
+    )
 
 
 def test_newer_run_selection_supersedes_stale_responses() -> None:
@@ -128,7 +132,9 @@ def test_superseded_local_demo_cannot_reach_final_refresh() -> None:
     )[0]
 
     final_guard = local_demo.rindex("if (!isCurrent()) return null;")
-    details_guard = local_demo.index("if (!isCurrent()) return null;", local_demo.index("await loadRunDetails"))
+    details_guard = local_demo.index(
+        "if (!isCurrent()) return null;", local_demo.index("await loadRunDetails")
+    )
     assert details_guard < local_demo.index("await bestEffortMountRerun")
     assert final_guard > local_demo.index("await bestEffortMountRerun")
     assert final_guard < local_demo.index("await refresh();")

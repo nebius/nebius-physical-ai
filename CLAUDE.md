@@ -114,6 +114,8 @@ making architecture, review, or domain judgments.
   operator/dev VM.
 - `skills/workflows/author-npa-workflow/SKILL.md`: author and validate
   declarative `npa.workflow/v0.0.1` specs (toolRef catalog, validate/plan/run CLI).
+- `skills/workflows/antioch-workbench/SKILL.md`: Antioch CLI authentication,
+  XR1 collection and evaluation, signed Nebius S3 transfers, and fine-tuning.
 - `skills/workflows/generate-npa-workflow/SKILL.md`: design new creative
  npa.workflow pipelines from the workbench tool catalog.
 - `skills/workflows/diagram-to-npa-workflow/SKILL.md`: turn an architecture

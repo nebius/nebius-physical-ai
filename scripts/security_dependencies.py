@@ -21,12 +21,19 @@ except ImportError:
 
 def _run(arguments: list[str], directory: Path) -> None:
     environment = {
-        key: value for key, value in os.environ.items()
+        key: value
+        for key, value in os.environ.items()
         if not key.startswith(("UV_", "PIP_", "TRIVY_"))
     }
     with (directory / "commands.log").open("a") as log:
-        result = subprocess.run(arguments, cwd=directory, env=environment,
-                                stdout=log, stderr=log, check=False)
+        result = subprocess.run(
+            arguments,
+            cwd=directory,
+            env=environment,
+            stdout=log,
+            stderr=log,
+            check=False,
+        )
     if result.returncode:
         raise RuntimeError(f"{arguments[0]} failed; inspect private commands.log")
 
@@ -35,7 +42,9 @@ def _exact_pins(text: str) -> list[str]:
     pins = []
     for line in text.replace("\\\n", "").splitlines():
         declaration = re.split(r"\s+#", line, maxsplit=1)[0].strip()
-        declaration = re.split(r"\s+--(?:hash|config-settings)(?:=|\s)", declaration, maxsplit=1)[0]
+        declaration = re.split(
+            r"\s+--(?:hash|config-settings)(?:=|\s)", declaration, maxsplit=1
+        )[0]
         if not declaration or declaration.startswith(("#", "-")):
             continue
         try:
@@ -65,29 +74,47 @@ def _validate_npm_manifests(root: Path) -> None:
         lock = json.loads(lock_path.read_text())
         declared = lock.get("packages", {}).get("")
         if not isinstance(declared, dict):
-            raise TypeError("npm package lock is missing its root dependency declarations")
-        if any(project.get(section, {}) != declared.get(section, {}) for section in sections):
-            raise ValueError("npm dependency declarations and package lock are out of sync")
+            raise TypeError(
+                "npm package lock is missing its root dependency declarations"
+            )
+        if any(
+            project.get(section, {}) != declared.get(section, {})
+            for section in sections
+        ):
+            raise ValueError(
+                "npm dependency declarations and package lock are out of sync"
+            )
         _require_direct_packages(project, lock["packages"], sections)
 
 
-def _require_direct_packages(project: dict, packages: dict, sections: tuple[str, ...]) -> None:
+def _require_direct_packages(
+    project: dict, packages: dict, sections: tuple[str, ...]
+) -> None:
     for section in sections:
         for name, declaration in project.get(section, {}).items():
             version = packages.get(f"node_modules/{name}", {}).get("version")
             if not version:
-                raise ValueError("npm package lock is missing a resolved direct dependency")
-            exact_version = re.fullmatch(r"\d+\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?", declaration)
+                raise ValueError(
+                    "npm package lock is missing a resolved direct dependency"
+                )
+            exact_version = re.fullmatch(
+                r"\d+\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?", declaration
+            )
             if exact_version and version != declaration:
-                raise ValueError("npm resolved direct dependency contradicts its exact version pin")
+                raise ValueError(
+                    "npm resolved direct dependency contradicts its exact version pin"
+                )
 
 
 def _resolve_project(project: dict, output: Path, cache: Path) -> Path:
     declarations = project["dependencies"] + project.get(
-        "optional-dependencies", {}).get("dev", [])
+        "optional-dependencies", {}
+    ).get("dev", [])
     for declaration in declarations:
         if Requirement(declaration).url:
-            raise ValueError("Core/development dependencies must use package index requirements")
+            raise ValueError(
+                "Core/development dependencies must use package index requirements"
+            )
     content = "\n".join(sorted(set(declarations))) + "\n"
     digest = hashlib.sha256(content.encode()).hexdigest()
     resolved = cache / f"{digest}.txt"
@@ -95,9 +122,24 @@ def _resolve_project(project: dict, output: Path, cache: Path) -> Path:
         return resolved
     source = output / "project.in"
     source.write_text(content)
-    _run(["uv", "pip", "compile", str(source), "--no-config", "--no-sources",
-          "--no-build", "--python-version", "3.12", "--default-index",
-          "https://pypi.org/simple", "--output-file", str(resolved)], output)
+    _run(
+        [
+            "uv",
+            "pip",
+            "compile",
+            str(source),
+            "--no-config",
+            "--no-sources",
+            "--no-build",
+            "--python-version",
+            "3.12",
+            "--default-index",
+            "https://pypi.org/simple",
+            "--output-file",
+            str(resolved),
+        ],
+        output,
+    )
     return resolved
 
 
@@ -112,7 +154,11 @@ def _inventory(root: Path, output: Path, cache: Path) -> dict[str, str]:
             destination = output / "inputs" / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, destination)
-        elif "requirements" in source.name and source.suffix in {".txt", ".lock", ".in"}:
+        elif "requirements" in source.name and source.suffix in {
+            ".txt",
+            ".lock",
+            ".in",
+        }:
             destination = output / "inputs" / relative / "requirements.txt"
             _write_pins(destination, _exact_pins(source.read_text()))
         elif source.name == "pyproject.toml":
@@ -131,7 +177,9 @@ def _inventory(root: Path, output: Path, cache: Path) -> dict[str, str]:
         resolved = _resolve_project(project, output, cache)
         destination = output / "inputs/npa-resolved/requirements.txt"
         _write_pins(destination, _exact_pins(resolved.read_text()))
-        inventory["npa-resolved/requirements.txt"] = "npa/pyproject.toml (resolved core + dev)"
+        inventory["npa-resolved/requirements.txt"] = (
+            "npa/pyproject.toml (resolved core + dev)"
+        )
     return inventory
 
 
@@ -145,20 +193,33 @@ def _findings(report: dict, inventory: dict[str, str]) -> list[dict]:
             package = vulnerability["PkgName"]
             version = vulnerability["InstalledVersion"]
             rule = vulnerability["VulnerabilityID"]
-            findings.append({"scanner": "trivy", "path": path, "rule": rule,
-                             "identity": f"{package}=={version}:{rule}", "line": 1,
-                             "message": f"{package}=={version}; fixed: "
-                             f"{vulnerability.get('FixedVersion') or 'not available'}"})
+            findings.append(
+                {
+                    "scanner": "trivy",
+                    "path": path,
+                    "rule": rule,
+                    "identity": f"{package}=={version}:{rule}",
+                    "line": 1,
+                    "message": f"{package}=={version}; fixed: "
+                    f"{vulnerability.get('FixedVersion') or 'not available'}",
+                }
+            )
     return findings
 
 
 def _expected_packages(source: Path) -> set[tuple[str, str]]:
     if source.name == "requirements.txt":
-        return {(canonicalize_name(pin.split("==")[0]), pin.split("==")[1])
-                for pin in _exact_pins(source.read_text())}
+        return {
+            (canonicalize_name(pin.split("==")[0]), pin.split("==")[1])
+            for pin in _exact_pins(source.read_text())
+        }
     lock = json.loads(source.read_text())
-    if lock.get("lockfileVersion") not in (2, 3) or not isinstance(lock.get("packages"), dict):
-        raise ValueError("npm dependencies require a complete version 2 or 3 package lock")
+    if lock.get("lockfileVersion") not in (2, 3) or not isinstance(
+        lock.get("packages"), dict
+    ):
+        raise ValueError(
+            "npm dependencies require a complete version 2 or 3 package lock"
+        )
     packages = set()
     for path, package in lock["packages"].items():
         if not path or package.get("link"):
@@ -173,7 +234,8 @@ def _validate_coverage(report: dict, inventory: dict[str, str], output: Path) ->
     for target in report["Results"]:
         observed[target["Target"]] = {
             (canonicalize_name(package["Name"]), package["Version"])
-            for package in target.get("Packages", [])}
+            for package in target.get("Packages", [])
+        }
     for target, manifest in inventory.items():
         expected = _expected_packages(output / "inputs" / target)
         if expected - observed.get(target, set()):
@@ -182,8 +244,9 @@ def _validate_coverage(report: dict, inventory: dict[str, str], output: Path) ->
 
 def _scanner_versions(output: Path) -> None:
     for scanner, expected in (("trivy", "Version: 0.74.0"), ("uv", "uv 0.12.5")):
-        result = subprocess.run([scanner, "--version"], check=True,
-                                capture_output=True, text=True)
+        result = subprocess.run(
+            [scanner, "--version"], check=True, capture_output=True, text=True
+        )
         if not result.stdout.startswith(expected):
             raise RuntimeError(f"Install the pinned {scanner} version")
         (output / f"{scanner}-version.txt").write_text(result.stdout)
@@ -211,12 +274,31 @@ def scan_dependencies(root: Path, output: Path, cache: Path) -> list[dict]:
         return []
     (output / "empty.yaml").write_text("{}\n")
     (output / "empty.ignore").write_text("")
-    arguments = ["trivy", "fs", "--config", str(output / "empty.yaml"),
-                 "--ignorefile", str(output / "empty.ignore"), "--scanners", "vuln",
-                 "--pkg-types", "library", "--include-dev-deps", "--ignore-unfixed=false",
-                 "--severity", "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL", "--disable-telemetry",
-                 "--cache-dir", str(cache / "trivy"), "--format", "json", "--output",
-                 str(output / "trivy.json"), "--exit-code", "0"]
+    arguments = [
+        "trivy",
+        "fs",
+        "--config",
+        str(output / "empty.yaml"),
+        "--ignorefile",
+        str(output / "empty.ignore"),
+        "--scanners",
+        "vuln",
+        "--pkg-types",
+        "library",
+        "--include-dev-deps",
+        "--ignore-unfixed=false",
+        "--severity",
+        "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL",
+        "--disable-telemetry",
+        "--cache-dir",
+        str(cache / "trivy"),
+        "--format",
+        "json",
+        "--output",
+        str(output / "trivy.json"),
+        "--exit-code",
+        "0",
+    ]
     if (cache / "trivy/db/trivy.db").exists():
         arguments.append("--skip-db-update")
     _run(arguments + [str(output / "inputs")], output)

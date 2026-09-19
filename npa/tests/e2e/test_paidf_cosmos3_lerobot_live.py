@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 import pytest
 
+from .paidf_runtime_audit import assert_completed_fresh_runtime
 from .test_npa_workflow_submit_live_e2e import _assert_paidf_live_artifacts
 
 
@@ -42,7 +43,7 @@ def test_completed_public_lerobot_v3_pipeline() -> None:
 
     runtime = read("npa-workflow/runtime.json")
     assert runtime["status"] == "succeeded" and runtime["run_id"] == run_id
-    assert all(wave["status"] == "succeeded" for wave in runtime["waves"])
+    assert_completed_fresh_runtime(client, parsed.netloc, prefix, runtime)
     if os.environ.get("NPA_E2E_PAIDF_LEROBOT_FRESH_AFTER"):
         _assert_fresh_run(client, parsed.netloc, run_id, runtime["waves"])
     provenance = read("input/provenance.json")
@@ -51,8 +52,11 @@ def test_completed_public_lerobot_v3_pipeline() -> None:
     assert provenance["camera"] == "observation.images.top"
     _assert_example_timeline(read)
     _assert_paidf_live_artifacts(
-        spec="paidf-cosmos3.yaml", waves=runtime["waves"], bucket=parsed.netloc,
-        run_id=run_id, e2e_project=project,
+        spec="paidf-cosmos3.yaml",
+        waves=runtime["waves"],
+        bucket=parsed.netloc,
+        run_id=run_id,
+        e2e_project=project,
     )
 
 
@@ -71,7 +75,9 @@ def _assert_example_timeline(read) -> None:
 
 
 def _assert_fresh_run(client, bucket, run_id, waves) -> None:
-    fresh_after = datetime.fromisoformat(os.environ["NPA_E2E_PAIDF_LEROBOT_FRESH_AFTER"])
+    fresh_after = datetime.fromisoformat(
+        os.environ["NPA_E2E_PAIDF_LEROBOT_FRESH_AFTER"]
+    )
     assert fresh_after.tzinfo is not None, "Freshness timestamp must include UTC offset"
     assert all(wave["replayed"] is False for wave in waves)
     assert all(wave["adopted"] is False for wave in waves)

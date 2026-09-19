@@ -109,12 +109,16 @@ def check_start_server(state: SmokeState) -> CheckResult:
             )
         try:
             health = _request_json("GET", f"{_base_url(state)}/health", timeout=5)
-            return CheckResult("start LanceDB server", True, json.dumps(health, sort_keys=True))
+            return CheckResult(
+                "start LanceDB server", True, json.dumps(health, sort_keys=True)
+            )
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
             last_error = _format_exception(exc)
             time.sleep(1)
     return CheckResult(
-        "start LanceDB server", False, f"timed out waiting for /health; last error: {last_error}"
+        "start LanceDB server",
+        False,
+        f"timed out waiting for /health; last error: {last_error}",
     )
 
 

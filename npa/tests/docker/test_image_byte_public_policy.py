@@ -15,7 +15,9 @@ from test_image_byte_adjudication import W, record  # noqa: E402
 def test_complete_shipped_catalog_compiles_with_all_bound_proofs(tmp_path, monkeypatch):
     """Check the real evidence graph with the production proof validator."""
     catalog = json.loads(
-        (ROOT / "npa/scripts/image_byte_scan/public_policies/curobo-v2.json").read_text()
+        (
+            ROOT / "npa/scripts/image_byte_scan/public_policies/curobo-v2.json"
+        ).read_text()
     )
     loaded = set()
     reviewer = object.__new__(P.FreshPolicyReview)

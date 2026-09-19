@@ -16,8 +16,9 @@ from security_source import scan_source
 
 
 def _git(root: Path, *arguments: str) -> bytes:
-    return subprocess.run(["git", "-C", str(root), *arguments], check=True,
-                          stdout=subprocess.PIPE).stdout
+    return subprocess.run(
+        ["git", "-C", str(root), *arguments], check=True, stdout=subprocess.PIPE
+    ).stdout
 
 
 def _tree_entries(root: Path, commit: str) -> list[tuple[str, str]]:
@@ -36,7 +37,9 @@ def _tree_entries(root: Path, commit: str) -> list[tuple[str, str]]:
     return entries
 
 
-def _write_blobs(entries: list[tuple[str, str]], stream: io.BytesIO, destination: Path) -> None:
+def _write_blobs(
+    entries: list[tuple[str, str]], stream: io.BytesIO, destination: Path
+) -> None:
     for relative, expected_digest in entries:
         digest, kind, size = stream.readline().decode().split()
         if digest != expected_digest or kind != "blob":
@@ -52,12 +55,18 @@ def _write_blobs(entries: list[tuple[str, str]], stream: io.BytesIO, destination
 
 
 def _snapshot_revision(root: Path, revision: str, destination: Path) -> str:
-    commit = _git(root, "rev-parse", "--verify", f"{revision}^{{commit}}").decode().strip()
+    commit = (
+        _git(root, "rev-parse", "--verify", f"{revision}^{{commit}}").decode().strip()
+    )
     entries = _tree_entries(root, commit)
     requested = "".join(f"{digest}\n" for _, digest in entries).encode()
     # Reading raw blobs prevents export-ignore/export-subst from hiding candidate code.
-    result = subprocess.run(["git", "-C", str(root), "cat-file", "--batch"],
-                            input=requested, stdout=subprocess.PIPE, check=True)
+    result = subprocess.run(
+        ["git", "-C", str(root), "cat-file", "--batch"],
+        input=requested,
+        stdout=subprocess.PIPE,
+        check=True,
+    )
     _write_blobs(entries, io.BytesIO(result.stdout), destination)
     return commit
 
@@ -88,8 +97,11 @@ def regressions(base: list[dict], candidate: list[dict]) -> list[dict]:
     Raises:
         KeyError: A scanner omitted a required identity field.
     """
+
     def key(finding: dict) -> tuple:
-        return tuple(finding[field] for field in ("scanner", "path", "rule", "identity"))
+        return tuple(
+            finding[field] for field in ("scanner", "path", "rule", "identity")
+        )
 
     remaining = collections.Counter(key(finding) for finding in base)
     added = []
@@ -114,10 +126,16 @@ def _scan(root: Path, output: Path, cache: Path) -> list[dict]:
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", required=True, help="Actual target branch commit")
-    parser.add_argument("--head", help="Candidate merge commit; defaults to working files")
+    parser.add_argument(
+        "--head", help="Candidate merge commit; defaults to working files"
+    )
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
-    parser.add_argument("--output-dir", type=Path, required=True,
-                        help="New private directory outside the checkout")
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        required=True,
+        help="New private directory outside the checkout",
+    )
     return parser.parse_args()
 
 
@@ -125,8 +143,10 @@ def _report_regressions(added: list[dict], summary: dict, output: Path) -> int:
     summary["regressions"] = added
     (output / "summary.json").write_text(json.dumps(summary, indent=2))
     for finding in added:
-        print(f"{finding['path']}:{finding['line']}: {finding['scanner']} "
-              f"{finding['rule']}: {finding['message']}")
+        print(
+            f"{finding['path']}:{finding['line']}: {finding['scanner']} "
+            f"{finding['rule']}: {finding['message']}"
+        )
     print(f"Security regression gate: {len(added)} new findings")
     return int(bool(added))
 
@@ -156,15 +176,30 @@ def main() -> int:
             _snapshot_working(root, output / "candidate")
             head_commit = "working-files"
         base = _scan(output / "base", output / "base-report", output / "cache")
-        candidate = _scan(output / "candidate", output / "candidate-report", output / "cache")
+        candidate = _scan(
+            output / "candidate", output / "candidate-report", output / "cache"
+        )
         added = regressions(base, candidate)
-        summary = {"base": base_commit, "head": head_commit, "base_findings": len(base),
-                   "candidate_findings": len(candidate)}
+        summary = {
+            "base": base_commit,
+            "head": head_commit,
+            "base_findings": len(base),
+            "candidate_findings": len(candidate),
+        }
         return _report_regressions(added, summary, output)
-    except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.CalledProcessError) as error:
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        RuntimeError,
+        subprocess.CalledProcessError,
+    ) as error:
         (output / "failure.txt").write_text(str(error))
-        print(f"Security gate could not complete ({type(error).__name__}); "
-              "rerun the documented command locally and inspect private failure.txt and scanner logs")
+        print(
+            f"Security gate could not complete ({type(error).__name__}); "
+            "rerun the documented command locally and inspect private failure.txt and scanner logs"
+        )
         return 2
 
 

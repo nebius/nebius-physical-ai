@@ -17,7 +17,10 @@ from npa.workbench.storage_scope import (
 )
 
 _INPUT_FIELDS = {
-    ("vision_path",), ("sound_path",), ("action_path",), ("prompt_path",),
+    ("vision_path",),
+    ("sound_path",),
+    ("action_path",),
+    ("prompt_path",),
     ("negative_prompt_file",),
     *((kind, "control_path") for kind in ("edge", "blur", "depth", "seg", "wsm")),
 }
@@ -33,7 +36,9 @@ def _download_uri(target: AuthorizedUri) -> str:
         or parsed.query
         or parsed.fragment
     ):
-        raise StorageAuthorizationError("conditioning S3 key cannot be downloaded exactly")
+        raise StorageAuthorizationError(
+            "conditioning S3 key cannot be downloaded exactly"
+        )
     return uri
 
 
@@ -58,7 +63,10 @@ def validate_sample_s3_keys(raw: dict[str, Any]) -> None:
 
 
 def stage_sample_inputs(
-    raw: dict[str, Any], destination: Path, *, scope: StorageScope,
+    raw: dict[str, Any],
+    destination: Path,
+    *,
+    scope: StorageScope,
     storage_client: Any = None,
 ) -> dict[str, Any]:
     """Authorize every input before allowing upstream validators to touch it.
@@ -89,16 +97,25 @@ def stage_sample_inputs(
             for key, child in value.items():
                 field = (*location, key)
                 if key in {"defaults_file", "output_dir"} and child is not None:
-                    raise StorageAuthorizationError("sample filesystem configuration is server-owned")
+                    raise StorageAuthorizationError(
+                        "sample filesystem configuration is server-owned"
+                    )
                 if field in _INPUT_FIELDS and child is not None:
                     if not isinstance(child, str) or not child.startswith("s3://"):
-                        raise StorageAuthorizationError("sample inputs require an authorized s3:// object")
+                        raise StorageAuthorizationError(
+                            "sample inputs require an authorized s3:// object"
+                        )
                     target = scope.authorize(child, operation="read")
                     if not target.key or child.endswith("/"):
-                        raise StorageAuthorizationError("sample inputs must identify a single S3 object")
+                        raise StorageAuthorizationError(
+                            "sample inputs must identify a single S3 object"
+                        )
                     _download_uri(target)
                     inputs.append((value, key, target))
-                elif key.endswith(("_path", "_file", "_dir", "_url")) and child is not None:
+                elif (
+                    key.endswith(("_path", "_file", "_dir", "_url"))
+                    and child is not None
+                ):
                     raise StorageAuthorizationError("unsupported sample file input")
                 else:
                     inspect(child, field)

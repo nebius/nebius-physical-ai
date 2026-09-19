@@ -44,9 +44,7 @@ def _tar(path: Path, members: dict[str, bytes]) -> Path:
     return path
 
 
-def _docker_save(
-    path: Path, *, layers: list[dict[str, bytes]], config: dict
-) -> Path:
+def _docker_save(path: Path, *, layers: list[dict[str, bytes]], config: dict) -> Path:
     layer_archives: list[tuple[str, bytes]] = []
     for index, members in enumerate(layers):
         stream = io.BytesIO()
@@ -56,7 +54,9 @@ def _docker_save(
                 info.size = len(payload)
                 layer.addfile(info, io.BytesIO(payload))
         layer_archives.append((f"layer-{index}/layer.tar", stream.getvalue()))
-    manifest = [{"Config": "config.json", "Layers": [name for name, _ in layer_archives]}]
+    manifest = [
+        {"Config": "config.json", "Layers": [name for name, _ in layer_archives]}
+    ]
     members = {
         "manifest.json": json.dumps(manifest).encode(),
         "config.json": json.dumps(config).encode(),

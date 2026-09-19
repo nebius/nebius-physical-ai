@@ -49,6 +49,7 @@ def source_bundle(recipe):
     Raises:
         None.
     """
+
     def copy_to(destination):
         """Copy canonical application source into a simulated worker package.
 
@@ -63,7 +64,11 @@ def source_bundle(recipe):
         for name in ("application.py", "worker.py", "validation.py"):
             shutil.copy2(recipe.directory / name, destination / name)
         shutil.copy2(recipe.udf_source, destination / "npa_lancedb_bdd100k_udfs.py")
-        return {path.name: recipe.validation.file_hash(path) for path in destination.iterdir()}
+        return {
+            path.name: recipe.validation.file_hash(path)
+            for path in destination.iterdir()
+        }
+
     return copy_to
 
 
@@ -93,7 +98,9 @@ def test_crop_edit_changes_real_pixels_and_restores_model_inputs(recipe):
     assert recipe.worker.preprocess_image(raw) == left
 
 
-def test_application_imports_real_udf_from_jobs_bundle(recipe, source_bundle, tmp_path, monkeypatch):
+def test_application_imports_real_udf_from_jobs_bundle(
+    recipe, source_bundle, tmp_path, monkeypatch
+):
     """Application imports real udf from jobs bundle.
 
     Args:
@@ -110,12 +117,19 @@ def test_application_imports_real_udf_from_jobs_bundle(recipe, source_bundle, tm
     import pyarrow as pa
 
     source_bundle(tmp_path)
-    monkeypatch.setattr(recipe.application, "__file__", "/unavailable-driver/ray-session/application.py")
+    monkeypatch.setattr(
+        recipe.application, "__file__", "/unavailable-driver/ray-session/application.py"
+    )
     monkeypatch.setattr(recipe.worker, "__file__", str(tmp_path / "worker.py"))
     monkeypatch.setitem(sys.modules, "npa_lancedb_bdd100k_udfs", None)
     udf = recipe.application.load_workbench_udf()
-    assert Path(udf.__file__).resolve() == (tmp_path / "npa_lancedb_bdd100k_udfs.py").resolve()
-    assert recipe.validation.file_hash(Path(udf.__file__)) == recipe.validation.file_hash(recipe.udf_source)
+    assert (
+        Path(udf.__file__).resolve()
+        == (tmp_path / "npa_lancedb_bdd100k_udfs.py").resolve()
+    )
+    assert recipe.validation.file_hash(
+        Path(udf.__file__)
+    ) == recipe.validation.file_hash(recipe.udf_source)
     batch = pa.record_batch({"image_bytes": [recipe.worker.render_record(42)]})
     assert udf.udf_dhash(batch).type == pa.int64()
     (tmp_path / "npa_lancedb_bdd100k_udfs.py").unlink()
@@ -128,8 +142,13 @@ def _import_actor_from_separate_file(recipe, source_bundle, tmp_path, monkeypatc
     bundle = tmp_path / "worker-runtime-env"
     manifest = source_bundle(bundle)
     actual_path = tmp_path / "imported_application.py"
-    actual_path.write_text((bundle / "application.py").read_text() + "\n# Distinguish imported source from neighboring package bytes.\n")
-    specification = importlib.util.spec_from_file_location("imported_application", actual_path)
+    actual_path.write_text(
+        (bundle / "application.py").read_text()
+        + "\n# Distinguish imported source from neighboring package bytes.\n"
+    )
+    specification = importlib.util.spec_from_file_location(
+        "imported_application", actual_path
+    )
     imported = importlib.util.module_from_spec(specification)
     monkeypatch.setitem(sys.modules, specification.name, imported)
     specification.loader.exec_module(imported)
@@ -154,7 +173,9 @@ def _install_provenance_runtime(monkeypatch):
         get_device_capability=lambda index: (12, 0),
     )
     torch = SimpleNamespace(
-        __version__="test-version", version=SimpleNamespace(cuda="test-version"), cuda=cuda,
+        __version__="test-version",
+        version=SimpleNamespace(cuda="test-version"),
+        cuda=cuda,
     )
     monkeypatch.setattr(importlib.metadata, "version", lambda name: "test-version")
     monkeypatch.setitem(sys.modules, "ray", ray)
@@ -193,11 +214,15 @@ def _model_snapshot_for_provenance(directory):
     checkpoint = directory / "model"
     checkpoint.mkdir()
     (checkpoint / "config.json").write_text('{"model_type":"clip"}')
-    (checkpoint / "pytorch_model.bin").write_bytes(b"test weights; no inference in this unit test")
+    (checkpoint / "pytorch_model.bin").write_bytes(
+        b"test weights; no inference in this unit test"
+    )
     return checkpoint
 
 
-def test_actor_provenance_hashes_actual_imported_application_not_neighbor(recipe, source_bundle, tmp_path, monkeypatch):
+def test_actor_provenance_hashes_actual_imported_application_not_neighbor(
+    recipe, source_bundle, tmp_path, monkeypatch
+):
     """Actor provenance hashes actual imported application not neighbor.
 
     Args:
@@ -211,7 +236,8 @@ def test_actor_provenance_hashes_actual_imported_application_not_neighbor(recipe
         AssertionError: The tested behavior differs from its required contract.
     """
     imported, actual_path, bundle, manifest = _import_actor_from_separate_file(
-        recipe, source_bundle, tmp_path, monkeypatch)
+        recipe, source_bundle, tmp_path, monkeypatch
+    )
     loads = _record_model_loads(imported, monkeypatch)
     _install_provenance_runtime(monkeypatch)
     checkpoint = _model_snapshot_for_provenance(tmp_path)
@@ -278,7 +304,10 @@ def test_checkpoint_replay_skips_actor_and_corruption_fails(recipe, tmp_path):
     identity = recipe.validation.checkpoint_identity(shard, "revision", "execution")
     data = tmp_path / "embeddings.parquet"
     data.write_bytes(b"checkpoint bytes")
-    receipt = {"identity": identity, "parquet_sha256": recipe.validation.file_hash(data)}
+    receipt = {
+        "identity": identity,
+        "parquet_sha256": recipe.validation.file_hash(data),
+    }
     recipe.validation.atomic_json(tmp_path / "commit.json", receipt)
 
     def _reject_duplicate_inference(*arguments):
@@ -287,18 +316,28 @@ def test_checkpoint_replay_skips_actor_and_corruption_fails(recipe, tmp_path):
 
     inference = SimpleNamespace(remote=_reject_duplicate_inference)
     forbidden_actor = SimpleNamespace(infer=inference)
-    cached, future = recipe.application.submit_shard(forbidden_actor, shard, tmp_path, "revision", "execution")
+    cached, future = recipe.application.submit_shard(
+        forbidden_actor, shard, tmp_path, "revision", "execution"
+    )
     assert cached["checkpoint_reused"] is True and future is None
     with pytest.raises(ValueError, match="identity differs"):
-        recipe.application.submit_shard(forbidden_actor, shard, tmp_path, "different-model", "execution")
+        recipe.application.submit_shard(
+            forbidden_actor, shard, tmp_path, "different-model", "execution"
+        )
     with pytest.raises(ValueError, match="identity differs"):
-        recipe.application.submit_shard(forbidden_actor, shard, tmp_path, "revision", "changed-weights-or-udf")
+        recipe.application.submit_shard(
+            forbidden_actor, shard, tmp_path, "revision", "changed-weights-or-udf"
+        )
     data.write_bytes(b"corrupted")
     with pytest.raises(ValueError, match="hash mismatch"):
-        recipe.application.submit_shard(forbidden_actor, shard, tmp_path, "revision", "execution")
+        recipe.application.submit_shard(
+            forbidden_actor, shard, tmp_path, "revision", "execution"
+        )
 
 
-def test_output_root_requires_matching_execution_identity(recipe, tmp_path, monkeypatch):
+def test_output_root_requires_matching_execution_identity(
+    recipe, tmp_path, monkeypatch
+):
     """Output root requires matching runtime and checkpoint-layout identity.
 
     Args:
@@ -316,7 +355,9 @@ def test_output_root_requires_matching_execution_identity(recipe, tmp_path, monk
     with pytest.raises(ValueError, match="different execution fingerprint"):
         recipe.validation.verify_execution(tmp_path, "different", layout)
     with pytest.raises(ValueError, match="different checkpoint layout"):
-        recipe.validation.verify_execution(tmp_path, "first", {"records": 4, "batch_size": 2})
+        recipe.validation.verify_execution(
+            tmp_path, "first", {"records": 4, "batch_size": 2}
+        )
     monkeypatch.setitem(sys.modules, "ray", SimpleNamespace())
     changed = SimpleNamespace(output_path=str(tmp_path), records=4, batch_size=2)
     with pytest.raises(ValueError, match="different checkpoint layout"):
@@ -327,7 +368,9 @@ def test_output_root_requires_matching_execution_identity(recipe, tmp_path, monk
         recipe.validation.verify_execution(tmp_path, "first", layout)
 
 
-def test_model_fingerprint_ignores_download_metadata_but_covers_model_bytes(recipe, tmp_path):
+def test_model_fingerprint_ignores_download_metadata_but_covers_model_bytes(
+    recipe, tmp_path
+):
     """Model fingerprint ignores download metadata but covers model bytes.
 
     Args:
@@ -363,6 +406,7 @@ def test_cleanup_attempts_all_actors_and_shutdown_after_first_kill_failure(recip
         AssertionError: The tested behavior differs from its required contract.
     """
     calls = []
+
     def kill(actor, **kwargs):
         """Record actor cleanup and raise the intended first-actor failure.
 
@@ -385,7 +429,9 @@ def test_cleanup_attempts_all_actors_and_shutdown_after_first_kill_failure(recip
     ray = SimpleNamespace(kill=kill, shutdown=_record_shutdown)
     errors = recipe.application.cleanup_actors(ray, ["first", "second"])
     assert calls == ["first", "second", "shutdown"]
-    assert errors == [{"operation": "kill actor", "actor_index": 0, "error_type": "RuntimeError"}]
+    assert errors == [
+        {"operation": "kill actor", "actor_index": 0, "error_type": "RuntimeError"}
+    ]
 
 
 def test_uncommitted_checkpoint_is_recomputed(recipe, tmp_path):
@@ -402,12 +448,15 @@ def test_uncommitted_checkpoint_is_recomputed(recipe, tmp_path):
     (tmp_path / "embeddings.parquet").write_bytes(b"partial without commit marker")
     shard = recipe.worker.preprocess_shard([4])
     calls = []
+
     def _record_inference(*arguments):
         calls.append(arguments)
         return "future"
 
     actor = SimpleNamespace(infer=SimpleNamespace(remote=_record_inference))
-    cached, future = recipe.application.submit_shard(actor, shard, tmp_path, "revision", "execution")
+    cached, future = recipe.application.submit_shard(
+        actor, shard, tmp_path, "revision", "execution"
+    )
     assert cached is None and future == "future" and len(calls) == 1
 
 
@@ -432,7 +481,14 @@ def test_real_parquet_checkpoint_lance_aggregation_and_retrieval(recipe, tmp_pat
         vector[index] = 1.0
         vectors = pa.array([vector.tolist()], type=pa.list_(pa.float32(), 512))
         path = tmp_path / "shards" / f"{index:06d}"
-        receipt = recipe.application.commit_shard(path, shard, vectors, {"inference_seconds": 0.1}, "model-revision", "execution")
+        receipt = recipe.application.commit_shard(
+            path,
+            shard,
+            vectors,
+            {"inference_seconds": 0.1},
+            "model-revision",
+            "execution",
+        )
         assert recipe.validation.read_checkpoint(path, receipt["identity"]) == receipt
         receipts.append(receipt)
     report = recipe.application.aggregate(tmp_path, receipts, 3)
@@ -493,13 +549,17 @@ def comparison_reports():
     """
     baseline = _baseline_application_report(_baseline_model_provenance())
     changed = copy.deepcopy(baseline)
-    changed.update(source_sha256="right", processed_hash="right-images", mean_embedding=[0.4, 0.1])
+    changed.update(
+        source_sha256="right", processed_hash="right-images", mean_embedding=[0.4, 0.1]
+    )
     for initialization in changed["model_initializations"]:
         initialization["source_sha256"] = "right"
     return baseline, changed, copy.deepcopy(baseline)
 
 
-def test_comparison_requires_changed_inference_and_restoration(recipe, comparison_reports):
+def test_comparison_requires_changed_inference_and_restoration(
+    recipe, comparison_reports
+):
     """Comparison requires changed inference and restoration.
 
     Args:
@@ -512,18 +572,44 @@ def test_comparison_requires_changed_inference_and_restoration(recipe, compariso
         pytest.fail.Exception: An expected exception is not raised.
     """
     base, changed, restored = comparison_reports
-    assert recipe.validation.compare_reports(base, changed, restored)["changed_mean_embedding_l2"] > 0.01
+    assert (
+        recipe.validation.compare_reports(base, changed, restored)[
+            "changed_mean_embedding_l2"
+        ]
+        > 0.01
+    )
     with pytest.raises(ValueError, match="meaningfully change"):
-        recipe.validation.compare_reports(base, {**changed, "mean_embedding": base["mean_embedding"]}, base)
+        recipe.validation.compare_reports(
+            base, {**changed, "mean_embedding": base["mean_embedding"]}, base
+        )
     with pytest.raises(ValueError, match="tolerance"):
-        recipe.validation.compare_reports(base, changed, {**base, "mean_embedding": [0.1, 0.3]})
+        recipe.validation.compare_reports(
+            base, changed, {**base, "mean_embedding": [0.1, 0.3]}
+        )
 
 
 @pytest.mark.parametrize("report_index", [0, 1, 2])
-@pytest.mark.parametrize("field", ["model_files", "model_config_sha256", "udf_sha256", "precision",
-                                   "gpu_capability", "python", "ray", "torch", "cuda",
-                                   "transformers", "pyarrow", "lancedb", "model_revision"])
-def test_comparison_rejects_model_or_runtime_drift_in_every_job_actor(recipe, comparison_reports, report_index, field):
+@pytest.mark.parametrize(
+    "field",
+    [
+        "model_files",
+        "model_config_sha256",
+        "udf_sha256",
+        "precision",
+        "gpu_capability",
+        "python",
+        "ray",
+        "torch",
+        "cuda",
+        "transformers",
+        "pyarrow",
+        "lancedb",
+        "model_revision",
+    ],
+)
+def test_comparison_rejects_model_or_runtime_drift_in_every_job_actor(
+    recipe, comparison_reports, report_index, field
+):
     """Comparison rejects model or runtime drift in every job actor.
 
     Args:
@@ -542,12 +628,19 @@ def test_comparison_rejects_model_or_runtime_drift_in_every_job_actor(recipe, co
         actor[field] = [*original, "changed"]
     else:
         actor[field] = original + "-changed"
-    with pytest.raises(ValueError, match="changed actual model/runtime|Actor model revision|different.*source than submitted"):
+    with pytest.raises(
+        ValueError,
+        match="changed actual model/runtime|Actor model revision|different.*source than submitted",
+    ):
         recipe.validation.compare_reports(*comparison_reports)
 
 
-@pytest.mark.parametrize("field", ["application_sha256", "validation_sha256", "udf_sha256"])
-def test_comparison_rejects_changing_other_application_modules(recipe, comparison_reports, field):
+@pytest.mark.parametrize(
+    "field", ["application_sha256", "validation_sha256", "udf_sha256"]
+)
+def test_comparison_rejects_changing_other_application_modules(
+    recipe, comparison_reports, field
+):
     """Comparison rejects changing other application modules.
 
     Args:
@@ -582,9 +675,14 @@ def test_comparison_rejects_missing_model_provenance(recipe, comparison_reports)
         recipe.validation.compare_reports(*comparison_reports)
 
 
-@pytest.mark.parametrize("filename,field", [("application.py", "application_sha256"),
-                                           ("validation.py", "validation_sha256"),
-                                           ("npa_lancedb_bdd100k_udfs.py", "udf_sha256")])
+@pytest.mark.parametrize(
+    "filename,field",
+    [
+        ("application.py", "application_sha256"),
+        ("validation.py", "validation_sha256"),
+        ("npa_lancedb_bdd100k_udfs.py", "udf_sha256"),
+    ],
+)
 @pytest.mark.parametrize("target", ["driver", "replacement_actor"])
 def test_report_rejects_unsubmitted_driver_or_replacement_actor_import(
     recipe, source_bundle, tmp_path, filename, field, target
@@ -604,7 +702,10 @@ def test_report_rejects_unsubmitted_driver_or_replacement_actor_import(
         pytest.fail.Exception: An expected exception is not raised.
     """
     manifest = source_bundle(tmp_path)
-    report = {field: manifest[name] for name, field in recipe.validation.SOURCE_HASH_FIELDS.items()}
+    report = {
+        field: manifest[name]
+        for name, field in recipe.validation.SOURCE_HASH_FIELDS.items()
+    }
     report["model_initializations"] = [dict(report), dict(report)]
     recipe.validation.verify_submitted_sources(report, manifest)
     if target == "driver":
@@ -615,7 +716,9 @@ def test_report_rejects_unsubmitted_driver_or_replacement_actor_import(
         recipe.validation.verify_submitted_sources(report, manifest)
 
 
-def test_comparison_checks_every_persisted_vector_even_when_means_match(recipe, tmp_path):
+def test_comparison_checks_every_persisted_vector_even_when_means_match(
+    recipe, tmp_path
+):
     """Comparison checks every persisted vector even when means match.
 
     Args:
@@ -631,9 +734,22 @@ def test_comparison_checks_every_persisted_vector_even_when_means_match(recipe, 
     import pyarrow.parquet as pq
 
     paths = [tmp_path / name for name in ("baseline.parquet", "changed.parquet")]
-    for path, vectors in zip(paths, ([[1.0, 0.0], [0.0, 1.0]], [[0.0, 1.0], [1.0, 0.0]]), strict=True):
-        pq.write_table(pa.table({"record_id": [0, 1], "input_sha256": ["first", "second"], "vector": vectors}), path)
-    assert recipe.validation.compare_vectors(*paths, changed=True)["compared_vectors"] == 2
+    for path, vectors in zip(
+        paths, ([[1.0, 0.0], [0.0, 1.0]], [[0.0, 1.0], [1.0, 0.0]]), strict=True
+    ):
+        pq.write_table(
+            pa.table(
+                {
+                    "record_id": [0, 1],
+                    "input_sha256": ["first", "second"],
+                    "vector": vectors,
+                }
+            ),
+            path,
+        )
+    assert (
+        recipe.validation.compare_vectors(*paths, changed=True)["compared_vectors"] == 2
+    )
     with pytest.raises(ValueError, match="Restored persisted vectors"):
         recipe.validation.compare_vectors(*paths, changed=False)
 
@@ -648,6 +764,7 @@ def test_barrier_uses_one_coordinator_clock_and_observes_overlap(recipe):
     Raises:
         AssertionError: The tested behavior differs from its required contract.
     """
+
     async def exercise():
         """Verify that one coordinator clock observes overlapping actor calls.
 
@@ -666,7 +783,10 @@ def test_barrier_uses_one_coordinator_clock_and_observes_overlap(recipe):
         await barrier.finish("second")
         result = await barrier.status()
         assert result["participants"] == 2 and result["overlap"]
-        assert [item["monotonic_ns"] for item in result["events"]] == sorted(item["monotonic_ns"] for item in result["events"])
+        assert [item["monotonic_ns"] for item in result["events"]] == sorted(
+            item["monotonic_ns"] for item in result["events"]
+        )
+
     asyncio.run(exercise())
 
 
@@ -688,7 +808,8 @@ def test_aggregation_rejects_a_removed_commit_marker(recipe, tmp_path):
     vectors = pyarrow.array([vector], type=pyarrow.list_(pyarrow.float32(), 512))
     directory = tmp_path / "shards" / "000000"
     receipt = recipe.application.commit_shard(
-        directory, shard, vectors, {"inference_seconds": 0.1}, "revision", "execution")
+        directory, shard, vectors, {"inference_seconds": 0.1}, "revision", "execution"
+    )
     (directory / "commit.json").unlink()
     with pytest.raises(ValueError, match="commit marker"):
         recipe.application.aggregate(tmp_path, [receipt], 1)
@@ -699,8 +820,12 @@ def _unexpected_cluster_connection(**arguments):
     pytest.fail("Invalid application GCS address reached ray.init")
 
 
-@pytest.mark.parametrize("address", ["", ":6381", "auto", "127.0.0.1:6380", "http://127.0.0.1:6381"])
-def test_entrypoint_rejects_invalid_application_gcs_before_connecting(recipe, tmp_path, monkeypatch, address):
+@pytest.mark.parametrize(
+    "address", ["", ":6381", "auto", "127.0.0.1:6380", "http://127.0.0.1:6381"]
+)
+def test_entrypoint_rejects_invalid_application_gcs_before_connecting(
+    recipe, tmp_path, monkeypatch, address
+):
     """Prevent invalid or management-runtime addresses from reaching Ray initialization.
 
     Args:

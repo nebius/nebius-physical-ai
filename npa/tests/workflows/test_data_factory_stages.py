@@ -44,6 +44,7 @@ def _mock_committed_manifest(
     """Make listed canonical test objects carry the real committed contract."""
 
     original = dfs._download_json
+
     def load(uri: str):
         if "cosmos_augmented/" in uri and uri.endswith("/manifest.json"):
             object_key = uri.split(f"s3://{bucket}/", 1)[-1]
@@ -145,16 +146,17 @@ def test_generate_configs_fans_out_coherent_profiles_and_distinct_seeds(
     )
 
     candidates = result["augmentations"]
-    assert len(
-        {
-            tuple(candidate[key] for key in dfs.APPEARANCE_VARIABLES)
-            for candidate in candidates
-        }
-    ) == 4
-    assert len({candidate["inference_seed"] for candidate in candidates}) == 4
-    assert all(
-        0 <= candidate["inference_seed"] < 2**31 for candidate in candidates
+    assert (
+        len(
+            {
+                tuple(candidate[key] for key in dfs.APPEARANCE_VARIABLES)
+                for candidate in candidates
+            }
+        )
+        == 4
     )
+    assert len({candidate["inference_seed"] for candidate in candidates}) == 4
+    assert all(0 <= candidate["inference_seed"] < 2**31 for candidate in candidates)
 
 
 def test_generate_configs_supports_a_shared_controlled_comparison_seed(
@@ -287,11 +289,31 @@ def test_candidate_selection_is_additive_and_preserves_complete_ranking_pool(
     augment_uri = "s3://b/run/cosmos_augmented/iteration-1/"
     selection_uri = "s3://b/run/selection/iteration-1/"
     source_rows = [
-        {"key": "run/cosmos_augmented/iteration-1/manifest.json", "size": 100, "etag": "m"},
-        {"key": "run/cosmos_augmented/iteration-1/candidate-a/augmented_video.mp4", "size": 200, "etag": "a"},
-        {"key": "run/cosmos_augmented/iteration-1/candidate-a/metadata.json", "size": 50, "etag": "am"},
-        {"key": "run/cosmos_augmented/iteration-1/candidate-b/augmented_video.mp4", "size": 210, "etag": "b"},
-        {"key": "run/cosmos_augmented/iteration-1/candidate-b/metadata.json", "size": 55, "etag": "bm"},
+        {
+            "key": "run/cosmos_augmented/iteration-1/manifest.json",
+            "size": 100,
+            "etag": "m",
+        },
+        {
+            "key": "run/cosmos_augmented/iteration-1/candidate-a/augmented_video.mp4",
+            "size": 200,
+            "etag": "a",
+        },
+        {
+            "key": "run/cosmos_augmented/iteration-1/candidate-a/metadata.json",
+            "size": 50,
+            "etag": "am",
+        },
+        {
+            "key": "run/cosmos_augmented/iteration-1/candidate-b/augmented_video.mp4",
+            "size": 210,
+            "etag": "b",
+        },
+        {
+            "key": "run/cosmos_augmented/iteration-1/candidate-b/metadata.json",
+            "size": 55,
+            "etag": "bm",
+        },
     ]
     destination_rows: list[dict[str, object]] = []
     manifest = {
@@ -304,9 +326,7 @@ def test_candidate_selection_is_additive_and_preserves_complete_ranking_pool(
             {
                 "clip": clip,
                 "variant_index": index,
-                "augmented_video_uri": (
-                    f"{augment_uri}{clip}/augmented_video.mp4"
-                ),
+                "augmented_video_uri": (f"{augment_uri}{clip}/augmented_video.mp4"),
                 "control_uris": {},
             }
             for index, clip in enumerate(("candidate-a", "candidate-b"))
@@ -360,12 +380,18 @@ def test_candidate_selection_is_additive_and_preserves_complete_ranking_pool(
     def upload(payload: dict, uri: str) -> str:
         if uri == f"{selection_uri}manifest.json":
             destination_rows.append(
-                {"key": "run/selection/iteration-1/manifest.json", "size": 100, "etag": "sm"}
+                {
+                    "key": "run/selection/iteration-1/manifest.json",
+                    "size": 100,
+                    "etag": "sm",
+                }
             )
         return uri
 
     monkeypatch.setattr(dfs, "_inventory_rows", inventory)
-    monkeypatch.setattr(dfs, "_committed_augment_manifest", lambda *_args, **_kwargs: manifest)
+    monkeypatch.setattr(
+        dfs, "_committed_augment_manifest", lambda *_args, **_kwargs: manifest
+    )
     monkeypatch.setattr(dfs, "_download_json", lambda _uri: ranking)
     monkeypatch.setattr(dfs, "_s3_client", lambda: FakeS3())
     monkeypatch.setattr(dfs, "_upload_json", upload)
@@ -383,7 +409,9 @@ def test_candidate_selection_is_additive_and_preserves_complete_ranking_pool(
     assert source_rows == inventory(augment_uri)
     assert any(row["key"].endswith("manifest.json") for row in destination_rows)
     if expected_selected:
-        assert any("candidate-a/augmented_video.mp4" in row["key"] for row in destination_rows)
+        assert any(
+            "candidate-a/augmented_video.mp4" in row["key"] for row in destination_rows
+        )
     assert not any("candidate-b/" in row["key"] for row in destination_rows)
 
 
@@ -409,7 +437,9 @@ def test_rejected_review_fields_are_truthful_and_never_promotion_eligible() -> N
     assert candidate["hallucination_status"] == "passed"
 
 
-def test_terminal_review_preservation_ignores_only_declared_outputs_and_ledger() -> None:
+def test_terminal_review_preservation_ignores_only_declared_outputs_and_ledger() -> (
+    None
+):
     before = [
         {"key": "run/candidate.mp4", "size": 11, "etag": "source"},
         {"key": "run/npa-workflow/runtime.json", "size": 20, "etag": "old"},
@@ -663,8 +693,7 @@ def test_prepare_refinement_uses_baseline_then_adapts_failed_retry(
         )
     )
     assert (
-        dfs.grade_gate(str(grade), str(decision), 0.75, str(refinement))
-        == "loop_back"
+        dfs.grade_gate(str(grade), str(decision), 0.75, str(refinement)) == "loop_back"
     )
     retry = dfs.prepare_refinement(
         str(grade), str(refinement), decision_uri=str(decision)
@@ -676,7 +705,9 @@ def test_prepare_refinement_uses_baseline_then_adapts_failed_retry(
     assert (tmp_path / "configs" / "refinement-attempt-01.json").is_file()
 
 
-def test_prepare_refinement_records_exact_failed_attribute_names(tmp_path: Path) -> None:
+def test_prepare_refinement_records_exact_failed_attribute_names(
+    tmp_path: Path,
+) -> None:
     grade = tmp_path / "grade"
     grade.mkdir()
     refinement = tmp_path / "configs" / "refinement.json"
@@ -705,8 +736,7 @@ def test_prepare_refinement_records_exact_failed_attribute_names(tmp_path: Path)
         )
     )
     assert (
-        dfs.grade_gate(str(grade), str(decision), 0.75, str(refinement))
-        == "loop_back"
+        dfs.grade_gate(str(grade), str(decision), 0.75, str(refinement)) == "loop_back"
     )
 
     retry = dfs.prepare_refinement(
@@ -859,15 +889,12 @@ def test_prepare_refinement_replays_a_committed_adapted_attempt_idempotently(
     grade.mkdir()
     refinement = tmp_path / "configs" / "refinement.json"
     decision = grade / "decision.json"
-    dfs.prepare_refinement(
-        str(grade), str(refinement), decision_uri=str(decision)
-    )
+    dfs.prepare_refinement(str(grade), str(refinement), decision_uri=str(decision))
     (grade / "cosmos_evaluator.json").write_text(
         json.dumps({"status": "completed", "score": 0.4, "passed": False})
     )
     assert (
-        dfs.grade_gate(str(grade), str(decision), 0.75, str(refinement))
-        == "loop_back"
+        dfs.grade_gate(str(grade), str(decision), 0.75, str(refinement)) == "loop_back"
     )
     retry = dfs.prepare_refinement(
         str(grade), str(refinement), decision_uri=str(decision)
@@ -881,7 +908,11 @@ def test_prepare_refinement_replays_a_committed_adapted_attempt_idempotently(
     )
 
     assert repeated == retry
-    assert (refinement.read_bytes(), history.read_bytes(), marker.read_bytes()) == before
+    assert (
+        refinement.read_bytes(),
+        history.read_bytes(),
+        marker.read_bytes(),
+    ) == before
     assert not (tmp_path / "configs" / "refinement-attempt-02.json").exists()
 
 
@@ -914,13 +945,10 @@ def test_prepare_refinement_adapts_exactly_when_quality_gate_retries(
     grade.mkdir()
     refinement = tmp_path / "configs" / "refinement.json"
     decision = grade / "decision.json"
-    dfs.prepare_refinement(
-        str(grade), str(refinement), decision_uri=str(decision)
-    )
+    dfs.prepare_refinement(str(grade), str(refinement), decision_uri=str(decision))
     (grade / "cosmos_evaluator.json").write_text(json.dumps(report))
     assert (
-        dfs.grade_gate(str(grade), str(decision), 0.75, str(refinement))
-        == "loop_back"
+        dfs.grade_gate(str(grade), str(decision), 0.75, str(refinement)) == "loop_back"
     )
 
     retry = dfs.prepare_refinement(
@@ -984,13 +1012,10 @@ def test_prepare_refinement_changes_every_retry_then_fails_closed_at_saturation(
         )
     )
     assert (
-        dfs.grade_gate(str(grade), str(decision), 0.75, str(refinement))
-        == "loop_back"
+        dfs.grade_gate(str(grade), str(decision), 0.75, str(refinement)) == "loop_back"
     )
     with pytest.raises(dfs.RefinementStateError, match="schedule is exhausted"):
-        dfs.prepare_refinement(
-            str(grade), str(refinement), decision_uri=str(decision)
-        )
+        dfs.prepare_refinement(str(grade), str(refinement), decision_uri=str(decision))
     assert refinement.read_bytes() == pointer_before
     assert not (tmp_path / "configs" / "refinement-attempt-03.json").exists()
 
@@ -1137,9 +1162,7 @@ def test_prepare_refinement_never_overwrites_conflicting_attempt_history(
 
 def test_grade_gate_promotes_above_threshold(tmp_path: Path) -> None:
     scores = tmp_path / "vlm_eval_stub.json"
-    scores.write_text(
-        json.dumps({"status": "completed", "score": 0.8, "passed": True})
-    )
+    scores.write_text(json.dumps({"status": "completed", "score": 0.8, "passed": True}))
     decision_path = tmp_path / "decision.json"
     decision = dfs.grade_gate(str(scores), str(decision_path), threshold=0.5)
     assert decision == "promote_checkpoint"
@@ -1163,9 +1186,7 @@ def test_grade_gate_accepts_string_threshold(tmp_path: Path, monkeypatch) -> Non
     """The blueprint interpolates a quoted config.grade_threshold; grade_gate must
     cast a str threshold (and fall back to 0.5 on a non-numeric value)."""
     scores = tmp_path / "vlm_eval_stub.json"
-    scores.write_text(
-        json.dumps({"status": "completed", "score": 0.6, "passed": True})
-    )
+    scores.write_text(json.dumps({"status": "completed", "score": 0.6, "passed": True}))
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.decisions.write_decision",
         lambda uri, decision: None,

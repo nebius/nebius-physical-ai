@@ -50,7 +50,9 @@ def _write_predictions_json(root: Path, *, frames: int = 10) -> Path:
     return path
 
 
-def _write_mismatched_skeleton_predictions_json(root: Path, *, frames: int = 10) -> Path:
+def _write_mismatched_skeleton_predictions_json(
+    root: Path, *, frames: int = 10
+) -> Path:
     path = root / "mismatched-predictions.json"
     predictions = np.zeros((frames, G1_STATE_DIM - 1, 3), dtype=np.float32)
     predictions[:, :, 2] = 1.0
@@ -77,7 +79,11 @@ def _dynamic_row_count(chunks, entity_path: str) -> int:
 
 
 def _first_packed_color(chunks, entity_path: str, column_name: str) -> int:
-    chunk = next(chunk for chunk in chunks if str(chunk.entity_path) == entity_path and not chunk.is_static)
+    chunk = next(
+        chunk
+        for chunk in chunks
+        if str(chunk.entity_path) == entity_path and not chunk.is_static
+    )
     return int(chunk.to_record_batch().column(column_name).to_pylist()[0][0])
 
 
@@ -101,14 +107,20 @@ def test_groot_predictions_to_rerun_writes_overlay_hierarchies(tmp_path: Path) -
         assert _dynamic_row_count(chunks, f"{root}/bones") == 10
 
 
-def test_groot_predictions_to_rerun_missing_predictions_is_clean_error(tmp_path: Path) -> None:
+def test_groot_predictions_to_rerun_missing_predictions_is_clean_error(
+    tmp_path: Path,
+) -> None:
     dataset = _write_lerobot_dataset(tmp_path, frames=10, fps=10)
 
     with pytest.raises(RerunAdapterError, match="Predictions path does not exist"):
-        groot_predictions_to_rerun(tmp_path / "missing.json", dataset, tmp_path / "missing.rrd")
+        groot_predictions_to_rerun(
+            tmp_path / "missing.json", dataset, tmp_path / "missing.rrd"
+        )
 
 
-def test_groot_predictions_to_rerun_color_differentiates_input_and_predictions(tmp_path: Path) -> None:
+def test_groot_predictions_to_rerun_color_differentiates_input_and_predictions(
+    tmp_path: Path,
+) -> None:
     dataset = _write_lerobot_dataset(tmp_path, frames=10, fps=10)
     predictions = _write_predictions_json(tmp_path, frames=10)
     output = tmp_path / "colors.rrd"
@@ -116,13 +128,27 @@ def test_groot_predictions_to_rerun_color_differentiates_input_and_predictions(t
     groot_predictions_to_rerun(predictions, dataset, output)
 
     chunks = _recording_chunks(output)
-    assert _first_packed_color(chunks, "/world/skeleton/joints", "Points3D:colors") == CYAN_PACKED
-    assert _first_packed_color(chunks, "/world/skeleton/bones", "LineStrips3D:colors") == CYAN_PACKED
-    assert _first_packed_color(chunks, "/world/predictions/joints", "Points3D:colors") == ORANGE_PACKED
-    assert _first_packed_color(chunks, "/world/predictions/bones", "LineStrips3D:colors") == ORANGE_PACKED
+    assert (
+        _first_packed_color(chunks, "/world/skeleton/joints", "Points3D:colors")
+        == CYAN_PACKED
+    )
+    assert (
+        _first_packed_color(chunks, "/world/skeleton/bones", "LineStrips3D:colors")
+        == CYAN_PACKED
+    )
+    assert (
+        _first_packed_color(chunks, "/world/predictions/joints", "Points3D:colors")
+        == ORANGE_PACKED
+    )
+    assert (
+        _first_packed_color(chunks, "/world/predictions/bones", "LineStrips3D:colors")
+        == ORANGE_PACKED
+    )
 
 
-def test_groot_predictions_to_rerun_preserves_short_prediction_horizon(tmp_path: Path) -> None:
+def test_groot_predictions_to_rerun_preserves_short_prediction_horizon(
+    tmp_path: Path,
+) -> None:
     dataset = _write_lerobot_dataset(tmp_path, frames=50, fps=10)
     predictions = _write_predictions_json(tmp_path, frames=4)
     output = tmp_path / "short-horizon.rrd"
@@ -136,15 +162,22 @@ def test_groot_predictions_to_rerun_preserves_short_prediction_horizon(tmp_path:
     assert _dynamic_row_count(chunks, "/world/predictions/bones") == 4
 
 
-def test_groot_predictions_to_rerun_rejects_predictions_longer_than_input(tmp_path: Path) -> None:
+def test_groot_predictions_to_rerun_rejects_predictions_longer_than_input(
+    tmp_path: Path,
+) -> None:
     dataset = _write_lerobot_dataset(tmp_path, frames=4, fps=10)
     predictions = _write_predictions_json(tmp_path, frames=5)
 
-    with pytest.raises(RerunAdapterError, match="Prediction frame count cannot exceed input frame count"):
+    with pytest.raises(
+        RerunAdapterError,
+        match="Prediction frame count cannot exceed input frame count",
+    ):
         groot_predictions_to_rerun(predictions, dataset, tmp_path / "too-long.rrd")
 
 
-def test_groot_predictions_to_rerun_mismatched_joint_count_is_clean_error(tmp_path: Path) -> None:
+def test_groot_predictions_to_rerun_mismatched_joint_count_is_clean_error(
+    tmp_path: Path,
+) -> None:
     dataset = _write_lerobot_dataset(tmp_path, frames=10, fps=10)
     predictions = _write_mismatched_skeleton_predictions_json(tmp_path, frames=10)
 

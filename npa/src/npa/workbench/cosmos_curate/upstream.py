@@ -224,7 +224,13 @@ def ffmpeg_encoders(*, ffmpeg: str = "") -> tuple[str, ...]:
     if not exe:
         return ()
     try:
-        proc = subprocess.run([exe, "-hide_banner", "-encoders"], capture_output=True, text=True, check=False, timeout=60)
+        proc = subprocess.run(
+            [exe, "-hide_banner", "-encoders"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
     except (OSError, subprocess.SubprocessError):
         return ()
     found = [name for name in (CPU_ENCODER, GPU_ENCODER) if name in (proc.stdout or "")]
@@ -260,7 +266,9 @@ def probe_availability(*, environ: dict[str, str] | None = None) -> CuratorAvail
     ffmpeg = shutil.which("ffmpeg") or ""
     encoders = ffmpeg_encoders(ffmpeg=ffmpeg)
     pipeline_cli = shutil.which("video-pipeline") or ""
-    python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    python_version = (
+        f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    )
     if root is None:
         return CuratorAvailability(
             ffmpeg=ffmpeg,
@@ -297,8 +305,12 @@ def probe_availability(*, environ: dict[str, str] | None = None) -> CuratorAvail
         ensure_upstream_importable(environ=environ)
         import importlib
 
-        importlib.import_module("cosmos_curator.pipelines.video.clipping.clip_extraction_stages")
-        importlib.import_module("cosmos_curator.pipelines.video.read_write.metadata_writer_stage")
+        importlib.import_module(
+            "cosmos_curator.pipelines.video.clipping.clip_extraction_stages"
+        )
+        importlib.import_module(
+            "cosmos_curator.pipelines.video.read_write.metadata_writer_stage"
+        )
     except Exception as exc:  # noqa: BLE001 - any failure means "cannot run here"
         importable = False
         import_error = f"{type(exc).__name__}: {exc}"[:300]

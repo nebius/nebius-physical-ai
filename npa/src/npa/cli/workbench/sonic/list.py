@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from npa.cli.workbench.sonic.helpers import DEFAULT_MODEL_REPO, EXPECTED_HF_ARTIFACTS, OutputFormat, output, sonic_workbenches
+from npa.cli.workbench.sonic.helpers import (
+    DEFAULT_MODEL_REPO,
+    EXPECTED_HF_ARTIFACTS,
+    OutputFormat,
+    output,
+    sonic_workbenches,
+)
 import typer
 
 

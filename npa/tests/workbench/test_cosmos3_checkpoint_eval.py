@@ -71,7 +71,9 @@ class _FakeStorage:
         assert path.is_file()
         self.uploads.append((local_file, uri))
         if path.suffix == ".json":
-            self.json_uploads.append((uri, json.loads(path.read_text(encoding="utf-8"))))
+            self.json_uploads.append(
+                (uri, json.loads(path.read_text(encoding="utf-8")))
+            )
         return uri
 
 
@@ -142,7 +144,9 @@ def test_consistency_uses_only_two_new_seeds_and_never_repeats_primary() -> None
     "selected",
     [[], ["Cosmos3-Nano"], ["Cosmos3-Nano", "Cosmos3-Nano"]],
 )
-def test_consistency_requires_exactly_two_distinct_campaign_checkpoints(selected) -> None:
+def test_consistency_requires_exactly_two_distinct_campaign_checkpoints(
+    selected,
+) -> None:
     with pytest.raises(Cosmos3CheckpointEvalError, match="exactly two distinct"):
         phase_arms(_config(), phase="consistency", top_checkpoints=selected)
 
@@ -169,9 +173,7 @@ def test_b200_preflight_translates_missing_nvidia_smi() -> None:
 
 
 def test_b200_inventory_is_redacted_hardware_provenance() -> None:
-    parsed = parse_nvidia_smi_inventory(
-        "NVIDIA B200, GPU-abc, 183359, 580.65.06\n"
-    )
+    parsed = parse_nvidia_smi_inventory("NVIDIA B200, GPU-abc, 183359, 580.65.06\n")
 
     assert parsed == [
         {
@@ -259,7 +261,10 @@ def test_one_arm_loads_checkpoint_once_for_all_prompts_and_publishes_metrics(
         1.5,
     ]
     assert result["gpu_memory"]["peak_memory_mib_sum"] == 123456
-    assert all(sample["artifact_uri"].startswith("s3://bucket/") for sample in result["samples"])
+    assert all(
+        sample["artifact_uri"].startswith("s3://bucket/")
+        for sample in result["samples"]
+    )
     assert result["provenance"]["weights_baked"] is False
     assert result["provenance"]["guardrails_enabled"] is True
     posture = result["provenance"]["guardrail_posture"]
@@ -368,7 +373,9 @@ def test_phase_publishes_complete_plan_before_first_arm(tmp_path: Path) -> None:
         )
 
     phase_snapshots = [
-        payload for uri, payload in storage.json_uploads if uri.endswith("/primary.json")
+        payload
+        for uri, payload in storage.json_uploads
+        if uri.endswith("/primary.json")
     ]
     assert len(phase_snapshots) == 1
     assert len(phase_snapshots[0]["arms"]) == 5
@@ -412,7 +419,9 @@ def test_cache_eviction_failure_does_not_increment_failed_arms(
         )
 
     phase_snapshots = [
-        payload for uri, payload in storage.json_uploads if uri.endswith("/primary.json")
+        payload
+        for uri, payload in storage.json_uploads
+        if uri.endswith("/primary.json")
     ]
     final = phase_snapshots[-1]
     assert final["status"] == "failed"
@@ -455,9 +464,7 @@ def test_workflow_rejects_mutable_or_malformed_image_before_submission(
     spec.config["source_sha"] = "a" * 40
     plan = build_plan(spec, run_id="preview")
     options = SkypilotRenderOptions(
-        image_overrides={
-            "workbench.cosmos3.checkpoint_eval": image
-        },
+        image_overrides={"workbench.cosmos3.checkpoint_eval": image},
         materialize_registry_secrets=False,
     )
 

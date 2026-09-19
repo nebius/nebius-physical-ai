@@ -186,11 +186,16 @@ def test_only_interrupted_bootstrap_may_reuse_service_install(resuming) -> None:
 
     bootstrap = Mock()
     result = agent_setup_convergence.converge_remote_agent_setup(
-        operation=None, resuming=resuming, bootstrap=bootstrap,
+        operation=None,
+        resuming=resuming,
+        bootstrap=bootstrap,
         reconcile=lambda **_kwargs: {"state": "incomplete"},
-        bootstrap_kwargs={"instance_id": "instance-test"}, reconcile_kwargs={},
-        persist_pending=lambda _state: None, status=lambda _text: None,
-        progress=lambda _event: None, transport_errors=(RuntimeError,),
+        bootstrap_kwargs={"instance_id": "instance-test"},
+        reconcile_kwargs={},
+        persist_pending=lambda _state: None,
+        status=lambda _text: None,
+        progress=lambda _event: None,
+        transport_errors=(RuntimeError,),
     )
     bootstrap.assert_called_once_with(resume_services=resuming)
     assert result.evidence["state"] == "incomplete"

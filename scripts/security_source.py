@@ -17,9 +17,14 @@ def _scanner_binary(scanner: str) -> str:
     """Reject missing or unexpected scanner installations before scanning."""
     executable = shutil.which(scanner)
     if executable is None:
-        raise RuntimeError(f"Install the pinned {scanner} scanner before running this gate")
+        raise RuntimeError(
+            f"Install the pinned {scanner} scanner before running this gate"
+        )
     version = subprocess.run(
-        [executable, "--version"], check=True, capture_output=True, text=True,
+        [executable, "--version"],
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.split()
     if version[:2] != [scanner, _SCANNER_VERSIONS[scanner]]:
         raise RuntimeError(f"Expected {scanner} {_SCANNER_VERSIONS[scanner]}")
@@ -28,7 +33,9 @@ def _scanner_binary(scanner: str) -> str:
 
 def _run_report(command: list[str], root: Path, output: Path) -> object:
     """Keep scanner diagnostics private and reject incomplete scanner execution."""
-    completed = subprocess.run(command, cwd=root, capture_output=True, text=True, check=False)
+    completed = subprocess.run(
+        command, cwd=root, capture_output=True, text=True, check=False
+    )
     output.write_text(completed.stdout, encoding="utf-8")
     output.with_suffix(".stderr").write_text(completed.stderr, encoding="utf-8")
     if completed.returncode not in (0, 1):
@@ -36,7 +43,9 @@ def _run_report(command: list[str], root: Path, output: Path) -> object:
     try:
         report = json.loads(completed.stdout)
     except json.JSONDecodeError as error:
-        raise RuntimeError(f"{output.stem} did not produce a complete JSON report") from error
+        raise RuntimeError(
+            f"{output.stem} did not produce a complete JSON report"
+        ) from error
     if output.stem == "zizmor" and completed.returncode != 0:
         raise RuntimeError("zizmor failed; its findings exit codes were disabled")
     return report
@@ -66,7 +75,8 @@ def _python_node(root: Path, path: str, issue: dict, trees: dict) -> str:
     start_lines = [line, min(issue.get("line_range") or [line])]
     for start_line in start_lines:
         candidates = [
-            node for node in ast.walk(trees[path])
+            node
+            for node in ast.walk(trees[path])
             if getattr(node, "lineno", None) == start_line
             and getattr(node, "col_offset", None) == column
         ]
@@ -80,20 +90,29 @@ def _python_findings(report: object, root: Path, expected: set[str]) -> list[dic
     if not isinstance(report, dict) or not isinstance(report.get("results"), list):
         raise TypeError("Bandit report has an invalid findings schema")
     if report.get("errors") != []:
-        raise RuntimeError("Bandit could not parse or scan every Python file; inspect bandit.json")
+        raise RuntimeError(
+            "Bandit could not parse or scan every Python file; inspect bandit.json"
+        )
     metrics = report.get("metrics", {})
     scanned = {_relative_path(path, root) for path in metrics if path != "_totals"}
     if scanned != expected:
-        raise RuntimeError("Bandit report did not cover every Python file in the snapshot")
+        raise RuntimeError(
+            "Bandit report did not cover every Python file in the snapshot"
+        )
     trees: dict[str, ast.AST] = {}
     findings = []
     for issue in report["results"]:
         path = _relative_path(issue["filename"], root)
-        findings.append({
-            "scanner": "bandit", "path": path, "rule": issue["test_id"],
-            "identity": _identity(_python_node(root, path, issue, trees)),
-            "line": issue["line_number"], "message": issue["issue_text"],
-        })
+        findings.append(
+            {
+                "scanner": "bandit",
+                "path": path,
+                "rule": issue["test_id"],
+                "identity": _identity(_python_node(root, path, issue, trees)),
+                "line": issue["line_number"],
+                "message": issue["issue_text"],
+            }
+        )
     return findings
 
 
@@ -107,10 +126,23 @@ def _scan_python(root: Path, output: Path) -> list[dict]:
     settings = output / "bandit.ini"
     settings.write_text("[bandit]\n", encoding="utf-8")
     command = [
-        _scanner_binary("bandit"), "--recursive", str(root), "--exclude", "",
-        "--configfile", str(configuration), "--ini", str(settings),
-        "--ignore-nosec", "--severity-level", "medium", "--confidence-level", "medium",
-        "--format", "json", "--quiet",
+        _scanner_binary("bandit"),
+        "--recursive",
+        str(root),
+        "--exclude",
+        "",
+        "--configfile",
+        str(configuration),
+        "--ini",
+        str(settings),
+        "--ignore-nosec",
+        "--severity-level",
+        "medium",
+        "--confidence-level",
+        "medium",
+        "--format",
+        "json",
+        "--quiet",
     ]
     report = _run_report(command, root, output / "bandit.json")
     return _python_findings(report, root, expected)
@@ -132,7 +164,9 @@ def _workflow_finding(issue: dict, root: Path) -> dict:
     path = _relative_path(symbolic["key"]["Local"]["verbatim_path"], root)
     route = [part for part in symbolic["route"]["route"] if "Key" in part]
     return {
-        "scanner": "zizmor", "path": path, "rule": issue["ident"],
+        "scanner": "zizmor",
+        "path": path,
+        "rule": issue["ident"],
         "identity": _identity([route, concrete["feature"].strip()]),
         "line": concrete["location"]["start_point"]["row"] + 1,
         "message": issue["desc"],
@@ -148,10 +182,24 @@ def _scan_workflows(root: Path, output: Path) -> list[dict]:
     if not definitions:
         return []
     command = [
-        _scanner_binary("zizmor"), "--offline", "--no-config", "--no-ignores",
-        "--strict-collection", "--collect", "all", "--min-severity", "medium",
-        "--min-confidence", "medium", "--persona", "regular", "--no-exit-codes",
-        "--format", "json", "--no-progress", *map(str, sorted(definitions)),
+        _scanner_binary("zizmor"),
+        "--offline",
+        "--no-config",
+        "--no-ignores",
+        "--strict-collection",
+        "--collect",
+        "all",
+        "--min-severity",
+        "medium",
+        "--min-confidence",
+        "medium",
+        "--persona",
+        "regular",
+        "--no-exit-codes",
+        "--format",
+        "json",
+        "--no-progress",
+        *map(str, sorted(definitions)),
     ]
     report = _run_report(command, root, output / "zizmor.json")
     if not isinstance(report, list):
@@ -179,9 +227,13 @@ def scan_source(root: Path, output: Path) -> list[dict]:
     if output == root or root in output.parents:
         raise ValueError("Scanner reports must be outside the candidate snapshot")
     if any(path.is_symlink() for path in root.rglob("*")):
-        raise ValueError("Security scans require a regular-file snapshot without symlinks")
+        raise ValueError(
+            "Security scans require a regular-file snapshot without symlinks"
+        )
     output.mkdir(parents=True, exist_ok=True, mode=0o700)
     try:
         return _scan_python(root, output) + _scan_workflows(root, output)
     except (KeyError, TypeError) as error:
-        raise RuntimeError("Scanner report is incomplete or has an invalid schema") from error
+        raise RuntimeError(
+            "Scanner report is incomplete or has an invalid schema"
+        ) from error

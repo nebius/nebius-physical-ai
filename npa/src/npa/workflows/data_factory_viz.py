@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
+from npa.workflows.data_factory_review import _PaidfReview
+
 if TYPE_CHECKING:
     from npa.clients.storage import StorageClient
 
@@ -167,7 +169,11 @@ def _log_frame(rr: Any, rec: Any, entity: str, arr: Any) -> None:
 
         buf = io.BytesIO()
         _PILImage.fromarray(arr).save(buf, format="JPEG", quality=RRD_JPEG_QUALITY)
-        rr.log(entity, rr.EncodedImage(contents=buf.getvalue(), media_type="image/jpeg"), recording=rec)
+        rr.log(
+            entity,
+            rr.EncodedImage(contents=buf.getvalue(), media_type="image/jpeg"),
+            recording=rec,
+        )
     except Exception:  # noqa: BLE001 - fall back to raw image if EncodedImage/PIL unavailable
         rr.log(entity, _image(rr, arr), recording=rec)
 
@@ -208,7 +214,9 @@ def build_run_rrd(
     try:
         import rerun as rr
     except ImportError as exc:  # pragma: no cover - rerun is a repo dependency
-        raise DataFactoryVizError(f"rerun-sdk is required to build the recording: {exc}") from exc
+        raise DataFactoryVizError(
+            f"rerun-sdk is required to build the recording: {exc}"
+        ) from exc
 
     run_id = _run_id_from_uri(input_uri)
     active_storage = storage_client
@@ -223,9 +231,8 @@ def build_run_rrd(
             active_storage = StorageClient.from_environment()
         source_bucket, source_prefix = _split_s3_prefix(input_uri)
         output_bucket, output_object_key = _split_s3_object(output_uri)
-        if (
-            output_bucket != source_bucket
-            or not output_object_key.startswith(source_prefix)
+        if output_bucket != source_bucket or not output_object_key.startswith(
+            source_prefix
         ):
             raise DataFactoryVizError(
                 "remote RRD publication must remain inside the canonical run prefix"
@@ -234,9 +241,7 @@ def build_run_rrd(
         require_colmap_lineage = _inventory_has_colmap_lineage(
             source_inventory, source_prefix
         )
-        output_exists = any(
-            row["key"] == output_object_key for row in source_inventory
-        )
+        output_exists = any(row["key"] == output_object_key for row in source_inventory)
 
     with tempfile.TemporaryDirectory(prefix="npa-df-viz-") as tmp:
         local = _materialize_run(
@@ -245,7 +250,8 @@ def build_run_rrd(
             storage_client=active_storage,
             require_colmap_lineage=require_colmap_lineage,
         )
-        captions = _load_captions(local)
+        review = _PaidfReview(local, input_uri)
+        captions = _load_captions(local, review=review)
 
         out_path = Path(tmp) / "sim2real.rrd"
         rec = rr.RecordingStream(app_id, recording_id=run_id)
@@ -258,7 +264,7 @@ def build_run_rrd(
         logged = 0
 
         input_root = local / "input"
-        input_provenance = _read_json(input_root / "provenance.json")
+        input_provenance = review.read(input_root / "provenance.json", "input")
         source_kind = (
             str(input_provenance.get("source_kind") or "")
             if isinstance(input_provenance, dict)
@@ -294,17 +300,23 @@ def build_run_rrd(
         augmented_video_count = 0
         variant_records = _committed_variant_records(local)
         if variant_records:
-            disposition = _read_json(local / "grade" / "quality_disposition.json")
-            quality_status = str(
-                disposition.get("quality_status") or "UNKNOWN"
-            ).upper() if isinstance(disposition, dict) else "UNKNOWN"
+            disposition = review.read(
+                local / "grade" / "quality_disposition.json", "quality"
+            )
+            quality_status = (
+                str(disposition.get("quality_status") or "UNKNOWN").upper()
+                if isinstance(disposition, dict)
+                else "UNKNOWN"
+            )
             for record in variant_records:
                 d = record["directory"]
-                label = _augmentation_label(d)
+                label = _augmentation_label(d, review)
                 candidate = str(record["candidate_id"])
                 entity = f"augmented/{candidate}"
                 augmented_entities.add(entity)
-                for png in _subsample(sorted(d.glob("*.png")), RRD_MAX_FRAMES_PER_ENTITY):
+                for png in _subsample(
+                    sorted(d.glob("*.png")), RRD_MAX_FRAMES_PER_ENTITY
+                ):
                     _set_frame(rr, rec, _frame_index(png.stem))
                     _log_frame(rr, rec, entity, _load_rgb(png))
                     logged += 1
@@ -336,7 +348,12 @@ def build_run_rrd(
                         )
                     augmented_video_count += 1
                 if label:
-                    rr.log(entity, rr.TextDocument(f"{d.name}: {label}"), static=True, recording=rec)
+                    rr.log(
+                        entity,
+                        rr.TextDocument(f"{review.identity(d.name)}: {label}"),
+                        static=True,
+                        recording=rec,
+                    )
                 rr.log(
                     f"{entity}/disposition",
                     rr.TextDocument(
@@ -347,6 +364,7 @@ def build_run_rrd(
                             candidate_id=candidate,
                             quality_status=quality_status,
                             disposition=disposition,
+                            review=review,
                         ),
                         media_type="text/markdown",
                     ),
@@ -396,7 +414,7 @@ def build_run_rrd(
         # curation report, the finalize aggregate, and a stage log/timeline — is
         # inspectable inside the embedded Rerun viewer alongside the input/output
         # images, not just the frames.
-        for entity, body in _load_stage_docs(local).items():
+        for entity, body in _load_stage_docs(local, review=review).items():
             rr.log(
                 entity,
                 rr.TextDocument(body, media_type="text/markdown"),
@@ -522,9 +540,7 @@ def _verify_additive_publication(
         raise DataFactoryVizError(
             "RRD publication changed the canonical source object inventory"
         )
-    workflow_before = {
-        key for key in before_by_key if key.startswith(workflow_prefix)
-    }
+    workflow_before = {key for key in before_by_key if key.startswith(workflow_prefix)}
     if not workflow_before.issubset(after_by_key):
         raise DataFactoryVizError("RRD publication removed workflow evidence")
     unexpected = {
@@ -536,7 +552,9 @@ def _verify_additive_publication(
         raise DataFactoryVizError("RRD publication added undeclared run artifacts")
     output = after_by_key.get(output_key)
     if output is None or int(output.get("size") or 0) <= 0:
-        raise DataFactoryVizError("RRD publication did not produce a non-empty artifact")
+        raise DataFactoryVizError(
+            "RRD publication did not produce a non-empty artifact"
+        )
     if output_key in before_by_key and output != before_by_key[output_key]:
         raise DataFactoryVizError("RRD publication changed an existing recording")
     return source_before
@@ -569,7 +587,11 @@ def _verify_terminal_rrd_media(
     for record in variant_records:
         candidate = str(record.get("candidate_id") or "")
         video_path = record.get("video")
-        if not candidate or not isinstance(video_path, Path) or not video_path.is_file():
+        if (
+            not candidate
+            or not isinstance(video_path, Path)
+            or not video_path.is_file()
+        ):
             raise DataFactoryVizError(
                 "existing RRD verification requires every committed candidate video"
             )
@@ -583,9 +605,9 @@ def _verify_terminal_rrd_media(
             for row in batch.column("AssetVideo:blob").to_pylist():
                 if row:
                     embedded.append(bytes(row[0]))
-        if len(embedded) != 1 or hashlib.sha256(embedded[0]).hexdigest() != _sha256_path(
-            video_path
-        ):
+        if len(embedded) != 1 or hashlib.sha256(
+            embedded[0]
+        ).hexdigest() != _sha256_path(video_path):
             raise DataFactoryVizError(
                 "existing RRD augmented video differs from its canonical candidate"
             )
@@ -597,8 +619,12 @@ def _verify_terminal_rrd_media(
             for name in batch.schema.names:
                 if "text" not in name.lower() and "body" not in name.lower():
                     continue
-                text_values.extend(str(value) for value in batch.column(name).to_pylist())
-        if not text_values or not any(expected_status in value.upper() for value in text_values):
+                text_values.extend(
+                    str(value) for value in batch.column(name).to_pylist()
+                )
+        if not text_values or not any(
+            expected_status in value.upper() for value in text_values
+        ):
             raise DataFactoryVizError(
                 "existing RRD candidate disposition is missing or inconsistent"
             )
@@ -665,7 +691,10 @@ def _log_nurec_entities(rr: Any, rec: Any, local: Path) -> int:
     recording as real run data.
     """
     logged = 0
-    for directory, prefix in (("novel_views", "novel_view"), ("reconstruction", "reconstruction")):
+    for directory, prefix in (
+        ("novel_views", "novel_view"),
+        ("reconstruction", "reconstruction"),
+    ):
         root = local / directory
         if not root.is_dir():
             continue
@@ -826,28 +855,39 @@ def _committed_variant_dirs(local: Path) -> list[Path]:
     return [record["directory"] for record in _committed_variant_records(local)]
 
 
-def _candidate_evaluation(local: Path, iteration: int, clip: str) -> dict[str, Any]:
+def _candidate_evaluation(
+    local: Path, iteration: int, clip: str, review: _PaidfReview
+) -> dict[str, Any]:
     grade_root = local / "grade"
     grade_dir = (
-        grade_root / f"iteration-{iteration}" / "ranking"
-        if iteration
-        else grade_root
+        grade_root / f"iteration-{iteration}" / "ranking" if iteration else grade_root
     )
     try:
         from npa.workbench.cosmos_evaluator import RESULT_FILENAME as result_name
     except Exception:  # noqa: BLE001
         result_name = "cosmos_evaluator.json"
-    report = _read_json(grade_dir / result_name)
-    if not isinstance(report, dict):
-        return {}
-    return next(
-        (
-            item
-            for item in report.get("clips", [])
-            if isinstance(item, dict) and str(item.get("clip_id") or "") == clip
-        ),
-        {},
-    )
+    return review.candidate_evaluation(grade_dir / result_name, clip)
+
+
+def _candidate_quality_fields(evaluation: dict[str, Any]) -> dict[str, Any]:
+    attributes = evaluation.get("attribute_verification") or {}
+    hallucination = evaluation.get("hallucination") or {}
+    return {
+        "candidate_passed": evaluation.get("passed") is True,
+        "score": evaluation.get("score"),
+        "failed_attributes": [
+            str(check.get("variable") or "unknown")
+            for check in attributes.get("checks", [])
+            if check.get("passed") is not True
+        ],
+        "attribute_results": attributes.get("checks", []),
+        "hallucination_status": "passed"
+        if hallucination.get("passed") is True
+        else "failed",
+        "hallucination": hallucination,
+        "temporal_consistency": evaluation.get("temporal_consistency"),
+        "appearance_fidelity": evaluation.get("appearance_fidelity"),
+    }
 
 
 def _candidate_disposition_document(
@@ -858,49 +898,33 @@ def _candidate_disposition_document(
     candidate_id: str,
     quality_status: str,
     disposition: Any,
+    review: _PaidfReview,
 ) -> str:
     """Truthful per-candidate disposition shown beside its actual media."""
-
-    evaluation = _candidate_evaluation(local, iteration, clip)
-    attributes = (
-        evaluation.get("attribute_verification", {})
-        if isinstance(evaluation.get("attribute_verification"), dict)
-        else {}
+    evaluation = _candidate_evaluation(local, iteration, clip, review)
+    summary = review.payload(
+        {
+            "candidate_id": candidate_id,
+            "iteration": iteration,
+            "clip_id": clip,
+            "run_disposition": quality_status,
+            "promotion_eligible": quality_status == "ACCEPTED"
+            and evaluation.get("passed") is True,
+            **_candidate_quality_fields(evaluation),
+            "source_comparison_entity": "source/* or conditioning/derived",
+            "output_media_entity": f"augmented/{candidate_id}",
+            "final_disposition": disposition if isinstance(disposition, dict) else {},
+        },
+        "candidate",
     )
-    failed_attributes = [
-        str(check.get("variable") or "unknown")
-        for check in attributes.get("checks", [])
-        if isinstance(check, dict) and check.get("passed") is not True
+    summary["source_reports"] = [
+        source["source_report"]
+        for source in (evaluation, disposition)
+        if isinstance(source, dict) and "source_report" in source
     ]
-    hallucination = (
-        evaluation.get("hallucination", {})
-        if isinstance(evaluation.get("hallucination"), dict)
-        else {}
-    )
-    summary = {
-        "candidate_id": candidate_id,
-        "iteration": iteration,
-        "clip_id": clip,
-        "run_disposition": quality_status,
-        "candidate_passed": evaluation.get("passed") is True,
-        "promotion_eligible": quality_status == "ACCEPTED"
-        and evaluation.get("passed") is True,
-        "score": evaluation.get("score"),
-        "failed_attributes": failed_attributes,
-        "attribute_results": attributes.get("checks", []),
-        "hallucination_status": (
-            "passed" if hallucination.get("passed") is True else "failed"
-        ),
-        "hallucination": hallucination,
-        "temporal_consistency": evaluation.get("temporal_consistency"),
-        "appearance_fidelity": evaluation.get("appearance_fidelity"),
-        "source_comparison_entity": "source/* or conditioning/derived",
-        "output_media_entity": f"augmented/{candidate_id}",
-        "final_disposition": disposition if isinstance(disposition, dict) else {},
-    }
     return (
-        f"# {quality_status} — candidate `{candidate_id}`\n\n"
-        "This panel is review evidence only. Rejected media is never relabeled, "
+        f"# {quality_status} — candidate `{review.identity(candidate_id)}`\n\n"
+        + "This panel is review evidence only. Rejected media is never relabeled, "
         "curated, finalized, or promoted. Compare it directly with the source or "
         "conditioning entities on the shared timeline.\n\n"
         + _json_block("Candidate quality evidence", summary)
@@ -916,16 +940,16 @@ def _validated_viz_manifest(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         raise DataFactoryVizError(str(exc)) from exc
 
 
-def _augmentation_label(clip_dir: Path) -> str:
+def _augmentation_label(clip_dir: Path, review: _PaidfReview) -> str:
     meta_path = clip_dir / "metadata.json"
     if not meta_path.is_file():
         return ""
-    try:
-        meta = json.loads(meta_path.read_text())
-    except (ValueError, OSError):
-        return ""
+    meta = review.read(meta_path, "metadata")
     variables = meta.get("variables", {}) if isinstance(meta, dict) else {}
-    return ", ".join(f"{k}={v}" for k, v in variables.items())
+    label = ", ".join(f"{k}={v}" for k, v in variables.items())
+    if label:
+        label += "\n\n" + _json_block("Metadata source", meta["source_report"])
+    return label
 
 
 def _read_json(path: Path) -> Any:
@@ -940,7 +964,9 @@ def _json_block(title: str, payload: Any) -> str:
     return f"## {title}\n\n```json\n{body}\n```\n"
 
 
-def _load_stage_docs(local: Path) -> dict[str, str]:
+def _load_stage_docs(
+    local: Path, *, review: _PaidfReview | None = None
+) -> dict[str, str]:
     """Build per-stage markdown docs (scenarios, hallucination/grade, curation,
     finalize, and a stage log) so the full pipeline is viewable in the Rerun panel.
 
@@ -949,16 +975,21 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
     """
     docs: dict[str, str] = {}
     stage_log: list[str] = []
+    review = review or _PaidfReview(local)
 
     # --- Neural-reconstruction stages (no-ops for a data-factory run) -------------
     docs.update(_load_nurec_docs(local, stage_log))
 
     # Stage 1 — sampled scenarios (Config Generation). This is the "various
     # scenarios" the augment stage multiplies over.
-    cfg = _read_json(local / "configs" / "manifest.json")
+    cfg = review.read(local / "configs" / "manifest.json", "config")
     if isinstance(cfg, dict):
         combos = cfg.get("augmentations") or []
-        lines = [f"**Scene:** {cfg.get('scene', 'n/a')}", f"**Scenarios sampled:** {len(combos)}", ""]
+        lines = [
+            f"**Scene:** {cfg.get('scene', 'n/a')}",
+            f"**Scenarios sampled:** {len(combos)}",
+            "",
+        ]
         for i, combo in enumerate(combos):
             if isinstance(combo, dict):
                 prompt = str(combo.get("prompt") or "")
@@ -966,10 +997,15 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
                 lines.append(f"- **scenario {i}** — {attrs}")
                 if prompt:
                     lines.append(f"    - prompt: _{prompt}_")
-        docs["pipeline/1_scenarios"] = "## Config generation — sampled scenarios\n\n" + "\n".join(lines) + "\n"
+        docs["pipeline/1_scenarios"] = (
+            "## Config generation — sampled scenarios\n\n" + "\n".join(lines) + "\n"
+        )
+        docs["pipeline/1_scenarios"] += _json_block(
+            "Scenario source", cfg["source_report"]
+        )
         stage_log.append(f"configs: {len(combos)} scenario(s) sampled")
 
-    input_provenance = _read_json(local / "input" / "provenance.json")
+    input_provenance = review.read(local / "input" / "provenance.json", "input")
     if isinstance(input_provenance, dict):
         label = str(input_provenance.get("input_origin_label") or "Run input")
         docs["pipeline/0_input_provenance"] = _json_block(label, input_provenance)
@@ -981,7 +1017,7 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
 
     # Augment fan-out — how many Cosmos Transfer 2.5 variants were produced.
     aug_dir = _latest_iteration_dir(local / "cosmos_augmented")
-    aug = _read_json(aug_dir / "manifest.json")
+    aug = review.read(aug_dir / "manifest.json", "augment")
     if isinstance(aug, dict):
         variants = aug.get("variants") or aug.get("clips") or []
         docs["pipeline/2_augment"] = _json_block("Augment — generated variants", aug)
@@ -1015,7 +1051,7 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
         _vlm_result_filename,
         "vlm_eval.json",
     ):
-        ev = _read_json(grade_dir / name)
+        ev = review.read(grade_dir / name, "evaluator")
         if isinstance(ev, dict):
             grade_docs.append(
                 _json_block("Evaluator — integrity and appearance checks", ev)
@@ -1024,11 +1060,11 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
                 f"grade: score={ev.get('score')}, status={ev.get('status', 'n/a')}"
             )
             break
-    dec = _read_json(grade_dir / "decision.json")
+    dec = review.read(grade_dir / "decision.json", "quality")
     if isinstance(dec, dict):
         grade_docs.append(_json_block("Quality gate decision", dec))
         stage_log.append(f"grade: decision={dec.get('decision', 'n/a')}")
-    disposition = _read_json(grade_root / "quality_disposition.json")
+    disposition = review.read(grade_root / "quality_disposition.json", "quality")
     if isinstance(disposition, dict):
         grade_docs.append(_json_block("Final quality disposition", disposition))
         stage_log.append(
@@ -1040,11 +1076,13 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
         docs["pipeline/3_grade"] = "\n".join(grade_docs)
 
     # Curation reports from both real components, when available.
-    curator = _read_json(local / "curation" / "cosmos_curator.json")
+    curator = review.read(local / "curation" / "cosmos_curator.json", "curation")
     if isinstance(curator, dict):
-        docs["pipeline/4_cosmos_curator"] = _json_block("Cosmos Curator report", curator)
+        docs["pipeline/4_cosmos_curator"] = _json_block(
+            "Cosmos Curator report", curator
+        )
         stage_log.append(f"cosmos-curator: {curator.get('clip_count', 0)} clip(s)")
-    cur = _read_json(local / "curation" / "report.json")
+    cur = review.read(local / "curation" / "report.json", "curation")
     if isinstance(cur, dict):
         docs["pipeline/4_curation"] = _json_block("Curation report", cur)
         stage_log.append(
@@ -1053,7 +1091,7 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
         )
 
     # Finalize aggregate report.
-    fin = _read_json(local / "reports" / "final.json")
+    fin = review.read(local / "reports" / "final.json", "final")
     if isinstance(fin, dict):
         docs["pipeline/5_finalize"] = _json_block("Finalize — aggregate report", fin)
         stage_log.append(
@@ -1063,7 +1101,9 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
 
     if stage_log:
         docs["pipeline/0_log"] = (
-            "## Pipeline stage log\n\n" + "\n".join(f"- {line}" for line in stage_log) + "\n"
+            "## Pipeline stage log\n\n"
+            + "\n".join(f"- {line}" for line in stage_log)
+            + "\n"
         )
     return docs
 
@@ -1179,7 +1219,9 @@ def _load_ncore_manifest_docs(local: Path, stage_log: list[str]) -> dict[str, st
                 f"({rig.get('pose_count', 0)} poses)",
                 f"**Poses component group:** `{rig.get('poses_component_group', 'n/a')}`",
             ]
-        docs["pipeline/1_ncore"] = "## NCore input capture\n\n" + "\n".join(lines) + "\n"
+        docs["pipeline/1_ncore"] = (
+            "## NCore input capture\n\n" + "\n".join(lines) + "\n"
+        )
         stage_log.append(
             f"ncore: {manifest.get('scene', 'n/a')} "
             f"({manifest.get('shard_count', 0)} shard(s), "
@@ -1271,24 +1313,33 @@ _CAPTION_HEADERS = {
 }
 
 
-def _load_captions(local: Path) -> dict[str, str]:
+def _load_captions(
+    local: Path, *, review: _PaidfReview | None = None
+) -> dict[str, str]:
     out: dict[str, str] = {}
+    review = review or _PaidfReview(local)
     for name in ("labeled_original", "labeled_augmented"):
         cj = local / name / "captions.json"
         if not cj.is_file():
             continue
-        try:
-            payload = json.loads(cj.read_text())
-        except (ValueError, OSError):
-            continue
+        payload = review.read(cj, "captions")
         items = payload.get("captions", []) if isinstance(payload, dict) else []
         body = "\n\n".join(
-            f"- {c.get('image')}: {c.get('caption')}" for c in items[:12] if isinstance(c, dict)
+            f"- {c.get('image')}: {c.get('caption')}"
+            for c in items[:12]
+            if isinstance(c, dict)
         )
         if body:
             # Prefix a self-identifying header so a caption panel is never confused
             # with the VLM eval / hallucination grade panel in the Rerun grid.
             out[name] = _CAPTION_HEADERS.get(name, "") + body
+            out[name] += "\n\n" + _json_block(
+                "Caption source",
+                {
+                    "model": payload.get("model"),
+                    **payload["source_report"],
+                },
+            )
     return out
 
 
@@ -1319,11 +1370,7 @@ def _materialize_run(
 
 
 def _download_colmap_lineage(client, root: str, dest: Path, *, required: bool) -> None:
-    lineage_paths = (
-        _COLMAP_LINEAGE_PATHS
-        if required
-        else ("source/attribution.json",)
-    )
+    lineage_paths = _COLMAP_LINEAGE_PATHS if required else ("source/attribution.json",)
     for relative in lineage_paths:
         local_path = dest / relative
         try:
@@ -1333,7 +1380,9 @@ def _download_colmap_lineage(client, root: str, dest: Path, *, required: bool) -
                 raise
 
 
-def _publish(local_path: str, output_uri: str, *, storage_client: "StorageClient | None") -> str:
+def _publish(
+    local_path: str, output_uri: str, *, storage_client: "StorageClient | None"
+) -> str:
     if not output_uri.startswith("s3://"):
         out = Path(output_uri)
         out.parent.mkdir(parents=True, exist_ok=True)

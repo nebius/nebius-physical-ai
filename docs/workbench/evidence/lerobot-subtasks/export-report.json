@@ -1,0 +1,10 @@
+{
+  "episode_count": 2,
+  "format": "lerobot-v3-subtasks",
+  "labeled_episode_count": 2,
+  "segment_count": 4,
+  "status": "exported",
+  "subtask_count": 4,
+  "tag_prefix": "subtask:",
+  "unlabeled_frame_count": 0
+}

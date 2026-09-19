@@ -57,9 +57,7 @@ def test_manifest_content_is_the_payload() -> None:
     assert captured == payload
 
 
-def test_local_and_s3_manifest_bytes_are_identical(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_local_and_s3_manifest_bytes_are_identical(tmp_path: Path, monkeypatch) -> None:
     payload = {
         "schema": "npa.cosmos2.transfer.v1",
         "status": "executed_reference",
@@ -92,7 +90,9 @@ def test_the_spec_declares_the_filename_the_tool_writes() -> None:
 
     spec_path = (
         Path(__file__).resolve().parents[3]
-        / "workflows" / "testing" / "cosmos2-transfer.yaml"
+        / "workflows"
+        / "testing"
+        / "cosmos2-transfer.yaml"
     )
     spec = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
     declared = spec["states"]["transfer"]["outputs"][0]["uri"]

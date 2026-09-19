@@ -74,14 +74,18 @@ def _require_agent_gpu_live() -> None:
         "NPA_AGENT_GPU_LIVE": "1",
         "NPA_AGENT_LIVE": "1",
     }
-    missing = [name for name, value in required.items() if os.environ.get(name) != value]
+    missing = [
+        name for name, value in required.items() if os.environ.get(name) != value
+    ]
     if missing:
         pytest.skip("agent GPU live proof requires " + ", ".join(missing))
 
 
 def _completion(decision: dict) -> dict:
     return {
-        "choices": [{"message": {"role": "assistant", "content": json.dumps(decision)}}],
+        "choices": [
+            {"message": {"role": "assistant", "content": json.dumps(decision)}}
+        ],
         "usage": {"total_tokens": 0},
     }
 
@@ -111,7 +115,9 @@ def _workflow_submit_allowlist() -> dict[str, ToolSpec]:
 
 def _requested_accelerator(path: Path) -> str:
     payload = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return str(((payload.get("resources") or {}).get("gpu") or {}).get("accelerators") or "")
+    return str(
+        ((payload.get("resources") or {}).get("gpu") or {}).get("accelerators") or ""
+    )
 
 
 def _write_evidence(payload: dict) -> None:
@@ -121,7 +127,9 @@ def _write_evidence(payload: dict) -> None:
     else:
         path = Path.home() / "npa-live-e2e-logs" / "agent-gpu-workflow-evidence.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def test_agent_confirmation_to_real_gpu_artifact_and_grounded_answer(
@@ -129,8 +137,7 @@ def test_agent_confirmation_to_real_gpu_artifact_and_grounded_answer(
     e2e_project: str | None,
 ) -> None:
     registry = (
-        os.environ.get("NPA_E2E_REGISTRY")
-        or "ghcr.io/nebius/nebius-physical-ai"
+        os.environ.get("NPA_E2E_REGISTRY") or "ghcr.io/nebius/nebius-physical-ai"
     ).strip()
 
     case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == SPEC_NAME)

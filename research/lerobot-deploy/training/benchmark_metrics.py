@@ -217,8 +217,12 @@ def emit_sample(output: Path, interval: float) -> int:
                     "gpu_max_mem_util_pct": f"{max(gpu_mem_utils) if gpu_mem_utils else 0.0:.2f}",
                     "gpu_total_mem_mb": f"{sum(gpu_mem_total):.2f}",
                     "gpu_max_mem_used_mb": f"{max(gpu_mem_used) if gpu_mem_used else 0.0:.2f}",
-                    "gpu_util_values_pct": "|".join(f"{value:.2f}" for value in gpu_utils),
-                    "gpu_mem_used_values_mb": "|".join(f"{value:.2f}" for value in gpu_mem_used),
+                    "gpu_util_values_pct": "|".join(
+                        f"{value:.2f}" for value in gpu_utils
+                    ),
+                    "gpu_mem_used_values_mb": "|".join(
+                        f"{value:.2f}" for value in gpu_mem_used
+                    ),
                 }
             )
             handle.flush()
@@ -265,8 +269,12 @@ def parse_samples(path: Path) -> list[SampleRow]:
                     "gpu_names": gpu_names,
                     "gpu_avg_util_pct": parse_float(row.get("gpu_avg_util_pct")),
                     "gpu_max_util_pct": parse_float(row.get("gpu_max_util_pct")),
-                    "gpu_avg_mem_util_pct": parse_float(row.get("gpu_avg_mem_util_pct")),
-                    "gpu_max_mem_util_pct": parse_float(row.get("gpu_max_mem_util_pct")),
+                    "gpu_avg_mem_util_pct": parse_float(
+                        row.get("gpu_avg_mem_util_pct")
+                    ),
+                    "gpu_max_mem_util_pct": parse_float(
+                        row.get("gpu_max_mem_util_pct")
+                    ),
                     "gpu_total_mem_mb": parse_float(row.get("gpu_total_mem_mb")),
                     "gpu_max_mem_used_mb": parse_float(row.get("gpu_max_mem_used_mb")),
                     "gpu_util_values": gpu_util_values,
@@ -370,33 +378,71 @@ def detect_bottleneck(summary: dict[str, object]) -> tuple[str, str]:
     gpu = summary.get("gpu", {})
     cpu = summary.get("cpu", {})
     if failure_kind == "oom":
-        return "memory_ceiling", "Run failed with an out-of-memory signature before steady-state throughput."
+        return (
+            "memory_ceiling",
+            "Run failed with an out-of-memory signature before steady-state throughput.",
+        )
 
     gpu_count = int(gpu.get("count", 0)) if isinstance(gpu, dict) else 0
     if gpu_count == 0:
-        return "gpu_metrics_unavailable", "nvidia-smi was unavailable, so GPU bottleneck classification is inconclusive."
+        return (
+            "gpu_metrics_unavailable",
+            "nvidia-smi was unavailable, so GPU bottleneck classification is inconclusive.",
+        )
 
     avg_gpu_util = float(gpu.get("avg_util_pct", 0.0)) if isinstance(gpu, dict) else 0.0
-    avg_mem_util = float(gpu.get("avg_mem_util_pct", 0.0)) if isinstance(gpu, dict) else 0.0
-    p50_gpu_util = float(gpu.get("p50_util_pct", avg_gpu_util)) if isinstance(gpu, dict) else avg_gpu_util
-    p90_gpu_util = float(gpu.get("p90_util_pct", avg_gpu_util)) if isinstance(gpu, dict) else avg_gpu_util
-    stddev_gpu_util = float(gpu.get("stddev_util_pct", 0.0)) if isinstance(gpu, dict) else 0.0
+    avg_mem_util = (
+        float(gpu.get("avg_mem_util_pct", 0.0)) if isinstance(gpu, dict) else 0.0
+    )
+    p50_gpu_util = (
+        float(gpu.get("p50_util_pct", avg_gpu_util))
+        if isinstance(gpu, dict)
+        else avg_gpu_util
+    )
+    p90_gpu_util = (
+        float(gpu.get("p90_util_pct", avg_gpu_util))
+        if isinstance(gpu, dict)
+        else avg_gpu_util
+    )
+    stddev_gpu_util = (
+        float(gpu.get("stddev_util_pct", 0.0)) if isinstance(gpu, dict) else 0.0
+    )
     avg_cpu_util = float(cpu.get("avg_util_pct", 0.0)) if isinstance(cpu, dict) else 0.0
-    p90_cpu_util = float(cpu.get("p90_util_pct", avg_cpu_util)) if isinstance(cpu, dict) else avg_cpu_util
+    p90_cpu_util = (
+        float(cpu.get("p90_util_pct", avg_cpu_util))
+        if isinstance(cpu, dict)
+        else avg_cpu_util
+    )
     avg_iowait = float(cpu.get("avg_iowait_pct", 0.0)) if isinstance(cpu, dict) else 0.0
     peak_torch_allocated_mb = (
-        float(gpu.get("peak_torch_memory_allocated_mb", 0.0)) if isinstance(gpu, dict) else 0.0
+        float(gpu.get("peak_torch_memory_allocated_mb", 0.0))
+        if isinstance(gpu, dict)
+        else 0.0
     )
     peak_torch_reserved_mb = (
-        float(gpu.get("peak_torch_memory_reserved_mb", 0.0)) if isinstance(gpu, dict) else 0.0
+        float(gpu.get("peak_torch_memory_reserved_mb", 0.0))
+        if isinstance(gpu, dict)
+        else 0.0
     )
-    total_memory_mb = float(gpu.get("total_memory_mb", 0.0)) if isinstance(gpu, dict) else 0.0
+    total_memory_mb = (
+        float(gpu.get("total_memory_mb", 0.0)) if isinstance(gpu, dict) else 0.0
+    )
     # total_memory_mb is the sum across all visible GPUs; use per-GPU memory
     # for bottleneck detection since torch peak memory is per-process.
-    per_gpu_memory_mb = (total_memory_mb / gpu_count) if gpu_count > 0 else total_memory_mb
+    per_gpu_memory_mb = (
+        (total_memory_mb / gpu_count) if gpu_count > 0 else total_memory_mb
+    )
 
-    torch_allocated_pct = (peak_torch_allocated_mb / per_gpu_memory_mb * 100.0) if per_gpu_memory_mb > 0 else 0.0
-    torch_reserved_pct = (peak_torch_reserved_mb / per_gpu_memory_mb * 100.0) if per_gpu_memory_mb > 0 else 0.0
+    torch_allocated_pct = (
+        (peak_torch_allocated_mb / per_gpu_memory_mb * 100.0)
+        if per_gpu_memory_mb > 0
+        else 0.0
+    )
+    torch_reserved_pct = (
+        (peak_torch_reserved_mb / per_gpu_memory_mb * 100.0)
+        if per_gpu_memory_mb > 0
+        else 0.0
+    )
     gpu_spiky_or_bursty = (
         avg_gpu_util < 70.0
         and p90_gpu_util >= 80.0
@@ -437,11 +483,22 @@ def detect_bottleneck(summary: dict[str, object]) -> tuple[str, str]:
             f"while host iowait averaged {avg_iowait:.1f}%, suggesting storage or input stalls between compute bursts.",
         )
     if avg_cpu_util >= 85.0 and avg_gpu_util < 60.0:
-        return "cpu_or_decode_bound", "Host CPU stayed saturated while GPU utilization remained low, suggesting an input/decode bottleneck."
+        return (
+            "cpu_or_decode_bound",
+            "Host CPU stayed saturated while GPU utilization remained low, suggesting an input/decode bottleneck.",
+        )
     if avg_iowait >= 20.0 and avg_gpu_util < 60.0:
-        return "storage_or_input_io_bound", "Host iowait stayed elevated while GPU utilization remained low, suggesting storage or input stalls."
-    if avg_gpu_util >= 85.0 or (p50_gpu_util >= 80.0 and p90_gpu_util >= 90.0 and stddev_gpu_util < 15.0):
-        return "gpu_compute_bound", "GPU utilization stayed high enough that the model is likely compute-bound."
+        return (
+            "storage_or_input_io_bound",
+            "Host iowait stayed elevated while GPU utilization remained low, suggesting storage or input stalls.",
+        )
+    if avg_gpu_util >= 85.0 or (
+        p50_gpu_util >= 80.0 and p90_gpu_util >= 90.0 and stddev_gpu_util < 15.0
+    ):
+        return (
+            "gpu_compute_bound",
+            "GPU utilization stayed high enough that the model is likely compute-bound.",
+        )
     if consistently_low_gpu_util:
         return (
             "underutilized_or_hardware_mismatch",
@@ -453,7 +510,10 @@ def detect_bottleneck(summary: dict[str, object]) -> tuple[str, str]:
             f"GPU utilization was bursty (avg {avg_gpu_util:.1f}%, p90 {p90_gpu_util:.1f}%, stddev {stddev_gpu_util:.1f}%), "
             "which points to transient pipeline stalls, but the CPU and I/O signals were not strong enough to classify the bottleneck more narrowly.",
         )
-    return "mixed_or_unclassified", "No single resource dominated strongly enough for a higher-confidence classification."
+    return (
+        "mixed_or_unclassified",
+        "No single resource dominated strongly enough for a higher-confidence classification.",
+    )
 
 
 def summarize_run(args: argparse.Namespace) -> int:
@@ -461,7 +521,9 @@ def summarize_run(args: argparse.Namespace) -> int:
     requested_warmup_trim_seconds = max(args.warmup_trim_seconds, 0.0)
     effective_warmup_trim_seconds = requested_warmup_trim_seconds
     if args.run_seconds > 0.0 and requested_warmup_trim_seconds > 0.0:
-        effective_warmup_trim_seconds = min(requested_warmup_trim_seconds, args.run_seconds * 0.2)
+        effective_warmup_trim_seconds = min(
+            requested_warmup_trim_seconds, args.run_seconds * 0.2
+        )
     rows, trimmed_prefix_count, applied_warmup_trim_seconds = trim_warmup_samples(
         raw_rows,
         effective_warmup_trim_seconds,
@@ -479,12 +541,16 @@ def summarize_run(args: argparse.Namespace) -> int:
     gpu_totals = [float(row["gpu_total_mem_mb"]) for row in rows]
     gpu_counts = [int(float(row["gpu_count"])) for row in rows]
     gpu_models = summarize_gpu_model_names(rows)
-    torch_memory = load_torch_memory_summary(Path(args.torch_memory_dir) if args.torch_memory_dir else None)
+    torch_memory = load_torch_memory_summary(
+        Path(args.torch_memory_dir) if args.torch_memory_dir else None
+    )
 
     # In DDP, effective batch = batch_size × gpu_count.  Track both
     # steps/sec and samples/sec so scaling comparisons are apples-to-apples.
     effective_batch_size = args.batch_size * args.gpu_count
-    steps_per_second = round(args.work_count / args.run_seconds, 6) if args.run_seconds > 0 else 0.0
+    steps_per_second = (
+        round(args.work_count / args.run_seconds, 6) if args.run_seconds > 0 else 0.0
+    )
     samples_per_second = round(steps_per_second * effective_batch_size, 6)
 
     summary: dict[str, object] = {
@@ -510,7 +576,9 @@ def summarize_run(args: argparse.Namespace) -> int:
         },
         "gpu_identity": {
             "models": gpu_models,
-            "label": format_gpu_model_label(gpu_models, max(gpu_counts) if gpu_counts else 0),
+            "label": format_gpu_model_label(
+                gpu_models, max(gpu_counts) if gpu_counts else 0
+            ),
         },
         "cpu": {
             "avg_util_pct": round(mean(cpu_utils), 2),
@@ -530,17 +598,27 @@ def summarize_run(args: argparse.Namespace) -> int:
         "gpu": {
             "count": max(gpu_counts) if gpu_counts else 0,
             "models": gpu_models,
-            "model_name": format_gpu_model_label(gpu_models, max(gpu_counts) if gpu_counts else 0),
+            "model_name": format_gpu_model_label(
+                gpu_models, max(gpu_counts) if gpu_counts else 0
+            ),
             "avg_util_pct": round(mean(gpu_avg_utils), 2),
             "max_util_pct": round(max(gpu_max_utils) if gpu_max_utils else 0.0, 2),
             "p50_util_pct": round(percentile(gpu_avg_utils, 50.0), 2),
             "p90_util_pct": round(percentile(gpu_avg_utils, 90.0), 2),
             "stddev_util_pct": round(stddev(gpu_avg_utils), 2),
             "avg_mem_util_pct": round(mean(gpu_avg_mem_utils), 2),
-            "max_mem_util_pct": round(max(gpu_max_mem_utils) if gpu_max_mem_utils else 0.0, 2),
-            "peak_memory_used_mb": round(max(gpu_peak_used) if gpu_peak_used else 0.0, 2),
-            "peak_nvidia_smi_memory_used_mb": round(max(gpu_peak_used) if gpu_peak_used else 0.0, 2),
-            "peak_torch_memory_allocated_mb": torch_memory.get("peak_allocated_mb", 0.0),
+            "max_mem_util_pct": round(
+                max(gpu_max_mem_utils) if gpu_max_mem_utils else 0.0, 2
+            ),
+            "peak_memory_used_mb": round(
+                max(gpu_peak_used) if gpu_peak_used else 0.0, 2
+            ),
+            "peak_nvidia_smi_memory_used_mb": round(
+                max(gpu_peak_used) if gpu_peak_used else 0.0, 2
+            ),
+            "peak_torch_memory_allocated_mb": torch_memory.get(
+                "peak_allocated_mb", 0.0
+            ),
             "peak_torch_memory_reserved_mb": torch_memory.get("peak_reserved_mb", 0.0),
             "torch_memory_process_count": torch_memory.get("process_count", 0),
             "total_memory_mb": round(max(gpu_totals) if gpu_totals else 0.0, 2),
@@ -556,7 +634,9 @@ def summarize_run(args: argparse.Namespace) -> int:
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    output.write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return 0
 
 
@@ -616,7 +696,10 @@ def row_gpu_label(row: dict[str, object]) -> str:
             return model_name
         models = gpu.get("models", [])
         if isinstance(models, list):
-            return format_gpu_model_label((str(model) for model in models), int(row.get("gpu_count_requested", 0) or 0))
+            return format_gpu_model_label(
+                (str(model) for model in models),
+                int(row.get("gpu_count_requested", 0) or 0),
+            )
     return format_gpu_model_label([], int(row.get("gpu_count_requested", 0) or 0))
 
 
@@ -649,8 +732,14 @@ def build_scaling_transitions(rows: list[dict[str, object]]) -> list[dict[str, o
         previous_sps = _row_samples_per_second(previous)
         current_sps = _row_samples_per_second(current)
         gpu_ratio = (current_gpus / previous_gpus) if previous_gpus > 0 else 0.0
-        step_speedup = (previous_seconds / current_seconds) if previous_seconds > 0 and current_seconds > 0 else 0.0
-        sample_throughput_ratio = (current_sps / previous_sps) if previous_sps > 0 else 0.0
+        step_speedup = (
+            (previous_seconds / current_seconds)
+            if previous_seconds > 0 and current_seconds > 0
+            else 0.0
+        )
+        sample_throughput_ratio = (
+            (current_sps / previous_sps) if previous_sps > 0 else 0.0
+        )
         efficiency = (sample_throughput_ratio / gpu_ratio) if gpu_ratio > 0 else 0.0
         sample_throughput_gain_pct = (
             ((current_sps - previous_sps) / previous_sps) * 100.0
@@ -664,7 +753,9 @@ def build_scaling_transitions(rows: list[dict[str, object]]) -> list[dict[str, o
                 "from_gpu_count": previous_gpus,
                 "to_gpu_count": current_gpus,
                 "step_speedup_vs_previous": round(step_speedup, 4),
-                "sample_throughput_ratio_vs_previous": round(sample_throughput_ratio, 4),
+                "sample_throughput_ratio_vs_previous": round(
+                    sample_throughput_ratio, 4
+                ),
                 "gpu_ratio_vs_previous": round(gpu_ratio, 4),
                 "scaling_efficiency_vs_previous": round(efficiency, 4),
                 "sample_throughput_gain_pct": round(sample_throughput_gain_pct, 2),
@@ -684,7 +775,9 @@ def combine_profile(args: argparse.Namespace) -> int:
     eval_seconds = float(eval_summary.get("run_seconds", 0.0))
     total_seconds = train_seconds + eval_seconds
     eval_over_train = (eval_seconds / train_seconds) if train_seconds > 0 else 0.0
-    eval_share_pct = (eval_seconds / total_seconds * 100.0) if total_seconds > 0 else 0.0
+    eval_share_pct = (
+        (eval_seconds / total_seconds * 100.0) if total_seconds > 0 else 0.0
+    )
 
     headline = []
     train_bottleneck = train.get("bottleneck", {})
@@ -737,7 +830,9 @@ def combine_profile(args: argparse.Namespace) -> int:
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(combined, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    output.write_text(
+        json.dumps(combined, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return 0
 
 
@@ -745,7 +840,9 @@ def summarize_scaling(args: argparse.Namespace) -> int:
     rows = [load_json(path) for path in args.run_summaries]
     successful = [row for row in rows if row.get("status") == "success"]
     if successful:
-        baseline = min(successful, key=lambda row: int(row.get("gpu_count_requested", 0)))
+        baseline = min(
+            successful, key=lambda row: int(row.get("gpu_count_requested", 0))
+        )
         baseline_seconds = float(baseline.get("run_seconds", 0.0))
         baseline_gpus = int(baseline.get("gpu_count_requested", 1))
     else:
@@ -781,14 +878,20 @@ def summarize_scaling(args: argparse.Namespace) -> int:
                 "throughput_per_second": row.get("throughput_per_second"),
                 "samples_per_second": sps,
                 "step_speedup_vs_baseline": round(step_speedup, 4),
-                "sample_throughput_ratio_vs_baseline": round(sample_throughput_ratio, 4),
+                "sample_throughput_ratio_vs_baseline": round(
+                    sample_throughput_ratio, 4
+                ),
                 "scaling_efficiency_vs_baseline": round(efficiency, 4),
                 "avg_gpu_util_pct": row.get("gpu", {}).get("avg_util_pct", 0.0),  # type: ignore[union-attr]
-                "bottleneck": row.get("bottleneck", {}).get("classification", "unknown"),  # type: ignore[union-attr]
+                "bottleneck": row.get("bottleneck", {}).get(
+                    "classification", "unknown"
+                ),  # type: ignore[union-attr]
             }
         )
 
-    successful_sorted = sorted(successful, key=lambda item: int(item.get("gpu_count_requested", 0) or 0))
+    successful_sorted = sorted(
+        successful, key=lambda item: int(item.get("gpu_count_requested", 0) or 0)
+    )
     transitions = build_scaling_transitions(successful_sorted)
     headline_findings: list[str] = []
     successful_table = [row for row in table if row["status"] == "success"]
@@ -820,8 +923,13 @@ def summarize_scaling(args: argparse.Namespace) -> int:
                     }
                 )
         if flattening_candidates:
-            weakest = min(flattening_candidates, key=lambda item: float(item["efficiency"]))
-            if float(weakest["efficiency"]) < 0.5 or float(weakest["sample_throughput_ratio"]) < 1.25:
+            weakest = min(
+                flattening_candidates, key=lambda item: float(item["efficiency"])
+            )
+            if (
+                float(weakest["efficiency"]) < 0.5
+                or float(weakest["sample_throughput_ratio"]) < 1.25
+            ):
                 headline_findings.append(
                     f"Scaling flattened from {weakest['from_gpu_count']} to {weakest['to_gpu_count']} GPU(s): "
                     f"only {float(weakest['sample_throughput_ratio']):.2f}x sample throughput for {float(weakest['gpu_ratio']):.2f}x more GPUs "
@@ -852,7 +960,9 @@ def summarize_scaling(args: argparse.Namespace) -> int:
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    output.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
     if args.csv_output:
         csv_path = Path(args.csv_output)
@@ -891,7 +1001,9 @@ def summarize_memory(args: argparse.Namespace) -> int:
 
     group_payloads: list[dict[str, object]] = []
     csv_rows: list[dict[str, object]] = []
-    for (policy, gpu_model, gpu_count), group_rows in sorted(grouped.items(), key=lambda item: (item[0][0], item[0][1], item[0][2])):
+    for (policy, gpu_model, gpu_count), group_rows in sorted(
+        grouped.items(), key=lambda item: (item[0][0], item[0][1], item[0][2])
+    ):
         ordered = sorted(group_rows, key=lambda row: int(row.get("batch_size", 0) or 0))
         max_success = None
         min_oom = None
@@ -902,7 +1014,9 @@ def summarize_memory(args: argparse.Namespace) -> int:
             elif row.get("failure_kind") == "oom" and min_oom is None:
                 min_oom = batch_size
 
-        headline = f"No memory ceiling was found in the tested batch sizes on {gpu_model}."
+        headline = (
+            f"No memory ceiling was found in the tested batch sizes on {gpu_model}."
+        )
         if max_success is not None and min_oom is not None:
             headline = (
                 f"On {gpu_model} ({gpu_count} GPU(s)), highest successful batch size was {max_success}; "
@@ -925,10 +1039,25 @@ def summarize_memory(args: argparse.Namespace) -> int:
                 "status": row.get("status"),
                 "failure_kind": row.get("failure_kind"),
                 "train_seconds": row.get("run_seconds"),
-                "peak_nvidia_smi_memory_mb": gpu.get("peak_nvidia_smi_memory_used_mb", gpu.get("peak_memory_used_mb", 0.0)) if isinstance(gpu, dict) else 0.0,
-                "peak_torch_memory_allocated_mb": gpu.get("peak_torch_memory_allocated_mb", 0.0) if isinstance(gpu, dict) else 0.0,
-                "peak_torch_memory_reserved_mb": gpu.get("peak_torch_memory_reserved_mb", 0.0) if isinstance(gpu, dict) else 0.0,
-                "avg_gpu_util_pct": gpu.get("avg_util_pct", 0.0) if isinstance(gpu, dict) else 0.0,
+                "peak_nvidia_smi_memory_mb": gpu.get(
+                    "peak_nvidia_smi_memory_used_mb",
+                    gpu.get("peak_memory_used_mb", 0.0),
+                )
+                if isinstance(gpu, dict)
+                else 0.0,
+                "peak_torch_memory_allocated_mb": gpu.get(
+                    "peak_torch_memory_allocated_mb", 0.0
+                )
+                if isinstance(gpu, dict)
+                else 0.0,
+                "peak_torch_memory_reserved_mb": gpu.get(
+                    "peak_torch_memory_reserved_mb", 0.0
+                )
+                if isinstance(gpu, dict)
+                else 0.0,
+                "avg_gpu_util_pct": gpu.get("avg_util_pct", 0.0)
+                if isinstance(gpu, dict)
+                else 0.0,
             }
             table.append(table_row)
             csv_rows.append(table_row)
@@ -947,17 +1076,34 @@ def summarize_memory(args: argparse.Namespace) -> int:
 
     comparison_findings: list[str] = []
     if len(group_payloads) > 1:
-        comparable = [group for group in group_payloads if group.get("max_successful_batch_size") is not None]
+        comparable = [
+            group
+            for group in group_payloads
+            if group.get("max_successful_batch_size") is not None
+        ]
         if len(comparable) >= 2:
-            best = max(comparable, key=lambda group: int(group.get("max_successful_batch_size") or -1))
-            worst = min(comparable, key=lambda group: int(group.get("max_successful_batch_size") or -1))
-            if best is not worst and best.get("max_successful_batch_size") != worst.get("max_successful_batch_size"):
+            best = max(
+                comparable,
+                key=lambda group: int(group.get("max_successful_batch_size") or -1),
+            )
+            worst = min(
+                comparable,
+                key=lambda group: int(group.get("max_successful_batch_size") or -1),
+            )
+            if best is not worst and best.get("max_successful_batch_size") != worst.get(
+                "max_successful_batch_size"
+            ):
                 comparison_findings.append(
                     f"{best['gpu_model']} sustained batch size {best['max_successful_batch_size']}, while "
                     f"{worst['gpu_model']} topped out at batch size {worst['max_successful_batch_size']}."
                 )
-            if worst.get("min_oom_batch_size") is not None and best.get("max_successful_batch_size") is not None:
-                if int(best["max_successful_batch_size"]) >= int(worst["min_oom_batch_size"]):
+            if (
+                worst.get("min_oom_batch_size") is not None
+                and best.get("max_successful_batch_size") is not None
+            ):
+                if int(best["max_successful_batch_size"]) >= int(
+                    worst["min_oom_batch_size"]
+                ):
                     comparison_findings.append(
                         f"{worst['gpu_model']} hit OOM at batch size {worst['min_oom_batch_size']}, "
                         f"but {best['gpu_model']} handled that batch size."
@@ -978,7 +1124,9 @@ def summarize_memory(args: argparse.Namespace) -> int:
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    output.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
     if args.csv_output:
         csv_path = Path(args.csv_output)

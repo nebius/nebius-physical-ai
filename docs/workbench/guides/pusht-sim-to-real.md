@@ -56,6 +56,12 @@ fixture rollout data is not a learned policy evaluation.
 
 ## Continue with a real workflow
 
+For a smaller demonstration-first experiment, use the
+[LeRobot transfer workflow](lerobot-transfer.md). It trains native ACT baseline
+and augmented policies, measures paired closed-loop PushT success under four
+conditions, and produces an expert-demo collection queue from validation
+failures. Its report distinguishes simulation robustness from physical transfer.
+
 The maintained 14-stage workflow is
 [`workflows/main/sim2real.yaml`](../../../workflows/main/sim2real.yaml).
 Follow its [runbook](sim2real-workflow.md) and
@@ -66,3 +72,16 @@ The retired `sim-to-real-pipeline.yaml` is not a runnable next step.
 A custom dataset must match the selected trainer's observation, action, and
 robot schemas. See [customer assets](sim2real-customer-assets.md) before
 substituting a different robot or dataset.
+
+## Clean up
+
+Idle GPU clusters keep billing after the run finishes. When you are done,
+tear them down:
+
+```bash
+npa destroy --project "<alias>" --all
+```
+
+The plan previews read-only until you pass `--yes`, and the Nebius project
+itself is retained by default. See [teardown](../../teardown.md) for what
+`npa destroy` removes (cloud spend) versus what it keeps.

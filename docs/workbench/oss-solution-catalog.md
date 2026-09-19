@@ -21,6 +21,7 @@ unique and must be tested with its own upstream-named capabilities.
 | ManiSkill | `mani-skill/ManiSkill` `v3.0.1` | `gymnasium_pickcube_registration` | `maniskill_pickcube_step.json` | `byof-maniskill.yaml` |
 | MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_task_registration` | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
+| Enactic OpenArm (**accepted public image; Isaac runtime fetch**) | `enactic/openarm_mujoco` `2.2.0` + `enactic/openarm_isaac_lab` `bad82e…` | `openarm_mujoco_bimanual_rollout` + `Isaac-Reach-OpenArm-v0` | MuJoCo/Isaac trajectories and RSL-RL checkpoint | `openarm-simulators.yaml` |
 | OpenPI | `Physical-Intelligence/openpi` `15a9616a…` | connected direct / cross-pod serve / LoRA optimizer smoke / held-out evaluation, plus the upstream full-DROID fine-tuning recipe | `openpi_pi05_droid_jointpos_polaris_inference.json` plus connected mode reports; full-DROID emits preparation and 100-update qualification RRDs, then immutable run-derived progress RRDs/manifests through the 100,000-update checkpoint | `byof-openpi.yaml` → `openpi-pi05-four-mode.yaml`; trusted public-image build → `openpi-pi05-full-droid-finetune.yaml` |
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
 | Open Dreamer (world model, **2-GPU min**) | `next-state/open-dreamer` `2b10640` | `dreamer4_tokenizer_train_two_gpu` | `open_dreamer_world_model_2gpu.json` | `byof-open-dreamer.yaml` |
@@ -41,6 +42,9 @@ unique and must be tested with its own upstream-named capabilities.
 | RoboCasa | `download_kitchen_assets_lw` | **accepted** | `defcap17-robocasa-20260709-060243` (IIFAN fixtures+objects; restored git accessories) |
 | RoboCasa | `kitchen_egl_env_reset` | **accepted** | `defcap17-robocasa-20260709-060243` (post-download subprocess; 58 lightwheel cats; obs dict) |
 | RoboCasa | `kitchen_random_rollout` | **accepted** | `defcap20-robocasa-20260710-032142` (`run_random_rollouts` + mp4 `22150` bytes; `gymnasium==0.29.1` + `env.sim` bind) |
+| Enactic OpenArm | `openarm_mujoco_bimanual_rollout` | **accepted** | exact public development digest: 500 real `mj_step` calls, finite joint/command/energy trace, and fully decoded 100-frame H.264 render |
+| Enactic OpenArm | `Isaac-Reach-OpenArm-v0` rollout | **accepted** | same digest on RTX PRO 6000: 64 environments × 100 real PhysX/CUDA steps with finite rewards and policy observations |
+| Enactic OpenArm | `Isaac-Reach-OpenArm-v0` RSL-RL training | **accepted** | same digest: upstream trainer completed one iteration and emitted an independently validated serialized Torch checkpoint |
 | OpenPI | `pi05_droid_jointpos_polaris_checkpoint_download` | **accepted** | Canonical isolated B200 gate: image build/push/digest verification, then 12,434,530,837 runtime-only GCS bytes with 27-object generation-manifest provenance; exact scoped `NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` is runtime-only |
 | OpenPI | `pi05_droid_jointpos_polaris_direct_infer` | **accepted** | Same digest-pinned B200 `sm_100` gate; deterministic Franka input produced finite `float64[15,8]` joint-position targets |
 | OpenPI | `pi05_droid_jointpos_polaris_served_infer` | **accepted builder regression** | Same gate; upstream WebSocket health + same-pod client round trip produced finite `float64[15,8]` |
@@ -97,6 +101,27 @@ unique and must be tested with its own upstream-named capabilities.
 > (`byof-robocasa.yaml`) is preserved for compatibility, but the native tool is
 > the maintained surface. See `skills/tools/robocasa/SKILL.md` and
 > `workflows/testing/robocasa-smoke.yaml`.
+
+### Enactic OpenArm
+
+OpenArm is split upstream by capability. NPA pins `enactic/openarm_mujoco`
+release 2.2.0 (`a8c979629f2591ad035d99d338ce114969e6cddc`) and the untagged
+`enactic/openarm_isaac_lab` repository at
+`bad82e23716e6941c2de78ccb978f57c78b37734`. Both simulator repositories and
+their included MJCF/USD robot assets are Apache-2.0. The separate hardware/CAD
+repository is not an image input and no rights for it are inferred.
+
+| Capability | Status | Upstream basis |
+| --- | --- | --- |
+| `openarm_mujoco_bimanual_rollout` | accepted (live) | `openarm_mujoco.v2.openarm_demo_xml`, `JointResolver`, 500 real `mj_step` calls, finite joint/command/energy NPZ, and 100-frame H.264 render |
+| `Isaac-Reach-OpenArm-v0` rollout | accepted (live) | upstream registered Isaac Lab environment, 64 vectorized environments × 100 real PhysX/CUDA steps, finite reward and policy-observation trace on RTX PRO 6000 |
+| `Isaac-Reach-OpenArm-v0` RSL-RL training | accepted (live) | pinned upstream `scripts/reinforcement_learning/rsl_rl/train.py`, one completed iteration, and independently validated serialized Torch checkpoint |
+
+The public `npa-openarm` image contains the Apache-2.0 OpenArm sources and
+MuJoCo closure, but no Isaac Sim, Isaac Lab, or Omniverse Kit bytes. Isaac is
+hash-pinned and fetched into the operator's runtime cache through the shared
+acceptance/refusal bootstrap. See [OpenArm](openarm.md) and
+`workflows/testing/openarm-simulators.yaml`.
 
 ### OpenPI
 
@@ -299,3 +324,25 @@ npa/.venv/bin/npa workbench workflow plan-spec \
 The registry-ready gate is not satisfied until the live run pulls the pushed
 image, executes the smoke command, and writes `npa_byof_summary.json`, smoke
 logs, and the named capability artifact to object storage.
+
+
+## GPU video BYOF workflows
+
+These Tier 1 BYOF recipes use immutable Diffusers source and model revisions. They do not claim action-conditioned simulation, training, or real-time serving. See [build and run instructions](video-generation-byof.md).
+
+| Model | Native API | Capability | Artifact | Workflow | Status |
+| --- | --- | --- | --- | --- | --- |
+| mochi-1 | `MochiPipeline` on CUDA | `mochi-1_text_to_video` | `mochi_1_text_to_video.json` + `video.mp4` | `byof-mochi-1.yaml` | public GHCR image; B200 inference verified (2026-09-16) |
+| cogvideox-2b | `CogVideoXPipeline` on CUDA | `cogvideox-2b_text_to_video` | `cogvideox_2b_text_to_video.json` + `video.mp4` | `byof-cogvideox-2b.yaml` | public GHCR image; B200 inference verified (2026-09-16) |
+| wan2.1-14b | `WanPipeline` on CUDA | `wan2.1-14b_text_to_video` | `wan2_1_14b_text_to_video.json` + `video.mp4` | `byof-wan2.1-14b.yaml` | public GHCR image; B200 inference verified (2026-09-16) |
+
+
+### LingBot World v1 camera workflow
+
+`byof-lingbot-world.yaml` exercises `lingbot_world_camera_conditioned_video` using pinned upstream `generate.py`, FSDP, and Ulysses on four B200 GPUs. It emits `lingbot_world_camera_conditioned_video.json`, per-rank execution evidence, authored camera controls, the source image, and a fully decoded MP4. Exact public GHCR image inference verified on B200 on 2026-09-16. Camera trajectories and approximate intrinsics are authored, not measured. This v1 recipe does not claim robot action input, training, real-time performance, or support for the separate World Infinity successor.
+
+- `byof-depth-anything-v2.yaml`: `relative_depth_video` emits `depth_anything_v2_relative_depth.json`, raw prediction arrays and a fully decoded GPU-derived video. Exact public GHCR image inference verified on B200 on 2026-09-16. Model checkpoints are immutable runtime fetches; video inputs require a complete SHA256. No metric-depth, ground-truth-mask, or robot-success claim.
+
+- `byof-sam2.1.yaml`: `prompted_video_mask_propagation` emits `sam2_1_video_mask_propagation.json`, raw prediction arrays and a fully decoded GPU-derived video. Exact public GHCR image inference verified on B200 on 2026-09-16. Model checkpoints are immutable runtime fetches; video inputs require a complete SHA256. No metric-depth, ground-truth-mask, or robot-success claim.
+
+Qualification above used the exact public GHCR images pulled by GPU workers, native capability execution, successful worker summaries, complete artifact hash verification and independent full video decode. The recipes default to the accepted `npa-diffusers`, `npa-lingbot-world` and `npa-sam2` digests; they are Tier 1 workflows, without standalone serving APIs. [Public capability evidence](validation/studio-public-models-20260916.json) records the bounded results. Concrete infrastructure records remain private.

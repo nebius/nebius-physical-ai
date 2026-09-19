@@ -231,9 +231,7 @@ def _collect_rows(
     if name:
         local_state = load_cluster_state(name)
         if local_state is not None and (
-            not project_scoped
-            or not project_id
-            or local_state.project_id == project_id
+            not project_scoped or not project_id or local_state.project_id == project_id
         ):
             local_by_name[name] = local_state
         elif local_state is not None:
