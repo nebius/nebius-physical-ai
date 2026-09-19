@@ -380,6 +380,89 @@ def run_multiway(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
     return report
 
 
+def _sample_distances(o3d, cloud, vertices):
+    """Distance from each mesh vertex to the nearest observed sample."""
+
+    import numpy as np
+
+    tree = o3d.geometry.KDTreeFlann(cloud)
+    return np.array(
+        [np.sqrt(tree.search_knn_vector_3d(vertex, 1)[2][0]) for vertex in vertices]
+    )
+
+
+def _support(o3d, mesh, cloud, voxel: float) -> dict[str, Any]:
+    """Measure how much of this surface any observation actually supports.
+
+    Poisson reconstruction closes a surface over an open scan, so a partial
+    capture comes back wrapped in an extrapolated shell. That shell renders as
+    smooth opaque geometry indistinguishable from observed structure, which is
+    exactly how invented detail gets reviewed as sensor truth. Reporting it as a
+    fraction of *area* rather than of vertices matters: the shell is dense and
+    fine-grained, so a vertex count understates it.
+    """
+
+    import numpy as np
+
+    vertices = np.asarray(mesh.vertices)
+    triangles = np.asarray(mesh.triangles)
+    distances = _sample_distances(o3d, cloud, vertices)
+    a, b, c = (
+        vertices[triangles[:, 0]],
+        vertices[triangles[:, 1]],
+        vertices[triangles[:, 2]],
+    )
+    areas = 0.5 * np.linalg.norm(np.cross(b - a, c - a), axis=1)
+    total = float(areas.sum())
+    per_triangle = distances[triangles].max(axis=1)
+    unsupported = float(areas[per_triangle > voxel].sum())
+    return {
+        "voxel_size": voxel,
+        "unsupported_area_fraction": (unsupported / total) if total > 0 else 0.0,
+        "unsupported_area": unsupported,
+        "max_vertex_distance_to_sample": float(distances.max()),
+        "median_vertex_distance_to_sample": float(np.median(distances)),
+        "p95_vertex_distance_to_sample": float(np.percentile(distances, 95)),
+    }
+
+
+def _coverage(o3d, mesh, cloud, voxel: float) -> dict[str, Any]:
+    """The other direction: do the observed samples still lie on this surface?
+
+    Cropping unsupported area is only honest if it does not also remove surface
+    that explains real observations, so the crop is measured against this.
+    """
+
+    import numpy as np
+
+    scene = o3d.t.geometry.RaycastingScene()
+    scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))
+    points = np.asarray(cloud.points).astype(np.float32)
+    distances = scene.compute_distance(o3d.core.Tensor(points)).numpy()
+    return {
+        "samples": int(len(distances)),
+        "fraction_within_voxel": float((distances < voxel).mean()),
+        "fraction_within_two_voxels": float((distances < 2.0 * voxel).mean()),
+        "sample_to_surface_rmse": float(np.sqrt((distances**2).mean())),
+        "sample_to_surface_p95": float(np.percentile(distances, 95)),
+    }
+
+
+def _mesh_facts(o3d, mesh, path: Path) -> dict[str, Any]:
+    extent = mesh.get_axis_aligned_bounding_box().get_extent()
+    return {
+        "vertex_count": len(mesh.vertices),
+        "triangle_count": len(mesh.triangles),
+        "surface_area": float(mesh.get_surface_area()),
+        "is_edge_manifold": bool(mesh.is_edge_manifold()),
+        "is_vertex_manifold": bool(mesh.is_vertex_manifold()),
+        "is_watertight": bool(mesh.is_watertight()),
+        "extent": [float(value) for value in extent],
+        "sha256": _digest(path),
+        "bytes": path.stat().st_size,
+    }
+
+
 def run_reconstruct(
     payload: dict[str, Any], output: Path, run_id: str
 ) -> dict[str, Any]:
@@ -413,45 +496,269 @@ def run_reconstruct(
                 "density cropping removed the entire surface; lower --density-quantile"
             )
     mesh.compute_vertex_normals()
+
+    # Publish the pre-crop surface too. The crop below is a claim about which
+    # geometry is observed, and a reviewer must be able to check that claim
+    # against what Poisson actually returned.
+    full_path = output / "mesh_uncropped.ply"
+    if not o3d.io.write_triangle_mesh(str(full_path), mesh):
+        raise Open3dError("Open3D could not write the uncropped mesh")
+    before = _support(o3d, mesh, cloud, voxel)
+    unsupported_removed = 0
+    if request.support_distance_factor > 0.0:
+        limit = voxel * request.support_distance_factor
+        distances = _sample_distances(o3d, cloud, np.asarray(mesh.vertices))
+        crop = distances > limit
+        unsupported_removed = int(crop.sum())
+        mesh.remove_vertices_by_mask(crop)
+        if not mesh.has_triangles():
+            raise Open3dError(
+                "support cropping removed the entire surface; raise "
+                "--support-distance-factor or pass 0 to disable it"
+            )
+        mesh.compute_vertex_normals()
     mesh_path = output / "mesh.ply"
     if not o3d.io.write_triangle_mesh(str(mesh_path), mesh):
         raise Open3dError("Open3D could not write the reconstructed mesh")
-    extent = mesh.get_axis_aligned_bounding_box().get_extent()
     return {
         "run_id": run_id,
         "poisson_depth": request.poisson_depth,
         "density_quantile": request.density_quantile,
+        "support_distance_factor": request.support_distance_factor,
         "input_points": len(cloud.points),
         "low_density_vertices_removed": removed,
-        "mesh": {
-            "vertex_count": len(mesh.vertices),
-            "triangle_count": len(mesh.triangles),
-            "surface_area": float(mesh.get_surface_area()),
-            "is_edge_manifold": bool(mesh.is_edge_manifold()),
-            "is_vertex_manifold": bool(mesh.is_vertex_manifold()),
-            "is_watertight": bool(mesh.is_watertight()),
-            "extent": [float(value) for value in extent],
-            "sha256": _digest(mesh_path),
-            "bytes": mesh_path.stat().st_size,
-        },
+        "unsupported_vertices_removed": unsupported_removed,
+        "mesh": _mesh_facts(o3d, mesh, mesh_path),
+        "mesh_uncropped": _mesh_facts(o3d, mesh, full_path)
+        if request.support_distance_factor <= 0.0
+        else _uncropped_facts(o3d, full_path),
+        # Both directions, before and after. The pair is the evidence: support
+        # should rise sharply while coverage stays put, and a coverage drop means
+        # the crop took surface that explained real observations.
+        "support_before_crop": before,
+        "support": _support(o3d, mesh, cloud, voxel),
+        "coverage": _coverage(o3d, mesh, cloud, voxel),
+        "cloud_extent": [
+            float(value) for value in cloud.get_axis_aligned_bounding_box().get_extent()
+        ],
     }
 
 
+def _uncropped_facts(o3d, path: Path) -> dict[str, Any]:
+    """Re-read the published uncropped mesh so its facts describe those bytes."""
+
+    mesh = o3d.io.read_triangle_mesh(str(path))
+    if not mesh.has_triangles():
+        raise Open3dError("uncropped mesh artifact decoded without triangles")
+    return _mesh_facts(o3d, mesh, path)
+
+
+def _up_axis(o3d, cloud, voxel: float) -> dict[str, Any]:
+    """Infer which way is up from the scan's largest plane, and say so.
+
+    A 3D view whose camera rolls the room onto its side is unreadable, and these
+    scans carry no axis convention we are entitled to assume. The largest planar
+    segment in an indoor capture is the floor or a wall, so its normal is a
+    measured basis for the camera's up vector. The inlier count and normal are
+    returned and published, because this is an inference and a reviewer should be
+    able to see it was one — and see when it was weak.
+    """
+
+    import numpy as np
+
+    try:
+        model, inliers = cloud.segment_plane(
+            distance_threshold=voxel, ransac_n=3, num_iterations=1000
+        )
+    except RuntimeError:
+        return {"source": "default", "up": [0.0, 0.0, 1.0], "plane_inliers": 0}
+    normal = np.asarray(model[:3], dtype=float)
+    norm = float(np.linalg.norm(normal))
+    total = len(cloud.points)
+    # A plane holding under a tenth of the scan is not a floor; do not steer the
+    # camera by it.
+    if norm == 0.0 or total == 0 or len(inliers) < 0.1 * total:
+        return {
+            "source": "default-weak-plane",
+            "up": [0.0, 0.0, 1.0],
+            "plane_inliers": int(len(inliers)),
+            "plane_inlier_fraction": (len(inliers) / total) if total else 0.0,
+        }
+    normal = normal / norm
+    points = np.asarray(cloud.points)
+    plane_centre = points[np.asarray(inliers)].mean(axis=0)
+    # Point away from the plane, towards where the scene actually is.
+    if float(np.dot(points.mean(axis=0) - plane_centre, normal)) < 0.0:
+        normal = -normal
+    # Snap to the nearest world axis. The largest plane in a room can be a wall
+    # rather than the floor, and an oblique up vector rolls the horizon, which is
+    # the reviewability problem this is meant to fix. Snapping keeps the view
+    # level and stops the camera implying a gravity direction the scan never
+    # declared; the raw normal is published beside it so the inference is visible.
+    axis = int(np.argmax(np.abs(normal)))
+    snapped = np.zeros(3)
+    snapped[axis] = 1.0 if normal[axis] > 0 else -1.0
+    return {
+        "source": "largest-plane-normal-snapped-to-axis",
+        "up": [float(value) for value in snapped],
+        "measured_plane_normal": [float(value) for value in normal],
+        "angle_to_snapped_axis_degrees": float(
+            np.degrees(np.arccos(np.clip(abs(normal[axis]), -1.0, 1.0)))
+        ),
+        "plane_inliers": int(len(inliers)),
+        "plane_inlier_fraction": len(inliers) / total,
+    }
+
+
+CAMERA_FOV_DEGREES = 55.0
+CAMERA_ELEVATION_DEGREES = 28.0
+CAMERA_FRAME_MARGIN = 1.12
+
+
+def _camera(cloud, up: list[float]) -> dict[str, Any]:
+    """Place an elevated three-quarter eye far enough back to fit the whole scan.
+
+    The distance is solved rather than guessed: a hand-picked multiple of the
+    scene span either clips the scan or strands it in the middle of an empty
+    frame, and both make the result harder to review than it needs to be.
+    """
+
+    import numpy as np
+
+    box = cloud.get_axis_aligned_bounding_box()
+    centre = np.asarray(box.get_center(), dtype=float)
+    extent = np.asarray(box.get_extent(), dtype=float)
+    up_vector = np.asarray(up, dtype=float)
+    up_vector = up_vector / float(np.linalg.norm(up_vector))
+
+    horizontal = np.array([1.0, 1.0, 1.0])
+    horizontal = horizontal - float(np.dot(horizontal, up_vector)) * up_vector
+    if float(np.linalg.norm(horizontal)) < 1e-6:
+        horizontal = np.array([1.0, 0.0, 0.0])
+        horizontal = horizontal - float(np.dot(horizontal, up_vector)) * up_vector
+    horizontal = horizontal / float(np.linalg.norm(horizontal))
+    elevation = np.radians(CAMERA_ELEVATION_DEGREES)
+    offset = np.cos(elevation) * horizontal + np.sin(elevation) * up_vector
+    offset = offset / float(np.linalg.norm(offset))
+
+    # Fit: the eye must sit far enough back that every bounding-box corner still
+    # projects inside the frame at this field of view.
+    corners = np.array(
+        [
+            centre + np.array([sx, sy, sz]) * extent / 2.0
+            for sx in (-1.0, 1.0)
+            for sy in (-1.0, 1.0)
+            for sz in (-1.0, 1.0)
+        ]
+    )
+    forward = -offset
+    right = np.cross(forward, up_vector)
+    right = right / float(np.linalg.norm(right))
+    true_up = np.cross(right, forward)
+    relative = corners - centre
+    half_angle = np.tan(np.radians(CAMERA_FOV_DEGREES) / 2.0)
+    lateral = np.abs(relative @ right).max()
+    vertical = np.abs(relative @ true_up).max()
+    depth = np.abs(relative @ forward).max()
+    distance = float(max(lateral, vertical) / half_angle + depth) * CAMERA_FRAME_MARGIN
+    return {
+        "eye": [float(value) for value in centre + offset * distance],
+        "look_target": [float(value) for value in centre],
+        "up": [float(value) for value in up_vector],
+        "distance": distance,
+        "fov_degrees": CAMERA_FOV_DEGREES,
+        "elevation_degrees": CAMERA_ELEVATION_DEGREES,
+        "scene_span": float(np.linalg.norm(extent)),
+        "scene_extent": [float(value) for value in extent],
+    }
+
+
+def _blueprint(rr, rrb, camera: dict[str, Any], has_removed: bool):
+    """A first view that shows the result, with the evidence a click away.
+
+    The default Rerun layout gave every entity one auto view, so the closed
+    surface covered the scan it was built from and the provenance document took a
+    third of the window. This puts the scene first, keeps the scan and the surface
+    on independent toggles, gives the removed surface its own tab instead of
+    deleting it from the record, and moves provenance into a tab.
+    """
+
+    controls = rrb.EyeControls3D(
+        kind=rrb.Eye3DKind.Orbital,
+        position=camera["eye"],
+        look_target=camera["look_target"],
+        eye_up=camera["up"],
+    )
+    # A metre grid on the floor plane, so the view carries a readable scale.
+    grid = rrb.LineGrid3D(visible=True, plane=rr.components.Plane3D(camera["up"]))
+
+    def view(name: str, contents: list[str], **kwargs):
+        return rrb.Spatial3DView(
+            name=name,
+            origin="/world",
+            contents=contents,
+            eye_controls=controls,
+            line_grid=grid,
+            **kwargs,
+        )
+
+    tabs = [
+        view(
+            "Observed scan only",
+            ["/world/fused", "/world/fragments/**"],
+        ),
+        view("Supported surface only", ["/world/mesh"]),
+    ]
+    if has_removed:
+        tabs.append(
+            view(
+                "Removed: unsupported surface",
+                ["/world/mesh", "/world/mesh_unsupported", "/world/fused"],
+            )
+        )
+    tabs.append(rrb.TextDocumentView(name="Provenance", origin="/provenance"))
+    return rrb.Blueprint(
+        rrb.Horizontal(
+            view(
+                "Scene: observed scan and supported surface",
+                ["/world/fused", "/world/mesh", "/world/fragments/**"],
+                overrides={
+                    # Per-fragment clouds duplicate the fused cloud in space. Keep
+                    # them in the recording and one click away, not stacked on top
+                    # of it by default.
+                    "/world/fragments": rrb.EntityBehavior(visible=False),
+                },
+            ),
+            rrb.Tabs(*tabs),
+            column_shares=[2, 1],
+        ),
+        collapse_panels=True,
+    )
+
+
 def run_visualize(payload: dict[str, Any], output: Path, run_id: str) -> dict[str, Any]:
-    """Log the optimized fragments, fused cloud and mesh into one recording."""
+    """Log the optimized fragments, fused cloud and surfaces into one recording."""
 
     o3d = _open3d()
     import numpy as np
     import rerun as rr
+    import rerun.blueprint as rrb
 
     pose_graph = payload["pose_graph"]
     fragments = _fragment_paths(payload)
     fused_path = Path(payload["fused_path"])
     mesh_path = Path(payload["mesh_path"]) if payload.get("mesh_path") else None
+    uncropped_path = (
+        Path(payload["uncropped_mesh_path"])
+        if payload.get("uncropped_mesh_path")
+        else None
+    )
+    voxel = float(payload.get("voxel_size") or 0.05)
     recording_path = output / "point_cloud.rrd"
     recording = rr.RecordingStream("npa.open3d", recording_id=run_id)
     recording.save(str(recording_path))
     logged: list[dict[str, Any]] = []
+    removed_triangles = 0
     try:
         for index, node in enumerate(pose_graph["nodes"]):
             key = node["fragment_id"]
@@ -483,6 +790,10 @@ def run_visualize(payload: dict[str, Any], output: Path, run_id: str) -> dict[st
             rr.Points3D(
                 positions=fused_points,
                 colors=np.asarray(fused.colors) if fused.has_colors() else None,
+                # Sized against the sampling scale. Default-sized points vanish
+                # into an opaque surface drawn at the same depth, which is how a
+                # combined view stops showing which geometry was measured.
+                radii=voxel * 0.25,
             ),
             static=True,
         )
@@ -505,6 +816,12 @@ def run_visualize(payload: dict[str, Any], output: Path, run_id: str) -> dict[st
                 "vertex_count": int(len(mesh.vertices)),
                 "triangle_count": int(len(mesh.triangles)),
             }
+            if uncropped_path is not None:
+                removed_triangles = _log_removed_surface(
+                    o3d, rr, recording, uncropped_path, fused, voxel
+                )
+        up = _up_axis(o3d, fused, voxel)
+        camera = _camera(fused, up["up"])
         recording.log(
             "provenance",
             rr.TextDocument(
@@ -516,10 +833,16 @@ def run_visualize(payload: dict[str, Any], output: Path, run_id: str) -> dict[st
                         "run_id": run_id,
                         "fused_sha256": pose_graph["fused_sha256"],
                         "logged_fragments": logged,
+                        "camera": camera,
+                        "up_axis_inference": up,
+                        "unsupported_triangles_shown": removed_triangles,
                         "limitations": (
                             "Fragments are shown in their optimized pose-graph "
-                            "poses; per-entity decimation is recorded above. No "
-                            "ground-truth pose, scale or semantic claim."
+                            "poses; per-entity decimation is recorded above. The "
+                            "up axis is inferred from the largest planar segment, "
+                            "not from a declared convention. No ground-truth pose, "
+                            "scale or semantic claim; a surface that passed the "
+                            "support check is still not certified for collision."
                         ),
                     },
                     sort_keys=True,
@@ -527,6 +850,7 @@ def run_visualize(payload: dict[str, Any], output: Path, run_id: str) -> dict[st
             ),
             static=True,
         )
+        recording.send_blueprint(_blueprint(rr, rrb, camera, removed_triangles > 0))
     finally:
         recording.flush()
         del recording
@@ -537,9 +861,50 @@ def run_visualize(payload: dict[str, Any], output: Path, run_id: str) -> dict[st
         "logged_fragments": logged,
         "fused_points": int(len(fused_points)),
         "mesh": mesh_summary,
+        "unsupported_triangles_shown": removed_triangles,
+        "camera": camera,
+        "up_axis_inference": up,
         "sha256": _digest(recording_path),
         "bytes": recording_path.stat().st_size,
     }
+
+
+def _log_removed_surface(o3d, rr, recording, uncropped_path: Path, cloud, voxel: float):
+    """Log the surface the support crop removed, so the crop is auditable.
+
+    Showing what was taken out is the difference between a defensible cleanup and
+    a flattering camera angle. It is off by default and has its own tab.
+    """
+
+    import numpy as np
+
+    full = o3d.io.read_triangle_mesh(str(uncropped_path))
+    if not full.has_triangles():
+        return 0
+    vertices = np.asarray(full.vertices)
+    distances = _sample_distances(o3d, cloud, vertices)
+    keep = np.asarray(full.triangles)[
+        distances[np.asarray(full.triangles)].max(axis=1) > voxel
+    ]
+    if len(keep) == 0:
+        return 0
+    removed = o3d.geometry.TriangleMesh(
+        o3d.utility.Vector3dVector(vertices), o3d.utility.Vector3iVector(keep)
+    )
+    removed.remove_unreferenced_vertices()
+    removed.compute_vertex_normals()
+    recording.log(
+        "world/mesh_unsupported",
+        rr.Mesh3D(
+            vertex_positions=np.asarray(removed.vertices),
+            triangle_indices=np.asarray(removed.triangles),
+            vertex_normals=np.asarray(removed.vertex_normals),
+            # Red, so an unsupported surface never reads as observed structure.
+            vertex_colors=np.tile([220, 60, 60], (len(removed.vertices), 1)),
+        ),
+        static=True,
+    )
+    return int(len(removed.triangles))
 
 
 KINDS = {

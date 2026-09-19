@@ -117,6 +117,14 @@ class ReconstructRequest(RunRequest):
     #: Drop the lowest-density vertices Poisson extrapolates past the samples,
     #: as the upstream tutorial does with its density quantile crop.
     density_quantile: float = Field(default=0.02, ge=0.0, lt=0.5)
+    #: Discard surface farther than this many `voxel_size` units from any observed
+    #: sample. The default of 1.0 is the sampling geometry, not a tuned number:
+    #: the cloud is voxel-downsampled at `voxel_size`, so a surface point that
+    #: interpolates between neighbouring samples sits at most about half a voxel
+    #: diagonal from one; past a full voxel there is nothing left to interpolate
+    #: from and Poisson is extrapolating. Pass 0.0 to publish the closed surface
+    #: unchanged, which is the right choice when the scan is already complete.
+    support_distance_factor: float = Field(default=1.0, ge=0.0, le=100.0)
 
 
 def fragment_id_for(uri: str) -> str:

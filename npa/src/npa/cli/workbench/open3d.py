@@ -182,6 +182,14 @@ def reconstruct_cmd(
         "--density-quantile",
         help="Drop this lowest-density fraction of Poisson vertices.",
     ),
+    support_distance_factor: float = typer.Option(
+        1.0,
+        "--support-distance-factor",
+        help=(
+            "Discard surface farther than this many voxel_size units from any "
+            "observed sample. 0 keeps Poisson's closed surface unchanged."
+        ),
+    ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.json, "--output-format", help="Output format."
     ),
@@ -195,6 +203,7 @@ def reconstruct_cmd(
             run_id=run_id,
             poisson_depth=poisson_depth,
             density_quantile=density_quantile,
+            support_distance_factor=support_distance_factor,
         ),
     )
 

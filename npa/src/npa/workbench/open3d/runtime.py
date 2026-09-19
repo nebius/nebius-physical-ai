@@ -34,6 +34,7 @@ from .artifacts import (
     validate_mesh,
     validate_pose_graph,
     validate_result,
+    validate_support,
     verify_rerun_recording,
 )
 from .schemas import (
@@ -53,6 +54,7 @@ MANIFEST_FILENAME = "manifest.json"
 POSE_GRAPH_FILENAME = "pose_graph.json"
 FUSED_FILENAME = "fused.ply"
 MESH_FILENAME = "mesh.ply"
+UNCROPPED_MESH_FILENAME = "mesh_uncropped.ply"
 RECORDING_FILENAME = "point_cloud.rrd"
 RESULT_FILENAME = "result.json"
 #: Maximum fragments one prefix may contribute. Multiway registration is
@@ -465,14 +467,20 @@ def reconstruct(request: ReconstructRequest) -> dict[str, Any]:
         )
         report = json.loads((output / "runner.json").read_text())
         validate_mesh(report["mesh"])
+        validate_mesh(report["mesh_uncropped"])
+        validate_support(report, voxel_size=_load_manifest_voxel(manifest_report))
         mesh = (output / MESH_FILENAME).read_bytes()
         if sha256_bytes(mesh) != report["mesh"]["sha256"]:
             raise Open3dError("reconstructed mesh does not match its reported digest")
+        uncropped = (output / UNCROPPED_MESH_FILENAME).read_bytes()
+        if sha256_bytes(uncropped) != report["mesh_uncropped"]["sha256"]:
+            raise Open3dError("uncropped mesh does not match its reported digest")
         report["schema_version"] = "npa.open3d.reconstruction.v1"
         # Carry the registration prefix forward so `visualize` can reach the
         # pose graph and fragments without being told twice.
         report["registration_path"] = request.input_path
         _publish(uri_join(request.output_path, MESH_FILENAME), mesh)
+        _publish(uri_join(request.output_path, UNCROPPED_MESH_FILENAME), uncropped)
         _publish(uri_join(request.output_path, RESULT_FILENAME), canonical(report))
         return report
     finally:
@@ -514,6 +522,10 @@ def visualize(request: RunRequest) -> dict[str, Any]:
         fused.write_bytes(read_bytes_uri(uri_join(registration_path, FUSED_FILENAME)))
         mesh = root / MESH_FILENAME
         mesh.write_bytes(read_bytes_uri(uri_join(request.input_path, MESH_FILENAME)))
+        uncropped = root / UNCROPPED_MESH_FILENAME
+        uncropped.write_bytes(
+            read_bytes_uri(uri_join(request.input_path, UNCROPPED_MESH_FILENAME))
+        )
         output = _run_runner(
             "visualize",
             {
@@ -521,6 +533,8 @@ def visualize(request: RunRequest) -> dict[str, Any]:
                 "fragments": _download_fragments(manifest, root),
                 "fused_path": str(fused),
                 "mesh_path": str(mesh),
+                "uncropped_mesh_path": str(uncropped),
+                "voxel_size": manifest.voxel_size,
             },
             root,
             request.run_id,

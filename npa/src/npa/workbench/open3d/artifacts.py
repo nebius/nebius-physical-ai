@@ -306,6 +306,67 @@ def validate_mesh(mesh: Any) -> None:
         raise Open3dError("mesh must carry a sha256 digest")
 
 
+def validate_support(report: Any, *, voxel_size: float) -> None:
+    """Check the support/coverage pair a reconstruction publishes about itself.
+
+    The point of these numbers is that they are checkable against each other. A
+    crop that claims to have removed unsupported surface must leave the observed
+    samples where they were: if coverage fell with the area, the crop took real
+    surface, and the reconstruction is worse rather than more honest.
+    """
+
+    if not isinstance(report, dict):
+        raise Open3dError("reconstruction report must be an object")
+    before = report.get("support_before_crop")
+    after = report.get("support")
+    coverage = report.get("coverage")
+    for name, block, keys in (
+        ("support_before_crop", before, ("unsupported_area_fraction",)),
+        ("support", after, ("unsupported_area_fraction",)),
+        (
+            "coverage",
+            coverage,
+            ("fraction_within_voxel", "sample_to_surface_rmse", "samples"),
+        ),
+    ):
+        if not isinstance(block, dict) or not set(keys) <= set(block):
+            raise Open3dError(f"reconstruction report is missing {name} measurements")
+    for block, key in ((before, "unsupported"), (after, "unsupported")):
+        fraction = block["unsupported_area_fraction"]
+        if not _finite_number(fraction) or not 0.0 <= float(fraction) <= 1.0:
+            raise Open3dError(f"{key} area fraction must be a fraction in [0, 1]")
+    within = coverage["fraction_within_voxel"]
+    if not _finite_number(within) or not 0.0 <= float(within) <= 1.0:
+        raise Open3dError("coverage fraction must be a fraction in [0, 1]")
+    rmse = coverage["sample_to_surface_rmse"]
+    if not _finite_number(rmse) or float(rmse) < 0.0:
+        raise Open3dError("sample-to-surface RMSE must be a nonnegative distance")
+    if isinstance(coverage["samples"], bool) or not isinstance(
+        coverage["samples"], int
+    ):
+        raise Open3dError("coverage must report how many samples it measured")
+    if coverage["samples"] <= 0:
+        raise Open3dError("coverage must measure at least one sample")
+    factor = report.get("support_distance_factor")
+    if not _finite_number(factor) or float(factor) < 0.0:
+        raise Open3dError("support_distance_factor must be a nonnegative multiple")
+    # Cropping can only remove area, so it cannot raise the unsupported fraction.
+    if (
+        float(factor) > 0.0
+        and float(after["unsupported_area_fraction"])
+        > float(before["unsupported_area_fraction"]) + 1e-9
+    ):
+        raise Open3dError(
+            "support cropping reported more unsupported area than before it ran"
+        )
+    if float(factor) > 0.0 and float(after["max_vertex_distance_to_sample"]) > (
+        voxel_size * float(factor)
+    ) * (1.0 + 1e-6):
+        raise Open3dError(
+            "surface remains farther from the scan than the support limit allows"
+        )
+
+
 def verify_rerun_recording(path: Path) -> None:
     """Decode the recording with Rerun's own verifier, not by checking a suffix."""
 

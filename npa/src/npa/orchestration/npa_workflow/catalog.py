@@ -334,6 +334,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.open3d_poisson_depth}}",
             "--density-quantile",
             "{{config.open3d_density_quantile}}",
+            "--support-distance-factor",
+            "{{config.open3d_support_distance_factor}}",
         ],
     ),
     "workbench.open3d.visualize": ToolEntry(

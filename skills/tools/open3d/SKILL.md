@@ -78,6 +78,33 @@ be able to open the thing being asserted.
 - `reconstruct` crops the lowest-density Poisson vertices (the upstream tutorial's
   density quantile). Those vertices are extrapolation past the samples, so the
   count removed is recorded rather than hidden.
+- The density quantile alone is nowhere near enough on a partial scan. Poisson
+  returns a *closed* surface, so an open capture comes back wrapped in an
+  extrapolated shell that renders as smooth opaque geometry indistinguishable
+  from observed structure. On the upstream three-fragment demo scans that shell
+  measured **0.527 of the total surface area**, reaching 0.905 m from the nearest
+  sample, and it explained none of the observations: cropping all of it left
+  sample coverage within one voxel unchanged at 0.99243 and moved
+  sample-to-surface RMSE by 0.00005 m. `--support-distance-factor` (default
+  `1.0`) discards surface with no observed sample within that many `voxel_size`
+  units. One voxel is the sampling geometry, not a tuned constant — the cloud is
+  voxel-downsampled, so a surface point interpolating between neighbouring
+  samples sits at most about half a voxel diagonal from one. Pass `0` to publish
+  the closed surface unchanged, which is right when the capture is already
+  complete.
+- Both surfaces ship: `mesh.ply` is the cropped result and `mesh_uncropped.ply`
+  is what Poisson returned, so the crop is a checkable claim rather than a
+  deletion. `reconstruct` also publishes the support measurement before and
+  after the crop plus coverage in the other direction (observed samples to the
+  surface), and the stage fails if those disagree — cropping that reported more
+  unsupported area than it started with, or surface left beyond the stated limit.
+- `visualize` sends a blueprint: an elevated three-quarter camera with its
+  distance solved so the whole scan fits, the scan and surface on independent
+  toggles, and the cropped-away surface in red in its own tab. The up axis is
+  inferred from the largest planar segment and then snapped to the nearest world
+  axis so the horizon stays level; the raw normal, its inlier fraction, and the
+  snap angle are all published, because it is an inference. A scan with no
+  dominant plane falls back to `+Z` and says so.
 - Multiway registration is O(n²) in pairwise registrations. At most 32 fragments
   are accepted in one run, so an over-broad prefix fails fast instead of becoming
   an unbounded job.

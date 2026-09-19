@@ -70,6 +70,7 @@ def reconstruct(
     run_id: str,
     poisson_depth: int = 9,
     density_quantile: float = 0.02,
+    support_distance_factor: float = 1.0,
 ) -> dict[str, Any]:
     return runtime.reconstruct(
         ReconstructRequest(
@@ -78,6 +79,7 @@ def reconstruct(
             run_id=run_id,
             poisson_depth=poisson_depth,
             density_quantile=density_quantile,
+            support_distance_factor=support_distance_factor,
         )
     )
 

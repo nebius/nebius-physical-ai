@@ -15,6 +15,7 @@ import math
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from npa.workbench.open3d import runtime
 from npa.workbench.open3d.artifacts import (
@@ -29,6 +30,7 @@ from npa.workbench.open3d.artifacts import (
     validate_registration_result,
     validate_result,
     validate_rigid_transform,
+    validate_support,
 )
 from npa.workbench.open3d.schemas import (
     DEMO_DATA_RELEASE,
@@ -353,6 +355,148 @@ def test_a_partial_scan_surface_is_accepted_even_when_open() -> None:
 def test_meshes_that_are_not_surfaces_are_rejected(overrides) -> None:
     with pytest.raises(Open3dError):
         validate_mesh(_mesh(**overrides))
+
+
+# ------------------------------------------------------- reconstruction support
+
+
+def _support_report(**overrides) -> dict:
+    """A coherent reconstruction report: half the area cropped, coverage intact."""
+
+    report = {
+        "support_distance_factor": 1.0,
+        "support_before_crop": {
+            "voxel_size": 0.05,
+            "unsupported_area_fraction": 0.527,
+            "unsupported_area": 11.72,
+            "max_vertex_distance_to_sample": 0.905,
+            "median_vertex_distance_to_sample": 0.0218,
+            "p95_vertex_distance_to_sample": 0.218,
+        },
+        "support": {
+            "voxel_size": 0.05,
+            "unsupported_area_fraction": 0.0,
+            "unsupported_area": 0.0,
+            "max_vertex_distance_to_sample": 0.0499,
+            "median_vertex_distance_to_sample": 0.0203,
+            "p95_vertex_distance_to_sample": 0.0416,
+        },
+        "coverage": {
+            "samples": 6340,
+            "fraction_within_voxel": 0.9924,
+            "fraction_within_two_voxels": 0.9996,
+            "sample_to_surface_rmse": 0.0108,
+            "sample_to_surface_p95": 0.0223,
+        },
+    }
+    report.update(overrides)
+    return report
+
+
+def test_a_crop_that_removes_unsupported_area_is_accepted() -> None:
+    """Poisson closes a partial scan; removing that shell is the intended result."""
+
+    validate_support(_support_report(), voxel_size=0.05)
+
+
+def test_an_uncropped_reconstruction_is_accepted_with_its_shell_declared() -> None:
+    """Factor 0 publishes the closed surface, so its unsupported area must stand."""
+
+    report = _support_report(support_distance_factor=0.0)
+    report["support"] = dict(report["support_before_crop"])
+    validate_support(report, voxel_size=0.05)
+
+
+def test_cropping_cannot_report_more_unsupported_area_than_it_started_with() -> None:
+    """Removing triangles can only shrink the unsupported area; arithmetic says so."""
+
+    report = _support_report()
+    report["support"]["unsupported_area_fraction"] = 0.6
+    with pytest.raises(Open3dError, match="more unsupported area"):
+        validate_support(report, voxel_size=0.05)
+
+
+def test_surface_left_beyond_the_support_limit_is_rejected() -> None:
+    """The reported limit and the reported distances have to agree."""
+
+    report = _support_report()
+    report["support"]["max_vertex_distance_to_sample"] = 0.4
+    with pytest.raises(Open3dError, match="farther from the scan"):
+        validate_support(report, voxel_size=0.05)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(lambda r: r.pop("support"), id="no-support-measurement"),
+        pytest.param(lambda r: r.pop("coverage"), id="no-coverage-measurement"),
+        pytest.param(lambda r: r.pop("support_before_crop"), id="no-baseline"),
+        pytest.param(
+            lambda r: r["coverage"].update(samples=0), id="coverage-measured-nothing"
+        ),
+        pytest.param(
+            lambda r: r["coverage"].update(samples=True), id="sample-count-is-a-bool"
+        ),
+        pytest.param(
+            lambda r: r["coverage"].update(fraction_within_voxel=1.4),
+            id="coverage-over-one",
+        ),
+        pytest.param(
+            lambda r: r["coverage"].update(sample_to_surface_rmse=-0.01),
+            id="negative-rmse",
+        ),
+        pytest.param(
+            lambda r: r["coverage"].update(sample_to_surface_rmse=float("nan")),
+            id="rmse-is-nan",
+        ),
+        pytest.param(
+            lambda r: r["support"].update(unsupported_area_fraction=-0.1),
+            id="negative-unsupported-fraction",
+        ),
+        pytest.param(
+            lambda r: r.update(support_distance_factor=-1.0), id="negative-factor"
+        ),
+    ],
+)
+def test_incoherent_support_reports_are_rejected(mutate) -> None:
+    report = _support_report()
+    mutate(report)
+    with pytest.raises(Open3dError):
+        validate_support(report, voxel_size=0.05)
+
+
+def test_support_report_must_be_an_object() -> None:
+    with pytest.raises(Open3dError):
+        validate_support(["support"], voxel_size=0.05)
+
+
+def test_support_distance_factor_defaults_to_one_voxel() -> None:
+    """The sampling scale, not a tuned number: past a voxel there is no sample."""
+
+    assert (
+        ReconstructRequest(
+            input_path="s3://bucket/graph",
+            output_path="s3://bucket/surface",
+            run_id="run",
+        ).support_distance_factor
+        == 1.0
+    )
+
+
+def test_support_distance_factor_can_be_disabled_but_not_negative() -> None:
+    kwargs = {
+        "input_path": "s3://bucket/graph",
+        "output_path": "s3://bucket/surface",
+        "run_id": "run",
+    }
+    assert (
+        ReconstructRequest(
+            support_distance_factor=0.0, **kwargs
+        ).support_distance_factor
+        == 0.0
+    )
+    with pytest.raises(ValidationError):
+        ReconstructRequest(support_distance_factor=-0.5, **kwargs)
 
 
 # -------------------------------------------------------------------- schemas
