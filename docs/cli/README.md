@@ -40,6 +40,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa workbench lichtblick](lichtblick.md)
 - [npa workbench ltx2](ltx2.md)
 - [npa workbench mjlab](mjlab.md)
+- [npa workbench molmoact](molmoact.md)
 - [npa network](network.md)
 - [npa cluster node-group](node-group.md)
 - [npa workbench nurec](nurec.md)

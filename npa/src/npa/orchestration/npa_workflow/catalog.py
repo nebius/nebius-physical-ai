@@ -129,6 +129,7 @@ _OPENPI_FULL_DROID_PIPELINE = [
     "-m",
     "npa.workflows.byof.openpi_full_droid",
 ]
+_MOLMOACT_PIPELINE = ["python3", "-m", "npa.workflows.byof.molmoact_pipeline"]
 
 _CONTENT_AGENTS_PIPELINE = [
     "python3",
@@ -1527,6 +1528,60 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--expected-compute-capability",
             "{{config.expected_compute_capability}}",
         ],
+    ),
+    "workbench.molmoact.finetune": ToolEntry(
+        name="workbench.molmoact.finetune",
+        description=(
+            "Validate a MolmoAct fine-tuning config "
+            "(planning only; training not implemented)."
+        ),
+        argv_template=[
+            *_MOLMOACT_PIPELINE,
+            "finetune",
+            "--model-id",
+            "{{config.model_id}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+            "--output-s3-uri",
+            "{{config.training_uri}}",
+        ],
+        access_capabilities=("huggingface",),
+    ),
+    "workbench.molmoact.serve": ToolEntry(
+        name="workbench.molmoact.serve",
+        description=(
+            "Validate a MolmoAct serving config "
+            "(planning only; serving not implemented)."
+        ),
+        argv_template=[
+            *_MOLMOACT_PIPELINE,
+            "serve",
+            "--checkpoint",
+            "{{config.trained_checkpoint_uri}}",
+            "--port",
+            "{{config.serve_port}}",
+        ],
+        access_capabilities=("huggingface",),
+    ),
+    "workbench.molmoact.eval": ToolEntry(
+        name="workbench.molmoact.eval",
+        description=(
+            "Validate a MolmoAct eval config "
+            "(planning only; evaluation not implemented)."
+        ),
+        argv_template=[
+            *_MOLMOACT_PIPELINE,
+            "eval",
+            "--model-id",
+            "{{config.model_id}}",
+            "--checkpoint",
+            "{{config.trained_checkpoint_uri}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+            "--output-s3-uri",
+            "{{config.evaluation_uri}}",
+        ],
+        access_capabilities=("huggingface",),
     ),
     "workbench.isaac_lab.byof_repo": ToolEntry(
         name="workbench.isaac_lab.byof_repo",
