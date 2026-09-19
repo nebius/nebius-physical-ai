@@ -456,7 +456,7 @@ jobs:
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
           if [ "$TOOL" = gymnasium-robotics ]; then
             npa/.venv/bin/python npa/scripts/scan_image_gymnasium_robotics_payload.py \
-              --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
+              --oci-layout "$RUNNER_TEMP/${TOOL}.tar" \
               --reviewed-graph-record \
               --output "$RUNNER_TEMP/${TOOL}-gymnasium-payload.json"
           fi
@@ -639,7 +639,7 @@ jobs:
             ] and
             .schema == "npa.gymnasium-robotics.payload-scan.v1" and
             .status == "passed" and
-            .archive_format == "docker-save" and
+            .archive_format == "oci-layout" and
             (.archive_sha256 | test("^[0-9a-f]{64}$")) and
             (.config_sha256 | test("^[0-9a-f]{64}$")) and
             (.layer_count > 0) and
@@ -771,7 +771,7 @@ jobs:
           done
           if [ "$TOOL" = gymnasium-robotics ]; then
             npa/.venv/bin/python npa/scripts/scan_image_gymnasium_robotics_payload.py \
-              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --oci-layout "$RUNNER_TEMP/${TOOL}-pushed.tar" \
               --reviewed-graph-record \
               --output "$RUNNER_TEMP/${TOOL}-pushed-gymnasium-payload.json"
             payload="$RUNNER_TEMP/${TOOL}-pushed-gymnasium-payload.json"
@@ -789,7 +789,7 @@ jobs:
               ] and
               .schema == "npa.gymnasium-robotics.payload-scan.v1" and
               .status == "passed" and
-              .archive_format == "docker-save" and
+              .archive_format == "oci-layout" and
               (.archive_sha256 | test("^[0-9a-f]{64}$")) and
               (.config_sha256 | test("^[0-9a-f]{64}$")) and
               (.layer_count > 0) and

@@ -131,6 +131,9 @@ def test_public_workflow_uses_hash_bound_graph_not_candidate_digests() -> None:
         in scanner_text
     )
     assert "--reviewed-graph-record" in text
+    assert text.count('--oci-layout "$RUNNER_TEMP/${TOOL}.tar"') == 1
+    assert text.count('--oci-layout "$RUNNER_TEMP/${TOOL}-pushed.tar"') == 1
+    assert text.count('.archive_format == "oci-layout"') == 2
     assert "if args.reviewed_graph_record and (" in (
         SCANNER.read_text(encoding="utf-8")
     )
