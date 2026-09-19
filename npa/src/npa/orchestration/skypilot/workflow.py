@@ -1436,6 +1436,11 @@ def submit_workflow(
             launch_transaction["libero_profile_sha256"] = (
                 libero_executable_profile_sha256(docs)
             )
+            if bound_libero_job_id:
+                # Keep the returned transaction self-validating on exact-run
+                # resume: verified owner bindings must carry the same exact
+                # queue candidate ID that the loader checks.
+                launch_transaction["libero_candidate_job_id"] = bound_libero_job_id
             candidate_job_id = bound_libero_job_id or unverified_libero_job_id
             if libero_launch_succeeded:
                 launch_transaction["libero_launch_succeeded"] = True

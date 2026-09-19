@@ -377,6 +377,7 @@ def test_libero_reconciliation_promotes_candidate_atomically(
     binding = result.launch_transaction["libero_owner_binding"]
     assert binding["job_id"] == "42"
     assert binding["state"] == "verified"
+    assert result.launch_transaction["libero_candidate_job_id"] == "42"
     assert "libero_unverified_candidate_job_id" not in result.launch_transaction
     assert "libero_binding_error" not in result.launch_transaction
 
@@ -2672,6 +2673,48 @@ def test_libero_verified_owner_binding_requires_matching_launch_evidence(
     assert job_id == "126"
     assert error == ""
     assert owner_binding is True
+
+
+@pytest.mark.parametrize("candidate_job_id", [None, "127"])
+def test_libero_verified_owner_binding_rejects_absent_or_mismatched_candidate(
+    monkeypatch, candidate_job_id
+) -> None:
+    from npa.orchestration.npa_workflow import submission_state
+
+    launch = {
+        "libero_owner_binding": {
+            "schema": workflow_module.LIBERO_OWNER_BINDING_SCHEMA,
+            "run_id": "exact-run",
+            "job_name": "exact-run",
+            "job_id": "126",
+            "profile_sha256": "a" * 64,
+            "state": "verified",
+            "evidence": "queue_exact_id_name_profile",
+        },
+        "libero_profile_sha256": "a" * 64,
+    }
+    if candidate_job_id is not None:
+        launch["libero_candidate_job_id"] = candidate_job_id
+
+    class Receipt:
+        outcome = "found"
+        payload = {"launch": launch}
+
+    monkeypatch.setattr(
+        submission_state,
+        "inspect_submission_state",
+        lambda _project, _run_id: Receipt(),
+    )
+
+    job_id, error, owner_binding = workflow_module._load_libero_owner_binding(
+        project="project",
+        run_id="exact-run",
+        expected_profile_sha256="a" * 64,
+    )
+
+    assert job_id == ""
+    assert owner_binding is False
+    assert error == "existing LIBERO verified owner binding lacks exact queue evidence"
 
 
 def test_libero_unverified_candidate_missing_from_queue_is_indeterminate(
