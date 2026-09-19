@@ -1232,7 +1232,11 @@ def submit_cmd(
         if output_format != OutputFormat.json and not plan_only:
             typer.echo(
                 ("Explicitly resuming" if resume else "Reserved fresh run")
-                + f" {resolved_run_id}; state will be created only after preflight",
+                + (
+                    " "
+                    f"{_redact_submit_private_values(resolved_run_id)}; state will be "
+                    "created only after preflight"
+                ),
                 err=True,
             )
     else:
@@ -2859,7 +2863,7 @@ def submit_cmd(
         return
 
     typer.echo(f"status: {result.status}")
-    typer.echo(f"run_id: {resolved_run_id}")
+    typer.echo(f"run_id: {_redact_submit_private_values(resolved_run_id)}")
     if result.job_id:
         typer.echo(f"job_id: {result.job_id}")
     if workflow_state is not None:

@@ -104,7 +104,7 @@ def _submit_cosmos3(*args: str):
     )
 
 
-def _submit_robotwin(*args: str):
+def _submit_robotwin(*args: str, run_id: str = "robotwin-public-launcher"):
     return runner.invoke(
         app,
         [
@@ -113,7 +113,7 @@ def _submit_robotwin(*args: str):
             "submit",
             str(ROBOTWIN_SPEC),
             "--run-id",
-            "robotwin-public-launcher",
+            run_id,
             "--no-deploy-if-absent",
             *args,
         ],
@@ -443,8 +443,12 @@ def test_non_robotwin_live_submit_never_enters_robotwin_preflight(
     special.assert_not_called()
 
 
-def test_robotwin_normal_submit_uses_only_internal_value_secret_and_bound_output(
-    monkeypatch: pytest.MonkeyPatch, mocker, tmp_path: Path
+@pytest.mark.parametrize("output_format", ["json", "text"])
+def test_robotwin_normal_submit_redacts_private_values_in_all_output_modes(
+    monkeypatch: pytest.MonkeyPatch,
+    mocker,
+    tmp_path: Path,
+    output_format: str,
 ) -> None:
     from npa.orchestration.npa_workflow import robotwin_preflight
     from npa.orchestration.skypilot.workflow import WorkflowResult
@@ -540,7 +544,8 @@ def test_robotwin_normal_submit_uses_only_internal_value_secret_and_bound_output
         "--isolated-config-dir",
         str(tmp_path / "sky-state"),
         "--output-format",
-        "json",
+        output_format,
+        run_id=str(private["run_id"]),
     )
 
     assert result.exit_code == 0, result.output
@@ -580,13 +585,19 @@ def test_robotwin_normal_submit_uses_only_internal_value_secret_and_bound_output
         "bootstrap_image",
         "bucket",
         "output_root",
-        "run_id",
     ):
         value = str(private[field])
         assert value not in rendered
         assert value not in result.output
+    assert str(private["run_id"]) not in result.output
     assert summary_uri not in result.output
-    assert "<redacted>" in json.loads(result.stdout)["stdout"]
+    if output_format == "json":
+        assert "<redacted>" in json.loads(result.stdout)["stdout"]
+    else:
+        assert str(private["run_id"]) not in result.stdout
+        assert str(private["run_id"]) not in result.stderr
+        assert "run_id: <redacted>" in result.stdout
+        assert "Reserved fresh run <redacted>" in result.stderr
     assert receipts == []
     operation_prepare.assert_not_called()
     saved_source_resolver.assert_not_called()
