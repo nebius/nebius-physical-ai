@@ -50,7 +50,13 @@ def partial_runtime(tmp_path, runtime_sdk_submission):
         workload_observable=bool(case.cancels),
     )
     case.status = lambda job_id: SimpleNamespace(status=case.terminal if job_id == "41" else "SUCCEEDED")
-    case.options = RuntimeOptions(poll_seconds=0, preflight_evidence=_supervisor_preflight())
+    # Durable recovery receipts carry only the redacted credential-access
+    # marker; the other checks remain ordinary pass evidence.
+    recovery_preflight = {
+        **_supervisor_preflight(),
+        "credentials_access": "<redacted>",
+    }
+    case.options = RuntimeOptions(poll_seconds=0, preflight_evidence=recovery_preflight)
     case.check = lambda uri: case.output
     return case
 

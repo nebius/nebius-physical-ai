@@ -121,7 +121,7 @@ def test_release_specific_evidence_stays_tied_to_current_pins(
         ),
         "npa-isaac-lab": (
             "3.0.0b2.post1-sim2real-coherent-20260904",
-            ["supported", "supported", "verified", "blocked", "blocked"],
+            ["supported", "supported", "historical", "blocked", "blocked"],
         ),
     }
     published = chart.published_images()
