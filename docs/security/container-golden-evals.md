@@ -114,7 +114,7 @@ flowchart TB
 | `lerobot-vlm-rl` | `0.1.1` | container-smoke | CUDA; VLM signal parse + RL step | required | gpu-gated |
 | `genesis` | `0.4.6` | container-smoke | import; Franka scene; step; body state | required | gpu-gated |
 | `isaac-lab` | `3.0.0b2.post1-sim2real-coherent-20260904` | container-smoke | version; runtime; vectorized environment steps and replay; separately validated RTX/Vulkan render | required | gpu-gated |
-| `habitat-sim` | `0.3.3-public-unbuilt` | container-smoke | runtime-hashed official Skokloster scene; distinct RGB/depth frames; Bullet time and displacement; NVIDIA EGL; exact digest and storage readback | exactly one RTX PRO 6000 Blackwell; never B200 | needs-image-update |
+| `habitat-sim` | `0.3.3-public-unbuilt` | container-smoke | runtime-hashed official Skokloster scene; distinct RGB/depth frames; Bullet time and displacement; NVIDIA EGL; exact digest and storage readback | exactly one RTX PRO 6000 Blackwell; never B200 | unvalidated |
 | `content-agents` | `0.5.2-npa2` | container-smoke | exact OVRTX runtime fetch; real rigid-physics authoring; upstream validation + render | required | gpu-gated |
 | `cosmos` | `cu128-torch27-sm100-1.0.9-20260803T002017Z` | container-smoke | version; model load; single inference (safety on) | required | gpu-gated |
 | `cosmos2-transfer` | `2.5.1-sim2real-coherent-20260904` | container-smoke | procedural input; four real diffusion steps; decoded, numerically validated output MP4; guardrails enabled | required | gpu-gated |
@@ -162,9 +162,10 @@ complete byte scan and the genuine one-RTX renderer workflow.
 | `build-import` | import/compile proof that the heavy deps resolve |
 
 `status` is one of `ready` (runs on a normal runner), `gpu-gated` (needs a GPU
-host/serverless with the image), `blocked-on-upstream` (B300/CUDA13 family), or
-`needs-image-update` (the published image cannot run its eval yet — see the
-validation results below).
+host/serverless with the image), `blocked-on-upstream` (B300/CUDA13 family),
+`unvalidated` (the candidate is unbuilt or publication-quarantined, so no
+published image is implied), or `needs-image-update` (a published image exists
+but cannot run its eval yet — see the validation results below).
 
 ## Validation results
 

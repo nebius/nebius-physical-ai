@@ -139,11 +139,6 @@ image (`public` | `restricted` | `unvalidated`), enforced by
   **runtime** by the operator, never baked into the image. These may be published
   to a public/anonymous registry.
 
-- **`unvalidated`** — The intended packaging shape is recorded, but complete
-  corresponding-source closure, built-byte verification, or both remain
-  unproved. An `unvalidated` image is not eligible for public publication or
-  anonymous pull claims; keep it quarantined until the missing evidence passes.
-
   Public registry availability alone is not a grant for every component. For
   example, the current cuDNN supplement identifies runtime `.so` and `.dll`
   files as distributable; an inspected wheel's older embedded supplement also
@@ -171,6 +166,12 @@ image (`public` | `restricted` | `unvalidated`), enforced by
   Review the [SSPL's distribution and service provisions](https://www.mongodb.com/legal/licensing/server-side-public-license)
   separately; an image's redistribution classification does not decide whether
   an operator's service use meets its obligations.
+
+- **`unvalidated`** — The intended packaging shape is recorded, but complete
+  corresponding-source closure, built-byte verification, or both remain
+  unproved. An `unvalidated` image is not eligible for public publication or
+  anonymous pull claims; keep it quarantined until the missing evidence passes.
+
 - **`restricted`** — bakes a runtime we are not licensed to redistribute. Such an
   image may be built and run by the operator who owns the registry (internal R&D,
   build-your-own), but hosting it **prebuilt on a public/anonymous registry** would
