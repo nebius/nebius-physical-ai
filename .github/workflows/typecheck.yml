@@ -31,13 +31,13 @@ jobs:
           python-version: "3.12"
 
       - name: Install npa and mypy
-        run: cd npa && pip install -e ".[full]" mypy
+        run: cd npa && pip install -e ".[full]" "mypy==2.3.1"  # pinned: mypy-baseline.txt is seeded with this version
 
       - name: Mypy
         id: mypy
         run: |
           cd npa
-          mypy src/npa --ignore-missing-imports --no-error-summary 2>&1 | tee mypy-output.txt
+          mypy src/npa --ignore-missing-imports --no-error-summary --python-version=3.12 2>&1 | tee mypy-output.txt
           mypy_code=${PIPESTATUS[0]}
           echo "mypy exit code: ${mypy_code}"
           # mypy exit 1 means "errors found": those are judged against the
