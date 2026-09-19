@@ -14,7 +14,10 @@ The implementation is in
 Both matched arms completed 3,600 updates on B200 GPUs, scored six checkpoints
 on the fixed holdout, and exported a selected model. A subsequent serving
 consistency check found different loss metrics despite identical learned
-parameters. Serving validation and policy-improvement evaluation remain pending.
+parameters. A B200 diagnostic isolated a correlation-statistics precision
+difference at update 600: matching that one array made all four checked metrics
+byte-identical. The selected update-3599 model still needs serving validation
+and rollout evaluation. See the [experiment report](behavior-matched-results-2026-09-19.md).
 
 ## What is trained
 

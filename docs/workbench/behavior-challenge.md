@@ -7,7 +7,14 @@ SkyPilot. A separately served policy receives RGB, depth, and robot
 proprioception and returns robot actions over WebSocket. This workflow evaluates
 a fixed policy; policy serving uses pinned upstream implementations.
 
-**Latest comparison, September 18:** the
+**Latest experiment, September 19:** both
+[matched training arms](behavior-matched-results-2026-09-19.md) completed 3,600
+updates, full holdout selection, and selected-model export. A GPU diagnostic
+confirmed a training-to-serving precision mismatch at update 600. The
+prospective fix is included; the selected model remains unvalidated for serving
+and has no rollout score.
+
+**Earlier comparison, September 18:** the
 [76-rollout follow-up](behavior-followup-results-2026-09-18.md) scored the
 published RLC controller at Q=0.404444 and the balanced three-task fine-tune at
 Q=0.227778 on the same development panel. The fine-tune improved four cases and
@@ -75,9 +82,10 @@ by September 2026 research. It records the failed adaptation run and the
 timestamp and annotation-alignment audits. The separate
 [matched stage-conditioning implementation](behavior-matched-training.md)
 freezes the parent task and stage modules while comparing teacher-bin and parent
-stage-replay action conditioning. The matched implementation has not completed
-native GPU validation or rollout evaluation; the published RLC
-comparison below remains the measured result.
+stage-replay action conditioning. Native GPU training and holdout selection
+completed for both arms. Selected-model serving validation and rollout
+evaluation remain pending; the published RLC comparison below is a separate
+measured result.
 
 `--policy-kind rlc` selects a development-only transfer of the published
 [RLC 2025 winning solution](https://github.com/IliaLarchenko/behavior-1k-solution).
