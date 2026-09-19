@@ -80,7 +80,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Keep LIBERO public disclosure quarantined
+      - name: Permit LIBERO payload-free development staging only
         env:
           REQUESTED_TOOLS: ${{ inputs.tool }}
           BUILD_TOOLS: ${{ inputs.build_development_tools }}
@@ -99,10 +99,12 @@ jobs:
             return 1
           }
           if contains_libero "$REQUESTED_TOOLS" || \
-            contains_libero "$BUILD_TOOLS" || \
             contains_libero "$CLEANUP_TOOLS"; then
-            echo "::error::LIBERO public disclosure remains blocked until a separate exact-digest live-B200 authorization is implemented and accepted."
+            echo "::error::LIBERO requested or cleanup selectors require an exact qualified digest and completed publication gates."
             exit 1
+          fi
+          if contains_libero "$BUILD_TOOLS"; then
+            echo "LIBERO payload-free public-development staging is permitted; qualification, payload, digest, anonymous-pull, and real-B200 gates remain mandatory."
           fi
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -793,6 +795,7 @@ jobs:
             )
             export_args=(
               --output "type=oci,dest=$RUNNER_TEMP/libero-build.oci.tar,tar=true,rewrite-timestamp=true"
+              --output "type=docker,dest=$RUNNER_TEMP/libero-build.docker.tar"
             )
             secret_args+=(
               --secret id=npa_libero_output_storage_authorization_public_key_b64,env=NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64
@@ -812,12 +815,13 @@ jobs:
           if [[ "$TOOL" == libero ]]; then
             test -s "$RUNNER_TEMP/libero-build-metadata.json"
             test -s "$RUNNER_TEMP/libero-build.oci.tar"
+            test -s "$RUNNER_TEMP/libero-build.docker.tar"
             npa/.venv/bin/python npa/scripts/scan_image_libero_payload.py \
               --verify-build-oci "$RUNNER_TEMP/libero-build.oci.tar" \
               --build-metadata "$RUNNER_TEMP/libero-build-metadata.json" \
               --output "$RUNNER_TEMP/libero-build-attestations.json"
-            echo "::error::LIBERO archive import remains disabled while public disclosure is quarantined."
-            exit 1
+            docker load --input "$RUNNER_TEMP/libero-build.docker.tar"
+            test "$(docker image inspect --format '{{.RepoTags}}' "$IMAGE")" != "[]"
           fi
 
       - name: Enforce runtime, revision, bootstrap, config, and history contracts

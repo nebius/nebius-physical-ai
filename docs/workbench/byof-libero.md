@@ -1,8 +1,9 @@
 # LIBERO neutral-bootstrap qualification
 
-LIBERO is a quarantined public-image candidate, not a supported release. Its
+LIBERO is an unqualified public-development candidate, not a supported release. Its
 planned image is a neutral, non-root bootstrap that contains no LIBERO or GPU
-runtime. A future customer-authorized run may materialize one exact runtime into an
+runtime. The trusted workflow may stage this payload-free candidate for inspection;
+a future customer-authorized run may materialize one exact runtime into an
 operator-owned cache, then exercise one official `libero_spatial` task through
 eight upstream BC-RNN optimizer steps, strict checkpoint reload, and a genuine
 trajectory-disjoint held-out evaluation on one B200. The path is headless and

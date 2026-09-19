@@ -34,7 +34,7 @@ unique and must be tested with its own upstream-named capabilities.
 
 | Solution | Capability | Live status | Run / evidence |
 | --- | --- | --- | --- |
-| LIBERO | `libero_spatial_bc_rnn_train_reload_heldout` | **qualification pending; public-neutral candidate quarantined/unbuilt** | Requires complete-byte and anonymous-pull proof followed by one STRICT-bound B200 run of the exact candidate digest: eight upstream BC-RNN/Adam steps on the official LIBERO-Spatial demonstration, checkpoint reload, and full trajectory-disjoint held-out evaluation |
+| LIBERO | `libero_spatial_bc_rnn_train_reload_heldout` | **qualification pending; payload-free public-development staging permitted; not released** | Requires complete-byte and anonymous-pull proof followed by one STRICT-bound B200 run of the exact candidate digest: eight upstream BC-RNN/Adam steps on the official LIBERO-Spatial demonstration, checkpoint reload, and full trajectory-disjoint held-out evaluation |
 | ManiSkill | `gymnasium_pickcube_registration` | **accepted** | `defcap-maniskill-20260708-230227` (81 `-v1` envs) |
 | ManiSkill | `pickcube_cpu_step` / `pickcube_parallel_envs` / `pickcube_gpu_rgb_render` | **accepted** | `defcap11-maniskill-20260709-043408` (sapien 3.0.3 on CUDA Ubuntu22.04/py3.10; Blackwell render OK) |
 | MuJoCo Playground | `mjx_cartpole_step` | **accepted** | `defcap8-mujoco-playground-20260709-024455` (+ prior `…-005745`) |
@@ -87,10 +87,11 @@ files and runs the pinned upstream LIBERO `AutoTokenizer`/`AutoModel`
 `pooler_output` path. Neither those model bytes nor the demonstration is baked.
 The public-neutral candidate also bakes no LIBERO, robomimic, MuJoCo, PyTorch,
 CUDA/NVIDIA runtime, task/render asset, populated cache, checkpoint, credential,
-or output byte. It remains unbuilt, absent from the release manifest and public
-image table, and quarantined until byte, provenance, anonymous-pull, and live
+or output byte. It remains absent from the release manifest and public image
+table, and unqualified until byte, provenance, anonymous-pull, and live
 acceptance. Historical private r15 bytes are old-head evidence only.
-The trusted public workflow also refuses before a LIBERO build unless the
+The trusted public workflow permits payload-free development staging, but still
+refuses promotion before a LIBERO build is qualified unless the
 separate image-qualification record supplies the private-stage complete-image
 inventory hash and OCI config digest. Its scanner binds every byte in each
 ordered uncompressed layer tar plus every canonical flattened-rootfs record,
