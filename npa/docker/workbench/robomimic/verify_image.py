@@ -1425,6 +1425,34 @@ def _wheel_target(name: str, directory: str) -> str:
     return PurePosixPath(*parts).as_posix()
 
 
+def _wheel_script_member(
+    name: str, directory: str, raw: bytes
+) -> tuple[str, dict[str, Any], str]:
+    """Apply only pip's authenticated ``.data/scripts`` transformation.
+
+    The pinned installer routes these members to the target ``bin`` directory,
+    rewrites a leading ``#!python`` line to its target interpreter, and marks
+    the result executable.  Unknown script forms remain fail-closed rather
+    than being accepted as an unproved generic data scheme.
+    """
+    parts = PurePosixPath(name).parts
+    data_directory = directory.removesuffix(".dist-info") + ".data"
+    if (
+        len(parts) < 3
+        or parts[0] != data_directory
+        or parts[1] != "scripts"
+    ):
+        raise VerificationError("unsupported wheel installation scheme")
+    relative = PurePosixPath(*parts[2:]).as_posix()
+    target = PurePosixPath("bin", relative).as_posix()
+    _installed_member_path(target)
+    firstline, separator, rest = raw.partition(b"\n")
+    if firstline != b"#!python" or not separator:
+        raise VerificationError("unsupported wheel script transformation")
+    transformed = b"#!" + BAKED_INSTALLER_EXECUTABLE.encode("ascii") + b"\n" + rest
+    return target, _file_identity(transformed, True), "../../" + target
+
+
 def _console_script(module: str, function: str) -> bytes:
     """Pip 26.2.1 PipScriptMaker, independently matched to pinned source bytes."""
     return (
@@ -1545,15 +1573,26 @@ def _wheel_expected_inventory(
     result, record_paths = {}, {}
     for name, (raw, executable) in members.items():
         if name != record_name:
-            target = _wheel_target(name, directory)
-            if target == "bin" or target.startswith("bin/"):
-                raise VerificationError("wheel reserves generated script directory")
-            _add_inventory_member(result, target, _file_identity(raw, executable))
-            record_paths[target] = (
-                "../../" + target
-                if PurePosixPath(name).parts[0].endswith(".data")
-                else target
-            )
+            parts = PurePosixPath(name).parts
+            if (
+                len(parts) >= 2
+                and parts[0].endswith(".data")
+                and parts[1] == "scripts"
+            ):
+                target, entry, record_path = _wheel_script_member(
+                    name, directory, raw
+                )
+            else:
+                target = _wheel_target(name, directory)
+                if target == "bin" or target.startswith("bin/"):
+                    raise VerificationError("wheel reserves generated script directory")
+                entry, record_path = _file_identity(raw, executable), (
+                    "../../" + target
+                    if parts[0].endswith(".data")
+                    else target
+                )
+            _add_inventory_member(result, target, entry)
+            record_paths[target] = record_path
     for suffix, raw in (("INSTALLER", b"pip\n"), ("REQUESTED", b"")):
         target = f"{directory}/{suffix}"
         _add_inventory_member(result, target, _file_identity(raw))

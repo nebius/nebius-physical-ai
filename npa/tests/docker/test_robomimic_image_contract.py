@@ -1880,7 +1880,9 @@ def _inert_install(root: Path, members: dict[str, bytes]) -> None:
         )
         rows.append(
             (
-                "../../" + name if name.startswith("bin/") else name,
+                "../../" + name
+                if name.startswith("bin/") or name == "inert_data.txt"
+                else name,
                 "sha256=" + digest,
                 str(len(raw)),
             )
@@ -2157,6 +2159,41 @@ def test_wheel_inventory_accepts_authenticated_data_scheme_target() -> None:
         )
         == "share/man/man1/ttx.1"
     )
+
+
+def test_wheel_inventory_accepts_authenticated_script_scheme_transform() -> None:
+    target, entry, record_path = VERIFIER._wheel_script_member(
+        "jmespath-1.0.1.data/scripts/jp.py",
+        "jmespath-1.0.1.dist-info",
+        b"#!python\nprint('inert')\n",
+    )
+    assert target == "bin/jp.py"
+    assert record_path == "../../bin/jp.py"
+    assert entry == {
+        "type": "file",
+        "size": 40,
+        "sha256": "eec29f22848f719f67c3d3e32f35d14b7c901359ab7cba525e30d7b6b376a6f2",
+        "executable": True,
+        "mode": 0o755,
+    }
+    assert VERIFIER._installed_record_bytes(
+        {target: entry},
+        "jmespath-1.0.1.dist-info/RECORD",
+        {target: record_path},
+    ) == (
+        b"../../bin/jp.py,sha256=7sKfIoSPcZ9nw9PjLzXRS3yQE1mrfLpSXjDXtrN2pvI,40\r\n"
+        b"jmespath-1.0.1.dist-info/RECORD,,\r\n"
+    )
+
+
+@pytest.mark.parametrize("raw", [b"#!/usr/bin/python\nprint('inert')\n", b"#!python -x\nprint('inert')\n"])
+def test_wheel_inventory_refuses_unproven_script_transform(raw: bytes) -> None:
+    with pytest.raises(VERIFIER.VerificationError, match="script transformation"):
+        VERIFIER._wheel_script_member(
+            "jmespath-1.0.1.data/scripts/jp.py",
+            "jmespath-1.0.1.dist-info",
+            raw,
+        )
 
 
 def test_wheel_distribution_accepts_pep427_name_case_and_separator_normalization() -> None:
