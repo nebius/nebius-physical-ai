@@ -72,3 +72,5 @@ Python and HTTP access follow each tool's documented contract.
 Inspect the selected guide's actual output artifacts after the run reaches a
 terminal state. A plan, successful status response, or historical benchmark
 alone does not establish a new run's result.
+
+SAM 3.1 video segmentation is available as a [development container](../../npa/docker/workbench/sam3/README.md); checkpoint access and GPU qualification are required before release acceptance.
