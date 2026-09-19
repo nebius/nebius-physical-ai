@@ -5,6 +5,11 @@
     "inventory_sha256": null,
     "records": {}
   },
+  "expected_runtime_closure": {
+    "dpkg_inventory_sha256": null,
+    "python_venv_inventory_sha256": null,
+    "native_closure_sha256": null
+  },
   "required_base_diff_ids": [
     "sha256:ea16cace89338c84eb6bcb91a7efdfcae6838fff359efe951858227436486c34"
   ],

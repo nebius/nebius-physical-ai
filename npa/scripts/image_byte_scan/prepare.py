@@ -159,6 +159,23 @@ def _trusted_contract(root: Path, revision: str) -> tuple[dict, dict[str, object
     }
 
 
+def _trusted_runtime_closure(contract: dict[str, object]) -> tuple[str, str, str]:
+    """Return closure digests committed by the authenticated contract."""
+    closure = contract.get("expected_runtime_closure")
+    W.require(isinstance(closure, dict), "trusted_runtime_closure_unavailable")
+    keys = (
+        "dpkg_inventory_sha256",
+        "python_venv_inventory_sha256",
+        "native_closure_sha256",
+    )
+    values = tuple(closure.get(key) for key in keys)
+    W.require(
+        all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) for value in values),
+        "trusted_runtime_closure_unavailable",
+    )
+    return values  # type: ignore[return-value]
+
+
 def _verify_habitat_report(args, archive, report) -> dict[str, object]:
     """Re-run Habitat verification against the exact held archive descriptor."""
     if __package__ in {None, ""}:
@@ -176,14 +193,7 @@ def _verify_habitat_report(args, archive, report) -> dict[str, object]:
         "habitat_source_revision_binding",
     )
     contract, contract_binding = _trusted_contract(args.trusted_root, source_revision)
-    expected = tuple(
-        report[key]
-        for key in (
-            "expected_dpkg_inventory_sha256",
-            "expected_python_venv_inventory_sha256",
-            "expected_native_closure_sha256",
-        )
-    )
+    expected = _trusted_runtime_closure(contract)
     _, fd, initial = W.open_private_fd(args.archive)
     try:
         W.require(
@@ -215,8 +225,17 @@ def _verify_habitat_report(args, archive, report) -> dict[str, object]:
         "expected_python_venv_inventory_sha256",
         "expected_native_closure_sha256",
     ):
+        if key == "expected_dpkg_inventory_sha256":
+            trusted = expected[0]
+        elif key == "expected_python_venv_inventory_sha256":
+            trusted = expected[1]
+        elif key == "expected_native_closure_sha256":
+            trusted = expected[2]
+        else:
+            trusted = verified.get(key)
         W.require(
-            report.get(key) == verified.get(key), "habitat_verifier_receipt_mismatch"
+            report.get(key) == trusted and verified.get(key) == trusted,
+            "habitat_verifier_receipt_mismatch",
         )
     return contract_binding
 

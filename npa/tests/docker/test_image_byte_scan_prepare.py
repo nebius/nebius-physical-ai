@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -81,6 +82,73 @@ def test_habitat_report_requires_an_independently_clean_verdict(tmp_path):
     archive = {"sha256": "0" * 64}
     with pytest.raises(W.ScanError, match="habitat_verifier_findings"):
         P._verify_habitat_report(args, archive, report)
+
+
+def test_habitat_report_uses_contract_runtime_closure_not_report_values(
+    tmp_path, monkeypatch
+):
+    archive_path = tmp_path / "archive"
+    archive_path.write_bytes(b"immutable fixture")
+    archive_path.chmod(0o600)
+    expected = ("1" * 64, "2" * 64, "3" * 64)
+    contract = {"expected_runtime_closure": dict(zip(
+        ("dpkg_inventory_sha256", "python_venv_inventory_sha256", "native_closure_sha256"),
+        expected,
+    ))}
+    binding = {"revision": P._trusted_revision(CHECKOUT), "git_blob": "a" * 40}
+    monkeypatch.setattr(P, "_trusted_contract", lambda *_: (contract, binding))
+    observed = {}
+
+    def fake_verify(*args):
+        observed["expected"] = args[-3:]
+        return {
+            "valid": True,
+            "findings": [],
+            "image_manifest_digest": "manifest",
+            "image_config_digest": "config",
+            "verified_layer_diff_ids": [],
+            "layer_count": 0,
+            "regular_files_read": 0,
+            "content_bytes_read": 0,
+            "expected_dpkg_inventory_sha256": expected[0],
+            "expected_python_venv_inventory_sha256": expected[1],
+            "expected_native_closure_sha256": expected[2],
+        }
+
+    monkeypatch.setattr("image_byte_scan.habitat_sim_verification.verify", fake_verify)
+    revision = P._trusted_revision(CHECKOUT)
+    report = {
+        "findings": [],
+        "expected_source_revision": revision,
+        "image_manifest_digest": "manifest",
+        "image_config_digest": "config",
+        "verified_layer_diff_ids": [],
+        "layer_count": 0,
+        "regular_files_read": 0,
+        "content_bytes_read": 0,
+        "expected_dpkg_inventory_sha256": expected[0],
+        "expected_python_venv_inventory_sha256": expected[1],
+        "expected_native_closure_sha256": expected[2],
+    }
+    archive = {"sha256": hashlib.sha256(archive_path.read_bytes()).hexdigest()}
+    args = SimpleNamespace(
+        trusted_root=CHECKOUT,
+        archive=archive_path,
+        expected_image_id="sha256:" + "a" * 64,
+    )
+    with W.authorized_roots(tmp_path, CHECKOUT):
+        P._verify_habitat_report(args, archive, report)
+    assert observed["expected"] == expected
+    report["expected_native_closure_sha256"] = "0" * 64
+    with W.authorized_roots(tmp_path, CHECKOUT), pytest.raises(
+        W.ScanError, match="habitat_verifier_receipt_mismatch"
+    ):
+        P._verify_habitat_report(args, archive, report)
+
+
+def test_habitat_runtime_closure_requires_authenticated_values():
+    with pytest.raises(W.ScanError, match="trusted_runtime_closure_unavailable"):
+        P._trusted_runtime_closure({"expected_runtime_closure": {}})
 
 
 def test_habitat_contract_binding_uses_committed_blob_and_rejects_drift(tmp_path):

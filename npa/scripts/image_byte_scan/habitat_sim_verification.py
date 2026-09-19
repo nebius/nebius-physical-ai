@@ -1373,9 +1373,18 @@ def _archive_limits(payload: bytes) -> tuple[int, int, int]:
 
 
 def _canonical_metadata_name(row: dict[str, object], name: str) -> bool:
-    root = f"{_normalize_distribution(str(row.get('name', '')))}-{row.get('version', '')}"
+    root = _canonical_source_root(row)
     parts = PurePosixPath(name).parts
     return len(parts) == 2 and parts[0] == root and parts[1] in {"PKG-INFO", "METADATA"}
+
+
+def _canonical_source_root(row: dict[str, object]) -> str:
+    return f"{_normalize_distribution(str(row.get('name', '')))}-{row.get('version', '')}"
+
+
+def _canonical_source_member(row: dict[str, object], name: str) -> bool:
+    root = _canonical_source_root(row)
+    return name == root or name.startswith(root + "/")
 
 
 def _read_metadata(stream) -> bytes | None:
@@ -1390,10 +1399,13 @@ def _tar_archive_metadata(row: dict[str, object], payload: bytes) -> bytes | Non
             metadata = None
             names: set[str] = set()
             total = 0
+            source_files = 0
             for count, member in enumerate(archive, 1):
                 if count > member_limit:
                     return None
                 if not _safe_archive_name(member.name) or member.issym() or member.islnk():
+                    return None
+                if not _canonical_source_member(row, member.name):
                     return None
                 if member.name in names or member.size > max_member_bytes or total + member.size > expanded_limit:
                     return None
@@ -1412,7 +1424,9 @@ def _tar_archive_metadata(row: dict[str, object], payload: bytes) -> bytes | Non
                     metadata = _read_metadata(stream)
                     if metadata is None:
                         return None
-            return metadata
+                else:
+                    source_files += 1
+            return metadata if source_files else None
     except (OSError, tarfile.TarError):
         return None
 
@@ -1427,9 +1441,12 @@ def _zip_archive_metadata(row: dict[str, object], payload: bytes) -> bytes | Non
                 return None
             names: set[str] = set()
             total = 0
+            source_files = 0
             for info in infos:
                 name = info.filename
                 if not _safe_archive_name(name) or name in names:
+                    return None
+                if not _canonical_source_member(row, name):
                     return None
                 names.add(name)
                 if info.is_dir() or name.endswith("/"):
@@ -1451,7 +1468,9 @@ def _zip_archive_metadata(row: dict[str, object], payload: bytes) -> bytes | Non
                         metadata = _read_metadata(stream)
                     if metadata is None:
                         return None
-            return metadata
+                else:
+                    source_files += 1
+            return metadata if source_files else None
     except (OSError, zipfile.BadZipFile):
         return None
 

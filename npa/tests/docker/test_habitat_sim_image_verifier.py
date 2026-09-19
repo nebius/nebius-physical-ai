@@ -113,6 +113,10 @@ def _source_artifacts(row: dict[str, object]) -> list[tuple[str, bytes]]:
             member = tarfile.TarInfo(f"{package}-{version}/PKG-INFO")
             member.size = len(metadata)
             archive.addfile(member, io.BytesIO(metadata))
+            source = tarfile.TarInfo(f"{package}-{version}/{package}.py")
+            source_payload = b"def fixture():\n    return 'source'\n"
+            source.size = len(source_payload)
+            archive.addfile(source, io.BytesIO(source_payload))
     return [(path, payload_buffer.getvalue())]
 
 
@@ -257,6 +261,17 @@ def test_python_source_archive_rejects_ambiguous_metadata_and_unsafe_names() -> 
         member.size = 0
         archive.addfile(member, io.BytesIO())
     assert H._python_source_matches(row, unsafe.getvalue()) is False
+
+
+def test_python_source_archive_rejects_metadata_only_content() -> None:
+    row = {"ecosystem": "python", "name": "fixture", "version": "1.0"}
+    payload = io.BytesIO()
+    with tarfile.open(fileobj=payload, mode="w") as archive:
+        metadata = b"Name: fixture\nVersion: 1.0\n"
+        member = tarfile.TarInfo("fixture-1.0/PKG-INFO")
+        member.size = len(metadata)
+        archive.addfile(member, io.BytesIO(metadata))
+    assert H._python_source_matches(row, payload.getvalue()) is False
 
 
 def test_python_source_archive_rejects_bounded_expansion_ratio() -> None:
