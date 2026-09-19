@@ -19,8 +19,9 @@ The intended layers exclude the upstream
 solution tree, Shadow Hand assets, MuJoCo/Python wheels, runtime cache, CUDA or
 other vendor runtime, credentials, datasets, checkpoints, and outputs. The
 Dockerfile's first executable gate binds the exact neutral Ubuntu/Python
-bootstrap closure and corresponding-source metadata before package network
-access, and rejects any incomplete or mismatched lock. A URL, credential,
+      bootstrap closure, corresponding-source lock and runtime-fetch manifest
+      before package network access, and rejects any incomplete or mismatched
+      lock. A URL, credential,
 private registry, or consent proxy must not bypass that refusal.
 
 At execution time, the bootstrap reads a repository-pinned manifest before any
@@ -111,7 +112,7 @@ is republished as an output.
 | Artifact class | Delivery and decision |
 | --- | --- |
 | Source | Exact official commit and MIT grant are reviewed inputs. The source archive is runtime-cache-only and must never enter candidate layers. |
-| Baked runtime | Neutral Ubuntu/Python bootstrap only. Its exact signed-snapshot binary, license/copyright, and corresponding-source mapping is locked. MuJoCo and the Python workload graph are runtime-cache-only; public corresponding-source delivery remains withheld. |
+| Baked runtime | Neutral Ubuntu/Python bootstrap only. Its exact signed-snapshot binary, license/copyright, corresponding-source mapping and runtime-fetch manifest are locked. MuJoCo and the Python workload graph are runtime-cache-only; corresponding-source delivery is operator-owned runtime fetch after the customer's existing upstream notice and acceptance process. |
 | Weights | None. No model or checkpoint is fetched, baked, mounted, or emitted. |
 | Data/assets | No external dataset. Exact Shadow Hand XML/STL/PNG hashes and `assets/LICENSE.md` are recorded. The assets remain runtime-cache-only; their preferred-form, transformation, use, and derivative questions remain unresolved. |
 | Runtime cache | External, private to the runtime operator, versioned by the exact fetch-manifest hash, sealed read-only, and atomically published only after full-tree verification. Every reuse rechecks its exact receipt and path/type/mode/size/file-hash manifest. It is neither an image layer nor a rights grant. |

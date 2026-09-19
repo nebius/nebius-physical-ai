@@ -19,9 +19,10 @@ SHA256_CHUNK_BYTES = 1024 * 1024
 EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
     "source-lock.json": "3318043e3d3fec10b233b212b8e7bd97391f48f20b629dbdb3319981010b6ca9",
     "apt-runtime.lock.json": "6e1df9be2187010e9d4ee12dc2a4d95e4f0aa799ff321c70d86ec2d8772b855e",
-    "corresponding-source.lock.json": "7a097851d8c9eae45bb663d7d8d989f507afc0fcdc12e721d7431dd27aa9a3be",
+    "corresponding-source.lock.json": "10ea8843b7b68c70b38a137a1683f46fcb6de8517d1863684f5419b21145967a",
+    "runtime-fetch-manifest.json": "08a628dd444d52dcaa7e60b41f1b416a42a4a7b85cde6dce0ab0887f1ea78f17",
     "requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a",
-    "runtime-bootstrap.py": "ebf8126e6c3477c25b8cb0eb40ddcdbb936aeef0c3fab24dfed6e530bb63c879",
+    "runtime-bootstrap.py": "d29c9571c6790637c8674afbfe67277da5ed2e876c6251509f313d0a865b2971",
     "capability_smoke.py": "f91683fa5955882e29e2ac8e6ba9f4d92f2a25eb71621275fa3c45b26828d6d6",
 }
 KNOWN_FORBIDDEN_CONTENT_SHA256 = frozenset(
@@ -88,16 +89,16 @@ EXPECTED_LOCK_FILENAMES = frozenset(
 )
 EXPECTED_FIXED_FILE_SHA256 = {
     "opt/npa/gymnasium-robotics/build.sh": (
-        "8f9cb981d8b9e0e821af502f4fca97d06f29b74d01c9a7324a16f9e3ac40c8b0"
+        "e02bb4b0137e1e6b5db555b9dd04d89e5c5c8ca9730dbba7a1c9ff5244c8029a"
     ),
     "usr/local/bin/npa-gymnasium-entrypoint": (
         "8f9cb981d8b9e0e821af502f4fca97d06f29b74d01c9a7324a16f9e3ac40c8b0"
     ),
     "usr/share/doc/npa-gymnasium-robotics/THIRD_PARTY_NOTICES.md": (
-        "a91e6df63d826b2df1cff942b288e6c23a84fec31a75af659d217eb1d8f8a121"
+        "0b6c38b84bf8e386cfaba6caf50634a99e8c1804efec433608ad6438cd5b3d9e"
     ),
     "usr/share/doc/npa-gymnasium-robotics/REDISTRIBUTION.md": (
-        "b3fc53d76bb7ba0fec78350164386d5fa6364e825036ac98148c421b51a68cc8"
+        "20b5a9d2ea09d0ffb8a737336b52dbeceb7b06c579fbaf12d6f73eac44df5de7"
     ),
 }
 

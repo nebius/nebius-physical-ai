@@ -24,13 +24,14 @@ BOOTSTRAP_APT_PACKAGES=(
   "sudo=1.9.15p5-3ubuntu5.24.04.2"
 )
 EXPECTED_APT_LOCK_SHA256="6e1df9be2187010e9d4ee12dc2a4d95e4f0aa799ff321c70d86ec2d8772b855e"
-EXPECTED_CORRESPONDING_SOURCE_LOCK_SHA256="7a097851d8c9eae45bb663d7d8d989f507afc0fcdc12e721d7431dd27aa9a3be"
+EXPECTED_CORRESPONDING_SOURCE_LOCK_SHA256="10ea8843b7b68c70b38a137a1683f46fcb6de8517d1863684f5419b21145967a"
+EXPECTED_RUNTIME_FETCH_MANIFEST_SHA256="08a628dd444d52dcaa7e60b41f1b416a42a4a7b85cde6dce0ab0887f1ea78f17"
 EXPECTED_FINAL_PACKAGE_MANIFEST_SHA256="e5e25fc8ac5570ebf90aa6a73d71243d611fba80d90e49ef2c9485bdc647a505"
 SNAPSHOT_URL="https://snapshot.ubuntu.com/ubuntu/20260905T000000Z"
 
 verify_bootstrap_locks() {
   incomplete=()
-  for name in apt-runtime.lock.json corresponding-source.lock.json; do
+  for name in apt-runtime.lock.json corresponding-source.lock.json runtime-fetch-manifest.json; do
     if ! grep -Eq '"status"[[:space:]]*:[[:space:]]*"complete"' "$LOCK_ROOT/$name"; then
       incomplete+=("$name")
     fi
@@ -43,6 +44,9 @@ verify_bootstrap_locks() {
   fi
   if [ "$(sha256sum "$LOCK_ROOT/corresponding-source.lock.json" | cut -d' ' -f1)" != "$EXPECTED_CORRESPONDING_SOURCE_LOCK_SHA256" ]; then
     incomplete+=("reviewed-corresponding-source-lock-bytes")
+  fi
+  if [ "$(sha256sum "$LOCK_ROOT/runtime-fetch-manifest.json" | cut -d' ' -f1)" != "$EXPECTED_RUNTIME_FETCH_MANIFEST_SHA256" ]; then
+    incomplete+=("reviewed-runtime-fetch-manifest-bytes")
   fi
   if ! grep -Fq '"url": "https://snapshot.ubuntu.com/ubuntu/20260905T000000Z"' \
     "$LOCK_ROOT/apt-runtime.lock.json"; then

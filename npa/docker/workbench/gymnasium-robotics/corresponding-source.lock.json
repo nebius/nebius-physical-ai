@@ -36,8 +36,8 @@
       "source_manifest_sha256": "ce96f665e5bb9c6eb4d7a3d780e7e4b17f09e809572e2851804a2599a88ae9dd"
     }
   ],
-  "public_corresponding_source_delivery": "withheld-until-separate-publication-acceptance",
-  "reason": "All installed Ubuntu package bytes map to exact source packages and 318 artifacts in the signed immutable snapshot; publication of corresponding-source delivery remains a separate release gate.",
+  "public_corresponding_source_delivery": "runtime-fetch-operator-owned",
+  "reason": "Installed Ubuntu package bytes map to exact source packages and 318 artifacts in the signed immutable snapshot; restricted Gymnasium-Robotics source, assets and wheels stay outside the public image and are fetched only into the operator-owned runtime cache after the customer's existing upstream notice and acceptance process.",
   "runtime_fetched_material_excluded": [
     "gymnasium-robotics-source",
     "shadow-hand-assets",

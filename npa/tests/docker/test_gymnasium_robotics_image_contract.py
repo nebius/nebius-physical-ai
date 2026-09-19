@@ -57,6 +57,7 @@ def test_candidate_copies_only_neutral_code_metadata_and_notices() -> None:
         "capability_smoke.py",
         "asset-lock.json",
         "source-lock.json",
+        "runtime-fetch-manifest.json",
         "THIRD_PARTY_NOTICES.md",
     ):
         assert any(required in line for line in copied)
@@ -67,6 +68,7 @@ def test_repository_locks_are_complete_exact_and_machine_readable() -> None:
         "source-lock.json",
         "apt-runtime.lock.json",
         "corresponding-source.lock.json",
+        "runtime-fetch-manifest.json",
     ):
         payload = json.loads((IMAGE / name).read_text(encoding="utf-8"))
         assert payload["status"] == "complete"
@@ -121,6 +123,11 @@ def test_pre_network_locks_are_readable_independent_of_checkout_modes() -> None:
         "COPY --chmod=0444 "
         "docker/workbench/gymnasium-robotics/corresponding-source.lock.json "
         "./corresponding-source.lock.json"
+    ) in dockerfile
+    assert (
+        "COPY --chmod=0444 "
+        "docker/workbench/gymnasium-robotics/runtime-fetch-manifest.json "
+        "./runtime-fetch-manifest.json"
     ) in dockerfile
     assert (
         "COPY --chmod=0555 docker/workbench/gymnasium-robotics/build.sh ./build.sh"

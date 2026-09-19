@@ -760,7 +760,8 @@ def test_both_publication_paths_consume_the_same_record() -> None:
     release = (ROOT / "npa/src/npa/deploy/publish_public.py").read_text(
         encoding="utf-8"
     )
-    assert "gymnasium_robotics_image_manifest.json" in workflow
+    assert "runtime_fetch_contract" in workflow
+    assert "runtime-fetch-manifest.json" in workflow
     assert "verify_gymnasium_corresponding_source(item)" in release
     assert "CORRESPONDING SOURCE GATE" in release
 
@@ -770,6 +771,4 @@ def test_current_candidate_remains_fail_closed() -> None:
         ROOT / "npa/src/npa/deploy/gymnasium_robotics_image_manifest.json"
     ).exists()
     lock = json.loads(REAL_LOCK.read_text(encoding="utf-8"))
-    assert lock["public_corresponding_source_delivery"] == (
-        "withheld-until-separate-publication-acceptance"
-    )
+    assert lock["public_corresponding_source_delivery"] == "runtime-fetch-operator-owned"

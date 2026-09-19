@@ -498,9 +498,12 @@ images:
       Gymnasium-Robotics 1.4.2 / MuJoCo 3.12.0 runtime cache. Candidate layers
       exclude the upstream solution, Shadow assets, MuJoCo/Python workload,
       populated cache, vendor runtime, credentials, datasets, checkpoints, and
-      outputs. Exact Ubuntu/Python inputs and corresponding-source metadata are
-      content-locked for a separately approved private non-conveying build; the
-      Dockerfile verifies those reviewed bytes before package network access.
+      outputs. Exact Ubuntu/Python inputs, corresponding-source metadata and the
+      runtime-fetch manifest are content-locked for a payload-free public
+      development build; the Dockerfile verifies those reviewed bytes before
+      package network access. Restricted source, assets and workload wheels
+      remain operator-owned runtime fetches after the customer's existing
+      upstream notice and acceptance process.
       Runtime fetch changes delivery only and grants no use, derivative, output,
       or service rights. An owner-only reference build produced the exact config
       and 20-DiffID graph pinned by the product scanner, but that transaction

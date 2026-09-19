@@ -42,10 +42,14 @@ and `gymnasium-robotics-smoke.json` is an operator-run output, never an upstream
 redistribution grant. A credential or private registry would not change any of
 these classifications.
 
-The exact private-build bootstrap package and source mapping is now locked.
-Publication remains blocked on public corresponding-source delivery, accepted
-built-byte and layer scans, SBOM/provenance, an anonymous digest pull, and an
-exact-digest RTX PRO 6000 Blackwell hard-gate run using genuine pinned upstream
-Shadow Hand assets. A private build or run does not satisfy those public gates.
+The exact neutral bootstrap package, runtime-fetch manifest, and source mapping
+are now locked. The public development image carries no restricted source,
+asset, wheel, or cache bytes; the corresponding-source contract is
+runtime-fetch-only and requires the customer's existing upstream notice and
+acceptance process before the operator fetches into the private cache.
+Publication remains blocked on accepted built-byte and layer scans,
+SBOM/provenance, an anonymous digest pull, and an exact-digest RTX PRO 6000
+Blackwell hard-gate run using genuine pinned upstream Shadow Hand assets. A
+private build or run does not satisfy those public gates.
 Historical private-image evidence is not evidence for the redesigned
 executable or image bytes.

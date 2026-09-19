@@ -131,6 +131,18 @@ def test_neutral_payload_scan_is_verified_before_development_image_push() -> Non
     assert "--argjson expected_layer_diff_ids" not in gym_gate
 
 
+def test_runtime_fetch_contract_replaces_public_source_archive_gate() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    start = text.index("Require Gymnasium payload-free runtime-fetch contract")
+    push = text.index('docker push "$IMAGE"')
+    gate = text[start:push]
+    assert "npa.deploy.runtime_fetch_contract" in gate
+    assert "runtime-fetch-manifest.json" in gate
+    assert "source-lock.json" in gate
+    assert "corresponding-source.lock.json" in gate
+    assert "gymnasium_robotics_image_manifest.json" not in gate
+
+
 def test_trusted_workflow_allows_neutral_development_selection_before_build() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
     build = text.index("docker buildx build")

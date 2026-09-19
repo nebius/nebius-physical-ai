@@ -600,7 +600,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Require Gymnasium corresponding source before development push
+      - name: Require Gymnasium payload-free runtime-fetch contract before development push
         if: matrix.tool == 'gymnasium-robotics'
         run: |
           set -euo pipefail
@@ -608,13 +608,10 @@ jobs:
           image_digest="$(jq -er '.["containerimage.digest"]' "$metadata")"
           config_digest="$(jq -er '.["containerimage.config.digest"]' "$metadata")"
           test "$config_digest" = "$(docker image inspect --format '{{.Id}}' "$IMAGE")"
-          npa/.venv/bin/python -m npa.deploy.corresponding_source \
-            --record npa/src/npa/deploy/gymnasium_robotics_image_manifest.json \
-            --lock npa/docker/workbench/gymnasium-robotics/corresponding-source.lock.json \
-            --source-revision "$DEVELOPMENT_SHA" \
-            --image-digest "$image_digest" \
-            --platform-manifest-digest "$image_digest" \
-            --config-digest "$config_digest"
+          npa/.venv/bin/python -m npa.deploy.runtime_fetch_contract \
+            --manifest npa/docker/workbench/gymnasium-robotics/runtime-fetch-manifest.json \
+            --source-lock npa/docker/workbench/gymnasium-robotics/source-lock.json \
+            --corresponding-lock npa/docker/workbench/gymnasium-robotics/corresponding-source.lock.json
 
       - name: Require Gymnasium neutral payload scan before development push
         if: matrix.tool == 'gymnasium-robotics'

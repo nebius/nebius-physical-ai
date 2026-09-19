@@ -40,6 +40,7 @@ import venv
 import zipfile
 
 MANIFEST_SCHEMA = "npa.gymnasium-robotics.runtime-fetch-lock.v2"
+PUBLIC_RUNTIME_CONTRACT_SCHEMA = "npa.gymnasium-robotics.public-runtime-fetch-manifest.v1"
 RECEIPT_SCHEMA = "npa.gymnasium-robotics.runtime-cache-receipt.v1"
 TREE_MANIFEST_SCHEMA = "npa.gymnasium-robotics.runtime-tree-manifest.v1"
 EXPECTED_SOURCE_COMMIT = "4d1ebecbc6436806cfbc0e42ebc36f594d05844e"
@@ -107,6 +108,19 @@ INOTIFY_EXCLUDE_UNLINKED = 0x04000000
 RIGHTS_BOUNDARY = (
     "Runtime fetch changes delivery only; it does not grant or resolve use, "
     "derivative-work, output, or hosted-service rights."
+)
+PUBLIC_RUNTIME_CONTRACT_RIGHTS = RIGHTS_BOUNDARY
+PUBLIC_RUNTIME_CONTRACT_EXCLUDED = frozenset(
+    {
+        "gymnasium-robotics-source",
+        "shadow-hand-assets",
+        "mujoco-and-python-wheels",
+        "operator-runtime-cache",
+        "customer-credentials",
+        "customer-data",
+        "vendor-runtimes",
+        "checkpoints",
+    }
 )
 _ApprovedAddress = tuple[int, str]
 
@@ -322,6 +336,52 @@ def _requirements_hashes(text: str) -> set[str]:
     if len(names) != EXPECTED_WHEEL_COUNT:
         _refuse("runtime Python wheel closure is incomplete")
     return hashes
+
+
+def _validate_public_runtime_contract(contract: Path, source_lock: Path) -> None:
+    """Bind runtime preparation to the payload-free public-image contract."""
+
+    raw = _read_trusted_input(contract, label="public runtime-fetch contract")
+    try:
+        payload = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        _refuse(f"public runtime-fetch contract is malformed: {error}")
+    if not isinstance(payload, dict) or payload.get("schema") != PUBLIC_RUNTIME_CONTRACT_SCHEMA:
+        _refuse("public runtime-fetch contract schema is unsupported")
+    if payload.get("status") != "complete" or payload.get("tool") != "gymnasium-robotics":
+        _refuse("public runtime-fetch contract is incomplete")
+    if payload.get("rights_boundary") != PUBLIC_RUNTIME_CONTRACT_RIGHTS:
+        _refuse("public runtime-fetch rights boundary changed")
+    if payload.get("image") != {
+        "redistribution": "public",
+        "payload_policy": "neutral-bootstrap-only",
+        "restricted_payloads_baked": False,
+    }:
+        _refuse("public runtime image is not payload-free")
+    runtime = payload.get("runtime_fetch")
+    if not isinstance(runtime, dict) or runtime.get("delivery") != "operator-owned-runtime-cache":
+        _refuse("public runtime-fetch delivery is not operator-owned")
+    if runtime.get("customer_gate") != "operator-owned-official-access-after-notice-and-acceptance":
+        _refuse("customer notice/acceptance gate is missing")
+    if runtime.get("acceptance_record") != "customer-run-external":
+        _refuse("customer acceptance must remain external")
+    if runtime.get("credential_storage") != "never-in-image-or-repository":
+        _refuse("runtime credential storage boundary changed")
+    if set(payload.get("excluded_from_public_image", [])) != PUBLIC_RUNTIME_CONTRACT_EXCLUDED:
+        _refuse("public runtime exclusion set changed")
+    source_raw = _read_trusted_input(source_lock, label="runtime lock")
+    if runtime.get("source_lock") != source_lock.name or runtime.get("source_lock_sha256") != hashlib.sha256(source_raw).hexdigest():
+        _refuse("public runtime source-lock binding changed")
+    corresponding = source_lock.with_name("corresponding-source.lock.json")
+    corresponding_raw = _read_trusted_input(corresponding, label="corresponding-source lock")
+    if runtime.get("corresponding_source_lock") != corresponding.name or runtime.get("corresponding_source_lock_sha256") != hashlib.sha256(corresponding_raw).hexdigest():
+        _refuse("public runtime corresponding-source binding changed")
+    try:
+        corresponding_payload = json.loads(corresponding_raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        _refuse(f"corresponding-source lock is malformed: {error}")
+    if not isinstance(corresponding_payload, dict) or corresponding_payload.get("public_corresponding_source_delivery") != "runtime-fetch-operator-owned":
+        _refuse("corresponding-source delivery is not runtime-fetch-only")
 
 
 def load_lock(manifest: Path, requirements: Path) -> RuntimeLock:
@@ -1476,6 +1536,9 @@ def prepare(
     """Fetch, validate, materialize, and atomically select one runtime version."""
 
     _refuse_root_runtime("runtime preparation")
+    contract = manifest.with_name("runtime-fetch-manifest.json")
+    if contract.exists():
+        _validate_public_runtime_contract(contract, manifest)
     runtime_lock = load_lock(manifest, requirements)
     handles: tuple[int, int, int] | None = None
     with _open_cache_directories(cache_root) as cache:
