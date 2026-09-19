@@ -923,7 +923,9 @@ jobs:
           fi
 
       - name: Promote exact validated digests and verify public parity
-        if: ${{ inputs.dry_run == false }}
+        # Manual dispatch only: inputs.* is undefined on push/schedule events,
+        # so automatic runs can never satisfy this condition.
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == false }}
         run: |
           args=(--target "$TARGET" --development-sha "$DEVELOPMENT_SHA")
           if [ -n "$SELECTED_TOOLS" ]; then
