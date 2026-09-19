@@ -4,15 +4,41 @@
 
 ## Integration onto current main
 
-The measurements below record the original validation campaign and its source
-snapshot. The PR was subsequently extracted onto main at `8c9c2909b`, preserving
-the newer S3 URI validation, `require_empty` upload preflight, bucket-root
-prefix handling, and portable object keys. The extracted version passed 334
-focused tests (80 optional tests skipped) and all 7 committed live credential,
-manifest-discovery, and transfer tests against fresh Nebius storage. Its full
-baseline comparison and renewed GPU validation are tracked separately in the PR;
-the historical timing and GPU results below are not a claim that the extracted
-source snapshot has already passed those checks.
+The timing measurements in the later sections record the original campaign.
+The PR was subsequently extracted onto main at `8c9c2909b`, preserving the
+newer S3 URI validation, `require_empty` upload preflight, bucket-root prefix
+handling, and portable object keys. The extracted source at `0365b774e`
+passed 334 focused tests (80 optional skips), 3,869 guardrails, and all 7
+committed live credential, manifest-discovery, and transfer tests against
+fresh Nebius storage. Independent Claude Code review found no actionable
+issue. All required Linux CI checks passed, including five Python test
+shards, merged coverage, security, browser/compatibility, and repository gates.
+
+Fresh GPU validation also exercised that extracted source, with import paths
+and SHA-256 hashes checked for all five changed production modules. Both
+B200 and RTX PRO 6000 performed a real CUDA matrix multiplication, 16 SGD
+training steps, checkpoint publication/download, `weights_only=True` loading
+into a fresh model, and 8 resumed steps with decreasing loss. All 37 output
+artifacts per device matched their hashes after S3 round trips. Independent
+operator-side NumPy checks recomputed the matrix product, checkpoint
+predictions, and resumed loss from the generated tensor storage bytes.
+Exact checkpoint downloads retained mode `0600`; manifest discovery and
+credential preflight also ran from the staged candidate source.
+
+RTX completed successfully. B200 deliberately exited nonzero **after**
+publishing its verified results and a distinguishing failure marker, providing
+a real failed-job fixture for the separate runtime-diagnostics change. The
+expected terminal failure was checked together with that marker and every
+artifact; it was not treated as an ordinary successful job. This validates
+synthetic tensor training and shared Workbench I/O, not a Genesis simulation
+or a Cosmos/model-specific training workload. It does not refresh the timing
+measurements below or establish an overall 5x speedup.
+
+The attempted full macOS base/candidate comparison was invalidated by host
+disk exhaustion. Its failure counts are not evidence of a pass or regression;
+the supported Linux CI run supplies the complete-suite result for the
+extracted source. Concrete infrastructure identities, credentials, and raw
+operator evidence remain in access-controlled external records.
 
 Scope: three shared, high-frequency code paths in `npa` — credential
 preflight, S3 directory transfer, and workflow-run manifest discovery —
