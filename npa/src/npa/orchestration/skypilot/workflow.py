@@ -975,7 +975,9 @@ def _refresh_workflow_preflight(yaml_path, run_id, **kwargs):
         yaml_path, run_id, submission_id=preparation_id, **kwargs
     )
     try:
-        return hashlib.sha256(Path(yaml_path).read_bytes()).hexdigest()
+        # Recovery must bind to the exact bytes that were preflighted and would
+        # be submitted, not the author's source formatting/comments.
+        return hashlib.sha256(Path(prepared.yaml_path).read_bytes()).hexdigest()
     finally:
         if prepared.runtime_config.isolated_config_dir is None:
             _cleanup_owned_submission_dir(prepared.submission_dir)
@@ -1137,11 +1139,17 @@ def submit_workflow(
             )
 
         def _reconcile() -> ReconciliationEvidence:
+            expected_profile_sha256 = ""
+            if libero_submission:
+                from npa.execution_preflight import libero_executable_profile_sha256
+
+                expected_profile_sha256 = libero_executable_profile_sha256(docs)
             return _reconcile_managed_job_env(
                 run_id,
                 env=env,
                 sky_executable=sky_executable,
                 cwd=stable_cwd,
+                expected_profile_sha256=expected_profile_sha256,
             )
 
         def _launch() -> tuple[
@@ -1648,6 +1656,7 @@ def _reconcile_managed_job_env(
     env: Mapping[str, str],
     sky_executable: str,
     cwd: str | None,
+    expected_profile_sha256: str = "",
     timeout: int = 60,
 ) -> ReconciliationEvidence:
     """Reconcile one exact name through the same SkyPilot runtime as launch."""
@@ -1693,11 +1702,25 @@ def _reconcile_managed_job_env(
     matching: set[str] = set()
     statuses: dict[str, str] = {}
     workload_markers: dict[str, set[str]] = {}
+    expected_profile_sha256 = (
+        str(expected_profile_sha256 or "").strip()
+        or str(env.get("NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256") or "").strip()
+    )
     for row in rows:
         if not isinstance(row, Mapping):
             continue
         if str(row.get("job_name") or row.get("name") or "") != job_name:
             continue
+        if expected_profile_sha256:
+            observed_profile_sha256 = _managed_job_profile_digest(row)
+            if observed_profile_sha256 != expected_profile_sha256:
+                return ReconciliationEvidence(
+                    ReconciliationState.UNAVAILABLE,
+                    error=(
+                        "existing LIBERO managed job lacks the exact executable "
+                        "profile digest; refusing adoption"
+                    ),
+                )
         job_id = str(row.get("job_id") or row.get("id") or "")
         if job_id.isdigit():
             matching.add(job_id)
@@ -1734,6 +1757,31 @@ def _reconcile_managed_job_env(
         workload_observable=bool(markers),
         workload_evidence=",".join(markers),
     )
+
+
+def _managed_job_profile_digest(row: Mapping[str, Any]) -> str:
+    """Extract the provider's durable profile binding for LIBERO adoption."""
+
+    candidates: list[Any] = [
+        row.get("executable_profile_sha256"),
+        row.get("workflow_profile_sha256"),
+    ]
+    for container_name in ("metadata", "labels", "envs", "task_metadata"):
+        container = row.get(container_name)
+        if isinstance(container, Mapping):
+            candidates.extend(
+                container.get(key)
+                for key in (
+                    "NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256",
+                    "executable_profile_sha256",
+                    "workflow_profile_sha256",
+                )
+            )
+    for candidate in candidates:
+        value = str(candidate or "").strip()
+        if re.fullmatch(r"[0-9a-f]{64}", value):
+            return value
+    return ""
 
 
 def parse_job_ids_by_name(output: str, job_name: str) -> list[str]:
