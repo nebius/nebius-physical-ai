@@ -326,12 +326,16 @@ inspect_shared_tag() {
 canonical_registry_reference() {
   local reference="$1"
   local first=""
+  local path=""
   [[ "${reference}" =~ ^[a-z0-9]+([._-][a-z0-9]+)*(:[0-9]+)?(/[a-z0-9]+([._-][a-z0-9]+)*)*$ ]] \
     || return 1
   first="${reference%%/*}"
   case "${first}" in
     docker.io|index.docker.io)
-      printf 'docker.io%s\n' "${reference#${first}}"
+      path="${reference#${first}/}"
+      [[ "${path}" != "${reference}" && -n "${path}" ]] || return 1
+      [[ "${path}" == */* ]] || path="library/${path}"
+      printf 'docker.io/%s\n' "${path}"
       ;;
     *.*|*:*|localhost)
       printf '%s\n' "${reference}"

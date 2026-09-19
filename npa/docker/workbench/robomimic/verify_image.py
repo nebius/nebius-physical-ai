@@ -266,18 +266,12 @@ def _runtime_entitlement_notice_sha256(
     ).hexdigest()
 
 
-def verify_customer_runtime_entitlement(
-    *,
-    entitlement_path: Path,
-    runtime_lock_path: Path,
+def _validate_runtime_entitlement_request(
     expected_entitlement_sha256: str,
     expected_customer_binding_sha256: str,
-    expected_run_id: str,
     expected_inventory_sha256: str,
-    now: datetime | None = None,
-) -> dict[str, Any]:
-    """Verify a customer-created, run-bound runtime-use record without mutation."""
-
+    expected_run_id: str,
+) -> None:
     for label, digest in (
         ("entitlement", expected_entitlement_sha256),
         ("customer binding", expected_customer_binding_sha256),
@@ -291,33 +285,16 @@ def verify_customer_runtime_entitlement(
     ):
         raise VerificationError("expected run ID is absent or malformed")
 
-    record, raw = _bounded_json_object(
-        entitlement_path,
-        maximum_size=RUNTIME_ENTITLEMENT_MAX_BYTES,
-        require_single_link=True,
-        require_owner_only=True,
-    )
-    if hashlib.sha256(raw).hexdigest() != expected_entitlement_sha256:
-        raise VerificationError("customer runtime entitlement byte identity mismatch")
-    lock = _json_object(runtime_lock_path)
-    contract = _runtime_entitlement_contract(lock)
-    expected_keys = {
-        "schema",
-        "decision",
-        "customer_binding_sha256",
-        "run_id",
-        "source_revision",
-        "runtime_id",
-        "runtime_manifest_sha256",
-        "runtime_lock_sha256",
-        "terms",
-        "customer_responsibilities",
-        "notice_sha256",
-        "accepted_at",
-        "expires_at",
-    }
-    if set(record) != expected_keys:
-        raise VerificationError("customer runtime entitlement fields are invalid")
+
+def _runtime_entitlement_expected_values(
+    record: dict[str, Any],
+    lock: dict[str, Any],
+    contract: dict[str, Any],
+    runtime_lock_path: Path,
+    expected_customer_binding_sha256: str,
+    expected_run_id: str,
+    expected_inventory_sha256: str,
+) -> dict[str, Any]:
     expected_values = {
         "schema": contract["schema"],
         "decision": "accepted",
@@ -340,6 +317,12 @@ def verify_customer_runtime_entitlement(
         raise VerificationError(
             "customer runtime entitlement binding mismatch: " + ", ".join(mismatched)
         )
+    return expected_values
+
+
+def _validate_runtime_entitlement_expiry(
+    record: dict[str, Any], maximum_validity_seconds: int, now: datetime | None
+) -> None:
     accepted_at = _utc_timestamp(record["accepted_at"], field="accepted_at")
     expires_at = _utc_timestamp(record["expires_at"], field="expires_at")
     observed_now = now or datetime.now(timezone.utc)
@@ -348,12 +331,52 @@ def verify_customer_runtime_entitlement(
             "customer runtime entitlement acceptance is in the future"
         )
     validity_seconds = int((expires_at - accepted_at).total_seconds())
-    if validity_seconds <= 0 or validity_seconds > contract["maximum_validity_seconds"]:
+    if validity_seconds <= 0 or validity_seconds > maximum_validity_seconds:
         raise VerificationError(
             "customer runtime entitlement validity is out of bounds"
         )
     if observed_now >= expires_at:
         raise VerificationError("customer runtime entitlement has expired")
+
+
+def _read_runtime_entitlement(path: Path, expected_sha256: str) -> dict[str, Any]:
+    record, raw = _bounded_json_object(
+        path,
+        maximum_size=RUNTIME_ENTITLEMENT_MAX_BYTES,
+        require_single_link=True,
+        require_owner_only=True,
+    )
+    if hashlib.sha256(raw).hexdigest() != expected_sha256:
+        raise VerificationError("customer runtime entitlement byte identity mismatch")
+    return record
+
+
+def _validate_runtime_entitlement_fields(record: dict[str, Any]) -> None:
+    expected_keys = {
+        "schema",
+        "decision",
+        "customer_binding_sha256",
+        "run_id",
+        "source_revision",
+        "runtime_id",
+        "runtime_manifest_sha256",
+        "runtime_lock_sha256",
+        "terms",
+        "customer_responsibilities",
+        "notice_sha256",
+        "accepted_at",
+        "expires_at",
+    }
+    if set(record) != expected_keys:
+        raise VerificationError("customer runtime entitlement fields are invalid")
+
+
+def _runtime_entitlement_result(
+    record: dict[str, Any],
+    expected_entitlement_sha256: str,
+    expected_inventory_sha256: str,
+    expected_values: dict[str, Any],
+) -> dict[str, Any]:
     return {
         "schema": "npa.robomimic.customer-runtime-entitlement-verification.v1",
         "record_sha256": expected_entitlement_sha256,
@@ -364,6 +387,45 @@ def verify_customer_runtime_entitlement(
         "expires_at": record["expires_at"],
         "redistribution_granted": False,
     }
+
+
+def verify_customer_runtime_entitlement(
+    *,
+    entitlement_path: Path,
+    runtime_lock_path: Path,
+    expected_entitlement_sha256: str,
+    expected_customer_binding_sha256: str,
+    expected_run_id: str,
+    expected_inventory_sha256: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Verify a customer-created, run-bound runtime-use record without mutation."""
+    _validate_runtime_entitlement_request(
+        expected_entitlement_sha256,
+        expected_customer_binding_sha256,
+        expected_inventory_sha256,
+        expected_run_id,
+    )
+
+    record = _read_runtime_entitlement(entitlement_path, expected_entitlement_sha256)
+    lock = _json_object(runtime_lock_path)
+    contract = _runtime_entitlement_contract(lock)
+    _validate_runtime_entitlement_fields(record)
+    expected_values = _runtime_entitlement_expected_values(
+        record,
+        lock,
+        contract,
+        runtime_lock_path,
+        expected_customer_binding_sha256,
+        expected_run_id,
+        expected_inventory_sha256,
+    )
+    _validate_runtime_entitlement_expiry(
+        record, contract["maximum_validity_seconds"], now
+    )
+    return _runtime_entitlement_result(
+        record, expected_entitlement_sha256, expected_inventory_sha256, expected_values
+    )
 
 
 def _canonical_name(value: str) -> str:
@@ -1437,11 +1499,7 @@ def _wheel_script_member(
     """
     parts = PurePosixPath(name).parts
     data_directory = directory.removesuffix(".dist-info") + ".data"
-    if (
-        len(parts) < 3
-        or parts[0] != data_directory
-        or parts[1] != "scripts"
-    ):
+    if len(parts) < 3 or parts[0] != data_directory or parts[1] != "scripts":
         raise VerificationError("unsupported wheel installation scheme")
     relative = PurePosixPath(*parts[2:]).as_posix()
     target = PurePosixPath("bin", relative).as_posix()
@@ -1451,6 +1509,27 @@ def _wheel_script_member(
         raise VerificationError("unsupported wheel script transformation")
     transformed = b"#!" + BAKED_INSTALLER_EXECUTABLE.encode("ascii") + b"\n" + rest
     return target, _file_identity(transformed, True), "../../" + target
+
+
+def _wheel_member_installation(
+    name: str, directory: str, raw: bytes, executable: bool
+) -> tuple[str, dict[str, Any], str]:
+    parts = PurePosixPath(name).parts
+    if len(parts) >= 2 and parts[0].endswith(".data") and parts[1] == "scripts":
+        return _wheel_script_member(name, directory, raw)
+    target = _wheel_target(name, directory)
+    if target == "bin" or target.startswith("bin/"):
+        raise VerificationError("wheel reserves generated script directory")
+    entry = _file_identity(raw, executable)
+    if not parts[0].endswith(".data"):
+        record_path = target
+    elif parts[1] in {"purelib", "platlib"}:
+        # Pip's selected library directory is the RECORD root for both
+        # library schemes; only destinations outside it retain ../../.
+        record_path = target
+    else:
+        record_path = "../../" + target
+    return target, entry, record_path
 
 
 def _console_script(module: str, function: str) -> bytes:
@@ -1573,24 +1652,9 @@ def _wheel_expected_inventory(
     result, record_paths = {}, {}
     for name, (raw, executable) in members.items():
         if name != record_name:
-            parts = PurePosixPath(name).parts
-            if (
-                len(parts) >= 2
-                and parts[0].endswith(".data")
-                and parts[1] == "scripts"
-            ):
-                target, entry, record_path = _wheel_script_member(
-                    name, directory, raw
-                )
-            else:
-                target = _wheel_target(name, directory)
-                if target == "bin" or target.startswith("bin/"):
-                    raise VerificationError("wheel reserves generated script directory")
-                entry, record_path = _file_identity(raw, executable), (
-                    "../../" + target
-                    if parts[0].endswith(".data")
-                    else target
-                )
+            target, entry, record_path = _wheel_member_installation(
+                name, directory, raw, executable
+            )
             _add_inventory_member(result, target, entry)
             record_paths[target] = record_path
     for suffix, raw in (("INSTALLER", b"pip\n"), ("REQUESTED", b"")):

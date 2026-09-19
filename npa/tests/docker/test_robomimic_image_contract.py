@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import copy
 import base64
 import csv
@@ -1257,6 +1258,49 @@ def test_build_helper_serializes_equivalent_registry_references(
     )
 
 
+def test_build_helper_serializes_docker_hub_default_namespace_aliases(
+    tmp_path: Path,
+) -> None:
+    environment, _, _, _ = _fake_build_environment(tmp_path)
+    processes = []
+    for index, registry in enumerate(
+        ("docker.io/npa-robomimic", "docker.io/library/npa-robomimic")
+    ):
+        candidate = dict(environment)
+        candidate_tmp = tmp_path / f"dockerhub-alias-tmp-{index}"
+        candidate_tmp.mkdir(mode=0o700)
+        candidate["TMPDIR"] = str(candidate_tmp)
+        candidate["NPA_BYOF_ROBOMIMIC_REGISTRY"] = registry
+        candidate["FAKE_CALLER_UID"] = f"dockerhub-alias-{index}"
+        candidate["FAKE_DOCKER_IMAGE_ID"] = "sha256:" + str(6 + index) * 64
+        candidate["FAKE_DOCKER_IID_RECORD"] = str(tmp_path / f"dockerhub-iid-{index}")
+        candidate["FAKE_DOCKER_CONTEXT_RECORD"] = str(
+            tmp_path / f"dockerhub-context-{index}"
+        )
+        processes.append(
+            subprocess.Popen(
+                ["bash", str(BUILD_SCRIPT)],
+                cwd=ROOT,
+                env=candidate,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        )
+    outcomes = [process.communicate(timeout=30) for process in processes]
+    assert sorted(process.returncode for process in processes) == [0, 1]
+    lock_actions = (tmp_path / "daemon-lock-actions").read_text().splitlines()
+    lock_names = {
+        line.split(":", 2)[1]
+        for line in lock_actions
+        if line.endswith(":create-acquired") or line.endswith(":create-refused")
+    }
+    assert len(lock_names) == 1
+    assert any(
+        "daemon-wide shared-tag coordination" in stderr for _, stderr in outcomes
+    )
+
+
 def test_build_helper_refuses_shared_tag_without_daemon_lock(tmp_path: Path) -> None:
     environment, temp_root, receipt_dir, tag_state = _fake_build_environment(tmp_path)
     image_id = "sha256:" + "5" * 64
@@ -1635,6 +1679,28 @@ def test_build_helper_shell_functions_remain_reviewable() -> None:
     assert max(function_lengths.values()) < 40, function_lengths
 
 
+def test_verifier_installer_and_entitlement_stages_remain_reviewable() -> None:
+    tree = ast.parse((IMAGE_ROOT / "verify_image.py").read_text(encoding="utf-8"))
+    names = {
+        "verify_customer_runtime_entitlement",
+        "_validate_runtime_entitlement_request",
+        "_read_runtime_entitlement",
+        "_validate_runtime_entitlement_fields",
+        "_runtime_entitlement_expected_values",
+        "_validate_runtime_entitlement_expiry",
+        "_runtime_entitlement_result",
+        "_wheel_member_installation",
+        "_wheel_expected_inventory",
+    }
+    lengths = {
+        node.name: node.end_lineno - node.lineno + 1
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name in names
+    }
+    assert set(lengths) == names
+    assert max(lengths.values()) < 40, lengths
+
+
 def test_dataset_notice_binds_exact_official_license_metadata() -> None:
     text = "\n".join(
         path.read_text(encoding="utf-8")
@@ -1832,6 +1898,7 @@ def _inert_wheel_members() -> dict[str, bytes]:
         "inertpkg-1.0.dist-info/RECORD": b"",
         "inertpkg-1.0.dist-info/entry_points.txt": b"[console_scripts]\ninert-script = inertpkg:unused\n",
         "inertpkg-1.0.data/purelib/inert_data.txt": b"inert relocated data\n",
+        "inertpkg-1.0.data/platlib/inert_platform.txt": b"inert platform data\n",
     }
     rows = []
     for name, raw in members.items():
@@ -1856,11 +1923,22 @@ def _write_inert_wheel(path: Path, members: dict[str, bytes]) -> None:
 
 def _inert_install(root: Path, members: dict[str, bytes]) -> None:
     record = "inertpkg-1.0.dist-info/RECORD"
-    installed = {
-        name.removeprefix("inertpkg-1.0.data/purelib/"): raw
-        for name, raw in members.items()
-        if name != record
-    }
+    installed = {}
+    record_paths = {}
+    for name, raw in members.items():
+        if name == record:
+            continue
+        if name.startswith("inertpkg-1.0.data/purelib/"):
+            target = name.removeprefix("inertpkg-1.0.data/purelib/")
+            record_path = target
+        elif name.startswith("inertpkg-1.0.data/platlib/"):
+            target = name.removeprefix("inertpkg-1.0.data/platlib/")
+            record_path = target
+        else:
+            target = name
+            record_path = name
+        installed[target] = raw
+        record_paths[target] = record_path
     installed["inertpkg-1.0.dist-info/INSTALLER"] = b"pip\n"
     installed["inertpkg-1.0.dist-info/REQUESTED"] = b""
     installed["bin/inert-script"] = (
@@ -1868,6 +1946,12 @@ def _inert_install(root: Path, members: dict[str, bytes]) -> None:
         b"from inertpkg import unused\nif __name__ == '__main__':\n"
         b"    sys.argv[0] = sys.argv[0].removesuffix('.exe')\n"
         b"    sys.exit(unused())\n"
+    )
+    record_paths["inertpkg-1.0.dist-info/INSTALLER"] = (
+        "inertpkg-1.0.dist-info/INSTALLER"
+    )
+    record_paths["inertpkg-1.0.dist-info/REQUESTED"] = (
+        "inertpkg-1.0.dist-info/REQUESTED"
     )
     rows = []
     for name, raw in installed.items():
@@ -1880,9 +1964,7 @@ def _inert_install(root: Path, members: dict[str, bytes]) -> None:
         )
         rows.append(
             (
-                "../../" + name
-                if name.startswith("bin/") or name == "inert_data.txt"
-                else name,
+                "../../" + name if name.startswith("bin/") else record_paths[name],
                 "sha256=" + digest,
                 str(len(raw)),
             )
@@ -1983,6 +2065,13 @@ def test_installed_byte_proof_binds_archive_wheels_and_inventories(
         proof["installed_dependencies"]["installation_policy"]
         == "pip-26.2.1-posix-home-target-no-compile-v2"
     )
+    record = (
+        inert_installed_image["baked_deps_path"] / "inertpkg-1.0.dist-info/RECORD"
+    ).read_text()
+    assert "inert_data.txt," in record
+    assert "inert_platform.txt," in record
+    assert "../../inert_data.txt," not in record
+    assert "../../inert_platform.txt," not in record
 
 
 @pytest.mark.parametrize(
