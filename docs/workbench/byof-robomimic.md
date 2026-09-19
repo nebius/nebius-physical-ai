@@ -86,15 +86,16 @@ daemon-owner authority to establish terminal writers and reconcile the exact
 mutex; this helper supplies neither cross-host authority nor automatic cleanup.
 
 `baked-requirements.lock` contains 40 exact version pins with approved artifact
-hashes for the redistributable non-CUDA closure baked into the candidate. The
-retained packages cover the pinned source's unconditional import
-graph: `robomimic.algo` registers Diffusion Policy, while
+hashes retained as historical verifier evidence; it is not installed or baked
+by the current bootstrap-only image. The selected 62-entry runtime map is
+fetched into the customer-owned runtime volume after entitlement, exact
+inventory, and installed `RECORD` checks. The retained packages cover the
+pinned source's unconditional import graph: `robomimic.algo` registers Diffusion Policy, while
 `robomimic.models.obs_core` imports the matplotlib-backed visualization helper
 even for low-dimensional BC. TensorBoard, transformer language-model,
 imageio-ffmpeg, and EGL-probe packages are lazy paths that this headless gate
 does not invoke. Torch, torchvision, Triton, and every `nvidia-*` distribution
-also remain absent. The Dockerfile installs the wheels with
-`--only-binary=:all: --no-deps --require-hashes`. Before any future authorized
+also remain absent. Before any future authorized
 smoke begins, the verified external runtime interpreter must pass a pinned BC
 entrypoint import gate, including the upstream registry's Diffusers scheduler
 and EMA symbols, against the security-updated Diffusers 0.38 candidate. This is

@@ -419,8 +419,11 @@ historical evidence.
 ## Intentionally not published as separate images
 
 - **`npa-robomimic`** is a quarantined, unbuilt Phase A neutral candidate, not a
-  published image. Its intended bytes are pinned MIT robomimic source plus 40
-  hash-locked non-CUDA dependencies on a digest-pinned Python base. PyTorch,
+  published image. Its intended bytes are pinned MIT robomimic source plus the
+  Debian/bootstrap closure on a digest-pinned Python base; the historical
+  40-entry hash lock is verifier evidence only. The selected 62-entry
+  public/CUDA/PyTorch/vendor runtime map is fetched into the customer-owned
+  runtime volume after entitlement and exact inventory checks. PyTorch,
   torchvision, Triton, NVIDIA CUDA/cuDNN/NCCL distributions, weights, official
   Lift PH data, populated runtime cache, credentials, and outputs are excluded.
   The CUDA runtime is a separate exact-inventory read-only operator mount. Its

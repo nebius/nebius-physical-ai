@@ -241,15 +241,18 @@ images:
       no sshd service is enabled by default, and no credentials are baked.
     redistribution: unvalidated
     notes: >-
-      Phase A neutral candidate only: pinned MIT robomimic source and 40
-      hash-locked non-CUDA Python distributions on a pinned Python base. It
-      bakes no torch, torchvision, Triton, NVIDIA CUDA/cuDNN/NCCL distribution,
-      weight, dataset, runtime cache, credential, or output. The separately
-      classified CUDA runtime is an externally prepared, exact-inventory,
-      read-only mount and remains unusable until an authoritative runtime-use
-      decision and manager transaction authorization. Publication stays
-      quarantined until built-image scanning, license/security/SBOM/provenance,
-      exact-digest private B200 qualification, and anonymous pull proofs pass.
+      Phase A neutral candidate only: pinned MIT robomimic source and the
+      redistributable Debian/bootstrap closure on a pinned Python base. The
+      historical 40-entry hash lock is verifier evidence only; the selected
+      62-entry public/CUDA/PyTorch/vendor runtime map is fetched into the
+      customer-owned runtime volume after entitlement and exact inventory
+      checks. The image bakes no Python wheel closure, torch, torchvision,
+      Triton, NVIDIA CUDA/cuDNN/NCCL distribution, weight, dataset, runtime
+      cache, credential, or output. Any prepared CUDA runtime is an external,
+      exact-inventory read-only mount owned by the customer and is not part of
+      this image. Publication stays quarantined until
+      built-image scanning, license/security/SBOM/provenance, exact-digest
+      private B200 qualification, and anonymous pull proofs pass.
   wan2-2:
     dockerfile: wan2-2/Dockerfile
     tier: job

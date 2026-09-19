@@ -743,7 +743,9 @@ def _artifact(index: int, *, size: int) -> dict[str, object]:
 def test_runtime_artifact_limits_admit_every_positive_boundary() -> None:
     artifact_count = verifier.RUNTIME_ARTIFACT_MAX_COUNT
     artifact_size = verifier.RUNTIME_PAYLOAD_MAX_BYTES // artifact_count
-    artifacts = [_artifact(index, size=artifact_size) for index in range(artifact_count)]
+    artifacts = [
+        _artifact(index, size=artifact_size) for index in range(artifact_count)
+    ]
 
     checked, total_bytes = verifier._checked_artifacts(artifacts)
 
@@ -1373,6 +1375,91 @@ def test_runtime_fetch_plan_binds_customer_credential_and_site_root(
     )
     assert plan[5] == runtime_root / "payload/lib/python3.11/site-packages"
     assert plan[6] == "built-in-safe-default"
+
+
+def test_runtime_fetch_plan_allows_public_closure_without_vendor_credential(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
+    inventory_path = runtime_root / "inventory.json"
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    inventory["fetch"] = {
+        "credential_env": "HF_TOKEN",
+        "site_packages": "payload/lib/python3.11/site-packages",
+    }
+    inventory_path.write_text(
+        json.dumps(inventory, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    marker_path = runtime_root / ".ready.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["inventory_sha256"] = _sha(inventory_path)
+    marker_path.write_text(json.dumps(marker, sort_keys=True) + "\n", encoding="utf-8")
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+
+    plan = verifier._runtime_fetch_plan(
+        runtime_root=runtime_root,
+        runtime_lock_path=lock_path,
+        expected_inventory_sha256=_sha(inventory_path),
+    )
+
+    assert plan[5] == runtime_root / "payload/lib/python3.11/site-packages"
+    assert plan[6] == "built-in-safe-default"
+
+
+def test_runtime_fetch_plan_requires_vendor_credential_for_mixed_closure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root, lock_path, _ = _runtime(tmp_path)
+    inventory_path = runtime_root / "inventory.json"
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    inventory["fetch"] = {
+        "credential_env": "HF_TOKEN",
+        "site_packages": "payload/lib/python3.11/site-packages",
+    }
+    inventory["artifacts"][0]["source"] = "https://huggingface.co/org/runtime.whl"
+    inventory_path.write_text(
+        json.dumps(inventory, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    marker_path = runtime_root / ".ready.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["inventory_sha256"] = _sha(inventory_path)
+    marker_path.write_text(json.dumps(marker, sort_keys=True) + "\n", encoding="utf-8")
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+
+    with pytest.raises(verifier.VerificationError, match="credential is absent"):
+        verifier._runtime_fetch_plan(
+            runtime_root=runtime_root,
+            runtime_lock_path=lock_path,
+            expected_inventory_sha256=_sha(inventory_path),
+        )
+
+
+def test_runtime_fetch_checks_entitlement_before_creating_lock(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
+
+    def refuse(**_: object) -> None:
+        raise verifier.VerificationError("entitlement refused")
+
+    monkeypatch.setattr(verifier, "_runtime_entitlement_rechecker", lambda **_: refuse)
+    monkeypatch.setattr(
+        verifier,
+        "_acquire_runtime_fetch_lock",
+        lambda _: pytest.fail("lock must not be created before entitlement"),
+    )
+
+    with pytest.raises(verifier.VerificationError, match="entitlement refused"):
+        verifier.fetch_external_runtime(
+            runtime_root=runtime_root,
+            runtime_lock_path=lock_path,
+            expected_inventory_sha256=inventory_sha256,
+            entitlement_path=tmp_path / "entitlement.json",
+            expected_entitlement_sha256="a" * 64,
+            expected_customer_binding_sha256="b" * 64,
+            expected_run_id="run",
+        )
+    assert not (tmp_path / ".runtime.fetch.lock").exists()
 
 
 def test_runtime_fetch_denylist_has_safe_default_and_explicit_override(

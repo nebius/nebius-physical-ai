@@ -2312,7 +2312,9 @@ def test_wheel_inventory_accepts_authenticated_script_scheme_transform() -> None
     )
 
 
-@pytest.mark.parametrize("raw", [b"#!/usr/bin/python\nprint('inert')\n", b"#!python -x\nprint('inert')\n"])
+@pytest.mark.parametrize(
+    "raw", [b"#!/usr/bin/python\nprint('inert')\n", b"#!python -x\nprint('inert')\n"]
+)
 def test_wheel_inventory_refuses_unproven_script_transform(raw: bytes) -> None:
     with pytest.raises(VERIFIER.VerificationError, match="script transformation"):
         VERIFIER._wheel_script_member(
@@ -2322,7 +2324,9 @@ def test_wheel_inventory_refuses_unproven_script_transform(raw: bytes) -> None:
         )
 
 
-def test_wheel_distribution_accepts_pep427_name_case_and_separator_normalization() -> None:
+def test_wheel_distribution_accepts_pep427_name_case_and_separator_normalization() -> (
+    None
+):
     members = {
         "PyYAML-6.0.2.dist-info/METADATA": (
             b"Name: PyYAML\nVersion: 6.0.2\n",
