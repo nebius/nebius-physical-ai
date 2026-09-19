@@ -28,6 +28,7 @@ import pwd
 import re
 import shutil
 import signal
+import shlex
 import ssl
 import stat
 import struct
@@ -155,8 +156,8 @@ REVIEWED_SOURCE_BUILD_NAMES = frozenset(
         "robomimic",
     }
 )
-SOURCE_BUILD_SANDBOX = Path("/usr/bin/bwrap")
-SOURCE_BUILD_UID = 65534
+SOURCE_BUILD_UNSHARE = Path("/usr/bin/unshare")
+SOURCE_BUILD_CHROOT = Path("/usr/sbin/chroot")
 RUNTIME_EXECUTION_GROUP = "npa-libero-exec"
 RUNTIME_EXECUTION_USER = "npa-libero-exec"
 RUNTIME_SUPERVISOR_USER = "ubuntu"
@@ -1862,78 +1863,67 @@ def _build_source_wheels(
     source_lock = build_wheelhouse.parent / ".source-requirements.txt"
     source_lock.write_text("\n".join(source_lines) + "\n", encoding="utf-8")
     os.chmod(source_lock, 0o400)
-    sandbox = SOURCE_BUILD_SANDBOX
-    try:
-        sandbox_info = sandbox.stat()
-    except OSError as exc:
-        raise BootstrapRefusal("source runtime build sandbox is unavailable") from exc
-    if (
-        not stat.S_ISREG(sandbox_info.st_mode)
-        or sandbox_info.st_uid != 0
-        or stat.S_IMODE(sandbox_info.st_mode) & 0o022
-        or not stat.S_IMODE(sandbox_info.st_mode) & 0o111
-    ):
-        raise BootstrapRefusal("source runtime build sandbox is not trusted")
+    for sandbox_tool in (SOURCE_BUILD_UNSHARE, SOURCE_BUILD_CHROOT):
+        try:
+            sandbox_info = sandbox_tool.stat()
+        except OSError as exc:
+            raise BootstrapRefusal("source runtime sandbox is unavailable") from exc
+        if (
+            not stat.S_ISREG(sandbox_info.st_mode)
+            or sandbox_info.st_uid != 0
+            or stat.S_IMODE(sandbox_info.st_mode) & 0o022
+            or not stat.S_IMODE(sandbox_info.st_mode) & 0o111
+        ):
+            raise BootstrapRefusal("source runtime sandbox is not trusted")
     wheelhouse = wheelhouse.resolve(strict=True)
     build_wheelhouse = build_wheelhouse.resolve(strict=True)
     source_lock = source_lock.resolve(strict=True)
     venv = Path(pip).resolve().parent.parent
-    sandbox_command = [
-        str(sandbox),
-        "--die-with-parent",
-        "--unshare-all",
-        "--new-session",
-        "--clearenv",
-        "--uid",
-        str(SOURCE_BUILD_UID),
-        "--gid",
-        str(SOURCE_BUILD_UID),
-        "--tmpfs",
-        "/",
-        "--proc",
-        "/proc",
-        "--dev",
-        "/dev",
+    sandbox_root = build_wheelhouse.parent / ".source-build-sandbox"
+    sandbox_root.mkdir(mode=0o700)
+    for relative in (
+        "bin",
+        "etc",
+        "lib",
+        "lib64",
+        "npa-build/input",
+        "npa-build/output",
+        "npa-build/venv",
+        "sbin",
+        "tmp",
+        "usr",
+    ):
+        (sandbox_root / relative).mkdir(mode=0o700, parents=True)
+    (sandbox_root / "npa-build/source-requirements.txt").touch(mode=0o400)
+    quote = shlex.quote
+    readonly_binds = [
+        ("/bin", sandbox_root / "bin"),
+        ("/etc", sandbox_root / "etc"),
+        ("/lib", sandbox_root / "lib"),
+        ("/lib64", sandbox_root / "lib64"),
+        ("/sbin", sandbox_root / "sbin"),
+        ("/usr", sandbox_root / "usr"),
+        (str(wheelhouse), sandbox_root / "npa-build/input"),
+        (str(source_lock), sandbox_root / "npa-build/source-requirements.txt"),
+        (str(venv), sandbox_root / "npa-build/venv"),
     ]
-    for system_path in ("/bin", "/etc", "/lib", "/lib64", "/sbin", "/usr"):
-        if Path(system_path).exists():
-            sandbox_command.extend(("--ro-bind", system_path, system_path))
-    sandbox_command.extend(
-        (
-            "--dir",
-            "/npa-build",
-            "--dir",
-            "/tmp/home",
-            "--ro-bind",
-            str(wheelhouse),
-            "/npa-build/input",
-            "--ro-bind",
-            str(source_lock),
-            "/npa-build/source-requirements.txt",
-            "--ro-bind",
-            str(venv),
-            "/npa-build/venv",
-            "--bind",
-            str(build_wheelhouse),
-            "/npa-build/output",
-            "--setenv",
-            "HOME",
-            "/tmp/home",
-            "--setenv",
-            "PATH",
-            "/npa-build/venv/bin:/usr/local/bin:/usr/bin:/bin",
-            "--setenv",
-            "TMPDIR",
-            "/tmp",
-            "--setenv",
-            "PIP_NO_CACHE_DIR",
-            "1",
-            "--setenv",
-            "PIP_DISABLE_PIP_VERSION_CHECK",
-            "1",
-            "--setenv",
-            "PYTHONDONTWRITEBYTECODE",
-            "1",
+    bind_commands = []
+    for source, destination in readonly_binds:
+        bind_commands.extend(
+            [
+                f"mount --bind {quote(source)} {quote(str(destination))}",
+                f"mount -o remount,ro,bind {quote(str(destination))}",
+            ]
+        )
+    bind_commands.extend(
+        [
+            f"mount --bind {quote(str(build_wheelhouse))} {quote(str(sandbox_root / 'npa-build/output'))}",
+            f"mount -t tmpfs tmpfs {quote(str(sandbox_root / 'tmp'))}",
+        ]
+    )
+    build_command = " ".join(
+        quote(part)
+        for part in (
             "/npa-build/venv/bin/python",
             "-m",
             "pip",
@@ -1950,7 +1940,32 @@ def _build_source_wheels(
             "/npa-build/source-requirements.txt",
         )
     )
-    _run(sandbox_command, environment=environment)
+    script = "set -eu; mount --make-rprivate /; " + "; ".join(bind_commands)
+    script += (
+        "; exec "
+        + quote(str(SOURCE_BUILD_CHROOT))
+        + " "
+        + quote(str(sandbox_root))
+        + " /usr/bin/env -i HOME=/tmp TMPDIR=/tmp PATH=/npa-build/venv/bin:/usr/bin:/bin "
+        + build_command
+    )
+    sandbox_command = [
+        str(SOURCE_BUILD_UNSHARE),
+        "--user",
+        "--map-root-user",
+        "--mount",
+        "--net",
+        "--pid",
+        "--fork",
+        "--",
+        "/bin/sh",
+        "-ceu",
+        script,
+    ]
+    try:
+        _run(sandbox_command, environment=environment)
+    finally:
+        shutil.rmtree(sandbox_root, ignore_errors=False)
     wheels = sorted(path for path in build_wheelhouse.iterdir() if path.is_file())
     if len(wheels) != len(source_artifacts) or any(
         path.suffix != ".whl" for path in wheels

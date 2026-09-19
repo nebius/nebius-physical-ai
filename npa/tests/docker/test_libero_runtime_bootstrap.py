@@ -1284,27 +1284,23 @@ def test_source_archives_become_identity_checked_hash_locked_wheels(
     )
 
     def fake_run(command, **_kwargs):
-        assert command[0] == "/usr/bin/bwrap"
-        assert "--unshare-all" in command
-        assert "--uid" in command and command[command.index("--uid") + 1] == "65534"
-        assert "--gid" in command and command[command.index("--gid") + 1] == "65534"
-        python_index = command.index("/npa-build/venv/bin/python")
-        assert command[python_index:] == [
-            "/npa-build/venv/bin/python",
-            "-m",
-            "pip",
-            "wheel",
-            "--no-deps",
-            "--no-build-isolation",
-            "--require-hashes",
-            "--no-index",
-            "--find-links",
-            "/npa-build/input",
-            "--wheel-dir",
-            "/npa-build/output",
-            "-r",
-            "/npa-build/source-requirements.txt",
+        assert command[:7] == [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount",
+            "--net",
+            "--pid",
+            "--fork",
         ]
+        assert command[7:10] == ["--", "/bin/sh", "-ceu"]
+        script = command[10]
+        assert "mount --make-rprivate /" in script
+        assert "/usr/sbin/chroot" in script
+        assert "mount --bind" in script and "mount -o remount,ro,bind" in script
+        assert "--no-index" in script and "--find-links /npa-build/input" in script
+        assert "--wheel-dir /npa-build/output" in script
+        assert "/npa-build/source-requirements.txt" in script
         build_wheelhouse.mkdir(mode=0o700, exist_ok=True)
         wheel = build_wheelhouse / "fixture_source-1.0-py3-none-any.whl"
         with zipfile.ZipFile(wheel, "w") as archive:
