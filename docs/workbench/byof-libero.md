@@ -130,7 +130,14 @@ identity comparison cannot depend on the wall-clock build time. The package
 transaction removes APT/dpkg/account logs and normalizes the non-root account's
 shadow day to the same epoch in its creation layer.
 
-The trusted build must then:
+The following is a future, separately authorized publication runbook; it is not
+an executable requirement or completion claim for this source-only phase. No
+public digest, anonymous-pull result, or B200 capability is implied until a
+customer-scoped authorization and an independently reviewed, registry-enforced
+first-publication transaction exist. If that transaction is not available, the
+runbook remains deferred and the quarantined candidate remains unvalidated.
+
+When that later transaction is authorized, the trusted build must then:
 
 1. reproduce the accepted development SHA from its hash-bound neutral build-input
    bundle with Buildx SBOM and maximum provenance, exporting an attested OCI
