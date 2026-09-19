@@ -111,10 +111,10 @@ def _prepare_robotwin_submit_without_global_source(
     sender.close()
     try:
         try:
-            if not receiver.poll(60):
+            if not receiver.poll(None):
                 process.terminate()
                 raise NpaWorkflowError(
-                    "RoboTwin isolated render timed out; submission was not attempted"
+                    "RoboTwin isolated render returned no result; submission was not attempted"
                 )
             response = receiver.recv()
         except EOFError:
