@@ -108,6 +108,27 @@ def test_neutral_payload_scan_is_verified_before_development_image_push() -> Non
         '.release_authorized == false',
     ):
         assert token in text
+    first_scan = text.index(
+        "npa/.venv/bin/python npa/scripts/scan_image_gymnasium_robotics_payload.py"
+    )
+    first_output = text.index(
+        '"$RUNNER_TEMP/${TOOL}-gymnasium-payload.json"', first_scan
+    )
+    first_invocation = text[first_scan:first_output]
+    assert "--expected-config-sha256" not in first_invocation
+    assert "--expected-layer-diff-ids-json" not in first_invocation
+    pushed_scan = text.rindex(
+        "npa/.venv/bin/python npa/scripts/scan_image_gymnasium_robotics_payload.py"
+    )
+    pushed_output = text.index(
+        '"$RUNNER_TEMP/${TOOL}-pushed-gymnasium-payload.json"', pushed_scan
+    )
+    pushed_invocation = text[pushed_scan:pushed_output]
+    assert "--expected-config-sha256" not in pushed_invocation
+    assert "--expected-layer-diff-ids-json" not in pushed_invocation
+    gym_gate = text[source_gate:push]
+    assert "--arg config_sha256" not in gym_gate
+    assert "--argjson expected_layer_diff_ids" not in gym_gate
 
 
 def test_trusted_workflow_allows_neutral_development_selection_before_build() -> None:
