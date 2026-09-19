@@ -1028,6 +1028,7 @@ def submit_workflow(
     unverified_libero_job_ids: tuple[str, ...] = ()
     libero_binding_error = ""
     libero_launch_succeeded = False
+    launch_started_at: float | None = None
     try:
         prepared = _prepare_workflow_submission(
             yaml_path,
@@ -1221,6 +1222,7 @@ def submit_workflow(
                     (bool(bound_libero_job_id) or persisted_candidate_binding)
                     and not owner_ledger_binding
                 ),
+                launch_started_at=(launch_started_at if binding_error else None),
             )
             preserved = _preserve_unverified_libero_candidate(
                 evidence,
@@ -1250,6 +1252,7 @@ def submit_workflow(
         def _launch() -> tuple[
             subprocess.CompletedProcess[str], list[SkyPilotDiagnosis]
         ]:
+            nonlocal launch_started_at
             try:
                 if (
                     _private_file_identity(prepared_yaml) != workflow_identity
@@ -1967,6 +1970,7 @@ def _reconcile_managed_job_env(
     require_owner_binding: bool = False,
     owner_ledger_binding: bool = False,
     allow_omitted_profile: bool = False,
+    launch_started_at: float | None = None,
     timeout: int = 60,
 ) -> ReconciliationEvidence:
     """Reconcile one exact name through the same SkyPilot runtime as launch."""
@@ -2123,6 +2127,18 @@ def _reconcile_managed_job_env(
                 ),
             )
         return ReconciliationEvidence(ReconciliationState.ABSENT)
+    if launch_started_at is not None and not any(
+        _managed_job_submission_time(row) is not None
+        and _managed_job_submission_time(row) >= launch_started_at
+        for row in matching_rows
+    ):
+        return ReconciliationEvidence(
+            ReconciliationState.UNAVAILABLE,
+            error=(
+                "unverified LIBERO candidate lacks current-attempt queue "
+                "correlation during reconciliation; refusing adoption"
+            ),
+        )
     # Historical cancelled/failed attempts retain the same deterministic name
     # in SkyPilot's all-jobs queue.  Once a viable replacement exists, those
     # terminal rows must not make exact-name reconciliation ambiguous.

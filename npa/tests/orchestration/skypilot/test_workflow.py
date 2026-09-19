@@ -2676,6 +2676,48 @@ def test_libero_persisted_candidate_promotes_without_optional_queue_profile(
     assert promoted.error == ""
 
 
+def test_libero_stale_unverified_candidate_cannot_promote_during_reconciliation(
+    monkeypatch,
+) -> None:
+    row = {
+        "job_id": 126,
+        "job_name": "exact-run",
+        "status": "SUCCEEDED",
+        "submitted_at": 50.0,
+        "metadata": {"executable_profile_sha256": "a" * 64},
+    }
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=""
+        ),
+    )
+
+    observed = workflow_module._reconcile_managed_job_env(
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        expected_job_id="126",
+        require_owner_binding=True,
+        launch_started_at=100.0,
+    )
+
+    assert observed.state is workflow_module.ReconciliationState.UNAVAILABLE
+    assert "current-attempt queue correlation" in observed.error
+    preserved = workflow_module._preserve_unverified_libero_candidate(
+        observed,
+        expected_job_id="126",
+        binding_error="launch binding lacked current-attempt correlation",
+        binding_verified=(observed.state is workflow_module.ReconciliationState.FOUND),
+    )
+    assert preserved.state is workflow_module.ReconciliationState.UNAVAILABLE
+    assert preserved.job_id == "126"
+    assert "lacked current-attempt correlation" in preserved.error
+
+
 @pytest.mark.parametrize("state", ["", "unknown", "CANDIDATE"])
 def test_libero_owner_binding_rejects_unsupported_state(monkeypatch, state) -> None:
     from npa.orchestration.npa_workflow import submission_state
